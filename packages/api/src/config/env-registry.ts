@@ -691,6 +691,15 @@ export const ENV_VARS: EnvDefinition[] = [
     runtimeEditable: false,
   },
   {
+    name: 'CAT_CAFE_COMPACTION_CARRIER_ROOT',
+    defaultValue: '(未设置 → 从模块位置锚定的 install root 解析)',
+    description:
+      'F296/#1542: managed Claude compaction carrier（f24-compaction.mjs）的可信安装根覆盖。仅在部署布局不含标准 packages/api 结构时使用；该根下的 .claude/hooks/f24-compaction.mjs 是唯一被接受的 carrier 坐标，绝不向上搜索',
+    category: 'server',
+    sensitive: false,
+    runtimeEditable: false,
+  },
+  {
     name: 'CAT_CAFE_WORKSPACE_ROOT',
     defaultValue: '(未设置 → process.cwd())',
     description:

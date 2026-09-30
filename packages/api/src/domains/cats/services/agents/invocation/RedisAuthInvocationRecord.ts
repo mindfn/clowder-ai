@@ -42,6 +42,7 @@ function applyOptionalFields(record: InvocationRecord, fields: Record<string, st
   if (fields.endedAt) record.endedAt = Number(fields.endedAt);
   if (fields.endReason) record.endReason = fields.endReason;
   if (fields.terminalRef) record.terminalRef = fields.terminalRef;
+  if (fields.expectedCompactionCarrier) record.expectedCompactionCarrier = fields.expectedCompactionCarrier;
   if (fields.traceId && fields.spanId) {
     record.traceContext = {
       traceId: fields.traceId,

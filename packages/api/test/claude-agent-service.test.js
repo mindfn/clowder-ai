@@ -1991,3 +1991,169 @@ test('AC-G4 cloud P2: Claude result is_error:true surfaces tool_call_parse_faile
     'silent_completion MUST NOT fire when Claude result carries is_error:true',
   );
 });
+
+// ── #1542: managed compaction launch-plan injection (P1 guards) ──────────────
+
+const { buildClaudeCompactionLaunchPlan } = await import(
+  '../dist/domains/cats/services/agents/providers/claude-compaction-launch-plan.js'
+);
+
+function managedLaunchPlanFixture() {
+  const root = mkdtempSync(join(tmpdir(), 'f296-managed-plan-'));
+  mkdirSync(join(root, '.claude', 'hooks'), { recursive: true });
+  writeFileSync(
+    join(root, '.claude', 'hooks', 'f24-compaction.mjs'),
+    [
+      '// fixture canonical Node carrier',
+      'fetch("/api/sessions/seal"',
+      'CAT_CAFE_INVOCATION_ID CAT_CAFE_CALLBACK_TOKEN',
+      'X-Invocation-Id X-Callback-Token X-Clowder-Compaction-Carrier',
+    ].join('\n'),
+  );
+  const plan = buildClaudeCompactionLaunchPlan({ installRoot: root });
+  assert.equal(plan.ready, true);
+  return plan;
+}
+
+function capturingSpawnFn(proc, capture) {
+  const inner = createMockSpawnFn(proc);
+  return mock.fn((...callArgs) => {
+    capture(callArgs);
+    return inner(...callArgs);
+  });
+}
+
+test('#1542: managed launch plan injects exactly one --settings derived from the plan, then cleans up', async () => {
+  const proc = createMockProcess();
+  let capturedSettings = null;
+  const spawnFn = capturingSpawnFn(proc, (callArgs) => {
+    const args = callArgs[1];
+    const idx = args.indexOf('--settings');
+    if (idx >= 0) capturedSettings = JSON.parse(readFileSync(args[idx + 1], 'utf8'));
+  });
+  const service = createClaudeAgentService({ spawnFn, model: 'claude-test-model' });
+
+  const promise = collect(
+    service.invoke('hello', {
+      callbackEnv: {
+        CAT_CAFE_API_URL: 'http://localhost:3004',
+        CAT_CAFE_INVOCATION_ID: 'inv-plan',
+        CAT_CAFE_CALLBACK_TOKEN: 'token-plan',
+        CAT_CAFE_ANTHROPIC_PROFILE_MODE: 'api_key',
+        CAT_CAFE_ANTHROPIC_API_KEY: 'sk-test',
+      },
+      compactionLaunchPlan: managedLaunchPlanFixture(),
+    }),
+  );
+  emitClaudeEvents(proc, [{ type: 'result', subtype: 'success' }]);
+  await promise;
+
+  const args = spawnFn.mock.calls[0].arguments[1];
+  assert.equal(args.filter((arg) => arg === '--settings').length, 1, 'exactly one --settings flag');
+  assert.ok(capturedSettings, 'settings document captured at spawn time');
+  assert.ok(capturedSettings.hooks.PreCompact[0].hooks[0].command.includes('f24-compaction.mjs'));
+  assert.ok(capturedSettings.hooks.PreCompact[0].hooks[0].command.includes(' pre'));
+  assert.ok(capturedSettings.hooks.SessionStart[0].hooks[0].command.includes(' post'));
+  const settingsPath = args[args.indexOf('--settings') + 1];
+  assert.ok(!existsSync(settingsPath), 'temp settings file removed after invocation');
+});
+
+test('#1542 P1: a user-supplied --settings is composed with the managed plan, never dropped or duplicated', async () => {
+  const userSettingsPath = join(tmpdir(), `f296-user-settings-${Date.now()}.json`);
+  writeFileSync(
+    userSettingsPath,
+    JSON.stringify({
+      spinnerTipsEnabled: true,
+      hooks: { PreCompact: [{ matcher: 'manual', hooks: [{ type: 'command', command: 'echo user-hook' }] }] },
+    }),
+  );
+
+  const proc = createMockProcess();
+  let capturedSettings = null;
+  const spawnFn = capturingSpawnFn(proc, (callArgs) => {
+    const args = callArgs[1];
+    const idx = args.indexOf('--settings');
+    if (idx >= 0) capturedSettings = JSON.parse(readFileSync(args[idx + 1], 'utf8'));
+  });
+  const service = createClaudeAgentService({ spawnFn, model: 'claude-test-model' });
+
+  const promise = collect(
+    service.invoke('hello', {
+      callbackEnv: {
+        CAT_CAFE_API_URL: 'http://localhost:3004',
+        CAT_CAFE_INVOCATION_ID: 'inv-plan-user',
+        CAT_CAFE_CALLBACK_TOKEN: 'token-plan-user',
+        CAT_CAFE_ANTHROPIC_PROFILE_MODE: 'api_key',
+        CAT_CAFE_ANTHROPIC_API_KEY: 'sk-test',
+      },
+      cliConfigArgs: ['--settings', userSettingsPath],
+      compactionLaunchPlan: managedLaunchPlanFixture(),
+    }),
+  );
+  emitClaudeEvents(proc, [{ type: 'result', subtype: 'success' }]);
+  await promise;
+
+  const args = spawnFn.mock.calls[0].arguments[1];
+  assert.equal(args.filter((arg) => arg === '--settings').length, 1, 'user flag replaced by one composed document');
+  assert.ok(!args.includes(userSettingsPath), 'the user path itself must not reach the CLI as a second flag');
+  assert.equal(capturedSettings.spinnerTipsEnabled, true, 'user settings preserved');
+  assert.equal(capturedSettings.hooks.PreCompact.length, 2, 'user hook + managed hook both present');
+  rmSync(userSettingsPath, { force: true });
+});
+
+test('#1542: user --settings passes through untouched when no managed plan is ready', async () => {
+  const userSettingsPath = join(tmpdir(), `f296-user-solo-${Date.now()}.json`);
+  writeFileSync(userSettingsPath, JSON.stringify({ spinnerTipsEnabled: false }));
+
+  const proc = createMockProcess();
+  const spawnFn = createMockSpawnFn(proc);
+  const service = createClaudeAgentService({ spawnFn, model: 'claude-test-model' });
+
+  const promise = collect(
+    service.invoke('hello', {
+      callbackEnv: {
+        CAT_CAFE_API_URL: 'http://localhost:3004',
+        CAT_CAFE_INVOCATION_ID: 'inv-solo',
+        CAT_CAFE_CALLBACK_TOKEN: 'token-solo',
+        CAT_CAFE_ANTHROPIC_PROFILE_MODE: 'api_key',
+        CAT_CAFE_ANTHROPIC_API_KEY: 'sk-test',
+      },
+      cliConfigArgs: ['--settings', userSettingsPath],
+    }),
+  );
+  emitClaudeEvents(proc, [{ type: 'result', subtype: 'success' }]);
+  await promise;
+
+  const args = spawnFn.mock.calls[0].arguments[1];
+  assert.equal(args.filter((arg) => arg === '--settings').length, 1);
+  assert.equal(args[args.indexOf('--settings') + 1], userSettingsPath);
+  rmSync(userSettingsPath, { force: true });
+});
+
+test('#1542: an invalid user --settings fails closed instead of silently dropping the managed carrier', async () => {
+  const proc = createMockProcess();
+  const spawnFn = createMockSpawnFn(proc);
+  const service = createClaudeAgentService({ spawnFn, model: 'claude-test-model' });
+
+  const messages = [];
+  const promise = (async () => {
+    for await (const message of service.invoke('hello', {
+      callbackEnv: {
+        CAT_CAFE_API_URL: 'http://localhost:3004',
+        CAT_CAFE_INVOCATION_ID: 'inv-bad',
+        CAT_CAFE_CALLBACK_TOKEN: 'token-bad',
+        CAT_CAFE_ANTHROPIC_PROFILE_MODE: 'api_key',
+        CAT_CAFE_ANTHROPIC_API_KEY: 'sk-test',
+      },
+      cliConfigArgs: ['--settings', '/nonexistent-user-settings.json'],
+      compactionLaunchPlan: managedLaunchPlanFixture(),
+    })) {
+      messages.push(message);
+    }
+  })();
+  emitClaudeEvents(proc, [{ type: 'result', subtype: 'success' }]);
+  await promise;
+
+  assert.match(String(messages.find((m) => m.type === 'error')?.error), /cli_config_args_settings_invalid/);
+  assert.equal(spawnFn.mock.calls.length, 0, 'fail closed: the CLI must not spawn with a broken settings contract');
+});

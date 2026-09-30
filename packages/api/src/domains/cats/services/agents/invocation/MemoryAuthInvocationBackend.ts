@@ -144,6 +144,11 @@ export class MemoryAuthInvocationBackend implements IAuthInvocationBackend {
     if (record?.state === 'active') record.traceContext = ctx;
   }
 
+  async setExpectedCompactionCarrier(invocationId: string, identity: string): Promise<void> {
+    const record = this.records.get(invocationId);
+    if (record?.state === 'active') record.expectedCompactionCarrier = identity;
+  }
+
   private verifyInTurn(invocationId: string, callbackToken: string, requireLatest: boolean): VerifyResult {
     this.cleanupTerminalTombstones();
     const record = this.records.get(invocationId);

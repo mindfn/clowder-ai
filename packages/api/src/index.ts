@@ -161,7 +161,6 @@ import {
 } from './domains/cats/services/runtime-session/RuntimeSessionSealReaper.js';
 import { createRuntimeSessionStore } from './domains/cats/services/runtime-session/RuntimeSessionStoreFactory.js';
 import { ContextEpochOwner } from './domains/cats/services/session/ContextEpochOwner.js';
-import { isClaudeProjectHookCarrierReady } from './domains/cats/services/session/claude-project-hook-readiness.js';
 import {
   InMemoryPresentationLedgerStore,
   PresentationLedger,
@@ -2500,7 +2499,6 @@ async function main(): Promise<void> {
     sessionChainStore,
     contextEpochOwner,
     hookAuthenticationReady: sessionHookAuthenticationReady,
-    claudeProjectHookCarrierReady: isClaudeProjectHookCarrierReady,
     presentationLedger,
     ...(routingContextRuntime ? { routingContextPromptProjection: routingContextRuntime.promptProjection } : {}),
     ...(routingContextRuntime ? { routingDispatchPreflight: routingContextRuntime.dispatchPreflight } : {}),

@@ -212,6 +212,12 @@ export class RedisAuthInvocationBackend implements IAuthInvocationBackend {
     await this.redis.hset(key, 'traceId', ctx.traceId, 'spanId', ctx.spanId, 'traceFlags', String(ctx.traceFlags));
   }
 
+  async setExpectedCompactionCarrier(invocationId: string, identity: string): Promise<void> {
+    const key = KEY_INV(invocationId);
+    if ((await this.redis.hget(key, 'state')) !== 'active') return;
+    await this.redis.hset(key, 'expectedCompactionCarrier', identity);
+  }
+
   private async verifyWithLua(
     invocationId: string,
     callbackToken: string,

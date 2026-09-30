@@ -57,6 +57,13 @@ export interface InvocationRecord {
   collectiveWorkBinding?: CollectiveWorkBinding;
   /** In-invocation idempotency keys for callback post-message de-duplication. */
   clientMessageIds: Set<string>;
+  /**
+   * #1542 guard 4: the compaction carrier identity this invocation's launch plan
+   * handed to its Claude spawn. Durable with the callback principal so
+   * /api/sessions/seal can fence legacy-shell callbacks after restart or
+   * capacity pressure — never process-local authority.
+   */
+  expectedCompactionCarrier?: string;
   createdAt: number;
   /** Active principals have no deadline; terminal tombstones expose their GC deadline. */
   expiresAt: number | null;
@@ -296,6 +303,11 @@ export class InvocationRegistry {
 
   async setTraceContext(invocationId: string, ctx: CallerTraceContext): Promise<void> {
     return this.backend.setTraceContext(invocationId, ctx);
+  }
+
+  /** #1542 guard 4: persist the launch plan's carrier identity on the durable callback principal. */
+  async setExpectedCompactionCarrier(invocationId: string, identity: string): Promise<void> {
+    return this.backend.setExpectedCompactionCarrier(invocationId, identity);
   }
 
   /**

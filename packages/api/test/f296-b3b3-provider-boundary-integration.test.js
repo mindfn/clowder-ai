@@ -1,11 +1,10 @@
 import './helpers/setup-cat-registry.js';
 import assert from 'node:assert/strict';
-import { mkdtempSync, realpathSync, rmSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { test } from 'node:test';
 import { invokeSingleCat } from '../dist/domains/cats/services/agents/invocation/invoke-single-cat.js';
-import { findMonorepoRoot } from '../dist/utils/monorepo-root.js';
 
 const CLAUDE_PRINT = {
   provider: 'anthropic',
@@ -92,26 +91,27 @@ test('F296 B3b-3 typed compact_boundary consumes a same-invocation legacy unknow
       update: async () => activeRecord,
     },
     hookAuthenticationReady: true,
-    claudeProjectHookCarrierReady: () => true,
     contextEpochOwner,
     threadStore: null,
     apiUrl: 'http://127.0.0.1:3004',
   };
 
-  for await (const _message of invokeSingleCat(deps, {
-    catId: 'opus',
-    service,
-    prompt: 'placeholder',
-    contextPromptFactory: async () => ({ prompt: 'trusted cold prompt', promptMessageIds: [] }),
-    userId: 'owner-1',
-    ownerAuthProvenance: 'unknown',
-    threadId: 'thread-f296',
-    invocationOrigin: 'interactive',
-    routeTopology: 'serial',
-    isLastCat: true,
-  })) {
-    // consume the complete provider path
-  }
+  await withCompactionCarrierRoot(writeCarrierFixtureRoot(), async () => {
+    for await (const _message of invokeSingleCat(deps, {
+      catId: 'opus',
+      service,
+      prompt: 'placeholder',
+      contextPromptFactory: async () => ({ prompt: 'trusted cold prompt', promptMessageIds: [] }),
+      userId: 'owner-1',
+      ownerAuthProvenance: 'unknown',
+      threadId: 'thread-f296',
+      invocationOrigin: 'interactive',
+      routeTopology: 'serial',
+      isLastCat: true,
+    })) {
+      // consume the complete provider path
+    }
+  });
 
   assert.equal(observations.length, 1);
   assert.equal(observations[0].event.eventId, 'context-compaction:logical-session-1:1');
@@ -121,7 +121,7 @@ test('F296 B3b-3 typed compact_boundary consumes a same-invocation legacy unknow
 
 async function invokeBoundaryWithReadiness({
   hookAuthenticationReady,
-  claudeProjectHookCarrierReady,
+  carrierReady = true,
   threadStore,
   activeRecord: suppliedActiveRecord,
   boundaryCount = 1,
@@ -179,7 +179,6 @@ async function invokeBoundaryWithReadiness({
       update: async () => activeRecord,
     },
     hookAuthenticationReady,
-    claudeProjectHookCarrierReady,
     contextEpochOwner: {
       async resolve(input) {
         return {
@@ -203,20 +202,22 @@ async function invokeBoundaryWithReadiness({
   };
 
   const messages = [];
-  for await (const message of invokeSingleCat(deps, {
-    catId: 'opus',
-    service,
-    prompt: 'placeholder',
-    contextPromptFactory: async () => ({ prompt: 'trusted cold prompt', promptMessageIds: [] }),
-    userId: 'owner-1',
-    ownerAuthProvenance: 'unknown',
-    threadId: 'thread-f296',
-    invocationOrigin: 'interactive',
-    routeTopology: 'serial',
-    isLastCat: true,
-  })) {
-    messages.push(message);
-  }
+  await withCompactionCarrierRoot(carrierReady ? writeCarrierFixtureRoot() : emptyCarrierRoot(), async () => {
+    for await (const message of invokeSingleCat(deps, {
+      catId: 'opus',
+      service,
+      prompt: 'placeholder',
+      contextPromptFactory: async () => ({ prompt: 'trusted cold prompt', promptMessageIds: [] }),
+      userId: 'owner-1',
+      ownerAuthProvenance: 'unknown',
+      threadId: 'thread-f296',
+      invocationOrigin: 'interactive',
+      routeTopology: 'serial',
+      isLastCat: true,
+    })) {
+      messages.push(message);
+    }
+  });
   const terminalError = messages.find((message) => message.type === 'error');
   return { terminalError, postBoundarySessionReads };
 }
@@ -224,7 +225,6 @@ async function invokeBoundaryWithReadiness({
 test('Claude compact_boundary fails actionably before sequence lookup when hook auth is unavailable', async () => {
   const { terminalError, postBoundarySessionReads } = await invokeBoundaryWithReadiness({
     hookAuthenticationReady: false,
-    claudeProjectHookCarrierReady: () => true,
     threadStore: null,
   });
 
@@ -232,42 +232,24 @@ test('Claude compact_boundary fails actionably before sequence lookup when hook 
   assert.equal(postBoundarySessionReads, 0, 'missing hook auth must be classified before sequence derivation');
 });
 
-test('Claude compact_boundary checks the active workspace hook carrier before sequence lookup', async () => {
-  let inspectedProjectRoot;
-  const externalProject = mkdtempSync(join(tmpdir(), 'f296-external-project-'));
-  try {
-    const { terminalError, postBoundarySessionReads } = await invokeBoundaryWithReadiness({
-      hookAuthenticationReady: true,
-      claudeProjectHookCarrierReady(projectRoot) {
-        inspectedProjectRoot = projectRoot;
-        return false;
-      },
-      threadStore: {
-        get: async () => ({
-          id: 'thread-f296',
-          title: 'external workspace fixture',
-          createdBy: 'owner-1',
-          projectPath: externalProject,
-        }),
-      },
-    });
+test('Claude compact_boundary fails closed when no launch-plan carrier resolves for the invocation', async () => {
+  const { terminalError, postBoundarySessionReads } = await invokeBoundaryWithReadiness({
+    hookAuthenticationReady: true,
+    carrierReady: false,
+    threadStore: null,
+  });
 
-    assert.equal(inspectedProjectRoot, findMonorepoRoot(realpathSync(externalProject)));
-    assert.match(String(terminalError?.error), /authoritative_compaction_unsupported:hook_carrier_unavailable/);
-    assert.equal(
-      postBoundarySessionReads,
-      0,
-      'missing workspace carrier must be classified before sequence derivation',
-    );
-  } finally {
-    rmSync(externalProject, { recursive: true, force: true });
-  }
+  assert.match(String(terminalError?.error), /authoritative_compaction_unsupported:hook_carrier_unavailable/);
+  assert.equal(
+    postBoundarySessionReads,
+    0,
+    'a missing launch-plan carrier must be classified before sequence derivation',
+  );
 });
 
 test('Claude compact_boundary rejects a stale sequence that was authenticated for a different invocation', async () => {
   const { terminalError, postBoundarySessionReads } = await invokeBoundaryWithReadiness({
     hookAuthenticationReady: true,
-    claudeProjectHookCarrierReady: () => true,
     threadStore: null,
   });
 
@@ -281,7 +263,6 @@ test('Claude compact_boundary rejects a stale sequence that was authenticated fo
 test('Claude compact_boundary rejects a torn observation whose sequence no longer matches the session counter', async () => {
   const { terminalError } = await invokeBoundaryWithReadiness({
     hookAuthenticationReady: true,
-    claudeProjectHookCarrierReady: () => true,
     threadStore: null,
     activeRecord: {
       id: 'logical-session-torn-observation',
@@ -304,11 +285,39 @@ test('Claude compact_boundary rejects a torn observation whose sequence no longe
   );
 });
 
+function writeCarrierFixtureRoot() {
+  const root = mkdtempSync(join(tmpdir(), 'f296-carrier-root-'));
+  mkdirSync(join(root, '.claude', 'hooks'), { recursive: true });
+  writeFileSync(
+    join(root, '.claude', 'hooks', 'f24-compaction.mjs'),
+    [
+      '// fixture canonical Node carrier',
+      '"use /api/sessions/seal";',
+      'CAT_CAFE_INVOCATION_ID CAT_CAFE_CALLBACK_TOKEN',
+      'X-Invocation-Id X-Callback-Token X-Clowder-Compaction-Carrier',
+    ].join('\n'),
+  );
+  return root;
+}
+
+function emptyCarrierRoot() {
+  return mkdtempSync(join(tmpdir(), 'f296-empty-carrier-root-'));
+}
+
+function withCompactionCarrierRoot(root, run) {
+  const previous = process.env.CAT_CAFE_COMPACTION_CARRIER_ROOT;
+  process.env.CAT_CAFE_COMPACTION_CARRIER_ROOT = root;
+  return run().finally(() => {
+    if (previous === undefined) delete process.env.CAT_CAFE_COMPACTION_CARRIER_ROOT;
+    else process.env.CAT_CAFE_COMPACTION_CARRIER_ROOT = previous;
+    rmSync(root, { recursive: true, force: true });
+  });
+}
+
 test('one authenticated seal observation cannot authorize two compact boundaries in the same invocation', async () => {
   let observations = 0;
   const { terminalError, postBoundarySessionReads } = await invokeBoundaryWithReadiness({
     hookAuthenticationReady: true,
-    claudeProjectHookCarrierReady: () => true,
     threadStore: null,
     activeRecord: {
       id: 'logical-session-current-hook',

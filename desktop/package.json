@@ -106,6 +106,10 @@
         "to": ".claude/hooks/user-level"
       },
       {
+        "from": "../.claude/hooks/f24-compaction.mjs",
+        "to": ".claude/hooks/f24-compaction.mjs"
+      },
+      {
         "from": "./scripts/sync-agent-hooks-offline.mjs",
         "to": "scripts/sync-agent-hooks-offline.mjs"
       },

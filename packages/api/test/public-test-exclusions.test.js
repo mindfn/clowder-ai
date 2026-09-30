@@ -176,7 +176,7 @@ test('resolver excludes source-only Claude hook bytes but keeps public F296 comp
     assert.ok(resolved.excludedFiles.includes(sourceOnlyTest));
   }
   assert.ok(resolved.selectedFiles.includes('test/f296-session-hook-auth.test.js'));
-  assert.ok(resolved.selectedFiles.includes('test/f296-claude-project-hook-readiness.test.js'));
+  assert.ok(resolved.selectedFiles.includes('test/f296-b3b3-provider-boundary-integration.test.js'));
 });
 
 test('resolver excludes the home-only tracked post-checkout hook contract from the public gate', async () => {

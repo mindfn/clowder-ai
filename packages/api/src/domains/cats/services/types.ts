@@ -23,6 +23,7 @@ import type { Span } from '@opentelemetry/api';
 import type { CliDiagnostics } from '../../../utils/cli-diagnostics.js';
 import type { CliSpawnOptions } from '../../../utils/cli-types.js';
 import type { AntigravitySessionLifecycle } from './agents/providers/antigravity/antigravity-runtime-lifecycle.js';
+import type { ClaudeCompactionLaunchPlanResult } from './agents/providers/claude-compaction-launch-plan.js';
 import type { CodexSessionReplacementProvenance } from './runtime-session/CodexSessionReplacementProvenance.js';
 import type { TurnExecutionMessageProjection } from './stores/ports/TurnExecutionStore.js';
 
@@ -842,6 +843,13 @@ export interface AgentServiceOptions {
   routeIntent?: AgentRouteIntent;
   /** Session ID to resume (optional) */
   sessionId?: string;
+  /**
+   * #1542: launch plan for the managed Claude compaction carrier. Built once
+   * per print-SDK attempt by invoke-single-cat; ClaudeAgentService derives the
+   * single final `--settings` injection from it, and the compaction boundary
+   * consumes the same plan as its carrier-readiness evidence.
+   */
+  compactionLaunchPlan?: ClaudeCompactionLaunchPlanResult;
   /** #1208: same capacity snapshot used by prompt assembly and lifecycle health. */
   contextCapacity?: AgentContextCapacity;
   /**
