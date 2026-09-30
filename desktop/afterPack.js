@@ -6,6 +6,12 @@
 const path = require('node:path');
 const fs = require('node:fs');
 
+function copyRuntimeModules(src, dest) {
+  // cpSync otherwise rewrites relative links to absolute build-host targets.
+  fs.cpSync(src, dest, { recursive: true, verbatimSymlinks: true });
+}
+exports.copyRuntimeModules = copyRuntimeModules;
+
 exports.default = async function afterPack(context) {
   if (context.electronPlatformName !== 'darwin') {
     return;
@@ -24,7 +30,7 @@ exports.default = async function afterPack(context) {
     const dest = path.join(resourcesDir, 'packages', pkg, 'node_modules');
     if (fs.existsSync(src)) {
       console.log(`  afterPack: copying ${pkg}/node_modules ...`);
-      fs.cpSync(src, dest, { recursive: true });
+      copyRuntimeModules(src, dest);
       console.log(`  afterPack: ${pkg}/node_modules copied`);
     } else {
       console.warn(`  afterPack: ${src} not found, skipping`);
@@ -45,18 +51,12 @@ exports.default = async function afterPack(context) {
   }
 
   // Verify the consumed .app after node_modules injection, before signing/DMG.
-  // Running against the actual bundled Node also catches ABI and loader errors
-  // that an architecture label or build-host version string cannot establish.
+  // Execute the bundled Node in build-mac.sh after ad-hoc signing: macOS may
+  // assess an unsealed .app before allowing its embedded executable to start.
   const arch = { 1: 'x64', 3: 'arm64' }[context.arch];
   if (!arch) throw new Error(`Unsupported macOS electron-builder arch: ${context.arch}`);
   const app = path.join(context.appOutDir, `${productFilename}.app`);
   const { inspectBundle } = await import('./scripts/lib/mac-bundle-arch.mjs');
-  const { engineAt, nodeInfo, probeNode, smokeNativeModules, validateNode } = await import(
-    './scripts/lib/build-node.mjs'
-  );
-  const engine = engineAt(resourcesDir);
-  validateNode(probeNode(node), { engine, platform: 'darwin', arch, builtWith: nodeInfo() });
   const count = inspectBundle(app, arch);
   console.log(`  afterPack: ${count} Mach-O binaries verified for ${arch}`);
-  console.log(smokeNativeModules(node, path.join(resourcesDir, 'packages', 'api')));
 };

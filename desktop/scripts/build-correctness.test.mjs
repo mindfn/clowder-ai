@@ -144,6 +144,25 @@ test('afterPack rejects an incomplete app instead of shipping absent native modu
   }
 });
 
+test('afterPack module copy stays portable after the build source moves', async () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'portable-module-copy-'));
+  try {
+    const src = path.join(dir, 'deploy/node_modules');
+    const dest = path.join(dir, 'app/node_modules');
+    fs.mkdirSync(path.join(src, '.bin'), { recursive: true });
+    fs.mkdirSync(path.join(src, 'sdk'), { recursive: true });
+    fs.writeFileSync(path.join(src, 'sdk/cli.js'), 'CLI');
+    fs.symlinkSync('../sdk/cli.js', path.join(src, '.bin/sdk'));
+    const { default: afterPack } = await import('../afterPack.js');
+    afterPack.copyRuntimeModules(src, dest);
+    fs.renameSync(path.join(dir, 'deploy'), path.join(dir, 'moved-deploy'));
+    assert.equal(fs.readFileSync(path.join(dest, '.bin/sdk'), 'utf8'), 'CLI');
+    assert.equal(fs.realpathSync(path.join(dest, '.bin/sdk')), path.join(fs.realpathSync(dest), 'sdk/cli.js'));
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+});
+
 test(
   'real Mach-O mismatch and corrupt/symlinked native files fail closed',
   { skip: process.platform !== 'darwin' },

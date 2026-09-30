@@ -271,6 +271,8 @@ for arch in "${ARCHS[@]}"; do
     # ../packages/api/node_modules), so use basic --deep verification only.
     codesign --verify --deep "$app_bundle" || die "codesign verify ${arch} failed"
     ok "Ad-hoc signed and verified ${arch}"
+    resources="${app_bundle}/Contents/Resources"
+    node "$NODE_VERIFIER" artifact "$resources" darwin "$arch" "${resources}/node/bin/node" "${resources}/packages/api" || die "Signed installed-layout Node/native validation failed"
   fi
 done
 
