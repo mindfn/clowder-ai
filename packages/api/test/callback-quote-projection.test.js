@@ -109,6 +109,39 @@ describe('G3 callback quote projection (real routes, isolated memory stores)', (
     }
   });
 
+  for (const length of [280, 12000]) {
+    test(`a ${length}-character quote cannot displace the user's comment from default previews`, async () => {
+      const original = append({ contentBlocks: [quote('中'.repeat(length), '用户要求 F1_ACTION')] });
+      const single = (await read(`get-message?messageId=${original.id}`)).body.message;
+      const anchor = (await read('thread-context')).body.messages.find((m) => m.id === original.id);
+      for (const preview of [single.content, anchor.preview]) {
+        assert.match(preview, /\[评论\]\n用户要求 F1_ACTION/);
+        assert.match(preview, /\[引用\]/);
+        assert.ok(preview.length <= 280);
+      }
+      assert.equal(single.truncated, true);
+      assert.equal(anchor.truncated, true);
+      assert.equal(single.contentLength, anchor.contentLength);
+      const full = (await read(`get-message?messageId=${single.drillDown.args.messageId}&mode=full`)).body.message;
+      assert.equal(full.content, original.content);
+      assert.deepEqual(full.contentBlocks, original.contentBlocks);
+      for (const keyword of ['F1_ACTION', '中']) {
+        const result = await read(`thread-context?keyword=${encodeURIComponent(keyword)}`);
+        assert.equal(result.body.messages[0].id, original.id);
+        assert.ok(result.body.messages[0].preview.includes(keyword));
+      }
+    });
+  }
+
+  test('a quote without a comment keeps its quote-first preview and does not invent a comment', async () => {
+    const block = quote('NO_COMMENT_QUOTE');
+    delete block.attachment.comment;
+    const original = append({ contentBlocks: [block] });
+    const single = (await read(`get-message?messageId=${original.id}`)).body.message;
+    assert.equal(single.content, '[引用]\nNO_COMMENT_QUOTE');
+    assert.equal(single.truncated, false);
+  });
+
   test('mixed body and multiple quotes stay distinct; plain/text blocks are not duplicated', async () => {
     const blocks = [{ type: 'text', text: 'ordinary body' }, quote(), quote('second quote', 'second comment')];
     const original = append({ content: 'ordinary body', contentBlocks: blocks });

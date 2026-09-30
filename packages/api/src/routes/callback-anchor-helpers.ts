@@ -19,8 +19,10 @@ export function callbackMessageText(item: { content: string; contentBlocks?: rea
   for (const block of item.contentBlocks ?? []) {
     if (block.type !== 'context_attachment' || block.attachment.kind !== 'quote') continue;
     const quote = block.attachment;
-    parts.push(`[引用]\n${quote.text}`);
+    // The paired comment is the user's intent; a long quoted source must not
+    // consume the head preview before that intent becomes visible.
     if (quote.comment !== undefined) parts.push(`[评论]\n${quote.comment}`);
+    parts.push(`[引用]\n${quote.text}`);
   }
   return parts.filter((part) => part.length > 0).join('\n\n');
 }
