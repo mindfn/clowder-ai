@@ -1,4 +1,6 @@
 ---
+doc_kind: plan
+created: 2026-10-01
 feature_ids: [F117]
 ---
 
