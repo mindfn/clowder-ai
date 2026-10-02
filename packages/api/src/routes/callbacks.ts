@@ -179,7 +179,12 @@ import {
   planA2AFanoutAdmission,
   preflightA2ATargets,
 } from './callback-a2a-trigger.js';
-import { anchorPendingMention, anchorThreadMessage, truncateHead } from './callback-anchor-helpers.js';
+import {
+  anchorPendingMention,
+  anchorThreadMessage,
+  callbackMessageText,
+  truncateHead,
+} from './callback-anchor-helpers.js';
 import {
   extractCallbackCredentials,
   registerCallbackAuthHook,
@@ -4061,7 +4066,7 @@ export const callbacksRoutes: FastifyPluginAsync<CallbackRoutesOptions> = async 
     const getKeywordScore = (item: Awaited<ReturnType<typeof messageStore.getByThread>>[number]): number => {
       const cached = relevanceScores.get(item.id);
       if (cached !== undefined) return cached;
-      const score = scoreKeywordRelevance(item.content, keywordTerms);
+      const score = scoreKeywordRelevance(callbackMessageText(item), keywordTerms);
       relevanceScores.set(item.id, score);
       return score;
     };
@@ -4343,7 +4348,14 @@ export const callbacksRoutes: FastifyPluginAsync<CallbackRoutesOptions> = async 
           ),
         )
       )
-        .filter((message): message is StoredMessage => message !== null)
+        .filter(
+          (message): message is StoredMessage =>
+            message !== null &&
+            message.threadId === effectiveThreadId &&
+            message.userId === principalUserId &&
+            !message.deletedAt &&
+            canViewMessage(message, viewer),
+        )
         .map((message) => [message.id, message]),
     );
     const queuedFullMessages = queuedFullEntries
@@ -4377,6 +4389,7 @@ export const callbacksRoutes: FastifyPluginAsync<CallbackRoutesOptions> = async 
           speaker,
           content: entry.content,
           contentLength: entry.content.length,
+          ...(sourceMessage?.contentBlocks ? { contentBlocks: sourceMessage.contentBlocks } : {}),
           truncated: false,
           deliveryStatus: 'queued' as const,
           queueEntryId: entry.entryId,
@@ -4453,6 +4466,7 @@ export const callbacksRoutes: FastifyPluginAsync<CallbackRoutesOptions> = async 
         speaker: getSenderName(item.catId),
         content: item.content,
         contentLength: item.content.length,
+        ...(item.contentBlocks ? { contentBlocks: item.contentBlocks } : {}),
         truncated: false,
         ...queuedProjection,
         ...localReviewProjection,
@@ -4465,7 +4479,7 @@ export const callbacksRoutes: FastifyPluginAsync<CallbackRoutesOptions> = async 
         threadId: effectiveThreadId,
         timestamp: item.timestamp,
         speaker: getSenderName(item.catId),
-        contentLength: item.content.length,
+        contentLength: anchored.contentLength,
         truncated: true,
         oversized: true,
         drillDown: anchored.drillDown,
@@ -4477,18 +4491,25 @@ export const callbacksRoutes: FastifyPluginAsync<CallbackRoutesOptions> = async 
         id: item.id,
         projection: isFullMode ? fullProjection : anchorProjection,
         oversizedProjection: isFullMode ? oversizedProjection : anchorProjection,
-        originalChars: item.content.length,
+        originalChars: callbackMessageText(item).length,
         source: 'published',
       };
     });
     const queuedCandidates: ThreadContextEnvelopeCandidate<Record<string, unknown>>[] = queuedFullMessages.map(
       (message) => {
+        const sourceMessage = queuedSourceMessages.get(message.id);
+        // Persistence does not grant ordinary get-message access to private queued
+        // work. Only advertise its drill when the scoped source is published and
+        // noninternal; otherwise keep custody pending until actual delivery.
+        const canDrillSource =
+          sourceMessage && isTimelinePublished(sourceMessage) && !isInternalNonQuotableParent(sourceMessage);
         const anchored = anchorThreadMessage(
           {
             id: message.id,
             userId: principalUserId,
             catId: null,
             content: message.content,
+            contentBlocks: message.contentBlocks,
             timestamp: message.timestamp,
           },
           { effectiveThreadId, speaker: message.speaker },
@@ -4501,16 +4522,20 @@ export const callbacksRoutes: FastifyPluginAsync<CallbackRoutesOptions> = async 
             threadId: effectiveThreadId,
             timestamp: message.timestamp,
             speaker: message.speaker,
-            contentLength: message.content.length,
+            contentLength: anchored.contentLength,
             oversized: true,
             truncated: true,
             deliveryStatus: message.deliveryStatus,
             queueEntryId: message.queueEntryId,
-            ...(message.id.startsWith('queued:')
-              ? { drillUnavailableReason: 'queued body has no persisted message anchor yet; retry after persistence' }
-              : { drillDown: anchored.drillDown }),
+            ...(canDrillSource
+              ? { drillDown: anchored.drillDown }
+              : {
+                  drillUnavailableReason: message.id.startsWith('queued:')
+                    ? 'queued body has no persisted message anchor yet; retry after persistence and delivery'
+                    : 'queued body is not published for get_message; retry after delivery',
+                }),
           },
-          originalChars: message.content.length,
+          originalChars: callbackMessageText(message).length,
           source: 'queued',
         };
       },
@@ -4734,7 +4759,10 @@ export const callbacksRoutes: FastifyPluginAsync<CallbackRoutesOptions> = async 
       returnedChars: payload.messages.reduce((sum, message) => {
         const projectedText =
           typeof message.content === 'string'
-            ? message.content
+            ? callbackMessageText({
+                content: message.content,
+                contentBlocks: message.contentBlocks as StoredMessage['contentBlocks'],
+              })
             : typeof message.preview === 'string'
               ? message.preview
               : '';
@@ -4949,17 +4977,18 @@ export const callbacksRoutes: FastifyPluginAsync<CallbackRoutesOptions> = async 
     const projectMsg = (m: typeof message) => {
       const imagePaths = extractImagePaths(m.contentBlocks, uploadDir);
       const imageUrls = extractImageUrls(m.contentBlocks);
-      const { preview, truncated } = isFullDrill ? { preview: m.content, truncated: false } : truncateHead(m.content);
+      const text = callbackMessageText(m);
+      const { preview, truncated } = isFullDrill ? { preview: m.content, truncated: false } : truncateHead(text);
       return {
         id: m.id,
         userId: m.userId,
         catId: m.catId,
         content: preview,
-        contentLength: m.content.length,
+        contentLength: isFullDrill ? m.content.length : text.length,
         truncated,
         // F236 R1 / 云端 Codex P2: preview-mode truncation carries a one-hop drill pointer to the
         // full content (consistent with thread-context/pending anchors — caller never left guessing).
-        ...(truncated
+        ...(truncated || (!isFullDrill && m.contentBlocks?.length)
           ? {
               drillDown: {
                 tool: 'cat_cafe_get_message',
@@ -5046,8 +5075,12 @@ export const callbacksRoutes: FastifyPluginAsync<CallbackRoutesOptions> = async 
       recordAnchorPreviewEvent({
         tool: 'get-message',
         itemIds: [message.id, ...contextMessages.map((m) => m.id)],
-        returnedChars: result.message.content.length + contextMessages.reduce((sum, m) => sum + m.content.length, 0),
-        originalChars: message.content.length + contextMessages.reduce((sum, m) => sum + m.contentLength, 0),
+        returnedChars:
+          callbackMessageText(result.message).length +
+          contextMessages.reduce((sum, m) => sum + callbackMessageText(m).length, 0),
+        originalChars:
+          callbackMessageText(message).length +
+          contextMessages.reduce((sum, m) => sum + callbackMessageText(m).length, 0),
         modeResolved: 'full',
         modeSource: 'legacy_equivalent',
         catId: principal.catId,
@@ -5057,7 +5090,7 @@ export const callbacksRoutes: FastifyPluginAsync<CallbackRoutesOptions> = async 
         tool: 'get-message',
         itemIds: [message.id, ...contextMessages.map((m) => m.id)],
         returnedChars: result.message.content.length + contextMessages.reduce((sum, m) => sum + m.content.length, 0),
-        originalChars: message.content.length + contextMessages.reduce((sum, m) => sum + m.contentLength, 0),
+        originalChars: result.message.contentLength + contextMessages.reduce((sum, m) => sum + m.contentLength, 0),
         modeResolved: 'anchor',
         modeSource: 'legacy_equivalent',
         catId: principal.catId,
