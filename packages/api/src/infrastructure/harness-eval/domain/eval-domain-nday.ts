@@ -20,6 +20,7 @@ import {
   type EvalDomainScheduleOpts,
   evaluatePublishPrereq,
 } from './eval-domain-daily.js';
+import { buildEvidencePrereqSkippedMessage, evaluateEvidencePrereq } from './eval-domain-evidence-gate.js';
 import { getEvalCatOverride } from './eval-domain-override.js';
 import {
   type EvalDomainRegistryEntry,
@@ -157,6 +158,23 @@ export function createEvalDomainNDaySpec(opts: EvalDomainScheduleOpts): TaskSpec
         }
 
         // Direction B publish-prereq gate (same as daily/weekly spec)
+        // F192 evidence-source prereq gate (parity with daily/weekly).
+        // Critically: returns BEFORE the Redis last-dispatch write, so a skip does
+        // NOT consume the N-day window — the domain retries on the next daily probe.
+        if (opts.evidencePrereqProbe) {
+          const evidenceResult = await evaluateEvidencePrereq(opts.evidencePrereqProbe, domain);
+          if (!evidenceResult.ok) {
+            if (ctx.deliver) {
+              await ctx.deliver({
+                threadId: domain.systemThreadId,
+                content: buildEvidencePrereqSkippedMessage(domain, evidenceResult.reason),
+                userId: 'scheduler',
+              });
+            }
+            return;
+          }
+        }
+
         if (opts.publishPrereqProbe) {
           const prereqOk = await evaluatePublishPrereq(opts.publishPrereqProbe, domain.domainId);
           if (!prereqOk) {

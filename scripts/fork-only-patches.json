@@ -1,0 +1,60 @@
+{
+  "$comment": "Single source of truth for fork-only patches that upstream main does NOT carry. Consumed by scripts/check-fork-only-patches.mjs (wired into `pnpm check`). See docs/fork-only-patches.md. Every develop_base rebuild from upstream main MUST re-apply these; the guard turns a silent loss into a red check.",
+  "baselineRef": "origin/develop_base",
+  "$baselineComment": "The pre-rebuild tip, read straight out of git. `git reset --hard upstream/main` replaces the working tree but does NOT move remote-tracking refs, so this ref still holds the previous tree's registry - and this guard - after a rebuild has erased both from disk. Run the guard as the last step of a rebuild to compare what the previous tree claimed to protect against what the new one actually has. NOT fork/optimizations: that branch is an orphan July snapshot (7 commits, no merge-base with upstream/main), so membership of it is not a survival predicate.",
+  "patches": [
+    {
+      "id": "f192-evidence-prereq-gate",
+      "owner": "opus",
+      "why": "Skips scheduled eval-cat invocation when the domain's evidence source cannot produce evidence (OTel disabled). Without it every daily eval:a2a fire burns a full LLM session to re-conclude a known gap.",
+      "upstreamStatus": "rejected-as-fork-scope (zts212653/clowder-ai#1352 closed 2026-08-25; issue #1353 accepted the direction then closed as fork-specific)",
+      "lostInRebuilds": ["PR #91 (2026-08-11)", "PR #137 (2026-08-28)", "commit 70d79a2f2 (2026-09-01)"],
+      "requiredFiles": [
+        "packages/api/src/infrastructure/harness-eval/domain/eval-domain-evidence-gate.ts",
+        "packages/api/test/harness-eval/eval-domain-evidence-gate.test.js"
+      ],
+      "requiredAnchors": [
+        {
+          "file": "packages/api/src/infrastructure/harness-eval/domain/eval-domain-daily.ts",
+          "mustContain": ["evidencePrereqProbe", "evaluateEvidencePrereq", "buildEvidencePrereqSkippedMessage"],
+          "note": "execute-path ordering: the evidence gate must run BEFORE publishPrereqProbe, or it cannot prevent the invocation it exists to prevent. Anchored on CALL SITES, not bare symbols - imports and interface fields would satisfy a substring check while the executed gate was gone.",
+          "order": ["evaluateEvidencePrereq(config.evidencePrereqProbe", "if (config.publishPrereqProbe)"]
+        },
+        {
+          "file": "packages/api/src/infrastructure/harness-eval/domain/eval-domain-nday.ts",
+          "mustContain": ["evidencePrereqProbe", "evaluateEvidencePrereq", "buildEvidencePrereqSkippedMessage"],
+          "note": "execute-path ordering: the evidence gate must run BEFORE publishPrereqProbe, or it cannot prevent the invocation it exists to prevent. Anchored on CALL SITES, not bare symbols - imports and interface fields would satisfy a substring check while the executed gate was gone.",
+          "order": ["evaluateEvidencePrereq(opts.evidencePrereqProbe", "if (opts.publishPrereqProbe)"]
+        },
+        {
+          "file": "packages/api/src/index.ts",
+          "mustContain": ["createTelemetryEvidencePrereqProbe", "evidencePrereqProbe,"],
+          "note": "bootstrap: import + probe construction from telemetryHandle + inclusion in evalScheduleOpts"
+        }
+      ]
+    },
+    {
+      "id": "fork-only-patch-guard",
+      "owner": "opus",
+      "why": "The guard that detects every other entry's loss. Its develop_base workflow is the only automatic enforcement point: all other workflows in this repo trigger on `main`, and develop_base is the branch rebuilt onto upstream main. Lose this and the guard degrades to 'someone remembers to run pnpm check' - the exact failure mode it replaces.",
+      "upstreamStatus": "fork-scope by construction - upstream has no develop_base branch and carries none of these patches",
+      "requiredFiles": [
+        ".github/workflows/fork-only-patches.yml",
+        "scripts/check-fork-only-patches.mjs",
+        "scripts/check-fork-only-patches.test.mjs"
+      ],
+      "requiredAnchors": [
+        {
+          "file": ".github/workflows/fork-only-patches.yml",
+          "mustContain": ["branches: [develop_base]"],
+          "note": "the trigger that makes the guard automatic; a workflow that survives with a main-only trigger is silently inert"
+        },
+        {
+          "file": "package.json",
+          "mustContain": ["pnpm check:fork-only-patches", "node scripts/check-fork-only-patches.mjs"],
+          "note": "local enforcement: wired FIRST in `check` so a rebuild fails fast; definition + chain wiring are separate revert cases"
+        }
+      ]
+    }
+  ]
+}
