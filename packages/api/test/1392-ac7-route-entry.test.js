@@ -110,11 +110,11 @@ describe('#1392 AC-7: registration routes', () => {
     const response = await post({ prNumber: 900 });
 
     assert.equal(response.statusCode, 200, 'the common path must not require naming conditions');
+    // No `pr_head_changed`: this caller is the PR author, and a new HEAD would be their own push.
     assert.deepEqual(armedKinds(response), [
       'pr_became_conflicting',
       'pr_ci_terminal',
       'pr_conversation_comment_added',
-      'pr_head_changed',
       'pr_inline_comment_added',
       'pr_review_decision_changed',
     ]);

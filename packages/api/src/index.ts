@@ -7315,9 +7315,10 @@ async function main(): Promise<void> {
       );
     };
 
-    const fetchReviews = async (repo: string, pr: number, sinceId?: number) => {
+    // #1392: every review, never cursor-filtered — a dismissal changes an old review in place.
+    const fetchReviews = async (repo: string, pr: number) => {
       await refreshGitHubSelfLogin();
-      const reviews = await fetchPaginated(`/repos/${repo}/pulls/${pr}/reviews`, sinceId);
+      const reviews = await fetchPaginated(`/repos/${repo}/pulls/${pr}/reviews`);
       return reviews.map(
         (r: {
           id: number;
