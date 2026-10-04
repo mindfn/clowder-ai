@@ -37,6 +37,7 @@ export interface PluginManagerDesignFixture {
   auth: PluginManagerAuthState;
   intent: PluginManagerIntentState;
   live: PluginManagerLiveState;
+  activationFailed?: boolean;
   capabilities: Array<{ name: string; description: string }>;
   contributions?: PluginManagerContribution[];
   tools?: Array<Pick<PluginManagerContributionTool, 'contributionId' | 'name' | 'description'>>;

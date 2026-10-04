@@ -324,6 +324,7 @@ export function projectPluginManagerCatalogCandidate(
     auth,
     intent,
     live,
+    ...(instance?.activationState === 'error' ? { activationFailed: true } : {}),
     lifecycleRevision: instance?.lifecycleRevision ?? null,
     capabilitySummary,
     actions: derivePluginManagerActions({ artifact, config, auth, intent, activationTransition }),

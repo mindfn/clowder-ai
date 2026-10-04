@@ -369,6 +369,8 @@ export interface PluginManagerListItem {
   auth: PluginManagerAuthState;
   intent: PluginManagerIntentState;
   live: PluginManagerLiveState;
+  /** Current Host activation error, independent of desired intent and historical diagnostics. */
+  activationFailed?: boolean;
   lifecycleRevision: number | null;
   capabilitySummary: Array<Pick<PluginManagerCapability, 'id' | 'kind' | 'name' | 'active'>>;
   actions: PluginManagerActions;

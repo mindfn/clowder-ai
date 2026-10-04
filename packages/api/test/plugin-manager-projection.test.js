@@ -235,6 +235,31 @@ describe('F202 terminal Plugin Manager projection', () => {
     assert.equal(Object.hasOwn(projected.actions, 'repair'), false);
   });
 
+  it('exposes current activation failure independently of intent and historical diagnostics', () => {
+    const lastRuntimeError = { code: 'UNEXPECTED_RUNTIME_FAILURE', occurredAt: 1_050, exitCode: null, signal: null };
+    for (const activationState of ['error', 'disabled', 'enabled']) {
+      const projected = projectPluginManagerCatalogCandidate(
+        candidate,
+        installedSnapshot({
+          activationState,
+          runtimeState: activationState === 'enabled' ? 'healthy' : 'stopped',
+          lastRuntimeError,
+        }),
+      );
+      assert.equal(projected.activationFailed, activationState === 'error' ? true : undefined);
+      assert.equal(projected.intent, activationState === 'enabled' ? 'enabled' : 'disabled');
+      assert.equal(projected.diagnostic.code, lastRuntimeError.code);
+      assert.equal(projected.actions.setEnabled, true);
+    }
+    const withIntentOverride = projectPluginManagerCatalogCandidate(
+      candidate,
+      installedSnapshot({ activationState: 'error', runtimeState: 'stopped' }),
+      { intentState: 'enabled' },
+    );
+    assert.equal(withIntentOverride.activationFailed, true);
+    assert.equal(withIntentOverride.intent, 'enabled');
+  });
+
   it('blocks enable until config and typed owner auth are ready', () => {
     assert.deepEqual(
       derivePluginManagerActions({

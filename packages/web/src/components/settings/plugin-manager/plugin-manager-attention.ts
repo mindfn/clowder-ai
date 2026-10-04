@@ -29,15 +29,15 @@ const liveReasons = { degraded: '运行受限', crashed: '运行进程已退出'
 export function pluginAttentionReason(plugin: PluginManagerDesignFixture): string | undefined {
   if (plugin.artifact === 'absent') return undefined;
   if (plugin.artifact !== 'installed') return artifactReasons[plugin.artifact];
+  if (plugin.activationFailed === true) return plugin.diagnostic?.trim() || '插件运行操作失败';
   if (plugin.config !== 'ready') return configReasons[plugin.config];
   if (plugin.auth === 'expired' || plugin.auth === 'error') return authReasons[plugin.auth];
   if (plugin.live === 'degraded' || plugin.live === 'crashed') {
     return plugin.diagnostic?.trim() || liveReasons[plugin.live];
   }
-  if (plugin.intent === 'enabled') {
-    if (plugin.auth === 'disconnected') return '尚未连接授权';
-    if (plugin.auth === 'pending') return '等待完成授权';
-    if (plugin.live === 'stopped') return '已启用，但尚未运行';
-  }
+  if (plugin.intent !== 'enabled') return undefined;
+  if (plugin.auth === 'disconnected') return '尚未连接授权';
+  if (plugin.auth === 'pending') return '等待完成授权';
+  if (plugin.live === 'stopped') return '已启用，但尚未运行';
   return undefined;
 }

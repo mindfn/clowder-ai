@@ -77,6 +77,7 @@ export function designFixture(
     auth: plugin.auth,
     intent: plugin.intent,
     live: plugin.live,
+    ...(plugin.activationFailed === undefined ? {} : { activationFailed: plugin.activationFailed }),
     readme,
     capabilities: capabilities.map((capability) => ({
       name: capability.name,
