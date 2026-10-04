@@ -129,7 +129,7 @@ describe('Plugin Manager v2 configuration', () => {
         currentValue: 'one[bot],two[bot]',
       },
     ]);
-    type('过滤提示噪声的机器人账号 第 1 项', 'new[bot]');
+    type('要忽略的机器人账号 第 1 项', 'new[bot]');
     click('保存配置');
     expect(save).toHaveBeenCalledWith('github', [{ key: 'GITHUB_SETUP_NOISE_BOT_LOGINS', value: 'new[bot],two[bot]' }]);
   });
@@ -170,8 +170,8 @@ describe('Plugin Manager v2 configuration', () => {
   });
   it('adds to an empty GitHub string and serializes comma paste as distinct tags', () => {
     render([{ ...list, key: 'GITHUB_SETUP_NOISE_BOT_LOGINS', kind: 'string', currentValue: null }]);
-    click('添加 过滤提示噪声的机器人账号');
-    type('过滤提示噪声的机器人账号 第 1 项', 'a,b');
+    click('添加 要忽略的机器人账号');
+    type('要忽略的机器人账号 第 1 项', 'a,b');
     expect(container.querySelectorAll('[data-tag-index]')).toHaveLength(2);
     click('保存配置');
     expect(save).toHaveBeenCalledWith('github', [{ key: 'GITHUB_SETUP_NOISE_BOT_LOGINS', value: 'a,b' }]);

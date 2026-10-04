@@ -3,9 +3,9 @@ import type { PluginManagerConfigField } from '@cat-cafe/shared';
 export type StringListFormat = 'json' | 'csv';
 
 const githubLabels = new Map([
-  ['GITHUB_TOKEN', '个人访问令牌'],
-  ['GITHUB_MCP_PAT', 'MCP 访问令牌'],
-  ['GITHUB_SETUP_NOISE_BOT_LOGINS', '过滤提示噪声的机器人账号'],
+  ['GITHUB_TOKEN', '个人访问令牌（Personal Access Token）'],
+  ['GITHUB_MCP_PAT', 'MCP 访问令牌（MCP Token）'],
+  ['GITHUB_SETUP_NOISE_BOT_LOGINS', '要忽略的机器人账号'],
 ]);
 
 /** Presentation only: keep field keys, types, defaults and submitted values unchanged. */

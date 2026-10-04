@@ -110,7 +110,9 @@ export function PluginManagerStringList({
         </p>
       )}
       {format === 'csv' && (
-        <p className="text-xs text-cafe-muted">逗号可分隔多个账号；清空会重置此项，不代表关闭过滤。</p>
+        <p className="text-xs text-cafe-muted">
+          只过滤这些账号的初始化提示评论；逗号可分隔多个账号。清空会重置此项，不代表关闭过滤。
+        </p>
       )}
     </fieldset>
   );

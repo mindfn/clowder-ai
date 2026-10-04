@@ -9,6 +9,11 @@ import '@/app/globals.css';
 
 const ready = {
   ...PLUGIN_MANAGER_DESIGN_FIXTURES[0],
+  steps: ['Log in with the GitHub CLI (`gh auth login`) on the machine running Clowder AI'],
+  contributions: [
+    { id: 'cicd-check', kind: 'schedule' as const, name: 'cicd-check' },
+    { id: 'review-feedback', kind: 'events' as const, name: 'review-feedback' },
+  ],
   configFields: [
     {
       kind: 'secret' as const,
@@ -46,6 +51,18 @@ const fixtures = [
     live: 'stopped' as const,
     activationFailed: true,
     diagnostic: '连接被拒绝，请检查插件连接配置。',
+    configFields: [
+      { key: 'account', kind: 'string' as const, label: '账号', currentValue: null, required: false, sensitive: false },
+      {
+        key: 'connection',
+        kind: 'operation' as const,
+        label: '检查连接',
+        currentValue: null,
+        required: false,
+        sensitive: false,
+        actions: [{ id: 'check', label: '检查连接', render: 'button' as const }],
+      },
+    ],
   },
   { ...PLUGIN_MANAGER_DESIGN_FIXTURES[2], icon: 'blocks' as const },
 ];
@@ -57,6 +74,7 @@ createRoot(root).render(
     <PluginManagerContent
       presentation="v2"
       fixtures={fixtures}
+      onOperationChange={(id) => document.documentElement.setAttribute('data-operation-refreshed', id)}
       onUninstall={(id) => document.documentElement.setAttribute('data-uninstalled', id)}
       onConfigure={(id, updates) =>
         document.documentElement.setAttribute('data-saved-config', JSON.stringify({ id, updates }))
