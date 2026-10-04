@@ -7,6 +7,9 @@ import { ConfigFieldRenderer } from '../primitives/ConfigFieldRenderer';
 import { SettingsText } from '../primitives/SettingsText';
 import { PluginManagerConfigurationActions } from './PluginManagerConfigurationActions';
 import { PluginManagerOperationField } from './PluginManagerOperationField';
+import { PluginManagerStringList } from './PluginManagerStringList';
+import type { PluginManagerPresentation } from './plugin-manager-attention';
+import { parsePluginList, pluginFieldLabel, pluginListFormat } from './plugin-manager-field-presentation';
 import type { PluginManagerDesignFixture } from './plugin-manager-fixtures';
 
 type ConfigurationField = NonNullable<PluginManagerDesignFixture['configFields']>[number];
@@ -97,6 +100,7 @@ export function PluginManagerConfigurationSection({
   onOperationChange,
   validationRequest,
   saved,
+  presentation = 'v1',
 }: {
   plugin: PluginManagerDesignFixture;
   busy: boolean;
@@ -104,6 +108,7 @@ export function PluginManagerConfigurationSection({
   onOperationChange?: () => void;
   validationRequest: number;
   saved: boolean;
+  presentation?: PluginManagerPresentation;
 }) {
   const installed = plugin.artifact === 'installed';
   const [fieldValues, setFieldValues] = useState<Record<string, string>>({});
@@ -114,15 +119,29 @@ export function PluginManagerConfigurationSection({
   const configurableFields = fields.filter((field) => field.kind !== 'operation' && field.hidden !== true);
   const steps = plugin.steps ?? plugin.setupSteps ?? [];
   const updates = configurationUpdates(fields, fieldValues);
+  const fieldLabel = (field: ConfigurationField) =>
+    presentation === 'v2' ? pluginFieldLabel(plugin.id, field) : field.label;
+  const changeField = (key: string, value: string) => {
+    setShowSaved(false);
+    setFieldValues((current) => ({ ...current, [key]: value }));
+    setFieldErrors((current) => {
+      const next = { ...current };
+      delete next[key];
+      return next;
+    });
+  };
 
   const validateConfiguration = useCallback(() => {
     const errors = Object.fromEntries(
-      configurableFields
-        .filter(
-          (field) =>
-            fieldIsRequired(field, fields, fieldValues) && effectiveFieldValue(field, fieldValues).trim().length === 0,
-        )
-        .map((field) => [field.key, `请填写 ${field.label}`]),
+      configurableFields.flatMap((field) => {
+        const value = effectiveFieldValue(field, fieldValues);
+        if (fieldIsRequired(field, fields, fieldValues) && value.trim().length === 0) {
+          const label = presentation === 'v2' ? pluginFieldLabel(plugin.id, field) : field.label;
+          return [[field.key, `请填写 ${label}`]];
+        }
+        const format = presentation === 'v2' ? pluginListFormat(plugin.id, field) : undefined;
+        return format && parsePluginList(value, format) === undefined ? [[field.key, '请填写有效的字符串数组']] : [];
+      }),
     );
     setFieldErrors(errors);
     const firstInvalid = configurableFields.find((field) => errors[field.key] !== undefined);
@@ -131,7 +150,7 @@ export function PluginManagerConfigurationSection({
     input?.focus();
     input?.scrollIntoView?.({ block: 'center' });
     return false;
-  }, [configurableFields, fieldValues, fields, plugin.id]);
+  }, [configurableFields, fieldValues, fields, plugin.id, presentation]);
 
   useEffect(() => {
     if (validationRequest <= handledValidationRequest.current) return;
@@ -150,7 +169,7 @@ export function PluginManagerConfigurationSection({
   return (
     <section className="space-y-3" data-plugin-detail-section="configuration">
       <SettingsText as="h4" variant="xs" tone="muted" className="font-semibold">
-        插件配置
+        {presentation === 'v2' ? '配置' : '插件配置'}
       </SettingsText>
       {installed ? (
         <>
@@ -174,8 +193,9 @@ export function PluginManagerConfigurationSection({
               <div className="ml-[26px] space-y-2.5">
                 {fields
                   .filter((field) => field.kind === 'operation' || field.hidden !== true)
-                  .map((field) =>
-                    field.kind === 'operation' ? (
+                  .map((field) => {
+                    const listFormat = presentation === 'v2' ? pluginListFormat(plugin.id, field) : undefined;
+                    return field.kind === 'operation' ? (
                       <PluginManagerOperationField
                         key={field.key}
                         pluginId={plugin.id}
@@ -183,27 +203,29 @@ export function PluginManagerConfigurationSection({
                         pendingConfigValues={fieldValues}
                         onStatusChange={onOperationChange}
                       />
+                    ) : listFormat ? (
+                      <PluginManagerStringList
+                        key={field.key}
+                        id={`plugin-manager-${plugin.id}-${field.key}`}
+                        label={fieldLabel(field)}
+                        value={effectiveFieldValue(field, fieldValues)}
+                        format={listFormat}
+                        required={fieldIsRequired(field, fields, fieldValues)}
+                        error={fieldErrors[field.key]}
+                        onChange={(value) => changeField(field.key, value)}
+                      />
                     ) : (
                       <ConfigFieldRenderer
                         key={field.key}
-                        field={renderField(field)}
+                        field={{ ...renderField(field), label: fieldLabel(field) }}
                         value={renderedFieldValue(field, fieldValues)}
                         required={fieldIsRequired(field, fields, fieldValues)}
                         error={fieldErrors[field.key]}
-                        onChange={(key, value) => {
-                          setShowSaved(false);
-                          setFieldValues((current) => ({ ...current, [key]: value }));
-                          setFieldErrors((current) => {
-                            if (current[key] === undefined) return current;
-                            const next = { ...current };
-                            delete next[key];
-                            return next;
-                          });
-                        }}
+                        onChange={changeField}
                         idPrefix={`plugin-manager-${plugin.id}`}
                       />
-                    ),
-                  )}
+                    );
+                  })}
               </div>
             </div>
           )}

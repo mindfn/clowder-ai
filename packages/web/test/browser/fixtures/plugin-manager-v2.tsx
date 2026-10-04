@@ -7,7 +7,35 @@ import '@/app/console-controls.css';
 import '@/app/connector-tokens.css';
 import '@/app/globals.css';
 
-const ready = PLUGIN_MANAGER_DESIGN_FIXTURES[0];
+const ready = {
+  ...PLUGIN_MANAGER_DESIGN_FIXTURES[0],
+  configFields: [
+    {
+      kind: 'secret' as const,
+      key: 'GITHUB_TOKEN',
+      label: 'Personal Access Token',
+      required: false,
+      sensitive: true,
+      currentValue: '••••••',
+    },
+    {
+      kind: 'string' as const,
+      key: 'GITHUB_SETUP_NOISE_BOT_LOGINS',
+      label: 'Noise Bot Login List',
+      required: false,
+      sensitive: false,
+      currentValue: 'one[bot],two[bot]',
+    },
+    {
+      kind: 'list' as const,
+      key: 'demoNames',
+      label: '演示字符串数组',
+      required: false,
+      sensitive: false,
+      currentValue: '["一项","另一项"]',
+    },
+  ],
+};
 const fixtures = [
   ready,
   {
@@ -30,6 +58,9 @@ createRoot(root).render(
       presentation="v2"
       fixtures={fixtures}
       onUninstall={(id) => document.documentElement.setAttribute('data-uninstalled', id)}
+      onConfigure={(id, updates) =>
+        document.documentElement.setAttribute('data-saved-config', JSON.stringify({ id, updates }))
+      }
     />
   </main>,
 );

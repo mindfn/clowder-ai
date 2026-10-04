@@ -242,6 +242,7 @@ export function PluginManagerContent({
                 key={selected.id}
                 plugin={selected}
                 locale={locale}
+                presentation={presentation}
                 busy={busyPluginId === selected.id}
                 configurationValidationRequest={
                   configurationValidation.pluginId === selected.id ? configurationValidation.request : 0

@@ -8,6 +8,7 @@ import { settingsResourceCardClass, settingsResourceRowClass } from '../../Setti
 import { SettingsText } from '../primitives/SettingsText';
 import { PluginManagerConfigurationSection } from './PluginManagerConfigurationSection';
 import { PluginVisual } from './PluginVisual';
+import type { PluginManagerPresentation } from './plugin-manager-attention';
 import type { PluginManagerDesignFixture } from './plugin-manager-fixtures';
 
 function SectionHeading({ children }: { children: string }) {
@@ -95,14 +96,16 @@ function CapabilityDocumentation({
   plugin,
   installed,
   groups,
+  presentation,
 }: {
   plugin: PluginManagerDesignFixture;
   installed: boolean;
   groups: readonly { kind: string; items: CapabilityDocItem[] }[];
+  presentation: PluginManagerPresentation;
 }) {
   return (
     <section className="space-y-3" data-plugin-detail-section="capability-docs">
-      <SectionHeading>能力说明</SectionHeading>
+      <SectionHeading>{presentation === 'v2' ? '能力' : '能力说明'}</SectionHeading>
       {plugin.readme.state === 'loading' ? (
         <SettingsText as="p" variant="sm" tone="muted">
           README 加载中…
@@ -156,6 +159,7 @@ function CapabilityDocumentation({
 export function PluginManagerDetailCard({
   plugin,
   locale,
+  presentation = 'v1',
   busy = false,
   onSaveConfig,
   onOperationChange,
@@ -164,6 +168,7 @@ export function PluginManagerDetailCard({
 }: {
   plugin: PluginManagerDesignFixture;
   locale: string;
+  presentation?: PluginManagerPresentation;
   busy?: boolean;
   onSaveConfig?: (updates: readonly { key: string; value: string | null }[]) => void;
   onOperationChange?: () => void;
@@ -200,7 +205,7 @@ export function PluginManagerDetailCard({
         </section>
 
         <section className="space-y-2" data-plugin-detail-section="introduction">
-          <SectionHeading>插件简介</SectionHeading>
+          <SectionHeading>{presentation === 'v2' ? '简介' : '插件简介'}</SectionHeading>
           <SettingsText as="p" variant="sm" tone="secondary">
             {description}
           </SettingsText>
@@ -217,6 +222,7 @@ export function PluginManagerDetailCard({
 
         <PluginManagerConfigurationSection
           plugin={plugin}
+          presentation={presentation}
           busy={busy}
           onSaveConfig={onSaveConfig}
           onOperationChange={onOperationChange}
@@ -224,7 +230,12 @@ export function PluginManagerDetailCard({
           saved={configurationSaved}
         />
 
-        <CapabilityDocumentation plugin={plugin} installed={installed} groups={capabilityGroups} />
+        <CapabilityDocumentation
+          plugin={plugin}
+          installed={installed}
+          groups={capabilityGroups}
+          presentation={presentation}
+        />
       </div>
     </article>
   );
