@@ -103,14 +103,18 @@ function clearStaleTransientFields(proj: BallCustodyProjection, event: BallCusto
   }
 }
 
+export interface BallCustodyApplyResult {
+  readonly accepted: boolean;
+}
+
 export class BallCustodyProjector {
   constructor(
     private readonly eventLog: IBallCustodyEventLog,
     private readonly store: IBallCustodyProjectionStore,
   ) {}
 
-  /** 应用单事件到 projection。事件须已在 event log（append first）。 */
-  async apply(event: BallCustodyEvent): Promise<void> {
+  /** 应用已追加事件；返回 transition 是否接受，不以持久化成功冒充接受。 */
+  async apply(event: BallCustodyEvent): Promise<BallCustodyApplyResult> {
     const now = event.at;
     const existing = await this.store.get(event.subjectKey);
     const proj = existing ?? createInitialProjection(event.subjectKey, now);
@@ -131,7 +135,7 @@ export class BallCustodyProjector {
         lastRejectedEvent: event.classification === 'state-changing' ? event : proj.lastRejectedEvent,
       };
       await this.store.save(rejected);
-      return;
+      return { accepted: false };
     }
 
     const stateChanged = result.next !== proj.state;
@@ -147,9 +151,10 @@ export class BallCustodyProjector {
     applyFieldEffects(updated, event, now);
     clearStaleTransientFields(updated, event);
     await this.store.save(updated);
+    return { accepted: true };
   }
 
-  /** 重建单 subject projection：删除现有 → replay 全部事件（INV-2）。 */
+  /** delete + replay 原语（INV-2）；与实时写入并存时须走同一 ingest.rebuild 队列。 */
   async rebuild(subjectKey: string): Promise<void> {
     await this.store.delete(subjectKey);
     const events = await this.eventLog.read(subjectKey);

@@ -88,14 +88,14 @@ describe('BallCustodyIngest (Redis end-to-end)', { skip: redisIsolationSkipReaso
 
   it('rebuild 无漂移：record 序列 vs delete+replay 逐字段相同（INV-2）', async () => {
     const threadId = nextThread();
-    const { store, projector, ingest } = makeStack();
+    const { store, ingest } = makeStack();
     await ingest.record(buildHandedEvent({ toCatId: 'opus', threadId, messageId: `${threadId}/m1`, at: 100 }));
     await ingest.record(
       buildHandedEvent({ fromCatId: 'opus', toCatId: 'codex', threadId, messageId: `${threadId}/m2`, at: 200 }),
     );
     const subjectKey = `ball:thread:${threadId}`;
     const before = await store.get(subjectKey);
-    await projector.rebuild(subjectKey);
+    await ingest.rebuild(subjectKey);
     assert.deepStrictEqual(await store.get(subjectKey), before);
   });
 });
