@@ -121,6 +121,7 @@ function assertQueueClassification(entry: Partial<QueueLedgerEntry>): void {
     'a2a',
     'a2a_failure',
     'continuation',
+    'producer_return',
     'issue',
     'freshness',
   ];

@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict';
+import type { TurnCustodyWakeProvenance } from '../../src/domains/ball-custody/TurnCustodyProjectionService.js';
 import { InvocationQueue } from '../../src/domains/cats/services/agents/invocation/InvocationQueue.js';
 import { InvocationTracker } from '../../src/domains/cats/services/agents/invocation/InvocationTracker.js';
 import { PersistedQueueDelivery } from '../../src/domains/cats/services/agents/invocation/PersistedQueueDelivery.js';
@@ -11,7 +12,13 @@ export function createPersistedQueueFixture(messages = new MessageStore()) {
   const queue = new InvocationQueue();
   const tracker = new InvocationTracker();
   const records = new InvocationRecordStore();
-  const starts: { threadId: string; userId: string; invocationId: string; messageIds: readonly string[] }[] = [];
+  const starts: {
+    threadId: string;
+    userId: string;
+    invocationId: string;
+    messageIds: readonly string[];
+    turnCustodyWake?: TurnCustodyWakeProvenance;
+  }[] = [];
   const completed: Promise<void>[] = [];
   const releases: (() => void)[] = [];
   const processor = new QueueProcessor({
@@ -41,7 +48,13 @@ export function createPersistedQueueFixture(messages = new MessageStore()) {
         const catId = targets[0];
         if (!catId) throw new Error('persisted Queue fixture requires one target');
         const messageIds = options?.persistedPromptMessageIds ?? [];
-        starts.push({ threadId, userId, invocationId, messageIds });
+        starts.push({
+          threadId,
+          userId,
+          invocationId,
+          messageIds,
+          turnCustodyWake: options?.turnCustodyWakeForCat?.(catId),
+        });
         const startedAt = Date.now();
         const lifecycle = await options?.onLifecycleInvocationStarted?.({
           threadId,

@@ -53,6 +53,31 @@ test('idempotent producer replay reuses the same Message and Queue identity', as
   assert.equal(f.queue.list(input.threadId, input.ownerUserId).length, 1);
 });
 
+test('producer return replay cannot reclassify a persisted Queue envelope', async () => {
+  const f = fixture('owned_deferred_busy');
+  const declared = { ...input, sourceCategory: 'producer_return' as const };
+  const first = await f.delivery.deliver(declared);
+  const replay = await f.delivery.deliver(declared);
+  assert.equal(replay.state, 'owned_deferred_busy');
+  assert.equal(replay.message?.id, first.message?.id);
+  const progressed = f.progressed.length;
+  for (const sourceCategory of [undefined, 'review'] as const) {
+    const conflict = await f.delivery.deliver({ ...input, sourceCategory });
+    assert.equal(conflict.state, 'conflict');
+  }
+  assert.equal(f.progressed.length, progressed, 'conflicting replay must not progress the original work');
+  assert.equal(f.queue.list(input.threadId, input.ownerUserId)[0]?.sourceCategory, 'producer_return');
+});
+
+test('declaring producer_return does not rewrite an older unclassified pending row', async () => {
+  const f = fixture('owned_deferred_busy');
+  await f.delivery.deliver(input);
+  const progressed = f.progressed.length;
+  assert.equal((await f.delivery.deliver({ ...input, sourceCategory: 'producer_return' })).state, 'conflict');
+  assert.equal(f.progressed.length, progressed);
+  assert.equal(f.queue.list(input.threadId, input.ownerUserId)[0]?.sourceCategory, undefined);
+});
+
 test('an idempotency collision with a different immutable envelope fails closed', async () => {
   const f = fixture();
   await f.delivery.deliver(input);

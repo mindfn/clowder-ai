@@ -53,6 +53,9 @@ export class ArtifactReviewReturnDispatcher {
       targetCatId: intent.targetCatId,
       idempotencyKey,
       content: reviewReturnEnvelope(intent),
+      // The committed review receipt resumes its existing Task. Dispatch must not infer this
+      // lifecycle from the envelope's prose or invent a wait/action/A2A carrier for it.
+      sourceCategory: 'producer_return',
       // The owner's own authenticated review continuation states `strict` explicitly rather than
       // inheriting it, so the port's fail-closed default can stay fail-closed for every other producer.
       ownerAuthProvenance: 'strict',

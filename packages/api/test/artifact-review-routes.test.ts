@@ -116,6 +116,35 @@ test('human and independent cat routes preserve named authorship, bound paging, 
     },
   });
   assert.equal(forgedDecision.statusCode, 403);
+  const judgment = await app.inject({
+    method: 'POST',
+    url: '/api/callbacks/artifact-review/act',
+    headers: cat,
+    payload: {
+      reviewId,
+      expectedRevision: named.review.revision,
+      expectedTaskRevision: 1,
+      operationId: 'request-human-producer-return',
+      round: 1,
+      action: { kind: 'request_judgment', summary: '完成封面', judgmentNeeded: '请确认发布' },
+    },
+  });
+  assert.equal(judgment.statusCode, 200, judgment.body);
+  const awaitingJudgment = await f.reviews.read(reviewId, f.human);
+  const acceptedDecision = await act({
+    reviewId,
+    expectedRevision: awaitingJudgment.review.revision,
+    expectedTaskRevision: 1,
+    operationId: 'human-producer-return',
+    round: 1,
+    action: { kind: 'decide', outcome: 'approved', explanation: '请继续原任务。' },
+  });
+  assert.equal(acceptedDecision.statusCode, 200, acceptedDecision.body);
+  const returned = f.store.returns.get(acceptedDecision.json().receipt.receiptRef);
+  assert.ok(returned?.messageId);
+  await f.dispatch.waitForAwakening(returned.messageId);
+  assert.equal(f.starts.length, 1);
+  assert.deepEqual(f.starts[0]?.turnCustodyWake, { kind: 'unstructured', source: 'queue_delivery' });
   const load = f.owner.load.bind(f.owner);
   let fullAssetLoads = 0;
   f.owner.load = async (...args) => {

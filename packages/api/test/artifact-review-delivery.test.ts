@@ -58,6 +58,11 @@ test('F310 reads the real content owner; one committed decision returns to the s
   const message = f.messages.getById(delivery.messageId);
   await f.dispatch.waitForAwakening(delivery.messageId);
   assert.equal(f.starts.length, 1);
+  assert.deepEqual(
+    f.starts[0]?.turnCustodyWake,
+    { kind: 'unstructured', source: 'queue_delivery' },
+    'a committed producer return must not enter the legacy custody stop gate',
+  );
   assert.equal(message?.source?.connector, 'content-review');
   assert.equal(message?.threadId, f.thread.id);
   assert.deepEqual(message?.mentions, ['codex-astra']);

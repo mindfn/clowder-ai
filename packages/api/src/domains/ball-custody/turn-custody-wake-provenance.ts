@@ -185,7 +185,7 @@ export async function resolveQueueTurnCustodyWake(
   if (entry.sourceCategory === 'a2a') return resolveA2AWake(entry, messageStore);
   if (entry.sourceCategory) {
     // ADR-043 D6: ordinary Queue delivery owns its own lifecycle. CI,
-    // review, conflict, issue, continuation, and A2A-failure messages are
+    // review, conflict, issue, continuation, producer_return, and A2A-failure messages are
     // not legacy custody obligations and must never enter the old stop gate.
     return { kind: 'unstructured', source: 'queue_delivery' };
   }

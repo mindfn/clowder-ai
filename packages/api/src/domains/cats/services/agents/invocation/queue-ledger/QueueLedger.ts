@@ -84,6 +84,7 @@ export interface QueueLedgerEntry {
     | 'a2a'
     | 'a2a_failure'
     | 'continuation'
+    | 'producer_return'
     | 'issue'
     | 'freshness';
   position?: number;
