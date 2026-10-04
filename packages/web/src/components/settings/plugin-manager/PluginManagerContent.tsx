@@ -9,6 +9,7 @@ import { SettingsText } from '../primitives/SettingsText';
 import { PluginGitInstallButton } from './PluginGitInstallButton';
 import { PluginManagerDetailCard } from './PluginManagerDetailCard';
 import { PluginListRow, PluginListSection } from './PluginManagerList';
+import { installedPluginGroups, type PluginManagerPresentation } from './plugin-manager-attention';
 import type { PluginManagerDesignFixture } from './plugin-manager-fixtures';
 
 const DEFAULT_RECOMMENDATION_LIMIT = 3;
@@ -90,6 +91,7 @@ export function PluginManagerContent({
   onOperationChange,
   configurationSavedPluginId = null,
   locale = 'zh-CN',
+  presentation = 'v1',
 }: {
   fixtures: readonly PluginManagerDesignFixture[];
   catalogStatus?: 'fresh' | 'stale' | 'degraded' | 'unavailable';
@@ -108,19 +110,20 @@ export function PluginManagerContent({
   onOperationChange?: (pluginId: string) => void;
   configurationSavedPluginId?: string | null;
   locale?: string;
+  /** Selected by the host shell; omitted for the frozen classic presentation. */
+  presentation?: PluginManagerPresentation;
 }) {
   const [query, setQuery] = useState('');
   const [mobileDetailOpen, setMobileDetailOpen] = useState(false);
   const [configurationValidation, setConfigurationValidation] = useState({ pluginId: '', request: 0 });
 
   const filtered = useMemo(() => fixtures.filter((plugin) => matchesSearch(plugin, query)), [fixtures, query]);
-  const installedPlugins = filtered.filter((plugin) => plugin.artifact === 'installed');
+  const leadingGroups = installedPluginGroups(filtered, presentation);
   const recommendationPool = filtered.filter((plugin) => plugin.artifact === 'absent' && plugin.source === 'catalog');
   const recommendedPlugins =
     query.trim().length > 0 ? recommendationPool : recommendationPool.slice(0, DEFAULT_RECOMMENDATION_LIMIT);
-  const attentionPlugins = filtered.filter((plugin) => plugin.artifact !== 'installed' && plugin.artifact !== 'absent');
   const otherPlugins = filtered.filter((plugin) => plugin.artifact === 'absent' && plugin.source !== 'catalog');
-  const visible = [...installedPlugins, ...attentionPlugins, ...recommendedPlugins, ...otherPlugins];
+  const visible = [...leadingGroups.flatMap((group) => group.plugins), ...recommendedPlugins, ...otherPlugins];
   const selection = usePluginSelection(visible, selectedPluginId, onPluginSelect);
   const selected = selection.selected;
 
@@ -129,6 +132,7 @@ export function PluginManagerContent({
       <PluginListRow
         key={plugin.id}
         plugin={plugin}
+        presentation={presentation}
         selected={plugin.id === selected?.id}
         locale={locale}
         onSelect={() => {
@@ -199,18 +203,15 @@ export function PluginManagerContent({
             )}
             {!loading && (
               <>
-                <PluginListSection
-                  kind="installed"
-                  title="已安装"
-                  ariaLabel="已安装插件"
-                  rows={renderRows(installedPlugins)}
-                />
-                <PluginListSection
-                  kind="attention"
-                  title="需要处理"
-                  ariaLabel="需要处理的插件"
-                  rows={renderRows(attentionPlugins)}
-                />
+                {leadingGroups.map(({ kind, title, ariaLabel, plugins }) => (
+                  <PluginListSection
+                    key={kind}
+                    kind={kind}
+                    title={title}
+                    ariaLabel={ariaLabel}
+                    rows={renderRows(plugins)}
+                  />
+                ))}
                 <PluginListSection
                   kind="recommended"
                   title="推荐"

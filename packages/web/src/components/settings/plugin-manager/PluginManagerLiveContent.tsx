@@ -5,6 +5,7 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import { useConfirm } from '@/components/useConfirm';
 import { apiFetch } from '@/utils/api-client';
 import { PluginManagerContent } from './PluginManagerContent';
+import type { PluginManagerPresentation } from './plugin-manager-attention';
 import {
   type ConfigurationUpdate,
   configurationRequest,
@@ -18,7 +19,7 @@ import {
 
 const POLL_INTERVAL_MS = 5_000;
 
-export function PluginManagerLiveContent() {
+export function PluginManagerLiveContent({ presentation = 'v1' }: { presentation?: PluginManagerPresentation } = {}) {
   const confirm = useConfirm();
   const [snapshot, setSnapshot] = useState<PluginManagerListResponse | null>(null);
   const [detailState, setDetailState] = useState<DetailLoadState>({ state: 'idle' });
@@ -179,6 +180,7 @@ export function PluginManagerLiveContent() {
 
   return (
     <PluginManagerContent
+      presentation={presentation}
       fixtures={fixtures}
       catalogStatus={snapshot?.catalog.status ?? 'fresh'}
       catalogMessage={snapshot?.catalog.message}
