@@ -204,6 +204,17 @@ function finishBuildIdentity(root, context, packages) {
 // watcher, polling snapshot or persistent event ledger is involved. Mixed
 // source/output directories can change only through the declared generators;
 // a transient new source there is observed even when it disappears by finish.
+function namespacesObserved(before, after, seen) {
+  if (!after || JSON.stringify(Object.keys(before)) !== JSON.stringify(Object.keys(after))) return false;
+  return Object.entries(after).every(([directory, epoch]) => {
+    const start = before[directory];
+    return (
+      JSON.stringify(epoch.slice(0, 2)) === JSON.stringify(start.slice(0, 2)) &&
+      (JSON.stringify(epoch) === JSON.stringify(start) || seen.has(directory))
+    );
+  });
+}
+
 async function runBuildIdentity(root, packages, command, args) {
   const context = beginBuildIdentity(root);
   const watchers = [];
@@ -250,15 +261,7 @@ async function runBuildIdentity(root, packages, command, args) {
     // changed directory with no observation is unknown, never generator proof.
     await new Promise((resolve) => setTimeout(resolve, 25));
     const end = captureBuildState(root);
-    for (const [directory, epoch] of Object.entries(end?.namespaces ?? {})) {
-      const startEpoch = context.namespaces?.[directory];
-      if (
-        JSON.stringify(epoch.slice(0, 2)) !== JSON.stringify(startEpoch?.slice(0, 2)) ||
-        (JSON.stringify(epoch) !== JSON.stringify(startEpoch) && !seenNamespaces.has(directory))
-      ) {
-        sourceChanged = true;
-      }
-    }
+    if (!namespacesObserved(context.namespaces ?? {}, end?.namespaces, seenNamespaces)) sourceChanged = true;
     if (sourceChanged) context.revision = null;
     else observedNamespaces.set(context, end?.namespaces);
     if (status !== 0 || !finishBuildIdentity(root, context, packages)) {
