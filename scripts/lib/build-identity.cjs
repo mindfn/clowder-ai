@@ -1,6 +1,6 @@
 // Deployment identity for the direct launcher's complete build transaction.
 // Stamps are disposable build metadata, never runtime/user storage.
-const { execFileSync } = require('node:child_process');
+const { execFileSync, spawn } = require('node:child_process');
 const { createHash } = require('node:crypto');
 const {
   existsSync,
@@ -10,9 +10,11 @@ const {
   renameSync,
   rmSync,
   statSync,
+  watch,
   writeFileSync,
 } = require('node:fs');
 const path = require('node:path');
+const { constants } = require('node:os');
 
 const PRODUCTS = Object.freeze({
   shared: 'packages/shared/dist/index.js',
@@ -30,6 +32,18 @@ const INPUTS = Object.freeze([
   '.npmrc',
 ]);
 const FULL_COMMIT = /^[0-9a-f]{40}$/;
+const observedNamespaces = new WeakMap();
+
+function mixedNamespace(directory) {
+  return /^packages\/[^/]+$/.test(directory) || directory === 'packages/web/public';
+}
+
+function generatedSibling(directory, name) {
+  if (/^packages\/[^/]+$/.test(directory)) {
+    return name === 'dist' || name === '.next' || /^[^/]+\.tsbuildinfo$/.test(name);
+  }
+  return name === 'vendor' || /^(?:sw\.js|(?:workbox-|swe-worker-|worker-).+\.js)(?:\.map)?$/.test(name);
+}
 
 function stampPath(root, pkg) {
   return path.join(path.dirname(path.resolve(root, PRODUCTS[pkg])), '.build-commit');
@@ -54,6 +68,7 @@ function captureBuildState(root) {
       .split('\0')
       .filter(Boolean);
     const directories = new Set();
+    const namespaces = {};
     for (const file of files) {
       const stat = lstatSync(path.resolve(root, file), { bigint: true });
       hash.update(JSON.stringify([file, ...[stat.dev, stat.ino, stat.size, stat.mtimeNs, stat.ctimeNs].map(String)]));
@@ -68,7 +83,9 @@ function captureBuildState(root) {
     }
     for (const directory of [...directories].sort()) {
       const stat = lstatSync(path.resolve(root, directory), { bigint: true });
-      hash.update(JSON.stringify([directory, ...[stat.dev, stat.ino, stat.mtimeNs, stat.ctimeNs].map(String)]));
+      const epoch = [stat.dev, stat.ino, stat.mtimeNs, stat.ctimeNs].map(String);
+      if (mixedNamespace(directory)) namespaces[directory] = epoch;
+      else hash.update(JSON.stringify([directory, ...epoch]));
     }
     // The reflog's metadata observes normal HEAD moves-and-returns too. This
     // is detection, not an exclusive writer lock or a hermetic build promise.
@@ -78,7 +95,7 @@ function captureBuildState(root) {
       hash.update(JSON.stringify([stat.ino, stat.size, stat.mtimeNs, stat.ctimeNs].map(String)));
     }
     if (dirty() || git(['rev-parse', '--verify', 'HEAD^{commit}']) !== revision) return null;
-    return { revision, fingerprint: hash.digest('hex') };
+    return { revision, fingerprint: hash.digest('hex'), namespaces };
   } catch {
     return null; // Non-git or unreadable inputs can build, but cannot claim identity.
   }
@@ -113,6 +130,7 @@ function beginBuildIdentity(root) {
     root: path.resolve(root),
     revision: source?.revision ?? null,
     fingerprint: source?.fingerprint ?? null,
+    namespaces: source?.namespaces ?? null,
     products: Object.fromEntries(
       Object.keys(PRODUCTS).map((pkg) => [
         pkg,
@@ -135,6 +153,7 @@ function finishBuildIdentity(root, context, packages) {
     context.root === path.resolve(root) &&
     source?.revision === capturedRevision &&
     source?.fingerprint === context.fingerprint &&
+    JSON.stringify(source?.namespaces) === JSON.stringify(observedNamespaces.get(context) ?? context.namespaces) &&
     packages.length > 0 &&
     packages.every((pkg) => {
       if (!Object.hasOwn(PRODUCTS, pkg)) return false;
@@ -165,7 +184,12 @@ function finishBuildIdentity(root, context, packages) {
     }
     // Also guard a HEAD/input change while the small stamp set is published.
     const publishedSource = captureBuildState(root);
-    if (publishedSource?.revision !== capturedRevision || publishedSource?.fingerprint !== context.fingerprint) {
+    if (
+      publishedSource?.revision !== capturedRevision ||
+      publishedSource?.fingerprint !== context.fingerprint ||
+      JSON.stringify(publishedSource?.namespaces) !==
+        JSON.stringify(observedNamespaces.get(context) ?? context.namespaces)
+    ) {
       invalidateBuildIdentity(root);
       return false;
     }
@@ -176,18 +200,103 @@ function finishBuildIdentity(root, context, packages) {
   }
 }
 
+// One foreground owner observes the complete compiler interval. No detached
+// watcher, polling snapshot or persistent event ledger is involved. Mixed
+// source/output directories can change only through the declared generators;
+// a transient new source there is observed even when it disappears by finish.
+async function runBuildIdentity(root, packages, command, args) {
+  const context = beginBuildIdentity(root);
+  const watchers = [];
+  let sourceChanged = false;
+  const seenNamespaces = new Set();
+  try {
+    for (const directory of Object.keys(context.namespaces ?? {})) {
+      const observer = watch(path.resolve(root, directory), (_event, filename) => {
+        seenNamespaces.add(directory);
+        if (!filename || !generatedSibling(directory, String(filename))) sourceChanged = true;
+      });
+      observer.on('error', () => {
+        sourceChanged = true;
+      });
+      watchers.push(observer);
+    }
+    const ready = captureBuildState(root);
+    if (JSON.stringify(ready?.namespaces) !== JSON.stringify(context.namespaces)) sourceChanged = true;
+    const child = spawn(command, args, {
+      cwd: root,
+      stdio: 'inherit',
+      env: { ...process.env, CAT_CAFE_WEB_BUILD_REVISION: context.revision ?? '' },
+    });
+    const forward = (signal) => {
+      sourceChanged = true;
+      invalidateBuildIdentity(root);
+      child.kill(signal);
+    };
+    const onInt = () => forward('SIGINT');
+    const onTerm = () => forward('SIGTERM');
+    process.on('SIGINT', onInt);
+    process.on('SIGTERM', onTerm);
+    let status;
+    try {
+      status = await new Promise((resolve, reject) => {
+        child.once('error', reject);
+        child.once('close', (code, signal) => resolve(code ?? (signal ? 128 + constants.signals[signal] : 1)));
+      });
+    } finally {
+      process.removeListener('SIGINT', onInt);
+      process.removeListener('SIGTERM', onTerm);
+    }
+    // Drain queued OS notifications while the watchers are still live. A
+    // changed directory with no observation is unknown, never generator proof.
+    await new Promise((resolve) => setTimeout(resolve, 25));
+    const end = captureBuildState(root);
+    for (const [directory, epoch] of Object.entries(end?.namespaces ?? {})) {
+      const startEpoch = context.namespaces?.[directory];
+      if (
+        JSON.stringify(epoch.slice(0, 2)) !== JSON.stringify(startEpoch?.slice(0, 2)) ||
+        (JSON.stringify(epoch) !== JSON.stringify(startEpoch) && !seenNamespaces.has(directory))
+      ) {
+        sourceChanged = true;
+      }
+    }
+    if (sourceChanged) context.revision = null;
+    else observedNamespaces.set(context, end?.namespaces);
+    if (status !== 0 || !finishBuildIdentity(root, context, packages)) {
+      invalidateBuildIdentity(root);
+      if (status === 0)
+        console.warn('[build] deployment identity unavailable: inputs changed or observation incomplete');
+    }
+    return status;
+  } finally {
+    for (const observer of watchers) observer.close();
+  }
+}
+
 module.exports = {
   PRODUCTS,
   INPUTS,
   beginBuildIdentity,
   invalidateBuildIdentity,
   finishBuildIdentity,
+  runBuildIdentity,
   stampPath,
 };
 
 if (require.main === module) {
   const [action, root, revision, ...packages] = process.argv.slice(2);
-  if (action === 'revision') {
+  if (action === 'run') {
+    const [selected, command, ...args] = [revision, ...packages];
+    runBuildIdentity(root, selected.split(','), command, args).then(
+      (status) => {
+        process.exitCode = status;
+      },
+      (error) => {
+        invalidateBuildIdentity(root);
+        console.error(error);
+        process.exitCode = 1;
+      },
+    );
+  } else if (action === 'revision') {
     process.stdout.write(JSON.parse(root).revision ?? '');
   } else if (!root || !existsSync(path.resolve(root, 'package.json'))) {
     throw new Error('build identity requires a package root');

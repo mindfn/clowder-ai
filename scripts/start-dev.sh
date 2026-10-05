@@ -1257,33 +1257,40 @@ run_logged_step() {
 }
 
 # 构建 shared + MCP + API (tsc)；--prod-web 时额外构建 Frontend
-build_packages() {
-    local build_revision build_context package rc
-    local build_identity_helper="$SCRIPT_DIR/lib/build-identity.cjs"
+compile_packages() {
+    local package rc
     local built_packages=(shared mcp-server api)
     [ "$PROD_WEB" != true ] || built_packages+=(web)
-    # Freeze the source identity before any compiler runs. Invalidate the old
-    # complete deployment first: failed/partial builds must not retain its stamps.
-    build_context="$(node "$build_identity_helper" begin "$PROJECT_DIR")"
-    BUILD_IDENTITY_PENDING=true
-    build_revision="$(node "$build_identity_helper" revision "$build_context")"
     for package in "${built_packages[@]}"; do
         echo ""
         echo -e "${CYAN}构建 $package...${NC}"
         # Pin next.config and Web postbuild to the same starting revision rather
         # than allowing them to independently reread a moving HEAD.
-        if CAT_CAFE_WEB_BUILD_REVISION="$build_revision" run_logged_step "$package 构建" 10 \
+        if run_logged_step "$package 构建" 10 \
             run_in_dir "$PROJECT_DIR/packages/$package" pnpm run build; then
             echo -e "${GREEN}  ✓ $package 构建完成${NC}"
         else
             rc=$?
-            node "$build_identity_helper" invalidate "$PROJECT_DIR"
-            BUILD_IDENTITY_PENDING=false
             return "$rc"
         fi
     done
-    node "$build_identity_helper" finish "$PROJECT_DIR" "$build_context" "${built_packages[@]}"
+}
+
+build_packages() {
+    local selected_packages=shared,mcp-server,api rc
+    [ "$PROD_WEB" != true ] || selected_packages+=,web
+    BUILD_IDENTITY_PENDING=true
+    # Keep the compiler and its input namespace observer under one foreground
+    # owner. Export only these existing compile/log functions, not launcher main.
+    export -f compile_packages run_logged_step run_in_dir
+    if PROJECT_DIR="$PROJECT_DIR" PROD_WEB="$PROD_WEB" RED="$RED" GREEN="$GREEN" CYAN="$CYAN" NC="$NC" \
+        node "$SCRIPT_DIR/lib/build-identity.cjs" run "$PROJECT_DIR" "$selected_packages" bash -c compile_packages; then
+        rc=0
+    else
+        rc=$?
+    fi
     BUILD_IDENTITY_PENDING=false
+    return "$rc"
 }
 
 configure_mcp_server_path() {

@@ -77,11 +77,21 @@ the input roots) retain namespace epochs: creating then removing a source file
 or an entire source subtree cannot disappear between the endpoint observations.
 Known `dist` and `.next` directories are established before observation, and
 their ignored contents are not traversed. Changes inside these output trees do
-not invalidate otherwise stable source. Namespace changes directly alongside
-tracked inputs are conservatively untrusted, even for ignored sibling files;
-this is not an arbitrary ignored-path exception that could hide transient source.
+not invalidate otherwise stable source. Package roots and Web `public` contain
+both inputs and generated output: one foreground Node owner watches those
+directories for the entire compiler interval. Only the known generated names
+(`dist`, `.next`, TypeScript build-info, PWA JavaScript/maps and `vendor`) are
+accepted there. Unknown names, missing filenames, observer errors, replaced
+directories or a changed namespace without an observed event invalidate identity.
+The observer remains live through final publication; namespace epochs are
+checked against its end snapshot before and after publication. Low-level
+begin/finish without this in-process proof still rejects any mixed-directory
+epoch change. There is no detached watcher or persistent observation ledger.
 The workspace root is not directory-fingerprinted (it also holds unrelated logs);
-its existing declared configuration files are fingerprinted individually.
+its existing declared configuration files are fingerprinted individually. New
+undeclared root-level compiler inputs and platform event loss/coalescing are not
+a hermetic provenance claim. Unknown observed events fail closed; this is an
+ordinary-change guard, not a hostile-writer/security attestation.
 It detects ordinary edits including edit-and-restore and HEAD move-and-return;
 it is not an exclusive writer lock, cryptographic artifact attestation, or a
 hermetic build. Dependencies, toolchain/environment reproducibility and hostile
@@ -105,6 +115,11 @@ Irreversibility: none; no config/user-data changes or runtime restart.
   both failed before adding directory epochs; generated-output namespace churn
   remained green. A real TypeScript compile regression now retains the emitted
   transient code and proves all stamps are invalidated after its input is moved.
+  The first real rebuild of `fd4a4913d7` compiled successfully but invalidated all
+  stamps because normal TypeScript/PWA generation changed mixed-directory
+  epochs. This failed handshake is retained at `/tmp/f117-g4-p2-build-CbEWxV`.
+  Regressions now cover root-level source/subtree and public-source transients,
+  reject even unknown ignored siblings, and accept observed build-info/PWA output.
   These are deterministic compiler
   seams through the production launcher, not real compiler evidence.
 - GREEN: run `node --test scripts/start-dev-build-identity.test.mjs` plus the

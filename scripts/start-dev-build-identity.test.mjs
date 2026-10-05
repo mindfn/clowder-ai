@@ -24,11 +24,13 @@ function git(root, ...args) {
 function fixture({ versioned = true } = {}) {
   // Retained isolated source/build fixtures contain no persistent user data.
   const root = mkdtempSync(join(tmpdir(), 'f117-build-identity-'));
-  writeFileSync(join(root, '.gitignore'), '**/dist/\n**/.next/\n');
+  writeFileSync(join(root, '.gitignore'), '**/dist/\n**/.next/\n*.tsbuildinfo\n*.log\npackages/web/public/sw.js\n');
   writeFileSync(join(root, 'package.json'), '{}\n');
   writeFileSync(join(root, 'tsconfig.base.json'), '{}\n');
   mkdirSync(join(root, 'packages', 'collective-service', 'src'), { recursive: true });
   writeFileSync(join(root, 'packages', 'collective-service', 'src', 'index.ts'), 'export const version = 1;\n');
+  mkdirSync(join(root, 'packages', 'web', 'public'), { recursive: true });
+  writeFileSync(join(root, 'packages', 'web', 'public', 'icon.txt'), 'tracked static input\n');
   for (const [pkg, product] of Object.entries(artifacts)) {
     mkdirSync(join(root, 'packages', pkg, 'src'), { recursive: true });
     writeFileSync(join(root, 'packages', pkg, 'src', 'index.ts'), 'export const version = 1;\n');
@@ -76,17 +78,17 @@ run_logged_step() {
       transient_file) printf 'export const transient = 99;\\n' > "$PROJECT_DIR/packages/api/src/transient.ts"; cp "$PROJECT_DIR/packages/api/src/transient.ts" "$PROJECT_DIR/packages/api/dist/transient.js"; mv "$PROJECT_DIR/packages/api/src/transient.ts" "$PROJECT_DIR/retained-transient.ts" ;;
       transient_directory) mkdir "$PROJECT_DIR/packages/api/src/transient"; printf 'export const transient = 99;\\n' > "$PROJECT_DIR/packages/api/src/transient/index.ts"; cp "$PROJECT_DIR/packages/api/src/transient/index.ts" "$PROJECT_DIR/packages/api/dist/transient.js"; mv "$PROJECT_DIR/packages/api/src/transient" "$PROJECT_DIR/retained-transient" ;;
       generated_namespace) mkdir -p "$PROJECT_DIR/packages/api/dist/new-directory"; printf 'generated\\n' > "$PROJECT_DIR/packages/api/dist/new-directory/generated.js"; mv "$PROJECT_DIR/packages/api/dist/new-directory" "$PROJECT_DIR/retained-generated" ;;
+      mixed_transient_file) printf 'export const transient = 99;\\n' > "$PROJECT_DIR/packages/web/transient.ts"; cp "$PROJECT_DIR/packages/web/transient.ts" "$PROJECT_DIR/packages/api/dist/transient.js"; mv "$PROJECT_DIR/packages/web/transient.ts" "$PROJECT_DIR/retained-transient.ts" ;;
+      mixed_transient_directory) mkdir "$PROJECT_DIR/packages/web/transient"; printf 'export const transient = 99;\\n' > "$PROJECT_DIR/packages/web/transient/index.ts"; cp "$PROJECT_DIR/packages/web/transient/index.ts" "$PROJECT_DIR/packages/api/dist/transient.js"; mv "$PROJECT_DIR/packages/web/transient" "$PROJECT_DIR/retained-transient" ;;
+      public_transient_file) printf 'export const transient = 99;\\n' > "$PROJECT_DIR/packages/web/public/transient.ts"; cp "$PROJECT_DIR/packages/web/public/transient.ts" "$PROJECT_DIR/packages/api/dist/transient.js"; mv "$PROJECT_DIR/packages/web/public/transient.ts" "$PROJECT_DIR/retained-transient.ts" ;;
+      ignored_unknown_sibling) printf 'unknown\\n' > "$PROJECT_DIR/packages/web/unknown.log"; mv "$PROJECT_DIR/packages/web/unknown.log" "$PROJECT_DIR/retained-unknown.log" ;;
+      generated_mixed_namespace) printf 'generated\\n' > "$PROJECT_DIR/packages/collective-service/tsconfig.tsbuildinfo"; printf 'generated\\n' > "$PROJECT_DIR/packages/web/public/sw.js" ;;
       restored) cp "$PROJECT_DIR/packages/api/src/index.ts" "$PROJECT_DIR/original.ts"; printf 'transient\\n' >> "$PROJECT_DIR/packages/api/src/index.ts"; cp "$PROJECT_DIR/original.ts" "$PROJECT_DIR/packages/api/src/index.ts" ;;
       head_restored) local old_head; old_head=$(git -C "$PROJECT_DIR" rev-parse HEAD); git -C "$PROJECT_DIR" -c user.name=fixture -c user.email=fixture@example.invalid commit --allow-empty -qm moved; git -C "$PROJECT_DIR" update-ref -m returned HEAD "$old_head" ;;
     esac
   fi
   if [ "$pkg" = web ] && [ "$BUILD_MUTATION" = signal ]; then
-    terminate_managed_pids() { :; }
-    remove_redis_dev_lease() { :; }
-    USE_REDIS=false
-    F247_CLOUD_OWNER_FILE=""
-    DAEMON_PID_FILE="$PROJECT_DIR/no-daemon.pid"
-    trap 'trap - EXIT; cleanup; exit 143' TERM
+    trap 'exit 143' TERM
     kill -TERM $$
   fi
 }
@@ -137,6 +139,10 @@ for (const mutation of [
   'untracked',
   'transient_file',
   'transient_directory',
+  'mixed_transient_file',
+  'mixed_transient_directory',
+  'public_transient_file',
+  'ignored_unknown_sibling',
   'restored',
   'head_restored',
 ]) {
@@ -151,6 +157,12 @@ for (const mutation of [
 test('generated output namespace changes do not invalidate an otherwise clean build', () => {
   const { root, head } = fixture();
   assert.equal(build(root, { mutation: 'generated_namespace' }).status, 0);
+  for (const pkg of Object.keys(artifacts)) assert.equal(readFileSync(stamp(root, pkg), 'utf8').trim(), head);
+});
+
+test('observed TypeScript/PWA generation beside tracked inputs is not mistaken for temporary source', () => {
+  const { root, head } = fixture();
+  assert.equal(build(root, { mutation: 'generated_mixed_namespace' }).status, 0);
   for (const pkg of Object.keys(artifacts)) assert.equal(readFileSync(stamp(root, pkg), 'utf8').trim(), head);
 });
 
@@ -228,7 +240,7 @@ test('unversioned sources may build but cannot manufacture a trusted deployment 
   for (const pkg of Object.keys(artifacts)) assert.equal(existsSync(stamp(root, pkg)), false, pkg);
 });
 
-test('SIGTERM after Web postbuild invalidates intermediate stamps through the actual cleanup handler', () => {
+test('a compiler terminated after Web postbuild cannot retain intermediate stamps', () => {
   const { root } = fixture();
   assert.equal(build(root, { mutation: 'signal' }).status, 143);
   for (const pkg of Object.keys(artifacts)) assert.equal(existsSync(stamp(root, pkg)), false, pkg);
