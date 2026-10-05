@@ -1258,27 +1258,32 @@ run_logged_step() {
 
 # 构建 shared + MCP + API (tsc)；--prod-web 时额外构建 Frontend
 build_packages() {
-    echo ""
-    echo -e "${CYAN}构建 shared...${NC}"
-    run_logged_step "shared 构建" 3 run_in_dir "$PROJECT_DIR/packages/shared" pnpm run build
-    echo -e "${GREEN}  ✓ shared 构建完成${NC}"
-
-    echo ""
-    echo -e "${CYAN}构建 MCP Server...${NC}"
-    run_logged_step "MCP Server 构建" 3 run_in_dir "$PROJECT_DIR/packages/mcp-server" pnpm run build
-    echo -e "${GREEN}  ✓ MCP Server 构建完成${NC}"
-
-    echo ""
-    echo -e "${CYAN}构建 API...${NC}"
-    run_logged_step "API 构建" 3 run_in_dir "$PROJECT_DIR/packages/api" pnpm run build
-    echo -e "${GREEN}  ✓ API 构建完成${NC}"
-
-    if [ "$PROD_WEB" = true ]; then
+    local build_revision build_context package rc
+    local build_identity_helper="$SCRIPT_DIR/lib/build-identity.cjs"
+    local built_packages=(shared mcp-server api)
+    [ "$PROD_WEB" != true ] || built_packages+=(web)
+    # Freeze the source identity before any compiler runs. Invalidate the old
+    # complete deployment first: failed/partial builds must not retain its stamps.
+    build_context="$(node "$build_identity_helper" begin "$PROJECT_DIR")"
+    BUILD_IDENTITY_PENDING=true
+    build_revision="$(node "$build_identity_helper" revision "$build_context")"
+    for package in "${built_packages[@]}"; do
         echo ""
-        echo -e "${CYAN}构建 Frontend (production)...${NC}"
-        run_logged_step "Frontend 构建" 10 run_in_dir "$PROJECT_DIR/packages/web" pnpm run build
-        echo -e "${GREEN}  ✓ Frontend 构建完成 (PWA 已启用)${NC}"
-    fi
+        echo -e "${CYAN}构建 $package...${NC}"
+        # Pin next.config and Web postbuild to the same starting revision rather
+        # than allowing them to independently reread a moving HEAD.
+        if CAT_CAFE_WEB_BUILD_REVISION="$build_revision" run_logged_step "$package 构建" 10 \
+            run_in_dir "$PROJECT_DIR/packages/$package" pnpm run build; then
+            echo -e "${GREEN}  ✓ $package 构建完成${NC}"
+        else
+            rc=$?
+            node "$build_identity_helper" invalidate "$PROJECT_DIR"
+            BUILD_IDENTITY_PENDING=false
+            return "$rc"
+        fi
+    done
+    node "$build_identity_helper" finish "$PROJECT_DIR" "$build_context" "${built_packages[@]}"
+    BUILD_IDENTITY_PENDING=false
 }
 
 configure_mcp_server_path() {
@@ -1402,6 +1407,13 @@ setup_storage() {
 cleanup() {
     [ "$CLEANUP_RUNNING" = true ] && return 0
     CLEANUP_RUNNING=true
+
+    # A signal after Web postbuild but before transaction validation must not
+    # leave that intermediate stamp looking like a completed deployment.
+    if [ "${BUILD_IDENTITY_PENDING:-false}" = true ]; then
+        node "$SCRIPT_DIR/lib/build-identity.cjs" invalidate "$PROJECT_DIR" || true
+        BUILD_IDENTITY_PENDING=false
+    fi
 
     echo ""
     echo "正在关闭服务..."
