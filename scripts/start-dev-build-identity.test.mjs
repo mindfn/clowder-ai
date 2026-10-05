@@ -1,9 +1,10 @@
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, renameSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { test } from 'node:test';
+import identity from './lib/build-identity.cjs';
 
 const launcher = resolve('scripts/start-dev.sh');
 const artifacts = {
@@ -72,6 +73,9 @@ run_logged_step() {
       root_config) printf ' \\n' >> "$PROJECT_DIR/tsconfig.base.json" ;;
       workspace_dependency) printf 'changed\\n' >> "$PROJECT_DIR/packages/collective-service/src/index.ts" ;;
       untracked) printf 'new\\n' > "$PROJECT_DIR/packages/shared/src/new.ts" ;;
+      transient_file) printf 'export const transient = 99;\\n' > "$PROJECT_DIR/packages/api/src/transient.ts"; cp "$PROJECT_DIR/packages/api/src/transient.ts" "$PROJECT_DIR/packages/api/dist/transient.js"; mv "$PROJECT_DIR/packages/api/src/transient.ts" "$PROJECT_DIR/retained-transient.ts" ;;
+      transient_directory) mkdir "$PROJECT_DIR/packages/api/src/transient"; printf 'export const transient = 99;\\n' > "$PROJECT_DIR/packages/api/src/transient/index.ts"; cp "$PROJECT_DIR/packages/api/src/transient/index.ts" "$PROJECT_DIR/packages/api/dist/transient.js"; mv "$PROJECT_DIR/packages/api/src/transient" "$PROJECT_DIR/retained-transient" ;;
+      generated_namespace) mkdir -p "$PROJECT_DIR/packages/api/dist/new-directory"; printf 'generated\\n' > "$PROJECT_DIR/packages/api/dist/new-directory/generated.js"; mv "$PROJECT_DIR/packages/api/dist/new-directory" "$PROJECT_DIR/retained-generated" ;;
       restored) cp "$PROJECT_DIR/packages/api/src/index.ts" "$PROJECT_DIR/original.ts"; printf 'transient\\n' >> "$PROJECT_DIR/packages/api/src/index.ts"; cp "$PROJECT_DIR/original.ts" "$PROJECT_DIR/packages/api/src/index.ts" ;;
       head_restored) local old_head; old_head=$(git -C "$PROJECT_DIR" rev-parse HEAD); git -C "$PROJECT_DIR" -c user.name=fixture -c user.email=fixture@example.invalid commit --allow-empty -qm moved; git -C "$PROJECT_DIR" update-ref -m returned HEAD "$old_head" ;;
     esac
@@ -131,6 +135,8 @@ for (const mutation of [
   'root_config',
   'workspace_dependency',
   'untracked',
+  'transient_file',
+  'transient_directory',
   'restored',
   'head_restored',
 ]) {
@@ -141,6 +147,51 @@ for (const mutation of [
     for (const pkg of Object.keys(artifacts)) assert.equal(existsSync(stamp(root, pkg)), false, pkg);
   });
 }
+
+test('generated output namespace changes do not invalidate an otherwise clean build', () => {
+  const { root, head } = fixture();
+  assert.equal(build(root, { mutation: 'generated_namespace' }).status, 0);
+  for (const pkg of Object.keys(artifacts)) assert.equal(readFileSync(stamp(root, pkg), 'utf8').trim(), head);
+});
+
+test('fresh output directories are established before the source namespace observation', () => {
+  const { root, head } = fixture();
+  for (const pkg of Object.keys(artifacts)) {
+    renameSync(join(root, 'packages', pkg, pkg === 'web' ? '.next' : 'dist'), join(root, `retained-${pkg}`));
+  }
+  assert.equal(build(root).status, 0);
+  for (const pkg of Object.keys(artifacts)) assert.equal(readFileSync(stamp(root, pkg), 'utf8').trim(), head);
+});
+
+test('a real TypeScript compile of added-then-moved source cannot receive the original committed identity', () => {
+  const { root, head } = fixture();
+  const context = identity.beginBuildIdentity(root);
+  const transient = join(root, 'packages/api/src/transient.ts');
+  writeFileSync(transient, 'export const transient = 99;\n');
+  const compiler = spawnSync(
+    process.execPath,
+    [
+      resolve('node_modules/typescript/lib/tsc.js'),
+      '--target',
+      'es2022',
+      '--skipLibCheck',
+      '--outDir',
+      join(root, 'packages/api/dist'),
+      join(root, 'packages/api/src/index.ts'),
+      transient,
+    ],
+    { cwd: root, encoding: 'utf8' },
+  );
+  assert.equal(compiler.status, 0, compiler.stdout + compiler.stderr);
+  assert.match(readFileSync(join(root, 'packages/api/dist/transient.js'), 'utf8'), /transient = 99/);
+  renameSync(transient, join(root, 'retained-transient.ts'));
+  for (const [pkg, product] of Object.entries(artifacts))
+    writeFileSync(join(root, 'packages', pkg, product), 'built\n');
+  writeFileSync(stamp(root, 'web'), `${head}\n`);
+  assert.equal(git(root, 'status', '--porcelain', '--', ...identity.INPUTS), '');
+  assert.equal(identity.finishBuildIdentity(root, context, Object.keys(artifacts)), false);
+  for (const pkg of Object.keys(artifacts)) assert.equal(existsSync(stamp(root, pkg)), false, pkg);
+});
 
 test('dirty inputs at build start cannot be legitimized by successful compilation', () => {
   const { root } = fixture();

@@ -69,9 +69,19 @@ local feature branches. That bounded inspection is not a global absence claim.
 6. Retain strict failure on missing, malformed and mismatching stamps. No text
    inference, HEAD-at-startup fallback or forwarding-guard bypass is added.
 
-Source stability uses Git status, exact HEAD and source file/reflog metadata,
+Source stability uses Git status, exact HEAD and source file/directory/reflog metadata,
 covering workspace packages, the inherited root TypeScript configuration,
 scripts and root dependency manifests.
+The existing directories containing tracked inputs (and their parents within
+the input roots) retain namespace epochs: creating then removing a source file
+or an entire source subtree cannot disappear between the endpoint observations.
+Known `dist` and `.next` directories are established before observation, and
+their ignored contents are not traversed. Changes inside these output trees do
+not invalidate otherwise stable source. Namespace changes directly alongside
+tracked inputs are conservatively untrusted, even for ignored sibling files;
+this is not an arbitrary ignored-path exception that could hide transient source.
+The workspace root is not directory-fingerprinted (it also holds unrelated logs);
+its existing declared configuration files are fingerprinted individually.
 It detects ordinary edits including edit-and-restore and HEAD move-and-return;
 it is not an exclusive writer lock, cryptographic artifact attestation, or a
 hermetic build. Dependencies, toolchain/environment reproducibility and hostile
@@ -90,6 +100,11 @@ Irreversibility: none; no config/user-data changes or runtime restart.
   Added no-output and edit/HEAD-restore regressions separately failed before
   their corresponding checks were implemented. Root TypeScript config and
   workspace-dependency mutation tests also failed before expanding the input set.
+  Independent review then found added-then-moved inputs were absent at both
+  observations. The new temporary-source and temporary-source-directory tests
+  both failed before adding directory epochs; generated-output namespace churn
+  remained green. A real TypeScript compile regression now retains the emitted
+  transient code and proves all stamps are invalidated after its input is moved.
   These are deterministic compiler
   seams through the production launcher, not real compiler evidence.
 - GREEN: run `node --test scripts/start-dev-build-identity.test.mjs` plus the

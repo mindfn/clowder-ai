@@ -2,7 +2,16 @@
 // Stamps are disposable build metadata, never runtime/user storage.
 const { execFileSync } = require('node:child_process');
 const { createHash } = require('node:crypto');
-const { existsSync, lstatSync, readFileSync, renameSync, rmSync, statSync, writeFileSync } = require('node:fs');
+const {
+  existsSync,
+  lstatSync,
+  mkdirSync,
+  readFileSync,
+  renameSync,
+  rmSync,
+  statSync,
+  writeFileSync,
+} = require('node:fs');
 const path = require('node:path');
 
 const PRODUCTS = Object.freeze({
@@ -44,9 +53,22 @@ function captureBuildState(root) {
     const files = git(['ls-files', '-z', '--cached', '--others', '--exclude-standard', '--', ...INPUTS])
       .split('\0')
       .filter(Boolean);
+    const directories = new Set();
     for (const file of files) {
       const stat = lstatSync(path.resolve(root, file), { bigint: true });
       hash.update(JSON.stringify([file, ...[stat.dev, stat.ino, stat.size, stat.mtimeNs, stat.ctimeNs].map(String)]));
+      // File epochs alone miss a new input that is consumed and then moved
+      // away. Its nearest pre-existing source directory retains that change,
+      // including when an entire new source subtree is added and removed.
+      // Do not descend into ignored output trees or include the workspace root
+      // (which also contains unrelated logs and retained test evidence).
+      for (let directory = path.dirname(file); directory !== '.'; directory = path.dirname(directory)) {
+        directories.add(directory);
+      }
+    }
+    for (const directory of [...directories].sort()) {
+      const stat = lstatSync(path.resolve(root, directory), { bigint: true });
+      hash.update(JSON.stringify([directory, ...[stat.dev, stat.ino, stat.mtimeNs, stat.ctimeNs].map(String)]));
     }
     // The reflog's metadata observes normal HEAD moves-and-returns too. This
     // is detection, not an exclusive writer lock or a hermetic build promise.
@@ -81,6 +103,11 @@ function readStamp(root, pkg) {
 }
 
 function beginBuildIdentity(root) {
+  // Establish the known build namespaces before observing source directories.
+  // Creating dist/.next on a fresh checkout must not look like adding source;
+  // subsequent writes within these ignored trees do not change their parents.
+  for (const pkg of Object.keys(PRODUCTS))
+    mkdirSync(path.dirname(path.resolve(root, PRODUCTS[pkg])), { recursive: true });
   const source = captureBuildState(root);
   const context = {
     root: path.resolve(root),
