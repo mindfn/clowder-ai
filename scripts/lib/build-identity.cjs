@@ -215,11 +215,118 @@ function namespacesObserved(before, after, seen) {
   });
 }
 
+function signalCompilerGroup(pid, signal) {
+  try {
+    // This is only the group established by our detached-but-awaited spawn,
+    // never the launcher's, caller's or runtime's inherited process group.
+    process.kill(-pid, signal);
+    return true;
+  } catch (error) {
+    if (error.code === 'ESRCH') return false;
+    throw error;
+  }
+}
+
+function compilerGroupAlive(pid) {
+  // kill(group, 0) on macOS can report EPERM for an already retired group.
+  // Read only process coordinates/state; zombies cannot publish artifacts.
+  return execFileSync('ps', ['-A', '-o', 'pid=,pgid=,stat='], { encoding: 'utf8' })
+    .trim()
+    .split('\n')
+    .some((line) => {
+      const [, group, state] = line.trim().split(/\s+/);
+      return Number(group) === pid && !state.startsWith('Z');
+    });
+}
+
+async function waitCompilerGroup(pid, timeout) {
+  const deadline = Date.now() + timeout;
+  while (compilerGroupAlive(pid)) {
+    if (Date.now() >= deadline) return false;
+    await new Promise((resolve) => setTimeout(resolve, 20));
+  }
+  return true;
+}
+
+async function stopCompilerGroup(pid, signal) {
+  if (!compilerGroupAlive(pid)) return;
+  signalCompilerGroup(pid, signal);
+  if (await waitCompilerGroup(pid, 750)) return;
+  signalCompilerGroup(pid, 'SIGKILL');
+  if (!(await waitCompilerGroup(pid, 2500))) throw new Error('owned compiler group did not stop');
+}
+
+function spawnOwnedCompiler(root, revision, command, args) {
+  const child = spawn(command, args, {
+    cwd: root,
+    stdio: 'inherit',
+    // POSIX start-dev.sh: detached establishes ownership, not background work.
+    // No unref; this foreground owner joins the entire group before returning.
+    detached: true,
+    env: { ...process.env, CAT_CAFE_WEB_BUILD_REVISION: revision ?? '' },
+  });
+  const exited = new Promise((resolve, reject) => {
+    child.once('error', reject);
+    child.once('close', (code, signal) => resolve(code ?? (signal ? 128 + constants.signals[signal] : 1)));
+  });
+  let interrupted;
+  let discarded = false;
+  let stopping;
+  let stopError;
+  const forward = (signal) => {
+    interrupted ??= signal;
+    invalidateBuildIdentity(root);
+    if (child?.pid && !stopping) {
+      stopping = stopCompilerGroup(child.pid, signal).catch((error) => {
+        stopError = error;
+      });
+    }
+  };
+  const onInt = () => forward('SIGINT');
+  const onTerm = () => forward('SIGTERM');
+  process.on('SIGINT', onInt);
+  process.on('SIGTERM', onTerm);
+  return {
+    get untrusted() {
+      return Boolean(interrupted) || discarded;
+    },
+    status(code) {
+      return interrupted ? 128 + constants.signals[interrupted] : code;
+    },
+    async wait() {
+      const status = await exited;
+      await stopping;
+      if (stopError) throw stopError;
+      // Shell completion is not tree completion, even when its exit was zero.
+      if (child.pid && compilerGroupAlive(child.pid)) {
+        discarded = true;
+        await stopCompilerGroup(child.pid, 'SIGTERM');
+      }
+      return status;
+    },
+    async close() {
+      try {
+        await stopping;
+        if (child.pid && compilerGroupAlive(child.pid)) {
+          discarded = true;
+          await stopCompilerGroup(child.pid, 'SIGTERM');
+        }
+      } finally {
+        if (interrupted || discarded || stopError) invalidateBuildIdentity(root);
+        process.removeListener('SIGINT', onInt);
+        process.removeListener('SIGTERM', onTerm);
+      }
+    },
+  };
+}
+
 async function runBuildIdentity(root, packages, command, args) {
   const context = beginBuildIdentity(root);
   const watchers = [];
   let sourceChanged = false;
   const seenNamespaces = new Set();
+  let compiler;
+  let status;
   try {
     for (const directory of Object.keys(context.namespaces ?? {})) {
       const observer = watch(path.resolve(root, directory), (_event, filename) => {
@@ -233,46 +340,28 @@ async function runBuildIdentity(root, packages, command, args) {
     }
     const ready = captureBuildState(root);
     if (JSON.stringify(ready?.namespaces) !== JSON.stringify(context.namespaces)) sourceChanged = true;
-    const child = spawn(command, args, {
-      cwd: root,
-      stdio: 'inherit',
-      env: { ...process.env, CAT_CAFE_WEB_BUILD_REVISION: context.revision ?? '' },
-    });
-    const forward = (signal) => {
-      sourceChanged = true;
-      invalidateBuildIdentity(root);
-      child.kill(signal);
-    };
-    const onInt = () => forward('SIGINT');
-    const onTerm = () => forward('SIGTERM');
-    process.on('SIGINT', onInt);
-    process.on('SIGTERM', onTerm);
-    let status;
-    try {
-      status = await new Promise((resolve, reject) => {
-        child.once('error', reject);
-        child.once('close', (code, signal) => resolve(code ?? (signal ? 128 + constants.signals[signal] : 1)));
-      });
-    } finally {
-      process.removeListener('SIGINT', onInt);
-      process.removeListener('SIGTERM', onTerm);
-    }
+    compiler = spawnOwnedCompiler(root, context.revision, command, args);
+    status = await compiler.wait();
     // Drain queued OS notifications while the watchers are still live. A
     // changed directory with no observation is unknown, never generator proof.
     await new Promise((resolve) => setTimeout(resolve, 25));
     const end = captureBuildState(root);
     if (!namespacesObserved(context.namespaces ?? {}, end?.namespaces, seenNamespaces)) sourceChanged = true;
-    if (sourceChanged) context.revision = null;
+    if (sourceChanged || compiler.untrusted) context.revision = null;
     else observedNamespaces.set(context, end?.namespaces);
     if (status !== 0 || !finishBuildIdentity(root, context, packages)) {
       invalidateBuildIdentity(root);
       if (status === 0)
         console.warn('[build] deployment identity unavailable: inputs changed or observation incomplete');
     }
-    return status;
   } finally {
-    for (const observer of watchers) observer.close();
+    try {
+      await compiler?.close();
+    } finally {
+      for (const observer of watchers) observer.close();
+    }
   }
+  return compiler.status(status);
 }
 
 module.exports = {

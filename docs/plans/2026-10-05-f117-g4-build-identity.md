@@ -98,6 +98,23 @@ hermetic build. Dependencies, toolchain/environment reproducibility and hostile
 metadata manipulation are not proven by these existing commit stamps. Run one
 launcher per checkout; concurrent build publication is not newly supported.
 
+The POSIX launcher's compiler tree is a separate owned process group, established
+by a detached spawn that is still awaited (never unref/fire-and-forget). The
+foreground owner retains its SIGINT/SIGTERM handlers through final publication,
+latches the first interruption and preserves its conventional exit code even if
+the shell handles that signal and exits zero. It signals the entire owned group,
+not just the direct shell, and checks process group/state coordinates until no
+live writer remains. Zombies are not artifact writers; on macOS, probing a retired
+group with kill(group, 0) can return EPERM, so membership is read via POSIX ps
+without process arguments instead. An unresponsive group receives SIGKILL after
+a bounded grace period, with a bounded liveness check afterward; the interval is
+not a fixed sleep used as proof of cleanup. Any residual group after shell success
+or failure is also stopped and its publication rejected before final invalidation.
+Only the group created by this build is signalled, never the caller/runtime group.
+This is a POSIX ordinary compiler ownership guarantee, not a hostile descendant
+that deliberately starts a new session/process-group escape guarantee; non-POSIX
+launcher ownership is not validated by this slice.
+
 ## Verification and risk alignment
 
 Behavior: startup identity changes. Data: disposable build metadata only.
@@ -122,6 +139,15 @@ Irreversibility: none; no config/user-data changes or runtime restart.
   reject even unknown ignored siblings, and accept observed build-info/PWA output.
   These are deterministic compiler
   seams through the production launcher, not real compiler evidence.
+  A second independent P2 exposed a live compiler grandchild republishing Web's
+  stamp after parent SIGTERM and final invalidation. Three real parent-signal
+  probes (SIGTERM, SIGINT, and a descendant ignoring TERM) failed before owned
+  process-group joining. SIGINT also exposed a signal being changed to exit0.
+  The harness stays alive until the delayed writer finishes or is confirmed gone;
+  command-session cleanup cannot conceal the failure. Added sibling coverage
+  verifies shell exit17 and exit0 with residual writers are also joined and cannot
+  retain/recreate any stamp. These are actual processes with controlled compiler
+  substitutes, not actual production compilation interrupted mid-build.
 - GREEN: run `node --test scripts/start-dev-build-identity.test.mjs` plus the
   existing launcher isolation and Web writer/config tests.
 - Dogfood required: invoke the actual `build_packages` from this feature checkout

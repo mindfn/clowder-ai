@@ -1,9 +1,20 @@
 import assert from 'node:assert/strict';
-import { spawnSync } from 'node:child_process';
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, renameSync, writeFileSync } from 'node:fs';
+import { spawn, spawnSync } from 'node:child_process';
+import { once } from 'node:events';
+import {
+  closeSync,
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  openSync,
+  readFileSync,
+  renameSync,
+  writeFileSync,
+} from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { test } from 'node:test';
+import { setTimeout as delay } from 'node:timers/promises';
 import identity from './lib/build-identity.cjs';
 
 const launcher = resolve('scripts/start-dev.sh');
@@ -245,6 +256,99 @@ test('a compiler terminated after Web postbuild cannot retain intermediate stamp
   assert.equal(build(root, { mutation: 'signal' }).status, 143);
   for (const pkg of Object.keys(artifacts)) assert.equal(existsSync(stamp(root, pkg)), false, pkg);
 });
+
+function alive(pid) {
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch (error) {
+    if (error.code === 'ESRCH') return false;
+    throw error;
+  }
+}
+
+async function until(predicate, timeout = 5000) {
+  const deadline = Date.now() + timeout;
+  while (!predicate()) {
+    assert.ok(Date.now() < deadline, 'owned probe did not reach expected state');
+    await delay(20);
+  }
+}
+
+for (const [signal, resistant, shellExit] of [
+  ['SIGTERM', false, null],
+  ['SIGINT', false, null],
+  ['SIGTERM', true, null],
+  [null, false, 17],
+  [null, false, 0],
+]) {
+  test(`${signal ? `parent ${signal}` : `shell exit${shellExit}`} joins the owned compiler tree${resistant ? ' even when a descendant ignores TERM' : ''}`, async () => {
+    const { root } = fixture();
+    const ready = join(root, 'compiler-ready.json');
+    const finished = join(root, 'compiler-finished');
+    const compiler = join(root, 'probe-compiler.cjs');
+    writeFileSync(
+      compiler,
+      `
+const fs = require('node:fs');
+${resistant ? "process.on('SIGTERM', () => {});" : ''}
+fs.writeFileSync(${JSON.stringify(ready)}, JSON.stringify({ pid: process.pid, parent: process.ppid }));
+setTimeout(() => {
+  fs.writeFileSync(${JSON.stringify(stamp(root, 'web'))}, process.env.CAT_CAFE_WEB_BUILD_REVISION + '\\n');
+  fs.writeFileSync(${JSON.stringify(finished)}, 'late postbuild');
+}, ${resistant ? 10000 : 500});
+`,
+    );
+    const log = join(root, 'owner.log');
+    const logFd = openSync(log, 'w');
+    const owner = spawn(
+      process.execPath,
+      [
+        resolve('scripts/lib/build-identity.cjs'),
+        'run',
+        root,
+        'shared,mcp-server,api,web',
+        'bash',
+        '-c',
+        signal
+          ? '"$PROBE_NODE" "$PROBE_COMPILER"; :'
+          : '"$PROBE_NODE" "$PROBE_COMPILER" & for i in {1..250}; do [ ! -f "$PROBE_READY" ] || exit "$PROBE_EXIT"; sleep 0.01; done; exit 18',
+      ],
+      {
+        cwd: root,
+        stdio: ['ignore', logFd, logFd],
+        env: {
+          ...process.env,
+          PROBE_NODE: process.execPath,
+          PROBE_COMPILER: compiler,
+          PROBE_READY: ready,
+          PROBE_EXIT: String(shellExit),
+        },
+      },
+    );
+    const exit = once(owner, 'exit');
+    let pid;
+    try {
+      await until(() => existsSync(ready));
+      ({ pid } = JSON.parse(readFileSync(ready, 'utf8')));
+      if (signal) owner.kill(signal);
+      const [code] = await exit;
+      // If the old implementation leaves a writer, keep the harness alive
+      // until its delayed postbuild fires instead of letting exec cleanup hide it.
+      await until(() => existsSync(finished) || !alive(pid), resistant ? 12000 : 5000);
+      const expected = signal ? (signal === 'SIGINT' ? 130 : 143) : shellExit;
+      assert.equal(code, expected, readFileSync(log, 'utf8'));
+      assert.equal(alive(pid), false, 'compiler descendant must be joined before owner exits');
+      assert.equal(existsSync(finished), false, 'a surviving descendant completed late postbuild');
+      for (const pkg of Object.keys(artifacts)) assert.equal(existsSync(stamp(root, pkg)), false, pkg);
+    } finally {
+      // These are exact probe processes created above, never runtime/parent PIDs.
+      if (owner.exitCode === null && owner.signalCode === null) owner.kill('SIGTERM');
+      if (pid && alive(pid)) process.kill(pid, 'SIGKILL');
+      closeSync(logFd);
+    }
+  });
+}
 
 test('main only enters the build transaction when quick mode is disabled', () => {
   assert.match(readFileSync(launcher, 'utf8'), /if \[ "\$QUICK_MODE" = false \]; then\s+build_packages\s+else/);
