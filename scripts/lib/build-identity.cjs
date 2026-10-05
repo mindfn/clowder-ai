@@ -12,11 +12,9 @@ const PRODUCTS = Object.freeze({
   web: 'packages/web/.next/BUILD_ID',
 });
 const INPUTS = Object.freeze([
-  'packages/api',
-  'packages/shared',
-  'packages/mcp-server',
-  'packages/web',
+  'packages',
   'scripts',
+  'tsconfig.base.json',
   'package.json',
   'pnpm-lock.yaml',
   'pnpm-workspace.yaml',
@@ -62,10 +60,6 @@ function captureBuildState(root) {
   } catch {
     return null; // Non-git or unreadable inputs can build, but cannot claim identity.
   }
-}
-
-function captureBuildIdentity(root) {
-  return captureBuildState(root)?.revision ?? null;
 }
 
 function productState(root, pkg) {
@@ -158,7 +152,6 @@ function finishBuildIdentity(root, context, packages) {
 module.exports = {
   PRODUCTS,
   INPUTS,
-  captureBuildIdentity,
   beginBuildIdentity,
   invalidateBuildIdentity,
   finishBuildIdentity,

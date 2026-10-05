@@ -69,7 +69,9 @@ local feature branches. That bounded inspection is not a global absence claim.
 6. Retain strict failure on missing, malformed and mismatching stamps. No text
    inference, HEAD-at-startup fallback or forwarding-guard bypass is added.
 
-Source stability uses Git status, exact HEAD and source file/reflog metadata.
+Source stability uses Git status, exact HEAD and source file/reflog metadata,
+covering workspace packages, the inherited root TypeScript configuration,
+scripts and root dependency manifests.
 It detects ordinary edits including edit-and-restore and HEAD move-and-return;
 it is not an exclusive writer lock, cryptographic artifact attestation, or a
 hermetic build. Dependencies, toolchain/environment reproducibility and hostile
@@ -86,7 +88,9 @@ Irreversibility: none; no config/user-data changes or runtime restart.
 - RED: the prior normal build path retained old stamps after success/failure;
   the initial regression run had ten failures and the quick-mode test passed.
   Added no-output and edit/HEAD-restore regressions separately failed before
-  their corresponding checks were implemented. These are deterministic compiler
+  their corresponding checks were implemented. Root TypeScript config and
+  workspace-dependency mutation tests also failed before expanding the input set.
+  These are deterministic compiler
   seams through the production launcher, not real compiler evidence.
 - GREEN: run `node --test scripts/start-dev-build-identity.test.mjs` plus the
   existing launcher isolation and Web writer/config tests.

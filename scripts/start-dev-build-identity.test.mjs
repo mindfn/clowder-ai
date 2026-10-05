@@ -25,6 +25,9 @@ function fixture({ versioned = true } = {}) {
   const root = mkdtempSync(join(tmpdir(), 'f117-build-identity-'));
   writeFileSync(join(root, '.gitignore'), '**/dist/\n**/.next/\n');
   writeFileSync(join(root, 'package.json'), '{}\n');
+  writeFileSync(join(root, 'tsconfig.base.json'), '{}\n');
+  mkdirSync(join(root, 'packages', 'collective-service', 'src'), { recursive: true });
+  writeFileSync(join(root, 'packages', 'collective-service', 'src', 'index.ts'), 'export const version = 1;\n');
   for (const [pkg, product] of Object.entries(artifacts)) {
     mkdirSync(join(root, 'packages', pkg, 'src'), { recursive: true });
     writeFileSync(join(root, 'packages', pkg, 'src', 'index.ts'), 'export const version = 1;\n');
@@ -66,6 +69,8 @@ run_logged_step() {
     case "$BUILD_MUTATION" in
       head) git -C "$PROJECT_DIR" -c user.name=fixture -c user.email=fixture@example.invalid commit --allow-empty -qm moved ;;
       tracked) printf 'changed\\n' >> "$PROJECT_DIR/packages/api/src/index.ts" ;;
+      root_config) printf ' \\n' >> "$PROJECT_DIR/tsconfig.base.json" ;;
+      workspace_dependency) printf 'changed\\n' >> "$PROJECT_DIR/packages/collective-service/src/index.ts" ;;
       untracked) printf 'new\\n' > "$PROJECT_DIR/packages/shared/src/new.ts" ;;
       restored) cp "$PROJECT_DIR/packages/api/src/index.ts" "$PROJECT_DIR/original.ts"; printf 'transient\\n' >> "$PROJECT_DIR/packages/api/src/index.ts"; cp "$PROJECT_DIR/original.ts" "$PROJECT_DIR/packages/api/src/index.ts" ;;
       head_restored) local old_head; old_head=$(git -C "$PROJECT_DIR" rev-parse HEAD); git -C "$PROJECT_DIR" -c user.name=fixture -c user.email=fixture@example.invalid commit --allow-empty -qm moved; git -C "$PROJECT_DIR" update-ref -m returned HEAD "$old_head" ;;
@@ -120,7 +125,15 @@ for (const fail of ['shared', 'mcp-server', 'api', 'web']) {
   });
 }
 
-for (const mutation of ['head', 'tracked', 'untracked', 'restored', 'head_restored']) {
+for (const mutation of [
+  'head',
+  'tracked',
+  'root_config',
+  'workspace_dependency',
+  'untracked',
+  'restored',
+  'head_restored',
+]) {
   test(`${mutation} changes during compilation cannot publish current HEAD as build identity`, () => {
     const { root } = fixture();
     const result = build(root, { mutation });
