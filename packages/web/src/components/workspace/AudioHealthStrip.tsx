@@ -1,3 +1,5 @@
+import { useShellPresentation } from '@/components/shell/shell-presentation';
+import { AudioHealthStripV2 } from './AudioHealthStripV2';
 import type { AudioStatus, ComponentHealth } from './audio-transcript-contract';
 
 function tone(state: ComponentHealth['state'] | NonNullable<AudioStatus['inputs']>[number]['state']) {
@@ -18,7 +20,7 @@ function HealthItem({ label, health, active }: { label: string; health?: Compone
   );
 }
 
-export function AudioHealthStrip({ status }: { status: AudioStatus }) {
+function AudioHealthStripClassic({ status }: { status: AudioStatus }) {
   const hasDetails = status.health || status.inputs?.length;
   if (!hasDetails) return null;
   return (
@@ -66,4 +68,9 @@ export function AudioHealthStrip({ status }: { status: AudioStatus }) {
         ))}
     </div>
   );
+}
+
+export function AudioHealthStrip({ status }: { status: AudioStatus }) {
+  const presentation = useShellPresentation();
+  return presentation === 'v2' ? <AudioHealthStripV2 status={status} /> : <AudioHealthStripClassic status={status} />;
 }

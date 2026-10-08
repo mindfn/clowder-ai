@@ -45,6 +45,14 @@
     "./profile-revision": {
       "import": "./dist/profile-revision.js",
       "types": "./dist/profile-revision.d.ts"
+    },
+    "./recent-works": {
+      "import": "./dist/recent-works.js",
+      "types": "./dist/recent-works.d.ts"
+    },
+    "./routing-preview": {
+      "import": "./dist/routing-preview.js",
+      "types": "./dist/routing-preview.d.ts"
     }
   },
   "scripts": {

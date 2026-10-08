@@ -12,7 +12,7 @@
  *  - AC-B1c-12: source-bound delta payload format (delegated to build-delta-payload)
  *
  * The legacy PinchTab bridge, which drove the foreground ChatGPT tab and could
- * open a fresh chat, was removed (F202 W2-3 h3a, issue #1538): the bridge never
+ * open a fresh chat, was removed (issue #1538): the bridge never
  * sends through a second transport after the Host declines.
  */
 
@@ -68,6 +68,11 @@ export class CloudInvokeBridge implements ICloudInvokeBridge {
 
   async dispatch(params: CloudInvokeDispatchParams): Promise<BridgeDispatchOutcome> {
     try {
+      if (params.catId === 'gpt-dot') {
+        return this.deps.dispatchDot
+          ? await this.deps.dispatchDot(params)
+          : { kind: 'fallback', reason: 'no-adapter', detail: 'dot 连接尚未准备，请打开 ChatGPT 云端插件详情。' };
+      }
       const outcome = await this.dispatchInternal(params);
       this.logger.info(
         { threadId: params.threadId, catId: params.catId, outcomeKind: outcome.kind },

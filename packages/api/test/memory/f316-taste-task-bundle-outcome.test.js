@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict';
 import { describe, test } from 'node:test';
+import { RECALL_OPPORTUNITY_CATALOG_VERSION } from '@cat-cafe/shared';
 import Database from 'better-sqlite3';
 import Fastify from 'fastify';
 
@@ -15,7 +16,7 @@ function coordinate(cueId) {
   return {
     cueId,
     opportunityId: 'f316-task-bundle-outcome',
-    catalogVersion: 5,
+    catalogVersion: RECALL_OPPORTUNITY_CATALOG_VERSION,
     resolverFamily: 'taste',
     resolverVersion: 3,
     family: 'taste',

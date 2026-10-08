@@ -143,6 +143,21 @@ function applyEvidenceEvent(ctx: ReducerContext, event: EvolutionProgramEventV1)
       );
       setStage(ctx, 'instrumenting');
       return true;
+    case 'measurement_constitution_rebound':
+      requireActiveAt(ctx, 'instrumenting');
+      ctx.program.certificates.measurement = event.measurementCertificateRef;
+      ctx.program.measurementRoleRefs = event.measurementRoleRefs;
+      addRefs(
+        ctx,
+        event.sourceRef,
+        event.decisionProofRef,
+        event.measurementCertificateRef,
+        event.measurementRoleRefs.observer,
+        event.measurementRoleRefs.domainOwner,
+        event.measurementRoleRefs.consumer,
+        event.measurementRoleRefs.calibrator,
+      );
+      return true;
     case 'sources_and_triggers_linked':
       requireActiveAt(ctx, 'instrumenting');
       addRefs(ctx, ...event.sourceRefs, event.triggerRef, event.namedConsumerRef);

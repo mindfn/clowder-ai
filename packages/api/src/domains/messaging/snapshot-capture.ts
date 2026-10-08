@@ -43,7 +43,6 @@ function isSnapshotVisible(msg: StoredMessage): boolean {
   if (isInternalNonQuotableParent(msg as Parameters<typeof isInternalNonQuotableParent>[0])) return false;
   if (msg.extra?.systemKind !== undefined) return false;
   if (msg.extra?.scheduler?.hiddenTrigger) return false;
-  if (msg.userId === 'scheduler') return false;
   return true;
 }
 

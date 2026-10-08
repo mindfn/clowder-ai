@@ -104,25 +104,47 @@ export class GovernanceRegistry {
     return data.entries;
   }
 
-  async checkHealth(projectPath: string, currentVersion?: string): Promise<GovernanceHealthSummary> {
-    const version = currentVersion ?? GOVERNANCE_PACK_VERSION;
-    const entry = await this.get(projectPath);
-    if (!entry) {
-      return {
-        projectPath,
-        status: 'never-synced',
-        packVersion: null,
-        lastSyncedAt: null,
-        findings: [],
-      };
+  /** A request-local health snapshot: read and parse the registry once. */
+  async listHealth(currentVersion?: string): Promise<GovernanceHealthSummary[]> {
+    const { entries } = await this.read();
+    const firstByPath = new Map<string, RegistryEntry>();
+    for (const entry of entries) {
+      if (!firstByPath.has(entry.projectPath)) firstByPath.set(entry.projectPath, entry);
     }
-    const status = entry.packVersion === version ? 'healthy' : 'stale';
+    return entries.map((entry) => {
+      // Keep get()'s first-match semantics for legacy duplicates and Windows paths.
+      const first =
+        process.platform === 'win32'
+          ? entries.find((candidate) => pathsEqual(candidate.projectPath, entry.projectPath))
+          : firstByPath.get(entry.projectPath);
+      return projectGovernanceHealth(entry.projectPath, first, currentVersion ?? GOVERNANCE_PACK_VERSION);
+    });
+  }
+
+  async checkHealth(projectPath: string, currentVersion?: string): Promise<GovernanceHealthSummary> {
+    return projectGovernanceHealth(projectPath, await this.get(projectPath), currentVersion ?? GOVERNANCE_PACK_VERSION);
+  }
+}
+
+function projectGovernanceHealth(
+  projectPath: string,
+  entry: RegistryEntry | undefined,
+  currentVersion: string,
+): GovernanceHealthSummary {
+  if (!entry) {
     return {
       projectPath,
-      status,
-      packVersion: entry.packVersion,
-      lastSyncedAt: entry.syncedAt,
+      status: 'never-synced',
+      packVersion: null,
+      lastSyncedAt: null,
       findings: [],
     };
   }
+  return {
+    projectPath,
+    status: entry.packVersion === currentVersion ? 'healthy' : 'stale',
+    packVersion: entry.packVersion,
+    lastSyncedAt: entry.syncedAt,
+    findings: [],
+  };
 }

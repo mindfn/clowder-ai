@@ -12,6 +12,8 @@ export interface ExecutionRecoveryVerification {
   readonly canonicalProjectionReady: boolean;
   /** Canonical truth covers the thread but its last sync failed. */
   readonly canonicalProjectionStale: boolean;
+  /** Canonical truth for this thread has not settled yet. */
+  readonly canonicalProjectionLoading: boolean;
   /**
    * The legacy socket still reports a live turn while canonical truth is empty
    * and unsettled. Nothing can confirm or deny that a turn is running, so the
@@ -74,11 +76,15 @@ export function useExecutionRecoveryVerification(
     (executionProjectPath !== null && executionProjectPath === effectiveThreadProjectPath);
   const canonicalProjectionReady = canonicalSnapshotCoversThread && executionHydration === 'ready';
   const canonicalProjectionStale = canonicalSnapshotCoversThread && executionHydration === 'error';
+  const canonicalProjectionLoading =
+    !canonicalProjectionReady &&
+    (!canonicalSnapshotCoversThread || executionHydration === 'idle' || executionHydration === 'loading');
 
   return {
     canonicalSnapshotCoversThread,
     canonicalProjectionReady,
     canonicalProjectionStale,
+    canonicalProjectionLoading,
     hasUnverifiedLegacyExecution: Boolean(
       legacyHasActiveInvocation && canonicalExecutionCount === 0 && !canonicalProjectionReady,
     ),

@@ -66,8 +66,8 @@ Discussed the architecture of the memory system, decided to use YAML as truth so
 
 ## Durable Knowledge
 
-[decision!] Knowledge Feed uses YAML as truth source — for git-trackability and audit trail
-[lesson] Redis port isolation prevents data corruption — dev on 6398, prod on 6399`;
+[decision!] Knowledge Feed uses YAML as truth source — for git-trackability and audit trail [sources: msg-1]
+[lesson] Redis port isolation prevents data corruption — dev on 6398, prod on 6399 [sources: msg-1]`;
 
     const result = parseNaturalLanguageOutput(text, baseInput);
     assert.ok(result);
@@ -100,9 +100,9 @@ Summary of how we handle Redis port isolation in development and production envi
 
 Made lots of decisions today.
 
-[decision!] First decision about architecture — important
-[lesson] Second learning about testing — also important
-[method] Third method about deployment — worth keeping`;
+[decision!] First decision about architecture — important [sources: msg-1]
+[lesson] Second learning about testing — also important [sources: msg-1]
+[method] Third method about deployment — worth keeping [sources: msg-1]`;
 
     const result = parseNaturalLanguageOutput(text, baseInput);
     assert.ok(result);
@@ -118,8 +118,8 @@ Made lots of decisions today.
 
 Updated several files for the memory system.
 
-[decision] Added mkdirSync before writeFileSync — prevents ENOENT
-[lesson!] Silent catch blocks cause invisible data loss — always log errors in catch blocks`;
+[decision] Added mkdirSync before writeFileSync — prevents ENOENT [sources: msg-1]
+[lesson!] Silent catch blocks cause invisible data loss — always log errors in catch blocks [sources: msg-1]`;
 
     const result = parseNaturalLanguageOutput(text, baseInput);
     assert.ok(result);

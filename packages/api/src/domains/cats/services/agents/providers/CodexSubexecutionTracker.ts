@@ -21,12 +21,16 @@ export interface CodexSubexecutionObservation {
 
 export interface CodexSubexecutionTracker {
   observe(envelope: unknown): Promise<CodexSubexecutionObservation>;
+  /** Live owner inputs advance the root turn without cancelling its already-admitted children. */
+  advanceRootTurn(turnId: string): void;
+  hasPendingChildren(): boolean;
 }
 
 interface CodexSubexecutionTrackerOptions {
   readonly binding: RootBinding;
   readonly readThread: (threadId: string) => Promise<unknown>;
   readonly now?: () => number;
+  readonly emitChildTurnStarts?: boolean;
 }
 
 interface TrackerState {
@@ -58,9 +62,24 @@ export function createCodexSubexecutionTracker(options: CodexSubexecutionTracker
     activityOwners: new Map(),
   };
   const now = options.now ?? Date.now;
+  let binding = options.binding;
+  const pending = new Set<string>();
 
   return {
-    observe: (envelope) => observeEnvelope(envelope, options, state, now),
+    observe: async (envelope) => {
+      const result = await observeEnvelope(envelope, { ...options, binding }, state, now);
+      if (result.event) {
+        if (['completed', 'failed', 'interrupted'].includes(result.event.stage))
+          pending.delete(result.event.subexecution_id);
+        else pending.add(result.event.subexecution_id);
+      }
+      return result;
+    },
+    hasPendingChildren: () => pending.size > 0,
+    advanceRootTurn(turnId) {
+      if (!exactCoordinate(turnId)) throw new Error('Invalid root turn');
+      binding = { threadId: binding.threadId, turnId };
+    },
   };
 }
 
@@ -77,7 +96,7 @@ async function observeEnvelope(
   }
   const known = resolveKnownNotification(notification, options.binding, state);
   if (!known || !matchesKnownTurn(known, options.binding)) return { scope: 'foreign' };
-  return observeKnownNotification(known, options.readThread, state, now);
+  return observeKnownNotification(known, options.readThread, state, now, options.emitChildTurnStarts === true);
 }
 
 function parseNotification(envelope: unknown): ParsedNotification | null {
@@ -121,6 +140,7 @@ async function observeKnownNotification(
   readThread: (threadId: string) => Promise<unknown>,
   state: TrackerState,
   now: () => number,
+  emitChildTurnStarts: boolean,
 ): Promise<CodexSubexecutionObservation> {
   const activity = startedSubAgentActivity(notification);
   if (activity) {
@@ -128,7 +148,13 @@ async function observeKnownNotification(
     return event ? { scope: notification.scope, event } : { scope: notification.scope };
   }
   if (notification.scope === 'root') return { scope: 'root' };
-  const event = observeChildNotification(notification.record, notification.params, notification.identity, now);
+  const event = observeChildNotification(
+    notification.record,
+    notification.params,
+    notification.identity,
+    now,
+    emitChildTurnStarts,
+  );
   return emitOnce(notification.scope, event, state.emittedEvents);
 }
 
@@ -250,13 +276,21 @@ function observeChildNotification(
   params: JsonObject,
   child: SubexecutionIdentity,
   now: () => number,
+  emitChildTurnStarts: boolean,
 ): CodexSubexecutionEvent | null {
   const method = record.method;
   if (method === 'turn/started') {
     const turnId = notificationTurnId(params);
     if (!turnId || (child.activeTurnId && child.activeTurnId !== turnId)) return null;
     child.activeTurnId = turnId;
-    return null;
+    return emitChildTurnStarts
+      ? createCodexSubexecutionEvent(child, {
+          eventId: subexecutionEventId('started', child.subexecutionId, turnId),
+          occurredAt: emittedAt(record, now),
+          stage: 'started',
+          turnId,
+        })
+      : null;
   }
   const turnId = notificationTurnId(params);
   if (!turnId || turnId !== child.activeTurnId) return null;
@@ -265,6 +299,32 @@ function observeChildNotification(
     const item = asCodexAppServerRecord(params.item);
     const itemId = exactCoordinate(item?.id);
     const content = nonBlankText(item?.text);
+    const result = asCodexAppServerRecord(item?.result);
+    if (
+      emitChildTurnStarts &&
+      item?.type === 'mcpToolCall' &&
+      itemId &&
+      (item.status === 'failed' || item.error || result?.isError === true)
+    ) {
+      const error = asCodexAppServerRecord(item.error);
+      const contentRows = Array.isArray(result?.content) ? result.content.map(asCodexAppServerRecord) : [];
+      const admissionDenied =
+        error?.message === 'Native tool admission is unavailable for this exact turn' ||
+        contentRows.some(
+          (row) =>
+            typeof row?.text === 'string' &&
+            row.text.includes('Native tool admission is unavailable for this exact turn'),
+        );
+      const tool = typeof item.tool === 'string' && /^[A-Za-z0-9_-]{1,200}$/.test(item.tool) ? item.tool : 'unknown';
+      return createCodexSubexecutionEvent(child, {
+        eventId: subexecutionEventId('tool-failed', child.subexecutionId, turnId, itemId),
+        occurredAt: emittedAt(record, now),
+        stage: 'message',
+        turnId,
+        messagePhase: 'unknown',
+        content: `子执行工具拒绝/失败：${tool}；原因：${admissionDenied ? 'native_turn_admission_unavailable' : 'native_tool_failed_reason_unknown'}。不复制原错误正文或凭据。`,
+      });
+    }
     if (item?.type !== 'agentMessage' || !itemId || !content) return null;
     return createCodexSubexecutionEvent(child, {
       eventId: subexecutionEventId('message', child.subexecutionId, turnId, itemId),
@@ -289,7 +349,10 @@ function observeChildNotification(
   });
 }
 
-function subexecutionEventId(kind: 'started' | 'message' | 'terminal', ...coordinates: string[]): string {
+function subexecutionEventId(
+  kind: 'started' | 'message' | 'terminal' | 'tool-failed',
+  ...coordinates: string[]
+): string {
   return `subexecution:codex:${kind}:${coordinates.map((coordinate) => `${coordinate.length}:${coordinate}`).join('')}`;
 }
 

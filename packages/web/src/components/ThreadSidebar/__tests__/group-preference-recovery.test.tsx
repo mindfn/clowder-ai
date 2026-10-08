@@ -64,6 +64,44 @@ describe('Group preference read recovery', () => {
     expect(current.savedGroups).toEqual(snapshot.groups);
     expect(container.textContent).toBe('整理全部 3 条');
   });
+  it('tracks a default-sort reset until canonical preferences confirm it and preserves overrides on failure', async () => {
+    const manual = { ...snapshot, memberSort: { 'group:attention_a': 'manual' } };
+    mockApiFetch.mockImplementation(() => jsonOk(manual));
+    await render();
+    const cluster = {
+      anchor: 'group:attention_a',
+      groupId: 'attention_a',
+      rootThreadId: 'a',
+      title: 'Group',
+      memberIds: ['a', 'b'],
+      searchText: '',
+    };
+    let finish!: (response: Response) => void;
+    mockApiFetch.mockClear().mockImplementation(() => new Promise<Response>((resolve) => (finish = resolve)));
+    let mutation!: Promise<void>;
+    await act(async () => {
+      mutation = current.changeMemberSort(cluster, null);
+    });
+    expect(current.pendingSort.has(cluster.anchor)).toBe(true);
+    expect(current.memberSort[cluster.anchor]).toBe('manual');
+    expect(JSON.parse(String(mockApiFetch.mock.calls[0]?.[1]?.body))).toEqual({
+      anchor: cluster.anchor,
+      memberSort: null,
+    });
+    await act(async () => {
+      finish(await jsonOk(snapshot));
+      await mutation;
+    });
+    expect(current.memberSort[cluster.anchor]).toBeUndefined();
+    expect(current.pendingSort.has(cluster.anchor)).toBe(false);
+    mockApiFetch.mockImplementation(() => jsonOk(manual));
+    await act(async () => current.reloadGroups());
+    mockApiFetch.mockRejectedValue(new Error('save failed'));
+    await act(async () => current.changeMemberSort(cluster, null));
+    expect(current.memberSort[cluster.anchor]).toBe('manual');
+    expect(current.pendingSort.has(cluster.anchor)).toBe(false);
+    expect(current.preferenceError).toContain('重试');
+  });
 
   it('bounds automatic retries and explains a persistent timeout', async () => {
     mockApiFetch.mockRejectedValue(timeout());

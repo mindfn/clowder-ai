@@ -298,6 +298,7 @@ function makeHarness(overrides = {}) {
     new DecisionCueResolver(decisionSource),
     new ProjectKnowledgeCueResolver(projectSource),
     new CatOwnedSeedCueResolver(catOwnedSeedSource),
+    { family: 'thread_overview', resolverVersion: 1, resolve: async () => [] },
   ]);
   const service = new MemoryCuePlaneService(registry, overrides.episodeStore);
   return { calls, registry, service };
@@ -313,7 +314,7 @@ const productionSizedDrillHandle =
 
 describe('F287 RecallOpportunity catalog', () => {
   it('is closed, versioned and binds scope to server truth', () => {
-    assert.equal(RECALL_OPPORTUNITY_CATALOG_V5.version, 5);
+    assert.equal(RECALL_OPPORTUNITY_CATALOG_V5.version, 6);
     assert.deepEqual(
       RECALL_OPPORTUNITY_CATALOG_V5.entries.map(({ kind, producer }) => ({ kind, producer })),
       [
@@ -326,6 +327,7 @@ describe('F287 RecallOpportunity catalog', () => {
         { kind: 'accepted_decision_required', producer: 'owner_message' },
         { kind: 'project_source_required', producer: 'task_context' },
         { kind: 'owned_seed_available', producer: 'present_loop' },
+        { kind: 'thread_opened', producer: 'owner_message' },
       ],
     );
     assert.deepEqual(admitRecallOpportunity(subjectOpportunity, scope), subjectOpportunity);
@@ -346,7 +348,7 @@ describe('F287 RecallOpportunity catalog', () => {
 });
 
 describe('F287 MemoryCueResolverRegistry', () => {
-  it('registers all eight families with the cat-owned Seed lane admitted in v5', async () => {
+  it('registers all nine families with the cat-owned Seed lane admitted in v5', async () => {
     const { registry } = makeHarness();
     assert.deepEqual(registry.families(), [
       'person_entity',
@@ -357,6 +359,7 @@ describe('F287 MemoryCueResolverRegistry', () => {
       'decision',
       'project_knowledge',
       'cat_owned_seed',
+      'thread_overview',
     ]);
     assert.equal(RECALL_RESOLVER_ADMISSION_V5.profile, 'catalog');
     assert.equal(RECALL_RESOLVER_ADMISSION_V5.event, 'catalog');
@@ -614,7 +617,7 @@ describe('F287 MemoryCuePlaneService', () => {
         opportunityKind: 'recall',
         producerOwner: candidate.producer,
         consumerScope: { kind: 'invocation', ...scope },
-        entryVersion: `recall-catalog:5:${candidate.kind}:${candidate.producer}`,
+        entryVersion: `recall-catalog:6:${candidate.kind}:${candidate.producer}`,
         subjectKey: `memory-cue:${expectedFamily}:${result.cues[0].source.anchor}`,
         asOf: { kind: 'version', value: result.cues[0].source.revision },
         sourceRefs: [result.cues[0].source.anchor],
@@ -669,7 +672,7 @@ describe('F287 MemoryCuePlaneService', () => {
         sourceRevision: 'revision-1',
         axis: 'consumption',
         consumptionOutcome: 'presented',
-        catalogVersion: 5,
+        catalogVersion: 6,
         resolverVersion: 1,
         occurredAt: subjectOpportunity.occurredAt,
       },

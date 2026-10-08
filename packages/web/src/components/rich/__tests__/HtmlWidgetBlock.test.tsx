@@ -1,8 +1,10 @@
+import { runInNewContext } from 'node:vm';
 import React, { act } from 'react';
 import { createRoot, type Root } from 'react-dom/client';
 import { renderToStaticMarkup } from 'react-dom/server';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { HtmlWidgetBlock } from '../HtmlWidgetBlock';
+import { addHtmlWidgetHeightBridge } from '../html-widget-height-bridge';
 import { WIDGET_PROOF_REQUEST_EVENT, WIDGET_PROOF_REQUEST_MESSAGE } from '../html-widget-layout-machine';
 import { sanitizeWidgetHtml } from '../sanitize-widget-html';
 
@@ -11,6 +13,126 @@ Object.assign(globalThis as Record<string, unknown>, { React });
 function optionalPreserveViewport(value: unknown): { preserveViewport?: unknown } {
   return value === undefined ? {} : { preserveViewport: value };
 }
+
+function mountGeneratedInputBridge() {
+  const listeners = new Map<string, (event: { isTrusted: boolean }) => void>();
+  const windowListeners = new Map<string, (event: { source: object; data: Record<string, unknown> }) => void>();
+  const messages: Record<string, unknown>[] = [];
+  const parent = {
+    postMessage: (message: Record<string, unknown>) => {
+      messages.push(message);
+    },
+  };
+  const animationFrames = vi.fn();
+  const html = addHtmlWidgetHeightBridge('<p>Content</p>', 'input-block', 'input-instance');
+  const script = html.match(/<script data-cat-cafe-widget-bridge>([\s\S]*?)<\/script>/)?.[1];
+  expect(script).toBeDefined();
+  runInNewContext(script ?? '', {
+    document: {
+      body: null,
+      documentElement: {},
+      addEventListener: (type: string, listener: (event: { isTrusted: boolean }) => void) => {
+        listeners.set(type, listener);
+      },
+    },
+    window: {
+      addEventListener: (type: string, listener: (event: { source: object; data: Record<string, unknown> }) => void) =>
+        windowListeners.set(type, listener),
+      setTimeout: vi.fn(),
+    },
+    parent,
+    performance: { now: () => 10, timeOrigin: 1000 },
+    requestAnimationFrame: animationFrames,
+    MutationObserver: class {
+      observe() {}
+    },
+  });
+  return {
+    listeners,
+    messages,
+    animationFrames,
+    receiveRequest: (data: Record<string, unknown>, source = parent) =>
+      windowListeners.get('message')?.({ source, data }),
+  };
+}
+
+describe('generated widget input bridge', () => {
+  it('acknowledges the input queue with its trusted epoch before measurement, without generating a new input', () => {
+    const fixture = mountGeneratedInputBridge();
+    fixture.listeners.get('pointerdown')?.({ isTrusted: true });
+    fixture.receiveRequest({
+      type: 'cat-cafe:html-widget-input-fence-request',
+      v: 6,
+      blockId: 'input-block',
+      instanceId: 'input-instance',
+      requestId: 'reading:1',
+    });
+    expect(fixture.messages).toHaveLength(3);
+    expect(fixture.messages[1]).toMatchObject({ phase: 'pending', inputOccurredAt: 1010 });
+    expect(fixture.messages[2]).toEqual({
+      type: 'cat-cafe:html-widget-input-fence-ack',
+      v: 6,
+      blockId: 'input-block',
+      instanceId: 'input-instance',
+      requestId: 'reading:1',
+      inputOccurredAt: 1010,
+    });
+    expect(fixture.animationFrames).toHaveBeenCalledTimes(1);
+  });
+
+  it('rejects foreign/stale fence requests and acknowledges a valid queue with no invented input epoch', () => {
+    const fixture = mountGeneratedInputBridge();
+    const request = {
+      type: 'cat-cafe:html-widget-input-fence-request',
+      v: 6,
+      blockId: 'input-block',
+      instanceId: 'input-instance',
+      requestId: 'reading:1',
+    };
+    for (const delta of [
+      { v: 7 },
+      { blockId: 'foreign' },
+      { instanceId: 'stale' },
+      { requestId: '' },
+      { requestId: 'bad id' },
+    ])
+      fixture.receiveRequest({ ...request, ...delta });
+    fixture.receiveRequest(request, { postMessage: () => {} });
+    expect(fixture.messages).toHaveLength(1);
+    fixture.receiveRequest(request);
+    expect(fixture.messages).toHaveLength(2);
+    expect(fixture.messages[1]).not.toHaveProperty('inputOccurredAt');
+    expect(fixture.messages[1]?.type).toBe('cat-cafe:html-widget-input-fence-ack');
+  });
+
+  it.each(['pointerdown', 'keydown', 'click'])('%s notifies the reading owner before measurement', (type) => {
+    const { listeners, messages, animationFrames } = mountGeneratedInputBridge();
+    expect(messages).toHaveLength(1); // Initial passive invalidation is already pending.
+    const listener = listeners.get(type);
+    expect(listener).toBeDefined();
+    listener?.({ isTrusted: true });
+    expect(messages).toHaveLength(2);
+    expect(messages[1]).toMatchObject({
+      v: 6,
+      phase: 'pending',
+      cause: 'content',
+      blockId: 'input-block',
+      instanceId: 'input-instance',
+      preserveViewport: true,
+      inputOccurredAt: 1010,
+    });
+    expect(animationFrames).toHaveBeenCalledTimes(1); // No deferred callback ran to notify the owner.
+  });
+
+  it.each(['pointerdown', 'keydown', 'click'])('untrusted %s cannot capture reading', (type) => {
+    const { listeners, messages } = mountGeneratedInputBridge();
+    const listener = listeners.get(type);
+    expect(listener).toBeDefined();
+    listener?.({ isTrusted: false });
+    expect(messages).toHaveLength(1);
+    expect(messages[0]).not.toHaveProperty('preserveViewport');
+  });
+});
 
 describe('HtmlWidgetBlock', () => {
   it('server-renders a bounded loading state instead of committing an empty iframe', () => {
@@ -301,6 +423,8 @@ describe('HtmlWidgetBlock responsive height contract', () => {
       blockId?: string;
       instanceId?: string;
       cause?: 'content' | 'viewport';
+      preserveViewport?: unknown;
+      inputOccurredAt?: unknown;
     } = {},
   ) {
     const {
@@ -319,6 +443,8 @@ describe('HtmlWidgetBlock responsive height contract', () => {
             cause: overrides.cause ?? 'content',
             blockId,
             instanceId,
+            ...optionalPreserveViewport(overrides.preserveViewport),
+            ...(overrides.inputOccurredAt === undefined ? {} : { inputOccurredAt: overrides.inputOccurredAt }),
           },
           origin,
           source,
@@ -363,6 +489,88 @@ describe('HtmlWidgetBlock responsive height contract', () => {
       await reportHeight(fixture, 420);
       const passiveChange = changes.at(-1);
       expect(passiveChange).not.toBeInstanceOf(CustomEvent);
+    } finally {
+      window.removeEventListener('catcafe:chat-layout-changed', onLayoutChange);
+    }
+  });
+
+  it('captures the current reading owner at child input before a deferred height measurement', async () => {
+    const fixture = await renderWidget({ height: 500 });
+    await reportHeight(fixture, 184);
+    const changes: Event[] = [];
+    const onLayoutChange = (event: Event) => changes.push(event);
+    window.addEventListener('catcafe:chat-layout-changed', onLayoutChange);
+    try {
+      await reportPending(fixture, { preserveViewport: true });
+      expect(fixture.iframe.style.height).toBe('184px');
+      expect(changes).toHaveLength(1);
+      expect((changes[0] as CustomEvent).detail).toEqual({ captureCurrentReading: true });
+    } finally {
+      window.removeEventListener('catcafe:chat-layout-changed', onLayoutChange);
+    }
+  });
+
+  it('does not capture reading for passive, invalid, or unrelated child pending messages', async () => {
+    const fixture = await renderWidget({ height: 500 });
+    await reportHeight(fixture, 184);
+    const changes: Event[] = [];
+    const onLayoutChange = (event: Event) => changes.push(event);
+    window.addEventListener('catcafe:chat-layout-changed', onLayoutChange);
+    try {
+      await reportPending(fixture);
+      await reportPending(fixture, { cause: 'viewport', preserveViewport: true });
+      await reportPending(fixture, { preserveViewport: 'true' });
+      await reportPending(fixture, { preserveViewport: true, source: window });
+      await reportPending(fixture, { preserveViewport: true, origin: 'https://unrelated.example' });
+      await reportPending(fixture, { preserveViewport: true, instanceId: 'departed-widget' });
+      await reportPending(fixture, { preserveViewport: true, blockId: 'unrelated-widget' });
+      for (const inputOccurredAt of [NaN, Infinity, -1, 0, '100', null]) {
+        await reportPending(fixture, { preserveViewport: true, inputOccurredAt });
+      }
+      expect(changes).toEqual([]);
+    } finally {
+      window.removeEventListener('catcafe:chat-layout-changed', onLayoutChange);
+    }
+  });
+
+  it('forwards the validated child input epoch only through the real Chat input capture', async () => {
+    const fixture = await renderWidget({ height: 500 });
+    const changes: Event[] = [];
+    const onLayoutChange = (event: Event) => changes.push(event);
+    window.addEventListener('catcafe:chat-layout-changed', onLayoutChange);
+    try {
+      await reportPending(fixture, { preserveViewport: true, inputOccurredAt: 1000.5 });
+      expect((changes.at(-1) as CustomEvent).detail).toEqual({ captureCurrentReading: true, inputOccurredAt: 1000.5 });
+    } finally {
+      window.removeEventListener('catcafe:chat-layout-changed', onLayoutChange);
+    }
+  });
+
+  it('does not capture another reading surface when the widget has no chat owner', async () => {
+    delete container.dataset.chatContainer;
+    const fixture = await renderWidget({ height: 500 });
+    await reportHeight(fixture, 184);
+    const changes: Event[] = [];
+    const onLayoutChange = (event: Event) => changes.push(event);
+    window.addEventListener('catcafe:chat-layout-changed', onLayoutChange);
+    try {
+      await reportPending(fixture, { preserveViewport: true });
+      expect(changes).toEqual([]);
+    } finally {
+      window.removeEventListener('catcafe:chat-layout-changed', onLayoutChange);
+    }
+  });
+
+  it('keeps export input separate from the interactive chat reading owner', async () => {
+    window.history.replaceState(null, '', '/?export=1');
+    const fixture = await renderWidget({ height: 500 });
+    await reportHeight(fixture, 184);
+    const changes: Event[] = [];
+    const onLayoutChange = (event: Event) => changes.push(event);
+    window.addEventListener('catcafe:chat-layout-changed', onLayoutChange);
+    try {
+      await reportPending(fixture, { preserveViewport: true });
+      expect(changes).toEqual([]);
     } finally {
       window.removeEventListener('catcafe:chat-layout-changed', onLayoutChange);
     }
@@ -543,6 +751,10 @@ describe('HtmlWidgetBlock responsive height contract', () => {
 
     await reportPending(fixture, { cause: 'viewport' });
     expect(fixture.widget.dataset.htmlWidgetProofRequestId).toBe('proof-request-1');
+    await reportHeight(fixture, 300, { viewportHeight: 300 });
+    expect(fixture.widget.dataset.htmlWidgetLayoutState).toBe('ready');
+    expect(fixture.widget.dataset.htmlWidgetProofRequestId).toBe('proof-request-1');
+
     await reportPending(fixture, { cause: 'content' });
     expect(fixture.widget.dataset.htmlWidgetProofRequestId).toBeUndefined();
   });

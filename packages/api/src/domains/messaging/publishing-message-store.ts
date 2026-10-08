@@ -34,7 +34,6 @@ import {
   type IdempotentAppendResult,
   type IMessageStore,
   type StoredMessage,
-  type ThreadFrontierAppendResult,
   type ThreadObservedAppendResult,
 } from '../cats/services/stores/ports/MessageStore.js';
 import { hasMediaRichBlocks, projectEnvelope } from './envelope.js';
@@ -145,14 +144,6 @@ export function createPublishingMessageStore<T extends IMessageStore>(inner: T, 
           withinPublicationSpan(msg.threadId ?? DEFAULT_THREAD_ID, async () => {
             const result = await target.appendAndObservePriorFrontier(prepare(msg));
             if (!result.idempotent) await publish(result.message);
-            return result;
-          });
-      }
-      if (property === 'appendIfThreadFrontier') {
-        return (msg: AppendMessageInput, expectedLatestMessageId: string | null): Promise<ThreadFrontierAppendResult> =>
-          withinPublicationSpan(msg.threadId ?? DEFAULT_THREAD_ID, async () => {
-            const result = await target.appendIfThreadFrontier(prepare(msg), expectedLatestMessageId);
-            if (result.kind === 'committed') await publish(result.message);
             return result;
           });
       }

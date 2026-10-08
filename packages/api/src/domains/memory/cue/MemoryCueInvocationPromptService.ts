@@ -11,6 +11,7 @@ import type {
   RecallScopeV1,
   RecentEventAvailableOpportunityV1,
   SubjectSeenOpportunityV1,
+  ThreadOpenedOpportunityV1,
 } from '@cat-cafe/shared';
 import type {
   MemoryCueDeliveryConfirmation,
@@ -21,6 +22,12 @@ import type {
 import type { CreateMemoryCueDrillHandleInput } from './MemoryCueResolverRegistry.js';
 
 export type MemoryCueOpportunitySeed =
+  | {
+      kind: 'thread_opened';
+      producer: 'owner_message';
+      occurredAt: number;
+      payload: ThreadOpenedOpportunityV1['payload'];
+    }
   | {
       kind: 'subject_seen';
       producer: 'entity_nudge';
@@ -81,6 +88,7 @@ export interface ResolveMemoryCueInvocationPromptInput {
   serverScope: RecallScopeV1;
   now: number;
   consumerCatId: string;
+  signal?: AbortSignal;
 }
 
 export interface MemoryCueInvocationPromptResolution {
@@ -116,6 +124,8 @@ function bindSeed(seed: MemoryCueOpportunitySeed, scope: RecallScopeV1): RecallO
     occurredAt: seed.occurredAt,
   };
   switch (seed.kind) {
+    case 'thread_opened':
+      return { ...base, kind: seed.kind, producer: seed.producer, payload: seed.payload };
     case 'subject_seen':
       return { ...base, kind: seed.kind, producer: seed.producer, payload: seed.payload };
     case 'delivery_decision':
@@ -158,6 +168,7 @@ export class MemoryCueInvocationPromptService implements MemoryCueInvocationProm
     const deliveryReceipts: MemoryCueDeliveryReceipt[] = [];
     const presentationEnvelopes: MemoryCuePresentationEnvelope[] = [];
     for (const seed of input.seeds) {
+      input.signal?.throwIfAborted();
       const candidate = bindSeed(seed, input.serverScope);
       const resolved = await this.deps.plane.resolve({
         candidate,
@@ -165,8 +176,10 @@ export class MemoryCueInvocationPromptService implements MemoryCueInvocationProm
         invocationState,
         now: input.now,
         consumerCatId: input.consumerCatId,
+        signal: input.signal,
         createDrillHandle: (coordinate) => this.deps.createDrillHandle(coordinate),
       });
+      input.signal?.throwIfAborted();
       if (resolved.promptSegment) {
         segments.push(resolved.promptSegment);
         admittedOpportunityIds.push(candidate.opportunityId);

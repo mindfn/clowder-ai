@@ -8,8 +8,8 @@ import { ThreadStore } from '../dist/domains/cats/services/stores/ports/ThreadSt
 import { createMessagingDomain } from '../dist/domains/messaging/index.js';
 import { MediaEntitlementLedger, MemoryMediaEntitlementPort } from '../dist/domains/messaging/media-entitlements.js';
 import { FileMessagingMediaLedger } from '../dist/domains/messaging/media-ledger.js';
-import { BundledPluginRuntimeCarrier } from '../dist/domains/plugin/builtin-runtime/bundled-runtime-carrier.js';
-import { ModulePluginRuntime } from '../dist/domains/plugin/builtin-runtime/module-plugin-runtime.js';
+import { BundledPluginRuntimeCarrier } from '../dist/domains/plugin/builtin-runtime/carriers/bundled-runtime-carrier.js';
+import { ModulePluginRuntime } from '../dist/domains/plugin/builtin-runtime/carriers/module-plugin-runtime.js';
 import { PluginRuntimeCarrierRouter } from '../dist/domains/plugin/carrier/runtime-carrier.js';
 import { PluginMediaReadService } from '../dist/domains/plugin/host-surface/plugin-media-host.js';
 import { MemoryConnectorThreadBindingStore } from '../dist/infrastructure/connectors/ConnectorThreadBindingStore.js';

@@ -52,6 +52,12 @@ export interface IProfileUpdateProposalStore {
   get(proposalId: string): ProfileUpdateProposal | null | Promise<ProfileUpdateProposal | null>;
   listPending(userId: string, limit?: number): ProfileUpdateProposal[] | Promise<ProfileUpdateProposal[]>;
   listByThread(threadId: string, limit?: number): ProfileUpdateProposal[] | Promise<ProfileUpdateProposal[]>;
+  /** Owner-scoped exact target binding used by the original-memory detail surface. */
+  listByTarget(
+    userId: string,
+    targetPath: string,
+    limit?: number,
+  ): ProfileUpdateProposal[] | Promise<ProfileUpdateProposal[]>;
   /** List approved/rejected proposals for a user, sorted by decision timestamp desc (F246 Phase H). */
   listSettledByUser(userId: string, limit?: number): ProfileUpdateProposal[] | Promise<ProfileUpdateProposal[]>;
   /** CAS pending → approving. Returns claimed snapshot, or null if not pending. */
@@ -132,6 +138,10 @@ export class InMemoryProfileUpdateProposalStore implements IProfileUpdateProposa
 
   listByThread(threadId: string, limit: number = DEFAULT_LIST_LIMIT): ProfileUpdateProposal[] {
     return this.collect((p) => p.sourceThreadId === threadId, limit);
+  }
+
+  listByTarget(userId: string, targetPath: string, limit: number = DEFAULT_LIST_LIMIT): ProfileUpdateProposal[] {
+    return this.collect((p) => p.createdBy === userId && p.targetPath === targetPath, limit);
   }
 
   listSettledByUser(userId: string, limit: number = DEFAULT_LIST_LIMIT): ProfileUpdateProposal[] {

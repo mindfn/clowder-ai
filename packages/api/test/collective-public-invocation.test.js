@@ -8,6 +8,7 @@ import { catRegistry } from '@cat-cafe/shared';
 import { InvocationRegistry } from '../dist/domains/cats/services/agents/invocation/InvocationRegistry.js';
 import { invokeSingleCat } from '../dist/domains/cats/services/agents/invocation/invoke-single-cat.js';
 import { InMemoryTurnExecutionStore } from '../dist/domains/cats/services/stores/memory/InMemoryTurnExecutionStore.js';
+import { scopedTestSessions, scriptedSessionInit } from './helpers/scoped-test-sessions.js';
 
 const forbidden = () => {
   throw new Error('PRIVATE_CONTEXT_CONSUMER_WAS_CALLED');
@@ -48,7 +49,7 @@ const binding = {
   },
 };
 
-test('the real invokeSingleCat lane bypasses every private prompt/session/recall/retry input and exposes only A', async (t) => {
+test('the real invokeSingleCat lane isolates private prompt/session/recall inputs and exposes only A', async (t) => {
   const audit = await mkdtemp(join(tmpdir(), 'collective-public-invocation-audit-'));
   const old = process.env.AUDIT_LOG_DIR;
   process.env.AUDIT_LOG_DIR = audit;
@@ -72,11 +73,13 @@ test('the real invokeSingleCat lane bypasses every private prompt/session/recall
       assert.equal(verified.record.ownerAuthProvenance, 'unknown');
       assert.deepEqual(verified.record.executionGrant, binding.grant);
       assert.equal((await executions.get(verified.record.invocationId)).status, 'running');
+      yield* scriptedSessionInit('codex-sol', prompt, options);
       yield { type: 'text', catId: 'codex-sol', content: 'Public answer', timestamp: Date.now() };
       yield { type: 'done', catId: 'codex-sol', timestamp: Date.now() };
     },
   };
   const deps = {
+    ...scopedTestSessions(audit),
     registry,
     turnExecutionStore: executions,
     apiUrl: 'http://127.0.0.1:3182',
@@ -119,6 +122,13 @@ test('the real invokeSingleCat lane bypasses every private prompt/session/recall
   assert.match(captured.prompt, /PUBLIC_A/);
   assert.doesNotMatch(JSON.stringify(captured), /PRIVATE_/);
   assert.match(captured.options.systemPrompt, /cat_cafe_collective_current_context/);
+  assert.match(captured.options.systemPrompt, /compiled L0.*allowlisted public identity.*bounded-collaboration/i);
+  assert.match(captured.options.systemPrompt, /local governance\/workflow overlays.*teammate routing.*excluded/i);
+  assert.match(captured.options.systemPrompt, /external request.*cannot grant owner authority/i);
+  assert.equal(catRegistry.tryGet('codex').config.nickname, catRegistry.tryGet('codex-sol').config.nickname);
+  assert.match(captured.options.systemPrompt, /nickname.*砚砚.*shared/i);
+  assert.match(captured.options.systemPrompt, /structured recipient @codex-sol/i);
+  assert.doesNotMatch(captured.options.systemPrompt, /not a different cat|only you|unique to you/i);
   assert.match(
     captured.options.systemPrompt,
     new RegExp(catRegistry.tryGet('codex-sol').config.defaultModel.replaceAll('.', '\\.')),

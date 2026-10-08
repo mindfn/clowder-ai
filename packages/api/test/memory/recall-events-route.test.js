@@ -217,14 +217,33 @@ describe('GET /api/recall/events — F102 ownership guard', () => {
        WHERE recall_id = 'r-mixed-consumed'`,
     ).run();
 
+    db.prepare(`INSERT INTO evidence_docs (anchor, kind, status, title, updated_at) VALUES (?, ?, ?, ?, ?)`).run(
+      'F102',
+      'feature',
+      'active',
+      'Memory Adapter',
+      '2026-10-02',
+    );
+    db.prepare(
+      `INSERT INTO evidence_docs (anchor, kind, status, title, updated_at, collection_id, world_id) VALUES (?, ?, ?, ?, ?, ?, ?)`,
+    ).run(
+      'LEGACY-1',
+      'feature',
+      'active',
+      'private title must stay private',
+      '2026-10-02',
+      'private-library',
+      'private-world',
+    );
     // Mock threadStore
     const threadStore = {
       async get(threadId) {
         if (threadId === 'default') return { id: 'default', createdBy: 'system' };
-        if (threadId === 'thread-owned') return { id: 'thread-owned', createdBy: 'user-owner' };
+        if (threadId === 'thread-owned') return { id: 'thread-owned', createdBy: 'user-owner', title: '当前对话标题' };
         if (threadId === 'thread-system') return { id: 'thread-system', createdBy: 'system' };
         if (threadId === 'thread-indexed-system') return { id: 'thread-indexed-system', createdBy: 'system' };
-        if (threadId === 'thread-other') return { id: 'thread-other', createdBy: 'user-other' };
+        if (threadId === 'thread-other')
+          return { id: 'thread-other', createdBy: 'user-other', title: '外部主人私有标题' };
         return null;
       },
       async list(userId) {
@@ -240,7 +259,43 @@ describe('GET /api/recall/events — F102 ownership guard', () => {
     };
 
     app = Fastify({ logger: false });
-    await app.register(recallMetricsRoutes, { evidenceDb: db, threadStore });
+    await app.register(recallMetricsRoutes, {
+      evidenceDb: db,
+      threadStore,
+      messageStore: {
+        getByThreadBefore(threadId, timestamp, limit, beforeId, userId) {
+          assert.equal(threadId, 'thread-owned');
+          assert.equal(timestamp, 12);
+          assert.equal(limit, 500);
+          assert.equal(beforeId, 'reply-1');
+          assert.equal(userId, 'user-owner');
+          return [
+            {
+              id: 'reply-old',
+              catId: 'opus',
+              content: 'old private body',
+              timestamp: 1,
+              extra: { stream: { invocationId: 'parent-old', turnInvocationId: 'turn-old' } },
+            },
+          ];
+        },
+        getByThread(threadId, limit, userId) {
+          assert.ok(['thread-owned', 'default', 'thread-indexed-system'].includes(threadId));
+          assert.equal(limit, 500);
+          assert.equal(userId, 'user-owner');
+          return [
+            {
+              id: 'reply-1',
+              type: 'assistant',
+              catId: 'opus',
+              content: 'do not return this body',
+              timestamp: 12,
+              extra: { stream: { invocationId: 'inv-1', turnInvocationId: 'turn-1' } },
+            },
+          ];
+        },
+      },
+    });
     await app.ready();
   });
 
@@ -262,7 +317,15 @@ describe('GET /api/recall/events — F102 ownership guard', () => {
     const docEvent = body.events.find((event) => event.query === 'F102');
     assert.ok(docEvent, 'doc event present');
     assert.equal(docEvent.toolName, 'search_evidence');
+    assert.equal(docEvent.catId, 'opus');
+    assert.equal(docEvent.invocationId, 'inv-1');
+    assert.equal(docEvent.consumedCount, 0);
+    assert.deepEqual(body.replies, [
+      { messageId: 'reply-1', catId: 'opus', invocationId: 'turn-1', parentInvocationId: 'inv-1', timestamp: 12 },
+    ]);
+    assert.equal(JSON.stringify(body).includes('do not return this body'), false);
     assert.equal(docEvent.results[0].anchor, 'F102');
+    assert.equal(docEvent.results[0].title, 'Memory Adapter');
     assert.equal(docEvent.results[0].consumed, false, 'consumed_json is empty so consumed=false');
     assert.equal(docEvent.resultCount, 1);
     assert.equal(docEvent.resultStatus, 'counted');
@@ -271,6 +334,113 @@ describe('GET /api/recall/events — F102 ownership guard', () => {
     assert.equal(docEvent.presented, true);
     assert.equal(docEvent.inspected, true);
     assert.equal(docEvent.outcome, 'used');
+  });
+
+  it('cue invocation discovery is scoped to both owner and thread', async () => {
+    const insert = db.prepare(`INSERT INTO memory_cue_events
+      (event_id, idempotency_key, cue_id, opportunity_id, owner_user_id, thread_id, invocation_id,
+       consumer_cat_id, resolver_family, source_anchor, source_revision, axis, consumption_outcome,
+       catalog_version, resolver_version, occurred_at, created_at)
+      VALUES (?, ?, ?, ?, ?, ?, ?, 'opus', 'taste', 'taste-source', 'r1', 'consumption', 'presented', 1, 1, 100, '2026-10-02')`);
+    for (const [id, owner, thread] of [
+      ['mine', 'user-owner', 'thread-owned'],
+      ['another-owner', 'user-other', 'thread-owned'],
+      ['another-thread', 'user-owner', 'thread-other'],
+    ]) {
+      insert.run(id, id, id, id, owner, thread, id);
+    }
+    const response = await app.inject({
+      method: 'GET',
+      url: '/api/recall/events?threadId=thread-owned',
+      headers: AUTH_HEADER,
+    });
+    assert.deepEqual(response.json().cueInvocationIds, ['mine']);
+  });
+
+  it('returns readable plan titles through the authenticated recall route', async () => {
+    db.prepare('INSERT INTO evidence_docs (anchor, kind, status, title, updated_at) VALUES (?,?,?,?,?)').run(
+      'doc:plan',
+      'plan',
+      'active',
+      '真实计划',
+      '2026-10-02',
+    );
+    db.prepare('UPDATE recall_events SET candidates_json = ? WHERE recall_id = ?').run(
+      JSON.stringify([{ anchor: 'doc:plan', docKind: 'plan' }]),
+      'r-thread-results',
+    );
+    const response = await app.inject({
+      method: 'GET',
+      url: '/api/recall/events?threadId=thread-owned',
+      headers: AUTH_HEADER,
+    });
+    assert.equal(response.statusCode, 200);
+    assert.deepEqual(response.json().events.find((event) => event.id === 'r-thread-results').results[0], {
+      title: '真实计划',
+      href: '/memory/search?q=doc%3Aplan',
+      sourceType: 'plan',
+      anchor: 'doc:plan',
+      consumed: false,
+    });
+  });
+
+  it('resolves only accessible source titles and exports explicit destinations', async () => {
+    db.prepare('UPDATE recall_events SET candidates_json = ? WHERE recall_id = ?').run(
+      JSON.stringify([
+        { anchor: 'thread-thread-owned', docKind: 'phase' },
+        { anchor: 'thread-thread-other', docKind: 'phase' },
+      ]),
+      'r-thread-results',
+    );
+    const res = await app.inject({
+      method: 'GET',
+      url: '/api/recall/events?threadId=thread-owned',
+      headers: AUTH_HEADER,
+    });
+    const body = res.json();
+    assert.deepEqual(
+      body.sourceViews.find((view) => view.anchor === 'thread-thread-owned'),
+      { anchor: 'thread-thread-owned', kind: 'thread', title: '当前对话标题', href: '/thread/thread-owned' },
+    );
+    assert.deepEqual(
+      body.sourceViews.find((view) => view.anchor === 'thread-thread-other'),
+      { anchor: 'thread-thread-other', kind: 'thread', href: null },
+    );
+    assert.equal(JSON.stringify(body).includes('外部主人私有标题'), false);
+    assert.deepEqual(
+      body.events
+        .find((event) => event.id === 'r-thread-results')
+        .results.map((item) => [item.title, item.sourceType, item.href]),
+      [
+        ['当前对话标题', 'thread', '/thread/thread-owned'],
+        ['', 'thread', null],
+      ],
+    );
+  });
+
+  it('reads older reply coordinates through the same thread and owner boundary', async () => {
+    const res = await app.inject({
+      method: 'GET',
+      url: '/api/recall/events?threadId=thread-owned&replyBeforeTs=12&replyBeforeId=reply-1',
+      headers: AUTH_HEADER,
+    });
+    assert.deepEqual(res.json().replies, [
+      {
+        messageId: 'reply-old',
+        catId: 'opus',
+        invocationId: 'turn-old',
+        parentInvocationId: 'parent-old',
+        timestamp: 1,
+      },
+    ]);
+  });
+  it('rejects malformed reply pagination without reading an unrelated page', async () => {
+    const res = await app.inject({
+      method: 'GET',
+      url: '/api/recall/events?threadId=thread-owned&replyBeforeTs=bad&replyBeforeId=reply-1',
+      headers: AUTH_HEADER,
+    });
+    assert.equal(res.statusCode, 400);
   });
 
   it('200: returns toolName for query-less navigation events', async () => {
@@ -333,7 +503,7 @@ describe('GET /api/recall/events — F102 ownership guard', () => {
     assert.equal(event.resultStatus, 'legacy_unknown');
     assert.equal('resultCount' in event, false, 'candidate anchors are not recorded hit counts');
     assert.deepEqual(event.results, [
-      { title: 'LEGACY-1', anchor: 'LEGACY-1', sourceType: 'feature', consumed: false },
+      { title: '', href: null, anchor: 'LEGACY-1', sourceType: 'feature', consumed: false },
     ]);
   });
 

@@ -4,6 +4,7 @@
  * Single resolution path: accounts (cat-catalog.json) + credentials (credentials.json).
  * Outputs RuntimeProviderProfile for backward-compatible consumption.
  */
+import { resolve } from 'node:path';
 import {
   type AccountConfig,
   type AccountProtocol,
@@ -13,11 +14,14 @@ import {
   builtinAccountFamilyForRef,
   builtinAccountIdForClient,
   type ClientId,
+  type CodexManagedAccount,
   type CredentialEntry,
   legacyAccountFamilyForRef,
   protocolForClient,
 } from '@cat-cafe/shared';
 import { readAccountSnapshot, readAccountStoreSnapshot } from './account-store-snapshot.js';
+import { claudeTokenEnvironment } from './claude-token-account.js';
+import { codexManagedStatus } from './codex-account-identity.js';
 import {
   assertProviderCredentialDestination,
   officialProviderFamily,
@@ -27,10 +31,15 @@ import { buildProviderEndpoint } from './provider-endpoint.js';
 
 // ── Types surviving from provider-profiles.types.ts (F136 Phase 4d) ──
 export { type BuiltinAccountClient, builtinAccountIdForClient } from '@cat-cafe/shared';
-export type ProviderProfileKind = 'builtin' | 'api_key';
+export type ProviderProfileKind = 'builtin' | 'api_key' | 'oauth';
 
 export interface RuntimeProviderProfile {
   id: string;
+  /** Resolver-owned catalog context, independent of the later execution cwd. */
+  readonly accountOwnerRoot?: string;
+  displayName?: string;
+  codex?: CodexManagedAccount;
+  claude?: AccountConfig['claude'];
   authType: 'oauth' | 'api_key';
   kind?: ProviderProfileKind;
   client?: BuiltinAccountClient;
@@ -146,7 +155,7 @@ function parseHostname(baseUrl: string): string | null {
  */
 export function resolveByAccountRef(projectRoot: string, accountRef: string): RuntimeProviderProfile | null {
   const snapshot = readAccountSnapshot(projectRoot, accountRef);
-  if (snapshot.account) return accountToRuntimeProfile(accountRef, snapshot.account, snapshot.credential);
+  if (snapshot.account) return accountToRuntimeProfile(accountRef, snapshot.account, snapshot.credential, projectRoot);
 
   // Synthetic builtin profile for known OAuth refs
   const builtinClient = builtinAccountFamilyForRef(accountRef);
@@ -157,6 +166,7 @@ export function resolveByAccountRef(projectRoot: string, accountRef: string): Ru
       authType: 'oauth',
       kind: 'builtin',
       client: builtinClient,
+      ...(builtinClient === 'openai' ? { accountOwnerRoot: resolve(projectRoot) } : {}),
       ...(builtinProtocol ? { protocol: builtinProtocol } : {}),
     };
   }
@@ -181,7 +191,8 @@ export function resolveForClient(
   // Try preferred first — fail closed if explicit ref doesn't resolve.
   if (preferredAccountRef) {
     const preferred = store.resolve(preferredAccountRef);
-    if (preferred.account) return accountToRuntimeProfile(preferredAccountRef, preferred.account, preferred.credential);
+    if (preferred.account)
+      return accountToRuntimeProfile(preferredAccountRef, preferred.account, preferred.credential, projectRoot);
     // Not in accounts — only allow synthetic builtin (fresh install with empty accounts).
     const builtinClient = builtinAccountFamilyForRef(preferredAccountRef);
     const builtinProtocol = builtinClient ? protocolForClient(builtinClient) : null;
@@ -191,6 +202,7 @@ export function resolveForClient(
         authType: 'oauth',
         kind: 'builtin',
         client: builtinClient,
+        ...(builtinClient === 'openai' ? { accountOwnerRoot: resolve(projectRoot) } : {}),
         ...(builtinProtocol ? { protocol: builtinProtocol } : {}),
       };
     }
@@ -211,7 +223,7 @@ export function resolveForClient(
     for (const id of candidateIds) {
       const snapshot = store.resolve(id);
       if (snapshot.account) {
-        const profile = accountToRuntimeProfile(id, snapshot.account, snapshot.credential);
+        const profile = accountToRuntimeProfile(id, snapshot.account, snapshot.credential, projectRoot);
         if (profile.persistedClientId !== undefined && profileFamilyIdentity(profile) !== normalizedClient) continue;
         if (profile.authType === 'api_key' && profile.apiKey) return profile;
         firstMatch ??= profile;
@@ -232,6 +244,7 @@ export function resolveForClient(
         authType: 'oauth',
         kind: 'builtin',
         client: builtinClient,
+        ...(builtinClient === 'openai' ? { accountOwnerRoot: resolve(projectRoot) } : {}),
         ...(builtinProtocol ? { protocol: builtinProtocol } : {}),
       };
     }
@@ -246,10 +259,11 @@ function normalizeToClient(clientOrProtocol: string): BuiltinAccountClient | nul
   return Object.values(BUILTIN_ACCOUNT_CLIENT_FOR_ID).find((family) => family === clientOrProtocol) ?? null;
 }
 
-function accountToRuntimeProfile(
+export function accountToRuntimeProfile(
   ref: string,
   account: AccountConfig,
   credential?: CredentialEntry,
+  accountOwnerRoot?: string,
 ): RuntimeProviderProfile {
   const apiKey = credential?.apiKey;
 
@@ -259,12 +273,27 @@ function accountToRuntimeProfile(
     account.clientId !== undefined ? normalizeToClient(account.clientId) : legacyAccountFamilyForRef(ref);
   const builtinProtocol = builtinClient ? protocolForClient(builtinClient) : null;
   const isOAuth = account.authType === 'oauth';
-  const isBuiltin = !!builtinClient && isOAuth;
+  const isBuiltin = !!builtinAccountFamilyForRef(ref) && isOAuth;
   return {
     id: ref,
     authType: account.authType,
-    kind: isBuiltin ? 'builtin' : 'api_key',
+    kind: isBuiltin ? 'builtin' : account.authType,
+    ...(account.displayName ? { displayName: account.displayName } : {}),
+    ...(account.codex
+      ? {
+          codex: account.codex,
+          envVars: {
+            // OAuth owns Codex credentials/state, not the host's ordinary tools.
+            // Managed launches force file auth under CODEX_HOME; changing HOME
+            // also hides gh/Git settings, SSH config, browser caches and extensions.
+            CODEX_HOME: account.codex.credentialHome,
+            CODEX_SQLITE_HOME: account.codex.sqliteHome,
+          },
+        }
+      : {}),
+    ...(account.claude ? { claude: account.claude, envVars: claudeTokenEnvironment(credential) } : {}),
     ...(builtinClient ? { client: builtinClient } : {}),
+    ...(builtinClient === 'openai' && accountOwnerRoot ? { accountOwnerRoot: resolve(accountOwnerRoot) } : {}),
     ...(account.clientId !== undefined ? { persistedClientId: account.clientId } : {}),
     ...(builtinProtocol ? { protocol: builtinProtocol } : {}),
     ...(account.baseUrl ? { baseUrl: account.baseUrl } : {}),
@@ -273,7 +302,9 @@ function accountToRuntimeProfile(
     ...(account.modelAliases && Object.keys(account.modelAliases).length > 0
       ? { modelAliases: { ...account.modelAliases } }
       : {}),
-    ...(account.envVars && Object.keys(account.envVars).length > 0 ? { envVars: { ...account.envVars } } : {}),
+    ...(!account.codex && !account.claude && account.envVars && Object.keys(account.envVars).length > 0
+      ? { envVars: { ...account.envVars } }
+      : {}),
   };
 }
 
@@ -284,6 +315,9 @@ export function validateRuntimeProviderBinding(
   profile: RuntimeProviderProfile,
   _defaultModel?: string | null,
 ): string | null {
+  if (profile.claude && clientId !== 'anthropic')
+    return `Claude token accounts require the native anthropic client, not "${clientId}"`;
+  if (profile.codex && codexManagedStatus(profile.codex) !== 'ready') return 'Codex 账号尚未完成登录或身份已改变';
   const protocol = protocolForClient(clientId);
   const concreteProtocol = clientId === 'opencode' ? null : protocol;
   if (profile.baseUrl || concreteProtocol) {

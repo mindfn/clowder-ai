@@ -1,7 +1,16 @@
 import { useRouter } from 'next/navigation';
 import { useEffect, useState } from 'react';
 import { apiFetch } from '@/utils/api-client';
+import { AppTooltip } from './AppTooltip';
+import { ThreadTitleResetMenu } from './execution-row/ThreadTitleResetMenu';
 import { CatCafeLogo } from './icons/CatCafeLogo';
+import { MessageSearchButton } from './message-search/MessageSearchButton';
+import { ConversationViewMenu } from './shell/ConversationViewMenu';
+import { ThreadTasksButton, ThreadWorksButton } from './shell/HeaderCounts';
+import { ShellGlyph } from './shell/ShellIcons';
+import { useShellPresentation } from './shell/shell-presentation';
+import { ThreadMetadataMenu } from './shell/ThreadMetadataMenu';
+import { useSettingsReadingEntry } from './shell/useSettingsSourceReturn';
 import { ThreadCatPill } from './ThreadCatPill';
 import { ThreadIndicator } from './ThreadIndicator';
 
@@ -14,6 +23,8 @@ interface ChatContainerHeaderProps {
   statusPanelOpen: boolean;
   onToggleStatusPanel: () => void;
   hasWorkspaceActivity?: boolean;
+  onOpenMessageSearch?: () => void;
+  messageSearchOpen?: boolean;
 }
 
 export function ChatContainerHeader({
@@ -28,7 +39,59 @@ export function ChatContainerHeader({
   statusPanelOpen,
   onToggleStatusPanel,
   hasWorkspaceActivity = false,
+  onOpenMessageSearch,
+  messageSearchOpen = false,
 }: ChatContainerHeaderProps) {
+  const isV2 = useShellPresentation() === 'v2';
+  if (isV2) {
+    return (
+      <header
+        className="safe-area-top"
+        style={{ background: 'var(--shell-work)', borderBottom: '1px solid var(--shell-hairline)' }}
+        data-shell-header="v2"
+      >
+        <div className="shell-chat-header-layout flex h-[52px] items-center gap-1 pl-3 pr-2 sm:gap-1.5 sm:pl-6 sm:pr-3.5">
+          <div className="shell-chat-header-navigation flex min-w-0 flex-1 items-center gap-1 sm:gap-1.5">
+            {/* The sidebar has its own collapse control; this one only brings a collapsed sidebar back. */}
+            {!sidebarOpen && (
+              <AppTooltip label="展开侧栏" side="bottom">
+                <button
+                  type="button"
+                  onClick={onToggleSidebar}
+                  aria-label="展开侧栏"
+                  data-testid="header-sidebar-expand"
+                  className="shell-rail-item shell-focusable -ml-2 mr-1 flex h-[30px] w-[30px] flex-none items-center justify-center rounded-lg"
+                  style={{ color: 'var(--shell-muted)' }}
+                >
+                  <ShellGlyph name="panelLeft" />
+                </button>
+              </AppTooltip>
+            )}
+            <div className="flex min-w-0 flex-1 items-center gap-2">
+              <ThreadIndicator threadId={threadId} showProject={false} />
+              {/* F322 original-B (new shell only): the title's ⌄ menu holds the normal force-reset; it appears only while something runs. Keyed by thread so a question opened for one thread cannot be confirmed against the next. */}
+              <ThreadTitleResetMenu key={threadId} threadId={threadId} />
+              {/* F198 Phase C AC-C5: Daemon active indicator */}
+              <DaemonActiveIndicator threadId={threadId} />
+            </div>
+            <ConversationViewMenu key={threadId} threadId={threadId} />
+            <ThreadMetadataMenu key={`metadata:${threadId}`} threadId={threadId} />
+          </div>
+          <div className="shell-chat-header-actions flex flex-none flex-wrap items-center justify-end gap-1 sm:gap-1.5">
+            {onOpenMessageSearch && <MessageSearchButton onOpen={onOpenMessageSearch} open={messageSearchOpen} />}
+            <ThreadWorksButton />
+            <ThreadTasksButton />
+            <PanelToggle
+              onToggleStatusPanel={onToggleStatusPanel}
+              statusPanelOpen={statusPanelOpen}
+              hasWorkspaceActivity={hasWorkspaceActivity}
+              tooltip
+            />
+          </div>
+        </div>
+      </header>
+    );
+  }
   return (
     <header className="safe-area-top">
       <div className="px-5 py-3 flex items-center gap-2">
@@ -60,7 +123,7 @@ export function ChatContainerHeader({
             </div>
           </div>
         </div>
-        {/* F284: one stable recall entry; activity stays a badge, not a second header capability. */}
+        {/* F284: one stable Workspace entry; activity stays a badge. */}
         <PanelToggle
           onToggleStatusPanel={onToggleStatusPanel}
           statusPanelOpen={statusPanelOpen}
@@ -76,6 +139,7 @@ export function ChatContainerHeader({
 function DaemonActiveIndicator({ threadId }: { threadId: string }) {
   const [daemonShortId, setDaemonShortId] = useState<string | null>(null);
   const router = useRouter();
+  const captureSettingsOrigin = useSettingsReadingEntry();
 
   useEffect(() => {
     let cancelled = false;
@@ -106,7 +170,10 @@ function DaemonActiveIndicator({ threadId }: { threadId: string }) {
   return (
     <button
       type="button"
-      onClick={() => router.push('/settings?s=ops&ops=agent-sessions')}
+      onClick={() => {
+        captureSettingsOrigin();
+        router.push('/settings?s=ops&ops=agent-sessions');
+      }}
       className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-micro font-mono text-conn-amber-text bg-conn-amber-bg hover:opacity-80 transition-colors flex-shrink-0"
       title={`Daemon ${daemonShortId} 运行中 · 点击查看后台会话`}
     >
@@ -128,10 +195,13 @@ export function PanelToggle({
   onToggleStatusPanel,
   statusPanelOpen,
   hasWorkspaceActivity = false,
+  tooltip = false,
 }: {
   onToggleStatusPanel: () => void;
   statusPanelOpen: boolean;
   hasWorkspaceActivity?: boolean;
+  /** F322 v2: name comes from AppTooltip (150ms, focus, Escape) instead of the native `title` (~1s). */
+  tooltip?: boolean;
 }) {
   // The button is server-rendered before React owns its click handler. Browser
   // journeys wait on this marker rather than racing cold client hydration.
@@ -140,7 +210,8 @@ export function PanelToggle({
     setClientInteractive(true);
   }, []);
 
-  return (
+  const label = statusPanelOpen ? '收起 Workspace' : '打开 Workspace';
+  const button = (
     <button
       type="button"
       onClick={onToggleStatusPanel}
@@ -149,8 +220,8 @@ export function PanelToggle({
           ? 'text-cafe-accent'
           : 'text-cafe-secondary hover:bg-[var(--console-hover-bg)] hover:text-cafe-accent'
       }`}
-      aria-label={statusPanelOpen ? '收起 Workspace' : '打开 Workspace'}
-      title={statusPanelOpen ? '收起 Workspace' : '打开 Workspace'}
+      aria-label={label}
+      title={tooltip ? undefined : label}
       data-client-interactive={clientInteractive ? 'true' : 'false'}
       data-testid="workspace-panel-toggle"
     >
@@ -175,5 +246,12 @@ export function PanelToggle({
         />
       )}
     </button>
+  );
+  return tooltip ? (
+    <AppTooltip label={label} side="bottom">
+      {button}
+    </AppTooltip>
+  ) : (
+    button
   );
 }

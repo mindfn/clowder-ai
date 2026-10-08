@@ -531,6 +531,13 @@ if (-not $SkipPortableZip) {
         Copy-ToStaging $hooksSource ".claude\hooks\user-level"
     }
 
+    # #1542: canonical Node compaction carrier (packaged only — spawn-time
+    # --settings injection reads it; never installed into project settings).
+    $carrierSource = Join-Path $ProjectRoot ".claude\hooks\f24-compaction.mjs"
+    if (Test-Path $carrierSource) {
+        Copy-ToStaging $carrierSource ".claude\hooks\f24-compaction.mjs"
+    }
+
     # Electron app (win-unpacked contents → desktop-dist/)
     $winUnpacked = Join-Path (Join-Path $ProjectRoot "desktop-dist") "win-unpacked"
     Copy-ToStaging $winUnpacked "desktop-dist"

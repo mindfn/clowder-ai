@@ -64,6 +64,12 @@ function makeFixture() {
   cpSync(SOURCE_SCRIPT, join(repoRoot, 'scripts', 'intake-from-opensource.sh'));
   mkdirSync(join(repoRoot, 'scripts', 'lib'), { recursive: true });
   cpSync(GH_RETRY_LIB, join(repoRoot, 'scripts', 'lib', 'intake-gh-retry.sh'));
+  cpSync(resolve('scripts/lib/intake-brand-paths.mjs'), join(repoRoot, 'scripts/lib/intake-brand-paths.mjs'));
+  cpSync(
+    resolve('scripts/lib/sync-public-export-coverage.mjs'),
+    join(repoRoot, 'scripts/lib/sync-public-export-coverage.mjs'),
+  );
+  cpSync(resolve('sync-manifest.yaml'), join(repoRoot, 'sync-manifest.yaml'));
   chmodSync(join(repoRoot, 'scripts', 'intake-from-opensource.sh'), 0o755);
 
   // F238 Phase C: dictionary helper + YAML for classify_path()
@@ -94,6 +100,7 @@ function makeRemoteFixture() {
   cpSync(SOURCE_SCRIPT, join(repoRoot, 'scripts', 'intake-from-opensource.sh'));
   mkdirSync(join(repoRoot, 'scripts', 'lib'), { recursive: true });
   cpSync(GH_RETRY_LIB, join(repoRoot, 'scripts', 'lib', 'intake-gh-retry.sh'));
+  cpSync(resolve('scripts/lib/intake-brand-paths.mjs'), join(repoRoot, 'scripts/lib/intake-brand-paths.mjs'));
   chmodSync(join(repoRoot, 'scripts', 'intake-from-opensource.sh'), 0o755);
 
   git(sandboxRoot, 'init', '--bare', 'clowder-ai-remote.git');
@@ -165,9 +172,7 @@ function makePlanFixture(files, pr = {}) {
     2,
   );
 
-  // gh api returns JSON array of {filename: ...} objects; with --jq '.[].filename'
-  // gh outputs one filename per line. Build both for the mock.
-  const filesOneLine = files.join('\n');
+  // Model the paginated GitHub JSON shape; never transport filenames as display lines.
 
   const mockBin = join(fixture.sandboxRoot, 'mock-bin');
   mkdirSync(mockBin, { recursive: true });
@@ -188,7 +193,7 @@ fi
 # Handle: gh api --paginate "repos/.../pulls/.../files" --jq '.[].filename'
 if [ "\${1:-}" = "api" ]; then
   cat <<'FILELIST'
-${filesOneLine}
+${JSON.stringify([files.map((filename) => ({ filename }))])}
 FILELIST
   exit 0
 fi
@@ -680,6 +685,7 @@ function makeBrandFixture(overrides = {}) {
   cpSync(SOURCE_SCRIPT, join(repoRoot, 'scripts', 'intake-from-opensource.sh'));
   mkdirSync(join(repoRoot, 'scripts', 'lib'), { recursive: true });
   cpSync(GH_RETRY_LIB, join(repoRoot, 'scripts', 'lib', 'intake-gh-retry.sh'));
+  cpSync(resolve('scripts/lib/intake-brand-paths.mjs'), join(repoRoot, 'scripts/lib/intake-brand-paths.mjs'));
   chmodSync(join(repoRoot, 'scripts', 'intake-from-opensource.sh'), 0o755);
 
   // Phase 2 dictionary-driven scan needs only the self-contained helper and dictionary YAML.
@@ -819,6 +825,44 @@ describe('intake-from-opensource.sh --validate-inbound', () => {
     assert.match(err.stdout, /system-prompt/);
     assert.match(err.stdout, /Clowder AI/);
   });
+
+  it('allows public branding in every manifest-mapped root document source', async () => {
+    const { loadPublicExportCoverage } = await import('./lib/sync-public-export-coverage.mjs');
+    const { classifyPath } = await import('./brand-dictionary-helper.mjs');
+    const coverage = loadPublicExportCoverage(process.cwd());
+    const sources = [...coverage.transformExactByTarget.values()]
+      .filter(
+        (entry) =>
+          entry.type === 'generate' && entry.source && !entry.target.includes('/') && entry.target.endsWith('.md'),
+      )
+      .map((entry) => entry.source);
+    assert.ok(sources.length > 0);
+    for (const source of sources) assert.equal(classifyPath(source).classification, 'public-source', source);
+    const f = makeBrandFixture(Object.fromEntries(sources.map((source) => [source, '# Clowder AI\n'])));
+    fixtures.push(f.sandboxRoot);
+    git(f.repoRoot, 'init', '-b', 'main');
+    git(f.repoRoot, 'add', '-A');
+    const output = run('bash', ['scripts/intake-from-opensource.sh', '--validate-inbound', '--from-index'], f.repoRoot);
+    assert.match(output, /No brand violations detected/);
+  });
+
+  for (const name of ['README', 'SETUP']) {
+    it(`keeps unregistered ${name} source lookalikes brand-protected`, () => {
+      const paths = [`${name}.opensource-preview.md`, `${name}.opensource.fr-FR.md`];
+      const f = makeBrandFixture(Object.fromEntries(paths.map((path) => [path, '# Clowder AI\n'])));
+      fixtures.push(f.sandboxRoot);
+      git(f.repoRoot, 'init', '-b', 'main');
+      git(f.repoRoot, 'add', '-A');
+      const result = runResult(
+        'bash',
+        ['scripts/intake-from-opensource.sh', '--validate-inbound', '--from-index'],
+        f.repoRoot,
+      );
+      assert.notEqual(result.status, 0, 'unregistered sources must not receive the public-brand exemption');
+      assert.match(result.stdout, /brand violation/i);
+      for (const path of paths) assert.ok(result.stdout.includes(path), `missing brand violation for ${path}`);
+    });
+  }
 
   it('fail-closes when dictionary helper exits non-zero', () => {
     const f = makeBrandFixture();
@@ -1045,7 +1089,13 @@ function makeHookFixture() {
   cpSync(SOURCE_SCRIPT, join(repoRoot, 'scripts', 'intake-from-opensource.sh'));
   mkdirSync(join(repoRoot, 'scripts', 'lib'), { recursive: true });
   cpSync(GH_RETRY_LIB, join(repoRoot, 'scripts', 'lib', 'intake-gh-retry.sh'));
+  cpSync(resolve('scripts/lib/intake-brand-paths.mjs'), join(repoRoot, 'scripts/lib/intake-brand-paths.mjs'));
   chmodSync(join(repoRoot, 'scripts', 'intake-from-opensource.sh'), 0o755);
+
+  cpSync(
+    resolve('scripts/materialize-biome-index-snapshot.mjs'),
+    join(repoRoot, 'scripts/materialize-biome-index-snapshot.mjs'),
+  );
 
   // Install pre-commit hook
   mkdirSync(join(repoRoot, '.githooks'), { recursive: true });
@@ -1373,6 +1423,27 @@ fi
 
 if [ "\${1:-}" = "api" ]; then
   for arg in "$@"; do
+    if [[ "$arg" =~ ^repos/zts212653/(clowder-ai|cat-cafe)/pulls/[0-9]+/files$ ]]; then
+      if [[ "$arg" == *clowder-ai* ]] && [ "${mock.targetPrFilesApiFails ? 'true' : 'false'}" = "true" ]; then exit 1; fi
+      case "$arg" in
+        *clowder-ai*) cat <<'JSON'
+${JSON.stringify([targetPrFiles.map((f) => ({ filename: fixtureFilePath(f) }))])}
+JSON
+          ;;
+        *) cat <<'JSON'
+${JSON.stringify([
+  mockAbsorbPrFileList
+    .split('\n')
+    .filter(Boolean)
+    .map((filename) => ({ filename })),
+])}
+JSON
+          ;;
+      esac
+      exit 0
+    fi
+  done
+  for arg in "$@"; do
     if [[ "$arg" =~ ^repos/zts212653/clowder-ai/pulls/[0-9]+/files$ ]]; then
       if [ "${mock.targetPrFilesApiFails ? 'true' : 'false'}" = "true" ]; then
         exit 1
@@ -1552,6 +1623,147 @@ describe('intake-from-opensource.sh --verify-merge-ready', () => {
 });
 
 describe('intake-from-opensource.sh --record strict guard (absorbed)', () => {
+  it('rejects skipped mapped public documents even when the rest of the PR was absorbed', () => {
+    const f = makeRecordFixture({
+      targetPrFiles: [{ path: 'README.md' }, { path: 'site/index.html' }],
+      absorbPrFiles: [{ path: 'site/index.html' }],
+      issueBody: [
+        'Source: clowder-ai#495',
+        '## Per-File Decision Table',
+        '| File | Change | Decision | Reason |',
+        '| README.md | concise landing page | skip | canonical source already exists |',
+        '| site/index.html | website | manual-port | absorb site |',
+      ].join('\n'),
+    });
+    fixtures.push(f.sandboxRoot);
+    const result = runResult(
+      'bash',
+      [
+        'scripts/intake-from-opensource.sh',
+        '--record',
+        '--pr',
+        '495',
+        '--decision',
+        'absorbed',
+        '--intent-issue',
+        '1234',
+        '--absorb-pr',
+        '1236',
+        '--review-proof',
+        'https://github.com/zts212653/clowder-ai/pull/1236#issuecomment-1',
+      ],
+      f.repoRoot,
+      { PATH: `${f.mockBin}:${process.env.PATH}` },
+    );
+    assert.notEqual(result.status, 0, 'PR-level absorption cannot cover an omitted README source');
+    assert.match(result.stdout + result.stderr, /README\.md.*README\.opensource\.md/);
+    assert.equal(JSON.parse(readFileSync(f.ledgerPath, 'utf8')).entries.length, 0);
+  });
+
+  it('accepts mapped public documents only with their canonical source in the reviewed absorb diff', () => {
+    const mappings = [
+      ['README.md', 'README.md'],
+      ['README.zh-CN.md', 'README.zh-CN.md'],
+      ['README.ja-JP.md', 'README.opensource.ja-JP.md'],
+      ['SETUP.md', 'SETUP.md'],
+      ['CONTRIBUTING.md', 'CONTRIBUTING.md'],
+    ];
+    const f = makeRecordFixture({
+      targetPrFiles: mappings.map(([path]) => ({ path })),
+      absorbPrFiles: mappings.map(([, path]) => ({ path })),
+      issueBody: [
+        'Source: clowder-ai#495',
+        '## Per-File Decision Table',
+        '| File | Change | Decision | Reason |',
+        ...mappings.map(([path]) => `| ${path} | public document | manual-port | preserve community work |`),
+      ].join('\n'),
+    });
+    fixtures.push(f.sandboxRoot);
+    for (const [, path] of mappings) writeFileSync(join(f.repoRoot, path), '# Clowder AI\n', 'utf8');
+    const output = runRecord(
+      f.repoRoot,
+      [
+        '--pr',
+        '495',
+        '--decision',
+        'absorbed',
+        '--intent-issue',
+        '1234',
+        '--absorb-pr',
+        '1236',
+        '--review-proof',
+        'https://github.com/zts212653/clowder-ai/pull/1236#issuecomment-1',
+      ],
+      { PATH: `${f.mockBin}:${process.env.PATH}` },
+    );
+    assert.match(output, /Recorded PR #495 → absorbed/);
+  });
+
+  it('rejects a partially ported localized README and does not write an absorbed record', () => {
+    const f = makeRecordFixture({
+      targetPrFiles: [{ path: 'README.md' }, { path: 'README.ja-JP.md' }],
+      absorbPrFiles: [{ path: 'README.md' }],
+      issueBody: [
+        'Source: clowder-ai#495',
+        '## Per-File Decision Table',
+        '| File | Change | Decision | Reason |',
+        '| README.md | English | manual-port | keep |',
+        '| README.ja-JP.md | Japanese | skip | source exists |',
+      ].join('\n'),
+    });
+    fixtures.push(f.sandboxRoot);
+    const err = captureRecordFailure(
+      f.repoRoot,
+      [
+        '--pr',
+        '495',
+        '--decision',
+        'absorbed',
+        '--intent-issue',
+        '1234',
+        '--absorb-pr',
+        '1236',
+        '--review-proof',
+        'https://github.com/zts212653/clowder-ai/pull/1236#issuecomment-1',
+      ],
+      { PATH: `${f.mockBin}:${process.env.PATH}` },
+    );
+    assert.match(err.stdout, /README\.ja-JP\.md -> README\.opensource\.ja-JP\.md/);
+    assert.equal(JSON.parse(readFileSync(f.ledgerPath, 'utf8')).entries.length, 0);
+  });
+
+  it('does not use a skipped target decision to authorize changes to its mapped source', () => {
+    const f = makeRecordFixture({
+      targetPrFiles: [{ path: 'README.md' }],
+      absorbPrFiles: [{ path: 'README.md' }],
+      issueBody: [
+        'Source: clowder-ai#495',
+        '## Per-File Decision Table',
+        '| File | Change | Decision | Reason |',
+        '| README.md | public document | skip | source exists |',
+      ].join('\n'),
+    });
+    fixtures.push(f.sandboxRoot);
+    const err = captureRecordFailure(
+      f.repoRoot,
+      [
+        '--pr',
+        '495',
+        '--decision',
+        'absorbed',
+        '--intent-issue',
+        '1234',
+        '--absorb-pr',
+        '1236',
+        '--review-proof',
+        'https://github.com/zts212653/clowder-ai/pull/1236#issuecomment-1',
+      ],
+      { PATH: `${f.mockBin}:${process.env.PATH}` },
+    );
+    assert.match(err.stdout, /outside Intake Intent Issue/);
+    assert.equal(JSON.parse(readFileSync(f.ledgerPath, 'utf8')).entries.length, 0);
+  });
+
   const fixtures = [];
 
   afterEach(() => {

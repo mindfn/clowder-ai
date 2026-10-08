@@ -39,6 +39,8 @@ describe('F306 AC-C7 Codex native guard launch contract', () => {
       'hooks={}',
       '-c',
       'hooks.PreToolUse=[]',
+      '--config',
+      'hooks.NativeShellSafetyCheck=[]',
       '--config=features.hooks=false',
       '-cfeatures={hooks=false}',
       '--disable',
@@ -51,5 +53,18 @@ describe('F306 AC-C7 Codex native guard launch contract', () => {
     const filtered = stripReservedCodexSystemConfigs(unsafe, 'codex-sol');
 
     assert.deepEqual(filtered, ['--config', 'model_verbosity="high"']);
+  });
+
+  test('final checks migrate only this guard Bash matcher with event-specific trust', async () => {
+    const { buildCodexNativeEffectGuardArgs } = await guardLaunchModule;
+    const { buildCodexAppServerArgs } = await serviceModule;
+    const args = buildCodexNativeEffectGuardArgs({ nativeShellSafetyCheck: true });
+    const config = args.find((value) => value.startsWith('hooks='));
+    assert.match(config, /PreToolUse=\[\{matcher="Edit\|Write"/);
+    assert.match(config, /NativeShellSafetyCheck=\[\{matcher="\^Bash\$"/);
+    assert.match(config, /config\.toml:native_shell_safety_check:0:0/);
+    assert.equal((config.match(/trusted_hash=/g) ?? []).length, 2);
+    assert.doesNotMatch(config, /matcher="Bash\|Edit\|Write"/);
+    assert.ok(buildCodexAppServerArgs(args).includes(config));
   });
 });

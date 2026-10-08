@@ -118,4 +118,27 @@ describe('apiFetch body normalization for mutating requests', () => {
     expect(headers['content-type']).toBe('application/json');
     expect(headers['x-custom']).toBe('value');
   });
+
+  it('attaches the server-issued session CSRF token to mutations without adding it to reads', async () => {
+    const mockFetch = vi.fn().mockImplementation((url: string) => {
+      if (url.includes('/api/session')) {
+        return Promise.resolve(Response.json({ csrfToken: 'csrf-from-session-bootstrap' }));
+      }
+      return Promise.resolve(new Response('{}', { status: 200 }));
+    });
+    globalThis.fetch = mockFetch;
+
+    const apiFetch = await loadApiFetch();
+    await apiFetch('/api/memory/people/person_1/actions', {
+      method: 'POST',
+      body: '{}',
+    });
+    await apiFetch('/api/memory/people/person_1');
+
+    const dataCalls = mockFetch.mock.calls.filter((call) => !(call[0] as string).includes('/api/session'));
+    expect(new Headers((dataCalls[0][1] as RequestInit).headers).get('x-csrf-token')).toBe(
+      'csrf-from-session-bootstrap',
+    );
+    expect(new Headers((dataCalls[1][1] as RequestInit).headers).has('x-csrf-token')).toBe(false);
+  });
 });

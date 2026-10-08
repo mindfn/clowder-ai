@@ -20,6 +20,7 @@ import type { AgentMessage, AgentService, AgentServiceOptions, ToolExecutionPoli
 import { ClaudeAgentService } from './ClaudeAgentService.js';
 import { ClaudeBgCarrierService } from './ClaudeBgCarrierService.js';
 import { ClaudeInteractivePtyCarrierService } from './ClaudeInteractivePtyCarrierService.js';
+import { ClaudeSdkAgentService } from './ClaudeSdkAgentService.js';
 import {
   CarrierHealthStore,
   type CarrierTier,
@@ -31,6 +32,7 @@ export const CARRIER_ENV_KEY = 'CAT_CAFE_CLAUDE_CARRIER';
 export const CARRIER_BG_DAEMON = 'bg_daemon';
 /** F230: opt-in value for interactive PTY carrier */
 export const CARRIER_INTERACTIVE_PTY = 'interactive_pty';
+export const CARRIER_AGENT_SDK = 'agent_sdk';
 export const CARRIER_PRINT_SDK = 'print_sdk';
 export const CARRIER_API_KEY = 'api_key';
 
@@ -76,6 +78,8 @@ export function _resetHealthStoreForTest(): void {
  */
 export function createCarrierByTier(tier: CarrierTier | string, catId: CatId): AgentService {
   switch (tier) {
+    case CARRIER_AGENT_SDK:
+      return new ClaudeSdkAgentService({ catId });
     case CARRIER_BG_DAEMON:
       return new ClaudeBgCarrierService({ catId });
     case CARRIER_INTERACTIVE_PTY:
@@ -119,6 +123,8 @@ export function createClaudeAgentServiceForCanary(
   catId: CatId,
   env: Record<string, string | undefined> = process.env,
 ): AgentService {
+  // Explicit opt-in bypasses replaying fallbacks: an SDK query may already have tool effects.
+  if (env[CARRIER_ENV_KEY]?.trim() === CARRIER_AGENT_SDK) return new ClaudeSdkAgentService({ catId });
   const store = getCarrierHealthStore();
   const targetTier = resolveTargetTier(env);
   const activeTier = selectFirstHealthyTier(targetTier, store) as CarrierTier;
@@ -187,6 +193,7 @@ export class FallbackCarrierWrapper implements AgentService {
         provider: 'anthropic',
         carrier: 'other',
         deliverySemantics: 'unsupported',
+        activeInvocationGuidance: 'unsupported',
       }
     );
   }
@@ -224,6 +231,10 @@ export class FallbackCarrierWrapper implements AgentService {
   }
 
   private async *_invoke(prompt: string, options?: AgentServiceOptions): AsyncGenerator<AgentMessage> {
+    // Account incompatibility is not carrier health. Reject even if bg is already degraded;
+    // selecting a token must not silently change the explicitly requested carrier.
+    if (options?.claudeTokenAccount && this.targetTier === 'bg_daemon')
+      throw new Error('claude_token_carrier_unsupported');
     let degradedDuringStream = false;
     try {
       for await (const msg of this.carrier.invoke(prompt, options)) {

@@ -881,6 +881,9 @@ describe('OpenCodeAgentService', () => {
       service.invoke('Test', {
         callbackEnv: {
           OPENCODE_CONFIG: '/tmp/.cat-cafe/oc-config-test-inv1/opencode.json',
+          CAT_CAFE_API_URL: 'http://127.0.0.1:1',
+          CAT_CAFE_INVOCATION_ID: 'mcp-callback-fixture',
+          CAT_CAFE_CALLBACK_TOKEN: 'mcp-callback-fixture',
           CAT_CAFE_OC_API_KEY: 'sk-custom-key',
           CAT_CAFE_OC_BASE_URL: 'https://maas.example.com/v1',
           CAT_CAFE_ANTHROPIC_API_KEY: 'sk-should-be-cleared',
@@ -894,6 +897,10 @@ describe('OpenCodeAgentService', () => {
     const opts = spawnFn.mock.calls[0].arguments[2];
     // OPENCODE_CONFIG and OC credentials must be present
     assert.strictEqual(opts.env.OPENCODE_CONFIG, '/tmp/.cat-cafe/oc-config-test-inv1/opencode.json');
+    // MCP child processes inherit these; auth-provider cleanup must not drop callbacks.
+    assert.strictEqual(opts.env.CAT_CAFE_API_URL, 'http://127.0.0.1:1');
+    assert.strictEqual(opts.env.CAT_CAFE_INVOCATION_ID, 'mcp-callback-fixture');
+    assert.strictEqual(opts.env.CAT_CAFE_CALLBACK_TOKEN, 'mcp-callback-fixture');
     assert.strictEqual(opts.env.CAT_CAFE_OC_API_KEY, 'sk-custom-key');
     assert.strictEqual(opts.env.CAT_CAFE_OC_BASE_URL, 'https://maas.example.com/v1');
     // Anthropic env vars must be cleared to prevent builtin provider conflict

@@ -43,7 +43,7 @@ describe('ThreadSettingsPanel', () => {
     delete (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT;
   });
 
-  function render(onClose = vi.fn(), returnFocusRef?: React.RefObject<HTMLElement | null>) {
+  function render(onClose = vi.fn(), returnFocusRef?: React.RefObject<HTMLElement | null>, projectPath?: string) {
     act(() => {
       root.render(
         <ThreadSettingsPanel
@@ -56,6 +56,7 @@ describe('ThreadSettingsPanel', () => {
           onSaveLabels={vi.fn()}
           onClose={onClose}
           returnFocusRef={returnFocusRef}
+          projectPath={projectPath}
         />,
       );
     });
@@ -101,6 +102,14 @@ describe('ThreadSettingsPanel', () => {
     expect(document.querySelector('[data-testid="effort-content"]')).not.toBeNull();
     expect(sectionButton('默认猫猫')?.getAttribute('aria-expanded')).toBe('false');
     expect(sectionButton('思考档位')?.getAttribute('aria-expanded')).toBe('true');
+  });
+
+  it('shows the supplied project path in full without adding it to unchanged callers', () => {
+    const path = '/work/projects/一个不能靠悬停才能找到的完整项目路径';
+    render(vi.fn(), undefined, path);
+    expect(document.querySelector('[data-testid="thread-project-path"]')?.textContent).toContain(path);
+    render();
+    expect(document.querySelector('[data-testid="thread-project-path"]')).toBeNull();
   });
 
   it('keeps Goal and Codex runtime status in Thread settings while Review belongs to Workspace Changes', () => {

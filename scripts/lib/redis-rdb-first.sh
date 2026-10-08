@@ -35,13 +35,24 @@ cat_cafe_redis_wait_for_ping() {
   return 1
 }
 
+cat_cafe_redis_read_dbsize() {
+  local size
+  size="$(redis-cli -h 127.0.0.1 -p "$1" --raw dbsize)" || return 1
+  if ! [[ "$size" =~ ^[0-9]+$ ]]; then
+    echo "[redis-rdb-first] dbsize is unreadable on port $1; refusing to infer an empty database" >&2
+    return 1
+  fi
+  printf '%s\n' "$size"
+}
+
 cat_cafe_redis_enable_aof_after_rdb_boot() {
   local port="$1"
   local dump_path="$2"
   local appendfsync="$3"
 
   local dbsize dump_size
-  dbsize="$(redis-cli -p "$port" dbsize 2>/dev/null || echo "0")"
+  REDIS_STARTUP_DATA_UNVERIFIED=true
+  dbsize="$(cat_cafe_redis_read_dbsize "$port")" || return 1
   dump_size="$(cat_cafe_file_size_bytes "$dump_path")"
 
   if [ "${dump_size:-0}" -ge 1024 ] && [ "${dbsize:-0}" = "0" ]; then
@@ -50,8 +61,9 @@ cat_cafe_redis_enable_aof_after_rdb_boot() {
     return 1
   fi
 
-  redis-cli -p "$port" config set appendfsync "$appendfsync" >/dev/null
-  redis-cli -p "$port" config set appendonly yes >/dev/null
+  REDIS_STARTUP_DATA_UNVERIFIED=false
+  redis-cli -p "$port" config set appendfsync "$appendfsync" >/dev/null || return 1
+  redis-cli -p "$port" config set appendonly yes >/dev/null || return 1
 
   for _ in $(seq 1 50); do
     if [ "$(redis-cli -p "$port" config get appendonly 2>/dev/null | sed -n '2p')" = "yes" ]; then
@@ -87,6 +99,7 @@ cat_cafe_redis_start_daemon() {
   local appendfsync="everysec"
   local pidfile=""
   local logfile=""
+  local named_alpha_ownership=false
 
   while [ "$#" -gt 0 ]; do
     case "$1" in
@@ -102,6 +115,7 @@ cat_cafe_redis_start_daemon() {
       --daemonize) shift 2 ;;
       --pidfile) pidfile="$2"; shift 2 ;;
       --logfile) logfile="$2"; shift 2 ;;
+      --named-alpha-ownership) named_alpha_ownership=true; shift ;;
       *)
         echo "[redis-rdb-first] unknown arg: $1" >&2
         return 2
@@ -111,6 +125,10 @@ cat_cafe_redis_start_daemon() {
 
   if [ -z "$port" ] || [ -z "$dir" ]; then
     echo "[redis-rdb-first] --port and --dir are required" >&2
+    return 2
+  fi
+  if [ "$named_alpha_ownership" = true ] && [ "$(type -t named_alpha_capture_redis_identity)" != function ]; then
+    echo "[redis-rdb-first] named Alpha requires its fixed native ownership callback" >&2
     return 2
   fi
 
@@ -153,6 +171,11 @@ cat_cafe_redis_start_daemon() {
   [ -n "$logfile" ] && args+=(--logfile "$logfile")
 
   redis-server "${args[@]}" >/dev/null 2>&1 || return 1
+  # A fixed launcher callback proves the spawned OS incarnation before this
+  # helper's first protocol read. No environment-supplied command is executed.
+  if [ "$named_alpha_ownership" = true ]; then
+    named_alpha_capture_redis_identity "$port" "$dir" "$pidfile" || return 1
+  fi
   cat_cafe_redis_wait_for_ping "$port" || return 1
 
   if [ "$rdb_first" = true ]; then

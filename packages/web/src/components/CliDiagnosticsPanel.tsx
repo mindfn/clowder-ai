@@ -84,13 +84,14 @@ const REASON_PALETTE: Record<CliErrorReasonCode, Palette> = {
   // Tier 2 — transient, retry later
   quota_exceeded: { ...PALETTE_TRANSIENT, Icon: GaugeIcon },
   network_error: { ...PALETTE_TRANSIENT, Icon: CloudOffIcon },
+  upstream_service_error: { ...PALETTE_TRANSIENT, Icon: CloudOffIcon },
+  stream_disconnected: { ...PALETTE_TRANSIENT, Icon: CloudOffIcon },
   // F212 Phase E (cloud codex P1 fix per @co-creator organic 2026-05-29): Anthropic server-side
   // temporary throttling — NOT user quota. Same transient tier (retry 30-60s) but distinct
   // hourglass icon to differentiate from gauge (quota) at-a-glance.
   server_overloaded: { ...PALETTE_TRANSIENT, Icon: HourglassIcon },
   cli_response_timeout: { ...PALETTE_TRANSIENT, Icon: HourglassIcon },
   cli_stall_timeout: { ...PALETTE_TRANSIENT, Icon: HourglassIcon },
-  active_writer_recovery: { ...PALETTE_TRANSIENT, Icon: HourglassIcon },
   // Tier 3 — system / environment
   spawn_failed: { ...PALETTE_SYSTEM, Icon: TerminalIcon },
   missing_rollout: { ...PALETTE_SYSTEM, Icon: FileXIcon },
@@ -266,6 +267,7 @@ export function CliDiagnosticsPanel({ errorMessage, diagnostics, dedupCount }: C
           <button
             type="button"
             data-testid="cli-diagnostics-toggle"
+            aria-expanded={expanded}
             onClick={() => setExpanded(!expanded)}
             className="flex items-center gap-1.5 cursor-pointer bg-transparent border-none p-0 self-start"
           >
@@ -277,7 +279,7 @@ export function CliDiagnosticsPanel({ errorMessage, diagnostics, dedupCount }: C
               查看详细错误
             </span>
           </button>
-          {expanded && (
+          {expanded && hasExcerpt && (
             <pre
               data-testid="cli-diagnostics-excerpt"
               className="rounded-lg overflow-x-auto whitespace-pre-wrap break-words text-xs font-mono m-0"
@@ -294,7 +296,7 @@ export function CliDiagnosticsPanel({ errorMessage, diagnostics, dedupCount }: C
         </>
       )}
 
-      {/* debugRef strip — always shown (no secrets, safe to expose) */}
+      {/* Standalone error metadata */}
       <div
         data-testid="cli-diagnostics-debug-ref"
         className="flex flex-wrap gap-x-3 gap-y-1 text-xs"
@@ -320,6 +322,14 @@ export function CliDiagnosticsPanel({ errorMessage, diagnostics, dedupCount }: C
             <span className="font-medium">invocationId:</span> {truncateMiddle(diagnostics.debugRef.invocationId, 32)}
           </span>
         )}
+        {diagnostics.debugRef.upstreamRequestId &&
+          /^[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$/i.test(
+            diagnostics.debugRef.upstreamRequestId,
+          ) && (
+            <span className="break-all">
+              <span className="font-medium">request ID:</span> {diagnostics.debugRef.upstreamRequestId}
+            </span>
+          )}
         {DEBUG_REF_CONTEXT_FIELDS.map(([key, label]) => {
           const value = diagnostics.debugRef[key];
           return value ? (

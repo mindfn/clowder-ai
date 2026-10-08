@@ -74,6 +74,18 @@ const collectiveTip: CapabilityTip = {
   },
 };
 
+const newConversationTip: CapabilityTip = {
+  ...sourceTip,
+  id: 'feature-f322-new-conversation',
+  kind: 'feature',
+  body: 'Choose a project and preferred cats before the first message creates a real conversation.',
+  action: {
+    type: 'open_capability_surface',
+    label: 'Start a new conversation',
+    surfaceId: 'new-conversation',
+  },
+};
+
 vi.mock('@/lib/capabilityTipEvents', async () => ({
   recordCapabilityTipEvent: vi.fn(),
 }));
@@ -234,5 +246,31 @@ describe('F244 CapabilityTipStrip action eligibility', () => {
     const link = container.querySelector<HTMLAnchorElement>('[data-testid="capability-tip-open-surface"]');
     expect(link?.textContent).toContain('Enter Collective');
     expect(link?.getAttribute('href')).toBe('/collective');
+  });
+
+  it('opens the real new-conversation landing from its capability tip', async () => {
+    vi.doMock('@/lib/capability-tips.seed.json', () => ({ default: [newConversationTip] }));
+    const { CapabilityTipStrip } = await import('../CapabilityTipStrip');
+
+    await act(async () => {
+      root = createRoot(container);
+      root.render(
+        <CapabilityTipStrip
+          surface="assistant_stream_bubble"
+          contexts={['thinking']}
+          firstDelayMs={0}
+          rotateMs={12000}
+        />,
+      );
+      await Promise.resolve();
+    });
+    await act(async () => {
+      vi.advanceTimersByTime(0);
+      await Promise.resolve();
+    });
+
+    const link = container.querySelector<HTMLAnchorElement>('[data-testid="capability-tip-open-surface"]');
+    expect(link?.textContent).toContain('Start a new conversation');
+    expect(link?.getAttribute('href')).toBe('/');
   });
 });

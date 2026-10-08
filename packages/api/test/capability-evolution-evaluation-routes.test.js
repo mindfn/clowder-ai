@@ -49,6 +49,7 @@ async function appWith(service, { authenticated = true } = {}) {
 const baseService = (overrides = {}) => ({
   get: async () => projection,
   linkCertificates: async () => ({ outcome: 'appended', projection }),
+  rebindMeasurementConstitution: async () => ({ outcome: 'appended', projection }),
   triggerEvaluation: async () => ({ outcome: 'appended', projection }),
   linkMeasurement: async () => ({ outcome: 'appended', projection }),
   linkAttribution: async () => ({ outcome: 'appended', projection }),
@@ -76,6 +77,42 @@ const constitutionBody = (overrides = {}) => ({
 });
 
 describe('F311 Phase 3 evaluation API', () => {
+  it('rebinds measurement constitution from one F267 proof identity without accepting owner payloads', async () => {
+    let rebound;
+    const app = await appWith(
+      baseService({
+        rebindMeasurementConstitution: async (input) => {
+          rebound = input;
+          return { outcome: 'appended', projection };
+        },
+      }),
+    );
+    const url = `/api/capability-evolution/programs/${programId}/measurement-constitution`;
+    const payload = {
+      expectedSequence: 4,
+      clientMessageId: 'rebind-measurement-v2',
+      evidenceProofRef: ref('F267', 'measurement-proof:proof-v2'),
+    };
+
+    const response = await app.inject({ method: 'POST', url, payload });
+    assert.equal(response.statusCode, 200, response.body);
+    assert.deepEqual(rebound.evidenceProofRef, payload.evidenceProofRef);
+    assert.equal(rebound.ownerUserId, 'operator');
+    assert.equal('measurementCertificateRef' in rebound, false);
+    assert.equal('measurementRoleRefs' in rebound, false);
+
+    const forged = await app.inject({
+      method: 'POST',
+      url,
+      payload: {
+        ...payload,
+        clientMessageId: 'forged-rebind',
+        measurementCertificateRef: ref('F267', 'measurement-certificate:forged'),
+      },
+    });
+    assert.equal(forged.statusCode, 400);
+  });
+
   it('exposes constitution and round-opening as real endpoints', async () => {
     // These two transitions previously had no public producer at all, so a freshly created Program
     // could never leave `constituting` except by writing to the event log from a test.

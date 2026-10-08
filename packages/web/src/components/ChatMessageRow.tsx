@@ -1,5 +1,6 @@
 'use client';
 
+import type { CapabilityTipContext, LifecycleActiveRun } from '@cat-cafe/shared';
 import { memo } from 'react';
 import type { CatData } from '@/hooks/useCatData';
 import type { ChatMessage as ChatMessageData } from '@/stores/chat-types';
@@ -10,9 +11,10 @@ import type { CardConfirmationEntry } from './rich/CardBlock';
 
 interface ChatMessageRowProps {
   message: ChatMessageData;
+  compact?: boolean;
   threadId: string;
   timelineMessages: readonly ChatMessageData[];
-  activeInvocationIds?: ReadonlySet<string>;
+  activeRuns?: readonly LifecycleActiveRun[];
   getCatById: (id: string) => CatData | undefined;
   onEditCat: (catId: string) => void;
   onEditCoCreator: () => void;
@@ -26,6 +28,8 @@ interface ChatMessageRowProps {
   forwardingDisabled: boolean;
   eager?: boolean;
   backgroundMountDelayMs?: number;
+  showCapabilityTip?: boolean;
+  capabilityTipContexts?: readonly CapabilityTipContext[];
   /** Routes interactive rich-block sends back to the surface that rendered this row. */
   sendContext?: string;
   confirmations?: CardConfirmationEntry[];
@@ -38,9 +42,10 @@ interface ChatMessageRowProps {
  */
 export const ChatMessageRow = memo(function ChatMessageRow({
   message,
+  compact = false,
   threadId,
   timelineMessages,
-  activeInvocationIds,
+  activeRuns,
   getCatById,
   onEditCat,
   onEditCoCreator,
@@ -54,11 +59,18 @@ export const ChatMessageRow = memo(function ChatMessageRow({
   forwardingDisabled,
   eager,
   backgroundMountDelayMs,
+  showCapabilityTip,
+  capabilityTipContexts,
   sendContext,
   confirmations,
 }: ChatMessageRowProps) {
   return (
-    <MessageViewportBoundary messageId={message.id} eager={eager} backgroundMountDelayMs={backgroundMountDelayMs}>
+    <MessageViewportBoundary
+      messageId={message.id}
+      eager={eager}
+      backgroundMountDelayMs={backgroundMountDelayMs}
+      navigationError={message.variant === 'error'}
+    >
       <MessageActions
         message={message}
         threadId={threadId}
@@ -71,15 +83,18 @@ export const ChatMessageRow = memo(function ChatMessageRow({
       >
         <ChatMessage
           message={message}
+          compact={compact}
           threadId={threadId}
           timelineMessages={timelineMessages}
-          activeInvocationIds={activeInvocationIds}
+          activeRuns={activeRuns}
           getCatById={getCatById}
           onEditCat={onEditCat}
           onEditCoCreator={onEditCoCreator}
           hideDiagnosticsPanel={hideDiagnosticsPanel}
           dedupCount={dedupCount}
           forwardingDisabled={forwardingDisabled}
+          showCapabilityTip={showCapabilityTip}
+          capabilityTipContexts={capabilityTipContexts}
           sendContext={sendContext}
           confirmations={confirmations}
         />

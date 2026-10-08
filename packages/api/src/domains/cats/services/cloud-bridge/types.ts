@@ -52,6 +52,8 @@ export interface CloudInvokeDispatchParams {
   readonly intent: string;
   /** Exact persisted source message ID: return anchor and Host idempotency key. */
   readonly sourceMessageId: string;
+  /** The durable child invocation that issued this source's return grant. */
+  readonly dispatchInvocationId?: string;
 }
 
 /**
@@ -61,8 +63,8 @@ export type BridgeDispatchOutcome =
   | {
       readonly kind: 'sent';
       readonly capturedUrl: string;
-      /** The only transport; the legacy PinchTab bridge was removed (F202 W2-3 h3a, issue #1538). */
-      readonly transport: 'host';
+      /** The only transport; the legacy PinchTab bridge was removed (issue #1538). */
+      readonly transport: 'host' | 'events';
       readonly hostMessageId: string;
       readonly idempotentReplay?: boolean;
     }

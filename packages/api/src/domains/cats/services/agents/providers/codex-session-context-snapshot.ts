@@ -43,7 +43,10 @@ export interface CodexSessionContextSnapshot {
   totalOutputTokens?: number;
 }
 
-export type CodexSessionContextSnapshotResolver = (sessionId: string) => Promise<CodexSessionContextSnapshot | null>;
+export type CodexSessionContextSnapshotResolver = (
+  sessionId: string,
+  selectedSessionsRoot?: string,
+) => Promise<CodexSessionContextSnapshot | null>;
 
 interface CandidateSnapshot {
   snapshot: CodexSessionContextSnapshot;
@@ -145,19 +148,20 @@ export function createCodexSessionContextSnapshotResolver(
     }
   }
 
-  async function findSessionFile(sessionId: string): Promise<string | null> {
-    const cached = fileCache.get(sessionId);
+  async function findSessionFile(sessionId: string, selectedRoot: string): Promise<string | null> {
+    const cacheKey = selectedRoot === sessionsRoot ? sessionId : `${selectedRoot}\0${sessionId}`;
+    const cached = fileCache.get(cacheKey);
     if (cached) {
       try {
         await fs.access(cached);
-        upsertCache(sessionId, cached);
+        upsertCache(cacheKey, cached);
         return cached;
       } catch {
-        fileCache.delete(sessionId);
+        fileCache.delete(cacheKey);
       }
     }
 
-    const stack: string[] = [sessionsRoot];
+    const stack: string[] = [selectedRoot];
     while (stack.length > 0) {
       const dir = stack.pop();
       if (!dir) break;
@@ -176,7 +180,7 @@ export function createCodexSessionContextSnapshotResolver(
           continue;
         }
         if (entry.isFile() && entry.name.endsWith('.jsonl') && entry.name.includes(sessionId)) {
-          upsertCache(sessionId, abs);
+          upsertCache(cacheKey, abs);
           return abs;
         }
       }
@@ -185,10 +189,13 @@ export function createCodexSessionContextSnapshotResolver(
     return null;
   }
 
-  return async (sessionId: string): Promise<CodexSessionContextSnapshot | null> => {
+  return async (
+    sessionId: string,
+    selectedSessionsRoot = sessionsRoot,
+  ): Promise<CodexSessionContextSnapshot | null> => {
     if (!sessionId) return null;
 
-    const file = await findSessionFile(sessionId);
+    const file = await findSessionFile(sessionId, selectedSessionsRoot);
     if (!file) return null;
 
     const tail = await readTailUtf8(file, tailBytes);

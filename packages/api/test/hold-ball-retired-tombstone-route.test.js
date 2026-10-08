@@ -52,13 +52,27 @@ describe('F167 Phase Q: retired hold tombstones', () => {
     };
   }
 
-  function makeStubDeps(tasks = []) {
+  function makeStubDeps(tasks = [], ownerUserId) {
     const insertedTasks = [...tasks];
     const registeredDynamic = [];
     const unregisteredIds = [];
     const removedIds = [];
     return {
       registry,
+      threadStore,
+      ownerUserId,
+      holdQuotaStore: {
+        async tryAdmit() {
+          return { admitted: true, count: 1, eventId: `stub-${Date.now()}` };
+        },
+        async releaseByEventId() {
+          return true;
+        },
+        async getCount() {
+          return 0;
+        },
+        async close() {},
+      },
       taskRunner: {
         registerDynamic(spec, taskId) {
           registeredDynamic.push({ spec, taskId });
@@ -134,7 +148,7 @@ describe('F167 Phase Q: retired hold tombstones', () => {
   test('single-slot replacement leaves retired tombstone readable', async () => {
     const thread = await threadStore.create('user-retired-replace', 'retired-replace');
     const retired = makeRetiredHoldTask('hold-ball-retired-replace', thread.id);
-    const deps = makeStubDeps([retired]);
+    const deps = makeStubDeps([retired], 'user-retired-replace');
     const app = await createApp(deps);
     const { invocationId, callbackToken } = await registry.create('user-retired-replace', 'codex', thread.id);
 
@@ -160,7 +174,7 @@ describe('F167 Phase Q: retired hold tombstones', () => {
   test('DELETE treats retired tombstone as no longer cancelable without deleting it', async () => {
     const thread = await threadStore.create('user-retired-delete', 'retired-delete');
     const retired = makeRetiredHoldTask('hold-ball-retired-delete', thread.id);
-    const deps = makeStubDeps([retired]);
+    const deps = makeStubDeps([retired], 'user-retired-delete');
     const app = await createApp(deps);
 
     const response = await app.inject({
@@ -169,7 +183,7 @@ describe('F167 Phase Q: retired hold tombstones', () => {
       headers: { 'x-cat-cafe-user': 'user-retired-delete' },
     });
 
-    assert.equal(response.statusCode, 404);
+    assert.equal(response.statusCode, 404, response.body);
     assert.ok(!deps._unregisteredIds.includes(retired.id), 'retired tombstone must not be unregistered');
     assert.ok(!deps._removedIds.includes(retired.id), 'retired tombstone must not be removed');
     assert.equal(deps.dynamicTaskStore.getById(retired.id), retired);

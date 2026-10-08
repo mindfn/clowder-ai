@@ -1,6 +1,7 @@
 'use client';
 
 import React, { useCallback, useEffect, useState } from 'react';
+import { apiFetch } from '@/utils/api-client';
 import { CreateCollectionDialog } from './CreateCollectionDialog';
 
 interface CollectionItem {
@@ -50,7 +51,7 @@ function CollectionDetail({ collectionId }: { collectionId: string }) {
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
-    fetch(`/api/library/${encodeURIComponent(collectionId)}/documents`)
+    apiFetch(`/api/library/${encodeURIComponent(collectionId)}/documents`)
       .then((r) => r.json())
       .then((data) => setGroups(data.groups ?? []))
       .catch(() => setGroups([]))
@@ -102,7 +103,7 @@ export function CollectionCatalog() {
   const [actionLoading, setActionLoading] = useState<string | null>(null);
 
   const loadCatalog = useCallback(() => {
-    fetch('/api/library/catalog')
+    apiFetch('/api/library/catalog')
       .then((r) => r.json())
       .then((data) => setCollections(data.collections ?? []))
       .catch(() => setCollections([]))
@@ -121,7 +122,7 @@ export function CollectionCatalog() {
     async (id: string) => {
       setActionLoading(id);
       try {
-        await fetch(`/api/library/${encodeURIComponent(id)}/archive`, { method: 'POST' });
+        await apiFetch(`/api/library/${encodeURIComponent(id)}/archive`, { method: 'POST' });
         loadCatalog();
       } finally {
         setActionLoading(null);
@@ -134,7 +135,7 @@ export function CollectionCatalog() {
     async (id: string) => {
       setActionLoading(id);
       try {
-        await fetch(`/api/library/${encodeURIComponent(id)}/unarchive`, { method: 'POST' });
+        await apiFetch(`/api/library/${encodeURIComponent(id)}/unarchive`, { method: 'POST' });
         loadCatalog();
       } finally {
         setActionLoading(null);
@@ -147,7 +148,7 @@ export function CollectionCatalog() {
     async (id: string) => {
       setActionLoading(id);
       try {
-        await fetch(`/api/library/${encodeURIComponent(id)}/rebuild`, { method: 'POST' });
+        await apiFetch(`/api/library/${encodeURIComponent(id)}/rebuild`, { method: 'POST' });
         loadCatalog();
       } finally {
         setActionLoading(null);

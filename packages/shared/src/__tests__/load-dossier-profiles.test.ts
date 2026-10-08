@@ -113,6 +113,17 @@ describe('R2-P2: hasDossierEntry warning scope', () => {
     expect(policy?.reentry).toBe('only_for_new_architecture_or_decision_judgment_or_explicit_cvo_request');
   });
 
+  test('canonical Opus55 creative seat retains the scheduler scarcity contract', () => {
+    const profile = loadDossierProfiles(REPO_ROOT).get('opus55');
+    expect(profile?.engagementPolicy).toMatchObject({
+      quota: 'weekly_subscription_scarce',
+      defaultMode: 'one_shot_calibration',
+      routineRepairReturn: 'author_then_routine_reviewer_if_needed',
+      reentry: 'only_for_new_architecture_or_decision_judgment_or_explicit_cvo_request',
+    });
+    expect(profile?.engagementPolicy?.highValueUses).toHaveLength(4);
+  });
+
   test('hydrates identity.pronouns from the structured dossier profile', () => {
     const tempRoot = mkdtempSync(join(tmpdir(), 'dossier-pronouns-'));
     const dossierDir = join(tempRoot, 'docs', 'team');
@@ -224,5 +235,31 @@ describe('R2-P2: hasDossierEntry warning scope', () => {
   test('community mode (no dossier) → hasDossierEntry = false for any cat', () => {
     expect(hasDossierEntry('opus', '/nonexistent/path')).toBe(false);
     expect(hasDossierEntry('runtime-spark', '/nonexistent/path')).toBe(false);
+  });
+});
+
+describe('L0 roster field contract (every cat pays for these fields in native L0)', () => {
+  // 2026-09-21: a 62-char, date-stamped l0RoutingNote added +45 tokens to EVERY cat's native
+  // L0 and tipped four cats over the ≤5950 warning margin. The cell is rendered into all
+  // teammates' prompts, so it must stay short and timeless — dates and "day N" phrasing are
+  // stale the moment they are written.
+  const RELATIVE_TIME = /\d{4}-\d{2}-\d{2}|第[一二三四五六七八九十\d]+天|今天|昨天|明天|上周|本周|刚到|刚进/;
+  const MAX_ROUTING_NOTE_CHARS = 60;
+
+  test('every l0RoutingNote in the real dossier is ≤60 chars and carries no date or day-count', () => {
+    const profiles = loadDossierProfiles(REPO_ROOT);
+    expect(profiles.size).toBeGreaterThan(0);
+    const violations: string[] = [];
+    for (const [catId, profile] of profiles) {
+      const note = profile.l0RoutingNote;
+      if (!note) continue;
+      if (note.length > MAX_ROUTING_NOTE_CHARS) {
+        violations.push(`${catId}: l0RoutingNote is ${note.length} chars (> ${MAX_ROUTING_NOTE_CHARS}): ${note}`);
+      }
+      if (RELATIVE_TIME.test(note)) {
+        violations.push(`${catId}: l0RoutingNote must be timeless (no dates / day counts): ${note}`);
+      }
+    }
+    expect(violations).toEqual([]);
   });
 });

@@ -10,7 +10,6 @@ import type {
   GateCtx,
   RunLedgerRow,
   RunOutcome,
-  ScheduleInvokeTrigger,
   ScheduleRunTiming,
   TaskSpec_P1,
 } from './types.js';
@@ -36,10 +35,12 @@ export interface PipelineContext {
   schedule?: ScheduleRunTiming;
   /** Phase 4 (AC-H1): deliver message to a thread */
   deliver?: (opts: DeliverOpts) => Promise<string>;
+  deliverPrivate?: (opts: import('./types.js').PrivateDeliverOpts) => Promise<void>;
+  /** Cancel a scheduler-owned queued message that failed before Queue admission. */
+  cancelQueuedDelivery?: (messageId: string) => Promise<boolean>;
   /** Phase 4 (AC-H2): fetch web content with browser-automation routing */
   fetchContent?: (url: string, signal?: AbortSignal) => Promise<FetchResult>;
   /** Phase 4b: invoke a cat to handle a scheduled task (fire-and-forget) */
-  invokeTrigger?: ScheduleInvokeTrigger;
   /** F233 PR3: optional ball-custody event sink for scheduler-originated events. */
   ballCustody?: IBallCustodyIngest;
   managedCommandWakeRecovery?: (taskId: string) => Promise<'missing' | 'pending' | 'recovered'>;
@@ -65,24 +66,25 @@ function ledgerTimingFields(
   };
 }
 
-async function withTimeout(
-  promise: Promise<void>,
+async function withTimeout<T>(
+  promise: Promise<T>,
   ms: number,
   taskId: string,
   controller: AbortController,
-): Promise<void> {
+  phase = 'execute',
+): Promise<T> {
   let timeoutError: Error | null = null;
   let timer: ReturnType<typeof setTimeout> | undefined;
   const timeout = new Promise<never>((_resolve, reject) => {
     timer = setTimeout(() => {
-      timeoutError = new Error(`[scheduler] ${taskId}: execute timed out after ${ms}ms`);
+      timeoutError = new Error(`[scheduler] ${taskId}: ${phase} timed out after ${ms}ms`);
       reject(timeoutError);
       controller.abort(timeoutError);
     }, ms);
   });
 
   try {
-    await Promise.race([promise, timeout]);
+    return await Promise.race([promise, timeout]);
   } catch (error) {
     if (timeoutError) {
       // Cancellation is not terminal until the underlying execution has
@@ -111,14 +113,16 @@ export async function executeTaskPipeline(ctx: PipelineContext): Promise<void> {
     isManualTrigger,
     schedule,
     deliver,
+    deliverPrivate,
+    cancelQueuedDelivery,
     fetchContent,
-    invokeTrigger,
     ballCustody,
     managedCommandWakeRecovery,
     onItemOutcome,
   } = ctx;
   const startMs = Date.now();
   const timing = ledgerTimingFields(task, schedule, isManualTrigger);
+  const suppressSelfEcho = task.admission.dependsOnThreadActivity !== false;
   const tickCount = (tickCounts.get(task.id) ?? 0) + 1;
   tickCounts.set(task.id, tickCount);
 
@@ -178,13 +182,37 @@ export async function executeTaskPipeline(ctx: PipelineContext): Promise<void> {
 
   try {
     // Step 3: Gate — returns workItems[]
+    const gateController = new AbortController();
+    const gateTimeoutMs = task.admission.timeoutMs ?? 30_000;
     const gateCtx: GateCtx = {
       taskId: task.id,
       lastRunAt: lastRunAt.get(task.id) ?? null,
       tickCount,
+      signal: gateController.signal,
+      deadlineMs: Date.now() + gateTimeoutMs,
     };
 
-    const gateResult = await task.admission.gate(gateCtx);
+    const gateResult = await withTimeout(
+      Promise.resolve().then(() => task.admission.gate(gateCtx)),
+      gateTimeoutMs,
+      task.id,
+      gateController,
+      'admission',
+    ).catch((error: unknown) => {
+      if (gateController.signal.aborted)
+        ledger.record({
+          task_id: task.id,
+          subject_key: task.id,
+          outcome: 'RUN_FAILED',
+          signal_summary: null,
+          duration_ms: Date.now() - startMs,
+          started_at: new Date(startMs).toISOString(),
+          assigned_cat_id: null,
+          error_summary: error instanceof Error ? error.message.slice(0, 500) : String(error).slice(0, 500),
+          ...timing,
+        });
+      throw error;
+    });
 
     if (!gateResult.run) {
       if (task.outcome.whenNoSignal === 'record') {
@@ -210,8 +238,8 @@ export async function executeTaskPipeline(ctx: PipelineContext): Promise<void> {
     for (const item of gateResult.workItems) {
       const itemStartMs = Date.now();
 
-      // AC-D2: Self-echo suppression — skip thread workItems where this task recently posted
-      if (emissionStore && item.subjectKey.startsWith('thread-')) {
+      // AC-D2: Only thread-driven admission can feed back on this task's posts.
+      if (suppressSelfEcho && emissionStore && item.subjectKey.startsWith('thread-')) {
         const threadId = item.subjectKey.slice(7);
         if (emissionStore.isSuppressed(task.id, threadId)) {
           ledger.record({
@@ -249,22 +277,10 @@ export async function executeTaskPipeline(ctx: PipelineContext): Promise<void> {
             return result;
           }
         : undefined;
-      const cancellationAwareInvokeTrigger: ScheduleInvokeTrigger | undefined = invokeTrigger
-        ? {
-            trigger(...args: Parameters<ScheduleInvokeTrigger['trigger']>) {
-              // A trigger carrying a message persisted by this same work item is
-              // the bounded completion of that delivery, even if timeout fired
-              // while the message write was settling. Unrelated new triggers
-              // remain fail-fast after cancellation.
-              const effect = Promise.resolve()
-                .then(() => {
-                  if (!deliveredMessageIds.has(args[4])) executeController.signal.throwIfAborted();
-                  return invokeTrigger.trigger(...args);
-                })
-                .finally(() => pendingTriggerEffects.delete(effect));
-              pendingTriggerEffects.add(effect);
-              return effect;
-            },
+      const cancellationAwareCancelQueuedDelivery = cancelQueuedDelivery
+        ? async (messageId: string): Promise<boolean> => {
+            if (!deliveredMessageIds.has(messageId)) executeController.signal.throwIfAborted();
+            return cancelQueuedDelivery(messageId);
           }
         : undefined;
       const cancellationAwareWakeRecovery = managedCommandWakeRecovery
@@ -283,8 +299,9 @@ export async function executeTaskPipeline(ctx: PipelineContext): Promise<void> {
             context: task.context,
             schedule,
             deliver: cancellationAwareDeliver,
+            ...(deliverPrivate ? { deliverPrivate } : {}),
+            cancelQueuedDelivery: cancellationAwareCancelQueuedDelivery,
             fetchContent: cancellationAwareFetch,
-            invokeTrigger: cancellationAwareInvokeTrigger,
             ballCustody,
             managedCommandWakeRecovery: cancellationAwareWakeRecovery,
           });
@@ -319,8 +336,8 @@ export async function executeTaskPipeline(ctx: PipelineContext): Promise<void> {
       // #415: notify on outcome (used for failure notifications)
       if (onItemOutcome) onItemOutcome(task.id, item.subjectKey, outcome, errorSummary);
 
-      // AC-D2: Record emission after successful thread-scoped delivery for self-echo suppression
-      if (outcome === 'RUN_DELIVERED' && emissionStore && item.subjectKey.startsWith('thread-')) {
+      // Independent gates neither consume nor create self-echo windows.
+      if (suppressSelfEcho && outcome === 'RUN_DELIVERED' && emissionStore && item.subjectKey.startsWith('thread-')) {
         const threadId = item.subjectKey.slice(7);
         const suppressionMs = task.trigger.type === 'interval' ? Math.max(task.trigger.ms * 2, 60_000) : 300_000;
         emissionStore.record({

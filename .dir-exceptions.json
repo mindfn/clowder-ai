@@ -1,6 +1,27 @@
 {
   "exceptions": [
     {
+      "path": "packages/api/src/domains/concierge/live",
+      "owner": "codex-astra",
+      "reason": "2026-10-13 public sync: 24 to 27 files after F317 presentation observations, response timing and native subexecution records. These readers share the existing live-call lifecycle; retain the reviewed import boundaries for this cut and reassess an observation/projection split before expiry.",
+      "expiresAt": "2026-10-27",
+      "ticket": "F317 / clowder-ai#1589"
+    },
+    {
+      "path": "packages/api/src/domains/concierge/live/host",
+      "owner": "codex-astra",
+      "reason": "2026-10-13 public sync: 24 to 25 files after F317 late-result notices. The notice adapter belongs to the current Host result-return lifecycle. Avoid moving that reviewed authority boundary solely to reduce the count; reassess the Host adapter grouping before expiry.",
+      "expiresAt": "2026-10-27",
+      "ticket": "F317 / clowder-ai#1589"
+    },
+    {
+      "path": "packages/api/src/domains/growing",
+      "owner": "codex-astra",
+      "reason": "2026-10-13 public sync: 24 to 31 files after F310 authenticated human-terminal and Task-execution evidence readers. Keep the reviewed Task-owned contracts intact in this cut; evaluate human-terminal and execution-read subdirectories with their import/authority boundaries before expiry.",
+      "expiresAt": "2026-10-27",
+      "ticket": "F310 / clowder-ai#1589"
+    },
+    {
       "path": "packages/api/src/domains/cats/services/agents/routing",
       "owner": "opus-48",
       "reason": "2026-08-31 renewal (F23 gate option b — freshness/ real split in same PR). 33 files. Agent routing + artifact tracking remain one unsplit agents subdomain.",
@@ -64,6 +85,13 @@
       "ticket": "F192"
     },
     {
+      "path": "packages/api/src/infrastructure/harness-eval/publish-verdict",
+      "owner": "opus",
+      "reason": "2026-09-20 R10 extraction: validate-publish-input.ts + verdict-source-types.ts split from types.ts/publish-verdict.ts for 350-line cap. 27 files. Reabsorb when adapter files consolidate.",
+      "expiresAt": "2026-10-31",
+      "ticket": "F192"
+    },
+    {
       "path": "packages/api/src/domains/cats/services/stores/redis",
       "owner": "opus",
       "reason": "2026-08-31 renewal (F23 gate option b). 50 files. Redis implementations should split with their proposal/community/session domains.",
@@ -90,13 +118,6 @@
       "reason": "2026-08-31 renewal. 51 files. People memory mixes identity, proposal lifecycle, disposition proofs, Redis persistence; F276/F281/F282 own split.",
       "expiresAt": "2026-10-31",
       "ticket": "F276/F281/F282"
-    },
-    {
-      "path": "packages/api/src/domains/cats/services/session",
-      "owner": "codex-sol",
-      "reason": "2026-09-16 census: 33 files. First bounded renewal of the F296/F299 exception added in #3876. Transcript persistence, session lifecycle, context presentation, and invocation trajectory still require an ownership-led split; this renewal does not claim that split is delivered. Keep existing import and persistence contracts stable during the reviewed public sync; the F296/F299 owner retains the split debt. Retire the separate redis-keys exception: its 24 root files are below the hard threshold.",
-      "expiresAt": "2026-09-30",
-      "ticket": "F296/F299"
     }
   ]
 }

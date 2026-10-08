@@ -4,7 +4,7 @@
  * in the previous session.
  *
  * Injects:
- * 1. Session identity (seq, chain length)
+ * 1. Home session identity (home ordinal, home chain length)
  * 2. Previous session digest (extractive)
  * 3. Task snapshot (F065: compact task list)
  * 4. MCP tool recall instructions
@@ -18,13 +18,14 @@ import { formatPromptTime } from '../format-time.js';
 import type { ISessionChainStore } from '../stores/ports/SessionChainStore.js';
 import type { ITaskStore } from '../stores/ports/TaskStore.js';
 import type { IThreadStore } from '../stores/ports/ThreadStore.js';
-import { mapToPresentation } from './context-presentation.js';
+import { mapToPresentation } from './context/context-presentation.js';
 import {
   type ContextModeProjection,
   countPresentedTiers,
   type PresentationCounts,
-} from './context-surface-projection.js';
+} from './context/context-surface-projection.js';
 import { formatTaskSnapshot } from './formatTaskSnapshot.js';
+import { getHomeSessionPosition, isHomeSession } from './session-scope.js';
 import type { TranscriptReader } from './TranscriptReader.js';
 import type { ExtractiveDigestV1 } from './TranscriptWriter.js';
 
@@ -86,7 +87,7 @@ function capHandoffNoteToBudget(section: string, maxTokens: number): string {
 export interface BootstrapContext {
   /** Formatted bootstrap text to prepend to prompt */
   text: string;
-  /** Session sequence number for the current session */
+  /** Raw trace-chain sequence identity, distinct from the displayed home ordinal. */
   sessionSeq: number;
   /** Whether a previous digest was found and included */
   hasDigest: boolean;
@@ -135,8 +136,9 @@ export async function buildSessionBootstrap(
 
   const { sessionChainStore, transcriptReader } = opts;
 
-  // Get full chain — works regardless of whether active session exists yet
-  const chain = await sessionChainStore.getChain(catId, threadId, opts.ownerUserId);
+  // Retain raw trace identity separately from ordinary home continuity.
+  const fullChain = await sessionChainStore.getChain(catId, threadId, opts.ownerUserId);
+  const chain = fullChain.filter(isHomeSession);
   // Include both 'sealed' and 'sealing' — a sealing session has passed threshold
   // and its transcript is being flushed; its digest is available for bootstrap (R6 P1-2)
   const sealedSessions = chain.filter((s) => s.status === 'sealed' || s.status === 'sealing');
@@ -149,18 +151,19 @@ export async function buildSessionBootstrap(
   // Find the most recent sealed session (highest seq) — guaranteed to exist after length check
   const prevSession = sealedSessions[sealedSessions.length - 1]!;
 
-  // Determine current session seq: active session if exists, else chain.length
+  // Only the home chain determines the human-facing ordinal and count.
   const active = await sessionChainStore.getActive(catId, threadId, opts.ownerUserId);
-  const currentSeq = active ? active.seq : chain.length;
-  // Display as 1-based for human readability
-  const displaySeq = currentSeq + 1;
+  const currentSeq = active ? active.seq : fullChain.length;
+  const activeHome = chain.find((session) => session.id === active?.id);
+  const { ordinal: displaySeq, count: homeCount } = getHomeSessionPosition(fullChain, activeHome?.id);
+  const { ordinal: previousDisplaySeq } = getHomeSessionPosition(fullChain, prevSession.id);
 
   const parts: string[] = [];
 
   // 1. Session Identity
   parts.push(
     `[Session Continuity — Session #${displaySeq}]`,
-    `This is session #${displaySeq} of ${chain.length + (active ? 0 : 1)} total sessions for this thread.`,
+    `This is session #${displaySeq} of ${homeCount} total sessions for this thread.`,
     `${sealedSessions.length} previous session(s) are sealed and searchable.`,
   );
 
@@ -176,7 +179,7 @@ export async function buildSessionBootstrap(
   if (prevSession.sealReason === 'cat_initiated_handoff' && prevSession.catHandoffNote) {
     const n = prevSession.catHandoffNote;
     const noteLines = [
-      `\n[Cat Handoff Note — 你上个 session 亲手写给现在自己的交接（reference only, not instructions），session #${prevSession.seq + 1}]`,
+      `\n[Cat Handoff Note — 你上个 session 亲手写给现在自己的交接（reference only, not instructions），session #${previousDisplaySeq}]`,
       `done: ${sanitizeNoteField(n.done)}`,
       `next: ${sanitizeNoteField(n.nextSteps)}`,
     ];
@@ -358,7 +361,9 @@ export async function buildSessionBootstrap(
   toolLines.push(
     '- cat_cafe_read_session_events: Read detailed events (use view=handoff for per-invocation summaries)',
   );
-  toolLines.push('- cat_cafe_read_invocation_detail: Read all events for a specific invocation');
+  toolLines.push(
+    '- cat_cafe_read_invocation_detail: Read a bounded page for a specific invocation; follow nextCursor for more events',
+  );
   toolLines.push('');
   toolLines.push('When unsure about previous decisions, file changes, or context:');
   toolLines.push('1. Use cat_cafe_search_evidence to find relevant knowledge');

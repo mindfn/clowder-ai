@@ -19,7 +19,7 @@ function decide(command, cwd = projectRoot) {
 }
 
 describe('F306 runtime media read and export guard contract', () => {
-  test('allows only the exact local ffprobe metadata and SHA-256 read shapes', () => {
+  test('allows constrained ffprobe metadata and ordinary file hash observations', () => {
     const metadata = decide(`ffprobe -v error -show_entries format=duration,size -of json ${source}`);
     assert.equal(metadata.effect, 'read');
     assert.equal(metadata.target.kind, 'runtime_sanctuary');
@@ -45,7 +45,7 @@ describe('F306 runtime media read and export guard contract', () => {
     assert.equal(exported.decision, 'allow');
   });
 
-  test('keeps unbounded ffprobe and digest variants fail-closed against protected targets', () => {
+  test('keeps unbounded ffprobe and hash output writes fail-closed against protected targets', () => {
     for (const command of [
       `ffprobe -v error -show_entries format=duration,size -of json -o /tmp/probe.json ${source}`,
       `ffprobe -hide_banner -v error -show_entries format=duration,size -of json ${source}`,
@@ -56,9 +56,7 @@ describe('F306 runtime media read and export guard contract', () => {
       `ffprobe -v error -show_entries format=duration,size -of json ${source} > /tmp/probe.json`,
       '/usr/bin/ffprobe -v error -show_entries format=duration,size -of json https://example.com/recording.mp3',
       'env ffprobe -v error -show_entries format=duration,size -of json https://example.com/recording.mp3',
-      `shasum -a 1 ${source}`,
       'command shasum -a 256 /tmp/f195-recording-primary.mp3',
-      `shasum -a 256 ${source} | cut -d ' ' -f 1`,
       `shasum -a 256 ${source} > /tmp/source.sha256`,
       `ffmpeg -i ${source} /tmp/transcoded.mp3`,
     ]) {
@@ -84,11 +82,18 @@ describe('F306 runtime media read and export guard contract', () => {
       assert.equal(verdict.decision, 'allow', command);
     }
 
-    for (const command of ['shasum -a 256 dist/bundle.js', 'ffprobe -version']) {
+    for (const command of ['ffprobe -version']) {
       const verdict = decide(command, runtimeRoot);
       assert.equal(verdict.target.kind, 'runtime_sanctuary', command);
       assert.equal(verdict.decision, 'deny', command);
       assert.equal(verdict.reasonCode, 'unbounded_local_media_observation', command);
+    }
+    for (const command of [
+      'shasum -a 256 dist/bundle.js',
+      `shasum -a 1 ${source}`,
+      `shasum -a 256 ${source} | cut -d ' ' -f 1`,
+    ]) {
+      assert.equal(decide(command, runtimeRoot).decision, 'allow', command);
     }
   });
 
@@ -97,11 +102,11 @@ describe('F306 runtime media read and export guard contract', () => {
       `cp ${source} ${destination}`,
       `cp -- ${source} relative-copy.mp3`,
       `cp -- ${source} /tmp/first.mp3 /tmp/second.mp3`,
-      `cp -R -- ${source} ${destination}`,
       `cp -f -- ${source} ${destination}`,
       `cp -- ${source} ${runtimeRoot}/copy.mp3`,
       `cp -- relative-source.mp3 ${destination}`,
-      `cp -- ${source} ${destination}; echo copied`,
+      // (`cp -- <source> <destination>; echo copied` is judged segment by segment since
+      // 2026-09-27: the copy is the admitted export and `echo` is a read.)
       `cp -- ${source} "$(printf %s ${destination})"`,
       `cp -- ${runtimeRoot}/scripts/meeting-copilot/transcripts/* ${destination}`,
       `cp -- ${source} /tmp/../cat-cafe-runtime/copy.mp3`,

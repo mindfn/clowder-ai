@@ -38,17 +38,19 @@ test('projects exact official catalog and durable installed state only to authen
     const response = await app.inject({ method: 'GET', url: '/api/plugins/official', headers: readHeaders });
     assert.equal(response.statusCode, 200, response.payload);
     const body = response.json();
-    assert.equal(body.plugins[0].catalogId, 'feishu-meeting-intake');
-    assert.equal(body.plugins[0].version, '0.1.0-alpha.9');
-    assert.equal(body.plugins[0].availableVersion, '0.1.0-alpha.9');
-    assert.equal(body.plugins[0].packageDigest, entry.packageDigest);
-    assert.equal(body.plugins[0].updateAvailable, false);
-    assert.equal(body.plugins[0].ownerAuthAvailable, true);
-    assert.equal(body.plugins[0].instance.lifecycleRevision, 1);
-    assert.equal(body.plugins[0].instance.installedVersion, '0.1.0-alpha.9');
-    assert.equal(body.plugins[0].instance.packageDigest, entry.packageDigest);
-    assert.equal(body.plugins[0].instance.runtimeState, 'stopped');
-    assert.deepEqual(body.plugins[0].instance.lastRuntimeError, {
+    const plugin = body.plugins.find((candidate) => candidate.catalogId === 'feishu-meeting-intake');
+    assert.ok(plugin);
+    assert.equal(plugin.catalogId, 'feishu-meeting-intake');
+    assert.equal(plugin.version, '0.1.0-alpha.9');
+    assert.equal(plugin.availableVersion, '0.1.0-alpha.9');
+    assert.equal(plugin.packageDigest, entry.packageDigest);
+    assert.equal(plugin.updateAvailable, false);
+    assert.equal(plugin.ownerAuthAvailable, true);
+    assert.equal(plugin.instance.lifecycleRevision, 1);
+    assert.equal(plugin.instance.installedVersion, '0.1.0-alpha.9');
+    assert.equal(plugin.instance.packageDigest, entry.packageDigest);
+    assert.equal(plugin.instance.runtimeState, 'stopped');
+    assert.deepEqual(plugin.instance.lastRuntimeError, {
       code: 'EVENT_BUS_CONFLICT',
       exitCode: 17,
       signal: null,
@@ -89,7 +91,9 @@ test('projects package-owned observation health and a visible stale recovery act
   try {
     const response = await app.inject({ method: 'GET', url: '/api/plugins/official', headers: readHeaders });
     assert.equal(response.statusCode, 200, response.payload);
-    assert.deepEqual(response.json().plugins[0].intakeHealth, intakeHealth);
+    const plugin = response.json().plugins.find((candidate) => candidate.catalogId === 'feishu-meeting-intake');
+    assert.ok(plugin);
+    assert.deepEqual(plugin.intakeHealth, intakeHealth);
   } finally {
     await app.close();
   }
@@ -328,6 +332,49 @@ test('previews the frozen catch-up window while a disabled runtime remains stopp
   }
 });
 
+test('a failed auth probe blocks catch-up as unavailable instead of claiming the owner logged out', async () => {
+  let previews = 0;
+  const { app, processCalls } = await harness({
+    auth: {
+      status: async () => ({
+        status: 'failed',
+        failureKind: 'status_probe',
+        error: '飞书认证状态暂时无法验证，请稍后重试。',
+      }),
+      start: async () => {
+        throw new Error('not used');
+      },
+    },
+    meetingIntake: {
+      project: async () => undefined,
+      detect: async () => ({ status: 'idle' }),
+      preview: async () => {
+        previews += 1;
+        throw new Error('must not inspect while auth status is unknown');
+      },
+      resolve: async () => {
+        throw new Error('not used');
+      },
+    },
+  });
+  try {
+    const response = await app.inject({
+      method: 'POST',
+      url: '/api/plugins/official/pi_official/catch-up/preview',
+      headers: writeHeaders,
+      remoteAddress: '127.0.0.1',
+      payload: { expectedRevision: 1 },
+    });
+
+    assert.equal(response.statusCode, 502, response.payload);
+    assert.equal(response.json().code, 'AUTH_STATUS_FAILED');
+    assert.equal(previews, 0);
+    assert.deepEqual(processCalls, []);
+  } finally {
+    await app.close();
+  }
+});
+
 test('requires the recovery-capable package update before inspecting an older live state file', async () => {
   let previews = 0;
   const { app, processCalls } = await harness({
@@ -532,10 +579,12 @@ test('projects installed versus available truth and keeps a disabled owner inten
   try {
     const before = await app.inject({ method: 'GET', url: '/api/plugins/official', headers: readHeaders });
     assert.equal(before.statusCode, 200, before.payload);
-    assert.equal(before.json().plugins[0].availableVersion, '0.1.0-alpha.9');
-    assert.equal(before.json().plugins[0].updateAvailable, true);
-    assert.equal(before.json().plugins[0].instance.installedVersion, '0.1.0-alpha.2');
-    assert.equal(before.json().plugins[0].instance.packageDigest, oldDigest);
+    const plugin = before.json().plugins.find((candidate) => candidate.catalogId === 'feishu-meeting-intake');
+    assert.ok(plugin);
+    assert.equal(plugin.availableVersion, '0.1.0-alpha.9');
+    assert.equal(plugin.updateAvailable, true);
+    assert.equal(plugin.instance.installedVersion, '0.1.0-alpha.2');
+    assert.equal(plugin.instance.packageDigest, oldDigest);
 
     const updated = await app.inject({
       method: 'POST',
@@ -602,6 +651,53 @@ test('updates an enabled plugin through one stop, swap, and resume transaction',
     assert.equal(updated.json().instance.runtimeState, 'stopped');
     assert.equal(updated.json().instance.packageDigest, entry.packageDigest);
     assert.deepEqual(processCalls, ['stop:pi_official', 'start:pi_official']);
+  } finally {
+    await app.close();
+  }
+});
+
+test('rejects an incompatible update before stopping the old enabled package', async () => {
+  const oldDigest = 'sha512-pLYTYEdGdAXrWBlKrLcUtrTJ6mszT6dmHpBDFOFLuPh1qkJAqwQ+S/xT/ORvjislG6jAgrzmYWnzlZMa778iEA==';
+  const { app, store, processCalls, updateCalls, preflightCalls } = await harness({
+    installedVersion: '0.1.0-alpha.2',
+    installedDigest: oldDigest,
+    preflightUpdate: async () => {
+      throw new Error('Host cannot validate bridge 1.3');
+    },
+    start: async () => {
+      throw new Error('old runtime cannot be restarted');
+    },
+  });
+  try {
+    await store.transaction((transaction) => {
+      const current = transaction.instances.get('pi_official');
+      transaction.instances.put({
+        ...current,
+        configReadiness: 'ready',
+        activationState: 'enabled',
+        runtimeState: 'healthy',
+      });
+    });
+    const response = await app.inject({
+      method: 'POST',
+      url: '/api/plugins/official/pi_official/update',
+      headers: writeHeaders,
+      remoteAddress: '127.0.0.1',
+      payload: {
+        expectedRevision: 1,
+        expectedCatalogVersion: entry.version,
+        expectedPackageDigest: entry.packageDigest,
+      },
+    });
+
+    assert.equal(response.statusCode, 500);
+    assert.equal(preflightCalls.length, 1);
+    assert.deepEqual(processCalls, []);
+    assert.deepEqual(updateCalls, []);
+    const instance = (await store.snapshot()).instances[0];
+    assert.equal(instance.packageDigest, oldDigest);
+    assert.equal(instance.activationState, 'enabled');
+    assert.equal(instance.runtimeState, 'healthy');
   } finally {
     await app.close();
   }
@@ -772,6 +868,107 @@ test('official plugin auth action is owner-only and gates enable until user OAut
     });
     assert.equal(enabled.statusCode, 200, enabled.payload);
     assert.deepEqual(processCalls, ['start:pi_official']);
+  } finally {
+    await app.close();
+  }
+});
+
+test('auth status failure is retryable and never projected as a disconnected owner account', async () => {
+  const authError = '飞书认证状态暂时无法验证，请稍后重试。';
+  const { app, store, processCalls } = await harness({
+    auth: {
+      status: async () => ({ status: 'failed', failureKind: 'status_probe', error: authError }),
+      start: async () => {
+        throw new Error('not used');
+      },
+    },
+  });
+  try {
+    const status = await app.inject({
+      method: 'GET',
+      url: '/api/plugins/official/pi_official/auth',
+      headers: readHeaders,
+    });
+    assert.equal(status.statusCode, 502, status.payload);
+    assert.deepEqual(status.json(), {
+      status: 'failed',
+      error: authError,
+      code: 'AUTH_STATUS_FAILED',
+    });
+
+    await store.transaction((transaction) => {
+      const current = transaction.instances.get('pi_official');
+      transaction.instances.put({
+        ...current,
+        configReadiness: 'ready',
+        activationState: 'error',
+        runtimeState: 'stopped',
+      });
+    });
+    const repair = await app.inject({
+      method: 'POST',
+      url: '/api/plugins/official/pi_official/repair',
+      headers: writeHeaders,
+      remoteAddress: '127.0.0.1',
+      payload: { expectedRevision: 1 },
+    });
+    assert.equal(repair.statusCode, 502, repair.payload);
+    assert.equal(repair.json().code, 'AUTH_STATUS_FAILED');
+    assert.deepEqual(processCalls, []);
+  } finally {
+    await app.close();
+  }
+});
+
+test('failed device login remains reconnectable instead of becoming an auth status outage', async () => {
+  let starts = 0;
+  const { app, store, processCalls } = await harness({
+    auth: {
+      status: async () => ({ status: 'failed', error: '飞书认证未完成，请重试。' }),
+      start: async () => {
+        starts += 1;
+        return { status: 'waiting', verificationUrl: 'https://accounts.feishu.cn/device' };
+      },
+    },
+  });
+  try {
+    const status = await app.inject({
+      method: 'GET',
+      url: '/api/plugins/official/pi_official/auth',
+      headers: readHeaders,
+    });
+    assert.equal(status.statusCode, 200, status.payload);
+    assert.deepEqual(status.json(), { status: 'failed', error: '飞书认证未完成，请重试。' });
+
+    await store.transaction((transaction) => {
+      const current = transaction.instances.get('pi_official');
+      transaction.instances.put({
+        ...current,
+        configReadiness: 'ready',
+        activationState: 'error',
+        runtimeState: 'stopped',
+      });
+    });
+    const repair = await app.inject({
+      method: 'POST',
+      url: '/api/plugins/official/pi_official/repair',
+      headers: writeHeaders,
+      remoteAddress: '127.0.0.1',
+      payload: { expectedRevision: 1 },
+    });
+    assert.equal(repair.statusCode, 409, repair.payload);
+    assert.equal(repair.json().code, 'AUTH_REQUIRED');
+    assert.deepEqual(processCalls, []);
+
+    const reconnect = await app.inject({
+      method: 'POST',
+      url: '/api/plugins/official/pi_official/auth/start',
+      headers: writeHeaders,
+      remoteAddress: '127.0.0.1',
+    });
+    assert.equal(reconnect.statusCode, 200, reconnect.payload);
+    assert.equal(reconnect.json().status, 'waiting');
+    assert.equal(starts, 1);
   } finally {
     await app.close();
   }

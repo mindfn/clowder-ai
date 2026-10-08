@@ -2,11 +2,55 @@
 @tailwind components;
 @tailwind utilities;
 
-[data-lineage-focus="true"] {
-  outline: 2px solid var(--color-cocreator-primary);
-  outline-offset: 3px;
+/* Derived action paint cannot override its message owner's unavailable/pending state. */
+[data-message-action-unavailable],
+[data-message-action-unavailable] * {
+  visibility: hidden !important;
+  pointer-events: none !important;
+}
+
+/* The file's own width decides which secondary actions move into More. */
+.v2-file-chrome {
+  container-type: inline-size;
+}
+.v2-file-menu-listen,
+.v2-file-menu-view {
+  display: none;
+}
+@container (max-width: 520px) {
+  .v2-file-listen {
+    display: none;
+  }
+  .v2-file-menu-listen {
+    display: block;
+  }
+}
+@container (max-width: 420px) {
+  .v2-file-view-toggle {
+    display: none;
+  }
+  .v2-file-menu-view {
+    display: block;
+  }
+}
+
+[data-message-jump-focus="true"] {
+  position: relative;
+}
+
+[data-message-jump-focus="true"]::after {
+  position: absolute;
+  z-index: 20;
+  inset: -3px;
+  border: 2px solid
+    oklch(
+      var(--cat-lineage-l, var(--cat-bubble-l, 0.62)) calc(var(--cocreator-chroma) * var(--cat-bubble-cmul, 1))
+        var(--cocreator-hue)
+    );
+  border-left: 0;
   border-radius: 0.75rem;
-  transition: outline-color 160ms ease;
+  pointer-events: none;
+  content: "";
 }
 
 /* Design tokens live in theme-tokens.css (imported via layout.tsx) */
@@ -172,48 +216,6 @@ body {
   /* Disable breathe ring and transitions on guide overlay elements */
   [style*="guide-breathe"] {
     animation: none !important;
-  }
-}
-
-/* F229 PR-A3a: 猫猫球动画 */
-/* V4: idle 态慢呼吸（4s，scale 1→1.04→1） */
-@keyframes concierge-breathe {
-  0%,
-  100% {
-    transform: scale(1);
-  }
-  50% {
-    transform: scale(1.04);
-  }
-}
-
-/* V4: 气泡弹出（200ms，从 origin-bottom-right 弹入） */
-@keyframes concierge-bubble-pop {
-  from {
-    transform: scale(0.8);
-    opacity: 0;
-  }
-  to {
-    transform: scale(1);
-    opacity: 1;
-  }
-}
-
-/* V8: reduced-motion — 静态化猫猫球动画（重定义 keyframes 为 no-op） */
-@media (prefers-reduced-motion: reduce) {
-  @keyframes concierge-breathe {
-    0%,
-    100%,
-    50% {
-      transform: scale(1);
-    }
-  }
-  @keyframes concierge-bubble-pop {
-    from,
-    to {
-      transform: scale(1);
-      opacity: 1;
-    }
   }
 }
 

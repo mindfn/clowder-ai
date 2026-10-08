@@ -3,8 +3,9 @@ import { createRoot, type Root } from 'react-dom/client';
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import { ChatInput, threadDrafts, threadImageDrafts } from '@/components/ChatInput';
 import { ThreadItem } from '@/components/ThreadSidebar/ThreadItem';
+import { syncDraftToStorage } from '@/components/thread-drafts';
 import type { WhisperOptions } from '@/hooks/useSendMessage';
-import type { DeliveryMode, Thread } from '@/stores/chat-types';
+import type { Thread } from '@/stores/chat-types';
 import { DEFAULT_THREAD_STATE, useChatStore } from '@/stores/chatStore';
 
 vi.mock('@/hooks/useCatData', () => ({
@@ -54,7 +55,7 @@ vi.mock('@/components/ThreadSidebar/thread-utils', () => ({
 
 vi.mock('@/utils/api-client', () => ({
   API_URL: 'http://example.test',
-  apiFetch: vi.fn(),
+  apiFetch: vi.fn(async () => ({ ok: true, json: async () => ({ participants: [] }) })),
 }));
 
 vi.mock('@/utils/compressImage', () => ({ compressImage: (f: File) => Promise.resolve(f) }));
@@ -67,7 +68,7 @@ vi.mock('@/hooks/useCoCreatorConfig', () => ({
   }),
 }));
 
-type OnSend = (content: string, images?: File[], whisper?: WhisperOptions, deliveryMode?: DeliveryMode) => void;
+type OnSend = (content: string, images?: File[], whisper?: WhisperOptions) => void;
 
 function makeThread(id: string, title: string): Thread {
   const now = Date.now();
@@ -147,7 +148,6 @@ describe('ThreadItem draft badge', () => {
       catInvocations: {},
       currentGame: null,
       queue: [],
-      queuePaused: false,
       queueFull: false,
       threadStates: {
         'thread-1': { ...DEFAULT_THREAD_STATE },
@@ -223,7 +223,7 @@ describe('ThreadItem draft badge', () => {
       getTextarea().dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }));
     });
 
-    expect(onSend).toHaveBeenCalledWith('half typed message', undefined, undefined, undefined, undefined, undefined);
+    expect(onSend).toHaveBeenCalledWith('half typed message', undefined, undefined, undefined);
     expect(getThreadRow('thread-1').textContent).not.toContain('[草稿]');
   });
 
@@ -247,5 +247,45 @@ describe('ThreadItem draft badge', () => {
     expect(getThreadRow('thread-1').textContent).toContain('[草稿]');
     expect(getThreadRow('thread-2').textContent).not.toContain('[草稿]');
     expect(getTextarea().value).toBe('');
+  });
+
+  describe('after a reload (no composer has been mounted for the thread in this page load)', () => {
+    function renderOffscreenRow() {
+      act(() => {
+        root.render(
+          React.createElement(ThreadItem, {
+            id: 'thread-1',
+            title: 'Thread 1',
+            participants: [],
+            lastActiveAt: 1,
+            isActive: false,
+            onSelect: vi.fn(),
+            presence: { status: 'idle' },
+            unreadCount: 0,
+            hasUserMention: false,
+          }),
+        );
+      });
+    }
+
+    it('shows the badge for a draft that survived in storage, with no composer flag ever set', () => {
+      // What the module does at load: the owner is hydrated from sessionStorage, nothing wrote the store flag.
+      threadDrafts.set('thread-1', 'a draft the reload kept');
+      expect(useChatStore.getState().threadStates['thread-1']?.hasDraft).toBe(false);
+
+      renderOffscreenRow();
+
+      expect(container.textContent).toContain('[草稿]');
+    });
+
+    it('drops the badge when the owner clears that draft, still without a composer', () => {
+      threadDrafts.set('thread-1', 'a draft the reload kept');
+      renderOffscreenRow();
+      expect(container.textContent).toContain('[草稿]');
+
+      act(() => syncDraftToStorage('thread-1', undefined));
+
+      expect(container.textContent).not.toContain('[草稿]');
+    });
   });
 });

@@ -34,7 +34,9 @@ export class CustodyOpportunityRuntime {
     const capturedAt = this.now();
     const observationCutoff = Math.min(capturedAt, cohort.reviewAt);
     const [sourceSlice, tasks] = await Promise.all([
-      this.deps.messages.listOwnerMessageWindowSlice(ownerUserId, cohort.startedAt, observationCutoff, 5_000),
+      this.deps.messages.listOwnerMessageWindowSlice(ownerUserId, cohort.startedAt, observationCutoff, 5_000, {
+        humanOnly: true,
+      }),
       this.deps.tasks.listByKind('work'),
     ]);
     const recorder = new CustodyOpportunityEpisodeRecorder();

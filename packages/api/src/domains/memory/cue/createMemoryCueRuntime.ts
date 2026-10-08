@@ -5,6 +5,7 @@ import type { EntityRegistryStore } from '../EntityRegistry.js';
 import type { IEventMemoryStore } from '../EventMemoryStore.js';
 import type { IEvidenceStore } from '../interfaces.js';
 import type { PersonMemoryRecallService } from '../people/PersonMemoryRecallService.js';
+import type { TasteMemoryLifecycleStore } from '../taste/TasteMemoryLifecycleStore.js';
 import type { MemoryCueDrillHandleService } from './MemoryCueDrillHandleService.js';
 import type { MemoryCueEpisodeStore } from './MemoryCueEpisodeStore.js';
 import { MemoryCueInvocationPromptService } from './MemoryCueInvocationPromptService.js';
@@ -27,16 +28,19 @@ import { PersonMemoryCueSource } from './sources/PersonMemoryCueSource.js';
 import { ProfileMemoryCueSource } from './sources/ProfileMemoryCueSource.js';
 import { ProjectKnowledgeMemoryCueSource } from './sources/ProjectKnowledgeMemoryCueSource.js';
 import { CanonicalTasteMemoryCueSource } from './sources/TasteMemoryCueSource.js';
+import type { ThreadOverviewMemoryCueSource } from './sources/ThreadOverviewMemoryCueSource.js';
 
 export interface MemoryCueRuntime {
   promptService: MemoryCueInvocationPromptService;
   sourceReader: MemoryCueSourceReader;
   profileOpportunitySource: ProfileMemoryCueSource;
   eventOpportunitySource: EventMemoryCueSource;
+  threadOverviewOpportunitySource?: ThreadOverviewMemoryCueSource;
 }
 
 /** Composition root for the source-backed read-only canonical lanes. */
 export function createMemoryCueRuntime(input: {
+  threadOverviewSource?: ThreadOverviewMemoryCueSource;
   episodeStore: MemoryCueEpisodeStore;
   handles: MemoryCueDrillHandleService;
   evidenceStore: Pick<IEvidenceStore, 'getByAnchor'>;
@@ -45,6 +49,7 @@ export function createMemoryCueRuntime(input: {
   entityRegistry: Pick<EntityRegistryStore, 'isCurrentVisibleRevision'>;
   personRecall?: PersonMemoryRecallService;
   tasteRepository: TasteRepository;
+  tasteLifecycle?: Pick<TasteMemoryLifecycleStore, 'isReadable'>;
   ownerUserId: string;
   profileRepository: import('../../cats/services/profile/ProfileRepository.js').FileProfileRepository;
   projectDocsRoot: string;
@@ -54,7 +59,7 @@ export function createMemoryCueRuntime(input: {
     ? new PersonMemoryCueSource({ recall: input.personRecall, messageStore: input.messageStore })
     : null;
   const operationalSource = new CanonicalOperationalPrecedentCueSource(input.evidenceStore);
-  const tasteSource = new CanonicalTasteMemoryCueSource(input.tasteRepository, input.ownerUserId);
+  const tasteSource = new CanonicalTasteMemoryCueSource(input.tasteRepository, input.ownerUserId, input.tasteLifecycle);
   const profileSource = new ProfileMemoryCueSource({
     ownerUserId: input.ownerUserId,
     repository: input.profileRepository,
@@ -86,6 +91,7 @@ export function createMemoryCueRuntime(input: {
     new DecisionCueResolver(decisionSource),
     new ProjectKnowledgeCueResolver(projectKnowledgeSource),
     new CatOwnedSeedCueResolver(catOwnedSeedSource),
+    input.threadOverviewSource ?? { family: 'thread_overview', resolverVersion: 1, resolve: async () => [] },
   ]);
   const plane = new MemoryCuePlaneService(registry, input.episodeStore);
   return {
@@ -95,8 +101,19 @@ export function createMemoryCueRuntime(input: {
     }),
     profileOpportunitySource: profileSource,
     eventOpportunitySource: eventSource,
+    ...(input.threadOverviewSource ? { threadOverviewOpportunitySource: input.threadOverviewSource } : {}),
     sourceReader: {
       async read(request) {
+        if (request.family === 'thread_overview') {
+          return input.threadOverviewSource
+            ? input.threadOverviewSource.read({
+                ownerUserId: request.scope.ownerUserId,
+                consumerCatId: request.consumerCatId,
+                anchor: request.anchor,
+                expectedRevision: request.expectedRevision,
+              })
+            : { status: 'not_available' as const, invalidationReason: 'source_forgotten' as const };
+        }
         if (request.family === 'person_memory') {
           return personSource
             ? personSource.read({

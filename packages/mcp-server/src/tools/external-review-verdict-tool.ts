@@ -110,6 +110,36 @@ export async function handleRecoverExternalReviewVerdict(input: {
   return callbackPost('/api/callbacks/recover-external-review-verdict', input);
 }
 
+export const externalReviewTransferInputSchema = {
+  repoFullName: z
+    .string()
+    .regex(/^[^/\s]+\/[^/\s]+$/)
+    .describe('Exact external owner/repo.'),
+  prNumber: z.number().int().positive().describe('Single PR whose existing review responsibility moves.'),
+  expectedAssignmentRevision: z
+    .number()
+    .int()
+    .nonnegative()
+    .describe('Canonical reviewerAssignmentRevision from the board; absent legacy value is zero.'),
+  proposalId: z
+    .string()
+    .min(1)
+    .max(200)
+    .optional()
+    .describe(
+      'Required for a target caller: exact approved proposal bound to the same tracker Task and target thread/cat. Omit only when the current assigned reviewer hands over its own responsibility.',
+    ),
+};
+
+export async function handleTransferExternalReview(input: {
+  repoFullName: string;
+  prNumber: number;
+  expectedAssignmentRevision: number;
+  proposalId?: string;
+}): Promise<ToolResult> {
+  return callbackPost('/api/callbacks/transfer-external-review', input);
+}
+
 export const externalReviewVerdictTools = [
   defineTool({
     name: 'cat_cafe_record_external_review_verdict',
@@ -154,6 +184,28 @@ export const externalReviewVerdictTools = [
         disposition: 'accepted-boundary',
         kind: 'authority-boundary',
         admissionRef: 'file:docs/features/F167-a2a-chain-quality.md',
+      },
+    },
+  }),
+  defineCanonicalTool({
+    name: 'cat_cafe_transfer_external_review',
+    description:
+      'Transfer one existing external PR reviewer assignment to its current same-owner canonical PR tracker. ' +
+      'Use when: an authorized handover moved the tracker/case but formal reviewer rights still name the predecessor. ' +
+      'NOT for: assigning arbitrary work, repo-wide policy edits, submitting a verdict, transferring an active action lease, or moving contributor implementation. ' +
+      'Output: canonical target/revision after event-log CAS and replay, or a precise fail-closed rejection. ' +
+      'GOTCHA: caller must be the current assigned reviewer, or the admitted target consuming its exact approved Task-bound thread proposal. Target principal comes only from the Task; expectedAssignmentRevision fences concurrent/replayed handovers. Invocation auth is mandatory. It preserves review history and never merges, restarts or registers tracking.',
+    inputSchema: externalReviewTransferInputSchema,
+    handler: handleTransferExternalReview,
+    governance: {
+      implementationExport: 'handleTransferExternalReview',
+      action: 'update',
+      risk: { level: 'write', openWorld: false },
+      runtimeProfiles: ['full'],
+      standaloneReason: {
+        disposition: 'accepted-boundary',
+        kind: 'authority-boundary',
+        admissionRef: 'file:docs/features/F168-community-ops-board.md',
       },
     },
   }),

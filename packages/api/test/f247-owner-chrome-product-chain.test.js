@@ -7,13 +7,14 @@ import { InvocationRegistry } from '../dist/domains/cats/services/agents/invocat
 import { invokeSingleCat } from '../dist/domains/cats/services/agents/invocation/invoke-single-cat.js';
 import { persistUserFacingSystemInfoNotices } from '../dist/domains/cats/services/agents/routing/persist-system-info-warnings.js';
 import { buildCloudBridgeStatusContent } from '../dist/domains/cats/services/cloud-bridge/cloud-bridge-fallback.js';
+import { CloudReturnBindingSigner } from '../dist/domains/cats/services/cloud-bridge/cloud-return-binding.js';
 import { MemoryCloudReturnGrantStore } from '../dist/domains/cats/services/cloud-bridge/cloud-return-grant.js';
 import { dispatchBoundConversationThroughHost } from '../dist/domains/cats/services/cloud-bridge/conversation-host-dispatch.js';
 import { MessageStore } from '../dist/domains/cats/services/stores/ports/MessageStore.js';
 import { ThreadStore } from '../dist/domains/cats/services/stores/ports/ThreadStore.js';
 import { callbacksRoutes } from '../dist/routes/callbacks.js';
-import { safeAdapterDiagnostic } from '../src/plugins/cloud-cat-personal-host/native-host/native-results.mjs';
-import { createUnsupportedNodeHarness } from './helpers/f247-unsupported-node-harness.js';
+import { boundedFailureDiagnostic } from './helpers/f202-cloud-failure-diagnostic.js';
+import { canonicalTestMessageInput } from './helpers/message-from-fixtures.js';
 
 function ensureGptProRegistered() {
   if (catRegistry.has('gpt-pro')) return;
@@ -39,23 +40,28 @@ describe('F247 normal owner-Chrome product chain', () => {
     const threadStore = new ThreadStore();
     const thread = await threadStore.create('alice', 'F247 product chain');
     await threadStore.updateCloudCatBinding(thread.id, 'gpt-pro', 'https://chatgpt.com/c/conversation-product-chain');
-    const source = messageStore.append({
-      userId: 'alice',
-      catId: 'codex-sol',
-      threadId: thread.id,
-      content: '@gpt-pro verify this exact source',
-      mentions: ['gpt-pro'],
-      timestamp: 1_000,
-      extra: { stream: { invocationId: 'inv-source', turnInvocationId: 'inv-source' } },
-    });
+    const source = messageStore.append(
+      canonicalTestMessageInput({
+        userId: 'alice',
+        catId: 'codex-sol',
+        threadId: thread.id,
+        content: '@gpt-pro verify this exact source',
+        mentions: ['gpt-pro'],
+        timestamp: 1_000,
+        extra: { stream: { invocationId: 'inv-source', turnInvocationId: 'inv-source' } },
+      }),
+    );
+    const signer = new CloudReturnBindingSigner(Buffer.alloc(32, 17));
+    // F117: the Host dispatch issues exactly one server-custodied return grant into
+    // this store before dispatching; the callback route claims it on source-bound returns.
     const grantStore = new MemoryCloudReturnGrantStore(Date.now, { historyBoundary: 0 });
     const bridgeCalls = [];
-    const dispositionCalls = [];
     const events = await drain(
       invokeSingleCat(
         {
           registry: new InvocationRegistry(),
           sessionManager: {},
+          messageStore,
           threadStore,
           apiUrl: 'http://localhost:0',
           cloudInvokeBridge: {
@@ -71,18 +77,6 @@ describe('F247 normal owner-Chrome product chain', () => {
             },
           },
           cloudReturnGrantStore: grantStore,
-          a2aDispatchDispositionService: {
-            async complete(auth, disposition) {
-              dispositionCalls.push({ auth, disposition });
-              return {
-                outcome: 'applied',
-                disposition,
-                invocationId: auth.invocationId,
-                sourceMessageId: auth.a2aTriggerMessageId,
-                fromCatId: 'codex-sol',
-              };
-            },
-          },
         },
         {
           catId: 'gpt-pro',
@@ -91,6 +85,7 @@ describe('F247 normal owner-Chrome product chain', () => {
             freshnessCarrierCapability: () => ({
               provider: 'other',
               carrier: 'other',
+              activeInvocationGuidance: 'undeclared',
               deliverySemantics: 'undeclared',
             }),
           },
@@ -112,23 +107,27 @@ describe('F247 normal owner-Chrome product chain', () => {
     assert.equal(bridgeCalls.length, 1);
     assert.equal(bridgeCalls[0].sourceMessageId, source.id);
     assert.equal('cloudReturnBinding' in bridgeCalls[0], false);
-    assert.equal(dispositionCalls.length, 1);
     const statusEvent = events.find(
       (event) =>
         event.type === 'system_info' && event.content && JSON.parse(event.content).type === 'cloud_bridge_status',
     );
+    const createdEvent = events.find(
+      (event) =>
+        event.type === 'system_info' && event.content && JSON.parse(event.content).type === 'invocation_created',
+    );
     const status = JSON.parse(statusEvent.content);
+    const created = JSON.parse(createdEvent.content);
     assert.deepEqual(
       {
         sourceMessageId: status.outboundReceipt.sourceMessageId,
-        dispatchInvocationId: status.outboundReceipt.dispatchInvocationId,
+        dispatchInvocationId: created.invocationId,
         status: status.outboundReceipt.status,
         transport: status.outboundReceipt.transport,
         hostMessageId: status.outboundReceipt.hostMessageId,
       },
       {
         sourceMessageId: source.id,
-        dispatchInvocationId: dispositionCalls[0].auth.invocationId,
+        dispatchInvocationId: status.outboundReceipt.dispatchInvocationId,
         status: 'sent',
         transport: 'host',
         hostMessageId: 'host-message-product-chain',
@@ -155,18 +154,43 @@ describe('F247 normal owner-Chrome product chain', () => {
     await app.register(callbacksRoutes, {
       registry: new InvocationRegistry(),
       agentKeyRegistry,
+      cloudReturnBindingSigner: signer,
       cloudReturnGrantStore: grantStore,
       messageStore,
       threadStore,
       socketManager: { broadcastAgentMessage: () => undefined },
     });
-    const wrongSource = messageStore.append({
-      userId: 'alice',
-      catId: 'codex-sol',
-      threadId: thread.id,
-      content: 'a different source in the same thread',
-      timestamp: 2_000,
+    // F117 new contract: a legacy cloudReturnBinding without its exact replyTo source
+    // is rejected 400 before any grant claim; the normal source-bound path is
+    // authorized by the server-custodied grant, not by a client-sent binding.
+    const missingBinding = await app.inject({
+      method: 'POST',
+      url: '/api/callbacks/post-message',
+      headers: { 'x-agent-key-secret': secret },
+      payload: {
+        content: 'must not return without the exact capability',
+        threadId: thread.id,
+        cloudReturnBinding: signer.sign({
+          threadId: thread.id,
+          userId: 'alice',
+          sourceMessageId: bridgeCalls[0].sourceMessageId,
+          dispatchInvocationId: 'inv-cloud',
+          targetCatId: 'gpt-pro',
+        }),
+      },
     });
+    assert.equal(missingBinding.statusCode, 400);
+    assert.equal(missingBinding.json().kind, 'cloud_return_binding_required');
+
+    const wrongSource = messageStore.append(
+      canonicalTestMessageInput({
+        userId: 'alice',
+        catId: 'codex-sol',
+        threadId: thread.id,
+        content: 'a different source in the same thread',
+        timestamp: 2_000,
+      }),
+    );
     const substitutedSource = await app.inject({
       method: 'POST',
       url: '/api/callbacks/post-message',
@@ -201,40 +225,18 @@ describe('F247 normal owner-Chrome product chain', () => {
 
   it('persists only the bounded text-free fingerprint from a terminal Host failure', async () => {
     const messageStore = new MessageStore();
-    const source = messageStore.append({
-      userId: 'alice',
-      catId: 'codex-sol',
-      threadId: 'thread-failed-dispatch',
-      content: '@gpt-pro private source body',
-      mentions: ['gpt-pro'],
-      timestamp: 1_000,
-      extra: { stream: { invocationId: 'inv-source', turnInvocationId: 'inv-source' } },
-    });
-    const harness = createUnsupportedNodeHarness();
-    let pageDiagnostic;
-    await assert.rejects(
-      harness.adapter.appendMessage({
-        requestId: 'comment-node-failure',
-        conversationId: 'conversation-product-chain',
-        text: 'must never enter diagnostics',
-        idempotencyKey: source.id,
+    const source = messageStore.append(
+      canonicalTestMessageInput({
+        userId: 'alice',
+        catId: 'codex-sol',
+        threadId: 'thread-failed-dispatch',
+        content: '@gpt-pro private source body',
+        mentions: ['gpt-pro'],
+        timestamp: 1_000,
+        extra: { stream: { invocationId: 'inv-source', turnInvocationId: 'inv-source' } },
       }),
-      (error) => {
-        assert.equal(error.code, 'COMPOSER_DOM_UNSUPPORTED');
-        pageDiagnostic = error.diagnostic;
-        return true;
-      },
     );
-    assert.equal(harness.getSendCount(), 0);
-    assert.equal(harness.document.querySelectorAll('[data-message-id]').length, 0);
-    assert.equal(harness.composer.textContent, '');
-    assert.equal(pageDiagnostic.fingerprint.firstUnsupportedPath, 'composer/#node-8[0]');
-    assert.deepEqual(
-      pageDiagnostic.fingerprint.nodes.map((node) => node.path),
-      ['composer', 'composer/#node-8[0]', 'composer/h1[1]'],
-    );
-    const diagnostic = safeAdapterDiagnostic(pageDiagnostic);
-    assert.ok(diagnostic, 'native Helper must preserve the adapter path grammar');
+    const diagnostic = boundedFailureDiagnostic('composer/#node-8[0]');
     assert.equal(isCloudBridgeFailureDiagnosticV1(diagnostic), true);
     for (const firstUnsupportedPath of [
       'composer/#node-8[0]/prompt_secret[0]',
@@ -246,7 +248,6 @@ describe('F247 normal owner-Chrome product chain', () => {
         ...diagnostic,
         fingerprint: { ...diagnostic.fingerprint, firstUnsupportedPath },
       };
-      assert.equal(safeAdapterDiagnostic(unsafeDiagnostic), null);
       assert.equal(isCloudBridgeFailureDiagnosticV1(unsafeDiagnostic), false);
     }
     const oversizedCountDiagnostic = {
@@ -256,7 +257,6 @@ describe('F247 normal owner-Chrome product chain', () => {
         nodes: [{ path: 'composer', kind: 'element', tag: 'DIV', childCount: 0x1_0000_0000 }],
       },
     };
-    assert.equal(safeAdapterDiagnostic(oversizedCountDiagnostic), null);
     assert.equal(isCloudBridgeFailureDiagnosticV1(oversizedCountDiagnostic), false);
     const hostError = Object.assign(new Error('ChatGPT composer DOM is unsupported'), {
       code: 'COMPOSER_DOM_UNSUPPORTED',

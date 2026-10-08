@@ -2,7 +2,7 @@
 title: F287 Memory Cue Source Map
 doc_kind: architecture
 feature_ids: [F287]
-related_features: [F102, F152, F186, F188, F200, F209, F221, F227, F231, F256, F260, F263, F271, F276, F281, F282, F312]
+related_features: [F321, F102, F152, F186, F188, F200, F209, F221, F227, F231, F256, F260, F263, F271, F276, F281, F282, F312]
 topics: [memory, recall, cue-plane, ownership, source-map, lifecycle]
 created: 2026-08-01
 description: "F287 对既有记忆源、消费者、cue 路径、drill、纠正遗忘以及 main/live/UAT 真相的逐 lane 边界普查。"
@@ -35,10 +35,13 @@ snapshot 是 origin/main / Alpha@cf9980b595168dbb5b64250c2e48022ba3ad27cd。
 - v6 closure：F312 Phase F 不新增 producer/kind pair。Library 维持 F186 显式 pull，Provider-local 维持
   provider/account authority；两者 E0 exempt，current resolver catalog 仍是 v5 的九个 closed pair。
 
+- F321 catalog v6：新增 `thread_opened / owner_message → thread_overview`；不要混淆上面的 F312 Phase F “v6 closure”历史名称，它当时并未提升 catalog。F321 当前分支的准入是 strict owner interactive 首条消息、整本可读目录模型选择、完整概况复读。来源仍是 F102 当前摘要与原始消息，映射/补齐 cursor 持久化在同一 SQLite。T2 内容仅沿 F296 `F321.ThreadOpeningClue` 显式 clue 合同递送；普通 pointer 不携带正文。main/live/Alpha 状态由 F321 的本次交付证据记录。
+
 ## Source census
 
 | Feature | Exact main truth anchor | Canonical truth / owner | Existing consumer | F287 cue path | Drill | Correction / forget | main / live / UAT | Verifiable anchors |
 |---|---|---|---|---|---|---|---|---|
+| F321 线程概况 | 本次集成 PR / exact HEAD | F102 summary projection + source messages；memory cell | 新 thread 当前猫；指挥猫需另核当前 Task/PR | catalog v6 thread_opened；whole-directory Luna librarian；bounded T2 clue | authenticated thread_overview drill + same-thread original coordinates | 每次复读核 source visibility/recall/revision；撤回后丢弃原生 session 并按有效概况重开；summary CAS + suppression fence | branch=implementation；main/live/Alpha 见交付证据；下一条真实新想法反馈未验 | LunaCurationClient.ts；curation/ThreadOverviewRepository.ts；curation/ThreadOverviewBackfill.ts；sources/ThreadOverviewMemoryCueSource.ts；f321-opening-presentation.test.ts |
 | F102 | 36af7fd0271cd8bf03e0976cc74ae3ccc77e41e0 | IEvidenceStore、IIndexBuilder 与本地 SQLite evidence；owner=memory cell | search_evidence、graph/query resolvers | catalog v4 的 project_source_required 只借 F209/F102 index 定位当前 task 的 exact feature source；index 不取得 authority | canonical feature document reader + Evidence drill carrier | canonical feature bytes/status/path 失效；index refresh 只更新定位，不改原 owner truth | main=Phase D candidate；live=unknown；UAT=须 merged-main Alpha | docs/features/F102-memory-adapter-refactor.md；ProjectKnowledgeMemoryCueSource.ts；f312-project-knowledge-cue.test.js |
 | F152 | bdcf7824434445d1eb59a2b9a03d0c8ccd23086c | RepoScanner 选择、CatCafeScanner 与 bootstrap；owner=memory cell | IndexBuilder rebuild/incremental update | readiness materialization only，不是 opportunity producer | scanned sourcePath → evidence anchor | source file deletion/rebuild | main=landed；live=unknown；UAT=feature doc source-owned，Phase A 未复跑 | docs/features/F152-expedition-memory.md；packages/api/src/domains/memory/CatCafeScanner.ts；IndexBuilder.ts |
 | F186 | 8ec53796eac7a059b5c74bb476c8515b31306e5e | library catalog / collection lifecycle 与安全边界；owner=memory cell | library collection readers | project knowledge resolver；v2 zero-only | collection/evidence typed readers | collection lifecycle policy；F287 不复制 collection state | main=landed；live=unknown；UAT=feature close truth，Phase A 未复跑 | docs/features/F186-library-memory-architecture.md；packages/api/src/domains/memory/LibraryCatalog.ts；collection routes/tests |

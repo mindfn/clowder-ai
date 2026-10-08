@@ -1,4 +1,5 @@
 import { createHash } from 'node:crypto';
+import { messageFrom } from '../../../cats/services/stores/message-from.js';
 import type { IMessageStore } from '../../../cats/services/stores/ports/MessageStore.js';
 import { isDelivered } from '../../../cats/services/stores/ports/MessageStore.js';
 import type { PersonMemoryRecallService } from '../../people/PersonMemoryRecallService.js';
@@ -27,8 +28,7 @@ function sourceVisibilityFailure(
   if (
     message.userId !== ownerUserId ||
     message.threadId !== threadId ||
-    message.catId !== null ||
-    message.source !== undefined ||
+    messageFrom(message).kind !== 'user' ||
     message.visibility === 'whisper' ||
     !isDelivered(message)
   ) {
@@ -82,8 +82,8 @@ export class PersonMemoryCueSource implements PersonEntityCueSource {
       return { status: 'not_available', invalidationReason: 'source_forgotten' };
     }
     const personId = input.anchor.slice(PERSON_MEMORY_ANCHOR_PREFIX.length);
-    const recalled = await this.deps.recall.recallByPersonId(input.ownerUserId, personId).catch(() => null);
-    if (!recalled || recalled.status !== 'resolved') {
+    const recalled = await this.deps.recall.recallByPersonId(input.ownerUserId, personId);
+    if (recalled.status !== 'resolved') {
       return { status: 'not_available', invalidationReason: 'source_forgotten' };
     }
     if (revisionOf(recalled.card) !== input.expectedRevision) {

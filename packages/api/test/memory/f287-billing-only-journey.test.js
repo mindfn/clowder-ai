@@ -155,6 +155,7 @@ describe('F287 D2 billing-only golden journey', () => {
       new DecisionCueResolver({ resolve: async () => null }),
       new ProjectKnowledgeCueResolver({ resolve: async () => null }),
       new CatOwnedSeedCueResolver({ resolve: async () => null }),
+      { family: 'thread_overview', resolverVersion: 1, resolve: async () => [] },
     ]);
     const service = new MemoryCueInvocationPromptService({
       plane: new MemoryCuePlaneService(registry, episodeStore),

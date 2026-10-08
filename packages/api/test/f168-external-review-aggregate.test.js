@@ -18,6 +18,23 @@ const assigned = (overrides = {}) => ({
 const event = (kind, payload, at = 1_000) => ({ kind, payload, at });
 
 describe('F168 external review aggregate', () => {
+  it('keeps terminal PRs terminal after late HEAD, CI, and cloud observations', () => {
+    for (const terminalKind of ['pr.closed', 'pr.merged', 'case.declined']) {
+      let state = createExternalReviewAggregate(assigned());
+      state = applyExternalReviewEvent(state, event('case.head_observed', { headSha: 'head-1' })).value;
+      state = applyExternalReviewEvent(state, event(terminalKind, {})).value;
+      for (const observation of [
+        event('case.ci_observed', { headSha: 'head-1', status: 'pending' }),
+        event('case.cloud_review_observed', { headSha: 'head-1', status: 'running' }),
+        event('case.head_observed', { headSha: 'head-2', headGeneration: 2 }),
+      ]) {
+        const result = applyExternalReviewEvent(state, observation);
+        assert.equal(result.ok, true);
+        assert.deepEqual(result.value, state, `${terminalKind}: late ${observation.kind} cannot reopen the PR`);
+      }
+    }
+  });
+
   it('holds one verdict submission on the current generation until canonical readiness arrives', () => {
     let state = createExternalReviewAggregate(assigned({ cloudPolicy: 'optional' }));
     state = applyExternalReviewEvent(

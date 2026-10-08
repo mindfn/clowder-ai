@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 import { describe, test } from 'node:test';
 import Fastify from 'fastify';
 import '../helpers/setup-cat-registry.js';
+import { canonicalTestMessageInput } from '../helpers/message-from-fixtures.js';
 
 const { InvocationRegistry } = await import('../../dist/domains/cats/services/agents/invocation/InvocationRegistry.js');
 const { MessageStore } = await import('../../dist/domains/cats/services/stores/ports/MessageStore.js');
@@ -64,7 +65,7 @@ describe('F310 entrusted-work Task owner lifecycle', () => {
     assert.equal(tasks[0].entrustedWork.revision, 1);
   });
 
-  test('time hints cannot admit a Schedule-invisible Task without canonical source time', async () => {
+  test('time hints cannot stand in for canonical source-backed dates at admission', async () => {
     const store = new TaskStore();
     const lifecycle = new EntrustedWorkLifecycleService(store, { now: () => now });
     const result = await lifecycle.admitOrResume(
@@ -77,7 +78,7 @@ describe('F310 entrusted-work Task owner lifecycle', () => {
     );
 
     assert.equal(result.result, 'needs_clarification');
-    assert.match(result.clarificationReason, /canonical businessDeadline or reviewBy/i);
+    assert.match(result.clarificationReason, /canonical typed time fact/i);
     assert.equal(store.listByThread('thread-f310').length, 0);
   });
 
@@ -161,14 +162,17 @@ describe('F310 entrusted-work Task owner lifecycle', () => {
     const messageStore = new MessageStore();
     const taskStore = new TaskStore();
     const lifecycle = new EntrustedWorkLifecycleService(taskStore, { now: () => now });
-    const source = messageStore.append({
-      userId: 'owner-1',
-      catId: null,
-      content: 'Please prepare tomorrow presentation',
-      mentions: [],
-      timestamp: now,
-      threadId: 'thread-f310',
-    });
+    // F117: append requires MessageFrom sender identity
+    const source = messageStore.append(
+      canonicalTestMessageInput({
+        userId: 'owner-1',
+        catId: null,
+        content: 'Please prepare tomorrow presentation',
+        mentions: [],
+        timestamp: now,
+        threadId: 'thread-f310',
+      }),
+    );
     const { deriveGrowingSourceMessageRevision } = await import(
       '../../dist/domains/cats/services/stores/ports/MessageStore.js'
     );

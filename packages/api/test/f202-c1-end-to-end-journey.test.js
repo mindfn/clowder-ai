@@ -45,7 +45,7 @@ beforeEach(async () => {
     import('../dist/domains/messaging/stores/factory.js'),
     import('../dist/domains/messaging/publishing-message-store.js'),
     import('../dist/domains/messaging/subscription-delivery.js'),
-    import('../dist/domains/plugin/builtin-runtime/module-host-invocation.js'),
+    import('../dist/domains/plugin/builtin-runtime/carriers/module-host-invocation.js'),
     import('../dist/domains/cats/services/stores/ports/MessageStore.js'),
   ]);
 

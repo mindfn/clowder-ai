@@ -56,6 +56,12 @@ export const PersonMemoryKeys = {
     `person-memory:correction:${encodePart(ownerUserId)}:${encodePart(requestId)}`,
   amendment: (ownerUserId: string, requestId: string) =>
     `person-memory:amendment:${encodePart(ownerUserId)}:${encodePart(requestId)}`,
+  ownerActionReceipt: (ownerUserId: string, requestId: string) =>
+    `person-memory:owner-action-receipt:${encodePart(ownerUserId)}:${encodePart(requestId)}`,
+  ownerActionGeneration: (ownerUserId: string, personId: string) =>
+    `person-memory:owner-action-generation:${encodePart(ownerUserId)}:${encodePart(personId)}`,
+  eventSuccessor: (ownerUserId: string, eventId: string) =>
+    `person-memory:event-successor:${encodePart(ownerUserId)}:${encodePart(eventId)}`,
   redaction: (ownerUserId: string, requestId: string) =>
     `person-memory:redaction:${encodePart(ownerUserId)}:${encodePart(requestId)}`,
   personArtifacts: (ownerUserId: string, personId: string) =>

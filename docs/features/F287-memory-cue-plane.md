@@ -22,6 +22,16 @@ Map delta: `update required`
 
 Why: 现有 memory cell 已拥有持久化、索引、检索与生命周期，但还没有声明“执行中记忆线索的机会、路由、预算、消费与失效”边界；F287 扩展该 cell，不新建第二个 MemoryStore。
 
+## F321 线程概况扩展（catalog v6）
+
+本单元按 operator `[thread-id]#private-source-id` 的授权扩展一个 closed pair：`thread_opened / owner_message`，payload 只含首条 owner 消息 ID，server 再核 owner/thread、首条身份、实际 cat 可读性和当前开启设置。resolver family / drill family 为 `thread_overview`。只有 strict owner interactive 首轮能生产此机会，不开放每轮自由文本机会判断。
+
+Luna 阅读整本可读目录，超容量分批覆盖全部条目并由模型归并，不以关键词、向量或固定相关规则预筛。选中后再读完整概况、提取带原文坐标的背景并复核当前权限与版本；缺口保留在目录，零结果合法。当前摘要、会话映射和历史补齐 cursor 均归 F102 SQLite，不创建另一份记忆权威。
+
+这一个机会的 F296 呈现为 `historical_clue / clue`，带线程、相关原因、历史背景和原文坐标；它仍是 T2，不能声明 state/directive，也不获得 Taste/Profile 审批。通用 T2 pointer 保持无正文。完整合同和机器检查见 `f321-opening-presentation.test.ts`、`f321-thread-recall.test.ts`，来源图见 `memory-cue-source-map.md`。每机会最多六条、6000 prompt token，单条 thread overview 摘要上限2000字符，其他源上限600不变。
+
+只有 actual provider 收到该代 prompt 后记 presented，认证 drill 后记 drilled，实际改变当前答复才记 applied；选择和后台生成不算消费。更正、权限变化、撤回、owner/thread/cat 错配及超时沿现有失效与非阻断路径处理。
+
 ## Why
 
 家里的记忆写入、索引、人物/品味 lane、反馈回流和主动候选生产已经分别存在，但**“猫正在执行任务时，为什么现在该想起哪类记忆”没有 owner**。结果是：文件写成功却搜不到、搜得到却不在判断时刻出现、各 feature 都完成一段仍拼不成一条可用旅程，甚至完成状态散落后继续显示成未完成。
@@ -136,6 +146,13 @@ AC-B2 已发现三文件并行 WIP（`context-transport.ts`、`route-helpers.ts`
 - producer 只读取当前 direct-owner message 的 `stripStructuralEnvelope` 结果，并要求真实 `sourceMessageId`；history-only、connector/A2A、未知 trigger 都返回零 seed。
 - resolver 只读取 `docs/taste/vignettes/visual-quality-ELI5-pcpjsd.md`，投影阶段不复制 vignette；owner-auth drill 才返回当前 revision 的完整批准内容与 typed `html_widget` application contract。
 - explicit Taste 的 `applied` 必须已有 `presented + drilled`，source revision 仍有效，且同 callback-auth invocation 的 `RichBlockBuffer` 真实存在 `html_widget`。纯 Markdown、只检索/只读 Index 或跨 invocation rich block 都不能记为 applied。
+
+### 2026-09-28 F324 Phase B：成功 drill 后的安全晚结算
+
+- Handle expiry 仍阻止新的 drill，也不延长 Cue TTL。若同一 owner/thread/invocation/cat 已在过期前持久记录 `drilled`，`applied|dismissed` 可在 handle 过期后结算；返回带 `settlement=late_after_drill`，复用既有 content-free episode ledger，不新增 receipt store。
+- 晚结算前必须按原 coordinate 重读 current source，验证 revision 与 visibility。`source_corrected / source_forgotten / scope_revoked / superseded` 继续走独立 invalidation，旧 cue 不可因权限恢复而复活；恢复后由新的 current cue/handle 进入新 episode。
+- source reader 执行失败返回 retryable `source_read_failed`，不伪装成 `not_available`、不写 invalidation；真实 Person reader 的 recall rejection 也必须上抛到这条 typed failure 路径。同一晚结算请求可在 reader 恢复后重试。没有 durable drill 的过期 handle 仍返回 410 并记录 `expired`。
+- 已提交 outcome 的 exact retry 仍先消费既有 idempotent event，不依赖瞬态 source/body，也不复活已失效 cue。
 
 ## User Journey
 

@@ -4,9 +4,11 @@ const postDescription =
   'Post a message to an owner-authorized thread as a persistent agent. ' +
   'Use for a proactive root collaboration or to return your complete final answer to a dispatched request. ' +
   'Agent-key-only registration requires threadId; agentKeyCatId selects your authenticated identity, not the recipient. ' +
-  'For a root message, omit replyTo and select intended recipients with targetCats after get_thread_cats. ' +
+  'To reply to the human in the thread, omit targetCats; no cat recipient is required. Use a line-start @co-creator in content to explicitly mention the human. ' +
+  'For a root message, omit replyTo; select targetCats after get_thread_cats only when intentionally waking cat teammates. ' +
   'For a gpt-pro return, copy replyTo=sourceMessageId and threadId from the runtime delta; authorization stays in the server grant. ' +
   'Output: a durable message and routing results. Only status ok/duplicate confirms success; queued/routed does not mean a teammate completed work. ' +
+  'effectClass=fyi delivers unread without waking scarce dossier engagementPolicy seats; check deliveredWithoutWake, which does not confirm reading. Local review facts and exact-source returns retain their wake. ' +
   'NOT for invocation-only structured action/coordination or replacing a provider final. ' +
   'GOTCHA: targetCats and line-start mentions are merged; never add your own catId unless self-invocation is intended. ' +
   'Missing reply authorization cannot be repaired by dropping replyTo or choosing another source. Report held/errors honestly; do not retry authorization rejections. ' +
@@ -17,6 +19,7 @@ const crossDescription =
   'Use when initiating collaboration in another known thread or delivering its requested result. ' +
   'Requires threadId and at least one intended recipient via targetCats or line-start mention; discover catIds with get_thread_cats first. ' +
   'Output: a durable message and routing results; routed does not mean completed. ' +
+  'effectClass=fyi delivers unread without waking scarce dossier engagementPolicy seats; deliveredWithoutWake is a delivery receipt, not proof of reading. ' +
   'NOT a structured action/coordination transfer or a way to bypass gpt-pro exact-source return authorization. ' +
   'GOTCHA: no source invocation is implied. Omit replyTo for a new root; for a dispatched return preserve its exact threadId/replyTo. ' +
   'agentKeyCatId is your identity, targetCats are recipients; do not implicitly target yourself or silently reroute disabled targets.';
@@ -34,6 +37,14 @@ export function projectAgentKeyCollaborationContract(
         ...supported,
         ...(name === 'cat_cafe_post_message'
           ? {
+              targetCats: z
+                .array(z.string().min(1))
+                .optional()
+                .describe(
+                  'Optional cat recipients to wake, not human recipients. Omit for a human-facing thread reply; ' +
+                    'mention the human with a line-start @co-creator in content, never targetCats=["operator"] or ["default-user"]. ' +
+                    'Line-start cat mentions also trigger routing; do not add a cat just to deliver a reply.',
+                ),
               streamDisposition: z
                 .literal('independent')
                 .optional()

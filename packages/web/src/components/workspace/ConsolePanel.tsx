@@ -1,5 +1,8 @@
 'use client';
 
+import { useShellPresentation } from '@/components/shell/shell-presentation';
+import { ConsolePanelV2 } from './ConsolePanelV2';
+
 export interface ConsoleEntry {
   level: 'log' | 'warn' | 'error' | 'info';
   args: string[];
@@ -25,7 +28,7 @@ interface ConsolePanelProps {
   onClear: () => void;
 }
 
-export function ConsolePanel({ entries, onClear }: ConsolePanelProps) {
+function ConsolePanelClassic({ entries, onClear }: ConsolePanelProps) {
   return (
     <div className="flex flex-col console-divider-t bg-cafe-surface/80 text-xs font-mono">
       {/* Header bar */}
@@ -67,4 +70,9 @@ export function ConsolePanel({ entries, onClear }: ConsolePanelProps) {
       </div>
     </div>
   );
+}
+
+export function ConsolePanel(props: ConsolePanelProps) {
+  const presentation = useShellPresentation();
+  return presentation === 'v2' ? <ConsolePanelV2 {...props} /> : <ConsolePanelClassic {...props} />;
 }

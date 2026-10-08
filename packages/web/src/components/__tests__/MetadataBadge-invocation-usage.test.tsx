@@ -5,6 +5,41 @@ import { describe, expect, it } from 'vitest';
 import { MetadataBadge } from '../MetadataBadge';
 
 describe('MetadataBadge invocation usage', () => {
+  it('renders the persisted execution account rather than consulting the current binding or renamed account', () => {
+    const html = renderToStaticMarkup(
+      <MetadataBadge
+        metadata={{
+          model: 'gpt-6.1-sol',
+          provider: 'openai',
+          executionAccount: {
+            accountRef: 'account-a',
+            displayName: '原备注 A',
+            authType: 'oauth',
+            accountRevision: 'revision-a',
+          },
+        }}
+      />,
+    );
+    expect(html).toContain('data-execution-account="account-a"');
+    expect(html).toContain('执行账号：原备注 A');
+  });
+  it('identifies the original account on a Realtime transcript', () => {
+    const html = renderToStaticMarkup(
+      <MetadataBadge
+        metadata={{
+          model: 'realtime',
+          provider: 'openai',
+          executionAccount: {
+            accountRef: 'account-a',
+            displayName: '原备注 A',
+            authType: 'oauth',
+            accountRevision: 'revision-a',
+          },
+        }}
+      />,
+    );
+    expect(html).toContain('Realtime 执行账号：原备注 A');
+  });
   it('renders Sol usage as the compact footer shown under an assistant message', () => {
     const html = renderToStaticMarkup(
       <MetadataBadge

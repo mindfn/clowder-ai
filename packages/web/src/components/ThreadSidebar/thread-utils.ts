@@ -39,7 +39,9 @@ export function formatSidebarStatusTime(presence: SidebarPresence, lastActiveAt:
 
 export function projectDisplayName(path: string): string {
   if (path === 'default') return '未分类';
-  const parts = path.replace(/\/+$/, '').split('/');
+  // Preserve drive-root labels, including their separators.
+  if (/^[a-z]:[\\/]+$/i.test(path)) return path;
+  const parts = path.replace(/[\\/]+$/, '').split(/[\\/]/);
   return parts[parts.length - 1] || path;
 }
 
@@ -153,7 +155,11 @@ function titleForSort<T extends SidebarThreadShape>(thread: T): string {
  * `sortByWorkingUnreadActivity`, but with pin taking precedence (matches the
  * tab helpers' existing pin-first contract).
  */
-function sortPinnedWorkingUnreadActivity<T extends SidebarThreadShape>(a: T, b: T, unreadIds: Set<string>): number {
+export function sortPinnedWorkingUnreadActivity<T extends SidebarThreadShape>(
+  a: T,
+  b: T,
+  unreadIds: Set<string>,
+): number {
   const aPinned = a.pinned ? 1 : 0;
   const bPinned = b.pinned ? 1 : 0;
   if (aPinned !== bPinned) return bPinned - aPinned;
@@ -162,7 +168,7 @@ function sortPinnedWorkingUnreadActivity<T extends SidebarThreadShape>(a: T, b: 
   const aUnread = unreadIds.has(a.id) ? 1 : 0;
   const bUnread = unreadIds.has(b.id) ? 1 : 0;
   if (aUnread !== bUnread) return bUnread - aUnread;
-  return b.lastActiveAt - a.lastActiveAt;
+  return b.lastActiveAt - a.lastActiveAt || a.id.localeCompare(b.id);
 }
 
 /**

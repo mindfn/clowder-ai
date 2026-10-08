@@ -3,6 +3,8 @@ export type WorktreeAliasMap = Record<string, string>;
 export interface WorktreeAliasEntry {
   id: string;
   canonicalId?: string | null;
+  /** Current discovery metadata from F063, never derived from the display name. */
+  rootIdentity?: string;
 }
 
 const EMPTY_ALIASES: WorktreeAliasMap = {};
@@ -50,6 +52,11 @@ export function resolveListedWorktreeId(
   aliases?: WorktreeAliasMap,
 ): string | null {
   if (!id) return null;
+  if (id.startsWith('f063_root_v1_')) {
+    // A durable content owner is never reinterpreted as a display alias or guessed from another root.
+    const matches = worktrees.filter((worktree) => worktree.rootIdentity === id);
+    return /^f063_root_v1_[a-f0-9]{64}$/.test(id) && matches.length === 1 ? matches[0].id : null;
+  }
   const exactMatch = worktrees.find((worktree) => worktree.id === id);
   if (exactMatch) return exactMatch.id;
 

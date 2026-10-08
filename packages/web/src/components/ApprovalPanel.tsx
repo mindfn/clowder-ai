@@ -6,12 +6,28 @@ import type { ApprovalFeatureId } from '@cat-cafe/shared';
 import { type ReactNode, useEffect, useState } from 'react';
 import { useApprovalHubStore } from '@/stores/approvalHubStore';
 import { type ApprovalHistoryOutcomeFilter, ApprovalHistoryPane } from './ApprovalHistoryPane';
-import { ApprovalPendingPane, type ApprovalStatusFilter } from './ApprovalPendingPane';
+import { type ApprovalPendingConsumer, ApprovalPendingPane, type ApprovalStatusFilter } from './ApprovalPendingPane';
+
+import { approvalHistoryCopy } from './approval-history.shell-copy';
+import { useShellCopy } from './shell/shell-copy';
 
 type ActiveTab = 'pending' | 'history';
 
-export function ApprovalPanel({ selectedProposalId = null }: { selectedProposalId?: string | null }) {
-  const [activeTab, setActiveTab] = useState<ActiveTab>('pending');
+export function ApprovalPanel({
+  selectedProposalId = null,
+  initialTab = 'pending',
+  showPendingCount = true,
+  consumer,
+  historyOwnerUserId,
+}: {
+  selectedProposalId?: string | null;
+  initialTab?: ActiveTab;
+  showPendingCount?: boolean;
+  consumer?: ApprovalPendingConsumer;
+  historyOwnerUserId?: string;
+}) {
+  const t = useShellCopy(approvalHistoryCopy);
+  const [activeTab, setActiveTab] = useState<ActiveTab>(initialTab);
   const [featureFilters, setFeatureFilters] = useState<Set<ApprovalFeatureId>>(() => new Set());
   const [statusFilter, setStatusFilter] = useState<ApprovalStatusFilter>('all');
   const [threadQuery, setThreadQuery] = useState('');
@@ -44,8 +60,8 @@ export function ApprovalPanel({ selectedProposalId = null }: { selectedProposalI
       <div className="flex items-center justify-between border-b border-cafe-subtle/40 px-3 py-2">
         <div className="flex items-center gap-0.5" data-testid="approval-tab-bar">
           <TabButton active={activeTab === 'pending'} onClick={() => setActiveTab('pending')} testId="pending">
-            待我处理
-            {count > 0 && (
+            {t.pending}
+            {showPendingCount && count > 0 && (
               <span
                 className="flex h-5 min-w-[18px] items-center justify-center rounded-full px-1 text-micro font-bold"
                 style={{ backgroundColor: 'var(--semantic-warning)', color: 'var(--cafe-accent-foreground)' }}
@@ -55,7 +71,7 @@ export function ApprovalPanel({ selectedProposalId = null }: { selectedProposalI
             )}
           </TabButton>
           <TabButton active={activeTab === 'history'} onClick={() => setActiveTab('history')} testId="history">
-            历史
+            {t.history}
           </TabButton>
         </div>
 
@@ -63,11 +79,11 @@ export function ApprovalPanel({ selectedProposalId = null }: { selectedProposalI
           type="button"
           onClick={() => (activeTab === 'pending' ? fetchPending?.() : fetchSettled?.())}
           className="flex h-7 w-7 items-center justify-center rounded-md hover:bg-[var(--cafe-muted)]"
-          title="刷新"
+          title={t.refresh}
           data-testid="approval-panel-refresh"
         >
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" className="h-3.5 w-3.5">
-            <title>刷新</title>
+            <title>{t.refresh}</title>
             <path
               d="M21 12a9 9 0 0 1-9 9m9-9a9 9 0 0 0-9-9m9 9H3m0 0a9 9 0 0 1 9-9m-9 9a9 9 0 0 0 9 9"
               strokeLinecap="round"
@@ -79,6 +95,7 @@ export function ApprovalPanel({ selectedProposalId = null }: { selectedProposalI
 
       {activeTab === 'pending' ? (
         <ApprovalPendingPane
+          consumer={consumer}
           selectedProposalId={selectedProposalId}
           featureFilters={featureFilters}
           onFeatureFiltersChange={setFeatureFilters}
@@ -89,6 +106,7 @@ export function ApprovalPanel({ selectedProposalId = null }: { selectedProposalI
         />
       ) : (
         <ApprovalHistoryPane
+          ownerUserId={historyOwnerUserId}
           featureFilters={historyFeatureFilters}
           onFeatureFiltersChange={setHistoryFeatureFilters}
           outcomeFilter={historyOutcomeFilter}
@@ -117,6 +135,7 @@ function TabButton({
       className={`flex items-center gap-1.5 rounded-md px-2.5 py-1 text-sm font-medium transition-all ${
         active ? 'bg-cafe-surface text-cafe-interactive' : 'text-cafe-interactive/50 hover:text-cafe-interactive/70'
       }`}
+      aria-pressed={active}
       data-testid={`approval-tab-${testId}`}
     >
       {children}

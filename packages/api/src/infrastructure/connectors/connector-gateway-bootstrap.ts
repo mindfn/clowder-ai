@@ -23,6 +23,8 @@ import {
   catRegistry,
   isStaticConnectorId,
   isValueField,
+  type MessageContent,
+  type MessageFrom,
 } from '@cat-cafe/shared';
 import type { RedisClient } from '@cat-cafe/shared/utils';
 import type { FastifyBaseLogger } from 'fastify';
@@ -47,6 +49,10 @@ import { type IConnectorThreadBindingStore, MemoryConnectorThreadBindingStore } 
 import { GitHubRepoWebhookHandler } from './github-repo-event/GitHubRepoWebhookHandler.js';
 import { ReconciliationDedup } from './github-repo-event/ReconciliationDedup.js';
 import { RedisDeliveryDedup } from './github-repo-event/RedisDeliveryDedup.js';
+import {
+  createRepoInboxOwnerResolver,
+  type RepoInboxOwnerConfigStore,
+} from './github-repo-event/RepoInboxOwnerResolver.js';
 import { InboundMessageDedup } from './InboundMessageDedup.js';
 import {
   clearConnectorConfigCache,
@@ -113,15 +119,19 @@ export interface ConnectorGatewayConfig {
 }
 
 export interface ConnectorGatewayDeps {
+  /** RFC §5.1: the single component that makes a producer envelope durable via Queue admission. */
+  readonly persistedQueueDelivery: import('../../domains/cats/services/agents/invocation/PersistedQueueDelivery.js').PersistedQueueDeliveryPort;
   readonly messageStore: {
     append(input: {
+      from: MessageFrom;
       threadId: string;
       userId: string;
-      catId: null;
       content: string;
       source: ConnectorSource;
       mentions: CatId[];
       timestamp: number;
+      deliveryStatus?: 'queued';
+      contentBlocks?: readonly MessageContent[];
     }): Promise<{ id: string }>;
     getById?(id: string): Promise<{ source?: ConnectorSource } | null>;
     getByThreadBefore?(
@@ -183,16 +193,6 @@ export interface ConnectorGatewayDeps {
       userId?: string,
     ): { tags: readonly string[] } | null | Promise<{ tags: readonly string[] } | null>;
   };
-  readonly invokeTrigger: {
-    trigger(
-      threadId: string,
-      catId: CatId,
-      userId: string,
-      message: string,
-      messageId: string,
-      ...args: unknown[]
-    ): Promise<'dispatched' | 'enqueued' | 'full'>;
-  };
   readonly socketManager?:
     | {
         broadcastToRoom(room: string, event: string, data: unknown): void;
@@ -211,6 +211,8 @@ export interface ConnectorGatewayDeps {
   readonly bindingStore?: IConnectorThreadBindingStore;
   /** Canonical GitHub issue-comment classifier shared with scheduler collection paths. */
   readonly classifyGitHubIssueComment?: (comment: { author: string; body: string }) => IssueCommentClassification;
+  /** Canonical per-repo community routing config used by GitHub Repo Inbox. */
+  readonly repoConfigStore?: RepoInboxOwnerConfigStore;
   /** @internal Test-only: override WSClient factory to avoid real SDK connections */
   readonly _wsClientFactory?:
     | ((opts: { appId: string; appSecret: string }) => {
@@ -536,11 +538,11 @@ export async function startConnectorGateway(
   }
 
   const connectorRouter = new ConnectorRouter({
+    persistedQueueDelivery: deps.persistedQueueDelivery,
     bindingStore,
     dedup,
     messageStore: deps.messageStore,
     threadStore: deps.threadStore,
-    invokeTrigger: deps.invokeTrigger,
     socketManager: deps.socketManager,
     defaultUserId: effectiveUserId,
     defaultCatId: deps.defaultCatId,
@@ -876,15 +878,13 @@ export async function startConnectorGateway(
         bindingStore,
         threadStore: deps.threadStore,
         deliverFn: deliverConnectorMessage,
-        invokeTrigger: deps.invokeTrigger,
         dedup: ghDedup,
         reconciliationDedup: ghReconciliationDedup,
+        ...(deps.repoConfigStore
+          ? { resolveInboxCatId: createRepoInboxOwnerResolver(deps.repoConfigStore, ghInboxCatId, log) }
+          : {}),
         redis: deps.redis as import('./github-repo-event/RedisDeliveryDedup.js').RedisLike,
-        deliveryDeps: {
-          messageStore:
-            deps.messageStore as import('../../domains/cats/services/stores/ports/MessageStore.js').IMessageStore,
-          socketManager: deps.socketManager,
-        },
+        deliveryDeps: { delivery: deps.persistedQueueDelivery },
         // F168 Phase A P1-1b: pass community event services to webhook handler
         eventLog: ghEventLog,
         projector:

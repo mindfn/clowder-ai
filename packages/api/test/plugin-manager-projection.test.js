@@ -160,7 +160,7 @@ describe('F202 terminal Plugin Manager projection', () => {
       { id: 'daily-video-summary', kind: 'schedule', name: 'daily-video-summary' },
       { id: 'video-analysis-guide', kind: 'skill', name: 'video-analysis-guide' },
       { id: 'docx-editor', kind: 'content-editor-provider', name: 'docx-editor' },
-      { id: 'companion-window', kind: 'ui', name: 'companion-window' },
+      { id: 'companion-window', kind: 'desktop-window', name: 'companion-window' },
     ]);
   });
 

@@ -75,6 +75,11 @@ describe('K-2A contract-native inventory', () => {
     assert.deepEqual(PLUGIN_MANIFEST_CONTRACT_VERSIONS, [
       '0.1.0',
       '0.1.0-beta.13',
+      '0.1.0-beta.15',
+      '0.1.0-beta.16',
+      '0.1.0-beta.17',
+      '0.1.0-beta.18',
+      '0.1.0-beta.19',
       '0.1.0-beta.20',
       '0.1.0-beta.21',
       '0.1.0-beta.22',
@@ -139,6 +144,33 @@ describe('K-2A contract-native inventory', () => {
       const snapshot = await store.snapshot();
       assert.equal(snapshot.packages[0].contractVersion, contractVersion);
     }
+  });
+
+  for (const contractVersion of [
+    '0.1.0-beta.13',
+    '0.1.0-beta.15',
+    '0.1.0-beta.16',
+    '0.1.0-beta.17',
+    '0.1.0-beta.18',
+    '0.1.0-beta.19',
+    '0.1.0-beta.20',
+  ]) {
+    it(`restores an admitted ${contractVersion} inventory without changing its identity or grants`, async () => {
+      const { store, controlPlane } = harness();
+      await controlPlane.installPackage(candidate({ manifest: manifest({ contractVersion }) }));
+      const saved = await store.snapshot();
+      const restored = new MemoryPluginInventoryStore(JSON.parse(JSON.stringify(saved)));
+      assert.deepEqual(await restored.snapshot(), saved);
+    });
+  }
+
+  it('rejects an unlisted future beta without admitting any inventory', async () => {
+    const { store, controlPlane } = harness();
+    await assert.rejects(
+      controlPlane.installPackage(candidate({ manifest: manifest({ contractVersion: '0.1.0-beta.99' }) })),
+      { code: 'CONTRACT_VERSION_MISMATCH' },
+    );
+    assert.deepEqual((await store.snapshot()).packages, []);
   });
 
   it('can bind admission to an exact newer contract runtime without bypassing Host policy', async () => {

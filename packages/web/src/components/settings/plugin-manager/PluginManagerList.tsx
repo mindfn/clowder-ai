@@ -66,10 +66,11 @@ function PluginListActions({
   onUninstall: (() => void) | undefined;
   quietUninstall: boolean;
 }) {
+  const actionSubject = plugin.id === 'official.chatgpt-dot' ? 'dot协作' : plugin.displayName;
   if (canInstall) {
     return (
       <SettingsPrimaryButton onClick={() => onInstall?.()} disabled={busy}>
-        安装
+        {plugin.id === 'official.chatgpt-dot' ? '开启 dot 协作' : '安装'}
       </SettingsPrimaryButton>
     );
   }
@@ -88,24 +89,17 @@ function PluginListActions({
             }
             onBlockedToggle?.();
           }}
-          ariaLabel={`${plugin.intent === 'enabled' ? '禁用' : '启用'}${plugin.displayName}`}
+          ariaLabel={`${plugin.intent === 'enabled' ? '禁用' : '启用'}${actionSubject}`}
           ariaPressed={plugin.intent === 'enabled'}
         />
       )}
       {canUninstall && (
-        <span
-          data-plugin-uninstall
-          className={
-            quietUninstall
-              ? 'pointer-events-none opacity-0 group-hover/plugin-row:pointer-events-auto group-hover/plugin-row:opacity-100 group-focus-within/plugin-row:pointer-events-auto group-focus-within/plugin-row:opacity-100'
-              : 'contents'
-          }
-        >
-          <SettingsDeleteButton
-            onClick={() => onUninstall?.()}
-            disabled={busy}
-            aria-label={`${plugin.artifact === 'quarantined' ? '移除' : '卸载'}${plugin.displayName}`}
-          />
+        <span data-plugin-uninstall className={quietUninstall ? 'pointer-events-none opacity-0 group-hover/plugin-row:pointer-events-auto group-hover/plugin-row:opacity-100 group-focus-within/plugin-row:pointer-events-auto group-focus-within/plugin-row:opacity-100' : 'contents'}>
+        <SettingsDeleteButton
+          onClick={() => onUninstall?.()}
+          disabled={busy}
+          aria-label={`${plugin.artifact === 'quarantined' ? '移除' : '卸载'}${actionSubject}`}
+        />
         </span>
       )}
     </>
@@ -121,6 +115,7 @@ export function PluginListRow({
   onBlockedToggle,
   onUninstall,
   busy,
+  enableBlockedReason,
   locale,
   presentation = 'v1',
 }: {
@@ -132,6 +127,7 @@ export function PluginListRow({
   onBlockedToggle?: () => void;
   onUninstall?: () => void;
   busy: boolean;
+  enableBlockedReason?: string;
   locale: string;
   presentation?: PluginManagerPresentation;
 }) {
@@ -194,6 +190,9 @@ export function PluginListRow({
           />
         </div>
       </div>
+      {enableBlockedReason && (
+        <output className="block px-4 pb-3 text-xs text-conn-amber-text">{enableBlockedReason}</output>
+      )}
     </li>
   );
 }

@@ -86,8 +86,6 @@ function contributionKind(contribution: ManifestContribution): PluginManagerCont
       return 'direct-tool';
     case 'message-subscription':
       return 'messaging';
-    case 'desktop-window':
-      return 'ui';
     default:
       return contribution.type;
   }

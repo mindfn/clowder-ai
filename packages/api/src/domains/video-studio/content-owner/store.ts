@@ -1,24 +1,24 @@
 import { createHash } from 'node:crypto';
-import { type BigIntStats, constants } from 'node:fs';
-import { type FileHandle, link, mkdir, open, readFile, rename, unlink } from 'node:fs/promises';
+import { type BigIntStats, constants, type Dirent } from 'node:fs';
+import { type FileHandle, link, mkdir, open, opendir, readFile, rename, unlink } from 'node:fs/promises';
 import { join } from 'node:path';
-import { validateContentPublication } from './publication.js';
-import type { ContentPublicationScopeV1, ContentSettlementReceiptV1, ProjectContentRevisionV1 } from './types.js';
+import { type ProjectContentStateV1, parseProjectContentState } from './state/manifest.js';
+import type { VideoProjectScopeV1 } from './types.js';
 
-interface StoredOperationV1 {
-  readonly fingerprint: `sha256:${string}`;
-  readonly receiptId: string;
+export type { ProjectContentStateV1 } from './state/manifest.js';
+
+export interface SourcePublicationBatchLookup {
+  readonly lookupId: string;
+  readonly ownerUserId: string;
+  readonly sourceRef: string;
+  readonly artifactRef: string;
+  readonly revisions: readonly string[];
 }
 
-export interface ProjectContentStateV1 {
-  readonly schemaVersion: 1;
+export interface SourcePublicationMatch {
   readonly contentRef: string;
-  readonly mediaType: string;
-  readonly currentOwnerRevision: number;
-  readonly revisions: readonly ProjectContentRevisionV1[];
-  readonly receipts: readonly ContentSettlementReceiptV1[];
-  readonly operations: Readonly<Record<string, StoredOperationV1>>;
-  readonly publicationScope?: ContentPublicationScopeV1;
+  readonly ownerRevision: number;
+  readonly sourceRevision: string;
 }
 
 export class ProjectContentOwnerStore {
@@ -50,11 +50,61 @@ export class ProjectContentOwnerStore {
   async readState(contentRef: string): Promise<ProjectContentStateV1 | undefined> {
     try {
       const raw = await readFile(this.statePath(contentRef), 'utf8');
-      return parseState(raw, contentRef);
+      return parseProjectContentState(raw, contentRef);
     } catch (error: unknown) {
       if (isErrno(error, 'ENOENT')) return undefined;
       throw error;
     }
+  }
+
+  /** Enumerate primary manifests, including owner commits not yet projected into an application ledger.
+   * No URL/byte index is an authority, and an incomplete read must never become "no prior publication".
+   */
+  async findSourcePublications(input: {
+    ownerUserId: string;
+    sourceRef: string;
+    artifactRef: string;
+    revisions: string[];
+  }): Promise<SourcePublicationMatch[]> {
+    const lookupId = 'single';
+    const matches = await this.findSourcePublicationsBatch([{ lookupId, ...input }]);
+    const candidates = matches.get(lookupId);
+    if (!candidates) throw new Error('Owner batch omitted its single source publication lookup');
+    return candidates;
+  }
+
+  /**
+   * Resolve many immutable source coordinates with one complete manifest walk.
+   * Any non-ENOENT read/parse failure rejects the whole batch so callers cannot
+   * mistake an incomplete owner catalogue for an authoritative negative.
+   */
+  async findSourcePublicationsBatch(
+    inputs: readonly SourcePublicationBatchLookup[],
+  ): Promise<Map<string, SourcePublicationMatch[]>> {
+    const { matches, lookupIdsByPublication } = indexSourcePublicationLookups(inputs);
+    if (inputs.length === 0) return matches;
+
+    const directory = await openOwnerManifestDirectory(this.rootDir);
+    if (!directory) return matches;
+    for await (const entry of directory) {
+      const state = await readOwnerManifest(this.rootDir, entry);
+      if (state) appendSourcePublicationMatches(state, lookupIdsByPublication, matches);
+    }
+    sortSourcePublicationMatches(matches);
+    return matches;
+  }
+
+  /** Discover projects through the same complete canonical manifest reader as publication batches. */
+  async listVideoProjects(ownerUserId: string): Promise<{ contentRef: string; projectScope: VideoProjectScopeV1 }[]> {
+    const matches: { contentRef: string; projectScope: VideoProjectScopeV1 }[] = [];
+    const directory = await openOwnerManifestDirectory(this.rootDir);
+    if (!directory) return matches;
+    for await (const entry of directory) {
+      const state = await readOwnerManifest(this.rootDir, entry);
+      if (state?.projectScope?.ownerUserId === ownerUserId)
+        matches.push({ contentRef: state.contentRef, projectScope: { ...state.projectScope } });
+    }
+    return matches.sort((a, b) => a.contentRef.localeCompare(b.contentRef));
   }
 
   async writeState(contentRef: string, state: ProjectContentStateV1): Promise<void> {
@@ -150,6 +200,93 @@ export class ProjectContentOwnerStore {
   }
 }
 
+function indexSourcePublicationLookups(inputs: readonly SourcePublicationBatchLookup[]): {
+  matches: Map<string, SourcePublicationMatch[]>;
+  lookupIdsByPublication: Map<string, Set<string>>;
+} {
+  const matches = new Map<string, SourcePublicationMatch[]>();
+  const lookupIdsByPublication = new Map<string, Set<string>>();
+  for (const input of inputs) {
+    if (matches.has(input.lookupId)) throw new TypeError(`Duplicate source publication lookup: ${input.lookupId}`);
+    matches.set(input.lookupId, []);
+    for (const revision of new Set(input.revisions)) {
+      const key = publicationLookupKey(input.ownerUserId, input.sourceRef, input.artifactRef, revision);
+      const lookupIds = getOrCreateLookupIds(lookupIdsByPublication, key);
+      lookupIds.add(input.lookupId);
+    }
+  }
+  return { matches, lookupIdsByPublication };
+}
+
+async function openOwnerManifestDirectory(rootDir: string): Promise<Awaited<ReturnType<typeof opendir>> | undefined> {
+  try {
+    return await opendir(rootDir);
+  } catch (error) {
+    if (isErrno(error, 'ENOENT')) return undefined;
+    throw error;
+  }
+}
+
+async function readOwnerManifest(rootDir: string, entry: Dirent): Promise<ProjectContentStateV1 | undefined> {
+  if (!entry.isDirectory()) return undefined;
+  if (!/^[a-f0-9]{64}$/.test(entry.name)) return undefined;
+  let raw: string;
+  try {
+    raw = await readFile(join(rootDir, entry.name, 'state.json'), 'utf8');
+  } catch (error) {
+    if (isErrno(error, 'ENOENT')) throw new Error(`Incomplete content owner manifest: ${entry.name}`, { cause: error });
+    throw error;
+  }
+  const identity: unknown = JSON.parse(raw);
+  if (!isRecord(identity)) throw new Error('Invalid content owner manifest identity');
+  if (typeof identity.contentRef !== 'string') throw new Error('Invalid content owner manifest identity');
+  if (contentKey(identity.contentRef) !== entry.name) throw new Error('Invalid content owner manifest identity');
+  return parseProjectContentState(raw, identity.contentRef);
+}
+
+function appendSourcePublicationMatches(
+  state: ProjectContentStateV1,
+  lookupIdsByPublication: ReadonlyMap<string, ReadonlySet<string>>,
+  matches: ReadonlyMap<string, SourcePublicationMatch[]>,
+): void {
+  const ownerUserId = state.publicationScope?.ownerUserId;
+  if (!ownerUserId) return;
+  for (const revision of state.revisions) {
+    const source = revision.sourcePublication;
+    if (!source) continue;
+    const lookupIds = lookupIdsByPublication.get(
+      publicationLookupKey(ownerUserId, source.sourceRef, source.artifactRef, source.revision),
+    );
+    if (!lookupIds) continue;
+    for (const lookupId of lookupIds) {
+      const candidates = matches.get(lookupId);
+      if (!candidates) throw new Error(`Unknown source publication lookup: ${lookupId}`);
+      candidates.push({
+        contentRef: state.contentRef,
+        ownerRevision: revision.ownerRevision,
+        sourceRevision: source.revision,
+      });
+    }
+  }
+}
+
+function sortSourcePublicationMatches(matches: ReadonlyMap<string, SourcePublicationMatch[]>): void {
+  for (const candidates of matches.values()) {
+    candidates.sort((a, b) => {
+      const contentOrder = a.contentRef.localeCompare(b.contentRef);
+      return contentOrder !== 0 ? contentOrder : a.ownerRevision - b.ownerRevision;
+    });
+  }
+}
+
+function getOrCreateLookupIds(lookupIdsByPublication: Map<string, Set<string>>, key: string): Set<string> {
+  const existing = lookupIdsByPublication.get(key);
+  if (existing) return existing;
+  const created = new Set<string>();
+  lookupIdsByPublication.set(key, created);
+  return created;
+}
+
 export function digestBytes(bytes: Uint8Array): `sha256:${string}` {
   return `sha256:${createHash('sha256').update(bytes).digest('hex')}`;
 }
@@ -175,6 +312,10 @@ function contentKey(contentRef: string): string {
   return createHash('sha256').update(contentRef).digest('hex');
 }
 
+function publicationLookupKey(ownerUserId: string, sourceRef: string, artifactRef: string, revision: string): string {
+  return JSON.stringify([ownerUserId, sourceRef, artifactRef, revision]);
+}
+
 function cryptoRandomSuffix(): string {
   return createHash('sha256')
     .update(`${Date.now()}\0${process.hrtime.bigint()}\0${Math.random()}`)
@@ -184,26 +325,6 @@ function cryptoRandomSuffix(): string {
 
 function isErrno(error: unknown, code: string): error is NodeJS.ErrnoException {
   return error instanceof Error && 'code' in error && error.code === code;
-}
-
-function parseState(raw: string, expectedContentRef: string): ProjectContentStateV1 {
-  const parsed: unknown = JSON.parse(raw);
-  if (!isRecord(parsed) || parsed.schemaVersion !== 1 || parsed.contentRef !== expectedContentRef) {
-    throw new Error(`Invalid content owner state for ${expectedContentRef}`);
-  }
-  if (
-    typeof parsed.mediaType !== 'string' ||
-    !Number.isSafeInteger(parsed.currentOwnerRevision) ||
-    !Array.isArray(parsed.revisions) ||
-    !Array.isArray(parsed.receipts) ||
-    !isRecord(parsed.operations)
-  ) {
-    throw new Error(`Corrupt content owner state for ${expectedContentRef}`);
-  }
-  const state = parsed as unknown as ProjectContentStateV1;
-  for (const revision of state.revisions)
-    validateContentPublication(state.publicationScope, revision.sourcePublication);
-  return state;
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {

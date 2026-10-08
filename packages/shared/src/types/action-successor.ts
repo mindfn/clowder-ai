@@ -190,7 +190,9 @@ export const actionSuccessorMetadataObjectSchema = z.object({
     .min(1)
     .max(300)
     .optional()
-    .describe('Required durable grounding evidence when claimOrigin=existing_standing.'),
+    .describe(
+      'Required durable grounding for claimOrigin=existing_standing. For a canonical Task-owner replacement of an initial terminal delegate in the same approved child, pass the exact direct-human message:<id>; the server re-reads it and never treats prose alone as the grant.',
+    ),
   terminalPredicate: actionTerminalPredicateInputSchema
     .optional()
     .describe('Typed completion parameters; server catalog owns predicate semantics and subject binding.'),

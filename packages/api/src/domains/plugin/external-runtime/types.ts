@@ -38,6 +38,9 @@ export interface VerifiedPluginPackage {
   readonly manifest: PluginManifest;
   /** Re-check the launchable tree against the in-memory snapshot derived from the admitted archive. */
   verifyIntegrity(): Promise<void>;
+  /** Revalidate this private generation's sealed tree identity for already
+   * snapshotted static assets. Never substitutes for executable admission. */
+  verifyStaticIntegrity?(): Promise<void>;
   /** Release the private per-runtime staging directory after the process is gone. */
   release(): Promise<void>;
 }
@@ -46,17 +49,21 @@ export interface VerifiedPluginPackageLocator {
   resolveInstalledPackage(packageDigest: string): Promise<VerifiedPluginPackage>;
 }
 
-export interface ExternalPluginBootstrapEnvironment {
+export interface ExternalPluginBootstrapEnvironment extends NodeJS.ProcessEnv {
   readonly CLOWDER_PLUGIN_ID: string;
   readonly CLOWDER_PACKAGE_DIGEST: string;
   readonly CLOWDER_CONTRACT_VERSION: string;
   readonly CLOWDER_WIRE_VERSION: string;
 }
 
-export interface ExternalPluginProcessSpec {
+export interface ManagedPluginProcessSpec {
   readonly command: string;
   readonly args: readonly string[];
   readonly cwd: string;
+  readonly env: Readonly<NodeJS.ProcessEnv>;
+}
+
+export interface ExternalPluginProcessSpec extends ManagedPluginProcessSpec {
   readonly env: ExternalPluginBootstrapEnvironment;
 }
 

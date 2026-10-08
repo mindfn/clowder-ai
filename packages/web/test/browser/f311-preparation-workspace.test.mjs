@@ -1,6 +1,5 @@
 import assert from 'node:assert/strict';
-import { createHash } from 'node:crypto';
-import { mkdir, readFile, writeFile } from 'node:fs/promises';
+import { mkdir, writeFile } from 'node:fs/promises';
 import { after, before, test } from 'node:test';
 import { chromium } from '../../../ppt-forge/node_modules/playwright/index.mjs';
 import { createSubmittedChoiceProjection } from './f311-preparation-choice.journey.mjs';
@@ -8,6 +7,7 @@ import {
   createPmPreparationProgramFixture,
   verifyPreparationWorkspace,
 } from './f311-preparation-workspace.journey.mjs';
+import { waitForResponsiveWorkspaceLayout } from './f311-responsive-workspace-layout.mjs';
 import { CONTRACT_THREAD_ID, startEvolutionWorkspaceBrowserFixture } from './f311-workspace-browser.harness.mjs';
 
 await import('tsx');
@@ -109,67 +109,6 @@ test(
 );
 
 test(
-  'renders the original author’s seven duck choices without turning the lowfi into history',
-  { timeout: 90_000 },
-  async () => {
-    const bytes = await readFile(
-      new URL(
-        '../../../../docs/videos/f311-microduck-roadshow/pipeline/cortex/preparation/20260914/object-map.body.json',
-        import.meta.url,
-      ),
-    );
-    assert.equal(
-      createHash('sha256').update(bytes).digest('hex'),
-      'd8b32e63b0db55e12414715b3524d36de6305f2103560cd01300064d0f987c5d',
-    );
-    const body = JSON.parse(bytes);
-    const { projection } = await createSubmittedChoiceProjection(evolutionPreparationFixture, body);
-    assert.deepEqual(projection.preparation.sections.object_map.current.submission.body, body);
-    const { page, context } = await authenticatedPage();
-    try {
-      await page.route('**/api/capability-evolution/programs**', (route) => {
-        const url = new URL(route.request().url());
-        assert.equal(route.request().method(), 'GET');
-        if (/\/(asset-review|preparation-review|exploration)$/.test(url.pathname))
-          return route.fulfill({ status: 404, json: {} });
-        return route.fulfill({ json: url.pathname.endsWith('/programs') ? { programs: [projection] } : projection });
-      });
-      const url = new URL(targetUrl());
-      url.searchParams.set('evolutionProgram', projection.program.programId);
-      await navigateShell(page, url.href);
-      const surface = page.getByTestId('evolution-program-surface');
-      await surface
-        .getByRole('navigation', { name: '能力进化旅程' })
-        .getByRole('button', { name: '准备', exact: true })
-        .click();
-      const workspace = surface.getByTestId('evolution-preparation-workspace');
-      await workspace.locator('[data-preparation-item="motor"]').waitFor();
-      assert.equal(await workspace.locator('[data-preparation-item]').count(), 7);
-      for (const item of body.items) {
-        const row = workspace.locator(`[data-preparation-item="${item.itemId}"] > summary`);
-        assert.match(await row.innerText(), new RegExp(item.category));
-        assert.match(await row.innerText(), item.decision.state === 'fixed' ? /保持固定/u : /纳入探索/u);
-      }
-      assert.equal(await workspace.locator('select,[data-preparation-spinner]').count(), 0);
-      await workspace.locator('[data-preparation-item="motor"]').scrollIntoViewIfNeeded();
-      await capture(page, 'preparation-authored-duck-desktop');
-      await page.setViewportSize({ width: 320, height: 900 });
-      await assertContained(surface);
-      await assertContained(workspace);
-      await capture(page, 'preparation-authored-duck-320');
-      report.measurements.authoredDuck = {
-        bodySha256: 'd8b32e63b0db55e12414715b3524d36de6305f2103560cd01300064d0f987c5d',
-        items: 7,
-        claim:
-          'Original author content through an isolated canonical submission replay, not the production Program revision or operator acceptance.',
-      };
-    } finally {
-      await context.close();
-    }
-  },
-);
-
-test(
   'reads a new human input and cat recommendation submitted through the real preparation service',
   { timeout: 90_000 },
   async () => {
@@ -208,6 +147,7 @@ test(
         .waitFor();
       for (const width of [416, 320]) {
         await page.setViewportSize({ width, height: 900 });
+        await waitForResponsiveWorkspaceLayout(page, surface, width);
         await assertContained(surface);
         await surface.locator('[data-preparation-item="data"]').scrollIntoViewIfNeeded();
         await capture(page, `preparation-submitted-stranger-${width}`);

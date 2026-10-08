@@ -5,6 +5,8 @@
  * Fetches once per session, caches module-level. All consumers share same data.
  */
 
+import type { AgyProfileConfig } from '@cat-cafe/shared';
+import { type BuiltinCloudIdentityProtection, CAT_CARRIERS, type CatCarrier } from '@cat-cafe/shared';
 import { useEffect, useMemo, useState } from 'react';
 import { formatCatDisplayName } from '@/lib/cat-display-name';
 import { UNKNOWN_CAT_COLOR } from '@/lib/color-defaults';
@@ -22,9 +24,18 @@ export interface CatData {
   mentionPatterns: string[];
   breedId?: string;
   accountRef?: string;
+  accountBindingMode?: 'follow' | 'override';
   /** clowder-ai#340 P5: CLI client identity (renamed from provider). */
   clientId: string;
+  /** Canonical member access mode resolved by the server config boundary. */
+  carrier: CatCarrier;
   defaultModel: string;
+  /** Runtime-configured responder used when a new thread has no routing history. */
+  isDefaultResponder?: boolean;
+  /** Static concrete-client delivery truth used before opening a Steer cutover. */
+  messageDeliveryCapabilities?: {
+    guideReply: boolean;
+  };
   cli?: {
     command?: string;
     outputFormat?: string;
@@ -32,11 +43,11 @@ export interface CatData {
     effort?: string;
     /** F291: requested Codex OAuth service tier. Absent = inherit Codex user config. */
     serviceTier?: 'standard' | 'fast';
-    /** F254 D2: Codex carrier override (openai only). Absent = follow server env. */
-    carrier?: 'exec_json' | 'app_server';
   };
   commandArgs?: string[];
   cliConfigArgs?: string[];
+  /** Public settings only; operator-issued task grants are never returned to this form. */
+  agyProfile?: AgyProfileConfig;
   /** F254 D2: effective carrier truth for openai cats (per-cat > env > default), resolved server-side. */
   codexCarrier?: {
     effective: 'exec_json' | 'app_server';
@@ -86,6 +97,8 @@ export interface CatData {
   sessionChain?: boolean;
   /** #712: MCP support toggle — when false, disables all MCP for this cat. */
   mcpSupport?: boolean;
+  /** F247: immutable transport identity for the built-in ChatGPT Pro cloud member. */
+  identityProtection?: BuiltinCloudIdentityProtection;
   /** F32-b P4: Human-readable variant label (e.g. "4.5", "Sonnet") */
   variantLabel?: string;
   /** F32-b P4: Whether this is the default variant for its breed */
@@ -101,8 +114,6 @@ export interface CatData {
     instruct?: string;
     temperature?: number;
   };
-  /** F149: Adapter mode for Google provider cats (ACP vs legacy CLI) */
-  adapterMode?: 'acp' | 'cli';
   /** F127: Roster metadata used by Hub ownership/lead markers */
   roster?: {
     family: string;
@@ -157,9 +168,17 @@ async function fetchCats(): Promise<FetchResult> {
   }
 }
 
+function requireCarrier(value: unknown, catId: string | undefined): CatCarrier {
+  if (typeof value === 'string' && CAT_CARRIERS.includes(value as CatCarrier)) {
+    return value as CatCarrier;
+  }
+  throw new Error(`Invalid /api/cats response: member ${catId ?? '<unknown>'} has no valid carrier`);
+}
+
 function normalizeCats(rawCats: unknown[]): CatData[] {
   return rawCats.map((raw) => {
     const cat = raw as Partial<CatData>;
+    const carrier = requireCarrier(cat.carrier, cat.id);
     return {
       ...cat,
       id: cat.id ?? '',
@@ -168,6 +187,7 @@ function normalizeCats(rawCats: unknown[]): CatData[] {
       mentionPatterns: Array.isArray(cat.mentionPatterns) ? cat.mentionPatterns : [],
       accountRef: cat.accountRef,
       clientId: cat.clientId ?? 'openai',
+      carrier,
       defaultModel: cat.defaultModel ?? '',
       cli: cat.cli,
       avatar: cat.avatar ?? '',
@@ -201,6 +221,10 @@ async function refreshCatsNow(): Promise<FetchResult> {
   return { cats: effective, fromApi: result.fromApi };
 }
 
+function refreshCatsOnConfigChange(): void {
+  void refreshCatsNow();
+}
+
 // ── Hook ────────────────────────────────────────────────
 
 interface UseCatDataOptions {
@@ -226,8 +250,10 @@ export function useCatData({ fetch: shouldFetch = true }: UseCatDataOptions = {}
       setIsLoading(false);
     };
     _listeners.add(listener);
+    if (_listeners.size === 1) window.addEventListener('cat-config-changed', refreshCatsOnConfigChange);
     return () => {
       _listeners.delete(listener);
+      if (_listeners.size === 0) window.removeEventListener('cat-config-changed', refreshCatsOnConfigChange);
     };
   }, []);
 

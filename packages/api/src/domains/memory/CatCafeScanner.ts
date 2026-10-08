@@ -49,6 +49,10 @@ export class CatCafeScanner implements RepoScanner {
     this.exclude = exclude;
   }
 
+  getExcludePatterns(): string[] | undefined {
+    return this.exclude;
+  }
+
   addExcludePatterns(patterns: string[]): void {
     this.exclude = [...(this.exclude ?? []), ...patterns];
   }
@@ -217,7 +221,7 @@ function splitLessonsLearned(docsRoot: string) {
   return results;
 }
 
-function matchGlob(pattern: string, path: string): boolean {
+export function matchGlob(pattern: string, path: string): boolean {
   const regex = pattern
     .replace(/\*\*\//g, '§GLOBSTAR_SLASH§')
     .replace(/\*\*/g, '§GLOBSTAR§')

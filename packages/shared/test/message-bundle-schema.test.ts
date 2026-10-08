@@ -163,7 +163,7 @@ describe('F294 MessageBundleCarrierV1Schema', () => {
     if (result.success) expect(result.data.note).toBe('why I am forwarding this');
   });
 
-  it('keeps raw CLI carriers on v1 while accepting durable Markdown-readable CLI carriers on v2', () => {
+  it('keeps raw CLI carriers on v1, Markdown stdout on v2, and keyed reply-record tools on v3', () => {
     const cliQuote = {
       kind: 'cli_quote',
       messageId: 'message-cli',
@@ -184,6 +184,11 @@ describe('F294 MessageBundleCarrierV1Schema', () => {
         carrier([{ ...cliQuote, segmentId: 'tool-detail:tool-1', sourceProjectionVersion: 2 }]),
       ).success,
     ).toBe(false);
+    expect(
+      MessageBundleCarrierV1Schema.safeParse(
+        carrier([{ ...cliQuote, segmentId: 'tool-detail:tool-1', sourceProjectionVersion: 3 }]),
+      ).success,
+    ).toBe(true);
     expect(MessageBundleCarrierV1Schema.safeParse(carrier([{ ...cliQuote, sourceProjectionVersion: 3 }])).success).toBe(
       false,
     );
@@ -286,7 +291,7 @@ describe('F294 MessageBundleSelectionSchema', () => {
     ).toBe(false);
   });
 
-  it('accepts an explicit Markdown-readable CLI selection proof without changing legacy raw selections', () => {
+  it('accepts explicit Markdown stdout and keyed reply-record proofs without changing legacy raw selections', () => {
     const base = {
       kind: 'cli_quote',
       messageId: 'message-cli',
@@ -319,6 +324,19 @@ describe('F294 MessageBundleSelectionSchema', () => {
         ],
       }).success,
     ).toBe(false);
+    expect(
+      MessageBundleSelectionSchema.safeParse({
+        sourceThreadId: 'thread-source',
+        items: [
+          {
+            ...base,
+            segmentId: 'tool-detail:tool-1',
+            sourceProjectionVersion: 3,
+            renderedOccurrences: 1,
+          },
+        ],
+      }).success,
+    ).toBe(true);
     expect(
       MessageBundleSelectionSchema.safeParse({
         sourceThreadId: 'thread-source',

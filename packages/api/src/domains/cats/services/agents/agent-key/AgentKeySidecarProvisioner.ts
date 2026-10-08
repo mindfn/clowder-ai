@@ -12,10 +12,10 @@ const KEY_DIR_MODE = 0o700;
 const KEY_FILE_MODE = 0o600;
 
 export type AgentKeySidecarDisposition =
-  | { readonly kind: 'preserved'; readonly agentKeyId: string; readonly expiresAt: number }
-  | { readonly kind: 'rotated'; readonly agentKeyId: string; readonly expiresAt: number }
-  | { readonly kind: 'replaced'; readonly agentKeyId: string; readonly expiresAt: number }
-  | { readonly kind: 'issued'; readonly agentKeyId: string; readonly expiresAt: number };
+  | { readonly kind: 'preserved'; readonly agentKeyId: string; readonly expiresAt: number | null }
+  | { readonly kind: 'rotated'; readonly agentKeyId: string; readonly expiresAt: number | null }
+  | { readonly kind: 'replaced'; readonly agentKeyId: string; readonly expiresAt: number | null }
+  | { readonly kind: 'issued'; readonly agentKeyId: string; readonly expiresAt: number | null };
 
 export interface EnsureAgentKeySidecarOptions {
   readonly registry: AgentKeyRegistry;
@@ -218,7 +218,10 @@ async function revokeNonCanonicalKeys(
   );
 }
 
-async function requireIssuedRecord(registry: AgentKeyRegistry, agentKeyId: string): Promise<{ expiresAt: number }> {
+async function requireIssuedRecord(
+  registry: AgentKeyRegistry,
+  agentKeyId: string,
+): Promise<{ expiresAt: number | null }> {
   const record = await registry.get(agentKeyId);
   if (!record) throw new Error(`issued agent-key record disappeared before sidecar publication: ${agentKeyId}`);
   return record;
@@ -239,7 +242,11 @@ async function reconcileUnderLease(options: EnsureAgentKeySidecarOptions): Promi
       ? verified.record
       : null;
 
-  if (matchingRecord && matchingRecord.graceUntil === undefined && matchingRecord.expiresAt - now() > renewBeforeMs) {
+  if (
+    matchingRecord &&
+    matchingRecord.graceUntil === undefined &&
+    (matchingRecord.expiresAt === null || matchingRecord.expiresAt - now() > renewBeforeMs)
+  ) {
     await enforceStrictFileMode(keyFile);
     await revokeNonCanonicalKeys(registry, catId, userId, matchingRecord.agentKeyId);
     return {

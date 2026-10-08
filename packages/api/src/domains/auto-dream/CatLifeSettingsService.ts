@@ -20,7 +20,7 @@ interface TemplateGetter {
 
 export interface CatLifeSettingsServiceOptions {
   store: AutoDreamStore;
-  dynamicTaskStore: Pick<DynamicTaskStore, 'getAll' | 'setEnabled' | 'upsert'>;
+  dynamicTaskStore: Pick<DynamicTaskStore, 'getByTemplateId' | 'setEnabled' | 'upsert'>;
   taskRunner: ProjectionTaskRunner;
   templateRegistry: TemplateGetter;
   threadStore: Pick<
@@ -150,7 +150,7 @@ export class CatLifeSettingsService {
 
     const knownIds = new Set(configs.map((config) => config.projectionTaskId));
     let disabledOrphans = 0;
-    for (const def of this.options.dynamicTaskStore.getAll()) {
+    for (const def of this.options.dynamicTaskStore.getByTemplateId('present-loop')) {
       if (!isOwnerPresentLoop(def, ownerUserId) || knownIds.has(def.id) || !def.enabled) continue;
       this.options.dynamicTaskStore.setEnabled(def.id, false);
       this.options.taskRunner.unregister(def.id);
@@ -162,7 +162,7 @@ export class CatLifeSettingsService {
   private async reconcileConfig(config: CatLifeConfigRecord): Promise<CatLifeConfigRecord> {
     try {
       this.disableProjection(config.projectionTaskId);
-      for (const def of this.options.dynamicTaskStore.getAll()) {
+      for (const def of this.options.dynamicTaskStore.getByTemplateId('present-loop')) {
         if (!def.enabled) continue;
         if (!isSamePresentLoopIdentity(def, config.ownerUserId, config.catId)) continue;
         this.disableProjection(def.id);

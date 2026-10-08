@@ -12,6 +12,7 @@ import { toolExecutionPolicyDenial } from '../domains/cats/services/agents/invoc
 import { cloudPrincipalStanding } from '../domains/cats/services/cloud-bridge/cloud-conversation-identity.js';
 import type { CallbackAuthSystemMessageNotifier } from './callback-auth-system-message.js';
 import { recordCallbackAuthFailure, recordLegacyFallbackHit } from './callback-auth-telemetry.js';
+import { allowCollectiveWorkScope } from './callback-collective-work-scope.js';
 import { makeCallbackAuthError } from './callback-errors.js';
 import { derivePrincipal } from './callback-scope-helpers.js';
 
@@ -28,7 +29,12 @@ function callbackToolFromUrl(url: string): string {
 }
 
 function allowToolExecution(request: FastifyRequest, reply: FastifyReply, record: InvocationRecord): boolean {
-  const denial = toolExecutionPolicyDenial(record.toolExecutionPolicy, callbackToolFromUrl(request.url));
+  const denial = toolExecutionPolicyDenial(
+    record.toolExecutionPolicy,
+    record.toolExecutionPolicy?.mode === 'callback_allowlist'
+      ? `${request.method} ${request.url}`
+      : callbackToolFromUrl(request.routeOptions.url ?? ''),
+  );
   if (!denial) return true;
   reply.status(403).send({
     error: 'tool_policy_violation',
@@ -61,6 +67,8 @@ export interface CallbackAuthHookOptions {
   notifier?: Pick<CallbackAuthSystemMessageNotifier, 'notify'>;
   /** F178 Phase C: agent-key registry for persistent agent auth. */
   agentKeyRegistry?: AgentKeyAuthRegistry;
+  /** Only the canonical writer with DotReturn admission may accept a dot facade key. */
+  allowDotSourceBoundReturn?: boolean;
   /** Session hooks reuse invocation auth but own a distinct, scope-bound action policy. */
   enforceToolExecutionPolicy?: boolean;
 }
@@ -102,7 +110,12 @@ export function registerCallbackAuthHook(
     // refresh-token does its own atomic verifyLatest in preValidation and
     // pre-populates callbackAuth. Preserve that atomic freshness decision.
     if (request.callbackAuth) {
-      if (options.enforceToolExecutionPolicy !== false) allowToolExecution(request, reply, request.callbackAuth);
+      if (!allowCollectiveWorkScope(request, reply, request.callbackAuth)) return;
+      if (
+        options.enforceToolExecutionPolicy !== false ||
+        request.callbackAuth.toolExecutionPolicy?.mode === 'callback_allowlist'
+      )
+        allowToolExecution(request, reply, request.callbackAuth);
       return;
     }
 
@@ -130,6 +143,20 @@ export function registerCallbackAuthHook(
         if (!akResult.ok) {
           recordCallbackAuthFailure({ reason: akResult.reason, tool });
           reply.status(401).send(makeCallbackAuthError(akResult.reason));
+          return;
+        }
+        // Dot's URL credential belongs to its event-bound MCP facade, not to
+        // the general callback surface. The writer must still admit the exact
+        // event/source/grant; every other hook and route rejects this principal.
+        if (
+          akResult.record.catId === 'gpt-dot' &&
+          !(
+            options.allowDotSourceBoundReturn === true &&
+            request.method === 'POST' &&
+            request.routeOptions.url === '/api/callbacks/post-message'
+          )
+        ) {
+          reply.status(403).send({ error: 'dot_facade_required', reason: 'dot_callback_scope_denied' });
           return;
         }
         // F202 h3c-2: a key of the cloud return boundary whose cat is no longer the configured cloud
@@ -192,7 +219,13 @@ export function registerCallbackAuthHook(
         '[#476 DEPRECATED] Callback credentials received via body/query — migrate to X-Invocation-Id / X-Callback-Token headers',
       );
     }
-    if (options.enforceToolExecutionPolicy !== false && !allowToolExecution(request, reply, result.record)) return;
+    if (!allowCollectiveWorkScope(request, reply, result.record)) return;
+    if (
+      (options.enforceToolExecutionPolicy !== false ||
+        result.record.toolExecutionPolicy?.mode === 'callback_allowlist') &&
+      !allowToolExecution(request, reply, result.record)
+    )
+      return;
     request.callbackAuth = result.record;
     request.callbackPrincipal = derivePrincipal(result.record);
   });

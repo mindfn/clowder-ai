@@ -101,6 +101,67 @@ describe('RedisDeliveryDedup', () => {
   });
 });
 
+describe('RepoInboxOwnerResolver', () => {
+  it('reads the canonical community guard on every call and overrides the stale fallback', async () => {
+    const { createRepoInboxOwnerResolver } = await import(
+      '../dist/infrastructure/connectors/github-repo-event/RepoInboxOwnerResolver.js'
+    );
+    let guardCatId = 'codex-sol';
+    const resolveOwner = createRepoInboxOwnerResolver(
+      {
+        async getByRepo() {
+          return { guardCatId };
+        },
+      },
+      'stale-env-owner',
+    );
+
+    assert.equal(await resolveOwner('zts212653/clowder-ai'), 'codex-sol');
+    guardCatId = 'codex61-sol';
+    assert.equal(await resolveOwner('zts212653/clowder-ai'), 'codex61-sol');
+  });
+
+  it('uses the environment owner only when the repo has no canonical config', async () => {
+    const { createRepoInboxOwnerResolver } = await import(
+      '../dist/infrastructure/connectors/github-repo-event/RepoInboxOwnerResolver.js'
+    );
+    const warnings = [];
+    const resolveOwner = createRepoInboxOwnerResolver({ getByRepo: async () => null }, 'fallback-owner', {
+      warn(context, message) {
+        warnings.push({ context, message });
+      },
+    });
+
+    assert.equal(await resolveOwner('unregistered/repo'), 'fallback-owner');
+    assert.deepEqual(warnings, [
+      {
+        context: { repoFullName: 'unregistered/repo', fallbackCatId: 'fallback-owner' },
+        message: '[repo-inbox] Canonical repo owner missing; using GITHUB_REPO_INBOX_CAT_ID fallback',
+      },
+    ]);
+  });
+
+  it('propagates canonical-store failures instead of silently using the fallback owner', async () => {
+    const { createRepoInboxOwnerResolver } = await import(
+      '../dist/infrastructure/connectors/github-repo-event/RepoInboxOwnerResolver.js'
+    );
+    const warnings = [];
+    const storeFailure = new Error('repo config unavailable');
+    const resolveOwner = createRepoInboxOwnerResolver(
+      {
+        async getByRepo() {
+          throw storeFailure;
+        },
+      },
+      'stale-env-owner',
+      { warn: (...args) => warnings.push(args) },
+    );
+
+    await assert.rejects(() => resolveOwner('zts212653/clowder-ai'), storeFailure);
+    assert.deepEqual(warnings, []);
+  });
+});
+
 // ── Task 6: GitHubRepoWebhookHandler ──
 
 describe('GitHubRepoWebhookHandler', () => {
@@ -193,7 +254,7 @@ describe('GitHubRepoWebhookHandler', () => {
         },
         deliverFn: async (_deps, input) => {
           deliveredMessages.push(input);
-          return { messageId: `msg-${deliveredMessages.length}`, content: input.content };
+          return { messageId: `msg-${deliveredMessages.length}`, content: input.content, admitted: true };
         },
         invokeTrigger: {
           trigger(...args) {
@@ -228,7 +289,7 @@ describe('GitHubRepoWebhookHandler', () => {
   }
 
   it('processes pull_request.opened event (AC-A1)', async () => {
-    const { deps, deliveredMessages, triggeredCalls } = createMockDeps();
+    const { deps, deliveredMessages } = createMockDeps();
     const handler = new GitHubRepoWebhookHandler(CONFIG, deps);
     const body = makePRPayload('opened');
     const { headers, raw } = makeHeaders('pull_request', 'delivery-001', body);
@@ -237,8 +298,8 @@ describe('GitHubRepoWebhookHandler', () => {
 
     assert.equal(result.kind, 'processed');
     assert.equal(deliveredMessages.length, 1);
+    assert.equal(deliveredMessages[0].sourceCategory, 'producer_return');
     assert.ok(deliveredMessages[0].content.includes('#42'));
-    assert.equal(triggeredCalls.length, 1);
   });
 
   it('processes issues.opened event (AC-A2)', async () => {
@@ -314,18 +375,47 @@ describe('GitHubRepoWebhookHandler', () => {
     assert.ok(source.url.includes('/pull/42'));
   });
 
-  it('calls invokeTrigger.trigger after delivery (KD-17)', async () => {
-    const { deps, triggeredCalls } = createMockDeps();
+  // KD-17 is structural now: one admitted envelope IS the inbox cat's wake, so the fact under
+  // test is the admission itself — there is no second trigger call that could be skipped.
+  it('admits the inbox envelope that starts the cat (KD-17)', async () => {
+    const { deps, deliveredMessages } = createMockDeps();
     const handler = new GitHubRepoWebhookHandler(CONFIG, deps);
     const body = makeIssuePayload('opened');
     const { headers, raw } = makeHeaders('issues', 'delivery-trig', body);
 
     await handler.handleWebhook(body, headers, raw);
 
-    assert.equal(triggeredCalls.length, 1);
-    const [threadId, catId] = triggeredCalls[0];
-    assert.ok(threadId.startsWith('thread-'));
-    assert.equal(catId, 'cat-maine-coon');
+    assert.equal(deliveredMessages.length, 1);
+    assert.ok(deliveredMessages[0].threadId.startsWith('thread-'));
+    assert.equal(deliveredMessages[0].catId, 'cat-maine-coon');
+    assert.ok(deliveredMessages[0].idempotencyKey.includes('delivery-trig'));
+  });
+
+  it('re-resolves the repo inbox owner for every delivery and wake', async () => {
+    let currentOwner = 'codex-sol';
+    const resolverCalls = [];
+    const { deps, deliveredMessages, triggeredCalls } = createMockDeps();
+    deps.resolveInboxCatId = async (repoFullName) => {
+      resolverCalls.push(repoFullName);
+      return currentOwner;
+    };
+    const handler = new GitHubRepoWebhookHandler({ ...CONFIG, inboxCatId: 'stale-env-owner' }, deps);
+
+    const firstBody = makePRPayload('opened');
+    const firstRequest = makeHeaders('pull_request', 'delivery-owner-before', firstBody);
+    await handler.handleWebhook(firstBody, firstRequest.headers, firstRequest.raw);
+
+    currentOwner = 'codex61-sol';
+    const secondBody = makeIssuePayload('opened');
+    const secondRequest = makeHeaders('issues', 'delivery-owner-after', secondBody);
+    await handler.handleWebhook(secondBody, secondRequest.headers, secondRequest.raw);
+
+    assert.deepEqual(resolverCalls, ['zts212653/clowder-ai', 'zts212653/clowder-ai']);
+    assert.deepEqual(
+      deliveredMessages.map((message) => message.catId),
+      ['codex-sol', 'codex61-sol'],
+    );
+    assert.deepEqual(triggeredCalls, [], 'Queue admission must not dispatch the same source through a second trigger');
   });
 
   it('skips unhandled event types', async () => {

@@ -24,7 +24,12 @@ export function parseMagicWordMeanings(governanceContent: string): MagicWordMean
   for (const line of governanceContent.split('\n')) {
     const m = MEANING_LINE_RE.exec(line);
     if (m?.[1] && m[2] && m[3]) {
-      out.push({ word: m[1], meaning: m[2], action: m[3] });
+      for (const word of m[1]
+        .split('／')
+        .map((alias) => alias.trim())
+        .filter(Boolean)) {
+        out.push({ word, meaning: m[2], action: m[3] });
+      }
     }
   }
   return out;

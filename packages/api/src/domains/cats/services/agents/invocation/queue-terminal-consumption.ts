@@ -1,8 +1,31 @@
-import type { QueueTerminalConsumptionWitness } from '@cat-cafe/shared';
+import type { QueueTargetOutcome, QueueTerminalConsumptionWitness } from '@cat-cafe/shared';
+
+/** The same disposition contract for live carriers and detached, exposed sources. */
+export function resolveQueueTargetDisposition(
+  consumption?: QueueTerminalConsumptionWitness,
+  hasExactSourceResponse = false,
+): QueueTargetOutcome['disposition'] {
+  switch (consumption?.kind) {
+    case 'managed_hold_continued':
+      return 'managed_hold_disposition';
+    case 'collective_public_reply':
+      return 'responded';
+    case 'terminal_silent':
+    case 'source_response':
+    case 'dispatch_handled_continuation':
+    case undefined:
+      return hasExactSourceResponse ? 'responded' : 'completed_with_turn';
+  }
+}
 
 function isQueueTerminalConsumptionWitness(value: unknown): value is QueueTerminalConsumptionWitness {
   if (!value || typeof value !== 'object') return false;
   const candidate = value as Record<string, unknown>;
+  if (candidate.kind === 'collective_public_reply') {
+    return ['sourceMessageId', 'sourceEventId', 'acceptedEventId'].every(
+      (key) => typeof candidate[key] === 'string' && candidate[key].trim().length > 0,
+    );
+  }
   if (
     candidate.kind === 'terminal_silent' &&
     candidate.projectionState === 'covered_empty' &&

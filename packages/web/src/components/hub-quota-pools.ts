@@ -1,8 +1,10 @@
 'use client';
 
+import { accountQuotaOwnerMatches } from '@cat-cafe/shared';
 import type { CatData } from '@/hooks/useCatData';
 import type { BuiltinAccountClient, ProfileItem } from './hub-accounts.types';
-import type { CodexUsageItem, QuotaResponse } from './quota-cards';
+import type { ConfiguredQuotaPlatforms } from './hub-quota-refresh';
+import { type CodexUsageItem, type QuotaResponse, toUtilization } from './quota-cards';
 
 export interface AccountQuotaPool {
   id: string;
@@ -10,6 +12,7 @@ export interface AccountQuotaPool {
   items: CodexUsageItem[];
   memberTags: string[];
   emptyText?: string;
+  checkedAt?: number;
 }
 
 export interface AccountQuotaPoolGroup {
@@ -96,6 +99,19 @@ function builtinEmptyText(clientId: BuiltinAccountClient | undefined): string {
   }
 }
 
+export function managedQuotaIsCurrent(profile: ProfileItem): boolean {
+  return (
+    profile.codex?.status === 'ready' && accountQuotaOwnerMatches(profile.quota, profile.id, profile.codex.identity)
+  );
+}
+
+function managedQuotaEmptyText(profile: ProfileItem): string {
+  if (profile.codex?.status === 'identity_changed') return '登录身份已变化，请先处理此账号登录';
+  if (profile.codex?.status !== 'ready') return '尚未登录，请先完成此账号的官方登录';
+  if (profile.quota && !managedQuotaIsCurrent(profile)) return '此账号额度身份未确认，请重新查询';
+  return profile.quota?.error ?? '尚未查询此账号额度，不代表额度为零';
+}
+
 export function buildAccountQuotaGroups(
   quota: QuotaResponse | null,
   profiles: ProfileItem[],
@@ -106,9 +122,17 @@ export function buildAccountQuotaGroups(
   const builtinPools = oauthProfiles.map<AccountQuotaPool>((profile) => ({
     id: profile.id,
     title: profile.displayName || BUILTIN_CLIENT_LABELS[profile.clientId ?? 'anthropic'],
-    items: builtinQuotaItems(profile.clientId, quota),
+    // The aggregate observation belongs to the native default, never another login.
+    items: profile.codex
+      ? managedQuotaIsCurrent(profile) && profile.quota?.status === 'ok'
+        ? [...profile.quota.items]
+        : []
+      : builtinQuotaItems(profile.clientId, quota),
     memberTags: memberTagsForAccount(cats, profile.id),
-    emptyText: builtinEmptyText(profile.clientId),
+    emptyText: profile.codex ? managedQuotaEmptyText(profile) : builtinEmptyText(profile.clientId),
+    ...(profile.codex && managedQuotaIsCurrent(profile) && profile.quota
+      ? { checkedAt: profile.quota.observedAt }
+      : {}),
   }));
 
   const apiKeyPools = profiles
@@ -161,4 +185,27 @@ export function buildAccountQuotaGroups(
   }
 
   return groups;
+}
+
+export function resolveAccountQuotaRisk(
+  quota: QuotaResponse | null,
+  refreshError: string | null,
+  configured: ConfiguredQuotaPlatforms,
+  profiles: ProfileItem[],
+  groups: AccountQuotaPoolGroup[],
+): 'ok' | 'warn' | 'high' {
+  if (
+    refreshError ||
+    (configured.codex && quota?.codex?.error) ||
+    (configured.claude && quota?.claude?.error) ||
+    (configured.gemini && quota?.gemini?.error) ||
+    (configured.kimi && quota?.kimi?.error) ||
+    (configured.antigravity && quota?.antigravity?.error) ||
+    profiles.some((profile) => profile.codex && managedQuotaIsCurrent(profile) && profile.quota?.error)
+  )
+    return 'high';
+  const max = Math.max(0, ...groups.flatMap((group) => group.pools.flatMap((pool) => pool.items.map(toUtilization))));
+  if (max >= 95) return 'high';
+  if (max >= 80) return 'warn';
+  return 'ok';
 }

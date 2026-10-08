@@ -31,6 +31,34 @@ describe('apiFetch 401 retry', () => {
     };
   }
 
+  it('reports concurrent transport failures once without retrying a mutation', async () => {
+    const fetchMock = vi.fn(async (url: RequestInfo | URL) => {
+      if (String(url).includes('/api/session')) return new Response('{}', { status: 200 });
+      throw new TypeError('Failed to fetch');
+    });
+    globalThis.fetch = fetchMock;
+    const { apiFetch, useToastStore } = await loadApiModules();
+    const results = await Promise.allSettled([
+      apiFetch('/api/threads/t/queue/q/targets', { method: 'POST', body: '{}' }),
+      apiFetch('/api/threads/t/queue'),
+    ]);
+    expect(results.every((result) => result.status === 'rejected')).toBe(true);
+    expect(fetchMock.mock.calls.filter(([url]) => String(url).endsWith('/targets'))).toHaveLength(1);
+    expect(useToastStore.getState().toasts).toHaveLength(1);
+    expect(useToastStore.getState().toasts[0].title).toBe('后端连接异常');
+  });
+
+  it('does not report a caller abort as backend unavailability', async () => {
+    globalThis.fetch = vi.fn(async () => new Response('{}', { status: 200 }));
+    const { apiFetch, useToastStore } = await loadApiModules();
+    const controller = new AbortController();
+    controller.abort();
+    await expect(apiFetch('/api/threads/t/queue', { signal: controller.signal })).rejects.toMatchObject({
+      name: 'AbortError',
+    });
+    expect(useToastStore.getState().toasts).toEqual([]);
+  });
+
   it('retries once after 401 by re-establishing session', async () => {
     const calls: string[] = [];
     const mockFetch = vi.fn().mockImplementation((url: string) => {
@@ -56,6 +84,31 @@ describe('apiFetch 401 retry', () => {
     const messageCalls = calls.filter((c) => c.includes('/api/messages'));
     expect(sessionCalls.length).toBe(2);
     expect(messageCalls.length).toBe(2);
+  });
+
+  it('replaces the CSRF header with the refreshed session token on a mutation retry', async () => {
+    let sessionAttempt = 0;
+    let dataAttempt = 0;
+    const observedCsrf: Array<string | null> = [];
+    const mockFetch = vi.fn().mockImplementation((url: string, init?: RequestInit) => {
+      if (url.includes('/api/session')) {
+        sessionAttempt += 1;
+        return Promise.resolve(Response.json({ csrfToken: `csrf-${sessionAttempt}` }));
+      }
+      dataAttempt += 1;
+      observedCsrf.push(new Headers(init?.headers).get('x-csrf-token'));
+      return Promise.resolve(new Response('{}', { status: dataAttempt === 1 ? 401 : 200 }));
+    });
+    globalThis.fetch = mockFetch;
+
+    const { apiFetch } = await loadApiModules();
+    const response = await apiFetch('/api/memory/people/person_1/actions', {
+      method: 'POST',
+      body: '{}',
+    });
+
+    expect(response.status).toBe(200);
+    expect(observedCsrf).toEqual(['csrf-1', 'csrf-2']);
   });
 
   it('does not retry on non-401 errors', async () => {

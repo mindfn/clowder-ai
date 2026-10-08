@@ -6,8 +6,10 @@ import {
   constituteEvolutionProgramInputSchema,
   handleConstituteEvolutionProgram,
   handleOpenEvolutionRound,
+  handleRebindEvolutionProgramMeasurement,
   handleRecordEvolutionEvaluation,
   openEvolutionRoundInputSchema,
+  rebindEvolutionProgramMeasurementInputSchema,
   recordEvolutionEvaluationInputSchema,
 } from '../dist/tools/capability-evolution-round-tools.js';
 
@@ -53,7 +55,7 @@ describe('F311 Phase 3 cat-facing round actions', () => {
 
   const body = () => JSON.parse(String(requests.at(-1)?.init.body));
 
-  it('reaches the canonical callback API for constitution, round and evaluation', async () => {
+  it('reaches the canonical callback API for constitution, rebind, round and evaluation', async () => {
     await handleConstituteEvolutionProgram({
       programId,
       expectedSequence: 1,
@@ -72,6 +74,15 @@ describe('F311 Phase 3 cat-facing round actions', () => {
       },
     });
     assert.match(String(requests.at(-1)?.url), /\/api\/callbacks\/evolution-programs\/.+\/constitution$/);
+
+    await handleRebindEvolutionProgramMeasurement({
+      programId,
+      expectedSequence: 2,
+      clientMessageId: 'rebind-measurement-v2',
+      evidenceProofRef: ref('F267', 'measurement-proof:proof-v2'),
+    });
+    assert.match(String(requests.at(-1)?.url), /\/api\/callbacks\/evolution-programs\/.+\/measurement-constitution$/);
+    assert.deepEqual(Object.keys(body()).sort(), ['clientMessageId', 'evidenceProofRef', 'expectedSequence']);
 
     await handleOpenEvolutionRound({
       programId,
@@ -107,6 +118,21 @@ describe('F311 Phase 3 cat-facing round actions', () => {
   it('refuses owner truth at the schema, not at the server', async () => {
     const evaluation = z.object(recordEvolutionEvaluationInputSchema).strict();
     // An owner verdict on the measurement.
+    assert.equal(
+      z
+        .object(rebindEvolutionProgramMeasurementInputSchema)
+        .strict()
+        .safeParse({
+          programId,
+          expectedSequence: 2,
+          clientMessageId: 'rebind-measurement-v2',
+          evidenceProofRef: ref('F267', 'measurement-proof:proof-v2'),
+          measurementRoleRefs: {
+            consumer: ref('F267', 'measurement-role:forged:consumer'),
+          },
+        }).success,
+      false,
+    );
     assert.equal(
       evaluation.safeParse({
         programId,
@@ -186,10 +212,11 @@ describe('F311 Phase 3 cat-facing round actions', () => {
     );
   });
 
-  it('registers all three actions as write-risk canonical tools', () => {
+  it('registers all four actions as write-risk canonical tools', () => {
     assert.deepEqual(capabilityEvolutionRoundTools.map((tool) => tool.name).sort(), [
       'cat_cafe_constitute_evolution_program',
       'cat_cafe_open_evolution_round',
+      'cat_cafe_rebind_evolution_program_measurement',
       'cat_cafe_record_evolution_evaluation',
     ]);
   });

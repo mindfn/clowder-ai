@@ -1,10 +1,12 @@
 /* F056 OKLCH Tuner — CSS generation + export text.
  * Split from oklch-tuner-engine.ts to stay under 350-line hard limit. */
 import type { CatTier, HcOverride, Mode, ModeP, NeutralP, SemanticP, SurfaceP, TunerState } from './oklch-tuner-engine';
-import { CAT_TIERS, INIT } from './oklch-tuner-engine';
+import { CAT_TIERS, INIT, SURF_FACTORS } from './oklch-tuner-engine';
+import { lineageRingLightness } from './oklch-tuner-lineage-ring';
+import { type ActualColours, resolveTunerNameAndPlate } from './oklch-tuner-name-role';
 
 /* ── CSS generation ── */
-export function buildCSS(p: TunerState, hc: HcOverride): string {
+export function buildCSS(p: TunerState, hc: HcOverride, actual?: ActualColours): string {
   const ok = (m: ModeP, t: CatTier, h: string, c: string) => `oklch(${m[t].L} calc(${c} * ${m[t].Cmul}) ${h})`;
   const it = (m: ModeP) => `oklch(${m.insetText.L} ${m.insetText.C} 250)`;
   /* Defensive: old persisted data may lack msgText (added mid-PR) */
@@ -25,23 +27,28 @@ export function buildCSS(p: TunerState, hc: HcOverride): string {
     const msg = m.msgText ?? (dark ? INIT.dark.msgText : INIT.light.msgText);
     /* Cat name text: unified H/L/C across all cats. CSS formulas in
      * cat-persona-tokens.css consume --cat-name-l/c/h (not per-cat hue).
-     * This avoids fragile source-order override of final --color-{slug}-text. */
-    const nameL = dark ? p.catTextDarkL : p.catTextLightL;
+     * This avoids fragile source-order override of final --color-{slug}-text.
+     * H and C are the user's. L is the saved lightness when it reads against what this theme draws names over, otherwise
+     * the nearest one that does (F322: the saved value itself is never rewritten). */
+    const role = resolveTunerNameAndPlate(p, dark, actual);
+    const nameL = role.l;
+    /* The lineage ring (globals.css `[data-message-jump-focus]`) is drawn in the human colour at the bubble lightness, floored at 3:1. */
+    const ringL = lineageRingLightness(p, dark, actual, role.plateL).l;
     return (
       `${sel}{` +
       `--cat-bubble-l:${m.primary.L};--cat-bubble-cmul:${m.primary.Cmul};` +
-      `--cat-surface-l:${m.surface.L};--cat-surface-cmul:${m.surface.Cmul};` +
+      `--cat-surface-l:${role.plateL};--cat-surface-cmul:${m.surface.Cmul};` +
       `--cat-text-l:${m.text.L};--cat-text-cmul:${m.text.Cmul};` +
       `--cat-ring-l:${m.ring.L};--cat-ring-cmul:${m.ring.Cmul};` +
       `--cat-inset-l:${m.inset.L};--cat-inset-cmul:${m.inset.Cmul};` +
       `--cat-inset-text-l:${m.insetText.L};--cat-inset-text-c:${m.insetText.C};` +
       `--cat-msg-text-l:${msg.L};--cat-msg-text-c:${msg.C};` +
-      `--cat-name-l:${nameL};--cat-name-c:${p.catTextC};--cat-name-h:${p.catTextH};}`
+      `--cat-name-l:${nameL};--cat-name-c:${p.catTextC};--cat-name-h:${p.catTextH};` +
+      `--cat-lineage-l:${ringL};}`
     );
   };
 
   // 2. Surface elevation — chroma = --surface-chroma × layer factor (1.5/1.2/0.5/0.3)
-  const SURF_FACTORS = [1.5, 1.2, 0.5, 0.3] as const;
   const surf = (e: SurfaceP, dark: boolean) => {
     const sel = dark ? '[data-theme="dark"]' : ':root';
     const ch = SURF_FACTORS.map((f) => +(sC * f).toFixed(4));

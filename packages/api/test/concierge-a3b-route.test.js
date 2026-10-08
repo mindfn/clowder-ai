@@ -16,6 +16,7 @@ import { readdir, readFile } from 'node:fs/promises';
 import { join, relative, resolve } from 'node:path';
 import { beforeEach, describe, it } from 'node:test';
 import Fastify from 'fastify';
+import { canonicalTestMessageInput } from './helpers/message-from-fixtures.js';
 
 const USER_HEADER = { 'x-cat-cafe-user': 'test-user', 'content-type': 'application/json' };
 
@@ -492,13 +493,15 @@ describe('GET /api/concierge/peek', () => {
 
     // Seed messages in a thread — append returns StoredMessage with generated id
     for (let i = 0; i < 7; i++) {
-      const stored = messageStore.append({
-        threadId: 'peek-thread',
-        content: `Message ${i}`,
-        userId: 'test-user',
-        catId: i % 2 === 0 ? null : 'opus',
-        timestamp: Date.now() + i * 1000,
-      });
+      const stored = messageStore.append(
+        canonicalTestMessageInput({
+          threadId: 'peek-thread',
+          content: `Message ${i}`,
+          userId: 'test-user',
+          catId: i % 2 === 0 ? null : 'opus',
+          timestamp: Date.now() + i * 1000,
+        }),
+      );
       msgIds.push(stored.id);
     }
   });
@@ -523,15 +526,17 @@ describe('GET /api/concierge/peek', () => {
   });
 
   it('returns a normal window around queued cat-authored speech already published to timeline', async () => {
-    const target = messageStore.append({
-      threadId: 'peek-thread',
-      content: 'published source-cat seed',
-      userId: 'test-user',
-      catId: 'codex-sol',
-      mentions: ['opus'],
-      timestamp: Date.now() + 10_000,
-      deliveryStatus: 'queued',
-    });
+    const target = messageStore.append(
+      canonicalTestMessageInput({
+        threadId: 'peek-thread',
+        content: 'published source-cat seed',
+        userId: 'test-user',
+        catId: 'codex-sol',
+        mentions: ['opus'],
+        timestamp: Date.now() + 10_000,
+        deliveryStatus: 'queued',
+      }),
+    );
 
     const res = await app.inject({
       method: 'GET',

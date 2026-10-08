@@ -156,6 +156,77 @@ describe('OperationRowsRenderer (F202 W2-3 h1)', () => {
     expect(byTestId('chatgpt-pro-rows-empty')?.textContent).toBe('No authorized conversations');
   });
 
+  it.each([
+    'Title refresh unavailable: HOST_UNAVAILABLE',
+    'Updated 2 titles',
+  ])('keeps button feedback after next:list: %s, and clears it on the next failed action', async (label) => {
+    let failed = false;
+    mockApiFetch.mockImplementation(async (url) => {
+      calls.push({ url: String(url) });
+      return String(url).endsWith('/list')
+        ? jsonResponse({ ok: true, render: 'rows', data: { rows: [row('a1')] } })
+        : jsonResponse(failed ? { ok: false, label: 'Connection lost' } : { ok: true, render: 'status', label });
+    });
+    const op = {
+      ...operation,
+      actions: [
+        operation.actions[0],
+        { id: 'refresh', label: 'Refresh titles', render: 'button' as const, next: 'list' },
+      ],
+    };
+    await render(<ActionRenderer target={target} operation={op} />);
+    await click(byTestId('chatgpt-pro-action-refresh'));
+    expect(sent('list')).toHaveLength(2);
+    expect(container.querySelector('[role="status"]')?.textContent).toBe(label);
+    expect(byTestId('chatgpt-pro-row-a1')).not.toBeNull();
+    failed = true;
+    await click(byTestId('chatgpt-pro-action-refresh'));
+    expect(container.querySelector('[role="status"]')).toBeNull();
+    expect(container.querySelector('[role="alert"]')?.textContent).toBe('Connection lost');
+  });
+
+  it.each(['list', 'revoke'])('clears button feedback when the owner starts %s, before its failure', async (action) => {
+    let failNext = false;
+    let finish: (value: Response) => void = () => {};
+    mockApiFetch.mockImplementation(async (url) => {
+      calls.push({ url: String(url) });
+      if (failNext)
+        return new Promise<Response>((resolve) => {
+          finish = resolve;
+        });
+      return String(url).endsWith('/list')
+        ? jsonResponse({ ok: true, render: 'rows', data: { rows: [row('a1')] } })
+        : jsonResponse({ ok: true, render: 'status', label: 'Updated 2 titles' });
+    });
+    const op = {
+      ...operation,
+      actions: [
+        operation.actions[0],
+        { id: 'refresh', label: 'Refresh titles', render: 'button' as const, next: 'list' },
+      ],
+    };
+    await render(<ActionRenderer target={target} operation={op} />);
+    await click(byTestId('chatgpt-pro-action-refresh'));
+    expect(container.querySelector('[role="status"]')?.textContent).toBe('Updated 2 titles');
+    failNext = true;
+    if (action === 'revoke') {
+      await click(revokeButton('a1'));
+      await click(dialogButton('取消'));
+      expect(sent('revoke')).toHaveLength(0);
+      expect(container.querySelector('[role="status"]')?.textContent).toBe('Updated 2 titles');
+      await click(revokeButton('a1'));
+      await click(dialogButton('确认'));
+    } else {
+      await click(byTestId('chatgpt-pro-rows-refresh'));
+    }
+    expect(container.querySelector('[role="status"]')).toBeNull();
+    await act(async () => finish(jsonResponse({ ok: false, label: 'Network error' })));
+    await settle();
+    expect(container.querySelector('[role="alert"]')?.textContent).toBe('Network error');
+    expect(container.querySelector('[role="status"]')).toBeNull();
+    expect(byTestId('chatgpt-pro-row-a1')).not.toBeNull();
+  });
+
   it('says why the list is unavailable', async () => {
     serve([], { listError: 'Plugin returned an invalid result' });
     await render(<ActionRenderer target={target} operation={operation} />);

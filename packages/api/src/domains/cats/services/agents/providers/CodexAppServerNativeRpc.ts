@@ -5,6 +5,7 @@ import {
   codexAppServerErrorMessage,
   respondToCodexAppServerRequest,
 } from './CodexAppServerEventMapper.js';
+import { validateCodexAccountConfiguration } from './codex-app-server-account-configuration.js';
 import { CodexAppServerRpcError } from './codex-app-server-rpc-error.js';
 
 interface PendingRequest {
@@ -104,6 +105,7 @@ export async function runCodexAppServerInitializedRpc<T>(input: {
       }),
     );
     await write({ method: 'initialized' });
+    await bounded(validateCodexAccountConfiguration(input.wire, (method, params) => bounded(request(method, params))));
     return await bounded(input.run({ request: (method, params) => bounded(request(method, params)) }, initialized));
   } finally {
     if (timer) clearTimeout(timer);

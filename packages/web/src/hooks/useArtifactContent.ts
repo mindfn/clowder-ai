@@ -56,9 +56,12 @@ export function useArtifactContent(
   worktreeId: string | null,
   enabled: boolean,
 ): ArtifactContentState {
-  const [state, setState] = useState<ArtifactContentState>(IDLE);
+  // Fence synchronously: effects run after a changed object has already rendered.
+  const sourceKey = JSON.stringify([artifact, worktreeId, enabled]);
+  const [loaded, setLoaded] = useState<{ key: string; state: ArtifactContentState }>({ key: '', state: IDLE });
 
   useEffect(() => {
+    const setState = (state: ArtifactContentState) => setLoaded({ key: sourceKey, state });
     if (!enabled || !artifact) {
       setState(IDLE);
       return;
@@ -84,7 +87,13 @@ export function useArtifactContent(
     return () => {
       cancelled = true;
     };
-  }, [artifact, worktreeId, enabled]);
+  }, [artifact, worktreeId, enabled, sourceKey]);
 
-  return state;
+  return loaded.key === sourceKey
+    ? loaded.state
+    : {
+        ...IDLE,
+        path: artifact?.ref ?? artifact?.name ?? '',
+        loading: enabled && artifact !== null,
+      };
 }

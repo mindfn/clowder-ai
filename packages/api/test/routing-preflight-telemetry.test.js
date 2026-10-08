@@ -116,7 +116,7 @@ describe('F293 routing preflight operational telemetry', () => {
 
   it('keeps process identifiers out of bounded metric attributes', async () => {
     const { routingPreflightMetricAttributes } = await import(
-      '../dist/domains/routing-context/RoutingPreflightTelemetry.js'
+      '../dist/domains/routing-context/preflight/RoutingPreflightTelemetry.js'
     );
     const attributes = routingPreflightMetricAttributes({
       kind: 'attempt',

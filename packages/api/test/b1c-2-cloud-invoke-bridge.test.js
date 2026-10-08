@@ -8,7 +8,7 @@
  *  - a bound conversation is appended through the Host adapter, which returns the receipt
  *  - a missing or corrupted binding is never sent anywhere (needs-binding)
  *  - Host rejections map to typed outcomes; there is no second transport (the legacy PinchTab
- *    bridge was removed, F202 W2-3 h3a, issue #1538)
+ *    bridge was removed, issue #1538)
  *  - emitFallback throwing is absorbed
  */
 

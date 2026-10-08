@@ -10,12 +10,10 @@ import './helpers/setup-cat-registry.js';
 import {
   bootstrapCapabilities,
   buildCatCafeMcpDescriptor,
-  __testing as capabilityOrchestratorTesting,
   comparePencilDirs,
   deduplicateDiscoveredMcpServers,
   discoverExternalMcpServers,
   ensureCatCafeMainServer,
-  generateCliConfigs,
   healCatCafeMcpTopology,
   inheritFullyBlockedMcpCapabilitiesForNewCat,
   migrateLegacyCatCafeCapability,
@@ -26,6 +24,7 @@ import {
   readCapabilitiesConfig,
   readResolvedMcpState,
   realignManagedCatCafeServerPaths,
+  reconcileMcpRuntimeConfig,
   resolveMachineSpecificServers,
   resolvePencilBinary,
   resolvePencilCommand,
@@ -2486,12 +2485,22 @@ describe('resolveServersForCat', () => {
     assert.equal(geminiServers.length, 1);
     assert.equal(geminiServers[0].name, 'remote-tool');
     assert.equal(geminiServers[0].enabled, false);
+
+    if (!catRegistry.has('agy-native-http-test')) {
+      catRegistry.register('agy-native-http-test', {
+        ...catRegistry.tryGet('gemini').config,
+        id: 'agy-native-http-test',
+        agyProfile: { enabled: true, carrier: 'native' },
+      });
+    }
+    const nativeServers = resolveServersForCat(config, 'agy-native-http-test');
+    assert.equal(nativeServers[0].enabled, true, 'Native AGY supports serverUrl HTTP transport');
   });
 });
 
 // ────────── Generate CLI configs ──────────
 
-describe('generateCliConfigs', () => {
+describe('reconcileMcpRuntimeConfig', () => {
   /** @type {string} */ let dir;
 
   beforeEach(async () => {
@@ -2501,176 +2510,30 @@ describe('generateCliConfigs', () => {
     await rm(dir, { recursive: true, force: true });
   });
 
-  it('generates config files for all providers', async () => {
-    // Need cats registered for this test
-    const hasAnyCats = catRegistry.getAllIds().length > 0;
-    if (!hasAnyCats) {
-      // Skip if no cats registered (test isolation)
-      return;
-    }
-
-    const config = makeConfig([
-      {
-        id: 'cat-cafe',
-        type: 'mcp',
-        enabled: true,
-        source: 'cat-cafe',
-        mcpServer: { command: 'node', args: ['server.js'] },
-      },
-    ]);
-
-    const paths = {
-      google: join(dir, '.gemini', 'settings.json'),
-    };
-
-    await generateCliConfigs(config, paths, dir);
-
-    // Gemini config should be generated (only persistent-config provider)
-    const geminiData = JSON.parse(await readFile(paths.google, 'utf-8'));
-    assert.ok(geminiData.mcpServers, 'Gemini CLI config should be generated');
-  });
-
-  it('restores CLI config file permissions during rollback', async () => {
-    const configPath = join(dir, '.mcp.json');
-    const originalUmask = process.umask(0o022);
-    try {
-      await writeFile(configPath, '{"mcpServers":{"secret":{"command":"old","args":[]}}}\n', { mode: 0o600 });
-      const snapshot = await capabilityOrchestratorTesting.snapshotCliConfigPath(configPath);
-
-      await rm(configPath);
-      await capabilityOrchestratorTesting.restoreCliConfigPath(configPath, snapshot);
-
-      const restoredMode = (await stat(configPath)).mode & 0o777;
-      assert.equal(restoredMode, 0o600, 'rollback should preserve strict config file permissions');
-    } finally {
-      process.umask(originalUmask);
-    }
-  });
-
-  it('restores symlinked CLI config targets during rollback', async () => {
-    const configPath = join(dir, '.mcp.json');
-    const targetPath = join(dir, 'dotfiles', 'claude-mcp.json');
-    const originalContent = '{"mcpServers":{"secret":{"command":"old","args":[]}}}\n';
-    const originalUmask = process.umask(0o022);
-    try {
-      await mkdir(join(dir, 'dotfiles'), { recursive: true });
-      await writeFile(targetPath, originalContent, { mode: 0o600 });
-      await symlink(targetPath, configPath);
-
-      const snapshot = await capabilityOrchestratorTesting.snapshotCliConfigPath(configPath);
-      await writeFile(configPath, '{"mcpServers":{"cat-cafe":{"command":"node","args":["new.js"]}}}\n');
-      await capabilityOrchestratorTesting.restoreCliConfigPath(configPath, snapshot);
-
-      assert.equal(await readFile(targetPath, 'utf-8'), originalContent);
-      assert.equal((await stat(targetPath)).mode & 0o777, 0o600);
-      assert.equal((await lstat(configPath)).isSymbolicLink(), true, 'rollback should preserve the symlink path');
-    } finally {
-      process.umask(originalUmask);
-    }
-  });
-
-  it('removes managed commandless entries from Gemini settings', async () => {
-    const hasGoogleCat = catRegistry.getAllIds().some((id) => {
-      const entry = catRegistry.tryGet(id);
-      return entry?.config.clientId === 'google';
-    });
-    if (!hasGoogleCat) return;
-
-    const paths = {
-      google: join(dir, '.gemini', 'settings.json'),
-    };
-
-    // Seed an existing invalid entry (historical config).
-    await mkdir(join(dir, '.gemini'), { recursive: true });
-    await writeFile(
-      paths.google,
-      JSON.stringify({
-        mcpServers: {
-          jetbrains: { command: '', args: [] },
-        },
-      }),
-    );
-
-    const config = makeConfig([
-      { id: 'jetbrains', type: 'mcp', enabled: true, source: 'external', mcpServer: { command: '', args: [] } },
-      {
-        id: 'cat-cafe-collab',
-        type: 'mcp',
-        enabled: true,
-        source: 'cat-cafe',
-        mcpServer: { command: 'node', args: ['collab.js'] },
-      },
-    ]);
-
-    await generateCliConfigs(config, paths, dir);
-    const data = JSON.parse(await readFile(paths.google, 'utf-8'));
-
-    assert.equal(data.mcpServers.jetbrains, undefined, 'invalid managed entry should be removed');
-    assert.ok(data.mcpServers['cat-cafe-collab'], 'valid managed entry should remain');
-  });
-
-  it('writes Antigravity global MCP config with readonly cat-cafe env', async () => {
-    if (!catRegistry.has('antigravity')) {
-      catRegistry.register('antigravity', {
-        id: 'antigravity',
-        name: '孟加拉猫',
-        displayName: '孟加拉猫',
-        avatar: '/avatars/antigravity.png',
-        color: { primary: '#D4853A', secondary: '#FAEBDB' },
-        mentionPatterns: ['@antigravity'],
-        clientId: 'antigravity',
-        defaultModel: 'gemini-3.1-pro',
-        mcpSupport: true,
-        roleDescription: 'bridge cat',
-        personality: 'steady',
-      });
-    }
+  it('F325 leaves retired Gemini and IDE execution configs untouched', async () => {
     const paths = {
       google: join(dir, '.gemini', 'settings.json'),
       antigravity: join(dir, '.gemini', 'antigravity', 'mcp_config.json'),
     };
-
-    const config = makeConfig([
-      {
-        id: 'cat-cafe-collab',
-        type: 'mcp',
-        enabled: true,
-        source: 'cat-cafe',
-        mcpServer: { command: 'node', args: ['collab.js'] },
-      },
-    ]);
-
-    const originalAwd = process.env.ALLOWED_WORKSPACE_DIRS;
-    const originalWsr = process.env.CAT_CAFE_WORKSPACE_ROOT;
-    const originalAgentKeyFile = process.env.CAT_CAFE_AGENT_KEY_FILE;
-    const originalAgentKeyFiles = process.env.CAT_CAFE_AGENT_KEY_FILES;
-    const originalAgentKeySecret = process.env.CAT_CAFE_AGENT_KEY_SECRET;
-    delete process.env.ALLOWED_WORKSPACE_DIRS;
-    delete process.env.CAT_CAFE_WORKSPACE_ROOT;
-    delete process.env.CAT_CAFE_AGENT_KEY_FILE;
-    delete process.env.CAT_CAFE_AGENT_KEY_FILES;
-    delete process.env.CAT_CAFE_AGENT_KEY_SECRET;
-    try {
-      await generateCliConfigs(config, paths, dir);
-      const data = JSON.parse(await readFile(paths.antigravity, 'utf-8'));
-
-      assert.deepEqual(data.mcpServers['cat-cafe-collab'].env, {
-        CAT_CAFE_API_URL: process.env.CAT_CAFE_API_URL?.trim() || 'http://localhost:3004',
-        CAT_CAFE_READONLY: 'true',
-        ALLOWED_WORKSPACE_DIRS: process.cwd(),
-      });
-    } finally {
-      if (originalAwd === undefined) delete process.env.ALLOWED_WORKSPACE_DIRS;
-      else process.env.ALLOWED_WORKSPACE_DIRS = originalAwd;
-      if (originalWsr === undefined) delete process.env.CAT_CAFE_WORKSPACE_ROOT;
-      else process.env.CAT_CAFE_WORKSPACE_ROOT = originalWsr;
-      if (originalAgentKeyFile === undefined) delete process.env.CAT_CAFE_AGENT_KEY_FILE;
-      else process.env.CAT_CAFE_AGENT_KEY_FILE = originalAgentKeyFile;
-      if (originalAgentKeyFiles === undefined) delete process.env.CAT_CAFE_AGENT_KEY_FILES;
-      else process.env.CAT_CAFE_AGENT_KEY_FILES = originalAgentKeyFiles;
-      if (originalAgentKeySecret === undefined) delete process.env.CAT_CAFE_AGENT_KEY_SECRET;
-      else process.env.CAT_CAFE_AGENT_KEY_SECRET = originalAgentKeySecret;
-    }
+    await mkdir(join(dir, '.gemini', 'antigravity'), { recursive: true });
+    const prior = '{"mcpServers":{"external-reader":{"command":"existing"}}}\n';
+    await writeFile(paths.google, prior);
+    await writeFile(paths.antigravity, prior);
+    await reconcileMcpRuntimeConfig(
+      makeConfig([
+        {
+          id: 'cat-cafe-collab',
+          type: 'mcp',
+          enabled: true,
+          source: 'cat-cafe',
+          mcpServer: { command: 'node', args: ['collab.js'] },
+        },
+      ]),
+      paths,
+      dir,
+    );
+    assert.equal(await readFile(paths.google, 'utf8'), prior);
+    assert.equal(await readFile(paths.antigravity, 'utf8'), prior);
   });
 
   it('resolves pencil from env override and records resolved state', async () => {
@@ -2698,18 +2561,13 @@ describe('generateCliConfigs', () => {
     process.env.PENCIL_MCP_BIN = explicitBin;
     process.env.PENCIL_MCP_APP = 'vscode';
     try {
-      await generateCliConfigs(config, paths, dir);
+      await reconcileMcpRuntimeConfig(config, paths, dir);
     } finally {
       if (originalEnv === undefined) delete process.env.PENCIL_MCP_BIN;
       else process.env.PENCIL_MCP_BIN = originalEnv;
       if (originalApp === undefined) delete process.env.PENCIL_MCP_APP;
       else process.env.PENCIL_MCP_APP = originalApp;
     }
-
-    // Gemini config should contain the resolved pencil entry
-    const geminiData = JSON.parse(await readFile(paths.google, 'utf-8'));
-    assert.ok(geminiData.mcpServers?.pencil, 'resolved pencil should be written to Gemini config');
-    assert.ok(geminiData.mcpServers.pencil.command.includes('custom-pencil'));
 
     const resolvedState = await readResolvedMcpState(dir);
     assert.deepEqual(resolvedState.pencil, {
@@ -2743,15 +2601,11 @@ describe('generateCliConfigs', () => {
     process.env.PENCIL_MCP_BIN = join(dir, 'missing-pencil');
     delete process.env.PENCIL_MCP_APP;
     try {
-      await generateCliConfigs(config, paths, dir);
+      await reconcileMcpRuntimeConfig(config, paths, dir);
     } finally {
       if (originalEnv !== undefined) process.env.PENCIL_MCP_BIN = originalEnv;
       if (originalApp !== undefined) process.env.PENCIL_MCP_APP = originalApp;
     }
-
-    // Gemini config should NOT contain the unresolved pencil entry
-    const geminiData = JSON.parse(await readFile(paths.google, 'utf-8'));
-    assert.equal(geminiData.mcpServers?.pencil, undefined);
 
     const resolvedState = await readResolvedMcpState(dir);
     assert.deepEqual(resolvedState.pencil, {
@@ -2798,46 +2652,6 @@ describe('generateCliConfigs', () => {
       command: '/tmp/pencil-bin',
       args: ['--app', 'vscode'],
     });
-  });
-
-  it('omits streamableHttp entries from Gemini persistent config', async () => {
-    const hasAnyCats = catRegistry.getAllIds().length > 0;
-    if (!hasAnyCats) return;
-
-    const paths = {
-      google: join(dir, '.gemini', 'settings.json'),
-    };
-
-    const config = makeConfig([
-      {
-        id: 'remote-tool',
-        type: 'mcp',
-        enabled: true,
-        source: 'external',
-        mcpServer: {
-          command: '',
-          args: [],
-          transport: 'streamableHttp',
-          url: 'https://mcp.example.com/sse',
-          headers: { Authorization: 'Bearer tok' },
-        },
-      },
-    ]);
-
-    await generateCliConfigs(config, paths, dir);
-
-    // Gemini config should NOT contain the streamableHttp entry
-    // (streamableHttp is only supported in invoke-time configs for Claude/Kimi/OpenCode)
-    try {
-      const geminiData = JSON.parse(await readFile(paths.google, 'utf-8'));
-      assert.equal(
-        geminiData.mcpServers?.['remote-tool'],
-        undefined,
-        'streamableHttp should not appear in Gemini config',
-      );
-    } catch {
-      // File may not exist if no google cats — that's fine
-    }
   });
 });
 
@@ -3039,7 +2853,7 @@ describe('healCatCafeMcpTopology (F193 Phase C shared migration chain)', () => {
   // 3-split + legacy `cat-cafe` + same-repo external `cat-cafe-limb` — passed
   // through the full heal chain ends in canonical split-only topology (no
   // duplicate limb id, no legacy main). This is the surface that drives
-  // `generateCliConfigs` → `.mcp.json` / `.codex/config.toml` regeneration,
+  // `reconcileMcpRuntimeConfig` → `.mcp.json` / `.codex/config.toml` regeneration,
   // so removing legacy here is what eliminates the duplicate
   // `mcp__cat_cafe__cat_cafe_search_evidence` exposure downstream.
   it('F193 PCFU: heal chain converges F209 D.0 shape to split-only canonical', () => {

@@ -1,18 +1,19 @@
 'use client';
 
 import type { PawFeelInboxPage } from '@cat-cafe/shared';
+import { usePawFeelCopy } from '../paw-feel/paw-feel.shell-copy';
+import { type PawFeelUiError, pawFeelUiErrorText } from '../paw-feel/paw-feel-ui-error';
 import { PawFeelInboxBundle } from './PawFeelInboxBundle';
 import type { DutyReadState } from './usePawFeelDuty';
 
 export function PawFeelInboxHeader({ title, page }: { title: string; page: PawFeelInboxPage | null }) {
+  const t = usePawFeelCopy();
   const healthy = page?.coverage?.status === 'healthy';
   return (
     <div className="flex min-w-0 flex-col gap-2 sm:flex-row sm:items-start sm:justify-between">
       <div className="min-w-0">
         <h3 className="text-base font-semibold text-cafe">{title}</h3>
-        <p className="mt-1 max-w-3xl text-xs leading-relaxed text-cafe-secondary">
-          按消息与调用上下文组成确定性审阅包；值班回执与问题是否解决分开显示。问题族暂无权威语义分组。
-        </p>
+        <p className="mt-1 max-w-3xl text-xs leading-relaxed text-cafe-secondary">{t.inboxDescription}</p>
       </div>
       {page?.coverage ? (
         <span
@@ -20,7 +21,7 @@ export function PawFeelInboxHeader({ title, page }: { title: string; page: PawFe
           title={`coverage · ${page.coverage.status}`}
         >
           <span className={`h-2 w-2 rounded-full ${healthy ? 'bg-conn-green-text' : 'bg-conn-amber-text'}`} />
-          {healthy ? '覆盖正常' : '覆盖降级'}
+          {healthy ? t.coverageHealthy : t.coverageDegraded}
         </span>
       ) : null}
     </div>
@@ -36,21 +37,26 @@ export function PawFeelDutyBanner({
   duty: DutyReadState;
   page: PawFeelInboxPage | null;
 }) {
+  const t = usePawFeelCopy();
   if (variant !== 'workspace' || duty.status === 'loading') return null;
   if (duty.status === 'unassigned') {
     return (
       <div className="mt-3 rounded-md border border-conn-red-ring bg-conn-red-bg px-3 py-2 text-xs text-conn-red-text">
-        <div className="font-semibold">当前无人值班，尚未开始责任审阅</div>
+        <div className="font-semibold">{t.unassigned}</div>
         <div className="mt-1 font-medium">
-          0 / 2 位值班猫 · {page?.denominator.reportOccurrences ?? 0} 条报告 · {page?.denominator.reviewBundles ?? 0}{' '}
-          个审阅包 · {page?.counts.overdue ?? 0} 条 72h+
+          {t.dutyCounts(
+            page?.denominator.reportOccurrences ?? 0,
+            page?.denominator.reviewBundles ?? 0,
+            page?.counts.overdue ?? 0,
+            false,
+          )}
         </div>
         <div className="mt-1">
-          未看信号仍会完整入箱，但不会自动猜责任猫。请到{' '}
+          {t.dutyHintStart}{' '}
           <a className="underline" href="/settings?ops=observability&obs=eval">
-            设置 → 可观测性 → 评估
+            {t.settingsRoute}
           </a>{' '}
-          指定 primary / backup。
+          {t.dutyHintEnd}
         </div>
       </div>
     );
@@ -58,16 +64,18 @@ export function PawFeelDutyBanner({
   if (duty.status === 'incomplete') {
     return (
       <div className="mt-3 rounded-md border border-conn-red-ring bg-conn-red-bg px-3 py-2 text-xs text-conn-red-text">
-        <div className="font-semibold">值班配置不完整，尚未开始责任审阅</div>
+        <div className="font-semibold">{t.incomplete}</div>
         <div className="mt-1 font-medium">
-          0 / 2 位可运营值班猫 · {page?.denominator.reportOccurrences ?? 0} 条报告 ·{' '}
-          {page?.denominator.reviewBundles ?? 0} 个审阅包 · {page?.counts.overdue ?? 0} 条 72h+
+          {t.dutyCounts(
+            page?.denominator.reportOccurrences ?? 0,
+            page?.denominator.reviewBundles ?? 0,
+            page?.counts.overdue ?? 0,
+            true,
+          )}
         </div>
         <div className="mt-1">
-          当前只记录了
-          {duty.config.primaryCatId ? ` primary @${duty.config.primaryCatId}` : ' primary 未指定'}
-          {duty.config.backupCatId ? ` / backup @${duty.config.backupCatId}` : ' / backup 未指定'}； 必须同时配置不同的
-          primary / backup，系统不会把一只猫冒充另一班。
+          Primary {duty.config.primaryCatId ?? t.notAssigned} / Backup {duty.config.backupCatId ?? t.notAssigned} ·{' '}
+          {t.incompleteAssignment}
         </div>
       </div>
     );
@@ -75,36 +83,37 @@ export function PawFeelDutyBanner({
   if (duty.status === 'unavailable') {
     return (
       <div className="mt-3 rounded-md border border-conn-amber-ring bg-conn-amber-bg px-3 py-2 text-xs text-conn-amber-text">
-        值班状态暂不可读；系统不会据此猜测责任猫。
+        {t.dutyUnavailable}
       </div>
     );
   }
   return (
     <div className="mt-3 flex flex-wrap items-center gap-x-2 gap-y-1 border-l-2 border-conn-green-ring pl-2.5 text-xs text-cafe-secondary">
-      <span className="font-semibold text-conn-green-text">值班已就绪</span>
+      <span className="font-semibold text-conn-green-text">{t.ready}</span>
       <span className="whitespace-nowrap">Primary @{duty.config.primaryCatId}</span>
       <span className="whitespace-nowrap">Backup @{duty.config.backupCatId}</span>
-      <span className="whitespace-nowrap text-cafe-muted">显式交接 · 72h operator 红灯</span>
+      <span className="whitespace-nowrap text-cafe-muted">{t.handoffRule}</span>
     </div>
   );
 }
 
-export function PawFeelInboxNotices({ page, error }: { page: PawFeelInboxPage | null; error: string | null }) {
+export function PawFeelInboxNotices({ page, error }: { page: PawFeelInboxPage | null; error: PawFeelUiError | null }) {
+  const t = usePawFeelCopy();
   return (
     <>
       {page?.degraded ? (
         <div className="mt-3 rounded-md border border-conn-amber-ring bg-conn-amber-bg px-3 py-2 text-xs text-conn-amber-text">
-          embedding 健康暂不可用；此页面当前不提供 live 语义分组。确定性上下文审阅包与全部原始报告继续可见。
+          {t.degraded}
         </div>
       ) : null}
       {error ? (
         <div className="mt-3 rounded-md bg-conn-red-bg px-3 py-2 text-xs text-conn-red-text" role="alert">
-          {error}
+          {pawFeelUiErrorText(error, t)}
         </div>
       ) : null}
       {page?.projectionStatus === 'unavailable' ? (
         <div className="mt-3 rounded-md bg-conn-red-bg px-3 py-2 text-xs text-conn-red-text" role="alert">
-          处置台账暂不可用：{page.unavailableReason ?? 'unknown'}
+          {t.ledgerUnavailable}: {page.unavailableReason ?? 'unknown'}
         </div>
       ) : null}
     </>
@@ -122,13 +131,10 @@ export function PawFeelInboxBody({
   loadingMore: boolean;
   onLoadMore: () => void;
 }) {
-  if (loading && !page) return <p className="mt-3 text-xs text-cafe-muted">正在读取责任收件箱…</p>;
+  const t = usePawFeelCopy();
+  if (loading && !page) return <p className="mt-3 text-xs text-cafe-muted">{t.loadingInbox}</p>;
   if (page?.projectionStatus === 'available' && page.bundles.length === 0) {
-    return (
-      <p className="mt-3 rounded-md bg-cafe-surface px-3 py-3 text-xs text-cafe-secondary">
-        当前筛选下没有报告；完整历史仍保留在同一台账中。
-      </p>
-    );
+    return <p className="mt-3 rounded-md bg-cafe-surface px-3 py-3 text-xs text-cafe-secondary">{t.empty}</p>;
   }
   return (
     <>
@@ -142,9 +148,7 @@ export function PawFeelInboxBody({
           ))}
         </div>
       ) : null}
-      {page ? (
-        <p className="mt-2 text-micro text-cafe-muted">问题族数不可可靠计算；semantic grouping 本阶段冻结。</p>
-      ) : null}
+      {page ? <p className="mt-2 text-micro text-cafe-muted">{t.familiesUnknown}</p> : null}
       {page?.nextCursor ? (
         <button
           type="button"
@@ -152,7 +156,7 @@ export function PawFeelInboxBody({
           onClick={onLoadMore}
           className="mt-3 w-full rounded-md border border-cafe px-3 py-2 text-xs font-medium text-cafe-secondary disabled:opacity-50"
         >
-          {loadingMore ? '加载中…' : '再看 50 条'}
+          {loadingMore ? t.loading : t.more}
         </button>
       ) : null}
     </>

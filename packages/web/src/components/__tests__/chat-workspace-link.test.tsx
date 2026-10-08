@@ -56,6 +56,7 @@ describe('transformChatMarkdownUrl', () => {
   it('restores only file-like Markdown URLs rejected as custom schemes', () => {
     expect(transformChatMarkdownUrl('README.md:42')).toBe('README.md:42');
     expect(transformChatMarkdownUrl('C:\\work\\cat-cafe\\README.md:7')).toBe('C:\\work\\cat-cafe\\README.md:7');
+    expect(transformChatMarkdownUrl('C:\\work\\cat-cafe\\src\\index.ts:7')).toBe('C:\\work\\cat-cafe\\src\\index.ts:7');
     expect(transformChatMarkdownUrl('javascript:guide.md')).toBe('');
     expect(transformChatMarkdownUrl('file:///tmp/guide.md')).toBe('');
   });
@@ -101,7 +102,11 @@ describe('MarkdownContent chat document navigation', () => {
 
   function renderContent(content: string) {
     act(() => {
-      root.render(<MarkdownContent content={content} disableCommandPrefix />);
+      root.render(
+        <div data-message-id="message-origin">
+          <MarkdownContent content={content} disableCommandPrefix />
+        </div>,
+      );
     });
   }
 
@@ -121,6 +126,7 @@ describe('MarkdownContent chat document navigation', () => {
           worktreeId: 'cat-cafe',
           path: 'docs/discussions/convergence.md',
           line: 59,
+          kind: 'file',
         }),
         { status: 200, headers: { 'content-type': 'application/json' } },
       ),
@@ -143,6 +149,67 @@ describe('MarkdownContent chat document navigation', () => {
     expect(state.rightPanelMode).toBe('workspace');
   });
 
+  it.each([
+    ['TypeScript', '/home/user/cat-cafe/src/index.ts:42', 'src/index.ts', 42],
+    ['JSON', '/home/user/cat-cafe/package.json:7', 'package.json', 7],
+    ['PNG', '/home/user/cat-cafe/docs/evidence/example.png', 'docs/evidence/example.png', null],
+  ])('opens an absolute %s file link in Workspace', async (_kind, href, path, line) => {
+    apiFetchMock.mockResolvedValueOnce(
+      new Response(JSON.stringify({ worktreeId: 'cat-cafe', path, line, kind: 'file' }), {
+        status: 200,
+        headers: { 'content-type': 'application/json' },
+      }),
+    );
+    renderContent(`[File](${href})`);
+
+    expect(container.querySelector('a')).toBeNull();
+    const action = container.querySelector('button');
+    expect(action).toBeTruthy();
+    await act(async () => {
+      action?.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true }));
+      await Promise.resolve();
+    });
+
+    expect(useChatStore.getState()._workspaceFileSetAt.disposition).toBe('permanent');
+
+    expect(apiFetchMock).toHaveBeenCalledWith('/api/workspace/resolve-document-link', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ href }),
+    });
+    const state = useChatStore.getState();
+    expect(state.workspaceOpenFilePath).toBe(path);
+    expect(state.workspaceOpenFileLine).toBe(line);
+    expect(state.workspaceWorktreeId).toBe('cat-cafe');
+    expect(state.rightPanelMode).toBe('workspace');
+  });
+
+  it('reveals an absolute directory link in the Workspace file tree', async () => {
+    apiFetchMock.mockResolvedValueOnce(
+      new Response(JSON.stringify({ worktreeId: 'cat-cafe', path: 'docs/evidence', line: null, kind: 'directory' }), {
+        status: 200,
+        headers: { 'content-type': 'application/json' },
+      }),
+    );
+    renderContent('[Evidence folder](/home/user/cat-cafe/docs/evidence)');
+
+    expect(container.querySelector('a')).toBeNull();
+    const action = container.querySelector('button');
+    expect(action).toBeTruthy();
+    await act(async () => {
+      action?.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true }));
+      await Promise.resolve();
+    });
+
+    expect(useChatStore.getState().workspaceOpenRequest?.target).toMatchObject({
+      kind: 'reveal',
+      worktreeId: 'cat-cafe',
+      path: 'docs/evidence',
+    });
+    expect(useChatStore.getState().rightPanelMode).toBe('workspace');
+    expect(useChatStore.getState().workspaceOpenFilePath).toBeNull();
+  });
+
   it('opens a repo-relative named Markdown link in Workspace', () => {
     renderAndClick('[Feature](docs/features/F063-hub-workspace-explorer.md)');
 
@@ -150,6 +217,12 @@ describe('MarkdownContent chat document navigation', () => {
     expect(state.workspaceOpenFilePath).toBe('docs/features/F063-hub-workspace-explorer.md');
     expect(state.workspaceOpenFileLine).toBeNull();
     expect(state.rightPanelMode).toBe('workspace');
+    expect(state._workspaceFileSetAt.disposition).toBe('permanent');
+    expect(state._workspaceFileSetAt.navigationOrigin).toEqual({
+      kind: 'chat-file-link',
+      threadId: 'default',
+      messageId: 'message-origin',
+    });
   });
 
   it('preserves a bare Markdown filename with a line suffix through the ReactMarkdown pipeline', () => {
@@ -168,6 +241,7 @@ describe('MarkdownContent chat document navigation', () => {
           worktreeId: 'cat-cafe-self-evolution-worldview',
           path: 'docs/research/self-evolution/README.md',
           line: 1,
+          kind: 'file',
         }),
         { status: 200, headers: { 'content-type': 'application/json' } },
       ),
@@ -202,6 +276,7 @@ describe('MarkdownContent chat document navigation', () => {
           worktreeId: 'cat-cafe-guide',
           path: 'docs/My Guide.md',
           line: 12,
+          kind: 'file',
         }),
         { status: 200, headers: { 'content-type': 'application/json' } },
       ),
@@ -231,6 +306,7 @@ describe('MarkdownContent chat document navigation', () => {
           worktreeId: 'cat-cafe-guide',
           path: 'docs/guide#draft.md',
           line: 12,
+          kind: 'file',
         }),
         { status: 200, headers: { 'content-type': 'application/json' } },
       ),
@@ -263,6 +339,7 @@ describe('MarkdownContent chat document navigation', () => {
           worktreeId: 'windows-share',
           path: 'docs/guide.md',
           line: 7,
+          kind: 'file',
         }),
         { status: 200, headers: { 'content-type': 'application/json' } },
       ),
@@ -288,7 +365,7 @@ describe('MarkdownContent chat document navigation', () => {
 
   it('fails a missing local Markdown path closed instead of opening a browser tab', async () => {
     apiFetchMock.mockResolvedValueOnce(
-      new Response(JSON.stringify({ error: 'Document is not in a registered workspace' }), {
+      new Response(JSON.stringify({ code: 'PATH_NOT_IN_REGISTERED_WORKSPACE' }), {
         status: 404,
         headers: { 'content-type': 'application/json' },
       }),
@@ -303,18 +380,79 @@ describe('MarkdownContent chat document navigation', () => {
       await Promise.resolve();
     });
 
-    expect(container.querySelector('[role="alert"]')?.textContent).toContain('无法在工作区中打开');
+    expect(container.querySelector('[role="alert"]')?.textContent).toContain('已登记的工作区');
     expect(useChatStore.getState().workspaceOpenFilePath).toBeNull();
   });
 
-  it('keeps external and non-Markdown hrefs as browser links', () => {
+  it('explains that an absolute non-Markdown path is outside registered workspaces', async () => {
+    apiFetchMock.mockResolvedValueOnce(
+      new Response(JSON.stringify({ code: 'PATH_NOT_IN_REGISTERED_WORKSPACE' }), {
+        status: 404,
+        headers: { 'content-type': 'application/json' },
+      }),
+    );
+    renderContent('[Missing image](/home/user/other/assets/missing.png)');
+
+    expect(container.querySelector('a')).toBeNull();
+    const action = container.querySelector('button');
+    expect(action).toBeTruthy();
+    await act(async () => {
+      action?.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true }));
+      await Promise.resolve();
+    });
+
+    expect(container.querySelector('[role="alert"]')?.textContent).toContain('已登记的工作区');
+    expect(useChatStore.getState().workspaceOpenFilePath).toBeNull();
+  });
+
+  it('explains when a file is missing inside a registered workspace', async () => {
+    apiFetchMock.mockResolvedValueOnce(
+      new Response(JSON.stringify({ code: 'PATH_NOT_FOUND' }), {
+        status: 404,
+        headers: { 'content-type': 'application/json' },
+      }),
+    );
+    renderContent('[Missing file](/home/user/cat-cafe/docs/missing.png)');
+
+    const action = container.querySelector('button');
+    expect(action).toBeTruthy();
+    await act(async () => {
+      action?.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true }));
+      await Promise.resolve();
+    });
+
+    expect(container.querySelector('[role="alert"]')?.textContent).toContain('在已登记的工作区中不存在');
+  });
+
+  it('maps typed access-denied errors to safe local copy', async () => {
+    apiFetchMock.mockResolvedValueOnce(
+      new Response(JSON.stringify({ code: 'PATH_ACCESS_DENIED' }), {
+        status: 403,
+        headers: { 'content-type': 'application/json' },
+      }),
+    );
+    renderContent('[Private file](/home/user/cat-cafe/.env.local)');
+
+    const action = container.querySelector('button');
+    expect(action).toBeTruthy();
+    await act(async () => {
+      action?.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true }));
+      await Promise.resolve();
+    });
+
+    expect(container.querySelector('[role="alert"]')?.textContent).toContain('无法安全地在 Workspace 中打开');
+    expect(container.querySelector('[role="alert"]')?.textContent).not.toContain('.env.local');
+  });
+
+  it('keeps external and relative non-Markdown hrefs as browser links', () => {
     renderContent(
-      '[Web](https://example.com/guide.md) [Protocol relative](//example.com/guide.md) [Code](src/index.ts)',
+      '[Web](https://example.com/guide.md) [Protocol relative](//example.com/guide.md) [Code](src/index.ts) [Absolute code](/home/user/cat-cafe/src/index.ts:12)',
     );
 
     const anchors = Array.from(container.querySelectorAll('a'));
     expect(anchors).toHaveLength(3);
     expect(anchors.every((anchor) => anchor.target === '_blank')).toBe(true);
+    expect(container.querySelector('button')?.textContent).toContain('Absolute code');
     expect(useChatStore.getState().workspaceOpenFilePath).toBeNull();
   });
 });

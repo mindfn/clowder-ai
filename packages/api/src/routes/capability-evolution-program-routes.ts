@@ -36,6 +36,7 @@ import {
   createProgramSchema,
   evaluationRoundSchema,
   evaluationSchema,
+  measurementConstitutionRebindSchema,
   observationSchema,
   programIdSchema,
 } from './capability-evolution-program-schemas.js';
@@ -50,6 +51,7 @@ export interface CapabilityEvolutionProgramRoutesOptions {
     | 'command'
     | 'linkObservation'
     | 'linkCertificates'
+    | 'rebindMeasurementConstitution'
     | 'triggerEvaluation'
     | 'linkMeasurement'
     | 'linkAttribution'
@@ -231,6 +233,32 @@ export const capabilityEvolutionProgramRoutes: FastifyPluginAsync<CapabilityEvol
     }
   };
 
+  const measurementConstitutionRebind = async (request: FastifyRequest, reply: FastifyReply) => {
+    const context = requireContext(request, reply);
+    if (!context) return;
+    if (!service) return unavailable(reply);
+    try {
+      const programId = programIdSchema.parse((request.params as { programId: string }).programId);
+      const current = await service.get(programId);
+      if (current.program.workspaceId !== context.workspaceId) return reply.status(404).send({ error: 'not_found' });
+      const body = measurementConstitutionRebindSchema.parse(request.body);
+      return sendResult(
+        await service.rebindMeasurementConstitution({
+          programId,
+          expectedSequence: body.expectedSequence,
+          clientMessageId: body.clientMessageId,
+          actorRef: context.actorRef,
+          originRef: context.originFor(body.clientMessageId),
+          ownerUserId: context.ownerUserId,
+          evidenceProofRef: body.evidenceProofRef,
+        }),
+        reply,
+      );
+    } catch (error) {
+      return sendError(error, reply);
+    }
+  };
+
   const evaluationRound = async (request: FastifyRequest, reply: FastifyReply) => {
     const context = requireContext(request, reply);
     if (!context) return;
@@ -330,6 +358,7 @@ export const capabilityEvolutionProgramRoutes: FastifyPluginAsync<CapabilityEvol
     app.get(`${prefix}/:programId/adapter-media/:sceneIndex`, adapterMedia);
     app.post(`${prefix}/:programId/commands`, command);
     app.post(`${prefix}/:programId/constitution`, constitution);
+    app.post(`${prefix}/:programId/measurement-constitution`, measurementConstitutionRebind);
     app.post(`${prefix}/:programId/observations`, observation);
     app.post(`${prefix}/:programId/evaluation-rounds`, evaluationRound);
     app.post(`${prefix}/:programId/evaluations`, evaluation);

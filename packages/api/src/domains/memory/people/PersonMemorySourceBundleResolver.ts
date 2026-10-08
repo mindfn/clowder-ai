@@ -7,9 +7,16 @@ import {
   personMemoryResolvedSourceBundleSchema,
   type ResolvedPersonMemorySource,
 } from '@cat-cafe/shared';
+import { messageFrom } from '../../cats/services/stores/message-from.js';
 import type { IMessageStore, StoredMessage } from '../../cats/services/stores/ports/MessageStore.js';
 import { isDelivered } from '../../cats/services/stores/ports/MessageStore.js';
 import { canViewMessage } from '../../cats/services/stores/visibility.js';
+import {
+  normalizeOwnerMessageText,
+  ownerMessageTextDigestMaterial,
+  ownerMessageTextSegments,
+  resolveOwnerMessageExcerptSegment,
+} from './owner-message-text-projection.js';
 
 export interface PersonMemorySourceAuth {
   ownerUserId: string;
@@ -34,13 +41,17 @@ export type PersonMemorySourceResolution =
   | { status: 'resolved'; bundle: PersonMemoryResolvedSourceBundle; bundleDigest: string }
   | { status: 'invalid'; error: string };
 
+export type PersonMemoryResolvedSourceRevalidation =
+  | { status: 'resolved'; bundle: PersonMemoryResolvedSourceBundle }
+  | { status: 'invalid'; error: string };
+
 interface ResolverDeps {
   messageStore: Pick<IMessageStore, 'getById'>;
   ownerPrivateArtifactResolver?: OwnerPrivateArtifactResolver;
 }
 
 export function normalizePersonMemorySourceText(value: string): string {
-  return value.normalize('NFKC').trim();
+  return normalizeOwnerMessageText(value);
 }
 
 function stableJson(value: unknown): string {
@@ -78,8 +89,7 @@ export function eligibleOwnerMessage(
   return Boolean(
     message &&
       message.userId === auth.ownerUserId &&
-      message.catId === null &&
-      message.source === undefined &&
+      messageFrom(message).kind === 'user' &&
       message.deletedAt === undefined &&
       message._tombstone !== true &&
       isDelivered(message) &&
@@ -88,10 +98,14 @@ export function eligibleOwnerMessage(
 }
 
 export function explicitlyConfirmsAccuracy(message: StoredMessage): boolean {
-  const content = normalizePersonMemorySourceText(message.content);
-  if (/(?:不对|不准确|未确认|not correct|inaccurate)/iu.test(content)) return false;
-  return /(?:^|[\s，,。.!！])(?:对|是的|没错)(?:[\s，,。.!！]|$)|(?:转写|记录|内容).{0,24}(?:准确|没错|已确认)|\bconfirm(?:ed)?\b/iu.test(
-    content,
+  const ownerSegments = ownerMessageTextSegments(message).map((segment) => segment.text);
+  if (ownerSegments.some((content) => /(?:不对|不准确|未确认|not correct|inaccurate)/iu.test(content))) {
+    return false;
+  }
+  return ownerSegments.some((content) =>
+    /(?:^|[\s，,。.!！])(?:对|是的|没错)(?:[\s，,。.!！]|$)|(?:转写|记录|内容).{0,24}(?:准确|没错|已确认)|\bconfirm(?:ed)?\b/iu.test(
+      content,
+    ),
   );
 }
 
@@ -130,7 +144,7 @@ export function ownerMessageAttachmentTranscript(block: unknown): string {
   return '';
 }
 
-function invalid(error: string): PersonMemorySourceResolution {
+function invalid(error: string): { status: 'invalid'; error: string } {
   return { status: 'invalid', error };
 }
 
@@ -184,6 +198,103 @@ export class PersonMemorySourceBundleResolver {
     return current;
   }
 
+  /**
+   * Revalidate stored canonical provenance for an owner read. This consumes the
+   * resolved bundle already attached to the person item and never accepts new
+   * source coordinates or source text from the browser caller.
+   */
+  async revalidateResolvedBundle(
+    bundle: PersonMemoryResolvedSourceBundle,
+    auth: PersonMemorySourceAuth,
+  ): Promise<PersonMemoryResolvedSourceRevalidation> {
+    const sources: ResolvedPersonMemorySource[] = [];
+    for (const source of bundle.sources) {
+      if (source.ownerUserId !== auth.ownerUserId) return invalid('invalid_source_owner');
+      const current = await this.revalidateResolvedSource(source, auth);
+      if (current.status === 'invalid') return current;
+      if (stableJson(current.source) !== stableJson(source)) return invalid('source_drift');
+      sources.push(current.source);
+    }
+    return {
+      status: 'resolved',
+      bundle: personMemoryResolvedSourceBundleSchema.parse({ ...bundle, sources }),
+    };
+  }
+
+  private async revalidateResolvedSource(
+    source: ResolvedPersonMemorySource,
+    auth: PersonMemorySourceAuth,
+  ): Promise<{ status: 'resolved'; source: ResolvedPersonMemorySource } | { status: 'invalid'; error: string }> {
+    if (source.kind === 'message_text') {
+      return this.resolveMessageText(
+        {
+          sourceId: source.sourceId,
+          kind: source.kind,
+          messageId: source.sourceRef.messageId,
+          expectedDigest: source.resolvedDigest,
+          excerpt: source.excerpt,
+        },
+        auth,
+      );
+    }
+    if (source.kind === 'message_attachment') {
+      return this.resolveMessageAttachment(
+        {
+          sourceId: source.sourceId,
+          kind: source.kind,
+          messageId: source.sourceRef.messageId,
+          attachmentLocator: source.attachmentLocator,
+          expectedDigest: source.resolvedDigest,
+          boundedTranscript: source.boundedTranscript,
+        },
+        auth,
+      );
+    }
+    if (source.kind === 'owner_confirmed_transcript') {
+      return this.resolveConfirmedTranscript(
+        {
+          sourceId: source.sourceId,
+          kind: source.kind,
+          transcript: source.transcript,
+          transcriptDigest: digestPersonMemorySourceMaterial(source.transcript),
+          confirmationMessageId: source.confirmationSourceRef.messageId,
+          confirmationScope: source.confirmationScope,
+        },
+        auth,
+      );
+    }
+    const confirmation = await this.deps.messageStore.getById(source.confirmationSourceRef.messageId);
+    if (
+      !eligibleOwnerMessage(confirmation, auth) ||
+      confirmation.threadId !== source.confirmationSourceRef.threadId ||
+      !explicitlyConfirmsAccuracy(confirmation)
+    ) {
+      return invalid('invalid_artifact_confirmation');
+    }
+    const artifact = await this.deps.ownerPrivateArtifactResolver?.resolve(auth.ownerUserId, source.artifactLocator);
+    if (
+      !artifact ||
+      !normalizePersonMemorySourceText(artifact.boundedText).includes(
+        normalizePersonMemorySourceText(source.boundedExcerpt),
+      )
+    ) {
+      return invalid('invalid_private_artifact');
+    }
+    const resolvedDigest = digestPersonMemorySourceMaterial({
+      artifactDigest: artifact.digest,
+      confirmation: ownerMessageTextDigestMaterial(confirmation),
+    });
+    if (resolvedDigest !== source.resolvedDigest) return invalid('source_drift');
+    return {
+      status: 'resolved',
+      source: {
+        ...source,
+        confirmationSourceRef: ownerMessageSourceRef(confirmation),
+        resolvedDigest,
+      },
+    };
+  }
+
   private async resolveSource(
     input: PersonMemorySourceInput,
     auth: PersonMemorySourceAuth,
@@ -200,10 +311,10 @@ export class PersonMemorySourceBundleResolver {
   ) {
     const message = await this.deps.messageStore.getById(input.messageId);
     if (!eligibleOwnerMessage(message, auth)) return { status: 'invalid' as const, error: 'invalid_message_source' };
-    if (!normalizePersonMemorySourceText(message.content).includes(normalizePersonMemorySourceText(input.excerpt))) {
+    if (!resolveOwnerMessageExcerptSegment(message, input.excerpt)) {
       return { status: 'invalid' as const, error: 'source_excerpt_mismatch' };
     }
-    const resolvedDigest = digestPersonMemorySourceMaterial(message.content);
+    const resolvedDigest = digestPersonMemorySourceMaterial(ownerMessageTextDigestMaterial(message));
     if (input.expectedDigest && input.expectedDigest !== resolvedDigest) {
       return { status: 'invalid' as const, error: 'source_digest_mismatch' };
     }
@@ -267,7 +378,7 @@ export class PersonMemorySourceBundleResolver {
     }
     const resolvedDigest = digestPersonMemorySourceMaterial({
       transcript: normalizePersonMemorySourceText(input.transcript),
-      confirmation: normalizePersonMemorySourceText(confirmation.content),
+      confirmation: ownerMessageTextDigestMaterial(confirmation),
     });
     return {
       status: 'resolved' as const,
@@ -303,7 +414,7 @@ export class PersonMemorySourceBundleResolver {
     }
     const resolvedDigest = digestPersonMemorySourceMaterial({
       artifactDigest: artifact.digest,
-      confirmation: normalizePersonMemorySourceText(confirmation.content),
+      confirmation: ownerMessageTextDigestMaterial(confirmation),
     });
     return {
       status: 'resolved' as const,

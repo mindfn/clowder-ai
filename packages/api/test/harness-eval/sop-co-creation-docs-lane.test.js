@@ -196,4 +196,24 @@ describe('Predicate: co_creation_docs_lane', () => {
     };
     assert.equal(evalPredicate(trace).status, 'pass');
   });
+
+  it('understands risk-based guidance without treating it as docs approval', () => {
+    const result = evalPredicate({
+      ...baseTrace,
+      changedFiles: ['docs/architecture/overview.md'],
+      commands: [classifierCommand({ lane: 'regular_development', cloudReview: 'risk_based', fullGate: 'risk_based' })],
+    });
+    assert.equal(result.status, 'violation');
+    assert.match(result.violation?.message ?? '', /unexpected classifier lane=regular_development/);
+  });
+
+  it('does not coerce malformed review decisions into valid strings', () => {
+    const result = evalPredicate({
+      ...baseTrace,
+      changedFiles: ['docs/architecture/overview.md'],
+      commands: [classifierCommand({ cloudReview: ['skip'] })],
+    });
+    assert.equal(result.status, 'violation');
+    assert.match(result.violation?.message ?? '', /not parseable/);
+  });
 });

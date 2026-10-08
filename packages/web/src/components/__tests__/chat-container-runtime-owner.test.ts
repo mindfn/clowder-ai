@@ -69,13 +69,13 @@ describe('chat runtime ownership', () => {
     ]);
   });
 
-  it('restores durable rich-action confirmations in both full and compact adapters', () => {
+  it('restores durable rich-action confirmations in the canonical chat adapter', () => {
     expect(
       findProductionHookConsumers(
         sourceRoot,
         'useConciergeConfirmations',
         new Set(['components/concierge/useConciergeConfirmations.ts']),
       ),
-    ).toEqual(['components/ChatContainer.tsx', 'components/concierge/ConciergePanel.tsx']);
+    ).toEqual(['components/ChatContainer.tsx']);
   });
 });

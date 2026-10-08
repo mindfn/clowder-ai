@@ -3,18 +3,28 @@
  */
 import { PcIcon } from './directory-browser-icons';
 
-export function ThisPcListEntry({ onEnterDrivesView }: { onEnterDrivesView: () => void }) {
+export function ThisPcListEntry({
+  onEnterDrivesView,
+  title = '查看所有磁盘',
+  label = '此电脑',
+  description = '切换磁盘',
+}: {
+  onEnterDrivesView: () => void;
+  title?: string;
+  label?: string;
+  description?: string;
+}) {
   return (
     <button
       type="button"
       onClick={onEnterDrivesView}
       className="w-full text-left px-3 py-2.5 text-sm rounded-lg transition-colors flex items-center gap-2.5 hover:bg-cafe-surface/50"
-      title="查看所有磁盘"
+      title={title}
     >
       <PcIcon />
       <div className="min-w-0 flex-1">
-        <span className="font-medium text-cafe-black block truncate">此电脑</span>
-        <span className="text-micro text-cafe-muted block truncate">切换磁盘</span>
+        <span className="font-medium text-cafe-black block truncate">{label}</span>
+        <span className="text-micro text-cafe-muted block truncate">{description}</span>
       </div>
       <svg
         aria-hidden="true"

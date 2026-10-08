@@ -46,7 +46,7 @@ function opportunity(record = seed()) {
 
 describe('F312 Phase E cat-owned Seed Standing Reflex', () => {
   it('resolves one content-free cue only for the producing cat and drills the exact private revision', async () => {
-    let current = seed();
+    const current = seed();
     const source = new CatOwnedSeedMemoryCueSource({
       getOwnedSeed: async (ownerUserId, catId, seedId) =>
         current.ownerUserId === ownerUserId && current.catId === catId && current.seedId === seedId ? current : null,
@@ -156,6 +156,7 @@ describe('F312 Phase E cat-owned Seed Standing Reflex', () => {
       id: 'message-present-loop',
       threadId: SCOPE.threadId,
       userId: 'scheduler',
+      from: { kind: 'system', service: 'scheduler' },
       catId: null,
       content: '[scheduler] privateContext=invocation-only',
       source: { connector: 'scheduler', label: '定时任务' },

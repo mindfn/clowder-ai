@@ -1,12 +1,23 @@
 import type { RedisClient } from '@cat-cafe/shared/utils';
-import { normalizeJsonUnicode } from '../../../../../utils/json-unicode.js';
 import type { AppendMessageInput, MessageAppendListener, StoredMessage } from '../ports/MessageStore.js';
-import { assertValidAppendMessageInput, DEFAULT_THREAD_ID, generateSortableId } from '../ports/MessageStore.js';
-import { assertQueueCustodyMessageBinding } from '../ports/queued-message-custody.js';
+import { canonicalizeAppendMessageInput, DEFAULT_THREAD_ID, generateSortableId } from '../ports/MessageStore.js';
 import { MessageKeys } from '../redis-keys/message-keys.js';
+import { withOwnerUncertaintyIndex as withUncertaintyIndex } from './owner-uncertainty-lua.js';
 import { serializeExtra } from './redis-message-parsers.js';
+import { withUserMentionIndex } from './user-mention-index-lua.js';
 
-const APPEND_MESSAGE_LUA = `
+function withOwnerUncertaintyIndex(script: string, hashKey: number, indexExpression: string): string {
+  const fields = 'cjson.decode(ARGV[2])';
+  const prefix = `string.sub(KEYS[1], 1, #KEYS[1] - #${fields}.id - 4)`;
+  return withUserMentionIndex(
+    withUncertaintyIndex(script, hashKey, indexExpression),
+    hashKey,
+    `{${prefix} .. 'msg:user-requests:latest:' .. ${fields}.userId, ${prefix} .. 'msg:user-requests:pending:' .. ${fields}.userId, ${prefix} .. 'msg:user-requests:closed:' .. ${fields}.userId, ${prefix} .. 'msg:user-request-signals:' .. ${fields}.userId .. ':' .. ${fields}.threadId}`,
+  );
+}
+
+const APPEND_MESSAGE_LUA = withOwnerUncertaintyIndex(
+  `
 redis.replicate_commands()
 
 local hash = KEYS[1]
@@ -66,9 +77,16 @@ if ttl and ttl > 0 then
 end
 
 return {'committed', messageId}
-`;
+`,
+  1,
+  "string.sub(KEYS[4], 1, #KEYS[4] - #cjson.decode(ARGV[2]).threadId - 11) .. 'msg:owner-uncertainty:' .. cjson.decode(ARGV[2]).threadId",
+);
 
-function serializeMessage(message: AppendMessageInput, id: string, threadId: string): Record<string, string> {
+function serializeMessage(
+  message: ReturnType<typeof canonicalizeAppendMessageInput>,
+  id: string,
+  threadId: string,
+): Record<string, string> {
   // F288: split pluginMessage from host extra — stored as independent hash field
   const { pluginMessage, ...hostExtra } = message.extra ?? {};
   const hasHostExtra = Object.keys(hostExtra).length > 0;
@@ -76,8 +94,10 @@ function serializeMessage(message: AppendMessageInput, id: string, threadId: str
     id,
     threadId,
     userId: message.userId,
+    from: JSON.stringify(message.from),
     catId: message.catId ?? '',
     content: message.content,
+    ...(message.lifecycle ? { lifecycle: JSON.stringify(message.lifecycle) } : {}),
     mentions: JSON.stringify(message.mentions),
     timestamp: String(message.timestamp),
     ...(message.contentBlocks !== undefined ? { contentBlocks: JSON.stringify(message.contentBlocks) } : {}),
@@ -92,13 +112,6 @@ function serializeMessage(message: AppendMessageInput, id: string, threadId: str
     ...(message.source ? { source: JSON.stringify(message.source) } : {}),
     ...(message.mentionsUser ? { mentionsUser: '1' } : {}),
     ...(message.deliveryStatus ? { deliveryStatus: message.deliveryStatus } : {}),
-    ...(message.queueCustody
-      ? {
-          queueCustody: JSON.stringify(message.queueCustody),
-          queueCustodyRevision: String(message.queueCustody.revision),
-        }
-      : {}),
-    ...(message.queueCustodyAdmission ? { queueCustodyAdmission: JSON.stringify(message.queueCustodyAdmission) } : {}),
     ...(message.replyTo ? { replyTo: message.replyTo } : {}),
   };
 }
@@ -111,9 +124,7 @@ export async function appendMessage(input: {
   onAppend?: MessageAppendListener;
 }): Promise<StoredMessage> {
   const { redis, ttlSeconds, loadById, onAppend } = input;
-  const message = normalizeJsonUnicode(input.message);
-  assertValidAppendMessageInput(message);
-  assertQueueCustodyMessageBinding(message);
+  const message = canonicalizeAppendMessageInput(input.message);
 
   const threadId = message.threadId ?? DEFAULT_THREAD_ID;
   const id = generateSortableId(message.timestamp);

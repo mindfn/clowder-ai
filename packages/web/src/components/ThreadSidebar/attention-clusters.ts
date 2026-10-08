@@ -20,6 +20,13 @@ export type AttentionRenderItem =
 export type AttentionListRow =
   | { kind: 'thread'; key: string; thread: SidebarSnapshotRow }
   | {
+      kind: 'cluster-remainder';
+      key: string;
+      cluster: AttentionCluster;
+      remainingCount: number;
+      nextThreadId: string;
+    }
+  | {
       kind: 'cluster-header';
       key: string;
       cluster: AttentionCluster;

@@ -8,7 +8,8 @@
  * 4. Attached images survive thread remount, stay thread-scoped, and flow into onSend
  */
 import React, { act } from 'react';
-import { createRoot, type Root } from 'react-dom/client';
+import { createRoot, hydrateRoot, type Root } from 'react-dom/client';
+import { renderToString } from 'react-dom/server';
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import {
   ChatInput,
@@ -171,6 +172,29 @@ async function attachFiles(files: File[]) {
 }
 
 describe('ChatInput draft persistence', () => {
+  it('restores the original draft selection after visiting another thread without moving focus', async () => {
+    await act(async () =>
+      root.render(React.createElement(ChatInput, { threadId: 'thread-SELECTION-A', onSend: vi.fn() })),
+    );
+    act(() => {
+      typeInto(getTextarea(), 'original selected draft');
+      getTextarea().setSelectionRange(3, 8);
+      getTextarea().dispatchEvent(new Event('select'));
+    });
+    await act(async () =>
+      root.render(React.createElement(ChatInput, { key: 'b', threadId: 'thread-SELECTION-B', onSend: vi.fn() })),
+    );
+    act(() => typeInto(getTextarea(), 'another thread draft'));
+    const outside = document.createElement('button');
+    container.appendChild(outside);
+    outside.focus();
+    await act(async () =>
+      root.render(React.createElement(ChatInput, { key: 'a', threadId: 'thread-SELECTION-A', onSend: vi.fn() })),
+    );
+    expect(getTextarea().value).toBe('original selected draft');
+    expect([getTextarea().selectionStart, getTextarea().selectionEnd]).toEqual([3, 8]);
+    expect(document.activeElement).not.toBe(getTextarea());
+  });
   it('shares one live text draft across two composers for the same thread', async () => {
     const onSend = vi.fn();
     act(() => {
@@ -327,7 +351,7 @@ describe('ChatInput draft persistence', () => {
     act(() => {
       textarea.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }));
     });
-    expect(onSend).toHaveBeenCalledWith('will be sent', undefined, undefined, undefined, undefined, undefined);
+    expect(onSend).toHaveBeenCalledWith('will be sent', undefined, undefined, undefined);
 
     // Unmount and remount — draft should be gone
     act(() => root.unmount());
@@ -336,6 +360,31 @@ describe('ChatInput draft persistence', () => {
       root.render(React.createElement(ChatInput, { threadId: 'thread-C', onSend }));
     });
     expect(getTextarea().value).toBe('');
+  });
+
+  it.each([true, false])('recall-edit resolves the quoted parent through ChatInput (loaded=%s)', async (loaded) => {
+    const parent = {
+      id: 'quoted-parent',
+      type: 'assistant' as const,
+      catId: 'opus',
+      content: 'Full quoted parent',
+      timestamp: 1,
+    };
+    useChatStore.setState({ messages: loaded ? [parent] : [] });
+    await act(async () => root.render(React.createElement(ChatInput, { threadId: 'thread-RECALL', onSend: vi.fn() })));
+    await act(async () => {
+      useChatStore
+        .getState()
+        .setPendingChatInsert({ threadId: 'thread-RECALL', text: 'Edit this reply', replyToId: parent.id });
+    });
+    expect(getTextarea().value).toBe('Edit this reply');
+    expect(useChatStore.getState().pendingChatInsert).toBeNull();
+    expect(useChatStore.getState().replyToMessage).toEqual({
+      id: parent.id,
+      content: loaded ? parent.content : '(原消息未加载)',
+      senderCatId: loaded ? 'opus' : null,
+      threadId: 'thread-RECALL',
+    });
   });
 
   it('consumes pending chat insert into the matching thread composer', async () => {
@@ -458,6 +507,46 @@ describe('ChatInput draft persistence', () => {
     expect(onSend).not.toHaveBeenCalled();
   });
 
+  // F309 text quotes: a chip added from a file must survive a reload without breaking hydration (the server has
+  // no browser session; sessionStorage restores the chip only on the client).
+  it('preserves the session text draft through the initial SSR hydration commit', async () => {
+    const threadId = 'thread-TEXT-HYDRATE';
+    const element = React.createElement(ChatInput, { threadId, onSend: vi.fn() });
+    act(() => root.unmount());
+    container.innerHTML = renderToString(element);
+    threadDrafts.set(threadId, 'local text before refresh');
+    window.sessionStorage.setItem('cat-cafe:thread-drafts', JSON.stringify([...threadDrafts.entries()]));
+    const errors: unknown[] = [];
+    await act(async () => {
+      root = hydrateRoot(container, element, { onRecoverableError: (error) => errors.push(error) });
+    });
+    expect(errors).toEqual([]);
+    expect(getTextarea().value).toBe('local text before refresh');
+    expect(threadDrafts.get(threadId)).toBe('local text before refresh');
+    expect(window.sessionStorage.getItem('cat-cafe:thread-drafts')).toContain('local text before refresh');
+  });
+
+  it('shows a session-restored context chip after hydration, not inside it', async () => {
+    const attachment = {
+      v: 1 as const,
+      id: 'ctx-hydrated',
+      kind: 'thread' as const,
+      threadId: 'thread-source',
+      title: 'Source Thread',
+    };
+    const element = React.createElement(ChatInput, { threadId: 'thread-HYDRATE', onSend: vi.fn() });
+    act(() => root.unmount());
+    container.innerHTML = renderToString(element);
+    threadContextAttachmentDrafts.set('thread-HYDRATE', [attachment]);
+    const errors: unknown[] = [];
+    await act(async () => {
+      root = hydrateRoot(container, element, { onRecoverableError: (error) => errors.push(error) });
+    });
+    expect(errors).toEqual([]);
+    expect(container.querySelector('[data-context-kind="thread"]')?.textContent).toContain('Source Thread');
+    expect(threadContextAttachmentDrafts.get('thread-HYDRATE')).toEqual([attachment]);
+  });
+
   it('restores and sends structured context attachments without Markdown text', async () => {
     const onSend = vi.fn();
     const attachment = {
@@ -494,7 +583,7 @@ describe('ChatInput draft persistence', () => {
     act(() => {
       getTextarea().dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }));
     });
-    expect(onSend).toHaveBeenCalledWith('', undefined, undefined, undefined, undefined, undefined, [attachment]);
+    expect(onSend).toHaveBeenCalledWith('', undefined, undefined, undefined, [attachment]);
     expect(container.querySelector('[data-context-kind="thread"]')).toBeNull();
     expect(threadContextAttachmentDrafts.has('thread-CONTEXT')).toBe(false);
   });
@@ -557,11 +646,7 @@ describe('ChatInput draft persistence', () => {
     act(() => {
       getTextarea().dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }));
     });
-    expect(onSend).toHaveBeenCalledWith('', undefined, undefined, undefined, undefined, undefined, [
-      threadAttachment,
-      first,
-      updated,
-    ]);
+    expect(onSend).toHaveBeenCalledWith('', undefined, undefined, undefined, [threadAttachment, first, updated]);
   });
 
   it('keeps structured context drafts when the send is rejected before admission', async () => {
@@ -1158,6 +1243,32 @@ describe('ChatInput draft persistence', () => {
     expect(getPreviewImage('photo.png')).toBeTruthy();
   });
 
+  it('publishes the live draft snapshot for a persistent pre-thread owner', async () => {
+    const onDraftChange = vi.fn();
+    const file = makeImageFile('recoverable.png');
+    act(() => {
+      root.render(
+        React.createElement(ChatInput, {
+          threadId: 'default',
+          onSend: vi.fn(),
+          onDraftChange,
+        }),
+      );
+    });
+
+    await act(async () => {
+      typeInto(getTextarea(), '刷新后还在');
+      await Promise.resolve();
+    });
+    await attachFiles([file]);
+
+    expect(onDraftChange).toHaveBeenLastCalledWith({
+      text: '刷新后还在',
+      files: [file],
+      contextAttachments: [],
+    });
+  });
+
   it('maintains independent image previews per thread across switches', async () => {
     const onSend = vi.fn();
     const imgA = makeImageFile('a.png');
@@ -1248,7 +1359,7 @@ describe('ChatInput draft persistence', () => {
     act(() => {
       getTextarea().dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }));
     });
-    expect(onSend).toHaveBeenCalledWith('msg with image', [fakeImage], undefined, undefined, undefined, undefined);
+    expect(onSend).toHaveBeenCalledWith('msg with image', [fakeImage], undefined, undefined);
     expect(getPreviewImage('pic.png')).toBeNull();
 
     act(() => root.unmount());

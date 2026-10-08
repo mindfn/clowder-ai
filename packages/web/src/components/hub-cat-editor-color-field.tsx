@@ -3,6 +3,8 @@
 import type { CSSProperties } from 'react';
 import { hexToOklch } from '@/lib/color-utils';
 
+import { useEditorLabel, useEditorText, useMemberEditorPresentation } from './members/editor-presentation';
+
 const PREVIEW_MODES = [
   { mode: 'light', label: '浅色' },
   { mode: 'dark', label: '深色' },
@@ -17,6 +19,9 @@ const PREVIEW_MODES = [
  * 实时回显 light/dark 派生效果——改一个色，两个 mode 同步可见。
  */
 export function CatColorField({ value, onChange }: { value: string; onChange: (hex: string) => void }) {
+  const label = useEditorLabel('Background Color');
+  const t = useEditorText();
+  const page = useMemberEditorPresentation();
   /* F056 KD-18: guard against catalog entries with non-hex primary — schemas only
    * require a non-empty string, so manual edits / external API clients can persist
    * invalid values. Fall back to neutral hue/chroma instead of throwing during render. */
@@ -39,10 +44,10 @@ export function CatColorField({ value, onChange }: { value: string; onChange: (h
   } as CSSProperties;
 
   return (
-    <div className="flex items-center gap-[14px]">
-      <span className="w-[150px] shrink-0 text-xs font-bold text-cafe-secondary">Background Color</span>
+    <div className={`${page ? 'member-color-field ' : ''}flex items-center gap-[14px]`}>
+      <span className="w-[150px] shrink-0 text-xs font-bold text-cafe-secondary">{label}</span>
       <div className="flex items-center gap-3">
-        <label className="flex items-center" title="主色">
+        <label className="flex items-center" title={t('主色')}>
           <input
             type="color"
             aria-label="Background Color Primary"
@@ -57,9 +62,9 @@ export function CatColorField({ value, onChange }: { value: string; onChange: (h
               key={mode}
               className={`cat-persona-preview-${mode} flex h-7 w-[76px] items-center justify-center rounded-[9px]`}
               style={bubbleStyle}
-              title={`${label}模式预览`}
+              title={t(`${label}模式预览`)}
             >
-              <span className="text-label font-bold">喵～消息</span>
+              <span className="text-label font-bold">{t('喵～消息')}</span>
             </div>
           ))}
         </div>

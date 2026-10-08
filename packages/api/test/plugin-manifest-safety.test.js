@@ -1418,7 +1418,7 @@ describe('PluginResourceActivator skill safety', () => {
       readCapabilities: async () => structuredClone(persisted),
       writeCapabilities: async (config) => {
         persisted = structuredClone(config);
-        if (writes++ === 0) throw new Error('generateCliConfigs failed');
+        if (writes++ === 0) throw new Error('reconcileMcpRuntimeConfig failed');
       },
       withCapabilityLock: async (fn) => fn(),
     });
@@ -1471,7 +1471,7 @@ describe('PluginResourceActivator skill safety', () => {
       readCapabilities: async () => structuredClone(persisted),
       writeCapabilities: async (config) => {
         persisted = structuredClone(config);
-        if (writes++ === 0) throw new Error('generateCliConfigs failed');
+        if (writes++ === 0) throw new Error('reconcileMcpRuntimeConfig failed');
       },
       withCapabilityLock: async (fn) => fn(),
     });

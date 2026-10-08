@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { useChatStore } from '@/stores/chatStore';
 import { apiFetch } from '@/utils/api-client';
+import { hasPendingWorkspaceFileLink } from '@/utils/pending-workspace-file-link';
 import { buildWorktreeAliasMap, resolveListedWorktreeId, type WorktreeAliasMap } from '@/utils/worktree-id-alias';
 import { useWorkspaceFileChange } from './useWorkspaceFileChange';
 import { useWorkspaceSearch } from './useWorkspaceSearch';
@@ -12,9 +13,15 @@ export type { SearchResult } from './useWorkspaceSearch';
 export interface WorktreeEntry {
   id: string;
   canonicalId?: string | null;
+  rootIdentity?: string;
   root: string;
   branch: string;
   head: string;
+  resolvedRoot?: string;
+  rootEpoch?: number;
+  removable?: boolean;
+  connectionEpoch?: number;
+  legacyAliases?: readonly string[];
 }
 
 export interface TreeNode {
@@ -67,7 +74,10 @@ function reconcileDiscoveredWorktree(
   const aliases = buildWorktreeAliasMap(entries);
   setAliases(aliases, projectPath);
 
-  const currentId = useChatStore.getState().workspaceWorktreeId;
+  const state = useChatStore.getState();
+  const currentId = state.workspaceWorktreeId;
+  // Keep the content owner's namespace on every read, including after a remount or inventory change.
+  if (currentId?.startsWith('f063_root_v1_')) return;
   const listedId = resolveListedWorktreeId(entries, currentId, aliases);
   if (listedId) {
     if (listedId !== currentId) normalizeWorktreeId(listedId);
@@ -77,16 +87,30 @@ function reconcileDiscoveredWorktree(
   const normalizedProjectPath = projectPath.replace(/[\\/]+$/, '');
   const projectWorktree = entries.find((entry) => entry.root.replace(/[\\/]+$/, '') === normalizedProjectPath);
   const discoveredId = projectWorktree?.id ?? entries[0]?.id ?? null;
-  if (discoveredId !== currentId) setWorktreeId(discoveredId);
+  if (discoveredId !== currentId) {
+    // Initial discovery supplies the root for a just-clicked link; it is not a user root switch.
+    if (currentId === null && hasPendingWorkspaceFileLink(state)) normalizeWorktreeId(discoveredId);
+    else setWorktreeId(discoveredId);
+  }
 }
 
-export function useWorkspace({ loadContent = true }: { loadContent?: boolean } = {}) {
+export function useWorkspace({
+  loadContent = true,
+  projectPath: threadProjectPath,
+}: {
+  loadContent?: boolean;
+  /** Null waits for the route thread's project; undefined keeps the classic store projection. */
+  projectPath?: string | null;
+} = {}) {
   const worktreeId = useChatStore((s) => s.workspaceWorktreeId);
   const openFilePath = useChatStore((s) => s.workspaceOpenFilePath);
   const setWorktreeId = useChatStore((s) => s.setWorkspaceWorktreeId);
   const normalizeWorktreeId = useChatStore((s) => s.normalizeWorkspaceWorktreeId);
   const setWorktreeAliases = useChatStore((s) => s.setWorkspaceWorktreeAliases);
-  const projectPath = useChatStore((s) => s.currentProjectPath);
+  const storedProjectPath = useChatStore((s) => s.currentProjectPath);
+  const projectPath = threadProjectPath === undefined ? storedProjectPath : threadProjectPath;
+  const projectPathRef = useRef(projectPath);
+  projectPathRef.current = projectPath;
 
   const [worktrees, setWorktrees] = useState<WorktreeEntry[]>([]);
   const [worktreesProjectPath, setWorktreesProjectPath] = useState<string | null>(null);
@@ -104,31 +128,33 @@ export function useWorkspace({ loadContent = true }: { loadContent?: boolean } =
     search,
     reset: resetSearch,
   } = useWorkspaceSearch(worktreeId);
-  const projectKey = projectPath || 'default';
-  const worktreesReadyForProject = worktreesProjectPath === projectKey;
+  const projectKey = projectPath === null ? null : projectPath || 'default';
+  const worktreesReadyForProject = projectKey !== null && worktreesProjectPath === projectKey;
   const currentWorktrees = worktreesReadyForProject ? worktrees : [];
 
   // Fetch worktrees — re-fetches when project changes
   const fetchWorktrees = useCallback(async () => {
     const requestSeq = ++worktreeRequestSeq.current;
+    const isCurrentRequest = () => requestSeq === worktreeRequestSeq.current && projectPathRef.current === projectPath;
     setWorktreesLoading(true);
     setWorktreesError(null);
+    if (projectPath === null) return;
     try {
       const newList = await discoverWorktrees(projectPath);
-      if (requestSeq !== worktreeRequestSeq.current) return;
+      if (!isCurrentRequest()) return;
 
       setWorktrees(newList);
       setWorktreesProjectPath(projectKey);
       // The ordinary flow is discovery + choice, never filesystem-path entry.
       reconcileDiscoveredWorktree(newList, projectPath, setWorktreeAliases, normalizeWorktreeId, setWorktreeId);
     } catch {
-      if (requestSeq === worktreeRequestSeq.current) {
+      if (isCurrentRequest()) {
         setWorktrees([]);
         setWorktreesProjectPath(projectKey);
         setWorktreesError('暂时没能读取工作区');
       }
     } finally {
-      if (requestSeq === worktreeRequestSeq.current) {
+      if (isCurrentRequest()) {
         setWorktreesLoading(false);
       }
     }

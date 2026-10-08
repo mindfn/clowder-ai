@@ -1,18 +1,19 @@
 import { act } from 'react';
 import { createRoot, type Root } from 'react-dom/client';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { writeShellPresentation } from '@/components/shell/shell-presentation';
 import type { WorkspaceSurfaceDescriptor } from '@/components/workbench/workbench-contract';
 import type { LauncherWorkspaceSearch } from '@/components/workspace/WorkspaceLauncherSearch';
 import { F307WorkspaceHomePage } from '../F307WorkspaceHomePage';
-import { resolveFileTarget } from '../real-surface-adapters';
+import { resolveFileTarget, resolveTerminalWorktreeId } from '../real-surface-adapters';
 
 const mocks = vi.hoisted(() => ({
   setWorkspaceMode: vi.fn(),
 }));
 
 vi.mock('@/stores/chatStore', () => ({
-  useChatStore: (selector: (state: { setWorkspaceMode: typeof mocks.setWorkspaceMode }) => unknown) =>
-    selector({ setWorkspaceMode: mocks.setWorkspaceMode }),
+  useChatStore: (selector: (state: { setWorkspaceMode: typeof mocks.setWorkspaceMode; threads: [] }) => unknown) =>
+    selector({ setWorkspaceMode: mocks.setWorkspaceMode, threads: [] }),
 }));
 
 vi.mock('@/components/workspace/WorkspaceNowSurface', () => ({
@@ -29,6 +30,18 @@ vi.mock('@/components/workspace/RecentTrajectoryRecall', () => ({
 
 vi.mock('@/components/workspace/WorkspaceLauncherSearch', () => ({
   WorkspaceLauncherSearch: ({ workspaceSearch }: { workspaceSearch?: LauncherWorkspaceSearch }) => (
+    <button
+      type="button"
+      data-testid="mock-workspace-search-result"
+      onClick={() => workspaceSearch?.onOpenResult('src/F307-search-result.ts', 120)}
+    >
+      Open search result
+    </button>
+  ),
+}));
+
+vi.mock('@/components/workspace-home/WorkspaceHomeV2', () => ({
+  WorkspaceHomeV2: ({ workspaceSearch }: { workspaceSearch?: LauncherWorkspaceSearch }) => (
     <button
       type="button"
       data-testid="mock-workspace-search-result"
@@ -56,6 +69,7 @@ describe('F307 canonical Home destination admission', () => {
   afterEach(() => {
     act(() => root.unmount());
     container.remove();
+    writeShellPresentation('classic');
     delete (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT;
   });
 
@@ -64,6 +78,7 @@ describe('F307 canonical Home destination admission', () => {
     worktreeLoading: boolean,
     worktreeError: string | null = null,
     workspaceSearch?: LauncherWorkspaceSearch,
+    canonicalWorktreeId?: string,
   ) {
     await act(async () => {
       root.render(
@@ -73,6 +88,7 @@ describe('F307 canonical Home destination admission', () => {
           onSelectDevSurface={() => undefined}
           onSelectSurface={onSelectSurface}
           worktreeId={worktreeId}
+          canonicalWorktreeId={canonicalWorktreeId}
           worktreeLoading={worktreeLoading}
           worktreeError={worktreeError}
           openFilePath={null}
@@ -118,6 +134,18 @@ describe('F307 canonical Home destination admission', () => {
     expect(container.textContent).not.toContain('正在读取工作区');
   });
 
+  it('uses the selected canonical pane owner when a pending Terminal click resumes after discovery', async () => {
+    await renderHome(null, true);
+    await act(async () => {
+      container.querySelector<HTMLButtonElement>('[data-testid="workspace-launcher-dev-terminal"]')?.click();
+    });
+    expect(onSelectSurface).not.toHaveBeenCalled();
+
+    await renderHome('230809_worktree-a', false, null, undefined, 'worktree-a');
+    expect(onSelectSurface).toHaveBeenCalledTimes(1);
+    expect(resolveTerminalWorktreeId(onSelectSurface.mock.calls[0][0])).toBe('worktree-a');
+  });
+
   it('opens Status as a Workbench surface without invoking the legacy full-host switch', async () => {
     await renderHome('worktree-a', false);
 
@@ -144,6 +172,7 @@ describe('F307 canonical Home destination admission', () => {
       onReset: vi.fn(),
       onOpenResult,
       onViewAll: vi.fn(),
+      fileNavigationOrigin: () => ({ kind: 'workspace-home-search', query: 'F307 search' }),
     });
 
     await act(async () => {
@@ -157,6 +186,30 @@ describe('F307 canonical Home destination admission', () => {
       path: 'src/F307-search-result.ts',
       scrollToLine: 120,
     });
+    expect(onSelectSurface.mock.calls[0][0].navigationOrigin).toEqual({
+      kind: 'workspace-home-search',
+      query: 'F307 search',
+    });
+  });
+
+  it('lets the v2 Home search stamp consumer write exactly once instead of directly opening a second surface', async () => {
+    writeShellPresentation('v2');
+    const onOpenResult = vi.fn();
+    await renderHome('worktree-a', false, null, {
+      enabled: true,
+      results: [],
+      loading: false,
+      error: null,
+      onSearch: vi.fn(),
+      onReset: vi.fn(),
+      onOpenResult,
+      onViewAll: vi.fn(),
+    });
+    await act(async () =>
+      container.querySelector<HTMLButtonElement>('[data-testid="mock-workspace-search-result"]')?.click(),
+    );
+    expect(onOpenResult).toHaveBeenCalledExactlyOnceWith('src/F307-search-result.ts', 120);
+    expect(onSelectSurface).not.toHaveBeenCalled();
   });
 
   it('shows one first-class capability evolution entry instead of dumping Program projections on Home', async () => {

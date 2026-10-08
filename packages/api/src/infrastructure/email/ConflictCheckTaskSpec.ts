@@ -4,24 +4,29 @@
  * #320: Reads from unified TaskStore (kind=pr_tracking) instead of PrTrackingStore.
  *
  * Gate: list pr_tracking tasks → checkMergeable per PR → build ConflictSignals.
- * Execute: ConflictRouter handles dedup/delivery → ConnectorInvokeTrigger wakes cat.
+ * Execute: the router terminalizes the matched outcome but holds its announcement, the executor
+ * gets its chance to repair, and only an unrepaired conflict is published — one admission, one wake.
  *
  * KD-9: Gate passes ALL mergeState results (including MERGEABLE) so ConflictRouter
  *       can clear fingerprints for re-conflict detection.
  */
-import type { CatId, TaskItem, WaitOutcomeV1 } from '@cat-cafe/shared';
+import type { GitHubWaitOutcomeV1, TaskItem } from '@cat-cafe/shared';
 import { parsePrSubjectKey } from '@cat-cafe/shared';
 import type { ITaskStore } from '../../domains/cats/services/stores/ports/TaskStore.js';
+import { gitHubAdmissionCanContinue } from '../github/admission-budget.js';
+import { GitHubRateLimitError } from '../github/request-budget.js';
 import type { ExecuteContext, TaskSpec_P1 } from '../scheduler/types.js';
 import type { AutoResolveResult, ConflictAutoExecutor } from './ConflictAutoExecutor.js';
 import type { ConflictRouter, ConflictSignal } from './ConflictRouter.js';
-import type { ConnectorInvokeTrigger, ConnectorTriggerPolicy } from './ConnectorInvokeTrigger.js';
 
 export interface ConflictCheckTaskSpecOptions {
   readonly taskStore: ITaskStore;
-  readonly checkMergeable: (repoFullName: string, prNumber: number) => Promise<{ mergeState: string; headSha: string }>;
+  readonly checkMergeable: (
+    repoFullName: string,
+    prNumber: number,
+    signal?: AbortSignal,
+  ) => Promise<{ mergeState: string; headSha: string }>;
   readonly conflictRouter: ConflictRouter;
-  readonly invokeTrigger?: ConnectorInvokeTrigger;
   readonly autoExecutor?: ConflictAutoExecutor;
   readonly log: {
     info: (...args: unknown[]) => void;
@@ -54,15 +59,15 @@ interface ConflictWorkItem {
  * Both are machine-checked enum fields rather than parsed prose, and both are positive tests: an
  * absent outcome fails them, because writing to a repository needs proof, not the absence of denial.
  */
-function conflictWasMatched(outcome: WaitOutcomeV1 | undefined): boolean {
+function conflictWasMatched(outcome: GitHubWaitOutcomeV1 | undefined): boolean {
   if (outcome?.reason !== 'matched') return false;
   return outcome.matched?.some((delta) => delta.kind === 'pr_became_conflicting') === true;
 }
 
-async function tryAutoResolveBeforeWake(
+async function tryAutoResolve(
   opts: ConflictCheckTaskSpecOptions,
   workItem: ConflictWorkItem,
-  outcome: WaitOutcomeV1 | undefined,
+  outcome: GitHubWaitOutcomeV1 | undefined,
   signal?: AbortSignal,
 ): Promise<AutoResolveResult | null> {
   if (!opts.autoExecutor || workItem.signal.mergeState !== 'CONFLICTING' || signal?.aborted) return null;
@@ -77,18 +82,21 @@ async function tryAutoResolveBeforeWake(
     );
   } catch (error) {
     if (!signal?.aborted) throw error;
-    opts.log.warn({ error }, '[conflict-check] cancellation interrupted optional auto-resolution; waking owner');
+    opts.log.warn({ error }, '[conflict-check] cancellation interrupted optional auto-resolution');
     return null;
   }
 }
 
 export function createConflictCheckTaskSpec(opts: ConflictCheckTaskSpecOptions): TaskSpec_P1<ConflictWorkItem> {
+  let nextTaskIndex = 0;
   return {
     id: opts.id ?? 'conflict-check',
     profile: 'poller',
     trigger: { type: 'interval', ms: opts.pollIntervalMs ?? 5 * 60 * 1000 },
     admission: {
-      async gate() {
+      async gate(ctx) {
+        const signal = ctx?.signal;
+        signal?.throwIfAborted();
         // #320: Read from unified TaskStore — exclude done tasks (PR merged/closed)
         const tasks = (await opts.taskStore.listByKind('pr_tracking')).filter((t) => t.status !== 'done');
         if (tasks.length === 0) {
@@ -96,13 +104,20 @@ export function createConflictCheckTaskSpec(opts: ConflictCheckTaskSpecOptions):
         }
 
         const workItems: { signal: ConflictWorkItem; subjectKey: string }[] = [];
-        for (const task of tasks) {
+        const startIndex = nextTaskIndex % tasks.length;
+        for (let step = 0; step < tasks.length; step++) {
+          signal?.throwIfAborted();
+          if (step > 0 && !gitHubAdmissionCanContinue(ctx)) break;
+          const index = (startIndex + step) % tasks.length;
+          const task = tasks[index]!;
+          nextTaskIndex = (index + 1) % tasks.length;
           try {
             const parsed = task.subjectKey ? parsePrSubjectKey(task.subjectKey) : null;
             if (!parsed) continue;
             const { repoFullName, prNumber } = parsed;
 
-            const { mergeState, headSha } = await opts.checkMergeable(repoFullName, prNumber);
+            const { mergeState, headSha } = await opts.checkMergeable(repoFullName, prNumber, signal);
+            signal?.throwIfAborted();
             workItems.push({
               signal: {
                 signal: { repoFullName, prNumber, headSha, mergeState },
@@ -111,6 +126,8 @@ export function createConflictCheckTaskSpec(opts: ConflictCheckTaskSpecOptions):
               subjectKey: task.subjectKey!,
             });
           } catch (err) {
+            signal?.throwIfAborted();
+            if (err instanceof GitHubRateLimitError) continue;
             opts.log.warn(
               { err, taskId: task.id, subjectKey: task.subjectKey },
               '[conflict-check] fail-open: skipping PR where check failed',
@@ -118,6 +135,7 @@ export function createConflictCheckTaskSpec(opts: ConflictCheckTaskSpecOptions):
           }
         }
 
+        signal?.throwIfAborted();
         if (workItems.length === 0) {
           return { run: false, reason: 'no tracked PRs with checkable state' };
         }
@@ -131,41 +149,35 @@ export function createConflictCheckTaskSpec(opts: ConflictCheckTaskSpecOptions):
       async execute(workItem: ConflictWorkItem, _subjectKey: string, ctx: ExecuteContext) {
         ctx.signal?.throwIfAborted();
         const routeResult = await opts.conflictRouter.route(workItem.signal);
-        if (routeResult.kind !== 'notified') return;
-        const conflictDelivery = conflictWasMatched(routeResult.outcome);
+        // An outcome that was already announced, or that never matched, is not ours to decide about.
+        if (routeResult.kind !== 'matched_pending') return;
 
-        // F140 Phase C: try auto-resolve before waking cat — only for a conflict the wait matched.
-        const result = await tryAutoResolveBeforeWake(opts, workItem, routeResult.outcome, ctx.signal);
+        // Phase C AC-C1. The owner asked to be told their PR conflicts; they should not be told
+        // about a conflict that no longer exists by the time anyone could read it. #1392 R5 is what
+        // makes the ordering legal: the authorization to touch the repository is the terminalized
+        // matched outcome, which is durable here even though nothing has been announced. Repair
+        // first, then decide whether there is anything left to say.
+        const result = await tryAutoResolve(opts, workItem, routeResult.outcome, ctx.signal);
         if (result?.kind === 'resolved') {
-          opts.log.info(`[conflict-check] Auto-resolved conflict for ${result.branch} (${result.method})`);
+          const settled = await opts.conflictRouter.settleWithoutWake(
+            routeResult.taskId,
+            routeResult.outcome,
+            `auto-resolved:${result.method}`,
+          );
+          opts.log.info(
+            `[conflict-check] Auto-resolved conflict for ${result.branch} (${result.method})${
+              settled ? '' : ' — the outbox had already flushed, so the owner was told anyway'
+            }`,
+          );
           return;
         }
         if (result?.kind === 'escalated') {
           opts.log.info(`[conflict-check] Escalating: ${result.files.length} conflict file(s) in ${result.branch}`);
         }
-
-        if (opts.invokeTrigger) {
-          /*
-           * #1392 R5: this poller delivers whatever the wait produced, so only a matched conflict may
-           * be labelled and prioritised as one. Anything else — an expiry above all — is an ordinary
-           * wait delivery, and calling it a conflict would misfile it for the owner reading the wake.
-           */
-          const policy: ConnectorTriggerPolicy = conflictDelivery
-            ? { priority: 'urgent', reason: 'github_pr_conflict', sourceCategory: 'conflict' }
-            : { priority: 'normal', reason: 'github_wait_satisfied', sourceCategory: 'scheduled' };
-          await opts.invokeTrigger
-            .trigger(
-              routeResult.threadId,
-              routeResult.catId as CatId,
-              workItem.task.userId ?? '',
-              routeResult.content,
-              routeResult.messageId,
-              undefined,
-              policy,
-            )
-            .catch((err) => opts.log.warn({ err }, '[conflict-check] trigger failed (best-effort)'));
-          opts.log.info(`[conflict-check] Triggered ${routeResult.catId} for ${policy.reason}`);
-        }
+        // Everything that is not a completed repair reaches the owner: escalations, refusals,
+        // executor absence, and a cancelled attempt alike. Publishing is compare-and-set on this
+        // exact outcome, so a concurrent outbox flush cannot turn into a second wake.
+        await opts.conflictRouter.publish(routeResult.taskId, routeResult.outcome);
       },
     },
     state: { runLedger: 'sqlite' },

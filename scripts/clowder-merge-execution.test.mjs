@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
-import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { copyFileSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { describe, it } from 'node:test';
@@ -446,5 +446,77 @@ describe('clowder-merge-execution CLI', () => {
     assert.equal(result.status, 1);
     assert.equal(result.json.reasonCode, 'authorization_head_stale');
     assert.equal(result.json.requiresNewAuthorization, true);
+  });
+});
+
+describe('public merge entry without home automatic-intake runtime', () => {
+  function publicFixture(t) {
+    const root = mkdtempSync(path.join(os.tmpdir(), 'public-merge-capability-'));
+    t.after(() => rmSync(root, { recursive: true, force: true }));
+    const scripts = path.join(root, 'scripts');
+    mkdirSync(path.join(scripts, 'lib'), { recursive: true });
+    const entry = path.join(scripts, 'clowder-merge-execution.mjs');
+    copyFileSync(SCRIPT_PATH, entry);
+    copyFileSync(
+      fileURLToPath(new URL('./lib/clowder-merge-check-evidence.mjs', import.meta.url)),
+      path.join(scripts, 'lib/clowder-merge-check-evidence.mjs'),
+    );
+    const truth = path.join(root, 'pr.json');
+    writeFileSync(truth, JSON.stringify(baseInput().prTruth));
+    const config = path.join(root, 'intake.json');
+    writeFileSync(config, '{}');
+    const gh = path.join(root, 'gh');
+    const ghCalled = path.join(root, 'gh-called');
+    writeFileSync(
+      gh,
+      `#!/bin/sh
+printf called > '${ghCalled}'
+exit 99
+`,
+      { mode: 0o755 },
+    );
+    const run = (...extra) =>
+      spawnSync(
+        process.execPath,
+        [
+          entry,
+          '--pr',
+          String(PR_NUMBER),
+          '--head',
+          CURRENT_HEAD,
+          '--authorization-ref',
+          AUTHORIZATION_REF,
+          '--authorization-subject',
+          `pr:${REPOSITORY}#${PR_NUMBER}`,
+          '--authorization-scope',
+          'pull_request',
+          ...extra,
+        ],
+        {
+          encoding: 'utf8',
+          env: {
+            ...process.env,
+            PATH: `${root}${path.delimiter}${process.env.PATH ?? ''}`,
+            CAT_CAFE_CLOWDER_MERGE_PR_FIXTURE: truth,
+          },
+        },
+      );
+    return { run, config, ghCalled };
+  }
+
+  it('loads and admits the portable public planner without importing home intake', (t) => {
+    const f = publicFixture(t);
+    const result = f.run('--intake-decision', 'public-only');
+    assert.equal(result.status, 0, result.stderr);
+    assert.equal(JSON.parse(result.stdout).outcome, 'admitted');
+    assert.equal(existsSync(f.ghCalled), false, 'planning must not execute source merge');
+  });
+
+  it('refuses explicitly requested automatic intake before any source merge when capability is absent', (t) => {
+    const f = publicFixture(t);
+    const result = f.run('--intake-decision', 'absorbed', '--execute', '--prepare-intake', '--intake-config', f.config);
+    assert.equal(result.status, 1);
+    assert.match(result.stderr, /automatic_intake_unavailable/);
+    assert.equal(existsSync(f.ghCalled), false, 'missing capability cannot fall through to naked source merge');
   });
 });

@@ -51,7 +51,21 @@ function isClassB(key: string): boolean {
 }
 
 // --- Class C: system identifiers — HMAC pseudonymized ---
-const CLASS_C_KEYS = new Set(['userid', 'threadid', 'invocationid', 'sessionid', 'messageid', 'rawarchivepath']);
+const CLASS_C_KEYS = new Set([
+  'userid',
+  'threadid',
+  'invocationid',
+  'sessionid',
+  'messageid',
+  'rawarchivepath',
+  'callid',
+  'nativeturnid',
+  'nativeitemid',
+  'realtimeturnid',
+  'childid',
+  'sourcerefs',
+  'clientmessageid',
+]);
 
 function isClassC(key: string): boolean {
   return CLASS_C_KEYS.has(key.toLowerCase());
@@ -65,6 +79,9 @@ function redactValue(key: string, value: unknown): unknown {
   }
   if (isClassC(key) && typeof value === 'string') {
     return pseudonymizeId(value);
+  }
+  if (isClassC(key) && Array.isArray(value)) {
+    return value.map((item) => (typeof item === 'string' ? pseudonymizeId(item) : '[INVALID_ID]'));
   }
   return value; // Class D: pass through
 }

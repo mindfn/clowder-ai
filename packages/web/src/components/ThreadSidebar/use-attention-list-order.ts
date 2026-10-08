@@ -1,5 +1,6 @@
 import type { ThreadAttentionMemberSort } from '@cat-cafe/shared';
-import { useLayoutEffect, useMemo, useRef } from 'react';
+import { type RefObject, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
+import { useShellPresentation } from '../shell/shell-presentation';
 import {
   type AttentionCluster,
   type AttentionListRow,
@@ -16,22 +17,98 @@ export function useAttentionListOrder(
   scope: string,
   query: string,
   arranging: boolean,
+  pointerHeld?: boolean,
 ): Record<string, AttentionListRow[]> {
-  const committed = useRef<{ scope: string; snapshots: Record<string, AttentionOrderSnapshot> }>();
+  const v2Ordering = useShellPresentation() === 'v2' && !arranging;
+  const committed = useRef<{
+    scope: string;
+    v2Ordering: boolean;
+    snapshots: Record<string, AttentionOrderSnapshot>;
+  }>();
   const { snapshots, rows } = useMemo(() => {
-    const previous = committed.current?.scope === scope ? committed.current.snapshots : {};
+    // v2 refreshes while the pointer is outside; the reading snapshot protects current click targets inside.
+    const previous =
+      committed.current?.scope === scope &&
+      committed.current.v2Ordering === v2Ordering &&
+      (pointerHeld === undefined || !v2Ordering || pointerHeld)
+        ? committed.current.snapshots
+        : {};
     const snapshots: Record<string, AttentionOrderSnapshot> = {};
     const rows: Record<string, AttentionListRow[]> = {};
     for (const [key, items] of Object.entries(lists)) {
-      const result = orderAttentionList(items, isOpen, arranging ? {} : modes, arranging ? undefined : previous[key]);
+      const result = orderAttentionList(
+        items,
+        isOpen,
+        arranging ? {} : modes,
+        arranging ? undefined : previous[key],
+        v2Ordering,
+        v2Ordering && pointerHeld === true,
+      );
       snapshots[key] = result.snapshot;
       rows[key] = flattenAttentionRows(result.items, isOpen, query);
     }
     return { snapshots, rows };
-  }, [lists, isOpen, modes, scope, query, arranging]);
+  }, [lists, isOpen, modes, scope, query, arranging, v2Ordering, pointerHeld]);
   // An abandoned concurrent render must not become a remembered user-visible order.
   useLayoutEffect(() => {
-    committed.current = { scope, snapshots };
-  }, [scope, snapshots]);
+    committed.current = { scope, v2Ordering, snapshots };
+  }, [scope, snapshots, v2Ordering]);
   return rows;
+}
+/** Explicit expand/collapse starts a new header layout; live facts do not. */
+export function sidebarReadingRowKey(row: AttentionListRow): string {
+  return row.kind === 'cluster-header' ? `${row.key}:${row.expanded}` : row.key;
+}
+
+interface ReadingSession {
+  scope: string;
+  held: boolean;
+  heights: Readonly<Record<string, number>>;
+}
+
+/** Remember layout, never facts: clearing reply signals must not move the next
+ * click target until the pointer leaves the list. */
+export function useSidebarReadingSession(surfaceRef: RefObject<HTMLElement>, enabled: boolean, scope: string) {
+  const [session, setSession] = useState<ReadingSession>({ scope, held: false, heights: {} });
+  useEffect(() => {
+    const surface = surfaceRef.current;
+    if (!surface || !enabled) {
+      setSession({ scope, held: false, heights: {} });
+      return;
+    }
+    const enter = () => {
+      const heights = Object.fromEntries(
+        [...surface.querySelectorAll<HTMLElement>('[data-sidebar-row-key]')].flatMap((row) => {
+          const height = row.getBoundingClientRect().height;
+          const key = row.dataset.sidebarRowKey;
+          return key && height > 0 ? [[key, height]] : [];
+        }),
+      );
+      setSession({ scope, held: true, heights });
+    };
+    const leave = () => setSession({ scope, held: false, heights: {} });
+    // Virtualization mounts rows inside the child without rendering this hook.
+    // Admit their dimensions too; later fact updates can grow but not shrink them.
+    const observer = new MutationObserver(() => {
+      setSession((current) => {
+        if (!current.held || current.scope !== scope) return current;
+        const growth = [...surface.querySelectorAll<HTMLElement>('[data-sidebar-row-key]')].flatMap((row) => {
+          const key = row.dataset.sidebarRowKey;
+          const height = row.getBoundingClientRect().height;
+          return key && height > (current.heights[key] ?? 0) ? [[key, height] as const] : [];
+        });
+        return growth.length ? { ...current, heights: { ...current.heights, ...Object.fromEntries(growth) } } : current;
+      });
+    });
+    observer.observe(surface, { childList: true, subtree: true });
+    if (surface.matches(':hover')) enter();
+    surface.addEventListener('pointerenter', enter);
+    surface.addEventListener('pointerleave', leave);
+    return () => {
+      surface.removeEventListener('pointerenter', enter);
+      surface.removeEventListener('pointerleave', leave);
+      observer.disconnect();
+    };
+  }, [surfaceRef, enabled, scope]);
+  return enabled && session.scope === scope ? session : { scope, held: false, heights: {} };
 }

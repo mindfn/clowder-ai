@@ -220,6 +220,7 @@ function createRegistry(state: FixtureSourceState): MemoryCueResolverRegistry {
     new DecisionCueResolver({ resolve: async () => null }),
     new ProjectKnowledgeCueResolver({ resolve: async () => null }),
     new CatOwnedSeedCueResolver({ resolve: async () => null }),
+    { family: 'thread_overview', resolverVersion: 1, resolve: async () => [] },
   ]);
 }
 
@@ -444,6 +445,7 @@ function createLifecycleRegistry(family: EvaluatedFamily, resolver: MemoryCueRes
     new DecisionCueResolver({ resolve: async () => null }),
     new ProjectKnowledgeCueResolver({ resolve: async () => null }),
     new CatOwnedSeedCueResolver({ resolve: async () => null }),
+    { family: 'thread_overview', resolverVersion: 1, resolve: async () => [] },
   ]);
 }
 

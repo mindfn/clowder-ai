@@ -10,6 +10,7 @@ import { fileURLToPath } from 'node:url';
 import type {
   CatBreed,
   CatCafeConfig,
+  CatCarrier,
   CatConfig,
   CatFeatures,
   CatId,
@@ -19,7 +20,16 @@ import type {
   ReviewPolicy,
   Roster,
 } from '@cat-cafe/shared';
-import { type ClientId, catRegistry, createCatId, normalizeCliEffortForProvider } from '@cat-cafe/shared';
+import {
+  CAT_CARRIERS,
+  type ClientId,
+  catClientSupportsCarrier,
+  catRegistry,
+  createCatId,
+  developmentPlanRefSchema,
+  developmentRevisionSchema,
+  normalizeCliEffortForProvider,
+} from '@cat-cafe/shared';
 import { z } from 'zod';
 import { createModuleLogger } from '../infrastructure/logger.js';
 import { bootstrapCatCatalog, type CatCatalogReadOptions, readCatCatalogRaw } from './cat-catalog-store.js';
@@ -64,25 +74,28 @@ const cliConfigSchema = z.object({
   /** Read-only migration input. Invalid legacy values are inert, not catalog-fatal. */
   contextWindow: legacyPositiveContextWindowSchema,
   // Legacy autoCompactTokenLimit is intentionally absent: Zod strips it as inert input.
-  /** F254 D2: Codex carrier override (openai only). Absent = follow CAT_CAFE_CODEX_CARRIER env. */
+  /** Legacy F254 read input. Canonical writes use variant.carrier. */
   carrier: z.enum(['exec_json', 'app_server']).optional(),
 });
 
 const agyProfileSchema = z
   .object({
     enabled: z.boolean().optional(),
+    carrier: z.enum(['legacy', 'native']).optional(),
     profileId: z.string().min(1).optional(),
     homeRoot: z.string().min(1).optional(),
     model: z.string().min(1).optional(),
     autoApprove: z.boolean().optional(),
     trustedWorkspaces: z.array(z.string().min(1)).optional(),
   })
+  .nullable()
   .optional();
 
 /** F32-b: mentionPatterns must start with @ */
 const mentionPatternSchema = z.string().min(2).regex(/^@/, 'mentionPattern must start with @');
 
 const colorSchema = z.object({ primary: z.string(), secondary: z.string() });
+const catCarrierSchema = z.enum(CAT_CARRIERS);
 
 const timeZoneSchema = z
   .string()
@@ -101,7 +114,13 @@ const catVariantSchema = z
     mentionPatterns: z.array(mentionPatternSchema).optional(), // F32-b: variant-level mentions
     source: z.string().optional(), // #441: legacy field, ignored — kept in schema for old catalog read compat
     accountRef: z.string().min(1).optional(), // F127: concrete account binding
+    accountBindingMode: z.enum(['follow', 'override']).optional(),
     clientId: z.string().min(1), // #252: accept unknown providers to avoid full config crash
+    carrier: catCarrierSchema.optional(),
+    /** Legacy member access-mode field. Read only; canonical writes use carrier. */
+    transport: catCarrierSchema.optional(),
+    /** ACP launch details remain config data; carrier decides whether they are active. */
+    acp: z.unknown().optional(),
 
     defaultModel: z.string(), // OAuth/subscription CLIs have built-in defaults; api_key validated at route level
     mcpSupport: z.boolean(),
@@ -120,6 +139,10 @@ const catVariantSchema = z
     sessionChain: z.boolean().optional(), // F127 review fix: allow variant-scoped sessionChain override
     // #1329: explicit member intent outranks breed policy and the legacy byte.
     sessionStrategy: z.lazy(() => sessionStrategySchema),
+    relationshipKey: z
+      .string()
+      .regex(/^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$/, 'relationshipKey must be a safe profile path segment')
+      .optional(),
     personality: z.string().optional(),
     strengths: z.array(z.string()).optional(),
     avatar: z.string().min(1).optional(), // F32-b P4c: override breed avatar
@@ -142,17 +165,45 @@ const catVariantSchema = z
     restrictions: z.array(z.string().min(1)).optional(), // F167 Phase E: hard task bans
   })
   .superRefine((variant, ctx) => {
-    // F254 D2: cli.carrier is a Codex-only override. The cats API rejects it for
-    // non-openai clients at write time; this is the read-time counterpart so a
-    // hand-edited catalog cannot smuggle the field onto another provider.
-    if (variant.cli?.carrier !== undefined && variant.clientId !== 'openai') {
+    const carrier = resolveCatCarrier(variant);
+    if (!catClientSupportsCarrier(variant.clientId, carrier)) {
       ctx.addIssue({
         code: 'custom',
-        path: ['cli', 'carrier'],
-        message: `cli.carrier is codex-only, but variant "${variant.id}" has clientId "${variant.clientId}"`,
+        path: ['carrier'],
+        message: `carrier "${carrier}" is not supported by clientId "${variant.clientId}"`,
       });
     }
   });
+
+type CarrierCompatInput = {
+  carrier?: CatCarrier;
+  transport?: CatCarrier;
+  clientId?: string;
+  cli?: { carrier?: 'exec_json' | 'app_server' };
+  acp?: unknown;
+};
+
+/**
+ * The only compatibility boundary for member access-mode configuration.
+ * Canonical carrier wins, followed by the legacy top-level transport field.
+ * When neither exists, migrate the two historical runtime selectors: an ACP
+ * launch block selected ACP before provider routing, while OpenAI's CLI field
+ * (then the retired process env selector) selected app-server vs exec-json.
+ * Every downstream projection receives only the canonical vocabulary.
+ */
+export function resolveCatCarrier(
+  input: CarrierCompatInput,
+  codexCarrierEnv = process.env.CAT_CAFE_CODEX_CARRIER,
+): CatCarrier {
+  if (input.carrier) return input.carrier;
+  if (input.transport) return input.transport;
+  if (input.clientId && input.acp != null) return 'acp';
+  if (input.clientId === 'openai') {
+    const legacy = input.cli?.carrier ?? codexCarrierEnv;
+    if (legacy === 'app_server') return 'app_server';
+  }
+  return 'cli';
+}
 
 /** F33 Phase 2: session strategy config (matches SessionStrategyConfig from shared).
  *  Exported for reuse by Phase 3 API route validation. */
@@ -257,6 +308,7 @@ const coCreatorConfigSchema = z.object({
 const catCafeConfigSchemaV1 = z.object({
   version: z.literal(1),
   breeds: z.array(catBreedSchema),
+  selectedAccountRefs: z.record(z.string(), z.string().min(1)).optional(),
 });
 
 /** Version 2: breeds + roster + reviewPolicy (F032) + coCreator (F067) */
@@ -264,6 +316,7 @@ const catCafeConfigSchemaV2 = z
   .object({
     version: z.literal(2),
     breeds: z.array(catBreedSchema),
+    selectedAccountRefs: z.record(z.string(), z.string().min(1)).optional(),
     roster: z.record(z.string(), rosterEntrySchema),
     reviewPolicy: reviewPolicySchema,
     coCreator: coCreatorConfigSchema.optional(),
@@ -279,8 +332,10 @@ const catCafeConfigSchemaV2 = z
     return rest;
   });
 
-/** Union of all versions — loader handles migration */
-const catCafeConfigSchema = z.union([catCafeConfigSchemaV1, catCafeConfigSchemaV2]);
+/** Parse the discriminator before the full config so branch-specific errors retain their exact paths. */
+const catCafeConfigVersionSchema = z.object({
+  version: z.union([z.literal(1), z.literal(2)]),
+});
 
 /** clowder-ai#340: Read cat-template.json directly — cat-config.json is no longer a runtime source. */
 function readTemplate(templatePath: string): string {
@@ -507,7 +562,14 @@ function mergeTemplateWithCatalog(templatePath: string, options: CatCatalogReadO
 
 function parseCatConfig(raw: string): CatCafeConfig {
   const json: unknown = JSON.parse(raw);
-  const result = catCafeConfigSchema.safeParse(json);
+  const versionResult = catCafeConfigVersionSchema.safeParse(json);
+  if (!versionResult.success) {
+    const issues = versionResult.error.issues.map((i) => `  ${i.path.join('.')}: ${i.message}`);
+    throw new Error(`Invalid cat config:\n${issues.join('\n')}`);
+  }
+
+  const result =
+    versionResult.data.version === 1 ? catCafeConfigSchemaV1.safeParse(json) : catCafeConfigSchemaV2.safeParse(json);
   if (!result.success) {
     const issues = result.error.issues.map((i) => `  ${i.path.join('.')}: ${i.message}`);
     throw new Error(`Invalid cat config:\n${issues.join('\n')}`);
@@ -534,6 +596,12 @@ function parseCatConfig(raw: string): CatCafeConfig {
   // CatCafeConfig has readonly arrays + branded CatId.
   // The shapes match at runtime after validation.
   return result.data as unknown as CatCafeConfig;
+}
+
+/** Validate member shape without dropping fields owned by raw catalog consumers (for example ACP). */
+export function parseRawCatConfig(raw: string): CatCafeConfig {
+  parseCatConfig(raw);
+  return JSON.parse(raw) as CatCafeConfig;
 }
 
 export function loadResolvedCatConfig(templatePath?: string, options: CatCatalogReadOptions = {}): CatCafeConfig {
@@ -639,7 +707,9 @@ export function toAllCatConfigs(config: CatCafeConfig): Record<string, CatConfig
         color: variant.color ?? breed.color, // F32-b P4c: variant can override
         mentionPatterns,
         ...(variant.accountRef != null ? { accountRef: variant.accountRef } : {}),
+        ...(variant.accountBindingMode ? { accountBindingMode: variant.accountBindingMode } : {}),
         clientId: variant.clientId as ClientId, // #252: Zod now accepts any string; downstream switch/case has default branches
+        carrier: resolveCatCarrier(variant as CarrierCompatInput),
         defaultModel: variant.defaultModel,
         mcpSupport: variant.mcpSupport,
         ...(variant.agyProfile != null ? { agyProfile: variant.agyProfile } : {}),
@@ -654,7 +724,7 @@ export function toAllCatConfigs(config: CatCafeConfig): Record<string, CatConfig
         roleDescription: variant.roleDescription ?? breed.roleDescription,
         personality: variant.personality ?? defaultVariant?.personality ?? '',
         breedId: breed.id,
-        relationshipKey: breed.relationshipKey ?? breed.id,
+        relationshipKey: variant.relationshipKey ?? breed.relationshipKey ?? breed.id,
         breedDisplayName: breed.displayName,
         ...(variant.variantLabel != null ? { variantLabel: variant.variantLabel } : {}),
         isDefaultVariant: isDefault,
@@ -775,7 +845,7 @@ let _catIdToBreedSource: CatCafeConfig | null = null;
  * Gracefully returns true if config file is unreadable (availability over strictness).
  *
  * F32-b: Now resolves variant catIds to their parent breed via index.
- * Design constraint: Clowder AI config is loaded once at startup, no hot-reload.
+ * Design constraint: Cat Cafe config is loaded once at startup, no hot-reload.
  *
  * @param catId - The cat to check (e.g. 'opus', 'codex', 'opus-45')
  * @param config - Optional config override (for testing)

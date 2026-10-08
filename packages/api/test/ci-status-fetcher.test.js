@@ -10,10 +10,56 @@ import { fetchPrCiStatuses } from '../dist/infrastructure/email/ci-status-batch-
 import {
   classifyGitHubExecutionFailure,
   computeAggregateBucket,
+  enrichPrCiFailure,
   fetchPrCiStatus,
   normalizeBucket,
   normalizePrState,
 } from '../dist/infrastructure/email/ci-status-fetcher.js';
+
+describe('deferred CI detail freshness', () => {
+  it('rejects valid JSON without PR identity as missing facts', async () => {
+    const result = await fetchPrCiStatus(
+      'owner/repo',
+      7,
+      { warn() {} },
+      {
+        execFileAsync: async () => ({ stdout: '{}' }),
+      },
+    );
+    assert.equal(result, null);
+  });
+
+  it('does not attach a newer GitHub HEAD to a buffered failure', async () => {
+    await assert.rejects(
+      enrichPrCiFailure(
+        {
+          repoFullName: 'owner/repo',
+          prNumber: 7,
+          headSha: 'head-old',
+          prState: 'open',
+          aggregateBucket: 'fail',
+          checks: [],
+        },
+        { warn() {} },
+        {
+          execFileAsync: async (_file, args) => {
+            if (args[1] === 'view')
+              return {
+                stdout: JSON.stringify({
+                  headRefOid: 'head-new',
+                  state: 'OPEN',
+                  mergedAt: null,
+                  statusCheckRollup: [],
+                }),
+              };
+            throw new Error('no details expected for a pending new HEAD');
+          },
+        },
+      ),
+      /Stale CI snapshot/,
+    );
+  });
+});
 
 describe('fetchPrCiStatuses', () => {
   it('loads many tracked PR rollups with one GraphQL process', async () => {

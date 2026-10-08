@@ -21,6 +21,10 @@ const assets = {
     contentType: 'text/css; charset=utf-8',
     path: fileURLToPath(new URL('./assets/app.css', import.meta.url)),
   },
+  '/collective-client/collective-landing-A.png': {
+    contentType: 'image/png',
+    path: fileURLToPath(new URL('./assets/collective-landing-A.png', import.meta.url)),
+  },
 } as const;
 
 export type CollectiveClientAssetPath = keyof typeof assets;

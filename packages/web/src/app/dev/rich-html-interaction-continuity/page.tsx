@@ -129,7 +129,10 @@ function seedFixture(): void {
     ...stateA,
     currentThreadId: THREAD_A,
     threads: [makeThread(THREAD_A, 'Continuity A'), makeThread(THREAD_B, 'Continuity B')],
-    threadStates: { [THREAD_A]: stateA, [THREAD_B]: stateB },
+    threadStates: {
+      [THREAD_A]: stateA,
+      [THREAD_B]: stateB,
+    },
   });
 }
 
@@ -144,6 +147,15 @@ export default function RichHtmlInteractionContinuityFixture() {
   }, []);
 
   const switchThread = (threadId: string) => {
+    if (threadId === THREAD_A && new URLSearchParams(location.search).has('pendingHistory')) {
+      const state = useChatStore.getState();
+      useChatStore.setState({
+        threadStates: {
+          ...state.threadStates,
+          [THREAD_A]: { ...state.getThreadState(THREAD_A), unreadCount: 2 },
+        },
+      });
+    }
     useChatStore.getState().setCurrentThread(threadId);
     setActiveThread(threadId);
   };

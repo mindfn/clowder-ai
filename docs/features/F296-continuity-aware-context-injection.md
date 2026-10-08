@@ -8,7 +8,7 @@ description: "按真实 runtime continuity 区分冷启动与热续，并让上�
 description_source: human
 description_author: codex-sol
 description_updated_at: 2026-08-31T16:45:00-07:00
-tips_exempt: "续租 2026-08-28 / PR #4040：AgentRouter authority 接线、rerun-safe provider trigger 选择与 Compact turn settlement 只修复既有生产/Alpha 可靠性接缝；不新增用户可操作入口。"
+tips_exempt: "Renewed 2026-10-14 for F325 Native missing-binding cold adoption and F321's automatic first-owner-message historical clue. Native setup and normal work are covered by the F325 member/Chat tip; source navigation remains in existing reply cue controls and F321 memory curation. These internal continuity changes add no separate F296 user action."
 ---
 
 # F296: Continuity-Aware Context Injection — 冷启动可信定向包 + 热续增量
@@ -38,6 +38,14 @@ Owner split: `identity-session` owns continuity / epoch；`memory` owns recall s
 Why: “猫是否仍有连续工作记忆”属于 identity/session continuity；“历史候选是否存在、来自哪里”
 属于 memory。F296 只在 route/bootstrap 组装边界决定本轮该呈现什么、以什么权威语气呈现，以及
 什么时候必须失效或重发。
+
+## F321 唯一的 historical clue 准入
+
+operator 已接受 `2026-10-08-f321-luna-thread-recall.md#luna-thread-recall` 的一次具体合同扩展：catalog v6 的 `thread_opened / owner_message` 可以把当前权限内的线程概况作为历史线索呈现。新增 `PresentationKind=clue`、`OpportunityEpistemicCeiling=historical_clue`，强度低于 state，高于通用 content-free pointer。
+
+T2 只在这一 closed entry、`F321.ThreadOpeningClue` policy、`thread-overview:` source anchor、对应版本和 source invalidator 一致时映射到 clue。最终 provider 边界还核 admission 的 producer、policy、entryVersion、scope、expiry、sourceRefs 和 invalidator；任一不一致便省略。它只能携带相关原因、历史背景与原文坐标，消费者须 drill 原文、核今天的 canonical 约定及 Task/PR，不能把概况升级为已批准事实。旧 T2 候选入口和泛化的 cold-start 摘要继续只允许 pointer/omit。
+
+下文的 v1/T2 pointer 限制是原基线，仍约束所有未获上述显式准入的来源。`f321-opening-presentation.test.ts` 与既有 F296 mapper/provider/ledger 测试共同守住扩展和负例；cue 的呈现仍只由 provider receipt 消耗本 epoch 的 ledger reservation。
 
 ## Why
 
@@ -211,7 +219,7 @@ unrecognized 各自的 count/bytes、delivery latency ms 与 bounded ledger outc
 也禁止把这些字段放进 metric labels。
 
 代码唯一可导入字段合同是
-`packages/api/src/domains/cats/services/session/context-projection-telemetry-contract.ts`。当前 producer 与后续
+`packages/api/src/domains/cats/services/session/context/context-projection-telemetry-contract.ts`。当前 producer 与后续
 Alpha consumer 必须共同导入它；plan、discussion 与 BACKLOG 只导航本节，不再复制字段清单。
 
 ## Current State / 现状基线
@@ -363,6 +371,14 @@ type ContextEpochState = Readonly<{
 
 epoch 单调递增且不复用。任何 epoch 转移都不重置 message delivery cursor 或 seen cursor；它只使旧
 presentation ledger key 失效。
+
+**F325 原生载体迁移澄清（2026-10-14）**：过去 unsupported 的 scope 可能已有 epoch 而没有 binding。
+首次拿到 provider 实际 `resumed(R)` 时，该轮仍按表返回 `unknown(binding_mismatch)`、`epoch+1`、`cold`；
+仅在原 binding 缺失时把实际观察到的 R 记入该 cold 世代。正文未交付或尚未 `confirmColdConsumed`，下一轮仍 cold；
+确认 cold 已被消费后，再次实际 resume 同 R 才 hot。原本已有不同 ID 的冲突不在当轮改绑，也不伪造 fresh/replaced。
+这是复用现有 binding / coldConsumed 两阶段语义，避免永远冷重建；不新增恢复 store 或重置 cursor。
+原负责人单题校准：`[thread-id]#private-source-id`；
+回归：`f296-b1-context-epoch-owner.test.js` 的 missing→cold adoption→未消费仍 cold→消费后 hot→不同 ID 拒绝。
 
 > **Compaction 去重的认知天花板（B2a 实测边界，勿再表述为 exact-once）**：实现保留最近 64 个已消费
 > compaction event ID 并逐出更旧的。因此保证是**有界重放抑制**，不是 lifecycle 级 exact-once——
@@ -758,13 +774,17 @@ final-generation card 与 mapper-only canonical subject 均有真实 route fixtu
   user/cat/thread 与 exact `cliSessionId`。callback auth/readiness 未就绪时显式
   `hook_authentication_unavailable`，不得继续读取并不存在的 compression sequence。*
   这里的 live-ready 不是启动期布尔值，而是同一 invocation coordinate 上三段证据的合取：全局
-  callback registry 已完成 recovery、当前 Claude `workingProjectRoot` 存在可执行的 project-local
-  PreCompact carrier，且该 invocation 的 authenticated `/api/sessions/seal` 已把本次 compression
-  observation 原子写进 active `SessionRecord`。前两项只证明“能够尝试”；只有第三项证明这次 hook
-  实际成功。runtime `/ready` 只能证明第一项，旧 session sequence 也不能替当前 invocation 作证。
+  callback registry 已完成 recovery、本次 invocation 的 spawn plan 携带 exact injected launch
+  carrier（#1542：harness 在 Claude spawn 时经单会话 `--settings` 注入 canonical Node carrier，
+  readiness 校验同一份 plan——不再扫描推测的 project root，仓内子目录 CWD 与 #1515 外部项目零写入
+  场景同样覆盖），且该 invocation 的 authenticated `/api/sessions/seal` 已把本次 compression
+  observation 原子写进 active `SessionRecord`（#1542 guard 4：seal 在计数前校验与 launch plan 绑定的
+  carrier identity，legacy shell 与 canonical Node 并发只形成一个 logical observation）。前两项只
+  证明“能够尝试”；只有第三项证明这次 hook 实际成功。runtime `/ready` 只能证明第一项，旧 session
+  sequence 也不能替当前 invocation 作证。
   provider-loop 按下表 fail closed：
 
-  | callback registry | active workspace PreCompact carrier | current-invocation seal observation | typed `compact_boundary` | authority result |
+  | callback registry | exact injected launch-plan carrier（#1542） | current-invocation seal observation | typed `compact_boundary` | authority result |
   |---|---|---|---|---|
   | unavailable | any | any | present | `unsupported:hook_authentication_unavailable`；不读取 session sequence |
   | ready | absent / invalid | any | present | `unsupported:hook_carrier_unavailable`；不读取 session sequence |

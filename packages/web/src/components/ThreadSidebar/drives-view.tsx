@@ -11,27 +11,49 @@ interface DrivesViewProps {
   activeProjectPath?: string;
   onSelectDrive: (path: string) => void;
   onRetry: () => void;
+  copy?: {
+    loading: string;
+    failed: string;
+    retry: string;
+    empty: string;
+    currentProject: string;
+  };
 }
 
-export function DrivesView({ drives, drivesState, activeProjectPath, onSelectDrive, onRetry }: DrivesViewProps) {
+const defaultCopy = {
+  loading: '正在加载磁盘列表...',
+  failed: '磁盘列表加载失败',
+  retry: '重试',
+  empty: '未发现可用磁盘',
+  currentProject: '当前项目',
+};
+
+export function DrivesView({
+  drives,
+  drivesState,
+  activeProjectPath,
+  onSelectDrive,
+  onRetry,
+  copy = defaultCopy,
+}: DrivesViewProps) {
   return (
     <div className="py-2">
       {drivesState === 'loading' && (
         <div className="flex items-center justify-center py-8">
-          <span className="text-xs text-cafe-muted">正在加载磁盘列表...</span>
+          <span className="text-xs text-cafe-muted">{copy.loading}</span>
         </div>
       )}
       {drivesState === 'error' && (
         <div className="flex flex-col items-center justify-center py-8 gap-2">
-          <span className="text-xs text-cafe-muted">磁盘列表加载失败</span>
+          <span className="text-xs text-cafe-muted">{copy.failed}</span>
           <button type="button" onClick={onRetry} className="text-xs text-cafe-accent hover:underline">
-            重试
+            {copy.retry}
           </button>
         </div>
       )}
       {drivesState === 'ready' && drives.length === 0 && (
         <div className="flex items-center justify-center py-8">
-          <span className="text-xs text-cafe-muted">未发现可用磁盘</span>
+          <span className="text-xs text-cafe-muted">{copy.empty}</span>
         </div>
       )}
       {drivesState === 'ready' && drives.length > 0 && (
@@ -53,7 +75,7 @@ export function DrivesView({ drives, drivesState, activeProjectPath, onSelectDri
                   <div className="font-medium text-cafe-black truncate">{drive.label}</div>
                   <div className="text-micro text-cafe-muted truncate">{drive.path}</div>
                 </div>
-                {isActive && <span className="text-micro text-cafe-accent flex-shrink-0">当前项目</span>}
+                {isActive && <span className="text-micro text-cafe-accent flex-shrink-0">{copy.currentProject}</span>}
               </button>
             );
           })}

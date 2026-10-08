@@ -79,6 +79,22 @@ describe('classifyCoCreationDocsLane', () => {
     assert.deepEqual(result.governanceFiles, ['docs/SOP.md']);
   });
 
+  it('routes prompt-input docs (the cat dossier feeds both prompt planes) to a PR with the prompt-budget guard', () => {
+    const result = classifyCoCreationDocsLane({
+      changedFiles: ['docs/team/cat-dossier.md'],
+      conflict: 'none',
+      reversibility: 'one_commit',
+    });
+
+    assert.equal(result.lane, 'co_creation_docs');
+    assert.equal(result.delivery, 'pull_request');
+    assert.deepEqual(result.promptInputFiles, ['docs/team/cat-dossier.md']);
+    assert.ok(result.reasons.includes('prompt_input_budget_guard'));
+    // One command covers both planes: native L0 tokens and the builder-prompt char budget.
+    assert.ok(result.validation.includes('pnpm check:prompt-budget'));
+    assert.ok(!result.validation.some((command) => command.includes('check:l0-budget')));
+  });
+
   it('fails closed to PR when reversibility is unknown', () => {
     const result = classifyCoCreationDocsLane({
       changedFiles: ['docs/architecture/overview.md'],
@@ -101,8 +117,8 @@ describe('classifyCoCreationDocsLane', () => {
 
     assert.equal(result.lane, 'regular_development');
     assert.equal(result.delivery, 'pull_request');
-    assert.equal(result.cloudReview, 'required');
-    assert.equal(result.fullGate, 'required');
+    assert.equal(result.cloudReview, 'risk_based');
+    assert.equal(result.fullGate, 'risk_based');
     assert.deepEqual(result.nonDocFiles, ['scripts/check-docs.mjs']);
   });
 
@@ -145,24 +161,24 @@ describe('collectChangedFiles', () => {
       runGit(args) {
         commands.push(args.join(' '));
         switch (args.join(' ')) {
-          case 'diff --name-only origin/main...HEAD':
-            return 'docs/a.md\n';
-          case 'diff --name-only':
-            return 'docs/b.md\n';
-          case 'diff --name-only --cached':
-            return 'docs/c.md\n';
+          case 'diff --name-only -z origin/main...HEAD':
+            return 'docs/a.md\0';
+          case 'diff --name-only -z':
+            return 'docs/b.md\0';
+          case 'diff --name-only --cached -z':
+            return 'docs/c.md\0';
           default:
-            return 'docs/c.md\ndocs/d.md\n';
+            return 'docs/c.md\0docs/d.md\0';
         }
       },
     });
 
     assert.deepEqual(result, ['docs/a.md', 'docs/b.md', 'docs/c.md', 'docs/d.md']);
     assert.deepEqual(commands, [
-      'diff --name-only origin/main...HEAD',
-      'diff --name-only',
-      'diff --name-only --cached',
-      'ls-files --others --exclude-standard',
+      'diff --name-only -z origin/main...HEAD',
+      'diff --name-only -z',
+      'diff --name-only --cached -z',
+      'ls-files --others --exclude-standard -z',
     ]);
   });
 });

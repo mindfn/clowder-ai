@@ -1,4 +1,4 @@
-import React, { act } from 'react';
+import React, { act, StrictMode } from 'react';
 import { createRoot, type Root } from 'react-dom/client';
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 
@@ -67,6 +67,37 @@ describe('F284 BrowserPanel preview lifecycle', () => {
   afterAll(() => {
     delete (globalThis as { React?: typeof React }).React;
     delete (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT;
+  });
+
+  it('creates one tab under StrictMode and keeps one tab when the same port re-enters', async () => {
+    await act(async () =>
+      root.render(
+        <StrictMode>
+          <BrowserPanel initialPort={5173} />
+        </StrictMode>,
+      ),
+    );
+    const tabs = () => container.querySelectorAll('[role="button"]');
+    expect(tabs()).toHaveLength(1);
+    await act(async () =>
+      root.render(
+        <StrictMode>
+          <BrowserPanel initialPort={5173} initialPath="/updated" />
+        </StrictMode>,
+      ),
+    );
+    expect(tabs()).toHaveLength(1);
+    expect(container.textContent).toContain('localhost:5173');
+  });
+
+  it('keeps separate tabs for different ports and reuses a previously opened port', async () => {
+    await act(async () => root.render(<BrowserPanel initialPort={5173} />));
+    await act(async () => root.render(<BrowserPanel initialPort={5324} initialPath="/dashboard" />));
+    expect(container.querySelectorAll('[role="button"]')).toHaveLength(2);
+    expect(container.textContent).toContain('localhost:5173');
+    expect(container.textContent).toContain('localhost:5324/dashboard');
+    await act(async () => root.render(<BrowserPanel initialPort={5173} />));
+    expect(container.querySelectorAll('[role="button"]')).toHaveLength(2);
   });
 
   it('does not terminate the backend preview when the shell unmounts', async () => {

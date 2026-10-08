@@ -3,8 +3,8 @@
  * at a time, in call order; dispatches to different threads are not serialized.
  *
  * The self-heal (AC-B1c-6) and fresh-chat cases this file used to hold belonged to the legacy
- * PinchTab bridge, which could open a new chat. That bridge was removed (F202 W2-3 h3a, issue
- * #1538); the Host adapter only appends to a bound conversation. Per-thread routing is covered in
+ * PinchTab bridge, which could open a new chat. That bridge was removed (issue #1538);
+ * the Host adapter only appends to a bound conversation. Per-thread routing is covered in
  * b1c-2-cloud-invoke-bridge.test.js.
  */
 

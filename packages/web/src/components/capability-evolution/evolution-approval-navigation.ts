@@ -1,6 +1,8 @@
 'use client';
 
 import type { OwnerTruthRefV1 } from '@cat-cafe/shared';
+import { openMailbox } from '@/components/shell/mailbox/mailbox-navigation';
+import { readShellPresentation } from '@/components/shell/shell-presentation';
 import { useF307ExperienceWorkbenchStore } from '@/components/workbench/experience-workbench-store';
 import { createApprovalActionSurface, createWorkspaceModeSurface } from '@/components/workbench/real-surface-adapters';
 import { useChatStore } from '@/stores/chatStore';
@@ -15,6 +17,10 @@ export function evolutionApprovalId(ref?: OwnerTruthRefV1): string | undefined {
 }
 
 export function openEvolutionApproval(proposalId: string): void {
+  if (readShellPresentation() === 'v2') {
+    openMailbox({ section: 'pending', proposalId });
+    return;
+  }
   const chat = useChatStore.getState();
   const surface = createApprovalActionSurface(createWorkspaceModeSurface('approval', chat.currentThreadId), proposalId);
   if (!surface) return;

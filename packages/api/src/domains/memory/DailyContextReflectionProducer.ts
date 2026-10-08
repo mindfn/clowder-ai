@@ -1,4 +1,5 @@
 import { performance } from 'node:perf_hooks';
+import { isHomeSession } from '../cats/services/session/session-scope.js';
 import type { ISessionChainStore } from '../cats/services/stores/ports/SessionChainStore.js';
 import type { IThreadStore } from '../cats/services/stores/ports/ThreadStore.js';
 import type {
@@ -83,6 +84,7 @@ export class DailyContextReflectionProducer {
       .flat()
       .filter(
         (session) =>
+          isHomeSession(session) &&
           session.userId === this.deps.ownerUserId &&
           householdDateKey(session.createdAt, timeZone) <= sourceLocalDate &&
           householdDateKey(session.updatedAt, timeZone) >= sourceLocalDate,

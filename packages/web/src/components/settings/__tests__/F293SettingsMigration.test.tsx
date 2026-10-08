@@ -41,7 +41,7 @@ describe('F293 Settings migration', () => {
     expect(SETTINGS_SECTIONS.find((section) => section.id === 'members')?.label).toBe('成员与运行时');
     const source = SETTINGS_SECTIONS.find((section) => section.id === 'profiles');
     expect(source?.label).toBe('能力画像来源');
-    expect(source?.description).toContain('不编辑实时路由状态或协作偏好');
+    expect(source?.description).toBe('查看成员能力的观察记录、依据与来源。');
   });
 
   it('opens Team only from an explicit Settings click', async () => {

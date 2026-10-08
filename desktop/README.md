@@ -222,12 +222,11 @@ pnpm desktop:installer
    - **Gemini / Antigravity CLI** — 运行 `agy` 完成 Google 登录，并用 `/model` 选择账号侧默认模型
    - **Kimi** — 运行 `kimi` 命令完成 Moonshot 登录
 5. **补装 CLI（如有需要）** — 如果某个 CLI 工具在安装阶段未成功安装，可手动补装。
-   需要系统已安装对应运行时（Node.js/npm 用于 Claude/Codex 与可选 Gemini CLI fallback，Python/pip 用于 Kimi）：
+   需要系统已安装对应运行时（Node.js/npm 用于 Claude/Codex，Python/pip 用于 Kimi）：
    ```powershell
    npm install -g @anthropic-ai/claude-code        # Claude
    npm install -g @openai/codex                     # Codex
    irm https://antigravity.google/cli/install.cmd | iex  # Antigravity CLI / Gemini 默认
-   npm install -g @google/gemini-cli                # Gemini CLI（可选 fallback）
    pip install --user --upgrade kimi-cli            # Kimi（Python）
    ```
    > 安装包内已 bundle 便携 Node.js，安装过程中会自动使用。手动补装时需确保系统 PATH 中有 Node.js 或 Python。

@@ -154,11 +154,7 @@ test('the Host names its plugin-host entries only through the layout table, whic
   };
   const srcRoot = new URL('../src', import.meta.url).pathname;
   await walk(srcRoot);
-  // The F247 copy that h3 deletes still builds its own `personal-chrome-host` path (h2 ⑦).
-  const mayNameTheRoot = new Set([
-    join(srcRoot, 'domains/plugin/host-inventory/plugin-host-layout.ts'),
-    join(srcRoot, 'domains/cats/services/cloud-bridge/personal-chrome-host/personal-chrome-host-adapter.ts'),
-  ]);
+  const mayNameTheRoot = new Set([join(srcRoot, 'domains/plugin/host-inventory/plugin-host-layout.ts')]);
   // Where the Host builds a child from a variable, it calls the plugin-host root `hostRoot`.
   const childOfRoot =
     /(?:resolve|join)\((?:dirname\([^)]*inventorySnapshotPath\)|pluginHostRoot\([^)]*\)|hostRoot),\s*([^)]+)\)/g;
@@ -168,7 +164,6 @@ test('the Host names its plugin-host entries only through the layout table, whic
       assert.ok(mayNameTheRoot.has(path), `${path} builds the plugin-host root itself`);
     if (!source.includes('inventorySnapshotPath') && !source.includes('pluginHostRoot(')) continue;
     for (const [, child] of source.matchAll(childOfRoot)) {
-      if (path.endsWith('personal-chrome-host-adapter.ts')) continue;
       checked += 1;
       assert.match(
         child.trim(),

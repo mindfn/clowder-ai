@@ -51,9 +51,42 @@ describe('useCatData applies catOrder', () => {
     captured = null;
   });
 
+  it('one binding change refreshes the shared registry once for all mounted labels', async () => {
+    wireApiFetch({
+      '/api/cats': { cats: [{ id: 'codex61-sol', carrier: 'cli', accountRef: 'codex' }] },
+      '/api/config/cat-order': { catOrder: [] },
+    });
+    await act(async () => {
+      root = createRoot(container);
+      root.render(
+        React.createElement(
+          React.Fragment,
+          null,
+          ...Array.from({ length: 4 }, (_, key) => React.createElement(HookHost, { key })),
+        ),
+      );
+    });
+    (apiFetch as ReturnType<typeof vi.fn>).mockClear();
+    wireApiFetch({
+      '/api/cats': { cats: [{ id: 'codex61-sol', carrier: 'cli', accountRef: 'managed-b' }] },
+      '/api/config/cat-order': { catOrder: [] },
+    });
+    await act(async () => {
+      window.dispatchEvent(new Event('cat-config-changed'));
+    });
+    expect((apiFetch as ReturnType<typeof vi.fn>).mock.calls.filter(([path]) => path === '/api/cats')).toHaveLength(1);
+    expect(captured?.cats[0].accountRef).toBe('managed-b');
+  });
+
   it('reorders cats according to /api/config/cat-order', async () => {
     wireApiFetch({
-      '/api/cats': { cats: [{ id: 'opus' }, { id: 'opus-47' }, { id: 'gpt52' }] },
+      '/api/cats': {
+        cats: [
+          { id: 'opus', carrier: 'cli' },
+          { id: 'opus-47', carrier: 'cli' },
+          { id: 'gpt52', carrier: 'cli' },
+        ],
+      },
       '/api/config/cat-order': { catOrder: ['opus-47', 'gpt52'] },
     });
 
@@ -70,7 +103,13 @@ describe('useCatData applies catOrder', () => {
 
   it('leaves cats in original order when cat-order returns empty', async () => {
     wireApiFetch({
-      '/api/cats': { cats: [{ id: 'opus' }, { id: 'opus-47' }, { id: 'gpt52' }] },
+      '/api/cats': {
+        cats: [
+          { id: 'opus', carrier: 'cli' },
+          { id: 'opus-47', carrier: 'cli' },
+          { id: 'gpt52', carrier: 'cli' },
+        ],
+      },
       '/api/config/cat-order': { catOrder: [] },
     });
 
@@ -87,7 +126,13 @@ describe('useCatData applies catOrder', () => {
 
   it('stale saveCatOrder success does not overwrite newer save in cache', async () => {
     wireApiFetch({
-      '/api/cats': { cats: [{ id: 'opus' }, { id: 'opus-47' }, { id: 'gpt52' }] },
+      '/api/cats': {
+        cats: [
+          { id: 'opus', carrier: 'cli' },
+          { id: 'opus-47', carrier: 'cli' },
+          { id: 'gpt52', carrier: 'cli' },
+        ],
+      },
       '/api/config/cat-order': { catOrder: [] },
     });
 
@@ -133,7 +178,13 @@ describe('useCatData applies catOrder', () => {
 
   it('older success after newer failure still updates cache', async () => {
     wireApiFetch({
-      '/api/cats': { cats: [{ id: 'opus' }, { id: 'opus-47' }, { id: 'gpt52' }] },
+      '/api/cats': {
+        cats: [
+          { id: 'opus', carrier: 'cli' },
+          { id: 'opus-47', carrier: 'cli' },
+          { id: 'gpt52', carrier: 'cli' },
+        ],
+      },
       '/api/config/cat-order': { catOrder: [] },
     });
 

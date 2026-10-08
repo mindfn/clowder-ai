@@ -4,17 +4,27 @@ import { CONTEXT_ATTACHMENT_COMMENT_MAX_LENGTH } from '@cat-cafe/shared';
 import { type CSSProperties, type ReactNode, useEffect, useId, useLayoutEffect, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { useIMEGuard } from '@/hooks/useIMEGuard';
+import { useActionOwnerReset, useActionSurfaceRef } from './message-v2/message-action-ownership';
 import type { FloatingSelectionPosition } from './workspace/selection-action-position';
+
+/**
+ * The one name of "put this selection into the chat composer", on the text selection card and on a circled place of an
+ * image alike (DESIGN.md「界面上的字」: formal Chinese, one name per concept). Its tooltip and its visible text are the same.
+ */
+export const ADD_TO_CHAT_LABEL = '引用到聊天';
 
 interface SelectionAnnotationActionProps {
   selectedText: string;
   position: FloatingSelectionPosition;
   positionMode: 'fixed' | 'absolute';
   actionTestId: string;
-  onSave: (comment: string) => void;
+  /** Returning `false` refuses the save: the card, the words and the selection stay as they were. */
+  onSave: (comment: string) => void | boolean;
   /** F294: optional cross-thread path. Unlike Add to chat, Comment may be empty. */
   onForward?: (comment: string) => void;
   initialComment?: string;
+  /** Opens straight into the editor, for text that is already chosen (e.g. an old draft being continued). */
+  initialEditing?: boolean;
   triggerContent?: ReactNode;
   triggerClassName?: string;
   onDelete?: () => void;
@@ -57,24 +67,46 @@ export function SelectionAnnotationAction({
   onSave,
   onForward,
   initialComment = '',
+  initialEditing = false,
   triggerContent,
   triggerClassName,
   onDelete,
   onOpen,
   onClose,
 }: SelectionAnnotationActionProps) {
-  const [editing, setEditing] = useState(false);
+  const [editing, setEditing] = useState(initialEditing);
   const [comment, setComment] = useState(initialComment);
   const commentRef = useRef<HTMLTextAreaElement>(null);
+  const editorRef = useRef<HTMLElement>(null);
   const commentId = useId();
   const commentHintId = `${commentId}-hint`;
   const ime = useIMEGuard();
+  // Once opened, the editor owns a draft. Source toolbar geometry may change
+  // while incoming messages scroll its row out of view; that cannot revoke it.
+  const sourceOwner = editing ? null : undefined;
+  const actionSurfaceRef = useActionSurfaceRef<HTMLElement>(sourceOwner, undefined, editorRef);
+  useActionOwnerReset(() => {
+    setEditing(false);
+    onClose?.();
+  }, sourceOwner);
+
+  useEffect(() => {
+    if (!editing) return;
+    const dismissOutside = (event: PointerEvent) => {
+      if (!(event.target instanceof Node) || editorRef.current?.contains(event.target)) return;
+      setEditing(false);
+      setComment(initialComment);
+      onClose?.();
+    };
+    document.addEventListener('pointerdown', dismissOutside);
+    return () => document.removeEventListener('pointerdown', dismissOutside);
+  }, [editing, initialComment, onClose]);
 
   useEffect(() => {
     void selectedText;
-    setEditing(false);
+    setEditing(initialEditing);
     setComment(initialComment);
-  }, [initialComment, selectedText]);
+  }, [initialComment, initialEditing, selectedText]);
 
   useLayoutEffect(() => {
     if (editing) commentRef.current?.focus();
@@ -85,6 +117,7 @@ export function SelectionAnnotationAction({
   if (!editing) {
     return renderSelectionSurface(
       <button
+        ref={actionSurfaceRef}
         type="button"
         data-testid={actionTestId}
         data-context-annotation-ui
@@ -98,7 +131,7 @@ export function SelectionAnnotationAction({
           triggerClassName ??
           `${positionClass} z-[70] flex items-center gap-1.5 rounded-lg bg-cafe-accent px-2.5 py-1.5 text-xs font-medium text-[var(--cafe-surface)] shadow-lg transition-colors hover:bg-cafe-interactive`
         }
-        title="引用到聊天"
+        title={ADD_TO_CHAT_LABEL}
       >
         {triggerContent ?? (
           <>
@@ -106,7 +139,7 @@ export function SelectionAnnotationAction({
               <path d="M1.5 2.5a1 1 0 0 1 1-1h8a1 1 0 0 1 1 1v5.5a1 1 0 0 1-1 1H5L2.5 11.5V9h-1a1 1 0 0 1-1-1V2.5Z" />
               <path d="M13.5 5v4a1 1 0 0 1-1 1H12v2.5L9.5 10H7a1 1 0 0 1-1-1" opacity="0.5" />
             </svg>
-            Add to chat
+            {ADD_TO_CHAT_LABEL}
           </>
         )}
       </button>,
@@ -117,7 +150,7 @@ export function SelectionAnnotationAction({
   const save = () => {
     const trimmed = comment.trim();
     if (!trimmed) return;
-    onSave(trimmed);
+    if (onSave(trimmed) === false) return;
     setEditing(false);
     setComment(initialComment);
     onClose?.();
@@ -132,8 +165,17 @@ export function SelectionAnnotationAction({
 
   return renderSelectionSurface(
     <section
+      ref={actionSurfaceRef}
       data-testid="context-annotation-editor"
       data-context-annotation-ui
+      onKeyDown={(event) => {
+        if (event.key !== 'Escape') return;
+        event.preventDefault();
+        event.stopPropagation();
+        setEditing(false);
+        setComment(initialComment);
+        onClose?.();
+      }}
       style={annotationEditorPosition(position, positionMode)}
       className={`${positionClass} z-[80] flex max-h-[calc(100dvh-1rem)] w-[min(25rem,calc(100vw-1rem))] flex-col overflow-hidden rounded-2xl border border-cafe bg-cafe-surface-elevated shadow-2xl`}
       aria-label="添加选区批注"
@@ -164,11 +206,6 @@ export function SelectionAnnotationAction({
                 event.preventDefault();
                 save();
                 return;
-              }
-              if (event.key === 'Escape') {
-                setEditing(false);
-                setComment(initialComment);
-                onClose?.();
               }
             }}
             rows={3}

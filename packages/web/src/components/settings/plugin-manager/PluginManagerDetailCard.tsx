@@ -6,6 +6,7 @@ import { HubIcon } from '../../hub-icons';
 import { MarkdownContent } from '../../MarkdownContent';
 import { settingsResourceCardClass, settingsResourceRowClass } from '../../SettingsResourceCard';
 import { SettingsText } from '../primitives/SettingsText';
+import { DotConnectionDetail } from './DotConnectionDetail';
 import { PluginManagerConfigurationSection } from './PluginManagerConfigurationSection';
 import { PluginManagerDetailPrelude } from './PluginManagerDetailPrelude';
 import { PluginVisual } from './PluginVisual';
@@ -41,6 +42,7 @@ const contributionKindLabel: Record<string, string> = {
   service: 'Service',
   ui: 'UI',
   'content-editor-provider': 'Content Editor',
+  'desktop-window': 'Desktop Window',
 };
 
 interface CapabilityDocItem {
@@ -179,20 +181,22 @@ export function PluginManagerDetailCard({
   plugin,
   locale,
   presentation = 'v1',
+  onOperationChange,
   busy = false,
   onSaveConfig,
-  onOperationChange,
   configurationValidationRequest = 0,
   configurationSaved = false,
+  onStateChanged,
 }: {
   plugin: PluginManagerDesignFixture;
   locale: string;
   presentation?: PluginManagerPresentation;
+  onOperationChange?: () => void;
   busy?: boolean;
   onSaveConfig?: (updates: readonly { key: string; value: string | null }[]) => void;
-  onOperationChange?: () => void;
   configurationValidationRequest?: number;
   configurationSaved?: boolean;
+  onStateChanged?: () => void | Promise<void>;
 }) {
   const installed = plugin.artifact === 'installed';
   const description = resolvePluginDescription(plugin.description, locale);
@@ -241,29 +245,29 @@ export function PluginManagerDetailCard({
           </div>
         )}
 
-        <PluginManagerConfigurationSection
-          plugin={plugin}
-          presentation={presentation}
-          renderBefore={
-            presentation === 'v2'
-              ? (operations) => (
-                  <PluginManagerDetailPrelude plugin={plugin} description={description} operations={operations} />
-                )
-              : undefined
-          }
-          busy={busy}
-          onSaveConfig={onSaveConfig}
-          onOperationChange={onOperationChange}
-          validationRequest={configurationValidationRequest}
-          saved={configurationSaved}
-        />
+        {plugin.id === 'official.chatgpt-dot' ? (
+          <DotConnectionDetail
+            installed={installed}
+            activationRequest={configurationValidationRequest}
+            activationAllowed={plugin.intent === 'enabled' || plugin.actions?.setEnabled === true}
+            onStateChanged={onStateChanged}
+          />
+        ) : (
+          <>
+            <PluginManagerConfigurationSection
+              plugin={plugin}
+              presentation={presentation}
+              renderBefore={presentation === 'v2' ? operations => <PluginManagerDetailPrelude plugin={plugin} description={description} operations={operations} /> : undefined}
+              onOperationChange={onOperationChange}
+              busy={busy}
+              onSaveConfig={onSaveConfig}
+              validationRequest={configurationValidationRequest}
+              saved={configurationSaved}
+            />
 
-        <CapabilityDocumentation
-          plugin={plugin}
-          installed={installed}
-          groups={capabilityGroups}
-          presentation={presentation}
-        />
+            <CapabilityDocumentation plugin={plugin} installed={installed} groups={capabilityGroups} presentation={presentation} />
+          </>
+        )}
       </div>
     </article>
   );

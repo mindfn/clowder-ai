@@ -14,7 +14,7 @@ before(async () => {
     encodeProfileSourceRef,
     requestGenerationSourceKey,
     resolveRequestGenerationSourceStates,
-  } = await import('../dist/domains/cats/services/session/request-generation-source-policy.js'));
+  } = await import('../dist/domains/cats/services/session/transcript-index/request-generation-source-policy.js'));
   ({ requestGenerationMessageSourceRefs, requestGenerationPresentations } = await import(
     '../dist/domains/cats/services/agents/invocation/invoke-single-cat.js'
   ));
@@ -213,7 +213,6 @@ describe('F299 request-generation source policy', () => {
       injectSystemPrompt: true,
       hasContextHint: true,
       hasStagingPrepend: true,
-      hasRoutingContextProjection: true,
       hasMissionPrefix: true,
     });
 
@@ -223,7 +222,6 @@ describe('F299 request-generation source policy', () => {
       { owner: 'system_prompt', ref: 'registry:cat-cafe-owned' },
       { owner: 'runtime_context', ref: 'context-management-hint:inv-1' },
       { owner: 'system_prompt', ref: 'staging:adr-038' },
-      { owner: 'runtime_context', ref: 'routing-context:inv-1' },
       { owner: 'home_state', ref: 'thread-mission:thread-1' },
       { owner: 'runtime_context', ref: 'transcript-path-hints:thread-1' },
     ]);

@@ -2,9 +2,11 @@ import { type DragEvent as ReactDragEvent, useCallback, useEffect, useMemo, useR
 import { type CatData, saveCatOrder } from '@/hooks/useCatData';
 import { sortCatsByOrder } from '@/lib/sort-cats-by-order';
 import { apiFetch } from '@/utils/api-client';
+import { MemberCodexAccount } from './codex-accounts/MemberCodexAccount';
 import type { ConfigData } from './config-viewer-types';
 import { DefaultCatSelector } from './DefaultCatSelector';
 import { HubCoCreatorOverviewCard, HubMemberOverviewCard, HubOverviewToolbar } from './HubMemberOverviewCard';
+import { useMemberAccounts } from './members/useMemberAccounts';
 import { BubbleToggle } from './settings/BubbleToggle';
 import { SettingsField, SettingsSection, SettingsStatusStrip } from './settings/primitives';
 
@@ -52,6 +54,7 @@ export function CatOverviewTab({
   onToggleAvailability?: (cat: CatData) => void;
   togglingCatId?: string | null;
 }) {
+  const accounts = useMemberAccounts();
   // F154 Phase B (AC-B2): Fetch and manage global default cat
   const [defaultCatId, setDefaultCatId] = useState<string | null>(null);
   const [defaultCatLoading, setDefaultCatLoading] = useState(false);
@@ -171,6 +174,7 @@ export function CatOverviewTab({
           <HubMemberOverviewCard
             key={catData.id}
             cat={catData}
+            accountControl={<MemberCodexAccount cat={catData} accounts={accounts} />}
             configCat={config.cats[catData.id]}
             onEdit={onEditMember}
             onDelete={onDeleteMember}
@@ -195,6 +199,7 @@ export function CatOverviewTab({
             <HubMemberOverviewCard
               key={catData.id}
               cat={catData}
+              accountControl={<MemberCodexAccount cat={catData} accounts={accounts} />}
               configCat={config.cats[catData.id]}
               onEdit={onEditMember}
               onDelete={onDeleteMember}

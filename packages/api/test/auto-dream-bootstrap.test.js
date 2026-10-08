@@ -49,6 +49,7 @@ describe('F255 bootstrap wiring', () => {
       },
       dynamicTaskStore: {
         getAll: () => [...dynamicDefs.values()],
+        getByTemplateId: (templateId) => [...dynamicDefs.values()].filter((def) => def.templateId === templateId),
         setEnabled: (id, enabled) => {
           const def = dynamicDefs.get(id);
           if (!def) return false;

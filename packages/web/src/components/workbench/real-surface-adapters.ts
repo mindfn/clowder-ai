@@ -11,14 +11,28 @@ import type { TrajectoryTarget } from '@/components/workspace/trajectory/traject
 import type { WorkspaceLauncherDestination } from '@/components/workspace/WorkspaceLauncher';
 import { WORKSPACE_MODE_META, type WorkspaceMode } from '@/lib/workspace-modes';
 import type { TeamWorkspaceSubject } from '@/stores/chat-types';
+import { artifactObjectId } from './artifact-object-key';
+
+export { artifactObjectId, legacyArtifactObjectId, parseArtifactObjectId } from './artifact-object-key';
+
 import { resolveArtifactReviewTarget } from './artifact-review-surface';
+import { resolveEvolutionMediaTarget } from './evolution-media-surface';
+import { fileObjectIdentity, matchesFileObjectIdentity } from './file-object-identity';
+import { resolveMessagePublicationSource } from './message-publication-surface';
+import { resolvePublicationTarget } from './publication-surface';
+import { PULL_REQUEST_CHANGES_OWNER } from './pull-request-changes-surface';
+
+export { createPullRequestChangesSurface, resolvePullRequestChangesTarget } from './pull-request-changes-surface';
+
+import { resolveThreadReplayThreadId, THREAD_REPLAY_OWNER } from './thread-replay-surface';
+import { resolveVideoProjectTarget } from './video-project-surface';
 
 export const REAL_SURFACE_OWNERS = {
   agentRun: 'f299-invocation-trajectory',
   approval: 'f246-approval-navigation',
   artifact: 'f232-thread-artifacts',
   browser: 'f120-browser-preview',
-  changes: 'f063-workspace-diff',
+  changes: PULL_REQUEST_CHANGES_OWNER,
   contentEditor: 'f309-collaborative-content',
   evolutionProgram: 'f311-capability-evolution-control',
   file: 'f063-workspace-file',
@@ -26,6 +40,7 @@ export const REAL_SURFACE_OWNERS = {
   needsMe: 'f310-needs-me-navigation',
   productSchedule: 'f310-product-schedule-navigation',
   terminal: 'f089-terminal-session',
+  threadReplay: THREAD_REPLAY_OWNER,
   team: 'f293-routing-context',
   workspace: 'f284-workspace-launcher',
 } as const;
@@ -56,6 +71,14 @@ function isCodePath(path: string): boolean {
 }
 
 export function isRealSurfaceOwnerAvailable(surface: WorkspaceSurfaceDescriptor): boolean {
+  if (surface.type === 'video-project') return resolveVideoProjectTarget(surface) !== null;
+  if (surface.type === 'thread-replay') return resolveThreadReplayThreadId(surface) !== null;
+  if (
+    resolvePublicationTarget(surface) ||
+    resolveEvolutionMediaTarget(surface) ||
+    resolveMessagePublicationSource(surface)
+  )
+    return true;
   if (resolveArtifactReviewTarget(surface)) return true;
   return REAL_OWNER_IDS.has(surface.ownerStateRef.owner) || LEGACY_OWNER_IDS.has(surface.ownerStateRef.owner);
 }
@@ -68,6 +91,8 @@ export function createFileSurface(input: {
   worktreeId: string;
   path: string;
   scrollToLine?: number | null;
+  navigationOrigin?: WorkspaceSurfaceDescriptor['navigationOrigin'];
+  rootSelection?: WorkspaceSurfaceDescriptor['rootSelection'];
 }): WorkspaceSurfaceDescriptor {
   const code = isCodePath(input.path);
   const scrollToLine = normalizeFileScrollToLine(input.scrollToLine);
@@ -79,10 +104,13 @@ export function createFileSurface(input: {
     type: code ? 'code' : 'file',
     renderer: code ? 'code-editor' : 'file-preview',
     title: displayFileName(input.path),
-    context: `${input.worktreeId} · ${input.path}`,
+    // Header text for people: the path. The root id is identity and lives on the typed refs below.
+    context: input.path,
     objectRef: { kind: 'file', id: input.worktreeId },
     ownerStateRef: { owner: REAL_SURFACE_OWNERS.file, key: input.worktreeId },
     resultTargetRef: { owner: REAL_SURFACE_OWNERS.file, key: targetKey },
+    ...(input.navigationOrigin ? { navigationOrigin: input.navigationOrigin } : {}),
+    ...(input.rootSelection ? { rootSelection: input.rootSelection } : {}),
     capabilities: SURFACE_CAPABILITIES,
   };
 }
@@ -105,6 +133,13 @@ export function createBrowserSurface(input: {
     resultTargetRef: { owner: REAL_SURFACE_OWNERS.browser, key: `${port}:${path}` },
     capabilities: SURFACE_CAPABILITIES,
   };
+}
+
+/** v2 preview and permanent file tabs share a stable per-file identity without creating a new owner. */
+export function createFilePreviewSurface(input: Parameters<typeof createFileSurface>[0]): WorkspaceSurfaceDescriptor {
+  const surface = createFileSurface(input);
+  const identity = fileObjectIdentity(input.worktreeId, input.path);
+  return { ...surface, id: `file-preview:${identity}`, objectRef: { kind: 'file', id: identity } };
 }
 
 export interface ContentEditorTarget {
@@ -208,20 +243,10 @@ export function resolveEvolutionProgramId(surface: WorkspaceSurfaceDescriptor): 
   return surface.objectRef.id;
 }
 
-export function artifactObjectId(artifact: ThreadArtifactDTO): string {
-  return encodedId([
-    artifact.type,
-    artifact.ref ?? null,
-    artifact.url ?? null,
-    artifact.sourceMessageId,
-    artifact.createdAt,
-    artifact.name,
-  ]);
-}
-
 export function createArtifactSurface(input: {
   threadId: string;
   artifact: ThreadArtifactDTO | GlobalArtifactDTO;
+  navigationOrigin?: WorkspaceSurfaceDescriptor['navigationOrigin'];
 }): WorkspaceSurfaceDescriptor {
   const ownerThreadId = 'threadId' in input.artifact ? input.artifact.threadId : input.threadId;
   const review = input.artifact.type === 'pr';
@@ -236,12 +261,27 @@ export function createArtifactSurface(input: {
     type: review ? 'review' : 'artifact',
     renderer: review ? 'review-summary' : 'artifact-view',
     title: input.artifact.name,
-    context: review ? (input.artifact.ref ?? 'PR Review') : `Thread 产物 · ${input.artifact.type}`,
+    context: review ? (input.artifact.ref ?? 'PR Review') : artifactTypeLabel(input.artifact),
+    ...(input.navigationOrigin ? { navigationOrigin: input.navigationOrigin } : {}),
     objectRef: { kind: review ? 'review' : 'artifact', id: objectId },
     ownerStateRef: { owner: REAL_SURFACE_OWNERS.artifact, key: ownerThreadId },
     resultTargetRef,
     capabilities: SURFACE_CAPABILITIES,
   };
+}
+
+function artifactTypeLabel(artifact: ThreadArtifactDTO | GlobalArtifactDTO): string {
+  if (artifact.type === 'file' && /\.(?:md|markdown)$/i.test(artifact.name)) return 'Markdown';
+  const labels = {
+    image: '图片',
+    file: '文件',
+    code: '代码',
+    audio: '音频',
+    video: '视频',
+    widget: '小组件',
+    pr: 'PR',
+  };
+  return labels[artifact.type];
 }
 
 type AgentRunAdapterInput =
@@ -328,7 +368,15 @@ export function createWorkspaceDestinationSurface(
   };
 }
 
-export function createFilesSurface(worktreeId: string): WorkspaceSurfaceDescriptor {
+export function createFilesSurface(
+  worktreeId: string,
+  options: {
+    reveal?: WorkspaceSurfaceDescriptor['filesReveal'];
+    navigationOrigin?: WorkspaceSurfaceDescriptor['navigationOrigin'];
+    /** The listing coordinate that minted `worktreeId`, when it is not the current chat's project. */
+    repoRoot?: string;
+  } = {},
+): WorkspaceSurfaceDescriptor {
   return {
     id: `workspace:surface:files:${worktreeId}`,
     type: 'workspace',
@@ -338,6 +386,9 @@ export function createFilesSurface(worktreeId: string): WorkspaceSurfaceDescript
     objectRef: { kind: 'workspace-destination', id: 'surface:files' },
     ownerStateRef: { owner: REAL_SURFACE_OWNERS.files, key: worktreeId },
     resultTargetRef: { owner: REAL_SURFACE_OWNERS.files, key: worktreeId },
+    ...(options.reveal ? { filesReveal: options.reveal } : {}),
+    ...(options.navigationOrigin ? { navigationOrigin: options.navigationOrigin } : {}),
+    ...(options.repoRoot ? { filesRepoRoot: options.repoRoot } : {}),
     capabilities: SURFACE_CAPABILITIES,
   };
 }
@@ -563,7 +614,9 @@ function resolveEntrustedWorkReturnTarget(
   return { threadId: decoded[0] === 'global' ? null : decoded[0], itemRef: decoded[1] };
 }
 
-export function resolveFilesTarget(surface: WorkspaceSurfaceDescriptor): { worktreeId: string } | null {
+export function resolveFilesTarget(
+  surface: WorkspaceSurfaceDescriptor,
+): { worktreeId: string; repoRoot?: string } | null {
   if (
     surface.renderer !== 'workspace-destination' ||
     surface.objectRef.kind !== 'workspace-destination' ||
@@ -576,7 +629,10 @@ export function resolveFilesTarget(surface: WorkspaceSurfaceDescriptor): { workt
   ) {
     return null;
   }
-  return { worktreeId: surface.ownerStateRef.key };
+  return {
+    worktreeId: surface.ownerStateRef.key,
+    ...(surface.filesRepoRoot ? { repoRoot: surface.filesRepoRoot } : {}),
+  };
 }
 
 export function resolveChangesTarget(
@@ -645,6 +701,11 @@ export function resolveWorkspaceDestinationTarget(
   return { destinationRef: target[1], threadId: target[0] === 'global' ? null : target[0] };
 }
 
+/** The voice destination surface (host:voice), keyed on the shared Home destination identity (audit row44). */
+export function isVoiceDestinationSurface(surface: WorkspaceSurfaceDescriptor): boolean {
+  return resolveWorkspaceDestinationTarget(surface)?.destinationRef === 'host:voice';
+}
+
 function decodeStringPair(key: string): [string, string] | null {
   try {
     const decoded: unknown = JSON.parse(decodeURIComponent(key));
@@ -707,7 +768,7 @@ function decodeFileTarget(key: string): { worktreeId: string; path: string; scro
 }
 
 export function resolveFileTarget(
-  surface: WorkspaceSurfaceDescriptor,
+  surface: Pick<WorkspaceSurfaceDescriptor, 'objectRef' | 'ownerStateRef' | 'resultTargetRef'>,
 ): { worktreeId: string; path: string; scrollToLine: number | null } | null {
   if (
     surface.objectRef.kind !== 'file' ||
@@ -717,7 +778,12 @@ export function resolveFileTarget(
     return null;
   }
   const target = decodeFileTarget(surface.resultTargetRef.key);
-  if (!target || target.worktreeId !== surface.ownerStateRef.key || surface.objectRef.id !== target.worktreeId) {
+  if (
+    !target ||
+    target.worktreeId !== surface.ownerStateRef.key ||
+    (surface.objectRef.id !== target.worktreeId &&
+      !matchesFileObjectIdentity(surface.objectRef.id, target.worktreeId, target.path))
+  ) {
     return null;
   }
   return target;

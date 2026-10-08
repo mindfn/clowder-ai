@@ -15,6 +15,8 @@ code_anchors:
   - packages/web/src/components/ThreadSidebar/LabelFilterBar.tsx
   - packages/web/src/components/ThreadSidebar/ThreadLabelPicker.tsx
   - packages/web/src/components/ThreadSidebar/thread-navigation.ts
+  - packages/web/src/components/message-search/useMessageSearchHost.ts
+  - packages/web/src/components/message-search/message-reading-session.ts
 doc_anchors:
   - docs/features/F057-thread-discoverability.md
   - docs/features/F095-sidebar-collapse-memory.md
@@ -28,6 +30,7 @@ cited_by:
   - {feature: F193, date: 2026-06-03, delta: "Phase E extends feat_index with owner catId and feature-thread suggested cross-post actions"}
   - {feature: F277, date: 2026-07-26, delta: "Thread attention projection + Sidebar/Thread relation-aware navigation"}
   - {feature: F297, date: 2026-08-17, delta: "Sidebar rows consume one authoritative full snapshot; edge events only invalidate, IndexedDB is bootstrap-only, and optimistic thread commands stay outside the canonical store"}
+  - {feature: F322-C, date: 2026-10-02, delta: "message-result navigation consumes the original route and reading owners; durable session metadata stores immutable coordinates and opaque origin refs without replacing message or scroll authority"}
 ---
 
 # Thread Navigation / Metadata
@@ -51,6 +54,7 @@ This cell is about how a user finds, groups, and revisits threads. It is not the
 - Reuse `IThreadStore` thread metadata methods and `ILabelStore` for label CRUD instead of creating parallel label/category stores.
 - Route label changes through `/api/labels` and `/api/threads/:id/labels` so Redis persistence and frontend stores stay aligned.
 - Extend `ThreadSidebar`, `LabelFilterBar`, `ThreadLabelPicker`, and `thread-navigation` helpers for user-facing navigation behavior.
+- Message search navigation uses the same URL route writer and foreground reading port. Result indices advance only on matching owner receipts; an interrupted or unavailable target preserves the return action. Stored session coordinates and opaque reading references have no expiry, carry no message bodies or visibility grants, and never replay navigation automatically after reload. A late old-session write cannot replace a newer explicit active-session choice.
 - Keep new organization semantics explicit: pin = attention, label = category, favorite = durable interest, filter = current view.
 - Compose active execution truth from the F295/F194 `dispatch` service. This cell may join that projection into Sidebar rows, but must not duplicate invocation lifecycle classification or cancel ownership.
 - Keep composer-owned `hasDraft` as a named local decoration adapter. It may decorate a row but must not enter or persist the canonical Sidebar snapshot.

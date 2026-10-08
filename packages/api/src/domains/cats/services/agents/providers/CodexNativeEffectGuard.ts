@@ -4,6 +4,7 @@ import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 export const CODEX_NATIVE_GUARD_HOOK_KEY = '/<session-flags>/config.toml:pre_tool_use:0:0';
+export const CODEX_NATIVE_SHELL_GUARD_HOOK_KEY = '/<session-flags>/config.toml:native_shell_safety_check:0:0';
 const MATCHER = 'Bash|Edit|Write';
 const TIMEOUT_SECONDS = 5;
 const STATUS_MESSAGE = 'Checking protected effects…';
@@ -11,16 +12,31 @@ const STATUS_MESSAGE = 'Checking protected effects…';
 export function buildCodexNativeEffectGuardArgs(options?: {
   readonly repoRoot?: string;
   readonly nodeExecutable?: string;
+  /** Only selected after the AgentService verifies the reviewed executor artifact. */
+  readonly nativeShellSafetyCheck?: boolean;
 }): string[] {
   const repoRoot = options?.repoRoot ?? resolveRepositoryRoot();
   const scriptPath = join(repoRoot, 'scripts', 'native-effect-target-guard.mjs');
   if (!existsSync(scriptPath)) throw new Error(`native_effect_guard_missing:${scriptPath}`);
   const command = `${shellQuote(options?.nodeExecutable ?? process.execPath)} ${shellQuote(realpathSync(scriptPath))}`;
-  const trustedHash = hookHash(command);
+  const groups = options?.nativeShellSafetyCheck
+    ? [
+        { event: 'PreToolUse', key: 'pre_tool_use', matcher: 'Edit|Write' },
+        { event: 'NativeShellSafetyCheck', key: 'native_shell_safety_check', matcher: '^Bash$' },
+      ]
+    : [{ event: 'PreToolUse', key: 'pre_tool_use', matcher: MATCHER }];
   const hookConfig = [
     'hooks={',
-    `PreToolUse=[{matcher=${tomlString(MATCHER)},hooks=[{type="command",command=${tomlString(command)},timeout=${TIMEOUT_SECONDS},statusMessage=${tomlString(STATUS_MESSAGE)}}]}],`,
-    `state={${tomlString(CODEX_NATIVE_GUARD_HOOK_KEY)}={enabled=true,trusted_hash=${tomlString(trustedHash)}}}`,
+    ...groups.map(
+      ({ event, matcher }) =>
+        `${event}=[{matcher=${tomlString(matcher)},hooks=[{type="command",command=${tomlString(command)},timeout=${TIMEOUT_SECONDS},statusMessage=${tomlString(STATUS_MESSAGE)}}]}],`,
+    ),
+    `state={${groups
+      .map(
+        ({ key, matcher }) =>
+          `${tomlString(`/<session-flags>/config.toml:${key}:0:0`)}={enabled=true,trusted_hash=${tomlString(hookHash(command, key, matcher))}}`,
+      )
+      .join(',')}}`,
     '}',
   ].join('');
   return ['--config', 'features.hooks=true', '--config', hookConfig];
@@ -30,9 +46,9 @@ export function nativeEffectGuardHookHash(command: string): string {
   return hookHash(command);
 }
 
-function hookHash(command: string): string {
+function hookHash(command: string, eventName = 'pre_tool_use', matcher = MATCHER): string {
   const identity = {
-    event_name: 'pre_tool_use',
+    event_name: eventName,
     hooks: [
       {
         async: false,
@@ -42,7 +58,7 @@ function hookHash(command: string): string {
         type: 'command',
       },
     ],
-    matcher: MATCHER,
+    matcher,
   };
   return `sha256:${createHash('sha256')
     .update(JSON.stringify(canonicalJson(identity)))

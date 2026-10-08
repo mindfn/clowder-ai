@@ -9,12 +9,13 @@ const HEIGHT_FEEDBACK_EPSILON = 2;
 export type WidgetHeightMessageResult =
   | { status: 'ignored' }
   | { status: 'invalid' }
-  | { status: 'pending'; cause: WidgetLayoutInvalidation }
+  | { status: 'pending'; cause: WidgetLayoutInvalidation; preserveViewport: boolean; inputOccurredAt?: number }
   | {
       status: 'valid';
       sample: WidgetHeightSample;
       proofRequestId: string | null;
       preserveViewport: boolean;
+      inputOccurredAt?: number;
     };
 
 export type WidgetLayoutInvalidation = 'content' | 'viewport';
@@ -178,6 +179,25 @@ export function reduceWidgetLayout(
   };
 }
 
+function readPendingWidgetHeightMessage(message: Record<string, unknown>): WidgetHeightMessageResult {
+  if (message.cause !== 'content' && message.cause !== 'viewport') return { status: 'ignored' };
+  const preserveViewport = message.preserveViewport ?? false;
+  if (typeof preserveViewport !== 'boolean') return { status: 'invalid' };
+  const inputOccurredAt = readWidgetInputTime(message.inputOccurredAt);
+  if (inputOccurredAt === null) return { status: 'invalid' };
+  return {
+    status: 'pending',
+    cause: message.cause,
+    preserveViewport: message.cause === 'content' && preserveViewport,
+    ...(message.cause === 'content' && preserveViewport && inputOccurredAt !== undefined ? { inputOccurredAt } : {}),
+  };
+}
+
+function readWidgetInputTime(at: unknown): number | null | undefined {
+  if (at === undefined) return undefined;
+  return typeof at === 'number' && Number.isFinite(at) && at > 0 ? at : null;
+}
+
 export function readWidgetHeightMessage(
   event: MessageEvent<unknown>,
   expected: { source: Window | null; blockId: string; instanceId: string },
@@ -195,14 +215,15 @@ export function readWidgetHeightMessage(
     return { status: 'ignored' };
   }
   if (message.phase === 'pending') {
-    if (message.cause !== 'content' && message.cause !== 'viewport') return { status: 'ignored' };
-    return { status: 'pending', cause: message.cause };
+    return readPendingWidgetHeightMessage(message);
   }
   if (message.phase !== 'measured') return { status: 'ignored' };
 
   const proofRequestId = message.proofRequestId ?? null;
   if (proofRequestId !== null && !isValidWidgetProofRequestId(proofRequestId)) return { status: 'invalid' };
   const preserveViewport = message.preserveViewport ?? false;
+  const inputOccurredAt = readWidgetInputTime(message.inputOccurredAt);
+  if (inputOccurredAt === null) return { status: 'invalid' };
 
   const values = [
     message.contentHeight,
@@ -222,6 +243,7 @@ export function readWidgetHeightMessage(
   }
   return {
     status: 'valid',
+    ...(preserveViewport && inputOccurredAt !== undefined ? { inputOccurredAt } : {}),
     proofRequestId,
     preserveViewport,
     sample: {

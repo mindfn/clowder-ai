@@ -85,11 +85,7 @@ export interface AcpInitializeResult {
   };
   agentCapabilities: {
     loadSession: boolean;
-    promptCapabilities?: {
-      image?: boolean;
-      audio?: boolean;
-      embeddedContext?: boolean;
-    };
+    promptCapabilities?: AcpPromptCapabilities;
     mcpCapabilities?: {
       http?: boolean;
       sse?: boolean;
@@ -102,6 +98,12 @@ export interface AcpAuthMethod {
   name: string;
   description: string;
   _meta?: Record<string, unknown>;
+}
+
+export interface AcpPromptCapabilities {
+  image?: boolean;
+  audio?: boolean;
+  embeddedContext?: boolean;
 }
 
 // ─── Session ───────────────────────────────────────────────────

@@ -13,6 +13,7 @@ import {
   captureCandidateSchema,
   interactionEventSchema,
   materializationAuthoritySchema,
+  ownerMemoryActionEvidenceSchema,
   PERSON_MEMORY_LIMITS,
   personClaimVersionSchema,
   personIdentitySchema,
@@ -587,7 +588,7 @@ describe('F276 shared person-memory contract', () => {
     );
   });
 
-  it('models all three materialization authorities without accepting an unanchored write', () => {
+  it('models the materialization authorities without accepting an unanchored write', () => {
     assert.equal(materializationAuthoritySchema.safeParse(cardApproval).success, true);
     assert.equal(
       materializationAuthoritySchema.safeParse({
@@ -614,6 +615,70 @@ describe('F276 shared person-memory contract', () => {
         authorizedAt: 13,
       }).success,
       false,
+    );
+  });
+
+  it('admits server-issued owner action evidence only on its exact action target and provenance lane', () => {
+    const digest = `sha256:${'a'.repeat(64)}`;
+    const evidence = {
+      kind: 'owner_memory_action' as const,
+      actionId: 'owner_action_contract_1',
+      action: 'correct_claim' as const,
+      ownerUserId: 'owner-1',
+      sessionBindingDigest: digest,
+      csrfVerificationDigest: digest,
+      target: {
+        personId: 'person_1',
+        itemKind: 'claim' as const,
+        itemId: 'person_claim_1',
+        expectedRevision: digest,
+      },
+      requestId: 'owner_action_contract_request_123456789',
+      requestDigest: digest,
+      statementDigest: digest,
+      sourceState: 'live' as const,
+      issuedAt: 20,
+      evidenceDigest: digest,
+    };
+    assert.equal(ownerMemoryActionEvidenceSchema.safeParse(evidence).success, true);
+    assert.equal(
+      ownerMemoryActionEvidenceSchema.safeParse({
+        ...evidence,
+        target: { ...evidence.target, itemKind: 'event' },
+      }).success,
+      false,
+    );
+    assert.equal(
+      ownerMemoryActionEvidenceSchema.safeParse({ ...evidence, sourceState: 'unavailable_erasure_only' }).success,
+      false,
+    );
+    const ownerClaim = {
+      claimId: 'person_claim_owner_action_contract',
+      personId: 'person_1',
+      ownerUserId: 'owner-1',
+      payload: reportedFact,
+      status: 'current' as const,
+      recordedAt: 20,
+      sourceRefs: [],
+      materializedBy: evidence,
+      supersedesClaimId: 'person_claim_1',
+    };
+    assert.equal(personClaimVersionSchema.safeParse(ownerClaim).success, true);
+    assert.equal(personClaimVersionSchema.safeParse({ ...ownerClaim, sourceRefs: [sourceMessageRef] }).success, false);
+    assert.equal(
+      interactionEventSchema.safeParse({
+        eventId: 'person_event_superseded_without_source',
+        relationshipId: 'relationship_1',
+        ownerUserId: 'owner-1',
+        recordedAt: 20,
+        eventKind: 'meeting',
+        headline: '历史事件不能在 superseded 后丢失来源',
+        sourceRefs: [],
+        materializedBy: cardApproval,
+        status: 'superseded',
+      }).success,
+      false,
+      'superseding an event must not make message provenance optional',
     );
   });
 
@@ -741,6 +806,7 @@ describe('F276 shared person-memory contract', () => {
           claimId: 'person_claim_1',
           text: '终端用户计算开发部 21 级',
           kind: 'reported_fact',
+          provenanceKind: 'message',
           provenanceRefs: [sourceMessageRef],
         },
       ],
@@ -757,6 +823,30 @@ describe('F276 shared person-memory contract', () => {
       indexable: false,
     };
     assert.equal(relationshipCardSchema.safeParse(base).success, true);
+    assert.equal(
+      relationshipCardSchema.safeParse({
+        ...base,
+        facts: [
+          {
+            ...base.facts[0],
+            provenanceKind: 'owner_memory_action',
+            provenanceRefs: [],
+          },
+        ],
+      }).success,
+      true,
+      'an owner action is first-class provenance without pretending to be a message source',
+    );
+    for (const fact of [
+      { ...base.facts[0], provenanceKind: 'message', provenanceRefs: [] },
+      { ...base.facts[0], provenanceKind: 'owner_memory_action', provenanceRefs: [sourceMessageRef] },
+    ]) {
+      assert.equal(
+        relationshipCardSchema.safeParse({ ...base, facts: [fact] }).success,
+        false,
+        'provenance kind and message coordinates must agree',
+      );
+    }
     assert.equal(
       relationshipCardSchema.safeParse({
         ...base,

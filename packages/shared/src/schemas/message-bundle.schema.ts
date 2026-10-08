@@ -22,6 +22,9 @@ export const MESSAGE_BUNDLE_CLI_QUOTE_DIGEST_DOMAIN = 'cat-cafe:message-bundle-c
 /** v2 anchors stdout selected from the Markdown-rendered CLI surface in its readable-text plane. */
 export const MESSAGE_BUNDLE_CLI_QUOTE_PROJECTION_VERSION_V2 = 2 as const;
 export const MESSAGE_BUNDLE_CLI_QUOTE_DIGEST_DOMAIN_V2 = 'cat-cafe:message-bundle-cli-quote:v2\0';
+/** v3 binds new reply-record tool labels/details to keyed/FIFO result pairing; v1 carriers keep their historical meaning. */
+export const MESSAGE_BUNDLE_CLI_QUOTE_PROJECTION_VERSION_V3 = 3 as const;
+export const MESSAGE_BUNDLE_CLI_QUOTE_DIGEST_DOMAIN_V3 = 'cat-cafe:message-bundle-cli-quote:v3\0';
 export const MESSAGE_BUNDLE_RICH_BLOCK_PROJECTION_VERSION = 1 as const;
 export const MESSAGE_BUNDLE_RICH_BLOCK_DIGEST_DOMAIN = 'cat-cafe:message-bundle-rich-block:v1\0';
 
@@ -102,6 +105,7 @@ export const MessageBundleCliQuoteItemV1Schema = z
     sourceProjectionVersion: z.union([
       z.literal(MESSAGE_BUNDLE_CLI_QUOTE_PROJECTION_VERSION),
       z.literal(MESSAGE_BUNDLE_CLI_QUOTE_PROJECTION_VERSION_V2),
+      z.literal(MESSAGE_BUNDLE_CLI_QUOTE_PROJECTION_VERSION_V3),
     ]),
     sourceProjectionSha256,
     comment: z.string().trim().min(1).max(CONTEXT_ATTACHMENT_COMMENT_MAX_LENGTH).optional(),
@@ -117,6 +121,17 @@ export const MessageBundleCliQuoteItemV1Schema = z
         code: z.ZodIssueCode.custom,
         path: ['sourceProjectionVersion'],
         message: 'CLI readable-text projection is only valid for Markdown-rendered stdout',
+      });
+    }
+    if (
+      quote.sourceProjectionVersion === MESSAGE_BUNDLE_CLI_QUOTE_PROJECTION_VERSION_V3 &&
+      !quote.segmentId.startsWith('tool-label:') &&
+      !quote.segmentId.startsWith('tool-detail:')
+    ) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ['sourceProjectionVersion'],
+        message: 'CLI keyed tool projection is only valid for reply-record tool segments',
       });
     }
     if (quote.selectionEnd <= quote.selectionStart) {
@@ -199,8 +214,13 @@ export const MessageBundleSelectionCliQuoteItemSchema = z
     text: z.string().min(1).max(CONTEXT_ATTACHMENT_QUOTE_MAX_LENGTH),
     selectionStart: characterOffset,
     selectionEnd: characterOffset,
-    /** Omitted means the historical raw-text v1 plane. Markdown-rendered stdout declares v2. */
-    sourceProjectionVersion: z.literal(MESSAGE_BUNDLE_CLI_QUOTE_PROJECTION_VERSION_V2).optional(),
+    /** Omitted means historical raw-text v1; Markdown stdout declares v2 and the new reply record declares v3. */
+    sourceProjectionVersion: z
+      .union([
+        z.literal(MESSAGE_BUNDLE_CLI_QUOTE_PROJECTION_VERSION_V2),
+        z.literal(MESSAGE_BUNDLE_CLI_QUOTE_PROJECTION_VERSION_V3),
+      ])
+      .optional(),
     renderedOccurrences: z.number().int().min(1).max(10_000).optional(),
     comment: z.string().trim().min(1).max(CONTEXT_ATTACHMENT_COMMENT_MAX_LENGTH).optional(),
   })
@@ -215,6 +235,17 @@ export const MessageBundleSelectionCliQuoteItemSchema = z
         code: z.ZodIssueCode.custom,
         path: ['sourceProjectionVersion'],
         message: 'CLI readable-text projection is only valid for Markdown-rendered stdout',
+      });
+    }
+    if (
+      quote.sourceProjectionVersion === MESSAGE_BUNDLE_CLI_QUOTE_PROJECTION_VERSION_V3 &&
+      !quote.segmentId.startsWith('tool-label:') &&
+      !quote.segmentId.startsWith('tool-detail:')
+    ) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ['sourceProjectionVersion'],
+        message: 'CLI keyed tool projection is only valid for reply-record tool segments',
       });
     }
     if (quote.selectionEnd <= quote.selectionStart) {

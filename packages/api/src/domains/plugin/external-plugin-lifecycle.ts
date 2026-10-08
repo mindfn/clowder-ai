@@ -1,3 +1,4 @@
+import { hasRetainedDesktopLoss } from './desktop-window-runtime/desktop-loss.js';
 import {
   logPluginStartFailure,
   type PluginStartPhase,
@@ -27,6 +28,13 @@ export interface ExternalPluginRestartRecovery {
   readonly resumeRequested: number;
 }
 
+export interface ExternalPluginRestartRecoveryOptions {
+  /** Holds an instance's resume until the returned gate settles; undefined resumes it
+   * at once. A held instance takes no runtime authority while waiting, and a gate that
+   * never opens or fails leaves its enabled intent for the next boot. */
+  readonly resumeGate?: (instance: PluginInstanceRecord) => PromiseLike<unknown> | undefined;
+}
+
 function currentInstance(transaction: PluginInventoryTransaction, instanceId: string): PluginInstanceRecord {
   const instance = transaction.instances.get(instanceId);
   if (!instance) throw new PluginLifecycleError('INSTANCE_NOT_FOUND', `unknown plugin instance ${instanceId}`);
@@ -49,9 +57,19 @@ function assertRevision(instance: PluginInstanceRecord, expectedRevision: number
 export class ExternalPluginLifecycleService {
   private readonly queue = new InstanceOperationQueue();
   private readonly now: () => number;
+  private restartRecoveryStopped = false;
+  private readonly pendingRestartResumes = new Set<Promise<void>>();
 
   constructor(private readonly options: ExternalPluginLifecycleServiceOptions) {
     this.now = options.now ?? Date.now;
+  }
+
+  cancelRestartRecovery(): void {
+    this.restartRecoveryStopped = true;
+  }
+
+  async drainRestartRecovery(): Promise<void> {
+    await Promise.all([...this.pendingRestartResumes]);
   }
   prepare(instanceId: string, expectedRevision: number): Promise<PluginInstanceRecord> {
     return this.queue.run(instanceId, async () => {
@@ -90,9 +108,11 @@ export class ExternalPluginLifecycleService {
     return this.queue.run(instanceId, async () => {
       const current = await this.readCurrent(instanceId);
       assertRevision(current, expectedRevision);
+      const retainedCompanionLoss = current.pluginId === 'official.companion' && hasRetainedDesktopLoss(current);
       if (
         current.activationState !== 'error' &&
-        !(current.activationState === 'enabled' && current.runtimeState === 'crashed')
+        !(current.activationState === 'enabled' && current.runtimeState === 'crashed') &&
+        !retainedCompanionLoss
       ) {
         throw new PluginLifecycleError('INVALID_TRANSITION', 'repair is not valid from the current plugin state');
       }
@@ -134,6 +154,7 @@ export class ExternalPluginLifecycleService {
       if (!shouldResume && !['stopped', 'crashed'].includes(initial.runtimeState)) {
         throw new PluginLifecycleError('INVALID_TRANSITION', 'dormant plugin maintenance requires a stopped runtime');
       }
+      await input.preflight?.();
       let stopped = initial;
       if (!['stopped', 'crashed'].includes(initial.runtimeState)) {
         await this.stopOrFail(input.instanceId, initial.lifecycleRevision, input.stopReason);
@@ -177,7 +198,10 @@ export class ExternalPluginLifecycleService {
     });
   }
 
-  async recoverAfterRestart(): Promise<ExternalPluginRestartRecovery> {
+  async recoverAfterRestart(
+    options: ExternalPluginRestartRecoveryOptions = {},
+  ): Promise<ExternalPluginRestartRecovery> {
+    if (this.restartRecoveryStopped) return { recoveredInstances: 0, resumeRequested: 0 };
     const recovery = await this.options.store.transaction((transaction) => {
       let recoveredInstances = 0;
       for (const instance of transaction.instances.list()) {
@@ -186,7 +210,7 @@ export class ExternalPluginLifecycleService {
         transaction.instances.put(recovered);
         recoveredInstances += 1;
       }
-      const resumableInstanceIds = transaction.instances
+      const resumable = transaction.instances
         .list()
         .filter(
           (instance) =>
@@ -195,16 +219,23 @@ export class ExternalPluginLifecycleService {
             instance.configReadiness === 'ready' &&
             instance.activationState === 'enabled' &&
             instance.runtimeState === 'stopped',
-        )
-        .map((instance) => instance.pluginInstanceId);
-      return { recoveredInstances, resumableInstanceIds };
+        );
+      return { recoveredInstances, resumable };
     });
-    for (const instanceId of recovery.resumableInstanceIds) {
-      void this.resumeAfterRestart(instanceId).catch(() => undefined);
+    for (const instance of recovery.resumable) {
+      const resume = () => {
+        if (this.restartRecoveryStopped) return;
+        const pending = this.resumeAfterRestart(instance.pluginInstanceId).catch(() => undefined);
+        this.pendingRestartResumes.add(pending);
+        void pending.then(() => this.pendingRestartResumes.delete(pending));
+      };
+      const gate = options.resumeGate?.(instance);
+      if (gate === undefined) void resume();
+      else void Promise.resolve(gate).then(resume, () => undefined);
     }
     return {
       recoveredInstances: recovery.recoveredInstances,
-      resumeRequested: recovery.resumableInstanceIds.length,
+      resumeRequested: recovery.resumable.length,
     };
   }
 
@@ -212,6 +243,7 @@ export class ExternalPluginLifecycleService {
     return this.queue.run(instanceId, async () => {
       const current = await this.readCurrent(instanceId);
       if (
+        this.restartRecoveryStopped ||
         current.configReadiness !== 'ready' ||
         current.activationState !== 'enabled' ||
         (current.runtimeState !== 'stopped' && current.runtimeState !== 'crashed')
@@ -223,25 +255,17 @@ export class ExternalPluginLifecycleService {
       } catch (error) {
         const failedAt = this.now();
         this.reportStartFailure(current, 'restart_resume', error, failedAt);
-        await this.projectResumeFailure(instanceId, startFailureRecord(error, failedAt, current.packageDigest));
+        if (!this.restartRecoveryStopped) await this.projectResumeFailure(instanceId, startFailureRecord(error, failedAt, current.packageDigest));
       }
     });
   }
 
-  /** Observing a failure must never change what the lifecycle records or reports. */
-  private reportStartFailure(
-    instance: PluginInstanceRecord,
-    phase: PluginStartPhase,
-    error: unknown,
-    at: number,
-  ): void {
+  private reportStartFailure(instance: PluginInstanceRecord, phase: PluginStartPhase, error: unknown, at: number): void {
     try {
       const { pluginId, pluginInstanceId } = instance;
       const report = pluginStartFailureReport({ pluginId, pluginInstanceId, phase, occurredAt: at, error });
       (this.options.onStartFailure ?? logPluginStartFailure)(report);
-    } catch {
-      // A failing observer loses one log line, never the failure itself.
-    }
+    } catch { /* Observers cannot change lifecycle state. */ }
   }
 
   private projectResumeFailure(instanceId: string, failure: ReturnType<typeof startFailureRecord>): Promise<void> {

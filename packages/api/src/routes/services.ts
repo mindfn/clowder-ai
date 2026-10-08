@@ -105,30 +105,38 @@ export const servicesRoutes: FastifyPluginAsync<ServicesRouteOptions> = async (a
     return readFileSync(htmlPath, 'utf-8');
   });
 
-  app.get<{ Params: { id: string } }>('/api/services/:id/install-preview', async (request, reply) => {
-    if (!requireIdentity(request, reply)) return { error: 'Authentication required' };
-    const { id } = request.params;
-    const service = getServiceManifest(id);
-    if (!service) {
-      reply.status(404);
-      return { error: `Service "${id}" not found` };
-    }
-    const profile = getEnvironmentProfile(true);
-    const recommendation = buildRecommendation(id, profile);
+  app.get<{ Params: { id: string }; Querystring: { refresh?: string; locale?: string } }>(
+    '/api/services/:id/install-preview',
+    async (request, reply) => {
+      if (!requireIdentity(request, reply)) return { error: 'Authentication required' };
+      const { id } = request.params;
+      const { locale } = request.query;
+      if (locale !== undefined && locale !== 'zh' && locale !== 'en') {
+        reply.status(400);
+        return { error: 'locale must be zh or en' };
+      }
+      const service = getServiceManifest(id);
+      if (!service) {
+        reply.status(404);
+        return { error: `Service "${id}" not found` };
+      }
+      const profile = await getEnvironmentProfile(request.query.refresh === 'true');
+      const recommendation = buildRecommendation(id, profile, locale);
 
-    // Suggest a concrete port for the modal to pre-fill. If neither
-    // services.json nor *_PORT env pins one, scan from the manifest default
-    // so the eventual install persists a findable port instead of leaving
-    // "auto" as transient UI state.
-    const suggestedPort = await resolveSuggestedServicePort({
-      service,
-      config: getEffectiveConfig(service),
-      env: options.env ?? process.env,
-      lookupPidsByPort,
-    });
+      // Suggest a concrete port for the modal to pre-fill. If neither
+      // services.json nor *_PORT env pins one, scan from the manifest default
+      // so the eventual install persists a findable port instead of leaving
+      // "auto" as transient UI state.
+      const suggestedPort = await resolveSuggestedServicePort({
+        service,
+        config: getEffectiveConfig(service),
+        env: options.env ?? process.env,
+        lookupPidsByPort,
+      });
 
-    return { profile, recommendation, suggestedPort };
-  });
+      return { profile, recommendation, suggestedPort };
+    },
+  );
 
   app.get<{ Params: { id: string } }>('/api/services/:id/health', async (request, reply) => {
     if (!requireIdentity(request, reply)) return { error: 'Authentication required' };

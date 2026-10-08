@@ -14,7 +14,8 @@ interface LiveSelectionAnnotationActionProps<T extends LiveSelectionTarget> {
   resetKey: string | null;
   positionMode: 'fixed' | 'absolute';
   actionTestId: string;
-  onSave: (action: T, comment: string) => void;
+  /** Returning `false` refuses the save: the card, the words and the selection stay as they were. */
+  onSave: (action: T, comment: string) => void | boolean;
   onForward?: (action: T, comment: string) => void;
   canForward?: (action: T) => boolean;
   triggerContent?: ReactNode;

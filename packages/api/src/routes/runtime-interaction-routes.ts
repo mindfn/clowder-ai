@@ -16,11 +16,18 @@ const cardRefSchema = z
     threadId: z.string().trim().min(1),
     messageId: z.string().trim().min(1),
     blockId: z.string().trim().min(1),
+    blockDigest: z
+      .string()
+      .regex(/^[a-f0-9]{64}$/)
+      .optional(),
+    publishedAt: z.number().int().nonnegative().optional(),
   })
   .strict();
 const respondBodySchema = z
   .object({
     cardRef: cardRefSchema,
+    expectedRevision: z.number().int().positive().optional(),
+    operationId: z.string().trim().min(1).max(200).optional(),
     response: z.unknown(),
   })
   .strict();
@@ -63,6 +70,8 @@ export const runtimeInteractionRoutes: FastifyPluginAsync<RuntimeInteractionRout
         interactionId: params.data.interactionId,
         ownerUserId,
         cardRef: body.data.cardRef,
+        ...(body.data.expectedRevision !== undefined ? { expectedRevision: body.data.expectedRevision } : {}),
+        ...(body.data.operationId ? { operationId: body.data.operationId } : {}),
         response: body.data.response,
       });
       return { interaction };

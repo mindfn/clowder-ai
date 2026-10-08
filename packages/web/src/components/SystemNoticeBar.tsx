@@ -3,6 +3,7 @@
 import { type CloudBridgeOutboundReceiptV1, isCloudBridgeOutboundReceiptV1 } from '@cat-cafe/shared';
 import { getCachedCats } from '@/hooks/useCatData';
 import type { ChatMessage as ChatMessageType } from '@/stores/chatStore';
+import { CloudDotReceipt } from './CloudDotReceipt';
 import { HubIcon } from './hub-icons';
 import { MarkdownContent } from './MarkdownContent';
 import { ReplyPill } from './ReplyPill';
@@ -104,7 +105,11 @@ export function SystemNoticeBar({ message }: SystemNoticeBarProps) {
             </span>
             <div className="min-w-0 flex-1 text-sm leading-6">
               <MarkdownContent content={message.content} />
-              {outboundReceipt && <CloudOutboundAudit message={message} receipt={outboundReceipt} />}
+              {outboundReceipt?.targetCatId === 'gpt-dot' ? (
+                <CloudDotReceipt eventId={outboundReceipt.hostMessageId} />
+              ) : (
+                outboundReceipt && <CloudOutboundAudit message={message} receipt={outboundReceipt} />
+              )}
             </div>
           </div>
         </div>

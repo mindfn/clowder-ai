@@ -2,6 +2,7 @@
 
 import type { RedisClient } from '@cat-cafe/shared/utils';
 import type { CallerTraceContext } from '../../../../../infrastructure/telemetry/genai-semconv.js';
+import { AuthInvocationKeys } from './auth-invocation-keys.js';
 import type {
   AuthInvocationInput,
   AuthInvocationMigrationResult,
@@ -23,9 +24,9 @@ import {
 } from './RedisAuthInvocationLua.js';
 import { authRecordFromRedisHash, isAuthTerminalState, parseRedisHashArray } from './RedisAuthInvocationRecord.js';
 
-const KEY_INV = (id: string) => `auth:inv:${id}`;
+const KEY_INV = AuthInvocationKeys.record;
 const KEY_MSGS = (id: string) => `auth:inv:${id}:msgs`;
-const KEY_LATEST = (threadId: string, catId: string) => `auth:latest:${threadId}:${catId}`;
+const KEY_LATEST = AuthInvocationKeys.latest;
 const KEY_REFRESH_COOLDOWN = (id: string) => `auth:refresh-cooldown:${id}`;
 const DEFAULT_TOMBSTONE_GC_TTL_MS = 30 * 24 * 60 * 60 * 1000;
 const MAX_CLIENT_MESSAGE_IDS = 1000;
@@ -150,6 +151,8 @@ export class RedisAuthInvocationBackend implements IAuthInvocationBackend {
     const records: InvocationRecord[] = [];
     for (const key of await this.scanInvocationKeys()) {
       const raw = await this.redis.hgetall(key);
+      // SCAN is not a snapshot: terminal tombstones may expire before HGETALL.
+      if (Object.keys(raw).length === 0) continue;
       const record = authRecordFromRedisHash(raw, new Set<string>());
       if (!record) throw new Error(`corrupt callback auth record during startup scan: ${key}`);
       if (record.state === 'active') records.push(record);
@@ -210,6 +213,12 @@ export class RedisAuthInvocationBackend implements IAuthInvocationBackend {
     const key = KEY_INV(invocationId);
     if ((await this.redis.hget(key, 'state')) !== 'active') return;
     await this.redis.hset(key, 'traceId', ctx.traceId, 'spanId', ctx.spanId, 'traceFlags', String(ctx.traceFlags));
+  }
+
+  async setExpectedCompactionCarrier(invocationId: string, identity: string): Promise<void> {
+    const key = KEY_INV(invocationId);
+    if ((await this.redis.hget(key, 'state')) !== 'active') return;
+    await this.redis.hset(key, 'expectedCompactionCarrier', identity);
   }
 
   private async verifyWithLua(
@@ -275,7 +284,10 @@ export class RedisAuthInvocationBackend implements IAuthInvocationBackend {
   private async loadMigrationRecords(keys: string[]): Promise<InvocationRecord[]> {
     const records: InvocationRecord[] = [];
     for (const key of keys) {
-      const record = authRecordFromRedisHash(await this.redis.hgetall(key), new Set<string>());
+      const raw = await this.redis.hgetall(key);
+      // Missing after SCAN is normal GC, not a corrupt principal to admit.
+      if (Object.keys(raw).length === 0) continue;
+      const record = authRecordFromRedisHash(raw, new Set<string>());
       if (!record) throw new Error(`corrupt callback auth record during migration: ${key}`);
       records.push(record);
     }

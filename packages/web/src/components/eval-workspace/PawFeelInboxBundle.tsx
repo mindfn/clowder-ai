@@ -2,28 +2,9 @@
 
 import type { PawFeelReviewBundle } from '@cat-cafe/shared';
 import { useMemo, useState } from 'react';
+import { usePawFeelCopy, usePawFeelLanguage } from '../paw-feel/paw-feel.shell-copy';
 import { pawFeelContinuationLabel } from '../paw-feel/paw-feel-issue-presentation';
 import { PawFeelInboxRow } from './PawFeelInboxRow';
-
-const BASIS_LABELS: Record<PawFeelReviewBundle['basis'], string> = {
-  message: '同一消息',
-  turn_invocation: '同一轮调用',
-  legacy_invocation: '历史调用',
-  single_signal: '单条报告',
-};
-
-const STATE_LABELS: Record<string, string> = {
-  new: '未看',
-  seen: '已看',
-  route_pending: '等待接单',
-  routed: '已移交',
-  closed: '已关闭',
-  duplicate: '重复',
-  no_action: '不修',
-  fix: '已确认要修',
-  signature_waiting: '等待独立签署',
-  blocked: '显式阻塞',
-};
 
 const RESPONSIBILITY_LABELS: Record<PawFeelReviewBundle['responsibility']['state'], string> = {
   unreviewed: 'unreviewed',
@@ -34,6 +15,10 @@ const RESPONSIBILITY_LABELS: Record<PawFeelReviewBundle['responsibility']['state
 };
 
 export function PawFeelInboxBundle({ bundle }: { bundle: PawFeelReviewBundle }) {
+  const t = usePawFeelCopy();
+  const language = usePawFeelLanguage();
+  const BASIS_LABELS = t.basis;
+  const STATE_LABELS: Record<string, string> = t.states;
   const [expanded, setExpanded] = useState(false);
   const representative = bundle.members[0];
   const stateSummary = useMemo(
@@ -41,7 +26,7 @@ export function PawFeelInboxBundle({ bundle }: { bundle: PawFeelReviewBundle }) 
       Object.entries(bundle.stateCounts)
         .map(([state, count]) => `${STATE_LABELS[state] ?? state} ${count}`)
         .join(' · '),
-    [bundle.stateCounts],
+    [bundle.stateCounts, STATE_LABELS],
   );
 
   return (
@@ -56,18 +41,18 @@ export function PawFeelInboxBundle({ bundle }: { bundle: PawFeelReviewBundle }) 
         <div className="min-w-0">
           <div className="flex flex-wrap items-center gap-2 text-xs font-semibold text-cafe">
             <span>
-              {BASIS_LABELS[bundle.basis]} · {bundle.rawSignalCount} 条报告
+              {BASIS_LABELS[bundle.basis]} · {t.reportCount(bundle.rawSignalCount)}
             </span>
             <span
               className="rounded-full border border-current px-1.5 py-0.5 font-mono text-micro text-cafe-secondary"
               data-testid="paw-feel-responsibility-state"
             >
               {RESPONSIBILITY_LABELS[bundle.responsibility.state]}
-              {!bundle.responsibility.validExit ? ' · 尚未形成有效出口' : ''}
+              {!bundle.responsibility.validExit ? ` · ${t.noExit}` : ''}
             </span>
             <span className="rounded-full border border-current px-1.5 py-0.5 text-micro text-cafe-secondary">
-              {bundle.issue.resolution === 'resolved' ? '问题已解决' : '问题仍开放'} ·{' '}
-              {pawFeelContinuationLabel(bundle.issue.continuation.kind)}
+              {bundle.issue.resolution === 'resolved' ? t.issueResolved : t.issueOpen} ·{' '}
+              {pawFeelContinuationLabel(bundle.issue.continuation.kind, language)}
             </span>
           </div>
           <div className="mt-1 truncate text-micro text-cafe-muted" title={stateSummary}>
@@ -83,7 +68,7 @@ export function PawFeelInboxBundle({ bundle }: { bundle: PawFeelReviewBundle }) 
             {representative.source.preview}
           </a>
         ) : (
-          <span className="text-micro text-conn-amber-text">原消息暂不可读</span>
+          <span className="text-micro text-conn-amber-text">{t.sourceUnavailable}</span>
         )}
       </div>
 
@@ -94,7 +79,7 @@ export function PawFeelInboxBundle({ bundle }: { bundle: PawFeelReviewBundle }) 
           className="inline-flex items-center gap-1 text-xs font-medium text-cafe-secondary transition hover:text-cafe"
           aria-expanded={expanded}
         >
-          {expanded ? '收起原始报告' : `展开 ${bundle.rawSignalCount} 条原始报告`}
+          {expanded ? t.collapseReports : t.expandReports(bundle.rawSignalCount)}
           <ChevronIcon open={expanded} />
         </button>
       </div>

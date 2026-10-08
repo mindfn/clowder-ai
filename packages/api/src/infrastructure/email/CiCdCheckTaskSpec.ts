@@ -7,13 +7,14 @@
  * Execute: fetch current PR/CI facts → route through F280 typed wait predicates.
  * Collection always advances; only a matched generation creates a connector wake.
  */
-import type { CatId, TaskItem } from '@cat-cafe/shared';
+import type { TaskItem } from '@cat-cafe/shared';
 import { parsePrSubjectKey } from '@cat-cafe/shared';
 import type { ITaskStore } from '../../domains/cats/services/stores/ports/TaskStore.js';
 import type { ExecuteContext, TaskSpec_P1 } from '../scheduler/types.js';
 import type { CiCdRouter, CiPollResult, CiRouteResult } from './CiCdRouter.js';
-import type { ConnectorInvokeTrigger, ConnectorTriggerPolicy } from './ConnectorInvokeTrigger.js';
-import { ciStatusTargetKey, fetchPrCiStatuses, type PrCiStatusTarget } from './ci-status-batch-fetcher.js';
+import { isStaleCiSnapshot } from './ci-cd-contract.js';
+import { ciStatusTargetKey, createCiCollectionReaders, type PrCiStatusTarget } from './ci-status-batch-fetcher.js';
+import { enrichPrCiFailure } from './ci-status-fetcher.js';
 
 /** Signal carries the TaskItem so execute can access threadId/catId/userId */
 export interface CiCdCheckSignal {
@@ -27,7 +28,6 @@ export interface CiCdCheckSignal {
 export interface CiCdCheckTaskSpecOptions {
   readonly taskStore: ITaskStore;
   readonly cicdRouter: CiCdRouter;
-  readonly invokeTrigger?: ConnectorInvokeTrigger;
   readonly fetchPrStatus?: (
     repoFullName: string,
     prNumber: number,
@@ -38,6 +38,7 @@ export interface CiCdCheckTaskSpecOptions {
     targets: readonly PrCiStatusTarget[],
     signal?: AbortSignal,
   ) => Promise<ReadonlyMap<string, CiPollResult | null>>;
+  readonly enrichFailureDetails?: (poll: CiPollResult, signal: AbortSignal) => Promise<CiPollResult>;
   readonly log: {
     info: (...args: unknown[]) => void;
     error: (...args: unknown[]) => void;
@@ -58,35 +59,6 @@ export interface CiCdCheckTaskSpecOptions {
    * Reuses the same self-login resolver as review feedback echo filtering.
    */
   readonly isSelfMerge?: (mergedByLogin: string) => boolean;
-}
-
-/**
- * PR terminal state (merged/closed) consumes any active wait exactly once.
- * Fires exactly once in production: CiCdRouter persists ci.prState and the gate filters completed lifecycle tasks.
- */
-async function triggerLifecycleWake(
-  opts: CiCdCheckTaskSpecOptions,
-  invokeTrigger: ConnectorInvokeTrigger,
-  signal: CiCdCheckSignal,
-  routeResult: Extract<CiRouteResult, { kind: 'lifecycle' }>,
-): Promise<void> {
-  const policy: ConnectorTriggerPolicy = {
-    priority: 'normal',
-    reason: routeResult.prState === 'merged' ? 'github_pr_merged' : 'github_pr_closed',
-    sourceCategory: 'ci',
-  };
-  await invokeTrigger
-    .trigger(
-      routeResult.threadId,
-      routeResult.catId as CatId,
-      signal.task.userId ?? '',
-      routeResult.content,
-      routeResult.messageId,
-      undefined,
-      policy,
-    )
-    .catch((err) => opts.log.warn({ err }, '[cicd-check] lifecycle trigger failed (best-effort)'));
-  opts.log.info(`[cicd-check] PR ${routeResult.prState} -> wake ${routeResult.catId} (terminal lifecycle)`);
 }
 
 function needsCiLifecycleRecovery(task: TaskItem): boolean {
@@ -111,6 +83,9 @@ async function shouldCollectTask(
 ): Promise<boolean> {
   if (task.automationState?.ci?.enabled === false) return false;
   if (task.status !== 'done' || needsCiLifecycleRecovery(task)) return true;
+  const ci = task.automationState?.ci;
+  if ((ci?.prState === 'merged' || ci?.prState === 'closed') && ci.terminalEffects?.completedAt !== undefined)
+    return false;
   if (!opts.continueDoneTracking) return false;
   try {
     return await opts.continueDoneTracking(repoFullName, prNumber);
@@ -120,36 +95,98 @@ async function shouldCollectTask(
   }
 }
 
+async function listCollectablePrs(opts: CiCdCheckTaskSpecOptions, signal?: AbortSignal) {
+  const candidates: { signal: CiCdCheckSignal; subjectKey: string }[] = [];
+  for (const task of await opts.taskStore.listByKind('pr_tracking')) {
+    signal?.throwIfAborted();
+    if (!task.subjectKey) continue;
+    const parsed = parsePrSubjectKey(task.subjectKey);
+    if (!parsed || !(await shouldCollectTask(opts, task, parsed.repoFullName, parsed.prNumber, task.subjectKey)))
+      continue;
+    candidates.push({ signal: { task, ...parsed }, subjectKey: task.subjectKey });
+  }
+  return candidates;
+}
+
+async function resolvePollResult(opts: CiCdCheckTaskSpecOptions, item: CiCdCheckSignal, signal?: AbortSignal) {
+  signal?.throwIfAborted();
+  const poll = opts.fetchPrStatus
+    ? await opts.fetchPrStatus(item.repoFullName, item.prNumber, signal)
+    : item.pollResult;
+  signal?.throwIfAborted();
+  if (!poll) throw new Error(`CI collection unavailable for ${item.repoFullName}#${item.prNumber}; retry next poll`);
+  const currentWait = (await opts.taskStore.get(item.task.id))?.automationState?.await;
+  if (isStaleCiSnapshot(poll, currentWait)) {
+    throw new Error(`Stale CI snapshot for ${item.repoFullName}#${item.prNumber}; retry current HEAD`);
+  }
+  if (!poll.failureDetailsPending && !poll.fullRollupPending) return poll;
+  // Admission is one batched request; details can need several typed GitHub
+  // reads. Keep their combined budget below the existing 30-second work item.
+  const timeoutSignal = AbortSignal.timeout(20_000);
+  const detailSignal = signal ? AbortSignal.any([signal, timeoutSignal]) : timeoutSignal;
+  const result = opts.enrichFailureDetails
+    ? await opts.enrichFailureDetails(poll, detailSignal)
+    : await enrichPrCiFailure(poll, opts.log, { signal: detailSignal, timeoutMs: 5_000 });
+  detailSignal.throwIfAborted();
+  const afterDetails = (await opts.taskStore.get(item.task.id))?.automationState?.await;
+  if (isStaleCiSnapshot(result, afterDetails)) {
+    throw new Error(`Stale CI snapshot for ${item.repoFullName}#${item.prNumber}; retry current HEAD`);
+  }
+  return result;
+}
+
+function isStaleCiRoute(result: CiRouteResult): boolean {
+  return result.kind === 'deduped' && result.reason === 'stale_source_observation';
+}
+
+/** Number of circular windows before their starting position repeats. */
+function collectionCycleLength(candidateCount: number, windowSize: number): number {
+  let a = candidateCount;
+  let b = windowSize;
+  while (b !== 0) [a, b] = [b, a % b];
+  return candidateCount / a;
+}
+
 export function createCiCdCheckTaskSpec(opts: CiCdCheckTaskSpecOptions): TaskSpec_P1<CiCdCheckSignal> {
-  const fetchPrStatuses =
-    opts.fetchPrStatuses ??
-    ((targets: readonly PrCiStatusTarget[], signal?: AbortSignal) => fetchPrCiStatuses(targets, opts.log, { signal }));
+  const defaultReaders = createCiCollectionReaders(opts.log, () => undefined);
+  const fetchPrStatuses = opts.fetchPrStatuses ?? defaultReaders.fetchPrStatuses;
+  let lastCollectedSubject: string | undefined;
+  let firstBatchOffset = 0;
+  let ticksInCollectionCycle = 0;
 
   return {
     id: opts.id ?? 'cicd-check',
     profile: 'poller',
     trigger: { type: 'interval', ms: opts.pollIntervalMs ?? 60_000 },
     admission: {
-      async gate() {
+      async gate(ctx) {
+        const gateSignal = ctx?.signal;
+        gateSignal?.throwIfAborted();
         // #320: Read from unified TaskStore — exclude done tasks after CI lifecycle is complete.
         // Review feedback can observe terminal PR state first; keep those done tasks
         // reachable until CiCdRouter delivers/records the CI lifecycle marker.
-        const allTasks = await opts.taskStore.listByKind('pr_tracking');
-        const workItems: { signal: CiCdCheckSignal; subjectKey: string }[] = [];
-        for (const task of allTasks) {
-          const subjectKey = task.subjectKey;
-          if (!subjectKey) continue;
-          const parsed = parsePrSubjectKey(subjectKey);
-          if (!parsed) continue;
-          if (!(await shouldCollectTask(opts, task, parsed.repoFullName, parsed.prNumber, subjectKey))) continue;
-          workItems.push({
-            signal: { task, repoFullName: parsed.repoFullName, prNumber: parsed.prNumber },
-            subjectKey,
-          });
+        const candidates = await listCollectablePrs(opts, gateSignal);
+
+        gateSignal?.throwIfAborted();
+        if (candidates.length === 0) {
+          return { run: false, reason: 'no parseable PR tasks' };
         }
 
-        if (workItems.length === 0) {
-          return { run: false, reason: 'no parseable PR tasks' };
+        // At most three 20-PR requests, each with a five-second queue+I/O
+        // deadline, fit inside admission's 30 seconds. Rotate window membership
+        // and batch position separately: a repeated cohort must not keep the
+        // same subjects in the failed first batch. Advance both before I/O.
+        const start =
+          (candidates.findIndex((item) => item.subjectKey === lastCollectedSubject) + 1) % candidates.length;
+        const selected = [...candidates.slice(start), ...candidates.slice(0, start)].slice(0, 60);
+        lastCollectedSubject = selected.at(-1)?.subjectKey;
+        const offset = firstBatchOffset % selected.length;
+        const workItems = [...selected.slice(offset), ...selected.slice(0, offset)];
+        // Rotate after the window-start cycle, rather than every tick: otherwise
+        // cohort and batch cycles can align again (e.g. three 60-PR cohorts).
+        if (++ticksInCollectionCycle >= collectionCycleLength(candidates.length, selected.length)) {
+          ticksInCollectionCycle = 0;
+          firstBatchOffset = (offset + 20) % selected.length;
         }
 
         if (!opts.fetchPrStatus) {
@@ -159,13 +196,25 @@ export function createCiCdCheckTaskSpec(opts: CiCdCheckTaskSpecOptions): TaskSpe
             repoFullName: signal.repoFullName,
             prNumber: signal.prNumber,
           }));
-          const results = await fetchPrStatuses(targets);
+          const results = await fetchPrStatuses(targets, gateSignal);
+          gateSignal?.throwIfAborted();
           for (const workItem of workItems) {
             workItem.signal.pollResult =
               results.get(ciStatusTargetKey(workItem.signal.repoFullName, workItem.signal.prNumber)) ?? null;
           }
         }
 
+        gateSignal?.throwIfAborted();
+        // Route available facts before attempting slow failure-detail reads.
+        workItems.sort(
+          (a, b) =>
+            Number(
+              a.signal.pollResult?.failureDetailsPending === true || a.signal.pollResult?.fullRollupPending === true,
+            ) -
+            Number(
+              b.signal.pollResult?.failureDetailsPending === true || b.signal.pollResult?.fullRollupPending === true,
+            ),
+        );
         return { run: true, workItems };
       },
     },
@@ -173,15 +222,11 @@ export function createCiCdCheckTaskSpec(opts: CiCdCheckTaskSpecOptions): TaskSpe
       overlap: 'skip',
       timeoutMs: 30_000,
       async execute(signal: CiCdCheckSignal, _subjectKey: string, ctx: ExecuteContext) {
-        ctx.signal?.throwIfAborted();
-        const pollResult = opts.fetchPrStatus
-          ? await opts.fetchPrStatus(signal.repoFullName, signal.prNumber, ctx.signal)
-          : signal.pollResult;
-        ctx.signal?.throwIfAborted();
-        if (!pollResult) return;
+        const pollResult = await resolvePollResult(opts, signal, ctx.signal);
 
         const routeResult = await opts.cicdRouter.route(pollResult);
-        if (!opts.invokeTrigger) return;
+        if (isStaleCiRoute(routeResult))
+          throw new Error(`Stale CI snapshot for ${signal.repoFullName}#${signal.prNumber}; retry current HEAD`);
 
         if (routeResult.kind === 'lifecycle') {
           // Skip wake when the merge was performed by our own GitHub identity —
@@ -191,28 +236,14 @@ export function createCiCdCheckTaskSpec(opts: CiCdCheckTaskSpecOptions): TaskSpe
             opts.log.info(`[cicd-check] PR ${routeResult.prState} by self (${pollResult.mergedByLogin}) -> skip wake`);
             return;
           }
-          await triggerLifecycleWake(opts, opts.invokeTrigger, signal, routeResult);
+          // CiCdRouter already admitted this terminal notice in one transaction; Queue drain owes
+          // the wake. No second trigger to fire twice or to drop best-effort.
+          opts.log.info(`[cicd-check] PR ${routeResult.prState} -> ${routeResult.catId} (terminal lifecycle)`);
           return;
         }
 
         if (routeResult.kind !== 'notified') return;
 
-        const policy: ConnectorTriggerPolicy = {
-          priority: routeResult.bucket === 'fail' ? 'urgent' : 'normal',
-          reason: 'github_wait_satisfied',
-          sourceCategory: 'ci',
-        };
-        await opts.invokeTrigger
-          .trigger(
-            routeResult.threadId,
-            routeResult.catId as CatId,
-            signal.task.userId ?? '',
-            routeResult.content,
-            routeResult.messageId,
-            undefined,
-            policy,
-          )
-          .catch((err) => opts.log.warn({ err }, '[cicd-check] wait trigger failed (best-effort)'));
         opts.log.info(`[cicd-check] Typed wait satisfied → wake ${routeResult.catId}`);
       },
     },

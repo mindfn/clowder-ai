@@ -3,9 +3,11 @@ import { afterEach, beforeEach, describe, it } from 'node:test';
 import { z } from 'zod';
 
 import {
+  externalReviewTransferInputSchema,
   externalReviewVerdictInputSchema,
   externalReviewVerdictTools,
   handleExternalReviewVerdict,
+  handleTransferExternalReview,
 } from '../dist/tools/external-review-verdict-tool.js';
 
 describe('cat_cafe_record_external_review_verdict', () => {
@@ -32,6 +34,34 @@ describe('cat_cafe_record_external_review_verdict', () => {
     restoreEnv('CAT_CAFE_INVOCATION_ID', originalEnv.invocationId);
     restoreEnv('CAT_CAFE_CALLBACK_TOKEN', originalEnv.callbackToken);
     restoreEnv('CAT_CAFE_CREDENTIAL_FILE', originalEnv.credentialFile);
+  });
+
+  it('transfer schema and callback preserve the exact subject/revision and derive auth from invocation', async () => {
+    const schema = z.object(externalReviewTransferInputSchema).strict();
+    const input = {
+      repoFullName: 'acme/widgets',
+      prNumber: 7,
+      expectedAssignmentRevision: 0,
+      proposalId: 'proposal-7',
+    };
+    assert.equal(schema.safeParse({ ...input, targetThreadId: 'forged' }).success, false);
+    assert.equal(schema.safeParse({ ...input, expectedAssignmentRevision: -1 }).success, false);
+    let sent;
+    globalThis.fetch = async (url, options) => {
+      sent = { url: String(url), body: JSON.parse(options.body), headers: options.headers };
+      return {
+        ok: true,
+        status: 200,
+        json: async () => ({ status: 'transferred', assignmentRevision: 1 }),
+        text: async () => '{}',
+      };
+    };
+    await handleTransferExternalReview(input);
+    assert.match(sent.url, /\/api\/callbacks\/transfer-external-review$/);
+    assert.deepEqual(sent.body, input);
+    const tool = externalReviewVerdictTools.find((t) => t.name === 'cat_cafe_transfer_external_review');
+    assert(tool);
+    for (const marker of ['Use when:', 'NOT for:', 'Output:', 'GOTCHA:']) assert(tool.description.includes(marker));
   });
 
   it('has no naked-verdict schema branch', () => {

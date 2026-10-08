@@ -2,7 +2,12 @@
 // Phase C adds: embedding_meta (V2) + evidence_vectors (vec0, decoupled)
 
 import type Database from 'better-sqlite3';
+import { addDevelopmentReturnColumn } from '../../infrastructure/scheduler/development-return/development-return-schema.js';
+import { MANAGED_COMMAND_CANDIDATE_INDEX } from '../../infrastructure/scheduler/managed-command-candidate-schema.js';
+import { admitThreadOverviewCueFamily } from './curation/thread-cue-schema-migration.js';
+import { migrateEntityMentionProjections } from './entity-mention-projection-schema.js';
 import { RUN_LEDGER_STATS_SCHEMA } from './run-ledger-stats-schema.js';
+import { ensureTasteMemoryProjectionFence } from './taste/taste-memory-projection-fence.js';
 
 export const EVIDENCE_FTS_SCHEMA = `
 CREATE VIRTUAL TABLE IF NOT EXISTS evidence_fts USING fts5(
@@ -71,12 +76,59 @@ END`,
 END`,
 ];
 
-export const CURRENT_SCHEMA_VERSION = 45;
+// Versions 53-57 were deployed by reverted F323 migrations and remain in live
+// schema_version ledgers. They must never be reused even though main returned to V52.
+export const CURRENT_SCHEMA_VERSION = 67;
 
 function memoryCueLedgerHasConsumerBinding(db: Database.Database): boolean {
   return (db.prepare('PRAGMA table_info(memory_cue_events)').all() as Array<{ name: string }>).some(
     ({ name }) => name === 'consumer_cat_id',
   );
+}
+
+function ensureEntityHardForgetProjectionFence(db: Database.Database): void {
+  const tables = db
+    .prepare(
+      `SELECT name FROM sqlite_master
+       WHERE type = 'table' AND name IN ('entity_registry', 'entity_memory_forget_tombstones')`,
+    )
+    .all() as Array<{ name: string }>;
+  if (new Set(tables.map((row) => row.name)).size !== 2) return;
+  db.transaction(() => {
+    for (const table of ['entity_mentions', 'entity_aliases']) {
+      const exists = db.prepare("SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = ?").get(table);
+      if (exists) {
+        db.exec(
+          `DELETE FROM ${table}
+           WHERE entity_id IN (SELECT entity_id FROM entity_memory_forget_tombstones)`,
+        );
+      }
+    }
+    db.exec(`
+      DELETE FROM entity_registry
+      WHERE entity_id IN (SELECT entity_id FROM entity_memory_forget_tombstones);
+      DROP TRIGGER IF EXISTS entity_registry_forget_no_insert;
+      CREATE TRIGGER entity_registry_forget_no_insert
+      BEFORE INSERT ON entity_registry
+      WHEN EXISTS (
+        SELECT 1 FROM entity_memory_forget_tombstones AS forgotten
+        WHERE forgotten.entity_id = NEW.entity_id
+      )
+      BEGIN
+        SELECT RAISE(ABORT, 'owner-forgotten Entity cannot be reinserted');
+      END;
+      DROP TRIGGER IF EXISTS entity_registry_forget_no_identity_update;
+      CREATE TRIGGER entity_registry_forget_no_identity_update
+      BEFORE UPDATE OF entity_id ON entity_registry
+      WHEN EXISTS (
+        SELECT 1 FROM entity_memory_forget_tombstones AS forgotten
+        WHERE forgotten.entity_id = NEW.entity_id
+      )
+      BEGIN
+        SELECT RAISE(ABORT, 'owner-forgotten Entity cannot be restored');
+      END;
+    `);
+  })();
 }
 
 // F163 Phase A: experiment infrastructure tables (cohorts, suggestions, logs)
@@ -1443,6 +1495,279 @@ export function applyMigrations(db: Database.Database): void {
       db.prepare('INSERT INTO schema_version (version, applied_at) VALUES (?, ?)').run(45, new Date().toISOString());
     })();
   }
+
+  // V46: keep the owner's continuation association out of public/legacy schedule params.
+  if (currentVersion < 46) {
+    db.transaction(() => {
+      addDevelopmentReturnColumn(db);
+      db.prepare('INSERT INTO schema_version (version, applied_at) VALUES (?, ?)').run(46, new Date().toISOString());
+    })();
+  }
+  // V47: reviewed returns remain durable but invisible to pre-lineage executors.
+  // Their old private blob is NULL and the legacy executable projection stays off.
+  if (currentVersion < 47) {
+    db.transaction(() => {
+      const columns = db.prepare('PRAGMA table_info(dynamic_task_defs)').all() as { name: string }[];
+      if (!columns.some((column) => column.name === 'reviewed_development_return_json')) {
+        db.exec(`ALTER TABLE dynamic_task_defs ADD COLUMN reviewed_development_return_json TEXT
+        CHECK (reviewed_development_return_json IS NULL OR
+          (development_return_json IS NULL AND enabled = 0 AND template_id = 'development-terminal-return'))`);
+      }
+      db.exec(`CREATE TRIGGER IF NOT EXISTS reviewed_development_return_no_delete
+        BEFORE DELETE ON dynamic_task_defs WHEN OLD.reviewed_development_return_json IS NOT NULL
+        BEGIN SELECT RAISE(ABORT, 'Reviewed execution return requires its typed owner transition'); END`);
+      db.prepare('INSERT INTO schema_version (version, applied_at) VALUES (?, ?)').run(47, new Date().toISOString());
+    })();
+  }
+  // V48: bounded owner/source lookup for the F321 A1b observatory read model.
+  if (currentVersion < 48) {
+    db.transaction(() => {
+      db.exec(`CREATE INDEX IF NOT EXISTS idx_memory_cue_events_source
+        ON memory_cue_events(owner_user_id, resolver_family, source_anchor, occurred_at)`);
+      db.prepare('INSERT INTO schema_version (version, applied_at) VALUES (?, ?)').run(48, new Date().toISOString());
+    })();
+  }
+
+  // V49: restart-safe incremental transcript and document-vector catch-up.
+  // A checkpoint is written only after its derived data has been committed.
+  if (currentVersion < 49) {
+    db.transaction(() => {
+      db.exec(`
+        CREATE TABLE IF NOT EXISTS transcript_backfill_files (
+          file_path TEXT PRIMARY KEY,
+          fingerprint TEXT NOT NULL
+        );
+        CREATE TABLE IF NOT EXISTS document_vector_sources (
+          anchor TEXT PRIMARY KEY,
+          source_hash TEXT NOT NULL
+        );
+      `);
+      db.prepare('INSERT INTO schema_version (version, applied_at) VALUES (?, ?)').run(49, new Date().toISOString());
+    })();
+  }
+  // V50: task + subject probes must not scan other tasks sharing the subject.
+  // The rowid suffix also supplies the existing id DESC history order.
+  // Keep idx_run_ledger_task: task-wide newest-run reads need id ordering across
+  // all subjects, which the compound index's subject-first ordering cannot supply.
+  if (currentVersion < 50) {
+    db.transaction(() => {
+      db.exec(`CREATE INDEX IF NOT EXISTS idx_run_ledger_task_subject
+        ON task_run_ledger(task_id, subject_key)`);
+      db.prepare('INSERT INTO schema_version (version, applied_at) VALUES (?, ?)').run(50, new Date().toISOString());
+    })();
+  }
+  // V51: polling/recovery reads only unsettled managed execution definitions.
+  if (currentVersion < 51) {
+    db.transaction(() => {
+      db.exec(MANAGED_COMMAND_CANDIDATE_INDEX);
+      db.prepare('INSERT INTO schema_version (version, applied_at) VALUES (?, ?)').run(51, new Date().toISOString());
+    })();
+  }
+  if (currentVersion < 52) migrateEntityMentionProjections(db);
+
+  // V59: action-generation return sources require a reader that revalidates
+  // the exact active lease. Keep those rows invisible and disabled for V52
+  // binaries, just as V47 fenced reviewed-source rows from V46 readers. The
+  // structural checks are authoritative because reverted V53-V57 markers still
+  // exist in runtime/alpha databases even when this column and trigger do not.
+  const successorReturnColumns = db.prepare('PRAGMA table_info(dynamic_task_defs)').all() as { name: string }[];
+  const hasSuccessorReturnColumn = successorReturnColumns.some(
+    (column) => column.name === 'successor_development_return_json',
+  );
+  const hasSuccessorReturnTrigger = Boolean(
+    db
+      .prepare(
+        "SELECT name FROM sqlite_master WHERE type = 'trigger' AND name = 'successor_development_return_no_delete'",
+      )
+      .get(),
+  );
+  const hasSuccessorReturnVersion = Boolean(db.prepare('SELECT 1 FROM schema_version WHERE version = 59').get());
+  if (currentVersion < 59 || !hasSuccessorReturnVersion || !hasSuccessorReturnColumn || !hasSuccessorReturnTrigger) {
+    db.transaction(() => {
+      const columns = db.prepare('PRAGMA table_info(dynamic_task_defs)').all() as { name: string }[];
+      if (!columns.some((column) => column.name === 'successor_development_return_json')) {
+        db.exec(`ALTER TABLE dynamic_task_defs ADD COLUMN successor_development_return_json TEXT
+        CHECK (successor_development_return_json IS NULL OR
+          (development_return_json IS NULL AND reviewed_development_return_json IS NULL AND enabled = 0
+            AND template_id = 'development-terminal-return'))`);
+      }
+      db.exec(`CREATE TRIGGER IF NOT EXISTS successor_development_return_no_delete
+        BEFORE DELETE ON dynamic_task_defs WHEN OLD.successor_development_return_json IS NOT NULL
+        BEGIN SELECT RAISE(ABORT, 'Successor execution return requires its typed owner transition'); END`);
+      db.prepare('INSERT OR IGNORE INTO schema_version (version, applied_at) VALUES (?, ?)').run(
+        59,
+        new Date().toISOString(),
+      );
+    })();
+  }
+
+  // V60: F321 owner Entity lifecycle. Tombstones prevent seed/proposal replay
+  // from silently recreating a hard-forgotten identity; action evidence is the
+  // exact crash-recovery witness (current state alone is not proof of execution).
+  if (currentVersion < 60) {
+    db.transaction(() => {
+      db.exec(`
+        CREATE TABLE IF NOT EXISTS entity_memory_forget_tombstones (
+          entity_id TEXT PRIMARY KEY,
+          owner_user_id TEXT NOT NULL,
+          forgotten_at TEXT NOT NULL
+        );
+        CREATE TABLE IF NOT EXISTS entity_memory_owner_action_evidence (
+          owner_user_id TEXT NOT NULL,
+          entity_id TEXT NOT NULL,
+          request_id TEXT NOT NULL,
+          action TEXT NOT NULL CHECK (action IN ('correct', 'retire', 'hard_forget')),
+          result_revision TEXT,
+          result_status TEXT,
+          applied_at TEXT NOT NULL,
+          PRIMARY KEY (owner_user_id, entity_id, request_id)
+        );
+      `);
+      db.prepare('INSERT INTO schema_version (version, applied_at) VALUES (?, ?)').run(60, new Date().toISOString());
+    })();
+  }
+  // V61: F321 owner Profile lifecycle. A prepared row binds one exact
+  // revision/action before the filesystem commit; applied_at is set only after
+  // the canonical mutation and provenance cleanup finish.
+  if (currentVersion < 61) {
+    db.transaction(() => {
+      db.exec(`
+        CREATE TABLE IF NOT EXISTS profile_memory_owner_action_evidence (
+          owner_user_id TEXT NOT NULL,
+          memory_id TEXT NOT NULL,
+          request_id TEXT NOT NULL,
+          action TEXT NOT NULL CHECK (action IN ('replace_content', 'hard_forget')),
+          command_digest TEXT NOT NULL,
+          expected_revision TEXT NOT NULL,
+          target_revision TEXT,
+          result_revision TEXT,
+          prepared_at TEXT NOT NULL,
+          applied_at TEXT,
+          PRIMARY KEY (owner_user_id, memory_id, request_id)
+        );
+      `);
+      db.prepare('INSERT INTO schema_version (version, applied_at) VALUES (?, ?)').run(61, new Date().toISOString());
+    })();
+  }
+  // V62: F321 Taste owner lifecycle, source tombstones, exact action evidence,
+  // and revision-bound one-sentence candidates awaiting owner confirmation.
+  if (currentVersion < 62) {
+    db.transaction(() => {
+      db.exec(`
+        CREATE TABLE IF NOT EXISTS taste_memory_lifecycle (
+          owner_user_id TEXT NOT NULL,
+          source_path TEXT NOT NULL,
+          memory_id TEXT NOT NULL,
+          status TEXT NOT NULL CHECK (status IN ('active', 'retired', 'forgotten', 'mutating')),
+          projected_revision TEXT,
+          last_request_id TEXT,
+          updated_at TEXT NOT NULL,
+          PRIMARY KEY (owner_user_id, source_path),
+          UNIQUE (owner_user_id, memory_id)
+        );
+        CREATE TABLE IF NOT EXISTS taste_memory_owner_action_evidence (
+          owner_user_id TEXT NOT NULL,
+          source_path TEXT NOT NULL,
+          memory_id TEXT NOT NULL,
+          request_id TEXT NOT NULL,
+          action TEXT NOT NULL CHECK (action IN ('confirm_takeaway', 'correct', 'retire', 'hard_forget')),
+          command_digest TEXT NOT NULL,
+          expected_revision TEXT NOT NULL,
+          target_revision TEXT,
+          result_status TEXT,
+          previous_row_exists INTEGER NOT NULL CHECK (previous_row_exists IN (0, 1)),
+          previous_status TEXT,
+          previous_revision TEXT,
+          prepared_at TEXT NOT NULL,
+          applied_at TEXT,
+          PRIMARY KEY (owner_user_id, source_path, request_id)
+        );
+        CREATE TABLE IF NOT EXISTS taste_takeaway_candidates (
+          owner_user_id TEXT NOT NULL,
+          source_path TEXT NOT NULL,
+          based_on_revision TEXT NOT NULL,
+          candidate_revision TEXT NOT NULL,
+          takeaway TEXT NOT NULL,
+          status TEXT NOT NULL CHECK (status IN ('pending', 'confirmed', 'stale')),
+          source_ref TEXT NOT NULL,
+          created_at TEXT NOT NULL,
+          decided_at TEXT,
+          PRIMARY KEY (owner_user_id, source_path, candidate_revision)
+        );
+        CREATE INDEX IF NOT EXISTS idx_taste_takeaway_candidates_pending
+          ON taste_takeaway_candidates(owner_user_id, source_path, status, created_at DESC);
+      `);
+      db.prepare('INSERT INTO schema_version (version, applied_at) VALUES (?, ?)').run(62, new Date().toISOString());
+    })();
+  }
+  // V63 belongs to deployed F306; F321 migrations follow it without reusing the marker.
+  if (currentVersion < 63) {
+    db.transaction(() => {
+      db.exec('DROP INDEX IF EXISTS idx_dynamic_managed_candidates');
+      db.exec(MANAGED_COMMAND_CANDIDATE_INDEX);
+      db.prepare('INSERT INTO schema_version (version, applied_at) VALUES (?, ?)').run(63, new Date().toISOString());
+    })();
+  }
+  if (currentVersion < 64) {
+    db.transaction(() => {
+      admitThreadOverviewCueFamily(db);
+      db.exec(`CREATE TABLE IF NOT EXISTS thread_curation_state (
+        owner_user_id TEXT NOT NULL, thread_id TEXT NOT NULL,
+        session_id TEXT, provider_identity TEXT NOT NULL,
+        summary_revision TEXT NOT NULL, directory_line TEXT NOT NULL,
+        backfill_cursor TEXT, backfill_target TEXT, backfill_complete INTEGER NOT NULL DEFAULT 1,
+        PRIMARY KEY(owner_user_id, thread_id)
+      )`);
+      db.prepare('INSERT INTO schema_version (version, applied_at) VALUES (?, ?)').run(64, new Date().toISOString());
+    })();
+  }
+  if (currentVersion < 65) {
+    db.transaction(() => {
+      // Earlier isolated F321 stores used 63/64 before F306 landed. Reassert its
+      // canonical index without rewriting markers, task rows or native metadata.
+      db.exec('DROP INDEX IF EXISTS idx_dynamic_managed_candidates');
+      db.exec(MANAGED_COMMAND_CANDIDATE_INDEX);
+      const columns = db.prepare('PRAGMA table_info(thread_curation_state)').all() as Array<{ name: string }>;
+      if (!columns.some(({ name }) => name === 'backfill_attempt_order'))
+        db.exec('ALTER TABLE thread_curation_state ADD COLUMN backfill_attempt_order INTEGER NOT NULL DEFAULT 0');
+      db.exec(`CREATE INDEX IF NOT EXISTS idx_thread_curation_backfill_rotation ON thread_curation_state
+          (owner_user_id,backfill_complete,backfill_attempt_order,thread_id)`);
+      db.prepare('INSERT INTO schema_version (version, applied_at) VALUES (?, ?)').run(65, new Date().toISOString());
+    })();
+  }
+  if (currentVersion < 66) {
+    db.transaction(() => {
+      const columns = db.prepare('PRAGMA table_info(summary_state)').all() as Array<{ name: string }>;
+      if (!columns.some((row) => row.name === 'pending_input_revision'))
+        db.exec('ALTER TABLE summary_state ADD COLUMN pending_input_revision INTEGER NOT NULL DEFAULT 0');
+      db.prepare('INSERT INTO schema_version(version,applied_at) VALUES (?,?)').run(66, new Date().toISOString());
+    })();
+  }
+  // V67: parent-bound proposal sources require a reader that understands the
+  // cross-thread Task/proposal/source relation. Keep these returns invisible
+  // and disabled for every earlier binary instead of letting it retire a live
+  // registration as invalid.
+  if (currentVersion < 67) {
+    db.transaction(() => {
+      const columns = db.prepare('PRAGMA table_info(dynamic_task_defs)').all() as Array<{ name: string }>;
+      if (!columns.some((row) => row.name === 'parent_bound_development_return_json')) {
+        db.exec(`ALTER TABLE dynamic_task_defs ADD COLUMN parent_bound_development_return_json TEXT
+        CHECK (parent_bound_development_return_json IS NULL OR
+          (development_return_json IS NULL AND reviewed_development_return_json IS NULL
+            AND successor_development_return_json IS NULL AND enabled = 0
+            AND template_id = 'development-terminal-return'))`);
+      }
+      db.exec(`CREATE TRIGGER IF NOT EXISTS parent_bound_development_return_no_delete
+        BEFORE DELETE ON dynamic_task_defs WHEN OLD.parent_bound_development_return_json IS NOT NULL
+        BEGIN SELECT RAISE(ABORT, 'Parent-bound execution return requires its typed owner transition'); END`);
+      db.prepare('INSERT INTO schema_version(version,applied_at) VALUES (?,?)').run(67, new Date().toISOString());
+    })();
+  }
+  // A rolled-back pre-F321 writer can see the upgraded schema version and still
+  // bypass application-level tombstone checks. Repair + recreate this DB fence
+  // on every open, rather than trusting a one-shot version migration.
+  ensureEntityHardForgetProjectionFence(db);
+  ensureTasteMemoryProjectionFence(db);
 }
 
 /**

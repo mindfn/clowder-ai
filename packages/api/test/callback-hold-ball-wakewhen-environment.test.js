@@ -13,6 +13,18 @@ test('wakeWhen persists primary output when daemon PATH omits bundled rg', async
   const messages = [];
   const holdBallDeps = {
     registry,
+    holdQuotaStore: {
+      async tryAdmit() {
+        return { admitted: true, count: 1, eventId: `stub-${Date.now()}` };
+      },
+      async releaseByEventId() {
+        return true;
+      },
+      async getCount() {
+        return 0;
+      },
+      async close() {},
+    },
     taskRunner: {
       registerDynamic() {},
       unregister() {
@@ -79,6 +91,13 @@ test('wakeWhen persists primary output when daemon PATH omits bundled rg', async
       getByIdempotencyKey(_threadId, _userId, key) {
         return { id: `invocation-${key}`, userMessageId: key.slice('connector-'.length), status: 'running' };
       },
+    },
+    // F117 Phase I: the wake Message and its Queue row commit together, so this stands in for the
+    // admission composition injects. It persists the same envelope the route used to append.
+    async admitManagedWake(input) {
+      const stored = { id: `message-${messages.length}`, ...input.message };
+      messages.push(stored);
+      return { messageId: stored.id };
     },
   };
 

@@ -2,12 +2,14 @@
 
 import { type EvolutionResolvedAssetReviewV1, type ExactAssetVersionRefV1, refIdentity } from '@cat-cafe/shared';
 import type { ReactNode } from 'react';
+import { useShellPresentation } from '@/components/shell/shell-presentation';
+import { EvolutionPhaseGaps } from './CapabilityEvolutionHomeV2';
 import {
   type EvolutionProgramPresentationProjection,
   evolutionProgramPresentation,
   productStatus,
 } from './capability-evolution-presentation';
-import { EvolutionJourney, journeyMoment } from './EvolutionJourney';
+import { EvolutionJourney, journeyMoment, MOMENTS } from './EvolutionJourney';
 import { EvolutionOwnerEvidence } from './EvolutionOwnerEvidence';
 import { RawDetails } from './EvolutionProgramContext';
 import { EvolutionProgramName } from './EvolutionProgramName';
@@ -23,6 +25,7 @@ import {
 import { projectAssetVersions, selectedAssetVersion } from './evolution-version-view';
 import { EvolutionMomentContext } from './journey/EvolutionMomentContext';
 import { EvolutionProgressAction } from './journey/EvolutionProgressAction';
+import { EvolutionPreparationOverview } from './preparation/EvolutionPreparationOverview';
 import { useEvolutionOwnerReadingDefault } from './use-evolution-owner-reading-default';
 
 function CurrentAdoption({
@@ -45,10 +48,10 @@ function CurrentAdoption({
               (version) => refIdentity(version.versionRef) === refIdentity(ref),
             )?.title;
             return (
-              <p key={refIdentity(ref)} className="mt-2 break-words text-sm text-cafe">
-                <span className="block font-semibold">{title ?? ref.assetId}</span>
-                <span className="mt-1 block break-all font-mono text-xs text-cafe-muted">{ref.version}</span>
-              </p>
+              <div key={refIdentity(ref)} className="mt-2">
+                <p className="break-words text-sm font-semibold text-cafe">{title ?? ref.assetId}</p>
+                <EvolutionSource label="版本标识" source={ref} />
+              </div>
             );
           })
         ) : (
@@ -57,11 +60,8 @@ function CurrentAdoption({
       ) : (
         <p className="evolution-empty mt-2">{loading ? '正在读取资产来源…' : '当前采用尚待资产来源确认。'}</p>
       )}
-      {!catalog && programRefs.length > 0 && (
-        <p className="mt-2 text-xs text-cafe-muted">
-          项目最近记录：{programRefs.map((ref) => ref.version ?? '未固定版本').join('、')}
-        </p>
-      )}
+      {!catalog &&
+        programRefs.map((ref) => <EvolutionSource key={refIdentity(ref)} label="项目最近记录" source={ref} />)}
       {catalog && <EvolutionSource label="采用来源" source={catalog.currentProofRef} />}
     </div>
   );
@@ -84,6 +84,7 @@ export function CapabilityEvolutionProgramDetail({
   onOpenProgram: (programId: string, view?: EvolutionReadingView) => void;
   controls?: ReactNode;
 }) {
+  const v2 = useShellPresentation() === 'v2';
   const id = projection.program.programId;
   const reading = useEvolutionReading((state) => state.programs[id] ?? DEFAULT_READING);
   const updateReading = useEvolutionReading((state) => state.update);
@@ -99,6 +100,11 @@ export function CapabilityEvolutionProgramDetail({
   const status = productStatus(projection);
   const moment = reading.journeyMoment ?? journeyMoment(projection);
   const change = projection.lineage?.current;
+  const candidateTitle = change
+    ? asset.catalog?.versions.find(
+        (version) => refIdentity(version.versionRef) === refIdentity(change.targetVersionRef),
+      )?.title
+    : undefined;
   const open = (view: EvolutionReadingView, exactVersionRef?: ExactAssetVersionRefV1) => {
     openEvolutionReading(id, view, exactVersionRef);
     onOpenProgram(id, view);
@@ -114,32 +120,72 @@ export function CapabilityEvolutionProgramDetail({
         {controls}
       </div>
       <p className="evolution-eyebrow">能力进化 · 第 {projection.program.cycle} 轮</p>
-      <h2 className="evolution-title mt-2">{target.title}</h2>
+      <h2 className="evolution-title mt-2">{v2 ? (projection.program.displayName ?? '尚未命名') : target.title}</h2>
       <EvolutionProgramOrigin projection={projection} />
       <EvolutionProgramName projection={projection} />
       <EvolutionJourney projection={projection} />
-      <EvolutionProgressAction projection={projection} compact={moment === 2} />
-      <div className="evolution-focus">
+      <EvolutionProgressAction projection={projection} compact={v2 || moment === 2} />
+      {v2 && (
+        <>
+          <aside className="evolution-v2-phase-note">
+            <strong>{MOMENTS[journeyMoment(projection)]}这一阶段还缺</strong>
+            <p>
+              <EvolutionPhaseGaps projection={projection} />
+            </p>
+          </aside>
+          <div role="tablist" aria-label="项目阅读内容" className="evolution-tabs">
+            <button
+              type="button"
+              role="tab"
+              aria-selected={reading.view === 'judgment'}
+              onClick={() => updateReading(id, { view: 'judgment' })}
+            >
+              本轮判断
+            </button>
+            <button type="button" role="tab" aria-selected={reading.view === 'history'} onClick={() => open('history')}>
+              更改历史
+            </button>
+          </div>
+        </>
+      )}
+      <div className={v2 ? 'evolution-v2-moment' : 'evolution-focus'}>
         <p className="text-xs font-semibold text-cafe-secondary">{status.label}</p>
-        <EvolutionMomentContext
-          projection={projection}
-          moment={moment}
-          onSelectCandidate={select}
-          onOpenPreparation={openPreparation}
-        >
-          {moment === 2 && change && <EvolutionSource label="候选来源" source={change.proposalRef} />}
-          {moment >= 2 && (
-            <EvolutionActualUse
-              selected={asset.review?.status === 'resolved' ? asset.review.selected : undefined}
-              readStatus={ownerReadStatus(asset)}
-            />
-          )}
-        </EvolutionMomentContext>
+        {v2 && moment === 1 ? (
+          <EvolutionPreparationOverview
+            projection={projection}
+            onOpen={(section) => {
+              updateReading(id, { preparationSection: section });
+              open('judgment');
+            }}
+          />
+        ) : (
+          <EvolutionMomentContext
+            projection={projection}
+            moment={moment}
+            onSelectCandidate={select}
+            onOpenPreparation={openPreparation}
+          >
+            {moment === 2 && change && <EvolutionSource label="候选来源" source={change.proposalRef} />}
+            {moment >= 2 && (
+              <EvolutionActualUse
+                selected={asset.review?.status === 'resolved' ? asset.review.selected : undefined}
+                readStatus={ownerReadStatus(asset)}
+              />
+            )}
+          </EvolutionMomentContext>
+        )}
         <button type="button" className="evolution-link mt-5" onClick={() => open('judgment')}>
-          展开阅读 →
+          {v2 ? '在主区展开阅读' : '展开阅读 →'}
         </button>
       </div>
-      <EvolutionOwnerEvidence projection={projection} />
+      {v2 ? (
+        <details className="evolution-preparation-related">
+          <summary>目标与评估来源</summary>
+          <EvolutionOwnerEvidence projection={projection} />
+        </details>
+      ) : (
+        <EvolutionOwnerEvidence projection={projection} />
+      )}
       <section className="mt-6 space-y-5" aria-label="采用与候选">
         <CurrentAdoption
           catalog={asset.catalog}
@@ -150,9 +196,10 @@ export function CapabilityEvolutionProgramDetail({
           <h3 className="text-xs font-semibold text-cafe-secondary">本轮候选</h3>
           <p className="evolution-empty mt-2">
             {change
-              ? `基于 ${change.targetVersionRef.version} 的改动 · ${status.label}`
+              ? `${candidateTitle ? `基于「${candidateTitle}」的改动` : '基于来源新发布的改动'} · ${status.label}`
               : '正式改动尚未形成；来源发布的候选可在上方“探索进化”中阅读。'}
           </p>
+          {change && <EvolutionSource label="候选版本" source={change.targetVersionRef} />}
           {change && <EvolutionSource label="候选来源" source={change.proposalRef} />}
         </div>
         <div className="flex flex-wrap items-baseline justify-between gap-2 border-t border-cafe-subtle pt-5">

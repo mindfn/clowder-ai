@@ -5,12 +5,14 @@ topics: [frustration, auto-issue, friction-detection, eval]
 doc_kind: spec
 created: 2026-06-03
 updated: 2026-08-24
-tips_exempt: "F286 removes the live permission-cancel producer while retaining historical read compatibility; it adds no new user-invokable capability."
+tips_exempt: "Renewed 2026-10-13: F322 retires keyword/rule-generated chat problem cards without a replacement detector. Historical records and explicit feedback remain; this retirement and the earlier F286 permission-cancel removal add no new user operation."
 ---
 
 # F222: Frustration Auto-Issue — 把负体验变成结构化反馈
 
 > **Status**: done | **Owner**: Ragdoll | **Priority**: P1 | **Completed**: 2026-06-04
+
+> **2026-10-11 You 决定（F322 旅程③）**：不做聊天里的关键词 / 规则匹配问题检测（「用检测词、用规则去匹配，这个肯定会有很多误报，我们不要干这事。」，经 dot Maine Coon转述 `[thread-id]#private-source-id`）。聊天里的自动问题卡随旅程③实现一起撤，不换成别的检测办法；见 [F322 已定表](F322-everyday-work-experience.md)。
 
 ## Architecture Ownership
 

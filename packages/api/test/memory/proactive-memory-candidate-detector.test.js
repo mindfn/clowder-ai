@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict';
 import { before, beforeEach, describe, it } from 'node:test';
+import { canonicalTestMessageInput } from '../helpers/message-from-fixtures.js';
 
 describe('ProactiveMemoryCandidateDetector', () => {
   let MessageStore;
@@ -35,15 +36,17 @@ describe('ProactiveMemoryCandidateDetector', () => {
   }
 
   function append(content, threadId, timestamp, overrides = {}) {
-    return messageStore.append({
-      userId: 'owner-1',
-      catId: null,
-      content,
-      mentions: [],
-      threadId,
-      timestamp,
-      ...overrides,
-    });
+    return messageStore.append(
+      canonicalTestMessageInput({
+        userId: 'owner-1',
+        catId: null,
+        content,
+        mentions: [],
+        threadId,
+        timestamp,
+        ...overrides,
+      }),
+    );
   }
 
   function detector(overrides = {}) {
@@ -119,6 +122,29 @@ describe('ProactiveMemoryCandidateDetector', () => {
     assert.deepEqual(result, []);
   });
 
+  it('requests human-only owner-window reads without changing candidate coordinates', async (t) => {
+    addThread('thread-a');
+    addThread('thread-b');
+    const first = append('Alden', 'thread-a', 100);
+    const second = append('Alden', 'thread-b', 200);
+    append('Alden', 'thread-a', 250, { catId: 'sonnet' });
+    const current = append('Alden', 'thread-b', 300);
+    const nativeRead = messageStore.listOwnerMessagesInWindow.bind(messageStore);
+    const calls = [];
+    t.mock.method(messageStore, 'listOwnerMessagesInWindow', (...args) => {
+      calls.push(args);
+      return nativeRead(...args);
+    });
+    const candidates = await detector().detect({ ownerUserId: 'owner-1', currentUserMessageId: current.id, now: 300 });
+    assert.deepEqual(calls[0]?.[3], { humanOnly: true });
+    assert.equal(candidates.length, 1);
+    assert.deepEqual(candidates[0].sourceCoordinates, [
+      { threadId: 'thread-a', messageIds: [first.id] },
+      { threadId: 'thread-b', messageIds: [second.id, current.id] },
+    ]);
+    assert.equal(candidates[0].distinctMessageCount, 3);
+  });
+
   it('never combines another owner into the occurrence threshold', async () => {
     addThread('thread-a');
     addThread('thread-b');
@@ -147,7 +173,10 @@ describe('ProactiveMemoryCandidateDetector', () => {
     const current = append('Alden', 'thread-public-b', 200);
     append('Alden', 'thread-private', 210);
     append('Alden', 'thread-whisper', 220, { visibility: 'whisper' });
-    append('Alden', 'thread-connector', 230, { source: { provider: 'feishu', externalMessageId: 'ext-1' } });
+    append('Alden', 'thread-connector', 230, {
+      from: { kind: 'external', connectorId: 'feishu' },
+      source: { connector: 'feishu', label: 'Feishu', icon: 'feishu', meta: { externalMessageId: 'ext-1' } },
+    });
     append('Alden', 'thread-deleted', 235);
     const deleted = append('Alden', 'thread-message-deleted', 240);
     messageStore.softDelete(deleted.id, 'owner-1');
@@ -159,6 +188,47 @@ describe('ProactiveMemoryCandidateDetector', () => {
       now: 250,
     });
     assert.deepEqual(result, []);
+  });
+
+  it('starts independent thread privacy reads together before one slow thread returns', async () => {
+    for (const threadId of ['thread-a', 'thread-b', 'thread-c', 'thread-d']) addThread(threadId);
+    append('Alden', 'thread-b', 100);
+    append('Alden', 'thread-c', 200);
+    append('Alden', 'thread-d', 300);
+    const current = append('Alden', 'thread-a', 400);
+
+    let releaseSlowRead;
+    let backgroundReads = 0;
+    const delayedThreadStore = {
+      get(threadId) {
+        if (threadId === 'thread-a') return threads.get(threadId);
+        backgroundReads += 1;
+        if (threadId === 'thread-d') throw new Error('privacy lookup unavailable');
+        if (backgroundReads === 1) {
+          return new Promise((resolve) => {
+            releaseSlowRead = () => resolve(threads.get(threadId));
+          });
+        }
+        return threads.get(threadId);
+      },
+    };
+
+    const pending = new ProactiveMemoryCandidateDetector(messageStore, delayedThreadStore, {
+      windowMs: 1_000,
+      recentWindowMs: 100,
+      minDistinctThreads: 2,
+      minDistinctMessages: 3,
+      minBackgroundMessages: 4,
+      minRecentBurstLift: 2,
+      maxNudgesPerTurn: 3,
+    }).detect({ ownerUserId: 'owner-1', currentUserMessageId: current.id, now: 400 });
+    await new Promise(setImmediate);
+    const readsBeforeSlowReturn = backgroundReads;
+    releaseSlowRead();
+    const result = await pending;
+
+    assert.ok(readsBeforeSlowReturn > 1, 'other threads should not wait for a slow privacy read');
+    assert.equal(result[0]?.distinctThreadCount, 3, 'failed privacy reads stay excluded');
   });
 
   it('removes fixture-backed common phrases while keeping Alden', async () => {

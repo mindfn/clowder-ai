@@ -11,7 +11,7 @@
  *
  * | 执行面            | 真相源                        | live classifier 认识吗 |
  * |-------------------|-------------------------------|------------------------|
- * | live invocation   | record + tracker + draft      | 认识                   |
+ * | live invocation   | record + tracker（KD-23 起不读 draft） | 认识          |
  * | managed command   | dynamicTaskStore (F295)       | **不认识**             |
  * | running child     | TurnExecution ledger (F194)   | **只从 running parent 反查** |
  *
@@ -33,13 +33,15 @@ import {
   parseManagedCommandWakeTask,
   parseRetiredManagedCommandWakeTask,
 } from '../../../../ball-custody/managed-command-wake-lifecycle.js';
-import type { IDraftStore } from '../../stores/ports/DraftStore.js';
+import { readManagedCommandWakeProjection } from '../../../../ball-custody/managed-command-wake-task-projection.js';
+import { ManagedJobService } from '../../../../managed-job/ManagedJobService.js';
 import type { IInvocationRecordStore } from '../../stores/ports/InvocationRecordStore.js';
 import type { ITurnExecutionStore } from '../../stores/ports/TurnExecutionStore.js';
 import {
   type ActiveInvocationProjection,
   type InvocationRegistryPort,
   type InvocationTrackerLike,
+  type ResponseStatusReader,
   resolveActiveInvocations,
   resolveActiveInvocationsStrict,
 } from './live-invocation-projection.js';
@@ -48,12 +50,13 @@ import { classifyManagedCommandActivity } from './managed-command-activity.js';
 export {
   type ActiveInvocationProjection,
   getRequestOwnedTrackerExecutionId,
-  type InvocationRegistryPort,
   type InvocationTrackerLike,
   type LifecycleProjectionCandidate,
   projectActiveInvocations,
+  type ResponseStatusReader,
   resolveActiveInvocations,
   resolveActiveInvocationsStrict,
+  responseStatusFromMessages,
   trackerProjectionCandidates,
 } from './live-invocation-projection.js';
 
@@ -99,6 +102,7 @@ export function listManagedCommandExecutions(
     // "这不是我的任务"——用户点了取消却取消不掉。判据是**取消路径认不认**，
     // 不是有没有忠实复刻旧行为。
     if (!task) continue;
+    if (readManagedCommandWakeProjection(task)?.jobId) continue;
     const parsed = isPendingHoldBallWakeTask(task)
       ? parseManagedCommandWakeTask(task)
       : isRetiredWakeWithRunningManagedCommand(task)
@@ -112,6 +116,16 @@ export function listManagedCommandExecutions(
       userId: parsed.userId,
       activity: classifyManagedCommandActivity(parsed.command.command),
       startedAt: parsed.command.startedAt,
+    });
+  }
+  for (const { job, startedAt } of new ManagedJobService().activeExecutions()) {
+    executions.push({
+      taskId: job.originTaskId,
+      threadId: job.wakeTarget.threadId,
+      catId: job.wakeTarget.catId,
+      userId: job.definition!.principal.userId,
+      activity: classifyManagedCommandActivity(job.definition!.command),
+      startedAt,
     });
   }
   return executions;
@@ -163,10 +177,12 @@ export interface LiveExecutionCandidateSnapshot {
 export interface ActiveExecutionServiceDeps {
   readonly invocationTracker: InvocationTrackerLike;
   readonly recordStore?: IInvocationRecordStore;
-  readonly draftStore?: IDraftStore;
+  /** F117 KD-23: a member whose response R is terminal is not processing. */
+  readonly responseStatus?: ResponseStatusReader;
   readonly turnExecutionStore?: Pick<ITurnExecutionStore, 'listByParent' | 'listRunningByUser'>;
   readonly invocationRegistry?: InvocationRegistryPort;
-  readonly dynamicTaskStore?: Pick<DynamicTaskStore, 'getAll'>;
+  readonly dynamicTaskStore?: Pick<DynamicTaskStore, 'getAll'> &
+    Partial<Pick<DynamicTaskStore, 'listManagedCommandCandidates'>>;
   readonly log: { info: (obj: unknown, msg?: string) => void; warn: (obj: unknown, msg?: string) => void };
 }
 
@@ -220,7 +236,9 @@ export function createActiveExecutionService(deps: ActiveExecutionServiceDeps): 
   // 占用算进 working 是独立设计决策，不在 rebase 合流里夹带。
   const listManaged = (userId: string): ManagedCommandExecution[] =>
     deps.dynamicTaskStore
-      ? listManagedCommandExecutions(deps.dynamicTaskStore.getAll()).filter((e) => e.userId === userId)
+      ? listManagedCommandExecutions(
+          deps.dynamicTaskStore.listManagedCommandCandidates?.() ?? deps.dynamicTaskStore.getAll(),
+        ).filter((e) => e.userId === userId)
       : [];
 
   const listRunningChildren = async (userId: string): Promise<RunningChildExecutionProjection[]> => {
@@ -242,10 +260,8 @@ export function createActiveExecutionService(deps: ActiveExecutionServiceDeps): 
       userId,
       deps.invocationTracker,
       deps.recordStore,
-      deps.draftStore,
+      deps.responseStatus,
       deps.turnExecutionStore,
-      deps.log,
-      deps.invocationRegistry,
     );
 
   const buildCandidateSnapshot = async (userId: string, includeManaged: boolean): Promise<ActiveExecutionSnapshot> => {
@@ -305,10 +321,9 @@ export function createActiveExecutionService(deps: ActiveExecutionServiceDeps): 
         userId,
         deps.invocationTracker,
         deps.recordStore,
-        deps.draftStore,
+        deps.responseStatus,
         deps.turnExecutionStore,
         deps.log,
-        deps.invocationRegistry,
       ),
 
     listManagedCommandExecutions: listManaged,

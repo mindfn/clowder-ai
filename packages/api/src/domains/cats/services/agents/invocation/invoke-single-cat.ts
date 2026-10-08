@@ -1,3 +1,4 @@
+import { claudeExecutionAccountSnapshot, redactClaudeLaunchToken } from '../../../../../config/claude-token-account.js';
 /**
  * Single Cat Invocation
  * 单猫调用的核心逻辑，从 AgentRouter 提取。
@@ -9,7 +10,13 @@
  *         消息存储（由调用方在 yield 后累积并存储）。
  */
 
-import { execFileSync } from 'node:child_process';
+import { execFile } from 'node:child_process';
+import { promisify } from 'node:util';
+import { cloudDispatchSourceMatches } from '../../cloud-bridge/cloud-dispatch-source.js';
+import { isHomeSession } from '../../session/session-scope.js';
+
+const execFileAsync = promisify(execFile);
+
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { rm } from 'node:fs/promises';
 import { dirname, join, resolve } from 'node:path';
@@ -25,7 +32,6 @@ import {
   type RequestGenerationPresentationV1,
   type RequestGenerationRetryReason,
   type RequestGenerationSourceRef,
-  type RoutingPreflightDecisionV1,
   resolveCodexSpeed,
   type SealReason,
   type SessionPolicySnapshot,
@@ -42,6 +48,8 @@ import { AccountStoreVerdictError } from '../../../../../config/account-store-fo
 import { resolveBoundAccountRefForCat } from '../../../../../config/cat-account-binding.js';
 import { buildCatGitIdentityEnv } from '../../../../../config/cat-git-identity.js';
 import { getCatModel } from '../../../../../config/cat-models.js';
+import { resolveCodexAccountLaunch } from '../../../../../config/codex-account-launch.js';
+import { codexExecutionAccountSnapshot } from '../../../../../config/codex-execution-account.js';
 import { parseOpenCodeModel, resolveEffectiveOpenCodeModel } from '../../../../../config/opencode-model.js';
 import { shouldTakeAction } from '../../../../../config/session-strategy.js';
 import { assertSafeTestConfigRoot } from '../../../../../config/test-config-write-guard.js';
@@ -79,6 +87,7 @@ import { resolveCliCommand } from '../../../../../utils/cli-resolve.js';
 import { resolveCliTimeoutMs } from '../../../../../utils/cli-timeout.js';
 import { findMonorepoRoot, isSameProject } from '../../../../../utils/monorepo-root.js';
 import { resolvePersistentProjectPathDetailed } from '../../../../../utils/persistent-project-path.js';
+import { readProcessActivity } from '../../../../../utils/process-activity-registry.js';
 import { pathsEqual } from '../../../../../utils/project-path.js';
 import { tcpProbe } from '../../../../../utils/tcp-probe.js';
 import { estimateTokens } from '../../../../../utils/token-counter.js';
@@ -100,10 +109,6 @@ import {
   type AsrPersonMemoryPresentationEnvelope,
   type AsrPersonMemoryPresentationReceipt,
 } from '../../../../memory/people/AsrPersonMemoryOpportunityPromptService.js';
-import {
-  classifyRoutingDispatchFailure,
-  type RoutingDispatchFailureClass,
-} from '../../../../routing-context/RoutingDispatchSignalContract.js';
 import type { AgentPaneRegistry } from '../../../../terminal/agent-pane-registry.js';
 import type { TmuxGateway } from '../../../../terminal/tmux-gateway.js';
 import { resolveBootcampWorkspaceRoot } from '../../bootcamp/workspace-root.js';
@@ -125,18 +130,22 @@ import {
   authenticatedCompactionSequenceForInvocation,
   authoritativeCompactionEventFromSession,
   resolveAuthoritativeCompactionSupport,
-} from '../../session/authoritative-compaction.js';
+} from '../../session/context/authoritative-compaction.js';
 import {
   ledgerOutcomeFromCommits,
   recordContextProjectionDeliveryLatency,
   recordContextProjectionFinalGeneration,
   recordContextProjectionLedgerOutcome,
-} from '../../session/context-continuity-telemetry.js';
+} from '../../session/context/context-continuity-telemetry.js';
 import {
   CAT_CAFE_SYSTEM_PROMPT_SOURCE_REF,
   encodeMemoryCueSourceRef,
-} from '../../session/request-generation-source-policy.js';
+} from '../../session/transcript-index/request-generation-source-policy.js';
+import { AgyNativeAgentService } from '../providers/agy-native/AgyNativeAgentService.js';
 import { resolveDefaultClaudeMcpServerPath } from '../providers/ClaudeAgentService.js';
+import { ClaudeSdkAgentService } from '../providers/ClaudeSdkAgentService.js';
+import { buildClaudeCompactionLaunchPlan } from '../providers/claude-compaction-launch-plan.js';
+import { servedFactsPayload } from '../providers/codex-served-model.js';
 import { extractUserEnvTemplates, hasSupportedEnvTemplate, resolveEnvMap } from '../providers/env-map.js';
 import { compileL0ViaSubprocess } from '../providers/l0-compiler.js';
 import { OC_INSTRUCTIONS_ONLY_ENV } from '../providers/OpenCodeAgentService.js';
@@ -153,6 +162,7 @@ import {
 } from '../providers/opencode-config-writer.js';
 import { appendTranscriptPathHints } from '../providers/transcript-path-hints.js';
 import { invokeCollectivePublic } from './collective-public-invocation.js';
+import { recordCollectiveScopedSession } from './collective-scoped-session.js';
 import {
   continuityDispositionFromProviderEvidence,
   resolveContextContinuity,
@@ -192,6 +202,8 @@ const ANTIGRAVITY_AUTOMATIC_RETRY_FRAGMENT_REASONS = new Set([
   'runtime_disconnected',
 ]);
 let _openCodeKnownModels: Set<string> | null = null;
+let openCodeModelProbe: Promise<Set<string>> | null = null;
+let openCodeModelGeneration = 0;
 
 interface MemoryCueLegacyFallbackProjection {
   readonly opportunityId: string;
@@ -254,7 +266,6 @@ export function requestGenerationMessageSourceRefs(input: {
   readonly injectSystemPrompt: boolean;
   readonly hasContextHint: boolean;
   readonly hasStagingPrepend: boolean;
-  readonly hasRoutingContextProjection?: boolean;
   readonly hasMissionPrefix: boolean;
 }): RequestGenerationSourceRef[] {
   const refs: RequestGenerationSourceRef[] = [
@@ -270,9 +281,6 @@ export function requestGenerationMessageSourceRefs(input: {
       ? [{ owner: 'runtime_context' as const, ref: `context-management-hint:${input.invocationId}` }]
       : []),
     ...(input.hasStagingPrepend ? [{ owner: 'system_prompt' as const, ref: 'staging:adr-038' }] : []),
-    ...(input.hasRoutingContextProjection
-      ? [{ owner: 'runtime_context' as const, ref: `routing-context:${input.invocationId}` }]
-      : []),
     ...(input.hasMissionPrefix ? [{ owner: 'home_state' as const, ref: `thread-mission:${input.threadId}` }] : []),
     { owner: 'runtime_context', ref: `transcript-path-hints:${input.threadId}` },
   ];
@@ -527,35 +535,45 @@ function createPresentationDeliveryAttempt(input: {
   };
 }
 
-export function getOpenCodeKnownModels(): Set<string> {
-  if (_openCodeKnownModels !== null) return _openCodeKnownModels;
-  try {
-    const opencodePath = resolveCliCommand('opencode');
-    if (!opencodePath) {
-      _openCodeKnownModels = new Set();
-      return _openCodeKnownModels;
+export function getOpenCodeKnownModels(): Promise<Set<string>> {
+  if (_openCodeKnownModels !== null) return Promise.resolve(_openCodeKnownModels);
+  if (openCodeModelProbe) return openCodeModelProbe;
+  const generation = openCodeModelGeneration;
+  const pending = (async () => {
+    let models = new Set<string>();
+    try {
+      const opencodePath = resolveCliCommand('opencode');
+      if (opencodePath) {
+        const { stdout } = await execFileAsync(opencodePath, ['models'], {
+          encoding: 'utf8',
+          timeout: 5000,
+          maxBuffer: 1024 * 1024,
+        });
+        models = new Set(
+          stdout
+            .trim()
+            .split('\n')
+            .map((line) => line.trim())
+            .filter(Boolean),
+        );
+      }
+    } catch {
+      /* unavailable CLI keeps the existing empty-model fallback */
     }
-    const stdout = execFileSync(opencodePath, ['models'], {
-      encoding: 'utf-8',
-      timeout: 5000,
-      stdio: ['ignore', 'pipe', 'ignore'],
-    });
-    _openCodeKnownModels = new Set(
-      stdout
-        .trim()
-        .split('\n')
-        .map((line) => line.trim())
-        .filter(Boolean),
-    );
-  } catch {
-    _openCodeKnownModels = new Set();
-  }
-  return _openCodeKnownModels;
+    if (generation === openCodeModelGeneration) _openCodeKnownModels = models;
+    return models;
+  })().finally(() => {
+    if (openCodeModelProbe === pending) openCodeModelProbe = null;
+  });
+  openCodeModelProbe = pending;
+  return pending;
 }
 
 /** @internal Exposed for tests */
 export function _resetOpenCodeKnownModels(override?: Set<string> | null): void {
   _openCodeKnownModels = override ?? null;
+  openCodeModelGeneration++;
+  openCodeModelProbe = null;
 }
 
 import {
@@ -567,14 +585,15 @@ import type {
   RuntimeSessionUnexpectedRuntimeSessionSwitch,
 } from '../../runtime-session/RuntimeSessionMetadata.js';
 import type { IRuntimeSessionStore } from '../../runtime-session/RuntimeSessionStore.js';
-import type { AuthoritativeCompactionEvent, ContextEpochOwner } from '../../session/ContextEpochOwner.js';
-import { mintDeliveryReceipt } from '../../session/delivery-receipt.js';
-import type { PresentationLedger } from '../../session/PresentationLedger.js';
+import type { AuthoritativeCompactionEvent, ContextEpochOwner } from '../../session/context/ContextEpochOwner.js';
+import { mintDeliveryReceipt } from '../../session/context/delivery-receipt.js';
+import type { PresentationLedger } from '../../session/context/PresentationLedger.js';
 import type { SessionManager } from '../../session/SessionManager.js';
 import type { ISessionSealer } from '../../session/SessionSealer.js';
 import type { TranscriptSessionInfo, TranscriptWriter } from '../../session/TranscriptWriter.js';
 import type { CreateSessionInput, ISessionChainStore } from '../../stores/ports/SessionChainStore.js';
 import type { IThreadStore } from '../../stores/ports/ThreadStore.js';
+import { DEFAULT_THREAD_ID } from '../../stores/ports/ThreadStore.js';
 import type {
   ITurnExecutionStore,
   TurnExecutionCausalRefs,
@@ -586,6 +605,7 @@ import type {
   AgentRouteIntent,
   AgentService,
   AgentServiceOptions,
+  ClaudeCompactionHooksFactory,
   ContextContinuityHandshake,
   InvocationOrigin,
   ProviderCompactionObservation,
@@ -601,11 +621,13 @@ import {
   completeCapsuleForSeal,
   type RouteStateContinuityCapsule,
 } from './CollaborationContinuityCapsule.js';
+import { invokeCollectivePrivate, prepareCollectivePrivatePolicy } from './collective-private-invocation.js';
+import { CollectivePrivateWorkRefusalError, privateAdmissionRefusal } from './collective-private-refusal.js';
 import type { ResumeFailureKind } from './invoke-helpers.js';
 import {
   classifyResumeFailure,
   extractTaskProgress,
-  isCliTimeoutError,
+  isCliStartupTimeoutError,
   isContextWindowOverflowError,
   isMalformedToolCallError,
   isMissingClaudeSessionError,
@@ -615,8 +637,13 @@ import {
   isTransientCliExitCode1,
   preflightRace,
 } from './invoke-helpers.js';
+import { MEMBER_TIMEOUT_REASON, MemberOutputTimeout, type MemberTimeoutEvent } from './member-output-timeout.js';
 import type { TaskProgressItem, TaskProgressStatus, TaskProgressStore } from './TaskProgressStore.js';
-import { assertToolExecutionPolicySupported } from './tool-execution-policy.js';
+import { assertToolExecutionPolicySupported, ToolExecutionPolicyUnavailableError } from './tool-execution-policy.js';
+
+function usesAgyNativeCarrier(service: AgentService): boolean {
+  return service instanceof AgyNativeAgentService;
+}
 
 async function getOrCreateManagedSessionRecord(
   store: ISessionChainStore,
@@ -1091,16 +1118,17 @@ export interface InvocationDeps {
   readonly collectiveContext?: () =>
     | import('../../../../plugin/builtin-runtime/collective-current-context.js').CollectiveCurrentContext
     | undefined;
-  /** F293: fresh owner-scoped sparse routing projection resolved for every provider generation. */
-  readonly routingContextPromptProjection?: import('../../../../routing-context/RoutingContextPromptProjector.js').RoutingContextPromptProjectionPort;
-  /** F293: observes routing evidence only after the canonical child terminal is durable. */
-  readonly routingDispatchSignalObserver?: import('../../../../routing-context/RoutingDispatchSignalContract.js').RoutingDispatchTerminalObserver;
   /** F296 B3b-1: single owner of context epoch and cold/hot mode for provider-bound invocations. */
   readonly contextEpochOwner?: Pick<ContextEpochOwner, 'resolve' | 'observeCompaction' | 'confirmColdConsumed'>;
   /** Live project-hook auth readiness required before Claude can own a compaction sequence. */
   readonly hookAuthenticationReady?: boolean | (() => boolean);
   /** Active-workspace PreCompact carrier readiness; independent from callback registry recovery. */
   readonly claudeProjectHookCarrierReady?: boolean | ((projectRoot: string) => boolean);
+  /**
+   * F117 K2: Claude compaction hooks for a carrier that runs them in-process (the Agent SDK carrier).
+   * Once wired they are that carrier's own proof: authenticated by construction, registered by it.
+   */
+  readonly claudeCompactionHooks?: ClaudeCompactionHooksFactory;
   /** F296 B3b-2: shared admission/delivery state machine for dynamic prompt projections. */
   readonly presentationLedger?: Pick<PresentationLedger, 'reserve' | 'commit' | 'release'>;
   /** F276 Wave 2 bridge: cross-invocation terminal truth consulted at opportunity admission. */
@@ -1139,18 +1167,6 @@ export interface InvocationDeps {
   readonly guideSessionStore?: import('../../../../guides/GuideSessionRepository.js').IGuideSessionStore;
   /** F155 B-6: Dismiss tracker for guide offer suppression */
   readonly dismissTracker?: import('../../../../guides/GuideDismissTracker.js').IGuideDismissTracker;
-  /** F091: Lookup signal articles linked to a thread for context injection */
-  readonly signalArticleLookup?: (threadId: string) => Promise<
-    readonly {
-      id: string;
-      title: string;
-      source: string;
-      tier: number;
-      contentSnippet: string;
-      note?: string | undefined;
-      relatedDiscussions?: readonly { sessionId: string; snippet: string; score: number }[] | undefined;
-    }[]
-  >;
   /** F229: Concierge config store for duty-cat岗位 prompt injection (optional, fail-open) */
   readonly conciergeConfigStore?: import('../../../../concierge/ConciergeConfigStore.js').IConciergeConfigStore;
   /** F229 Phase B: TriagePlan store for triage-plan marker → confirm/cancel card actions (optional, fail-open) */
@@ -1167,11 +1183,6 @@ export interface InvocationDeps {
   readonly cloudReturnGrantStore?: Pick<
     import('../../cloud-bridge/cloud-return-grant.js').CloudReturnGrantStore,
     'issue'
-  >;
-  /** Server-owned exact A2A terminal producer used by the cloud transport. */
-  readonly a2aDispatchDispositionService?: Pick<
-    import('../../../../ball-custody/A2ADispatchDispositionService.js').A2ADispatchDispositionService,
-    'complete'
   >;
   /**
    * F254 Phase B3/B4: Optional freshness re-invoke callback.
@@ -1190,6 +1201,10 @@ export interface InvocationDeps {
   readonly freshnessStateStore?: import('../../freshness/FreshnessInvocationStateStore.js').FreshnessInvocationStateStore;
   /** F254 D2: build one invocation-scoped provider-native freshness controller. */
   readonly providerNativeFreshnessFactory?: (params: {
+    liveResultConsumerActive?: () => boolean;
+    liveExposureReason?: (
+      message: import('../../freshness/freshness-unseen-source.js').FreshnessReadableMessage,
+    ) => 'same_live_call_exposure' | null;
     invocationId: string;
     threadId: string;
     userId: string;
@@ -1199,24 +1214,12 @@ export interface InvocationDeps {
   }) => Promise<import('../../freshness/FreshnessNoticeBroker.js').ActiveInvocationFreshnessController | null>;
   /** F306: canonical cross-provider request/response surface. */
   readonly runtimeInteractionPort?: import('../../../../runtime-interaction/ports/RuntimeInteractionPort.js').RuntimeInteractionPort;
-  readonly freshnessReinvokeCheck?: (params: {
-    invocationId: string;
-    threadId: string;
-    catId: import('@cat-cafe/shared').CatId;
-    userId: string;
-  }) => Promise<{
-    shouldReinvoke: boolean;
-    reason: string;
-    skipReason?: string;
-    noticeIds: string[];
-    senders: string[];
-    reinvokePrompt?: string;
-  } | null>;
   /** F287: invocation-bound Cue resolver; receives only server-owned typed seeds. */
   readonly memoryCuePromptService?: MemoryCueInvocationPromptResolver;
   /** F312: lane-owned standing predicate for an unconsumed canonical Profile revision. */
   readonly profileCueOpportunitySource?: import('../../../../memory/cue/sources/ProfileMemoryCueSource.js').ProfileMemoryCueSource;
   /** F312: lane-owned temporal/subject predicate for one unconsumed F227 Event revision. */
+  readonly threadOverviewOpportunitySource?: import('../../../../memory/cue/sources/ThreadOverviewMemoryCueSource.js').ThreadOverviewMemoryCueSource;
   readonly eventCueOpportunitySource?: import('../../../../memory/cue/sources/EventMemoryCueSource.js').EventMemoryCueSource;
   /** F231 canonical owner used only to bind embedded L0 profile bytes to their source lifecycle. */
   readonly profileRepository?: import('../../profile/ProfileRepository.js').FileProfileRepository;
@@ -1226,12 +1229,11 @@ export interface InvocationDeps {
  * Per-invocation parameters
  */
 export interface InvocationParams {
+  readonly onRemoteExecutionDispatched?: AgentServiceOptions['onRemoteExecutionDispatched'];
+  readonly liveCompanion?: AgentServiceOptions['liveCompanion'];
   /** Route-owned intent projected to provider behavior only when its provenance permits it. */
   readonly routeIntent?: AgentRouteIntent;
   /** F293: deterministic message scope, independent from provider prompt inference. */
-  readonly routingContextIntent?: 'review' | 'architecture';
-  /** F293: exact actual-send decision retained until the durable terminal transition. */
-  readonly routingDispatchPreflightDecision?: RoutingPreflightDecisionV1;
   readonly catId: CatId;
   readonly service: AgentService;
   /** #1208: one pre-provider capacity owner shared by all invocation consumers. */
@@ -1255,7 +1257,7 @@ export interface InvocationParams {
     readonly prompt: string;
     readonly promptMessageIds?: readonly string[];
     /** Existing F296 surface shape; telemetry forwards it without recomputing delta size. */
-    readonly deltaSize?: import('../../session/context-surface-projection.js').ContextSurfaceProjection['deltaSize'];
+    readonly deltaSize?: import('../../session/context/context-surface-projection.js').ContextSurfaceProjection['deltaSize'];
   }>;
   /** Rebuild route-owned context when a late native binding turns a resume into a fresh session. */
   readonly rebuildPromptAfterSessionSeal?: () => Promise<string>;
@@ -1293,6 +1295,11 @@ export interface InvocationParams {
   readonly contentBlocks?: readonly MessageContent[];
   readonly uploadDir?: string;
   readonly signal?: AbortSignal;
+  /**
+   * F117 KD-22 (J4): arms this member's output timeout (`CLI_TIMEOUT_MS`). Called once when it
+   * fires; the route keeps the diagnostics and has the Queue stop the member. Absent → no timeout.
+   */
+  readonly onMemberTimeout?: (timeout: MemberTimeoutEvent) => void;
   readonly isLastCat: boolean;
   /** Static identity prompt — prepended to prompt on new sessions (gated by F-BLOAT logic) */
   readonly systemPrompt?: string;
@@ -1313,6 +1320,12 @@ export interface InvocationParams {
   readonly executionKind?: TurnExecutionKind;
   /** Typed causal provenance used by history, relevance, and UI projections. */
   readonly executionCausal?: TurnExecutionCausalRefs;
+  /**
+   * F117 KD-21: this child belongs to an action-fenced dispatch, so it is created with a gated
+   * output fence and no settlement path may publish its draft before the fence allows it. Any
+   * other child is created open.
+   */
+  readonly outputFenced?: boolean;
   /** Exact persisted message bodies exposed to this child invocation's prompt. */
   readonly promptMessageIds?: readonly string[];
   /** Persists per-target body exposure after child identity exists and before provider start. */
@@ -1323,9 +1336,25 @@ export interface InvocationParams {
     invocationId: string;
     messageIds: readonly string[];
     seenAt: number;
-  }) => Promise<
-    readonly import('../../../../ball-custody/TurnCustodyProjectionService.js').TurnCustodyWakeProvenance[] | void
-  >;
+  }) => Promise<void>;
+  /** Create the exact child's durable processing response before provider startup. */
+  readonly onLifecycleInvocationStarted?: (input: {
+    threadId: string;
+    userId: string;
+    catId: CatId;
+    invocationId: string;
+    parentInvocationId: string;
+    startedAt: number;
+  }) => Promise<{
+    responseMessageId: string;
+    priorFrontierMessageId: string | null;
+    activeRun: import('@cat-cafe/shared').LifecycleActiveRun;
+  }>;
+  /** Bind the exact live provider adapter after provider turn acceptance. */
+  readonly onAgentClientActiveRunReady?: (input: {
+    catId: CatId;
+    dispatcher: import('../../types.js').AgentClientActiveRunDispatcher;
+  }) => (() => void) | undefined;
   /** Scope-free seeds are bound only after this child invocation id exists. */
   readonly memoryCueOpportunitySeeds?: readonly MemoryCueOpportunitySeed[];
   /** F276 trial: source-only ASR scenes bound to their exact owner trigger message. */
@@ -1376,11 +1405,33 @@ export async function* invokeSingleCat(deps: InvocationDeps, params: InvocationP
   if (params.executionScope === 'collective-participation' && !participation)
     throw new Error('collective_source_unavailable');
   const needsWorkAuthority =
-    params.executionScope === 'collective-work' || originMessage?.extra?.collectiveWorkInvocationV1 !== undefined;
+    params.executionScope === 'collective-work' ||
+    originMessage?.extra?.collectiveWorkInvocationV1 !== undefined ||
+    originMessage?.extra?.collectiveWorkDelegationV1 !== undefined;
   const privateWork = needsWorkAuthority
-    ? await collectiveContext?.resolvePrivate({ ...params, originTriggerMessageId }, 'admission')
+    ? await collectiveContext
+        ?.resolvePrivate({ ...params, originTriggerMessageId }, 'admission')
+        .catch((error: unknown) => {
+          throw privateAdmissionRefusal(error);
+        })
     : undefined;
   if (needsWorkAuthority && !privateWork) throw new Error('collective_owner_admission_unavailable');
+  if (privateWork && params.toolExecutionPolicy && params.toolExecutionPolicy.mode !== 'collective_work')
+    throw new CollectivePrivateWorkRefusalError(
+      'private_policy_conflict',
+      'Private Work admission cannot widen the requested tool execution policy',
+    );
+  const privatePolicy = privateWork
+    ? await prepareCollectivePrivatePolicy(privateWork, params.userId, params.threadId)
+    : undefined;
+  if (privateWork)
+    params = {
+      ...params,
+      ownerAuthProvenance: 'unknown',
+      toolExecutionPolicy: privatePolicy,
+      prompt: '',
+      promptMessageIds: originTriggerMessageId ? [originTriggerMessageId] : [],
+    };
   if (participation) {
     if (params.toolExecutionPolicy && params.toolExecutionPolicy.mode !== 'collective_participation')
       throw new Error('collective_participation_replay_policy_conflict');
@@ -1396,11 +1447,28 @@ export async function* invokeSingleCat(deps: InvocationDeps, params: InvocationP
   const { catId, service, userId, threadId, isLastCat, signal: callerSignal } = params;
   let prompt = params.prompt;
   const invocationPromptAdditions: string[] = [];
-  assertToolExecutionPolicySupported(service, params.toolExecutionPolicy);
-  const freshnessCarrierCapability = service.freshnessCarrierCapability?.() ?? {
+  if (privateWork) {
+    try {
+      assertToolExecutionPolicySupported(service, params.toolExecutionPolicy);
+    } catch (error) {
+      if (error instanceof ToolExecutionPolicyUnavailableError)
+        throw new CollectivePrivateWorkRefusalError('private_provider_unsupported', error.message, error);
+      throw error;
+    }
+  }
+  const isAgyNative = usesAgyNativeCarrier(service);
+  const nativeCatConfig = catRegistry.tryGet(catId as string)?.config;
+  const effectiveToolExecutionPolicy = params.toolExecutionPolicy;
+  if (!privateWork) {
+    assertToolExecutionPolicySupported(service, effectiveToolExecutionPolicy);
+  }
+  const freshnessCarrierCapability = service.freshnessCarrierCapability?.(
+    params.liveCompanion ? { liveCompanion: params.liveCompanion } : undefined,
+  ) ?? {
     provider: 'other' as const,
     carrier: 'other' as const,
     deliverySemantics: 'undeclared' as const,
+    activeInvocationGuidance: 'undeclared' as const,
   };
   let invocationCapacitySnapshot = params.capacitySnapshot;
 
@@ -1408,7 +1476,7 @@ export async function* invokeSingleCat(deps: InvocationDeps, params: InvocationP
   // normal durable child invocation. The bounded Host transport branch runs
   // after invocation creation/body exposure so Queue and F167 can bind the
   // exact source to one terminal outcome.
-  const cloudOnlyConfig = catRegistry.tryGet(catId as string)?.config;
+  const cloudOnlyConfig = nativeCatConfig;
   const isCloudOnlyInvocation = cloudOnlyConfig?.provider === 'openai-chatgpt-pro';
 
   // F198 Bug #3: a bg carrier has no stable per-conversation sessionId — the
@@ -1439,7 +1507,7 @@ export async function* invokeSingleCat(deps: InvocationDeps, params: InvocationP
     threadId,
     params.parentInvocationId,
     params.a2aTriggerMessageId,
-    params.toolExecutionPolicy,
+    effectiveToolExecutionPolicy,
     // The exact A2A source is server-owned callback identity. Do not make it
     // depend on a second optional causal alias used by direct invocations.
     params.a2aTriggerMessageId ?? params.executionCausal?.triggerMessageId,
@@ -1451,8 +1519,11 @@ export async function* invokeSingleCat(deps: InvocationDeps, params: InvocationP
           v: 1,
           taskId: privateWork.work.task.id,
           observedRevision: privateWork.work.revision,
+          resultRevision: privateWork.work.resultRevision ?? 1,
           sourceRef: privateWork.sourceRef,
           authorityRef: privateWork.work.authorityRef,
+          executionRevision: privateWork.work.executionRevision,
+          ...(privateWork.work.executionRef ? { executionRef: privateWork.work.executionRef } : {}),
         }
       : undefined,
   );
@@ -1529,38 +1600,28 @@ export async function* invokeSingleCat(deps: InvocationDeps, params: InvocationP
   let turnExecutionFailureReason: string | undefined;
   let turnExecutionInterruptionReason: string | undefined;
   let turnExecutionCompletedSuccessfully = false;
-  let routingDispatchFailureClass: RoutingDispatchFailureClass | undefined;
-  let routingFailureObservedAt: number | undefined;
 
   // F153: Record cat invocation count with trigger type
   const triggerType = params.a2aTriggerMessageId ? 'mention' : params.parentInvocationId ? 'routing' : 'default';
   catInvocationCount.add(1, { [AGENT_ID]: catId, [TRIGGER]: triggerType });
 
-  // F089: Optional invocation-level timeout — independent of the NDJSON stream timeout.
-  // CLI_TIMEOUT_MS=0 means manual-cancel-only, so no automatic outer timer is armed.
-  const INVOCATION_TIMEOUT_MULTIPLIER = 2;
-  const cliTimeoutMs = resolveCliTimeoutMs(undefined);
-  const invocationTimeoutMs = cliTimeoutMs * INVOCATION_TIMEOUT_MULTIPLIER;
-  const invocationAc = new AbortController();
-  let invocationTimer: ReturnType<typeof setTimeout> | null = null;
-  const resetInvocationTimeout = (): void => {
-    if (invocationTimer) clearTimeout(invocationTimer);
-    if (invocationTimeoutMs <= 0) {
-      invocationTimer = null;
-      return;
-    }
-    invocationTimer = setTimeout(() => {
-      log.error({ invocationId, catId, threadId, timeoutMs: invocationTimeoutMs }, 'Invocation hard timeout fired');
-      invocationAc.abort(new Error('invocation_timeout'));
-    }, invocationTimeoutMs);
-    invocationTimer.unref();
-  };
-  resetInvocationTimeout();
-
-  // Merge caller signal (user cancel) with invocation timeout — neither loses semantics.
-  const signal: AbortSignal | undefined = callerSignal
-    ? AbortSignal.any([callerSignal, invocationAc.signal])
-    : invocationAc.signal;
+  // F117 KD-22 (J4): this member's one timeout — no output for CLI_TIMEOUT_MS (0 = never). When it
+  // fires the member is stopped the way Stop stops it (reason `timeout`), through the caller's
+  // signal, so the run winds down through the same path as a Stop.
+  const onMemberTimeout = params.onMemberTimeout;
+  const memberTimeout = onMemberTimeout
+    ? new MemberOutputTimeout({
+        timeoutMs: resolveCliTimeoutMs(undefined),
+        probeProcess: () => readProcessActivity(invocationId),
+        invocationId,
+        onTimeout: (diagnostics) => {
+          log.warn({ invocationId, catId, threadId, diagnostics }, 'Member output timeout fired; stopping the member');
+          onMemberTimeout({ executionId: executionParentInvocationId, diagnostics });
+        },
+      })
+    : undefined;
+  // A run without a caller signal (no Queue slot) can still be torn down only by its own end.
+  const signal: AbortSignal = callerSignal ?? new AbortController().signal;
 
   log.info({ invocationId, catId, threadId, userId }, 'Created invocation');
 
@@ -1579,7 +1640,7 @@ export async function* invokeSingleCat(deps: InvocationDeps, params: InvocationP
     // "missing required parameter". Inject the live threadId so prompt template
     // can resolve to a concrete value.
     CAT_CAFE_THREAD_ID: threadId,
-    ...(params.toolExecutionPolicy?.mode === 'read_only' ? { CAT_CAFE_READONLY: 'true' } : {}),
+    ...(effectiveToolExecutionPolicy?.mode === 'read_only' ? { CAT_CAFE_READONLY: 'true' } : {}),
     // F254 AC-C2: Runtime mode for freshness gate descriptor derivation.
     // The MCP server reads this to construct RuntimeCapabilityDescriptor,
     // which parameterizes held/notice behavior per carrier tier.
@@ -1638,6 +1699,19 @@ export async function* invokeSingleCat(deps: InvocationDeps, params: InvocationP
     | undefined;
   const resolveInvocationMemoryCues = async (): Promise<void> => {
     invocationPromptAdditions.length = 0;
+    if (deps.runtimeInteractionPort && params.ownerAuthProvenance === 'strict') {
+      try {
+        const pendingDecisionPrompt = await deps.runtimeInteractionPort.pendingConversationDecisionPrompt(
+          userId,
+          threadId,
+          catId,
+          originTriggerMessageId,
+        );
+        if (pendingDecisionPrompt) invocationPromptAdditions.push(pendingDecisionPrompt);
+      } catch (err) {
+        log.warn({ err, invocationId, threadId, catId }, '[F306] Pending conversation decision prompt failed closed');
+      }
+    }
     memoryCuePresentationEnvelopes = [];
     omittedMemoryCueOpportunityIds = [];
     const serverScope = { ownerUserId: userId, threadId, invocationId };
@@ -1693,6 +1767,28 @@ export async function* invokeSingleCat(deps: InvocationDeps, params: InvocationP
         log.warn({ err, invocationId, threadId, catId }, '[F312] Event cue predicate failed closed');
       }
     }
+    if (
+      deps.threadOverviewOpportunitySource &&
+      // Live admission stores a Host bootstrap message, not the owner's first
+      // spoken request. Do not run the opening librarian before RTC is ready.
+      !params.liveCompanion &&
+      params.invocationOrigin === 'interactive' &&
+      params.ownerAuthProvenance === 'strict'
+    ) {
+      try {
+        const seed = await deps.threadOverviewOpportunitySource.prepareOpportunity({
+          ownerUserId: userId,
+          threadId,
+          consumerCatId: catId as string,
+          sourceMessageId: params.executionCausal?.triggerMessageId,
+          occurredAt: Date.now(),
+          signal,
+        });
+        if (seed) seeds = [...seeds, seed];
+      } catch (err) {
+        log.warn({ err, invocationId, threadId }, '[F321] thread opening predicate failed closed');
+      }
+    }
     if (!deps.memoryCuePromptService || seeds.length === 0) return;
     try {
       const cueResolution = await deps.memoryCuePromptService.resolve({
@@ -1700,6 +1796,7 @@ export async function* invokeSingleCat(deps: InvocationDeps, params: InvocationP
         serverScope,
         now: Date.now(),
         consumerCatId: catId as string,
+        signal,
       });
       const typedEnvelopes = cueResolution.presentationEnvelopes ?? [];
       if (cueResolution.promptSegment && typedEnvelopes.length === 0) {
@@ -1802,6 +1899,7 @@ export async function* invokeSingleCat(deps: InvocationDeps, params: InvocationP
 
   // F118 AC-C5: Flags for finally block fallback audit (must be before any early return)
   let hadError = false;
+  let hadProviderCancellation = false;
   let didWriteAudit = false;
   let didComplete = false;
   let didResetRestoreFailures = false;
@@ -1932,8 +2030,10 @@ export async function* invokeSingleCat(deps: InvocationDeps, params: InvocationP
   let currentPresentationAttempt: ProviderPresentationAttempt<InvocationPresentationReceipt> | undefined;
   let requestGenerationRecorder: ReturnType<typeof createRequestGenerationRecorder> | undefined;
   let currentRequestGenerationCommit: ProviderRequestGenerationCommitV1 | undefined;
+  let currentRequestGenerationSettled = false;
+  let previousLiveGeneration: { commit: ProviderRequestGenerationCommitV1 | undefined; settled: boolean } | undefined;
   const observeCurrentRequestGeneration = async (message: AgentMessage): Promise<void> => {
-    if (!requestGenerationRecorder || !currentRequestGenerationCommit) return;
+    if (!requestGenerationRecorder || !currentRequestGenerationCommit || currentRequestGenerationSettled) return;
     const metadata = message.metadata as Record<string, unknown> | undefined;
     try {
       await requestGenerationRecorder.recordObserved(currentRequestGenerationCommit, {
@@ -1952,7 +2052,7 @@ export async function* invokeSingleCat(deps: InvocationDeps, params: InvocationP
     outcome: 'accepted' | 'replaced' | 'rejected' | 'error' | 'cancelled' | 'unknown',
     reason?: string,
   ): Promise<void> => {
-    if (!requestGenerationRecorder || !currentRequestGenerationCommit) return;
+    if (!requestGenerationRecorder || !currentRequestGenerationCommit || currentRequestGenerationSettled) return;
     try {
       await requestGenerationRecorder.recordTerminal(currentRequestGenerationCommit, outcome, reason);
     } catch (error) {
@@ -2017,7 +2117,9 @@ export async function* invokeSingleCat(deps: InvocationDeps, params: InvocationP
           catId,
           executionKind,
           startedAt: executionStartedAt,
+          ...(params.liveCompanion ? { queueCompletionPolicy: 'explicit_source' as const } : {}),
           ...(Object.keys(executionCausal).length > 0 ? { causal: executionCausal } : {}),
+          outputFence: params.outputFenced ? 'gated' : 'open',
         });
       } catch (error) {
         // Auth was minted first so the exact child id could be shared with the
@@ -2051,6 +2153,17 @@ export async function* invokeSingleCat(deps: InvocationDeps, params: InvocationP
       ownsTurnExecution = true;
     }
 
+    const lifecycleAdmission = params.onLifecycleInvocationStarted
+      ? await params.onLifecycleInvocationStarted({
+          threadId,
+          userId,
+          catId,
+          invocationId,
+          parentInvocationId: executionParentInvocationId,
+          startedAt: executionStartedAt,
+        })
+      : undefined;
+
     // F22 R2 P1-1 + durable child truth: expose the exact child identity only
     // after its running record exists. Keeping this yield inside the outer try
     // guarantees iterator.return() reaches the lifecycle terminalizer.
@@ -2059,6 +2172,9 @@ export async function* invokeSingleCat(deps: InvocationDeps, params: InvocationP
       catId,
       turnInvocationId: invocationId,
       turnExecutionStartedAt: executionStartedAt,
+      ...(lifecycleAdmission ? { lifecycleResponseMessageId: lifecycleAdmission.responseMessageId } : {}),
+      ...(lifecycleAdmission ? { activeRun: lifecycleAdmission.activeRun } : {}),
+      ...(lifecycleAdmission ? { lifecyclePriorFrontierMessageId: lifecycleAdmission.priorFrontierMessageId } : {}),
       extra: {
         turnExecution: {
           invocationId,
@@ -2082,13 +2198,68 @@ export async function* invokeSingleCat(deps: InvocationDeps, params: InvocationP
     // only after the epoch decision below. Legacy/cloud paths still expose here.
     if (participation) {
       await exposeCurrentPromptMessages();
-      for await (const message of invokeCollectivePublic({
-        source: participation,
-        service,
-        callbackEnv,
+      for await (const message of recordCollectiveScopedSession({
+        sessions: deps.sessionChainStore,
+        transcript: deps.transcriptWriter,
+        sealer: deps.sessionSealer,
+        catId,
+        userId,
+        threadId,
+        startedAt: executionStartedAt,
         signal: signal!,
+        scope: { executionScope: 'collective-participation', invocationId, originMessageId: originTriggerMessageId! },
+        stream: (beforeProviderLaunch) =>
+          invokeCollectivePublic({
+            source: participation,
+            service,
+            callbackEnv,
+            signal: signal!,
+            beforeProviderLaunch,
+          }),
       })) {
-        resetInvocationTimeout();
+        memberTimeout?.observe(message);
+        if (message.type === 'error') hadError = true;
+        if (message.type === 'done' && !hadError) turnExecutionCompletedSuccessfully = true;
+        yield { ...message, turnInvocationId: invocationId, turnExecutionStartedAt: executionStartedAt };
+      }
+      return;
+    }
+    if (privateWork && privatePolicy) {
+      await exposeCurrentPromptMessages();
+      for await (const message of recordCollectiveScopedSession({
+        sessions: deps.sessionChainStore,
+        transcript: deps.transcriptWriter,
+        sealer: deps.sessionSealer,
+        catId,
+        userId,
+        threadId,
+        startedAt: executionStartedAt,
+        signal: signal!,
+        scope: {
+          executionScope: 'collective-work',
+          invocationId,
+          originMessageId: originTriggerMessageId!,
+          taskId: privateWork.work.task.id,
+          executionRevision: privatePolicy.executionRevision,
+          executionRef: privatePolicy.executionRef,
+          authorityRef: privateWork.work.authorityRef,
+        },
+        stream: (beforeProviderLaunch) =>
+          invokeCollectivePrivate({
+            beforeProviderLaunch,
+            work: privateWork,
+            policy: privatePolicy,
+            service,
+            callbackEnv,
+            signal: signal!,
+            originMessage,
+            revalidate: async () => {
+              const verified = await registry.verify(invocationId, callbackToken);
+              if (!verified.ok) throw new Error('collective_work_authority_unavailable');
+            },
+          }),
+      })) {
+        memberTimeout?.observe(message);
         if (message.type === 'error') hadError = true;
         if (message.type === 'done' && !hadError) turnExecutionCompletedSuccessfully = true;
         yield { ...message, turnInvocationId: invocationId, turnExecutionStartedAt: executionStartedAt };
@@ -2119,28 +2290,34 @@ export async function* invokeSingleCat(deps: InvocationDeps, params: InvocationP
             ? {
                 kind: 'cat' as const,
                 id: cloudCalledBy,
-                ...(params.parentInvocationId ? { invocationId: params.parentInvocationId } : {}),
               }
             : ({ kind: 'user' as const, id: userId } satisfies CloudBridgeAuditContext['sourceSender'])
           : undefined);
-      // F202 h3c-2: with several cats on one cloud provider nobody can own the reply — refuse before
-      // any grant or Host delivery, and name the cats so the owner can fix the configuration.
+      const sourceMatches =
+        sourceMessageId && sourceSender
+          ? await cloudDispatchSourceMatches({
+              messageStore: deps.messageStore,
+              sourceMessageId,
+              sourceSender,
+              threadId,
+              userId,
+              targetCatId: catId,
+            })
+          : false;
       const cloudProvider = cloudConversationProviderOf(catRegistry, catId as string);
       const cloudCat = cloudProvider ? resolveCloudConversationCat(catRegistry, cloudProvider) : undefined;
       if (cloudCat?.status === 'ambiguous') {
         const detail = `Cats configured for the ${cloudProvider} provider: ${cloudCat.catIds.join(', ')} — configure exactly one`;
         outcome = { kind: 'fallback', reason: 'ambiguous-cloud-cat', detail };
-        log.warn(
-          { catId, threadId, provider: cloudProvider, catIds: cloudCat.catIds },
-          `F202 cloud dispatch refused: ${detail}`,
-        );
+        log.warn({ catId, threadId, provider: cloudProvider, catIds: cloudCat.catIds }, `F202 cloud dispatch refused: ${detail}`);
       } else if (
         deps.cloudInvokeBridge &&
         deps.cloudReturnGrantStore &&
         cloudIntent &&
         cloudCalledBy &&
         sourceMessageId &&
-        sourceSender
+        sourceSender &&
+        sourceMatches
       ) {
         let threadMetadata = null;
         if (threadStore) {
@@ -2185,7 +2362,10 @@ export async function* invokeSingleCat(deps: InvocationDeps, params: InvocationP
           outcome = {
             kind: 'fallback',
             reason: 'incomplete-dispatch-provenance',
-            detail: 'Cloud return grant could not be persisted before Host delivery',
+            detail:
+              grant?.ok === false && grant.reason === 'in_flight'
+                ? '当前来源的回复正在落盘，本次重试尚未投递；请等待原回复或稍后重试。'
+                : 'Cloud return grant could not be persisted before Host delivery',
           };
         } else {
           outcome = await deps.cloudInvokeBridge.dispatch({
@@ -2200,12 +2380,14 @@ export async function* invokeSingleCat(deps: InvocationDeps, params: InvocationP
             calledBy: cloudCalledBy,
             intent: cloudIntent,
             sourceMessageId,
+            dispatchInvocationId: invocationId,
           });
         }
       } else {
         const reason = !sourceMessageId
           ? 'missing-source-message-id'
-          : deps.cloudInvokeBridge && (!deps.cloudReturnGrantStore || !cloudIntent || !cloudCalledBy || !sourceSender)
+          : deps.cloudInvokeBridge &&
+              (!deps.cloudReturnGrantStore || !cloudIntent || !cloudCalledBy || !sourceSender || !sourceMatches)
             ? 'incomplete-dispatch-provenance'
             : 'no-adapter';
         const detail = !sourceMessageId
@@ -2223,22 +2405,6 @@ export async function* invokeSingleCat(deps: InvocationDeps, params: InvocationP
             hasMentioningCatId: Boolean(cloudCalledBy),
           },
           'F247 cloud transport unavailable before dispatch',
-        );
-      }
-
-      if (params.a2aTriggerMessageId) {
-        if (!deps.a2aDispatchDispositionService) {
-          throw new Error('a2a_dispatch_disposition_service_unavailable');
-        }
-        await deps.a2aDispatchDispositionService.complete(
-          {
-            invocationId,
-            catId,
-            threadId,
-            a2aTriggerMessageId: params.a2aTriggerMessageId,
-            originTriggerMessageId: sourceMessageId,
-          },
-          'completed',
         );
       }
 
@@ -2339,7 +2505,7 @@ export async function* invokeSingleCat(deps: InvocationDeps, params: InvocationP
           signal,
         );
         if (chain.length > 0) {
-          const activeRec = chain.find((s) => s.status === 'active');
+          const activeRec = chain.find((s) => isHomeSession(s) && s.status === 'active');
           if (!activeRec) {
             // Chain exists but no active session → previous was sealed; don't resume
             sessionId = undefined;
@@ -2547,8 +2713,10 @@ export async function* invokeSingleCat(deps: InvocationDeps, params: InvocationP
 
     const catConfig = catRegistry.tryGet(catId as string)?.config;
     const provider = catConfig?.clientId;
-    const requiresThreadWorkspace = providerRequiresThreadWorkspace(provider);
+    const requiresThreadWorkspace = providerRequiresThreadWorkspace(provider) || isAgyNative;
+    const workspaceRequiredBy = isAgyNative ? 'AGY native' : 'OpenCode';
 
+    let firstReplyNamingInstruction = '';
     // Resolve workingDirectory from thread's projectPath
     let workingDirectory: string | undefined;
     let threadProjectPath: string | undefined;
@@ -2567,6 +2735,10 @@ export async function* invokeSingleCat(deps: InvocationDeps, params: InvocationP
         );
       }
       if (thread) {
+        if (threadId !== DEFAULT_THREAD_ID && !thread.systemKind && thread.titleSource === 'temporary') {
+          firstReplyNamingInstruction =
+            '这条对话尚未起名。首次回话时，请调用 cat_cafe_set_thread_metadata 的 title，起一个概括这次任务的短名（不照抄用户原话）。用户自己填过或改过的名字会受保护；猫只起一次名。';
+        }
         if (thread.createdAt) threadCreatedAt = thread.createdAt;
         if (thread.projectPath) threadProjectPath = thread.projectPath;
         // #836: Reborn session strategy — force new session every invocation.
@@ -2590,7 +2762,9 @@ export async function* invokeSingleCat(deps: InvocationDeps, params: InvocationP
             '#836: isRebornSession lookup failed pre-invoke, defaulting to non-reborn',
           );
         }
-        if (isReborn) {
+        const hasExplicitImportedHistory =
+          activeSessionRecordForResume?.externalImport?.cliSessionId === sessionId && Boolean(sessionId);
+        if (isReborn && !hasExplicitImportedHistory) {
           sessionId = undefined;
           log.info({ catId, threadId }, '#836: reborn session strategy — forcing new session');
         }
@@ -2599,7 +2773,7 @@ export async function* invokeSingleCat(deps: InvocationDeps, params: InvocationP
           // categorization only — they are not real filesystem directories. Skip them
           // to avoid triggering the F070 governance gate on a non-existent path.
           if (thread.projectPath.startsWith('games/')) {
-            workspaceResolutionFailureMessage = `OpenCode requires a filesystem thread projectPath for ${threadId}; virtual game projectPath ${thread.projectPath} cannot be used as a working directory.`;
+            workspaceResolutionFailureMessage = `${workspaceRequiredBy} requires a filesystem thread projectPath for ${threadId}; virtual game projectPath ${thread.projectPath} cannot be used as a working directory.`;
           } else {
             const validatedProjectPath = await resolvePersistentProjectPathDetailed(thread.projectPath);
             if (!validatedProjectPath.ok) {
@@ -2654,14 +2828,14 @@ export async function* invokeSingleCat(deps: InvocationDeps, params: InvocationP
             bootcampWorkspaceError = new Error(bootcampWorkspace.error);
           }
         } else if (requiresThreadWorkspace) {
-          workspaceResolutionFailureMessage = `OpenCode requires a thread projectPath for ${threadId}. Bind the thread to a project workspace before spawning OpenCode.`;
+          workspaceResolutionFailureMessage = `${workspaceRequiredBy} requires a thread projectPath for ${threadId}. Bind the thread to a project workspace before spawning ${workspaceRequiredBy}.`;
         }
       }
     }
     if (requiresThreadWorkspace && threadStore && !workingDirectory && !bootcampWorkspaceError) {
       workspaceResolutionError = new Error(
         workspaceResolutionFailureMessage ??
-          `OpenCode requires a thread projectPath for ${threadId}. Bind the thread to a project workspace before spawning OpenCode.`,
+          `${workspaceRequiredBy} requires a thread projectPath for ${threadId}. Bind the thread to a project workspace before spawning ${workspaceRequiredBy}.`,
       );
     }
     if (bootcampWorkspaceError) {
@@ -3135,7 +3309,7 @@ export async function* invokeSingleCat(deps: InvocationDeps, params: InvocationP
       effectiveModel &&
       effectiveProviderName &&
       (hasExplicitOcProvider ||
-        !getOpenCodeKnownModels().has(effectiveModel) ||
+        !(await getOpenCodeKnownModels()).has(effectiveModel) ||
         mcpServerPath ||
         hasResolvedInvocationCapacity)
     ) {
@@ -3291,6 +3465,10 @@ export async function* invokeSingleCat(deps: InvocationDeps, params: InvocationP
             reason: 'context capability undeclared; F296 fail-closed projection',
           }
         : undefined);
+    const claudeCompactionHooks =
+      contextCapability?.provider === 'anthropic' && contextCapability.carrier === 'agent_sdk'
+        ? deps.claudeCompactionHooks?.({ invocationId, userId, catId, threadId })
+        : undefined;
     // F296 B4a: the adapter must expose the seam AND the carrier must be one we
     // dynamically proved has it. Either half missing keeps the carrier cold.
     const providerPreflightAvailable = typeof service.invokeWithContinuityPreflight === 'function';
@@ -3352,38 +3530,6 @@ export async function* invokeSingleCat(deps: InvocationDeps, params: InvocationP
       await exposeCurrentPromptMessages();
       return true;
     };
-    let routingContextPrepend = '';
-    let routingContextProjectionFailureAudited = false;
-    const resolveRoutingContextProjection = async (): Promise<void> => {
-      routingContextPrepend = '';
-      if (!deps.routingContextPromptProjection) return;
-      try {
-        routingContextPrepend = await deps.routingContextPromptProjection.resolve({
-          ownerId: userId,
-          ...(params.routingContextIntent ? { intent: params.routingContextIntent } : {}),
-        });
-      } catch (err) {
-        log.warn(
-          { threadId, invocationId, catId, errorName: err instanceof Error ? err.name : 'unknown' },
-          'Routing context prompt projection failed; continuing without dynamic routing context',
-        );
-        if (routingContextProjectionFailureAudited) return;
-        routingContextProjectionFailureAudited = true;
-        try {
-          await auditLog.append({
-            type: AuditEventTypes.ROUTING_CONTEXT_PROJECTION_FAILED,
-            threadId,
-            data: {
-              catId,
-              invocationId,
-              errorName: err instanceof Error ? err.name : 'unknown',
-            },
-          });
-        } catch (auditErr) {
-          log.warn({ threadId, invocationId, auditErr }, 'Routing context projection failure audit write failed');
-        }
-      }
-    };
     const applyEpochScopedPrompt = async (): Promise<void> => {
       const promptBuiltForEpoch = await applyContextPromptFactory();
       if (
@@ -3400,7 +3546,6 @@ export async function* invokeSingleCat(deps: InvocationDeps, params: InvocationP
       await resolveInvocationMemoryCues();
       resolveEntityNudgePresentation();
       await resolveAsrPersonMemoryOpportunities(contextContinuityHandshake);
-      await resolveRoutingContextProjection();
     };
 
     // F-BLOAT: Only inject staticIdentity (systemPrompt) on new provider sessions.
@@ -3471,7 +3616,14 @@ export async function* invokeSingleCat(deps: InvocationDeps, params: InvocationP
     ): { readonly promptWithInvocationAdditions: string; readonly effectivePrompt: string } => {
       // Prepend staticIdentity to prompt when injection is needed.
       // F070-P2: missionPrefix (dispatch context) is prepended for external projects.
-      const composedPrompt = [prompt, ...invocationPromptAdditions, ...presentationSegments].filter(Boolean).join('\n');
+      const composedPrompt = [
+        prompt,
+        firstReplyNamingInstruction,
+        ...invocationPromptAdditions,
+        ...presentationSegments,
+      ]
+        .filter(Boolean)
+        .join('\n');
       const promptWithMission = missionPrefix ? `${missionPrefix}\n\n${composedPrompt}` : composedPrompt;
       let composedEffectivePrompt =
         includeSystemPrompt && params.systemPrompt
@@ -3479,9 +3631,6 @@ export async function* invokeSingleCat(deps: InvocationDeps, params: InvocationP
           : `${promptWithMission}`;
       if (contextHintPrefix) composedEffectivePrompt = `${contextHintPrefix}\n\n---\n\n${composedEffectivePrompt}`;
       if (stagingPrepend) composedEffectivePrompt = `${stagingPrepend}\n\n---\n\n${composedEffectivePrompt}`;
-      if (routingContextPrepend) {
-        composedEffectivePrompt = `${routingContextPrepend}\n\n---\n\n${composedEffectivePrompt}`;
-      }
       /* @segment M2 — Transcript Path Hints */
       composedEffectivePrompt = appendTranscriptPathHints(composedEffectivePrompt, TRANSCRIPT_DIR, threadId);
       return { promptWithInvocationAdditions: composedPrompt, effectivePrompt: composedEffectivePrompt };
@@ -3643,7 +3792,6 @@ export async function* invokeSingleCat(deps: InvocationDeps, params: InvocationP
                 injectSystemPrompt,
                 hasContextHint: Boolean(contextHintPrefix),
                 hasStagingPrepend: Boolean(stagingPrepend),
-                hasRoutingContextProjection: Boolean(routingContextPrepend),
                 hasMissionPrefix: Boolean(missionPrefix),
               });
               return {
@@ -3666,7 +3814,10 @@ export async function* invokeSingleCat(deps: InvocationDeps, params: InvocationP
     // F089 Phase 2+3: Create tmux spawn override for agent-in-pane execution
     let spawnCliOverride: AgentServiceOptions['spawnCliOverride'];
     let agentCarrierSessionFactory: AgentServiceOptions['agentCarrierSessionFactory'];
-    if (deps.tmuxGateway && workingDirectory) {
+    // The official SDK owns its bidirectional subprocess. CLI-only tmux
+    // wrappers cannot be supplied to its query transport.
+    const sdkOwnsTransport: boolean = service instanceof ClaudeSdkAgentService;
+    if (deps.tmuxGateway && workingDirectory && !sdkOwnsTransport) {
       const { resolveWorktreeIdByPath } = await import('../../../../workspace/workspace-security.js');
       const { createTmuxSpawnOverride } = await import('../../../../terminal/tmux-agent-spawner.js');
       const { createTmuxAgentCarrierSessionFactory } = await import(
@@ -3680,12 +3831,14 @@ export async function* invokeSingleCat(deps: InvocationDeps, params: InvocationP
           userId,
           deps.tmuxGateway,
           deps.agentPaneRegistry,
+          catId as string,
         );
         agentCarrierSessionFactory = createTmuxAgentCarrierSessionFactory({
           worktreeId,
           userId,
           tmuxGateway: deps.tmuxGateway,
           ...(deps.agentPaneRegistry ? { agentPaneRegistry: deps.agentPaneRegistry } : {}),
+          catId: catId as string,
         });
       } catch {
         log.warn({ workingDirectory }, 'resolveWorktreeIdByPath failed — skipping tmux pane');
@@ -3746,21 +3899,73 @@ export async function* invokeSingleCat(deps: InvocationDeps, params: InvocationP
 
     const activeInvocationFreshness = deps.providerNativeFreshnessFactory
       ? await deps.providerNativeFreshnessFactory({
-          invocationId: params.parentInvocationId ?? invocationId,
+          // Live MCP credentials belong to this child; an enclosing route is not its carrier.
+          invocationId: params.liveCompanion ? invocationId : (params.parentInvocationId ?? invocationId),
           threadId,
           userId,
           catId,
           provider: provider ?? 'unknown',
           capability: freshnessCarrierCapability,
+          ...(params.liveCompanion
+            ? {
+                liveResultConsumerActive: () =>
+                  params.liveCompanion!.acceptsFreshness?.() === true &&
+                  params.liveCompanion!.isActiveCarrier?.({
+                    invocationId,
+                    catId,
+                    threadId,
+                  }) === true,
+              }
+            : {}),
+          ...(params.liveCompanion?.exposureReason
+            ? {
+                liveExposureReason: (
+                  message: import('../../freshness/freshness-unseen-source.js').FreshnessReadableMessage,
+                ) => params.liveCompanion!.exposureReason!(message),
+              }
+            : {}),
         })
       : null;
 
     const entrustedWorkSourceMessageId = params.a2aTriggerMessageId ?? params.executionCausal?.triggerMessageId;
     const entrustedWorkTaskStore = deps.taskStore;
 
+    // #1542: build the managed compaction launch plan once. The SAME plan is
+    // handed to the carrier (which derives the single `--settings` injection)
+    // and consumed at the compaction boundary as carrier-readiness evidence —
+    // readiness proves the exact carrier this invocation will launch, never a
+    // guessed project root. Assets resolve from the API install root, so this
+    // works for thread-workspace cwds and zero-write external projects alike.
+    const compactionLaunchPlan = provider === 'anthropic' ? buildClaudeCompactionLaunchPlan() : undefined;
+    if (compactionLaunchPlan?.ready && typeof deps.registry.setExpectedCompactionCarrier === 'function') {
+      // #1542 guard 4: bind the carrier identity to the DURABLE callback
+      // principal — survives API restarts and never evicts live authority.
+      await deps.registry.setExpectedCompactionCarrier(invocationId, compactionLaunchPlan.carrierIdentity);
+    }
+
+    const codexAccountLaunch =
+      provider === 'openai' && resolvedAccount
+        ? resolveCodexAccountLaunch(resolvedAccount, { cwd: workingProjectRoot })
+        : undefined;
+    const executionAccount =
+      resolvedAccount && codexAccountLaunch
+        ? codexExecutionAccountSnapshot(resolvedAccount, codexAccountLaunch)
+        : provider === 'anthropic' && resolvedAccount?.claude
+          ? claudeExecutionAccountSnapshot(resolvedAccount)
+          : undefined;
+    const requiresImportedHistory =
+      activeSessionRecordForResume?.externalImport?.cliSessionId === sessionId && Boolean(sessionId);
     const baseOptions: AgentServiceOptions = {
+      ...(params.onRemoteExecutionDispatched
+        ? { onRemoteExecutionDispatched: params.onRemoteExecutionDispatched }
+        : {}),
+      ...(activeSessionRecordForResume?.nativeSessionBinding
+        ? { nativeSessionBinding: activeSessionRecordForResume.nativeSessionBinding }
+        : {}),
+      ...(requiresImportedHistory ? { requireExactResume: true } : {}),
       ...(params.routeIntent ? { routeIntent: params.routeIntent } : {}),
       callbackEnv,
+      ...(compactionLaunchPlan ? { compactionLaunchPlan } : {}),
       ...(invocationCapacitySnapshot
         ? {
             contextCapacity: invocationCapacitySnapshot.capacity,
@@ -3772,6 +3977,8 @@ export async function* invokeSingleCat(deps: InvocationDeps, params: InvocationP
       ...(reasoningEffortOverride ? { reasoningEffortOverride } : {}),
       ...(requestedServiceTier ? { requestedServiceTier } : {}),
       ...(accountEnv ? { accountEnv } : {}),
+      ...(resolvedAccount?.claude ? { claudeTokenAccount: true } : {}),
+      ...(codexAccountLaunch ? { codexAccountLaunch } : {}),
       auditContext: {
         invocationId,
         executionId: params.parentInvocationId ?? invocationId,
@@ -3800,6 +4007,7 @@ export async function* invokeSingleCat(deps: InvocationDeps, params: InvocationP
       ...(spawnCliOverride ? { spawnCliOverride } : {}),
       ...(agentCarrierSessionFactory ? { agentCarrierSessionFactory } : {}),
       ...(activeInvocationFreshness ? { activeInvocationFreshness } : {}),
+      ...(params.liveCompanion ? { liveCompanion: params.liveCompanion } : {}),
       ...(deps.runtimeInteractionPort ? { runtimeInteractionPort: deps.runtimeInteractionPort } : {}),
       ...(entrustedWorkTaskStore && entrustedWorkSourceMessageId
         ? {
@@ -3812,6 +4020,15 @@ export async function* invokeSingleCat(deps: InvocationDeps, params: InvocationP
               }),
           }
         : {}),
+      ...(claudeCompactionHooks ? { claudeCompactionHooks } : {}),
+      ...(params.onAgentClientActiveRunReady
+        ? {
+            activeRunDispatch: {
+              invocationId,
+              register: (dispatcher) => params.onAgentClientActiveRunReady!({ catId, dispatcher }),
+            },
+          }
+        : {}),
       invocationId,
       ...(sessionId ? { cliSessionId: sessionId } : {}),
       ...(isResume && !injectSystemPrompt && params.systemPrompt
@@ -3820,8 +4037,9 @@ export async function* invokeSingleCat(deps: InvocationDeps, params: InvocationP
       // F118: Keep liveness warnings visible, but leave termination to explicit user cancel.
       livenessProbe: { stallAutoKill: false, stallWarningMs: CAT_INVOCATION_STALL_WARNING_MS },
       ...(catConfig?.cliConfigArgs?.length ? { cliConfigArgs: catConfig.cliConfigArgs } : {}),
+      ...(executionAccount ? { executionAccount } : {}),
       parentSpan: invocationSpan,
-      ...(params.toolExecutionPolicy ? { toolExecutionPolicy: params.toolExecutionPolicy } : {}),
+      ...(effectiveToolExecutionPolicy ? { toolExecutionPolicy: effectiveToolExecutionPolicy } : {}),
     };
 
     let lastErrorMessage: string | undefined;
@@ -3869,6 +4087,16 @@ export async function* invokeSingleCat(deps: InvocationDeps, params: InvocationP
     };
 
     const processMessage = async (msg: AgentMessage): Promise<AgentMessage[]> => {
+      msg = redactClaudeLaunchToken(msg, resolvedAccount?.claude ? accountEnv?.CLAUDE_CODE_OAUTH_TOKEN : undefined);
+      if (executionAccount && msg.metadata)
+        msg = {
+          ...msg,
+          metadata: {
+            ...msg.metadata,
+            executionAccount,
+            ...(msg.metadata.usage ? { usage: { ...msg.metadata.usage, executionAccount } } : {}),
+          },
+        };
       const outputs: AgentMessage[] = [];
 
       // clowder#915 (cloud P1): F8/F24 usage + context_health block extracted so
@@ -3945,6 +4173,10 @@ export async function* invokeSingleCat(deps: InvocationDeps, params: InvocationP
             usage: msg.metadata.usage,
             model: msg.metadata.model,
             provider: msg.metadata.provider,
+            ...(msg.metadata.executionAccount ? { executionAccount: msg.metadata.executionAccount } : {}),
+            // F319 Phase E.1: served facts are only known at done; carry them on the live
+            // channel so the bubble shows them without a history reload. Absent = unobserved.
+            ...servedFactsPayload(msg.metadata),
           }),
           timestamp: Date.now(),
         });
@@ -4246,6 +4478,9 @@ export async function* invokeSingleCat(deps: InvocationDeps, params: InvocationP
       }
 
       if (msg.type === 'session_init' && msg.sessionId) {
+        if (requiresImportedHistory && msg.sessionId !== activeSessionRecordForResume?.externalImport?.cliSessionId) {
+          throw new Error('The imported native session was not resumed; refusing to replace its history');
+        }
         log.info(
           { cliSessionId: msg.sessionId, threadId, catId, userId, invocationId },
           'Session init: binding session',
@@ -4687,6 +4922,23 @@ export async function* invokeSingleCat(deps: InvocationDeps, params: InvocationP
           }
         }
 
+        if (msg.nativeSessionBinding && deps.sessionChainStore) {
+          const record = await deps.sessionChainStore.getActive(catId, threadId, userId);
+          if (
+            !sessionRuntimeBindingAccepted ||
+            record?.cliSessionId !== msg.sessionId ||
+            msg.nativeSessionBinding.cliSessionId !== msg.sessionId
+          ) {
+            throw new Error('Native continuity binding could not be committed to the active session');
+          }
+          const committed = await deps.sessionChainStore.update(record.id, {
+            nativeSessionBinding: msg.nativeSessionBinding,
+          });
+          if (!committed?.nativeSessionBinding || committed.nativeSessionBinding.cliSessionId !== msg.sessionId) {
+            throw new Error('Native continuity persistence failed before stream advancement');
+          }
+        }
+
         if (sessionRuntimeBindingAccepted) {
           try {
             await sessionManager.store(userId, catId, threadId, msg.sessionId);
@@ -5060,23 +5312,21 @@ export async function* invokeSingleCat(deps: InvocationDeps, params: InvocationP
 
     const streamProcessedOutputs = async function* (sourceMsg: AgentMessage | undefined): AsyncIterable<AgentMessage> {
       if (!sourceMsg) return;
-      const messageObservedAt = Date.now();
       for (const out of await processMessage(sourceMsg)) {
-        routingDispatchFailureClass ??= classifyRoutingDispatchFailure({
-          ...(out.metadata?.cliDiagnostics?.reasonCode
-            ? { cliReasonCode: out.metadata.cliDiagnostics.reasonCode }
-            : {}),
-          ...(out.errorCode ? { providerErrorCode: out.errorCode } : {}),
-        });
-        if (routingDispatchFailureClass !== undefined) routingFailureObservedAt ??= messageObservedAt;
         if (out.type === 'error') {
           hadError = true;
-          turnExecutionFailureReason ??= 'provider_execution_failed';
+          const cancelled = out.errorCode === 'INVOCATION_CANCELLED';
+          hadProviderCancellation ||= cancelled;
+          if (!cancelled) turnExecutionFailureReason ??= 'provider_execution_failed';
           terminalTaskProgressStatus = 'interrupted';
-          terminalInterruptReason = 'error';
+          terminalInterruptReason = cancelled ? 'aborted' : 'error';
         }
         if (out.type === 'done' && out.errorCode !== undefined) {
-          turnExecutionFailureReason ??= 'provider_execution_failed';
+          if (out.errorCode === 'INVOCATION_CANCELLED') {
+            hadProviderCancellation = true;
+            terminalTaskProgressStatus = 'interrupted';
+            terminalInterruptReason = 'aborted';
+          } else turnExecutionFailureReason ??= 'provider_execution_failed';
         }
         await maybePersistTaskProgress(out);
         if (out.type === 'done' && terminalTaskProgressStatus === null) {
@@ -5104,32 +5354,6 @@ export async function* invokeSingleCat(deps: InvocationDeps, params: InvocationP
               spanId: sc.spanId,
               ...(parentSid ? { parentSpanId: parentSid } : {}),
             };
-          }
-          // F254 B3/B4: Check for freshness re-invoke after terminal event.
-          // Fail-open: errors here never block the done signal.
-          if (deps.freshnessReinvokeCheck && !hadError && !signal?.aborted) {
-            try {
-              const decision = await deps.freshnessReinvokeCheck({
-                invocationId,
-                threadId,
-                catId,
-                userId: params.userId,
-              });
-              if (decision) {
-                // Attach decision to done metadata for routing layer.
-                // Initialize metadata if missing (some provider paths emit done without it).
-                if (!out.metadata) {
-                  (out as unknown as Record<string, unknown>).metadata = {};
-                }
-                (out.metadata as unknown as Record<string, unknown>).freshnessReinvoke = decision;
-                log.info(
-                  { catId, threadId, invocationId, shouldReinvoke: decision.shouldReinvoke, reason: decision.reason },
-                  '[F254-B3] freshness re-invoke decision',
-                );
-              }
-            } catch (err) {
-              log.warn({ catId, threadId, invocationId, err }, '[F254-B3] freshness re-invoke check failed, fail-open');
-            }
           }
           // A consumer may stop as soon as it receives the terminal `done`.
           // Record success before yielding that boundary so iterator.return()
@@ -5187,7 +5411,7 @@ export async function* invokeSingleCat(deps: InvocationDeps, params: InvocationP
       );
     }
 
-    let allowSessionRetry = Boolean(sessionId);
+    let allowSessionRetry = Boolean(sessionId) && !requiresImportedHistory;
     let allowTransientRetry = true;
     let nextRequestGenerationReason: RequestGenerationRetryReason | undefined;
     let consumedClaudeCompactionObservation: string | undefined;
@@ -5227,17 +5451,47 @@ export async function* invokeSingleCat(deps: InvocationDeps, params: InvocationP
       const options: AgentServiceOptions = {
         ...(sessionId ? { sessionId } : {}),
         ...baseOptions,
+        ...(params.liveCompanion
+          ? {
+              onLiveInputOutcome: async (receipt: import('../../types.js').LiveProviderInputOutcome) => {
+                // Preserve the accepted output fence; a rejected follow-up never owns ongoing output.
+                if (currentRequestGenerationCommit?.requestGenerationId === receipt.request.requestGenerationId) {
+                  if (receipt.outcome !== 'accepted') currentRequestGenerationCommit = previousLiveGeneration?.commit;
+                  currentRequestGenerationSettled =
+                    receipt.outcome === 'accepted' || (previousLiveGeneration?.settled ?? false);
+                  previousLiveGeneration = undefined;
+                }
+                try {
+                  if (receipt.nativeTurnId)
+                    await generationRecorder?.recordObserved(receipt.request, {
+                      evidenceRef: `codex_live_input:${receipt.nativeTurnId}`,
+                    });
+                  await generationRecorder?.recordTerminal(receipt.request, receipt.outcome, 'live_native_input');
+                } catch (error) {
+                  log.error({ invocationId, error }, 'Failed to record Live input outcome');
+                }
+              },
+            }
+          : {}),
         ...(generationRecorder || entityNudgePromptPresentation || entityNudgeCuePromptPresentation
           ? {
               beforeProviderLaunch: async (prepared) => {
+                signal?.throwIfAborted();
                 launchCountThisAttempt += 1;
+                const liveFollowup =
+                  Boolean(params.liveCompanion) &&
+                  [
+                    'app_server_live_typed_input',
+                    'app_server_live_freshness_input',
+                    'app_server_live_context_input',
+                  ].includes(prepared.message.injectionDecision ?? '');
                 let committed: ProviderRequestGenerationCommitV1;
                 if (generationRecorder) {
                   const reason =
                     nextRequestGenerationReason ??
                     prepared.boundaryReason ??
                     (launchCountThisAttempt > 1 ? ('provider_continuation' as const) : undefined);
-                  if (currentRequestGenerationCommit) {
+                  if (currentRequestGenerationCommit && !currentRequestGenerationSettled) {
                     const previousOutcome =
                       reason === 'provider_continuation'
                         ? 'accepted'
@@ -5249,12 +5503,19 @@ export async function* invokeSingleCat(deps: InvocationDeps, params: InvocationP
                       previousOutcome,
                       reason ?? 'provider_generation_replaced',
                     );
+                    currentRequestGenerationSettled = true;
                   }
+                  if (liveFollowup)
+                    previousLiveGeneration = {
+                      commit: currentRequestGenerationCommit,
+                      settled: currentRequestGenerationSettled,
+                    };
                   committed = await generationRecorder.recordPrepared(prepared, {
                     attempt: attempt + 1,
                     ...(reason ? { reason } : {}),
                   });
                   currentRequestGenerationCommit = committed;
+                  currentRequestGenerationSettled = false;
                   nextRequestGenerationReason = undefined;
                 } else {
                   // Test/legacy embedders still need the adapter's exact boundary
@@ -5268,7 +5529,20 @@ export async function* invokeSingleCat(deps: InvocationDeps, params: InvocationP
 
                 const presentation = entityNudgePromptPresentation;
                 const hasCueNudge = Boolean(entityNudgeCuePromptPresentation?.presentation.result.nudges.length);
-                if (presentation?.promptContext || hasCueNudge) {
+                // A capacity-recovery request carries an empty body by design
+                // (turn/start sends input: []), so it can never contain the
+                // nudge promptContext. The nudge was already delivered and
+                // confirmed by the prompt generation it resumes; re-checking
+                // kills every recovery, and re-confirming would double-write
+                // the delivery ledger. The exemption requires the empty body
+                // too: a carrier that misuses the label on a real body falls
+                // back to the strict check, as does every other boundary
+                // (e.g. Claude carrier provider_fallback).
+                const isCapacityRecovery =
+                  prepared.boundaryReason === 'provider_capacity_recovery' &&
+                  'body' in prepared.message &&
+                  prepared.message.body === '';
+                if (!liveFollowup && !isCapacityRecovery && (presentation?.promptContext || hasCueNudge)) {
                   if (!('body' in prepared.message)) throw new Error('entity_nudge_prepared_prompt_unavailable');
                   if (presentation?.promptContext && !prepared.message.body.includes(presentation.promptContext)) {
                     throw new Error('entity_nudge_prepared_prompt_not_exact');
@@ -5363,20 +5637,20 @@ export async function* invokeSingleCat(deps: InvocationDeps, params: InvocationP
           msg = projected;
         }
         if (currentRequestGenerationCommit) await observeCurrentRequestGeneration(msg);
-        // F149: provider_signal / liveness_signal must NOT reset timeout — prevents "续命"
-        // F198 Phase C P2-1: status (daemon detail progress) also must NOT reset timeout —
-        // a daemon sending frequent status updates must not evade the 30-min kill deadline.
-        if (msg.type !== 'provider_signal' && msg.type !== 'liveness_signal' && msg.type !== 'status')
-          resetInvocationTimeout();
+        // F117 KD-22: only member output restarts the timeout; signals, status and diagnostics
+        // never do (F149, F198 Phase C), so a member cannot keep itself alive without working.
+        memberTimeout?.observe(msg);
         if (msg.contextCompaction) {
+          // F117 K2: in-process hooks are authenticated by construction and registered by the
+          // carrier itself; only a project hook depends on callback auth and the workspace files.
           const hookAuthenticationReady =
-            typeof deps.hookAuthenticationReady === 'function'
+            claudeCompactionHooks !== undefined ||
+            (typeof deps.hookAuthenticationReady === 'function'
               ? deps.hookAuthenticationReady()
-              : (deps.hookAuthenticationReady ?? false);
-          const hookCarrierReady =
-            typeof deps.claudeProjectHookCarrierReady === 'function'
-              ? deps.claudeProjectHookCarrierReady(workingProjectRoot ?? hostProjectRoot)
-              : (deps.claudeProjectHookCarrierReady ?? false);
+              : (deps.hookAuthenticationReady ?? false));
+          // In-process hooks prove their own carrier registration. Project hooks
+          // require the plan actually passed to this invocation's launch.
+          const hookCarrierReady = claudeCompactionHooks !== undefined || compactionLaunchPlan?.ready === true;
           // Ask the state machine with no attestation first. Only its specific
           // "attestation unavailable" edge authorizes the session read below;
           // auth/carrier/capability failures stop before sequence state.
@@ -5449,7 +5723,14 @@ export async function* invokeSingleCat(deps: InvocationDeps, params: InvocationP
         if (
           allowSessionRetry &&
           msg.type === 'error' &&
-          (isMissingClaudeSessionError(msg.error) || isSessionNotFoundDiagnostic(msg.metadata))
+          (isMissingClaudeSessionError(msg.error) ||
+            isSessionNotFoundDiagnostic(msg.metadata) ||
+            (isAgyNative &&
+              !attemptHasContentOutput &&
+              msg.errorCode === 'AGY_NATIVE_RESUME_MISMATCH' &&
+              deps.sessionChainStore &&
+              deps.sessionSealer &&
+              (params.contextPromptFactory || params.rebuildPromptAfterSessionSeal)))
         ) {
           suppressedMissingSessionError = msg;
           continue;
@@ -5481,8 +5762,10 @@ export async function* invokeSingleCat(deps: InvocationDeps, params: InvocationP
           suppressedTransientCliError = msg;
           continue;
         }
-        // #774 self-heal: CLI timeout during session resume with no substantive output
-        // → likely stale/unreachable session. Suppress and retry without session.
+        // #774 self-heal: a resumed session whose CLI never produced its first event (startup
+        // watchdog) → likely stale/unreachable session. Suppress and retry without session.
+        // F117 KD-22: silence after the member started is not retried — its output timeout stops
+        // the member as an ordinary, resendable failure.
         // Uses attemptHasSubstantiveOutput (not attemptHasContentOutput) because
         // timeout_diagnostics (system_info) must NOT block the retry path.
         if (
@@ -5490,7 +5773,7 @@ export async function* invokeSingleCat(deps: InvocationDeps, params: InvocationP
           options.sessionId &&
           !attemptHasSubstantiveOutput &&
           msg.type === 'error' &&
-          isCliTimeoutError(msg.error)
+          isCliStartupTimeoutError(msg.error)
         ) {
           suppressedTimeoutError = msg;
           continue;
@@ -5519,6 +5802,14 @@ export async function* invokeSingleCat(deps: InvocationDeps, params: InvocationP
         // Other self-heal paths (prompt limit, context overflow) all guard on !attemptHasContentOutput.
         // Without this guard, a multi-step run that used a tool then ended with a malformed turn
         // would re-run the original prompt from scratch — duplicating tool actions.
+        if (requiresImportedHistory && msg.type === 'error' && isMalformedToolCallError(msg.error)) {
+          for await (const out of streamProcessedOutputs({
+            ...msg,
+            error: 'malformed_toolcall: 原会话本轮工具调用未完成，原会话仍保留；请重试。',
+          }))
+            yield out;
+          continue;
+        }
         if (msg.type === 'error' && isMalformedToolCallError(msg.error) && !attemptHasContentOutput) {
           suppressedMalformedError = msg;
           continue;
@@ -5658,10 +5949,21 @@ export async function* invokeSingleCat(deps: InvocationDeps, params: InvocationP
           msg.type === 'provider_signal' || msg.type === 'liveness_signal'
             ? { ...msg, type: 'system_info' as const }
             : msg;
-        if (msg.type === 'error') await terminateCurrentRequestGeneration('error', 'provider_error');
+        const providerCancelled = msg.errorCode === 'INVOCATION_CANCELLED';
+        if (msg.type === 'error')
+          await terminateCurrentRequestGeneration(
+            providerCancelled ? 'cancelled' : 'error',
+            msg.errorCode ?? 'provider_error',
+          );
         if (msg.type === 'done') {
           await terminateCurrentRequestGeneration(
-            hadError || msg.errorCode !== undefined ? 'error' : signal?.aborted ? 'cancelled' : 'accepted',
+            providerCancelled
+              ? 'cancelled'
+              : hadError || msg.errorCode !== undefined
+                ? 'error'
+                : signal?.aborted
+                  ? 'cancelled'
+                  : 'accepted',
             msg.errorCode,
           );
         }
@@ -5709,17 +6011,20 @@ export async function* invokeSingleCat(deps: InvocationDeps, params: InvocationP
       }
       if (activeServiceIterator === serviceIter) await closeActiveServiceIterator();
 
-      if (shouldRetryWithoutSession && attempt + 1 < maxAttempts) {
+      if (shouldRetryWithoutSession && !requiresImportedHistory && attempt + 1 < maxAttempts) {
         await presentationDelivery?.release('provider_generation_replaced');
-        const retryReason = suppressedPromptLimitError
-          ? 'prompt_token_limit'
-          : suppressedContextOverflowError
-            ? 'context_window_overflow'
-            : suppressedTimeoutError
-              ? 'cli_timeout'
-              : suppressedMalformedError
-                ? 'malformed_toolcall'
-                : 'missing_session';
+        const nativeBindingChanged = suppressedMissingSessionError?.errorCode === 'AGY_NATIVE_RESUME_MISMATCH';
+        const retryReason = nativeBindingChanged
+          ? 'native_binding_changed'
+          : suppressedPromptLimitError
+            ? 'prompt_token_limit'
+            : suppressedContextOverflowError
+              ? 'context_window_overflow'
+              : suppressedTimeoutError
+                ? 'cli_timeout'
+                : suppressedMalformedError
+                  ? 'malformed_toolcall'
+                  : 'missing_session';
         nextRequestGenerationReason = retryReason;
         log.info(
           {
@@ -5735,6 +6040,33 @@ export async function* invokeSingleCat(deps: InvocationDeps, params: InvocationP
           },
           'cat retrying invoke (session self-heal)',
         );
+        if (nativeBindingChanged) {
+          // The Native adapter refuses this binding before spawning. Commit the
+          // history boundary before rebuilding or submitting any replacement.
+          const prior = await deps.sessionChainStore?.getActive(catId, threadId, userId);
+          if (!prior || prior.cliSessionId !== sessionId || !deps.sessionSealer) {
+            throw new Error('native_resume_boundary_source_unavailable');
+          }
+          const seal = await deps.sessionSealer.requestSeal({ sessionId: prior.id, reason: retryReason });
+          if (!seal.accepted) throw new Error('native_resume_boundary_seal_rejected');
+          const finalized = await deps.sessionSealer.finalize({ sessionId: prior.id });
+          if (!finalized.sealed) throw new Error('native_resume_boundary_finalize_failed');
+          const notice: AgentMessage = {
+            type: 'system_info',
+            catId,
+            timestamp: Date.now(),
+            content: JSON.stringify({
+              type: 'session_seal_requested',
+              catId,
+              sessionId: prior.id,
+              sessionSeq: prior.seq + 1,
+              reason: retryReason,
+            }),
+          };
+          for await (const out of streamProcessedOutputs(notice)) yield out;
+          delete baseOptions.nativeSessionBinding;
+          activeSessionRecordForResume = null;
+        }
         try {
           await sessionManager.delete(userId, catId, threadId);
         } catch {
@@ -5769,6 +6101,12 @@ export async function* invokeSingleCat(deps: InvocationDeps, params: InvocationP
         // here rather than leave a known double-injection behind a new carrier.
         if (params.systemPrompt && !baseOptions.systemPrompt && !hasTargetContinuityHandshake) {
           baseOptions.systemPrompt = params.systemPrompt;
+        }
+        if (nativeBindingChanged && !hasTargetContinuityHandshake) {
+          // Non-handshake embedders must also supply the sealed history, never
+          // replay only the latest user message into an empty conversation.
+          if (!params.rebuildPromptAfterSessionSeal) throw new Error('native_resume_cold_rebuild_unavailable');
+          prompt = await params.rebuildPromptAfterSessionSeal();
         }
         if (hasTargetContinuityHandshake) {
           // The identity belongs to exactly one channel. The rebuild below owns
@@ -5957,8 +6295,9 @@ export async function* invokeSingleCat(deps: InvocationDeps, params: InvocationP
     didComplete = true; // F118 AC-C5: Normal completion reached
   } catch (err) {
     await closeActiveServiceIterator();
+    // F117 KD-22: a member stopped by its output timeout failed; any other stop cancelled it.
     await terminateCurrentRequestGeneration(
-      signal?.aborted ? 'cancelled' : 'error',
+      signal.aborted && signal.reason !== MEMBER_TIMEOUT_REASON ? 'cancelled' : 'error',
       err instanceof Error ? err.message : String(err),
     );
     // F152: Record error on invocation span + OTel log
@@ -6008,26 +6347,29 @@ export async function* invokeSingleCat(deps: InvocationDeps, params: InvocationP
       tracing: { traceId: sc.traceId, spanId: sc.spanId, ...(parentSid ? { parentSpanId: parentSid } : {}) },
     };
   } finally {
+    memberTimeout?.close();
+    // F117 KD-22: a member stopped by its output timeout failed; any other stop cancelled it.
+    const timedOut = callerSignal?.aborted === true && callerSignal.reason === MEMBER_TIMEOUT_REASON;
     await closeActiveServiceIterator();
     await terminateCurrentRequestGeneration(
       turnExecutionCompletedSuccessfully
         ? 'accepted'
-        : callerSignal?.aborted || invocationAc.signal.aborted
+        : (callerSignal?.aborted || hadProviderCancellation) && !timedOut
           ? 'cancelled'
-          : hadError || turnExecutionFailureReason !== undefined
+          : timedOut || hadError || turnExecutionFailureReason !== undefined
             ? 'error'
             : 'unknown',
-      turnExecutionFailureReason ?? turnExecutionInterruptionReason,
+      timedOut ? MEMBER_TIMEOUT_REASON : (turnExecutionFailureReason ?? turnExecutionInterruptionReason),
     );
     await presentationDelivery?.release('invocation_finalized_without_delivery');
     if (deps.turnExecutionStore && ownsTurnExecution) {
       let terminal: TurnExecutionTerminalInput;
       if (turnExecutionCompletedSuccessfully) {
         terminal = { status: 'succeeded', endedAt: Date.now() };
-      } else if (callerSignal?.aborted) {
+      } else if (timedOut) {
+        terminal = { status: 'failed', endedAt: Date.now(), terminalReason: MEMBER_TIMEOUT_REASON };
+      } else if (callerSignal?.aborted || hadProviderCancellation) {
         terminal = { status: 'canceled', endedAt: Date.now(), terminalReason: 'user_cancel' };
-      } else if (invocationAc.signal.aborted) {
-        terminal = { status: 'failed', endedAt: Date.now(), terminalReason: 'invocation_timeout' };
       } else if (turnExecutionFailureReason !== undefined || hadError) {
         terminal = {
           status: 'failed',
@@ -6045,34 +6387,6 @@ export async function* invokeSingleCat(deps: InvocationDeps, params: InvocationP
         const result = await deps.turnExecutionStore.transitionTerminal(invocationId, terminal);
         if (result.outcome === 'not_found' || result.record === null) {
           log.error({ invocationId, terminal }, 'Turn execution disappeared before terminal transition');
-        } else if (
-          deps.routingDispatchSignalObserver &&
-          params.routingDispatchPreflightDecision &&
-          result.record.status !== 'running' &&
-          result.record.endedAt !== undefined
-        ) {
-          const failureClass =
-            routingDispatchFailureClass ??
-            classifyRoutingDispatchFailure({ terminalReason: result.record.terminalReason });
-          try {
-            await deps.routingDispatchSignalObserver.observeTerminal({
-              ownerId: userId,
-              observationId: invocationId,
-              observedAt: result.record.endedAt,
-              evidenceRef: `turn-execution:${invocationId}`,
-              catId,
-              status: result.record.status,
-              ...(result.record.status === 'failed' && failureClass ? { failureClass } : {}),
-              ...(result.record.status === 'failed' && routingFailureObservedAt !== undefined
-                ? { failureObservedAt: routingFailureObservedAt }
-                : {}),
-              preflightDecision: params.routingDispatchPreflightDecision,
-            });
-          } catch (err) {
-            // Durable lifecycle truth and delivery already committed. Routing observation
-            // is advisory and must never rewrite or suppress that canonical terminal.
-            log.warn({ invocationId, err }, 'F293 durable dispatch signal observation failed');
-          }
         }
       } catch (err) {
         // A running record is deliberately left for startup reconciliation;
@@ -6084,9 +6398,6 @@ export async function* invokeSingleCat(deps: InvocationDeps, params: InvocationP
     // F153 Phase J AC-J4: drain any open tool spans whose tool_result never arrived
     // (abort / error / timeout). Mirrors PR #732 mention_dispatch abort-safety pattern.
     toolSpanTracker.endAllOrphans('aborted');
-
-    // F089: Clear invocation hard timeout
-    if (invocationTimer) clearTimeout(invocationTimer);
 
     // F118/#1329: Release runtime resume custody before conversation policy
     // custody. Every release is idempotent, including partial acquisition.

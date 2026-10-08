@@ -21,9 +21,16 @@ export class PassageVectorStore {
   ) {}
 
   upsert(passageKey: string, embedding: Float32Array): void {
-    // vec0 does not support ON CONFLICT; mirror VectorStore's delete+insert.
-    this.db.prepare('DELETE FROM passage_vectors WHERE passage_key = ?').run(passageKey);
-    this.db.prepare('INSERT INTO passage_vectors (passage_key, embedding) VALUES (?, ?)').run(passageKey, embedding);
+    // Native UPDATE retains the slot; delete+insert leaves sparse chunk holes.
+    this.db.transaction(() => {
+      const updated = this.db
+        .prepare('UPDATE passage_vectors SET embedding = ? WHERE passage_key = ?')
+        .run(embedding, passageKey);
+      if (!updated.changes)
+        this.db
+          .prepare('INSERT INTO passage_vectors (passage_key, embedding) VALUES (?, ?)')
+          .run(passageKey, embedding);
+    })();
   }
 
   delete(passageKey: string): void {

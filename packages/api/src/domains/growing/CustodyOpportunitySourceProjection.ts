@@ -4,6 +4,7 @@ import {
   custodyOfferV1Schema,
   type TaskItem,
 } from '@cat-cafe/shared';
+import { messageFrom } from '../cats/services/stores/message-from.js';
 import { deriveGrowingSourceMessageRevision, type StoredMessage } from '../cats/services/stores/ports/MessageStore.js';
 import { isDurableOwnerReadEvidence, isSystemUserMessage } from '../cats/services/stores/visibility.js';
 import {
@@ -12,7 +13,7 @@ import {
   type CustodyOpportunityCohort,
   custodyOpportunitySample,
 } from './CustodyOpportunityCohortStore.js';
-import { containsEntrustedWorkTimeSignal } from './EntrustedWorkSourceSignals.js';
+import { classifyEntrustedWorkSourceTime } from './EntrustedWorkSourceSignals.js';
 
 type Episode = CustodyOpportunityEpisodeInputV1;
 export type OpportunityProjection =
@@ -57,7 +58,8 @@ export function projectCustodyOpportunity(
   }
   const action = offer !== undefined || work !== undefined;
   const sampled = custodyOpportunitySample(sourceRef, cohort.policyVersion);
-  const riskTargeted = containsEntrustedWorkTimeSignal(source.content);
+  const sourceTimeRelation = classifyEntrustedWorkSourceTime(source.content);
+  const riskTargeted = sourceTimeRelation === 'deadline' || sourceTimeRelation === 'ambiguous';
   if (!action && ((!sampled && !riskTargeted) || capturedAt - source.timestamp < CUSTODY_SILENCE_DELAY_MS)) {
     return { kind: 'excluded' };
   }
@@ -103,7 +105,7 @@ export function projectCustodyOpportunity(
 function belongsToProspectiveCohort(source: StoredMessage, cohort: CustodyOpportunityCohort): boolean {
   return !(
     source.userId !== cohort.ownerUserId ||
-    source.catId !== null ||
+    messageFrom(source).kind !== 'user' ||
     isSystemUserMessage(source) ||
     source.source ||
     source.sourceParseFailure ||

@@ -26,7 +26,7 @@ function reservePort() {
   });
 }
 
-it('does not report a managed process stopped until the exact process has exited', async () => {
+it('does not report a managed process stopped until the exact process has exited', async (t) => {
   const root = mkdtempSync(join(tmpdir(), 'cat-cafe-preview-process-stop-'));
   const stateDir = join(root, 'state');
   const port = await reservePort();
@@ -87,6 +87,15 @@ it('does not report a managed process stopped until the exact process has exited
       encoding: 'utf8',
       timeout: 6_000,
     });
+    if (stop.status !== 0) {
+      t.diagnostic(
+        JSON.stringify({
+          started,
+          command,
+          current: spawnSync('ps', ['-p', String(child.pid), '-o', 'lstart=,command='], { encoding: 'utf8' }).stdout,
+        }),
+      );
+    }
     assert.equal(stop.status, 0, stop.stderr || stop.stdout);
     if (child.exitCode === null) await new Promise((resolve) => child.once('exit', resolve));
     assert.throws(() => process.kill(child.pid, 0), /ESRCH/);

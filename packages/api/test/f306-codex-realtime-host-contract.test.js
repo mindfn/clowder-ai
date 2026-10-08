@@ -48,6 +48,12 @@ class TurnWire {
 
   async write(message) {
     if (message.method === 'initialize') this.inbox.push({ id: message.id, result: {} });
+    if (message.method === 'config/read')
+      this.inbox.push({ id: message.id, result: { config: { model_provider: 'openai' } } });
+    if (message.method === 'configRequirements/read')
+      this.inbox.push({ id: message.id, result: { requirements: null } });
+    if (message.method === 'account/read')
+      this.inbox.push({ id: message.id, result: { account: { type: 'chatgpt' } } });
     if (message.method === 'thread/start' || message.method === 'thread/resume') {
       const threadId = message.method === 'thread/resume' ? message.params.threadId : this.threadId;
       this.inbox.push({ id: message.id, result: { thread: { id: threadId, turns: [] } } });
@@ -160,21 +166,26 @@ test('a cold Realtime attachment becomes the sole session owner without taking a
   }
 });
 
-test('a warm session host stays pinned beyond idle TTL while Realtime is attached', async () => {
+test('a warm session host stays pinned beyond idle TTL while Realtime is attached', async (t) => {
+  t.mock.timers.enable({ apis: ['setTimeout'] });
   const { pool, hosts } = createHarness({ idleTtlMs: 10 });
   try {
     const seed = await pool.createSession(sessionOptions({ sessionId: 'native-thread-warm' }));
     seed.rememberSession('native-thread-warm');
     await seed.close();
     assert.equal(pool.getMetrics().warmHostCount, 1);
-
+    t.mock.timers.tick(9);
+    assert.equal(hosts[0].closeCalls, 0, 'the warm host has not reached its idle deadline');
     const companion = await pool.createSessionAttachment(
       sessionOptions({ invocationId: 'realtime-warm', sessionId: 'native-thread-warm' }),
     );
-    await new Promise((resolve) => setTimeout(resolve, 30));
+    assert.equal(companion.reusedSessionHost, true, 'the attachment must pin the original warm host');
+    t.mock.timers.tick(30);
     assert.equal(hosts[0].closeCalls, 0, 'the prior idle timer must be cancelled by the attachment');
     assert.equal(pool.getMetrics().warmHostCount, 0);
     await companion.close();
+    t.mock.timers.tick(10);
+    assert.equal(hosts[0].closeCalls, 1, 'the released host must expire after its idle TTL');
   } finally {
     await pool.closeAll();
   }

@@ -1,4 +1,5 @@
 import { buildCanonicalToolRegistry, type CanonicalToolSources } from './canonical-tool-registry.js';
+import { homeActionTools } from './tools/home-action-tools.js';
 import {
   artifactReviewTools,
   audioTools,
@@ -12,6 +13,9 @@ import {
   collectiveParticipationTools,
   communityRouteAcceptanceTools,
   contentEditorTools,
+  contentModificationTools,
+  developmentReturnTools,
+  developmentWorkTools,
   distillationTools,
   entrustedWorkReadTools,
   evalLifecycleTools,
@@ -34,6 +38,7 @@ import {
   pluginManagementTools,
   publishVerdictTools,
   realtimeCompanionTools,
+  recallMetricsTools,
   recentTools,
   richBlockRulesTools,
   runtimeInteractionTools,
@@ -44,6 +49,9 @@ import {
   signalsTools,
   skillConsumptionTools,
 } from './tools/index.js';
+import { liveMeetingTools } from './tools/live-meeting-tools.js';
+import { memberImageTools } from './tools/member-image-tools.js';
+import { pageActionTools } from './tools/page-action-tools.js';
 
 export const CANONICAL_TOOL_SOURCES = {
   collab: [
@@ -57,11 +65,18 @@ export const CANONICAL_TOOL_SOURCES = {
     ...communityRouteAcceptanceTools,
     ...contentEditorTools,
     ...artifactReviewTools,
+    ...contentModificationTools,
     ...externalReviewVerdictTools,
     ...externalRuntimeSessionCallbackTools,
     ...hubActionTools,
+    ...pageActionTools,
+    ...homeActionTools,
+    ...liveMeetingTools,
+    ...memberImageTools,
     ...skillConsumptionTools,
     ...entrustedWorkReadTools,
+    ...developmentWorkTools,
+    ...developmentReturnTools,
     ...eventMemoryTools,
     ...publishVerdictTools,
     ...evalLifecycleTools,
@@ -75,6 +90,7 @@ export const CANONICAL_TOOL_SOURCES = {
     ...pluginManagementTools,
   ],
   memory: [
+    ...recallMetricsTools,
     ...callbackMemoryTools,
     ...distillationTools,
     ...evidenceTools,

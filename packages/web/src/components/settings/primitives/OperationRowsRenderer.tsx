@@ -50,6 +50,7 @@ export function OperationRowsRenderer({
   const [rows, setRows] = useState<PluginOperationRows | undefined>(() => rowsFrom(operation.lastResult));
   const [listing, setListing] = useState(false);
   const [listError, setListError] = useState<string | null>(null);
+  const [actionMessage, setActionMessage] = useState<string | null>(null);
   const [awaitingOwner, setAwaitingOwner] = useState(false);
   const [busyKeys, setBusyKeys] = useState<ReadonlySet<string>>(() => new Set());
   // Row keys are plugin data; a Map keeps keys such as `__proto__` or `toString` ordinary.
@@ -65,6 +66,8 @@ export function OperationRowsRenderer({
       confirmed: boolean,
     ): Promise<ActionApiResult | null> => {
       if (!invocationAllowed(declared, confirmed)) return null;
+      // All owner actions pass here after confirmation; automatic next:list uses false.
+      if (confirmed) setActionMessage(null);
       try {
         const response = await apiFetch(request.url, request.init);
         const body = (await response.json().catch(() => ({}))) as ActionApiResult & { error?: string };
@@ -141,6 +144,7 @@ export function OperationRowsRenderer({
       const result = await send(action.confirm, actionRequest(stableTarget, operation.name, action.id), true);
       const failure = await settle(result, action.label, action.next);
       if (failure !== null) setListError(failure);
+      else setActionMessage(result?.label ?? null);
     },
     [confirmAction, operation.name, send, settle, stableTarget],
   );
@@ -175,6 +179,11 @@ export function OperationRowsRenderer({
       {listError && (
         <p role="alert" className="text-xs text-conn-red-text">
           {listError}
+        </p>
+      )}
+      {actionMessage && (
+        <p role="status" className="text-xs text-cafe-secondary">
+          {actionMessage}
         </p>
       )}
       {awaitingOwner && (

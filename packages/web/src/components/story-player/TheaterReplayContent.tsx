@@ -8,14 +8,18 @@
  */
 
 import { useThreadReplay } from '@/lib/story-player/useThreadReplay';
+import { useShellPresentation } from '../shell/shell-presentation';
 import { ReplayControls } from './ReplayControls';
 import { ReplayMessageList } from './ReplayMessageList';
+import { ThreadReplayViewV2 } from './ThreadReplayViewV2';
 
 interface TheaterReplayContentProps {
   threadId: string;
 }
 
 export function TheaterReplayContent({ threadId }: TheaterReplayContentProps) {
+  const replay = useThreadReplay({ threadId });
+  const presentation = useShellPresentation();
   const {
     messages,
     isLoading,
@@ -30,7 +34,9 @@ export function TheaterReplayContent({ threadId }: TheaterReplayContentProps) {
     // doStepForward / doStepBackward available for keyboard shortcuts (PR E-2)
     doToggleDisplayMode,
     doToggleAdaptivePacing,
-  } = useThreadReplay({ threadId });
+  } = replay;
+
+  if (presentation === 'v2') return <ThreadReplayViewV2 replay={replay} />;
 
   if (isLoading) {
     return (

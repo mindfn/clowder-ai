@@ -10,7 +10,6 @@ import type {
   AttributionCandidateInput,
   EvolutionAttributionLayer,
   MeasurementUncertaintyBasis,
-  RejudgeCell,
 } from './program-eval-bridge.js';
 import type { EvolutionProgramProjectionV1 } from './read-model/program-projection.js';
 
@@ -89,6 +88,35 @@ export interface EvaluationOwnerResolver {
     /** The F267 decision proof to read. Named for what it is, so no caller mistakes it for a result. */
     evidenceProofRef: OwnerTruthRefV1;
   }): Promise<OwnerMeasurementResolution>;
+}
+
+export interface MeasurementConstitutionBinding {
+  sourceRef: OwnerTruthRefV1;
+  measurementCertificateRef: OwnerTruthRefV1;
+  measurementRoleRefs: {
+    observer: OwnerTruthRefV1;
+    domainOwner: OwnerTruthRefV1;
+    consumer: OwnerTruthRefV1;
+    calibrator: OwnerTruthRefV1;
+    overlapJustification?: string;
+  };
+}
+
+export type MeasurementConstitutionResolution =
+  | { status: 'ready'; binding: MeasurementConstitutionBinding }
+  | { status: 'unavailable'; reason: string };
+
+export interface MeasurementConstitutionResolver {
+  resolveMeasurementConstitution(input: {
+    ownerUserId: string;
+    program: EvolutionProgramProjectionV1;
+    evidenceProofRef: OwnerTruthRefV1;
+  }): Promise<MeasurementConstitutionResolution>;
+}
+
+export interface ProgramMeasurementConstitutionRebindInput extends ProgramEvaluationLinkBase {
+  ownerUserId: string;
+  evidenceProofRef: OwnerTruthRefV1;
 }
 
 export interface ProgramMeasurementLinkInput extends ProgramEvaluationLinkBase {
@@ -173,4 +201,6 @@ export interface ProgramEvaluationDependencies {
   append(envelope: EvolutionProgramEventEnvelopeV1): Promise<EvolutionProgramServiceResult>;
   /** Absent resolver = the owner contract is not wired; the ingress then fails closed. */
   ownerResolver?: EvaluationOwnerResolver;
+  /** F267 publication resolver used only for an atomic active/instrumenting constitution rebind. */
+  measurementConstitutionResolver?: MeasurementConstitutionResolver;
 }

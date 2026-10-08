@@ -1,19 +1,25 @@
 'use client';
 
-import { MESSAGE_BUNDLE_CLI_QUOTE_PROJECTION_VERSION_V2 } from '@cat-cafe/shared';
+import {
+  MESSAGE_BUNDLE_CLI_QUOTE_PROJECTION_VERSION_V2,
+  MESSAGE_BUNDLE_CLI_QUOTE_PROJECTION_VERSION_V3,
+} from '@cat-cafe/shared';
 import { type RefObject, useEffect, useState } from 'react';
 import {
   type FloatingSelectionPosition,
   positionSelectionActionForAnchors,
   type RectLike,
 } from '@/components/workspace/selection-action-position';
+import { isUnmappedNativeSelection, projectedSelectionOffsets } from './text-selection-source-offsets';
 
 export interface TextSelectionAction {
   text: string;
   position: FloatingSelectionPosition;
   sourceKind: string | null;
   sourceSegmentId?: string;
-  sourceProjectionVersion?: typeof MESSAGE_BUNDLE_CLI_QUOTE_PROJECTION_VERSION_V2;
+  sourceProjectionVersion?:
+    | typeof MESSAGE_BUNDLE_CLI_QUOTE_PROJECTION_VERSION_V2
+    | typeof MESSAGE_BUNDLE_CLI_QUOTE_PROJECTION_VERSION_V3;
   selectionStart?: number;
   selectionEnd?: number;
   /**
@@ -43,20 +49,6 @@ function selectionAnchorRects(selection: Selection): RectLike[] {
   if (fragments.length > 0) return fragments.reverse().map(rectLike);
   const rect = range.getBoundingClientRect();
   return rect.width || rect.height ? [rectLike(rect)] : [];
-}
-
-function selectionOffsets(range: Range, container: Node): { start: number; end: number } | null {
-  if (typeof range.cloneRange !== 'function') return null;
-  try {
-    const prefix = range.cloneRange();
-    prefix.selectNodeContents(container);
-    prefix.setEnd(range.startContainer, range.startOffset);
-    const start = prefix.toString().length;
-    const end = start + range.toString().length;
-    return end > start ? { start, end } : null;
-  } catch {
-    return null;
-  }
 }
 
 function clippedRangeWithin(range: Range, candidate: Element): Range | null {
@@ -108,21 +100,17 @@ function countRenderedOccurrences(root: Element, text: string): number {
   return rendered.split(text).length - 1;
 }
 
-function trimSelectionOffsets(
-  offsets: { start: number; end: number } | null,
-  rawText: string,
-): { start: number; end: number } | null {
-  if (!offsets) return null;
-  const leadingWhitespaceLength = rawText.length - rawText.trimStart().length;
-  const trailingWhitespaceLength = rawText.length - rawText.trimEnd().length;
-  return { start: offsets.start + leadingWhitespaceLength, end: offsets.end - trailingWhitespaceLength };
-}
+type CliProjectionVersion = NonNullable<TextSelectionAction['sourceProjectionVersion']>;
 
-function cliProjectionVersion(segment: Element | null): typeof MESSAGE_BUNDLE_CLI_QUOTE_PROJECTION_VERSION_V2 | null {
-  return segment?.getAttribute('data-context-quote-projection-version') ===
-    String(MESSAGE_BUNDLE_CLI_QUOTE_PROJECTION_VERSION_V2)
-    ? MESSAGE_BUNDLE_CLI_QUOTE_PROJECTION_VERSION_V2
-    : null;
+function cliProjectionVersion(segment: Element | null): CliProjectionVersion | null {
+  const value = segment?.getAttribute('data-context-quote-projection-version');
+  if (value === String(MESSAGE_BUNDLE_CLI_QUOTE_PROJECTION_VERSION_V2)) {
+    return MESSAGE_BUNDLE_CLI_QUOTE_PROJECTION_VERSION_V2;
+  }
+  if (value === String(MESSAGE_BUNDLE_CLI_QUOTE_PROJECTION_VERSION_V3)) {
+    return MESSAGE_BUNDLE_CLI_QUOTE_PROJECTION_VERSION_V3;
+  }
+  return null;
 }
 
 function matchingSubtree(root: Element, selector: string): Element[] {
@@ -164,7 +152,7 @@ interface SelectionSource {
   coordinateRoot: Element | null;
   coordinateRange: Range | null;
   segmentId: string | null;
-  projectionVersion: typeof MESSAGE_BUNDLE_CLI_QUOTE_PROJECTION_VERSION_V2 | null;
+  projectionVersion: CliProjectionVersion | null;
 }
 
 const MIXED_SELECTION_SOURCE: SelectionSource = {
@@ -250,13 +238,6 @@ function selectionViewport(container: HTMLElement, coordinateSpace: 'container' 
   };
 }
 
-function projectedOffsets(source: SelectionSource, selection: Selection, container: HTMLElement) {
-  const offsetRoot = source.kind === 'cli_output' ? source.coordinateRoot : (source.coordinateRoot ?? container);
-  const offsetRange = source.coordinateRange ?? selection.getRangeAt(0);
-  const offsetRawText = source.coordinateRange?.toString() ?? selection.toString();
-  return trimSelectionOffsets(offsetRoot ? selectionOffsets(offsetRange, offsetRoot) : null, offsetRawText);
-}
-
 function selectionBelongsToContainer(selection: Selection | null, container: HTMLElement): selection is Selection {
   return Boolean(
     selection &&
@@ -279,9 +260,10 @@ function projectSelectionAction(
   const viewport = selectionViewport(container, coordinateSpace);
   const position = positionSelectionActionForAnchors(selectionAnchorRects(selection), viewport);
   const source = selectionSource(selection, container);
-  if (source.coordinateRoot && crossesExcludedChrome(selection.getRangeAt(0), source.coordinateRoot)) return null;
-  const trimmedOffsets = projectedOffsets(source, selection, container);
+  if (crossesExcludedChrome(selection.getRangeAt(0), container)) return null;
+  const trimmedOffsets = projectedSelectionOffsets(source, selection, container);
   if (!position || source.mixed) return null;
+  if (isUnmappedNativeSelection(source.coordinateRoot, trimmedOffsets)) return null;
   const renderedRoot = source.coordinateRoot ?? container;
   return {
     text,

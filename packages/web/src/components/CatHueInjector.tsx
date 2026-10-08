@@ -15,14 +15,11 @@
  * (overlay), via /api/cats → useCatData hook.
  */
 
-import { getAllConnectorDefinitions } from '@cat-cafe/shared';
 import { useEffect } from 'react';
 import { useCatData } from '@/hooks/useCatData';
-import { hexToOklch } from '@/lib/color-utils';
-import { connectorThemeToken } from '@/lib/connector-theme-token';
+import { NEUTRAL_HUE_CHROMA, readHueChroma, themeColourSources } from '@/lib/theme-colour-sources';
 
 const DYNAMIC_STYLE_ID = 'f056-dynamic-cat-tokens';
-const CSS_SAFE_ID = /^[a-zA-Z0-9_-]+$/;
 
 /* Both light and dark use the same formula, just with different fallback L/Cmul
  * values. Tuner emits :root + [data-theme="dark"] overrides for the --cat-{tier}-
@@ -58,49 +55,15 @@ export function CatHueInjector() {
     const root = document.documentElement;
     const ruleIds: string[] = [];
 
-    for (const cat of cats) {
-      if (!cat.id || !CSS_SAFE_ID.test(cat.id)) continue;
-      let h = 0;
-      let c = 0;
-      if (cat.color?.primary) {
-        try {
-          const oklch = hexToOklch(cat.color.primary);
-          if (Number.isFinite(oklch.h) && Number.isFinite(oklch.c)) {
-            h = oklch.h;
-            c = oklch.c;
-          }
-        } catch {
-          /* Invalid hex → neutral fallback (h=0 c=0) so tokens still exist */
-        }
-      }
-      root.style.setProperty(`--${cat.id}-hue`, h.toFixed(1));
-      root.style.setProperty(`--${cat.id}-chroma`, c.toFixed(3));
-      ruleIds.push(cat.id);
-    }
-
-    /* Connector sources use the same pipeline as cats: one theme hex →
-     * hexToOklch → hue/chroma → lightDecl/darkDecl derives all tiers. */
-    for (const def of getAllConnectorDefinitions()) {
-      if (!def.id) continue;
-      const tokenId = connectorThemeToken(def.id);
-      if (!CSS_SAFE_ID.test(tokenId) || ruleIds.includes(tokenId)) continue;
-      const hex = def.themeColor;
-      let h = 0;
-      let c = 0;
-      if (hex) {
-        try {
-          const oklch = hexToOklch(hex);
-          if (Number.isFinite(oklch.h) && Number.isFinite(oklch.c)) {
-            h = oklch.h;
-            c = oklch.c;
-          }
-        } catch {
-          /* neutral fallback */
-        }
-      }
-      root.style.setProperty(`--${tokenId}-hue`, h.toFixed(1));
-      root.style.setProperty(`--${tokenId}-chroma`, c.toFixed(3));
-      ruleIds.push(tokenId);
+    /* Cats, then connector sources, which use the same pipeline: one theme hex → hue/chroma → lightDecl/darkDecl derives
+     * all tiers. The list is lib/theme-colour-sources, the very list the name role, the plate and the lineage ring are
+     * checked against (ThemeApplier), so what is checked is what is painted. An invalid or missing hex → neutral fallback
+     * (h=0 c=0) so tokens still exist. */
+    for (const source of themeColourSources(cats)) {
+      const { h, c } = readHueChroma(source.hex) ?? NEUTRAL_HUE_CHROMA;
+      root.style.setProperty(`--${source.id}-hue`, h.toFixed(1));
+      root.style.setProperty(`--${source.id}-chroma`, c.toFixed(3));
+      ruleIds.push(source.id);
     }
 
     /* Generate dynamic token stylesheet for ALL cats + connector sources. */

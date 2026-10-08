@@ -19,6 +19,7 @@ const navState = vi.hoisted(() => ({
 const useWorkspaceNavigateMock = vi.hoisted(() => vi.fn());
 
 vi.mock('next/navigation', () => ({
+  useRouter: () => ({ push: vi.fn() }),
   usePathname: () => navState.pathname,
   useSearchParams: () => new URLSearchParams(navState.search),
 }));

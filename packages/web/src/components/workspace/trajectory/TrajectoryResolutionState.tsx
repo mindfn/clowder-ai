@@ -1,11 +1,7 @@
 import type { TrajectoryResolutionError } from './canonical-trajectory-resolution';
+import { trajectoryCopy } from './trajectory.shell-copy';
 import type { TrajectoryTarget } from './trajectory-navigation';
-
-function errorText(error: TrajectoryResolutionError): string {
-  if (error.status === 403) return '没有权限查看这轮 invocation。';
-  if (error.status === 409) return '证据坐标与 canonical 记录不一致。';
-  return '这轮 invocation 的 canonical 现场暂不可用。';
-}
+import { useTrajectoryCopy } from './use-trajectory-copy';
 
 export function TrajectoryResolutionFailure({
   target,
@@ -18,13 +14,14 @@ export function TrajectoryResolutionFailure({
   onRetry: () => void;
   onBack: () => void;
 }) {
+  const t = useTrajectoryCopy(trajectoryCopy);
   return (
     <div
       className="flex h-full flex-col items-center justify-center gap-3 p-4 text-center text-sm text-cafe-muted"
       data-testid="trajectory-resolution-error"
       data-error-code={error.code}
     >
-      <p>{errorText(error)}</p>
+      <p>{error.status === 403 ? t.accessDenied : error.status === 409 ? t.coordinateMismatch : t.targetUnavailable}</p>
       <code className="font-mono text-xs">inv:{target.invocationId}</code>
       <div className="flex gap-2">
         <button
@@ -32,14 +29,14 @@ export function TrajectoryResolutionFailure({
           className="rounded-lg border border-cafe px-3 py-2 font-semibold text-cafe-secondary"
           onClick={onRetry}
         >
-          重试
+          {t.retry}
         </button>
         <button
           type="button"
           className="rounded-lg border border-cafe px-3 py-2 font-semibold text-cafe-secondary"
           onClick={onBack}
         >
-          返回来源
+          {t.backSource}
         </button>
       </div>
     </div>
@@ -47,12 +44,13 @@ export function TrajectoryResolutionFailure({
 }
 
 export function TrajectoryResolutionLoading({ switchingThread }: { switchingThread: boolean }) {
+  const t = useTrajectoryCopy(trajectoryCopy);
   return (
     <div
       className="flex h-full items-center justify-center p-4 text-sm text-cafe-muted"
       data-testid="trajectory-direct-open"
     >
-      {switchingThread ? '正在切换到 canonical thread…' : '正在定位 canonical invocation…'}
+      {switchingThread ? t.switchingThread : t.locatingRun}
     </div>
   );
 }

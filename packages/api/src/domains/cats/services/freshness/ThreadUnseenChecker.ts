@@ -8,28 +8,51 @@
  * Content-free: returns only count + sender names + maxMessageId.
  * Does NOT return message content (privacy invariant, AC-B6).
  *
- * This is the bridge between FreshnessNoticeService (domain logic)
+ * This is the bridge between the provider-native notice broker (domain logic)
  * and the actual data stores (DeliveryCursorStore + MessageStore).
  */
 
 import type { CatId } from '@cat-cafe/shared';
 import { cursorFor, parseCursor } from '../stores/cursor.js';
 import type { DeliveryCursorStore } from '../stores/ports/DeliveryCursorStore.js';
+import { isFreshnessSelfSourceMessage, isFreshnessSelfSourceQueueEntry } from './FreshnessSourcePolicy.js';
 import {
   type FreshnessMessageReader,
+  type FreshnessReadableMessage,
   getFreshnessSenderLabel,
   getQueuedFreshnessSenderLabel,
   isExpectedA2AReplyForCat,
   isFreshnessRoutableMessage,
   type QueuedMessageChecker,
-} from './checkFreshnessForPostMessage.js';
-import type { UnseenChecker, UnseenResult } from './FreshnessNoticeService.js';
-import { isFreshnessSelfSourceMessage, isFreshnessSelfSourceQueueEntry } from './FreshnessSourcePolicy.js';
+} from './freshness-unseen-source.js';
 
-// Raised from 20 to 50 to reduce false-negative edge case where the first
-// batch contains only filtered messages (deleted/briefing/play-hidden).
-// Full pagination is overkill for an advisory notice — Phase A's critical
-// hold-decision path already paginates. (Cloud review R2 P2-R2-3)
+export interface UnseenResult {
+  count: number;
+  senders: string[];
+  maxMessageId: string;
+  /**
+   * Stable, content-free identity for coalescing repeated notice attempts when
+   * maxMessageId is only a synthetic sortable cursor. Undefined preserves the
+   * legacy ordered-frontier coalescing path. This key is never receipt proof.
+   */
+  noticeDedupKey?: string;
+  /**
+   * Exact durable message identities represented by maxMessageId when the
+   * frontier itself is synthetic (for example, a queued-only fallback).
+   * Undefined preserves the legacy invariant that maxMessageId is exact.
+   * An explicit empty list means correlation identity is unavailable and
+   * receipt projection must fail closed.
+   */
+  correlationMessageIds?: string[];
+}
+
+export interface UnseenChecker {
+  checkUnseen(params: { threadId: string; catId: CatId }): Promise<UnseenScanResult | null>;
+}
+
+/** Bounded scanner progress is not an empty inbox or a read receipt. */
+export type UnseenScanResult = UnseenResult | { kind: 'incomplete'; reason: 'scan_cap'; scanned: number };
+
 const UNSEEN_FETCH_LIMIT = 50;
 
 interface ThreadUnseenCheckerDeps {
@@ -38,6 +61,13 @@ interface ThreadUnseenCheckerDeps {
   messageStore: FreshnessMessageReader;
   /** Optional visibility filter — must match Phase A's messageFilter (P0: no hidden message leaks) */
   messageFilter?: (msg: Record<string, unknown>) => boolean;
+  /** Exact Host/provider exposure; this does not reclassify real user ASR as self-source. */
+  exposureReason?: (message: FreshnessReadableMessage) => 'same_live_call_exposure' | null;
+  /** An attached Live conversation waits for these results; ordinary A2A handoffs remain quiet. */
+  includeExpectedA2AReplies?: boolean;
+  maxScanPages?: number;
+  /** SDK result confirmation is delayed; exact read joins need message IDs, not cursor tokens. */
+  includeExactMessageIds?: boolean;
   /**
    * Optional queue checker — detects messages queued by F117 but not yet
    * delivered (invisible to messageStore due to isDelivered() filter).
@@ -48,9 +78,10 @@ interface ThreadUnseenCheckerDeps {
 }
 
 export class ThreadUnseenChecker implements UnseenChecker {
+  private continuation?: { scope: string; seenCursor: string; cursor: string };
   constructor(private readonly deps: ThreadUnseenCheckerDeps) {}
 
-  async checkUnseen(params: { threadId: string; catId: CatId }): Promise<UnseenResult | null> {
+  async checkUnseen(params: { threadId: string; catId: CatId }): Promise<UnseenScanResult | null> {
     const { threadId, catId } = params;
     const { userId, cursorStore, messageStore, messageFilter } = this.deps;
 
@@ -58,50 +89,60 @@ export class ThreadUnseenChecker implements UnseenChecker {
     const seenCursor = await cursorStore.getSeenCursor(userId, catId, threadId);
     if (seenCursor == null) return null;
 
-    // Fetch messages after seenCursor (single batch — notice doesn't need precise count)
-    const batch = await messageStore.getByThreadAfter(threadId, seenCursor, UNSEEN_FETCH_LIMIT, userId, {
-      unresolvedCursorPolicy: 'empty',
-    });
-
-    // If no delivered messages, check queue as fallback (F254 queue-aware gate)
-    if (!batch || batch.length === 0) {
-      return this.checkQueueFallback(threadId, catId, seenCursor);
+    const scope = `${threadId}:${catId}`;
+    let cursor =
+      this.continuation?.scope === scope && this.continuation.seenCursor === seenCursor
+        ? this.continuation.cursor
+        : seenCursor;
+    const paginated = Boolean(this.deps.exposureReason);
+    const maxPages = paginated ? Math.max(1, Math.min(8, this.deps.maxScanPages ?? 4)) : 1;
+    let scanned = 0;
+    for (let page = 0; page < maxPages; page++) {
+      const batch = await messageStore.getByThreadAfter(threadId, cursor, UNSEEN_FETCH_LIMIT, userId, {
+        unresolvedCursorPolicy: 'empty',
+      });
+      scanned += batch?.length ?? 0;
+      const qualifying = [];
+      for (const msg of batch ?? []) {
+        if (!isFreshnessRoutableMessage(msg)) continue;
+        if (messageFilter && !messageFilter(msg as unknown as Record<string, unknown>)) continue;
+        if (this.deps.exposureReason?.(msg) === 'same_live_call_exposure') continue;
+        if (isFreshnessSelfSourceMessage(msg, catId, threadId)) continue;
+        if (!this.deps.includeExpectedA2AReplies && (await isExpectedA2AReplyForCat(msg, catId, messageStore)))
+          continue;
+        qualifying.push(msg);
+      }
+      if (qualifying.length) {
+        // Keep this batch eligible until a real read advances seenCursor.
+        this.continuation = paginated ? { scope, seenCursor, cursor } : undefined;
+        return {
+          count: qualifying.length,
+          senders: [...new Set(qualifying.map(getFreshnessSenderLabel))],
+          maxMessageId: cursorFor(qualifying[qualifying.length - 1]),
+          ...(paginated || this.deps.includeExactMessageIds
+            ? { correlationMessageIds: qualifying.map((message) => message.id) }
+            : {}),
+        };
+      }
+      if (!paginated || !batch || batch.length < UNSEEN_FETCH_LIMIT) {
+        this.continuation = paginated
+          ? { scope, seenCursor, cursor: batch?.length ? cursorFor(batch[batch.length - 1]) : cursor }
+          : undefined;
+        return this.checkQueueFallback(threadId, catId, seenCursor);
+      }
+      const next = cursorFor(batch[batch.length - 1]);
+      if (next === cursor) break;
+      cursor = next;
     }
-
-    // Apply visibility filter (P0: must reuse Phase A's messageFilter)
-    const routable = batch.filter(isFreshnessRoutableMessage);
-    const visible = messageFilter
-      ? routable.filter((msg) => messageFilter(msg as unknown as Record<string, unknown>))
-      : routable;
-    if (visible.length === 0) {
-      return this.checkQueueFallback(threadId, catId, seenCursor);
-    }
-
-    // Filter out self-messages (consistent with Phase A) and expected A2A replies
-    // to this cat's own route handoff.
-    const nonSelf: typeof visible = [];
-    for (const msg of visible) {
-      if (isFreshnessSelfSourceMessage(msg, catId, threadId)) continue;
-      if (await isExpectedA2AReplyForCat(msg, catId, messageStore)) continue;
-      nonSelf.push(msg);
-    }
-    if (nonSelf.length === 0) {
-      return this.checkQueueFallback(threadId, catId, seenCursor);
-    }
-
-    // Extract unique senders (content-free — no message body)
-    const senderSet = new Set(nonSelf.map((msg) => getFreshnessSenderLabel(msg)));
-    const senders = [...senderSet];
-
-    // #1200 §8.7: maxMessageId as v2 cursor for seen-cursor domain comparison.
-    // Messages from getByThreadAfter carry visibilitySeq → cursorFor produces v2.
-    const maxMessageId = cursorFor(nonSelf[nonSelf.length - 1]);
-
-    return {
-      count: nonSelf.length,
-      senders,
-      maxMessageId,
-    };
+    // Scanner progress is not a seen/read receipt. Resume at the next idle boundary.
+    this.continuation = { scope, seenCursor, cursor };
+    return (
+      (await this.checkQueueFallback(threadId, catId, seenCursor)) ?? {
+        kind: 'incomplete',
+        reason: 'scan_cap',
+        scanned,
+      }
+    );
   }
 
   /**
@@ -133,9 +174,7 @@ export class ThreadUnseenChecker implements UnseenChecker {
     const senderSet = new Set(nonSelf.map((e) => getQueuedFreshnessSenderLabel(e)));
     const senders = [...senderSet];
     const frontierEntry = nonSelf.at(-1);
-    const correlationMessageIds = [frontierEntry?.messageId ?? '', ...(frontierEntry?.mergedMessageIds ?? [])].filter(
-      (messageId, index, all) => messageId.length > 0 && all.indexOf(messageId) === index,
-    );
+    const correlationMessageIds = frontierEntry?.messageId ? [frontierEntry.messageId] : [];
     const noticeDedupKey = JSON.stringify({
       queueEntryId: frontierEntry?.entryId ?? null,
       messageIds: [...correlationMessageIds].sort(),
@@ -157,9 +196,9 @@ export class ThreadUnseenChecker implements UnseenChecker {
       // syntheticSeq = max(seenSeq+1, Date.now()) ensures the cursor exceeds
       // the current seen cursor (codex R13 HWM fix).
       maxMessageId: cursorFor({ id: '0', visibilitySeq: syntheticSeq }),
-      // Re-checking the same queued entry generates a fresh synthetic cursor.
-      // Coalesce by durable, content-free Queue identity instead; a newly
-      // merged message ID changes this key and permits exactly one new notice.
+      // Re-checking the same queued row generates a fresh synthetic cursor.
+      // Deduplicate by its durable, content-free scalar identity; a new source
+      // arrives as a new row and therefore permits exactly one new notice.
       noticeDedupKey,
       // Receipt truth must use the exact Queue identity, never the synthetic
       // cursor frontier. If the frontier entry lacks identity, keep [] so

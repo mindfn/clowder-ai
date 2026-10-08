@@ -53,6 +53,12 @@ class CapacityWire {
   async write(message) {
     this.writes.push(message);
     if (message.method === 'initialize') this.inbox.push({ id: message.id, result: {} });
+    if (message.method === 'config/read')
+      this.inbox.push({ id: message.id, result: { config: { model_provider: 'openai' } } });
+    if (message.method === 'configRequirements/read')
+      this.inbox.push({ id: message.id, result: { requirements: null } });
+    if (message.method === 'account/read')
+      this.inbox.push({ id: message.id, result: { account: { type: 'chatgpt' } } });
     if (message.method === 'thread/resume' && this.resumeRejection) {
       if (this.resumeRejection === 'carrier') this.inbox.destroy(new Error('Max payload size exceeded'));
       else

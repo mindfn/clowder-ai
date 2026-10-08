@@ -91,7 +91,7 @@ describe('ChatInput whisper targets with empty mentionPatterns', () => {
 
     const addBtn = container.querySelector<HTMLButtonElement>('[aria-label="添加"]');
     act(() => addBtn?.click());
-    const whisperBtn = container.querySelector<HTMLButtonElement>('[data-testid="composer-whisper"]');
+    const whisperBtn = document.querySelector<HTMLButtonElement>('[data-testid="composer-whisper"]');
     expect(whisperBtn).not.toBeNull();
     act(() => whisperBtn?.click());
 
@@ -116,7 +116,7 @@ describe('ChatInput whisper targets with empty mentionPatterns', () => {
     // Enter whisper mode through the progressive add menu.
     const addBtn = container.querySelector<HTMLButtonElement>('[aria-label="添加"]');
     act(() => addBtn?.click());
-    const whisperBtn = container.querySelector<HTMLButtonElement>('[data-testid="composer-whisper"]');
+    const whisperBtn = document.querySelector<HTMLButtonElement>('[data-testid="composer-whisper"]');
     act(() => whisperBtn?.click());
 
     // Find the opus-fast row in the floating popup

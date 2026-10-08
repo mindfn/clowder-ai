@@ -1,10 +1,10 @@
 ---
 feature_ids: [F247]
-related_features: [F178, F061, F174, F236, F237]
+related_features: [F178, F061, F174, F236, F237, F172, F202, F309, F310, F317, F322]
 topics: [cloud-cat, chatgpt-pro, mcp, multi-provider, custom-instructions, github-connector, chrome-extension, native-messaging]
 doc_kind: spec
 description: Productized cloud-cat platform for connecting ChatGPT Pro and future cloud LLM providers into Clowder AI as first-class collaborators.
-tips_exempt: "Renewed 2026-09-05 for readable recovery: the source-bound card teaches title backfill, exact conversation inspection, connection-only versus retry, and verified delivery in place; a separate capability tip would duplicate the in-place recovery surface."
+tips_exempt: "Renewed 2026-10-14: remove the rejected per-cat dot permission step; no new configuration or discovery action to teach. Existing plugin setup and lifecycle tips remain the entry; this change removes redundant work."
 description_source: model
 description_author: codex
 description_updated_at: 2026-07-06T11:45:00Z
@@ -22,13 +22,9 @@ revision_history: |
     - P2 R3-2: KD-1 rewrite (F178 owns single-agent-key research, F247 owns productized platform)
     - P2 R3-4: mint roster allowlist only + Phase C breeds.variants task
     - R5: 1175 L0 hold_ball → 工具无关表述
-  v3 (2026-08-12): 个人版实时召唤路线收敛
-    - Personal Chrome Host Adapter 成为个人 ChatGPT Pro 主路径
-    - Clowder AI plugin 统一编排 Chrome extension + Native Messaging helper 安装与配对
-    - 用户通过富文本预览显式授权转发；Scheduled Tasks 降为非实时可选兜底
-    - 没有真实 hostMessageId 不宣称发送成功，自动化失败降级为复制并打开
-  v4 (2026-08-12): cloud invocation terminal contract 修复
-    - cloud-only route 创建 durable child invocation，不再提前 silent done
+  v3 (2026-08-12): 个人版实时召唤路线收敛；Personal Chrome Host Adapter 成为个人 ChatGPT Pro 主路径，Clowder AI plugin 统一编排 Chrome extension + Native Messaging helper 安装与配对
+    - 用户通过富文本预览显式授权转发；Scheduled Tasks 降为非实时可选兜底；没有真实 hostMessageId 不宣称发送成功，自动化失败降级为复制并打开
+  v4 (2026-08-12): cloud invocation terminal contract 修复；cloud-only route 创建 durable child invocation，不再提前 silent done
     - Host transport 只等待有界 receipt/failure，不等待云端猫回复
     - exact A2A source 写 completed disposition；缺 adapter 只显示一次可读状态并终结 source
     - Personal Chrome adapter 可由 socket + pairing secret 显式配置激活，安装/配对仍属 Phase E/F
@@ -97,12 +93,13 @@ revision_history: |
     - extension revision 升至 `0.2.2`；本实现不触碰 owner Chrome、不重放 nonce，AC-F8 继续等待 post-merge 真实 receipt + exact return
   v19 (2026-08-25): route-exact watchdog detail moved to focused bug truth；gpt-pro return/proactive auth 按语义分流，严格回程绑定不变，独立消息仅走 append-only agent-key 通道
   v20 (2026-08-26): enclosing-turn receipt、dedicated principal 与 artifact freshness；v21 (2026-08-27): bounded same-turn unique real-ID lookup + extension `0.2.5` / adapter `2026-08-27.1`，零/多候选 fail closed；v22 (2026-08-29): source-bound return authorization 改由服务端保管，runtime delta 与公开 MCP schema 不再搬运 cloudReturnBinding，exact owner/thread/source/cat grant 在 durable append 后一次性消费，atomic append winner 仅按持久消息恢复投递，grant 记录 24h 有界保留；v23 (2026-08-30): extension `0.2.6` / adapter `2026-08-30.1` 接受全局唯一 `conversation-turn-*` Host ID，MCP 缺席时只捕获 exact dispatched user turn 后首个完成的 assistant turn，经 mode-0600 Native ledger 与 API durable source idempotency 回写，MCP/浏览器竞态只保留同一 winner；v24 (2026-08-30): API poller 显式区分 durable Redis grant 与 ephemeral memory grant，no-Redis 重启丢 grant 时保留 Host inbox 项而不 ACK；v25 (2026-08-30): cursor 允许保留项不阻塞新回程，ledger 为每个未产出/未 ACK 派发分别预留最大 JSON-expanded final；v26 (2026-08-30): local ACK 加入 exact conversation scope，跨会话重派即使 fallback assistant ID 碰撞也只删除目标项；v27 (2026-08-30): retained-return cursor 同样绑定 exact conversation/source/assistant triple，碰撞的保留项不会循环卡住后续授权回程，AC-F8 仍待 post-activation live proof；v28 (2026-08-31): extension `0.2.7` / adapter `2026-08-31.1` 将提交后的 user turn 按 rendered message 读取，嵌套 `.whitespace-pre-wrap` 不再被 composer-only parser 误判丢失，real-ID/唯一性/exact-text 与因果回程边界不变；v29 (2026-08-31): extension `0.2.8` / adapter `2026-08-31.2` 在 strict parser 不可表示时分别对 `innerText` 与 `textContent` 做 exact payload equality；折叠投影不再遮蔽完整 payload，唯一 Host ID、零/多候选 fail-closed、因果回程与无历史扫描边界不变；v30 (2026-09-01): extension `0.2.9` / adapter `2026-09-01.1` 将折叠气泡的 canonical `.whitespace-pre-wrap` 正文与 sibling `展开` UI 分界，正文仍须完整 exact equality，real-ID/唯一性/因果回程与无历史扫描边界不变；v31 (2026-09-02): extension `0.2.10` / adapter `2026-09-02.1` 以已验证 Host ID 跨 React remount 重定位 source/assistant turn，禁止 detached partial 回程，并将无 final 的脱敏观察断点经 Native durability handshake 写入账本；v32 (2026-09-03): 右侧“对话信息”直接投影当前 thread 的 owner-only ChatGPT conversation ID，并提供复制 canonical URL 与显式打开入口；extension 后台投递继续 zero-focus，不新增自动导航；v33 (2026-09-03): 每条 source-bound query 在 untrusted runtime delta 与原始 intent 之后追加固定、服务端生成的 Remote MCP 回程契约，显式要求 `cat_cafe_post_message(agentKeyCatId="gpt-pro", threadId, replyTo=sourceMessageId, content=complete final)`；契约不携带 capability/secret，服务端 one-shot grant 与 durable source idempotency 仍是唯一授权和判重真相，浏览器 assistant observer 降为有界兜底；v34 (2026-09-04): owner-visible ChatGPT Conversation 从通用“对话信息”迁入 Session Chain，和 CLI Session 分名展示；未绑定态给出 Host 授权→当前 thread 选会话的可执行路径，Settings 深链自动展开目标插件卡；v35 (2026-09-04): operator 将未绑定恢复入口移回触发现场：`@gpt-pro` 未绑定时在原消息旁生成 source-bound inline card，单授权预选后以“绑定此会话并发送”一次完成 route + exact-source retry，多授权原地选择，零授权显式打开 ChatGPT 授权；Settings 降为管理/更换的 deep-dive，不再是首次召唤必经路径；v36 (2026-09-05): Native owner-private title sidecar backfills exact authorized open tabs; source recovery always re-reads retry authority and distinguishes connection-only, queued, Host sent and unknown. Authorization schema v2 and exact-source retry authority remain unchanged.
+  v37 (2026-09-24): built-in gpt-pro identity protection — Settings keeps profile fields editable, fixes the `@gpt-pro` primary handle, and replaces Client/model/account/runtime controls with a readable summary；API atomically reserves the cat ID, breed, handle, transport identity, and deletion boundary；historical drift is surfaced without silent overwrite and repaired only by one explicit restore action
 ---
 
 # F247: 云端猫 Family + 多 provider 接入平台
 > **Status**: active | **Owner**: Ragdoll (Ragdoll opus-47) | **Reviewer**: Maine Coon (Maine Coon codex/gpt-5.5) | **Vision Guard**: Ragdoll (opus-48) | **Priority**: P1 | **Created**: 2026-06-21
 Architecture cell: plugin + callback-auth + transport + dispatch + bubble-pipeline + thread-chat-surface + identity-session
-Map delta: v36 adds bounded display-only Native title metadata and current-authority reconciliation; no new authority owner. v35 makes the failed source message—not Session Chain or Settings—the primary unbound-recovery surface. Existing owner-only authorization, exact thread binding, durable Queue custody, and queue-target retry remain the state owners; the new read route only projects the current optimistic-concurrency fence when the timeline prop is stale. Session Chain and Settings remain secondary inspect/change surfaces. Canonical source: `packages/api/src/routes/messages.ts#currentRetryableAttemptId` + `packages/web/src/components/cloud-binding-recovery-operations.ts#readRecoveryState` + `packages/web/src/components/CloudBindingRecoveryCard.tsx` (last updated 2026-09-05).
+Map delta: v37 makes the built-in `gpt-pro` transport identity an explicit shared invariant projected by the Cats API and enforced at both API and Settings boundaries. It does not change thread binding, Host authorization, dispatch, or return ownership. v36 adds bounded display-only Native title metadata and current-authority reconciliation; no new authority owner. v35 makes the failed source message—not Session Chain or Settings—the primary unbound-recovery surface. Existing owner-only authorization, exact thread binding, durable Queue custody, and queue-target retry remain the state owners; the new read route only projects the current optimistic-concurrency fence when the timeline prop is stale. Session Chain and Settings remain secondary inspect/change surfaces. Canonical source: `packages/shared/src/types/builtin-cloud-identity.ts#projectBuiltinCloudIdentityProtection` + `packages/api/src/routes/cats.ts#builtinCloudIdentityPatchViolationFields` + `packages/web/src/components/hub-cat-editor.sections.tsx#ProtectedCloudIdentitySection` (last updated 2026-09-24).
 Consumer evidence: `rg -n "cloud_bridge_status|cloudBridgeOutboundReceipt|cloud-bindings|retry-authority|queue-targets/.*/retry|CloudBindingRecoveryCard" packages/api/src packages/web/src` enumerates the typed failure producer, durable source-bound notice, owner-only authorization/binding reads, exact retry-fence hydration, mutation consumer, and inline projection.
 Claim guard: every exact-source cloud dispatch ends with a fixed `cat-cafe-return-contract` naming `agentKeyCatId="gpt-pro"`, runtime `threadId`, and `replyTo=sourceMessageId`, while hostile title/intent text cannot alter that final literal and the complete payload stays within 2,000 chars → `pnpm -C packages/api run build && node --test packages/api/test/b1c-2-build-delta-payload.test.js` → RED when the contract is absent/mutable, carries `cloudReturnBinding`, or breaks the cap. A no-route or Host `NEEDS_BINDING` failure must become one typed source-bound recovery projection; owner actions can read only the validated authorization collection, bind exactly one canonical conversation, and retry the existing current `(sourceMessageId, targetCatId, attemptId)` without cloning the source. Missing timeline fences use an owner-only exact-source GET that reuses the mutation preflight, exposes no other owner, and never advances custody; the POST revalidates atomically. `messages-endpoint.test.js` plus `CloudBindingRecoveryCard*.test.tsx` guard owner privacy, hydration, sorting/inspection, thread/binding switches, stale async completion, duplicate clicks, 401/403, zero/multiple authorizations, and retry convergence. Session Chain continues to expose the canonical owner-readable Conversation separately from CLI Session.
 Why: F247 consumes the F178 principal lifecycle, adds a Host-governed conversation append seam, settles cloud-only A2A work through the existing exact-source dispatch contract, and owns the durable outbound receipt projection on the canonical transport timeline without claiming provider capability. V22 removed the redundant model-carried HMAC after a live OpenAI safety block; v23 closes the independent case where ChatGPT completes an ordinary visible response but the model omits its Remote MCP callback.
@@ -125,7 +122,6 @@ F178 §12 升级条件给出新 F 号触发集合（self OAuth AS / multi-tenant
 - 愿景：multi-provider 聚集地 → 任何能跑 MCP connector 的云端 LLM 都能成为家庭成员
 
 **operator signoff**：operator 2026-06-21 08:11 UTC "可以更新 feat md 了嘛？" + 08:40 UTC "先更新你的 feat md 然后再开始写代码"。Phase F inline recovery 由 2026-09-04 source `[thread-id]#private-source-id` 放行：“好像ok 你可以update 一下feat md然后开始施工？”，其文案与动作边界来自同 thread `private-source-id`。
-
 ## Current State / 基线（截至 2026-09-04）
 ### 已验证 ✅
 - MCP transport（Streamable HTTP）+ ChatGPT Developer mode connector 兼容（spike B0 mock harness）
@@ -141,7 +137,7 @@ F178 §12 升级条件给出新 F 号触发集合（self OAuth AS / multi-tenant
   - cat-cafe API hot-add gpt-pro via `POST /api/cats` (0 重启) ✅
   - dry-run `cat_cafe_post_message` 真写入 thread, speaker 显示 "Maine CoonPro(Pro Cloud (ChatGPT))" ✅
 - **2026-08-08 principal lifecycle hardening + live recovery proof**：45-day Redis TTL 到期而 sidecar 残留导致 `agent_key_unknown`；共享 provisioner 已实现 verify/preserve/rotate/replace + daily renewal。授权 runtime reconcile 后，公网 Remote MCP 以 `gpt-pro` 写入 `[thread-id]` 并返回 message ID `private-source-id`，full thread read 精确确认一次。
-- **Host Adapter contract**：`append_message(conversationId, text, idempotencyKey) -> {hostMessageId, idempotentReplay?}` 已落窄接口与 fail-closed tests；Personal Chrome Host 在 owner 授权的 exact conversation 上已有真实 background append 证据，但不外推为任意 provider / conversation，也不冒充 Chrome Web Store 公开发行。Legacy PinchTab 仅 `CAT_CAFE_ENABLE_LEGACY_PINCHTAB_BRIDGE=1` 显式启用，默认不接管前台 UI。
+- **Host Adapter contract**：`append_message(conversationId, text, idempotencyKey) -> {hostMessageId, idempotentReplay?}` 已落窄接口与 fail-closed tests；Personal Chrome Host 在 owner 授权的 exact conversation 上已有真实 background append 证据，但不外推为任意 provider / conversation，也不冒充 Chrome Web Store 公开发行。Legacy PinchTab bridge 已删除（clowder-ai#1538 / #1550）：Host Adapter 是唯一 transport，拒绝后不再改走第二条通道。
 - **历史个人版双向 E2E 已实锤**（2026-06-30）：旧 PinchTab bridge 将 Clowder AI mention 投进绑定的 ChatGPT conversation；云端 `gpt-pro` 随后通过 Remote MCP 真写回 Clowder AI，消息 `private-source-id` 可精确读取。它证明产品闭环可行，但不把前台浏览器自动化升级为稳定公共契约。
 - **Personal Chrome Host Adapter 隔离 spike（2026-08-12）**：35 项 focused 契约全部通过。真实 Chrome + 临时 profile + unpacked MV3 extension 在拦截的 `chatgpt.com/c/<id>` fixture 上完成后台 tab 投递，前台 tab 未变化；首次返回 DOM message ID `fixture-host-message-1`，同一 idempotency key 重试返回同一 ID 且 send count 保持 1。独立 full-seam integration 另行穿过真实 `PersonalChromeHostAdapter`、Unix socket bridge、Native Messaging framing、service-worker `connectNative`/`dispatchAppend`、tab receipt 与 0600 durable ledger；helper socket 由跨进程原子 owner lease 守住，live/仍在落盘的旧 helper 不会被重叠启动替换，dead helper 遗留的 lease 可安全回收；POSIX install contract 还直接启动 manifest 写入的 executable path 并交换真实 stdio frame，防止进程内 mock 或 DOM-only fixture 绕过 helper/port 后仍误报机制通过。该证据只关闭 fixture/本地协议 gate，不冒充已安装原生宿主或登录态真实 ChatGPT DOM 证据。
 - **Cloud invocation terminal contract（2026-08-12）**：`openai-chatgpt-pro` 不再从 KD-17 guard 提前 `done`。它先创建 durable child、暴露 exact source body，再等待 Host transport 的有界 `sent | fallback | error`；随后发布一条可读 `cloud_bridge_status`，为 A2A source 写精确 `completed` disposition，并用同一 child `done` 收口。Host 缺失是一次显式 unavailable，不再被 F167 判成 disposition missing 后重排队。
@@ -152,6 +148,7 @@ F178 §12 升级条件给出新 F 号触发集合（self OAuth AS / multi-tenant
 - **Owner-friendly product card（2026-08-21）**：Console 插件页使用仓内正式 `/avatars/gpt-pro.png`，MV3 manifest 使用从同一资产确定性生成的 16/32/48/128 图标。owner-only/local-only API 投影 Web Store publication、Host、authorization collection 与 live 状态，并支持精确单项撤销；非 owner、非 loopback、forwarded 或不可信 Origin 在读取前拒绝。卡片不再输出 repository/source path 或 `chrome://extensions` 指令。`CAT_CAFE_PERSONAL_CHROME_WEB_STORE_URL` 只有严格匹配 `chromewebstore.google.com` 与固定 extension ID 时才算 `published`；为空时显示“集成已就绪、尚未公开发布”并在 Host mutation 前返回 `CHROME_WEB_STORE_LISTING_NOT_CONFIGURED`。配置可信 listing 后，一次 Settings 安装操作准备 Host 并打开 Web Store，仍只由 Chrome 完成“添加扩展/权限”原生确认。Windows 稳定 unsupported。当前外部 blocker 是公共 package PR 与 Chrome Web Store listing/发布权限，不能宣称已经公开发布。
 - **Authorization → current-thread route product completion（2026-08-23）**：Settings 现在明确展示两个不同 authority：扩展/Host 的最多 32 项 exact conversation authorization collection，以及当前 Clowder AI thread 的 owner-only `cloudCatBindings.gpt-pro` 一对一路由。owner 只从已授权 collection 中选择当前 thread 的目标；route 指向已撤销 authorization 时投影 degraded + replacement，不自动猜绑。该 consumer 只调用既有 owner-only sidecar API，不把 conversation route 放回默认 thread context、memory、export 或 cross-post。
 - **Conversation inspect + inline recovery（2026-09-04, deterministic PASS）**：ChatGPT Conversation 与 CLI Session 在 Session Chain 分名展示，Settings 继续管理授权/route；首次 `@gpt-pro` 未绑定则在原 source message 旁显示唯一恢复卡。单授权预选，多授权原地选择，零授权只在用户点击后打开 ChatGPT；“绑定此会话并发送”复用原 `sourceMessageId`、latest retryable attempt 与既有幂等 fence，不创建第二条用户消息。非 owner、损坏、切 thread 与陈旧 completion 均 fail closed；extension zero-focus 契约不变。
+- **Built-in cloud identity protection（2026-09-24, deterministic PASS）**：`gpt-pro` 的所属家族、`clientId=openai`、`defaultModel=gpt-pro`、`provider=openai-chatgpt-pro`、Remote MCP、内置账号、“无本地 CLI/ACP”以及主句柄 `@gpt-pro` 是固定身份；其他别名仍可增加。Settings 隐藏身份/高级运行时控件、将主句柄显示为不可删除标签并解释原因；列表不提供删除动作。API 在 catalog 读取/写入前拒绝伪造创建、危险 PATCH、句柄转让与 DELETE，返回 typed 409 且字节级零写入。若旧版本已造成漂移，GET 明确投影异常字段，普通资料编辑不静默覆盖，只有独立的 `restoreBuiltinCloudIdentity` 动作可原子恢复并持久化。回归覆盖创建/修改/删除/回滚四个入口、资料编辑、漂移读取、显式恢复与重启持久性。
 - **Multiline contenteditable normalization repair（2026-08-23）**：正式 runtime delta 的多行文本允许 ChatGPT 把单 text node 等价规范化为 direct `<p>` / `<div>` blocks，每个 block 只接受直接 text / `<br>`；adapter 以不 trim、不折叠字符的 exact DOM-text serializer 完成插入与 submit 前 recheck。nested block、unknown/mixed DOM、改变一个字符、conversation、owner draft 或 send button 仍在 click 前 typed fail closed 并恢复空 composer。deterministic regression 覆盖真实 `<thread-runtime>\nJSON\n...</thread-runtime>\n\nintent` 形状与 nested-DIV 零点击反例。
 - **PR #3857 后 owner-click real dogfood（2026-08-23, OBSERVED/PASS）**：刷新扩展与目标 ChatGPT page 后，You 登录态 conversation 经 Native Messaging 完成 background append，DOM `hostMessageId=9d752dbe-fe46-4222-901b-9f9a3b406012`；相同 source key 重试返回同一 ID，Chrome 生命周期与前台焦点均未变化。刷新前的失败保留为诊断历史：运行中的 extension worker 使用 stale dynamic import / artifact，不能用“仓内代码已更新”推断浏览器已加载；刷新后才形成有效 live evidence。随后 gpt-pro 通过 Remote MCP 回到原 thread，消息 `private-source-id` 与 `private-source-id` 可追溯。该证据关闭真实 background delivery（AC-F5），但 operator diagnostic script 不是从富卡授权开始，故不关闭 AC-F4/AC-F8。
 - **Source-bound return + proactive append split（2026-08-23；2026-08-29 server-custody correction）**：正常 cloud runtime delta 只携带 exact `sourceMessageId`。Host 投递前，服务端持久化 owner user / thread / exact source / dispatch / target cat grant；gpt-pro 用既有 agent-key 与 `replyTo=sourceMessageId` 回程时，服务端按同一 scope 原子 claim，消息 durable append 后消费，append 失败释放，替换/跨 scope/并发一律 typed fail closed。message store 另以 exact owner/thread/source/cat scope 做 durable idempotency：commit 瞬时失败不会阻断已落盘消息的 delivery，任何 replay 都返回原 `messageId` 且不追加第二条。`cloudReturnBinding` 不再进入 prompt、公开 MCP schema 或 Custom Instructions；API 仅保留 legacy pair 的滚动兼容验证。没有 source/reply 语义的独立主动消息继续走 agent-key append-only 通道；该通道仍拒绝 replace-final、review verdict、coordination 与 structured action。normal dispatch 的 refs-only typed receipt 与 same-thread/public-safe/sender/dispatch/target fences 保持不变；没有真实 host receipt 时仍不能冒充 `sent`。
@@ -177,7 +174,6 @@ F178 §12 升级条件给出新 F 号触发集合（self OAuth AS / multi-tenant
 - 前端 bubble 渲染优化（catalog hot-add 显示 "Maine CoonPro(Pro Cloud (ChatGPT))" + fallback avatar 已 work；Phase C 升级真头像 + 气泡风格）
 - 多 provider 配置 UI（"配置云端猫"页面）
 - Chrome Web Store 签名 extension 的实际公开 listing；Clowder AI listing 集成与发布阻断状态已就绪，但当前没有发布权限/URL，不能宣称已经公开发布
-
 ## User Journey
 
 1. operator在 Clowder AI 插件市场点击安装 Cloud Cat plugin；向导安装本地 Native Messaging helper，并打开官方 Chrome Web Store 页面。Chrome 仍要求用户确认一次“添加扩展/权限”，插件不得静默绕过浏览器授权。
@@ -185,7 +181,6 @@ F178 §12 升级条件给出新 F 号触发集合（self OAuth AS / multi-tenant
 3. 用户直接 `@gpt-pro`；若 thread 未绑定，系统零发送并在原消息旁显示唯一恢复卡。单授权预选、多授权原地选择、零授权提供显式打开 ChatGPT；点击“绑定此会话并发送”后复用原 `sourceMessageId` 与 latest retryable attempt 写 route + retry。重复点击/重载/重放不得克隆 source 或 Host turn，旧 thread completion 不得更新新卡。
 4. Chrome extension 经 Native Messaging 在不聚焦窗口、不读 Cookie、不调用私有 API 的前提下投递；只有真实 `hostMessageId` 才显示“已发送”，否则显示准确状态与恢复动作。
 5. 云端猫用自己的 `catId` / agent-key 读取完整 thread context并回写猫咖；Hub 以独立身份和 delivery 状态展示，胶囊不复制整段历史。
-
 ## What
 
 6 个核心能力 + 6 个 Phase。
@@ -218,6 +213,8 @@ F178 §12 升级条件给出新 F 号触发集合（self OAuth AS / multi-tenant
 3. **`breeds[].variants[]` (cat-config.json)** — **design-time** template，影响 UI render 默认值 + breed catId mapping。**不参与 runtime catRegistry**。Phase C scope 简化为：avatar / bubble UX 设计 + UI render verify，不需要为 gpt-pro 加 breeds entry。
 
 displayName "Maine CoonPro"（变体: "Pro Cloud (ChatGPT)"），昵称 "Maine CoonPro"，签名 `[Maine CoonPro/gpt-pro🐾]`，与本地 `codex`（@gpt-5.5）词面区分。
+
+`gpt-pro` 还是一个**内置固定云端身份**，不是可以在通用成员表单里改造成任意本地猫的模板。允许编辑人物资料并增加别名；`catId`、所属家族、主句柄 `@gpt-pro` 与接入身份由共享 invariant 锁定，其他成员也不能认领该主句柄。需要本地 Codex 时应新建另一位成员，避免同一个 `catId` 同时承担云端回程 principal 与本地 CLI identity。历史漂移不会在创建、启动或普通保存时被暗改，Settings 会先解释风险，再由operator显式点击“恢复云端身份”。
 
 ### 2.2 前端 bubble/avatar 渲染（Phase C 范围）
 
@@ -279,7 +276,6 @@ Console settings "配置云端猫" 流程：
 operator 2026-06-21 06:54 UTC 确认：**ChatGPT 官方 GitHub Connector 已用**。Maine Coon通过 GitHub Connector 访问 `github.com/zts212653/cat-cafe`：看 PR diff / code / commit log。
 
 **Scope 简化**：cat-cafe MCP 不暴露 file_slice 等 code 工具，code 走 GitHub Connector。cat-cafe MCP 只暴露 cat-cafe 独有（thread / message / memory），**48 R2 P0 暴露面减一档**。
-
 ## Phase 划分
 
 ### Phase A — Design Gate + 策略明确 ✅ done
@@ -358,15 +354,15 @@ operator 2026-06-21 06:54 UTC 确认：**ChatGPT 官方 GitHub Connector 已用*
 >
 > **operator R1 catch (2026-06-25 23:46 PT)**：bridge 投递到 ChatGPT 端**哪个 chat**？v1 spec 漏了这层架构——每次 mention 新建 chat = sidebar 爆炸 + Maine Coon Pro 失去 conversation continuity；投到 active chat = 打断他当前讨论。**必须做 thread↔chat binding (KD-20)**。
 
-**目标**：本地猫 @ gpt-pro → cat-cafe 通过宿主提供的 background Host Adapter，向 **该 thread 已绑定的 conversation** 追加 mention 通知（带 thread context）→ Maine Coon Pro 看到后 MCP read 拉详情 + 写回复。**全程零人肉粘贴、零前台 UI 接管。** Host 未暴露能力时明确 fallback；只有 operator 显式 opt-in 才允许旧 PinchTab 路径创建/修复 binding。
+**目标**：本地猫 @ gpt-pro → cat-cafe 通过宿主提供的 background Host Adapter，向 **该 thread 已绑定的 conversation** 追加 mention 通知（带 thread context）→ Maine Coon Pro 看到后 MCP read 拉详情 + 写回复。**全程零人肉粘贴、零前台 UI 接管。** Host 未暴露能力时明确 fallback；旧 PinchTab 路径（曾可创建/修复 binding）已删除（clowder-ai#1538 / #1550）。
 
 #### Design 要点
 
-**1. Backend priority = Host Adapter；PinchTab 降级为显式 opt-in legacy**（2026-08-08 supersedes 原“PinchTab 单一”）
+**1. Backend = Host Adapter；PinchTab legacy bridge 已删除**（2026-08-08 supersedes 原“PinchTab 单一”；clowder-ai#1538 / #1550）
 - 首选 Host-owned 窄接口：`append_message(conversationId, text, idempotencyKey)`，成功必须返回 non-empty host message ID；conversation ID 来自 owner-only thread binding，idempotency key 来自持久化 source message ID
 - Host Adapter 缺失 / receipt 无效 / append 失败：typed fallback，**不**自动启动 PinchTab / composer / CGEvent；这保证后台服务不会抢用户鼠标和前台画面
 - 当前 OpenAI 公共 Host 能力只证明 Codex Quick Chat 可引用 ChatGPT conversation，不足以证明 server 可向任意 conversation 追加并取回 host message ID；provider 保持 `null`，直到官方能力真实出现
-- PinchTab 旧路径只在 operator 显式设置 `CAT_CAFE_ENABLE_LEGACY_PINCHTAB_BRIDGE=1` 时启用，用于兼容/诊断，不再是默认行为
+- PinchTab 旧路径（原来只在 `CAT_CAFE_ENABLE_LEGACY_PINCHTAB_BRIDGE=1` 时启用）已删除（clowder-ai#1538 / #1550），环境变量一并移除；已存回执里的 `transport: 'legacy-pinchtab'` 仍按历史值可读。独立 PinchTab browser MCP 不变。
 
 **历史实现：PinchTab adapter**
 - 跨族（Maine Coon/Siamese/Ragdoll都能用），不像 claude-in-chrome 仅 Anthropic 系
@@ -387,7 +383,7 @@ operator 2026-06-21 06:54 UTC 确认：**ChatGPT 官方 GitHub Connector 已用*
 }
 ```
 
-绑定 lifecycle（lazy + auto-self-heal）：
+> 绑定 lifecycle（lazy + auto-self-heal；历史实现）：现状（clowder-ai#1538 / #1550）：下面「首次 @ 开新 chat」与「binding stale 自动 re-open」是已删除的 PinchTab bridge 的行为，现已不存在。Host Adapter 只向 thread 已绑定的 conversation 追加，不会自己开新 chat；binding 缺失或损坏时走 needs-binding fallback，什么都不发。
 - **Lazy 不预绑**：thread 创建时**不**预先开 chat
 - **首次 @ gpt-pro**：bridge 在 ChatGPT 端开新 chat → URL 包含 `chatgpt.com/c/<conversation-id>` → capture URL → 写 thread metadata
 - **后续 @ 同 thread**：bridge 查 thread metadata → 找到 bound URL → navigate to bound chat → 投通知
@@ -398,7 +394,7 @@ operator 2026-06-21 06:54 UTC 确认：**ChatGPT 官方 GitHub Connector 已用*
 - `invokeSingleCat` 看到 `provider === 'openai-chatgpt-pro'` → 跳过 provider CLI，但仍创建 durable child invocation，并在 prompt exposure 后触发 cloud-invoke-bridge
 - bridge 返回有界 Host transport outcome；本地 invocation **不等待云端猫回复**，但必须等待该 outcome 后发布一条可读状态
 - A2A source 由同一 child 写 exact `completed` disposition，再 `done`；缺 adapter/receipt 也终结该 source，禁止 silent completion → governance error → Queue replay
-- API composition 仅在 socket + pairing secret 同时配置时启用 Personal Chrome Host Adapter；否则 typed unavailable。Legacy PinchTab 仍只允许显式 opt-in
+- API composition 仅在 socket + pairing secret 同时配置时启用 Personal Chrome Host Adapter；否则 typed unavailable。Legacy PinchTab bridge 已删除（clowder-ai#1538 / #1550）
 
 **4. 载荷模板**（thread context-aware）
 
@@ -647,6 +643,85 @@ gpt-pro（以及未来 claude-cloud / gemini-cloud 等其他 cloud cats），不
 
 - 插件页在用户首次安装 `gpt-pro` provider 时提示：“需要 Chrome 扩展的一次安装确认；完成后在目标 ChatGPT conversation 点击绑定。”sourceRef 指向本 spec Phase E/F。
 - `@gpt-pro` 无可用 binding 时提示：“先绑定 conversation，或选择复制并打开。”不得只显示内部 `HOST_APPEND_UNAVAILABLE`。
+### Phase G — dot 独立接入、猫咖内召唤与协作
+
+**Status**: in-progress；Astra 负责设计/范围，Sol61 实现。operator 于本 thread `[thread-id]#private-source-id` 接受概念并要求直接开发、在真实代码里打磨。
+
+**2026-10-11 实现状态**：首版 #5336 已合入 `7c6ef410e4`，browser admission #5343 已合入 `fad12058a8`。
+已有 MCP 复用纠正 #5381 已合入 `9c04cba87becb03b44ca71962f7d9d9d5425c95c`：保留原 `/mcp` 与 Pro 口令/工具，
+固定共享入口新增 dot Events/三工具；Host 保持 owner、配对与 exact-source 回程/图片权限。界面统一为「ChatGPT 云端」，
+目标 dot 只准备订阅，Pro/dot 成员分别显示；Chrome 辅助仍由原 producer 管理。
+作者真实 Remote HTTP→Fastify Host→来源回帖/私有 PNG、默认入口 1440/390 验证通过；
+cloud R1 与 Sonnet typed 终审 `66e86edc` 已消费，后续仅机械转录其两项文字建议及无关 main 合流。
+这些是实现/合同证据，不是实际 ChatGPT dot 的收件、手机呈现或原图验收。
+存量安装仍保存旧 manifest 名称，#5389 已合入 `0e62427e543045511041017f747684853acae5f3`：仅将当前 builtin 列表/详情标签投影为「ChatGPT 云端」，
+保留原包名、ID、版本、digest 和连接；成员页明确「身份独立，沿用已连接的猫咖插件」。Sonnet 在 `e8aaab6b` 独立复现旧安装 RED/GREEN 并放行，
+后续仅机械转录其一行文案建议，成员相关检查 13/13。原生 browser merge plan 的四个 unmapped inputs 保持诚实记录，采用风险匹配的组件检查，未声称 plan ready/full green。
+标准 Alpha 在 `0e62427e54` 的真实旧安装已通过默认菜单进入、列表与详情、1440/390 窄屏及共享连接文案检查，未发安装/订阅准备/凭据修改请求；
+生产仍在 boot 22、revision `140dc4115d8`，本轮不停止/重启 API/Web。此前原执行 Task936 登记了 generation 5 的
+`revision_included=0e62427e54`（api/web）单次部署等待；加载后沿同一个既有 MCP 刷新独立 Remote，再验真实订阅、
+本人 A/B、获准家猫与原图。续办已加入 source341/350 的 329/331 真实反例：dot 主动询问按 Pro 作者落盘、家猫回信进入未绑定的 Pro 回程。
+该主动询问分支也须验真实送回同一 dot，不能仅凭新版加载或首条召唤成功宣称双向贯通；官方受控 runtime 更新仍需本人明确许可。
+Alpha 交付与完整 G1 的真实 provider 验收仍分别按实物留痕，阶段保持 in-progress。
+
+**G1-6 主动询问回程已合入**：[#5397](https://github.com/zts212653/clowder-ai/pull/5397) 的 landed revision 为 `05343af4bb24b1df6336bfdb68f5178a24f1371f`。
+同一 MCP 增加有界 `cat_cafe_dot_ask`，Host 固定 dot 作者，家猫正式 callback/stream 按真实执行来源自动回送原订阅；
+受询回信依赖真实 root、实际接收者和执行来源；逐猫永久召唤名单按上述 2026-10-14 校准退役。多猫部分失败如实可重试，保留原消息与幂等 key；本人回复 dot 提问保留普通召唤权限。
+Sonnet 已对最终 `c6d3f953` 给出 typed approved（本 thread `private-source-id`），独立接受第四轮假阳性 pushback；
+作者最后选择 21/21 与 API build/types 通过，独立最终选择 42/42、隔离 Redis 1/1 通过。原生 browser merge plan 17 条 backend/MCP/shared unmapped 仍为 blocked，未声称 full 或 browser 绿。
+
+标准 Alpha 已加载 `05343af4`，shared/API/MCP 构建 stamp 一致，boot 116；真实默认菜单、旧安装、1440/390、共享连接文案及无二次地址入口已复验。
+Alpha 不持有全局 Pro sidecar，Host 本轮只验无凭据 401 / 错凭据 403，未借正式凭据或创建新连接、订阅、问题。
+页面在 `http://localhost:3011/settings?s=plugins` 可试用，托管为 launchd；Hub 打开请求 `unconfirmed/no_matching_client`，不宣称用户已看到。
+正式 runtime 仍 boot 22 / `140dc4115d8`；原 936 Task 的单次部署等待现为 generation 6、`revision_included=05343af4`（api/web），取代此前 generation 5。
+新版本实际加载后继续验真实 dot Events、A/B 原处回程、获准家猫、主动询问回信与 PNG/原图刷新。未获正式受控重启许可，未自行停止服务；G1/Phase G 不关闭。
+
+**正式加载更新（boot23）**：运行版本 `9fade4a70022bd81b480581e0aad2458032dca44` 已包含 `05343af4`，原936的generation6部署等待已matched。
+独立Remote同时从runtime checkout加载新版，无需本负责人另启/重启服务；Host四个dot工具及公网同一 `/mcp` 的17工具、`dot.summoned`、现代JSON与原Pro SSE目录均实际200。
+主人的现有插件页读取及未配对dot「准备订阅说明」已通过，Pro连接、口令、包身份保留；本次配对说明已提供本人，只需发给同一现有dot，无二次安装配置。
+当前实际仍无目标dot订阅/唤醒/来源回程/图片回执。正式加载条件已解除，剩余入口在真实dot客户端注册回调，然后继续原936验完整旅程。
+
+**2026-10-12 灰开关反馈已交 Alpha**：[#5436](https://github.com/zts212653/clowder-ai/pull/5436) 合入 `f03983dc4a`。
+原专用详情没有接住 blocked-toggle 请求；现点未就绪开关会解释订阅/两处往返步骤，并链接现有 ChatGPT 插件页。
+局部产品快车道作者27项、类型/格式/diff检查通过；真实 Alpha 在包含修复的 `122c9eddd6` 上1440/390均核提示、外链与零配置POST。
+正式runtime未动，尚未加载这份界面反馈。订阅说明已交目标dot，但其13:06 UTC实际发现仍为旧工具/无Clowder AI Events；
+本轮无新的真实订阅或事件回执，不要求本人重复搬运说明、不把原任务改回等旧部署；原936继续验客户端发现、订阅与完整回程/PNG。
+
+**2026-10-12 16:08 UTC 客户端发现已恢复**：本人在原 ChatGPT 猫咖连接完成 Refresh（来源1899）。
+目标 dot 主会话实查并回传四项 `cat_cafe_dot_*` 工具、猫咖事件源及 `dot.summoned` 的严格配对参数（来源1951），旧目录缺失阻塞解除。
+16:13 UTC 正式状态投影仍为未配对、无订阅及回程/图片记录；现有说明已于13:23 UTC过期，不得继续使用旧attempt或伪造订阅。
+下一步由本人在同一「ChatGPT 云端」详情重新准备有效订阅说明，交给原目标dot建立真实订阅；不重装、改Pro连接或重启runtime。
+这项客户端授权操作尚无合法Needs Me producer，原936如实记录该入口缺口，不伪造approval/runtime_interaction。
+
+**2026-10-12 新说明已交，真实订阅创建失败**：目标dot16:26/16:27两次创建均Task Service ERROR（来源2017）。
+正式状态revision5与新attempt匹配，尝试时有效；16:45仍未配对、无订阅/验证/回程/图片记录。
+两次窗口的Host共享RPC有四条HTTP200，但现有日志未记录RPC方法/错误体，不能认定subscribe已成功或唯一定位challenge失败层。
+剩余阻塞转为具体RPC/Task Service错误的观测缺口；不再等待本人Refresh或已完成的准备动作，未改配置、凭据或服务，原936继续验G1。
+
+**2026-10-12 回调Host与安全诊断修复已合入/Alpha验证**：[#5443](https://github.com/zts212653/clowder-ai/pull/5443) 合入 `65cdb541296f0c773b44cb2544e4d669ec66e7a0`。
+修正签名headers覆盖原域名Host的确定缺口，保留已验证IP、TLS/SNI与签名；订阅日志只保留方法、hostname、有界失败类别/系统码，不记录配对或callback秘密。
+Sonnet独立审查最终HEAD `7f0012f358` 放行（来源235），包含真实本地TLS、fake-IP拒绝与日志隐私验证；作者相关60/60、最终增量7/7、API类型检查通过。
+Alpha实际HEAD/build stamp `007ebaf646` 包含合入修复，健康检查ok，合入后回归7/7；正式runtime仍boot24/`8f98aed76a`，尚未加载新补丁。
+系统DNS的fake-IP与正式公网地址校验冲突已独立复现，但真实callback hostname及16:26唯一失败原因未知；没有放行保留网段、改网络/凭据或创建新订阅。
+原936已登记包含`65cdb541`的正式部署单次续办；加载后的真实订阅、双向原处回复及PNG仍待验，不据此关闭G1。
+
+**2026-10-13 协议兼容修复已合入/Alpha验证，正式加载与真实订阅仍待验**：[#5489](https://github.com/zts212653/clowder-ai/pull/5489) 合入 `93af0f2742854494adaeaafd8f4f6f0f8452af02`。
+正式 boot27/`1a13a3f79e` 已加载此前Host修复；真实13:59/14:00的req-3mu/req-3ug已到Host，但返回invalid_parameters且未进入订阅服务/挑战。原payload未保留，不能认定具体被拒字段。
+本轮独立复现严格子集拒绝合法`_meta`/`maxAgeMs`，修正订阅、退订和工具调用的命名协议字段及完整`resultType`外壳；业务参数、owner/作者、来源权限与安全回调仍严格验证。
+新增局部诊断只保留静态phase、白名单path/code/expected及有界计数，不记录值或秘密；内部schema错误另记phase。
+Sonnet最终typed approved覆盖`e6db98bd22`（来源169），独立52/52；标准Alpha boot132的API/MCP构建stamp与合入SHA一致，合入后19/19、健康检查通过。
+15:16 UTC正式仍boot27，未包含这次补丁；当前record revision6未配对、无订阅/来源读取/回信/图片回执，attempt已于14:28过期，不能倒推为请求时失败原因。
+原936已登记generation8等待冻结合入SHA加载；正式停止/重启仍受本人原生source120边界约束，未自行改服务/网络/凭据或创建新订阅。
+客户端操作缺少合法Needs Me入口如实记入原progress，不伪造approval；下一轮先核云端最终任务状态，再在有效本人授权下验真实订阅、双线程自动召唤、原处回信与PNG。
+
+**2026-10-13 23:52 UTC 正式补丁已加载，剩余为真实客户端订阅**：boot28 / `237a5a9de17e5e311f67a6b8e6ad2475e85db813` 健康；API/MCP stamp一致、Git祖先包含`93af0f2742`，实际编译文件包含新协议字段、完整外壳和白名单诊断。
+原936 generation8已matched，加载/重启阻塞解除，不再要求另一次重启。当前Host仍record revision6、未配对、无订阅及读源/回信/图片回执，上次attempt已过期。
+云端最终任务状态仍unknown；本invocation没有目标dot任务查询能力，下一步先由原dot主会话合法只读列任务确认无重复，再由本人在同一插件详情原处准备有效说明供原dot订阅。
+不自行重备、重试真实订阅或改连接/口令；客户端操作缺少合法Needs Me producer继续如实保留。真实自动召唤、原处回复、正式询问回程与PNG仍待原936验收。
+
+**2026-10-14 01:42 UTC 新订阅已过参数解析，失败于回调DNS地址校验**：boot28真实`req-lrr`在01:42:38.855Z记received，随后报`callback_non_public_address`；实际hostname为`connectors.api.openai.com`，HTTPS挑战发送前即被拒。
+01:45只读系统DNS返回保留`198.18.0.0/15`答案，实际编译resolver再次拒绝；不是昨日invalid_parameters，原请求地址值未留而不补造。新attempt在请求时有效，Host record revision8仍未配对/无订阅；目标dot报告随后完整list仅4项旧任务且无新订阅、未重试。
+下一步需本人授权仅这个精确hostname的真实DNS例外并保持既有代理路由，先核全公网解析再继续有效授权的真实订阅；本轮未改网络/服务/凭据或创建callback，不要求再次Refresh或立即重配。真实G1仍未验。
 
 ## Acceptance Criteria
 

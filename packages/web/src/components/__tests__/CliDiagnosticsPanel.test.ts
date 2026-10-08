@@ -245,7 +245,6 @@ describe('F212 CliDiagnosticsPanel (AC-B2/B3/B4)', () => {
       'server_overloaded',
       'cli_response_timeout',
       'cli_stall_timeout',
-      'active_writer_recovery',
       // F212 Phase G (clowder-ai#875): silent_completion — CLI clean exit, no text event.
       'silent_completion',
       // F212 Phase H (Sol runtime forensics 2026-07-09, archive 97449e4b): upstream
@@ -385,6 +384,24 @@ describe('F212 CliDiagnosticsPanel (AC-B2/B3/B4)', () => {
     expect(ref?.textContent).toContain('invocationId:');
     // truncation: middle ellipsis "…" present for long invocationId
     expect(ref?.textContent).toMatch(/…/);
+  });
+
+  it('renders actual upstream diagnostics with a full request ID, without a VPN instruction', async () => {
+    const { buildCliDiagnostics } = await import('../../../../api/src/utils/cli-diagnostics');
+    const { CliDiagnosticsPanel } = await import('../CliDiagnosticsPanel');
+    const requestId = '7ab62694-a1b3-4ef6-977e-7edb76b44640';
+    const diagnostics = buildCliDiagnostics({
+      rawText: `stream disconnected before completion: An error occurred while processing your request. Please include the request ID ${requestId} in your message.`,
+      debugRef: { command: 'codex app-server', signal: null },
+    });
+    act(() => root.render(React.createElement(CliDiagnosticsPanel, { errorMessage: 'Error', diagnostics })));
+    expect(container.querySelector('[data-testid="cli-diagnostics-banner"]')?.textContent).toContain('上游');
+    expect(container.textContent).not.toMatch(/VPN|代理/);
+    expect(container.querySelector('[data-testid="cli-diagnostics-debug-ref"]')?.textContent).toContain(requestId);
+    act(() => (container.querySelector('[data-testid="cli-diagnostics-toggle"]') as HTMLButtonElement).click());
+    expect(container.querySelector('[data-testid="cli-diagnostics-excerpt"]')?.textContent).toContain(
+      'processing your request',
+    );
   });
 
   it('timeout debugRef omits the exit label when post-kill exitCode is causally absent', async () => {

@@ -40,27 +40,29 @@ describe('F296 B3b production context infrastructure wiring', () => {
   it('AgentRouter forwards the exact configured owner, hook readiness coordinates, and ledger into InvocationDeps', () => {
     const contextEpochOwner = { resolve: async () => assert.fail('wiring test must not resolve') };
     const presentationLedger = { reserve: async () => assert.fail('wiring test must not reserve') };
-    const claudeProjectHookCarrierReady = () => true;
     const router = new AgentRouter({
       agentRegistry: new AgentRegistry(),
       registry: createMockRegistry(),
       messageStore: createMockMessageStore(),
       contextEpochOwner,
       hookAuthenticationReady: true,
-      claudeProjectHookCarrierReady,
       presentationLedger,
     });
 
     assert.equal(router.getStrategyDeps().invocationDeps.contextEpochOwner, contextEpochOwner);
     assert.equal(router.getStrategyDeps().invocationDeps.hookAuthenticationReady, true);
-    assert.equal(router.getStrategyDeps().invocationDeps.claudeProjectHookCarrierReady, claudeProjectHookCarrierReady);
     assert.equal(router.getStrategyDeps().invocationDeps.presentationLedger, presentationLedger);
   });
 
   it('production composition chooses Redis persistence and supplies the owner to AgentRouter', () => {
     const source = readFileSync(new URL('../src/index.ts', import.meta.url), 'utf8');
 
-    assert.match(source, /new ContextEpochOwner\(new RedisContextEpochStore\(redis\)\)/);
+    assert.match(source, /if \(redis\) \{\s*contextEpochStore = new RedisContextEpochStore\(redis\);/);
+    assert.match(
+      source,
+      /const contextEpochOwner = new ContextEpochOwner\(contextEpochStore\);/,
+      'the Redis-backed store must reach the owner through the shared composition binding',
+    );
     assert.match(
       source,
       /^\s*contextEpochOwner,\s*$/m,
@@ -71,15 +73,19 @@ describe('F296 B3b production context infrastructure wiring', () => {
       /hookAuthenticationReady:\s*sessionHookAuthenticationReady/,
       'the live invocation-auth readiness resolver must reach provider-bound invocation deps',
     );
+    const invokeSource = readFileSync(
+      new URL('../src/domains/cats/services/agents/invocation/invoke-single-cat.ts', import.meta.url),
+      'utf8',
+    );
     assert.match(
-      source,
-      /claudeProjectHookCarrierReady:\s*isClaudeProjectHookCarrierReady/,
-      'the active-workspace carrier resolver must reach provider-bound invocation deps',
+      invokeSource,
+      /buildClaudeCompactionLaunchPlan\(\)/,
+      'the #1542 launch plan must be built inside invoke-single-cat as the single carrier truth source',
     );
     assert.match(source, /new PresentationLedger\(new RedisPresentationLedgerStore\(redis\)\)/);
     assert.match(
       source,
-      /new InMemoryPresentationLedgerStore\(contextEpochStore\)/,
+      /const memoryEpochStore = new InMemoryContextEpochStore\(\);\s*contextEpochStore = memoryEpochStore;\s*presentationLedger = new PresentationLedger\(new InMemoryPresentationLedgerStore\(memoryEpochStore\)\);/,
       'the no-Redis fallback must share the same epoch owner so its write fence cannot diverge',
     );
     assert.match(

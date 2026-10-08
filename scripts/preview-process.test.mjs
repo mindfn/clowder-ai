@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
-import { mkdtempSync, readFileSync, rmSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync } from 'node:fs';
 import net from 'node:net';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
@@ -11,6 +11,18 @@ import { fileURLToPath } from 'node:url';
 const SCRIPT_DIR = dirname(fileURLToPath(import.meta.url));
 const SCRIPT_PATH = join(SCRIPT_DIR, 'preview-process.mjs');
 const LEASE_RUNNER_PATH = join(SCRIPT_DIR, 'preview-process-lease-runner.mjs');
+
+// Positive fixtures model a cooperating launcher. Arbitrary no-report commands
+// are covered separately and cannot certify requested cleanup from their exit.
+const OWNER_REPORT_SOURCE = `
+const fs = require('node:fs');
+const resultPath = process.env.CAT_CAFE_PREVIEW_CLEANUP_RESULT;
+function report(exitCode) {
+  fs.writeFileSync(resultPath, JSON.stringify({pid:process.pid,processGroupId:process.pid,exitCode}));
+}
+report(null);
+process.on('SIGTERM', () => { report(0); process.exit(0); });
+`;
 
 function reservePort() {
   return new Promise((resolve, reject) => {
@@ -53,8 +65,47 @@ describe('preview-process managed lifecycle', () => {
     rmSync(root, { recursive: true, force: true });
   });
 
-  it('keeps a preview server alive after start exits and reports exact status until stop', () => {
+  it('rejects duplicate recognized options before resolving a lifecycle target', () => {
+    const runtimeFixture = join(root, ['cat-cafe', 'runtime'].join('-'));
+    const aliasParent = join(root, 'duplicate-option-aliases');
+    const mainAlias = join(aliasParent, 'cat-cafe');
+    mkdirSync(runtimeFixture, { recursive: true });
+    mkdirSync(aliasParent, { recursive: true });
+    symlinkSync(runtimeFixture, mainAlias, 'dir');
+
+    for (const args of [
+      ['status', '--port', '3511', '--port', '3512', '--cwd', root],
+      ['status', '--port', '3511', '--cwd', mainAlias, '--cwd', mainAlias],
+      ['status', '--port', '3511', '--cwd', root, '--lifetime-seconds', '1', '--lifetime-seconds', '2'],
+      ['status', '--port', '3511', '--cwd', root, '--json', '--json'],
+    ]) {
+      const result = spawnSync(process.execPath, [SCRIPT_PATH, ...args], { env, encoding: 'utf8', timeout: 2_000 });
+      assert.equal(result.status, 1, result.stderr);
+      assert.match(result.stderr, /duplicate argument:/);
+    }
+  });
+
+  it('status without registration reports an unregistered observation without writing a record', () => {
+    const result = spawnSync(
+      process.execPath,
+      [SCRIPT_PATH, 'status', '--port', String(port), '--cwd', root, '--json'],
+      {
+        env,
+        encoding: 'utf8',
+        timeout: 5000,
+      },
+    );
+    assert.equal(result.status, 1, result.stderr);
+    const payload = JSON.parse(result.stdout);
+    assert.equal(payload.status, 'stopped');
+    assert.equal(payload.registered, false);
+    assert.equal(payload.pid, undefined);
+    assert.equal(existsSync(stateDir), false);
+  });
+
+  it('keeps a reporting preview server alive after start exits and reports exact status until stop', () => {
     const fixture = [
+      OWNER_REPORT_SOURCE,
       "const http = require('node:http');",
       `http.createServer((_req, res) => res.end('managed-preview-ok:' + (process.env.CAT_CAFE_CALLBACK_TOKEN ? 'leaked' : 'clean'))).listen(${port}, '127.0.0.1');`,
     ].join('');
@@ -74,6 +125,7 @@ describe('preview-process managed lifecycle', () => {
     assert.equal(status.status, 0, status.stderr || status.stdout);
     const runningStatus = JSON.parse(status.stdout);
     assert.equal(runningStatus.status, 'running');
+    assert.equal(runningStatus.registered, true);
     assert.match(runningStatus.expiresAt, /^\d{4}-\d{2}-\d{2}T/);
     assert.ok(Date.parse(runningStatus.expiresAt) > Date.now(), 'managed previews must have a future expiry');
 
@@ -266,6 +318,7 @@ describe('preview-process managed lifecycle', () => {
   it('continues a bounded readiness probe when a managed cold start crosses ten seconds', async () => {
     const latePort = await reservePort();
     const fixture = [
+      OWNER_REPORT_SOURCE,
       "const http = require('node:http');",
       `setTimeout(() => http.createServer((_req, res) => res.end('late-ready')).listen(${latePort}, '127.0.0.1'), 10_500);`,
       'setInterval(() => {}, 1000);',

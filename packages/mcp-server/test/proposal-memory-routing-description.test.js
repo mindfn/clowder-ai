@@ -22,6 +22,9 @@ describe('Profile and Taste proposal descriptions have mutually exclusive semant
     assert.match(tool.description, /NOT for.*cat_cafe_propose_profile_update/i);
     assert.match(tool.description, /code-as-harness/i);
     assert.match(tool.description, /correction.*does not|praise.*does not/i);
+    assert.match(tool.description, /Output:.*proposalId.*Approval Hub/i);
+    assert.match(tool.description, /target.*expectedRevision.*owner approval/i);
+    assert.match(tool.description, /GOTCHA:/i);
   });
 
   test('Entity accepts verified workspace aliases without a nudge while rejecting bare-name guesses and private facts', async () => {

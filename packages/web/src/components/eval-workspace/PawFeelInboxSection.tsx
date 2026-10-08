@@ -3,7 +3,9 @@
 import type { PawFeelInboxPage, PawFeelInboxSort, PawFeelIssueResolution } from '@cat-cafe/shared';
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { apiFetch } from '@/utils/api-client';
+import { usePawFeelCopy } from '../paw-feel/paw-feel.shell-copy';
 import { isPawFeelInboxPage } from '../paw-feel/paw-feel-page-guard';
+import { PawFeelLocalError, type PawFeelUiError, pawFeelUiError } from '../paw-feel/paw-feel-ui-error';
 import { PawFeelDutyBanner, PawFeelInboxBody, PawFeelInboxHeader, PawFeelInboxNotices } from './PawFeelInboxChrome';
 import { type PawFeelFilter, PawFeelInboxToolbar } from './PawFeelInboxToolbar';
 import { usePawFeelDuty } from './usePawFeelDuty';
@@ -30,9 +32,9 @@ async function requestInboxPage(
   cursor?: string,
 ): Promise<PawFeelInboxPage> {
   const response = await apiFetch(`/api/paw-feel/inbox?${queryFor(filter, sort, cursor)}`);
-  if (!response.ok) throw new Error(`爪感差收件箱请求失败 (${response.status})`);
+  if (!response.ok) throw new PawFeelLocalError({ kind: 'inbox_request_failed', status: response.status });
   const payload: unknown = await response.json();
-  if (!isPawFeelInboxPage(payload, true)) throw new Error('爪感差收件箱返回了无效数据');
+  if (!isPawFeelInboxPage(payload, true)) throw new PawFeelLocalError({ kind: 'invalid_inbox' });
   return payload;
 }
 
@@ -68,6 +70,7 @@ export function PawFeelInboxSection({
   variant?: 'workspace' | 'history';
   pollMs?: number;
 }) {
+  const t = usePawFeelCopy();
   const [page, setPage] = useState<PawFeelInboxPage | null>(null);
   const [filter, setFilter] = useState<PawFeelFilter>(variant === 'history' ? 'all' : 'active');
   const [sort, setSort] = useState<PawFeelInboxSort>(variant === 'history' ? 'oldest' : 'newest');
@@ -77,7 +80,7 @@ export function PawFeelInboxSection({
   const duty = usePawFeelDuty(variant);
   const [loading, setLoading] = useState(true);
   const [loadingMore, setLoadingMore] = useState(false);
-  const [error, setError] = useState<string | null>(null);
+  const [error, setError] = useState<PawFeelUiError | null>(null);
 
   const acceptFirstPage = useCallback((payload: PawFeelInboxPage, background: boolean) => {
     const knownTotal = knownTotalRef.current;
@@ -103,7 +106,7 @@ export function PawFeelInboxSection({
           acceptFirstPage(payload, background);
         }
       } catch (reason) {
-        setError(reason instanceof Error ? reason.message : String(reason));
+        setError(pawFeelUiError(reason));
       } finally {
         setLoading(false);
         setLoadingMore(false);
@@ -120,7 +123,7 @@ export function PawFeelInboxSection({
     return () => window.clearInterval(timer);
   }, [fetchPage, pollMs]);
 
-  const title = variant === 'history' ? '爪感差处置台账' : '爪感差责任收件箱';
+  const title = variant === 'history' ? t.history : t.inbox;
   return (
     <section
       className="mt-4 rounded-xl border border-cafe bg-cafe-surface-elevated p-3 sm:p-4"

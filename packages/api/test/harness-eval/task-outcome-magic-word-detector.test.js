@@ -12,9 +12,8 @@ const STAGING_CONTENT_URL = new URL('../../../../cat-cafe-skills/refs/l0-staging
 
 function readSharedRuleMagicWords() {
   const rulesText = readFileSync(SHARED_RULES_URL, 'utf8');
-  const magicWordsSection =
-    rulesText.split('## Magic Words（co-creator专用拉闸词）')[1]?.split('### 47 自检协议')[0] ?? '';
-  return [...magicWordsSection.matchAll(/\|\s*「([^」]+)」\s*\|/g)].map((match) => match[1]);
+  const magicWordsSection = rulesText.split(/## Magic Words[^\n]*\n/)[1]?.split(/\n## /)[0] ?? '';
+  return [...magicWordsSection.matchAll(/\|\s*「([^」]+)」\s*\|/g)].flatMap((match) => match[1].split('／'));
 }
 
 describe('Magic Word Runtime Detector (F192 Phase G AC-G12)', () => {
@@ -22,18 +21,6 @@ describe('Magic Word Runtime Detector (F192 Phase G AC-G12)', () => {
     const hits = detectMagicWords('这个方案是脚手架，不是终态');
     assert.ok(hits.length > 0);
     assert.equal(hits[0].word, '脚手架');
-  });
-
-  it('detects 绕路了 in user message', () => {
-    const hits = detectMagicWords('你绕路了，回到直线路径');
-    assert.ok(hits.length > 0);
-    assert.equal(hits[0].word, '绕路了');
-  });
-
-  it('detects 喵约 in user message', () => {
-    const hits = detectMagicWords('喵约！你忘了我们的约定');
-    assert.ok(hits.length > 0);
-    assert.equal(hits[0].word, '喵约');
   });
 
   it('detects 星星罐子 (P0 emergency brake)', () => {
@@ -54,24 +41,6 @@ describe('Magic Word Runtime Detector (F192 Phase G AC-G12)', () => {
     assert.equal(hits[0].word, '数学之美');
   });
 
-  it('detects 下次一定 in user message', () => {
-    const hits = detectMagicWords('又下次一定？能做的现在做');
-    assert.ok(hits.length > 0);
-    assert.equal(hits[0].word, '下次一定');
-  });
-
-  it('detects 我能猜出来 in user message', () => {
-    const hits = detectMagicWords('我能猜出来！你在推理跳过查询');
-    assert.ok(hits.length > 0);
-    assert.equal(hits[0].word, '我能猜出来');
-  });
-
-  it('detects 碎片够了 in user message', () => {
-    const hits = detectMagicWords('碎片够了，再搜一轮不同角度');
-    assert.ok(hits.length > 0);
-    assert.equal(hits[0].word, '碎片够了');
-  });
-
   it('detects 补锅匠 in user message', () => {
     const hits = detectMagicWords('你是补锅匠，逐点修补不审视同类');
     assert.ok(hits.length > 0);
@@ -85,11 +54,11 @@ describe('Magic Word Runtime Detector (F192 Phase G AC-G12)', () => {
   });
 
   it('detects multiple magic words in one message', () => {
-    const hits = detectMagicWords('脚手架！绕路了！回来');
+    const hits = detectMagicWords('脚手架！钛合金裤衩子！回来');
     assert.equal(hits.length, 2);
     const words = hits.map((h) => h.word);
     assert.ok(words.includes('脚手架'));
-    assert.ok(words.includes('绕路了'));
+    assert.ok(words.includes('钛合金裤衩子'));
   });
 
   it('returns empty for normal message', () => {
@@ -101,10 +70,13 @@ describe('Magic Word Runtime Detector (F192 Phase G AC-G12)', () => {
     assert.equal(detectMagicWords('').length, 0);
   });
 
-  it('MAGIC_WORD_PATTERNS has at least 9 entries', () => {
-    assert.ok(MAGIC_WORD_PATTERNS.length >= 9, `Expected ≥9 patterns, got ${MAGIC_WORD_PATTERNS.length}`);
+  it('recognizes current aliases and ignores retired words for new events', () => {
+    assert.deepEqual(
+      detectMagicWords('unknown-first 钛合金裤衩子 钛合金内裤').map(({ word }) => word),
+      ['unknown-first', '钛合金裤衩子', '钛合金内裤'],
+    );
+    assert.deepEqual(detectMagicWords('绕路了 喵约 下次一定 我能猜出来 碎片够了'), []);
   });
-
   it('keeps runtime patterns in sync with public injected-governance truth', () => {
     const sourceWords = readSharedRuleMagicWords();
 

@@ -38,7 +38,10 @@ const GLOBAL_ARTIFACTS = [
   },
 ];
 
-vi.mock('@/utils/api-client', () => ({ API_URL: 'http://test.local' }));
+vi.mock('@/utils/api-client', () => ({
+  API_URL: 'http://test.local',
+  apiFetch: vi.fn(async () => Response.json({ artifacts: [] })),
+}));
 vi.mock('@/utils/scrollToMessage', () => ({ scrollToMessage: vi.fn(() => false) }));
 vi.mock('@/hooks/useThreadArtifacts', () => ({
   useThreadArtifacts: () => ({ artifacts: THREAD_ARTIFACTS, loading: false, error: null }),
@@ -55,7 +58,11 @@ vi.mock('@/hooks/useGlobalArtifacts', () => ({
 vi.mock('@/hooks/useCatData', () => ({
   useCatData: () => ({
     getCatById: (id: string) =>
-      id === 'opus' ? { nickname: '宪宪' } : id === 'codex' ? { nickname: '砚砚' } : undefined,
+      id === 'opus'
+        ? { displayName: '布偶猫', nickname: '宪宪' }
+        : id === 'codex'
+          ? { displayName: '缅因猫', nickname: '砚砚' }
+          : undefined,
   }),
 }));
 

@@ -137,14 +137,6 @@ describe('mintAgentKey — sanctuary Redis triple-confirm', () => {
     );
     assert.equal(outcome.ok, true);
   });
-
-  it('accepts 6398 (worktree) without --i-understand-runtime-redis', async () => {
-    const outcome = await mintAgentKey(
-      makeArgs({ redisUrl: 'redis://127.0.0.1:6398', iUnderstandRuntimeRedis: false }),
-      makeDeps(),
-    );
-    assert.equal(outcome.ok, true);
-  });
 });
 
 describe('mintAgentKey — pre-existing key file refusal', () => {

@@ -197,14 +197,14 @@ export interface EntityRecord {
   updatedAt: string;
 }
 
-export type EntityMutationSource = 'proposal-approval' | 'seed-sync' | 'system';
+export type EntityMutationSource = 'proposal-approval' | 'seed-sync' | 'system' | 'owner-action';
 
 export interface EntityMutationContext {
   source: EntityMutationSource;
   actorId?: string;
   proposalId?: string;
   reason?: string;
-  conflictPolicy?: 'allow-update' | 'reject-conflict';
+  conflictPolicy?: 'allow-update' | 'reject-conflict' | 'owner-correction';
 }
 
 export interface QueryEntityMatch {
@@ -385,6 +385,13 @@ export interface ReflectionContext {
 // ── Interfaces ───────────────────────────────────────────────────────
 
 export interface IEvidenceStore {
+  readMessagePassageState?(
+    candidate: import('./message-passage-search-types.js').MessagePassageCandidate,
+  ): import('./message-passage-search-types.js').MessagePassageIndexState;
+  searchMessagePassages?(
+    query: string,
+    options: import('./message-passage-search-types.js').MessagePassageSearchOptions,
+  ): Promise<import('./message-passage-search-types.js').MessagePassageSearchExecution>;
   search(query: string, options?: SearchOptions): Promise<EvidenceItem[]>;
   searchWithMeta?(query: string, options?: SearchOptions): Promise<EvidenceSearchExecution>;
   upsert(items: EvidenceItem[]): Promise<void>;
@@ -412,8 +419,19 @@ export interface MessageRecallSuppressionLease {
   leaseId: string;
 }
 
+export interface ThreadIndexRefreshOptions {
+  force?: boolean;
+  signal?: AbortSignal;
+  onProgress?: RebuildProgressCallback;
+}
+
 export interface IIndexBuilder {
-  rebuild(options?: { force?: boolean; onProgress?: RebuildProgressCallback }): Promise<RebuildResult>;
+  rebuild(options?: {
+    force?: boolean;
+    deferThreadIndexing?: boolean;
+    onProgress?: RebuildProgressCallback;
+  }): Promise<RebuildResult>;
+  refreshThreadIndex(options?: ThreadIndexRefreshOptions): Promise<RebuildResult>;
   startPassageEmbeddingWarmup(): void;
   /** True while background passage-vector backfill is running. */
   isPassageWarmupActive(): boolean;
@@ -447,6 +465,8 @@ export interface MaterializeOptions {
 export interface IMaterializationService {
   materialize(markerId: string, options?: MaterializeOptions): Promise<MaterializeResult>;
   canMaterialize(markerId: string): Promise<boolean>;
+  /** Parent-root targets retain this service's canonical indexer. Legacy embedders may omit this query. */
+  isDefaultTargetRoot?(targetRoot: string): boolean;
 }
 
 export interface IReflectionService {

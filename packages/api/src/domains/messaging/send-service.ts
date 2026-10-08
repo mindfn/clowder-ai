@@ -223,24 +223,16 @@ export class SendService {
         }
       }
 
-      // Check immediately before persistence, after potentially slow handle/parent resolution.
-      if (
-        draft.payload.elements.some(
-          (element) => element.kind === 'media_ref' && element.payload.reference.startsWith('hmr_'),
-        )
-      ) {
+      if (draft.payload.elements.some(element => element.kind === 'media_ref' && element.payload.reference.startsWith('hmr_'))) {
         if (!this.deps.mediaReferences) throw new MessagingError('MEDIA_ACCESS_DENIED', 'Media access denied');
         await this.deps.mediaReferences.assertCanReference(ctx.pluginInstanceId, draft.payload.elements);
       }
       const timestamp = Date.now();
       const appendInput: AppendMessageInput = {
+        from: { kind: 'plugin', instanceId: ctx.pluginInstanceId },
         threadId: handle.threadId,
         userId: handle.userId,
-        catId: null,
         content,
-        // v0: plugin sends never trigger @-routing (wake power is K-3a scope). Authenticated
-        // connector ingress is the one exception, and its target is Host-derived — never read
-        // from the package's own text claim.
         mentions: wakeCatId === undefined ? [] : [wakeCatId],
         timestamp,
         ...(source === undefined ? {} : { source }),

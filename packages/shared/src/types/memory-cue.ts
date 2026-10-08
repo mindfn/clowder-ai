@@ -1,7 +1,7 @@
 import { z } from 'zod';
 import { CURRENT_CORPUS_PROFILE_URI, CURRENT_RELATIONSHIP_PROFILE_URI } from '../profile-contract.js';
 
-export const RECALL_OPPORTUNITY_CATALOG_VERSION = 5 as const;
+export const RECALL_OPPORTUNITY_CATALOG_VERSION = 6 as const;
 
 export const RECALL_RESOLVER_FAMILIES = [
   'person_entity',
@@ -12,6 +12,7 @@ export const RECALL_RESOLVER_FAMILIES = [
   'decision',
   'project_knowledge',
   'cat_owned_seed',
+  'thread_overview',
 ] as const;
 
 export const MEMORY_CUE_INVALIDATORS = [
@@ -53,8 +54,10 @@ export const RECALL_OPPORTUNITY_V1_PAIRS = Object.freeze([
     kind: 'owned_seed_available' as const,
     producer: 'present_loop' as const,
   }),
+  Object.freeze({ kind: 'thread_opened' as const, producer: 'owner_message' as const }),
 ]);
 
+// F321: timing is server-owned; Luna decides relevance after seeing the whole directory.
 const boundedIdentifier = (max: number) => z.string().trim().min(1).max(max);
 const timestampSchema = z.number().int().nonnegative().finite();
 
@@ -252,6 +255,16 @@ export const ownedSeedAvailableOpportunityV1Schema = z
   })
   .strict();
 
+export const threadOpenedOpportunityV1Schema = z
+  .object({
+    ...opportunityBaseShape,
+    kind: z.literal('thread_opened'),
+    producer: z.literal('owner_message'),
+    payload: z.object({ sourceMessageId: boundedIdentifier(200) }).strict(),
+  })
+  .strict();
+export type ThreadOpenedOpportunityV1 = z.infer<typeof threadOpenedOpportunityV1Schema>;
+
 export const recallOpportunityV1Schema = z.discriminatedUnion('kind', [
   subjectSeenOpportunityV1Schema,
   deliveryDecisionOpportunityV1Schema,
@@ -262,6 +275,7 @@ export const recallOpportunityV1Schema = z.discriminatedUnion('kind', [
   acceptedDecisionRequiredOpportunityV1Schema,
   projectSourceRequiredOpportunityV1Schema,
   ownedSeedAvailableOpportunityV1Schema,
+  threadOpenedOpportunityV1Schema,
 ]);
 
 const memoryCueInvalidatorsSchema = z.tuple([
@@ -282,7 +296,7 @@ export const cueEnvelopeV1Schema = z
     resolverVersion: z.number().int().positive(),
     whyNow: boundedIdentifier(400),
     title: boundedIdentifier(160),
-    summary: boundedIdentifier(600),
+    summary: boundedIdentifier(2000),
     source: z
       .object({
         anchor: boundedIdentifier(500),
@@ -293,7 +307,7 @@ export const cueEnvelopeV1Schema = z
       .strict(),
     drill: z
       .object({
-        family: z.enum(['person_memory', 'evidence', 'taste', 'profile', 'event', 'owned_seed']),
+        family: z.enum(['person_memory', 'evidence', 'taste', 'profile', 'event', 'owned_seed', 'thread_overview']),
         handle: boundedIdentifier(2_000),
       })
       .strict(),
@@ -303,6 +317,13 @@ export const cueEnvelopeV1Schema = z
   })
   .strict()
   .superRefine((value, ctx) => {
+    if (value.resolverFamily !== 'thread_overview' && value.summary.length > 600) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ['summary'],
+        message: 'ordinary cue summaries remain bounded to 600',
+      });
+    }
     if (value.resolverFamily === 'person_entity' && value.source.asOf === undefined) {
       ctx.addIssue({
         code: z.ZodIssueCode.custom,
@@ -338,6 +359,7 @@ const MEMORY_CUE_DRILL_FAMILY_BY_RESOLVER = Object.freeze({
   decision: 'evidence' as const,
   project_knowledge: 'evidence' as const,
   cat_owned_seed: 'owned_seed' as const,
+  thread_overview: 'thread_overview' as const,
 });
 
 export function memoryCueDrillFamilyForResolver(

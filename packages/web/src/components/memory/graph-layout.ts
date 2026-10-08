@@ -94,7 +94,7 @@ function settle(
   }
 }
 
-function readableHubLayout(
+export function readableHubLayout(
   nodes: Array<{ anchor: string }>,
   center: string,
   width: number,

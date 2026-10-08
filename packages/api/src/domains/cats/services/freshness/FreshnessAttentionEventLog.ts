@@ -20,10 +20,10 @@ import type { RedisClient } from '@cat-cafe/shared/utils';
 import type {
   FreshnessAttentionEvent,
   FreshnessAttentionEventWindow,
-  NoticeAttachedEvent,
   ProviderNoticeDeliveredEvent,
   ProviderNoticeEventBase,
   ProviderNoticeHandledEvent,
+  ProviderNoticePreparedEvent,
   ProviderNoticeSeenEvent,
 } from './freshness-attention-event-types.js';
 
@@ -241,9 +241,14 @@ export class FreshnessAttentionEventLog {
     if (input.exactMessageIds.length === 0) return 0;
     const events = await this.queryByInvocation(input.invocationId);
     const exactIds = new Set(input.exactMessageIds);
-    const delivered = events.filter(
-      (event): event is ProviderNoticeDeliveredEvent =>
-        event.kind === 'provider_notice_delivered' && event.catId === input.catId,
+    // F318: SDK delivery is confirmed retrospectively by the final result UUIDs.
+    // Its exact full read can precede that result. Retain the independent read
+    // fact against the prepared identity; this never fabricates delivery.
+    const readableNotices = events.filter(
+      (event): event is ProviderNoticeDeliveredEvent | ProviderNoticePreparedEvent =>
+        event.catId === input.catId &&
+        (event.kind === 'provider_notice_delivered' ||
+          (event.kind === 'provider_notice_prepared' && event.carrier === 'claude_agent_sdk')),
     );
     const seenIds = new Set(
       events
@@ -251,7 +256,7 @@ export class FreshnessAttentionEventLog {
         .map((event) => event.noticeId),
     );
     let marked = 0;
-    for (const notice of delivered) {
+    for (const notice of readableNotices) {
       if (seenIds.has(notice.noticeId) || !exactReadCoversProviderNotice(notice, exactIds)) continue;
       await this.append(
         {
@@ -263,6 +268,7 @@ export class FreshnessAttentionEventLog {
         },
         { ownerUserId: input.ownerUserId },
       );
+      seenIds.add(notice.noticeId);
       marked++;
     }
     return marked;
@@ -302,35 +308,6 @@ export class FreshnessAttentionEventLog {
       marked++;
     }
     return marked;
-  }
-
-  /**
-   * Get unresolved notices for an invocation.
-   * A notice is "unresolved" if it has been attached but NOT explicitly acked.
-   *
-   * `notice_deferred` does NOT resolve a notice — it means the cat was warned
-   * at hold_ball time but chose to exit without reading. B3 should still
-   * consider re-invoking for deferred notices (the cat never read the messages).
-   * Only `notice_implicit_acked` (seenCursor caught up) truly resolves.
-   *
-   * This is the key projection for B3 (re-invoke trigger decision).
-   */
-  async getUnresolvedNotices(invocationId: string): Promise<NoticeAttachedEvent[]> {
-    const events = await this.queryByInvocation(invocationId);
-
-    // Only notice_implicit_acked resolves a notice.
-    // notice_deferred = "cat was warned but didn't read" — NOT resolved.
-    const resolvedIds = new Set<string>();
-    for (const e of events) {
-      if (e.kind === 'notice_implicit_acked') {
-        for (const id of e.noticeIds) {
-          resolvedIds.add(id);
-        }
-      }
-    }
-
-    // Return notices that haven't been resolved
-    return events.filter((e): e is NoticeAttachedEvent => e.kind === 'notice_attached' && !resolvedIds.has(e.noticeId));
   }
 }
 

@@ -14,6 +14,8 @@ interface WorkspaceListenActionsProps {
   onCancelCache: () => void;
   onStartCache: () => void;
   onStartListen: () => void;
+  action?: 'listen' | 'cache';
+  listenLabel?: string;
 }
 
 function cacheActionText(cache: WorkspaceListenActionsProps['cache']): string {
@@ -32,6 +34,8 @@ export function WorkspaceListenActions({
   onCancelCache,
   onStartCache,
   onStartListen,
+  action,
+  listenLabel = '听读',
 }: WorkspaceListenActionsProps) {
   const cached = cache.cachedAnchors.length;
   const complete = cache.totalSentences > 0 && cached === cache.totalSentences;
@@ -47,27 +51,31 @@ export function WorkspaceListenActions({
 
   return (
     <>
-      <ToolbarBtn
-        active={active}
-        activeClass="bg-cafe-accent text-[var(--cafe-accent-foreground)] hover:bg-cafe-interactive"
-        onClick={onStartListen}
-        title={hasSentences ? '从上次位置开始听读' : '这份 Markdown 没有可听正文'}
-        disabled={!hasSentences}
-      >
-        <span className="inline-flex items-center gap-1">
-          <PlayIcon />
-          听读
-        </span>
-      </ToolbarBtn>
-      <ToolbarBtn
-        active={cache.active}
-        activeClass="bg-cafe-interactive text-[var(--cafe-accent-foreground)] hover:bg-cafe-accent"
-        onClick={cache.active ? onCancelCache : onStartCache}
-        title={cacheTitle}
-        disabled={!hasSentences || (complete && !cache.active)}
-      >
-        {cacheActionText(cache)}
-      </ToolbarBtn>
+      {action !== 'cache' && (
+        <ToolbarBtn
+          active={active}
+          activeClass="bg-cafe-accent text-[var(--cafe-accent-foreground)] hover:bg-cafe-interactive"
+          onClick={onStartListen}
+          title={hasSentences ? '从上次位置开始听读' : '这份 Markdown 没有可听正文'}
+          disabled={!hasSentences}
+        >
+          <span className="inline-flex items-center gap-1">
+            <PlayIcon />
+            {listenLabel}
+          </span>
+        </ToolbarBtn>
+      )}
+      {action !== 'listen' && (
+        <ToolbarBtn
+          active={cache.active}
+          activeClass="bg-cafe-interactive text-[var(--cafe-accent-foreground)] hover:bg-cafe-accent"
+          onClick={cache.active ? onCancelCache : onStartCache}
+          title={cacheTitle}
+          disabled={!hasSentences || (complete && !cache.active)}
+        >
+          {cacheActionText(cache)}
+        </ToolbarBtn>
+      )}
     </>
   );
 }

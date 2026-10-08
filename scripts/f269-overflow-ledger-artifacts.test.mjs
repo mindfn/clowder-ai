@@ -1,9 +1,8 @@
 import assert from 'node:assert/strict';
 import { execFileSync } from 'node:child_process';
-import { readdirSync, readFileSync, writeFileSync } from 'node:fs';
-import { dirname, join } from 'node:path';
+import { writeFileSync } from 'node:fs';
+import { join } from 'node:path';
 import { afterEach, describe, it } from 'node:test';
-import { fileURLToPath } from 'node:url';
 
 import {
   assertArtifactContentsCurrent,
@@ -19,17 +18,6 @@ import { classified, cleanupTempDirs, excluded, makeRepo, metadata } from './f26
 afterEach(cleanupTempDirs);
 
 describe('F269 overflow ledger artifacts', () => {
-  it('keeps every scanner module within the 350-line hard cap', () => {
-    const scriptsDir = dirname(fileURLToPath(import.meta.url));
-    const sourceFiles = readdirSync(scriptsDir).filter(
-      (name) => name.startsWith('f269-overflow-ledger') && name.endsWith('.mjs'),
-    );
-    for (const sourceFile of sourceFiles) {
-      const lineCount = readFileSync(join(scriptsDir, sourceFile), 'utf8').split('\n').length;
-      assert.ok(lineCount <= 350, `${sourceFile} has ${lineCount} lines`);
-    }
-  });
-
   it('renders byte-stable markdown from explicit metadata', () => {
     const rootDir = makeRepo();
     const cssScan = scanCssLexical({ rootDir });

@@ -4,6 +4,7 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import { apiFetch } from '@/utils/api-client';
 import { CriticalText } from '../content-overflow';
 import { HubIcon } from '../hub-icons';
+import { MemoryReadError } from '../memory/page/MemoryReadError';
 import {
   SettingsResourceIconButton,
   SettingsResourceToggleSwitch,
@@ -40,6 +41,7 @@ interface ServiceStatusPanelProps {
   title?: string;
   anchorId?: string;
   onStateChange?: () => void;
+  showReadState?: boolean;
 }
 
 function serviceMatchesFilter(service: HomeServiceState, filterFeatures?: readonly string[]): boolean {
@@ -47,9 +49,16 @@ function serviceMatchesFilter(service: HomeServiceState, filterFeatures?: readon
   return service.features.some((f) => filterFeatures.includes(f));
 }
 
-export function ServiceStatusPanel({ filterFeatures, title, anchorId, onStateChange }: ServiceStatusPanelProps) {
+export function ServiceStatusPanel({
+  filterFeatures,
+  title,
+  anchorId,
+  onStateChange,
+  showReadState = false,
+}: ServiceStatusPanelProps) {
   const [services, setServices] = useState<ServiceUiState[]>([]);
   const [loading, setLoading] = useState(true);
+  const [readError, setReadError] = useState(false);
   const [acting, setActing] = useState<Set<string>>(new Set());
   const [actionError, setActionError] = useState<{ id: string; message: string } | null>(null);
   const [installTarget, setInstallTarget] = useState<ServiceUiState | null>(null);
@@ -60,16 +69,16 @@ export function ServiceStatusPanel({ filterFeatures, title, anchorId, onStateCha
   const fetchServices = useCallback(async () => {
     try {
       const res = await apiFetch('/api/services');
-      if (!res.ok) {
-        setServices([]);
-        return;
-      }
+      if (!res.ok) throw new Error('Services unavailable');
       const payload = (await res.json()) as { services?: unknown };
-      const list = Array.isArray(payload.services) ? (payload.services as HomeServiceState[]) : [];
+      if (!Array.isArray(payload.services)) throw new Error('Invalid services response');
+      const list = payload.services as HomeServiceState[];
       setServices(list.filter((s) => serviceMatchesFilter(s, filterFeatures)).map(adaptServiceState));
+      setReadError(false);
       onStateChange?.();
     } catch {
       setServices([]);
+      setReadError(true);
     } finally {
       setLoading(false);
     }
@@ -195,6 +204,25 @@ export function ServiceStatusPanel({ filterFeatures, title, anchorId, onStateCha
     void executeAction(service.id, action);
   }
 
+  if (showReadState && (loading || readError || services.length === 0)) {
+    return (
+      <div id={anchorId} className="rounded-xl bg-[var(--console-card-bg)] p-4">
+        {readError && !loading ? (
+          <MemoryReadError
+            noun="服务状态"
+            retry={() => {
+              setLoading(true);
+              void fetchServices();
+            }}
+          />
+        ) : (
+          <p role="status" className="text-compact text-cafe-muted">
+            {loading ? '正在读取服务状态…' : '没有匹配的服务'}
+          </p>
+        )}
+      </div>
+    );
+  }
   if (loading) return null;
   if (services.length === 0) return null;
 

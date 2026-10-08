@@ -3,17 +3,59 @@
 import { FitAddon } from '@xterm/addon-fit';
 import { Terminal } from '@xterm/xterm';
 import { useEffect, useRef, useState } from 'react';
+import { useShellCopy } from '@/components/shell/shell-copy';
+import { useShellPresentation } from '@/components/shell/shell-presentation';
+import { useCatData } from '@/hooks/useCatData';
+import { resolveCatDisplayName } from '@/lib/cat-display-name';
 import typographyTokens from '@/styles/typography-tokens.json';
 import { API_URL } from '@/utils/api-client';
+import { type CodeToolsCopy, codeToolsCopy } from './code-tools.shell-copy';
 import { TERMINAL_THEME } from './terminal-theme';
 
 interface AgentPaneViewerProps {
   worktreeId: string;
   paneId: string;
   onBack: () => void;
+  /** F322 v2: resolved cat identity for the pane owner; absent = fall back to the pane id. */
+  catId?: string | null;
 }
 
-export function AgentPaneViewer({ worktreeId, paneId, onBack }: AgentPaneViewerProps) {
+type PaneViewerCopy = Pick<
+  CodeToolsCopy['terminal'],
+  'backToMyTerminal' | 'connecting' | 'disconnected' | 'readOnly' | 'watching'
+>;
+
+const CLASSIC_COPY: PaneViewerCopy = {
+  backToMyTerminal: 'Back to shell',
+  connecting: 'Connecting…',
+  disconnected: 'Disconnected',
+  readOnly: 'read-only',
+  watching: (label: string) => `Watching ${label}`,
+};
+
+export function AgentPaneViewer(props: AgentPaneViewerProps) {
+  const presentation = useShellPresentation();
+  return presentation === 'v2' ? (
+    <AgentPaneViewerV2 {...props} />
+  ) : (
+    <AgentPaneViewerCore {...props} copy={CLASSIC_COPY} subjectLabel={props.paneId} />
+  );
+}
+
+function AgentPaneViewerV2(props: AgentPaneViewerProps) {
+  const copy = useShellCopy(codeToolsCopy).terminal;
+  const { getCatById } = useCatData();
+  const subjectLabel = props.catId ? resolveCatDisplayName(props.catId, getCatById) : props.paneId;
+  return <AgentPaneViewerCore {...props} copy={copy} subjectLabel={subjectLabel} />;
+}
+
+function AgentPaneViewerCore({
+  worktreeId,
+  paneId,
+  onBack,
+  copy,
+  subjectLabel,
+}: AgentPaneViewerProps & { copy: PaneViewerCopy; subjectLabel: string }) {
   const containerRef = useRef<HTMLDivElement>(null);
   const [status, setStatus] = useState<'connecting' | 'watching' | 'disconnected'>('connecting');
 
@@ -91,7 +133,7 @@ export function AgentPaneViewer({ worktreeId, paneId, onBack }: AgentPaneViewerP
             fontSize: typographyTokens.fontSizePx.label,
           }}
         >
-          Back to shell
+          {copy.backToMyTerminal}
         </button>
         <span
           style={{
@@ -107,7 +149,11 @@ export function AgentPaneViewer({ worktreeId, paneId, onBack }: AgentPaneViewerP
           }}
         />
         <span>
-          {status === 'watching' ? `Watching ${paneId}` : status === 'connecting' ? 'Connecting\u2026' : 'Disconnected'}
+          {status === 'watching'
+            ? copy.watching(subjectLabel)
+            : status === 'connecting'
+              ? copy.connecting
+              : copy.disconnected}
         </span>
         <span
           style={{
@@ -116,7 +162,7 @@ export function AgentPaneViewer({ worktreeId, paneId, onBack }: AgentPaneViewerP
             marginLeft: 'auto',
           }}
         >
-          read-only
+          {copy.readOnly}
         </span>
       </div>
       <div ref={containerRef} style={{ flex: 1, overflow: 'hidden' }} />

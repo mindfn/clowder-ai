@@ -6,7 +6,9 @@ import type {
   ITurnExecutionStore,
   TransitionTurnExecutionResult,
   TurnExecutionRecord,
+  TurnExecutionSourceQuery,
   TurnExecutionTerminalInput,
+  TurnOutputFenceVerdict,
 } from '../../stores/ports/TurnExecutionStore.js';
 import {
   authTerminalFromTurnExecution,
@@ -49,6 +51,10 @@ export class CallbackAuthTurnExecutionLifecycle implements ITurnExecutionStore {
     return this.store.get(invocationId);
   }
 
+  listBySource(query: TurnExecutionSourceQuery): TurnExecutionRecord[] | Promise<TurnExecutionRecord[]> {
+    return this.store.listBySource(query);
+  }
+
   listByParent(parentInvocationId: string): TurnExecutionRecord[] | Promise<TurnExecutionRecord[]> {
     return this.store.listByParent(parentInvocationId);
   }
@@ -77,6 +83,21 @@ export class CallbackAuthTurnExecutionLifecycle implements ITurnExecutionStore {
       await this.registry.commitTerminal(authTerminalFromTurnExecution(record));
     }
     return interrupted;
+  }
+
+  listResponsePending(): TurnExecutionRecord[] | Promise<TurnExecutionRecord[]> {
+    return this.store.listResponsePending();
+  }
+
+  clearResponsePending(invocationId: string): void | Promise<void> {
+    return this.store.clearResponsePending(invocationId);
+  }
+
+  settleOutputFence(
+    invocationId: string,
+    verdict: TurnOutputFenceVerdict,
+  ): TurnExecutionRecord | null | Promise<TurnExecutionRecord | null> {
+    return this.store.settleOutputFence(invocationId, verdict);
   }
 
   async failRegistration(invocationId: string, endedAt: number, reason: string): Promise<AuthTerminalCommitResult> {

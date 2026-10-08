@@ -26,12 +26,17 @@ export interface CliSpawnOptions {
   outputMode?: 'ndjson' | 'plainText';
   /** Working directory for the process */
   cwd?: string;
-  /** Opt-in timeout in milliseconds before automatic termination (default: 0 = manual cancel only) */
+  /**
+   * Opt-in response timeout in milliseconds for probes and other one-off commands (default: 0 =
+   * none). A dispatched member never sets it: its one timeout is its invocation's (F117 KD-22).
+   */
   timeoutMs?: number;
   /** AbortSignal to cancel the process externally */
   signal?: AbortSignal;
   /** Environment overrides. `null` means delete inherited var from child env. */
   env?: Record<string, string | null>;
+  /** Start from only env overrides, never the API process environment. Defaults to inheritance for existing providers. */
+  inheritParentEnv?: boolean;
   /** False for probes/non-invocation commands that must never create an execution-owner manifest. */
   bindExecutionOwner?: boolean;
   /** F118: Invocation context for diagnostic enrichment of __cliTimeout */
@@ -66,6 +71,10 @@ export interface CliSpawnOptions {
    * stdio[0] 设为 'pipe' 并将此内容写入 child.stdin。
    */
   stdinInput?: string;
+  /** Register a prompt writer for carriers that confirm their runtime before receiving input. */
+  onStdinReady?: (write: (input: string) => void) => void;
+  /** Duplex NDJSON drivers close input after their terminal frame, not after writing the prompt. */
+  stdinCloseSignal?: AbortSignal;
   /**
    * F212 Phase F (AC-F1/F3 testability per 砚砚 R1 P1-1): test injection point for the
    * structured-log writes (`'CLI abnormal exit'` + `'CLI stderr (LOG_CLI_STDERR=1)'`).
@@ -82,6 +91,13 @@ export interface CliSpawnOptions {
    * event counts.
    */
   onSuccessfulExitStderr?: (summary: { stderrPresent: boolean; stderrExcerpt?: string }) => void;
+  /**
+   * F319: observe child stderr one complete line at a time (trailing partial
+   * line is flushed at stream end). Consumers must not retain lines: providers
+   * running trace-level logging emit megabytes per turn. Never resets the
+   * timeout or the liveness probe — stderr stays transport noise for those.
+   */
+  onStderrLine?: (line: string) => void;
 }
 
 /**

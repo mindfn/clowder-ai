@@ -1,5 +1,6 @@
 import { CONTEXT_ATTACHMENT_COMMENT_MAX_LENGTH } from '@cat-cafe/shared';
 import type { RefObject } from 'react';
+import { useActionSurfaceRef } from './message-v2/message-action-ownership';
 import {
   type TransferCatChoice,
   TransferCatStep,
@@ -145,8 +146,12 @@ function TransferPickerFooter({
 }
 
 export function TransferTargetPickerView(props: TransferTargetPickerViewProps) {
+  const actionSurfaceRef = useActionSurfaceRef<HTMLDivElement>();
   return (
-    <div className={`fixed inset-0 z-[90] flex ${props.isDesktop ? 'items-center justify-center p-4' : 'items-end'}`}>
+    <div
+      ref={actionSurfaceRef}
+      className={`fixed inset-0 z-[90] flex ${props.isDesktop ? 'items-center justify-center p-4' : 'items-end'}`}
+    >
       <button
         type="button"
         className="absolute inset-0 bg-[var(--console-overlay-backdrop)]"

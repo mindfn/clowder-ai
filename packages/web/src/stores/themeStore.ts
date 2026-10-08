@@ -15,6 +15,7 @@ import {
   STYLE_ID,
   type TunerState,
 } from '@/components/dev/oklch-tuner-engine';
+import type { ActualColours } from '@/lib/readable-name-plate';
 import { apiFetch } from '@/utils/api-client';
 
 const LS_KEY = 'cat-cafe:themes';
@@ -230,14 +231,14 @@ export function getActiveTheme(state: ThemeState): ThemePreset {
 }
 
 /* ── CSS injection (called by ThemeApplier + on page init) ── */
-export function applyThemeCSS(params: TunerState) {
+export function applyThemeCSS(params: TunerState, actual?: ActualColours) {
   let el = document.getElementById(STYLE_ID) as HTMLStyleElement | null;
   if (!el) {
     el = document.createElement('style');
     el.id = STYLE_ID;
     document.head.appendChild(el);
   }
-  const css = buildCSS(params, NO_HC);
+  const css = buildCSS(params, NO_HC, actual);
   el.textContent = css;
   /* Debug aid: expose last applied params + CSS length on window for console inspection.
    * Open DevTools and inspect `window.__f056ThemeDebug` to verify CSS injection is live. */
@@ -246,6 +247,9 @@ export function applyThemeCSS(params: TunerState) {
       lastApplyAt: Date.now(),
       cssLength: css.length,
       params,
+      /* How many cat/connector colours the name role, plate and ring were resolved against (null = none known yet). */
+      actualCats: actual ? actual.cats.length : null,
+      actual: actual ?? null,
       styleElPresent: !!document.getElementById(STYLE_ID),
     };
   }

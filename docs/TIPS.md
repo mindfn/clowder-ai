@@ -1,3 +1,10 @@
+---
+doc_kind: guide
+topics: [usage, magic-words, collaboration]
+updated: 2026-10-06
+description: "User tips for course correction, routing, and everyday collaboration."
+---
+
 # Tips / 使用小 Tips
 
 [English](#english) | [中文](#中文)
@@ -8,18 +15,20 @@
 
 Quick tips for getting the most out of your Clowder AI team.
 
-## 1. Magic Words — Emergency Brakes
+## 1. Magic Words — Course Corrections
 
-Say these words to your cats and they'll immediately stop and re-examine what they're doing:
+Use these words to correct a cat's direction. Except for the emergency stop, the cat should correct its approach and continue your task.
 
 | Say | What happens |
 |-----|-------------|
-| **"脚手架"** (scaffolding) | Cat stops and checks: is the current output a final-state foundation, or throwaway scaffolding? If throwaway → rewrite. |
-| **"绕路了"** (detour) | Cat stops, draws a straight-line path to the goal, and discards the roundabout work. |
-| **"喵约"** (cat pact) | Cat re-reads all house rules and checks its current behavior against each one. |
-| **"星星罐子"** (star jar) | Full freeze — cat stops issuing commands, writing files, or pushing code. Waits for your instructions. Use for P0 irreversible risks. |
+| **星星罐子** (star jar) | Emergency stop: no new commands, file writes, or pushes. The cat waits for your instructions. |
+| **脚手架** (scaffolding) | Checks the original request and completes the real user journey. An explicitly requested prototype stays a prototype. |
+| **第一性原理 / 数学之美** (first principles / mathematical beauty) | Reconsiders the goal and necessary constraints, then removes needless layers. Both names mean the same thing. |
+| **补锅匠** (patching one symptom at a time) | Finds the root cause and fixes affected related cases, without turning it into an unlimited rewrite. |
+| **四象限 / unknown-first** | Tests the unknown most likely to overturn the current plan, using counterexamples or real use. No mandatory worksheet. |
+| **钛合金裤衩子 / 钛合金内裤** (titanium underwear) | Removes needless restrictions and uses an available path to continue. Facility faults go to their owner; a real human decision is brought directly to you. |
 
-> These only trigger when you say them directly as instructions. Quoting, retelling, or discussing them in conversation won't trigger the brake.
+> Only your current corrective instruction triggers these meanings. Quoting or discussing a word does not. The old dedicated triggers 绕路了, 喵约, 下次一定, 我能猜出来 and 碎片够了 are retired; ordinary requests using them are still understood in context.
 
 ## 2. @Mentions — Route to Any Cat
 
@@ -91,18 +100,20 @@ Your cats remember past decisions, discussion conclusions, and lessons learned a
 
 让你更好地使用 Clowder AI 团队的实用小技巧。
 
-## 1. Magic Words — 紧急拉闸词
+## 1. Magic Words — 纠偏词
 
-对猫猫说这些词，它们会立刻停下来审视自己的行为：
+用这些词指出猫当前的偏航。除紧急停止外，猫应纠正做法后继续原任务。
 
 | 说 | 猫猫会 |
 |----|-------|
-| **「脚手架」** | 停下来检查：当前产出是终态基座，还是用完即弃的脚手架？如果是脚手架 → 重写。 |
-| **「绕路了」** | 停下来，画出直线路径，丢掉绕路的部分。 |
-| **「喵约」** | 重读全部家规，逐条对照当前行为。 |
-| **「星星罐子」** | 全面冻结 — 不发命令、不写文件、不 push。等你指示。用于 P0 不可逆风险。 |
+| **「星星罐子」** | 立即停止新增操作，不发命令、不写文件、不 push，等你指示。 |
+| **「脚手架」** | 对照原托付补齐真实使用路径；明确要求的原型仍按原型范围交付。 |
+| **「第一性原理／数学之美」** | 回到目标与必要约束，删去说不清必要性的层次和机制；两个叫法是同一含义。 |
+| **「补锅匠」** | 追根因、修复受影响的同类问题并验证，不无界扩成全仓重构。 |
+| **「四象限／unknown-first」** | 先验证最可能推翻方案的未知，用反例或真实使用发现盲区，不以填表代替探索。 |
+| **「钛合金裤衩子／钛合金内裤」** | 去掉无必要限制、沿可用路径推进；设施故障交负责人，真需你决定就直接提醒你。 |
 
-> 仅当你直接对猫猫说时触发。引用、复述、讨论历史中的这些词不会触发。
+> 仅你当前的纠偏指令触发；引用、复述、讨论词义不触发。旧的「绕路了」「喵约」「下次一定」「我能猜出来」「碎片够了」已退役专用流程，日常表达仍按上下文理解。
 
 ## 2. @提及 — 指哪打哪
 

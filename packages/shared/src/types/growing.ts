@@ -1,4 +1,7 @@
 import { z } from 'zod';
+import { entrustedWorkTaskExecutionV1Schema } from './entrusted-work-human-terminal.js';
+import { preparedArtifactSnapshotV1Schema } from './growing-artifact.js';
+import { developmentScopeV1Schema, developmentTaskRefSchema } from './growing-development.js';
 
 const boundedRef = z.string().trim().min(1).max(1_000);
 const boundedText = z.string().trim().min(1).max(4_000);
@@ -122,8 +125,30 @@ const terminalClosureDisposition = (kind: 'cancelled' | 'abandoned') =>
       authorityRef: boundedRef,
       dispositionRef: boundedRef,
       disposedAt: timestampSchema,
+      reason: z.string().trim().min(1).max(600).optional(),
+      taskExecution: entrustedWorkTaskExecutionV1Schema.optional(),
     })
     .strict();
+
+const humanSatisfiedConfirmationSchema = z
+  .object({
+    kind: z.literal('human'),
+    actorRef: boundedRef,
+    authorityRef: boundedRef,
+    decisionRef: boundedRef,
+    confirmedAt: timestampSchema,
+    taskExecution: entrustedWorkTaskExecutionV1Schema,
+  })
+  .strict()
+  .superRefine((confirmation, context) => {
+    if (confirmation.taskExecution.state !== 'idle') {
+      context.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ['taskExecution'],
+        message: 'Human confirmation requires an idle Task-binding observation',
+      });
+    }
+  });
 
 const entrustedClosureSchema = z.discriminatedUnion('state', [
   z
@@ -138,6 +163,7 @@ const entrustedClosureSchema = z.discriminatedUnion('state', [
       ...closureBase,
       state: z.literal('satisfied'),
       evidenceRefs: z.array(boundedRef).min(1).max(64),
+      confirmation: humanSatisfiedConfirmationSchema.optional(),
     })
     .strict(),
   z
@@ -163,20 +189,46 @@ export const entrustedWorkV1Schema = z
   .object({
     revision: revisionSchema,
     admission: entrustedAdmissionSchema,
+    developmentScope: developmentScopeV1Schema.optional(),
+    parentTaskRef: developmentTaskRefSchema.optional(),
+    predecessorTaskRef: developmentTaskRefSchema.optional(),
     intendedOutcome: boundedText,
     time: z
       .object({
         businessDeadline: businessTimeFactSchema.optional(),
         reviewBy: businessTimeFactSchema.optional(),
+        plannedStart: businessTimeFactSchema.optional(),
+        actualStart: businessTimeFactSchema.optional(),
+        estimatedCompletion: businessTimeFactSchema.optional(),
       })
       .strict(),
+    progress: z
+      .object({
+        summary: z.string().trim().min(1).max(600),
+        nextStep: z.string().trim().min(1).max(600).optional(),
+        blockerReason: z.string().trim().min(1).max(600).optional(),
+        sourceRef: boundedRef,
+      })
+      .strict()
+      .optional(),
     artifactRefs: z.array(boundedRef).max(64),
+    completion: z
+      .object({
+        recordedAt: timestampSchema,
+        artifactSnapshot: preparedArtifactSnapshotV1Schema.optional(),
+      })
+      .strict()
+      .optional(),
     closure: entrustedClosureSchema,
   })
   .strict();
 
 export const PHASE_B_NEEDS_ME_PRODUCER_IDS = ['f246.approval', 'f292.repair', 'f306.runtime_interaction'] as const;
-export const NEEDS_ME_PRODUCER_IDS = [...PHASE_B_NEEDS_ME_PRODUCER_IDS, 'f309.content_review'] as const;
+export const NEEDS_ME_PRODUCER_IDS = [
+  ...PHASE_B_NEEDS_ME_PRODUCER_IDS,
+  'f309.content_review',
+  'f290.collective_work_result',
+] as const;
 
 const producerCoordinateSchema = z
   .object({

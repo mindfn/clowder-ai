@@ -2,6 +2,7 @@ import '../helpers/setup-cat-registry.js';
 import assert from 'node:assert/strict';
 import { afterEach, beforeEach, describe, it } from 'node:test';
 import Fastify from 'fastify';
+import { canonicalTestMessageInput } from '../helpers/message-from-fixtures.js';
 import { proposedReviewAction } from './helpers.js';
 
 function createSucceedingIngress() {
@@ -81,22 +82,26 @@ describe('staged recovery origin preservation', () => {
     const target = await threadStore.create('user-1', 'Target');
     await threadStore.addParticipants(source.id, ['opus']);
     await threadStore.addParticipants(target.id, ['sonnet']);
-    const originA = await messageStore.append({
-      userId: 'user-1',
-      catId: 'opus',
-      threadId: source.id,
-      content: 'Origin A',
-      mentions: [],
-      timestamp: Date.now() - 2000,
-    });
-    const originB = await messageStore.append({
-      userId: 'user-1',
-      catId: 'opus',
-      threadId: source.id,
-      content: 'Origin B',
-      mentions: [],
-      timestamp: Date.now() - 1000,
-    });
+    const originA = await messageStore.append(
+      canonicalTestMessageInput({
+        userId: 'user-1',
+        catId: 'opus',
+        threadId: source.id,
+        content: 'Origin A',
+        mentions: [],
+        timestamp: Date.now() - 2000,
+      }),
+    );
+    const originB = await messageStore.append(
+      canonicalTestMessageInput({
+        userId: 'user-1',
+        catId: 'opus',
+        threadId: source.id,
+        content: 'Origin B',
+        mentions: [],
+        timestamp: Date.now() - 1000,
+      }),
+    );
 
     const app = Fastify();
     apps.push(app);
@@ -272,11 +277,20 @@ describe('staged recovery origin preservation', () => {
     const payload = {
       scene: 'A stable taste signal',
       quote: 'Keep the original provenance',
+      takeaway: '我们以为 You 喜欢可追溯的来源。',
       tags: ['authentic-expression'],
       dimension: 'authentic-expression',
       privacy: 'public',
       clientRequestId: 'taste-origin-preserve',
     };
+
+    const invalid = await app.inject({
+      method: 'POST',
+      url: '/api/callbacks/propose-taste',
+      payload: { ...payload, takeaway: '   ' },
+    });
+    assert.equal(invalid.statusCode, 400);
+    assert.equal(store.listPending('user-1').length, 0);
 
     const first = await app.inject({ method: 'POST', url: '/api/callbacks/propose-taste', payload });
     assert.ok(first.statusCode >= 500);
@@ -287,6 +301,7 @@ describe('staged recovery origin preservation', () => {
     };
     const retry = await app.inject({ method: 'POST', url: '/api/callbacks/propose-taste', payload });
     assert.equal(retry.statusCode, 200);
+    assert.equal(store.listPending('user-1')[0]?.takeaway, '我们以为 You 喜欢可追溯的来源。');
     assert.deepEqual(drafts[0].originRef, {
       kind: 'event',
       anchor: 'invocation:inv-taste-original',

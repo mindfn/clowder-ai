@@ -196,7 +196,7 @@ describe('F293 pure routing-context reducer', () => {
     );
   });
 
-  it('turns expired or retracted negative evidence into unknown, never synthetic available', () => {
+  it('keeps expired evidence unknown but removes explicitly retracted assertions from current influence', () => {
     const expiring = asserted({
       eventId: 'signal:expired',
       subjectRef: { type: 'cat', catId: 'sol' },
@@ -212,9 +212,7 @@ describe('F293 pure routing-context reducer', () => {
       reduce({ signalEvents: [expiring, closed('retracted', 'signal:retracted', ['signal:expired'])] }),
       'sol',
     );
-    assert.equal(retracted.availability, 'unknown');
-    assert.equal(retracted.effect, 'advisory');
-    assert.match(retracted.reasons[0].code, /retracted/);
+    assert.deepEqual(retracted, byCat(reduce(), 'sol'));
   });
 
   it('accepts explicit causal recovery as available without clearing unrelated signals', () => {
@@ -331,5 +329,20 @@ describe('F293 pure routing-context reducer', () => {
       revisionOne.candidates.map((entry) => [entry.binding.catId, entry.effect]),
       revisionTwoWithPending.candidates.map((entry) => [entry.binding.catId, entry.effect]),
     );
+  });
+
+  it('keeps capability context out of availability decision reasons', () => {
+    const snapshot = reduce({
+      profiles: [profile('sol', 'dossier:v1', 0), profile('terra', 'dossier:terra-v1', 0)],
+    });
+
+    assert.deepEqual(byCat(snapshot, 'sol').reasons, []);
+    assert.deepEqual(byCat(snapshot, 'sol').profile.revision.relevantSignals, [
+      {
+        kind: 'strength',
+        summary: 'sol is strong at architecture',
+        evidenceRefs: ['dossier:dossier:v1'],
+      },
+    ]);
   });
 });

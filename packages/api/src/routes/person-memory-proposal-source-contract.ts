@@ -14,8 +14,10 @@ import {
   writeOpportunityRefV1Schema,
 } from '@cat-cafe/shared';
 import { z } from 'zod';
+import { messageFrom } from '../domains/cats/services/stores/message-from.js';
 import { type IMessageStore, isDelivered } from '../domains/cats/services/stores/ports/MessageStore.js';
 import { canViewMessage } from '../domains/cats/services/stores/visibility.js';
+import { resolveOwnerMessageExcerptSegment } from '../domains/memory/people/owner-message-text-projection.js';
 import { estimateTokens } from '../utils/token-counter.js';
 
 const claimInputSchema = candidateClaimDraftSchema.omit({ draftId: true, decision: true });
@@ -219,7 +221,8 @@ export async function resolvedBindingsAreMaterializable(
     const source = sources.get(binding.sourceId);
     if (source?.kind !== 'message_text') return false;
     const message = await messageStore.getById(source.sourceRef.messageId);
-    if (!message || containsRelayedQuote(message.content)) return false;
+    const segment = message ? resolveOwnerMessageExcerptSegment(message, source.excerpt) : null;
+    if (!segment || containsRelayedQuote(segment.text)) return false;
   }
   return true;
 }
@@ -236,13 +239,12 @@ export async function resolveInteractionSourceEvidence(
     if (
       !message ||
       message.userId !== auth.userId ||
-      message.catId !== null ||
-      message.source !== undefined ||
+      messageFrom(message).kind !== 'user' ||
       message.deletedAt !== undefined ||
       message._tombstone === true ||
       !isDelivered(message) ||
       !canViewMessage(message, { type: 'user' }) ||
-      !message.content.normalize('NFKC').includes(source.evidenceExcerpt.normalize('NFKC'))
+      !resolveOwnerMessageExcerptSegment(message, source.evidenceExcerpt)
     ) {
       return null;
     }
@@ -278,13 +280,12 @@ export async function resolveProposalSourceMessageId(
   if (
     !message ||
     message.userId !== auth.userId ||
-    message.catId !== null ||
-    message.source !== undefined ||
+    messageFrom(message).kind !== 'user' ||
     message.deletedAt !== undefined ||
     message._tombstone === true ||
     !isDelivered(message) ||
     !canViewMessage(message, { type: 'user' }) ||
-    evidenceExcerpts.some((excerpt) => !message.content.normalize('NFKC').includes(excerpt.normalize('NFKC')))
+    evidenceExcerpts.some((excerpt) => !resolveOwnerMessageExcerptSegment(message, excerpt))
   ) {
     return null;
   }

@@ -7,6 +7,9 @@
  */
 
 import { useEffect, useState } from 'react';
+import { apiFetch } from '@/utils/api-client';
+import { MemoryReadError } from './page/MemoryReadError';
+import { memoryTime } from './page/memory-time';
 
 interface ToolUsageMetric {
   value: number | null;
@@ -30,15 +33,40 @@ interface ToolUsageMetricsReport {
   nudgeFailureRate: ToolUsageMetric;
 }
 
+function isMetricsReport(value: unknown): value is ToolUsageMetricsReport {
+  if (!value || typeof value !== 'object') return false;
+  const report = value as ToolUsageMetricsReport;
+  if (!report.distribution || !Number.isSafeInteger(report.threadCount) || typeof report.generatedAt !== 'string')
+    return false;
+  return [
+    report.distribution.searchEvidence,
+    report.distribution.graphResolve,
+    report.distribution.listRecent,
+    report.grepAfterSearchRate,
+    report.candidateSelectionDistribution,
+    report.listRecentAdoptionRate,
+    report.nudgeFailureRate,
+  ].every(
+    (metric) =>
+      metric &&
+      (metric.value === null || Number.isFinite(metric.value)) &&
+      Number.isSafeInteger(metric.sampleN) &&
+      metric.sampleN >= 0 &&
+      Number.isFinite(metric.threshold) &&
+      typeof metric.sufficient === 'boolean' &&
+      typeof metric.unit === 'string',
+  );
+}
+
 function MetricRow({ label, metric, hint }: { label: string; metric: ToolUsageMetric; hint?: string }) {
   const display =
     metric.sufficient && metric.value !== null
       ? `${metric.value.toFixed(1)}${metric.unit}`
-      : `数据不足 (N=${metric.sampleN}, 需 ≥${metric.threshold})`;
-  const color = metric.sufficient ? 'text-cafe-black' : 'text-cafe-muted italic';
+      : `样本不足：${metric.sampleN} / ${metric.threshold}`;
+  const color = metric.sufficient ? 'text-cafe-black' : 'text-cafe-muted';
   return (
-    <div className="flex items-baseline justify-between console-divider-b py-2 last:border-0">
-      <div>
+    <div className="flex flex-wrap items-baseline justify-between gap-2 console-divider-b py-2 last:border-0">
+      <div className="min-w-0 flex-1">
         <div className="text-xs font-medium text-cafe-black">{label}</div>
         {hint ? <div className="text-micro text-cafe-muted">{hint}</div> : null}
       </div>
@@ -52,25 +80,37 @@ function MetricRow({ label, metric, hint }: { label: string; metric: ToolUsageMe
 export function ToolUsageMetricsPanel({ fetcher }: { fetcher?: () => Promise<ToolUsageMetricsReport> }) {
   const [report, setReport] = useState<ToolUsageMetricsReport | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [attempt, setAttempt] = useState(0);
 
   useEffect(() => {
+    let cancelled = false;
+    setReport(null);
+    setError(null);
     const load =
       fetcher ??
       (async () => {
-        const res = await fetch('/api/library/tool-usage-metrics');
+        const res = await apiFetch('/api/library/tool-usage-metrics');
         if (!res.ok) throw new Error(`HTTP ${res.status}`);
         return res.json();
       });
     load()
-      .then((r) => setReport(r as ToolUsageMetricsReport))
-      .catch((e) => setError(e instanceof Error ? e.message : String(e)));
-  }, [fetcher]);
+      .then((value: unknown) => {
+        if (!isMetricsReport(value)) throw new Error('读取结果不完整');
+        if (!cancelled) setReport(value);
+      })
+      .catch(() => {
+        if (!cancelled) setError('暂时读不到工具使用指标');
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [fetcher, attempt]);
 
   if (error) {
     return (
       <div className="rounded-xl bg-[var(--console-card-bg)] p-5" data-testid="tool-usage-metrics-error">
         <h4 className="mb-2 text-sm font-semibold text-cafe-black">工具使用指标</h4>
-        <div className="text-xs text-conn-red-text">加载失败: {error}</div>
+        <MemoryReadError noun="工具使用指标" retry={() => setAttempt((value) => value + 1)} />
       </div>
     );
   }
@@ -89,7 +129,7 @@ export function ToolUsageMetricsPanel({ fetcher }: { fetcher?: () => Promise<Too
       <div className="mb-3 flex items-baseline justify-between">
         <h4 className="text-sm font-semibold text-cafe-black">工具使用指标</h4>
         <div className="text-micro text-cafe-muted">
-          {report.threadCount} 个线程 · {new Date(report.generatedAt).toLocaleString()}
+          {report.threadCount} 个线程 · {memoryTime(report.generatedAt)}
         </div>
       </div>
       <div className="space-y-0">
@@ -102,23 +142,19 @@ export function ToolUsageMetricsPanel({ fetcher }: { fetcher?: () => Promise<Too
         <MetricRow
           label="搜索后 grep 比率"
           metric={report.grepAfterSearchRate}
-          hint="FM-1: 搜索后 5 轮内回退 grep。目标: <30%"
+          hint="搜索后 5 轮内回退 grep。目标: <30%"
         />
         <MetricRow
           label="候选项选择（非首选）"
           metric={report.candidateSelectionDistribution}
-          hint="FM-2: graph_resolve 候选排序质量。目标: <50%"
+          hint="graph_resolve 候选排序质量。目标: <50%"
         />
         <MetricRow
           label="list_recent 采用率"
           metric={report.listRecentAdoptionRate}
-          hint="FM-3: 冷启动使用 list_recent。目标: ≥5%"
+          hint="冷启动使用 list_recent。目标: ≥5%"
         />
-        <MetricRow
-          label="提示失败率"
-          metric={report.nudgeFailureRate}
-          hint="FM-5: 已发提示但猫回退到 grep。目标: <40%"
-        />
+        <MetricRow label="提示失败率" metric={report.nudgeFailureRate} hint="已发提示但猫回退到 grep。目标: <40%" />
       </div>
     </div>
   );

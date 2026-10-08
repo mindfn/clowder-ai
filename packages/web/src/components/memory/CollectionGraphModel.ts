@@ -3,6 +3,7 @@ export interface GraphNode {
   collectionId: string;
   sensitivity: string;
   kind: string;
+  displayType?: string;
   title: string;
   redacted: boolean;
 }

@@ -11,6 +11,7 @@ import { chromium } from '../../../ppt-forge/node_modules/playwright/index.mjs';
 import { TEAM_AVATAR, TEAM_CATS, TEAM_DOSSIER_REVISION, teamRoutingReadModel } from './f293-team-fixtures.mjs';
 import { realSurfaceApiResponse, THREAD_ID } from './f307-real-surface-fixtures.mjs';
 import { ensureWorkspaceOpen } from './f307-workspace-open.mjs';
+import { waitForResponsiveWorkspaceLayout } from './f311-responsive-workspace-layout.mjs';
 import { createNextDevTestEnvironment } from './next-dev-test-environment.mjs';
 
 const WEB_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../..');
@@ -311,16 +312,18 @@ test(
             'the dark base must actually repaint the Team surface, not only flip an attribute',
           );
         }
+        await waitForResponsiveWorkspaceLayout(page, panel, width);
         await page.getByTestId('team-cat-codex-sol').waitFor();
         assert.equal(
           await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth),
           true,
           `the Team surface must not overflow horizontally at ${width}px`,
         );
+        const panelWidth = await panel.evaluate((node) => ({ client: node.clientWidth, scroll: node.scrollWidth }));
         assert.equal(
-          await panel.evaluate((node) => node.scrollWidth <= node.clientWidth + 1),
+          panelWidth.scroll <= panelWidth.client + 1,
           true,
-          `the Team panel must not scroll horizontally at ${width}px`,
+          `the Team panel must not scroll horizontally at ${width}px: ${JSON.stringify(panelWidth)}`,
         );
         await page.screenshot({ path: path.join(EVIDENCE_DIR, `team-${width}-${theme}.png`), fullPage: true });
       }

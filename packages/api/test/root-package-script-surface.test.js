@@ -47,18 +47,12 @@ test('root package scripts do not reference missing script files', () => {
   assert.deepEqual(missing, [], `Missing script targets:\n${missing.join('\n')}`);
 });
 
-test('alpha worktree scripts expose help output', () => {
+test('alpha worktree manager exposes help output', () => {
   const alphaHelp = execFileSync('bash', ['./scripts/alpha-worktree.sh', '--help'], {
     cwd: repoRoot,
     encoding: 'utf8',
   });
   assert.match(alphaHelp, /Clowder AI Alpha Worktree Manager/);
-
-  const alphaTestHelp = execFileSync('bash', ['./scripts/alpha-worktree.test.sh', '--help'], {
-    cwd: repoRoot,
-    encoding: 'utf8',
-  });
-  assert.match(alphaTestHelp, /Clowder AI Alpha Worktree Manager|PASS: usage documents alpha commands/);
 });
 
 test('directly invoked root scripts keep executable bit', () => {

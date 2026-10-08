@@ -14,8 +14,11 @@ import {
   externalReviewVerdictAuthorizationFailure,
   PENDING_VERIFICATION_REASONS,
 } from './external-review-aggregate.js';
+import { loadExternalReviewEventReceipt } from './external-review-event-receipt.js';
+import { ExternalReviewVerdictError } from './external-review-verdict-error.js';
 
 export { PENDING_VERIFICATION_REASONS } from './external-review-aggregate.js';
+export { ExternalReviewVerdictError, type ExternalReviewVerdictErrorCode } from './external-review-verdict-error.js';
 export type ExternalReviewVerdict = 'approved' | 'changes_requested' | 'commented';
 
 export type ExternalReviewDeliveryInput =
@@ -52,33 +55,6 @@ export type ExternalPendingVerdictSettlementResult =
   | { readonly kind: 'waiting'; readonly reason: string }
   | { readonly kind: 'settled'; readonly result: ExternalReviewVerdictRecordResult };
 
-export type ExternalReviewVerdictErrorCode =
-  | 'not_configured'
-  | 'observe_only'
-  | 'stale_head'
-  | 'projection_unavailable'
-  | 'wrong_principal'
-  | 'subject_terminal'
-  | 'head_not_ready'
-  | 'invalid_delivery_proof'
-  | 'invalid_pending_reason'
-  | 'delivery_regression'
-  | 'verdict_conflict'
-  | 'action_lease_required'
-  | 'action_lease_mismatch'
-  | 'action_lease_preflight_unavailable'
-  | 'stale_action_lease';
-
-export class ExternalReviewVerdictError extends Error {
-  constructor(
-    readonly code: ExternalReviewVerdictErrorCode,
-    message: string,
-  ) {
-    super(message);
-    this.name = 'ExternalReviewVerdictError';
-  }
-}
-
 export interface ExternalReviewVerdictProjectorPort {
   apply(event: CommunityEvent): Promise<void>;
   rebuild(subjectKey: string): Promise<void>;
@@ -104,6 +80,18 @@ export interface ExternalReviewVerdictServiceOptions {
     now: number;
   }) => Promise<{ outcome: string }>;
   readonly recordUserNudgeRequired?: () => void;
+  /**
+   * F168 #1511: Verify durable reviewer admission from the PR tracker task.
+   * For PR subjects, the community projection never receives ownerThreadId/ownerRole
+   * from case.routed or case.bootstrap (both issue-only). When the coordinator hasn't
+   * run yet (no case.external_review_assigned in the event log), bootstrap Case 1 needs
+   * an alternative authority source. This callback checks the tracker task (registered
+   * via callback-auth-verified register-pr-tracking) to verify the caller is the
+   * admitted reviewer.
+   *
+   * Returns true if a durable tracker exists for the subject with matching catId/threadId.
+   */
+  readonly verifyDurableReviewerAdmission?: (subjectKey: string, catId: string, threadId: string) => Promise<boolean>;
   readonly now?: () => number;
 }
 
@@ -166,23 +154,6 @@ export function materializeExternalReviewDelivery(
   return { kind: 'pending_delivery', headSha, ownerCatId: input.principal.catId, reason, createdAt: recordedAt };
 }
 
-export async function loadCanonicalReviewDelivery(input: {
-  objectStore: Pick<ICommunityObjectStore, 'get'>;
-  projector: Pick<ExternalReviewVerdictProjectorPort, 'rebuild'>;
-  subjectKey: string;
-  delivery: ReviewDeliveryOutcome;
-}): Promise<ReviewDeliveryOutcome> {
-  let canonical = (await input.objectStore.get(input.subjectKey))?.externalReview;
-  if (!canonical || !isSameDelivery(canonical.delivery, input.delivery)) {
-    await input.projector.rebuild(input.subjectKey);
-    canonical = (await input.objectStore.get(input.subjectKey))?.externalReview;
-  }
-  if (!canonical?.delivery || !isSameDelivery(canonical.delivery, input.delivery)) {
-    throw new ExternalReviewVerdictError('projection_unavailable', 'Verdict event was not projected');
-  }
-  return canonical.delivery;
-}
-
 interface PendingExternalReviewVerdictInput {
   eventLog: ICommunityEventLog;
   projector: ExternalReviewVerdictProjectorPort;
@@ -222,6 +193,7 @@ function makePendingVerdictEvent(
     kind: 'case.review_verdict_submitted',
     classification: 'informational',
     payload: {
+      reviewerAssignmentRevision: aggregate.reviewerAssignmentRevision ?? 0,
       fingerprint: input.submissionFingerprint,
       headSha: input.currentHeadSha,
       headGeneration: input.headGeneration,
@@ -287,8 +259,13 @@ async function applyAndVerifyPending(
   event: CommunityEvent,
 ): Promise<ExternalReviewAggregate> {
   await input.projector.apply(event);
-  const aggregate = (await input.objectStore.get(input.subjectKey))?.externalReview;
-  if (aggregate?.pendingVerdict?.fingerprint !== input.submissionFingerprint) {
+  const aggregate = await loadExternalReviewEventReceipt(input.eventLog, event);
+  const current = (await input.objectStore.get(input.subjectKey))?.externalReview;
+  if (
+    !current ||
+    (current.pendingVerdict?.fingerprint !== input.submissionFingerprint &&
+      (current.reviewerAssignmentRevision ?? 0) === (aggregate.reviewerAssignmentRevision ?? 0))
+  ) {
     throw new ExternalReviewVerdictError(
       'projection_unavailable',
       'Durable pending verdict event was not represented by the current projection',

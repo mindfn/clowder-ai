@@ -31,6 +31,7 @@ import { computeFromThreads } from '../domains/memory/ToolUsageMetricsAggregator
 import { VectorStore } from '../domains/memory/VectorStore.js';
 import { resolveHeaderUserId } from '../utils/request-identity.js';
 import { buildThreadCrossPostSuggestion, extractThreadIdFromRecentAnchor } from './cross-thread-affordance.js';
+import { memoryWriteOwner } from './memory-write-owner.js';
 
 export interface LibraryRoutesOptions {
   catalog: LibraryCatalog;
@@ -105,6 +106,10 @@ function persistCollectionStatusBestEffort(dataDir: string | undefined, id: stri
 }
 
 export const libraryRoutes: FastifyPluginAsync<LibraryRoutesOptions> = async (app, opts) => {
+  const requireOwner = memoryWriteOwner(opts.privateOwnerUserId, true);
+  app.addHook('preHandler', async (request, reply) => {
+    if (request.method !== 'GET' && request.method !== 'HEAD') return requireOwner(request, reply);
+  });
   app.get('/api/library/catalog', async (request, reply) => {
     const ip = request.ip;
     if (ip !== '127.0.0.1' && ip !== '::1' && ip !== '::ffff:127.0.0.1') {

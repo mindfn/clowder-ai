@@ -94,6 +94,12 @@ assert.match(
   'the shard command must use the resolved pnpm executable across the sudo boundary',
 );
 const distributableLauncher = readFileSync(new URL('./run-public-test-distributable.sh', import.meta.url), 'utf8');
+assert.match(
+  distributableLauncher,
+  /exec \/usr\/bin\/python3 -I .*public-test-namespace-init\.py/,
+  'the private PID domain must have a dedicated orphan reaper, not the shard runtime as PID 1',
+);
+assert.ok(readFileSync(new URL('./public-test-namespace-init.py', import.meta.url), 'utf8'));
 for (const [pattern, message] of [
   [/ip link set lo up/, 'the distributable network namespace must retain loopback for local test servers'],
   [/--no-new-privs/, 'the distributable test process must not regain privilege through setuid executables'],
