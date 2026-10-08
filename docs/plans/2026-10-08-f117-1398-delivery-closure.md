@@ -98,3 +98,16 @@ Operator `0001791433289819-000025-740e3876` 要求核实作品审查通知合理
 - 原对象在扫描的 34 个本地 Git common database 中均不存在，包含非浅克隆；原仓 GitHub commit 查询被 403 rate limit 拒绝，不是 404，不能据此声称远端对象不存在。未查到新的具名迁移授权；结论依据是已有公开导出边界。
 
 astra 未修改整合 checkout、未运行绕过检查的生成器。sol 继续唯一源码写入；本次来源核定不等于完整候选通过。
+
+## 06:31 内部状态消息的同类审计
+
+Operator `0001791441081560-000110-e3f79b33` 追问同类问题。astra 只读核对当前整合树的 producer、active/background 展示和恢复/持久化三路；下表是实际源码路径，不代表逐项运行复现或已修复。
+
+| 发现 | 来源与影响 | 处置 |
+|---|---|---|
+| P2 provider 自动重连独立消息 | `CodexAgentService.buildCodexProviderRecoveryTransition` / `codex-event-transform` → `system-info.ts` → `projectProviderRecoveryMessage`，产生 `provider-recovery:*` 的正在重连、已恢复、重连失败行；warning suite 仍固定断言这行 | 自动恢复更新当前执行状态，成功不再留结果通知；最终失败由原 response 表达，attempt 保留诊断 |
+| P2 transient_status 仍变成聊天行 | Codex 原生会话等待、ACP capacity、Antigravity 自动重试均声明 `transient_status`，`formatWarning` 却与 `user_action_required` 同样展示；后端只持久化后者 | 沿已有 presentation 分类收敛，瞬时进度进入执行状态；用户确需操作的警告保留唯一出口，不增加逐场景隐藏规则 |
+| P2 自动会话接力/封存另发消息 | `invoke-single-cat` 三处 `session_seal_requested` → `formatSessionSealRequested`，输出自动接力/下次自动创建会话通知 | 保留 session/continuity 事实与诊断，取消独立聊天结果；不得只移除 `session_rollover_lifecycle` 落盘就宣称全清 |
+| 失败去重仍依赖文本 | `persist-system-info-warnings.ts` 的 `duplicatesTerminalFailure` 用去前缀后的 substring 比较 | 按结果所属 response / 未接纳失败的责任边界处理，用措辞变化场景检验，不把文本相同当成唯一性机制 |
+
+边界：未投递/待绑定的 cloud bridge 结果、治理初始化阻塞、没有 response 的准入失败确有用户动作或唯一失败事实，不能全部吞掉。后台完成 toast 是跨 thread 提醒，不等同另一条 History 消息。本轮不扩成重新设计全部通知。原 task300 唯一 writer 继续按同一机制及 active/background/F5/晚到事件/成功恢复/最终失败场景验证，astra 不改其 checkout。
