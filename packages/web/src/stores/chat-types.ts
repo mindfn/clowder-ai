@@ -826,6 +826,7 @@ export interface QueueEntry {
     replyTo?: string;
     /** Stored connector identity; lets the row reuse the timeline bubble's summary. */
     connector?: string;
+    source?: import('@cat-cafe/shared').ConnectorSource;
   };
   /** Server-owned executable recovery projection; absent only on legacy cached snapshots. */
   recoveryActions?: QueueRecoveryAction[];

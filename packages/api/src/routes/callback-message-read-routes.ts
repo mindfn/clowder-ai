@@ -6,6 +6,7 @@ import type { QueueProcessor } from '../domains/cats/services/agents/invocation/
 import { extractImagePaths, extractImageUrls } from '../domains/cats/services/agents/providers/image-paths.js';
 import { getMessageSpeakerName } from '../domains/cats/services/context/ContextAssembler.js';
 import { readDurableLocalReviewFact } from '../domains/cats/services/local-review-artifact.js';
+import { messageFrom } from '../domains/cats/services/stores/message-from.js';
 import type { IMessageStore } from '../domains/cats/services/stores/ports/MessageStore.js';
 import type { IThreadStore } from '../domains/cats/services/stores/ports/ThreadStore.js';
 import type {
@@ -194,6 +195,7 @@ export function registerCallbackMessageReadRoutes(app: FastifyInstance, opts: Ca
           ...(imageUrls.length > 0 ? { imageUrls } : {}),
           ...(m.replyTo ? { replyTo: m.replyTo } : {}),
           speaker: getMessageSpeakerName(m),
+          from: messageFrom(m),
           timestamp: m.timestamp,
           threadId: m.threadId,
         };

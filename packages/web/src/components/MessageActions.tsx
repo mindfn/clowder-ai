@@ -357,6 +357,8 @@ export function MessageActions({
               id: message.id,
               content: message.content,
               senderCatId: message.catId === undefined ? null : message.catId,
+              ...(message.from ? { from: message.from } : {}),
+              ...(message.source ? { source: message.source } : {}),
               threadId,
             });
           }}

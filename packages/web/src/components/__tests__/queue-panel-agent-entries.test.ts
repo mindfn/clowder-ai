@@ -18,8 +18,8 @@ vi.mock('@/hooks/useCoCreatorConfig', () => ({
 }));
 
 const TEST_CATS = [
-  { id: 'codex', displayName: '缅因猫', variantLabel: 'sol' },
-  { id: 'opus', displayName: '布偶猫', variantLabel: 'Fable' },
+  { id: 'codex', displayName: '缅因猫', variantLabel: 'sol', color: { primary: '#123456', secondary: '#abcdef' } },
+  { id: 'opus', displayName: '布偶猫', variantLabel: 'Fable', color: { primary: '#456789', secondary: '#abcdef' } },
 ];
 
 vi.mock('@/hooks/useCatData', () => ({

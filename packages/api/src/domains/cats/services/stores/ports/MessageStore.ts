@@ -3558,13 +3558,15 @@ export async function hydrateReplyPreview(store: IMessageStore, replyToId: strin
   if (!parent) return null;
 
   if (parent.deletedAt || parent._tombstone) {
-    return { senderCatId: parent.catId, content: '', deleted: true };
+    return { from: messageFrom(parent), senderCatId: parent.catId, content: '', deleted: true };
   }
 
   const truncated =
     parent.content.length > PREVIEW_MAX_LENGTH ? parent.content.slice(0, PREVIEW_MAX_LENGTH) : parent.content;
 
   return {
+    from: messageFrom(parent),
+    ...(parent.source ? { source: structuredClone(parent.source) } : {}),
     senderCatId: parent.catId,
     content: truncated,
     ...(parent.extra?.scheduler?.hiddenTrigger ? { kind: 'scheduler_trigger' as const } : {}),

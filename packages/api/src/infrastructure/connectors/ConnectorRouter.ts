@@ -33,12 +33,13 @@ import type { IOutboundAdapter } from './OutboundDeliveryHook.js';
 function emitConnectorMessage(
   socketManager: { broadcastToRoom(room: string, event: string, data: unknown): void } | null | undefined,
   threadId: string,
-  msg: { id: string; content: string; source: ConnectorSource; timestamp: number },
+  msg: { id: string; from: MessageFrom; content: string; source: ConnectorSource; timestamp: number },
 ): void {
   socketManager?.broadcastToRoom(`thread:${threadId}`, 'connector_message', {
     threadId,
     message: {
       id: msg.id,
+      from: msg.from,
       type: 'connector' as const,
       content: msg.content,
       source: msg.source,
@@ -596,12 +597,14 @@ export class ConnectorRouter {
     // Broadcast both
     emitConnectorMessage(socketManager, threadId, {
       id: cmdMsg.id,
+      from: { kind: 'external', connectorId },
       content: commandText,
       source: { connector: connectorId, label: def?.displayName ?? connectorId, icon: connectorSourceIcon(def) },
       timestamp: now,
     });
     emitConnectorMessage(socketManager, threadId, {
       id: resMsg.id,
+      from: { kind: 'system', service: 'connector-command' },
       content: responseText,
       source: { connector: 'system-command', label: 'Clowder AI', icon: 'settings' },
       timestamp: now + 1,

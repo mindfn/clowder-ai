@@ -6931,6 +6931,7 @@ async function main(): Promise<void> {
         threadId,
         message: {
           id: stored.id,
+          from: stored.from,
           type: 'cat',
           catId: stored.catId,
           content: stored.content,
@@ -6953,6 +6954,7 @@ async function main(): Promise<void> {
         threadId,
         message: {
           id: stored.id,
+          from: stored.from,
           type: 'cat',
           catId: stored.catId,
           content: stored.content,
@@ -6983,6 +6985,7 @@ async function main(): Promise<void> {
         threadId,
         message: {
           id: stored.id,
+          from: stored.from,
           type: 'cat',
           catId: stored.catId,
           content: stored.content,

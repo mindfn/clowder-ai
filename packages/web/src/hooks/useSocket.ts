@@ -5,6 +5,7 @@ import {
   isMessageFrom,
   type MessageFrom,
   type ProviderSemanticEvent,
+  type ReplyPreview,
   timelineMessageKind,
 } from '@cat-cafe/shared';
 import { useCallback, useEffect, useRef, useState } from 'react';
@@ -77,7 +78,7 @@ interface AgentMessage {
   /** F121: ID of the message this message is replying to */
   replyTo?: string;
   /** F121: Hydrated preview of the replied-to message */
-  replyPreview?: { senderCatId: string | null; content: string; deleted?: true };
+  replyPreview?: ReplyPreview;
   /** F108: Invocation ID — distinguishes messages from concurrent invocations */
   invocationId?: string;
   turnInvocationId?: string;
@@ -108,6 +109,7 @@ interface ConnectorMessageEvent {
   message: {
     id: string;
     type: 'connector';
+    from?: MessageFrom;
     content: string;
     source?: import('../stores/chat-types').ConnectorSourceData;
     extra?: import('../stores/chat-types').ChatMessage['extra'];
@@ -974,7 +976,7 @@ export function useSocket(callbacks: SocketCallbacks, threadId?: string, foregro
           origin?: 'stream' | 'callback' | 'briefing';
           source?: import('../stores/chat-types').ConnectorSourceData;
           replyTo?: string;
-          replyPreview?: { senderCatId: string | null; content: string; deleted?: boolean; kind?: string };
+          replyPreview?: ReplyPreview;
           mentionsUser?: boolean;
         }>;
       }) => {
@@ -1003,7 +1005,7 @@ export function useSocket(callbacks: SocketCallbacks, threadId?: string, foregro
           extra?: Record<string, unknown>;
           origin?: 'stream' | 'callback' | 'briefing';
           replyTo?: string;
-          replyPreview?: { senderCatId: string | null; content: string; deleted?: boolean; kind?: string };
+          replyPreview?: ReplyPreview;
           mentionsUser?: boolean;
           // Connector framing must survive the delivery hop: this envelope may be a connector
           // notice that was admitted as queued work, and delivery is its first live appearance.
@@ -1121,6 +1123,7 @@ export function useSocket(callbacks: SocketCallbacks, threadId?: string, foregro
       store.addMessageToThread(data.threadId, {
         id: data.message.id,
         type: 'connector',
+        ...(data.message.from ? { from: data.message.from } : {}),
         content: semantic?.action === 'replace' ? semantic.projection.content : (data.message.content ?? ''),
         ...(data.message.source ? { source: data.message.source } : {}),
         ...(data.message.extra ? { extra: data.message.extra } : {}),

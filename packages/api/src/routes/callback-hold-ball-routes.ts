@@ -1058,6 +1058,7 @@ export function registerCallbackHoldBallRoutes(app: FastifyInstance, deps: HoldB
         threadId,
         message: {
           id: storedWaitingMessage.id,
+          from: storedWaitingMessage.from,
           type: 'connector',
           content: storedWaitingMessage.content,
           source: holdSource,
@@ -1262,6 +1263,7 @@ export function registerCallbackHoldBallRoutes(app: FastifyInstance, deps: HoldB
             threadId,
             message: {
               id: admStored.id,
+              from: admStored.from,
               type: 'connector',
               content: admStored.content,
               source: statusSource,

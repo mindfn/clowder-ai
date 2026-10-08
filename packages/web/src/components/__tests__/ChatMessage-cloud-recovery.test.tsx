@@ -39,10 +39,17 @@ describe('ChatMessage wires exact Host delivery facts into recovery', () => {
   });
 
   function render(status: 'sent' | 'failed', receiptDispatchId = 'dispatch-1') {
-    const source: Message = { id: 'source-1', type: 'user', content: '@gpt-pro hello', timestamp: 1 };
+    const source: Message = {
+      id: 'source-1',
+      type: 'user',
+      from: { kind: 'user', userId: 'test-user' },
+      content: '@gpt-pro hello',
+      timestamp: 1,
+    };
     const recovery: Message = {
       id: 'recovery',
       type: 'connector',
+      from: { kind: 'external', connectorId: 'cloud-bridge-status' },
       content: 'Needs connection',
       timestamp: 2,
       replyTo: source.id,
@@ -64,6 +71,7 @@ describe('ChatMessage wires exact Host delivery facts into recovery', () => {
     const receipt: Message = {
       id: 'receipt',
       type: 'connector',
+      from: { kind: 'external', connectorId: 'cloud-bridge-status' },
       content: 'Delivery fact',
       timestamp: 3,
       replyTo: source.id,

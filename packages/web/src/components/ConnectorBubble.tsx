@@ -1,77 +1,25 @@
 'use client';
 
-import {
-  type ConnectorIconSpec,
-  decideHoldCancelEntry,
-  getConnectorDefinition,
-  readHoldCardCancelability,
-} from '@cat-cafe/shared';
+import { type ConnectorSource, decideHoldCancelEntry, readHoldCardCancelability } from '@cat-cafe/shared';
+import { useCoCreatorConfig } from '@/hooks/useCoCreatorConfig';
 import { tintedLight } from '@/lib/color-utils';
 import { connectorThemeToken } from '@/lib/connector-theme-token';
+import { resolveMessageSender } from '@/lib/resolve-sender';
 import type { ChatMessage as ChatMessageType } from '@/stores/chatStore';
 import { compareMessageTimelineOrder } from '@/stores/message-timeline';
 import { ContentBlocks } from './ContentBlocks';
 import { HOST_CONTENT_REVIEW_CONNECTOR, hostReturnHeadline } from './content-review/host-return-headline';
 import { DevelopmentReturnBody } from './development-return/DevelopmentReturnBody';
 import { HoldBallCancelButton } from './HoldBallCancelButton';
-import {
-  AuthKeyIcon,
-  ConnectorImage,
-  GitHubIcon,
-  HoldBallIcon,
-  ReturnArrowIcon,
-  RobotIcon,
-  SchedulerIcon,
-  SearchIcon,
-  SettingsIcon,
-  UsersIcon,
-} from './icons/ConnectorIcons';
-import { BallotIcon } from './icons/VoteIcons';
+import { ConnectorIcon } from './icons/ConnectorIcon';
 import { MarkdownContent } from './MarkdownContent';
 import { MessageActionSlot } from './MessageActionSlot';
 import { MessageBubble } from './MessageBubble';
 import { RichBlocks } from './rich/RichBlocks';
 
-/** SVG icon component lookup — maps definition `iconId` to React component.
- *  Single source of truth: add new SVG icons here + in ConnectorIcons.tsx. */
-const SVG_ICON_MAP: Record<string, React.ComponentType<{ className?: string }>> = {
-  github: GitHubIcon,
-  ballot: BallotIcon,
-  users: UsersIcon,
-  scheduler: SchedulerIcon,
-  settings: SettingsIcon,
-  'hold-ball': HoldBallIcon,
-  'auth-key': AuthKeyIcon,
-  search: SearchIcon,
-  robot: RobotIcon,
-  'return-arrow': ReturnArrowIcon,
-};
-
 function formatTime(ts: number): string {
   const d = new Date(ts);
   return d.toLocaleString('zh-CN', { month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit' });
-}
-
-/** Data-driven icon rendering from ConnectorDefinition.icon spec.
- *  Registered connectors always use the registry icon (SVG or PNG).
- *  Falls back to source.icon (emoji/URL) only for unregistered connectors. */
-function ConnectorIcon({ iconSpec, fallbackIcon }: { iconSpec?: ConnectorIconSpec; fallbackIcon: string }) {
-  // Registered connector → always use registry icon
-  if (iconSpec) {
-    if ('src' in iconSpec && iconSpec.src) {
-      return <ConnectorImage src={iconSpec.src} alt="connector" className="w-5 h-5" />;
-    }
-    if (iconSpec.type === 'svg') {
-      const SvgComponent = SVG_ICON_MAP[iconSpec.iconId];
-      if (SvgComponent) return <SvgComponent className="w-4 h-4" />;
-    }
-  }
-
-  // Fallback for unregistered connectors
-  if (fallbackIcon.startsWith('/') || fallbackIcon.startsWith('http')) {
-    return <ConnectorImage src={fallbackIcon} alt="connector" className="w-5 h-5" />;
-  }
-  return <span>{fallbackIcon}</span>;
 }
 
 /** Host returns keep the machine instructions available behind the human headline. */
@@ -123,14 +71,14 @@ interface ConnectorBubbleProps {
  * Uses MessageBubble for shared layout; adds connector-specific avatar, header, and actions.
  */
 export function ConnectorBubble({ message, threadId, timelineMessages }: ConnectorBubbleProps) {
-  const source = message.source;
-  if (!source) return null;
+  const coCreator = useCoCreatorConfig();
+  const source: ConnectorSource = message.source ?? { connector: '', label: '', icon: '' };
   if (message.extra?.scheduler?.hiddenTrigger) return null;
 
   const connId = source.connector;
   const themeToken = connectorThemeToken(connId);
-  const connDef = getConnectorDefinition(connId);
-  const themeHex = connDef?.themeColor;
+  const sender = resolveMessageSender({ from: message.from, source }, () => undefined, coCreator);
+  const themeHex = sender.color;
   const hasBlocks = message.contentBlocks && message.contentBlocks.length > 0;
   const richBlocks = message.extra?.rich?.blocks;
   const rawUrl = source.url;
@@ -159,7 +107,7 @@ export function ConnectorBubble({ message, threadId, timelineMessages }: Connect
         boxShadow: themeHex ? `0 0 0 2px ${themeHex}` : '0 0 0 2px var(--cafe-border)',
       }}
     >
-      <ConnectorIcon iconSpec={connDef?.icon} fallbackIcon={source.icon} />
+      <ConnectorIcon iconSpec={sender.icon} fallbackIcon={sender.fallbackIcon} />
     </div>
   );
 
@@ -173,18 +121,15 @@ export function ConnectorBubble({ message, threadId, timelineMessages }: Connect
           className="text-xs font-semibold hover:underline"
           style={{ color: `var(--color-${themeToken}-bubble, var(--cafe-text))` }}
         >
-          {source.label}
+          {sender.label}
         </a>
       ) : (
         <span
           className="text-xs font-semibold"
           style={{ color: `var(--color-${themeToken}-bubble, var(--cafe-text))` }}
         >
-          {source.label}
+          {sender.label}
         </span>
-      )}
-      {source.sender && (
-        <span className="text-xs text-cafe-secondary">{source.sender.name || source.sender.id} 说</span>
       )}
       <span className="text-xs text-cafe-muted">{formatTime(message.timestamp)}</span>
       <MessageActionSlot />

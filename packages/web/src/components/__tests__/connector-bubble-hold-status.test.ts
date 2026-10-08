@@ -9,6 +9,10 @@ import type { ChatMessage } from '@/stores/chat-types';
 import { apiFetch } from '@/utils/api-client';
 import { ConnectorBubble } from '../ConnectorBubble';
 
+vi.mock('@/hooks/useCoCreatorConfig', () => ({
+  useCoCreatorConfig: () => ({ name: 'lang', aliases: [], mentionPatterns: [] }),
+}));
+
 vi.mock('@/utils/api-client', () => ({
   API_URL: 'http://api.test',
   apiFetch: vi.fn(),
@@ -52,6 +56,7 @@ describe('ConnectorBubble hold status lifecycle', () => {
     return {
       id: 'm-hold-refresh',
       type: 'connector',
+      from: { kind: 'external', connectorId: 'hold-ball' },
       content: 'hold is pending',
       timestamp: 1_780_000_000_000,
       source: {

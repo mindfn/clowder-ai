@@ -5,7 +5,7 @@ import { useChatStore } from '@/stores/chatStore';
 import { apiFetch } from '@/utils/api-client';
 import { QueuePanel } from '../QueuePanel';
 
-vi.mock('@/hooks/useCatData', () => ({ useCatData: () => ({ cats: [] }) }));
+vi.mock('@/hooks/useCatData', () => ({ useCatData: () => ({ cats: [], getCatById: () => undefined }) }));
 vi.mock('@/hooks/useCatNameResolver', () => ({ useCatNameResolver: () => (id: string) => id }));
 vi.mock('@/hooks/useCoCreatorConfig', () => ({ useCoCreatorConfig: () => ({ name: 'owner' }) }));
 vi.mock('@/hooks/useThreadScopedSelectors', () => ({

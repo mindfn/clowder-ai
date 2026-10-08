@@ -101,6 +101,43 @@ describe('GET /api/callbacks/get-message visibility', () => {
   });
 
   // #699 P1 (gpt52 intake review #2111): system/briefing are internal, non-routable —
+  test('message and thread drills preserve external from in anchor and full projections', async () => {
+    const app = await createApp();
+    const { invocationId, callbackToken } = await registry.create('user-1', 'opus');
+    const thread = threadStore.create('user-1', 'external identity');
+    const from = { kind: 'external', connectorId: 'github-wait', sender: { id: 'actor', name: 'Alice' } };
+    const message = messageStore.append({
+      userId: 'user-1',
+      threadId: thread.id,
+      from,
+      content: 'CI finished',
+      mentions: [],
+      timestamp: 1,
+      source: { connector: 'github-wait', label: 'GitHub Wait', icon: 'github' },
+    });
+    try {
+      for (const url of [
+        `/api/callbacks/get-message?messageId=${message.id}`,
+        `/api/callbacks/get-message?messageId=${message.id}&mode=full`,
+        `/api/callbacks/thread-context?threadId=${thread.id}`,
+        `/api/callbacks/thread-context?threadId=${thread.id}&responseMode=full`,
+      ]) {
+        const response = await app.inject({
+          method: 'GET',
+          url,
+          headers: { 'x-invocation-id': invocationId, 'x-callback-token': callbackToken },
+        });
+        assert.equal(response.statusCode, 200);
+        const body = response.json();
+        const projected = body.message ?? body.messages.find((item) => item.id === message.id);
+        assert.deepEqual(projected.from, from, url);
+        assert.equal(projected.speaker, 'Alice via GitHub Wait', url);
+      }
+    } finally {
+      await app.close();
+    }
+  });
+
   // get-message must align with isEligibleReplyParent and never return their raw content.
   test('returns 404 for system message (internal, non-routable)', async () => {
     const app = await createApp();

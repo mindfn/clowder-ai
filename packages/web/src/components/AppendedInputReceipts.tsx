@@ -3,6 +3,9 @@
 import { useId, useState } from 'react';
 import { useMeasuredOverflow } from '@/components/content-overflow/useMeasuredOverflow';
 import { ChevronIcon } from '@/components/hub-icons';
+import type { CatData } from '@/hooks/useCatData';
+import { useCoCreatorConfig } from '@/hooks/useCoCreatorConfig';
+import { resolveMessageSender } from '@/lib/resolve-sender';
 import type { ChatMessage } from '@/stores/chat-types';
 import { focusLineageMessage } from '@/utils/focusLineageMessage';
 
@@ -33,23 +36,6 @@ function formatReceiptTimestamp(timestamp: number): string {
   const date = new Date(timestamp);
   const part = (value: number) => String(value).padStart(2, '0');
   return `${part(date.getMonth() + 1)}/${part(date.getDate())} ${part(date.getHours())}:${part(date.getMinutes())}:${part(date.getSeconds())}`;
-}
-
-function sourceLabel(message: ChatMessage, coCreatorName: string, getCatLabel: (catId: string) => string): string {
-  switch (message.from?.kind) {
-    case 'user':
-      return coCreatorName;
-    case 'agent':
-      return getCatLabel(message.from.catId);
-    case 'external':
-      return message.from.sender?.name ?? message.source?.label ?? message.from.connectorId;
-    case 'plugin':
-      return message.source?.label ?? message.from.instanceId;
-    case 'system':
-      return message.from.service;
-    default:
-      return message.catId ? getCatLabel(message.catId) : coCreatorName;
-  }
 }
 
 interface AppendedInputRowProps {
@@ -108,16 +94,11 @@ function AppendedInputRow({ source, label, expanded, onToggle }: AppendedInputRo
 interface AppendedInputReceiptsProps {
   response: ChatMessage;
   timelineMessages: readonly ChatMessage[];
-  coCreatorName: string;
-  getCatLabel: (catId: string) => string;
+  getCatById: (catId: string) => CatData | undefined;
 }
 
-export function AppendedInputReceipts({
-  response,
-  timelineMessages,
-  coCreatorName,
-  getCatLabel,
-}: AppendedInputReceiptsProps) {
+export function AppendedInputReceipts({ response, timelineMessages, getCatById }: AppendedInputReceiptsProps) {
+  const coCreator = useCoCreatorConfig();
   const [listExpanded, setListExpanded] = useState(false);
   const [expandedRowIds, setExpandedRowIds] = useState<ReadonlySet<string>>(() => new Set());
   const appendedInputs = projectAppendedInputReceipts(response, timelineMessages);
@@ -169,7 +150,7 @@ export function AppendedInputReceipts({
           <AppendedInputRow
             key={source.id}
             source={source}
-            label={sourceLabel(source, coCreatorName, getCatLabel)}
+            label={resolveMessageSender(source, getCatById, coCreator).label}
             expanded={expandedRowIds.has(source.id)}
             onToggle={() => toggleRow(source.id)}
           />

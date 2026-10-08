@@ -70,6 +70,7 @@ export class MessageRuntimeInteractionCardPublisher implements RuntimeInteractio
         threadId: request.owner.threadId,
         message: {
           id: stored.id,
+          from: stored.from,
           type: 'cat',
           catId: request.owner.catId,
           content: stored.content,

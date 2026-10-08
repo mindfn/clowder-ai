@@ -2,6 +2,7 @@ import React from 'react';
 import { renderToStaticMarkup } from 'react-dom/server';
 import { describe, expect, it, vi } from 'vitest';
 import { MessageNavigator, messageNavigatorPreviewText } from '@/components/MessageNavigator';
+import { UNKNOWN_CAT_COLOR } from '@/lib/color-defaults';
 import type { ChatMessage as ChatMessageData } from '@/stores/chatStore';
 
 vi.mock('@/hooks/useCoCreatorConfig', () => ({
@@ -16,6 +17,11 @@ function makeMsg(id: string, type: 'user' | 'assistant' | 'system', catId?: stri
   return {
     id,
     type,
+    from: catId
+      ? { kind: 'agent', catId }
+      : type === 'user'
+        ? { kind: 'user', userId: 'owner' }
+        : { kind: 'system', service: 'test' },
     content: `Content for ${id}`,
     timestamp: Date.now(),
     ...(catId ? { catId } : {}),
@@ -70,13 +76,13 @@ describe('MessageNavigator', () => {
     expect(buttons.length).toBe(3);
   });
 
-  it('applies cat-specific dot colors', () => {
+  it('uses the shared unknown identity color before member profiles load', () => {
     const msgs = [makeMsg('m1', 'user'), makeMsg('m2', 'assistant', 'opus'), makeMsg('m3', 'assistant', 'codex')];
     const html = render(msgs);
 
-    expect(html).toContain('bg-cafe-accent');
+    expect(html).toContain('background-color:');
     expect(html).toContain('#9B7EBD');
-    expect(html).toContain('#5B8C5A');
+    expect(html).toContain(UNKNOWN_CAT_COLOR.primary);
   });
 
   it('tolerates variant catIds before /api/cats loads', () => {
@@ -85,12 +91,12 @@ describe('MessageNavigator', () => {
 
     // base colors come from useCatData (populated by /api/cats)
     expect(html).toContain('#9B7EBD');
-    expect(html).toContain('#5B8C5A');
-    expect(html).toContain('跳转到 opus-45 的消息');
-    expect(html).toContain('跳转到 spark 的消息');
+    expect(html).toContain(UNKNOWN_CAT_COLOR.primary);
+    expect(html).toContain('跳转到 @opus-45 的消息');
+    expect(html).toContain('跳转到 @spark 的消息');
   });
 
-  it('resolves non-hyphen variant catIds during fallback', () => {
+  it('does not infer a profile from non-hyphen member IDs', () => {
     const msgs = [
       makeMsg('m1', 'user'),
       makeMsg('m2', 'assistant', 'gpt52'),
@@ -99,21 +105,18 @@ describe('MessageNavigator', () => {
     ];
     const html = render(msgs);
 
-    // base colors come from useCatData
-    expect(html).toContain('#5B8C5A'); // codex
-    expect(html).toContain('#9B7EBD'); // opus
-    expect(html).toContain('#5B9BD5'); // gemini
+    expect(html).toContain(UNKNOWN_CAT_COLOR.primary);
 
-    expect(html).toContain('跳转到 gpt52 的消息');
-    expect(html).toContain('跳转到 sonnet 的消息');
-    expect(html).toContain('跳转到 gemini25 的消息');
+    expect(html).toContain('跳转到 @gpt52 的消息');
+    expect(html).toContain('跳转到 @sonnet 的消息');
+    expect(html).toContain('跳转到 @gemini25 的消息');
   });
 
-  it('treats messages with catId as assistant even when type is user', () => {
+  it('uses from agent identity even when legacy type is user', () => {
     const msgs = [makeMsg('m1', 'user'), makeMsg('m2', 'user', 'gpt52'), makeMsg('m3', 'assistant', 'codex')];
     const html = render(msgs);
 
-    expect(html).toContain('跳转到 gpt52 的消息');
+    expect(html).toContain('跳转到 @gpt52 的消息');
 
     const ownerLabels = html.match(/跳转到 始皇帝 的消息/g) ?? [];
     expect(ownerLabels.length).toBe(1);
@@ -123,7 +126,7 @@ describe('MessageNavigator', () => {
     const msgs = [makeMsg('m1', 'user'), makeMsg('m2', 'assistant', 'kimi'), makeMsg('m3', 'assistant', 'codex')];
     const html = render(msgs);
 
-    expect(html).toContain('跳转到 kimi 的消息');
+    expect(html).toContain('跳转到 @kimi 的消息');
   });
 
   it('includes accessibility labels', () => {
@@ -131,7 +134,7 @@ describe('MessageNavigator', () => {
     const html = render(msgs);
 
     expect(html).toContain('跳转到 始皇帝 的消息');
-    expect(html).toContain('跳转到 codex 的消息');
+    expect(html).toContain('跳转到 @codex 的消息');
   });
 
   it('samples at fixed intervals when messages exceed MAX_DOTS (18)', () => {

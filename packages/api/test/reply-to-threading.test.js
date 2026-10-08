@@ -8,6 +8,90 @@ import { describe, test } from 'node:test';
 import { canonicalTestMessageInput } from './helpers/message-from-fixtures.js';
 
 describe('replyTo threading', () => {
+  test('reply and Queue preview preserve canonical sender identity and display metadata', async () => {
+    const { MessageStore, hydrateReplyPreview } = await import(
+      '../dist/domains/cats/services/stores/ports/MessageStore.js'
+    );
+    const { enrichQueueEntries, emitQueueUpdated } = await import('../dist/utils/queue-enrichment.js');
+    const { connectorDeliveryHarness } = await import('./helpers/connector-delivery-harness.js');
+    const identities = [
+      { kind: 'external', connectorId: 'github-wait' },
+      { kind: 'external', connectorId: 'custom', sender: { id: 'actor', name: 'Alice' } },
+      { kind: 'plugin', instanceId: 'plugin-instance' },
+      { kind: 'system', service: 'system-service' },
+      { kind: 'user', userId: 'user-1' },
+      { kind: 'agent', catId: 'opus' },
+    ];
+    for (const from of identities) {
+      const store = new MessageStore();
+      const source =
+        from.kind === 'external' || from.kind === 'system'
+          ? {
+              connector: from.kind === 'external' ? from.connectorId : 'custom',
+              label: 'Display Room',
+              icon: '🧩',
+            }
+          : undefined;
+      const connector = connectorDeliveryHarness({ messageStore: store });
+      let parentId;
+      if (source) {
+        const result = await connector.delivery.deliver({
+          ownerUserId: 'user-1',
+          threadId: 'thread-1',
+          targetCatId: 'opus',
+          content: 'content',
+          from,
+          source,
+          idempotencyKey: 'key',
+        });
+        assert.equal(result.state, 'started');
+        const [entry] = connector.admitted('thread-1', 'user-1');
+        parentId = entry.payload.messageId;
+        const [enriched] = await enrichQueueEntries([entry], store);
+        assert.deepEqual(enriched.from, from);
+        assert.deepEqual(enriched.messagePreview.source, source);
+        // The immediate event never joins History; a blocked preview cannot delay dispatch publication.
+        const emitted = [];
+        await emitQueueUpdated(
+          { emitToUser: (...args) => emitted.push(args) },
+          'user-1',
+          'thread-1',
+          [entry],
+          'enqueue',
+        );
+        assert.deepEqual(emitted[0][2].queue[0].from, from);
+      } else {
+        parentId = store.append({
+          from,
+          userId: 'user-1',
+          threadId: 'thread-1',
+          content: 'content',
+          mentions: [],
+          timestamp: 1,
+          ...(from.kind === 'plugin'
+            ? {
+                extra: {
+                  pluginMessage: {
+                    instanceId: from.instanceId,
+                    revision: 1,
+                    provenance: { origin: from, epistemicStatus: 'inference' },
+                    elements: [],
+                  },
+                },
+              }
+            : {}),
+        }).id;
+      }
+      const preview = await hydrateReplyPreview(store, parentId);
+      assert.deepEqual(preview.from, from);
+      assert.deepEqual(preview.source, source);
+      store.softDelete(parentId, 'user-1');
+      const deleted = await hydrateReplyPreview(store, parentId);
+      assert.equal(deleted.deleted, true);
+      assert.deepEqual(deleted.from, from);
+      assert.equal(deleted.source, undefined);
+    }
+  });
   // ── StoredMessage persistence ──
 
   test('append() persists replyTo field', async () => {

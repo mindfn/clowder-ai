@@ -35,7 +35,7 @@ export function messageRendersNothing(
   timeline: readonly ChatMessage[],
   context: VisibilityContext = {},
 ): boolean {
-  const isOwn = message.type === 'user' && !message.catId;
+  const isOwn = message.from?.kind === 'user';
 
   // The first thing ChatMessage does: a summary with its content is a card (without it, the row falls through to nothing).
   if (message.type === 'summary' && message.summary) return false;
@@ -55,7 +55,7 @@ export function messageRendersNothing(
     return false;
   }
 
-  if (message.type === 'connector' && message.source) {
+  if (message.from?.kind === 'external' || message.from?.kind === 'plugin' || message.type === 'connector') {
     return isConnectorSystemNotice(message) && isLinkedCloudBindingRecoveryNotice(message, timeline);
   }
 

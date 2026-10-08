@@ -263,6 +263,7 @@ export class CallbackAuthSystemMessageNotifier {
       threadId: params.threadId,
       message: {
         id: stored.id,
+        from: stored.from,
         type: 'connector',
         content: stored.content,
         source: CALLBACK_AUTH_SOURCE,

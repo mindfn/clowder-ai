@@ -72,12 +72,7 @@ describe('delivered input belongs to the member response', () => {
     };
     act(() =>
       root.render(
-        <AppendedInputReceipts
-          response={response}
-          timelineMessages={[source]}
-          coCreatorName="owner"
-          getCatLabel={(id) => id}
-        />,
+        <AppendedInputReceipts response={response} timelineMessages={[source]} getCatById={() => undefined} />,
       ),
     );
     const row = container.querySelector('[data-appended-input-id="appended-source"]');

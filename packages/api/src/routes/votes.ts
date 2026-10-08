@@ -105,6 +105,7 @@ export async function closeVoteInternal(
         threadId,
         message: {
           id: stored.id,
+          from: stored.from,
           type: 'connector',
           content: stored.content,
           source: VOTE_RESULT_SOURCE,
@@ -303,6 +304,7 @@ export const voteRoutes: FastifyPluginAsync<VoteRoutesOptions> = async (app, opt
             threadId,
             message: {
               id: stored.id,
+              from: stored.from,
               type: 'connector',
               content: stored.content,
               source: VOTE_RESULT_SOURCE,
@@ -412,6 +414,7 @@ export const voteRoutes: FastifyPluginAsync<VoteRoutesOptions> = async (app, opt
           threadId,
           message: {
             id: stored.id,
+            from: stored.from,
             type: 'connector',
             content: stored.content,
             source: VOTE_RESULT_SOURCE,

@@ -5,6 +5,8 @@ import type { ChatMessage } from '@/stores/chat-types';
 import { focusLineageMessage } from '@/utils/focusLineageMessage';
 import { AppendedInputReceipts } from '../AppendedInputReceipts';
 
+vi.mock('@/hooks/useCoCreatorConfig', () => ({ useCoCreatorConfig: () => ({ name: 'lang' }) }));
+
 vi.mock('@/utils/focusLineageMessage', () => ({ focusLineageMessage: vi.fn() }));
 
 Object.assign(globalThis as Record<string, unknown>, { React });
@@ -111,8 +113,7 @@ describe('AppendedInputReceipts: expand in place, jump separately', () => {
         <AppendedInputReceipts
           response={responseFor(sources)}
           timelineMessages={sources}
-          coCreatorName="lang"
-          getCatLabel={(catId) => catId}
+          getCatById={() => undefined}
         />,
       );
     });

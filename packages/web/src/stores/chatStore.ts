@@ -1,4 +1,4 @@
-import { type ThreadArtifactDTO, timelineMessageKind } from '@cat-cafe/shared';
+import { type ReplyPreview, type ThreadArtifactDTO, timelineMessageKind } from '@cat-cafe/shared';
 import { create } from 'zustand';
 import { getCachedCats } from '@/hooks/useCatData';
 import { formatCatDisplayName } from '@/lib/cat-display-name';
@@ -984,7 +984,7 @@ export interface ChatState {
       extra?: Record<string, unknown>;
       origin?: 'stream' | 'callback' | 'briefing';
       replyTo?: string;
-      replyPreview?: { senderCatId: string | null; content: string; deleted?: boolean; kind?: string };
+      replyPreview?: ReplyPreview;
       mentionsUser?: boolean;
       // Connector framing travels with the delivered envelope. Without it the client cannot tell a
       // connector notice from an ordinary system line, and the card degrades to plain text.
@@ -1108,8 +1108,8 @@ export interface ChatState {
   setShowVoteModal: (show: boolean) => void;
 
   // ── #699: Reply-to (quote) state (threadId scoped for split-pane safety) ──
-  replyToMessage: { id: string; content: string; senderCatId: string | null; threadId: string } | null;
-  setReplyTo: (msg: { id: string; content: string; senderCatId: string | null; threadId: string }) => void;
+  replyToMessage: (ReplyPreview & { id: string; threadId: string }) | null;
+  setReplyTo: (msg: ReplyPreview & { id: string; threadId: string }) => void;
   clearReplyTo: () => void;
 }
 
@@ -1853,7 +1853,19 @@ export const useChatStore = create<ChatState>((set, get) => ({
 
   // ── #699: Reply-to (quote) state ──
   replyToMessage: null,
-  setReplyTo: (msg) => set({ replyToMessage: msg }),
+  setReplyTo: (msg) =>
+    set((state) => {
+      const messages =
+        msg.threadId === state.currentThreadId ? state.messages : (state.threadStates[msg.threadId]?.messages ?? []);
+      const parent = messages.find((message) => message.id === msg.id);
+      return {
+        replyToMessage: {
+          ...msg,
+          ...(parent?.from ? { from: parent.from } : {}),
+          ...(parent?.source ? { source: parent.source } : {}),
+        },
+      };
+    }),
   clearReplyTo: () => set({ replyToMessage: null }),
 
   // ── Active-thread actions ──
