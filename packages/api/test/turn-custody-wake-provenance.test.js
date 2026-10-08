@@ -235,6 +235,30 @@ describe('F167 Phase T queue wake provenance', () => {
     );
   });
 
+  it('preserves the fork policy for every declared ordinary return without inventing a carrier', async () => {
+    for (const sourceCategory of ['ci', 'review', 'conflict', 'issue', 'continuation', 'a2a_failure']) {
+      const wake = await resolveQueueTurnCustodyWake(
+        entry({ sourceCategory, callerCatId: undefined, a2aTriggerMessageId: undefined }),
+        {
+          getById: async () => {
+            throw new Error('ordinary returns must not query a made-up carrier');
+          },
+        },
+      );
+      assert.deepEqual(wake, { kind: 'unstructured', source: 'queue_delivery' }, sourceCategory);
+    }
+  });
+
+  it('does not let a producer-return declaration bypass an existing action fence', async () => {
+    assert.deepEqual(
+      await resolveQueueTurnCustodyWake(
+        entry({ sourceCategory: 'producer_return', actionSuccessorFence: { leaseId: 'lease-1', generation: 3 } }),
+        noMessage,
+      ),
+      { kind: 'action_successor', leaseId: 'lease-1', generation: 3, holderCatId: 'codex-sol' },
+    );
+  });
+
   it('classifies machine-proven FYI, coordinate, and terminal coordination wakes as obligation-free', async () => {
     const cases = [
       {
@@ -322,6 +346,36 @@ describe('F167 Phase T queue wake provenance', () => {
     );
   });
 
+  it('classifies producer-return connector entries as unstructured (no stop-gate obligation)', async () => {
+    // Positive: connector with explicit producer_return sourceCategory → unstructured
+    assert.deepEqual(
+      await resolveQueueTurnCustodyWake(
+        entry({
+          source: 'connector',
+          sourceCategory: 'producer_return',
+          callerCatId: undefined,
+          a2aTriggerMessageId: undefined,
+        }),
+        noMessage,
+      ),
+      { kind: 'unstructured', source: 'producer_return' },
+    );
+
+    // Negative: connector WITHOUT sourceCategory still fails closed (legacy/carrier_missing)
+    assert.deepEqual(
+      await resolveQueueTurnCustodyWake(
+        entry({
+          source: 'connector',
+          sourceCategory: undefined,
+          callerCatId: undefined,
+          a2aTriggerMessageId: undefined,
+        }),
+        noMessage,
+      ),
+      { kind: 'legacy', reason: 'carrier_missing' },
+    );
+  });
+
   it('maps wake carriers to bounded trace source categories', () => {
     assert.equal(
       turnCustodyWakeSourceCategory({ kind: 'legacy', reason: 'carrier_missing', sourceCategory: 'review' }),
@@ -330,6 +384,7 @@ describe('F167 Phase T queue wake provenance', () => {
     assert.equal(turnCustodyWakeSourceCategory({ kind: 'legacy', reason: 'source_missing' }), 'unknown');
     assert.equal(turnCustodyWakeSourceCategory({ kind: 'unstructured', source: 'user_chat' }), 'user');
     assert.equal(turnCustodyWakeSourceCategory({ kind: 'unstructured', source: 'queue_delivery' }), 'queue');
+    assert.equal(turnCustodyWakeSourceCategory({ kind: 'unstructured', source: 'producer_return' }), 'producer_return');
     assert.equal(
       turnCustodyWakeSourceCategory({
         kind: 'action_successor',

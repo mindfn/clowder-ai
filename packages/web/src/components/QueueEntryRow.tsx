@@ -1,8 +1,10 @@
 'use client';
 
+import { getConnectorDefinition } from '@cat-cafe/shared';
 import { useSortable } from '@dnd-kit/sortable';
 import { CSS } from '@dnd-kit/utilities';
 import { LongFormReader } from '@/components/content-overflow';
+import { HOST_CONTENT_REVIEW_CONNECTOR, hostReturnHeadline } from '@/components/content-review/host-return-headline';
 import type { ChatMessage } from '@/stores/chat-types';
 import type { QueueEntry } from '@/stores/chatStore';
 import { AvatarImageWithFallback } from './AvatarImageWithFallback';
@@ -26,25 +28,35 @@ function exactMessageById(messages: readonly ChatMessage[], messageId: string): 
 }
 
 /** Queue UI reads delivery directly from the canonical source refs already present in Chat History. */
-export function readTargetIdsFromHistory(sourceMessageId: string, messages: readonly ChatMessage[]): string[] {
+export function deliveredTargetIdsFromHistory(sourceMessageId: string, messages: readonly ChatMessage[]): string[] {
   const source = exactMessageById(messages, sourceMessageId);
   const refs = source?.lifecycle?.dispatchRefs ?? [];
   return refs.flatMap((ref) => {
     const status = exactMessageById(messages, ref.statusMessageId)?.lifecycle;
-    const targetReadSource =
+    const targetDeliveredSource =
       status?.kind === 'response' &&
       status.targetId === ref.targetId &&
       status.inputMessageIds.includes(sourceMessageId);
-    return targetReadSource ? [ref.targetId] : [];
+    return targetDeliveredSource ? [ref.targetId] : [];
   });
 }
 
-function QueueTarget({ catId, label, avatar, read }: { catId: string; label: string; avatar?: string; read: boolean }) {
+function QueueTarget({
+  catId,
+  label,
+  avatar,
+  delivered,
+}: {
+  catId: string;
+  label: string;
+  avatar?: string;
+  delivered: boolean;
+}) {
   return (
     <span className="inline-flex items-center gap-1 whitespace-nowrap" data-queue-target-row={catId}>
       <AvatarImageWithFallback src={avatar} alt="" className="h-5 w-5 rounded-full object-cover" />
       <span className="text-xs font-medium text-cafe-secondary">{label}</span>
-      {read && <span className="text-micro text-cafe-muted">（已读）</span>}
+      {delivered && <span className="text-micro text-cafe-muted">（已投递）</span>}
     </span>
   );
 }
@@ -55,7 +67,7 @@ export interface QueueEntryRowProps {
   imageCount: number;
   ownerName: string;
   ownerAvatar?: string;
-  readTargetIds: readonly string[];
+  deliveredTargetIds: readonly string[];
   resolveCatName: (catId: string) => string;
   resolveCatAvatar: (catId: string) => string | undefined;
   onRemove: (id: string) => void;
@@ -81,7 +93,7 @@ function QueueEntryRow({
   imageCount,
   ownerName,
   ownerAvatar,
-  readTargetIds,
+  deliveredTargetIds,
   resolveCatName,
   resolveCatAvatar,
   onRemove,
@@ -95,13 +107,13 @@ function QueueEntryRow({
   const categoryLabel = entry.sourceCategory ? SOURCE_CATEGORY_LABEL[entry.sourceCategory] : null;
   const rowToneClass = isAgent ? 'bg-[var(--color-cocreator-surface)]' : '';
 
-  const readTargets = new Set(readTargetIds);
-  const targetIds = [...new Set([...entry.targetCats, ...readTargets])];
+  const deliveredTargets = new Set(deliveredTargetIds);
+  const targetIds = [...new Set([...entry.targetCats, ...deliveredTargets])];
   const sourceLabel =
     entry.from.kind === 'agent'
       ? resolveCatName(entry.from.catId)
       : entry.from.kind === 'external'
-        ? (entry.from.sender?.name ?? 'Connector')
+        ? (getConnectorDefinition(entry.from.connectorId)?.displayName ?? entry.from.sender?.name ?? 'Connector')
         : entry.from.kind === 'plugin'
           ? 'Plugin'
           : entry.from.kind === 'system'
@@ -113,6 +125,10 @@ function QueueEntryRow({
       : entry.from.kind === 'user'
         ? ownerAvatar
         : undefined;
+  const summary =
+    entry.from.kind === 'external' && entry.from.connectorId === HOST_CONTENT_REVIEW_CONNECTOR
+      ? hostReturnHeadline(entry.content)
+      : entry.content;
 
   return (
     <div className={`flex items-start gap-2 px-3 py-2 rounded-lg ${rowToneClass}`}>
@@ -134,7 +150,7 @@ function QueueEntryRow({
       <div className="flex-1 min-w-0">
         <LongFormReader
           title={`排队消息 · ${sourceLabel}`}
-          summary={entry.content}
+          summary={summary}
           accessibleSummary={`排队消息，来源 ${sourceLabel}。完整内容请使用查看全文按钮。`}
           content={entry.content}
           format="markdown"
@@ -162,7 +178,7 @@ function QueueEntryRow({
                     catId={catId}
                     label={resolveCatName(catId)}
                     avatar={resolveCatAvatar(catId)}
-                    read={readTargets.has(catId)}
+                    delivered={deliveredTargets.has(catId)}
                   />
                 );
               })}

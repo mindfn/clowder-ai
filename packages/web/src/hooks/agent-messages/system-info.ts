@@ -1,22 +1,19 @@
 import {
+  writeCliDiagnostics,
   writeMessageMetadata,
   writePostRichBlock,
   writeRichBlock,
   writeThinking,
   writeToolEvent,
 } from '@/hooks/named-message-writer';
+import { servedFactsFromUsagePayload } from '@/lib/served-model-facts';
 import type { RichBlock, TokenUsage } from '@/stores/chat-types';
-import {
-  formatSessionSealRequested,
-  formatVisibleSystemInfo,
-  isSystemInfoProtocolPayload,
-} from '../system-info-visible';
+import { formatVisibleSystemInfo, isSystemInfoProtocolPayload } from '../system-info-visible';
 import { dropUnnamedBodyWrite, isLateForCommittedResponse, namedTarget, touchStreamActivity } from './named-target';
 import type { SystemInfoPort } from './system-info-port';
 import { projectStatusSystemInfo } from './system-info-status';
 import {
   isRecord,
-  projectProviderRecoveryMessage,
   resolveSemanticSystemMessage,
   retainSystemInfo,
   stringField,
@@ -41,6 +38,12 @@ export function consumeSystemInfo(msg: SystemInfoEvent, port: SystemInfoPort): S
     protocolPayload = isSystemInfoProtocolPayload(parsed);
     if (isRecord(parsed)) projectPayload(parsed, msg, port, out);
   } catch (error) {
+    if (msg.type === 'provider_signal') {
+      out.consumed = true;
+      if (msg.content && !isLateForCommittedResponse(msg, port.threadId, port.store()))
+        port.setCatStatus(msg.catId, 'spawning', msg.content);
+      return out;
+    }
     // A recognized protocol envelope stays hidden even when its projector fails; the failure is a
     // diagnostic. Plain text that does not parse stays on the visible fallback path.
     if (protocolPayload) out.consumed = true;
@@ -64,14 +67,10 @@ function projectPayload(
   port: SystemInfoPort,
   out: SystemInfoConsumeResult,
 ): void {
-  const providerRecovery = projectProviderRecoveryMessage(parsed, {
-    catId: msg.catId,
-    invocationId: msg.invocationId,
-    turnInvocationId: msg.turnInvocationId,
-    timestamp: msg.timestamp,
-  });
-  if (providerRecovery) {
-    upsertSystemRow(port, providerRecovery);
+  if (parsed.type === 'silent_completion') {
+    const target = namedTarget(msg, port.threadId);
+    if (target && msg.metadata?.cliDiagnostics && !isLateForCommittedResponse(msg, port.threadId, port.store()))
+      writeCliDiagnostics(target, msg.metadata.cliDiagnostics, port.store);
     out.consumed = true;
     return;
   }
@@ -87,15 +86,11 @@ function projectPayload(
     return;
   }
   if (parsed.type === 'session_seal_requested') {
-    // F24 Phase B: the sealed session is recorded and announced once as a readable notice.
+    // Client-internal continuity: update the existing invocation, never create a result row.
     const sealedCatId = stringField(parsed, 'catId');
     if (!sealedCatId) return;
     port.setCatInvocation(sealedCatId, { sessionSeq: parsed.sessionSeq as number | undefined, sessionSealed: true });
-    const sealNotice = formatSessionSealRequested(parsed, port.resolveCatName);
-    if (sealNotice) {
-      out.content = sealNotice.content;
-      out.systemInfo = retainSystemInfo(parsed, msg.catId);
-    }
+    out.consumed = true;
   }
 }
 
@@ -113,7 +108,11 @@ const writeInvocationUsage: BodyProjector = (parsed, msg, port) => {
     const provider = stringField(parsed, 'provider');
     writeMessageMetadata(
       target,
-      { ...(model && provider ? { metadata: { model, provider } } : {}), ...(usage ? { usage } : {}) },
+      {
+        ...(model && provider ? { metadata: { model, provider } } : {}),
+        ...(usage ? { usage } : {}),
+        served: servedFactsFromUsagePayload(parsed),
+      },
       port.store,
     );
   }

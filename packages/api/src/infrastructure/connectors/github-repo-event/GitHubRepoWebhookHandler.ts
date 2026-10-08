@@ -20,6 +20,7 @@ import type { IConnectorThreadBindingStore } from '../ConnectorThreadBindingStor
 import { type InboxThreadStore, resolveInboxThread } from './inbox-thread-resolver.js';
 import type { ReconciliationDedup } from './ReconciliationDedup.js';
 import type { RedisDeliveryDedup, RedisLike } from './RedisDeliveryDedup.js';
+import type { ResolveRepoInboxCatId } from './RepoInboxOwnerResolver.js';
 import type { GitHubRepoInboxConfig, RepoInboxSignal } from './types.js';
 import { verifyGitHubSignature } from './verify-signature.js';
 
@@ -65,6 +66,8 @@ export interface GitHubRepoHandlerDeps {
   readonly deliveryDeps: ConnectorDeliveryDeps;
   readonly redis?: RedisLike; // KD-20: per-repo inbox thread creation lock
   readonly reconciliationDedup?: Pick<ReconciliationDedup, 'markNotified'>; // Phase B bridge
+  /** Dynamic canonical owner lookup. Called once immediately before each delivery. */
+  readonly resolveInboxCatId?: ResolveRepoInboxCatId;
   // F168 Phase A: community event log + projector (best-effort, optional)
   readonly eventLog?: ICommunityEventLog;
   readonly projector?: ICommunityProjectorApply;
@@ -174,6 +177,10 @@ export class GitHubRepoWebhookHandler {
     }
 
     try {
+      const inboxCatId = this.deps.resolveInboxCatId
+        ? await this.deps.resolveInboxCatId(signal.repoFullName)
+        : this.config.inboxCatId;
+
       // 8. Find or create per-repo inbox thread (KD-14, KD-20)
       const threadId = await this.ensureInboxThread(signal.repoFullName);
 
@@ -204,7 +211,7 @@ export class GitHubRepoWebhookHandler {
       delivered = await this.deps.deliverFn(this.deps.deliveryDeps, {
         threadId,
         userId: this.config.defaultUserId,
-        catId: this.config.inboxCatId,
+        catId: inboxCatId,
         content,
         source,
         idempotencyKey: `github-repo-event:${deliveryId}`,

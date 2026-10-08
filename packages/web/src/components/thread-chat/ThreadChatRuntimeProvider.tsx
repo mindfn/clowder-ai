@@ -58,7 +58,7 @@ export function ThreadChatRuntimeProvider({ children, routeThreadId }: ThreadCha
   const indexEventHandlersRef = useRef(new Map<symbol, IndexEventHandler>());
   const storeThreadId = useChatStore((state) => state.currentThreadId);
   const activeThreadId = routeThreadId || storeThreadId;
-  const { handleAgentMessage, resetTimeout, clearDoneTimeout } = useAgentMessages();
+  const { handleAgentMessage } = useAgentMessages();
 
   useLayoutEffect(() => {
     runtimeMountedRef.current = true;
@@ -77,8 +77,6 @@ export function ThreadChatRuntimeProvider({ children, routeThreadId }: ThreadCha
     threadId: activeThreadId,
     userId: getUserId(),
     handleAgentMessage,
-    resetTimeout,
-    clearDoneTimeout,
     onNavigateToThread: navigateToThread,
     onIndexEvent: dispatchIndexEvent,
   });

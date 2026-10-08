@@ -1,5 +1,5 @@
 import { isDeepStrictEqual } from 'node:util';
-import { createCatId } from '@cat-cafe/shared';
+import { createCatId, type WaitContinuationCarrierV1 } from '@cat-cafe/shared';
 import type { OwnerAuthProvenance } from '../../owner-auth-provenance.js';
 import type { AppendMessageInput, IMessageStore, StoredMessage } from '../../stores/ports/MessageStore.js';
 import type { InvocationQueue, QueueEntry } from './InvocationQueue.js';
@@ -27,8 +27,10 @@ export interface PersistedQueueDeliveryInput {
   ownerAuthProvenance?: OwnerAuthProvenance;
   /** Producer hint about which skill this input needs; carried on the Queue row, not inferred. */
   suggestedSkill?: string;
-  /** Producer's own category label for the Queue row (ci / review / scheduled / issue / a2a). */
-  sourceCategory?: 'ci' | 'review' | 'conflict' | 'scheduled' | 'a2a' | 'issue';
+  /** Explicit producer category; an ordinary return does not create a carrier. */
+  sourceCategory?: 'ci' | 'review' | 'conflict' | 'scheduled' | 'a2a' | 'issue' | 'producer_return';
+  /** Typed owner authority supplied by a wait producer, never inferred from prose/category. */
+  waitContinuationCarrier?: WaitContinuationCarrierV1;
   /** Structured payload parts (IM media, cards) that belong to the same input as its text. */
   contentBlocks?: StoredMessage['contentBlocks'];
   /**
@@ -54,7 +56,7 @@ export interface PrivateQueueDeliveryInput {
   content: string;
   from: NonNullable<StoredMessage['from']>;
   priority?: 'urgent' | 'normal';
-  sourceCategory?: 'ci' | 'review' | 'conflict' | 'scheduled' | 'a2a' | 'issue';
+  sourceCategory?: PersistedQueueDeliveryInput['sourceCategory'];
   ownerAuthProvenance?: OwnerAuthProvenance;
 }
 
@@ -149,6 +151,7 @@ export class PersistedQueueDelivery implements PersistedQueueDeliveryPort {
         ...(input.priority ? { priority: input.priority } : {}),
         ...(input.suggestedSkill ? { suggestedSkill: input.suggestedSkill } : {}),
         ...(input.sourceCategory ? { sourceCategory: input.sourceCategory } : {}),
+        ...(input.waitContinuationCarrier ? { waitContinuationCarrier: input.waitContinuationCarrier } : {}),
       },
     );
     // Typed like every other queue-full refusal in the codebase (ROUTE_QUEUE_FULL) so callers can
@@ -163,6 +166,12 @@ export class PersistedQueueDelivery implements PersistedQueueDeliveryPort {
     }
     const entry = admitted.entry;
     if (!entry) return { state: 'unavailable' as const, reason: 'Queue admission is unavailable', message };
+    if (entry.sourceCategory !== input.sourceCategory) {
+      return { state: 'conflict' as const, reason: 'Persisted producer category does not match', message };
+    }
+    if (!isDeepStrictEqual(entry.execution?.waitContinuationCarrier, input.waitContinuationCarrier)) {
+      return { state: 'conflict' as const, reason: 'Persisted wait authority does not match', message };
+    }
     if (entry.status === 'claimed' || entry.status === 'processing') {
       return { state: 'already_processing' as const, entryId: entry.id, message };
     }
@@ -249,6 +258,12 @@ export class PersistedQueueDelivery implements PersistedQueueDeliveryPort {
     const entryId = queueEntryId(existing.id);
     const entry = await this.deps.queue.getDurableEntry(input.threadId, entryId);
     if (entry) {
+      if (entry.sourceCategory !== input.sourceCategory) {
+        return { state: 'conflict', reason: 'Persisted producer category does not match', message: existing };
+      }
+      if (!isDeepStrictEqual(entry.execution?.waitContinuationCarrier, input.waitContinuationCarrier)) {
+        return { state: 'conflict', reason: 'Persisted wait authority does not match', message: existing };
+      }
       if (entry.status === 'claimed' || entry.status === 'processing') {
         return { state: 'already_processing', entryId, message: existing };
       }

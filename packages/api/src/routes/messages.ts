@@ -63,6 +63,7 @@ import type { SocketManager } from '../infrastructure/websocket/index.js';
 import { normalizeJsonUnicode } from '../utils/json-unicode.js';
 import { getDefaultUploadDir } from '../utils/upload-paths.js';
 import { admitThreadParticipants } from './thread-participant-admission.js';
+import { readUserMessageReceipt } from './user-message-receipt.js';
 
 type StoredRecovery = NonNullable<StoredMessage['extra']>['recovery'];
 
@@ -408,13 +409,29 @@ export const messagesRoutes: FastifyPluginAsync<MessagesRoutesOptions> = async (
     }
     const ownerAuthProvenance: OwnerAuthProvenance =
       resolveStrictUserId(request) === userId ? 'strict' : 'compatibility_fallback';
+    const liveSessionHeader = request.headers['x-cat-cafe-live-session'];
+    if (
+      liveSessionHeader !== undefined &&
+      (typeof liveSessionHeader !== 'string' ||
+        !liveSessionHeader ||
+        ownerAuthProvenance !== 'strict' ||
+        messageBundleRequest ||
+        whisperVisibility ||
+        messageDisposition === 'continue_current')
+    )
+      return reply.code(400).send({ error: 'Invalid Live admission', code: 'INVALID_LIVE_ADMISSION' });
+    const liveSessionId = typeof liveSessionHeader === 'string' ? liveSessionHeader : undefined;
 
     // Default to 'default' thread for lobby (prevents global broadcast)
     const resolvedThreadId = threadId ?? 'default';
+    if (!opts.invocationQueue || !opts.queueProcessor) {
+      return reply.code(503).send({ error: 'Message delivery is unavailable', code: 'MESSAGE_DELIVERY_UNAVAILABLE' });
+    }
     // A retried no-mention send must retain the target that won the original
     // atomic admission even if a newer reply has since changed the fallback.
     // Queue remains the sole owner of this immutable admission fact; History is
     // consulted only to locate the exact source record named by the idempotency key.
+    const receiptOwner = { userId, threadId: resolvedThreadId };
     const replayedSource =
       idempotencyKey && opts.invocationQueue
         ? await opts.messageStore.getByIdempotencyKey(userId, resolvedThreadId, idempotencyKey)
@@ -689,6 +706,27 @@ export const messagesRoutes: FastifyPluginAsync<MessagesRoutesOptions> = async (
         : sourceTargetCats;
     const visibleRoutingWarnings =
       whisperVisibility !== 'whisper' && routing_warnings?.length ? [...routing_warnings] : [];
+    if (liveSessionId && targetCats.length !== 1)
+      return reply.code(400).send({ error: 'Live requires one exact member', code: 'INVALID_LIVE_ADMISSION' });
+    if (replayedSource && (liveSessionId || replayedSource.extra?.liveAdmission)) {
+      const receipt = replayedSource.extra?.liveAdmission;
+      if (
+        !receipt ||
+        receipt.sessionId !== liveSessionId ||
+        receipt.targetId !== targetCats[0] ||
+        replayedSource.content !== content ||
+        replayedSource.threadId !== resolvedThreadId ||
+        replayedSource.userId !== userId
+      )
+        return reply.code(409).send({ error: 'Live admission identity conflict', code: 'LIVE_ADMISSION_CONFLICT' });
+      // Already accepted: return the same durable receipt before touching an ephemeral handle.
+      return reply.code(202).send({
+        status: 'queued',
+        merged: false,
+        userMessageId: replayedSource.id,
+        ...(await readUserMessageReceipt(opts.messageStore, replayedSource.id, receiptOwner, replayedSource)),
+      });
+    }
 
     // Sidebar participant presence is canonical ThreadStore truth, not a
     // side-effect of the first CLI event. Persist every resolved target (the
@@ -732,6 +770,7 @@ export const messagesRoutes: FastifyPluginAsync<MessagesRoutesOptions> = async (
     // Server-generated idempotency key if client didn't provide one
     const resolvedIdempotencyKey = idempotencyKey ?? randomUUID();
     const sourcePayloadExtra: NonNullable<StoredMessage['extra']> = {
+      ...(liveSessionId ? { liveAdmission: { sessionId: liveSessionId, targetId: targetCats[0]! } } : {}),
       ...(admittedMessageBundle ? { messageBundle: admittedMessageBundle.carrier } : {}),
       ...(visibleRoutingWarnings.length > 0 ? { routingWarnings: visibleRoutingWarnings } : {}),
     };
@@ -747,6 +786,7 @@ export const messagesRoutes: FastifyPluginAsync<MessagesRoutesOptions> = async (
         threadId: resolvedThreadId,
       });
       const queueInput = {
+        ...(liveSessionId ? { liveSessionId } : {}),
         from: { kind: 'user' as const, userId },
         threadId: resolvedThreadId,
         userId,
@@ -772,27 +812,54 @@ export const messagesRoutes: FastifyPluginAsync<MessagesRoutesOptions> = async (
           }),
         intent: intent.intent,
       };
-      const enqueueResult = await opts.invocationQueue.appendAndEnqueueDurable(
-        opts.messageStore,
-        {
-          from: queueInput.from,
-          userId,
-          content,
-          // Routing fallback is server-owned metadata, not an @mention the user wrote.
-          mentions: sourceTargetCats,
-          timestamp: Date.now(),
-          threadId: resolvedThreadId,
-          idempotencyKey: resolvedIdempotencyKey,
-          deliveryStatus: 'queued',
-          ...(contentBlocks ? { contentBlocks } : {}),
-          ...(whisperVisibility && whisperRecipients
-            ? { visibility: whisperVisibility, whisperTo: whisperRecipients }
-            : {}),
-          ...(replyTo ? { replyTo } : {}),
-          ...sourcePayloadWrite,
-        },
-        queueInput,
-      );
+      const enqueueResult = await opts.invocationQueue
+        .appendAndEnqueueDurable(
+          opts.messageStore,
+          {
+            from: queueInput.from,
+            userId,
+            content,
+            // Routing fallback is server-owned metadata, not an @mention the user wrote.
+            mentions: sourceTargetCats,
+            timestamp: Date.now(),
+            threadId: resolvedThreadId,
+            idempotencyKey: resolvedIdempotencyKey,
+            deliveryStatus: 'queued',
+            ...(contentBlocks ? { contentBlocks } : {}),
+            ...(whisperVisibility && whisperRecipients
+              ? { visibility: whisperVisibility, whisperTo: whisperRecipients }
+              : {}),
+            ...(replyTo ? { replyTo } : {}),
+            ...sourcePayloadWrite,
+          },
+          queueInput,
+        )
+        .catch(async (error: unknown) => {
+          if (!liveSessionId) throw error;
+          // The preflight replay lookup may precede another request's atomic
+          // admission. Only the immutable committed source can prove a conflict;
+          // an unknown write/read outcome must retain its original error.
+          const committed = await opts.messageStore.getByIdempotencyKey(
+            userId,
+            resolvedThreadId,
+            resolvedIdempotencyKey,
+          );
+          if (!committed) throw error;
+          const receipt = committed.extra?.liveAdmission;
+          if (
+            !receipt ||
+            receipt.sessionId !== liveSessionId ||
+            receipt.targetId !== targetCats[0] ||
+            committed.content !== content ||
+            committed.threadId !== resolvedThreadId ||
+            committed.userId !== userId
+          ) {
+            reply.code(409).send({ error: 'Live admission identity conflict', code: 'LIVE_ADMISSION_CONFLICT' });
+            return null;
+          }
+          throw error;
+        });
+      if (!enqueueResult) return;
 
       // Queue full → 429, no message written (no ghost message)
       if (enqueueResult.outcome === 'full') {
@@ -830,7 +897,11 @@ export const messagesRoutes: FastifyPluginAsync<MessagesRoutesOptions> = async (
       if (admittedMessageBundle) await publishAdmittedBundleParticipants();
 
       const admittedEntries = enqueueResult.entries ?? (enqueueResult.entry ? [enqueueResult.entry] : []);
-      if (requestedDisposition === 'continue_current' && opts.queueProcessor?.tryAutoAppendExactEntry) {
+      if (
+        !liveSessionId &&
+        requestedDisposition === 'continue_current' &&
+        opts.queueProcessor?.tryAutoAppendExactEntry
+      ) {
         for (const admittedEntry of admittedEntries) {
           if (admittedEntry.targets.length === 0) continue;
           for (const targetCatId of admittedEntry.targets) {
@@ -869,7 +940,6 @@ export const messagesRoutes: FastifyPluginAsync<MessagesRoutesOptions> = async (
           userId,
           resolvedThreadId,
           opts.invocationQueue.list(resolvedThreadId, userId),
-          opts.messageStore,
           enqueueResult.outcome,
         );
       }
@@ -887,6 +957,7 @@ export const messagesRoutes: FastifyPluginAsync<MessagesRoutesOptions> = async (
         ),
         merged: false,
         ...(storedUserMessageId ? { userMessageId: storedUserMessageId } : {}),
+        ...(await readUserMessageReceipt(opts.messageStore, storedUserMessageId, receiptOwner, enqueueResult.message)),
         ...(admittedMessageBundle && storedUserMessageId ? { messageBundleId: storedUserMessageId } : {}),
       };
     }
@@ -1006,7 +1077,6 @@ export const messagesRoutes: FastifyPluginAsync<MessagesRoutesOptions> = async (
         userId,
         source.threadId,
         opts.invocationQueue.list(source.threadId, userId),
-        opts.messageStore,
         admitted.outcome,
       );
       void opts.queueProcessor.requestDrain(source.threadId);
@@ -1151,7 +1221,11 @@ export const messagesRoutes: FastifyPluginAsync<MessagesRoutesOptions> = async (
         ...(m.metadata ? { metadata: m.metadata } : {}),
         ...(m.origin ? { origin: m.origin } : {}),
         ...(m.thinking ? { thinking: m.thinking } : {}),
-        ...(m.extra?.rich ||
+        ...(m.extra?.semanticEvent ||
+        m.extra?.liveCompanion ||
+        m.extra?.contentModificationRequestV1 ||
+        m.extra?.systemInfo ||
+        m.extra?.rich ||
         m.extra?.routingWarnings ||
         isCrossThreadProvenance(m.extra?.crossPost?.sourceThreadId, m.threadId) ||
         m.extra?.coordination ||
@@ -1170,6 +1244,14 @@ export const messagesRoutes: FastifyPluginAsync<MessagesRoutesOptions> = async (
         m.extra?.recovery
           ? {
               extra: {
+                ...(m.extra?.semanticEvent ? { semanticEvent: m.extra.semanticEvent } : {}),
+                ...(m.extra?.liveCompanion?.identity
+                  ? { liveCompanion: { identity: m.extra.liveCompanion.identity } }
+                  : {}),
+                ...(m.extra?.contentModificationRequestV1
+                  ? { contentModificationRequestV1: m.extra.contentModificationRequestV1 }
+                  : {}),
+                ...(m.extra?.systemInfo ? { systemInfo: m.extra.systemInfo } : {}),
                 ...(m.extra?.rich ? { rich: m.extra.rich } : {}),
                 ...(m.extra?.routingWarnings ? { routingWarnings: m.extra.routingWarnings } : {}),
                 ...(isCrossThreadProvenance(m.extra?.crossPost?.sourceThreadId, m.threadId)

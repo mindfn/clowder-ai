@@ -83,6 +83,8 @@ function assertQueueExecution(value: unknown): asserts value is QueueLedgerExecu
   ) {
     throw new Error('queue ledger owner auth provenance is invalid');
   }
+  if (value.liveSessionId !== undefined && (typeof value.liveSessionId !== 'string' || !value.liveSessionId))
+    throw new Error('queue ledger Live handle is invalid');
   if (typeof value.autoExecute !== 'boolean') throw new Error('queue ledger autoExecute is invalid');
   if (
     value.requiresExactCloudDispatchProvenance !== undefined &&
@@ -121,11 +123,27 @@ function assertQueueClassification(entry: Partial<QueueLedgerEntry>): void {
     'a2a',
     'a2a_failure',
     'continuation',
+    'producer_return',
     'issue',
     'freshness',
   ];
   if (entry.sourceCategory !== undefined && !sourceCategories.includes(entry.sourceCategory)) {
     throw new Error('queue ledger source category is invalid');
+  }
+}
+
+/** The public collective restriction follows the canonical ledger, not Message custody. */
+export function assertQueueLedgerExecutionScope(entry: Pick<QueueLedgerEntry, 'from' | 'targets' | 'execution'>): void {
+  const scope = entry.execution.executionScope;
+  if (scope === undefined) return;
+  if (scope !== 'collective-participation' && scope !== 'collective-work') {
+    throw new Error('queue ledger execution scope is invalid');
+  }
+  const domainSender =
+    entry.from.kind === 'external' ||
+    (scope === 'collective-work' && entry.from.kind === 'system' && entry.from.service === 'collective-work');
+  if (!domainSender || entry.targets.length !== 1 || entry.execution.ownerAuthProvenance !== 'unknown') {
+    throw new Error('queue ledger execution scope cannot elevate domain input to managed owner authority');
   }
 }
 
@@ -142,6 +160,16 @@ export function assertQueueLedgerEntry(value: unknown): asserts value is QueueLe
   if (!isMessageFrom(entry.from)) throw new Error('queue ledger sender is invalid');
   assertQueuePayload(entry.payload);
   assertQueueExecution(entry.execution);
+  if (
+    entry.execution.liveSessionId &&
+    (entry.kind !== 'conversation_input' ||
+      entry.from.kind !== 'user' ||
+      entry.owner.kind !== 'user' ||
+      entry.targets.length !== 1 ||
+      entry.execution.ownerAuthProvenance !== 'strict')
+  )
+    throw new Error('queue ledger Live admission scope is invalid');
+  assertQueueLedgerExecutionScope(entry as QueueLedgerEntry);
   if (!isRecord(entry.delivery)) throw new Error('queue ledger delivery is invalid');
   if (!isFiniteTimestamp(entry.enqueuedAt)) throw new Error('queue ledger enqueuedAt is invalid');
   assertOptionalTimestamp(entry.claimedAt, 'claimedAt');

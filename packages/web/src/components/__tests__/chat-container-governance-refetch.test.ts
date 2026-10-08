@@ -202,8 +202,6 @@ vi.mock('@/hooks/useAgentMessages', () => ({
   useAgentMessages: () => ({
     handleAgentMessage: vi.fn(),
     handleStop: vi.fn(),
-    resetTimeout: vi.fn(),
-    clearDoneTimeout: vi.fn(),
   }),
 }));
 

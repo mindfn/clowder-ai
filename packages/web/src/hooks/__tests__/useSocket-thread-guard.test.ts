@@ -84,7 +84,7 @@ const mockKnownThreadIds = new Set(['thread-A', 'thread-B', 'thread-C']);
 const mockGetThreadState = vi.fn((threadId: string) => {
   return {
     messages: [],
-    queue: [] as Array<{ id: string }>,
+    queue: mockThreadQueues.get(threadId) ?? [],
     isLoading: false,
     isLoadingHistory: false,
     hasMore: true,
@@ -275,7 +275,7 @@ describe('useSocket thread guard (P1 regression: cross-thread event leakage)', (
     mockGetThreadState.mockReset();
     mockGetThreadState.mockImplementation((threadId: string) => ({
       messages: [],
-      queue: [],
+      queue: mockThreadQueues.get(threadId) ?? [],
       isLoading: false,
       isLoadingHistory: false,
       hasMore: true,
@@ -455,6 +455,18 @@ describe('useSocket thread guard (P1 regression: cross-thread event leakage)', (
       'thread-A',
       expect.objectContaining({ id: 'response-1', extra: expect.objectContaining({ timeoutDiagnostics }) }),
     );
+  });
+
+  it('requests source-thread catch-up when a modification source is persisted without focusing that thread', () => {
+    const callbacks: SocketCallbacks = { onMessage: vi.fn() };
+    act(() => root.render(React.createElement(HookWrapper, { callbacks, threadId: 'thread-B' })));
+    mockRequestStreamCatchUp.mockClear();
+    act(() =>
+      simulateServerEvent('content_modification_source_saved', { threadId: 'thread-A', messageId: 'actual-source' }),
+    );
+    expect(mockRequestStreamCatchUp).toHaveBeenCalledExactlyOnceWith('thread-A');
+    expect(callbacks.onMessage).not.toHaveBeenCalled();
+    expect(mockStoreCurrentThreadId).toBe('thread-B');
   });
 
   it('receives preview auto-open on the stable chat socket across a thread switch', () => {
@@ -1213,7 +1225,7 @@ describe('useSocket thread guard (P1 regression: cross-thread event leakage)', (
       });
     });
 
-    expect(mockSetQueue).not.toHaveBeenCalled();
+    expect(mockSetQueue).toHaveBeenCalledWith('thread-B', [canonicalEntry]);
     await act(async () => {
       resolveQueueJson?.({ queue: [canonicalEntry], activeInvocations: [] });
       await Promise.resolve();
@@ -1221,8 +1233,53 @@ describe('useSocket thread guard (P1 regression: cross-thread event leakage)', (
     });
 
     expect(mockApiFetch).toHaveBeenCalledWith('/api/threads/thread-B/queue');
-    expect(mockSetQueue).toHaveBeenCalledTimes(1);
+    expect(mockSetQueue).toHaveBeenCalledTimes(2);
     expect(mockSetQueue).toHaveBeenCalledWith('thread-B', [canonicalEntry]);
+  });
+
+  it('retires delivered targets immediately and rejects a late GET snapshot after a newer socket event', async () => {
+    const row = {
+      id: 'q-1',
+      from: { kind: 'user', userId: 'test-user' },
+      targetCats: ['opus', 'codex'],
+      status: 'queued',
+      content: 'one source',
+      messageId: 'm-1',
+    };
+    mockThreadQueues.set('thread-B', [row]);
+    const resolvers: Array<(value: unknown) => void> = [];
+    mockApiFetch.mockImplementation(() =>
+      Promise.resolve({ ok: true, json: () => new Promise((resolve) => resolvers.push(resolve)) }),
+    );
+    act(() =>
+      root.render(React.createElement(HookWrapper, { callbacks: { onMessage: vi.fn() }, threadId: 'thread-B' })),
+    );
+    act(() =>
+      simulateServerEvent('queue_updated', {
+        threadId: 'thread-B',
+        queue: [{ ...row, targetCats: ['codex'] }],
+        action: 'processing',
+      }),
+    );
+    expect(mockThreadQueues.get('thread-B')).toEqual([{ ...row, targetCats: ['codex'] }]);
+    await act(async () => {
+      await Promise.resolve();
+    });
+    act(() => simulateServerEvent('queue_updated', { threadId: 'thread-B', queue: [], action: 'processing' }));
+    expect(mockThreadQueues.get('thread-B')).toEqual([]);
+    await act(async () => {
+      await Promise.resolve();
+    });
+    await act(async () => {
+      resolvers[0]?.({ queue: [row], activeInvocations: [] });
+      await Promise.resolve();
+    });
+    expect(mockThreadQueues.get('thread-B')).toEqual([]);
+    await act(async () => {
+      resolvers[1]?.({ queue: [], activeInvocations: [] });
+      await Promise.resolve();
+    });
+    expect(mockThreadQueues.get('thread-B')).toEqual([]);
   });
 
   it('forwards true recall and late receipt events with their source thread intact', () => {

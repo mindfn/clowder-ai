@@ -13,6 +13,7 @@ import {
   routingSignalClosures,
   routingSignalEventV1Schema,
 } from '@cat-cafe/shared';
+import type { CapabilityProfileDiagnostic } from './CapabilityProfileRevisionSource.js';
 
 export interface ReduceRoutingContextInput {
   ownerId: string;
@@ -21,6 +22,7 @@ export interface ReduceRoutingContextInput {
   intent?: 'review' | 'architecture';
   candidates: readonly RoutingCandidateBindingV1[];
   profiles: readonly CapabilityProfileRevisionRefV1[];
+  profileDiagnostics?: readonly CapabilityProfileDiagnostic[];
   signalEvents: readonly RoutingSignalEventV1[];
   preferenceRevisions: readonly RoutingPreferenceRevisionV1[];
 }
@@ -141,15 +143,6 @@ function inactiveSignalReason(signal: AssertedSignal, closer?: ClosingSignal): R
     summary: `${signal.reasonCode} expired without recovery evidence`,
     sourceRefs: [signal.eventId, signal.evidenceRef],
   };
-}
-
-function profileReasons(profile?: CapabilityProfileRevisionRefV1): RoutingReasonV1[] {
-  if (profile === undefined) return [];
-  return profile.relevantSignals.map((signal) => ({
-    code: `capability_${signal.kind}`,
-    summary: signal.summary,
-    sourceRefs: [profile.dossierRevision, ...signal.evidenceRefs],
-  }));
 }
 
 function effectForAvailability(availability: Availability): CandidateProjection['effect'] {
@@ -291,11 +284,16 @@ export function reduceRoutingContext(rawInput: ReduceRoutingContextInput): Routi
       .filter((preference) => preference.ownerId === rawInput.ownerId),
   );
   const profileHeads = selectProfileHeads(profiles);
+  const profileDiagnostics = rawInput.profileDiagnostics ?? [];
   const closures = routingSignalClosures(signalEvents);
 
   const projectedCandidates: CandidateProjection[] = candidates
     .map((binding) => {
       const profile = profileHeads.get(binding.catId);
+      const diagnostics = profileDiagnostics
+        .filter((diagnostic) => diagnostic.catId === binding.catId)
+        .map((diagnostic) => diagnostic.reason)
+        .slice(0, 32);
       const signalState = reduceCandidateSignals({
         candidate: binding,
         events: signalEvents,
@@ -309,7 +307,7 @@ export function reduceRoutingContext(rawInput: ReduceRoutingContextInput): Routi
         availability: signalState.availability,
         freshness: signalState.freshness,
         ...(signalState.dispatch ? { dispatch: signalState.dispatch } : {}),
-        reasons: [...signalState.reasons.slice(0, 32 - profileReasons(profile).length), ...profileReasons(profile)],
+        reasons: [...diagnostics, ...signalState.reasons.slice(0, 32 - diagnostics.length)],
         matchedPreferences: [],
         effect: effectForAvailability(signalState.availability),
       };

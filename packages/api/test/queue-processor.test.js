@@ -76,6 +76,7 @@ function createHarness({
   draftStore,
   turnExecutionStore,
   actionSuccessorLeaseStore,
+  deploymentWaitStartGuard,
 } = {}) {
   const queue = new InvocationQueue();
   const messageStore = new MessageStore();
@@ -122,6 +123,7 @@ function createHarness({
     ...(draftStore ? { draftStore } : {}),
     ...(turnExecutionStore ? { turnExecutionStore } : {}),
     ...(actionSuccessorLeaseStore ? { actionSuccessorLeaseStore } : {}),
+    ...(deploymentWaitStartGuard ? { deploymentWaitStartGuard } : {}),
   };
   return { ...deps, processor: new QueueProcessor(deps, processorOptions), routeCalls };
 }
@@ -205,6 +207,7 @@ async function admitMessage(harness, overrides = {}) {
     userId: queueInput.userId,
     catId: null,
     from: queueInput.from,
+    ...(overrides.messageSource ? { source: overrides.messageSource } : {}),
     content: queueInput.content,
     mentions: queueInput.targetCats,
     timestamp: Date.now(),
@@ -2171,5 +2174,100 @@ describe('F117 soak: a waiting entry does not stop its thread’s queue', () => 
       ['later', 'earlier'],
       'codex receives its sources in the order the owner set',
     );
+  });
+});
+
+describe('deployment continuation at the canonical Queue boundary', () => {
+  const carrier = {
+    v: 1,
+    waitId: 'task-deployment',
+    outcomeId: 'wait:deployment:abc123def456:runtime:g1:matched',
+    ownerFence: { kind: 'containing_task', generation: 1 },
+  };
+  const waiting = {
+    from: { kind: 'external', connectorId: 'deployment-wait' },
+    waitContinuationCarrier: carrier,
+    messageSource: {
+      connector: 'deployment-wait',
+      label: 'Deployment Wait',
+      meta: { waitContinuationCarrier: carrier },
+    },
+  };
+  it('unknown runtime readiness preserves the pending source without creating an invocation', async () => {
+    const h = createHarness();
+    const admitted = await admitMessage(h, waiting);
+    await h.processor.processNext('thread-1', 'user-1');
+    await waitFor(() => !h.invocationTracker.has('thread-1', 'opus'));
+    assert.equal(h.router.routeExecution.mock.calls.length, 0);
+    assert.equal(h.invocationRecordStore.create.mock.calls.length, 0);
+    assert.deepEqual(h.queue.list('thread-1', 'user-1')[0]?.targets, ['opus']);
+    assert.notEqual(h.messageStore.getById(admitted.message.id).deliveryStatus, 'canceled');
+  });
+  for (const late of [false, true]) {
+    it(`rejects authority that becomes stale ${late ? 'after invocation reservation' : 'before invocation reservation'}`, async () => {
+      let checks = 0;
+      const h = createHarness({
+        deploymentWaitStartGuard: {
+          check: async () => (++checks === 1 && late ? { ok: true } : { ok: false, reason: 'authority_stale' }),
+        },
+      });
+      const admitted = await admitMessage(h, waiting);
+      await h.processor.processNext('thread-1', 'user-1');
+      await waitFor(
+        () =>
+          h.messageStore.getById(admitted.message.id).deliveryStatus === 'canceled' &&
+          h.queue.list('thread-1', 'user-1').length === 0,
+      );
+      assert.equal(h.router.routeExecution.mock.calls.length, 0);
+      assert.equal(
+        h.invocationRecordStore.create.mock.calls.length,
+        late ? 1 : 0,
+        JSON.stringify({
+          checks,
+          calls: h.invocationRecordStore.create.mock.calls,
+          errors: errorLog(h),
+          records: [...h.invocationRecordStore.records.values()],
+        }),
+      );
+      assert.equal(h.queue.list('thread-1', 'user-1').length, 0);
+    });
+  }
+  it('late readiness uncertainty preserves the source and does not enter the provider', async () => {
+    let checks = 0;
+    const h = createHarness({
+      deploymentWaitStartGuard: {
+        check: async () => (++checks === 1 ? { ok: true } : { ok: false, reason: 'evidence_stale' }),
+      },
+    });
+    const admitted = await admitMessage(h, waiting);
+    await h.processor.processNext('thread-1', 'user-1');
+    await waitFor(() => checks >= 2 && !h.invocationTracker.has('thread-1', 'opus'));
+    assert.equal(h.router.routeExecution.mock.calls.length, 0);
+    assert.notEqual(h.messageStore.getById(admitted.message.id).deliveryStatus, 'canceled');
+    assert.deepEqual(
+      h.queue.list('thread-1', 'user-1')[0]?.targets,
+      ['opus'],
+      JSON.stringify({
+        checks,
+        errors: errorLog(h),
+        records: [...h.invocationRecordStore.records.values()],
+        message: h.messageStore.getById(admitted.message.id),
+      }),
+    );
+  });
+  it('ordinary input preserves its declared producer on replay without borrowing a wait guard', async () => {
+    for (const from of [
+      { kind: 'user', userId: 'user-1' },
+      { kind: 'external', connectorId: 'github' },
+      { kind: 'agent', catId: 'codex' },
+    ]) {
+      const h = createHarness();
+      await admitMessage(h, { from });
+      await h.processor.processNext('thread-1', 'user-1');
+      await waitFor(() => h.router.routeExecution.mock.calls.length === 1);
+      const options = h.router.routeExecution.mock.calls[0].arguments[6];
+      assert.equal(options.humanDispositionInvocationOrigin, 'queue_replay');
+      assert.equal(options.routingQueueSource, { user: 'user', external: 'connector', agent: 'agent' }[from.kind]);
+    }
   });
 });

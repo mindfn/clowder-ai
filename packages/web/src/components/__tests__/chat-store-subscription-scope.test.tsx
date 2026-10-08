@@ -266,7 +266,7 @@ describe('SplitPaneView thread-state subscription', () => {
         },
       }));
     });
-    expect(container.querySelector('[data-testid="active-invocation-banner"]')).toBeNull();
+    expect(container.querySelectorAll('[data-testid="active-invocation-banner"]')).toHaveLength(1);
     expect(container.querySelector('[aria-label="Stop generation"]')).not.toBeNull();
   });
 
@@ -336,7 +336,7 @@ describe('SplitPaneView thread-state subscription', () => {
     });
 
     expect(useChatStore.getState().threadStates[threadId]?.activeInvocations).toEqual({});
-    expect(container.querySelector('[data-testid="active-invocation-banner"]')).toBeNull();
+    expect(container.querySelectorAll('[data-testid="active-invocation-banner"]')).toHaveLength(1);
     expect(container.querySelector('[aria-label="Stop generation"]')).not.toBeNull();
 
     act(() => {
@@ -351,7 +351,7 @@ describe('SplitPaneView thread-state subscription', () => {
       }));
     });
 
-    expect(container.querySelector('[data-testid="active-invocation-banner"]')).toBeNull();
+    expect(container.querySelectorAll('[data-testid="active-invocation-banner"]')).toHaveLength(1);
     expect(container.querySelector('[aria-label="Stop generation"]')).not.toBeNull();
   });
 
@@ -394,7 +394,7 @@ describe('SplitPaneView thread-state subscription', () => {
       ),
     );
 
-    expect(container.querySelector('[data-testid="active-invocation-banner"]')).toBeNull();
+    expect(container.querySelectorAll('[data-testid="active-invocation-banner"]')).toHaveLength(1);
     const stop = container.querySelector('[aria-label="Stop generation"]') as HTMLButtonElement | null;
     expect(stop?.disabled).toBe(false);
   });
@@ -474,9 +474,9 @@ describe('SplitPaneView thread-state subscription', () => {
     );
 
     const actionCancel = container.querySelector('[aria-label="Stop generation"]') as HTMLButtonElement | null;
-    expect(container.querySelector('[data-testid="banner-cancel-btn"]')).toBeNull();
+    expect(container.querySelectorAll('[aria-label="Stop generation"]')).toHaveLength(1);
     expect(actionCancel).toBeTruthy();
-    expect(container.querySelector('[data-testid="active-invocation-banner"]')).toBeNull();
+    expect(container.querySelectorAll('[data-testid="active-invocation-banner"]')).toHaveLength(1);
     await act(async () => {
       actionCancel?.click();
       await Promise.resolve();

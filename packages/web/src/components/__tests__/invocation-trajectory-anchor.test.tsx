@@ -13,16 +13,18 @@ function message(phase: 'succeeded' | 'failed' | 'canceled' | 'running', withTim
     catId: 'codex-sol',
     content: 'reply',
     timestamp: 1,
+    lifecycle: {
+      kind: 'response',
+      orderKey: '1:response',
+      invocationId: `inv-${phase}`,
+      targetId: 'codex-sol',
+      inputEntryIds: [],
+      inputMessageIds: [],
+      startedAt: 1,
+      status: phase === 'running' ? 'processing' : phase === 'succeeded' ? 'completed' : phase,
+    },
     extra: {
       stream: { turnInvocationId: `inv-${phase}` },
-      invocationReconciliation: {
-        v: 1,
-        invocationId: `parent-${phase}`,
-        catIds: ['codex-sol'],
-        turnInvocationIds: [`inv-${phase}`],
-        phase,
-        updatedAt: 2,
-      },
       ...(withTimeout
         ? {
             timeoutDiagnostics: {

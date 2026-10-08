@@ -38,7 +38,6 @@ export interface ActiveContext {
   actions: ActiveStoreActions;
   rows: OpenThreadRows;
   resolveCatName: (catId: string) => string;
-  clearDoneTimeout: (threadId?: string) => void;
   timeoutDiagnostics: TimeoutDiagnosticsStash;
 }
 

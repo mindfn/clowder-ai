@@ -166,7 +166,7 @@ describe('F296 B1: RedisContextEpochStore', { skip: redisIsolationSkipReason(RED
     const { RedisContextEpochStore } = await import(
       '../dist/domains/cats/services/stores/redis/RedisContextEpochStore.js'
     );
-    const { ContextEpochOwner } = await import('../dist/domains/cats/services/session/ContextEpochOwner.js');
+    const { ContextEpochOwner } = await import('../dist/domains/cats/services/session/context/ContextEpochOwner.js');
     const rebuilt = new ContextEpochOwner(new RedisContextEpochStore(redis));
 
     const next = await rebuilt.resolve({
@@ -202,7 +202,7 @@ describe('F296 B1: RedisContextEpochStore', { skip: redisIsolationSkipReason(RED
     const { RedisContextEpochStore } = await import(
       '../dist/domains/cats/services/stores/redis/RedisContextEpochStore.js'
     );
-    const { ContextEpochOwner } = await import('../dist/domains/cats/services/session/ContextEpochOwner.js');
+    const { ContextEpochOwner } = await import('../dist/domains/cats/services/session/context/ContextEpochOwner.js');
     const scope = { userId: 'user-1', catId: 'opus', threadId: 'thread-race' };
     const unknown = { state: 'unknown', reason: 'signal_unavailable', evidenceRef: 'ev:unknown' };
 

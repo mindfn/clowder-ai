@@ -823,7 +823,6 @@ export async function enqueueA2ATargets(
       opts.userId,
       threadId,
       deps.invocationQueue.list(threadId, opts.userId),
-      deps.messageStore,
       'enqueued',
     );
   }

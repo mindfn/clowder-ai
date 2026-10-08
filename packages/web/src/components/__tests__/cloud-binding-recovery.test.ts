@@ -70,6 +70,7 @@ describe('cloud binding recovery projection', () => {
   it.each([
     'sent',
     'unknown',
+    'failed',
   ] as const)('projects a %s receipt only when it matches the failed dispatch', (receiptStatus) => {
     const authored = source();
     const outboundReceipt = {
@@ -101,6 +102,11 @@ describe('cloud binding recovery projection', () => {
     expect(projectCloudBindingRecovery(authored, [authored, notice(), receiptNotice])?.deliveryStatus).toBe(
       receiptStatus,
     );
+    if (receiptStatus === 'failed') {
+      expect(projectCloudBindingRecovery(authored, [authored, notice(), receiptNotice])?.attemptId).toBeUndefined();
+      (receiptNotice.source!.meta!.cloudBridgeOutboundReceipt as { transport: string }).transport = 'none';
+      expect(projectCloudBindingRecovery(authored, [authored, notice(), receiptNotice])).toEqual(pendingProjection);
+    }
   });
 
   it('rejects forged or cross-source recovery metadata', () => {

@@ -1,9 +1,30 @@
-export type QueueHandledDisposition = 'responded' | 'completed_with_turn';
+export type QueueReceiptTargetState =
+  | 'queued'
+  | 'notified'
+  | 'awakened'
+  | 'seen'
+  | 'failed'
+  | 'interrupted'
+  | 'steering'
+  | 'withdrawn'
+  | 'handled';
+
+/** Ephemeral server projection of completed children while an exact auxiliary child finishes. */
+export interface QueueInvocationSettlement {
+  activeTurnInvocationId: string;
+  completedTurnInvocationIds: string[];
+}
+
+export type QueueHandledDisposition =
+  | 'responded'
+  | 'completed_with_turn'
+  | 'managed_hold_disposition'
+  | 'dispatch_disposition';
 
 export type MessageWorkDisposition = 'continue_current' | 'next_work';
 
 /** Exact provider + concrete transport truth used by composer, Queue and receipts. */
-export type FreshnessCarrierProvider = 'openai_codex' | 'anthropic' | 'opencode' | 'kimi' | 'other';
+export type FreshnessCarrierProvider = 'openai_codex' | 'anthropic' | 'opencode' | 'kimi' | 'google' | 'other';
 export type FreshnessCarrier =
   | 'codex_app_server'
   | 'codex_exec_json'
@@ -11,6 +32,7 @@ export type FreshnessCarrier =
   | 'claude_print_sdk'
   | 'claude_stream_json'
   | 'kimi_stream_json'
+  | 'agy_stream_json'
   | 'mcp_result_piggyback'
   | 'other';
 export type FreshnessCarrierDeliverySemantics =
@@ -34,6 +56,7 @@ export const FRESHNESS_CARRIER_PROVIDERS = [
   'anthropic',
   'opencode',
   'kimi',
+  'google',
   'other',
 ] as const satisfies readonly FreshnessCarrierProvider[];
 
@@ -44,6 +67,7 @@ export const FRESHNESS_CARRIERS = [
   'claude_print_sdk',
   'claude_stream_json',
   'kimi_stream_json',
+  'agy_stream_json',
   'mcp_result_piggyback',
   'other',
 ] as const satisfies readonly FreshnessCarrier[];
@@ -132,7 +156,36 @@ export interface QueueTurnExecutionEvidenceRef {
   invocationId: string;
 }
 
-export type QueueTargetOutcomeEvidenceRef = QueueLineageEvidenceRef | QueueTurnExecutionEvidenceRef;
+/** Exact durable dispatch terminal; independent of the carrier's eventual execution outcome. */
+export interface QueueDispatchDispositionEvidenceRef {
+  kind: 'dispatch_disposition';
+  invocationId: string;
+  sourceMessageId: string;
+  handoffEventId: string;
+  dispositionEventId: string;
+  disposition: 'handled' | 'completed';
+  dispositionAt: number;
+}
+
+export function isQueueDispatchDispositionEvidence(value: unknown): value is QueueDispatchDispositionEvidenceRef {
+  if (!value || typeof value !== 'object') return false;
+  const item = value as Record<string, unknown>;
+  return (
+    item.kind === 'dispatch_disposition' &&
+    ['invocationId', 'sourceMessageId', 'handoffEventId', 'dispositionEventId'].every(
+      (key) => typeof item[key] === 'string' && item[key].length > 0,
+    ) &&
+    (item.disposition === 'handled' || item.disposition === 'completed') &&
+    typeof item.dispositionAt === 'number' &&
+    Number.isFinite(item.dispositionAt) &&
+    item.dispositionAt >= 0
+  );
+}
+
+export type QueueTargetOutcomeEvidenceRef =
+  | QueueLineageEvidenceRef
+  | QueueTurnExecutionEvidenceRef
+  | QueueDispatchDispositionEvidenceRef;
 
 export interface QueueTerminalSilentConsumptionWitness {
   kind: 'terminal_silent';

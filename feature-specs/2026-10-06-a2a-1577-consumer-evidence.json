@@ -1,0 +1,2095 @@
+{
+  "schemaVersion": 1,
+  "thirtiethStage": {
+    "scope": "Canonical Web named-message/History/Queue consumers, cold provenance/read geometry, socket source-event ownership and exact media publications",
+    "evidenceDirectory": "feature-specs/evidence/a2a-1577-2026-10-08-history",
+    "authorResults": "author-20261008/results.json",
+    "webSuites": 22,
+    "webPass": 220,
+    "behaviorMutants": 3,
+    "mutantFailuresEach": 1,
+    "selectedWebFiles": 18,
+    "selectedWebDiagnostics": 0,
+    "dependencyDiagnosticsRemaining": 7,
+    "sourceHashes": 40,
+    "resolvedIndexConflicts": 11,
+    "conflictsRemaining": 66,
+    "apiReExecuted": false,
+    "apiContinuityHashes": 12,
+    "newRedisInstances": 0,
+    "pageOrFullBuildPassed": false,
+    "legalCandidateCommit": null,
+    "f202Consumption": "All five immutable tree objects readable; base declared registry/poller and successor factory/pins/rows absent; provenance registration is not actual base consumption",
+    "f202SourceMap": "f202-consumption-boundary.json",
+    "pending": "Remaining Web/F322 execution-row/receipt consumers, native governance fixtures, providers/index and actual F202 base plus successor semantics; exact commit/clean gate/formal review/SDK/human/soak",
+    "independentVerification": "Prepared runner, not yet independently executed"
+  },
+  "twentyNinthStage": {
+    "scope": "Native owned Redis Queue/History delivery independent of exact private Task routing exit; real ChatMessage diagnostics/shell/Host recovery and paragraph scroll composition",
+    "evidenceDirectory": "feature-specs/evidence/a2a-1577-2026-10-08-queue",
+    "apiPass": 186,
+    "webPass": 188,
+    "apiFiles": 8,
+    "webSuites": 21,
+    "behaviorMutants": 3,
+    "mutantFailuresEach": 1,
+    "selectedWebDiagnostics": 0,
+    "selectedWebFiles": 11,
+    "dependencyDiagnosticsRemaining": 7,
+    "retainedRdbChecks": 11,
+    "resolvedIndexConflicts": 12,
+    "conflictsRemaining": 77,
+    "realResponseRouterPassed": true,
+    "pageOrFullBuildPassed": false,
+    "sourceHashes": 28,
+    "pending": "Legacy Queue/receipt/authority consumers; Web hook/store/page and provider/index conflicts; actual immutable F202 successor consumption; formal exact commit/clean gates/SDK/review/human/soak",
+    "forkCandidateOwner": "task300 sol sole writer, astra coordination",
+    "publicF202CandidateOwner": "Host thread_mu8dg6h7l2x4ohsk public chain; never push fork aggregate as public branch",
+    "f202RequiredChain": ["e3efa166", "f60e12b2", "8b7f5b1", "ba49a757", "70c79391"],
+    "f202SuccessorsConsumed": false,
+    "runtimeTouched": false
+  },
+  "twentyEighthStage": {
+    "scope": "Real owned Redis registration authority/races plus suppress redundant generic banner for response-owned timeout details",
+    "evidenceDirectory": "feature-specs/evidence/a2a-1577-2026-10-08-registration",
+    "registrationPass": 128,
+    "taskConsumersPass": 42,
+    "componentPass": 19,
+    "selectedProductionDiagnostics": 0,
+    "retainedRdbChecks": 6,
+    "conflictsRemaining": 89,
+    "wholeRouterPassed": false,
+    "wholeRouterTestsExecuted": 0,
+    "wholeRouterBlocker": "unresolved scrollToMessage.ts and ChatMessage.tsx merge markers",
+    "pending": "Old typed Queue Redis fixture; F202 successors; final API/Web/index/Message+Queue/pages/hooks/SDK/review/human/soak",
+    "runtimeTouched": false
+  },
+  "scope": "Source-loaded consumers and canonical in-memory Message/Queue, with explicitly scoped owned Unix Redis TurnExecution persistence/restart. Not final compiled API/Web, Redis Message+Queue or UI acceptance.",
+  "commandEnvironment": "REDIS_URL=redis://127.0.0.1:0",
+  "nextContractSeam": {
+    "id": "C7",
+    "document": "feature-specs/2026-10-07-a2a-1577-live-completion-seam.md",
+    "status": "Boundary accepted source579; actual Live/callback/Queue consumers migrating, not code approval",
+    "decisionSource": "0001791352018236-000579-78f4a022",
+    "sourceTypes": {
+      "chunkId": "31f9ef",
+      "files": 4,
+      "diagnostics": 33,
+      "exitCode": 1,
+      "scope": "Retained earlier diagnostics in old authority/receipt/restart modules; not fixed by this selected consumer cut"
+    },
+    "boundary": "Exact carrier admission/drain and canonical Queue-to-History delivery only; business completion exclusively by existing authorized typed owner; no retired untyped disposition repair",
+    "pending": "Remaining old authority/receipt/restart/governance consumers and final index; no per-file approval or new task"
+  },
+  "twentySecondStage": {
+    "scope": "C7 actual Live HTTP/MCP exact-child/close gate, real Sessions/Call native credential lifecycle, canonical recovery visibility and transcript writer, no retired repair hook/advertisement",
+    "conflictsRemaining": 102,
+    "resolvedIndexConflicts": [],
+    "production": [
+      "packages/api/src/routes/live-carrier-read-guard.ts",
+      "packages/api/src/routes/callback-message-read-routes.ts",
+      "packages/api/src/domains/cats/services/agents/invocation/QueueProcessor.ts",
+      "packages/api/src/domains/concierge/live/recovery/recovery-projections.ts",
+      "packages/api/src/domains/concierge/live/live-transcript.ts"
+    ],
+    "index": "Affected Live construction hunk migrated in same unmerged index, not staged resolved, compiled or tested as final startup",
+    "redDirectory": "/tmp/sol-a2a-1577-c7-red-CEBkvq",
+    "red": {
+      "live": { "log": "live-http.log", "tests": 33, "pass": 25, "fail": 8 },
+      "processor": { "log": "processor-red.log", "tests": 8, "pass": 6, "fail": 2 },
+      "lostHistoryAcknowledgement": {
+        "log": "committed-reply-red.log",
+        "tests": 1,
+        "pass": 0,
+        "fail": 1,
+        "cause": "Commit persisted, receipt lost, local false flag blindly restored target"
+      }
+    },
+    "green": {
+      "log": "final-source-green.log",
+      "tests": 69,
+      "pass": 69,
+      "fail": 0,
+      "skip": 0,
+      "cancel": 0,
+      "todo": 0,
+      "postFormat": true
+    },
+    "coverage": [
+      "Returned child ID/parent/user/thread/target/status must match auth",
+      "Live lacks Host gate rejected before body exposure",
+      "Retired disposition endpoint404 and stale service never invoked or advertised",
+      "Accepted read drains before close; late read rejected; business Task remains todo",
+      "Real Sessions/Call shares HTTP/MCP gate and revokes native-turn/call credentials",
+      "Unknown commit preserves exact claim; recovery does not requeue committed target or swallow sibling",
+      "Append lost reply read-back or outage never invokes provider; persisted pre-provider admission alone can be compensated",
+      "Typed source/full-versus-anchor/sparse/cross-scope exclusion",
+      "Canonical recovery and summarizer preserve visibility"
+    ],
+    "retainedFailures": [
+      "Original public untyped read/completion contract is deliberately replaced under source579, not falsely compatible",
+      "Earlier fixture cwd/dist, stale coordinator, MessageFrom and dispatcher-binding errors retained in red directory",
+      "Historical old authority/receipt/restart type diagnostics33 remain pending"
+    ],
+    "format": { "log": "final-format.log", "files": 11, "exitCode": 0, "warnings": 55 },
+    "fallbackAudit": "Canonical persisted recovery helper replaces blind rollback in both exposure/Append paths; no third authority fallback, generic retry, new wake or business completion. Unknown/missing History preserves claim; confirmed pre-commit failure alone restores Queue.",
+    "preparedCheckpoint": {
+      "directory": "/tmp/sol-a2a-1577-c7-check-J1pPvo",
+      "executed": true,
+      "completed": true,
+      "passed": false,
+      "completedAt": "2026-10-07T06:13:18.706Z",
+      "lanes": 20,
+      "tests": 763,
+      "pass": 763,
+      "fail": 0,
+      "skip": 0,
+      "cancel": 0,
+      "todo": 0,
+      "fingerprintedFiles": 78,
+      "inputsUnchanged": true,
+      "identityUnchanged": true,
+      "retiredSourcesUnchanged": true,
+      "failure": "Format exit1: a2a-1577-live-inbox-seam imports unsorted;19 production semantic diagnostics0 and every behavioral lane exit0. Original failure retained; scoped safe format fix plus10/10 inbox replay exit0, full format rerun exit0 with70 warnings.",
+      "scope": "Fresh shared/finance/MCP, expanded source/consumer/transport, selected semantics, format/directory, identity/input/retired-writer guards; not final API/Web/index/Redis Message+Queue/pages/SDK/aggregate"
+    },
+    "f202Notice": {
+      "source": "0001791352348854-000590-db5690a5",
+      "tree": "70c79391ad03d9a2795a4c789658f8d4fb57ceef",
+      "accepted": false,
+      "claim": "Original Host reports codex P2 closed with advisory53/53; source hashes verified there, no formal approval. Accepted input still e3efa166; not independently rechecked/consumed here"
+    },
+    "pending": [
+      "Old Live owner/governance/restart consumers and fixtures",
+      "F202 frozen chain semantic integration",
+      "Final same-candidate API/Web/index/Redis Message+Queue/pages/hooks/formal review/human/soak",
+      "SDK actual authentication/version proof remains open"
+    ]
+  },
+  "twentyThirdStage": {
+    "scope": "C7 orphan untyped Live Message-custody read/completion/repair chain retired after actual call-graph and write audit; useful closing/drain, Ball classifications and canonical History facts preserved",
+    "conflictsRemaining": 102,
+    "resolvedIndexConflicts": [],
+    "removedSource": [
+      "packages/api/src/domains/ball-custody/DispatchAdoptionAuthority.ts",
+      "packages/api/src/domains/ball-custody/DispatchReceiptService.ts",
+      "packages/api/src/domains/ball-custody/dispatch-receipt-publication.ts",
+      "packages/api/src/domains/cats/services/agents/invocation/QueueReadEvidence.ts",
+      "packages/api/src/domains/concierge/live/live-dispatch-adoption.ts"
+    ],
+    "sourceAudit": "After C7 index/processor/consumer migration no active production import constructs these modules. Their getQueueReadEvidence getter only reads legacy writer-produced custody witness for retired untyped permission; no canonical read projection deleted. Optional private port/type declarations and old restart Message-custody consumers remain for coherent subsequent port, not denied or approved.",
+    "recovery": "All five source blobs recoverable from frozen public MERGE_HEAD; no runtime/config/persistent storage files deleted",
+    "red": {
+      "directory": "/tmp/sol-a2a-1577-c7-red-CEBkvq",
+      "log": "retired-live-writer-red.log",
+      "tests": 1,
+      "pass": 0,
+      "fail": 1
+    },
+    "green": {
+      "log": "retired-live-green.log",
+      "tests": 87,
+      "pass": 87,
+      "fail": 0,
+      "skip": 0,
+      "cancel": 0,
+      "todo": 0,
+      "scope": "Actual callbacks/Live/processor/native/recovery/inbox plus absence/startup hook guard, not all obsolete public fixture files"
+    },
+    "preparedCheckpoint": {
+      "directory": "/tmp/sol-a2a-1577-c7-retired-check-EF0bKF",
+      "executed": true,
+      "lanes": 20,
+      "fingerprintedFiles": 78,
+      "absentSourceGuards": 10,
+      "scope": "Fresh same-checkout shared/finance/MCP, C7 and existing source/HTTP/MCP/type/format/identity regressions; no aggregate review",
+      "passed": true,
+      "completedAt": "2026-10-07T06:20:14.370Z",
+      "returnedBy": "0001791354041411-000600-3aafe553",
+      "tests": 764,
+      "pass": 764,
+      "fail": 0,
+      "skip": 0,
+      "cancel": 0,
+      "todo": 0,
+      "inputsUnchanged": true,
+      "identityUnchanged": true,
+      "retiredSourcesUnchanged": true,
+      "selectedProductionSemanticDiagnostics": 0,
+      "selectedProductionFiles": 19,
+      "formatWarnings": 70,
+      "note": "Lane execution count includes repeated HTTP/C7 coverage; not 764 unique all-repository scenarios"
+    },
+    "pending": [
+      "Old restart Message-custody consumers and public untyped completion fixtures still require canonical semantic migration; not deleted to hide failures",
+      "Final API/Web/index/persistent Message+Queue/pages/hooks/formal review/human/soak",
+      "F202 frozen chain semantic integration and SDK proof unchanged"
+    ]
+  },
+  "twentyFourthStage": {
+    "scope": "C7 retired Message-custody startup/restart writer chain replaced by existing canonical ledger and exact response recovery",
+    "conflictsBefore": 102,
+    "conflictsRemaining": 96,
+    "resolvedIndexConflicts": [
+      "packages/api/src/domains/cats/services/agents/invocation/QueuedMessageCustodyStartupReconciler.ts",
+      "packages/api/src/domains/cats/services/agents/invocation/QueuedMessageCustodyStartupMessageReconciler.ts",
+      "packages/api/src/domains/cats/services/agents/invocation/QueuedMessageCustodyStartupQueueEntry.ts",
+      "packages/api/src/domains/cats/services/agents/invocation/QueuedMessageCustodyStartupTypes.ts",
+      "packages/api/src/domains/cats/services/agents/invocation/QueuedMessageCustodyRestartTargets.ts",
+      "packages/api/src/domains/cats/services/agents/invocation/QueuedMessageCustodyRestartWitness.ts"
+    ],
+    "removedSource": [
+      "packages/api/src/domains/cats/services/agents/invocation/QueuedMessageCustodyStartupReconciler.ts",
+      "packages/api/src/domains/cats/services/agents/invocation/QueuedMessageCustodyStartupMessageReconciler.ts",
+      "packages/api/src/domains/cats/services/agents/invocation/QueuedMessageCustodyStartupQueueEntry.ts",
+      "packages/api/src/domains/cats/services/agents/invocation/QueuedMessageCustodyStartupTypes.ts",
+      "packages/api/src/domains/cats/services/agents/invocation/QueuedMessageCustodyRestartTargets.ts",
+      "packages/api/src/domains/cats/services/agents/invocation/QueuedMessageCustodyRestartWitness.ts",
+      "packages/api/src/domains/cats/services/agents/invocation/queue-source-completion-policy.ts"
+    ],
+    "sourceAudit": "Six fork-deleted/public-modified modules and auto-added policy only reference each other; obsolete Message custody writers reconstruct pending work and infer untyped completion. No active production construction/import. Canonical Queue hydration before listen, exact child recovery after successful listen, existing response settlement and parent recovery are retained.",
+    "red": {
+      "directory": "/tmp/sol-a2a-1577-c7-startup-red-IdokA4",
+      "log": "startup-owner-red.log",
+      "tests": 4,
+      "pass": 3,
+      "fail": 1,
+      "reason": "Audited retired recovery modules still present; three new real canonical Live restart cases already green before removal, not fabricated product RED"
+    },
+    "green": {
+      "log": "startup-owner-green.log",
+      "tests": 129,
+      "pass": 129,
+      "fail": 0,
+      "skip": 0,
+      "cancel": 0,
+      "todo": 0,
+      "postFormat": true,
+      "scope": "Actual Live full-body adoption/close, canonical TurnExecutionStartupReconciler + production response draft settlement + same ledger hydration; existing startup/Queue/recovery suites"
+    },
+    "coverage": [
+      "Running or previously successful Live child never completes business Task merely by delivery/outer success",
+      "Post-listen exact response settlement terminalizes original execution, not sibling pending targets",
+      "Settlement outage retains original response-pending fact; repeat recovery succeeds once without new wake",
+      "Restart hydration never resurrects History-owned target; native callback rejects ended child",
+      "Existing alive/unknown/mismatched child and failed-listen fences preserved"
+    ],
+    "recovery": "Source modules recoverable from frozen MERGE_HEAD; no persistent data/config/runtime touched",
+    "pending": [
+      "Obsolete untyped disposition/receipt public fixtures and remaining private ports/governance",
+      "Final API/Web/index/Redis Message+Queue/pages/hooks/formal review/human/soak",
+      "F202 successors not consumed; SDK proof open"
+    ],
+    "mutants": {
+      "directory": "/tmp/sol-a2a-1577-c7-restart-check-51eopY",
+      "executed": true,
+      "inputsUnchanged": true,
+      "fingerprintedFiles": 5,
+      "behaviorCases": ["startup-settlement", "child", "drain", "lost-reply"],
+      "allExpectedAssertionFailures": true,
+      "moduleLoadFailures": false
+    },
+    "preparedCheckpoint": {
+      "directory": "/tmp/sol-a2a-1577-c7-restart-check-51eopY",
+      "executed": true,
+      "lanes": 20,
+      "fingerprintedFiles": 82,
+      "absentSourceGuards": 17,
+      "selectedProductionFiles": 22,
+      "executionMode": "Prepared bounded foreground verification for astra in existing task300; no new responsibility/approval",
+      "scope": "Same-checkout fresh shared/finance/MCP and source/transport/type/format/canonical startup matrix; not final index/API/Web/Redis Message+Queue/pages/hooks/review/human/soak",
+      "passed": true,
+      "completedAt": "2026-10-07T06:31:52.909Z",
+      "returnedBy": "0001791354751970-000606-ab72e583",
+      "tests": 787,
+      "pass": 787,
+      "fail": 0,
+      "skip": 0,
+      "cancel": 0,
+      "todo": 0,
+      "inputsUnchanged": true,
+      "identityUnchanged": true,
+      "retiredSourcesUnchanged": true,
+      "formatWarnings": 73,
+      "note": "HTTP/C7 executions overlap; not787 distinct repository scenarios"
+    }
+  },
+  "twentyFifthStage": {
+    "scope": "Retire orphan direct connector trigger, untyped disposition and Message-custody retry private ports after audit; canonical atomic admission and typed owner fences retained",
+    "conflictsBefore": 96,
+    "conflictsRemaining": 90,
+    "resolvedIndexConflicts": [
+      "packages/api/src/domains/ball-custody/A2ADispatchDispositionService.ts",
+      "packages/api/src/domains/ball-custody/WaitContinuationRetryCommitter.ts",
+      "packages/api/src/domains/ball-custody/WaitContinuationRetryPreflight.ts",
+      "packages/api/src/domains/cats/services/agents/invocation/QueuedMessageCustodyCoordinator.ts",
+      "packages/api/src/domains/cats/services/stores/ports/queued-message-custody.ts",
+      "packages/api/src/infrastructure/email/ConnectorInvokeTrigger.ts"
+    ],
+    "sourceAudit": {
+      "forkRetirementCommit": "3f126bba7b45ce642c11bf654461969a2ff3c2fc",
+      "sourceMap": "ConnectorInvokeTrigger was deleted by fork after every producer migrated; public merge restores separate Invocation execution/custody initialization/rebind. Coordinator owns Message custody CAS; old WaitRetryCommitter writes custody under owner witness; its preflight/port only support obsolete chain. A2ADisposition has no active consumer afterC7. Actual src/import/index audit completed; canonical types, Task/action preflight, QueueLedger and History retained.",
+      "index": "Remove old coordinator import/options and public direct-trigger construction hunk only; existing persistedQueueDelivery holder, atomic managed wake + lease adoption + independent notifier remain. Index stillUU, not accepted compiled composition.",
+      "testConsumerGap": "The src/index import scan was production-only, not a complete consumer audit. Source612 expanded checkpoint found f323-deployment-wait-lifecycle.test.js still importing deleted WaitContinuationRetryPreflight; whole file failed to load and none of its behavior cases ran. Keep original failure; migrate actual start permission to retained DeploymentWaitStartGuard, never restore old writer or omit test."
+    },
+    "removedSource": [
+      "packages/api/src/domains/ball-custody/A2ADispatchDispositionService.ts",
+      "packages/api/src/domains/ball-custody/WaitContinuationRetryCommitter.ts",
+      "packages/api/src/domains/ball-custody/WaitContinuationRetryPreflight.ts",
+      "packages/api/src/domains/cats/services/agents/invocation/QueuedMessageCustodyCoordinator.ts",
+      "packages/api/src/domains/cats/services/stores/ports/queued-message-custody.ts",
+      "packages/api/src/infrastructure/email/ConnectorInvokeTrigger.ts"
+    ],
+    "recovery": "All six sources recoverable from frozen public Git; no persistent store/config/runtime changes",
+    "red": {
+      "directory": "/tmp/sol-a2a-1577-private-port-red-VUE1z9",
+      "log": "private-port-red.log",
+      "tests": 1,
+      "pass": 0,
+      "fail": 1,
+      "scope": "Structural guard only; not product behavior RED"
+    },
+    "green": {
+      "log": "private-port-green.log",
+      "tests": 101,
+      "pass": 101,
+      "fail": 0,
+      "skip": 0,
+      "cancel": 0,
+      "todo": 0,
+      "postFormat": true,
+      "scope": "Actual atomic connector port, exact lease legacy adoption, notifier failures/drain, exactly-once managed producer, C5 production composition and actual C6 callback private-receipt fences"
+    },
+    "mutants": {
+      "directory": "/tmp/sol-a2a-1577-private-port-check-o7mWNp",
+      "executed": true,
+      "fingerprintedFiles": 7,
+      "inputsUnchanged": true,
+      "behaviorCases": ["notifier-drain", "startup-settlement", "child", "drain", "lost-reply"],
+      "allExpectedAssertionFailures": true,
+      "moduleLoadFailures": false
+    },
+    "compatibility": "Public direct execution/custody retry and untyped business disposition are retired, not claimed compatible. Existing canonical delivery/response and typed business-owner rejection evidence replace safety obligations; old public completion/coordinator/trigger fixtures remain pending semantic migration, not counted green or silently dropped.",
+    "preparedCheckpoint": {
+      "directory": "/tmp/sol-a2a-1577-private-port-check-o7mWNp",
+      "executed": true,
+      "lanes": 21,
+      "fingerprintedFiles": 88,
+      "absentSourceGuards": 23,
+      "selectedProductionFiles": 25,
+      "scope": "Fresh same-checkout shared/finance/MCP; actual atomic producers, existing C7/C6/C5/source/HTTP/MCP/canonical startup and selected type/format/identity regressions. Not final API/Web/index/complete Redis Message+Queue/pages/hooks/formal review/human/soak",
+      "completed": true,
+      "passed": false,
+      "completedAt": "2026-10-07T06:41:13.758Z",
+      "returnedBy": "0001791355324027-000612-9726ae65",
+      "tests": 782,
+      "pass": 781,
+      "fail": 1,
+      "skip": 0,
+      "cancel": 0,
+      "todo": 0,
+      "inputsUnchanged": true,
+      "identityUnchanged": true,
+      "retiredSourcesUnchanged": true,
+      "formatWarnings": 73,
+      "failure": "deployment-callback exit1: ERR_MODULE_NOT_FOUND for deleted WaitContinuationRetryPreflight; 29 pass/1 whole-file load failure, not one failed behavior assertion; lifecycle behavior file unexecuted.20 other lanes exit0."
+    },
+    "pending": [
+      "Remaining obsolete public untyped disposition/coordinator/trigger/receipt fixtures and governance",
+      "RedisTypedWaitCustodyGuard audit and final index composition",
+      "F202 frozen successors, final builds/pages/review/human/soak and SDK proof"
+    ]
+  },
+  "twentySixthStage": {
+    "scope": "Fix source612 overlooked C5 test consumer using canonical Task/private-receipt deployment start authority; test-only migration, no restored writer",
+    "conflictsBefore": 90,
+    "conflictsRemaining": 90,
+    "changedSource": [],
+    "changedTests": ["packages/api/test/f323-deployment-wait-lifecycle.test.js"],
+    "failureEvidence": {
+      "directory": "/tmp/sol-a2a-1577-private-port-check-o7mWNp",
+      "log": "deployment-callback.log",
+      "source": "0001791355324027-000612-9726ae65",
+      "kind": "module-load failure, not product behavior RED",
+      "wholeLifecycleFileUnexecuted": true
+    },
+    "fix": "Remove obsolete WaitContinuationRetryPreflight import; original positive Task-owned permission assertion now executes retained DeploymentWaitStartGuard using canonical Message, Task, private receipt and fresh deployment proof. Business Task remains blocked, transport stable and repeated outcome deduped.",
+    "coverage": [
+      "Cross-thread/user/cat and missing expected carrier reject without Task/Queue writes or new wake",
+      "Read-fault/revoked private snapshots: missing receipt, subject, receipt generation/owner fence, new coherent generation, changed outcome identity, Task terminal and current child claim reject; no new permission protocol",
+      "Actual Task owner transfer during fresh observation rejected by second authority read",
+      "Existing live predicate stale-proof, pending recovery and repeat message identity assertions preserved; original lifecycle file kept in expanded runner"
+    ],
+    "focused": {
+      "directory": "/tmp/sol-a2a-1577-deployment-authority-fix-wgvhxL",
+      "log": "deployment-fixed.log",
+      "tests": 68,
+      "pass": 68,
+      "fail": 0,
+      "skip": 0,
+      "cancel": 0,
+      "todo": 0,
+      "postFormat": true,
+      "scope": "Original four C5 source consumer files55 plus13 guard cases; source API plus existing MCP artifact, not final API/index/fresh full builds"
+    },
+    "mutants": {
+      "directory": "/tmp/sol-a2a-1577-deployment-authority-fix-wgvhxL",
+      "executed": true,
+      "behaviorCases": [
+        "deployment-owner",
+        "deployment-generation",
+        "deployment-reread",
+        "notifier-drain",
+        "startup-settlement",
+        "child",
+        "drain",
+        "lost-reply"
+      ],
+      "allExpectedAssertionFailures": true,
+      "moduleLoadFailures": false,
+      "fingerprintedFiles": 10,
+      "inputsUnchanged": true,
+      "note": "New owner/generation/re-read omissions each yield exactly1 assertion failure; previous5 also preserved. Production files unchanged."
+    },
+    "preparedCheckpoint": {
+      "directory": "/tmp/sol-a2a-1577-deployment-authority-fix-wgvhxL",
+      "executed": true,
+      "lanes": 21,
+      "fingerprintedFiles": 90,
+      "absentSourceGuards": 23,
+      "selectedProductionFiles": 27,
+      "scope": "Same-checkout fresh shared/finance/MCP, all previous consumer lanes plus migrated lifecycle file retained, deployment guard/authority in selected semantic and format checks. Not final API/Web/index/full Redis Message+Queue/pages/hooks/review/human/soak",
+      "completed": true,
+      "passed": true,
+      "completedAt": "2026-10-07T06:53:42.423Z",
+      "returnedBy": "0001791356054402-000618-8d45d8ce",
+      "tests": 820,
+      "pass": 820,
+      "fail": 0,
+      "skip": 0,
+      "cancel": 0,
+      "todo": 0,
+      "inputsUnchanged": true,
+      "identityUnchanged": true,
+      "retiredSourcesUnchanged": true,
+      "selectedProductionSemanticDiagnostics": 0,
+      "formatWarnings": 74,
+      "note": "21 lane execution counts overlap; not820 independent repository scenarios.Original o7mWNp whole-file load failure kept."
+    },
+    "pending": [
+      "Remaining obsolete untyped/trigger/coordinator/receipt fixtures and Redis guard/governance",
+      "F202 frozen successor chain separate consumption; SDK proof open",
+      "Final same-candidate builds/index/pages/hooks/formal review/human/soak"
+    ]
+  },
+  "twentySeventhStage": {
+    "scope": "Retire orphan Redis Message-custody Lua helper; migrate its F323 test consumer to canonical private Task authority and real owned Redis WATCH races",
+    "conflictsBefore": 90,
+    "conflictsRemaining": 89,
+    "resolvedIndexConflicts": ["packages/api/src/domains/cats/services/stores/redis/RedisTypedWaitCustodyGuard.ts"],
+    "removedSource": ["packages/api/src/domains/cats/services/stores/redis/RedisTypedWaitCustodyGuard.ts"],
+    "sourceAudit": "Full actual module read: imports already retired TypedWaitCustodyGuard, exports old Message-custody/handled guard Lua. Symbol/import scans of production and test helpers identify no production caller; f323-deployment-wait-redis test is sole direct helper consumer and is migrated, not excluded. Actual RedisMessageStore and canonical QueueLedger do not use this Lua. TaskStore getWaitRegistration/WATCH and TypedWaitRegistration/Continuation retained; no Task or action guard removed.",
+    "recovery": "Source recoverable from frozen public Git; removal of code only, all owned Redis data retained and no runtime/config/user data accessed",
+    "failureEvidence": {
+      "directory": "/tmp/sol-a2a-1577-redis-task-guard-bnZDWS",
+      "load": "f323-redis-load-red.log",
+      "structural": "orphan-guard-red.log",
+      "kind": "One preexisting whole-file module-load failure plus1 explicit structural guard failure before removal; neither is a product behavior RED"
+    },
+    "coverage": [
+      "Existing F3234 real Redis cases kept: private receipt/cold hydration/noTTL/one CAS winner, entrusted closure, subject owner transfer, same-millisecond cancellation fence",
+      "Fresh exact resolver rejects parent/foreign source/thread/user/cat with raw Task hash unchanged; matched old await receipt rejects while outcome stays persistent; concurrent generation winner owns coherent receipt",
+      "Two actual Redis WATCH read-to-EXEC races owner/generation reject stale contender, retain winner byte-for-byte, revoke old receipt; controlled callbacks, no sleep",
+      "Owned helper ignores REDIS_URL, starts only its own port0 Unix socket child, saves RDB/AOF/logs and stops that child without key cleanup or database flush",
+      "This is canonical Task registration/resolve evidence, NOT old Queue custody Lua guard compatibility or complete Message+Queue atomicity"
+    ],
+    "focused": {
+      "directory": "/tmp/sol-a2a-1577-redis-task-guard-bnZDWS",
+      "initialLog": "task-guard-green.log",
+      "initialTests": 14,
+      "log": "redis-canonical-green.log",
+      "tests": 91,
+      "pass": 91,
+      "fail": 0,
+      "skip": 0,
+      "cancel": 0,
+      "todo": 0,
+      "postFormat": true,
+      "scope": "6 real Redis F323 +10 structural/bridge/callback +39 lifecycle +36 typed registration; in-memory and Redis overlapping authority coverage",
+      "selectedProductionFiles": 4,
+      "selectedProductionSemanticDiagnostics": 0
+    },
+    "mutants": {
+      "directory": "/tmp/sol-a2a-1577-redis-task-guard-bnZDWS",
+      "executed": true,
+      "behaviorCases": [
+        "redis-child",
+        "redis-watch",
+        "deployment-owner",
+        "deployment-generation",
+        "deployment-reread",
+        "notifier-drain",
+        "startup-settlement",
+        "child",
+        "drain",
+        "lost-reply"
+      ],
+      "allExpectedAssertionFailures": true,
+      "moduleLoadFailures": false,
+      "fingerprintedFiles": 14,
+      "inputsUnchanged": true,
+      "note": "New exact-child bypass and missing WATCH each fail1 actual assertion on real owned Redis; retained8 remain valid. No production behavioral edits."
+    },
+    "preparedCheckpoint": {
+      "directory": "/tmp/sol-a2a-1577-redis-task-guard-bnZDWS",
+      "executed": true,
+      "lanes": 21,
+      "fingerprintedFiles": 94,
+      "absentSourceGuards": 24,
+      "selectedProductionFiles": 31,
+      "scope": "Fresh shared/finance/MCP and expanded actual source/transport/TaskRedis, retained lifecycle file and all previous consumer lanes; owned Redis helper and migrated file included in format/input checks. Not final API/Web/index/full Redis Message+Queue/pages/hooks/review/human/soak",
+      "managedHoldRejected": {
+        "status": 429,
+        "holdsInWindow": 3,
+        "maxHoldsPerWindow": 3,
+        "retryAt": "2026-10-07T07:12:29.909Z",
+        "commandStarted": false
+      },
+      "executionMode": "Actual foreground handoff621 completed; root readback2026-10-08 every lane/hash/mutant. Delivery response622/sol624 timed out separately; not command failure or formal independent approval",
+      "completed": true,
+      "passed": true,
+      "startedAt": "2026-10-07T07:04:21.985Z",
+      "completedAt": "2026-10-07T07:05:33.356Z",
+      "tests": 827,
+      "pass": 827,
+      "fail": 0,
+      "skip": 0,
+      "cancel": 0,
+      "todo": 0,
+      "inputsUnchanged": true,
+      "identityUnchanged": true,
+      "retiredSourcesUnchanged": true,
+      "formatWarnings": 77,
+      "rootReadbackChunks": ["ed3514", "90276f"],
+      "deliveryTimeouts": ["0001791356634523-000622-90f371fb", "0001791358696402-000624-1eafe39a"]
+    },
+    "pending": [
+      "typed-wait-queue-redis and other old custody fixtures still pending semantic migration, not counted green",
+      "Remaining public untyped/trigger/coordinator/receipt fixtures and governance",
+      "F202 frozen successor chain not consumed; SDK proof open",
+      "Final same-candidate API/Web/index/full Redis Message+Queue/pages/hooks/formal review/human/soak"
+    ]
+  },
+  "twentyFirstStage": {
+    "scope": "Remove retired Message-custody hold receipt/disposition startup owner; retain pure Ball observation and process-local Live/ordinary teardown bridge. Not the final dispatch adoption or index composition migration.",
+    "conflictsRemaining": 102,
+    "resolvedIndexConflicts": [
+      "ManagedHoldDispositionService.ts",
+      "ManagedHoldReceiptService.ts",
+      "ManagedHoldSourceSelection.ts",
+      "TurnCustodyAdoptionRegistry.ts",
+      "managed-hold-supersession.ts",
+      "record-managed-hold-disposition.ts"
+    ],
+    "red": {
+      "chunkId": "466389",
+      "tests": 6,
+      "pass": 5,
+      "fail": 1,
+      "cause": "Retired owner source and startup references are still reintroduced by public merge"
+    },
+    "focusedGreen": [
+      { "chunkId": "d1a771", "tests": 25, "pass": 25, "scope": "bridge six cases plus pure retirement/supersession" },
+      { "chunkId": "8b5a73", "tests": 7, "pass": 7, "scope": "includes real callback404 and no old writer invocation" },
+      {
+        "chunkId": "e67acc",
+        "tests": 81,
+        "pass": 81,
+        "scope": "combined bridge/pure classifiers plus actual typed continuation and persisted C6 retirement; output partly truncated, expanded checkpoint must read logs"
+      }
+    ],
+    "mutant": {
+      "chunkId": "ae66f5",
+      "tests": 7,
+      "pass": 5,
+      "fail": 2,
+      "scope": "isolated removal of both teardown drains triggers two real assertion failures; runner will separately verify input fingerprints"
+    },
+    "sourceMap": "Old Receipt/Disposition/SourceSelection/record writer has only retired startup and legacy fixture consumers. New DispatchAdoptionAuthority uses registry withOperation, not managed-hold continuation selection. Pure managed-hold-retirement still imports supersession and is used by C6 source capture; both retained. Fork deleted/public modified is a merge conflict, not evidence public deleted QueueLedger.",
+    "removed": [
+      "ManagedHoldReceiptService.ts",
+      "ManagedHoldDispositionService.ts",
+      "ManagedHoldSourceSelection.ts",
+      "record-managed-hold-disposition.ts",
+      "managed-hold-settlement-publication.ts"
+    ],
+    "retained": "TurnCustodyAdoptionRegistry operation lease, serial preparation, commit/abort and route teardown drain; readonly snapshots never grant Task permission. Pure historical Ball retirement/replay classifiers remain tested.",
+    "fallbackAudit": "No alternate durable owner, ordinary read to typed hold rebind, or source guessing introduced. Old completed/handled endpoint absent even when a stale caller supplies its service. Task/Queue/History retirement remains separate; no persistent data removed.",
+    "retainedFailure": "First census patch attempted out-of-order hunks and failed atomically; reordered patch verified exact102 Git paths. Old Message-custody disposition and error-branch fixtures still await explicit migration; not silently declared passing or dropped.",
+    "preparedCheckpoint": {
+      "directory": "/tmp/sol-a2a-1577-retired-owner-check-VcFSMp",
+      "executed": true,
+      "completed": true,
+      "passed": true,
+      "completedAt": "2026-10-07T05:36:42.189Z",
+      "resultSource": "0001791351402194-000570-f75ef399",
+      "lanes": 19,
+      "tests": 658,
+      "pass": 658,
+      "fail": 0,
+      "skip": 0,
+      "cancel": 0,
+      "todo": 0,
+      "fingerprintedFiles": 62,
+      "inputsUnchanged": true,
+      "identityUnchanged": true,
+      "retiredSourcesUnchanged": true,
+      "formatWarnings": 15,
+      "rootReadbackChunks": ["28158a", "25da0e", "efa8b9", "1a9c8b", "e78831", "4e972f", "f44b7d"],
+      "scope": "nineteen lanes: actual missing-drain mutation5/7 with two assertion failures, fresh shared/finance/MCP, bridge/classification/native/readonly/C6/C5/callback/startup/history/compiled MCP, fourteen selected production semantics0, format/directory; sixty-two input hashes plus five absent writer checks. Not final API/Web/index/Redis Message+Queue/page/SDK/aggregate"
+    },
+    "pending": [
+      "DispatchAdoptionAuthority still reads legacy queueCustody; migrate exact canonical read/adoption authority before final wiring",
+      "legacy hold disposition/error fixtures and old governance/startup owners",
+      "remaining index and provider/Web conflicts",
+      "SDK/F202 successor/final pages/hooks/review/human/soak gates"
+    ],
+    "newDependencyNotice": {
+      "sources": ["0001791351275512-000564-7f141a0d", "0001791351493735-000572-767d3f87"],
+      "reportedTree": "ba49a7575ecc5da7cc11fbc58f780df8f23f3022",
+      "reportedBase": "8b7f5b1ffb204b1dc409e98e5fc0021bbf0bef71",
+      "frozenChain": [
+        "e3efa1666bfbff9a92dfdbfc521675041fc5a39c",
+        "f60e12b2e23263b7383305b4b4a174092c9128bd",
+        "8b7f5b1ffb204b1dc409e98e5fc0021bbf0bef71",
+        "ba49a7575ecc5da7cc11fbc58f780df8f23f3022"
+      ],
+      "directory": "/Users/lang/workspace/github-lab/f202-acceptance/batch8-host-2026-10-07",
+      "reportedPatchSha256": "94277752c3d8af5cbde728a8c58fc0f360d17235d0d79fd92181ae206be3ebc6",
+      "status": "Full unread572 consumed. Coordinator reports51 hashes and artifact/render/Settings success; independent Batch8 advisory pending at this source. Not independently reverified or consumed here; accepted F202 source remains e3efa166. At the existing merge step consume the exact frozen chain, never the changing Host worktree; legal commit/formal review/account/human/soak gates remain."
+    }
+  },
+  "twentiethStage": {
+    "scope": "Actual F309 user source writer, canonical native Queue withdrawal and immutable persistent human control receipts; no Message custody owner restored",
+    "conflictsRemaining": 108,
+    "resolvedIndexConflicts": ["packages/api/src/domains/growing/ArtifactReviewReturnDispatcher.ts"],
+    "production": [
+      "packages/api/src/domains/collaborative-content/modification/request-source.ts",
+      "packages/api/src/domains/collaborative-content/modification/control/runtime-control-service.ts",
+      "packages/api/src/domains/growing/ArtifactReviewReturnDispatcher.ts",
+      "packages/api/src/domains/cats/services/stores/redis/redis-message-parsers.ts"
+    ],
+    "writerRed": {
+      "chunkId": "b335d2",
+      "tests": 3,
+      "pass": 0,
+      "fail": 3,
+      "rootCause": "Actual request source writer still uses legacy catId and lacks mandatory MessageFrom; all requests fail before delivery"
+    },
+    "controlRed": {
+      "chunkId": "e8948e",
+      "tests": 3,
+      "pass": 0,
+      "fail": 3,
+      "rootCause": "Control confirmation reads removed Queue fields; receipt list accepts a getter returning another child ID"
+    },
+    "focusedGreen": {
+      "chunkId": "71f83b",
+      "tests": 52,
+      "pass": 52,
+      "fail": 0,
+      "skip": 0,
+      "cancel": 0,
+      "todo": 0,
+      "scope": "F309 cancellation/runtime/source19 and carrier serialization33, before final queued-row/id guard; full post-format checkpoint still required"
+    },
+    "retainedFailures": [
+      "c2637c dispatcher conflict load failure",
+      "479269 author test invocation omitted established source loader; missing dist configuration, command fixed",
+      "3c8a16 mistaken human sender enum rejected; authoritative MessageFrom read, corrected user sender",
+      "64a5b1 retained catId projection also rejected by canonical append, removed",
+      "566179 new seam fixture used invalid request ID; corrected via canonical modificationRequestId",
+      "a567ce19 tests18pass/1load failure: identical parseRealtimeCompanionCarrier declared twice by automatic merge, removed one exact duplicate",
+      "b7e19f four production semantics1 diagnostic: system owner variant requires user-kind narrowing, fixed",
+      "7bb9c0 initial child mutant strip-only rejects parameter property; changed test harness to transform before behavioral evidence"
+    ],
+    "mutants": {
+      "directory": "/tmp/sol-a2a-1577-native-control-check-UTLB94",
+      "child": { "tests": 3, "pass": 2, "fail": 1 },
+      "sender": { "tests": 6, "pass": 2, "fail": 4 },
+      "scope": "Isolated load-time behavior mutation, child assertion and three sender subtests plus failed parent; production fingerprint equality verified by mutants.json"
+    },
+    "nativeScope": "Old multi-source merged fixture replaced by actual canonical same-source target expansion after frozen confirmation; native atomic claim rejects widened scope. Whole withdrawal requires separate explicit receipt. Unavailable commit returns503, retry acknowledges, another SQLite connection preserves acknowledgement; unrelated source row and history preserved. Stop confirmation is not a stopped process.",
+    "fallbackAudit": "No new authority fallback, coordinator, terminal Queue or model retry. Exact queued source/owner/thread/target and child identity only. Pending source persistence is neither delivered nor successful Task. Fixture databases preserved, connections and owned providers closed.",
+    "preparedCheckpoint": {
+      "directory": "/tmp/sol-a2a-1577-native-control-check-UTLB94",
+      "executed": true,
+      "completed": true,
+      "passed": true,
+      "completedAt": "2026-10-07T05:25:23.683Z",
+      "lanes": 17,
+      "tests": 632,
+      "pass": 632,
+      "fail": 0,
+      "skip": 0,
+      "cancel": 0,
+      "todo": 0,
+      "fingerprintedFiles": 56,
+      "inputsUnchanged": true,
+      "identityUnchanged": true,
+      "resultSource": "0001791350723689-000558-433f021e",
+      "rootReadbackChunks": ["a13372", "fc80d0", "0c2db5", "627255", "97a23e", "c54369", "86e5fb", "af9799"],
+      "scope": "fresh shared/finance/MCP, expanded F309/source parser/readonly/C6/C5/callback/startup/HTTP/compiled MCP, eleven production semantics0; format12 warnings, directory threshold warnings; frozen inputs. Not final API/Web/index/persistent Message+Queue/pages"
+    },
+    "pending": [
+      "remaining old owner/governance/provider/Web conflicts",
+      "Redis Message+Queue final production composition",
+      "F202 accepted input still e3efa166; successor trees not adopted",
+      "SDK/final API/Web/page/hooks/formal review/human/soak"
+    ]
+  },
+  "nineteenthStage": {
+    "scope": "Preserve two automatically added readonly progress consumers, migrate missing Message custody dependencies to canonical Queue pending rows and exact History responses; no new owner or continuation authority",
+    "conflictsRemaining": 109,
+    "resolvedIndexConflicts": ["packages/api/test/collective-owner-participation.test.js"],
+    "production": [
+      "packages/api/src/domains/cats/services/agents/invocation/queue-ledger/QueueTargetExecutionView.ts",
+      "packages/api/src/domains/collaborative-content/modification/execution-view.ts",
+      "packages/api/src/domains/collaborative-content/modification/service.ts",
+      "packages/api/src/domains/collaborative-content/modification/composition.ts",
+      "packages/api/src/routes/collective-owner-request-progress.ts",
+      "packages/api/src/routes/collective-owner-participation-view.ts",
+      "packages/api/src/routes/collective-owner-participation-routes.ts"
+    ],
+    "indexBoundary": "One readonly queue port added to existing owner route composition; index still unmerged, not a complete production composition verification",
+    "red": {
+      "chunkId": "4018cb",
+      "scope": "content view cannot load deleted QueuedMessageCustodyCarrierProjection module; actual load failure, not behavioral assertion"
+    },
+    "childIdentityRed": {
+      "chunkId": "92c71d",
+      "tests": 1,
+      "pass": 0,
+      "fail": 1,
+      "scope": "getter returning different invocation identity supplied running/parent control facts; add exact child ID and distinct nonempty parent validation"
+    },
+    "green": {
+      "chunkId": "a90ad0",
+      "tests": 41,
+      "pass": 41,
+      "fail": 0,
+      "skip": 0,
+      "cancel": 0,
+      "todo": 0,
+      "scope": "20 actual owner HTTP cases, 20 pending/receiver projection cases, one content execution matrix with queued/running/terminal and child identity negatives"
+    },
+    "sourceTypes": {
+      "chunkId": "0eb967",
+      "files": 7,
+      "diagnostics": 0,
+      "scope": "selected seven production semantics before final exact child guard; repeat required in prepared checkpoint"
+    },
+    "fixtureFailuresRetained": [
+      "434213 owner19/20 old queueCustody-injected stage matrix must migrate, not production success",
+      "a0fa6d owner19/20 new fixture wrongly gave public Collective strict managed provenance; corrected to canonical unknown, no policy weakening",
+      "90537d combined21/23 new helper fixture omitted required producer source; corrected fixture, not product finding",
+      "253757 source types3 errors: optional StoredMessage.from must be narrowed, fixed without assuming old hydrated envelopes have sender"
+    ],
+    "mutants": {
+      "directory": "/tmp/sol-a2a-1577-execution-view-check-PYqddt",
+      "chunkId": "787a34",
+      "productionUnchanged": true,
+      "receiverOwnerGuard": { "tests": 20, "pass": 18, "fail": 2 },
+      "pendingOwnerGuard": { "tests": 20, "pass": 18, "fail": 2 },
+      "scope": "in-memory behavior mutants; subtest owner failure plus failed parent test, not syntax-only failure"
+    },
+    "fallbackAudit": "One shared readonly fact predicate, no custody fallback. Invalid/ambiguous receiver does not fall back to Queue; missing Queue is unknown, store read errors propagate rather than fabricate queued/delivered. Content controls require exact child/parent witness; owner stage does not close Task or create public reply.",
+    "directoryGuard": "Exit0 with existing warnings; new shared predicate makes queue-ledger15 files at warning threshold. Kept co-located with canonical Queue evidence, avoiding two divergent domain predicates; no new exception.",
+    "preparedCheckpoint": {
+      "directory": "/tmp/sol-a2a-1577-execution-view-check-PYqddt",
+      "executed": true,
+      "completed": true,
+      "passed": true,
+      "completedAt": "2026-10-07T05:12:07.362Z",
+      "lanes": 15,
+      "tests": 581,
+      "pass": 581,
+      "fail": 0,
+      "skip": 0,
+      "cancel": 0,
+      "todo": 0,
+      "fingerprintedFiles": 43,
+      "inputsUnchanged": true,
+      "identityUnchanged": true,
+      "rootReadbackChunk": "40a750",
+      "resultSource": "0001791349950906-000545-78d2b014",
+      "scope": "fresh shared/finance/MCP; readonly owner/content, C6/C5/callback/startup/HTTP/compiled MCP; seven selected production semantics0, format3 warnings, directory threshold warnings; not final API/Web/index/Redis Message+Queue/pages"
+    },
+    "pending": [
+      "automatic F309 native-control fixtures still reference old coordinator and retained-storage cleanup requires review before running",
+      "remaining old Message owners/governance/startup and final index consumers",
+      "SDK/F202/final API/Web/page/hooks/independent review/human/soak"
+    ]
+  },
+  "seventeenthStage": {
+    "scope": "Canonical exact-child startup truth protects running and stale-queued parent callback projections; no Message custody recovery owner restored",
+    "conflictsRemaining": 111,
+    "resolvedIndexConflicts": [],
+    "production": "packages/api/src/domains/cats/services/agents/invocation/StartupReconciler.ts",
+    "rootCause": "Automatic merge supplies turnExecutionStore but never reads it before orphaning parents. Parent sweep can therefore fail callback auth and delete progress after exact-child recovery preserved a live detached owner.",
+    "red": { "chunkId": "9f5e58", "tests": 11, "pass": 2, "fail": 9 },
+    "green": {
+      "chunkId": "39140c",
+      "tests": 66,
+      "pass": 66,
+      "fail": 0,
+      "skip": 0,
+      "cancel": 0,
+      "todo": 0,
+      "postFormat": true
+    },
+    "format": {
+      "chunkId": "dfffd0",
+      "files": 2,
+      "exitCode": 0,
+      "warnings": 3,
+      "scope": "existing sweep/notification complexity warnings, not zero warnings"
+    },
+    "sourceTypes": {
+      "chunkId": "0aa47c",
+      "files": 3,
+      "diagnostics": 0,
+      "scope": "selected startup/child/ledger semantics, not full API tsc"
+    },
+    "guardCoverage": [
+      "running and stale queued parent preserved by exact surviving child",
+      "unavailable ledger, wrong parent/thread/user/target and unknown lifecycle retain uncertainty",
+      "one terminal sibling cannot authorize interruption or progress deletion for a live sibling",
+      "actual child recovery preserves one owner and interrupts lost sibling before parent recovery; repeat parent pass remains safe",
+      "confirmed empty/all-ended children preserve legacy orphan warning without mutating child terminals or inferring business success",
+      "canonical ledger hydration/startup resume, CAS races, per-record failure isolation and post-listen child guard regressions"
+    ],
+    "fallbackAudit": "One exact-child read, with identity/status validation. Read exceptions use existing per-record isolation and never fall back to orphan failure. Legacy callers with no ledger retain prior behavior; production supplies the canonical ledger. No generic retry, model replay or second owner.",
+    "preparedCheckpoint": {
+      "directory": "/tmp/sol-a2a-1577-startup-check-kN0ZoQ",
+      "executed": true,
+      "completed": true,
+      "passed": true,
+      "completedAt": "2026-10-07T04:34:38.472Z",
+      "lanes": 11,
+      "tests": 450,
+      "pass": 450,
+      "fail": 0,
+      "skip": 0,
+      "cancel": 0,
+      "todo": 0,
+      "fingerprintedFiles": 25,
+      "inputsUnchanged": true,
+      "identityUnchanged": true,
+      "retainedRedisData": "/tmp/a2a-turn-HcSTG1",
+      "handoff": "astra source497 foreground result; actual logs/results read, author resumes source work",
+      "scope": "startup/ledger/admission, real owned Redis child persistence, hold/C5/full callbacks and history/MCP consumers; source API, unchanged source476 compiled MCP, no new builds or final composition"
+    },
+    "pending": [
+      "old Message owner modules and remaining governance/provider/Web conflicts",
+      "Redis Message+Queue final composition",
+      "SDK/F202/final builds/pages/hooks/independent review/human/soak"
+    ]
+  },
+  "typedWaitC6Decision": {
+    "scope": "Actual callback register-tracking route with canonical Task receipt and entry-snapshot LifecycleActiveRun source; public pure ball retirement classification, no Message custody writer restored",
+    "red": { "chunkId": "6c33b5", "tests": 20, "pass": 19, "fail": 1, "skip": 0 },
+    "fixtureFailureRetained": "859032 initially18/20 included misplaced retirement assertion in live case; fixed placement, exact retired-first-source incompatibility remains19/20",
+    "coordinatorSource": "0001791348001337-000505-6335fb6a",
+    "decision": "Preserve exact entry-source uniqueness, independent of pure Ball retirement or event order. Sole legal retired source remains supported; no new selector or old Message owner.",
+    "recommendation": "Keep strict exact-child entry source. Terminal projection alone does not choose a Task continuation source; canonical explicit source identity is required. Retired drain is not an authorization fallback.",
+    "testStagedAsResolvedAfterActualGreen": true
+  },
+  "eighteenthStage": {
+    "scope": "Authenticated source-loaded tracking producer/resolver plus real SQLite CAS and actual Message+Queue/child/History managed wake cleanup, not final index/API/Web acceptance",
+    "conflictsRemaining": 110,
+    "production": "packages/api/src/routes/callback-typed-wait-source.ts",
+    "resolvedIndexConflicts": ["packages/api/test/typed-wait-callback-continuation.test.js"],
+    "permissionRed": {
+      "chunkId": "7ac7f4",
+      "tests": 46,
+      "pass": 43,
+      "fail": 3,
+      "rootCause": "Source visibility does not bind auth thread; active child lookup did not validate child thread/target"
+    },
+    "retainedFixtureFailures": [
+      "7e7d4b 38/46: fixture methods mistakenly injected as callback options, corrected before clean permission RED",
+      "294e82 4/5: nonexistent ledger.listActive, corrected to canonical Queue exact-message query"
+    ],
+    "postFormatGreen": {
+      "chunkId": "90f43a",
+      "tests": 94,
+      "pass": 94,
+      "fail": 0,
+      "skip": 0,
+      "cancel": 0,
+      "todo": 0,
+      "groups": { "actualCallback": 50, "receiptResolver": 36, "canonicalRetirement": 5, "historyAdapter": 3 }
+    },
+    "mutants": {
+      "directory": "/tmp/sol-a2a-1577-c6-mutants-NIFbQa",
+      "chunkId": "8f38be",
+      "testsEach": 50,
+      "removeUniqueness": { "pass": 38, "fail": 12 },
+      "removeThreadFence": { "pass": 49, "fail": 1 },
+      "productionFingerprintUnchanged": true,
+      "scope": "Isolated load-time behavior mutation, no production file edits"
+    },
+    "retainedSqlite": [
+      "/var/folders/1z/8dpvll5d2fq7brlf2qk4kkw40000gn/T/a2a-c6-retirement-VhcRNc",
+      "/var/folders/1z/8dpvll5d2fq7brlf2qk4kkw40000gn/T/a2a-c6-retirement-FVJshQ",
+      "/var/folders/1z/8dpvll5d2fq7brlf2qk4kkw40000gn/T/a2a-c6-retirement-KhCTd9",
+      "/var/folders/1z/8dpvll5d2fq7brlf2qk4kkw40000gn/T/a2a-c6-retirement-59x7DL",
+      "/var/folders/1z/8dpvll5d2fq7brlf2qk4kkw40000gn/T/a2a-c6-retirement-BPxaLY"
+    ],
+    "fallbackAudit": "No additional authority fallback: unavailable lookup yields no private receipt. Ball remains read-only classification. Canonical existing engine handles retirement; no History rewrite, terminal Queue, revived old complete-managed-hold writer or model replay.",
+    "format": { "chunkId": "8aabe9", "exitCode": 0, "warnings": 1 },
+    "preparedCheckpoint": {
+      "directory": "/tmp/sol-a2a-1577-c6-check-gszsRO",
+      "executed": true,
+      "completed": true,
+      "completedAt": "2026-10-07T04:53:16.104Z",
+      "passed": true,
+      "lanes": 14,
+      "tests": 540,
+      "pass": 540,
+      "fail": 0,
+      "skip": 0,
+      "cancel": 0,
+      "todo": 0,
+      "fingerprintedFiles": 29,
+      "inputsUnchanged": true,
+      "identityUnchanged": true,
+      "rootReadbackChunk": "f75898",
+      "foregroundHandoff": "0001791348718960-000519-32b6813d",
+      "resultSource": "0001791348823581-000524-fb8fe9a3",
+      "managedHoldRejected": {
+        "status": 429,
+        "holdsInWindow": 3,
+        "retryAt": "2026-10-07T05:22:49.837Z",
+        "commandStarted": false
+      },
+      "scope": "Fresh shared/finance/MCP and source consumers; no full API/Web/index/Redis Message+Queue/page/SDK/aggregate acceptance"
+    },
+    "pending": [
+      "remaining old owner/governance/provider/Web conflicts",
+      "final same-candidate API/Web/index/persistent Message+Queue/page validation",
+      "SDK/F202/hooks/independent review/human/soak"
+    ]
+  },
+  "sixteenthStage": {
+    "scope": "Real Lua creation independently preserves immutable queueCompletionPolicy and late-bound outputFence; actual Redis restart and hold callback consumer",
+    "conflictsRemaining": 111,
+    "resolvedIndexConflicts": [
+      "packages/api/src/domains/cats/services/stores/redis/RedisTurnExecutionStore.ts",
+      "packages/api/test/callback-hold-ball-route.test.js"
+    ],
+    "rootCause": "Automatic merge reused ARGV10 for policy and fence. Append policy at ARGV11, retain fork fence ordinal10, immutable policy and strict codec.",
+    "red": { "chunkId": "0ac7e1", "tests": 10, "pass": 2, "fail": 8, "retainedData": "/tmp/a2a-turn-esPyBQ" },
+    "retainedFixtureFailures": [
+      "189593: hook registered inside before prematurely closed fixture; fixed top-level after and per-start readiness",
+      "556858: unsafe finally return warning; removed without suppressing shutdown failure"
+    ],
+    "green": {
+      "chunkId": "acaea2",
+      "tests": 33,
+      "pass": 33,
+      "fail": 0,
+      "skip": 0,
+      "cancel": 0,
+      "todo": 0,
+      "postFormat": true,
+      "retainedData": "/tmp/a2a-turn-xbg72v"
+    },
+    "holdCallback": {
+      "chunkId": "4e6a78",
+      "tests": 15,
+      "pass": 15,
+      "fail": 0,
+      "scope": "source Fastify auth/schema, owned memory SQLite quota and own completed echo command"
+    },
+    "sourceTypes": {
+      "chunkId": "53af03",
+      "files": 3,
+      "diagnostics": 0,
+      "scope": "selected production semantics, not full API tsc"
+    },
+    "format": { "chunkId": "f56305", "files": 4, "warnings": 0 },
+    "guardCoverage": [
+      "ordinary/explicit_source crossed independently with open/gated fence",
+      "actual concurrent create, immutable identity drift, parent index, TTL=-1",
+      "atomic coverage replay/conflict and monotone output verdict",
+      "legacy no-fence hashes read/replay/settle without rewriting",
+      "unknown/mismatched policy and unknown fence fail closed in projection",
+      "terminal race and response-pending survive real saved Redis process restart"
+    ],
+    "isolation": {
+      "transport": "owned Unix socket, --port 0, no inherited REDIS_URL or TCP",
+      "diskRetained": true,
+      "ownProcessJoined": true,
+      "noFlushDeleteOrRuntimeConfig": true
+    },
+    "fallbackAudit": "No reader weakening or second pending owner. Known shutdown connection-close is followed by joining the exact child. Legacy reads never infer open or write missing fences.",
+    "preparedCheckpoint": {
+      "directory": "/tmp/sol-a2a-1577-turn-persistence-check-whG40I",
+      "executed": true,
+      "completed": true,
+      "completedAt": "2026-10-07T04:23:37.801Z",
+      "passed": true,
+      "lanes": 14,
+      "tests": 626,
+      "pass": 626,
+      "fail": 0,
+      "skip": 0,
+      "cancel": 0,
+      "todo": 0,
+      "fingerprintedFiles": 31,
+      "inputsUnchanged": true,
+      "identityUnchanged": true,
+      "managedTaskId": "hold-ball-1791346969832-6eea2i",
+      "scope": "actual turn Redis/restart plus source consumers; unchanged source476 compiled MCP reused, no new build"
+    },
+    "pending": [
+      "old owner/governance/startup conflicts",
+      "Redis Message+Queue transaction/recovery",
+      "SDK/F202/final API/Web/pages/hooks/independent review"
+    ]
+  },
+  "fifteenthStage": {
+    "scope": "Actual in-memory atomic Message/Queue admission, canonical ledger restart and exact-child exposure consumer; test fixture migration, no production changes in this cut",
+    "conflictsRemaining": 113,
+    "resolvedIndexConflicts": [
+      "packages/api/test/helpers/persisted-queue-fixture.ts",
+      "packages/api/test/persisted-queue-delivery.test.ts"
+    ],
+    "retainedFailures": [
+      "af821f: unresolved fixture transform",
+      "fcde11: 9/14; wrong parent provenance field/hydrate method/Message idempotency projection",
+      "142ef4: 13/14; premature started assertion",
+      "9cc70e/a4d266: 13/14; hydration does not request drain, premature child wait timed out",
+      "5f5f1e: 13 scoped type diagnostics; a4d266 readonly covered ids correction"
+    ],
+    "claimCorrection": "already_processing may only prove a durable claim, not child startup. Lost-ACK recovery requests normal drain then waits actual exact child/parent, LifecycleActiveRun and response History exposure; repeated admission never creates a second child.",
+    "green": {
+      "chunkId": "aee4ef",
+      "tests": 14,
+      "pass": 14,
+      "fail": 0,
+      "skip": 0,
+      "cancel": 0,
+      "todo": 0,
+      "postFormat": true
+    },
+    "sourceTypes": {
+      "chunkId": "aee4ef",
+      "files": 2,
+      "diagnostics": 0,
+      "rootDirOverride": "diagnostic program only, repository tsconfig unchanged"
+    },
+    "format": {
+      "chunkId": "aee4ef",
+      "files": 2,
+      "warnings": 0
+    },
+    "guardCoverage": [
+      "atomic admission and persistence validation rollback",
+      "lost acknowledgement after committed Message/ledger, hydrate and same-message replay",
+      "actual concurrent callers create one parent and exact child",
+      "no provider starts before actual admission barrier",
+      "explicit unknown auth remains unknown in actual router options",
+      "serialized producer_return and legacy classification survive ledger hydration",
+      "strict actual InvocationRecordStore and child terminal settlement",
+      "source History has no queueCustody and cannot reconstruct pending work"
+    ],
+    "fallbackAudit": "No second owner or delivery fallback. Durable claim, actual child startup and prompt exposure are distinct proofs; fixture waits on observable completion rather than fixed sampling sleep.",
+    "preparedCheckpoint": {
+      "directory": "/tmp/sol-a2a-1577-admission-check-ATCCWJ",
+      "executed": true,
+      "scope": "Risk-matched source and actual consumer regressions. Reuses unchanged package outputs from source476, does not claim new builds or aggregate acceptance.",
+      "passed": true,
+      "completedAt": "2026-10-07T04:14:12.439Z",
+      "lanes": 12,
+      "tests": 564,
+      "pass": 564,
+      "fail": 0,
+      "skip": 0,
+      "cancel": 0,
+      "todo": 0,
+      "inputsUnchanged": true,
+      "identityUnchanged": true,
+      "fingerprintedFiles": 26,
+      "sourceTypesFiles": 2,
+      "diagnostics": 0,
+      "formatWarnings": 0
+    },
+    "pending": [
+      "old owner/governance/startup and remaining conflicts",
+      "SDK proof/F202/final persistent API/Web/pages/hooks/independent review"
+    ]
+  },
+  "fourteenthStage": {
+    "scope": "Full Collective reconsideration/refusal fixtures migrate to canonical ledger and exact child History; actual fixture Service/Connector HTTP, scripted model and Human authentication",
+    "conflictsRemaining": 115,
+    "resolvedIndexConflicts": [],
+    "migratedConsumers": [
+      "f290-communication-reconsideration-queue.fixture.ts",
+      "f290-communication-reconsideration-queue-refusal.test.ts",
+      "f290-communication-reconsideration.fixture.ts",
+      "f290-communication-reconsideration.test.ts",
+      "f290-communication-validation.host.ts"
+    ],
+    "red": [
+      "089c43: old refusal fixture imports retired startup projection",
+      "be5a3d/e2dc0a: actual InvocationRecordStore rejects duplicate failed terminal transition, leaving trusted g1 claim pending",
+      "546685: other full fixtures still import retired owner",
+      "274608: full Service dist missing in this checkout"
+    ],
+    "fixtureFailuresRetained": [
+      "dc3dd8: removed cache API and incorrect idempotencyKey location",
+      "1583b6: scripted router omitted child terminal commit",
+      "92bef9: removed isPaused API",
+      "b6b215/5963ff: optional reader/closure narrowing, optional source sender and broad updater interface diagnostics"
+    ],
+    "fix": "Verify exact invocation id/source/owner/thread/singleton target and identical durable failed error before reusing catch/backstop evidence; otherwise require write and exact readback. Generic terminal-update rejection is unchanged. Missing/unknown reader fails closed.",
+    "guardCoverage": [
+      "g1 refusal frees independent g2/B before receiver admission, including persisted ledger hydration",
+      "corrupt marker/purpose/target never retires source",
+      "record or source writer failures retain canonical claim",
+      "wrong record source/owner/target/error/status and unknown read cannot prove refusal",
+      "pre-receiver transport retry reuses the same source, no terminal child replay",
+      "actual Registry-authenticated exact child admission/exposure/History terminal, not parent substitution",
+      "public current context and permission revocation retain grant fences"
+    ],
+    "sourceGreen": {
+      "chunkId": "b7cd10",
+      "tests": 26,
+      "pass": 26,
+      "fail": 0,
+      "beforeFinalMissingReaderCaseAndTypeFix": true
+    },
+    "fullReconsiderationGreen": {
+      "chunkId": "c6e135",
+      "tests": 8,
+      "pass": 8,
+      "fail": 0,
+      "beforeFinalPostFormatCheckpoint": true
+    },
+    "dataSafety": "Owned Service/Connector fixture directories retained on close; service binds random owned loopback ports and restarts only its own server; no runtime config or user-data access. Fresh same-checkout Collective Service/Client build succeeded; no copied dist/native binding.",
+    "fallbackAudit": "One pending ledger owner. Durable exact failed record replay is evidence idempotence, not another dispatch or status-only fallback. Unknown reader/writer/claim identity stops retirement. Successful receiver terminal belongs to exact child History, never Message custody reconstruction.",
+    "preparedCheckpoint": {
+      "directory": "/tmp/sol-a2a-1577-collective-full-check-oBQZtP",
+      "executed": true,
+      "passed": false,
+      "completedAt": "2026-10-07T03:55:12.437Z",
+      "lanes": 15,
+      "tests": 544,
+      "pass": 538,
+      "fail": 6,
+      "skip": 0,
+      "cancel": 0,
+      "todo": 0,
+      "inputsUnchanged": true,
+      "fingerprintedFiles": 20,
+      "sourceTypesFiles": 4,
+      "diagnostics": 0,
+      "formatWarnings": 40,
+      "failure": "Six full Host cases stop at five obsolete append inputs missing canonical from; permission and recovery assertions not reached",
+      "managedCommandStarted": true,
+      "automaticCallbackRegistered": true,
+      "holdTaskId": "hold-ball-1791345238031-evmyql",
+      "pid": 8055,
+      "scope": "Fresh shared/finance/MCP/Collective Service plus full Host manual/validation/reconsideration and prior source/transport checks; no full API/Web/provider/Redis/page approval"
+    },
+    "senderMigration": {
+      "fixtureRed": {
+        "chunkId": "4c75ae",
+        "tests": 39,
+        "pass": 38,
+        "fail": 1,
+        "cause": "Actual execution receipt writer still passes catId rather than canonical from"
+      },
+      "bootstrapRed": {
+        "chunkId": "91e06a",
+        "tests": 6,
+        "pass": 0,
+        "fail": 6,
+        "causes": [
+          "execution receipt writer missing Host user provenance",
+          "cold Host immutable assignment writer missing external Collective provenance"
+        ]
+      },
+      "fixedWriters": ["collective-work-execution-receipt.ts", "collective-work-standing-admission.ts"],
+      "fixtureCorrectionRetained": {
+        "chunkId": "a0dfe5",
+        "tests": 11,
+        "pass": 10,
+        "fail": 1,
+        "cause": "New lineage sender assertion omitted preserved external sender, corrected to require the actual sender"
+      },
+      "guardsUnchanged": "MessageStore sender/carrier validation, standing grant/current Service evidence, immutable first admission and stable per-revision receipt identities unchanged",
+      "freshCheckpoint": {
+        "directory": "/tmp/sol-a2a-1577-collective-senders-slRl6T",
+        "executed": true,
+        "scope": "Fresh same-checkout package builds and expanded first-admission/crash/replay/full Host plus source/transport regressions",
+        "passed": true,
+        "completedAt": "2026-10-07T04:02:08.208Z",
+        "lanes": 15,
+        "tests": 550,
+        "pass": 550,
+        "fail": 0,
+        "skip": 0,
+        "cancel": 0,
+        "todo": 0,
+        "inputsUnchanged": true,
+        "identityUnchanged": true,
+        "fingerprintedFiles": 24,
+        "sourceTypesFiles": 6,
+        "diagnostics": 0,
+        "formatWarnings": 41,
+        "holdTaskId": "hold-ball-1791345651816-0jo8jl"
+      },
+      "sourceGreen": {
+        "chunkId": "040532",
+        "tests": 11,
+        "pass": 11,
+        "fail": 0,
+        "skip": 0,
+        "cancel": 0,
+        "todo": 0,
+        "postFormat": true
+      }
+    },
+    "pending": [
+      "old owner/governance/startup and remaining conflicts",
+      "SDK proof/F202/final persistent API/Web/pages/hooks/independent review"
+    ]
+  },
+  "eleventhStage": {
+    "scope": "Canonical single-admission scheduler/GitHub consumers retain public abort/rate-limit/budget and bounded timer recovery; no ConnectorInvokeTrigger second owner",
+    "conflictsRemaining": 119,
+    "resolved": ["IssueCommentTaskSpec.ts", "ConflictCheckTaskSpec.ts", "RepoScanTaskSpec.ts", "TaskRunnerV2.ts"],
+    "red": [
+      "6dfe63: unresolved import transform failure",
+      "746a2b: incomplete scheduler fixture/provenance and prefire guard expectations",
+      "fdc70e: old second-trigger fixture",
+      "d80b6f: explicit admitted=false incorrectly settled dedup (Node test failed despite subsequent rg command exit0)",
+      "f8fb02: author used wrong Queue target field",
+      "669091/e5fa19: broader 101/107; obsolete trigger/key/status expectations and child cwd",
+      "66d008: actual canonical admission failure recorded RUN_DELIVERED",
+      "4e7f6f: template still expected swallowed failure"
+    ],
+    "findingsFixed": [
+      "Repo scan only commits notification dedup after admitted=true",
+      "Failure status receipt cannot satisfy hold wake obligation; actual scheduler retries same identity and records RUN_FAILED",
+      "Public onceLifecycle SLA and retired/disabled hold fence compose with fork managed-command retry"
+    ],
+    "green": {
+      "chunkId": "fbe50d",
+      "tests": 107,
+      "pass": 107,
+      "fail": 0,
+      "skip": 0,
+      "cancel": 0,
+      "todo": 0,
+      "scope": "Actual timer scheduler + SQLite memory + canonical in-memory admission, abort and signal seams"
+    },
+    "additionalGreen": {
+      "chunkId": "a5f4d3",
+      "tests": 90,
+      "pass": 90,
+      "fail": 0,
+      "skip": 0,
+      "cancel": 0,
+      "todo": 0,
+      "scope": "Real publisher/conflict/budget and timer disposition tests; not remote GitHub"
+    },
+    "sourceTypes": {
+      "chunkId": "4dc68a",
+      "files": 7,
+      "diagnostics": 0
+    },
+    "format": {
+      "chunkId": "292e79",
+      "exitCode": 0,
+      "warnings": 30,
+      "infos": 2,
+      "unusedImportsRemovedAfterward": true
+    },
+    "fallbackAudit": "No second owner or fallback delivery plane. Wake error and optional diagnostic error remain distinct; AggregateError preserves both. Retry has canonical active/expiry fences and uses the same identity, not a new outcome.",
+    "preparedCheckpoint": {
+      "directory": "/tmp/sol-a2a-1577-scheduler-check-T9kE6m",
+      "scriptSyntaxVerified": true,
+      "executed": true,
+      "actor": "astra",
+      "resultSource": "thread_msr51149hym0i79f#0001791342579476-000408-c4e473e9",
+      "passed": false,
+      "completedAt": "2026-10-07T03:07:25.974Z",
+      "lanes": 16,
+      "tests": 592,
+      "pass": 590,
+      "fail": 1,
+      "skip": 1,
+      "inputsUnchanged": true,
+      "failures": [
+        "governance skip fixed 50ms sample: attempts1/retired0",
+        "reminder.ts diagnostic content indentation"
+      ],
+      "managedCommandStarted": false,
+      "automaticCallbackRegistered": false,
+      "holdRejected": {
+        "status": 429,
+        "holdsInWindow": 3,
+        "retryAt": "2026-10-07T03:49:54.617Z"
+      },
+      "scope": "Fresh shared/finance/MCP plus post-format source consumers and scoped diagnostics; not full API/Web/Redis/model/page approval"
+    },
+    "checkpointCorrection": {
+      "red": "9166a9: controlled delayed first timer reproduces attempts1/retired0 with the original fixed sample",
+      "fix": "Controlled Date/setTimeout with real TaskRunner timer/finally/retirement; explicit microtask turns and bounded actual retry steps, no wall-clock sleep or production retry changes",
+      "preservedGuards": [
+        "expired SLA",
+        "retired/disabled hold",
+        "expiry while first pipeline settles",
+        "no retry fails expected attempts/retirement assertions"
+      ],
+      "focusedGreen": "a25c01: 12/12, prior formatting failure retained then formatted",
+      "joint": {
+        "directory": "/tmp/sol-a2a-1577-scheduler-fixed-7joxE9",
+        "passed": true,
+        "completedAt": "2026-10-07T03:15:23.122Z",
+        "lanes": 16,
+        "tests": 594,
+        "pass": 593,
+        "fail": 0,
+        "skip": 1,
+        "skipReason": "existing private staging absence",
+        "inputsUnchanged": true,
+        "sourceTypesFiles": 7,
+        "diagnostics": 0,
+        "formatWarnings": 28,
+        "formatInfos": 2
+      }
+    },
+    "f202Input": "FYI387: immutable e3efa166 only; changing original Host checkout never used",
+    "pending": [
+      "remaining old owner/governance and startup/composition",
+      "SDK0.3.285 auth/version proof",
+      "aggregate gates"
+    ]
+  },
+  "twelfthStage": {
+    "scope": "Collective reconsideration producer route, actual source authorization consumer and canonical scoped ledger hydration; not a complete Collective journey or provider dispatch",
+    "conflictsRemaining": 118,
+    "resolved": ["packages/api/test/collective-queue-recovery.test.js"],
+    "automaticConsumerMigration": [
+      "routes/collective-owner-work-reconsideration.ts",
+      "builtin-runtime/collective-work/collective-reconsideration-source.ts"
+    ],
+    "canonicalSource": "QueueLedger pending owner + immutable producer purpose index + current Connector grant; actual History dispatchRefs/response owns the post-admission state",
+    "red": [
+      "30e7f5: old producer imports retired TypedWaitCustodyGuard via second custody owner",
+      "ea8dec: old source consumer rejects valid canonical producer without Message custody"
+    ],
+    "fixtureFailuresRetained": [
+      "b451ff: wrong hydrate method",
+      "c54aee: incomplete response terminal patch",
+      "61f6ca: omitted canonical input settlement",
+      "a3f018: wrong assertion on typed error message",
+      "82ddd3: scope fixture missing exact public source"
+    ],
+    "sourceGreen": {
+      "priorChunkId": "6c6e04",
+      "evidenceLog": "/tmp/sol-a2a-1577-collective-check-URkd7W/collective-source-cut.log",
+      "tests": 18,
+      "pass": 18,
+      "fail": 0,
+      "skip": 0,
+      "cancel": 0,
+      "todo": 0,
+      "additionalConsumer": "actual CollectiveCurrentContext.resolvePublic retains exact producer grant after ledger retirement; current Host binding/permission still required; includes three authenticated callback policy regressions"
+    },
+    "sourceTypes": {
+      "chunkId": "1c3d5d",
+      "files": 2,
+      "diagnostics": 0,
+      "beforeFinalUnreadGuard": true
+    },
+    "claimGuard": [
+      "permission/current exact purpose and singleton target",
+      "atomic History/Queue failure leaves no queue-only work",
+      "hydration reuses persisted row, never Message reconstruction",
+      "completed-unread/failed/missing evidence cannot claim classification or create new work",
+      "withdrawn source stays withdrawn",
+      "domain scopes cannot elevate owner auth or coalesce targets"
+    ],
+    "fallbackAudit": "One canonical pending row; after row retirement only exact actual child evidence is inspected. Unknown evidence fails closed, no restore fallback or alternate delivery plane.",
+    "joint": {
+      "directory": "/tmp/sol-a2a-1577-collective-check-URkd7W",
+      "passed": true,
+      "completedAt": "2026-10-07T03:28:20.839Z",
+      "lanes": 17,
+      "tests": 612,
+      "pass": 611,
+      "fail": 0,
+      "skip": 1,
+      "cancel": 0,
+      "todo": 0,
+      "inputsUnchanged": true,
+      "sourceTypesFiles": 9,
+      "diagnostics": 0,
+      "formatWarnings": 28,
+      "formatInfos": 2,
+      "scope": "Fresh shared/finance/MCP + source API/Fastify/current context, not full aggregate API/Web/Redis/provider/page"
+    },
+    "f202Input": "immutable e3efa166 only; FYI420/428 successor f60e12b2 is an unadopted source anchor with retained batch7 render failure, never copied from the changing Host worktree",
+    "pending": [
+      "remaining Collective full callback/refusal fixture migration",
+      "old owner/startup/governance",
+      "SDK and final candidate gates"
+    ]
+  },
+  "thirteenthStage": {
+    "scope": "Native exact child control receipts compose with fork per-cat Stop, durable response settlement and canonical claimed Queue withdrawal; source HTTP fixtures only",
+    "conflictsRemaining": 115,
+    "resolved": ["routes/active-execution-routes.ts", "routes/queue.ts", "test/queue-api.test.js"],
+    "red": [
+      "f69bee: projection blocked by the unresolved Queue route",
+      "bf5dc1: unconditional original-parent tracker comparison breaks legacy replacement Stop (41/42)",
+      "d2d0c8: removing post-claim scope validation cancels both targets and returns200 instead of409"
+    ],
+    "fixtureFailuresRetained": [
+      "4ad265: author passed messageId instead of canonical entryId to target reconciliation (71/72)"
+    ],
+    "sourceGreen": {
+      "chunkId": "3d758d",
+      "tests": 120,
+      "pass": 120,
+      "fail": 0,
+      "skip": 0,
+      "cancel": 0,
+      "todo": 0,
+      "postFormat": true
+    },
+    "sourceTypes": {
+      "chunkId": "8cf658",
+      "files": 2,
+      "diagnostics": 0
+    },
+    "preservedBehavior": [
+      "public exact child/parent/thread/principal/running guards and post-await tracker comparison",
+      "native receipt admission before control, observed acknowledgement only after real cancel/withdrawal",
+      "fork unbound legacy Stop may reconcile or cancel the same-cat replacement",
+      "frozen selector never retargets a replacement or cleans unknown child",
+      "canonical reversible withdrawal claim, History retained, rollback on persistence failure",
+      "target set checked before and after atomic claim; sibling dispatch or unknown source History cannot cancel unrelated work",
+      "canonical adjacent sources never coalesce"
+    ],
+    "fallbackAudit": "Explicit frozen-child control versus legacy per-cat intent, not extra delivery fallbacks. Whole-public loses fork settlement/reconciliation; whole-fork loses exact child and native receipt guards. Principal, canonical child, tracker-after-await, claimed targets and source History validate different facts and cannot substitute for one another; no alternate owner or new protocol plane.",
+    "format": {
+      "chunkId": "3598af",
+      "exitCode": 0,
+      "warnings": 27,
+      "newExceptions": false,
+      "scope": "Four changed files; subsequent two test additions formatted separately"
+    },
+    "preparedCheckpoint": {
+      "directory": "/tmp/sol-a2a-1577-control-check-NUAf9W",
+      "scriptSyntaxVerified": true,
+      "executed": true,
+      "actor": "astra",
+      "resultSource": "thread_msr51149hym0i79f#0001791344428081-000448-0b431e55",
+      "passed": true,
+      "completedAt": "2026-10-07T03:39:46.872Z",
+      "lanes": 19,
+      "tests": 732,
+      "pass": 731,
+      "fail": 0,
+      "skip": 1,
+      "cancel": 0,
+      "todo": 0,
+      "skipReason": "existing private L0 staging absence",
+      "inputsUnchanged": true,
+      "fingerprintedFiles": 33,
+      "sourceTypesFiles": 11,
+      "diagnostics": 0,
+      "formatWarnings": 55,
+      "formatInfos": 2,
+      "managedCommandStarted": false,
+      "automaticCallbackRegistered": false,
+      "scope": "Fresh shared/finance/MCP and source control/Collective/scheduler/C5/callback/transport regressions with before/after identity/census; no full API/Web, services, provider/native install or SDK authentication"
+    },
+    "f202SourceAnchors": {
+      "acceptedTree": "e3efa1666bfbff9a92dfdbfc521675041fc5a39c",
+      "unadoptedSuccessorTree": "f60e12b2e23263b7383305b4b4a174092c9128bd",
+      "sourceMessage": "0001791343465705-000428-f5607e50",
+      "deltaSha256": "09707807536993b0afb9d0df5c4687ee580189da4ae4bbfef3559af50d3b51da",
+      "knownBoundary": "batch7 lacks resultRender:rows; Host owner retains artifact 5pass/1fail and pending Settings authorization/revoke journey, no aggregate approval"
+    },
+    "f202WiringSuccessor": {
+      "tree": "8b7f5b1ffb204b1dc409e98e5fc0021bbf0bef71",
+      "baseTree": "f60e12b2e23263b7383305b4b4a174092c9128bd",
+      "adopted": false,
+      "files": 5,
+      "deltaSha256": "39f0d144098fa3e66051d4e8299ccc9e4f42461afacba31fb663a85e7a4d2df6",
+      "sourceMessages": ["0001791344428081-000448-0b431e55", "0001791344629633-000453-3a1c4d64"],
+      "boundary": "Read-only followup closed production wiring P2, not commit/aggregate approval; artifact still 6pass/1fail due to list.resultRender. Current accepted input remains e3efa166."
+    },
+    "pending": [
+      "old owner/governance/startup",
+      "full Collective callback/refusal fixture migration",
+      "SDK authentication/version and final aggregate gates"
+    ]
+  },
+  "ninthStage": {
+    "acceptedContract": "thread_msr51149hym0i79f#0001791339527545-000363-e8456318",
+    "conflictsRemaining": 131,
+    "red": [
+      "99ebba: 10 failures",
+      "509020: unknown History/legacy claim safety",
+      "9e473d: codec await undefined shape"
+    ],
+    "sourceGreen": {
+      "chunkId": "2beb55",
+      "tests": 55,
+      "publicationSeams": 18,
+      "lifecycle": 26,
+      "routeAndMcp": 9,
+      "taskRoutes": 2,
+      "fail": 0,
+      "skip": 0,
+      "cancel": 0,
+      "todo": 0
+    },
+    "scope": "Real in-memory Task/Message/Queue/child records, actual Fastify routes and MCP callback transport; codec roundtrip but no live Redis/API build/model dispatch",
+    "format": {
+      "chunkId": "babaa0",
+      "exitCode": 0,
+      "warnings": 3
+    },
+    "directoryGuard": {
+      "exitCode": 0,
+      "existingWarningsRetained": true,
+      "newExceptions": false
+    },
+    "preparedCheckpoint": {
+      "directory": "/tmp/sol-a2a-1577-deployment-check-kCDZJr",
+      "executed": true,
+      "passed": true,
+      "completedAt": "2026-10-07T02:38:24.818Z",
+      "lanes": 13,
+      "tests": 389,
+      "fail": 0,
+      "skip": 0,
+      "cancel": 0,
+      "todo": 0,
+      "warnings": 3,
+      "scope": "Fresh shared/finance/MCP, source API/Fastify consumers; not full API/Web/Redis/model or aggregate acceptance",
+      "managedCommandStarted": true,
+      "automaticCallbackRegistered": true,
+      "holdTaskId": "hold-ball-1791340681263-92fqzx",
+      "pid": 67603
+    },
+    "f202Input": "FYI368/369: frozen tree unchanged; new Host work remains in original thread",
+    "pending": [
+      "old owner/governance migration",
+      "SDK authentication/version",
+      "final persistent/API/Web/F202/page/hooks/independent review"
+    ]
+  },
+  "tenthStage": {
+    "scope": "Read-only settlement consumes the same canonical child snapshot, native provider freshness retained; fork-retired gate/piggyback/notice-reinvoke not restored",
+    "retirementSource": "c94a58ac7388ba077281ab0608f2ec26a81d8551",
+    "conflictsRemaining": 123,
+    "red": {
+      "chunkId": "d5207b",
+      "pass": 3,
+      "fail": 3,
+      "findings": [
+        "missing explicit unread selection",
+        "public read-only settlement not composed",
+        "retired runtime planes still present"
+      ]
+    },
+    "green": {
+      "chunkId": "87ad11",
+      "pass": 22,
+      "fail": 0,
+      "skip": 1,
+      "cancel": 0,
+      "todo": 0,
+      "skipReason": "private staging content absent from public checkout"
+    },
+    "additionalTypeChecks": {
+      "red": [
+        "b5f0f1: incorrect StoredMessage module import",
+        "49db4b: public frontier/legacy closure union not narrowed"
+      ],
+      "green": "503845: five production files, zero semantic diagnostics"
+    },
+    "liveConsumerFixtureFailures": [
+      "043f2c: five missing MessageFrom failures",
+      "352446: duplicated catId projection forbidden",
+      "255a22: author used invalid cat discriminator; corrected from actual MessageFrom definition"
+    ],
+    "liveConsumerGreen": {
+      "chunkId": "18c0c8",
+      "pass": 5,
+      "fail": 0,
+      "scope": "Actual canonical in-memory store + authenticated ordinary post HTTP injection; no cursor ack/HELD gate restoration"
+    },
+    "preparedCheckpoint": {
+      "directory": "/tmp/sol-a2a-1577-observation-check-u9PpNP",
+      "executed": true,
+      "passed": true,
+      "completedAt": "2026-10-07T02:50:43.769Z",
+      "allLanesExitZero": 16,
+      "tests": 418,
+      "pass": 417,
+      "fail": 0,
+      "skip": 1,
+      "cancel": 0,
+      "todo": 0,
+      "skipReason": "private staging content absent",
+      "scriptSyntaxVerified": true,
+      "managedCommandStarted": true,
+      "automaticCallbackRegistered": true,
+      "holdTaskId": "hold-ball-1791341394607-wk1k8y",
+      "pid": 1537,
+      "scope": "Fresh shared/finance/MCP, source C5/callback/native/projection/HTTP consumers, five-file TS diagnostics and scoped format; not aggregate API/Web/Redis/model acceptance"
+    },
+    "format": {
+      "chunkId": "8d9103",
+      "exitCode": 0,
+      "warnings": 1,
+      "reason": "retained bounded ThreadUnseenChecker scan complexity"
+    },
+    "f202Input": "FYI376/378: continue frozen e3efa166 only; successor 78cd6043 not consumed",
+    "pending": [
+      "remaining old owner/governance and retired test consumers",
+      "SDK auth/version",
+      "final aggregate gates"
+    ]
+  },
+  "fifthStage": {
+    "priorManagedSdkCheckpoint": {
+      "directory": "/tmp/sol-a2a-1577-sdk-contract-GViLqq",
+      "sourceTests": 128,
+      "sourceLaneCounts": [61, 26, 41],
+      "exitCode": 1,
+      "versionGateExit": 1,
+      "liveProbeExit": 1,
+      "liveError": "authentication_failed / Not logged in",
+      "contractProven": false,
+      "verifiedVersionUnchanged": "0.3.280",
+      "installedVersion": "0.3.285",
+      "dataPreserved": true,
+      "credentialConfigChanged": false
+    },
+    "drillHarnessFailures": ["5b0214 wrong import", "e60590 omitted immutable Queue content"],
+    "drillProductRed": {
+      "chunkId": "87583f",
+      "pass": 2,
+      "fail": 4
+    },
+    "drillStorageRed": {
+      "chunkId": "07690d",
+      "pass": 5,
+      "fail": 1,
+      "reason": "thrown History storage was classified as 409"
+    },
+    "documentHarnessFailure": {
+      "chunkId": "3d86ca",
+      "reason": "grant is credentials, not thread/cat fields"
+    },
+    "httpAndCompiledMcpGreen": {
+      "chunkId": "b81aa6",
+      "pass": 20,
+      "fail": 0,
+      "scope": "17 actual drill HTTP cases including 3 freshly compiled MCP-to-HTTP consumers, plus 3 real MD renderer/publication tests. API is source-loaded, HTTP transport seam is app.inject, not real sockets/model/Redis/aggregate server."
+    },
+    "mcpFirstBuild": {
+      "chunkId": "6ca52f",
+      "exitCode": 2,
+      "reason": "finance workspace types not built after ignore-scripts install"
+    },
+    "financeFreshBuild": {
+      "chunkId": "790f36",
+      "exitCode": 0
+    },
+    "mcpFreshBuild": {
+      "chunkId": "8a9325",
+      "exitCode": 0
+    },
+    "mcpDescriptionRed": {
+      "chunkId": "d8c99a",
+      "pass": 17,
+      "fail": 1,
+      "reason": "lost explicit oversized workflow drill pointer description"
+    },
+    "mcpTargetedGreen": {
+      "chunkId": "8f6066",
+      "pass": 20,
+      "fail": 0,
+      "scope": "compiled transport/registration/budget subset; not complete MCP suite or terminal producer acceptance"
+    },
+    "format": [
+      {
+        "chunkId": "33ba8d",
+        "warnings": 75,
+        "checked": 6,
+        "fixed": 5,
+        "unsafeFixesApplied": false
+      },
+      {
+        "chunkId": "42398e",
+        "warnings": 6,
+        "checked": 7,
+        "fixed": 2,
+        "unsafeFixesApplied": false
+      }
+    ],
+    "remainingIndexedConflicts": 139,
+    "completeCallbackRegistrationVerified": false,
+    "pending": [
+      "typed action terminal/refresh canonical owner port",
+      "hold terminal and quota producer consumers",
+      "actual HTTP history/unread cursor/tail matrix",
+      "derived governance snapshot",
+      "F202 and Web semantic consumption",
+      "final fresh API/Web builds",
+      "owned Redis and browser aggregate acceptance"
+    ]
+  },
+  "fourthStage": {
+    "previousManagedCheckpoint": {
+      "directory": "/tmp/sol-a2a-1577-consumer-check-ZSbHUB",
+      "lanes": 8,
+      "exitCode": 0,
+      "tests": 87
+    },
+    "refusalRed": {
+      "chunkId": "96f8f8",
+      "pass": 2,
+      "fail": 4,
+      "rawCopy": "prior tool result; summary only here"
+    },
+    "newQueueConsumerGreen": {
+      "chunkId": "69eca7",
+      "pass": 19,
+      "fail": 0,
+      "commandExitCode": 1,
+      "exitReason": "trailing documentation sed used a wrong path, not a test failure"
+    },
+    "sdkRed": {
+      "chunkId": "80639b",
+      "pass": 0,
+      "fail": 2,
+      "cancelled": 1,
+      "reason": "missing auxiliary notice interface and real SDK seam timeout"
+    },
+    "publicSdkLaunchRed": {
+      "chunkId": "13ae0d",
+      "pass": 0,
+      "fail": 1,
+      "cancelled": 1,
+      "reason": "local validation launched the query; cancellation did not close streaming input"
+    },
+    "sdkGreen": {
+      "chunkId": "651a85",
+      "pass": 29,
+      "fail": 0,
+      "scope": "actual source SDK service with deterministic provider seam, public launch/native notices plus fork Append consumption and Stop"
+    },
+    "sdkVersionGate": {
+      "chunkId": "f62165",
+      "installed": "0.3.285",
+      "liveVerified": "0.3.280",
+      "state": "failed; constant unchanged; isolated live contract still required"
+    },
+    "routeConsumerRed": {
+      "chunkId": "fdb295",
+      "reason": "stale auto-merge references to retired supplement and replace_final variables; unresolved projection test and obsolete Message custody SDK fixture also failed"
+    },
+    "routeConsumerGreen": {
+      "chunkId": "c9bafb",
+      "pass": 41,
+      "fail": 0,
+      "scope": "actual serial/parallel failed-return and actual-send routing, plus in-memory TurnExecutionStore; source-loaded, not compiled or Redis"
+    },
+    "preservedForkRetirements": {
+      "namedResponseAndIndependentPosts": "f8071e44ae",
+      "glassBoxSupplementsAndReinvoke": "c94a58ac73"
+    },
+    "format": {
+      "chunkId": "bb9560",
+      "exitCode": 0,
+      "checked": 16,
+      "fixed": 4,
+      "warnings": 98,
+      "infos": 5,
+      "unsafeFixesApplied": false
+    },
+    "pending": [
+      "HTTP/MCP exact-child consumers",
+      "public SDK Message-custody fixture migration",
+      "projection conflict tests",
+      "native parser and Redis integrated persistence",
+      "repair owner consumers",
+      "fresh full builds",
+      "F202 semantic consumption",
+      "Web journeys"
+    ]
+  },
+  "messageScopeRed": {
+    "chunk_id": "6cdf22",
+    "wall_time_seconds": 0.183003333,
+    "exit_code": 1,
+    "original_token_count": 1174,
+    "output": "✔ collective-participation atomically preserves the source and narrow ledger scope (1.854709ms)\n✔ collective-work atomically preserves the source and narrow ledger scope (0.623458ms)\n✖ rejects missing public source without orphan ledger work or visible source (0.580125ms)\n✔ rejects wrong source connector without orphan ledger work or visible source (0.34575ms)\n✔ rejects wrong durable sender without orphan ledger work or visible source (0.1285ms)\n✖ rejects different participation target without orphan ledger work or visible source (0.169791ms)\n✖ rejects invalid participation receipt without orphan ledger work or visible source (0.13675ms)\n✖ rejects work without invocation receipt without orphan ledger work or visible source (0.128625ms)\nℹ tests 8\nℹ suites 0\nℹ pass 4\nℹ fail 4\nℹ cancelled 0\nℹ skipped 0\nℹ todo 0\nℹ duration_ms 275.968875\n\n✖ failing tests:\n\ntest at test/a2a-1577-message-scope-seam.test.mjs:53:3\n✖ rejects missing public source without orphan ledger work or visible source (0.580125ms)\n  AssertionError [ERR_ASSERTION]: Missing expected exception.\n      at TestContext.<anonymous> (file:///Users/lang/workspace/github-lab/cat-cafe-a2a-dev-1577/packages/api/test/a2a-1577-message-scope-seam.test.mjs:56:12)\n      at Test.runInAsyncScope (node:async_hooks:227:14)\n      at Test.run (node:internal/test_runner/test:1201:25)\n      at Test.processPendingSubtests (node:internal/test_runner/test:831:18)\n      at Test.postRun (node:internal/test_runner/test:1330:19)\n      at Test.run (node:internal/test_runner/test:1258:12)\n      at async Test.processPendingSubtests (node:internal/test_runner/test:831:7) {\n    generatedMessage: false,\n    code: 'ERR_ASSERTION',\n    actual: undefined,\n    expected: /Collective|collective|MessageFrom/,\n    operator: 'throws',\n    diff: 'simple'\n  }\n\ntest at test/a2a-1577-message-scope-seam.test.mjs:53:3\n✖ rejects different participation target without orphan ledger work or visible source (0.169791ms)\n  AssertionError [ERR_ASSERTION]: Missing expected exception.\n      at TestContext.<anonymous> (file:///Users/lang/workspace/github-lab/cat-cafe-a2a-dev-1577/packages/api/test/a2a-1577-message-scope-seam.test.mjs:56:12)\n      at Test.runInAsyncScope (node:async_hooks:227:14)\n      at Test.run (node:internal/test_runner/test:1201:25)\n      at Test.processPendingSubtests (node:internal/test_runner/test:831:18)\n      at Test.postRun (node:internal/test_runner/test:1330:19)\n      at Test.run (node:internal/test_runner/test:1258:12)\n      at async Test.processPendingSubtests (node:internal/test_runner/test:831:7) {\n    generatedMessage: false,\n    code: 'ERR_ASSERTION',\n    actual: undefined,\n    expected: /Collective|collective|MessageFrom/,\n    operator: 'throws',\n    diff: 'simple'\n  }\n\ntest at test/a2a-1577-message-scope-seam.test.mjs:53:3\n✖ rejects invalid participation receipt without orphan ledger work or visible source (0.13675ms)\n  AssertionError [ERR_ASSERTION]: Missing expected exception.\n      at TestContext.<anonymous> (file:///Users/lang/workspace/github-lab/cat-cafe-a2a-dev-1577/packages/api/test/a2a-1577-message-scope-seam.test.mjs:56:12)\n      at Test.runInAsyncScope (node:async_hooks:227:14)\n      at Test.run (node:internal/test_runner/test:1201:25)\n      at Test.processPendingSubtests (node:internal/test_runner/test:831:18)\n      at Test.postRun (node:internal/test_runner/test:1330:19)\n      at Test.run (node:internal/test_runner/test:1258:12)\n      at async Test.processPendingSubtests (node:internal/test_runner/test:831:7) {\n    generatedMessage: false,\n    code: 'ERR_ASSERTION',\n    actual: undefined,\n    expected: /Collective|collective|MessageFrom/,\n    operator: 'throws',\n    diff: 'simple'\n  }\n\ntest at test/a2a-1577-message-scope-seam.test.mjs:53:3\n✖ rejects work without invocation receipt without orphan ledger work or visible source (0.128625ms)\n  AssertionError [ERR_ASSERTION]: Missing expected exception.\n      at TestContext.<anonymous> (file:///Users/lang/workspace/github-lab/cat-cafe-a2a-dev-1577/packages/api/test/a2a-1577-message-scope-seam.test.mjs:56:12)\n      at Test.runInAsyncScope (node:async_hooks:227:14)\n      at Test.run (node:internal/test_runner/test:1201:25)\n      at Test.processPendingSubtests (node:internal/test_runner/test:831:18)\n      at Test.postRun (node:internal/test_runner/test:1330:19)\n      at Test.run (node:internal/test_runner/test:1258:12)\n      at async Test.processPendingSubtests (node:internal/test_runner/test:831:7) {\n    generatedMessage: false,\n    code: 'ERR_ASSERTION',\n    actual: undefined,\n    expected: /Collective|collective|MessageFrom/,\n    operator: 'throws',\n    diff: 'simple'\n  }\n"
+  },
+  "messageSenderRed": {
+    "chunk_id": "ad7e55",
+    "wall_time_seconds": 0.180322375,
+    "exit_code": 1,
+    "original_token_count": 485,
+    "output": "✔ collective-participation atomically preserves the source and narrow ledger scope (2.311792ms)\n✔ collective-work atomically preserves the source and narrow ledger scope (0.230458ms)\n✔ rejects missing public source without orphan ledger work or visible source (0.533417ms)\n✔ rejects wrong source connector without orphan ledger work or visible source (0.122167ms)\n✔ rejects wrong durable sender without orphan ledger work or visible source (0.095916ms)\n✔ rejects different participation target without orphan ledger work or visible source (0.189542ms)\n✖ rejects different ledger sender without orphan ledger work or visible source (0.465959ms)\n✔ rejects invalid participation receipt without orphan ledger work or visible source (0.127834ms)\n✔ rejects work without invocation receipt without orphan ledger work or visible source (0.13625ms)\nℹ tests 9\nℹ suites 0\nℹ pass 8\nℹ fail 1\nℹ cancelled 0\nℹ skipped 0\nℹ todo 0\nℹ duration_ms 272.181041\n\n✖ failing tests:\n\ntest at test/a2a-1577-message-scope-seam.test.mjs:54:3\n✖ rejects different ledger sender without orphan ledger work or visible source (0.465959ms)\n  AssertionError [ERR_ASSERTION]: Missing expected exception.\n      at TestContext.<anonymous> (file:///Users/lang/workspace/github-lab/cat-cafe-a2a-dev-1577/packages/api/test/a2a-1577-message-scope-seam.test.mjs:57:12)\n      at Test.runInAsyncScope (node:async_hooks:227:14)\n      at Test.run (node:internal/test_runner/test:1201:25)\n      at Test.processPendingSubtests (node:internal/test_runner/test:831:18)\n      at Test.postRun (node:internal/test_runner/test:1330:19)\n      at Test.run (node:internal/test_runner/test:1258:12)\n      at async Test.processPendingSubtests (node:internal/test_runner/test:831:7) {\n    generatedMessage: false,\n    code: 'ERR_ASSERTION',\n    actual: undefined,\n    expected: /Collective|collective|MessageFrom/,\n    operator: 'throws',\n    diff: 'simple'\n  }\n"
+  },
+  "liveInboxRed": {
+    "chunk_id": "198ec0",
+    "wall_time_seconds": 0.275948708,
+    "exit_code": 1,
+    "original_token_count": 681,
+    "output": "✖ real pending ledger source produces a bodyless reference without Message custody shadow (2.574959ms)\n✖ structured owner is succession-only; cross-owner and unauthorized projections stay closed (0.260875ms)\n✖ canonical History read is projected from exact response lineage (0.41125ms)\n✖ canonical History unread is projected from exact response lineage (0.275625ms)\nℹ tests 4\nℹ suites 0\nℹ pass 0\nℹ fail 4\nℹ cancelled 0\nℹ skipped 0\nℹ todo 0\nℹ duration_ms 365.706459\n\n✖ failing tests:\n\ntest at test/a2a-1577-live-inbox-seam.test.mjs:23:1\n✖ real pending ledger source produces a bodyless reference without Message custody shadow (2.574959ms)\n  AssertionError [ERR_ASSERTION]: Expected values to be strictly equal:\n  \n  0 !== 1\n  \n      at TestContext.<anonymous> (file:///Users/lang/workspace/github-lab/cat-cafe-a2a-dev-1577/packages/api/test/a2a-1577-live-inbox-seam.test.mjs:26:10)\n      at async Test.run (node:internal/test_runner/test:1208:7)\n      at async startSubtestAfterBootstrap (node:internal/test_runner/harness:385:3) {\n    generatedMessage: true,\n    code: 'ERR_ASSERTION',\n    actual: 0,\n    expected: 1,\n    operator: 'strictEqual',\n    diff: 'simple'\n  }\n\ntest at test/a2a-1577-live-inbox-seam.test.mjs:34:1\n✖ structured owner is succession-only; cross-owner and unauthorized projections stay closed (0.260875ms)\n  TypeError: Cannot read properties of null (reading 'nextWork')\n      at TestContext.<anonymous> (file:///Users/lang/workspace/github-lab/cat-cafe-a2a-dev-1577/packages/api/test/a2a-1577-live-inbox-seam.test.mjs:36:68)\n      at async Test.run (node:internal/test_runner/test:1208:7)\n      at async Test.processPendingSubtests (node:internal/test_runner/test:831:7)\n\ntest at test/a2a-1577-live-inbox-seam.test.mjs:41:37\n✖ canonical History read is projected from exact response lineage (0.41125ms)\n  TypeError: Cannot read properties of null (reading 'facts')\n      at TestContext.<anonymous> (file:///Users/lang/workspace/github-lab/cat-cafe-a2a-dev-1577/packages/api/test/a2a-1577-live-inbox-seam.test.mjs:57:25)\n      at async Test.run (node:internal/test_runner/test:1208:7)\n      at async Test.processPendingSubtests (node:internal/test_runner/test:831:7)\n\ntest at test/a2a-1577-live-inbox-seam.test.mjs:41:37\n✖ canonical History unread is projected from exact response lineage (0.275625ms)\n  TypeError: Cannot read properties of null (reading 'facts')\n      at TestContext.<anonymous> (file:///Users/lang/workspace/github-lab/cat-cafe-a2a-dev-1577/packages/api/test/a2a-1577-live-inbox-seam.test.mjs:57:25)\n      at async Test.run (node:internal/test_runner/test:1208:7)\n      at async Test.processPendingSubtests (node:internal/test_runner/test:831:7)\n"
+  },
+  "liveInboxTerminalProbe": {
+    "chunk_id": "2805a3",
+    "wall_time_seconds": 0.276981625,
+    "exit_code": 1,
+    "original_token_count": 824,
+    "output": "✔ real pending ledger source produces a bodyless reference without Message custody shadow (3.113375ms)\n✔ structured owner is succession-only; cross-owner and unauthorized projections stay closed (0.463667ms)\n✖ canonical History read is projected from exact response lineage (1.624667ms)\n✖ canonical History unread is projected from exact response lineage (0.491084ms)\n✔ History ref to another thread cannot establish a read or handled witness (0.311792ms)\n✔ History ref to another owner cannot establish a read or handled witness (0.255042ms)\n✔ History ref to another cat cannot establish a read or handled witness (0.235208ms)\n✔ History ref to another input cannot establish a read or handled witness (0.219417ms)\n✔ History ref to another entry cannot establish a read or handled witness (0.220042ms)\n✖ exact terminal delivery failure is handled, not a model read, even after pending target retirement (0.601083ms)\nℹ tests 10\nℹ suites 0\nℹ pass 7\nℹ fail 3\nℹ cancelled 0\nℹ skipped 0\nℹ todo 0\nℹ duration_ms 369.249667\n\n✖ failing tests:\n\ntest at test/a2a-1577-live-inbox-seam.test.mjs:41:37\n✖ canonical History read is projected from exact response lineage (1.624667ms)\n  AssertionError [ERR_ASSERTION]: Expected values to be strictly deep-equal:\n  + actual - expected\n  \n    [\n  +   'codex',\n      'opus'\n    ]\n  \n      at TestContext.<anonymous> (file:///Users/lang/workspace/github-lab/cat-cafe-a2a-dev-1577/packages/api/test/a2a-1577-live-inbox-seam.test.mjs:62:10)\n      at async Test.run (node:internal/test_runner/test:1208:7)\n      at async Test.processPendingSubtests (node:internal/test_runner/test:831:7) {\n    generatedMessage: true,\n    code: 'ERR_ASSERTION',\n    actual: [ 'codex', 'opus' ],\n    expected: [ 'opus' ],\n    operator: 'deepStrictEqual',\n    diff: 'simple'\n  }\n\ntest at test/a2a-1577-live-inbox-seam.test.mjs:41:37\n✖ canonical History unread is projected from exact response lineage (0.491084ms)\n  AssertionError [ERR_ASSERTION]: Expected values to be strictly deep-equal:\n  + actual - expected\n  \n    [\n  +   'codex',\n      'opus'\n    ]\n  \n      at TestContext.<anonymous> (file:///Users/lang/workspace/github-lab/cat-cafe-a2a-dev-1577/packages/api/test/a2a-1577-live-inbox-seam.test.mjs:62:10)\n      at async Test.run (node:internal/test_runner/test:1208:7)\n      at async Test.processPendingSubtests (node:internal/test_runner/test:831:7) {\n    generatedMessage: true,\n    code: 'ERR_ASSERTION',\n    actual: [ 'codex', 'opus' ],\n    expected: [ 'opus' ],\n    operator: 'deepStrictEqual',\n    diff: 'simple'\n  }\n\ntest at test/a2a-1577-live-inbox-seam.test.mjs:90:1\n✖ exact terminal delivery failure is handled, not a model read, even after pending target retirement (0.601083ms)\n  AssertionError [ERR_ASSERTION]: Expected values to be strictly equal:\n  \n  false !== true\n  \n      at TestContext.<anonymous> (file:///Users/lang/workspace/github-lab/cat-cafe-a2a-dev-1577/packages/api/test/a2a-1577-live-inbox-seam.test.mjs:98:10)\n      at async Test.run (node:internal/test_runner/test:1208:7)\n      at async Test.processPendingSubtests (node:internal/test_runner/test:831:7) {\n    generatedMessage: true,\n    code: 'ERR_ASSERTION',\n    actual: false,\n    expected: true,\n    operator: 'strictEqual',\n    diff: 'simple'\n  }\n"
+  },
+  "ledgerClaimRed": {
+    "state": "raw prior-turn tool result; no structured copy recovered"
+  },
+  "latestLiveInboxGreen": {
+    "chunk_id": "f2bf87",
+    "wall_time_seconds": 0.285522459,
+    "exit_code": 0,
+    "original_token_count": 262,
+    "output": "✔ real pending ledger source produces a bodyless reference without Message custody shadow (3.253458ms)\n✔ structured owner is succession-only; cross-owner and unauthorized projections stay closed (0.494ms)\n✔ canonical History read is projected from exact response lineage (0.902875ms)\n✔ canonical History unread is projected from exact response lineage (0.458375ms)\n✔ History ref to another thread cannot establish a read or handled witness (0.3065ms)\n✔ History ref to another owner cannot establish a read or handled witness (0.220959ms)\n✔ History ref to another cat cannot establish a read or handled witness (0.211666ms)\n✔ History ref to another input cannot establish a read or handled witness (0.197042ms)\n✔ History ref to another entry cannot establish a read or handled witness (0.2135ms)\n✔ exact terminal delivery failure is handled, not a model read, even after pending target retirement (0.596917ms)\nℹ tests 10\nℹ suites 0\nℹ pass 10\nℹ fail 0\nℹ cancelled 0\nℹ skipped 0\nℹ todo 0\nℹ duration_ms 378.832791\n"
+  },
+  "sixthStage": {
+    "scope": "Source-level typed action History and Ledger consumer migration, not complete callback/Redis/aggregate acceptance",
+    "previousManagedCheckpoint": {
+      "directory": "/tmp/sol-a2a-1577-http-mcp-check-X4nioG",
+      "exitCode": 0,
+      "tests": 208,
+      "freshBuilds": ["shared", "finance", "mcp-server"],
+      "sdkLiveGateRerun": false
+    },
+    "productRed": [
+      {
+        "chunkId": "bac738",
+        "reason": "wrong scoped idempotency-index hit accepted as successful execution"
+      },
+      {
+        "chunkId": "09bf7a",
+        "pass": 17,
+        "fail": 1,
+        "reason": "old interrupted source outranked exact new pending replacement"
+      },
+      {
+        "chunkId": "bce9ff",
+        "pass": 18,
+        "fail": 1,
+        "reason": "already dispatched History after Queue retirement reported as absent durable admission"
+      }
+    ],
+    "harnessFailures": [
+      "a13ac2: retired TypedWaitGuard transitively imported",
+      "2d4ec2: diagnostic --input-type=module inherited by logger worker",
+      "3c7ae2: fixture omitted terminalReason/parallelIntent and used hydrate before claim",
+      "b86b96: ordinary adoption correctly rejected typed action",
+      "fb7d15: fixture InvocationQueue constructor shape mismatch"
+    ],
+    "green": {
+      "chunkId": "587b1b",
+      "tests": 32,
+      "fail": 0,
+      "scope": "20 canonical action/source proofs, 6 real QueueProcessor seams, 6 existing fork carrier regressions; in-memory production stores, no model/Redis/full callback"
+    },
+    "finalFixtureRefactor": {
+      "chunkId": "2ba976",
+      "tests": 20,
+      "fail": 0
+    },
+    "format": {
+      "chunkId": "76c303",
+      "checked": 1,
+      "warnings": 0,
+      "unsafeFixesApplied": false,
+      "productionNewComplexityWarningsRemoved": true
+    },
+    "remainingIndexedConflicts": 138,
+    "guarantees": [
+      "immutable scope/generation and exact source-response-child-parent joins",
+      "Queue-only pending admission, History actual delivery; no shadow custody writes or expiring-index requirement",
+      "safe_wait canceled/failed refusal, interrupted same fence, handled refresh CAS",
+      "old interrupted attempt cannot restart over a current exact pending replacement",
+      "committed History delivery read reports execution outcomes without scheduling or promising redelivery"
+    ],
+    "pending": [
+      "Complete callback HTTP retry/race and history/unread registration",
+      "Public former Message-custody action fixtures and owned Redis recovery",
+      "Hold quota/terminal producer migration",
+      "F202/Web final semantic integration",
+      "Fresh full API/Web builds, browser aggregate acceptance, hooks and independent review"
+    ]
+  },
+  "eighthStage": {
+    "remainingIndexedConflicts": 131,
+    "fullCallbackImport": {
+      "initialFailureChunk": "275f5a",
+      "resolvedChunk": "3d6366"
+    },
+    "actualTypedIngressRed": {
+      "chunkId": "01bcaa",
+      "finding": "wait carrier in Message metadata was lost before canonical Queue admission, allowing ordinary HTTP adoption"
+    },
+    "actualHttpMcpGreen": {
+      "chunkId": "6c44c6",
+      "httpTests": 22,
+      "consumer": "actual authenticated callback composition plus existing fresh MCP dist, in-memory stores"
+    },
+    "publisherImmutableGreen": {
+      "chunkId": "ea1efe",
+      "tests": 42,
+      "scope": "production GitHub wait publisher, connector composition and immutable category/carrier replay including concurrent admission winners"
+    },
+    "fullCallbackAttempt": {
+      "chunkId": "5d00cd",
+      "pass": 236,
+      "fail": 1,
+      "reason": "older queued-read fixture omitted exact LifecycleActiveRun tracker"
+    },
+    "correctedFixtureGreen": {
+      "chunkId": "e2f49c",
+      "tests": 1
+    },
+    "retainedF323Failure": {
+      "chunkId": "cf8391",
+      "pass": 7,
+      "fail": 1,
+      "finding": "deployment immediate-current-turn still uses MessageStore-only connector wiring; migrate current-turn History and background atomic Queue publication coherently"
+    },
+    "format": {
+      "chunkId": "b588fd",
+      "exitCode": 0,
+      "warnings": 43,
+      "info": 1,
+      "unsafeFixesApplied": false
+    },
+    "preparedCheckpoint": {
+      "directory": "/tmp/sol-a2a-1577-callback-check-hzUKIR",
+      "executed": true,
+      "managedCommandStarted": true,
+      "automaticCallbackRegistered": true,
+      "holdTaskId": "hold-ball-1791339294370-zbd3zh",
+      "pid": 15480,
+      "passed": true,
+      "completedAt": "2026-10-07T02:15:11.136Z",
+      "allLanesExitZero": 11,
+      "tests": 334,
+      "fullCallbacksAndMultiMention": 232,
+      "typedProducerAndPublisher": 42,
+      "actualHttpMcpDrillDocuments": 42,
+      "compiledMcpRetirement": 2,
+      "compiledMcpReadTransport": 16,
+      "freshPackages": ["shared", "finance", "mcp-server"],
+      "fullApiWebAcceptance": false
+    },
+    "pending": [
+      "F323 publication/claim/recovery composition",
+      "old owner/governance migration",
+      "Redis persistence and F202/Web",
+      "full API/Web fresh builds, isolated page, hooks and independent review"
+    ]
+  },
+  "seventhStage": {
+    "priorManagedActionCheckpoint": {
+      "directory": "/tmp/sol-a2a-1577-action-check-AhgTSo",
+      "exitCode": 0,
+      "tests": 234,
+      "freshPackages": ["shared", "finance", "mcp-server"],
+      "fullApiWebAcceptance": false
+    },
+    "holdRouteRed": {
+      "chunkId": "67441b",
+      "pass": 4,
+      "fail": 2,
+      "findings": [
+        "definite History non-commit leaked exact quota reservation",
+        "overlapping runOnce cycles not serialized after fork/public cut"
+      ]
+    },
+    "holdRouteGreen": {
+      "chunkId": "08e27d",
+      "pass": 13,
+      "fail": 0,
+      "scope": "actual callback auth/Fastify/History route, quota authority is a contract fixture; no Redis or SQLite quota acceptance"
+    },
+    "oldRecoveryHarnessConflictFailure": {
+      "chunkId": "aa93d6",
+      "reason": "unresolved reminder/test imports; not model/storage finding"
+    },
+    "nativeBoundaryFailure": {
+      "chunkId": "a954b2",
+      "pass": 45,
+      "fail": 2,
+      "reason": "better-sqlite3@12.8.0 binding missing after ignore-scripts dependency install"
+    },
+    "compiledMcpRetirementRed": {
+      "chunkId": "e4da20",
+      "pass": 0,
+      "fail": 2,
+      "reason": "fresh earlier MCP build still advertised retired shadow-owner terminal writers"
+    },
+    "mcpRetirementHarnessFailure": {
+      "chunkId": "4bdcb1",
+      "reason": "factory governance is not a direct tool-object property; corrected assertion"
+    },
+    "retainedForkRetirement": {
+      "commit": "f426fb7902837d95286ea98207ef39afb038106c",
+      "contract": "atomic Message+Queue lifecycle and History terminal authority, no manually completed shadow-owner routes"
+    },
+    "preparedCheckpoint": {
+      "directory": "/tmp/sol-a2a-1577-hold-native-VG61sF",
+      "scope": "only exact existing local better-sqlite3 install script, memory binding probe, source recovery/hold/quota regressions and fresh MCP consumers",
+      "executed": true,
+      "registrationRejected": 429,
+      "holdsInWindow": 3,
+      "retryAt": "2026-10-06T14:39:53.721Z",
+      "automaticCallbackRegistered": false,
+      "executionMode": "astra foreground under existing task300",
+      "completedAt": "2026-10-06T13:57:35.081Z",
+      "returnedBy": "0001791295087386-000352-9a2bfe26",
+      "allLanesExitZero": 13,
+      "tests": 91,
+      "native": "exact local better-sqlite3@12.8.0; real memory binding write/read",
+      "freshPackages": ["shared", "finance", "mcp-server"],
+      "biomeWarnings": 10,
+      "fullApiWebAcceptance": false
+    },
+    "pending": [
+      "full callback history/unread and public action fixtures",
+      "governance snapshot from final implementation",
+      "Redis failed atomic/restart/old rows and full API/Web/F202 integration",
+      "aggregate fresh build/page/hooks/independent review"
+    ]
+  }
+}

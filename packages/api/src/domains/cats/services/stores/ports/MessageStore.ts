@@ -28,6 +28,8 @@ import type {
 } from '@cat-cafe/shared';
 import {
   collectiveOwnerAdmissionV1Schema,
+  collectiveSourceIdentitySchema,
+  collectiveWorkDelegationV1Schema,
   collectiveWorkInvocationV1Schema,
   custodyOfferV1Schema,
   evolutionPreparationSubmissionV1Schema,
@@ -55,13 +57,6 @@ import {
   resolveDeliveryTimelineScore,
   resolveThreadMessageVisibility,
 } from '../visibility.js';
-import {
-  type CommitLifecycleAppendReadResult,
-  handLifecycleResponseInputsMetadata,
-  type LifecycleAppendReadInput,
-  prepareLifecycleAppendRead,
-  removeLifecycleResponseInputs,
-} from './lifecycle-append-read.js';
 // Single source of truth: ThreadStore.ts owns DEFAULT_THREAD_ID
 import { DEFAULT_THREAD_ID } from './ThreadStore.js';
 import type { TurnExecutionMessageProjection } from './TurnExecutionStore.js';
@@ -81,7 +76,6 @@ export function isDelivered(msg: StoredMessage): boolean {
  * Queued user/system/briefing work remains private until delivery.
  */
 export { isTimelinePublished } from '../visibility.js';
-export type { CommitLifecycleAppendReadResult, LifecycleAppendReadInput } from './lifecycle-append-read.js';
 
 export type UnresolvedCursorPolicy = 'rescan' | 'empty';
 
@@ -265,9 +259,36 @@ export interface StoredMessage {
   metadata?: MessageMetadata;
   /** F022+F052+F098-C1+F153-F: Extensible extra data (rich blocks, stream metadata, cross-post origin, explicit targets, tracing pointers) */
   extra?: {
+    /** Immutable Live ingress receipt, not executable media or an ownership record. */
+    liveAdmission?: { sessionId: string; targetId: string };
+    /** F309: a confirmed human request; technical coordinates resolve through the request ref. */
+    contentModificationRequestV1?: import('@cat-cafe/shared').ContentModificationSourceMessageV1;
+    /** F317: Host-persisted typed input or provider-committed speech/result. Never a task grant. */
+    liveCompanion?: {
+      callId: string;
+      /** Display identity frozen when this Live call began; author/source remain on the message. */
+      identity?: import('@cat-cafe/shared').CompanionIdentitySnapshotV1;
+    } & (
+      | {
+          modality: 'typed';
+          role: 'user';
+          clientMessageId: string;
+        }
+      | {
+          nativeThreadId: string;
+          realtimeSessionId: string;
+          nativeItemId: string;
+          modality: 'voice' | 'result';
+          /** Explicit source role; legacy records without it remain in complete chat. */
+          role?: 'user' | 'assistant';
+          nativeTurnId?: string;
+        }
+    );
     /** F290: canonical owner receipt and exact Task execution trigger; written by owner admission routes only. */
     collectiveOwnerAdmissionV1?: import('@cat-cafe/shared').CollectiveOwnerAdmissionV1;
     collectiveWorkInvocationV1?: import('@cat-cafe/shared').CollectiveWorkInvocationV1;
+    /** F290: authenticated Task owner explicitly names home Cats allowed to continue this private Work. */
+    collectiveWorkDelegationV1?: import('@cat-cafe/shared').CollectiveWorkDelegationV1;
     collectiveAuthorizationInvalid?: true;
     /** F306 durable provider-neutral event; native wire vocabulary is never stored here. */
     semanticEvent?: ProviderSemanticEvent;
@@ -594,6 +615,7 @@ export type HostMessageExtra = Omit<
   | 'deliveryBoundary'
   | 'collectiveOwnerAdmissionV1'
   | 'collectiveWorkInvocationV1'
+  | 'collectiveWorkDelegationV1'
   | 'collectiveAuthorizationInvalid'
 >;
 
@@ -758,6 +780,37 @@ export function prepareQueueLedgerSourceLifecycle(
   message: StoredMessage,
   entries: readonly QueueLedgerEntry[],
 ): LifecycleStoredMessageMetadata {
+  // Scope limits execution; it is not a grant manufactured by the Queue label.
+  // Bind it to immutable History source evidence before either store commits.
+  for (const entry of entries) {
+    if (entry.execution.executionScope && !isDeepStrictEqual(entry.from, message.from)) {
+      throw new Error('Collective Queue admission sender must match its durable source');
+    }
+    if (entry.execution.executionScope === 'collective-participation') {
+      const source = collectiveSourceIdentitySchema.safeParse(message.source?.meta?.participation);
+      if (
+        !source.success ||
+        message.source?.connector !== 'collective' ||
+        message.from?.kind !== 'external' ||
+        message.from.connectorId !== 'collective' ||
+        entry.targets.length !== 1 ||
+        entry.targets[0] !== source.data.catId
+      ) {
+        throw new Error('Collective participation Queue admission requires its exact durable source and target');
+      }
+    } else if (entry.execution.executionScope === 'collective-work') {
+      const invocation = collectiveWorkInvocationV1Schema.safeParse(message.extra?.collectiveWorkInvocationV1);
+      if (
+        !invocation.success ||
+        message.from?.kind !== 'system' ||
+        message.from.service !== 'collective-work' ||
+        message.source ||
+        message.extra?.collectiveAuthorizationInvalid
+      ) {
+        throw new Error('Collective work Queue admission requires its durable invocation receipt');
+      }
+    }
+  }
   const targetIds = entries.flatMap((entry) => entry.targets);
   const dispatchedTargets = new Set(message.lifecycle?.dispatchRefs?.map((ref) => ref.targetId) ?? []);
   if (targetIds.some((targetId) => dispatchedTargets.has(targetId))) {
@@ -805,7 +858,7 @@ export type LifecycleInputDispatchPatch = {
   producerInvocationId?: string;
   targetId: string;
   statusMessageId: string;
-} & ({ phase: 'dispatched'; dispatchedAt: number; readState?: 'awaiting' } | { phase: 'settled' });
+} & ({ phase: 'dispatched'; dispatchedAt: number } | { phase: 'settled' });
 
 export type AdvanceLifecycleInputDispatchResult =
   | { kind: 'applied' | 'replayed'; message: StoredMessage }
@@ -820,11 +873,6 @@ export interface LifecycleAppendAdmissionInput {
   threadId: string;
   entryId: string;
   inputMessageIds: readonly string[];
-  /**
-   * F117 Phase M: the carrier is about to be handed this input and nothing has read it yet. The ref
-   * waits (`readState: 'awaiting'`) and the response only indexes it as handed; read comes later.
-   */
-  handed?: boolean;
   runs: readonly {
     targetId: string;
     invocationId: string;
@@ -1023,7 +1071,6 @@ export function advanceLifecycleInputDispatchMetadata(
             phase: 'dispatched',
             statusMessageId: patch.statusMessageId,
             dispatchedAt: patch.dispatchedAt,
-            ...(patch.readState ? { readState: patch.readState } : {}),
           },
         ],
       },
@@ -1052,7 +1099,6 @@ export function advanceLifecycleInputDispatchMetadata(
             phase: 'dispatched',
             statusMessageId: patch.statusMessageId,
             dispatchedAt: patch.dispatchedAt,
-            ...(patch.readState ? { readState: patch.readState } : {}),
           },
         ],
       },
@@ -1080,14 +1126,12 @@ export function advanceLifecycleInputDispatchMetadata(
   } else if (existing.phase === 'settled' || patch.phase !== 'settled') {
     return { kind: 'conflict', reason: 'invalid_transition' };
   }
-  // Settling keeps what was read; an Append still waiting when its response settles was never read.
+  // Settlement keeps the exact delivery identity.
   const nextRef: LifecycleDispatchRef = {
     targetId: patch.targetId,
     phase: patch.phase,
     statusMessageId: patch.statusMessageId,
     ...(existing.dispatchedAt !== undefined ? { dispatchedAt: existing.dispatchedAt } : {}),
-    ...(existing.readAt !== undefined ? { readAt: existing.readAt } : {}),
-    ...(existing.readState === 'awaiting' ? { readState: 'unread' as const } : {}),
   };
   return {
     kind: 'applied',
@@ -1173,7 +1217,6 @@ export function prepareLifecycleAppendAdmission(
         phase: 'dispatched',
         statusMessageId: run.responseMessageId,
         dispatchedAt: run.dispatchedAt,
-        ...(input.handed ? { readState: 'awaiting' as const } : {}),
       });
       if (transition.kind === 'conflict') return { kind: 'conflict', reason: 'input_lifecycle_conflict' };
       if (transition.kind === 'applied') {
@@ -1187,28 +1230,41 @@ export function prepareLifecycleAppendAdmission(
   for (let index = 0; index < input.runs.length; index += 1) {
     const run = input.runs[index]!;
     const message = messages[input.inputMessageIds.length + index]!;
-    const transition = input.handed
-      ? handLifecycleResponseInputsMetadata(message.lifecycle, {
-          entryId: input.entryId,
-          inputMessageIds: input.inputMessageIds,
-          targetId: run.targetId,
-          invocationId: run.invocationId,
-        })
-      : appendLifecycleResponseInputsMetadata(message.lifecycle, {
-          entryId: input.entryId,
-          inputMessageIds: input.inputMessageIds,
-          targetId: run.targetId,
-          invocationId: run.invocationId,
-          latestInputTimelineOrderAt: Math.max(
-            run.dispatchedAt,
-            ...messages.slice(0, input.inputMessageIds.length).map(getTimelineOrderTime),
-          ),
-        });
+    const transition = appendLifecycleResponseInputsMetadata(message.lifecycle, {
+      entryId: input.entryId,
+      inputMessageIds: input.inputMessageIds,
+      targetId: run.targetId,
+      invocationId: run.invocationId,
+      latestInputTimelineOrderAt: Math.max(
+        run.dispatchedAt,
+        ...messages.slice(0, input.inputMessageIds.length).map(getTimelineOrderTime),
+      ),
+    });
     if (transition.kind === 'conflict') return { kind: 'conflict', reason: 'response_lifecycle_conflict' };
     if (transition.kind === 'applied') replayed = false;
     lifecycles.push(transition.kind === 'applied' ? transition.lifecycle : message.lifecycle!);
   }
   return { kind: 'prepared', lifecycles, replayed };
+}
+
+function removeLifecycleResponseInputs(
+  current: Extract<LifecycleStoredMessageMetadata, { kind: 'response' }>,
+  entryId: string,
+  inputMessageIds: readonly string[],
+): { kind: 'applied'; lifecycle: typeof current } | { kind: 'replayed' } | { kind: 'conflict' } {
+  const hasEntry = current.inputEntryIds.includes(entryId);
+  const ids = new Set(inputMessageIds);
+  const present = current.inputMessageIds.filter((id) => ids.has(id));
+  if (!hasEntry && present.length === 0) return { kind: 'replayed' };
+  if (!hasEntry || present.length !== ids.size) return { kind: 'conflict' };
+  return {
+    kind: 'applied',
+    lifecycle: {
+      ...current,
+      inputEntryIds: current.inputEntryIds.filter((id) => id !== entryId),
+      inputMessageIds: current.inputMessageIds.filter((id) => !ids.has(id)),
+    },
+  };
 }
 
 export function prepareLifecycleAppendRejection(
@@ -1341,11 +1397,7 @@ export async function settleLifecycleResponseInputs(
 ): Promise<void> {
   const lifecycle = response.lifecycle;
   if (lifecycle?.kind === 'response') {
-    // F117 Phase M: an Append handed to this run and never read settles `unread` (the transition
-    // converts a waiting ref). Handed and read Appends left the Queue at acceptance, so settling must
-    // also publish them: otherwise one stays queued with no ledger row, visible to no one.
-    const handed = new Set(lifecycle.handedInputMessageIds ?? []);
-    for (const inputMessageId of [...lifecycle.inputMessageIds, ...handed]) {
+    for (const inputMessageId of lifecycle.inputMessageIds) {
       const inputMessage = await store.getById(inputMessageId);
       if (!inputMessage || !isLifecycleDispatchableSource(inputMessage.lifecycle)) continue;
       const targetRef = inputMessage.lifecycle.dispatchRefs?.find((ref) => ref.targetId === lifecycle.targetId);
@@ -1363,10 +1415,6 @@ export async function settleLifecycleResponseInputs(
         throw new Error(
           `lifecycle input settlement conflict: ${inputMessageId}:${settled.kind}:${'reason' in settled ? settled.reason : 'missing'}`,
         );
-      }
-      const handedAppend = handed.has(inputMessageId) || targetRef.readAt !== undefined;
-      if (handedAppend && inputMessage.deliveryStatus === 'queued') {
-        await store.markDelivered(inputMessageId, targetRef.readAt ?? lifecycle.completedAt ?? Date.now());
       }
     }
   }
@@ -1561,6 +1609,10 @@ export function assertValidAppendMessageInput(msg: AppendMessageInput): void {
   }
   const ownerAdmission = msg.extra?.collectiveOwnerAdmissionV1;
   const workInvocation = msg.extra?.collectiveWorkInvocationV1;
+  const workDelegation = msg.extra?.collectiveWorkDelegationV1;
+  if (workDelegation !== undefined && (ownerAdmission !== undefined || workInvocation !== undefined)) {
+    throw new TypeError('Collective Work Message cannot combine Host authority and home delegation carriers');
+  }
   if (ownerAdmission !== undefined) {
     if (msg.from.kind !== 'user' || msg.source || msg.extra?.collectiveAuthorizationInvalid) {
       throw new TypeError('Collective owner receipts require a Host-owned user Message');
@@ -1577,6 +1629,19 @@ export function assertValidAppendMessageInput(msg: AppendMessageInput): void {
       throw new TypeError('Collective Work invocations require the canonical system producer');
     }
     collectiveWorkInvocationV1Schema.parse(workInvocation);
+  }
+  if (workDelegation !== undefined) {
+    const parsed = collectiveWorkDelegationV1Schema.parse(workDelegation);
+    if (
+      msg.from.kind !== 'agent' ||
+      msg.from.catId !== parsed.ownerCatId ||
+      msg.source ||
+      msg.origin !== 'callback' ||
+      msg.extra?.collectiveAuthorizationInvalid ||
+      JSON.stringify([...msg.mentions].sort()) !== JSON.stringify([...parsed.targetCatIds].sort())
+    ) {
+      throw new TypeError('Collective Work delegation requires an exact authenticated owner callback Message');
+    }
   }
   const custody = msg.extra?.custodyOfferV1;
   if (custody) {
@@ -1653,7 +1718,8 @@ export function mergeMessageExtra(
     evolutionPreparationSubmissionV1: _stripPreparation,
     deliveryBoundary: _stripBoundary,
     collectiveOwnerAdmissionV1: _stripCollectiveAdmission,
-    collectiveWorkInvocationV1: _stripCollectiveWork,
+    collectiveWorkInvocationV1: _stripCollectiveInvocation,
+    collectiveWorkDelegationV1: _stripCollectiveDelegation,
     collectiveAuthorizationInvalid: _stripCollectiveInvalid,
     ...incomingHost
   } = incoming ?? {};
@@ -1913,10 +1979,6 @@ export interface IMessageStore {
   commitLifecycleAppendRejection(
     input: LifecycleAppendRejectionInput,
   ): CommitLifecycleAppendRejectionResult | Promise<CommitLifecycleAppendRejectionResult>;
-  /** F117 Phase M: consumption evidence turns one handed Append into a read input of its response. */
-  commitLifecycleAppendRead(
-    input: LifecycleAppendReadInput,
-  ): CommitLifecycleAppendReadResult | Promise<CommitLifecycleAppendReadResult>;
   /**
    * F098-D: CAS transition queued → delivered at an admitted timestamp.
    * `deliveryTransitioned` is true only when this call won; false on a state no-op.
@@ -3108,7 +3170,8 @@ export class MessageStore {
       evolutionPreparationSubmissionV1: _stripPreparation,
       deliveryBoundary: _stripBoundary,
       collectiveOwnerAdmissionV1: _stripCollectiveAdmission,
-      collectiveWorkInvocationV1: _stripCollectiveWork,
+      collectiveWorkInvocationV1: _stripCollectiveInvocation,
+      collectiveWorkDelegationV1: _stripCollectiveDelegation,
       collectiveAuthorizationInvalid: _stripCollectiveInvalid,
       ...hostOnly
     } = extra as Record<string, unknown>;
@@ -3353,21 +3416,6 @@ export class MessageStore {
     const messages = ids.map((id) => this.messages.find((message) => message.id === id));
     if (messages.some((message) => !message)) return { kind: 'not_found' };
     const prepared = prepareLifecycleAppendAdmission(messages as StoredMessage[], input);
-    if (prepared.kind !== 'prepared') return prepared;
-    if (prepared.replayed) {
-      return { kind: 'replayed', messages: (messages as StoredMessage[]).map((message) => structuredClone(message)) };
-    }
-    for (let index = 0; index < messages.length; index += 1) {
-      messages[index]!.lifecycle = structuredClone(prepared.lifecycles[index]!);
-    }
-    return { kind: 'applied', messages: (messages as StoredMessage[]).map((message) => structuredClone(message)) };
-  }
-
-  commitLifecycleAppendRead(input: LifecycleAppendReadInput): CommitLifecycleAppendReadResult {
-    const ids = [...input.inputMessageIds, input.run.responseMessageId];
-    const messages = ids.map((id) => this.messages.find((message) => message.id === id));
-    if (messages.some((message) => !message)) return { kind: 'not_found' };
-    const prepared = prepareLifecycleAppendRead(messages as StoredMessage[], input);
     if (prepared.kind !== 'prepared') return prepared;
     if (prepared.replayed) {
       return { kind: 'replayed', messages: (messages as StoredMessage[]).map((message) => structuredClone(message)) };

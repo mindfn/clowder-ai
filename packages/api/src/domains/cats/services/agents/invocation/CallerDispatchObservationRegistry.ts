@@ -220,8 +220,7 @@ export class CallerDispatchObservationRegistry {
             selectionChange: 'added',
             selectionChangedBy: 'unknown',
           },
-          // The read state is part of the fact: an Append that becomes read, or settles unread, is news.
-          `${ref.phase}:${ref.statusMessageId}${ref.readState ? `:${ref.readState}` : ''}`,
+          `${ref.phase}:${ref.statusMessageId}`,
         ),
       );
   }

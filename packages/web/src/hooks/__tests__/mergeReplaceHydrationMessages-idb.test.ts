@@ -3,9 +3,8 @@
  *
  * Goal: when API history hydration fires and a local message is `cachedFrom='idb'`,
  * it must be dropped (not preserved). Live state (no cachedFrom) is still
- * preserved via the existing stable-identity match. Invocation reconciliation
- * receipts are the narrow exception because server message history never owns
- * them; unresolved receipts are revalidated against canonical invocation truth.
+ * preserved via the existing stable-identity match. All cached rows yield to
+ * canonical history, including former client wait-window notices.
  *
  * Without this filter, an IDB cache message that the server has since deleted
  * would survive history hydration → ghost bubble.
@@ -33,31 +32,18 @@ describe('mergeReplaceHydrationMessages — AC-D2 IDB-origin filter', () => {
     expect(result.stats.preservedLocalCount).toBe(0);
   });
 
-  it('preserves an invocation reconciliation receipt that server message history does not own', () => {
+  it('drops a former client wait-window notice when canonical history does not contain it', () => {
     const history: ChatMessage[] = [];
     const current: ChatMessage[] = [
       makeMsg({
         id: 'invocation-status-parent-1',
         type: 'system',
         cachedFrom: 'idb',
-        extra: {
-          invocationReconciliation: {
-            v: 1,
-            invocationId: 'parent-1',
-            catIds: ['opus'],
-            turnInvocationIds: ['turn-1'],
-            phase: 'unknown_running',
-            reason: 'record_unavailable',
-            updatedAt: 1000,
-          },
-        },
       }),
     ];
 
     const result = mergeReplaceHydrationMessages(history, current);
-    expect(result.messages).toHaveLength(1);
-    expect(result.messages[0]?.id).toBe('invocation-status-parent-1');
-    expect(result.messages[0]?.cachedFrom).toBeUndefined();
+    expect(result.messages).toHaveLength(0);
   });
 
   it('preserves live placeholder (no cachedFrom) when history does not contain it', () => {

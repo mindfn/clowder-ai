@@ -17,7 +17,6 @@ import {
 } from '@/debug/invocationEventDebug';
 import { previewVisiblePageAdmissionController } from '@/lib/preview-visible-page-admission-controller';
 import { resolveProviderSemanticMessage } from '@/lib/provider-semantic-registry';
-import { applyAwaitingReadFromQueueResponse } from '@/stores/awaitingReadStore';
 import { useBrakeStore } from '@/stores/brakeStore';
 import { useChatStore } from '@/stores/chatStore';
 import { useGuideStore } from '@/stores/guideStore';
@@ -158,7 +157,6 @@ export interface SocketCallbacks {
     timestamp: number;
   }) => void;
   /** #80 fix-C: Clear the done-timeout guard (called when background thread completes) */
-  clearDoneTimeout?: (threadId?: string) => void;
   /** F39: Queue updated */
   onQueueUpdated?: (data: {
     threadId: string;
@@ -233,14 +231,16 @@ export async function reconcileThreadWithServer(
     queue: import('../stores/chat-types').QueueEntry[];
   },
 ): Promise<void> {
+  // Reconnect/watchdog GETs must also yield to newer committed socket truth,
+  // not just to another probe of their own kind.
+  const queueEpoch = getLiveQueueHydrateEpoch(threadId);
   const data = await fetchQueueReconciliationSnapshot(threadId);
-  if (shouldAbort()) return;
+  if (shouldAbort() || getLiveQueueHydrateEpoch(threadId) !== queueEpoch) return;
   const queue = Array.isArray(data?.queue) ? data.queue : socketFallback?.queue;
   const store = useChatStore.getState();
   if (queue) {
     store.setQueue(threadId, queue);
   }
-  applyAwaitingReadFromQueueResponse(threadId, data);
   if (!data) return;
 
   try {
@@ -684,6 +684,16 @@ export function useSocket(callbacks: SocketCallbacks, threadId?: string, foregro
         window.dispatchEvent(new Event('cat-cafe:entrusted-work-projection-invalidated'));
       }
     });
+    const onArtifactReviewChanged = (data: { reviewId: string }) => {
+      if (typeof window !== 'undefined')
+        window.dispatchEvent(new CustomEvent('cat-cafe:artifact-review-changed', { detail: data }));
+    };
+    const onContentModificationSourceSaved = (data: { threadId: string; messageId: string }) => {
+      if (typeof data.threadId === 'string' && data.threadId && typeof data.messageId === 'string' && data.messageId)
+        useChatStore.getState().requestStreamCatchUp(data.threadId);
+    };
+    socket.on('artifact_review_changed', onArtifactReviewChanged);
+    socket.on('content_modification_source_saved', onContentModificationSourceSaved);
     socket.on('custody_offer_updated', (data: { messageId: string; threadId: string }) => {
       if (typeof window !== 'undefined') {
         window.dispatchEvent(new CustomEvent('cat-cafe:custody-offer-updated', { detail: data }));
@@ -878,20 +888,38 @@ export function useSocket(callbacks: SocketCallbacks, threadId?: string, foregro
         const status = (entry as { status?: unknown }).status;
         return typeof status === 'string' ? status : 'unknown';
       });
-    // F39: Queue events — reconcile the full canonical projection before
-    // replacing the thread-scoped Queue. Socket rows intentionally omit some
-    // server-only actions (for example exact active-run Append), so committing
-    // them first would create a false-negative action surface.
+    // The socket event is committed pending-target truth. Apply it immediately;
+    // /queue adds rich previews and fenced actions without delaying retirement.
     socket.on('queue_updated', (data: { threadId: string; queue: unknown[]; action: string }) => {
       void invalidateSidebarProjection();
       const store = useChatStore.getState();
       const queue = normalizeQueueEntries(data.queue);
       const epoch = bumpLiveQueueHydrateEpoch(data.threadId);
+      const known = data.threadId === store.currentThreadId ? store.queue : store.getThreadState(data.threadId).queue;
+      const projected = queue.map((entry) => {
+        const previous = known.find((candidate) => candidate.id === entry.id);
+        // Retain only presentation and already-fenced controls for the same
+        // source/targets. Never carry controls onto a mutated pending target set.
+        const sameSource =
+          previous &&
+          previous.messageId === entry.messageId &&
+          previous.content === entry.content &&
+          JSON.stringify(previous.from) === JSON.stringify(entry.from) &&
+          JSON.stringify(previous.targetCats) === JSON.stringify(entry.targetCats) &&
+          JSON.stringify(previous.authorIntentByTarget) === JSON.stringify(entry.authorIntentByTarget);
+        return sameSource
+          ? {
+              ...entry,
+              messagePreview: entry.messagePreview ?? previous.messagePreview,
+              lifecycleActions: entry.lifecycleActions ?? previous.lifecycleActions,
+            }
+          : entry;
+      });
+      store.setQueue(data.threadId, projected);
       void reconcileThreadWithServer(
         data.threadId,
         () => getLiveQueueHydrateEpoch(data.threadId) !== epoch,
         'QueueUpdated',
-        { queue },
       );
       // Queue processor started executing an entry: restore the coarse "active"
       // marker immediately, then hydrate current-thread slot truth from /queue.
@@ -1291,6 +1319,8 @@ export function useSocket(callbacks: SocketCallbacks, threadId?: string, foregro
     }
 
     return () => {
+      socket.off('artifact_review_changed', onArtifactReviewChanged);
+      socket.off('content_modification_source_saved', onContentModificationSourceSaved);
       clearInterval(watchdogTimer);
       clearInterval(connectionWatchdogTimer);
       if (visibilityHandler) {

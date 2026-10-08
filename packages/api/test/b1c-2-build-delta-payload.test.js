@@ -1,12 +1,11 @@
 /**
- * F247 AC-B1c-12 + AC-B1c-10: thread runtime delta payload builder tests.
+ * F247 AC-B1c-12: thread runtime delta payload builder tests.
  *
  * Pins:
  *  - 6 required fields (threadId / threadTitle / participants / calledBy / intent / sourceMessageId)
  *  - JSON.stringify safety against delimiter injection (delimiter / "ignore prev" / quotes)
  *  - Payload length cap (DELTA_PAYLOAD_MAX_CHARS); intent truncated when over
  *  - Envelope shape: <thread-runtime v=1 format=json>{...}</thread-runtime> + intent + fixed MCP return contract
- *  - quoteForEval helper round-trips arbitrary payloads
  */
 
 import assert from 'node:assert/strict';
@@ -15,7 +14,6 @@ import { describe, it } from 'node:test';
 import {
   buildDeltaPayload,
   DELTA_PAYLOAD_MAX_CHARS,
-  quoteForEval,
 } from '../dist/domains/cats/services/cloud-bridge/build-delta-payload.js';
 
 function baseParams(overrides = {}) {
@@ -50,6 +48,8 @@ describe('F247 AC-B1c-12: buildDeltaPayload — envelope shape', () => {
     assert.match(out, /threadId from thread-runtime/);
     assert.match(out, /replyTo=sourceMessageId from thread-runtime/);
     assert.match(out, /content equal to your complete final answer/);
+    assert.match(out, /reply to the human.*omit targetCats/i);
+    assert.match(out, /@co-creator/);
     assert.match(out, /A visible ChatGPT answer alone does not complete this request/);
     assert.match(out, /callback status "ok" or "duplicate" as success/);
     assert.ok(out.endsWith('</cat-cafe-return-contract>'));
@@ -338,40 +338,5 @@ describe('F247 AC-B1c-12 R2: payload cap cascading shrink (gpt52 R2 P2 regressio
     assert.ok('participants' in delta);
     assert.ok('calledBy' in delta);
     assert.ok('intent' in delta);
-  });
-});
-
-describe('F247 AC-B1c-10: quoteForEval', () => {
-  // quoteForEval returns a JSON-stringified representation of the payload.
-  // We verify roundtrip via JSON.parse (NOT eval — biome lint security/noGlobalEval).
-  // Equivalence: JSON.parse(JSON.stringify(s)) === s for any string s, and the
-  // string output is also a valid JS string literal (the property quoteForEval
-  // is documented to provide).
-  it('round-trips arbitrary string via JSON.parse (JSON.stringify === JS string literal)', () => {
-    const payload = 'has "quotes" + backslash\\ + newline\n + </script>';
-    const quoted = quoteForEval(payload);
-    assert.equal(JSON.parse(quoted), payload);
-  });
-
-  it('escapes lone backslash without breaking', () => {
-    const quoted = quoteForEval('only\\backslash');
-    assert.equal(JSON.parse(quoted), 'only\\backslash');
-  });
-
-  it('handles full delta payload envelope safely', () => {
-    const envelope = buildDeltaPayload(baseParams({ intent: 'inject "(evil)" attempt' }));
-    const quoted = quoteForEval(envelope);
-    assert.equal(JSON.parse(quoted), envelope);
-  });
-
-  it('produces output that starts/ends with a double-quote (valid JS string literal)', () => {
-    const out = quoteForEval('any string');
-    assert.match(out, /^".*"$/);
-  });
-
-  it('handles strings with embedded JSON-special chars (tab, CR, control)', () => {
-    const tricky = 'tab\t cr\r null\0 bell';
-    const quoted = quoteForEval(tricky);
-    assert.equal(JSON.parse(quoted), tricky);
   });
 });

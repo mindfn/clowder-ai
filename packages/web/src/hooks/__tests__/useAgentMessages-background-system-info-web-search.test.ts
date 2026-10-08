@@ -39,7 +39,6 @@ function createMockOptions(storeOverrides: Record<string, unknown> = {}) {
       return () => ++i;
     })(),
     addToast: vi.fn(),
-    clearDoneTimeout: vi.fn(),
   } as unknown as HandleBackgroundMessageOptions;
 }
 
@@ -432,13 +431,12 @@ describe('consumeBackgroundSystemInfo provider_capability (#966)', () => {
 });
 
 describe('consumeBackgroundSystemInfo warning + telemetry suppression', () => {
-  it('patches a background reconnect notice to recovered with the same identity', () => {
+  it('keeps background reconnect evidence on the existing response', () => {
     const initial = {
-      id: 'provider-recovery:codex-sol:turn-bg',
-      type: 'system',
-      variant: 'info',
+      id: 'response-bg',
+      type: 'assistant',
       catId: 'codex-sol',
-      content: 'Reconnecting to codex (attempt 1)…',
+      content: 'working',
       timestamp: 100,
     };
     const options = createMockOptions({
@@ -452,6 +450,7 @@ describe('consumeBackgroundSystemInfo warning + telemetry suppression', () => {
         threadId: 'thread-bg',
         invocationId: 'parent-bg',
         turnInvocationId: 'turn-bg',
+        messageId: 'response-bg',
         content: JSON.stringify({
           type: 'provider_recovery',
           provider: 'codex',
@@ -469,9 +468,8 @@ describe('consumeBackgroundSystemInfo warning + telemetry suppression', () => {
     expect(options.store.addMessageToThread).not.toHaveBeenCalled();
     expect(options.store.patchThreadMessage).toHaveBeenCalledWith(
       'thread-bg',
-      'provider-recovery:codex-sol:turn-bg',
+      'response-bg',
       expect.objectContaining({
-        content: 'Connection recovered.',
         extra: expect.objectContaining({
           providerRecovery: expect.objectContaining({
             phase: 'recovered',

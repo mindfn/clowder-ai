@@ -1,4 +1,4 @@
-import type { WaitOutcomeV1 } from '@cat-cafe/shared';
+import type { GitHubWaitOutcomeV1 } from '@cat-cafe/shared';
 import { prSubjectKey } from '@cat-cafe/shared';
 import type { FastifyBaseLogger } from 'fastify';
 import type { ITaskStore } from '../../domains/cats/services/stores/ports/TaskStore.js';
@@ -24,7 +24,7 @@ export type ConflictRouteResult =
        * "notified". A consumer that writes to a repository has to know WHICH condition matched: an
        * expiry and a conflict are both deliveries, and only one of them is a conflict.
        */
-      readonly outcome: WaitOutcomeV1;
+      readonly outcome: GitHubWaitOutcomeV1;
     }
   | {
       /**
@@ -38,7 +38,7 @@ export type ConflictRouteResult =
       readonly taskId: string;
       readonly threadId: string;
       readonly catId: string;
-      readonly outcome: WaitOutcomeV1;
+      readonly outcome: GitHubWaitOutcomeV1;
     }
   | { readonly kind: 'deduped' | 'skipped'; readonly reason: string };
 
@@ -99,7 +99,7 @@ export class ConflictRouter {
   }
 
   /** Announce a deferred outcome: exactly one wake, or none if the outbox already flushed. */
-  async publish(taskId: string, outcome: WaitOutcomeV1): Promise<ConflictRouteResult> {
+  async publish(taskId: string, outcome: GitHubWaitOutcomeV1): Promise<ConflictRouteResult> {
     const result = await this.opts.waitLifecycle.publishDeferred(taskId, outcome.outcomeId);
     if (result.kind !== 'notified') {
       return { kind: result.kind === 'not_tracked' ? 'skipped' : 'deduped', reason: result.reason };
@@ -115,7 +115,7 @@ export class ConflictRouter {
   }
 
   /** Close a deferred outcome the caller resolved itself, without waking the owner. */
-  async settleWithoutWake(taskId: string, outcome: WaitOutcomeV1, reason: string): Promise<boolean> {
+  async settleWithoutWake(taskId: string, outcome: GitHubWaitOutcomeV1, reason: string): Promise<boolean> {
     return this.opts.waitLifecycle.settleDeferredWithoutWake(taskId, outcome.outcomeId, reason);
   }
 }

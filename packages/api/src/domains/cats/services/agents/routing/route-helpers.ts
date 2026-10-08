@@ -32,14 +32,14 @@ import { buildMessageMap, formatMessage } from '../../context/ContextAssembler.j
 import { BRIEFING_TIMEZONE } from '../../duty-briefing/constants.js';
 import { formatPromptTime } from '../../format-time.js';
 import type { DegradationResult } from '../../orchestration/DegradationPolicy.js';
-import { mapToPresentation } from '../../session/context-presentation.js';
+import { mapToPresentation } from '../../session/context/context-presentation.js';
 import {
   type ContextModeProjection,
   type ContextSurfaceProjection,
   countPresentedTiers,
   projectContextMode,
   withSurfaceShape,
-} from '../../session/context-surface-projection.js';
+} from '../../session/context/context-surface-projection.js';
 import { cursorFor } from '../../stores/cursor.js';
 import { messageFrom } from '../../stores/message-from.js';
 import { DeliveryCursorStore } from '../../stores/ports/DeliveryCursorStore.js';
@@ -264,6 +264,7 @@ export interface RouteOptions {
   /** Execution-owned fan-out policy. Queue dequeue uses parallel fan-out for one source
    *  with multiple targets; ordinary routes retain their intent-derived default. */
   targetDispatchMode?: 'serial' | 'parallel' | undefined;
+  liveCompanion?: import('../../types.js').AgentServiceOptions['liveCompanion'];
   /** Route-owned intent plus whether the user explicitly selected it. */
   routeIntent?: AgentRouteIntent;
   /** F293: deterministic scope used to resolve sparse routing cognition. */
@@ -274,6 +275,8 @@ export interface RouteOptions {
   humanDispositionInvocationOrigin?: HumanDispositionInvocationOrigin;
   /** Canonical Queue source class for admission/retry policy. */
   routingQueueSource?: 'user' | 'connector' | 'agent' | 'system';
+  /** Immutable Host domain scope forwarded to children; it limits execution, never grants authority. */
+  executionScope?: 'collective-participation' | 'collective-work';
   /** F167 Phase T: exact protocol wake carrier for this route, never inferred from response prose. */
   turnCustodyWake?: import('../../../../ball-custody/TurnCustodyProjectionService.js').TurnCustodyWakeProvenance;
   /** Per-cat carrier resolver for multi-holder routes. Takes precedence over turnCustodyWake. */
@@ -2699,4 +2702,22 @@ async function assembleSmartWindowContext(
         }
       : {}),
   };
+}
+
+/**
+ * F309: a publication names a message by its stored time, which the live bubble cannot know on its
+ * own clock. Read it back with the stored id; an unreadable time is left unknown, never guessed.
+ */
+export async function storedMessageTimestamp(
+  store: Pick<IMessageStore, 'getById'>,
+  messageId: string | undefined,
+): Promise<{ messageTimestamp: number } | Record<string, never>> {
+  if (!messageId) return {};
+  try {
+    const stored = await store.getById(messageId);
+    return stored?.id === messageId ? { messageTimestamp: stored.timestamp } : {};
+  } catch (err) {
+    log.warn({ err, messageId }, 'stored message time unreadable; done leaves it unknown');
+    return {};
+  }
 }

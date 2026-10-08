@@ -1,3 +1,4 @@
+import { formatVisibleSystemInfo } from '@/hooks/system-info-visible';
 import type { ChatMessage, EvidenceData, RichBlock } from '@/stores/chat-types';
 import { isAssistantAuthored, projectFailedResponseLabel } from './assistant-message-renderability';
 import { isLinkedDeliveryFailureCarrier } from './MessageDispatchAvatars';
@@ -18,6 +19,16 @@ const INTERNAL_PROTOCOL_DIAGNOSTIC_SERVICES = new Set(['routing-guard', 'a2a-liv
  */
 export function isHiddenChatRow(message: ChatMessage): boolean {
   if (message.extra?.systemKind === 'a2a_routing') return true;
+  if (message.type === 'system') {
+    // Rehydrate protocol metadata through the same explicit presentation contract as live events.
+    if (message.extra?.providerRecovery) return true;
+    if (
+      message.extra?.systemInfo &&
+      !message.extra.governanceBlocked &&
+      !formatVisibleSystemInfo(message.extra.systemInfo.payload)
+    )
+      return true;
+  }
   return message.from?.kind === 'system' && INTERNAL_PROTOCOL_DIAGNOSTIC_SERVICES.has(message.from.service);
 }
 

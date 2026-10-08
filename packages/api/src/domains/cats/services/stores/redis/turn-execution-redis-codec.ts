@@ -22,6 +22,7 @@ export interface RedisTurnExecutionHash {
   userId?: string;
   catId?: string;
   executionKind?: string;
+  queueCompletionPolicy?: string;
   startedAt?: string;
   causal?: string;
   status?: string;
@@ -93,6 +94,7 @@ export function hydrateTurnExecution(data: RedisTurnExecutionHash): TurnExecutio
   try {
     if (!['ordinary', 'routing_guard'].includes(data.executionKind)) return null;
     if (!['running', 'succeeded', 'failed', 'canceled', 'interrupted'].includes(data.status)) return null;
+    if (data.queueCompletionPolicy && data.queueCompletionPolicy !== 'explicit_source') return null;
     const legacyCausal = parseCausal(data.causal);
     const legacyRecord: TurnExecutionRecord = {
       invocationId: data.invocationId,
@@ -101,6 +103,9 @@ export function hydrateTurnExecution(data: RedisTurnExecutionHash): TurnExecutio
       userId: data.userId,
       catId: data.catId as CatId,
       executionKind: data.executionKind as TurnExecutionKind,
+      ...(data.queueCompletionPolicy === 'explicit_source'
+        ? { queueCompletionPolicy: 'explicit_source' as const }
+        : {}),
       startedAt: Number(data.startedAt),
       ...(legacyCausal ? { causal: legacyCausal } : {}),
       status: data.status as TurnExecutionStatus,

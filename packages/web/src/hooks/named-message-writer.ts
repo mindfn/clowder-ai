@@ -1,5 +1,6 @@
 import type { ReplyPreview, RichBlock } from '@cat-cafe/shared';
 import { hasAssistantBody } from '@/components/assistant-message-renderability';
+import type { ServedModelFacts } from '@/lib/served-model-facts';
 import type { ChatMessage, ChatMessageMetadata, TimeoutDiagnostics, TokenUsage, ToolEvent } from '@/stores/chat-types';
 import { type ChatState, useChatStore } from '@/stores/chatStore';
 
@@ -176,7 +177,7 @@ export function writeRichBlock(target: NamedMessageTarget, block: RichBlock, sou
  */
 export function writeMessageMetadata(
   target: Pick<NamedMessageTarget, 'threadId' | 'messageId'>,
-  write: { metadata?: ChatMessageMetadata; usage?: TokenUsage },
+  write: { metadata?: ChatMessageMetadata; usage?: TokenUsage; served?: ServedModelFacts },
   source: StoreSource = liveStore,
 ) {
   const store = source();
@@ -184,6 +185,10 @@ export function writeMessageMetadata(
   // Metadata first: usage lands inside metadata and is a no-op while metadata is absent.
   if (write.metadata) store.setThreadMessageMetadata(target.threadId, target.messageId, write.metadata);
   if (write.usage) store.setThreadMessageUsage(target.threadId, target.messageId, write.usage);
+  const current = store.getThreadState(target.threadId).messages.find((message) => message.id === target.messageId);
+  if (write.served && current?.metadata) {
+    store.patchThreadMessage(target.threadId, target.messageId, { metadata: { ...current.metadata, ...write.served } });
+  }
 }
 
 /**
@@ -199,6 +204,16 @@ export function writeTimeoutDiagnostics(
   const store = source();
   if (!store.getThreadState(target.threadId).messages.some((message) => message.id === target.messageId)) return;
   store.patchThreadMessage(target.threadId, target.messageId, { extra: { timeoutDiagnostics } });
+}
+
+export function writeCliDiagnostics(
+  target: Pick<NamedMessageTarget, 'threadId' | 'messageId'>,
+  cliDiagnostics: NonNullable<NonNullable<ChatMessage['extra']>['cliDiagnostics']>,
+  source: StoreSource = liveStore,
+) {
+  const store = source();
+  if (!store.getThreadState(target.threadId).messages.some((message) => message.id === target.messageId)) return;
+  store.patchThreadMessage(target.threadId, target.messageId, { extra: { cliDiagnostics } });
 }
 
 /** A persisted post_message arrives whole under its own id; replaying it changes nothing. */

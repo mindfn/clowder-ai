@@ -134,53 +134,28 @@ export function projectContextBriefingMessage(parsed: Record<string, unknown>): 
   };
 }
 
-type ProviderRecoveryPhase = 'reconnecting' | 'recovered' | 'failed';
-
-function providerRecoveryAttempts(parsed: Record<string, unknown>): string[] {
-  if (Array.isArray(parsed.attempts)) return parsed.attempts.filter((item): item is string => typeof item === 'string');
-  return typeof parsed.message === 'string' ? [parsed.message] : [];
-}
-
-function providerRecoveryContent(phase: ProviderRecoveryPhase, provider: string, attempt: number | undefined): string {
-  if (phase === 'recovered') return 'Connection recovered.';
-  if (phase === 'failed') return 'Reconnect failed.';
-  return `Reconnecting to ${provider}${attempt !== undefined ? ` (attempt ${attempt})` : ''}…`;
-}
-
-/** One invocation-scoped reconnect notice, updated in place as the provider recovers or fails. */
-export function projectProviderRecoveryMessage(
+/** Reconnect evidence belongs to the exact response, never to a second chat result. */
+export function parseProviderRecovery(
   parsed: Record<string, unknown>,
-  context: { catId: string; invocationId?: string; turnInvocationId?: string; timestamp?: number },
-): ChatMessage | null {
-  if (parsed.type !== 'provider_recovery') return null;
+  context: { invocationId?: string; turnInvocationId?: string; timestamp?: number },
+): NonNullable<NonNullable<ChatMessage['extra']>['providerRecovery']> | null {
   const phase = parsed.phase;
   if (phase !== 'reconnecting' && phase !== 'recovered' && phase !== 'failed') return null;
-
-  const provider = stringField(parsed, 'provider') ?? 'provider';
-  const invocationId = stringField(parsed, 'invocationId') ?? context.turnInvocationId ?? context.invocationId;
+  const invocationId = context.turnInvocationId ?? context.invocationId;
   const attempt = typeof parsed.attempt === 'number' ? parsed.attempt : undefined;
   const evidence = stringField(parsed, 'evidence');
-  const timestamp = context.timestamp ?? Date.now();
   return {
-    id: `provider-recovery:${context.catId}:${invocationId ?? 'legacy'}`,
-    type: 'system',
-    variant: phase === 'failed' ? 'error' : 'info',
-    catId: context.catId,
-    content: providerRecoveryContent(phase, provider, attempt),
-    timestamp,
-    extra: {
-      providerRecovery: {
-        v: 1,
-        provider,
-        phase,
-        ...(invocationId ? { invocationId } : {}),
-        ...(context.invocationId ? { parentInvocationId: context.invocationId } : {}),
-        ...(attempt !== undefined ? { attempt } : {}),
-        attempts: providerRecoveryAttempts(parsed),
-        ...(evidence ? { evidence } : {}),
-        updatedAt: timestamp,
-      },
-    },
+    v: 1,
+    provider: stringField(parsed, 'provider') ?? 'provider',
+    phase,
+    ...(invocationId ? { invocationId } : {}),
+    ...(context.invocationId ? { parentInvocationId: context.invocationId } : {}),
+    ...(attempt !== undefined ? { attempt } : {}),
+    attempts: Array.isArray(parsed.attempts)
+      ? parsed.attempts.filter((item): item is string => typeof item === 'string')
+      : [],
+    ...(evidence ? { evidence } : {}),
+    updatedAt: context.timestamp ?? Date.now(),
   };
 }
 

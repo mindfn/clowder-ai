@@ -230,7 +230,7 @@ describe('QueuePanel steer (F047)', () => {
     act(() => root.render(React.createElement(QueuePanel, { threadId: 'thread-1' })));
 
     const route = container.querySelector('[data-testid="queue-route-q1"]');
-    expect(route?.textContent).toContain('布偶猫（已读）');
+    expect(route?.textContent).toContain('布偶猫（已投递）');
     expect(route?.textContent).toContain('缅因猫');
     expect(route?.textContent).not.toContain('opus');
     expect(route?.textContent).not.toContain('codex');
@@ -282,12 +282,12 @@ describe('QueuePanel steer (F047)', () => {
 
     act(() => useChatStore.setState({ messages: [deliveredSource, responseMessage] }));
     route = container.querySelector('[data-testid="queue-route-q1"]');
-    expect(route?.textContent).toContain('布偶猫（已读）');
+    expect(route?.textContent).toContain('布偶猫（已投递）');
     expect(route?.textContent).toContain('缅因猫');
 
     act(() => useChatStore.setState({ queue: [{ ...QUEUED_ENTRY, targetCats: ['codex'] }] }));
     route = container.querySelector('[data-testid="queue-route-q1"]');
-    expect(route?.textContent).toContain('布偶猫（已读）');
+    expect(route?.textContent).toContain('布偶猫（已投递）');
     expect(route?.textContent).toContain('缅因猫');
   });
 
@@ -344,7 +344,7 @@ describe('QueuePanel steer (F047)', () => {
     act(() => root.render(React.createElement(QueuePanel, { threadId: 'thread-1' })));
 
     expect(container.querySelector('[data-testid="queue-route-successor-entry"]')?.textContent).toContain(
-      '缅因猫（已读）',
+      '缅因猫（已投递）',
     );
   });
 

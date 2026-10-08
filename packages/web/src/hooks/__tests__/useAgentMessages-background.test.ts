@@ -16,9 +16,6 @@ import { selectThreadLiveness } from '../useThreadScopedSelectors';
 /** Monotonic counter matching useSocket.ts bgSeq */
 let testBgSeq = 0;
 
-/** #80 fix-C: Track clearDoneTimeout calls */
-let clearDoneTimeoutCalls: Array<string | undefined> = [];
-
 /**
  * Runs the extracted background-thread branch handler with real stores.
  */
@@ -28,9 +25,6 @@ function simulateBackgroundMessage(msg: BackgroundAgentMessage, resolveCatName?:
     nextBgSeq: () => testBgSeq++,
     addToast: (toast) => useToastStore.getState().addToast(toast),
     resolveCatName,
-    clearDoneTimeout: (threadId) => {
-      clearDoneTimeoutCalls.push(threadId);
-    },
   });
 }
 
@@ -82,7 +76,6 @@ describe('background thread socket handling', () => {
     });
     useToastStore.setState({ toasts: [] });
     testBgSeq = 0;
-    clearDoneTimeoutCalls = [];
   });
 
   describe('P1-2: done event handling', () => {
@@ -997,7 +990,7 @@ describe('background thread socket handling', () => {
       });
 
       const ts = useChatStore.getState().getThreadState('thread-bg');
-      expect(ts.messages).toHaveLength(3);
+      expect(ts.messages).toHaveLength(2);
       expect(ts.messages[0]?.variant).toBe('info');
       expect(ts.messages[0]?.extra?.systemInfo).toEqual({
         v: 1,
@@ -1008,12 +1001,12 @@ describe('background thread socket handling', () => {
         },
         fallbackCatId: 'codex',
       });
-      expect(ts.messages[1]?.variant).toBe('info');
-      expect(ts.messages[2]?.variant).toBe('a2a_followup');
-      expect(ts.messages[2]?.content).toContain('缅因猫 @了 opus');
+      expect(ts.messages[1]?.variant).toBe('a2a_followup');
+      expect(ts.messages[1]?.content).toContain('缅因猫 @了 opus');
+      expect(ts.catInvocations.opus).toMatchObject({ sessionSeq: 3, sessionSealed: true });
     });
 
-    it('projects runtime member names in generated system_info copy', () => {
+    it('does not create a background History notice from retired silent_completion metadata', () => {
       const resolveCatName = (catId: string) => (catId === 'codex' ? '缅因猫（sol）' : catId);
 
       simulateBackgroundMessage(
@@ -1028,7 +1021,7 @@ describe('background thread socket handling', () => {
       );
 
       const ts = useChatStore.getState().getThreadState('thread-bg');
-      expect(ts.messages[0]?.content).toBe('缅因猫（sol） completed without a text response.');
+      expect(ts.messages).toEqual([]);
     });
 
     it('consumes invocation_usage system_info into thread invocation + message metadata (no raw JSON message)', () => {
@@ -1269,6 +1262,40 @@ describe('background thread socket handling', () => {
       });
     });
 
+    it('F319 Phase E.1: served facts on invocation_usage land on the bg bubble live, merged into existing metadata', () => {
+      const now = Date.now();
+      simulateBackgroundMessage({
+        type: 'text',
+        catId: 'codex-sol',
+        threadId: 'thread-bg',
+        messageId: 'response-served-facts',
+        content: 'OK',
+        metadata: { provider: 'openai', model: 'gpt-5.6-sol' },
+        timestamp: now,
+      });
+      simulateBackgroundMessage({
+        type: 'system_info',
+        catId: 'codex-sol',
+        threadId: 'thread-bg',
+        messageId: 'response-served-facts',
+        content: JSON.stringify({
+          type: 'invocation_usage',
+          catId: 'codex-sol',
+          usage: { inputTokens: 10, outputTokens: 2 },
+          model: 'gpt-5.6-sol',
+          provider: 'openai',
+          served: { servedModel: 'gpt-5.6-sol', servedModelSource: 'ws_response_object', upstreamTurnStateLength: 312 },
+        }),
+        timestamp: now + 1000,
+      });
+      const meta = useChatStore.getState().getThreadState('thread-bg').messages[0]?.metadata;
+      expect(meta?.model).toBe('gpt-5.6-sol');
+      expect(meta?.servedModel).toBe('gpt-5.6-sol');
+      expect(meta?.servedModelSource).toBe('ws_response_object');
+      expect(meta?.upstreamTurnStateLength).toBe(312);
+      expect(meta?.usage).toMatchObject({ outputTokens: 2 });
+    });
+
     it('bg-carrier regression: existing metadata model/provider not corrupted by invocation_usage (F230)', () => {
       const now = Date.now();
       // Normal bg carrier: text WITH metadata (model/provider already set)
@@ -1476,71 +1503,6 @@ describe('background thread socket handling', () => {
       expect(ts.messages[0].id).toBe('resp-codex');
       expect(ts.messages[0].content).toBe('codex thinking');
       expect(ts.messages[1]).toMatchObject({ id: 'resp-opus', catId: 'opus', content: 'opus thinking' });
-    });
-  });
-
-  describe('#80 fix-C: background done(isFinal) clears timeout guard', () => {
-    it('done(isFinal) calls clearDoneTimeout with threadId', () => {
-      simulateBackgroundMessage({
-        type: 'done',
-        catId: 'opus',
-        threadId: 'thread-bg',
-        isFinal: true,
-        timestamp: Date.now(),
-      });
-
-      expect(clearDoneTimeoutCalls).toEqual(['thread-bg']);
-    });
-
-    it('done(non-final) does NOT call clearDoneTimeout', () => {
-      simulateBackgroundMessage({
-        type: 'done',
-        catId: 'opus',
-        threadId: 'thread-bg',
-        timestamp: Date.now(),
-      });
-
-      expect(clearDoneTimeoutCalls).toEqual([]);
-    });
-
-    it('text(isFinal) calls clearDoneTimeout with threadId', () => {
-      simulateBackgroundMessage({
-        type: 'text',
-        catId: 'opus',
-        threadId: 'thread-bg',
-        messageId: 'resp-1',
-        origin: 'stream',
-        content: 'final answer',
-        isFinal: true,
-        timestamp: Date.now(),
-      });
-
-      expect(clearDoneTimeoutCalls).toEqual(['thread-bg']);
-    });
-
-    it('error(isFinal) calls clearDoneTimeout with threadId', () => {
-      simulateBackgroundMessage({
-        type: 'error',
-        catId: 'opus',
-        threadId: 'thread-bg',
-        error: 'something broke',
-        isFinal: true,
-        timestamp: Date.now(),
-      });
-
-      expect(clearDoneTimeoutCalls).toEqual(['thread-bg']);
-    });
-
-    it('error(non-final) does NOT call clearDoneTimeout', () => {
-      simulateBackgroundMessage({
-        type: 'error',
-        catId: 'opus',
-        threadId: 'thread-bg',
-        error: 'partial error',
-        timestamp: Date.now(),
-      });
-
-      expect(clearDoneTimeoutCalls).toEqual([]);
     });
   });
 

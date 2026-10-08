@@ -118,18 +118,6 @@ export function userFacingSystemInfoNoticeContent(content: string, catId: string
   return parseVisibleNotice(content, catId)?.content;
 }
 
-function normalizedFailureText(value: string): string {
-  return value.replace(/^(?:⚠️\s*|Error:\s*)+/u, '').trim();
-}
-
-function duplicatesTerminalFailure(notice: VisibleNotice, terminalFailureText: string | undefined): boolean {
-  return (
-    notice.connector === 'system-warning' &&
-    typeof terminalFailureText === 'string' &&
-    normalizedFailureText(terminalFailureText).includes(normalizedFailureText(notice.content))
-  );
-}
-
 async function appendVisibleNotice(
   messageStore: IMessageStore,
   threadId: string,
@@ -256,8 +244,8 @@ export async function persistUserFacingSystemInfoNotices(options: {
   contents: readonly string[];
   expectedSourceMessageId?: string;
   expectedDispatchInvocationId?: string;
-  /** Exact provider failure already persisted in the lifecycle response body. */
-  terminalFailureText?: string;
+  /** The admitted execution's canonical result, never inferred from notice wording. */
+  responseMessageId?: string;
   persistenceContext?: PersistenceContext;
 }): Promise<void> {
   const {
@@ -267,14 +255,29 @@ export async function persistUserFacingSystemInfoNotices(options: {
     contents,
     expectedSourceMessageId,
     expectedDispatchInvocationId,
-    terminalFailureText,
+    responseMessageId,
     persistenceContext,
   } = options;
 
+  let failedResponseOwnsWarning = false;
+  if (responseMessageId) {
+    try {
+      const response = await messageStore.getById(responseMessageId);
+      failedResponseOwnsWarning =
+        response?.threadId === threadId &&
+        response.lifecycle?.kind === 'response' &&
+        response.lifecycle.targetId === catId &&
+        response.lifecycle.invocationId === expectedDispatchInvocationId &&
+        response.lifecycle.status === 'failed';
+    } catch (err) {
+      recordPersistenceFailure(catId, err, persistenceContext);
+      return;
+    }
+  }
   for (const content of contents) {
     const notice = parseVisibleNotice(content, catId);
     if (notice == null) continue;
-    if (duplicatesTerminalFailure(notice, terminalFailureText)) continue;
+    if (notice.connector === 'system-warning' && failedResponseOwnsWarning) continue;
 
     try {
       await appendVisibleNotice(

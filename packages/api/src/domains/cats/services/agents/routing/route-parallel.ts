@@ -18,6 +18,7 @@ import {
 } from '../../../../../infrastructure/telemetry/instruments.js';
 import { estimateTokens } from '../../../../../utils/token-counter.js';
 import { conciergeContextForCat, prepareConciergeContext } from '../../../../concierge/ConciergeRoutingInterceptor.js';
+import { createConciergeMessageSearch } from '../../../../concierge/concierge-message-search.js';
 import {
   buildConciergeActions,
   extractTriagePlanIdsFromActions,
@@ -56,7 +57,7 @@ import {
 } from '../../context/SystemPromptBuilder.js';
 import { mayDeleteDraft } from '../../freshness/FreshnessDraftCustody.js';
 import { formatDegradationMessage } from '../../orchestration/DegradationPolicy.js';
-import { mergePresentationCounts, type PresentationCounts } from '../../session/context-surface-projection.js';
+import { mergePresentationCounts, type PresentationCounts } from '../../session/context/context-surface-projection.js';
 import { buildSessionBootstrap, MAX_SESSION_BOOTSTRAP_TOKENS } from '../../session/SessionBootstrap.js';
 import { createMessageDeliveryBoundary } from '../../stores/message-delivery-boundary.js';
 import { messageFrom } from '../../stores/message-from.js';
@@ -130,6 +131,7 @@ import {
   routeContentBlocksForCat,
   sanitizeInjectedContent,
   shouldPersistContextBriefing,
+  storedMessageTimestamp,
   subjectSeenCueSeeds,
   toStoredToolEvent,
   upsertMaxBoundary,
@@ -325,6 +327,13 @@ export async function* routeParallel(
         userMessage: message,
         threadId,
         evidenceStore: deps.evidenceStore,
+        messageSearch: createConciergeMessageSearch({
+          evidenceStore: deps.evidenceStore,
+          threadStore: deps.invocationDeps.threadStore,
+          messageStore: deps.messageStore,
+          userId,
+          ...(currentUserMessageId ? { source: { threadId, messageId: currentUserMessageId } } : {}),
+        }),
       });
       conciergeSearchContextString = searchResult.contextString;
       conciergeHandles = searchResult.handles;
@@ -1051,6 +1060,7 @@ export async function* routeParallel(
         ...(options.asrPersonMemoryScenes?.length ? { asrPersonMemoryScenes: options.asrPersonMemoryScenes } : {}),
         ...(memoryCueLegacyFallbacks.length > 0 ? { memoryCueLegacyFallbacks } : {}),
         ...(options.toolExecutionPolicy ? { toolExecutionPolicy: options.toolExecutionPolicy } : {}),
+        ...(options.executionScope ? { executionScope: options.executionScope } : {}),
         executionKind: turnExecutionKind,
         ...(options.beforeOutputCommit ? { outputFenced: true } : {}),
         executionCausal: {
@@ -2076,24 +2086,8 @@ export async function* routeParallel(
           hasRichBlocks ||
           (catTools?.length ?? 0) > 0 ||
           Boolean(thinking && renderThinkingChunks(thinking).trim().length > 0);
-        const shouldEmitSilentCompletion = (catTools?.length ?? 0) > 0 && !hasRichBlocks && !sawUserFacingSystemInfo;
-
-        // Diagnostic: if cat ran tools but produced no text, emit a system_info so the
-        // user sees *something* instead of a silent vanish (bugfix: silent-exit P1).
-        if (shouldEmitSilentCompletion) {
-          yield {
-            type: 'system_info' as AgentMessageType,
-            catId: msg.catId,
-            content: JSON.stringify({
-              type: 'silent_completion',
-              detail: `${msg.catId} completed with tool calls but no text response.`,
-              toolCount: catTools?.length ?? 0,
-            }),
-            timestamp: Date.now(),
-          } as AgentMessage;
-        }
-
-        if (shouldPersistNoTextMessage || sawUserFacingSystemInfo || shouldEmitSilentCompletion) {
+        // A transport/status notice cannot acknowledge a business guide outcome.
+        if (shouldPersistNoTextMessage) {
           catProducedOutput = true;
         }
 
@@ -2220,19 +2214,6 @@ export async function* routeParallel(
             }
           }
         } else if (!sawUserFacingSystemInfo) {
-          yield {
-            type: 'system_info' as AgentMessageType,
-            catId: msg.catId,
-            content: JSON.stringify({
-              type: 'silent_completion',
-              detail: `${msg.catId} completed without textual output.`,
-              toolCount: catToolEvents.get(msg.catId)?.length ?? 0,
-              provider: catMeta.get(msg.catId)?.provider,
-              model: catMeta.get(msg.catId)?.model,
-              invocationId: ownInvId,
-            }),
-            timestamp: Date.now(),
-          } as AgentMessage;
           // No persisted message for fully silent turns.
           if (deps.draftStore && ownInvId) {
             deps.draftStore.delete(userId, threadId, ownInvId)?.catch?.(noop);
@@ -2333,9 +2314,7 @@ export async function* routeParallel(
         contents: catUserFacingSystemInfoContents.get(msg.catId) ?? [],
         ...(bridgeTriggerMessageId ? { expectedSourceMessageId: bridgeTriggerMessageId } : {}),
         ...(ownInvId ? { expectedDispatchInvocationId: ownInvId } : {}),
-        ...(lifecycleErrorOwnedByResponse && terminalFailureContent
-          ? { terminalFailureText: terminalFailureContent }
-          : {}),
+        ...(lifecycleErrorOwnedByResponse ? { responseMessageId: lifecycleResponse!.messageId } : {}),
         ...(options.persistenceContext ? { persistenceContext: options.persistenceContext } : {}),
       });
       catUserFacingSystemInfoContents.delete(msg.catId);
@@ -2494,6 +2473,7 @@ export async function* routeParallel(
           ...(memberTimeout && stampedDone.errorCode === undefined ? { errorCode: MEMBER_TIMEOUT_REASON } : {}),
           ...(persistedDoneContent !== undefined ? { content: persistedDoneContent } : {}),
           ...(turnStoredMessageId ? { messageId: turnStoredMessageId } : {}),
+          ...(await storedMessageTimestamp(deps.messageStore, turnStoredMessageId)),
           isFinal,
         },
         ownInvId,

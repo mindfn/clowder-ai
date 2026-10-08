@@ -183,8 +183,8 @@ describe('Sequential multi-cat: non-final done removes own slot', () => {
 
     // Codex's primary slot should be removed
     expect(mockRemoveActiveInvocation).toHaveBeenCalledWith('inv-001');
-    // Also attempts secondary slot cleanup
-    expect(mockRemoveActiveInvocation).toHaveBeenCalledWith('inv-001-codex');
+    // Exact invocation owns the slot; never invent a second id from the cat suffix.
+    expect(mockRemoveActiveInvocation).toHaveBeenCalledTimes(1);
 
     // Global state must NOT be cleared — isFinal=false means more cats coming
     expect(mockSetLoading).not.toHaveBeenCalledWith(false);

@@ -1,9 +1,9 @@
 import type {
   AutomationState,
+  GitHubWaitOutcomeV1,
   IssueWaitAutomationState,
   PrAutomationState,
   TaskItem,
-  WaitOutcomeV1,
   WaitTerminationActor,
   WaitTerminationEventV1,
 } from '@cat-cafe/shared';
@@ -28,7 +28,7 @@ import {
 import { automationGeneration } from '../cats/services/stores/ports/TaskAutomationState.js';
 import type { ITaskStore } from '../cats/services/stores/ports/TaskStore.js';
 import { type GitHubWaitFacts, matchGitHubWaitPredicates } from './GitHubWaitPredicateCatalog.js';
-import { planWaitRenewal } from './GitHubWaitRenewalBaseline.js';
+import { planWaitRenewal, quietBaselineUpdate } from './GitHubWaitRenewalBaseline.js';
 import {
   type GitHubReviewLoopBrake,
   REVIEW_LOOP_BRAKE_NEXT_STEP,
@@ -71,7 +71,7 @@ export interface GitHubWaitObservation {
 export interface GitHubWaitNotified {
   readonly kind: 'notified';
   readonly task: TaskItem;
-  readonly outcome: WaitOutcomeV1;
+  readonly outcome: GitHubWaitOutcomeV1;
   readonly messageId: string;
   readonly content: string;
 }
@@ -80,7 +80,7 @@ export interface GitHubWaitNotified {
 export interface GitHubWaitPendingDelivery {
   readonly kind: 'pending_delivery';
   readonly task: TaskItem;
-  readonly outcome: WaitOutcomeV1;
+  readonly outcome: GitHubWaitOutcomeV1;
 }
 
 export type GitHubWaitLifecycleResult =
@@ -148,7 +148,7 @@ function mergeCollectorState(
   };
 }
 
-function lifecycleEvent(task: TaskItem, outcome: WaitOutcomeV1): WaitTerminationEventV1 {
+function lifecycleEvent(task: TaskItem, outcome: GitHubWaitOutcomeV1): WaitTerminationEventV1 {
   if (!task.userId || !task.ownerCatId) {
     throw new Error(`GitHub wait ${task.id} has no canonical owner identity`);
   }
@@ -169,7 +169,7 @@ function lifecycleEvent(task: TaskItem, outcome: WaitOutcomeV1): WaitTermination
   };
 }
 
-function pendingOutcome(task: TaskItem): WaitOutcomeV1 | null {
+function pendingOutcome(task: TaskItem): GitHubWaitOutcomeV1 | null {
   const outcome = task.automationState?.waitOutcome;
   // A claimed-but-unsent outcome is still `pending`, so a claim whose process died is picked up
   // again here. Re-publishing is keyed on outcomeId and converges on the same row, never a second wake.
@@ -194,7 +194,7 @@ interface OutboxLog {
  * derived here rather than guessed by a producer that cannot yet know what matched: `route` learns
  * the outcome only after this call has already delivered it.
  */
-function conflictDeliveryLabel(outcome: WaitOutcomeV1): {
+function conflictDeliveryLabel(outcome: GitHubWaitOutcomeV1): {
   priority?: 'urgent';
   sourceCategory?: 'conflict';
 } {
@@ -336,6 +336,19 @@ export class GitHubWaitLifecycleService {
     } else {
       const matched = matchGitHubWaitPredicates(active.continuation.when, active.baseline, input.facts);
       if (matched.length === 0 && !isAwaitExpired(active, at)) {
+        const moved = quietBaselineUpdate(active, collectorState, input.facts, at);
+        if (moved) {
+          // Same generation and no outcome: the wait moves with the HEAD, or a wait registered before
+          // verdicts were recorded adopts the ones it sees now. Nobody is woken.
+          const installed = await this.opts.taskStore.replaceAutomationStateIfGeneration(task.id, {
+            expectedGeneration: active.generation,
+            expectedUpdatedAt: task.updatedAt,
+            automationState: { ...collectorState, await: { ...active, baseline: moved.baseline } } as AutomationState,
+            status: 'doing',
+          });
+          if (!installed) return LOST_RACE;
+          return { kind: 'state_only', reason: moved.reason };
+        }
         if (input.collectorPatch) {
           await this.opts.taskStore.patchAutomationState(task.id, input.collectorPatch as Partial<AutomationState>);
         }
@@ -462,7 +475,7 @@ export class GitHubWaitLifecycleService {
     return flushed;
   }
 
-  async recordOutcomeEvent(task: TaskItem, outcome: WaitOutcomeV1): Promise<void> {
+  async recordOutcomeEvent(task: TaskItem, outcome: GitHubWaitOutcomeV1): Promise<void> {
     await this.appendLifecycleEvent(task, outcome);
   }
 
@@ -494,7 +507,7 @@ export class GitHubWaitLifecycleService {
     return { kind: 'deduped', reason: 'generation_changed_concurrently' };
   }
 
-  private async appendLifecycleEvent(task: TaskItem, outcome: WaitOutcomeV1): Promise<void> {
+  private async appendLifecycleEvent(task: TaskItem, outcome: GitHubWaitOutcomeV1): Promise<void> {
     if (!this.opts.eventLog) return;
     try {
       await this.opts.eventLog.append(lifecycleEvent(task, outcome));
@@ -505,7 +518,7 @@ export class GitHubWaitLifecycleService {
 
   private async publishPending(
     task: TaskItem,
-    outcome: WaitOutcomeV1,
+    outcome: GitHubWaitOutcomeV1,
     deliveryExtra?: ConnectorDeliveryInput['extra'],
     deliveryPriority?: 'urgent' | 'normal',
   ): Promise<GitHubWaitLifecycleResult> {
@@ -529,7 +542,11 @@ export class GitHubWaitLifecycleService {
       userId: task.userId ?? '',
       catId: task.ownerCatId ?? '',
       content,
-      idempotencyKey: outcome.outcomeId,
+      waitContinuationCarrier,
+      // #1392: the key belongs to the task. outcomeIds restart at g1 when tracking is unregistered and
+      // re-registered, so a bare outcomeId let the store hand the new notification back as a replay
+      // of the old task's message. Every other delivery key in this domain carries its owner's id.
+      idempotencyKey: `github-wait:${task.id}:${outcome.outcomeId}`,
       source: {
         connector: 'github-wait',
         label: 'GitHub Wait',
@@ -617,7 +634,7 @@ export class GitHubWaitLifecycleService {
 
   private async quarantineLegacyUnfencedOutcome(
     task: TaskItem,
-    outcome: WaitOutcomeV1,
+    outcome: GitHubWaitOutcomeV1,
   ): Promise<GitHubWaitLifecycleResult> {
     this.opts.log.warn(
       { taskId: task.id, outcomeId: outcome.outcomeId },

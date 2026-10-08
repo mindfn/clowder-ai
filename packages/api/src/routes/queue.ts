@@ -28,7 +28,6 @@ import {
   resolveActiveInvocations,
   responseStatusFromMessages,
 } from '../domains/cats/services/agents/invocation/active-execution-service.js';
-import { projectAwaitingReadInputs } from '../domains/cats/services/agents/invocation/awaiting-read-projection.js';
 import {
   type InvocationQueue,
   isSystemPinnedQueueEntry,
@@ -43,6 +42,7 @@ import {
   projectLifecycleAppendCapability,
 } from '../domains/cats/services/agents/invocation/lifecycle-append-projection.js';
 import { emitLifecycleMessageUpdated } from '../domains/cats/services/agents/invocation/lifecycle-message-update.js';
+import type { NativeControlReceiptPort } from '../domains/cats/services/agents/invocation/NativeControlReceipt.js';
 import type { QueueProcessor } from '../domains/cats/services/agents/invocation/QueueProcessor.js';
 import { queueEntryId } from '../domains/cats/services/agents/invocation/queue-ledger/QueueLedger.js';
 import { settleResponseFromDraft } from '../domains/cats/services/agents/invocation/response-draft-settlement.js';
@@ -64,6 +64,7 @@ import { resolveUserId } from '../utils/request-identity.js';
 import { type LiveExecutionCandidate, registerActiveExecutionRoutes } from './active-execution-routes.js';
 import { getMultiMentionOrchestrator } from './callback-multi-mention-routes.js';
 import { resolveQueueAuthorIntentByCatId } from './message-disposition-admission.js';
+import { nativeControlReceiptHooks, nativeQueueControlCommand } from './native-control-receipts.js';
 import { admitThreadParticipants } from './thread-participant-admission.js';
 
 interface ManagedCommandWakeRecoveryLike {
@@ -76,6 +77,7 @@ interface ManagedCommandWakeRecoveryLike {
 }
 
 export interface QueueRoutesOptions {
+  controlReceipts?: () => NativeControlReceiptPort | undefined;
   threadStore: IThreadStore;
   invocationQueue: InvocationQueue;
   queueProcessor: QueueProcessor;
@@ -875,6 +877,8 @@ export const queueRoutes: FastifyPluginAsync<QueueRoutesOptions> = async (app, o
 
   registerActiveExecutionRoutes(app, {
     threadStore,
+    ...(opts.controlReceipts ? { controlReceipts: opts.controlReceipts } : {}),
+    ...(opts.turnExecutionStore ? { turnExecutions: opts.turnExecutionStore } : {}),
     invocationTracker,
     dynamicTaskStore: opts.dynamicTaskStore,
     // F297 AC-D3：与 Sidebar 共用同一个 composition service；project scan 只取
@@ -892,6 +896,8 @@ export const queueRoutes: FastifyPluginAsync<QueueRoutesOptions> = async (app, o
         }
       : {}),
     resolveLiveExecutions: resolveAndRepairLiveExecutions,
+    isLiveExecutionControlPlaneComplete: async (request) =>
+      (await processOwnerSnapshotForRequest(request, opts.cliExecutionOwnerService)).complete,
     cancelExactLiveInvocation: async ({ threadId, userId, catId, executionId, candidate, request }) => {
       if (candidate.controlSource === 'process_owner' && opts.cliExecutionOwnerService && candidate.invocationId) {
         return cancelProcessOwnedInvocation({
@@ -980,12 +986,7 @@ export const queueRoutes: FastifyPluginAsync<QueueRoutesOptions> = async (app, o
     const queueEntries = invocationQueue.list(threadId, guard.userId);
     const queueRevision = invocationQueue.snapshotRevision(threadId, guard.userId);
     const enrichedQueue = await enrichQueueEntries(queueEntries, messageStore);
-    // F117 Phase M: inputs handed to a running carrier and not read yet sit beside the pending rows.
-    const awaitingRead = messageStore
-      ? await projectAwaitingReadInputs({ threadId, userId: guard.userId, invocationTracker, messageStore })
-      : [];
     return {
-      awaitingRead,
       queue: enrichedQueue.map((entry) => {
         const internal = queueEntries.find((candidate) => candidate.id === entry.id);
         if (!internal) return entry;
@@ -1046,8 +1047,12 @@ export const queueRoutes: FastifyPluginAsync<QueueRoutesOptions> = async (app, o
   );
 
   // DELETE /api/threads/:threadId/queue/:entryId
-  app.delete<{ Params: { threadId: string; entryId: string }; Querystring: { deleteMessage?: string } }>(
+  app.delete<{
+    Params: { threadId: string; entryId: string };
+    Querystring: { deleteMessage?: string; expectedSourceMessageId?: string; expectedTargetCatId?: string };
+  }>(
     '/api/threads/:threadId/queue/:entryId',
+    nativeControlReceiptHooks(opts.controlReceipts, nativeQueueControlCommand),
     async (request, reply) => {
       const { threadId, entryId } = request.params;
       const guard = await guardThreadOwnership(request, reply, threadStore, threadId);
@@ -1064,6 +1069,22 @@ export const queueRoutes: FastifyPluginAsync<QueueRoutesOptions> = async (app, o
         reply.status(409);
         return { error: '条目正在处理中，无法撤回', code: 'ENTRY_PROCESSING' };
       }
+      const { expectedSourceMessageId, expectedTargetCatId } = request.query;
+      const scoped = expectedSourceMessageId !== undefined || expectedTargetCatId !== undefined;
+      const expected = scoped
+        ? z
+            .object({ messageId: z.string().min(1).max(256), catId: z.string().min(1).max(100) })
+            .safeParse({ messageId: expectedSourceMessageId, catId: expectedTargetCatId })
+        : undefined;
+      if (expected && !expected.success)
+        return reply.code(400).send({ error: 'Invalid exact queue source', code: 'INVALID_REQUEST' });
+      const matchesScope = (row: QueueEntry) =>
+        !expected?.success ||
+        (row.payload.messageId === expected.data.messageId &&
+          row.targets.length === 1 &&
+          row.targets[0] === expected.data.catId);
+      if (!matchesScope(entry))
+        return reply.code(409).send({ error: '该队列项不再只包含这次请求，尚未撤回', code: 'ENTRY_SCOPE_CHANGED' });
       const claimed = await invocationQueue.claimQueuedEntryForWithdrawal(threadId, guard.userId, entryId);
       if (!claimed) {
         reply.status(409);
@@ -1071,6 +1092,23 @@ export const queueRoutes: FastifyPluginAsync<QueueRoutesOptions> = async (app, o
       }
       let removed: QueueEntry | null = null;
       try {
+        // The async canonical claim may return a newer target set. Never apply a
+        // frozen native control request to it, and never leave a rejected claim held.
+        if (!matchesScope(claimed)) {
+          if (!(await invocationQueue.restoreClaimedEntries(threadId, [entryId])))
+            throw new Error('Scoped Queue withdrawal could not release its claim');
+          return reply.code(409).send({ error: '该队列项范围已变化，尚未撤回', code: 'ENTRY_SCOPE_CHANGED' });
+        }
+        if (expected?.success) {
+          const source = await messageStore?.getById(expected.data.messageId);
+          if (!source || source.userId !== guard.userId || source.threadId !== threadId)
+            throw new Error('Exact Queue source History unavailable');
+          if (source.lifecycle?.dispatchRefs?.some((ref) => ref.targetId !== expected.data.catId)) {
+            if (!(await invocationQueue.restoreClaimedEntries(threadId, [entryId])))
+              throw new Error('Scoped Queue withdrawal could not release its claim');
+            return reply.code(409).send({ error: '该消息还对应其他目标，尚未撤回', code: 'ENTRY_SCOPE_CHANGED' });
+          }
+        }
         const messageIds = queueEntryMessageIds(claimed);
         const remaining = invocationQueue.list(threadId, guard.userId).filter((candidate) => candidate.id !== entryId);
         for (const messageId of messageIds) {
@@ -1087,7 +1125,6 @@ export const queueRoutes: FastifyPluginAsync<QueueRoutesOptions> = async (app, o
           guard.userId,
           threadId,
           invocationQueue.list(threadId, guard.userId),
-          messageStore,
           'withdraw_failed',
         );
         reply.status(503);
@@ -1113,7 +1150,6 @@ export const queueRoutes: FastifyPluginAsync<QueueRoutesOptions> = async (app, o
         guard.userId,
         threadId,
         invocationQueue.list(threadId, guard.userId),
-        messageStore,
         'removed',
       );
 
@@ -1373,7 +1409,6 @@ export const queueRoutes: FastifyPluginAsync<QueueRoutesOptions> = async (app, o
         guard.userId,
         threadId,
         invocationQueue.list(threadId, guard.userId),
-        messageStore,
         'steer_targets_resolved',
       );
       // Mapping is a durable Queue mutation in its own right. If the browser
@@ -1484,7 +1519,6 @@ export const queueRoutes: FastifyPluginAsync<QueueRoutesOptions> = async (app, o
         guard.userId,
         threadId,
         invocationQueue.list(threadId, guard.userId),
-        messageStore,
         'continue_current_fallback',
       );
       return {
@@ -1575,7 +1609,6 @@ export const queueRoutes: FastifyPluginAsync<QueueRoutesOptions> = async (app, o
           guard.userId,
           threadId,
           invocationQueue.list(threadId, guard.userId),
-          messageStore,
           'steer_failed',
         );
         reply.status(503);
@@ -1587,7 +1620,6 @@ export const queueRoutes: FastifyPluginAsync<QueueRoutesOptions> = async (app, o
         guard.userId,
         threadId,
         invocationQueue.list(threadId, guard.userId),
-        messageStore,
         'steer_immediate',
       );
 
@@ -1644,7 +1676,6 @@ export const queueRoutes: FastifyPluginAsync<QueueRoutesOptions> = async (app, o
         guard.userId,
         threadId,
         invocationQueue.list(threadId, guard.userId),
-        messageStore,
         'reordered',
       );
 
@@ -1706,7 +1737,6 @@ export const queueRoutes: FastifyPluginAsync<QueueRoutesOptions> = async (app, o
       guard.userId,
       threadId,
       invocationQueue.list(threadId, guard.userId),
-      messageStore,
       'reordered',
     );
     return { ok: true };
@@ -1744,7 +1774,7 @@ export const queueRoutes: FastifyPluginAsync<QueueRoutesOptions> = async (app, o
           'durable Queue clear stopped; unsettled entries retained',
         );
         const remaining = invocationQueue.list(threadId, guard.userId);
-        await emitQueueUpdated(socketManager, guard.userId, threadId, remaining, messageStore, 'withdraw_failed');
+        await emitQueueUpdated(socketManager, guard.userId, threadId, remaining, 'withdraw_failed');
         reply.status(503);
         return {
           error:
@@ -1776,7 +1806,6 @@ export const queueRoutes: FastifyPluginAsync<QueueRoutesOptions> = async (app, o
       guard.userId,
       threadId,
       invocationQueue.list(threadId, guard.userId),
-      messageStore,
       'cleared',
     );
 
@@ -1923,7 +1952,6 @@ export const queueRoutes: FastifyPluginAsync<QueueRoutesOptions> = async (app, o
         guard.userId,
         threadId,
         invocationQueue.list(threadId, guard.userId),
-        messageStore,
         'force_reset',
       );
     }
@@ -1959,7 +1987,6 @@ export const queueRoutes: FastifyPluginAsync<QueueRoutesOptions> = async (app, o
         guard.userId,
         threadId,
         invocationQueue.list(threadId, guard.userId),
-        messageStore,
         'force_reset',
       );
     }

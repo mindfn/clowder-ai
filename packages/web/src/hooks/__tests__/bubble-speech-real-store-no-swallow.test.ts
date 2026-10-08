@@ -31,7 +31,6 @@ function dispatchBg(msg: BackgroundAgentMessage) {
     store: useChatStore.getState(),
     nextBgSeq: () => testBgSeq++,
     addToast: () => {},
-    clearDoneTimeout: () => {},
   });
 }
 

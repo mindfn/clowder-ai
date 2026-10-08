@@ -31,7 +31,11 @@ export interface QueueLedgerPayload {
 export interface QueueLedgerExecution {
   intent: string;
   ownerAuthProvenance: OwnerAuthProvenance;
+  /** Domain execution restriction; never an owner-authentication grant. */
+  executionScope?: 'collective-participation' | 'collective-work';
   autoExecute: boolean;
+  /** Existing ephemeral surface reference; never credentials or a media reconstruction plan. */
+  liveSessionId?: string;
   a2aParentInvocationId?: string;
   readOnlyToolPolicy?: ToolExecutionPolicy;
   actionSuccessorFence?: ActionSuccessorFence;
@@ -84,6 +88,7 @@ export interface QueueLedgerEntry {
     | 'a2a'
     | 'a2a_failure'
     | 'continuation'
+    | 'producer_return'
     | 'issue'
     | 'freshness';
   position?: number;

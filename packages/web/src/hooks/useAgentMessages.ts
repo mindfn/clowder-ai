@@ -1,6 +1,6 @@
 'use client';
 
-import { useCallback, useEffect, useMemo, useRef } from 'react';
+import { useCallback, useMemo, useRef } from 'react';
 import { useShallow } from 'zustand/react/shallow';
 import { useCatNameResolver } from '@/hooks/useCatNameResolver';
 import { useChatStore } from '@/stores/chatStore';
@@ -10,7 +10,6 @@ import { handleActiveAgentMessage } from './agent-messages/active-handler';
 import { handleBackgroundAgentMessage } from './agent-messages/background-handler';
 import { processThreadSeq } from './agent-messages/thread-seq';
 import type { AgentMsg } from './agent-messages/types';
-import { reconcileTimedOutInvocations } from './invocation-timeout-reconciliation';
 
 export { consumeBackgroundSystemInfo, handleBackgroundAgentMessage } from './agent-messages/background-handler';
 export { processThreadSeq, type ThreadSeqAction } from './agent-messages/thread-seq';
@@ -22,9 +21,6 @@ export type {
   HandleBackgroundMessageOptions,
 } from './agent-messages/types';
 
-/** Timeout for done(isFinal): this much silence hands the thread to timeout reconciliation. */
-const DONE_TIMEOUT_MS = 5 * 60 * 1000;
-
 /**
  * Socket `agent_message` dispatch for every thread (F173 KD-1). The open thread and background
  * threads keep separate entries; both write each event only into the message it names
@@ -32,7 +28,6 @@ const DONE_TIMEOUT_MS = 5 * 60 * 1000;
  *
  * Returns:
  * - handleAgentMessage: socket event handler
- * - resetTimeout / clearDoneTimeout: done-timeout watchdog
  */
 export function useAgentMessages() {
   const resolveCatName = useCatNameResolver();
@@ -67,40 +62,7 @@ export function useAgentMessages() {
 
   /** Counter for ids of background rows and tool events (never message identity). */
   const bgSeqRef = useRef(0);
-  const timeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-  /** Which thread the current timeout guard belongs to. */
-  const timeoutThreadRef = useRef<string | null>(null);
   const timeoutDiagnosticsRef = useRef(new Map<string, Record<string, unknown>>());
-
-  /** Start or restart the done-timeout watchdog for the open thread. */
-  const resetTimeout = useCallback(() => {
-    if (timeoutRef.current) clearTimeout(timeoutRef.current);
-    const timeoutThreadId = useChatStore.getState().currentThreadId;
-    timeoutThreadRef.current = timeoutThreadId;
-    timeoutRef.current = setTimeout(() => {
-      timeoutRef.current = null;
-      timeoutThreadRef.current = null;
-      if (timeoutThreadId) void reconcileTimedOutInvocations(timeoutThreadId);
-    }, DONE_TIMEOUT_MS);
-  }, []);
-
-  /** Clear the watchdog (done/error isFinal); a background thread's completion clears only its own. */
-  const clearDoneTimeout = useCallback((threadId?: string) => {
-    if (threadId && timeoutThreadRef.current && timeoutThreadRef.current !== threadId) return;
-    if (!timeoutRef.current) return;
-    clearTimeout(timeoutRef.current);
-    timeoutRef.current = null;
-    timeoutThreadRef.current = null;
-  }, []);
-
-  useEffect(
-    () => () => {
-      if (timeoutRef.current) clearTimeout(timeoutRef.current);
-      timeoutRef.current = null;
-      timeoutThreadRef.current = null;
-    },
-    [],
-  );
 
   const timeoutDiagnostics = useMemo<TimeoutDiagnosticsStash>(
     () => ({
@@ -132,19 +94,16 @@ export function useAgentMessages() {
             nextBgSeq: () => bgSeqRef.current++,
             addToast: (toast) => useToastStore.getState().addToast(toast),
             resolveCatName,
-            clearDoneTimeout,
           },
         );
         return;
       }
 
-      // Any open-thread event (or a legacy event without threadId) keeps the watchdog alive.
-      resetTimeout();
-      const ctx: ActiveContext = { actions, rows, resolveCatName, clearDoneTimeout, timeoutDiagnostics };
+      const ctx: ActiveContext = { actions, rows, resolveCatName, timeoutDiagnostics };
       handleActiveAgentMessage(msg, ctx);
     },
-    [actions, rows, resolveCatName, resetTimeout, clearDoneTimeout, timeoutDiagnostics],
+    [actions, rows, resolveCatName, timeoutDiagnostics],
   );
 
-  return { handleAgentMessage, resetTimeout, clearDoneTimeout };
+  return { handleAgentMessage };
 }

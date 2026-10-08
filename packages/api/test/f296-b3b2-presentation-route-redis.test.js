@@ -6,7 +6,7 @@ import assert from 'node:assert/strict';
 import { after, before, describe, it } from 'node:test';
 import Redis from 'ioredis';
 import { invokeSingleCat } from '../dist/domains/cats/services/agents/invocation/invoke-single-cat.js';
-import { PresentationLedger } from '../dist/domains/cats/services/session/PresentationLedger.js';
+import { PresentationLedger } from '../dist/domains/cats/services/session/context/PresentationLedger.js';
 import { RedisPresentationLedgerStore } from '../dist/domains/cats/services/stores/redis/RedisPresentationLedgerStore.js';
 import { assertRedisIsolationOrThrow, redisIsolationSkipReason } from './helpers/redis-test-helpers.js';
 
@@ -173,7 +173,9 @@ describe(
         const { RedisContextEpochStore } = await import(
           '../dist/domains/cats/services/stores/redis/RedisContextEpochStore.js'
         );
-        const { ContextEpochOwner } = await import('../dist/domains/cats/services/session/ContextEpochOwner.js');
+        const { ContextEpochOwner } = await import(
+          '../dist/domains/cats/services/session/context/ContextEpochOwner.js'
+        );
         const epochStore = new RedisContextEpochStore(redis);
         assert.equal(
           await epochStore.compareAndPut(
@@ -202,12 +204,7 @@ describe(
 
     after(async () => {
       if (redis?.status !== 'ready') return;
-      const keys = await redis.keys(`${TEST_PREFIX}*`);
-      if (keys.length > 0) {
-        const tx = redis.multi();
-        for (const key of keys) tx.del(key.slice(TEST_PREFIX.length));
-        await tx.exec();
-      }
+      console.info(`Retained Redis acceptance namespace: ${TEST_PREFIX}`);
       await redis.quit();
     });
 

@@ -1,44 +1,11 @@
 import { describe, expect, it } from 'vitest';
-import { formatSessionSealRequested, formatVisibleSystemInfo } from '../system-info-visible';
+import { formatVisibleSystemInfo } from '../system-info-visible';
 
-describe('formatSessionSealRequested', () => {
-  it('describes runtime replacement as an in-turn recovery instead of a context seal', () => {
+describe('internal session continuity has no visible notice formatter', () => {
+  it.each(['runtime_replacement', 'context_threshold'])('keeps %s outside chat', (reason) => {
     expect(
-      formatSessionSealRequested(
-        {
-          type: 'session_seal_requested',
-          catId: 'codex-sol',
-          sessionSeq: 2,
-          reason: 'cli_session_replaced',
-          continuityDiagnostics: {
-            source: 'runtime_replacement',
-            boundary: 'runtime_replacement',
-          },
-        },
-        () => '缅因猫 Sol',
-      ),
-    ).toEqual({
-      content: '缅因猫 Sol 的会话 #2 已自动接力；新会话已在本轮继续运行',
-      variant: 'info',
-    });
-  });
-
-  it('keeps context percentage copy for a real threshold seal', () => {
-    expect(
-      formatSessionSealRequested(
-        {
-          type: 'session_seal_requested',
-          catId: 'codex-sol',
-          sessionSeq: 3,
-          reason: 'context_threshold',
-          healthSnapshot: { fillRatio: 0.82 },
-        },
-        () => '缅因猫 Sol',
-      ),
-    ).toEqual({
-      content: '缅因猫 Sol 的会话 #3 已封存（上下文 82%），下次调用将自动创建新会话',
-      variant: 'info',
-    });
+      formatVisibleSystemInfo({ type: 'session_seal_requested', catId: 'codex-sol', sessionSeq: 3, reason }),
+    ).toBeNull();
   });
 });
 
@@ -167,7 +134,7 @@ describe('formatVisibleSystemInfo — warning presentation', () => {
     expect(formatVisibleSystemInfo({ type: 'warning', message: 'model metadata missing' })).toBeNull();
   });
 
-  it('shows only explicitly classified actionable or transient warnings', () => {
+  it('shows actionable warnings and keeps automatic retries outside chat', () => {
     expect(
       formatVisibleSystemInfo({
         type: 'warning',
@@ -181,6 +148,6 @@ describe('formatVisibleSystemInfo — warning presentation', () => {
         presentation: 'transient_status',
         message: '正在自动重试',
       }),
-    ).toEqual({ content: '⚠️ 正在自动重试', variant: 'info' });
+    ).toBeNull();
   });
 });

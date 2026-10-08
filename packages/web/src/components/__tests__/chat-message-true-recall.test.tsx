@@ -152,7 +152,9 @@ describe('ChatMessage true recall tombstone', () => {
     expect(container.querySelector('[data-folded-source-anchor="child-folded"]')).toBeNull();
     expect(container.querySelector('[data-testid="message-dispatch-avatars"]')).not.toBeNull();
     expect(container.querySelector('[data-folded-source="child-folded"]')).toBeNull();
-    expect(container.textContent?.match(/这段原消息必须留在作者位置/g)).toHaveLength(1);
+    expect(sourceBubble?.textContent?.match(/这段原消息必须留在作者位置/g)).toHaveLength(1);
+    // The response's reply pill previews that same source; it is not another source bubble.
+    expect(container.querySelectorAll('[data-message-id="message-folded-source"]')).toHaveLength(1);
     expect(container.textContent).toContain('You');
     expect(container.textContent).toContain('08:04');
     expect(container.textContent).not.toContain('已随本轮完成');

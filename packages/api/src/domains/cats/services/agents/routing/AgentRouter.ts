@@ -33,8 +33,8 @@ import { inferRoutingContextIntent } from '../../../../routing-context/RoutingDi
 import type { IntentResult } from '../../context/IntentParser.js';
 import { parseIntent, ROUTE_CONTROL_TAGS, stripIntentTags } from '../../context/IntentParser.js';
 import type { IRuntimeSessionStore } from '../../runtime-session/RuntimeSessionStore.js';
-import type { ContextEpochOwner } from '../../session/ContextEpochOwner.js';
-import type { PresentationLedger } from '../../session/PresentationLedger.js';
+import type { ContextEpochOwner } from '../../session/context/ContextEpochOwner.js';
+import type { PresentationLedger } from '../../session/context/PresentationLedger.js';
 import { SessionManager } from '../../session/SessionManager.js';
 import type { ISessionSealer } from '../../session/SessionSealer.js';
 import type { TranscriptReader } from '../../session/TranscriptReader.js';
@@ -1882,8 +1882,11 @@ export class AgentRouter {
 
     const strategyDeps = this.getStrategyDeps();
     const { callerTraceContext: _callerTraceContext, ...strategyInputOptions } = options;
+    const routingContextIntent = inferRoutingContextIntent(cleanMessage);
     const routeOptions: RouteOptions = {
       ...strategyInputOptions,
+      routeIntent: projectAgentRouteIntent(intent),
+      ...(routingContextIntent ? { routingContextIntent } : {}),
       promptTags: intent.promptTags,
       currentUserMessageId: userMessageId,
       persistedPromptMessages: options?.persistedPromptMessages?.map((persisted) => ({

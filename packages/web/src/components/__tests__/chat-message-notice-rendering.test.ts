@@ -111,19 +111,18 @@ describe('ChatMessage notice rendering', () => {
       return Promise.resolve({ ok: false } as Response);
     });
     const message = {
-      id: 'system-info-session-seal',
+      id: 'system-info-mode-proposal',
       type: 'system',
       variant: 'info',
-      content: 'cat-sol 的会话 #2 已封存（上下文 42%），下次调用将自动创建新会话',
+      content: 'cat-sol 提议切换到 execute 模式。',
       timestamp: Date.now(),
       extra: {
         systemInfo: {
           v: 1,
           payload: {
-            type: 'session_seal_requested',
-            catId: 'cat-sol',
-            sessionSeq: 2,
-            healthSnapshot: { fillRatio: 0.42 },
+            type: 'mode_switch_proposal',
+            proposedBy: 'cat-sol',
+            proposedMode: 'execute',
           },
           fallbackCatId: 'cat-sol',
         },
@@ -138,7 +137,7 @@ describe('ChatMessage notice rendering', () => {
     await act(async () => {
       root.render(React.createElement(NoticeHarness));
     });
-    expect(container.textContent).toContain('cat-sol 的会话 #2');
+    expect(container.textContent).toContain('cat-sol 提议');
     expect(mockApiFetch.mock.calls.filter((call) => call[0] === '/api/cats')).toHaveLength(1);
 
     const completeCatsRequest = resolveCatsResponse;
@@ -154,9 +153,31 @@ describe('ChatMessage notice rendering', () => {
       await Promise.resolve();
       await Promise.resolve();
     });
-    expect(container.textContent).toContain('缅因猫（sol） 的会话 #2');
-    expect(container.textContent).not.toContain('cat-sol 的会话 #2');
+    expect(container.textContent).toContain('缅因猫（sol） 提议');
+    expect(container.textContent).not.toContain('cat-sol 提议');
     expect(mockApiFetch.mock.calls.filter((call) => call[0] === '/api/cats')).toHaveLength(1);
+  });
+
+  it.each([
+    { type: 'session_seal_requested', sessionSeq: 2 },
+    { type: 'provider_recovery', phase: 'recovered' },
+    { type: 'warning', presentation: 'transient_status', message: 'retrying' },
+  ])('does not resurrect internal protocol $type as chat from a restored row', (payload) => {
+    act(() =>
+      root.render(
+        React.createElement(ChatMessage, {
+          message: {
+            id: 'old-notice',
+            type: 'system',
+            content: 'old visible fallback',
+            timestamp: 1,
+            extra: { systemInfo: { v: 1, payload, fallbackCatId: 'codex' } },
+          },
+          getCatById: () => undefined,
+        }),
+      ),
+    );
+    expect(container.textContent).toBe('');
   });
 
   it('renders one recovery card beside the exact source and suppresses the linked standalone notice', async () => {

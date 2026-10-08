@@ -42,6 +42,7 @@ function deliveryStatusForRecovery(
       continue;
     }
     if (receipt.status === 'sent' && receipt.transport === 'host' && receipt.hostMessageId) return 'sent';
+    if (receipt.status === 'failed' && receipt.transport === 'host') return 'failed';
     return receipt.status === 'unknown' ? 'unknown' : undefined;
   }
   return undefined;
@@ -71,7 +72,7 @@ export function projectCloudBindingRecovery(
   const deliveryStatus = deliveryStatusForRecovery(source.id, recovery, timelineMessages);
   return {
     targetCatId: recovery.targetCatId,
-    attemptId: recovery.dispatchInvocationId,
+    ...(deliveryStatus === 'failed' ? {} : { attemptId: recovery.dispatchInvocationId }),
     ...(deliveryStatus ? { deliveryStatus } : {}),
   };
 }

@@ -1,4 +1,4 @@
-import type { CatId, ConnectorSource } from '@cat-cafe/shared';
+import type { CatId, ConnectorSource, WaitContinuationCarrierV1 } from '@cat-cafe/shared';
 import type { PersistedQueueDeliveryPort } from '../../domains/cats/services/agents/invocation/PersistedQueueDelivery.js';
 
 /**
@@ -28,6 +28,7 @@ export interface ConnectorDeliveryInput {
   readonly timestamp?: number;
   /** How the Queue row should be filed. Stated by the producer; never inferred from the payload. */
   readonly sourceCategory?: 'ci' | 'review' | 'conflict' | 'scheduled' | 'a2a' | 'issue';
+  readonly waitContinuationCarrier?: WaitContinuationCarrierV1;
 }
 
 export interface ConnectorDeliveryResult {
@@ -70,6 +71,7 @@ export async function deliverConnectorMessage(
     ...(input.priority ? { priority: input.priority } : {}),
     ...(input.timestamp !== undefined ? { timestamp: input.timestamp } : {}),
     ...(input.sourceCategory ? { sourceCategory: input.sourceCategory } : {}),
+    ...(input.waitContinuationCarrier ? { waitContinuationCarrier: input.waitContinuationCarrier } : {}),
   });
 
   // `conflict` and `unavailable` mean the envelope never reached the Queue. Every other state is a

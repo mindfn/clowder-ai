@@ -63,8 +63,8 @@ describe(
         import('../dist/domains/cats/services/stores/redis/RedisContextEpochStore.js'),
         import('../dist/domains/cats/services/stores/redis/RedisPresentationLedgerStore.js'),
         import('../dist/domains/cats/services/stores/redis-keys/presentation-ledger-keys.js'),
-        import('../dist/domains/cats/services/session/ledger-key.js'),
-        import('../dist/domains/cats/services/session/PresentationLedger.js'),
+        import('../dist/domains/cats/services/session/context/ledger-key.js'),
+        import('../dist/domains/cats/services/session/context/PresentationLedger.js'),
         import('../dist/domains/cats/services/agents/invocation/invoke-single-cat.js'),
       ]);
       epochStore = new RedisContextEpochStore(redis);

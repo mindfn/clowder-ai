@@ -1,9 +1,5 @@
 import type { CatInvocationInfo, ThreadState } from '@/stores/chat-types';
 import { type ChatState, useChatStore } from '@/stores/chatStore';
-import {
-  type InvocationTerminalPhase,
-  terminalizeInvocationReconciliation,
-} from '../invocation-timeout-reconciliation';
 import type { BackgroundAgentMessage, HandleBackgroundMessageOptions } from './types';
 
 /**
@@ -21,6 +17,26 @@ function newestFirst(slots: ActiveInvocationSlots | undefined): Array<[string, S
 export function normalizeInvocationForCat(invocationId: string | undefined, catId: string): string | undefined {
   const suffix = `-${catId}`;
   return invocationId?.endsWith(suffix) ? invocationId.slice(0, -suffix.length) : invocationId;
+}
+
+/** Clear only the terminal event's direct identity; late events cannot clear a newer turn. */
+export function clearTerminalInvocationIdentity(
+  threadId: string,
+  catId: string,
+  invocationId: string,
+  turnInvocationId?: string,
+): void {
+  const store = useChatStore.getState();
+  const isOpen = store.currentThreadId === threadId;
+  const direct = (isOpen ? store.catInvocations : store.getThreadState(threadId).catInvocations)?.[catId];
+  if (direct?.invocationId !== invocationId) return;
+  if (turnInvocationId && direct.turnInvocationId && direct.turnInvocationId !== turnInvocationId) return;
+  const patch: Partial<CatInvocationInfo> = {
+    invocationId: undefined,
+    ...(turnInvocationId ? { turnInvocationId: undefined } : {}),
+  };
+  if (isOpen) store.setCatInvocation(catId, patch);
+  else store.setThreadCatInvocation(threadId, catId, patch);
 }
 
 export function findLatestActiveInvocationIdForCat(
@@ -45,6 +61,15 @@ export function findTerminalActiveInvocationSlot(
   invocationId: string | undefined,
   turnInvocationId: string | undefined,
 ): string | undefined {
+  const direct = catInvocations?.[catId];
+  if (
+    turnInvocationId &&
+    direct &&
+    direct.invocationId === invocationId &&
+    direct.turnInvocationId &&
+    direct.turnInvocationId !== turnInvocationId
+  )
+    return undefined;
   const exactKeys = new Set([invocationId, turnInvocationId].flatMap((id) => (id ? [id, `${id}-${catId}`] : [])));
   const exact = newestFirst(activeInvocations).find(([key, info]) => info.catId === catId && exactKeys.has(key));
   if (exact) return exact[0];
@@ -52,7 +77,6 @@ export function findTerminalActiveInvocationSlot(
   // Slots are keyed by the parent liveness id while terminal events can carry the per-cat turn id.
   // catInvocations confirming this turn under that parent makes the parent slot this event's slot;
   // a newer same-cat slot has a different parent key, so preemption stays safe.
-  const direct = catInvocations?.[catId];
   const terminalTurn = turnInvocationId ?? invocationId;
   if (!terminalTurn || direct?.turnInvocationId !== terminalTurn || !direct.invocationId) return undefined;
   const parent = direct.invocationId;
@@ -74,11 +98,19 @@ export function isStaleTerminalEvent(
   catInvocations: CatInvocations,
   catId: string,
   invocationId: string | undefined,
+  turnInvocationId?: string,
 ): boolean {
   if (!invocationId) return false;
+  const direct = catInvocations?.[catId];
+  if (
+    turnInvocationId &&
+    direct?.invocationId === invocationId &&
+    direct.turnInvocationId &&
+    direct.turnInvocationId !== turnInvocationId
+  )
+    return true;
   const latestRealSlot = normalizeInvocationForCat(latestRealSlotKey(activeInvocations, catId), catId);
   if (latestRealSlot === invocationId) return false;
-  const direct = catInvocations?.[catId];
   // The event carries this cat's turn id under the parent the latest slot confirms.
   if (direct?.turnInvocationId === invocationId && direct.invocationId && latestRealSlot === direct.invocationId) {
     return false;
@@ -152,10 +184,14 @@ function removeBackgroundCatSlots(
     else store.setThreadHasActiveInvocation(msg.threadId, false);
     return;
   }
-  if (before.activeInvocations[msg.invocationId]?.catId === msg.catId) {
-    store.removeThreadActiveInvocation(msg.threadId, msg.invocationId);
-  }
-  store.removeThreadActiveInvocation(msg.threadId, `${msg.invocationId}-${msg.catId}`);
+  const slot = findTerminalActiveInvocationSlot(
+    before.activeInvocations,
+    before.catInvocations,
+    msg.catId,
+    msg.invocationId,
+    msg.turnInvocationId,
+  );
+  if (slot) store.removeThreadActiveInvocation(msg.threadId, slot);
   const orphan = findLatestActiveInvocationIdForCat(store.getThreadState(msg.threadId).activeInvocations, msg.catId);
   if (orphan?.startsWith('hydrated-')) store.removeThreadActiveInvocation(msg.threadId, orphan);
 }
@@ -164,19 +200,11 @@ function removeBackgroundCatSlots(
 export function markThreadInvocationComplete(
   msg: BackgroundAgentMessage,
   options: HandleBackgroundMessageOptions,
-  phase: InvocationTerminalPhase,
 ): void {
   const { store } = options;
   store.setThreadLoading(msg.threadId, false);
   if (msg.invocationId) {
-    terminalizeInvocationReconciliation({
-      threadId: msg.threadId,
-      invocationId: msg.invocationId,
-      phase,
-      catId: msg.catId,
-      turnInvocationId: msg.turnInvocationId,
-      ...(msg.error ? { error: msg.error } : {}),
-    });
+    clearTerminalInvocationIdentity(msg.threadId, msg.catId, msg.invocationId, msg.turnInvocationId);
   }
   const before = store.getThreadState(msg.threadId);
   const slotsBefore = Object.keys(before.activeInvocations ?? {}).length;

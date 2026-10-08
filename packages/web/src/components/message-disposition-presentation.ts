@@ -5,7 +5,6 @@ import {
   type QueueAuthorIntentReceipt,
   supportsActiveInvocationGuidance,
 } from '@cat-cafe/shared';
-
 export type FreshnessCarrierSupport = 'exact' | 'queued' | 'unsupported' | 'undeclared';
 
 export function parseFreshnessCarrierCapability(value: unknown): FreshnessCarrierCapability | undefined {

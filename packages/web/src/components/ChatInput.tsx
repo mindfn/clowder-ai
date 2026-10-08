@@ -21,6 +21,7 @@ import { useMessageDispositionPreference } from '@/hooks/useMessageDispositionPr
 import { usePathCompletion } from '@/hooks/usePathCompletion';
 import type { UploadStatus, WhisperOptions } from '@/hooks/useSendMessage';
 import { useThreadLiveness } from '@/hooks/useThreadScopedSelectors';
+import { useActiveExecutionStore } from '@/stores/activeExecutionStore';
 import { useChatStore } from '@/stores/chatStore';
 import { useInputHistoryStore } from '@/stores/inputHistoryStore';
 import { apiFetch } from '@/utils/api-client';
@@ -65,8 +66,26 @@ export {
 } from './thread-drafts';
 
 const MAX_IMAGE_DRAFT_THREADS = 5;
+const NO_CONTEXT_ATTACHMENTS: ContextAttachment[] = [];
+const subscribeNothing = () => () => {};
+/** False while hydrating server HTML, true afterwards (and on any plain client mount). */
+function useHydrated(): boolean {
+  return useSyncExternalStore(
+    subscribeNothing,
+    () => true,
+    () => false,
+  );
+}
 
 interface ChatInputProps {
+  /**
+   * Which presentation the HOST gives this composer. `'v2'` only where the host also mounts the one execution row above
+   * it (ThreadChatSurface): the row then says who is running / whether the run can be verified / how to stop it, so the
+   * composer drops its "猫猫正在回复中… 取消" bar and the empty-draft stop becomes its last control. Every other host
+   * (the split view mounts a bare ChatInput) keeps the classic composer, whatever shell is chosen — nothing there would
+   * say those things in its place.
+   */
+  presentation?: 'classic' | 'v2';
   /** Thread ID for draft persistence — drafts are saved per-thread */
   threadId?: string;
   onSend: (
@@ -90,6 +109,7 @@ const ACCEPTED_TYPES =
   'image/png,image/jpeg,image/gif,image/webp,application/pdf,text/plain,text/markdown,text/csv,application/json,application/zip,application/gzip,application/x-tar,application/octet-stream,audio/mpeg,audio/wav,audio/ogg,video/mp4,video/webm';
 
 export function ChatInput({
+  presentation = 'classic',
   threadId,
   onSend,
   disabled,
@@ -151,6 +171,8 @@ export function ChatInput({
   const stopState: 'available' | 'pending' | 'unavailable' | 'hidden' = hasActiveInvocation
     ? projectedCancelState
     : 'hidden';
+  const shellV2 = presentation === 'v2';
+  const canonicalProjectionStale = useActiveExecutionStore((state) => state.hydration === 'error');
   const activeCatIds = useMemo(() => {
     const ids = new Set<string>();
     for (const execution of canonicalExecutions) {
@@ -196,6 +218,10 @@ export function ChatInput({
   const [contextAttachments, setContextAttachments] = useState<ContextAttachment[]>(() =>
     threadId ? (threadContextAttachmentDrafts.get(threadId) ?? []) : [],
   );
+  // Context drafts are restored from this browser session, which the server never sees: keep them in state (so the
+  // draft sync below never clears them) but render them only once hydration is over, like the text draft.
+  const hydrated = useHydrated();
+  const shownContextAttachments = hydrated ? contextAttachments : NO_CONTEXT_ATTACHMENTS;
   const [isPreparingImages, setIsPreparingImages] = useState(false);
   const [whisperMode, setWhisperMode] = useState(false);
   const [whisperTargets, setWhisperTargets] = useState<Set<string>>(new Set());
@@ -793,6 +819,39 @@ export function ChatInput({
 
   return (
     <div className="relative bg-[var(--console-shell-bg)] safe-area-bottom">
+      {/* F39: Queue status bar — visible when cat is running. New shell (v2): the one execution row above the composer
+          says this and holds the stop; the classic interface keeps the bar unchanged. */}
+      {hasActiveInvocation && !shellV2 && (
+        <div data-testid="active-invocation-banner" className="px-4 pt-2 flex items-center gap-2">
+          <span className="inline-block w-2 h-2 rounded-full bg-[var(--color-cocreator-primary)] animate-pulse" />
+          <span className="text-xs text-[var(--color-cocreator-primary)] font-medium">
+            {canonicalExecutions.length > 0
+              ? canonicalProjectionStale
+                ? '猫猫正在回复中 · 状态暂不可核对'
+                : '猫猫正在回复中...'
+              : canonicalProjectionStale
+                ? '运行状态暂不可核对'
+                : '正在确认运行状态...'}
+          </span>
+          <span className="text-xs text-cafe-muted flex-1">
+            {messageDisposition.effective === 'continue_current'
+              ? '继续输入，消息可投递给当前成员'
+              : '继续输入，消息会成为下一件工作'}
+          </span>
+          {stopState !== 'hidden' && (
+            <button
+              type="button"
+              data-testid="banner-cancel-btn"
+              onClick={() => void handleProjectedStop()}
+              disabled={stopState !== 'available'}
+              className="text-xs text-cafe-muted hover:text-cafe-primary transition-colors px-2 py-0.5 rounded-md hover:bg-cafe-surface-elevated focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-cafe-primary flex-shrink-0 disabled:cursor-wait disabled:opacity-50"
+              aria-label="Stop generation"
+            >
+              {stopState === 'pending' ? '正在停止' : stopState === 'available' ? '取消' : '暂不可取消'}
+            </button>
+          )}
+        </div>
+      )}
       {contextPickerMode && (
         <ChatContextPicker
           mode={contextPickerMode}
@@ -872,7 +931,7 @@ export function ChatInput({
       <AttachmentPreview files={images} onRemove={handleRemoveImage} />
 
       <ContextAttachmentList
-        attachments={contextAttachments}
+        attachments={shownContextAttachments}
         compact
         onRemove={(id) => setContextAttachments((previous) => previous.filter((attachment) => attachment.id !== id))}
       />
@@ -978,12 +1037,14 @@ export function ChatInput({
           onTranscript={handleTranscript}
           onSend={handleSend}
           onStop={() => void handleProjectedStop()}
-          stopState={stopState}
+          // The classic composer already has its exact Stop in the execution banner.
+          stopState={shellV2 ? stopState : 'hidden'}
           onQueueSend={handleSend}
           disabled={disabled}
           sendDisabled={sendTemporarilyDisabled}
           hasActiveInvocation={whisperTargetsAllIdle ? false : hasActiveInvocation}
-          hasText={Boolean(input.trim() || contextAttachments.length > 0)}
+          hasText={Boolean(input.trim() || shownContextAttachments.length > 0)}
+          presentation={shellV2 ? 'v2' : 'classic'}
         />
       </div>
 

@@ -33,14 +33,6 @@ describe('mergeReplaceHydrationMessages metadata ownership boundary', () => {
           sourceThreadId: 'thread-source',
           items: [{ kind: 'message', messageId: 'message-source' }],
         },
-        invocationReconciliation: {
-          v: 1,
-          invocationId: 'parent-1',
-          catIds: ['codex-sol'],
-          turnInvocationIds: ['turn-primary'],
-          phase: 'succeeded',
-          updatedAt: 2_100,
-        },
       },
     };
 
@@ -50,7 +42,6 @@ describe('mergeReplaceHydrationMessages metadata ownership boundary', () => {
     expect(extra?.turnExecution?.invocationId).toBe('turn-primary');
     expect(extra?.auxiliaryTurnExecutions?.[0]?.invocationId).toBe('turn-guard');
     expect(extra?.messageBundle?.items).toEqual([{ kind: 'message', messageId: 'message-source' }]);
-    expect(extra?.invocationReconciliation?.phase).toBe('succeeded');
   });
 
   it('does not pass undeclared runtime extra fields through the hydration boundary', () => {

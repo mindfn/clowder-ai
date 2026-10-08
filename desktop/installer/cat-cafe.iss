@@ -120,6 +120,8 @@ Source: "..\scripts\sync-agent-hooks-offline.mjs"; DestDir: "{app}\scripts"
 ; User-level Agent CLI hook truth source used by F180 health/sync.
 Source: "..\..\.claude\hooks\user-level\*";      DestDir: "{app}\.claude\hooks\user-level"; \
   Flags: recursesubdirs createallsubdirs
+; #1542: canonical Node compaction carrier packaged for spawn-time --settings injection.
+Source: "..\..\.claude\hooks\f24-compaction.mjs"; DestDir: "{app}\.claude\hooks"
 ; (Electron app is shipped as electron.tar.gz in bulk archives above)
 ; Desktop assets (icon used by uninstaller entry)
 Source: "..\assets\*";                           DestDir: "{app}\desktop\assets"; \

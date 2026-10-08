@@ -1,7 +1,6 @@
 import { writePersistedPost, writeStreamText, writeToolEvent } from '@/hooks/named-message-writer';
 import type { ToolEvent } from '@/stores/chat-types';
 import { useChatStore } from '@/stores/chatStore';
-import { formatVisibleSystemInfo } from '../system-info-visible';
 import { type ActiveContext, activeSystemInfoPort, openThreadStore } from './active-context';
 import { handleActiveDone, handleActiveError } from './active-terminal';
 import {
@@ -14,12 +13,7 @@ import {
   touchStreamActivity,
 } from './named-target';
 import { applySemanticEvent, consumeSystemInfo } from './system-info';
-import {
-  appServerLifecycleFromStatus,
-  appServerStageStatus,
-  isAppServerRecoveryStatus,
-  isRecord,
-} from './system-projections';
+import { appServerLifecycleFromStatus, appServerStageStatus, isAppServerRecoveryStatus } from './system-projections';
 import { randomIdSuffix, skipFileChangeCard, toolResultEvent, toolUseEvent } from './tool-events';
 import type { AgentMsg } from './types';
 
@@ -51,7 +45,7 @@ export function handleActiveAgentMessage(msg: AgentMsg, ctx: ActiveContext): voi
       handleActiveError(msg, threadId, ctx);
       break;
     case 'provider_signal':
-      handleProviderSignal(msg, ctx);
+      handleActiveSystemInfo(msg, threadId, ctx);
       break;
     case 'system_info':
       handleActiveSystemInfo(msg, threadId, ctx);
@@ -131,27 +125,6 @@ function writeActiveToolEvent(msg: AgentMsg, threadId: string, event: ToolEvent)
   writeToolEvent(target, event);
   touchStreamActivity(openThreadStore(), threadId, target.messageId);
   return true;
-}
-
-/** Bug-J: provider-origin notices (capacity retries, grace windows) surface as a system row. */
-function handleProviderSignal(msg: AgentMsg, ctx: ActiveContext): void {
-  let content = msg.content ?? '';
-  try {
-    const parsed: unknown = JSON.parse(content);
-    const visible = isRecord(parsed) ? formatVisibleSystemInfo(parsed, ctx.resolveCatName, msg.catId) : null;
-    if (visible) content = visible.content;
-  } catch {
-    /* non-JSON payload — display as-is */
-  }
-  if (!content) return;
-  ctx.rows.addRow({
-    id: `provider-${Date.now()}-${msg.catId}`,
-    type: 'system',
-    variant: 'info',
-    catId: msg.catId,
-    content,
-    timestamp: Date.now(),
-  });
 }
 
 function handleActiveSystemInfo(msg: AgentMsg, threadId: string, ctx: ActiveContext): void {

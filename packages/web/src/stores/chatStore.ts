@@ -1,8 +1,9 @@
-import { timelineMessageKind } from '@cat-cafe/shared';
+import { type ThreadArtifactDTO, timelineMessageKind } from '@cat-cafe/shared';
 import { create } from 'zustand';
 import { getCachedCats } from '@/hooks/useCatData';
 import { formatCatDisplayName } from '@/lib/cat-display-name';
 import { inferFileKind, inferRenderMode } from '@/lib/file-kind';
+import type { ServedModelFacts } from '@/lib/served-model-facts';
 import { isWorkspaceMode, type WorkspaceMode } from '@/lib/workspace-modes';
 import {
   resolveNavigateTargetWorktreeId,
@@ -32,7 +33,9 @@ import type {
   ThreadState,
   TokenUsage,
   ToolEvent,
+  WorkspaceFileNavigationOrigin,
   WorkspaceOpenRequest,
+  WorkspacePathOpenTarget,
   WorkspacePreviewState,
   WorkspaceSurface,
 } from './chat-types';
@@ -517,6 +520,51 @@ function applyMessagePatch(message: ChatMessage, patch: ChatMessagePatch): ChatM
   };
 }
 
+export interface DefinitiveRichBlockOwner {
+  catId: string;
+  invocationId?: string;
+  turnInvocationId?: string;
+}
+
+/** A messageId-bound callback owns its block; an earlier same-turn stream copy was only a preview. */
+function appendRichBlockToMessages(
+  messages: ChatMessage[],
+  messageId: string,
+  block: RichBlock,
+  owner?: DefinitiveRichBlockOwner,
+): ChatMessage[] {
+  const target = messages.find((message) => message.id === messageId);
+  if (!target) return messages;
+  const definitiveCallback = owner && target.origin === 'callback';
+  let changed = false;
+  const next = messages.map((message) => {
+    if (message.id === messageId) {
+      const rich = message.extra?.rich ?? { v: 1 as const, blocks: [] };
+      if (rich.blocks.some((existing) => existing.id === block.id)) return message;
+      changed = true;
+      return { ...message, extra: { ...message.extra, rich: { ...rich, blocks: [...rich.blocks, block] } } };
+    }
+    if (!definitiveCallback || message.origin !== 'stream' || message.catId !== owner.catId) return message;
+    const stream = message.extra?.stream;
+    const sameTurn = owner.turnInvocationId
+      ? (stream?.turnInvocationId ?? stream?.invocationId) === owner.turnInvocationId
+      : Boolean(owner.invocationId && stream?.invocationId === owner.invocationId);
+    if (!sameTurn || !message.extra?.rich?.blocks.some((existing) => existing.id === block.id)) return message;
+    changed = true;
+    return {
+      ...message,
+      extra: {
+        ...message.extra,
+        rich: {
+          ...message.extra.rich,
+          blocks: message.extra.rich.blocks.filter((existing) => existing.id !== block.id),
+        },
+      },
+    };
+  });
+  return changed ? next : messages;
+}
+
 function patchMessageInList(messages: ChatMessage[], id: string, patch: ChatMessagePatch): ChatMessage[] {
   const index = messages.findIndex((message) => message.id === id);
   if (index < 0) return messages;
@@ -677,7 +725,7 @@ export interface ChatState {
   appendToMessage: (id: string, content: string) => void;
   appendToolEvent: (id: string, event: ToolEvent) => void;
   /** F22: Append a rich block to a message */
-  appendRichBlock: (id: string, block: RichBlock) => void;
+  appendRichBlock: (id: string, block: RichBlock, owner?: DefinitiveRichBlockOwner) => void;
   /** F096: Update a specific rich block within a message */
   updateRichBlock: (messageId: string, blockId: string, patch: Record<string, unknown>) => void;
   setStreaming: (id: string, streaming: boolean) => void;
@@ -700,6 +748,12 @@ export interface ChatState {
   setMessageUsage: (messageId: string, usage: TokenUsage) => void;
   /** Merge metadata onto an active-thread message (parallel to setThreadMessageMetadata) */
   setMessageMetadata: (messageId: string, metadata: ChatMessageMetadata) => void;
+  /**
+   * F319 Phase E.1: merge the upstream served facts onto an active-thread message.
+   * `setMessageMetadata` is first-write-wins (per-chunk render guard), and served facts
+   * only exist at `done`, so they need their own merging path. No-op without metadata.
+   */
+  mergeMessageServedFacts: (messageId: string, facts: ServedModelFacts) => void;
   /** F045: Set or append extended thinking content on an assistant message */
   setMessageThinking: (messageId: string, thinking: string) => void;
   clearMessages: () => void;
@@ -844,7 +898,12 @@ export interface ChatState {
   appendToThreadMessage: (threadId: string, messageId: string, content: string) => void;
   appendToolEventToThread: (threadId: string, messageId: string, event: ToolEvent) => void;
   /** F22: Append a rich block to a message in a specific thread */
-  appendRichBlockToThread: (threadId: string, messageId: string, block: RichBlock) => void;
+  appendRichBlockToThread: (
+    threadId: string,
+    messageId: string,
+    block: RichBlock,
+    owner?: DefinitiveRichBlockOwner,
+  ) => void;
   setThreadCatInvocation: (threadId: string, catId: string, info: Partial<CatInvocationInfo>) => void;
   setThreadMessageMetadata: (threadId: string, messageId: string, metadata: ChatMessageMetadata) => void;
   setThreadMessageUsage: (threadId: string, messageId: string, usage: TokenUsage) => void;
@@ -957,13 +1016,29 @@ export interface ChatState {
   /** Explicit deep-link/navigation action; reveals the canonical Team workspace. */
   openTeamSubject: (subject: TeamWorkspaceSubject | null) => void;
   openEvolutionProgram: (programId: string) => void;
+  openPublishedArtifact: (
+    threadId: string,
+    artifact: ThreadArtifactDTO,
+    navigationOrigin?: WorkspaceFileNavigationOrigin,
+  ) => void;
+  /**
+   * Open one exact workspace file, or show one path in its file tree, in the Workbench of `threadId`.
+   * The request survives a route change and is consumed once by whichever Workbench mounts for that
+   * thread; it does not switch projects. Returns false when `threadId` is not the current thread, so a
+   * caller never navigates to nothing.
+   */
+  openWorkspacePath: (threadId: string, target: WorkspacePathOpenTarget) => boolean;
+  openPublication: (
+    target: Extract<WorkspaceOpenRequest['target'], { kind: 'publication' | 'message-publication' }>,
+    hostThreadId: string,
+  ) => boolean;
   /** Acknowledge one exact transient request after F307 has consumed it. */
   consumeWorkspaceOpenRequest: (revision: number) => void;
   workspaceEditToken: string | null;
   workspaceEditTokenExpiry: number | null;
   /** @internal Last workspace-file-set event context (timestamp + threadId).
    * Used by WorkspacePanel to distinguish fresh navigate from stale leftovers on mount. */
-  _workspaceFileSetAt: { ts: number; threadId: string | null };
+  _workspaceFileSetAt: { ts: number; threadId: string | null; navigationOrigin?: WorkspaceFileNavigationOrigin };
   setRightPanelMode: (mode: 'status' | 'workspace' | 'transcript') => void;
   /** F284 × F120 review P1: canonical right panel visibility (orthogonal to
    * rightPanelMode). Snapshotted per thread — see ThreadState.rightPanelOpen. */
@@ -979,13 +1054,11 @@ export interface ChatState {
     line?: number | null,
     worktreeId?: string | null,
     originThreadId?: string | null,
+    navigationOrigin?: WorkspaceFileNavigationOrigin,
   ) => void;
   closeWorkspaceTab: (path: string) => void;
   restoreWorkspaceTabs: (tabs: string[], openFile: string | null) => void;
   setWorkspaceEditToken: (token: string | null, expiresIn?: number) => void;
-
-  workspaceRevealPath: string | null;
-  setWorkspaceRevealPath: (path: string | null, originThreadId?: string | null) => void;
 
   // F063: Presentation Lock — freeze workspace during demos
   presentationLock: PresentationLockSnapshot | null;
@@ -1295,6 +1368,36 @@ export const useChatStore = create<ChatState>((set, get) => ({
         ...mirrorActiveFlat(state, durablePatch),
       };
     }),
+  openPublishedArtifact: (threadId, artifact, navigationOrigin) =>
+    set((state) => {
+      if (state.currentThreadId !== threadId) return {};
+      const patch = { rightPanelOpen: true, rightPanelMode: 'workspace' as const, workspaceMode: 'dev' as const };
+      const revision = state.workspaceOpenRevision + 1;
+      return {
+        ...patch,
+        ...mirrorActiveFlat(state, patch),
+        workspaceOpenRevision: revision,
+        workspaceOpenRequest: {
+          revision,
+          threadId,
+          target: { kind: 'artifact' as const, artifact, ...(navigationOrigin ? { navigationOrigin } : {}) },
+        },
+      };
+    }),
+  // An explicit open is honoured under a presentation lock too, as the file-stamp path it replaces was.
+  openWorkspacePath: (threadId, target) => {
+    const state = get();
+    if (state.currentThreadId !== threadId) return false;
+    const patch = { rightPanelOpen: true, rightPanelMode: 'workspace' as const, workspaceMode: 'dev' as const };
+    const revision = state.workspaceOpenRevision + 1;
+    set({
+      ...patch,
+      ...mirrorActiveFlat(state, patch),
+      workspaceOpenRevision: revision,
+      workspaceOpenRequest: { revision, threadId, target },
+    });
+    return true;
+  },
   consumeWorkspaceOpenRequest: (revision) =>
     set((state) => (state.workspaceOpenRequest?.revision === revision ? { workspaceOpenRequest: null } : {})),
   workspaceEditToken: null,
@@ -1361,9 +1464,13 @@ export const useChatStore = create<ChatState>((set, get) => ({
       workspaceWorktreeAliases: aliases,
       workspaceWorktreeAliasesProjectPath: projectPath ?? get().currentProjectPath,
     }),
-  setWorkspaceOpenFile: (path, line, targetWorktreeId, originThreadId) => {
+  setWorkspaceOpenFile: (path, line, targetWorktreeId, originThreadId, navigationOrigin) => {
     if (path) {
-      const stamp = { ts: Date.now(), threadId: originThreadId ?? get().currentThreadId };
+      const stamp = {
+        ts: Date.now(),
+        threadId: originThreadId ?? get().currentThreadId,
+        ...(navigationOrigin ? { navigationOrigin } : {}),
+      };
       const currentWorktreeId = get().workspaceWorktreeId;
       const state = get();
       const scopedAliases = scopeWorktreeAliases(
@@ -1464,15 +1571,6 @@ export const useChatStore = create<ChatState>((set, get) => ({
       workspaceEditToken: token,
       workspaceEditTokenExpiry: token && expiresIn ? Date.now() + expiresIn * 1000 : null,
     }),
-
-  workspaceRevealPath: null,
-  setWorkspaceRevealPath: (path, originThreadId) =>
-    set((state) => ({
-      workspaceRevealPath: path,
-      ...(path ? { workspaceSurface: 'files' as const } : {}),
-      rightPanelMode: 'workspace' as const,
-      _workspaceFileSetAt: { ts: Date.now(), threadId: originThreadId ?? state.currentThreadId },
-    })),
 
   // F063: Presentation Lock
   presentationLock: null,
@@ -1640,6 +1738,21 @@ export const useChatStore = create<ChatState>((set, get) => ({
 
   // Phase H: Workspace mode
   workspaceMode: 'dev' as const,
+  openPublication: (target, hostThreadId) => {
+    // An asynchronous owner read must not steal focus in a conversation opened in the meantime.
+    if (get().currentThreadId !== hostThreadId) return false;
+    set((state) => {
+      const revision = state.workspaceOpenRevision + 1;
+      const patch = { workspaceMode: 'dev' as const, rightPanelMode: 'workspace' as const, rightPanelOpen: true };
+      return {
+        ...patch,
+        workspaceOpenRevision: revision,
+        workspaceOpenRequest: { revision, threadId: hostThreadId, target },
+        ...mirrorActiveFlat(state, patch),
+      };
+    });
+    return true;
+  },
   openEvolutionProgram: (programId) =>
     set((state) => {
       if (!/^evolution-program:[0-9a-f]{32}$/.test(programId)) return {};
@@ -1868,15 +1981,9 @@ export const useChatStore = create<ChatState>((set, get) => ({
       messages: state.messages.map((m) => (m.id === id ? { ...m, toolEvents: [...(m.toolEvents ?? []), event] } : m)),
     })),
 
-  appendRichBlock: (id, block) =>
+  appendRichBlock: (id, block, owner) =>
     set((state) => ({
-      messages: state.messages.map((m) => {
-        if (m.id !== id) return m;
-        const rich = m.extra?.rich ?? { v: 1 as const, blocks: [] };
-        // Defensive dedup by block.id (server already deduplicates, this is a safety net)
-        if (rich.blocks.some((b: { id: string }) => b.id === block.id)) return m;
-        return { ...m, extra: { ...m.extra, rich: { ...rich, blocks: [...rich.blocks, block] } } };
-      }),
+      messages: appendRichBlockToMessages(state.messages, id, block, owner),
     })),
 
   /** F096: Update a specific rich block within a message (e.g. set disabled + selectedIds) */
@@ -2124,6 +2231,13 @@ export const useChatStore = create<ChatState>((set, get) => ({
       messages: state.messages.map((m) => (m.id === messageId ? { ...m, metadata } : m)),
     }));
   },
+
+  mergeMessageServedFacts: (messageId, facts) =>
+    set((state) => ({
+      messages: state.messages.map((m) =>
+        m.id === messageId && m.metadata ? { ...m, metadata: { ...m.metadata, ...facts } } : m,
+      ),
+    })),
 
   setMessageThinking: (messageId, thinking) =>
     set((state) => ({
@@ -2529,14 +2643,24 @@ export const useChatStore = create<ChatState>((set, get) => ({
     ),
 
   /** F22: Append a rich block to a message in a specific thread. */
-  appendRichBlockToThread: (threadId, messageId, block) =>
-    set((state) =>
-      updateThreadMessage(state, threadId, messageId, (m) => {
-        const rich = m.extra?.rich ?? { v: 1 as const, blocks: [] };
-        if (rich.blocks.some((b: { id: string }) => b.id === block.id)) return m;
-        return { ...m, extra: { ...m.extra, rich: { ...rich, blocks: [...rich.blocks, block] } } };
-      }),
-    ),
+  appendRichBlockToThread: (threadId, messageId, block, owner) =>
+    set((state) => {
+      if (threadId === state.currentThreadId) {
+        const messages = appendRichBlockToMessages(state.messages, messageId, block, owner);
+        if (messages === state.messages) return state;
+        return { messages, ...mirrorActiveFlat(state, { messages }) };
+      }
+      const existing = state.threadStates[threadId];
+      if (!existing) return state;
+      const messages = appendRichBlockToMessages(existing.messages, messageId, block, owner);
+      if (messages === existing.messages) return state;
+      return {
+        threadStates: {
+          ...state.threadStates,
+          [threadId]: { ...existing, messages, lastActivity: Date.now() },
+        },
+      };
+    }),
 
   /** Set/merge cat invocation info for a specific thread (active or background). */
   setThreadCatInvocation: (threadId, catId, info) =>

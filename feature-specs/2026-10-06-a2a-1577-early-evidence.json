@@ -1,0 +1,20 @@
+{
+  "schemaVersion": 1,
+  "scope": "pure source helper only; not HTTP/MCP, build, UI, persistent recovery or complete integration",
+  "command": "node --experimental-strip-types --test scripts/a2a-1577-quote-contract.test.mjs",
+  "red": {
+    "exitCode": 1,
+    "output": "✖ structured quote text includes the paired comment before a long source (1.66475ms)\n✖ real anchor preview exposes intent, declares truncation and retains a full drill pointer (6.395416ms)\nℹ tests 2\nℹ suites 0\nℹ pass 0\nℹ fail 2\nℹ cancelled 0\nℹ skipped 0\nℹ todo 0\nℹ duration_ms 159.722792\n\n✖ failing tests:\n\ntest at scripts/a2a-1577-quote-contract.test.mjs:24:1\n✖ structured quote text includes the paired comment before a long source (1.66475ms)\n  AssertionError [ERR_ASSERTION]: Expected values to be strictly equal:\n  + actual - expected\n  \n  + 'undefined'\n  - 'function'\n  \n      at TestContext.<anonymous> (file:///Users/lang/workspace/github-lab/cat-cafe-a2a-dev-1577/scripts/a2a-1577-quote-contract.test.mjs:25:10)\n      at Test.runInAsyncScope (node:async_hooks:227:14)\n      at Test.run (node:internal/test_runner/test:1201:25)\n      at Test.start (node:internal/test_runner/test:1096:17)\n      at startSubtestAfterBootstrap (node:internal/test_runner/harness:385:17) {\n    generatedMessage: true,\n    code: 'ERR_ASSERTION',\n    actual: 'undefined',\n    expected: 'function',\n    operator: 'strictEqual',\n    diff: 'simple'\n  }\n\ntest at scripts/a2a-1577-quote-contract.test.mjs:31:1\n✖ real anchor preview exposes intent, declares truncation and retains a full drill pointer (6.395416ms)\n  AssertionError [ERR_ASSERTION]: The expression evaluated to a falsy value:\n  \n    assert.ok(anchor.preview.includes('retain-user-intent'))\n  \n      at TestContext.<anonymous> (file:///Users/lang/workspace/github-lab/cat-cafe-a2a-dev-1577/scripts/a2a-1577-quote-contract.test.mjs:36:10)\n      at Test.runInAsyncScope (node:async_hooks:227:14)\n      at Test.run (node:internal/test_runner/test:1201:25)\n      at Test.processPendingSubtests (node:internal/test_runner/test:831:18)\n      at Test.postRun (node:internal/test_runner/test:1330:19)\n      at Test.run (node:internal/test_runner/test:1258:12)\n      at async startSubtestAfterBootstrap (node:internal/test_runner/harness:385:3) {\n    generatedMessage: true,\n    code: 'ERR_ASSERTION',\n    actual: false,\n    expected: true,\n    operator: '==',\n    diff: 'simple'\n  }\n"
+  },
+  "green": {
+    "exitCode": 0,
+    "output": "✔ structured quote text includes the paired comment before a long source (0.844666ms)\n✔ real anchor preview exposes intent, declares truncation and retains a full drill pointer (0.189458ms)\nℹ tests 2\nℹ suites 0\nℹ pass 2\nℹ fail 0\nℹ cancelled 0\nℹ skipped 0\nℹ todo 0\nℹ duration_ms 141.029834\n packages/api/src/routes/callback-anchor-helpers.ts | 24 ++++++++++++++++++----\n 1 file changed, 20 insertions(+), 4 deletions(-)\n"
+  },
+  "failuresRetained": [
+    {
+      "kind": "guard_rejected",
+      "execution": "not_started",
+      "reason": "protected_target_unparsed on inline quoted node probe; replaced with an explicit named file, not a RED test"
+    }
+  ]
+}

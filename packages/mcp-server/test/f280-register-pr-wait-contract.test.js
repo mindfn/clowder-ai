@@ -238,4 +238,20 @@ describe('F280 register_pr_tracking public contract', () => {
     assert.match(description, /matches nobody/i, 'the dead combination must be named, not implied');
     assert.doesNotMatch(description, /replaces the derived audience/i, 'the replacement promise is gone');
   });
+
+  /*
+   * #1392: the default no longer arms a new HEAD for the PR author, because that push is their own.
+   * The two descriptions an agent reads when it registers must say so, or they promise a wake the
+   * server will not send.
+   */
+  it('the descriptions say a new HEAD is not armed for the PR author', async () => {
+    const { callbackTools, registerPrTrackingInputSchema } = await import('../dist/tools/callback-tools.js');
+    const description = callbackTools.find((tool) => tool.name === 'cat_cafe_register_pr_tracking')?.description ?? '';
+    const whenDescription = registerPrTrackingInputSchema.when.description ?? '';
+
+    for (const text of [description, whenDescription]) {
+      assert.match(text, /a new HEAD unless you are the PR author/, 'the author exception must be stated');
+      assert.doesNotMatch(text, /conflict and new HEAD/, 'no unconditional new-HEAD promise may survive');
+    }
+  });
 });

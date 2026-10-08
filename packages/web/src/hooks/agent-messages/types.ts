@@ -119,7 +119,6 @@ export interface HandleBackgroundMessageOptions {
   /** Human-facing projection only; stored events keep their stable catId facts. */
   resolveCatName?: (catId: string) => string;
   /** #80 fix-C: clear the done-timeout guard when a background thread completes. */
-  clearDoneTimeout?: (threadId?: string) => void;
 }
 
 export interface SystemInfoConsumeResult {

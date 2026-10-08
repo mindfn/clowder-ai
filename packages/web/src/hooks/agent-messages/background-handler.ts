@@ -7,7 +7,7 @@ import {
 } from '@/hooks/named-message-writer';
 import type { CatStatusType } from '@/stores/chat-types';
 import { invocationErrorRowId, isRecoverableInFlightError, upsertErrorRow } from './error-rows';
-import { markThreadInvocationActive, markThreadInvocationComplete } from './invocation-slots';
+import { isStaleTerminalEvent, markThreadInvocationActive, markThreadInvocationComplete } from './invocation-slots';
 import {
   callbackPost,
   dropUnnamedBodyWrite,
@@ -108,6 +108,7 @@ export function handleBackgroundAgentMessage(msg: BackgroundAgentMessage, option
     case 'tool_result':
       handleTool(msg, options);
       break;
+    case 'provider_signal':
     case 'system_info':
       handleSystemInfo(msg, options);
       break;
@@ -145,13 +146,12 @@ function handleText(msg: BackgroundAgentMessage, options: Options): void {
   }
   if (!msg.isFinal) return;
 
-  // #80 fix-C: a completed background thread clears the done-timeout guard.
-  options.clearDoneTimeout?.(msg.threadId);
+  // Completion uses the original response; the toast only notifies another thread.
   const finalMessage = finalMessageId
     ? store.getThreadState(msg.threadId).messages.find((message) => message.id === finalMessageId)
     : undefined;
   const preview = finalMessage?.content ?? msg.content;
-  markThreadInvocationComplete(msg, options, 'succeeded');
+  markThreadInvocationComplete(msg, options);
   options.addToast({
     type: 'success',
     title: `${catName(options, msg.catId)} 完成`,
@@ -165,9 +165,18 @@ function handleText(msg: BackgroundAgentMessage, options: Options): void {
 function handleError(msg: BackgroundAgentMessage, options: Options): void {
   const { store } = options;
   const recoverable = isRecoverableInFlightError(msg);
-  markThreadInvocationActive(msg, options);
+  const before = store.getThreadState(msg.threadId);
+  const stale = isStaleTerminalEvent(
+    before.activeInvocations,
+    before.catInvocations,
+    msg.catId,
+    msg.invocationId,
+    msg.turnInvocationId,
+  );
   const target = namedTarget(msg, msg.threadId);
   if (target && !recoverable) finishNamedMessage(target, writerStore(options));
+  if (stale) return;
+  markThreadInvocationActive(msg, options);
   if (!target) {
     // No admitted response: the row is the only carrier (F212: with its CLI diagnostics panel).
     // A new row in a background thread counts one unread; a repeated error updates it in place.
@@ -184,8 +193,7 @@ function handleError(msg: BackgroundAgentMessage, options: Options): void {
   }
   if (!recoverable) store.updateThreadCatStatus(msg.threadId, msg.catId, 'error');
   if (msg.isFinal) {
-    options.clearDoneTimeout?.(msg.threadId);
-    markThreadInvocationComplete(msg, options, 'failed');
+    markThreadInvocationComplete(msg, options);
   }
   options.addToast({
     type: 'error',
@@ -201,6 +209,17 @@ function handleDone(msg: BackgroundAgentMessage, options: Options): void {
   // (published at each target's done) is the truth; an empty `done.content` must not wipe it.
   const target = namedTarget(msg, msg.threadId);
   if (target) finishNamedMessage(target, writerStore(options));
+  const before = options.store.getThreadState(msg.threadId);
+  if (
+    isStaleTerminalEvent(
+      before.activeInvocations,
+      before.catInvocations,
+      msg.catId,
+      msg.invocationId,
+      msg.turnInvocationId,
+    )
+  )
+    return;
   // An error already reported this turn: done keeps it and shows no success toast.
   if (options.store.getThreadState(msg.threadId).catStatuses[msg.catId] !== 'error') {
     options.store.updateThreadCatStatus(msg.threadId, msg.catId, 'done');
@@ -213,8 +232,7 @@ function handleDone(msg: BackgroundAgentMessage, options: Options): void {
     });
   }
   if (msg.isFinal) {
-    options.clearDoneTimeout?.(msg.threadId);
-    markThreadInvocationComplete(msg, options, msg.errorCode ? 'failed' : 'succeeded');
+    markThreadInvocationComplete(msg, options);
   }
 }
 

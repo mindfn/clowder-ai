@@ -71,7 +71,9 @@ function systemInfo(threadId: string, payload: Record<string, unknown>, messageI
   });
 }
 
-function responseLifecycle(status: 'processing' | 'completed'): LifecycleStoredMessageMetadata {
+function responseLifecycle(
+  status: 'processing' | 'completed',
+): Extract<LifecycleStoredMessageMetadata, { kind: 'response' }> {
   return {
     kind: 'response',
     orderKey: 'order-1',
@@ -319,6 +321,156 @@ describe('F117 named-message writes', () => {
         invocationId: INV,
       });
       expect(systemRows(threadId)).toEqual([]);
+    });
+
+    it('keeps reconnect attempts on R, silently recovers and ignores a late reconnect after terminal', () => {
+      publishResponse(threadId);
+      send(
+        systemInfo(threadId, {
+          type: 'provider_recovery',
+          provider: 'codex',
+          phase: 'reconnecting',
+          attempt: 1,
+          attempts: ['socket disconnected'],
+        }),
+      );
+      expect(messageIn(threadId, R)?.extra?.providerRecovery).toMatchObject({
+        phase: 'reconnecting',
+        attempts: ['socket disconnected'],
+      });
+      expect(systemRows(threadId)).toEqual([]);
+      expect(useChatStore.getState().getThreadState(threadId).catStatuses[CAT]).toBe('spawning');
+      send(
+        systemInfo(threadId, {
+          type: 'provider_recovery',
+          provider: 'codex',
+          phase: 'recovered',
+          attempts: ['socket disconnected'],
+          evidence: 'item.completed',
+        }),
+      );
+      expect(messageIn(threadId, R)?.extra?.providerRecovery).toMatchObject({
+        phase: 'recovered',
+        evidence: 'item.completed',
+      });
+      expect(systemRows(threadId)).toEqual([]);
+      publishResponse(threadId, 'completed', 'answer');
+      const committed = messageIn(threadId, R);
+      send(
+        systemInfo(threadId, {
+          type: 'provider_recovery',
+          provider: 'codex',
+          phase: 'failed',
+          attempts: ['late reconnect'],
+        }),
+      );
+      expect(messageIn(threadId, R)).toBe(committed);
+      expect(systemRows(threadId)).toEqual([]);
+    });
+
+    it.each([
+      { catId: 'codex-sol' },
+      { invocationId: 'other-invocation' },
+    ])('does not attach a foreign recovery event to R: %j', (foreignIdentity) => {
+      publishResponse(threadId);
+      const before = messageIn(threadId, R);
+      send({
+        ...systemInfo(threadId, { type: 'provider_recovery', provider: 'codex', phase: 'failed' }),
+        ...foreignIdentity,
+      });
+      expect(messageIn(threadId, R)).toBe(before);
+      expect(messageIn(threadId, R)?.extra?.providerRecovery).toBeUndefined();
+      expect(systemRows(threadId)).toEqual([]);
+    });
+
+    it('binds recovery to the exact child response while the event carries its outer parent', () => {
+      publishResponse(threadId);
+      useChatStore.getState().patchThreadMessage(threadId, R, {
+        lifecycle: { ...responseLifecycle('processing'), invocationId: 'exact-child' },
+        extra: { stream: { invocationId: INV, turnInvocationId: 'exact-child' } },
+      });
+      send({
+        ...systemInfo(threadId, { type: 'provider_recovery', provider: 'codex', phase: 'recovered' }),
+        turnInvocationId: 'exact-child',
+      });
+      expect(messageIn(threadId, R)?.extra?.providerRecovery).toMatchObject({
+        invocationId: 'exact-child',
+        parentInvocationId: INV,
+        phase: 'recovered',
+      });
+      const before = messageIn(threadId, R);
+      send({
+        ...systemInfo(threadId, { type: 'provider_recovery', provider: 'codex', phase: 'failed' }),
+        turnInvocationId: 'sibling-child',
+      });
+      expect(messageIn(threadId, R)).toBe(before);
+      expect(systemRows(threadId)).toEqual([]);
+    });
+
+    it('retains failed reconnect evidence without inventing a failure result before the canonical snapshot', () => {
+      publishResponse(threadId);
+      send(
+        systemInfo(threadId, {
+          type: 'provider_recovery',
+          provider: 'codex',
+          phase: 'failed',
+          evidence: 'cli_error',
+          attempts: ['disconnected'],
+        }),
+      );
+      expect(messageIn(threadId, R)?.extra?.providerRecovery).toMatchObject({ phase: 'failed', evidence: 'cli_error' });
+      expect(messageIn(threadId, R)?.lifecycle).toMatchObject({ kind: 'response', status: 'processing' });
+      expect(systemRows(threadId)).toEqual([]);
+    });
+
+    it('keeps automatic retry and session handoff inside the invocation rather than chat or unread', () => {
+      publishResponse(threadId);
+      send({
+        ...systemInfo(threadId, {
+          type: 'warning',
+          presentation: 'transient_status',
+          message: 'capacity retry in 20s',
+        }),
+        type: 'provider_signal',
+      });
+      expect(useChatStore.getState().getThreadState(threadId).catStatusDetails[CAT]).toBe('capacity retry in 20s');
+      send(
+        systemInfo(threadId, {
+          type: 'session_seal_requested',
+          catId: CAT,
+          sessionSeq: 3,
+          continuityDiagnostics: { source: 'runtime_replacement' },
+        }),
+      );
+      expect(useChatStore.getState().getThreadState(threadId).catInvocations[CAT]).toMatchObject({
+        sessionSeq: 3,
+        sessionSealed: true,
+      });
+      expect(messagesOf(threadId).map((message) => message.id)).toEqual([R]);
+      expect(useChatStore.getState().getThreadState(threadId).unreadCount).toBe(0);
+    });
+
+    it('keeps no-text completion diagnostics on R without adding another result notification', () => {
+      publishResponse(threadId);
+      const cliDiagnostics = {
+        reasonCode: 'silent_completion' as const,
+        publicSummary: '无正文输出',
+        publicHint: '可查看工具结果',
+        debugRef: { command: 'codex', exitCode: 0, signal: null },
+      };
+      send({
+        ...systemInfo(threadId, { type: 'silent_completion', detail: 'no text' }),
+        metadata: { provider: 'openai', model: 'fixture', cliDiagnostics },
+      });
+      expect(systemRows(threadId)).toEqual([]);
+      expect(messageIn(threadId, R)?.extra?.cliDiagnostics).toEqual(cliDiagnostics);
+    });
+
+    it('an unnamed completion diagnostic cannot create a second result or guess a response', () => {
+      publishResponse(threadId);
+      send(systemInfo(threadId, { type: 'silent_completion', detail: 'no text' }, null));
+      expect(systemRows(threadId)).toEqual([]);
+      expect(messageIn(threadId, R)?.extra?.cliDiagnostics).toBeUndefined();
     });
 
     it('adds one error row with its own id for an error without messageId, even when repeated', () => {

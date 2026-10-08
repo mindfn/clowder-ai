@@ -144,7 +144,7 @@ describe('QueuePanel withdraw UX (F39)', () => {
 
     const toasts = useToastStore.getState().toasts;
     expect(
-      toasts.some((t) => t.title === '已停止后续处理' && t.message === '原消息与已经发生的读取事实仍保留在历史中'),
+      toasts.some((t) => t.title === '已停止后续处理' && t.message === '原消息与已经发生的投递事实仍保留在历史中'),
     ).toBe(true);
   });
 

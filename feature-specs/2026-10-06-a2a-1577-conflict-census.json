@@ -1,0 +1,571 @@
+{
+  "schemaVersion": 1,
+  "forkHead": "db3fbbce7b9b98fe5d6b34c44016d03075fb6f17",
+  "publicMergeHead": "3e70e1d6805be24672e8f841861f180d20b184c2",
+  "initialUnresolved": 180,
+  "remainingUnresolved": 89,
+  "previousSnapshotUnresolved": 90,
+  "resolvedSincePreviousSnapshot": [
+    "packages/api/src/domains/cats/services/stores/redis/RedisTypedWaitCustodyGuard.ts"
+  ],
+  "resolvedThisStage": [
+    "packages/api/config/public-test-exclusions.json",
+    "packages/api/package.json",
+    "packages/api/scripts/with-test-home.sh",
+    "packages/api/src/config/cat-config-loader.ts",
+    "packages/api/src/domains/cats/services/agents/invocation/PersistedQueueDelivery.ts",
+    "packages/shared/src/types/github-wait.ts",
+    "packages/shared/src/types/index.ts",
+    "packages/shared/src/types/queue-receipt.ts",
+    "pnpm-lock.yaml",
+    "scripts/alpha-worktree.sh"
+  ],
+  "conflicts": [
+    {
+      "path": "docs/architecture/ownership/README.md",
+      "group": "ownership-docs",
+      "kind": "both-modified"
+    },
+    {
+      "path": "docs/architecture/ownership/cells/ball-custody.md",
+      "group": "ownership-docs",
+      "kind": "both-modified"
+    },
+    {
+      "path": "docs/architecture/ownership/cells/dispatch.md",
+      "group": "ownership-docs",
+      "kind": "both-modified"
+    },
+    {
+      "path": "docs/features/F167-a2a-chain-quality.md",
+      "group": "ownership-docs",
+      "kind": "both-modified"
+    },
+    {
+      "path": "docs/features/F254-side-effect-freshness-gate.md",
+      "group": "ownership-docs",
+      "kind": "both-modified"
+    },
+    {
+      "path": "packages/api/src/domains/cats/services/agents/providers/CodexAppServerClient.ts",
+      "group": "producers-routes-providers",
+      "kind": "both-modified"
+    },
+    {
+      "path": "packages/api/src/domains/cats/services/agents/providers/CodexUnixWebSocketSession.ts",
+      "group": "producers-routes-providers",
+      "kind": "both-modified"
+    },
+    {
+      "path": "packages/api/src/domains/cats/services/agents/providers/DirectAgentCarrierSession.ts",
+      "group": "producers-routes-providers",
+      "kind": "both-modified"
+    },
+    {
+      "path": "packages/api/src/domains/cats/services/agents/providers/codex-event-transform.ts",
+      "group": "producers-routes-providers",
+      "kind": "both-modified"
+    },
+    {
+      "path": "packages/api/src/index.ts",
+      "group": "producers-routes-providers",
+      "kind": "both-modified"
+    },
+    {
+      "path": "packages/api/src/infrastructure/connectors/github-repo-event/GitHubRepoWebhookHandler.ts",
+      "group": "producers-routes-providers",
+      "kind": "both-modified"
+    },
+    {
+      "path": "packages/api/src/routes/cats.ts",
+      "group": "producers-routes-providers",
+      "kind": "both-modified"
+    },
+    {
+      "path": "packages/api/src/routes/messages.ts",
+      "group": "producers-routes-providers",
+      "kind": "both-modified"
+    },
+    {
+      "path": "packages/api/test/a2a-dispatch-disposition-invocation-binding.test.js",
+      "group": "api-tests",
+      "kind": "deleted-by-fork/modified-by-public"
+    },
+    {
+      "path": "packages/api/test/a2a-dispatch-disposition-same-cat.test.js",
+      "group": "api-tests",
+      "kind": "deleted-by-fork/modified-by-public"
+    },
+    {
+      "path": "packages/api/test/agent-key-registry.test.js",
+      "group": "api-tests",
+      "kind": "both-modified"
+    },
+    {
+      "path": "packages/api/test/auth-invocation-backend-contract.test.js",
+      "group": "api-tests",
+      "kind": "both-modified"
+    },
+    {
+      "path": "packages/api/test/callback-a2a-postmsg.test.js",
+      "group": "api-tests",
+      "kind": "both-modified"
+    },
+    {
+      "path": "packages/api/test/collective-persistent-authority.test.js",
+      "group": "api-tests",
+      "kind": "both-modified"
+    },
+    {
+      "path": "packages/api/test/connector-invoke-trigger.test.js",
+      "group": "api-tests",
+      "kind": "deleted-by-fork/modified-by-public"
+    },
+    {
+      "path": "packages/api/test/f254-freshness-gate-integration.test.js",
+      "group": "api-tests",
+      "kind": "deleted-by-fork/modified-by-public"
+    },
+    {
+      "path": "packages/api/test/f254-notice-service.test.js",
+      "group": "api-tests",
+      "kind": "deleted-by-fork/modified-by-public"
+    },
+    {
+      "path": "packages/api/test/f254-queue-restart-custody.test.js",
+      "group": "api-tests",
+      "kind": "deleted-by-fork/modified-by-public"
+    },
+    {
+      "path": "packages/api/test/f254-queued-message-custody-redis.test.js",
+      "group": "api-tests",
+      "kind": "deleted-by-fork/modified-by-public"
+    },
+    {
+      "path": "packages/api/test/f254-queued-message-custody-store.test.js",
+      "group": "api-tests",
+      "kind": "deleted-by-fork/modified-by-public"
+    },
+    {
+      "path": "packages/api/test/f296-b3b2-presentation-route-redis.test.js",
+      "group": "api-tests",
+      "kind": "both-modified"
+    },
+    {
+      "path": "packages/api/test/f296-b3b3-provider-boundary-integration.test.js",
+      "group": "api-tests",
+      "kind": "both-modified"
+    },
+    {
+      "path": "packages/api/test/f296-b4a-epoch-retirement-redis.test.js",
+      "group": "api-tests",
+      "kind": "both-modified"
+    },
+    {
+      "path": "packages/api/test/helpers/a2a-dispatch-disposition-harness.js",
+      "group": "api-tests",
+      "kind": "deleted-by-fork/modified-by-public"
+    },
+    {
+      "path": "packages/api/test/image-upload.test.js",
+      "group": "api-tests",
+      "kind": "both-modified"
+    },
+    {
+      "path": "packages/api/test/managed-hold-disposition.test.js",
+      "group": "api-tests",
+      "kind": "deleted-by-fork/modified-by-public"
+    },
+    {
+      "path": "packages/api/test/messages-delivery-mode.test.js",
+      "group": "api-tests",
+      "kind": "deleted-by-fork/modified-by-public"
+    },
+    {
+      "path": "packages/api/test/queue-processor.test.js",
+      "group": "api-tests",
+      "kind": "both-modified"
+    },
+    {
+      "path": "packages/api/test/route-serial-callback-dedup.test.js",
+      "group": "api-tests",
+      "kind": "both-modified"
+    },
+    {
+      "path": "packages/api/test/route-strategies.test.js",
+      "group": "api-tests",
+      "kind": "both-modified"
+    },
+    {
+      "path": "packages/api/test/scheduler/conflict-auto-executor.test.js",
+      "group": "api-tests",
+      "kind": "both-modified"
+    },
+    {
+      "path": "packages/api/test/scheduler/review-feedback-spec.test.js",
+      "group": "api-tests",
+      "kind": "both-modified"
+    },
+    {
+      "path": "packages/api/test/turn-custody-stop-gate-route.test.js",
+      "group": "api-tests",
+      "kind": "deleted-by-fork/modified-by-public"
+    },
+    {
+      "path": "packages/api/test/typed-wait-queue-redis.test.js",
+      "group": "api-tests",
+      "kind": "deleted-by-fork/modified-by-public"
+    },
+    {
+      "path": "packages/api/test/wait-continuation-retry-committer-redis.test.js",
+      "group": "api-tests",
+      "kind": "deleted-by-fork/modified-by-public"
+    },
+    {
+      "path": "packages/mcp-server/governance/mcp-surface-baseline.json",
+      "group": "mcp",
+      "kind": "both-modified"
+    },
+    {
+      "path": "packages/web/src/app/globals.css",
+      "group": "web",
+      "kind": "both-modified"
+    },
+    {
+      "path": "packages/web/src/components/ChatContainer.tsx",
+      "group": "web",
+      "kind": "both-modified"
+    },
+    {
+      "path": "packages/web/src/components/ChatInput.tsx",
+      "group": "web",
+      "kind": "both-modified"
+    },
+    {
+      "path": "packages/web/src/components/ChatInputActionButton.tsx",
+      "group": "web",
+      "kind": "both-modified"
+    },
+    {
+      "path": "packages/web/src/components/ChatMessage.tsx",
+      "group": "web",
+      "kind": "both-modified"
+    },
+    {
+      "path": "packages/web/src/components/ChatMessageRow.tsx",
+      "group": "web",
+      "kind": "both-modified"
+    },
+    {
+      "path": "packages/web/src/components/ConnectorBubble.tsx",
+      "group": "web",
+      "kind": "both-modified"
+    },
+    {
+      "path": "packages/web/src/components/HubCatEditor.tsx",
+      "group": "web",
+      "kind": "both-modified"
+    },
+    {
+      "path": "packages/web/src/components/MessageNavigator.tsx",
+      "group": "web",
+      "kind": "both-modified"
+    },
+    {
+      "path": "packages/web/src/components/MessageReceiptDock.tsx",
+      "group": "web",
+      "kind": "deleted-by-fork/modified-by-public"
+    },
+    {
+      "path": "packages/web/src/components/QueueEntryRow.tsx",
+      "group": "web",
+      "kind": "both-modified"
+    },
+    {
+      "path": "packages/web/src/components/QueuePanel.tsx",
+      "group": "web",
+      "kind": "both-modified"
+    },
+    {
+      "path": "packages/web/src/components/ThinkingIndicator.tsx",
+      "group": "web",
+      "kind": "deleted-by-fork/modified-by-public"
+    },
+    {
+      "path": "packages/web/src/components/TurnAbsorptionDock.tsx",
+      "group": "web",
+      "kind": "deleted-by-fork/modified-by-public"
+    },
+    {
+      "path": "packages/web/src/components/__tests__/ChatMessage-render-isolation.test.tsx",
+      "group": "web",
+      "kind": "both-modified"
+    },
+    {
+      "path": "packages/web/src/components/__tests__/cloud-binding-recovery.test.ts",
+      "group": "web",
+      "kind": "both-modified"
+    },
+    {
+      "path": "packages/web/src/components/__tests__/f264-turn-absorption-dock.test.tsx",
+      "group": "web",
+      "kind": "deleted-by-fork/modified-by-public"
+    },
+    {
+      "path": "packages/web/src/components/__tests__/f264-turn-absorption-summary.test.ts",
+      "group": "web",
+      "kind": "deleted-by-fork/modified-by-public"
+    },
+    {
+      "path": "packages/web/src/components/__tests__/message-receipt-dock.test.tsx",
+      "group": "web",
+      "kind": "deleted-by-fork/modified-by-public"
+    },
+    {
+      "path": "packages/web/src/components/__tests__/queue-panel-processing.test.ts",
+      "group": "web",
+      "kind": "deleted-by-fork/modified-by-public"
+    },
+    {
+      "path": "packages/web/src/components/cloud-binding-recovery.ts",
+      "group": "web",
+      "kind": "both-modified"
+    },
+    {
+      "path": "packages/web/src/components/concierge/ConciergeHost.tsx",
+      "group": "web",
+      "kind": "both-modified"
+    },
+    {
+      "path": "packages/web/src/components/message-disposition-presentation.ts",
+      "group": "web",
+      "kind": "both-modified"
+    },
+    {
+      "path": "packages/web/src/components/queue-receipt-projection.ts",
+      "group": "web",
+      "kind": "deleted-by-fork/modified-by-public"
+    },
+    {
+      "path": "packages/web/src/components/queue-retry-action.ts",
+      "group": "web",
+      "kind": "deleted-by-fork/modified-by-public"
+    },
+    {
+      "path": "packages/web/src/components/thread-chat/ThreadChatExport.tsx",
+      "group": "web",
+      "kind": "both-modified"
+    },
+    {
+      "path": "packages/web/src/components/thread-chat/ThreadChatSurface.tsx",
+      "group": "web",
+      "kind": "both-modified"
+    },
+    {
+      "path": "packages/web/src/components/turn-absorption-summary.ts",
+      "group": "web",
+      "kind": "deleted-by-fork/modified-by-public"
+    },
+    {
+      "path": "packages/web/src/components/useCloudBindingRecovery.ts",
+      "group": "web",
+      "kind": "both-modified"
+    },
+    {
+      "path": "packages/web/src/components/useQueueActionConvergence.ts",
+      "group": "web",
+      "kind": "both-modified"
+    },
+    {
+      "path": "packages/web/src/hooks/__tests__/queue-message-receipt-normalizer.test.ts",
+      "group": "web",
+      "kind": "deleted-by-fork/modified-by-public"
+    },
+    {
+      "path": "packages/web/src/hooks/__tests__/useAgentMessages-background-system-info-web-search.test.ts",
+      "group": "web",
+      "kind": "both-modified"
+    },
+    {
+      "path": "packages/web/src/hooks/__tests__/useAgentMessages-invocation-usage-footer.test.ts",
+      "group": "web",
+      "kind": "both-modified"
+    },
+    {
+      "path": "packages/web/src/hooks/__tests__/useAgentMessages-richblock-correlation.test.ts",
+      "group": "web",
+      "kind": "both-modified"
+    },
+    {
+      "path": "packages/web/src/hooks/queue-active-invocation-hydration.ts",
+      "group": "web",
+      "kind": "both-modified"
+    },
+    {
+      "path": "packages/web/src/hooks/queue-message-receipt-normalizer.ts",
+      "group": "web",
+      "kind": "deleted-by-fork/modified-by-public"
+    },
+    {
+      "path": "packages/web/src/hooks/useAgentMessages.ts",
+      "group": "web",
+      "kind": "both-modified"
+    },
+    {
+      "path": "packages/web/src/hooks/useCatData.ts",
+      "group": "web",
+      "kind": "both-modified"
+    },
+    {
+      "path": "packages/web/src/hooks/useChatHistory.ts",
+      "group": "web",
+      "kind": "both-modified"
+    },
+    {
+      "path": "packages/web/src/hooks/useSendMessage.ts",
+      "group": "web",
+      "kind": "both-modified"
+    },
+    {
+      "path": "packages/web/src/hooks/useSocket.ts",
+      "group": "web",
+      "kind": "both-modified"
+    },
+    {
+      "path": "packages/web/src/stores/__tests__/chatStore-multithread.test.ts",
+      "group": "web",
+      "kind": "both-modified"
+    },
+    {
+      "path": "packages/web/src/stores/bubble-projection.ts",
+      "group": "web",
+      "kind": "deleted-by-fork/modified-by-public"
+    },
+    {
+      "path": "packages/web/src/stores/chat-types.ts",
+      "group": "web",
+      "kind": "both-modified"
+    },
+    {
+      "path": "packages/web/src/stores/chatStore.ts",
+      "group": "web",
+      "kind": "both-modified"
+    },
+    {
+      "path": "packages/web/src/utils/__tests__/scrollToMessage.test.ts",
+      "group": "web",
+      "kind": "both-modified"
+    },
+    {
+      "path": "packages/web/src/utils/scrollToMessage.ts",
+      "group": "web",
+      "kind": "both-modified"
+    },
+    {
+      "path": "scripts/alpha-worktree.test.sh",
+      "group": "build-config",
+      "kind": "both-modified"
+    }
+  ],
+  "previousStage": {
+    "remainingUnresolved": 178,
+    "resolvedThisStage": [
+      "packages/api/src/domains/ball-custody/turn-custody-wake-provenance.ts",
+      "packages/api/src/domains/ball-custody/turn-custody-projection-types.ts"
+    ]
+  },
+  "thirdStage": {
+    "previousRemaining": 168,
+    "resolved": [
+      "packages/api/src/domains/cats/services/agents/invocation/InvocationOwnerReaper.ts",
+      "packages/api/src/domains/cats/services/agents/invocation/InvocationQueue.ts",
+      "packages/api/src/domains/cats/services/agents/invocation/StartupReconciler.ts",
+      "packages/api/src/domains/cats/services/agents/invocation/active-execution-service.ts",
+      "packages/api/src/domains/cats/services/context/ContextAssembler.ts",
+      "packages/api/src/domains/cats/services/stores/ports/MessageStore.ts",
+      "packages/api/src/domains/cats/services/stores/redis/RedisMessageStore.ts",
+      "packages/api/src/domains/cats/services/stores/redis/redis-message-parsers.ts",
+      "packages/api/src/domains/plugin/builtin-runtime/collective-ingress-dispatcher.ts",
+      "packages/api/src/domains/plugin/builtin-runtime/collective-work-dispatcher.ts"
+    ],
+    "remaining": 158
+  },
+  "fourthStage": {
+    "previousRemaining": 158,
+    "resolved": [
+      "packages/api/src/domains/ball-custody/TurnCustodyProjectionService.ts",
+      "packages/api/src/domains/cats/services/agents/invocation/QueueProcessor.ts",
+      "packages/api/src/domains/cats/services/agents/invocation/invoke-single-cat.ts",
+      "packages/api/src/domains/cats/services/agents/providers/ClaudeAgentService.ts",
+      "packages/api/src/domains/cats/services/agents/providers/ClaudeSdkAgentService.ts",
+      "packages/api/src/domains/cats/services/agents/providers/CodexAgentService.ts",
+      "packages/api/src/domains/cats/services/agents/providers/claude-mcp-config.ts",
+      "packages/api/src/domains/cats/services/agents/routing/AgentRouter.ts",
+      "packages/api/src/domains/cats/services/agents/routing/route-helpers.ts",
+      "packages/api/src/domains/cats/services/agents/routing/route-serial.ts",
+      "packages/api/src/domains/cats/services/stores/ports/TurnExecutionStore.ts",
+      "packages/api/src/domains/cats/services/types.ts",
+      "packages/api/src/utils/queue-enrichment.ts"
+    ],
+    "remaining": 145,
+    "semanticIntegrationComplete": false
+  },
+  "fifthStage": {
+    "previousRemaining": 145,
+    "resolved": [
+      "packages/mcp-server/src/tools/callback-tools.ts",
+      "packages/mcp-server/src/server-toolsets.ts",
+      "packages/mcp-server/src/agent-key-collaboration-contract.ts",
+      "packages/mcp-server/test/callback-tools.test.js",
+      "packages/mcp-server/test/tool-registration.test.js",
+      "packages/api/src/routes/callback-document-routes.ts"
+    ],
+    "remaining": 139,
+    "semanticIntegrationComplete": false
+  },
+  "sixthStage": {
+    "previousUnresolved": 139,
+    "remainingUnresolved": 138,
+    "resolvedPaths": ["packages/api/src/domains/ball-custody/DirectActionSuccessorCarrierRecovery.ts"],
+    "semanticMigrationComplete": false
+  },
+  "eighthStage": {
+    "previousUnresolved": 134,
+    "remainingUnresolved": 131,
+    "resolvedPaths": [
+      "packages/api/src/routes/callbacks.ts",
+      "packages/api/src/routes/callback-multi-mention-routes.ts",
+      "packages/api/test/callback-routes.test.js"
+    ],
+    "semanticMigrationComplete": false
+  },
+  "sixteenthStage": {
+    "previousUnresolved": 113,
+    "remainingUnresolved": 111,
+    "resolvedPaths": [
+      "packages/api/src/domains/cats/services/stores/redis/RedisTurnExecutionStore.ts",
+      "packages/api/test/callback-hold-ball-route.test.js"
+    ],
+    "semanticMigrationComplete": false
+  },
+  "fifteenthStage": {
+    "previousUnresolved": 115,
+    "remainingUnresolved": 113,
+    "resolvedPaths": [
+      "packages/api/test/helpers/persisted-queue-fixture.ts",
+      "packages/api/test/persisted-queue-delivery.test.ts"
+    ],
+    "semanticMigrationComplete": false
+  },
+  "seventhStage": {
+    "previousUnresolved": 138,
+    "remainingUnresolved": 134,
+    "resolvedPaths": [
+      "packages/api/src/routes/callback-hold-ball-routes.ts",
+      "packages/api/src/domains/ball-custody/ManagedCommandWakeRecoverySweep.ts",
+      "packages/api/src/infrastructure/scheduler/templates/reminder.ts",
+      "packages/api/test/managed-command-wake-recovery-sweep.test.js"
+    ],
+    "semanticMigrationComplete": false
+  }
+}

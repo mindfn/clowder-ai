@@ -1,5 +1,5 @@
 /**
- * F220 intake — ordered, frozen, bounded Queue publication.
+ * F220 intake — immediate, frozen Queue publication.
  *
  * The public Queue projection contains pending source rows only. Delivery and
  * terminal truth belongs to History lifecycle dispatchRefs/response messages.
@@ -41,7 +41,6 @@ describe('F220 intake: queue snapshot publication ordering', () => {
           payload: { sourceRecordId: 'private-prompt', content: 'secret podcast prompt' },
         }),
       ],
-      null,
       'private',
     );
     assert.deepEqual(emitted[0].queue, []);
@@ -71,156 +70,79 @@ describe('F220 intake: queue snapshot publication ordering', () => {
     assert.equal('targetStates' in projected, false);
   });
 
-  it('serializes same-scope snapshots while a different user remains independent', async () => {
+  it('publishes pending targets and retirement without waiting for any History preview', async () => {
     const emitted = [];
-    let releaseOlder;
-    let olderStarted;
-    const olderStartedPromise = new Promise((resolve) => {
-      olderStarted = resolve;
-    });
+    let lookups = 0;
+    let releasePreview;
     const messageStore = {
-      getById: async (messageId) => {
-        if (messageId === 'msg-older') {
-          olderStarted();
-          await new Promise((resolve) => {
-            releaseOlder = resolve;
-          });
-        }
-        return null;
+      getById: async () => {
+        lookups++;
+        return new Promise((resolve) => {
+          releasePreview = resolve;
+        });
       },
     };
-    const socketManager = {
-      emitToUser: (userId, _event, data) => emitted.push({ userId, ...data }),
-    };
-
-    const older = emitQueueUpdated(
-      socketManager,
-      'u1',
-      't1',
-      [makeEntry({ payload: { sourceRecordId: 'msg-older', content: 'older', messageId: 'msg-older' } })],
-      messageStore,
-      'older',
-    );
-    await olderStartedPromise;
-    const newer = emitQueueUpdated(socketManager, 'u1', 't1', [], messageStore, 'newer');
-    const independent = emitQueueUpdated(socketManager, 'u2', 't1', [], messageStore, 'independent');
-
+    const socketManager = { emitToUser: (userId, _event, data) => emitted.push({ userId, ...data }) };
+    const { enrichQueueEntries } = await import('../dist/utils/queue-enrichment.js');
+    const preview = enrichQueueEntries([makeEntry()], messageStore);
+    const started = performance.now();
+    const queued = emitQueueUpdated(socketManager, 'u1', 't1', [makeEntry()], 'enqueued');
+    const delivered = emitQueueUpdated(socketManager, 'u1', 't1', [], 'processing');
+    const independent = emitQueueUpdated(socketManager, 'u2', 't1', [makeEntry()], 'enqueued');
+    // Assert before releasing a lookup or advancing any timer.
     try {
-      await independent;
-      await new Promise((resolve) => setImmediate(resolve));
       assert.deepEqual(
-        emitted.filter((event) => event.userId === 'u1'),
-        [],
+        emitted.map((e) => [e.userId, e.action, e.queue.length]),
+        [
+          ['u1', 'enqueued', 1],
+          ['u1', 'processing', 0],
+          ['u2', 'enqueued', 1],
+        ],
       );
-      assert.deepEqual(
-        emitted.filter((event) => event.userId === 'u2').map((event) => event.action),
-        ['independent'],
-      );
+      await Promise.all([queued, delivered, independent]);
+      assert.equal(lookups, 1, 'the stalled HTTP preview does not hold any mutation publication');
     } finally {
-      releaseOlder?.();
-      await Promise.allSettled([older, newer, independent]);
+      releasePreview(null);
+      await preview;
     }
-
-    assert.deepEqual(
-      emitted.filter((event) => event.userId === 'u1').map((event) => event.action),
-      ['older', 'newer'],
-    );
-    assert.equal(
-      emitted.some((event) => 'messageReceipts' in event),
-      false,
+    console.log(
+      JSON.stringify({ scenario: 'blocked-preview-publication', elapsedMs: performance.now() - started, lookups }),
     );
   });
 
   it('freezes mutable queue entries at publication call time', async () => {
     const emitted = [];
-    let releaseLookup;
-    let lookupStarted;
-    const lookupStartedPromise = new Promise((resolve) => {
-      lookupStarted = resolve;
-    });
-    const messageStore = {
-      getById: async () => {
-        lookupStarted();
-        await new Promise((resolve) => {
-          releaseLookup = resolve;
-        });
-        return null;
-      },
-    };
     const entry = makeEntry();
     const publication = emitQueueUpdated(
       { emitToUser: (_userId, _event, data) => emitted.push(data) },
       'u1',
       't1',
       [entry],
-      messageStore,
       'frozen',
     );
-    await lookupStartedPromise;
-    entry.targets = ['codex'];
-    releaseLookup();
+    entry.targets[0] = 'codex';
+    entry.from.userId = 'changed';
     await publication;
-
     assert.deepEqual(emitted[0].queue[0].targetCats, ['opus']);
+    assert.deepEqual(emitted[0].queue[0].from, { kind: 'user', userId: 'user-1' });
   });
 
-  it('releases the publication tail with the pending projection after the enrichment deadline', async (t) => {
-    t.mock.timers.enable({ apis: ['setTimeout'] });
-    const emitted = [];
-    let lookupStarted;
-    const lookupStartedPromise = new Promise((resolve) => {
-      lookupStarted = resolve;
-    });
-    const messageStore = {
-      getById: async () => {
-        lookupStarted();
-        return new Promise(() => {});
-      },
-    };
-    const socketManager = { emitToUser: (_userId, _event, data) => emitted.push(data) };
-
-    const stalled = emitQueueUpdated(socketManager, 'u1', 't1', [makeEntry()], messageStore, 'stalled');
-    await lookupStartedPromise;
-    const following = emitQueueUpdated(socketManager, 'u1', 't1', [], messageStore, 'following');
-    t.mock.timers.tick(2_000);
-    await new Promise((resolve) => setImmediate(resolve));
-    await Promise.all([stalled, following]);
-
-    assert.deepEqual(
-      emitted.map((event) => ({ action: event.action, targetCats: event.queue[0]?.targetCats })),
-      [
-        { action: 'stalled', targetCats: ['opus'] },
-        { action: 'following', targetCats: undefined },
-      ],
-    );
-  });
-
-  it('enriches a targetless pending source row without inventing a delivery target', async () => {
-    const emitted = [];
-    const messageStore = {
+  it('retains rich connector/reply previews in the HTTP projection without inventing a target', async () => {
+    const { enrichQueueEntries } = await import('../dist/utils/queue-enrichment.js');
+    const queue = await enrichQueueEntries([makeEntry({ targets: [] })], {
       getById: async (id) => ({
         id,
-        userId: 'u1',
-        threadId: 't1',
         contentBlocks: [{ kind: 'text', text: 'preview text' }],
         replyTo: 'msg-parent',
+        source: { connector: 'content-review' },
       }),
-    };
-
-    await emitQueueUpdated(
-      { emitToUser: (_userId, _event, data) => emitted.push(data) },
-      'u1',
-      't1',
-      [makeEntry({ targets: [] })],
-      messageStore,
-      'enriched',
-    );
-
-    assert.deepEqual(emitted[0].queue[0].messagePreview, {
+    });
+    assert.deepEqual(queue[0].messagePreview, {
       contentBlocks: [{ kind: 'text', text: 'preview text' }],
       replyTo: 'msg-parent',
+      connector: 'content-review',
     });
-    assert.deepEqual(emitted[0].queue[0].targetCats, []);
+    assert.deepEqual(queue[0].targetCats, []);
   });
 
   it('does not poison a same-scope successor when the previous emitter throws', async () => {
@@ -236,8 +158,8 @@ describe('F220 intake: queue snapshot publication ordering', () => {
       },
     };
 
-    const failed = emitQueueUpdated(socketManager, 'u1', 't1', [], null, 'first');
-    const following = emitQueueUpdated(socketManager, 'u1', 't1', [], null, 'second');
+    const failed = emitQueueUpdated(socketManager, 'u1', 't1', [], 'first');
+    const following = emitQueueUpdated(socketManager, 'u1', 't1', [], 'second');
     await assert.rejects(failed, /synthetic emit failure/);
     await following;
     assert.deepEqual(emitted, ['second']);

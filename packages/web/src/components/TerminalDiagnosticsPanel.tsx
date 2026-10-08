@@ -34,16 +34,28 @@ export function TerminalDiagnosticsPanel({
   selected,
   errorMessage,
   dedupCount,
+  responseOwnsFailure = false,
 }: {
   selected: TerminalDiagnostics;
   /** Copy naming the failure; the CLI panel falls back to it when publicSummary is missing. */
   errorMessage: string;
   /** Head of an adjacent duplicate group: the CLI panel shows "×N". */
   dedupCount?: number;
+  /** The response bubble/status already explains failure; do not repeat a generic banner. */
+  responseOwnsFailure?: boolean;
 }) {
   return selected.kind === 'cli' ? (
-    <CliDiagnosticsPanel errorMessage={errorMessage} diagnostics={selected.diagnostics} dedupCount={dedupCount} />
+    <CliDiagnosticsPanel
+      errorMessage={errorMessage}
+      diagnostics={selected.diagnostics}
+      dedupCount={dedupCount}
+      showErrorBanner={!responseOwnsFailure}
+    />
   ) : (
-    <TimeoutDiagnosticsPanel errorMessage={errorMessage} diagnostics={selected.diagnostics} />
+    <TimeoutDiagnosticsPanel
+      errorMessage={errorMessage}
+      diagnostics={selected.diagnostics}
+      showErrorBanner={!responseOwnsFailure}
+    />
   );
 }

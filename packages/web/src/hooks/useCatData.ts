@@ -5,7 +5,7 @@
  * Fetches once per session, caches module-level. All consumers share same data.
  */
 
-import { CAT_CARRIERS, type CatCarrier } from '@cat-cafe/shared';
+import { type BuiltinCloudIdentityProtection, CAT_CARRIERS, type CatCarrier } from '@cat-cafe/shared';
 import { useEffect, useMemo, useState } from 'react';
 import { formatCatDisplayName } from '@/lib/cat-display-name';
 import { UNKNOWN_CAT_COLOR } from '@/lib/color-defaults';
@@ -88,6 +88,8 @@ export interface CatData {
   sessionChain?: boolean;
   /** #712: MCP support toggle — when false, disables all MCP for this cat. */
   mcpSupport?: boolean;
+  /** F247: immutable transport identity for the built-in ChatGPT Pro cloud member. */
+  identityProtection?: BuiltinCloudIdentityProtection;
   /** F32-b P4: Human-readable variant label (e.g. "4.5", "Sonnet") */
   variantLabel?: string;
   /** F32-b P4: Whether this is the default variant for its breed */

@@ -24,6 +24,7 @@ import {
   type LivenessSource,
   type OwnerSnapshot,
 } from './getThreadLiveInvocations.js';
+import { projectInvocationSettlement } from './InvocationSettlementProjection.js';
 
 /**
  * F117 KD-23: how strongly each source proves a member processing. A slot this process holds, or a
@@ -93,6 +94,7 @@ export interface InvocationRegistryPort {
 }
 
 export interface ActiveInvocationProjection {
+  settlement?: import('@cat-cafe/shared').QueueInvocationSettlement;
   catId: string;
   startedAt: number;
   /** Parent/control-plane identity. Frontend keeps this as the active slot key for Cancel. */
@@ -244,13 +246,20 @@ export async function resolveActiveInvocationsStrict(
   if (!recordStore) {
     return projectActiveInvocations(threadId, trackerProjectionCandidates(threadId, userId, invocationTracker));
   }
+  const childrenByParent = new Map<string, Awaited<ReturnType<ITurnExecutionStore['listByParent']>>>();
   const result = await getThreadLiveInvocations(threadId, userId, {
     listRunningRecords: (tid, uid) => recordStore.listRunningByThread(tid, uid),
     getActiveSlots: (tid) => invocationTracker.getActiveSlots(tid),
     getTrackerUserId: (tid, cid) => invocationTracker.getUserId(tid, cid),
     getTrackerExecutionId: (tid, cid) => invocationTracker.getExecutionId?.(tid, cid),
     ...(turnExecutionStore
-      ? { listTurnExecutionsByParent: (parentId: string) => turnExecutionStore.listByParent(parentId) }
+      ? {
+          listTurnExecutionsByParent: async (parentId: string) => {
+            const children = await turnExecutionStore.listByParent(parentId);
+            childrenByParent.set(parentId, children);
+            return children;
+          },
+        }
       : {}),
     ...(ownerSnapshot ? { ownerSnapshot } : {}),
   });
@@ -279,7 +288,14 @@ export async function resolveActiveInvocationsStrict(
   const candidates = Array.from(chosen.values(), (live) =>
     lifecycleCandidate(threadId, userId, live, invocationTracker, trackerActiveRunByCatId),
   );
-  return projectActiveInvocations(threadId, candidates);
+  return projectActiveInvocations(threadId, candidates).map((slot) => {
+    if (!slot.executionId || !slot.turnInvocationId) return slot;
+    const settlement = projectInvocationSettlement(
+      { threadId, userId, catId: slot.catId, executionId: slot.executionId, turnInvocationId: slot.turnInvocationId },
+      childrenByParent.get(slot.executionId) ?? [],
+    );
+    return settlement ? { ...slot, settlement } : slot;
+  });
 }
 
 /**

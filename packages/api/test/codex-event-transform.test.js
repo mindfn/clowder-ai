@@ -63,6 +63,31 @@ test('app-server agentMessage deltas stream into the response and completed item
   assert.equal(completed?.textMode, 'replace');
 });
 
+test('streamed async question completion retains both response replacement and its controls', () => {
+  const state = { hadPriorTextTurn: false };
+  transformCodexEvent({ type: 'item.agent_message.delta', item_id: 'question-1', delta: 'Choose' }, CAT, state);
+  const result = transformCodexEvent(
+    {
+      type: 'item.completed',
+      item: {
+        id: 'question-1',
+        type: 'agent_message',
+        text: 'Choose a scope',
+        delivery: 'async',
+        questions: [{ title: 'Which scope?', options: ['Current task', 'All tasks'] }],
+      },
+    },
+    CAT,
+    state,
+  );
+  assert.ok(Array.isArray(result));
+  assert.equal(result[0].content, 'Choose a scope');
+  assert.equal(result[0].textMode, 'replace');
+  assert.equal(result.length, 2);
+  assert.equal(result[1].type, 'system_info');
+  assert.equal(JSON.parse(result[1].content).type, 'rich_block');
+});
+
 test('one invocation keeps multi-turn streamed text inside one response replacement boundary', () => {
   const state = { hadPriorTextTurn: false };
 
@@ -239,14 +264,26 @@ test('app-server mapper preserves envelope identity for downstream scope fences'
       params: {
         threadId: 'child-1',
         turnId: 'child-turn-1',
-        item: { id: 'msg-1', type: 'agentMessage', text: 'child result' },
+        item: {
+          id: 'msg-1',
+          type: 'agentMessage',
+          text: 'child result',
+          delivery: 'async',
+          questions: [{ title: 'Continue?', options: ['Yes', 'No'] }],
+        },
       },
     }),
     {
       type: 'item.completed',
       thread_id: 'child-1',
       turn_id: 'child-turn-1',
-      item: { id: 'msg-1', type: 'agent_message', text: 'child result' },
+      item: {
+        id: 'msg-1',
+        type: 'agent_message',
+        text: 'child result',
+        delivery: 'async',
+        questions: [{ title: 'Continue?', options: ['Yes', 'No'] }],
+      },
     },
   );
 });

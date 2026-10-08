@@ -74,19 +74,6 @@ async function resolveRecallContext(
   if (target.userId !== ownerUserId || target.threadId !== parsed.data.threadId) {
     return reject(reply, 403, { error: 'Unauthorized', code: 'UNAUTHORIZED' });
   }
-  // F117 Phase M: a running cat's carrier already holds this input (the SDK cannot take a queued
-  // input back; Codex has injected it). Say so instead of pretending it can still be withdrawn.
-  const awaitingTargets =
-    target.lifecycle?.kind === 'input' || target.lifecycle?.kind === 'response'
-      ? (target.lifecycle.dispatchRefs ?? []).filter((ref) => ref.readState === 'awaiting').map((ref) => ref.targetId)
-      : [];
-  if (awaitingTargets.length > 0) {
-    return reject(reply, 409, {
-      error: `已交给 ${awaitingTargets.join('、')}，等待读取，无法撤回`,
-      code: 'MESSAGE_AWAITING_READ',
-      targetIds: awaitingTargets,
-    });
-  }
   return {
     ok: true,
     value: {
@@ -308,6 +295,10 @@ export function createRecallMessageHandler(
     if (!resolved.ok) return resolved.body;
     const context = resolved.value;
     if (context.target.recall) return buildAlreadyRecalledResponse(context, context.target);
+    if (context.target.deliveryStatus !== 'queued') {
+      reply.status(409);
+      return { error: 'Message is not recallable', code: 'MESSAGE_NOT_RECALLABLE' };
+    }
     const prepared = await prepareSuppression(context, reply);
     if (!prepared.ok) return prepared.body;
     const preparation = prepared.value;

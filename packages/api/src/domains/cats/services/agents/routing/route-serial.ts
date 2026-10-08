@@ -104,6 +104,7 @@ import {
   turnCustodyWakeSourceCategory,
 } from '../../../../ball-custody/turn-custody-wake-provenance.js';
 import { conciergeContextForCat, prepareConciergeContext } from '../../../../concierge/ConciergeRoutingInterceptor.js';
+import { createConciergeMessageSearch } from '../../../../concierge/concierge-message-search.js';
 import {
   buildConciergeActions,
   extractTriagePlanIdsFromActions,
@@ -143,7 +144,7 @@ import {
 import { mayDeleteDraft } from '../../freshness/FreshnessDraftCustody.js';
 import { formatDegradationMessage } from '../../orchestration/DegradationPolicy.js';
 import { AuditEventTypes, getEventAuditLog } from '../../orchestration/EventAuditLog.js';
-import { mergePresentationCounts, type PresentationCounts } from '../../session/context-surface-projection.js';
+import { mergePresentationCounts, type PresentationCounts } from '../../session/context/context-surface-projection.js';
 import { buildSessionBootstrap, MAX_SESSION_BOOTSTRAP_TOKENS } from '../../session/SessionBootstrap.js';
 import { createMessageDeliveryBoundary } from '../../stores/message-delivery-boundary.js';
 import { messageFrom } from '../../stores/message-from.js';
@@ -228,6 +229,7 @@ import {
   routeContentBlocksForCat,
   sanitizeInjectedContent,
   shouldPersistContextBriefing,
+  storedMessageTimestamp,
   subjectSeenCueSeeds,
   toStoredToolEvent,
   upsertMaxBoundary,
@@ -492,6 +494,27 @@ export async function* routeSerial(
   threadId: string,
   options: RouteOptions = {},
 ): AsyncIterable<AgentMessage> {
+  const preparationStartedAt = performance.now();
+  let memberPreparationStartedAt = preparationStartedAt;
+  let preparationCheckpointAt = preparationStartedAt;
+  const preparationTimings: Array<{ stage: string; durationMs: number }> = [];
+  const checkpointPreparation = (stage: string): void => {
+    const now = performance.now();
+    const durationMs = now - preparationCheckpointAt;
+    preparationTimings.push({ stage, durationMs });
+    log.debug(
+      {
+        threadId,
+        targetCats,
+        parentInvocationId: options.parentInvocationId,
+        stage,
+        durationMs,
+        elapsedMs: now - preparationStartedAt,
+      },
+      'Delivery route preparation checkpoint',
+    );
+    preparationCheckpointAt = now;
+  };
   const {
     contentBlocks,
     uploadDir,
@@ -546,6 +569,7 @@ export async function* routeSerial(
     }
   }
   // F042: Fetch thread routingPolicy once before loop (threadId doesn't change).
+  checkpointPreparation('lineage_and_participants');
   let routingPolicy: ThreadRoutingPolicyV1 | undefined;
   // F073 P4: SOP stage hint from workflow-sop (告示牌 — info only, cats decide actions)
   let sopStageHint:
@@ -586,6 +610,7 @@ export async function* routeSerial(
     }
   }
   const bootcampMemberCount = getThreadBootcampMemberCount(routeThread);
+  checkpointPreparation('thread_and_workflow');
 
   // F153: Trace propagation — track per-invocation spans and route-level token totals
   let routeTotalTokens = 0;
@@ -604,18 +629,26 @@ export async function* routeSerial(
 
   // F229: Concierge interceptor — load duty-cat 岗位 context for concierge threads
   const conciergeCtx = await prepareConciergeContext(routeThread, userId, deps.invocationDeps.conciergeConfigStore);
+  checkpointPreparation('guide_and_concierge');
 
   // F229 KD-23: Pre-fetch search context → per-invocation handle table + prompt context.
   // Handle table flows from here to buildConciergeActions (same function scope).
   // No shared storage — cross-turn overwrites impossible by construction.
   let conciergeSearchContextString = '';
   let conciergeHandles: HandleEntry[] = [];
-  if ('conciergeConfig' in conciergeCtx) {
+  if (!options.liveCompanion && 'conciergeConfig' in conciergeCtx) {
     try {
       const searchResult = await buildConciergeSearchContext({
         userMessage: message,
         threadId,
         evidenceStore: deps.evidenceStore,
+        messageSearch: createConciergeMessageSearch({
+          evidenceStore: deps.evidenceStore,
+          threadStore: deps.invocationDeps.threadStore,
+          messageStore: deps.messageStore,
+          userId,
+          ...(currentUserMessageId ? { source: { threadId, messageId: currentUserMessageId } } : {}),
+        }),
       });
       conciergeSearchContextString = searchResult.contextString;
       conciergeHandles = searchResult.handles;
@@ -625,6 +658,7 @@ export async function* routeSerial(
   }
 
   // F260 AC-B8: Entity nudge — scan HUMAN input only.
+  checkpointPreparation('concierge_search');
   // P1-1 R2 fix: Gate on frustrationAutoIssueEligible (typed user-origin flag plumbed
   // through routeExecution). This excludes A2A, connector, callback multi-mention, and
   // queue-replayed messages — not just those with a2aTriggerMessageId.
@@ -748,6 +782,7 @@ export async function* routeSerial(
     );
   }
   const routeLevelNudgePromptContext = routeOwnedNudgePromptContext + humanDispositionFeedbackPromptContext;
+  checkpointPreparation('memory_and_feedback');
 
   const completedCatInvocationIds: Array<[string, string]> = [];
   const pushRecallPresentationsByInvocation = new Map<string, PushRecallPresentation[]>();
@@ -768,6 +803,11 @@ export async function* routeSerial(
   try {
     while (index < worklist.length) {
       const catId = worklist[index]!;
+      if (index > 0) {
+        memberPreparationStartedAt = performance.now();
+        preparationCheckpointAt = memberPreparationStartedAt;
+        preparationTimings.length = 0;
+      }
       let stopGateRemedialAttempted = false;
       let routingDispatchPreflightDecision: RoutingPreflightDecisionV1 | undefined;
       // F-parallel-cancel: per-cat signal — canceling one cat skips ONLY that cat, not the
@@ -821,6 +861,7 @@ export async function* routeSerial(
         }
       }
       // F148 OQ-2: briefing→invocation link + context eval
+      checkpointPreparation('routing_preflight');
       let briefingMessageId: string | undefined;
       let briefingCoverageMap: import('./context-transport.js').CoverageMap | undefined;
       const currentPushRecallPresentations: PushRecallPresentation[] = [];
@@ -859,6 +900,15 @@ export async function* routeSerial(
       const activeA2ATriggerMessageId = isOriginalTarget ? a2aTriggerMessageId : undefined;
       const streamReplyTo = activeA2ATriggerMessageId ?? queueTriggerReplyTo;
       const turnTriggerMessageId = streamReplyTo ?? currentUserMessageId ?? a2aTriggerMessageId;
+      const turnTriggerMessage = turnTriggerMessageId ? await deps.messageStore.getById(turnTriggerMessageId) : null;
+      const collectiveBoundTurn =
+        options.executionScope === 'collective-work' ||
+        options.executionScope === 'collective-participation' ||
+        turnTriggerMessage?.source?.connector === 'collective' ||
+        Boolean(
+          turnTriggerMessage?.extra?.collectiveWorkInvocationV1 ||
+            turnTriggerMessage?.extra?.collectiveWorkDelegationV1,
+        );
       const streamReplyPreview = streamReplyTo
         ? await hydrateReplyPreview(deps.messageStore, streamReplyTo)
         : undefined;
@@ -868,6 +918,16 @@ export async function* routeSerial(
       const activeA2ATriggerContent =
         activeA2ATriggerMessage && !activeA2ATriggerMessage.deletedAt && !activeA2ATriggerMessage._tombstone
           ? activeA2ATriggerMessage.content
+          : undefined;
+      // The original request's provenance belongs only to its original targets.
+      // A downstream cloud turn must carry the persisted cat handoff, not the
+      // human message that started this serial chain.
+      const initialCloudProvenance = isOriginalTarget ? options.cloudDispatchProvenance : undefined;
+      const cloudA2AContent =
+        activeA2ATriggerMessage?.threadId === threadId &&
+        activeA2ATriggerMessage.userId === userId &&
+        activeA2ATriggerMessage.catId === directMessageFrom
+          ? activeA2ATriggerContent
           : undefined;
       const exactA2ATriggerPromptMessage = incrementalMode
         ? await hydrateVisibleA2ATriggerPromptMessage(deps, streamReplyTo, threadId, catId, thinkingMode)
@@ -923,6 +983,7 @@ export async function* routeSerial(
         packBlocks = await getActivePackBlocks(deps.packStore);
       }
       let service: AgentService;
+      checkpointPreparation('source_and_pack');
       try {
         service = getService(deps.services, catId, deps.unavailableServices);
       } catch (error) {
@@ -983,6 +1044,7 @@ export async function* routeSerial(
         clearProviderSession: () => deps.invocationDeps.sessionManager.delete(userId, catId, threadId),
       });
       if (sealedForCapacity) capacitySnapshot = resolvedCapacitySnapshot;
+      checkpointPreparation('service_capacity_and_session');
       const declaredTurnCustodyWake =
         options.turnCustodyWakeForCat?.(catId) ??
         options.turnCustodyWake ??
@@ -1131,6 +1193,7 @@ export async function* routeSerial(
           )
         : '';
       const invocationContext = [
+        // Budget and identity work is measured separately from History assembly.
         buildInvocationContext({
           catId,
           mode: invocationMode,
@@ -1156,6 +1219,14 @@ export async function* routeSerial(
           threadId,
           ...(worldContext ? { worldContext } : {}),
           ...catConciergeContext,
+          ...(options.liveCompanion && index === 0
+            ? {
+                liveCompanion: {
+                  householdToolsEnabled: options.liveCompanion.householdToolsEnabled === true,
+                  compositionInstructions: options.liveCompanion.compositionInstructions,
+                },
+              }
+            : {}),
         }),
         personMemoryProposalStatusContext,
       ]
@@ -1181,6 +1252,7 @@ export async function* routeSerial(
       // duplicate records. Phase 2 will take over persistence when migration completes.
 
       // F24 Phase E: Bootstrap context for Session #2+
+      checkpointPreparation('identity_and_linked_context');
       // #836: Reborn cats skip bootstrap — every invocation starts with zero prior context.
       // Uses store lookup (not thread field) — Redis memberSS:* fields aren't hydrated by get().
       let bootstrapContext = '';
@@ -1514,6 +1586,7 @@ export async function* routeSerial(
       }
 
       let textContent = '';
+      checkpointPreparation('history_and_prompt');
       let persistedDoneContent: string | undefined;
       const thinkingChunks: string[] = [];
       let persistedMetadata: MessageMetadata | undefined;
@@ -1864,8 +1937,20 @@ export async function* routeSerial(
             }
           : projectedMsg;
       };
+      checkpointPreparation('callback_setup');
+      log.info(
+        {
+          threadId,
+          catId,
+          parentInvocationId: options.parentInvocationId,
+          elapsedMs: preparationCheckpointAt - memberPreparationStartedAt,
+          stages: preparationTimings.splice(0),
+        },
+        'Delivery route preparation timing',
+      );
       for await (const msg of invokeSingleCat(deps.invocationDeps, {
         onRemoteExecutionDispatched: remoteCancellation.onDispatched,
+        ...(options.liveCompanion && index === 0 ? { liveCompanion: options.liveCompanion } : {}),
         ...(options.routeIntent ? { routeIntent: options.routeIntent } : {}),
         ...(options.routingContextIntent ? { routingContextIntent: options.routingContextIntent } : {}),
         ...(routingDispatchPreflightDecision ? { routingDispatchPreflightDecision } : {}),
@@ -1894,16 +1979,14 @@ export async function* routeSerial(
         ...(options.asrPersonMemoryScenes?.length ? { asrPersonMemoryScenes: options.asrPersonMemoryScenes } : {}),
         ...(memoryCueLegacyFallbacks.length > 0 ? { memoryCueLegacyFallbacks } : {}),
         ...(options.toolExecutionPolicy ? { toolExecutionPolicy: options.toolExecutionPolicy } : {}),
+        ...(options.executionScope ? { executionScope: options.executionScope } : {}),
         executionKind: initialExecutionKind,
         ...(options.beforeOutputCommit ? { outputFenced: true } : {}),
         executionCausal: {
-          ...((options.cloudDispatchProvenance?.sourceMessageId ??
-          streamReplyTo ??
-          currentUserMessageId ??
-          a2aTriggerMessageId)
+          ...((initialCloudProvenance?.sourceMessageId ?? streamReplyTo ?? currentUserMessageId ?? a2aTriggerMessageId)
             ? {
                 triggerMessageId:
-                  options.cloudDispatchProvenance?.sourceMessageId ??
+                  initialCloudProvenance?.sourceMessageId ??
                   streamReplyTo ??
                   currentUserMessageId ??
                   a2aTriggerMessageId,
@@ -1928,13 +2011,11 @@ export async function* routeSerial(
         // - mentionContent: the raw user/cat message (NOT the orchestrated prompt with system context)
         // - mentioningCatId: A2A → the cat that @ mentioned; user-initiated → userId as fallback
         //   so the cloud cat knows "who called" (gpt52 R1 P1-2 contract: calledBy ≠ thread owner)
-        mentionContent: options.cloudDispatchProvenance?.intent ?? message,
+        mentionContent: isOriginalTarget ? (initialCloudProvenance?.intent ?? message) : cloudA2AContent,
         mentioningCatId:
-          options.cloudDispatchProvenance?.calledByCatId ??
-          ((directMessageFrom ?? userId) as import('@cat-cafe/shared').CatId),
-        ...(isOriginalTarget && options.cloudDispatchProvenance
-          ? { cloudDispatchProvenance: options.cloudDispatchProvenance }
-          : {}),
+          initialCloudProvenance?.calledByCatId ??
+          (isOriginalTarget ? ((directMessageFrom ?? userId) as import('@cat-cafe/shared').CatId) : directMessageFrom),
+        ...(initialCloudProvenance ? { cloudDispatchProvenance: initialCloudProvenance } : {}),
         ...(isOriginalTarget && options.requiresExactCloudDispatchProvenance
           ? { requiresExactCloudDispatchProvenance: true }
           : {}),
@@ -2667,6 +2748,7 @@ export async function* routeSerial(
           ...(options.routeSpan ? { routeSpan: options.routeSpan } : {}),
           invocationSpanRef,
           ...(options.toolExecutionPolicy ? { toolExecutionPolicy: options.toolExecutionPolicy } : {}),
+          ...(options.executionScope ? { executionScope: options.executionScope } : {}),
           executionKind: 'routing_guard',
           ...(options.beforeOutputCommit ? { outputFenced: true } : {}),
           executionCausal: {
@@ -3068,7 +3150,8 @@ export async function* routeSerial(
 
         // A2A mention detection (缅因猫 P1-3: only after full text accumulated)
         // Line-start @mention = always actionable (no keyword gate)
-        a2aMentions = parseA2AMentions(storedContent, catId);
+        // Collective relay uses the authenticated post-message carrier. Plain prose cannot mint an unscoped queue item.
+        a2aMentions = collectiveBoundTurn ? [] : parseA2AMentions(storedContent, catId);
 
         // clowder-ai#489: baseline counter — line-start mentions
         if (a2aMentions.length > 0) {
@@ -3696,8 +3779,10 @@ export async function* routeSerial(
           hasRichBlocks ||
           collectedToolEvents.length > 0 ||
           Boolean(renderThinkingChunks(thinkingChunks).trim().length > 0);
+        // A callback is its own named Message, never a replacement for R
+        // (fork f8071e44ae). Retired glass-box supplements (c94a58ac73)
+        // cannot suppress or own this turn's persistence.
         const shouldPersistNoTextMessage = hasNoTextStreamPayload;
-        const shouldEmitSilentCompletion = collectedToolEvents.length > 0 && !hasRichBlocks && !sawUserFacingSystemInfo;
 
         log.debug(
           {
@@ -3711,21 +3796,9 @@ export async function* routeSerial(
           },
           'Cat produced no text — evaluating silent_completion',
         );
-        // Diagnostic: if cat ran tools but produced no text, emit a system_info so the
-        // user sees *something* instead of a silent vanish (bugfix: silent-exit P1).
-        if (shouldEmitSilentCompletion) {
-          yield {
-            type: 'system_info' as AgentMessageType,
-            catId,
-            content: JSON.stringify({
-              type: 'silent_completion',
-              detail: `${catConfig?.displayName ?? (catId as string)} completed with tool calls but no text response.`,
-              toolCount: collectedToolEvents.length,
-            }),
-            timestamp: Date.now(),
-          } as AgentMessage;
-        }
-        if (shouldPersistNoTextMessage || sawUserFacingSystemInfo || shouldEmitSilentCompletion) {
+        // The response owns its terminal result even when its body is empty.
+        // A transport/status notice cannot acknowledge a business guide outcome.
+        if (shouldPersistNoTextMessage) {
           catProducedOutput = true;
         }
 
@@ -3874,21 +3947,6 @@ export async function* routeSerial(
         }
 
         if (!shouldPersistNoTextMessage) {
-          if (!catSignal?.aborted && !sawUserFacingSystemInfo) {
-            yield {
-              type: 'system_info' as AgentMessageType,
-              catId,
-              content: JSON.stringify({
-                type: 'silent_completion',
-                detail: `${catConfig?.displayName ?? (catId as string)} completed without textual output.`,
-                toolCount: collectedToolEvents.length,
-                provider: persistedMetadata?.provider,
-                model: persistedMetadata?.model,
-                invocationId: ownInvocationId,
-              }),
-              timestamp: Date.now(),
-            } as AgentMessage;
-          }
           // No persisted message for fully silent turns; clean up draft for turns whose
           // only user-visible content was a system_info warning (persisted in the common path below).
           if (deps.draftStore && ownInvocationId) {
@@ -4033,8 +4091,8 @@ export async function* routeSerial(
         contents: userFacingSystemInfoContents,
         ...(turnTriggerMessageId ? { expectedSourceMessageId: turnTriggerMessageId } : {}),
         ...(ownInvocationId ? { expectedDispatchInvocationId: ownInvocationId } : {}),
-        ...(lifecycleResponseMessageId && turnStoredMessageId === lifecycleResponseMessageId && terminalFailureContent
-          ? { terminalFailureText: terminalFailureContent }
+        ...(lifecycleResponseMessageId && turnStoredMessageId === lifecycleResponseMessageId
+          ? { responseMessageId: lifecycleResponseMessageId }
           : {}),
         ...(options.persistenceContext ? { persistenceContext: options.persistenceContext } : {}),
       });
@@ -4218,6 +4276,7 @@ export async function* routeSerial(
           ...(cancellationDiagnostics ? { metadata: persistedMetadata } : {}),
           ...(persistedDoneContent !== undefined ? { content: persistedDoneContent } : {}),
           ...(turnStoredMessageId ? { messageId: turnStoredMessageId } : {}),
+          ...(await storedMessageTimestamp(deps.messageStore, turnStoredMessageId)),
           ...(mentionsUser ? { mentionsUser } : {}),
           ...(turnCustodyTerminalWitnesses[0] ? { turnCustodyTerminalWitness: turnCustodyTerminalWitnesses[0] } : {}),
           ...(turnCustodyTerminalWitnesses.length > 0 ? { turnCustodyTerminalWitnesses } : {}),

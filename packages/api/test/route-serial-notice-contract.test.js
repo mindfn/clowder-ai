@@ -331,7 +331,8 @@ describe('route-serial notice contract', () => {
         `thread-cloud-${testCase.name}`,
         { currentUserMessageId: `source-cloud-${testCase.name}` },
       )) {
-        if (message.type === 'system_info' && message.content) yieldedPayloads.push(JSON.parse(message.content));
+        if (message.type === 'system_info' && message.content?.trim().startsWith('{'))
+          yieldedPayloads.push(JSON.parse(message.content));
       }
 
       assert.equal(yieldedPayloads.filter((payload) => payload.type === 'cloud_bridge_status').length, 1);

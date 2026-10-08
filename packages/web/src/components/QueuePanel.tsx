@@ -3,31 +3,22 @@
 import { type ActiveExecutionListResponse, SCHEDULER_TRIGGER_PREFIX } from '@cat-cafe/shared';
 import { closestCenter, DndContext, type DragEndEvent, PointerSensor, useSensor, useSensors } from '@dnd-kit/core';
 import { arrayMove, SortableContext, verticalListSortingStrategy } from '@dnd-kit/sortable';
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useMemo, useState } from 'react';
 import { useCatData } from '@/hooks/useCatData';
 import { useCatNameResolver } from '@/hooks/useCatNameResolver';
 import { useCoCreatorConfig } from '@/hooks/useCoCreatorConfig';
 import { useThreadLiveness, useThreadMessages } from '@/hooks/useThreadScopedSelectors';
-import { useAwaitingReadStore } from '@/stores/awaitingReadStore';
 import { useChatStore } from '@/stores/chatStore';
 import { useToastStore } from '@/stores/toastStore';
 import { apiFetch } from '@/utils/api-client';
 import { composerInsertFromRecall, requestTrueRecall, TrueRecallRequestError } from '@/utils/true-recall';
-import { AwaitingReadRows } from './AwaitingReadRows';
-import { readTargetIdsFromHistory, SortableQueueEntryRow } from './QueueEntryRow';
-import { SteerQueuedEntryModal } from './SteerQueuedEntryModal';
-import {
-  parseSteerSourceRecordId,
-  parseSteerSourceTargetStates,
-  parseSteerThreadCatProjection,
-  type SteerSourceTargetState,
-  type SteerThreadCatProjection,
-} from './steer-target-selection';
+import { scopedQueue } from './execution-row/thread-queue';
+import { deliveredTargetIdsFromHistory, SortableQueueEntryRow } from './QueueEntryRow';
+import { QueueSteerDialog } from './QueueSteerDialog';
 import { useQueueActionConvergence } from './useQueueActionConvergence';
 
 const COLLAPSE_THRESHOLD = 4;
 const EMPTY_TARGET_IDS: readonly string[] = [];
-const EMPTY_AWAITING_READ: readonly import('@cat-cafe/shared').QueueAwaitingReadInput[] = [];
 
 const PRIORITY_RANK: Record<string, number> = { urgent: 0, normal: 1 };
 
@@ -112,9 +103,8 @@ export function QueuePanel({ threadId }: QueuePanelProps) {
   const { cats } = useCatData();
   const resolveCatName = useCatNameResolver();
   const catAvatarById = useMemo(() => new Map(cats.map((cat) => [cat.id, cat.avatar])), [cats]);
-  const rawQueue = useChatStore((s) => s.queue);
+  const rawQueue = useChatStore((s) => scopedQueue(s, threadId));
   const queue = useMemo(() => rawQueue ?? [], [rawQueue]);
-  const awaitingRead = useAwaitingReadStore((state) => state.rowsByThread[threadId]) ?? EMPTY_AWAITING_READ;
   const timelineMessages = useThreadMessages(threadId);
   const setQueue = useChatStore((s) => s.setQueue);
   const { activeInvocations } = useThreadLiveness(threadId);
@@ -123,83 +113,6 @@ export function QueuePanel({ threadId }: QueuePanelProps) {
 
   const { steerEntryId, handleSteerConfirm, handleSteerOpen, handleSteerCancel } = useQueueActionConvergence(threadId);
   const [collapsed, setCollapsed] = useState<boolean | null>(null);
-  const [steerContext, setSteerContext] = useState<
-    SteerThreadCatProjection & {
-      threadId: string | null;
-      entryId: string | null;
-      sourceTargets: SteerSourceTargetState[];
-      sourceRecordId: string | null;
-      state: 'loading' | 'ready' | 'unavailable';
-    }
-  >({
-    threadId: null,
-    entryId: null,
-    participantActivity: [],
-    fallbackTargetCatId: null,
-    sourceTargets: [],
-    sourceRecordId: null,
-    state: 'loading',
-  });
-
-  useEffect(() => {
-    if (!steerEntryId) {
-      setSteerContext({
-        threadId: null,
-        entryId: null,
-        participantActivity: [],
-        fallbackTargetCatId: null,
-        sourceTargets: [],
-        sourceRecordId: null,
-        state: 'loading',
-      });
-      return;
-    }
-    let current = true;
-    setSteerContext({
-      threadId,
-      entryId: steerEntryId,
-      participantActivity: [],
-      fallbackTargetCatId: null,
-      sourceTargets: [],
-      sourceRecordId: null,
-      state: 'loading',
-    });
-    void Promise.all([
-      apiFetch(`/api/threads/${encodeURIComponent(threadId)}/cats`),
-      apiFetch(`/api/threads/${encodeURIComponent(threadId)}/queue/${encodeURIComponent(steerEntryId)}/targets`),
-    ])
-      .then(async ([catsResponse, targetsResponse]) => {
-        if (!catsResponse.ok || !targetsResponse.ok) throw new Error('Steer context unavailable');
-        return Promise.all([catsResponse.json(), targetsResponse.json()]);
-      })
-      .then(([catsBody, targetsBody]) => {
-        if (!current) return;
-        setSteerContext({
-          threadId,
-          entryId: steerEntryId,
-          ...parseSteerThreadCatProjection(catsBody),
-          sourceTargets: parseSteerSourceTargetStates(targetsBody),
-          sourceRecordId: parseSteerSourceRecordId(targetsBody),
-          state: 'ready',
-        });
-      })
-      .catch(() => {
-        if (current) {
-          setSteerContext({
-            threadId,
-            entryId: steerEntryId,
-            participantActivity: [],
-            fallbackTargetCatId: null,
-            sourceTargets: [],
-            sourceRecordId: null,
-            state: 'unavailable',
-          });
-        }
-      });
-    return () => {
-      current = false;
-    };
-  }, [steerEntryId, threadId]);
 
   const sensors = useSensors(useSensor(PointerSensor, { activationConstraint: { distance: 5 } }));
 
@@ -250,7 +163,7 @@ export function QueuePanel({ threadId }: QueuePanelProps) {
         addToast({
           type: 'success',
           title: '已停止后续处理',
-          message: '原消息与已经发生的读取事实仍保留在历史中',
+          message: '原消息与已经发生的投递事实仍保留在历史中',
           threadId,
           duration: 3000,
         });
@@ -295,10 +208,10 @@ export function QueuePanel({ threadId }: QueuePanelProps) {
         if (insert) setPendingChatInsert(insert);
         addToast({
           type: result.verdict === 'exposed' ? 'info' : 'success',
-          title: result.verdict === 'exposed' ? '正文已撤回 · 猫曾读取' : '已撤回并回填输入框',
+          title: result.verdict === 'exposed' ? '正文已撤回 · 曾投递' : '已撤回并回填输入框',
           message:
             result.verdict === 'exposed'
-              ? '未读猫已停止后续处理；已读回合不会被普通撤回中断。'
+              ? '未投递目标已停止后续处理；正在处理的回合不会被普通撤回中断。'
               : '正文已从消息历史转移到持久草稿，可修改后重新发送。',
           threadId,
           duration: 4000,
@@ -359,7 +272,7 @@ export function QueuePanel({ threadId }: QueuePanelProps) {
       addToast({
         type: 'success',
         title: '已全部停止',
-        message: '运行中的执行已停止，待处理队列已清空；原消息与读取事实仍保留',
+        message: '运行中的执行已停止，待处理队列已清空；原消息与投递事实仍保留',
         threadId,
         duration: 3000,
       });
@@ -413,64 +326,12 @@ export function QueuePanel({ threadId }: QueuePanelProps) {
     [addToast, queue, setQueue, threadId, visibleEntries],
   );
 
-  if (visibleEntries.length === 0 && awaitingRead.length === 0) return null;
+  if (visibleEntries.length === 0) return null;
 
-  const isCollapsed = collapsed ?? visibleEntries.length + awaitingRead.length >= COLLAPSE_THRESHOLD;
+  const isCollapsed = collapsed ?? visibleEntries.length >= COLLAPSE_THRESHOLD;
   const entryIds = visibleEntries.map((e) => e.id);
 
   const selectedSteerEntry = steerEntryId ? (queue.find((e) => e.id === steerEntryId) ?? null) : null;
-  const selectedSteerTargets = (() => {
-    if (!selectedSteerEntry) return [];
-    const currentContext =
-      steerContext.threadId === threadId &&
-      steerContext.entryId === selectedSteerEntry.id &&
-      steerContext.state === 'ready'
-        ? steerContext
-        : null;
-    if (!currentContext) return [];
-    const catById = new Map(cats.map((cat) => [cat.id, cat]));
-    const siblingEntries = queue.filter(
-      (candidate) =>
-        candidate.status === 'queued' &&
-        selectedSteerEntry.messageId &&
-        candidate.messageId === selectedSteerEntry.messageId,
-    );
-    const rowByTarget = new Map(
-      siblingEntries.flatMap((entry) => entry.targetCats.map((targetCatId) => [targetCatId, entry] as const)),
-    );
-    const participantActivity = currentContext.participantActivity;
-    const participantIds = new Set(participantActivity.map((participant) => participant.catId));
-    const candidateIds = new Set<string>();
-    for (const participant of participantActivity) candidateIds.add(participant.catId);
-    for (const target of currentContext.sourceTargets) candidateIds.add(target.targetCatId);
-    for (const targetId of Object.keys(selectedSteerEntry.authorIntentByTarget ?? {})) candidateIds.add(targetId);
-    for (const targetCatId of selectedSteerEntry.targetCats) candidateIds.add(targetCatId);
-    const fallbackId = currentContext.fallbackTargetCatId ?? undefined;
-    if (fallbackId) candidateIds.add(fallbackId);
-    const pendingTargetIds = new Set(siblingEntries.flatMap((entry) => entry.targetCats));
-    if (selectedSteerEntry.targetCats.length === 0 && fallbackId) pendingTargetIds.add(fallbackId);
-    return [...candidateIds].flatMap((targetId) => {
-      const cat = catById.get(targetId);
-      if (!cat) return [];
-      const sourceTarget = currentContext.sourceTargets.find((target) => target.targetCatId === targetId);
-      const delivered = sourceTarget ? sourceTarget.state !== 'pending' : false;
-      const row = rowByTarget.get(targetId);
-      return [
-        {
-          id: targetId,
-          label: resolveCatName(targetId),
-          ...(cat.avatar ? { avatar: cat.avatar } : {}),
-          canGuideReply: cat.messageDeliveryCapabilities?.guideReply === true,
-          defaultSelected: pendingTargetIds.has(targetId) && !delivered,
-          pending: sourceTarget?.state === 'pending' && sourceTarget.actionable,
-          delivered,
-          unavailable: cat.roster?.available === false,
-          disposition: row?.authorIntentByTarget?.[targetId]?.requested ?? 'next_work',
-          membershipAtOpen: participantIds.has(targetId) ? ('member' as const) : ('admit' as const),
-        },
-      ];
-    });
-  })();
 
   return (
     <div
@@ -494,7 +355,7 @@ export function QueuePanel({ threadId }: QueuePanelProps) {
             className="text-xs px-1.5 py-0.5 rounded-full font-medium text-[var(--color-cocreator-primary)]"
             style={{ backgroundColor: 'color-mix(in oklch, var(--color-cocreator-primary) 20%, transparent)' }}
           >
-            {visibleEntries.length + awaitingRead.length}
+            {visibleEntries.length}
           </span>
         </div>
         <div className="flex items-center gap-2">
@@ -536,8 +397,8 @@ export function QueuePanel({ threadId }: QueuePanelProps) {
               {visibleEntries.map((entry, idx) => {
                 // #706: Compute image count from server-enriched messagePreview
                 const imageCount = entry.messagePreview?.contentBlocks?.filter((b) => b.type === 'image').length ?? 0;
-                const readTargetIds = entry.messageId
-                  ? readTargetIdsFromHistory(entry.messageId, timelineMessages)
+                const deliveredTargetIds = entry.messageId
+                  ? deliveredTargetIdsFromHistory(entry.messageId, timelineMessages)
                   : EMPTY_TARGET_IDS;
                 return (
                   <SortableQueueEntryRow
@@ -547,7 +408,7 @@ export function QueuePanel({ threadId }: QueuePanelProps) {
                     imageCount={imageCount}
                     ownerName={coCreator.name}
                     ownerAvatar={coCreator.avatar}
-                    readTargetIds={readTargetIds}
+                    deliveredTargetIds={deliveredTargetIds}
                     resolveCatName={resolveCatName}
                     resolveCatAvatar={(catId) => catAvatarById.get(catId)}
                     onRemove={handleRemove}
@@ -561,25 +422,12 @@ export function QueuePanel({ threadId }: QueuePanelProps) {
         </DndContext>
       )}
 
-      {!isCollapsed && (
-        <AwaitingReadRows
-          rows={awaitingRead}
-          ownerName={coCreator.name}
-          ownerAvatar={coCreator.avatar}
-          resolveCatName={resolveCatName}
-          resolveCatAvatar={(catId) => catAvatarById.get(catId)}
-        />
-      )}
-
       {selectedSteerEntry && selectedSteerEntry.status === 'queued' && (
-        <SteerQueuedEntryModal
-          sourceRecordId={steerContext.sourceRecordId ?? selectedSteerEntry.messageId ?? ''}
-          targets={selectedSteerTargets}
-          contextState={
-            steerContext.threadId === threadId && steerContext.entryId === selectedSteerEntry.id
-              ? steerContext.state
-              : 'loading'
-          }
+        <QueueSteerDialog
+          key={`${threadId}:${selectedSteerEntry.id}`}
+          threadId={threadId}
+          entry={selectedSteerEntry}
+          queue={queue}
           onCancel={handleSteerCancel}
           onConfirm={handleSteerConfirm}
         />

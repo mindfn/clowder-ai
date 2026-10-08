@@ -1,6 +1,5 @@
 import { finishNamedMessage } from '@/hooks/named-message-writer';
 import { useChatStore } from '@/stores/chatStore';
-import { terminalizeInvocationReconciliation } from '../invocation-timeout-reconciliation';
 import type { ActiveContext, ActiveStoreActions, OpenThreadRows } from './active-context';
 import {
   errorRowExtra,
@@ -10,6 +9,7 @@ import {
   upsertErrorRow,
 } from './error-rows';
 import {
+  clearTerminalInvocationIdentity,
   findLatestActiveInvocationIdForCat,
   findTerminalActiveInvocationSlot,
   isStaleTerminalEvent,
@@ -25,7 +25,13 @@ import type { AgentMsg } from './types';
 
 function isTerminalStale(msg: AgentMsg): boolean {
   const state = useChatStore.getState();
-  return isStaleTerminalEvent(state.activeInvocations, state.catInvocations, msg.catId, msg.invocationId);
+  return isStaleTerminalEvent(
+    state.activeInvocations,
+    state.catInvocations,
+    msg.catId,
+    msg.invocationId,
+    msg.turnInvocationId,
+  );
 }
 
 function activeSlots() {
@@ -44,9 +50,17 @@ function removeTerminalSlots(
   done?: { terminalSlotKey: string | undefined },
 ): void {
   if (msg.invocationId) {
-    if (activeSlots()[msg.invocationId]?.catId === msg.catId) actions.removeActiveInvocation(msg.invocationId);
-    actions.removeActiveInvocation(`${msg.invocationId}-${msg.catId}`);
-    if (done?.terminalSlotKey) actions.removeActiveInvocation(done.terminalSlotKey);
+    const state = useChatStore.getState();
+    const slot = done
+      ? done.terminalSlotKey
+      : findTerminalActiveInvocationSlot(
+          activeSlots(),
+          state.catInvocations,
+          msg.catId,
+          msg.invocationId,
+          msg.turnInvocationId,
+        );
+    if (slot) actions.removeActiveInvocation(slot);
     if (!stale) {
       const orphan = findLatestActiveInvocationIdForCat(activeSlots(), msg.catId);
       if (orphan?.startsWith('hydrated-')) actions.removeActiveInvocation(orphan);
@@ -62,7 +76,6 @@ function removeTerminalSlots(
 /** F108 P1: global execution state clears only when the last invocation ends. */
 function teardownWhenIdle(ctx: ActiveContext): void {
   if (Object.keys(activeSlots()).length > 0) return;
-  ctx.clearDoneTimeout();
   ctx.actions.setLoading(false);
   ctx.actions.setIntentMode(null);
   ctx.actions.clearCatStatuses();
@@ -100,17 +113,9 @@ export function handleActiveDone(msg: AgentMsg, threadId: string, ctx: ActiveCon
   const target = namedTarget(msg, threadId);
   if (target) finishNamedMessage(target);
   if (!stale) markCatDone(msg, actions);
-  // One identity-guarded writer owns direct cleanup and the optional timeout-notice transition;
-  // only a final done may terminalize the correlated parent notice.
+  // Terminal events clean up the exact invocation identity without creating another message.
   if (msg.invocationId) {
-    terminalizeInvocationReconciliation({
-      threadId,
-      invocationId: msg.invocationId,
-      phase: msg.errorCode ? 'failed' : 'succeeded',
-      catId: msg.catId,
-      turnInvocationId: msg.turnInvocationId,
-      projectNotice: msg.isFinal === true,
-    });
+    clearTerminalInvocationIdentity(threadId, msg.catId, msg.invocationId, msg.turnInvocationId);
   }
   // This cat is done even when more cats follow (isFinal=false): its slot always goes.
   removeTerminalSlots(msg, stale, actions, { terminalSlotKey });
@@ -169,14 +174,7 @@ export function handleActiveError(msg: AgentMsg, threadId: string, ctx: ActiveCo
   // serial gaps. Slot cleanup for msg.invocationId is self-guarded by the slot's cat.
   if (!msg.isFinal) return;
   if (msg.invocationId) {
-    terminalizeInvocationReconciliation({
-      threadId,
-      invocationId: msg.invocationId,
-      phase: 'failed',
-      catId: msg.catId,
-      turnInvocationId: msg.turnInvocationId,
-      ...(msg.error ? { error: msg.error } : {}),
-    });
+    clearTerminalInvocationIdentity(threadId, msg.catId, msg.invocationId, msg.turnInvocationId);
   }
   removeTerminalSlots(msg, stale, actions);
   if (!stale) teardownWhenIdle(ctx);

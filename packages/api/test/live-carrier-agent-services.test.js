@@ -103,7 +103,8 @@ describe('live member carriers', () => {
       { expectedInvocationId: registration.invocationId, force: false },
     );
     assert.equal(appended.accepted, true);
-    assert.equal((await sdkInput.next()).value.message.content[0].text, 'append body');
+    const appendedInput = (await sdkInput.next()).value;
+    assert.equal(appendedInput.message.content[0].text, 'append body');
     assert.equal(interruptCount, 0);
 
     const steered = await registration.dispatcher.dispatch(
@@ -112,7 +113,8 @@ describe('live member carriers', () => {
     );
     assert.equal(steered.accepted, true);
     assert.equal(interruptCount, 1);
-    assert.equal((await sdkInput.next()).value.message.content[0].text, 'steer body');
+    const steeredInput = (await sdkInput.next()).value;
+    assert.equal(steeredInput.message.content[0].text, 'steer body');
 
     events.push({
       type: 'stream_event',
@@ -120,6 +122,12 @@ describe('live member carriers', () => {
       event: { type: 'content_block_delta', delta: { type: 'text_delta', text: 'done' } },
     });
     assert.equal((await output.next()).value.content, 'done');
+    events.push({
+      type: 'result',
+      subtype: 'success',
+      session_id: 'sdk-session-1',
+      user_message_uuids: [initialInput.value.uuid, appendedInput.uuid, steeredInput.uuid],
+    });
     events.close();
     assert.equal((await output.next()).value.type, 'done');
     assert.equal(registration.released, true);
@@ -381,7 +389,7 @@ describe('live member carriers', () => {
     ]);
   });
 
-  it('Claude SDK consumes the response for an Append accepted before the current result terminal', async () => {
+  it('Claude SDK keeps the response open for an Append accepted before the current result terminal', async () => {
     const events = new AsyncInbox();
     const registration = activeRunRegistration();
     let sdkInput;
@@ -411,7 +419,7 @@ describe('live member carriers', () => {
     events.push({ type: 'system', subtype: 'init', session_id: 'sdk-append-result-race' });
     assert.equal((await initialized).value.type, 'session_init');
 
-    const { consumption, ...accepted } = await registration.dispatcher.dispatch(
+    const accepted = await registration.dispatcher.dispatch(
       { text: 'accepted follow-up' },
       { expectedInvocationId: registration.invocationId, force: false },
     );
@@ -453,7 +461,6 @@ describe('live member carriers', () => {
     });
     assert.equal((await terminal).value.type, 'done');
     assert.equal(registration.released, true);
-    assert.equal((await consumption).consumed, true, 'the result that answers the Append proves it was read');
   });
 
   it('Claude SDK does not apply an older result queue snapshot to a locally buffered Append', async () => {
@@ -858,6 +865,9 @@ describe('live member carriers', () => {
     assert.deepEqual(rejected, { accepted: false, reason: 'provider_rejected' });
 
     events.close();
+    const failure = await output.next();
+    assert.equal(failure.value.type, 'error');
+    assert.equal(failure.value.error, 'claude_sdk_stream_ended_without_result');
     assert.equal((await output.next()).value.type, 'done');
   });
 });

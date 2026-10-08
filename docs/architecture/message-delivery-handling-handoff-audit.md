@@ -1123,7 +1123,7 @@ A → B
 
 B completed  → delivery result 闭合；A 下一次自然 invocation 可观察 completed，不自动唤醒 A
 B canceled   → delivery result 闭合；A 下一次自然 invocation 可观察 canceled，不自动唤醒 A
-B failed     → 公开 failed bubble；A 下一次自然 invocation 可观察 failed，不自动唤醒 A
+B failed     → 原位 failed bubble；原子创建引用该 response 的 exact、幂等 caller wake，不创建第二结果，不递归 fail-back
 B interrupted→ 公开 interrupted 结果；A 下一次自然 invocation 可观察 interrupted
 
 B completed final 本身含有效 @D

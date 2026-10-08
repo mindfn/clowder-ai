@@ -9,7 +9,11 @@
  *         消息存储（由调用方在 yield 后累积并存储）。
  */
 
-import { execFileSync } from 'node:child_process';
+import { execFile } from 'node:child_process';
+import { promisify } from 'node:util';
+
+const execFileAsync = promisify(execFile);
+
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { rm } from 'node:fs/promises';
 import { dirname, join, resolve } from 'node:path';
@@ -122,18 +126,24 @@ import {
   authenticatedCompactionSequenceForInvocation,
   authoritativeCompactionEventFromSession,
   resolveAuthoritativeCompactionSupport,
-} from '../../session/authoritative-compaction.js';
+} from '../../session/context/authoritative-compaction.js';
 import {
   ledgerOutcomeFromCommits,
   recordContextProjectionDeliveryLatency,
   recordContextProjectionFinalGeneration,
   recordContextProjectionLedgerOutcome,
-} from '../../session/context-continuity-telemetry.js';
+} from '../../session/context/context-continuity-telemetry.js';
 import {
   CAT_CAFE_SYSTEM_PROMPT_SOURCE_REF,
   encodeMemoryCueSourceRef,
 } from '../../session/request-generation-source-policy.js';
+import { AgyNativeAgentService } from '../providers/agy-native/AgyNativeAgentService.js';
+import { resolveAgyNativeCodingGrant } from '../providers/agy-native/agy-native-coding-grant.js';
+import { callbackPolicyForAgyNativeMcpTools } from '../providers/agy-native/agy-native-policy.js';
 import { resolveDefaultClaudeMcpServerPath } from '../providers/ClaudeAgentService.js';
+import { ClaudeSdkAgentService } from '../providers/ClaudeSdkAgentService.js';
+import { buildClaudeCompactionLaunchPlan } from '../providers/claude-compaction-launch-plan.js';
+import { servedFactsPayload } from '../providers/codex-served-model.js';
 import { extractUserEnvTemplates, hasSupportedEnvTemplate, resolveEnvMap } from '../providers/env-map.js';
 import { compileL0ViaSubprocess } from '../providers/l0-compiler.js';
 import { OC_INSTRUCTIONS_ONLY_ENV } from '../providers/OpenCodeAgentService.js';
@@ -189,6 +199,8 @@ const ANTIGRAVITY_AUTOMATIC_RETRY_FRAGMENT_REASONS = new Set([
   'runtime_disconnected',
 ]);
 let _openCodeKnownModels: Set<string> | null = null;
+let openCodeModelProbe: Promise<Set<string>> | null = null;
+let openCodeModelGeneration = 0;
 
 interface MemoryCueLegacyFallbackProjection {
   readonly opportunityId: string;
@@ -524,35 +536,45 @@ function createPresentationDeliveryAttempt(input: {
   };
 }
 
-export function getOpenCodeKnownModels(): Set<string> {
-  if (_openCodeKnownModels !== null) return _openCodeKnownModels;
-  try {
-    const opencodePath = resolveCliCommand('opencode');
-    if (!opencodePath) {
-      _openCodeKnownModels = new Set();
-      return _openCodeKnownModels;
+export function getOpenCodeKnownModels(): Promise<Set<string>> {
+  if (_openCodeKnownModels !== null) return Promise.resolve(_openCodeKnownModels);
+  if (openCodeModelProbe) return openCodeModelProbe;
+  const generation = openCodeModelGeneration;
+  const pending = (async () => {
+    let models = new Set<string>();
+    try {
+      const opencodePath = resolveCliCommand('opencode');
+      if (opencodePath) {
+        const { stdout } = await execFileAsync(opencodePath, ['models'], {
+          encoding: 'utf8',
+          timeout: 5000,
+          maxBuffer: 1024 * 1024,
+        });
+        models = new Set(
+          stdout
+            .trim()
+            .split('\n')
+            .map((line) => line.trim())
+            .filter(Boolean),
+        );
+      }
+    } catch {
+      /* unavailable CLI keeps the existing empty-model fallback */
     }
-    const stdout = execFileSync(opencodePath, ['models'], {
-      encoding: 'utf-8',
-      timeout: 5000,
-      stdio: ['ignore', 'pipe', 'ignore'],
-    });
-    _openCodeKnownModels = new Set(
-      stdout
-        .trim()
-        .split('\n')
-        .map((line) => line.trim())
-        .filter(Boolean),
-    );
-  } catch {
-    _openCodeKnownModels = new Set();
-  }
-  return _openCodeKnownModels;
+    if (generation === openCodeModelGeneration) _openCodeKnownModels = models;
+    return models;
+  })().finally(() => {
+    if (openCodeModelProbe === pending) openCodeModelProbe = null;
+  });
+  openCodeModelProbe = pending;
+  return pending;
 }
 
 /** @internal Exposed for tests */
 export function _resetOpenCodeKnownModels(override?: Set<string> | null): void {
   _openCodeKnownModels = override ?? null;
+  openCodeModelGeneration++;
+  openCodeModelProbe = null;
 }
 
 import {
@@ -564,9 +586,9 @@ import type {
   RuntimeSessionUnexpectedRuntimeSessionSwitch,
 } from '../../runtime-session/RuntimeSessionMetadata.js';
 import type { IRuntimeSessionStore } from '../../runtime-session/RuntimeSessionStore.js';
-import type { AuthoritativeCompactionEvent, ContextEpochOwner } from '../../session/ContextEpochOwner.js';
-import { mintDeliveryReceipt } from '../../session/delivery-receipt.js';
-import type { PresentationLedger } from '../../session/PresentationLedger.js';
+import type { AuthoritativeCompactionEvent, ContextEpochOwner } from '../../session/context/ContextEpochOwner.js';
+import { mintDeliveryReceipt } from '../../session/context/delivery-receipt.js';
+import type { PresentationLedger } from '../../session/context/PresentationLedger.js';
 import type { SessionManager } from '../../session/SessionManager.js';
 import type { ISessionSealer } from '../../session/SessionSealer.js';
 import type { TranscriptSessionInfo, TranscriptWriter } from '../../session/TranscriptWriter.js';
@@ -599,6 +621,8 @@ import {
   completeCapsuleForSeal,
   type RouteStateContinuityCapsule,
 } from './CollaborationContinuityCapsule.js';
+import { invokeCollectivePrivate, prepareCollectivePrivatePolicy } from './collective-private-invocation.js';
+import { CollectivePrivateWorkRefusalError, privateAdmissionRefusal } from './collective-private-refusal.js';
 import type { ResumeFailureKind } from './invoke-helpers.js';
 import {
   classifyResumeFailure,
@@ -615,7 +639,11 @@ import {
 } from './invoke-helpers.js';
 import { MEMBER_TIMEOUT_REASON, MemberOutputTimeout, type MemberTimeoutEvent } from './member-output-timeout.js';
 import type { TaskProgressItem, TaskProgressStatus, TaskProgressStore } from './TaskProgressStore.js';
-import { assertToolExecutionPolicySupported } from './tool-execution-policy.js';
+import { assertToolExecutionPolicySupported, ToolExecutionPolicyUnavailableError } from './tool-execution-policy.js';
+
+function usesAgyNativeCarrier(service: AgentService): boolean {
+  return service instanceof AgyNativeAgentService;
+}
 
 async function getOrCreateManagedSessionRecord(
   store: ISessionChainStore,
@@ -1188,6 +1216,10 @@ export interface InvocationDeps {
   readonly freshnessStateStore?: import('../../freshness/FreshnessInvocationStateStore.js').FreshnessInvocationStateStore;
   /** F254 D2: build one invocation-scoped provider-native freshness controller. */
   readonly providerNativeFreshnessFactory?: (params: {
+    liveResultConsumerActive?: () => boolean;
+    liveExposureReason?: (
+      message: import('../../freshness/freshness-unseen-source.js').FreshnessReadableMessage,
+    ) => 'same_live_call_exposure' | null;
     invocationId: string;
     threadId: string;
     userId: string;
@@ -1212,6 +1244,7 @@ export interface InvocationDeps {
  */
 export interface InvocationParams {
   readonly onRemoteExecutionDispatched?: AgentServiceOptions['onRemoteExecutionDispatched'];
+  readonly liveCompanion?: AgentServiceOptions['liveCompanion'];
   /** Route-owned intent projected to provider behavior only when its provenance permits it. */
   readonly routeIntent?: AgentRouteIntent;
   /** F293: deterministic message scope, independent from provider prompt inference. */
@@ -1241,7 +1274,7 @@ export interface InvocationParams {
     readonly prompt: string;
     readonly promptMessageIds?: readonly string[];
     /** Existing F296 surface shape; telemetry forwards it without recomputing delta size. */
-    readonly deltaSize?: import('../../session/context-surface-projection.js').ContextSurfaceProjection['deltaSize'];
+    readonly deltaSize?: import('../../session/context/context-surface-projection.js').ContextSurfaceProjection['deltaSize'];
   }>;
   /** Rebuild route-owned context when a late native binding turns a resume into a fresh session. */
   readonly rebuildPromptAfterSessionSeal?: () => Promise<string>;
@@ -1299,6 +1332,8 @@ export interface InvocationParams {
   readonly continuityCapsule?: RouteStateContinuityCapsule;
   /** ADR-042 hard execution boundary for automatic supplement checks. */
   readonly toolExecutionPolicy?: import('../../types.js').ToolExecutionPolicy;
+  /** F325: Host-authored exact AGY native grants; never copied from model text. */
+  readonly agyNativeScope?: AgentServiceOptions['agyNativeScope'];
   readonly executionScope?: 'collective-participation' | 'collective-work';
   /** Typed child purpose; never inferred from prompt or logs. */
   readonly executionKind?: TurnExecutionKind;
@@ -1389,11 +1424,33 @@ export async function* invokeSingleCat(deps: InvocationDeps, params: InvocationP
   if (params.executionScope === 'collective-participation' && !participation)
     throw new Error('collective_source_unavailable');
   const needsWorkAuthority =
-    params.executionScope === 'collective-work' || originMessage?.extra?.collectiveWorkInvocationV1 !== undefined;
+    params.executionScope === 'collective-work' ||
+    originMessage?.extra?.collectiveWorkInvocationV1 !== undefined ||
+    originMessage?.extra?.collectiveWorkDelegationV1 !== undefined;
   const privateWork = needsWorkAuthority
-    ? await collectiveContext?.resolvePrivate({ ...params, originTriggerMessageId }, 'admission')
+    ? await collectiveContext
+        ?.resolvePrivate({ ...params, originTriggerMessageId }, 'admission')
+        .catch((error: unknown) => {
+          throw privateAdmissionRefusal(error);
+        })
     : undefined;
   if (needsWorkAuthority && !privateWork) throw new Error('collective_owner_admission_unavailable');
+  if (privateWork && params.toolExecutionPolicy && params.toolExecutionPolicy.mode !== 'collective_work')
+    throw new CollectivePrivateWorkRefusalError(
+      'private_policy_conflict',
+      'Private Work admission cannot widen the requested tool execution policy',
+    );
+  const privatePolicy = privateWork
+    ? await prepareCollectivePrivatePolicy(privateWork, params.userId, params.threadId)
+    : undefined;
+  if (privateWork)
+    params = {
+      ...params,
+      ownerAuthProvenance: 'unknown',
+      toolExecutionPolicy: privatePolicy,
+      prompt: '',
+      promptMessageIds: originTriggerMessageId ? [originTriggerMessageId] : [],
+    };
   if (participation) {
     if (params.toolExecutionPolicy && params.toolExecutionPolicy.mode !== 'collective_participation')
       throw new Error('collective_participation_replay_policy_conflict');
@@ -1409,8 +1466,62 @@ export async function* invokeSingleCat(deps: InvocationDeps, params: InvocationP
   const { catId, service, userId, threadId, isLastCat, signal: callerSignal } = params;
   let prompt = params.prompt;
   const invocationPromptAdditions: string[] = [];
-  assertToolExecutionPolicySupported(service, params.toolExecutionPolicy);
-  const freshnessCarrierCapability = service.freshnessCarrierCapability?.() ?? {
+  if (privateWork) {
+    try {
+      assertToolExecutionPolicySupported(service, params.toolExecutionPolicy);
+    } catch (error) {
+      if (error instanceof ToolExecutionPolicyUnavailableError)
+        throw new CollectivePrivateWorkRefusalError('private_provider_unsupported', error.message, error);
+      throw error;
+    }
+  }
+  const isAgyNative = usesAgyNativeCarrier(service);
+  const nativeCatConfig = catRegistry.tryGet(catId as string)?.config;
+  const nativeCodingGrant =
+    isAgyNative && params.toolExecutionPolicy?.mode !== 'read_only'
+      ? await resolveAgyNativeCodingGrant({
+          grant: nativeCatConfig?.agyProfile?.nativeCodingGrant,
+          threadId,
+          catId,
+          userId,
+          ...(deps.taskStore ? { taskStore: deps.taskStore } : {}),
+        })
+      : null;
+  if (!isAgyNative && params.agyNativeScope) throw new Error('AGY native scope requires the native AGY carrier');
+  if (nativeCodingGrant && params.agyNativeScope)
+    throw new Error('AGY native caller scope conflicts with the Task grant');
+  if (params.agyNativeScope?.writableFiles.length && !nativeCodingGrant)
+    throw new Error('AGY native writes require a live operator-issued Task grant');
+  const nativeScope = isAgyNative
+    ? nativeCodingGrant
+      ? {
+          ...nativeCodingGrant,
+          mcpTools: [
+            'cat-cafe-collab/cat_cafe_get_thread_context',
+            'cat-cafe-collab/cat_cafe_post_message',
+            'cat-cafe-collab/cat_cafe_run_task_test',
+          ],
+        }
+      : (params.agyNativeScope ?? {
+          writableFiles: [],
+          mcpTools:
+            params.toolExecutionPolicy?.mode === 'read_only' ? [] : ['cat-cafe-collab/cat_cafe_get_thread_context'],
+        })
+    : undefined;
+  if (isAgyNative && params.toolExecutionPolicy?.mode === 'callback_allowlist')
+    throw new Error('AGY native callback scope must be derived from host-authored MCP grants');
+  if (isAgyNative && params.toolExecutionPolicy?.mode === 'read_only' && nativeScope?.mcpTools.length)
+    throw new Error('Read-only AGY native invocation cannot grant MCP tools');
+  const effectiveToolExecutionPolicy =
+    isAgyNative && !params.toolExecutionPolicy
+      ? callbackPolicyForAgyNativeMcpTools(nativeScope?.mcpTools ?? [])
+      : params.toolExecutionPolicy;
+  if (!privateWork) {
+    assertToolExecutionPolicySupported(service, effectiveToolExecutionPolicy);
+  }
+  const freshnessCarrierCapability = service.freshnessCarrierCapability?.(
+    params.liveCompanion ? { liveCompanion: params.liveCompanion } : undefined,
+  ) ?? {
     provider: 'other' as const,
     carrier: 'other' as const,
     deliverySemantics: 'undeclared' as const,
@@ -1422,7 +1533,7 @@ export async function* invokeSingleCat(deps: InvocationDeps, params: InvocationP
   // normal durable child invocation. The bounded Host transport branch runs
   // after invocation creation/body exposure so Queue and F167 can bind the
   // exact source to one terminal outcome.
-  const cloudOnlyConfig = catRegistry.tryGet(catId as string)?.config;
+  const cloudOnlyConfig = nativeCatConfig;
   const isCloudOnlyInvocation = cloudOnlyConfig?.provider === 'openai-chatgpt-pro';
 
   // F198 Bug #3: a bg carrier has no stable per-conversation sessionId — the
@@ -1453,7 +1564,7 @@ export async function* invokeSingleCat(deps: InvocationDeps, params: InvocationP
     threadId,
     params.parentInvocationId,
     params.a2aTriggerMessageId,
-    params.toolExecutionPolicy,
+    effectiveToolExecutionPolicy,
     // The exact A2A source is server-owned callback identity. Do not make it
     // depend on a second optional causal alias used by direct invocations.
     params.a2aTriggerMessageId ?? params.executionCausal?.triggerMessageId,
@@ -1465,8 +1576,11 @@ export async function* invokeSingleCat(deps: InvocationDeps, params: InvocationP
           v: 1,
           taskId: privateWork.work.task.id,
           observedRevision: privateWork.work.revision,
+          resultRevision: privateWork.work.resultRevision ?? 1,
           sourceRef: privateWork.sourceRef,
           authorityRef: privateWork.work.authorityRef,
+          executionRevision: privateWork.work.executionRevision,
+          ...(privateWork.work.executionRef ? { executionRef: privateWork.work.executionRef } : {}),
         }
       : undefined,
   );
@@ -1585,7 +1699,7 @@ export async function* invokeSingleCat(deps: InvocationDeps, params: InvocationP
     // "missing required parameter". Inject the live threadId so prompt template
     // can resolve to a concrete value.
     CAT_CAFE_THREAD_ID: threadId,
-    ...(params.toolExecutionPolicy?.mode === 'read_only' ? { CAT_CAFE_READONLY: 'true' } : {}),
+    ...(effectiveToolExecutionPolicy?.mode === 'read_only' ? { CAT_CAFE_READONLY: 'true' } : {}),
     // F254 AC-C2: Runtime mode for freshness gate descriptor derivation.
     // The MCP server reads this to construct RuntimeCapabilityDescriptor,
     // which parameterizes held/notice behavior per carrier tier.
@@ -1938,8 +2052,10 @@ export async function* invokeSingleCat(deps: InvocationDeps, params: InvocationP
   let currentPresentationAttempt: ProviderPresentationAttempt<InvocationPresentationReceipt> | undefined;
   let requestGenerationRecorder: ReturnType<typeof createRequestGenerationRecorder> | undefined;
   let currentRequestGenerationCommit: ProviderRequestGenerationCommitV1 | undefined;
+  let currentRequestGenerationSettled = false;
+  let previousLiveGeneration: { commit: ProviderRequestGenerationCommitV1 | undefined; settled: boolean } | undefined;
   const observeCurrentRequestGeneration = async (message: AgentMessage): Promise<void> => {
-    if (!requestGenerationRecorder || !currentRequestGenerationCommit) return;
+    if (!requestGenerationRecorder || !currentRequestGenerationCommit || currentRequestGenerationSettled) return;
     const metadata = message.metadata as Record<string, unknown> | undefined;
     try {
       await requestGenerationRecorder.recordObserved(currentRequestGenerationCommit, {
@@ -1958,7 +2074,7 @@ export async function* invokeSingleCat(deps: InvocationDeps, params: InvocationP
     outcome: 'accepted' | 'replaced' | 'rejected' | 'error' | 'cancelled' | 'unknown',
     reason?: string,
   ): Promise<void> => {
-    if (!requestGenerationRecorder || !currentRequestGenerationCommit) return;
+    if (!requestGenerationRecorder || !currentRequestGenerationCommit || currentRequestGenerationSettled) return;
     try {
       await requestGenerationRecorder.recordTerminal(currentRequestGenerationCommit, outcome, reason);
     } catch (error) {
@@ -2023,6 +2139,7 @@ export async function* invokeSingleCat(deps: InvocationDeps, params: InvocationP
           catId,
           executionKind,
           startedAt: executionStartedAt,
+          ...(params.liveCompanion ? { queueCompletionPolicy: 'explicit_source' as const } : {}),
           ...(Object.keys(executionCausal).length > 0 ? { causal: executionCausal } : {}),
           outputFence: params.outputFenced ? 'gated' : 'open',
         });
@@ -2108,6 +2225,27 @@ export async function* invokeSingleCat(deps: InvocationDeps, params: InvocationP
         service,
         callbackEnv,
         signal,
+      })) {
+        memberTimeout?.observe(message);
+        if (message.type === 'error') hadError = true;
+        if (message.type === 'done' && !hadError) turnExecutionCompletedSuccessfully = true;
+        yield { ...message, turnInvocationId: invocationId, turnExecutionStartedAt: executionStartedAt };
+      }
+      return;
+    }
+    if (privateWork && privatePolicy) {
+      await exposeCurrentPromptMessages();
+      for await (const message of invokeCollectivePrivate({
+        work: privateWork,
+        policy: privatePolicy,
+        service,
+        callbackEnv,
+        signal: signal!,
+        originMessage,
+        revalidate: async () => {
+          const verified = await registry.verify(invocationId, callbackToken);
+          if (!verified.ok) throw new Error('collective_work_authority_unavailable');
+        },
       })) {
         memberTimeout?.observe(message);
         if (message.type === 'error') hadError = true;
@@ -2528,7 +2666,8 @@ export async function* invokeSingleCat(deps: InvocationDeps, params: InvocationP
 
     const catConfig = catRegistry.tryGet(catId as string)?.config;
     const provider = catConfig?.clientId;
-    const requiresThreadWorkspace = providerRequiresThreadWorkspace(provider);
+    const requiresThreadWorkspace = providerRequiresThreadWorkspace(provider) || isAgyNative;
+    const workspaceRequiredBy = isAgyNative ? 'AGY native' : 'OpenCode';
 
     // Resolve workingDirectory from thread's projectPath
     let workingDirectory: string | undefined;
@@ -2580,7 +2719,7 @@ export async function* invokeSingleCat(deps: InvocationDeps, params: InvocationP
           // categorization only — they are not real filesystem directories. Skip them
           // to avoid triggering the F070 governance gate on a non-existent path.
           if (thread.projectPath.startsWith('games/')) {
-            workspaceResolutionFailureMessage = `OpenCode requires a filesystem thread projectPath for ${threadId}; virtual game projectPath ${thread.projectPath} cannot be used as a working directory.`;
+            workspaceResolutionFailureMessage = `${workspaceRequiredBy} requires a filesystem thread projectPath for ${threadId}; virtual game projectPath ${thread.projectPath} cannot be used as a working directory.`;
           } else {
             const validatedProjectPath = await resolvePersistentProjectPathDetailed(thread.projectPath);
             if (!validatedProjectPath.ok) {
@@ -2635,14 +2774,14 @@ export async function* invokeSingleCat(deps: InvocationDeps, params: InvocationP
             bootcampWorkspaceError = new Error(bootcampWorkspace.error);
           }
         } else if (requiresThreadWorkspace) {
-          workspaceResolutionFailureMessage = `OpenCode requires a thread projectPath for ${threadId}. Bind the thread to a project workspace before spawning OpenCode.`;
+          workspaceResolutionFailureMessage = `${workspaceRequiredBy} requires a thread projectPath for ${threadId}. Bind the thread to a project workspace before spawning ${workspaceRequiredBy}.`;
         }
       }
     }
     if (requiresThreadWorkspace && threadStore && !workingDirectory && !bootcampWorkspaceError) {
       workspaceResolutionError = new Error(
         workspaceResolutionFailureMessage ??
-          `OpenCode requires a thread projectPath for ${threadId}. Bind the thread to a project workspace before spawning OpenCode.`,
+          `${workspaceRequiredBy} requires a thread projectPath for ${threadId}. Bind the thread to a project workspace before spawning ${workspaceRequiredBy}.`,
       );
     }
     if (bootcampWorkspaceError) {
@@ -3116,7 +3255,7 @@ export async function* invokeSingleCat(deps: InvocationDeps, params: InvocationP
       effectiveModel &&
       effectiveProviderName &&
       (hasExplicitOcProvider ||
-        !getOpenCodeKnownModels().has(effectiveModel) ||
+        !(await getOpenCodeKnownModels()).has(effectiveModel) ||
         mcpServerPath ||
         hasResolvedInvocationCapacity)
     ) {
@@ -3651,7 +3790,10 @@ export async function* invokeSingleCat(deps: InvocationDeps, params: InvocationP
     // F089 Phase 2+3: Create tmux spawn override for agent-in-pane execution
     let spawnCliOverride: AgentServiceOptions['spawnCliOverride'];
     let agentCarrierSessionFactory: AgentServiceOptions['agentCarrierSessionFactory'];
-    if (deps.tmuxGateway && workingDirectory) {
+    // The official SDK owns its bidirectional subprocess. CLI-only tmux
+    // wrappers cannot be supplied to its query transport.
+    const sdkOwnsTransport: boolean = service instanceof ClaudeSdkAgentService;
+    if (deps.tmuxGateway && workingDirectory && !sdkOwnsTransport) {
       const { resolveWorktreeIdByPath } = await import('../../../../workspace/workspace-security.js');
       const { createTmuxSpawnOverride } = await import('../../../../terminal/tmux-agent-spawner.js');
       const { createTmuxAgentCarrierSessionFactory } = await import(
@@ -3731,17 +3873,49 @@ export async function* invokeSingleCat(deps: InvocationDeps, params: InvocationP
 
     const activeInvocationFreshness = deps.providerNativeFreshnessFactory
       ? await deps.providerNativeFreshnessFactory({
-          invocationId: params.parentInvocationId ?? invocationId,
+          // Live MCP credentials belong to this child; an enclosing route is not its carrier.
+          invocationId: params.liveCompanion ? invocationId : (params.parentInvocationId ?? invocationId),
           threadId,
           userId,
           catId,
           provider: provider ?? 'unknown',
           capability: freshnessCarrierCapability,
+          ...(params.liveCompanion
+            ? {
+                liveResultConsumerActive: () =>
+                  params.liveCompanion!.acceptsFreshness?.() === true &&
+                  params.liveCompanion!.isActiveCarrier?.({
+                    invocationId,
+                    catId,
+                    threadId,
+                  }) === true,
+              }
+            : {}),
+          ...(params.liveCompanion?.exposureReason
+            ? {
+                liveExposureReason: (
+                  message: import('../../freshness/freshness-unseen-source.js').FreshnessReadableMessage,
+                ) => params.liveCompanion!.exposureReason!(message),
+              }
+            : {}),
         })
       : null;
 
     const entrustedWorkSourceMessageId = params.a2aTriggerMessageId ?? params.executionCausal?.triggerMessageId;
     const entrustedWorkTaskStore = deps.taskStore;
+
+    // #1542: build the managed compaction launch plan once. The SAME plan is
+    // handed to the carrier (which derives the single `--settings` injection)
+    // and consumed at the compaction boundary as carrier-readiness evidence —
+    // readiness proves the exact carrier this invocation will launch, never a
+    // guessed project root. Assets resolve from the API install root, so this
+    // works for thread-workspace cwds and zero-write external projects alike.
+    const compactionLaunchPlan = provider === 'anthropic' ? buildClaudeCompactionLaunchPlan() : undefined;
+    if (compactionLaunchPlan?.ready && typeof deps.registry.setExpectedCompactionCarrier === 'function') {
+      // #1542 guard 4: bind the carrier identity to the DURABLE callback
+      // principal — survives API restarts and never evicts live authority.
+      await deps.registry.setExpectedCompactionCarrier(invocationId, compactionLaunchPlan.carrierIdentity);
+    }
 
     const baseOptions: AgentServiceOptions = {
       ...(params.onRemoteExecutionDispatched
@@ -3749,6 +3923,7 @@ export async function* invokeSingleCat(deps: InvocationDeps, params: InvocationP
         : {}),
       ...(params.routeIntent ? { routeIntent: params.routeIntent } : {}),
       callbackEnv,
+      ...(compactionLaunchPlan ? { compactionLaunchPlan } : {}),
       ...(invocationCapacitySnapshot
         ? {
             contextCapacity: invocationCapacitySnapshot.capacity,
@@ -3787,6 +3962,7 @@ export async function* invokeSingleCat(deps: InvocationDeps, params: InvocationP
       ...(spawnCliOverride ? { spawnCliOverride } : {}),
       ...(agentCarrierSessionFactory ? { agentCarrierSessionFactory } : {}),
       ...(activeInvocationFreshness ? { activeInvocationFreshness } : {}),
+      ...(params.liveCompanion ? { liveCompanion: params.liveCompanion } : {}),
       ...(deps.runtimeInteractionPort ? { runtimeInteractionPort: deps.runtimeInteractionPort } : {}),
       ...(entrustedWorkTaskStore && entrustedWorkSourceMessageId
         ? {
@@ -3817,7 +3993,8 @@ export async function* invokeSingleCat(deps: InvocationDeps, params: InvocationP
       livenessProbe: { stallAutoKill: false, stallWarningMs: CAT_INVOCATION_STALL_WARNING_MS },
       ...(catConfig?.cliConfigArgs?.length ? { cliConfigArgs: catConfig.cliConfigArgs } : {}),
       parentSpan: invocationSpan,
-      ...(params.toolExecutionPolicy ? { toolExecutionPolicy: params.toolExecutionPolicy } : {}),
+      ...(effectiveToolExecutionPolicy ? { toolExecutionPolicy: effectiveToolExecutionPolicy } : {}),
+      ...(nativeScope ? { agyNativeScope: nativeScope } : {}),
     };
 
     let lastErrorMessage: string | undefined;
@@ -3941,6 +4118,9 @@ export async function* invokeSingleCat(deps: InvocationDeps, params: InvocationP
             usage: msg.metadata.usage,
             model: msg.metadata.model,
             provider: msg.metadata.provider,
+            // F319 Phase E.1: served facts are only known at done; carry them on the live
+            // channel so the bubble shows them without a history reload. Absent = unobserved.
+            ...servedFactsPayload(msg.metadata),
           }),
           timestamp: Date.now(),
         });
@@ -5197,17 +5377,47 @@ export async function* invokeSingleCat(deps: InvocationDeps, params: InvocationP
       const options: AgentServiceOptions = {
         ...(sessionId ? { sessionId } : {}),
         ...baseOptions,
+        ...(params.liveCompanion
+          ? {
+              onLiveInputOutcome: async (receipt: import('../../types.js').LiveProviderInputOutcome) => {
+                // Preserve the accepted output fence; a rejected follow-up never owns ongoing output.
+                if (currentRequestGenerationCommit?.requestGenerationId === receipt.request.requestGenerationId) {
+                  if (receipt.outcome !== 'accepted') currentRequestGenerationCommit = previousLiveGeneration?.commit;
+                  currentRequestGenerationSettled =
+                    receipt.outcome === 'accepted' || (previousLiveGeneration?.settled ?? false);
+                  previousLiveGeneration = undefined;
+                }
+                try {
+                  if (receipt.nativeTurnId)
+                    await generationRecorder?.recordObserved(receipt.request, {
+                      evidenceRef: `codex_live_input:${receipt.nativeTurnId}`,
+                    });
+                  await generationRecorder?.recordTerminal(receipt.request, receipt.outcome, 'live_native_input');
+                } catch (error) {
+                  log.error({ invocationId, error }, 'Failed to record Live input outcome');
+                }
+              },
+            }
+          : {}),
         ...(generationRecorder || entityNudgePromptPresentation || entityNudgeCuePromptPresentation
           ? {
               beforeProviderLaunch: async (prepared) => {
+                signal?.throwIfAborted();
                 launchCountThisAttempt += 1;
+                const liveFollowup =
+                  Boolean(params.liveCompanion) &&
+                  [
+                    'app_server_live_typed_input',
+                    'app_server_live_freshness_input',
+                    'app_server_live_context_input',
+                  ].includes(prepared.message.injectionDecision ?? '');
                 let committed: ProviderRequestGenerationCommitV1;
                 if (generationRecorder) {
                   const reason =
                     nextRequestGenerationReason ??
                     prepared.boundaryReason ??
                     (launchCountThisAttempt > 1 ? ('provider_continuation' as const) : undefined);
-                  if (currentRequestGenerationCommit) {
+                  if (currentRequestGenerationCommit && !currentRequestGenerationSettled) {
                     const previousOutcome =
                       reason === 'provider_continuation'
                         ? 'accepted'
@@ -5219,12 +5429,19 @@ export async function* invokeSingleCat(deps: InvocationDeps, params: InvocationP
                       previousOutcome,
                       reason ?? 'provider_generation_replaced',
                     );
+                    currentRequestGenerationSettled = true;
                   }
+                  if (liveFollowup)
+                    previousLiveGeneration = {
+                      commit: currentRequestGenerationCommit,
+                      settled: currentRequestGenerationSettled,
+                    };
                   committed = await generationRecorder.recordPrepared(prepared, {
                     attempt: attempt + 1,
                     ...(reason ? { reason } : {}),
                   });
                   currentRequestGenerationCommit = committed;
+                  currentRequestGenerationSettled = false;
                   nextRequestGenerationReason = undefined;
                 } else {
                   // Test/legacy embedders still need the adapter's exact boundary
@@ -5238,7 +5455,20 @@ export async function* invokeSingleCat(deps: InvocationDeps, params: InvocationP
 
                 const presentation = entityNudgePromptPresentation;
                 const hasCueNudge = Boolean(entityNudgeCuePromptPresentation?.presentation.result.nudges.length);
-                if (presentation?.promptContext || hasCueNudge) {
+                // A capacity-recovery request carries an empty body by design
+                // (turn/start sends input: []), so it can never contain the
+                // nudge promptContext. The nudge was already delivered and
+                // confirmed by the prompt generation it resumes; re-checking
+                // kills every recovery, and re-confirming would double-write
+                // the delivery ledger. The exemption requires the empty body
+                // too: a carrier that misuses the label on a real body falls
+                // back to the strict check, as does every other boundary
+                // (e.g. Claude carrier provider_fallback).
+                const isCapacityRecovery =
+                  prepared.boundaryReason === 'provider_capacity_recovery' &&
+                  'body' in prepared.message &&
+                  prepared.message.body === '';
+                if (!liveFollowup && !isCapacityRecovery && (presentation?.promptContext || hasCueNudge)) {
                   if (!('body' in prepared.message)) throw new Error('entity_nudge_prepared_prompt_unavailable');
                   if (presentation?.promptContext && !prepared.message.body.includes(presentation.promptContext)) {
                     throw new Error('entity_nudge_prepared_prompt_not_exact');
@@ -5344,11 +5574,9 @@ export async function* invokeSingleCat(deps: InvocationDeps, params: InvocationP
             (typeof deps.hookAuthenticationReady === 'function'
               ? deps.hookAuthenticationReady()
               : (deps.hookAuthenticationReady ?? false));
-          const hookCarrierReady =
-            claudeCompactionHooks !== undefined ||
-            (typeof deps.claudeProjectHookCarrierReady === 'function'
-              ? deps.claudeProjectHookCarrierReady(workingProjectRoot ?? hostProjectRoot)
-              : (deps.claudeProjectHookCarrierReady ?? false));
+          // In-process hooks prove their own carrier registration. Project hooks
+          // require the plan actually passed to this invocation's launch.
+          const hookCarrierReady = claudeCompactionHooks !== undefined || compactionLaunchPlan?.ready === true;
           // Ask the state machine with no attestation first. Only its specific
           // "attestation unavailable" edge authorizes the session read below;
           // auth/carrier/capability failures stop before sequence state.

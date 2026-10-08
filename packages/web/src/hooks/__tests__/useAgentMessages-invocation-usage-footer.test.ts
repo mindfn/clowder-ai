@@ -36,6 +36,7 @@ const mockSetMessageUsage = vi.fn();
 const mockRequestStreamCatchUp = vi.fn();
 const mockSetMessageMetadata = vi.fn();
 const mockSetMessageThinking = vi.fn();
+const mockMergeMessageServedFacts = vi.fn();
 
 const mockAddMessageToThread = vi.fn();
 const mockSetThreadMessageMetadata = vi.fn();
@@ -73,6 +74,7 @@ const storeState = {
   requestStreamCatchUp: mockRequestStreamCatchUp,
   setMessageMetadata: mockSetMessageMetadata,
   setMessageThinking: mockSetMessageThinking,
+  mergeMessageServedFacts: mockMergeMessageServedFacts,
 
   addMessageToThread: mockAddMessageToThread,
   appendToThreadMessage: vi.fn(),

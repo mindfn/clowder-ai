@@ -29,8 +29,10 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { flushSync } from 'react-dom';
 import { Rnd } from 'react-rnd';
+import { useConciergeDesktopStore, watchConciergeDesktop } from '@/stores/conciergeDesktopStore';
 import { projectBallState, useConciergeStore } from '@/stores/conciergeStore';
 import { ConciergeBall } from './ConciergeBall';
+import { ConciergeDesktopFallbackNotice } from './ConciergeDesktopFallbackNotice';
 import { ConciergePanel } from './ConciergePanel';
 import { ConciergeToolbar } from './ConciergeToolbar';
 import {
@@ -39,17 +41,19 @@ import {
   resolvePetPosition,
   resolveWalkedPetPosition,
 } from './petActionZone';
+import { useDismissDesktopLossNoticeOnClose } from './useDismissDesktopLossNoticeOnClose';
 import { usePetBehavior } from './usePetBehavior';
 
 /** Default margin from viewport edge — matches original Tailwind `bottom-6 right-6` (1.5rem = 24px) */
 const EDGE_MARGIN = 24;
+const TOOLBAR_BELOW_HEIGHT = PET_TOOLBAR_CLEARANCE_PX;
 /** Extra vertical space needed below the ball for the toolbar (BUG-UX-13 R2).
  *  Toolbar: top-[calc(100%+8px)] → 8px gap; buttons are h-9 (36px) → total 44px.
  *  Used in default position AND clamp to ensure toolbar is never clipped. */
 /** Minimum drag distance (px) to distinguish drag from click (INV-P1)
  *  BUG-UX-5: root fix is removing pointerEvents:'none' (below); threshold stays at 5. */
 const DRAG_THRESHOLD = 5;
-const ACTION_ZONE_SELECTOR = '[data-concierge-action-zone]';
+const ACTION_ZONE_SELECTOR = '[data-concierge-action-zone], [data-concierge-reserved-rect]';
 
 function sameZones(left: readonly PetActionZone[], right: readonly PetActionZone[]): boolean {
   return (
@@ -64,7 +68,18 @@ function sameZones(left: readonly PetActionZone[], right: readonly PetActionZone
   );
 }
 
+function sameBallPosition(
+  left: { readonly x: number; readonly y: number },
+  right: { readonly x: number; readonly y: number },
+): boolean {
+  return left.x === right.x && left.y === right.y;
+}
+
 export function ConciergeHost() {
+  const desktopVisible = useConciergeDesktopStore((s) => s.visible);
+  const desktopLost = useConciergeDesktopStore((s) => s.desktopLost);
+  const lossNoticeVisible = useConciergeDesktopStore((s) => s.noticeVisible);
+  useEffect(watchConciergeDesktop, []);
   const fetchConfig = useConciergeStore((s) => s.fetchConfig);
 
   // Lazily load config once (INV-9: only one GET, guard inside fetchConfig)
@@ -92,6 +107,8 @@ export function ConciergeHost() {
   const behaviorEnabled = useConciergeStore((s) => s.behaviorEnabled);
   const lastMessageTimestamp = useConciergeStore((s) => s.lastMessageTimestamp);
 
+  useDismissDesktopLossNoticeOnClose(desktopLost, surfaceState, muted);
+
   // Ball position (PR-A3b INV-P1~P4) + size (E3)
   const ballPosition = useConciergeStore((s) => s.ballPosition);
   const ballSize = useConciergeStore((s) => s.ballSize);
@@ -99,6 +116,7 @@ export function ConciergeHost() {
   const setBallSize = useConciergeStore((s) => s.setBallSize);
   const setIsDragging = useConciergeStore((s) => s.setIsDragging);
   const [actionZones, setActionZones] = useState<PetActionZone[]>([]);
+  const reservedRects = actionZones;
   const [viewport, setViewport] = useState(() => ({
     width: typeof window === 'undefined' ? 0 : window.innerWidth,
     height: typeof window === 'undefined' ? 0 : window.innerHeight,
@@ -239,15 +257,39 @@ export function ConciergeHost() {
     [setBallPosition, setIsDragging, ballSize, actionZones],
   );
 
+  const handleResizeStop = useCallback(
+    (_event: unknown, _direction: unknown, ref: { readonly offsetWidth: number }) => {
+      const newSize = ref.offsetWidth;
+      const persisted = useConciergeStore.getState().ballPosition;
+      if (persisted) {
+        const clamped = resolvePetPosition(
+          persisted,
+          newSize,
+          { width: window.innerWidth, height: window.innerHeight },
+          [],
+        );
+        if (!sameBallPosition(clamped, persisted)) {
+          flushSync(() => useConciergeStore.setState({ ballPosition: clamped }));
+          void setBallPosition(clamped);
+        }
+      }
+      void setBallSize(newSize);
+    },
+    [setBallPosition, setBallSize],
+  );
+
   // E4: Autonomous Behavior Engine — visual overlay on top of business state
   // Hook called unconditionally (React rules). INV-3: hidden → zero activity,
   // so force behaviorEnabled=false when hidden (even if user didn't mute).
   const petBehavior = usePetBehavior({
     ballState: effectiveBallState === 'hidden' ? 'idle' : effectiveBallState,
-    behaviorEnabled: behaviorEnabled && effectiveBallState !== 'hidden',
+    behaviorEnabled: behaviorEnabled && effectiveBallState !== 'hidden' && !desktopVisible,
     muted,
     ballPosition: clampedPosition,
     ballSize,
+    edgeMargin: EDGE_MARGIN,
+    toolbarBelow: TOOLBAR_BELOW_HEIGHT,
+    reservedRects,
     lastMessageTimestamp,
   });
 
@@ -292,9 +334,12 @@ export function ConciergeHost() {
 
   // INV-3: hidden → zero DOM (no ball, no badge, no tooltip, no toolbar, no bubble)
   if (effectiveBallState === 'hidden') return null;
+  // The canonical conversation panel stays reachable; only the duplicate main body yields.
+  if (desktopVisible) return <ConciergePanel />;
 
   return (
     <>
+      {desktopLost && lossNoticeVisible && <ConciergeDesktopFallbackNotice />}
       {/* PR-A3b: Rnd wrapper replaces static `fixed bottom-6 right-6` div.
           - INV-P1: drag threshold ~5px (handleDragStart/handleDragStop above)
           - INV-P2: bounds="window" + clampedPosition keep ball in viewport
@@ -324,11 +369,7 @@ export function ConciergeHost() {
         bounds="window"
         onDragStart={handleDragStart}
         onDragStop={handleDragStop}
-        onResizeStop={(_e, _dir, ref) => {
-          // E3: persist new size after resize ends
-          const newSize = ref.offsetWidth;
-          void setBallSize(newSize);
-        }}
+        onResizeStop={handleResizeStop}
         style={{ position: 'fixed', zIndex: 30 }}
         // BUG-UX-5 fix: removed pointerEvents:'none' — it blocked react-rnd's
         // drag detection from receiving mousedown directly on the wrapper.

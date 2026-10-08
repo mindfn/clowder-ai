@@ -1,8 +1,13 @@
 'use client';
 
-import { type CapabilityTipContext, isCrossThreadProvenance, type LifecycleActiveRun } from '@cat-cafe/shared';
+import {
+  type CapabilityTipContext,
+  companionIdentitySnapshotV1Schema,
+  isCrossThreadProvenance,
+  type LifecycleActiveRun,
+} from '@cat-cafe/shared';
 import { type CSSProperties, memo, type ReactNode } from 'react';
-import { formatSessionSealRequested, formatVisibleSystemInfo } from '@/hooks/system-info-visible';
+import { formatVisibleSystemInfo } from '@/hooks/system-info-visible';
 import { type CatData, formatCatName } from '@/hooks/useCatData';
 import { useCoCreatorConfig } from '@/hooks/useCoCreatorConfig';
 import { resolveCatDisplayName } from '@/lib/cat-display-name';
@@ -11,6 +16,7 @@ import { CO_CREATOR_COLOR } from '@/lib/color-defaults';
 import { hexToOklch } from '@/lib/color-utils';
 import { getMentionRe, getMentionToCat } from '@/lib/mention-highlight';
 import { parseDirection, parseImplicitStructuredTargets } from '@/lib/parse-direction';
+import { CLASSIC_NAME_OPACITY } from '@/lib/readable-name-role';
 import { type ChatMessage as ChatMessageType, resolveBubbleExpanded, useChatStore } from '@/stores/chatStore';
 import { getMessageTimelineOrderTime, getOrderedMessageTimeline } from '@/stores/message-timeline';
 import { setPendingCrossPostScroll } from '@/utils/crosspost-scroll-target';
@@ -22,10 +28,12 @@ import {
 } from './assistant-message-renderability';
 import { CapabilityTipStrip } from './CapabilityTipStrip';
 import { CatAvatar } from './CatAvatar';
+import { CatNameplate } from './CatNameplate';
 import { CloudBindingRecoveryCard } from './CloudBindingRecoveryCard';
 import { CollapsibleMarkdown } from './CollapsibleMarkdown';
 import { ConnectorBubble } from './ConnectorBubble';
 import { ContentBlocks } from './ContentBlocks';
+import { CopyIdButton } from './CopyIdButton';
 import { isHiddenChatRow, projectFailedResponseDiagnostics, projectSystemRowSurface } from './chat-row-surface';
 import { CliOutputBlock } from './cli-output/CliOutputBlock';
 import { toCliEvents } from './cli-output/toCliEvents';
@@ -34,6 +42,8 @@ import {
   isLinkedCloudBindingRecoveryNotice,
   projectCloudBindingRecovery,
 } from './cloud-binding-recovery';
+import { CompanionMessageAvatar, CompanionMessageIdentity } from './concierge/CompanionMessageIdentity';
+import { ContentModificationSourceMessage } from './content-review/ContentModificationSourceMessage';
 import { DirectionPill } from './DirectionPill';
 import { EvidencePanel } from './EvidencePanel';
 import { GovernanceBlockedCard } from './GovernanceBlockedCard';
@@ -45,6 +55,8 @@ import { MessageBundleCard } from './MessageBundleCard';
 import { MessageDispatchAvatars } from './MessageDispatchAvatars';
 import { MetadataBadge } from './MetadataBadge';
 import { buildMessageDisclosureKey, buildRichHtmlDisclosureKey } from './message-disclosure-state';
+import { isConnectorSystemNotice } from './message-render-visibility';
+import { isLastOfOwnRun } from './own-message-run';
 import { PawFeelDispositionDock } from './paw-feel/PawFeelDispositionDock';
 import { ReplyPill } from './ReplyPill';
 import { RoutingWarningNotice } from './RoutingWarningNotice';
@@ -55,6 +67,7 @@ import { RichBlocks } from './rich/RichBlocks';
 import { SubexecutionActivity } from './SubexecutionActivity';
 import { SummaryCard } from './SummaryCard';
 import { SystemNoticeBar } from './SystemNoticeBar';
+import { useShellPresentation } from './shell/shell-presentation';
 import { TerminalDiagnosticsPanel } from './TerminalDiagnosticsPanel';
 import { ThinkingContent } from './ThinkingContent';
 import { pushThreadRouteWithHistory } from './ThreadSidebar/thread-navigation';
@@ -88,11 +101,6 @@ function isSchedulerReplyPreview(replyPreview?: ChatMessageType['replyPreview'])
   return replyPreview?.senderCatId === 'system' && replyPreview.kind === 'scheduler_trigger';
 }
 
-function isConnectorSystemNotice(message: ChatMessageType): boolean {
-  if (message.type !== 'connector' || !message.source?.meta) return false;
-  return (message.source.meta as Record<string, unknown>).presentation === 'system_notice';
-}
-
 function exactReplyPreview(
   message: ChatMessageType,
   timelineMessages: readonly ChatMessageType[],
@@ -109,6 +117,7 @@ function exactReplyPreview(
 
 interface ChatMessageProps {
   message: ChatMessageType;
+  compact?: boolean;
   threadId?: string;
   timelineMessages?: readonly ChatMessageType[];
   activeRuns?: readonly LifecycleActiveRun[];
@@ -155,6 +164,7 @@ function needsTimelineProjection(message: ChatMessageType): boolean {
 
 function ChatMessageContent({
   message,
+  compact = false,
   threadId,
   timelineMessages,
   getCatById,
@@ -168,9 +178,21 @@ function ChatMessageContent({
   sendContext,
   confirmations,
 }: ChatMessageProps) {
+  // The Café 1.6 cat reply (nameplate, no outer bubble) is a presentation of the same message, switched by the one shell
+  // switch. Read it with the other hooks, before any early return.
+  const shellPresentation = useShellPresentation();
   const coCreator = useCoCreatorConfig();
   const currentThreadId = useChatStore((s) => s.currentThreadId);
   const renderThreadId = threadId ?? currentThreadId;
+  const publication =
+    renderThreadId && !message.isStreaming
+      ? {
+          threadId: renderThreadId,
+          messageId: message.id,
+          messageRevision: String(message.timestamp),
+          origins: message.projectionPublicationOrigins,
+        }
+      : undefined;
   const disclosureThreadId = renderThreadId ?? 'default';
   const bodyDisclosureKey = buildMessageDisclosureKey(disclosureThreadId, message, 'body');
   const thinkingDisclosureKey = buildMessageDisclosureKey(disclosureThreadId, message, 'thinking');
@@ -202,19 +224,26 @@ function ChatMessageContent({
   const isConnector = message.type === 'connector';
   const cloudBindingRecovery = isUser ? projectCloudBindingRecovery(message, threadMessages) : undefined;
   const projectedSystemContent = message.extra?.systemInfo
-    ? ((
-        formatVisibleSystemInfo(
-          message.extra.systemInfo.payload,
-          (catId) => resolveCatDisplayName(catId, getCatById),
-          message.extra.systemInfo.fallbackCatId,
-        ) ??
-        formatSessionSealRequested(message.extra.systemInfo.payload, (catId) =>
-          resolveCatDisplayName(catId, getCatById),
-        )
+    ? (formatVisibleSystemInfo(
+        message.extra.systemInfo.payload,
+        (catId) => resolveCatDisplayName(catId, getCatById),
+        message.extra.systemInfo.fallbackCatId,
       )?.content ?? message.content)
     : message.content;
 
   const catData = message.catId ? getCatById(message.catId) : undefined;
+  const parsedCompanionIdentity = companionIdentitySnapshotV1Schema.safeParse(message.extra?.liveCompanion?.identity);
+  const companionIdentity =
+    message.type === 'assistant' &&
+    parsedCompanionIdentity.success &&
+    (message.catId === parsedCompanionIdentity.data.live.catId ||
+      message.catId === parsedCompanionIdentity.data.deep.catId)
+      ? parsedCompanionIdentity.data
+      : undefined;
+  const companionAuthorName =
+    companionIdentity && message.catId === companionIdentity.live.catId
+      ? companionIdentity.live.displayName
+      : companionIdentity?.deep.displayName;
   const catStyle = catData
     ? (() => {
         const breed = BREED_STYLES[catData.breedId ?? ''] ?? DEFAULT_BREED_STYLE;
@@ -513,7 +542,48 @@ function ChatMessageContent({
       </button>
     );
 
-    const userHeader = (
+    /* F322 B segment 1 (human message). In the new presentation your own message is right-aligned with no avatar and no
+     * signature (DESIGN.md「对话」: alone in the Café, right-aligned is you). What you could do with the message stays: the
+     * action anchor, the whisper / reply marks, the copy-id control. The header is only as tall as the marks it holds, so a
+     * plain message has no empty row above it; the copy-id control sits in the blank to the left of the block. */
+    const humanPresentation = shellPresentation === 'v2' && !compact;
+    const humanHasMarks = isWhisper || Boolean(message.replyTo && resolvedReplyPreview && !isSchedulerReply);
+    // The human colour's light step. With no colour configured the role is the shared cocoa (shell-v2.css bakes its hue and
+    // chroma, and CoCreatorHueInjector replaces them when the config has one), so there is no separate neutral fallback.
+    const humanFill = 'var(--color-cocreator-surface)';
+    const humanHeader = (
+      <div
+        data-testid="human-message-header"
+        className={`relative flex w-full justify-end items-center gap-2${humanHasMarks ? ' mb-1' : ''}`}
+      >
+        <span className="absolute right-full top-0 mr-1">
+          <CopyIdButton messageId={message.id} />
+        </span>
+        <MessageActionSlot />
+        {isWhisper && (
+          <span
+            className={`text-xs px-1.5 py-0.5 rounded ${isRevealed ? 'bg-cafe-surface-elevated text-cafe-secondary' : 'bg-semantic-warning-surface text-semantic-warning'}`}
+          >
+            {isRevealed ? '已揭秘' : `悄悄话 → ${message.whisperTo?.join(', ') ?? ''}`}
+          </span>
+        )}
+        {message.replyTo && resolvedReplyPreview && !isSchedulerReply && (
+          <ReplyPill replyPreview={resolvedReplyPreview} replyToId={message.replyTo} getCatById={getCatById} />
+        )}
+      </div>
+    );
+    /* A run of your own messages shows its time once, under the last one. */
+    const humanTime =
+      humanPresentation &&
+      isLastOfOwnRun(message, timelineMessages ?? EMPTY_TIMELINE_MESSAGES, { currentThreadId: renderThreadId }) ? (
+        <div data-testid="human-message-time" className="mt-1 text-xs" style={{ color: 'var(--shell-muted)' }}>
+          {formatDualTime(message.timestamp, message.deliveredAt)}
+        </div>
+      ) : undefined;
+
+    const userHeader = humanPresentation ? (
+      humanHeader
+    ) : (
       <div className="flex justify-end items-center gap-2 mb-1">
         <MessageActionSlot />
         {isWhisper && (
@@ -540,19 +610,38 @@ function ChatMessageContent({
       <MessageBubble
         messageId={message.id}
         align="right"
+        presentation={humanPresentation ? 'human' : 'bubble'}
+        maxWidth={compact ? 'max-w-[86%]' : undefined}
         avatar={userAvatar}
         header={userHeader}
+        footer={
+          <>
+            {humanTime}
+            <RoutingWarningNotice warnings={message.extra?.routingWarnings} />
+          </>
+        }
         wrapperClassName="group cat-persona-derived"
         wrapperStyle={{ '--msg-hue': coCreatorMsgHue, '--msg-chroma': coCreatorMsgChroma } as CSSProperties}
         bubbleRadius="rounded-2xl rounded-br-sm"
         bubbleClassName={
           whisperActive
             ? 'bg-semantic-warning-surface text-semantic-warning border border-dashed border-semantic-warning'
-            : ''
+            : compact
+              ? 'ml-auto w-fit max-w-full border border-cafe-subtle'
+              : ''
         }
-        bubbleStyle={!whisperActive ? { backgroundColor: coCreatorBubbleBg, color: coCreatorBubbleText } : undefined}
-        footer={<RoutingWarningNotice warnings={message.extra?.routingWarnings} />}
+        bubbleStyle={
+          !whisperActive
+            ? {
+                backgroundColor: humanPresentation ? humanFill : coCreatorBubbleBg,
+                color: compact ? 'var(--cafe-text)' : coCreatorBubbleText,
+              }
+            : undefined
+        }
       >
+        {!recalledAfterExposure && message.extra?.contentModificationRequestV1 ? (
+          <ContentModificationSourceMessage metadata={message.extra.contentModificationRequestV1} />
+        ) : null}
         {recalledAfterExposure ? (
           <div data-recalled-message="seen" className="text-xs text-cafe-muted">
             <div className="font-medium text-cafe-secondary">已撤回 · 曾读取</div>
@@ -577,7 +666,7 @@ function ChatMessageContent({
             }}
           />
         ) : hasBlocks ? (
-          <ContentBlocks blocks={message.contentBlocks!} />
+          <ContentBlocks blocks={message.contentBlocks!} publication={publication} />
         ) : (
           <CollapsibleMarkdown content={message.content} disclosureKey={bodyDisclosureKey} />
         )}
@@ -587,6 +676,7 @@ function ChatMessageContent({
             sourceMessageId={message.id}
             targetCatId={cloudBindingRecovery.targetCatId}
             attemptId={cloudBindingRecovery.attemptId}
+            deliveryStatus={cloudBindingRecovery.deliveryStatus}
           />
         ) : null}
         {message.extra?.custodyOfferV1 ? (
@@ -646,23 +736,60 @@ function ChatMessageContent({
     return null;
   }
 
+  /* F322 B segment 1: in the Café 1.6 presentation a cat's ordinary reply is a nameplate over unframed text.
+   * Everything that already has its own look stays on the old path: compact replies, the live companion's identity, and
+   * a message whose cat the registry does not know. The user, connector and system branches returned above. */
+  const showsNameplate = shellPresentation === 'v2' && !compact && !companionIdentity && !!catStyle;
+
   /* ── Cat (assistant) header ── */
   const catHeader =
-    catStyle || subexecutionEvents.length ? (
+    compact ||
+    catStyle ||
+    companionIdentity ||
+    message.extra?.turnExecution ||
+    message.extra?.auxiliaryTurnExecutions?.length ||
+    subexecutionEvents.length ? (
       <div
         className="mb-1 flex flex-col gap-1 min-w-0"
         data-testid="message-header"
         data-turn-execution-owner={message.extra?.turnExecution?.invocationId}
       >
         <div className="flex items-center gap-2 min-w-0">
-          <span
-            className="text-xs font-semibold truncate max-w-[140px] sm:max-w-[200px] md:max-w-[280px]"
-            style={{ color: catStyle?.textColor, opacity: 0.8 }}
-            title={catStyle?.label ?? message.catId}
-          >
-            {catStyle?.label ?? message.catId}
-          </span>
-          <span className="text-xs text-cafe-muted shrink-0">{formatTime(assistantPresentationTime)}</span>
+          {showsNameplate && message.catId && catStyle ? (
+            <>
+              <CatNameplate
+                catId={message.catId}
+                name={catStyle.label}
+                streaming={message.isStreaming}
+                onEditCat={onEditCat ? () => onEditCat(message.catId!) : undefined}
+              />
+              <span
+                data-testid="cat-nameplate-time"
+                className="text-xs shrink-0"
+                style={{ color: 'var(--shell-muted)' }}
+              >
+                {formatTime(assistantPresentationTime)}
+              </span>
+            </>
+          ) : (
+            <>
+              <span
+                className="text-xs font-semibold truncate max-w-[140px] sm:max-w-[200px] md:max-w-[280px]"
+                style={{ color: catStyle?.textColor, opacity: CLASSIC_NAME_OPACITY }}
+                title={
+                  companionIdentity
+                    ? `猫猫球 · ${companionIdentity.partner.displayName}`
+                    : (catStyle?.label ?? message.catId)
+                }
+              >
+                {companionIdentity
+                  ? `猫猫球 · ${companionIdentity.partner.displayName}`
+                  : (catStyle?.label ?? message.catId)}
+              </span>
+              <span className="text-xs text-cafe-muted shrink-0">{formatTime(assistantPresentationTime)}</span>
+            </>
+          )}
+          <CopyIdButton messageId={message.id} />
           {message.extra?.recovery?.kind === 'f254_withheld_message' && (
             <span
               className="shrink-0 rounded-full border border-conn-blue-ring bg-conn-blue-bg px-1.5 py-0.5 text-micro font-semibold text-[var(--semantic-info)]"
@@ -705,6 +832,9 @@ function ChatMessageContent({
           <InvocationTrajectoryAnchor message={message} threadId={renderThreadId} />
           <MessageActionSlot />
         </div>
+        {companionIdentity && companionAuthorName && (
+          <CompanionMessageIdentity identity={companionIdentity} authorName={companionAuthorName} />
+        )}
         {showSchedulerAccent && (
           <div className={SCHEDULER_ACCENT_BADGE_CLASS}>
             <span aria-hidden>⏰</span>
@@ -753,8 +883,11 @@ function ChatMessageContent({
   return (
     <MessageBubble
       messageId={message.id}
+      presentation={showsNameplate ? 'nameplate' : 'bubble'}
       avatar={
-        catData ? (
+        companionIdentity ? (
+          <CompanionMessageAvatar identity={companionIdentity} />
+        ) : catData ? (
           <CatAvatar
             catId={message.catId!}
             size={32}
@@ -768,6 +901,7 @@ function ChatMessageContent({
         ) : null
       }
       header={catHeader}
+      maxWidth={compact ? 'max-w-[86%]' : undefined}
       /* F056: always add cat-persona-derived so nested ThinkingContent/CliOutputBlock
        * have valid --cat-msg-{inset,inset-text,...} tokens even when catData is
        * undefined (e.g. stream messages without resolved catId). */
@@ -776,11 +910,28 @@ function ChatMessageContent({
         catStyle ? ({ '--msg-hue': catStyle.msgHue, '--msg-chroma': catStyle.msgChroma } as CSSProperties) : undefined
       }
       bubbleRadius={catStyle ? catStyle.radius : 'rounded-2xl'}
-      bubbleClassName={`${catStyle ? (catStyle.font ?? '') : 'bg-cafe-surface'} ${emptyResponseNotice ? 'w-fit' : ''}`.trim()}
+      bubbleClassName={
+        compact
+          ? `w-fit max-w-full border border-[var(--conn-emerald-bubble-border)] ${catStyle?.font ?? ''}`
+          : showsNameplate
+            ? /* No breed voice: DESIGN.md keeps mono for machine output, and the reply is plain working text.
+               * `pl-2` is the only inset: it lines the text (and the cards under it) up with the plate's avatar. */
+              'pl-2'
+            : catStyle
+              ? `${catStyle.font ?? ''} ${emptyResponseNotice ? 'w-fit' : ''}`.trim()
+              : `bg-cafe-surface ${emptyResponseNotice ? 'w-fit' : ''}`.trim()
+      }
       bubbleStyle={
-        catStyle
-          ? { backgroundColor: catStyle.bgColor, color: 'var(--cat-msg-text)' }
-          : { color: 'var(--cat-msg-text)' }
+        compact
+          ? {
+              backgroundColor: 'color-mix(in oklch, var(--cafe-surface-elevated) 48%, var(--conn-emerald-bubble-bg))',
+              color: 'var(--cafe-text)',
+            }
+          : showsNameplate
+            ? { color: 'var(--cat-msg-text)' }
+            : catStyle
+              ? { backgroundColor: catStyle.bgColor, color: 'var(--cat-msg-text)' }
+              : { color: 'var(--cat-msg-text)' }
       }
       footer={
         <>
@@ -790,6 +941,7 @@ function ChatMessageContent({
                 selected={visibleFailedResponseDiagnostics}
                 errorMessage={failedResponseLabel}
                 dedupCount={dedupCount}
+                responseOwnsFailure
               />
             </div>
           ) : null}
@@ -813,11 +965,11 @@ function ChatMessageContent({
           disclosureKey={bodyDisclosureKey}
         />
       ) : hasCliBlock && isStreamOrigin ? null : !isStreamOrigin && hasBlocks ? (
-        <ContentBlocks blocks={message.contentBlocks!} />
+        <ContentBlocks blocks={message.contentBlocks!} publication={publication} />
       ) : !isStreamOrigin && hasTextContent ? (
         <CollapsibleMarkdown
           content={mergedSpeechContent ?? message.content}
-          className={catStyle?.font}
+          className={showsNameplate ? undefined : catStyle?.font}
           disclosureKey={bodyDisclosureKey}
         />
       ) : null}
@@ -839,7 +991,7 @@ function ChatMessageContent({
       {message.thinking && (
         <ThinkingContent
           content={message.thinking}
-          className={catStyle?.font}
+          className={showsNameplate ? undefined : catStyle?.font}
           label="Thinking"
           defaultExpanded={
             bubbleRestorePending
@@ -866,6 +1018,7 @@ function ChatMessageContent({
       {message.extra?.rich?.blocks && message.extra.rich.blocks.length > 0 && (
         <RichBlocks
           blocks={message.extra.rich.blocks}
+          publication={publication}
           catId={message.catId}
           messageId={message.id}
           sourceThreadId={renderThreadId}

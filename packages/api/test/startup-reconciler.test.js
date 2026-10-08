@@ -422,301 +422,43 @@ describe('StartupReconciler', () => {
     assert.ok(result.durationMs >= 0);
   });
 
-  // ── Phase A+ tests: User-visible notification after sweep ──
-
-  test('AC-A+1: posts visible error message to affected threads via source field', async () => {
-    const r1 = makeRecord({ id: 'n1', threadId: 'thread-a', status: 'running', targetCats: ['opus'] });
-    const r2 = makeRecord({ id: 'n2', threadId: 'thread-b', status: 'running', targetCats: ['codex'] });
-    store.seed(r1);
-    store.seed(r2);
-
-    const appendedMessages = [];
-    const messageStore = {
-      append(msg) {
-        appendedMessages.push(msg);
-        return { ...msg, id: `msg-${appendedMessages.length}`, threadId: msg.threadId ?? 'default' };
-      },
-    };
-
-    const broadcastedEvents = [];
-    const socketManager = {
-      broadcastToRoom(room, event, payload) {
-        broadcastedEvents.push({ room, event, payload });
-      },
-    };
-
-    const reconciler = new StartupReconciler({
-      invocationRecordStore: store,
-      taskProgressStore,
-      log,
-      messageStore,
-      socketManager,
+  // Parent projection recovery cannot append a second result or socket-only notice.
+  for (const status of ['running', 'queued']) {
+    test('restart projection recovery stays silent for multiple owners: ' + status, async () => {
+      const writes = [],
+        broadcasts = [];
+      for (const [id, userId, threadId] of [
+        ['a', 'alice', 'thread-alice'],
+        ['b', 'bob', 'thread-bob'],
+      ]) {
+        store.seed(makeRecord({ id, userId, threadId, status, createdAt: Date.now() - 10 * 60_000 }));
+      }
+      const reconciler = new StartupReconciler({
+        invocationRecordStore: store,
+        taskProgressStore,
+        log,
+        messageStore: {
+          append(input) {
+            writes.push(input);
+            throw new Error('must not create a chat result');
+          },
+        },
+        socketManager: {
+          broadcastToRoom(...args) {
+            broadcasts.push(args);
+            throw new Error('must not create a socket-only result');
+          },
+        },
+      });
+      const result = await reconciler.reconcileOrphans();
+      assert.equal(result.swept, 2);
+      assert.equal(result.notifiedThreads, 0);
+      assert.deepEqual(writes, []);
+      assert.deepEqual(broadcasts, []);
+      assert.equal((await store.get('a')).status, 'failed');
+      assert.equal((await store.get('b')).status, 'failed');
     });
-
-    const result = await reconciler.reconcileOrphans();
-
-    assert.equal(result.notifiedThreads, 2, 'should notify 2 threads');
-    assert.equal(appendedMessages.length, 2, 'should append 2 messages');
-    assert.equal(broadcastedEvents.length, 2, 'should broadcast 2 messages');
-
-    // AC-A+2: Verify the system sender union owns identity; source owns presentation.
-    const msgA = appendedMessages.find((m) => m.threadId === 'thread-a');
-    assert.ok(msgA, 'thread-a should have a message');
-    assert.deepEqual(msgA.from, { kind: 'system', service: 'startup-reconciler' });
-    assert.ok(msgA.source, 'message must have source field');
-    assert.equal(msgA.source.connector, 'startup-reconciler', 'source.connector must be startup-reconciler');
-    assert.equal(msgA.source.meta.presentation, 'system_notice');
-    assert.equal(msgA.source.meta.noticeTone, 'warning');
-    assert.equal(msgA.catId, undefined, 'new writes must not carry the legacy naked catId');
-    assert.ok(msgA.content.includes('opus'), 'message should mention affected cat');
-    assert.ok(
-      msgA.content.includes('restart') || msgA.content.includes('interrupted') || msgA.content.includes('重启'),
-      'message should explain restart',
-    );
-
-    // P1 fix: Verify notification uses actual userId from InvocationRecord, not 'system'
-    assert.equal(msgA.userId, 'user-1', 'notification userId must match InvocationRecord.userId (not "system")');
-    const msgB = appendedMessages.find((m) => m.threadId === 'thread-b');
-    assert.ok(msgB, 'thread-b should have a message');
-    assert.equal(msgB.userId, 'user-1', 'thread-b notification also uses record userId');
-
-    // Verify real-time broadcast uses the same connector notice protocol as persistence
-    const bcA = broadcastedEvents.find((b) => b.payload.threadId === 'thread-a');
-    assert.ok(bcA);
-    assert.equal(bcA.room, 'thread:thread-a');
-    assert.equal(bcA.event, 'connector_message');
-    assert.equal(bcA.payload.message.type, 'connector');
-    assert.equal(bcA.payload.message.source.connector, 'startup-reconciler');
-    assert.equal(bcA.payload.message.source.meta.presentation, 'system_notice');
-    assert.equal(bcA.payload.message.source.meta.noticeTone, 'warning');
-  });
-
-  test('AC-A+3: deduplicates notifications per thread (multiple invocations → one message)', async () => {
-    // Two invocations in the same thread with different cats
-    const r1 = makeRecord({ id: 'dup1', threadId: 'thread-x', status: 'running', targetCats: ['opus'] });
-    const r2 = makeRecord({ id: 'dup2', threadId: 'thread-x', status: 'running', targetCats: ['codex'] });
-    store.seed(r1);
-    store.seed(r2);
-
-    const appendedMessages = [];
-    const messageStore = {
-      append(msg) {
-        appendedMessages.push(msg);
-        return { ...msg, id: `msg-${appendedMessages.length}`, threadId: msg.threadId ?? 'default' };
-      },
-    };
-
-    const reconciler = new StartupReconciler({
-      invocationRecordStore: store,
-      taskProgressStore,
-      log,
-      messageStore,
-    });
-
-    const result = await reconciler.reconcileOrphans();
-
-    assert.equal(result.notifiedThreads, 1, 'only 1 thread notification despite 2 invocations');
-    assert.equal(appendedMessages.length, 1, 'only 1 message appended');
-    // Both cats should be mentioned
-    assert.ok(
-      appendedMessages[0].content.includes('2') || appendedMessages[0].content.includes('opus'),
-      'message should indicate multiple affected cats',
-    );
-  });
-
-  test('AC-A+4: notification failure does not block startup (best-effort)', async () => {
-    store.seed(makeRecord({ id: 'be1', threadId: 'thread-y', status: 'running', targetCats: ['opus'] }));
-
-    const messageStore = {
-      append() {
-        throw new Error('simulated messageStore failure');
-      },
-    };
-
-    const reconciler = new StartupReconciler({
-      invocationRecordStore: store,
-      taskProgressStore,
-      log,
-      messageStore,
-    });
-
-    // Must not throw — sweep should succeed even if notification fails
-    const result = await reconciler.reconcileOrphans();
-
-    assert.equal(result.running, 1, 'sweep still happens');
-    assert.equal(result.notifiedThreads, 0, 'notification failed but counted as 0');
-    assert.ok(
-      log.messages.some((m) => m.level === 'warn' && m.msg.includes('thread-y')),
-      'should log warning about failed notification',
-    );
-  });
-
-  test('AC-A+5: no notification when messageStore/socketManager not provided (memory mode compat)', async () => {
-    store.seed(makeRecord({ id: 'quiet1', status: 'running' }));
-
-    const reconciler = new StartupReconciler({
-      invocationRecordStore: store,
-      taskProgressStore,
-      log,
-      // no messageStore, no socketManager
-    });
-
-    const result = await reconciler.reconcileOrphans();
-
-    assert.equal(result.notifiedThreads, 0);
-    assert.equal(result.running, 1, 'still sweeps even without notification deps');
-  });
-
-  test('AC-A+6: stale queued records also trigger notifications', async () => {
-    const staleQueued = makeRecord({
-      id: 'sq-notify',
-      threadId: 'thread-z',
-      status: 'queued',
-      targetCats: ['gemini'],
-      createdAt: Date.now() - 10 * 60_000, // 10 min ago = stale
-    });
-    store.seed(staleQueued);
-
-    const appendedMessages = [];
-    const messageStore = {
-      append(msg) {
-        appendedMessages.push(msg);
-        return { ...msg, id: `msg-${appendedMessages.length}`, threadId: msg.threadId ?? 'default' };
-      },
-    };
-
-    const reconciler = new StartupReconciler({
-      invocationRecordStore: store,
-      taskProgressStore,
-      log,
-      messageStore,
-    });
-
-    const result = await reconciler.reconcileOrphans();
-
-    assert.equal(result.notifiedThreads, 1, 'stale queued should trigger notification');
-    assert.equal(appendedMessages.length, 1);
-    assert.ok(appendedMessages[0].content.includes('gemini'));
-  });
-
-  test('P1 regression: notification userId matches InvocationRecord.userId per thread', async () => {
-    const r1 = makeRecord({
-      id: 'uid1',
-      threadId: 'thread-alice',
-      userId: 'alice',
-      status: 'running',
-      targetCats: ['opus'],
-    });
-    const r2 = makeRecord({
-      id: 'uid2',
-      threadId: 'thread-bob',
-      userId: 'bob',
-      status: 'running',
-      targetCats: ['codex'],
-    });
-    store.seed(r1);
-    store.seed(r2);
-
-    const appendedMessages = [];
-    const messageStore = {
-      append(msg) {
-        appendedMessages.push(msg);
-        return { ...msg, id: `msg-${appendedMessages.length}`, threadId: msg.threadId ?? 'default' };
-      },
-    };
-
-    const reconciler = new StartupReconciler({
-      invocationRecordStore: store,
-      taskProgressStore,
-      log,
-      messageStore,
-    });
-
-    await reconciler.reconcileOrphans();
-
-    const aliceMsg = appendedMessages.find((m) => m.threadId === 'thread-alice');
-    const bobMsg = appendedMessages.find((m) => m.threadId === 'thread-bob');
-    assert.equal(aliceMsg.userId, 'alice', 'alice thread notification must use alice userId');
-    assert.equal(bobMsg.userId, 'bob', 'bob thread notification must use bob userId');
-  });
-
-  test('P2 regression: broadcast fires even when messageStore.append throws', async () => {
-    store.seed(
-      makeRecord({
-        id: 'p2-1',
-        threadId: 'thread-p2',
-        status: 'running',
-        targetCats: ['opus'],
-      }),
-    );
-
-    const messageStore = {
-      append() {
-        throw new Error('simulated append failure');
-      },
-    };
-
-    const broadcastedEvents = [];
-    const socketManager = {
-      broadcastToRoom(room, event, payload) {
-        broadcastedEvents.push({ room, event, payload });
-      },
-    };
-
-    const reconciler = new StartupReconciler({
-      invocationRecordStore: store,
-      taskProgressStore,
-      log,
-      messageStore,
-      socketManager,
-    });
-
-    const result = await reconciler.reconcileOrphans();
-
-    assert.equal(broadcastedEvents.length, 1, 'broadcast must fire even when append throws');
-    assert.equal(broadcastedEvents[0].room, 'thread:thread-p2');
-    assert.equal(broadcastedEvents[0].event, 'connector_message');
-    assert.equal(broadcastedEvents[0].payload.message.type, 'connector');
-    assert.equal(broadcastedEvents[0].payload.message.source.connector, 'startup-reconciler');
-    assert.equal(result.notifiedThreads, 1, 'notified=1 because broadcast succeeded despite persist failure');
-    assert.ok(
-      log.messages.some((m) => m.level === 'warn' && m.msg.includes('persist')),
-      'should log persist failure warning',
-    );
-  });
-
-  test('Cloud P2: socket-only mode counts 0 when broadcast throws', async () => {
-    store.seed(
-      makeRecord({
-        id: 'sock-fail',
-        threadId: 'thread-sock',
-        status: 'running',
-        targetCats: ['opus'],
-      }),
-    );
-
-    const socketManager = {
-      broadcastToRoom() {
-        throw new Error('simulated broadcast failure');
-      },
-    };
-
-    const reconciler = new StartupReconciler({
-      invocationRecordStore: store,
-      taskProgressStore,
-      log,
-      socketManager,
-    });
-
-    const result = await reconciler.reconcileOrphans();
-
-    assert.equal(result.running, 1, 'sweep still happens');
-    assert.equal(result.notifiedThreads, 0, 'notified=0 because broadcast failed and no messageStore');
-    assert.ok(
-      log.messages.some((m) => m.level === 'warn' && m.msg.includes('broadcast')),
-      'should log broadcast failure warning',
-    );
-  });
+  }
 
   // ── P1-C: queued message visibility convergence ──
 

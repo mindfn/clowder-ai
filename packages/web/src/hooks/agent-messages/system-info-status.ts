@@ -3,7 +3,7 @@ import { writeTimeoutDiagnostics } from '@/hooks/named-message-writer';
 import type { ContextHealthData, TaskProgressItem } from '@/stores/chat-types';
 import { formatAgyProgressDetail } from '../system-info-visible';
 import { timeoutDiagnosticsFrom } from './error-rows';
-import { namedTarget } from './named-target';
+import { isLateForCommittedResponse, namedTarget } from './named-target';
 import type { SystemInfoPort } from './system-info-port';
 import {
   appServerStageStatus,
@@ -11,14 +11,15 @@ import {
   parseAppServerLifecycle,
   parseLivenessWarning,
   parseProviderCapability,
+  parseProviderRecovery,
   projectContextBriefingMessage,
   stringField,
 } from './system-projections';
 import type { AgentEventFields } from './types';
 
 /**
- * Status-only `system_info` subtypes: cat status, invocation snapshots and system rows with their
- * own ids. None of them writes into a response.
+ * `system_info` updates execution status and snapshots. Response diagnostics use the exact
+ * named response; actionable business cards keep their own stored identities.
  */
 type StatusProjector = (parsed: Record<string, unknown>, msg: AgentEventFields, port: SystemInfoPort) => void;
 
@@ -112,6 +113,41 @@ const projectGovernanceBlocked: StatusProjector = (parsed, _msg, port) => {
 };
 
 const STATUS_PROJECTORS = new Map<string, StatusProjector>([
+  [
+    'provider_recovery',
+    (parsed, msg, port) => {
+      if (isLateForCommittedResponse(msg, port.threadId, port.store())) return;
+      const recovery = parseProviderRecovery(parsed, msg);
+      if (!recovery) return;
+      const target = namedTarget(msg, port.threadId);
+      const store = port.store();
+      const response = target
+        ? store.getThreadState(port.threadId).messages.find((message) => message.id === target.messageId)
+        : undefined;
+      if (
+        response &&
+        (response.type !== 'assistant' ||
+          response.catId !== msg.catId ||
+          (response.lifecycle?.kind === 'response' &&
+            response.lifecycle.invocationId !== (msg.turnInvocationId ?? msg.invocationId)))
+      )
+        return;
+      if (target && response) {
+        store.patchThreadMessage(port.threadId, target.messageId, { extra: { providerRecovery: recovery } });
+      }
+      if (recovery.phase === 'reconnecting') port.setCatStatus(msg.catId, 'spawning', '正在重新连接');
+      if (recovery.phase === 'recovered') port.setCatStatus(msg.catId, 'streaming');
+      // A failed reconnect is diagnostic evidence. Only the canonical response declares failure.
+    },
+  ],
+  [
+    'warning',
+    (parsed, msg, port) => {
+      if (parsed.presentation === 'transient_status' && !isLateForCommittedResponse(msg, port.threadId, port.store())) {
+        port.setCatStatus(msg.catId, 'spawning', stringField(parsed, 'message'));
+      }
+    },
+  ],
   ['invocation_created', projectInvocationCreated],
   ['invocation_metrics', projectInvocationMetrics],
   ['task_progress', projectTaskProgress],

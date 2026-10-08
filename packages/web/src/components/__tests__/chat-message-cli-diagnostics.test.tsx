@@ -581,6 +581,14 @@ describe('F212 Phase B — ChatMessage routes cliDiagnostics to folded panel', (
     const bubbleText = () => container.querySelector('[data-testid="message-bubble"]')?.textContent ?? '';
     const cliPanel = () => container.querySelector('[data-testid="cli-diagnostics"]');
     const timeoutPanel = () => container.querySelector('[data-testid="timeout-diagnostics"]');
+    function expandCliPanel(panel = cliPanel()) {
+      const toggle = panel?.querySelector<HTMLButtonElement>('[data-testid="cli-diagnostics-toggle"]');
+      expect(toggle?.getAttribute('aria-expanded')).toBe('false');
+      expect(panel?.querySelector('[data-testid="cli-diagnostics-cause"]')).toBeNull();
+      act(() => toggle?.click());
+      expect(toggle?.getAttribute('aria-expanded')).toBe('true');
+      expect(panel?.querySelector('[data-testid="cli-diagnostics-banner"]')).toBeNull();
+    }
 
     // F212 Phase B precedence carried from the error row to the response that now owns the
     // failure: the Claude/Codex timeout paths emit timeout_diagnostics and then an error with
@@ -591,6 +599,7 @@ describe('F212 Phase B — ChatMessage routes cliDiagnostics to folded panel', (
     ])('a classified CLI failure outranks the timeout %s', (_label, content) => {
       renderResponse(failedResponse(content, 'failed', { cliDiagnostics: classifiedCli, timeoutDiagnostics }));
 
+      expandCliPanel();
       expect(cliPanel()?.textContent).toContain('API 认证失败');
       expect(timeoutPanel()).toBeNull();
       if (content) expect(bubbleText()).toContain(content);
@@ -618,6 +627,7 @@ describe('F212 Phase B — ChatMessage routes cliDiagnostics to folded panel', (
       renderResponse(failedResponse('', 'failed', { cliDiagnostics: classifiedCli }));
 
       expect(bubbleText()).toContain('回复失败。');
+      expandCliPanel();
       expect(cliPanel()?.textContent).toContain('API 认证失败');
       expect(timeoutPanel()).toBeNull();
     });
@@ -627,6 +637,7 @@ describe('F212 Phase B — ChatMessage routes cliDiagnostics to folded panel', (
 
       expect(bubbleText()).toContain('partial answer');
       expect(cliPanel()).toBeTruthy();
+      expandCliPanel();
       expect(container.querySelector('svg[aria-label="cli-error-unknown"]')).toBeTruthy();
       expect(timeoutPanel()).toBeNull();
     });
@@ -634,6 +645,7 @@ describe('F212 Phase B — ChatMessage routes cliDiagnostics to folded panel', (
     it('an interrupted response shows its CLI diagnostics too', () => {
       renderResponse(failedResponse('partial answer', 'interrupted', { cliDiagnostics: classifiedCli }));
 
+      expandCliPanel();
       expect(cliPanel()?.textContent).toContain('API 认证失败');
     });
 
@@ -659,6 +671,7 @@ describe('F212 Phase B — ChatMessage routes cliDiagnostics to folded panel', (
     it('the head of a duplicate group counts the repeats on its panel', () => {
       renderResponse(failedResponse('', 'failed', { cliDiagnostics: classifiedCli }), { dedupCount: 3 });
 
+      expandCliPanel();
       expect(cliPanel()?.textContent).toContain('×3');
     });
 
@@ -668,7 +681,8 @@ describe('F212 Phase B — ChatMessage routes cliDiagnostics to folded panel', (
       expect(container.querySelector('[data-testid="message-bubble"]')?.textContent).toContain('回复失败。');
       const panel = container.querySelector('[data-testid="timeout-diagnostics"]');
       expect(panel).toBeTruthy();
-      expect(panel?.textContent).toContain('回复失败。');
+      expect(panel?.textContent).not.toContain('回复失败。');
+      expect(panel?.textContent).toContain('查看超时诊断');
       expect(container.querySelector('[data-message-id="response-timeout"]')).toBeTruthy();
     });
 
@@ -680,13 +694,15 @@ describe('F212 Phase B — ChatMessage routes cliDiagnostics to folded panel', (
       );
       const panel = container.querySelector('[data-testid="timeout-diagnostics"]');
       expect(panel).toBeTruthy();
-      expect(panel?.textContent).toContain('回复失败。');
+      expect(panel?.textContent).not.toContain('回复失败。');
+      expect(panel?.textContent).toContain('查看超时诊断');
     });
 
     it('labels an interrupted response with a body as interrupted', () => {
       render(failedResponse('partial answer', 'interrupted'));
 
-      expect(container.querySelector('[data-testid="timeout-diagnostics"]')?.textContent).toContain('回复已中断。');
+      expect(container.querySelector('[data-testid="timeout-diagnostics"]')?.textContent).not.toContain('回复已中断。');
+      expect(container.querySelector('[data-testid="timeout-diagnostics"]')?.textContent).toContain('查看超时诊断');
     });
 
     it('never shows timeout diagnostics on a completed response', () => {
@@ -767,6 +783,7 @@ describe('F212 Phase B — ChatMessage routes cliDiagnostics to folded panel', (
         ]);
 
         expect(panelIn('completed-r', 'cli')).toBeNull();
+        expandCliPanel(panelIn('failed-r', 'cli'));
         expect(panelIn('failed-r', 'cli')?.textContent).toContain('API 认证失败');
         expect(container.textContent).not.toContain('×2');
       });
@@ -777,6 +794,7 @@ describe('F212 Phase B — ChatMessage routes cliDiagnostics to folded panel', (
           responseRow('second-r', { cliDiagnostics: classifiedCli }, 'failed', 125),
         ]);
 
+        expandCliPanel(panelIn('first-r', 'cli'));
         expect(panelIn('first-r', 'cli')?.textContent).toContain('×2');
         expect(panelIn('second-r', 'cli')).toBeNull();
         expect(row('second-r')?.textContent).toContain('answer from second-r');

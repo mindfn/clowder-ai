@@ -23,6 +23,7 @@ import {
   CodexCapacityRecoveryCheckpoint,
   type CodexCapacityRecoveryCheckpointSnapshot,
 } from './CodexCapacityRecoveryCheckpoint.js';
+import { CodexRequiredToolsUnavailableError } from './CodexRequiredToolsPreflight.js';
 import {
   canRetryBeforeTurn,
   canRetryModelCapacity,
@@ -336,6 +337,7 @@ export async function* runCodexAppServerWithRecovery(options: CodexAppServerRunn
         !capacityTerminalObserved &&
         !isActiveWriterError(error) &&
         !(error instanceof CodexAppServerExactResumeRequiredError) &&
+        !(error instanceof CodexRequiredToolsUnavailableError) &&
         transportAttempt < retryBudget &&
         canRetryBeforeTurn(failedAt, options.runInput.signal)
       ) {

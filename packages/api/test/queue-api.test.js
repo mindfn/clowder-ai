@@ -903,6 +903,163 @@ describe('Queue Management API', () => {
 
   // ── Functional: DELETE entry ──
 
+  for (const shape of ['multiple_targets', 'wrong_source']) {
+    it(`scoped DELETE preserves ${shape} instead of withdrawing other work`, async () => {
+      const r = enqueueEntry(deps.invocationQueue, {
+        ownerAuthProvenance: 'strict',
+        messageId: 'request-source',
+        ...(shape === 'multiple_targets' ? { targetCats: ['opus', 'codex'] } : {}),
+      });
+      const source = shape === 'wrong_source' ? 'unrelated-source' : 'request-source';
+      const response = await app.inject({
+        method: 'DELETE',
+        url: `/api/threads/t1/queue/${r.entry.id}?expectedSourceMessageId=${source}&expectedTargetCatId=opus`,
+        headers: { 'x-cat-cafe-user': 'user-a' },
+      });
+      assert.equal(response.statusCode, 409, response.body);
+      assert.equal(response.json().code, 'ENTRY_SCOPE_CHANGED');
+      assert.equal(deps.invocationQueue.list('t1', 'user-a').length, 1);
+      assert.equal(deps.messageStore.markCanceled.mock.callCount(), 0);
+      assert.equal(deps.queueProcessor.finalizeRemovedEntry.mock.callCount(), 0);
+    });
+  }
+
+  it('scoped DELETE withdraws only the exact single source and cat, retaining source history', async () => {
+    const r = enqueueEntry(deps.invocationQueue, { ownerAuthProvenance: 'strict', messageId: 'request-source' });
+    mockSourceMessage(deps, 'request-source');
+    const response = await app.inject({
+      method: 'DELETE',
+      url: `/api/threads/t1/queue/${r.entry.id}?expectedSourceMessageId=request-source&expectedTargetCatId=opus`,
+      headers: { 'x-cat-cafe-user': 'user-a' },
+    });
+    assert.equal(response.statusCode, 200, response.body);
+    assert.equal(response.json().removed.id, r.entry.id);
+    assert.deepEqual(deps.messageStore.markCanceled.mock.calls[0].arguments, ['request-source']);
+    assert.equal(deps.queueProcessor.registerCallerDispatchQueueWithdrawal.mock.callCount(), 1);
+  });
+
+  it('incomplete scoped DELETE fails before removing any entry', async () => {
+    const r = enqueueEntry(deps.invocationQueue, { ownerAuthProvenance: 'strict', messageId: 'request-source' });
+    const response = await app.inject({
+      method: 'DELETE',
+      url: `/api/threads/t1/queue/${r.entry.id}?expectedSourceMessageId=request-source`,
+      headers: { 'x-cat-cafe-user': 'user-a' },
+    });
+    assert.equal(response.statusCode, 400, response.body);
+    assert.equal(deps.invocationQueue.list('t1', 'user-a').length, 1);
+  });
+
+  it('canonical adjacent sources stay separate and an exact withdrawal cannot absorb the neighbor', async () => {
+    const a = enqueueEntry(deps.invocationQueue, { messageId: 'request-source' });
+    const b = enqueueEntry(deps.invocationQueue, { messageId: 'neighbor-source' });
+    assert.notEqual(a.entry.id, b.entry.id);
+    mockSourceMessage(deps, 'request-source');
+    const response = await app.inject({
+      method: 'DELETE',
+      url: `/api/threads/t1/queue/${a.entry.id}?expectedSourceMessageId=request-source&expectedTargetCatId=opus`,
+      headers: { 'x-cat-cafe-user': 'user-a' },
+    });
+    assert.equal(response.statusCode, 200, response.body);
+    assert.deepEqual(
+      deps.invocationQueue.list('t1', 'user-a').map((row) => row.payload.messageId),
+      ['neighbor-source'],
+    );
+    assert.deepEqual(
+      deps.messageStore.markCanceled.mock.calls.map((call) => call.arguments),
+      [['request-source']],
+    );
+  });
+
+  it('native Queue receipt authorizes the exact source and observes only committed withdrawal', async () => {
+    await app.close();
+    let authorized = false;
+    const port = { authorize: mock.fn(() => authorized), observe: mock.fn() };
+    deps.controlReceipts = () => port;
+    const { queueRoutes } = await import('../dist/routes/queue.js');
+    app = Fastify();
+    await app.register(queueRoutes, deps);
+    const r = enqueueEntry(deps.invocationQueue, { messageId: 'request-source' });
+    mockSourceMessage(deps, 'request-source');
+    const withdraw = () =>
+      app.inject({
+        method: 'DELETE',
+        url: `/api/threads/t1/queue/${r.entry.id}?expectedSourceMessageId=request-source&expectedTargetCatId=opus&controlReceiptRef=owned-receipt`,
+        headers: { 'x-cat-cafe-user': 'user-a' },
+      });
+    assert.equal((await withdraw()).statusCode, 409);
+    assert.equal(deps.messageStore.markCanceled.mock.callCount(), 0);
+    authorized = true;
+    const response = await withdraw();
+    assert.equal(response.statusCode, 200, response.body);
+    assert.deepEqual(port.authorize.mock.calls.at(-1).arguments, [
+      'owned-receipt',
+      'user-a',
+      {
+        kind: 'queue',
+        threadId: 't1',
+        entryId: r.entry.id,
+        messageId: 'request-source',
+        catId: 'opus',
+      },
+    ]);
+    assert.deepEqual(port.observe.mock.calls.at(-1).arguments, ['owned-receipt', 'user-a', 200, true, undefined]);
+  });
+
+  it('scoped DELETE refuses a source with an already-dispatched sibling, restoring the pending claim', async () => {
+    const r = enqueueEntry(deps.invocationQueue, { messageId: 'request-source' });
+    mockSourceMessage(deps, 'request-source', {
+      lifecycle: { kind: 'user', dispatchRefs: [{ targetId: 'codex', phase: 'dispatched' }] },
+    });
+    const response = await app.inject({
+      method: 'DELETE',
+      url: `/api/threads/t1/queue/${r.entry.id}?expectedSourceMessageId=request-source&expectedTargetCatId=opus`,
+      headers: { 'x-cat-cafe-user': 'user-a' },
+    });
+    assert.equal(response.statusCode, 409, response.body);
+    assert.equal(response.json().code, 'ENTRY_SCOPE_CHANGED');
+    assert.equal(deps.invocationQueue.list('t1', 'user-a')[0].status, 'queued');
+    assert.equal(deps.messageStore.markCanceled.mock.callCount(), 0);
+  });
+
+  it('scoped DELETE fails closed on missing source History without leaving a held claim', async () => {
+    const r = enqueueEntry(deps.invocationQueue, { messageId: 'request-source' });
+    const response = await app.inject({
+      method: 'DELETE',
+      url: `/api/threads/t1/queue/${r.entry.id}?expectedSourceMessageId=request-source&expectedTargetCatId=opus`,
+      headers: { 'x-cat-cafe-user': 'user-a' },
+    });
+    assert.equal(response.statusCode, 503, response.body);
+    assert.equal(deps.invocationQueue.list('t1', 'user-a')[0].status, 'queued');
+    assert.equal(deps.messageStore.markCanceled.mock.callCount(), 0);
+  });
+
+  it('scoped DELETE rechecks targets returned by the atomic claim before any source cancellation', async () => {
+    const r = enqueueEntry(deps.invocationQueue, { messageId: 'request-source' });
+    mockSourceMessage(deps, 'request-source');
+    const claim = deps.invocationQueue.claimQueuedEntryForWithdrawal.bind(deps.invocationQueue);
+    deps.invocationQueue.claimQueuedEntryForWithdrawal = async (...args) => {
+      const changed = await deps.invocationQueue.reconcileQueuedMessageTargetsDurable(
+        't1',
+        'user-a',
+        r.entry.id,
+        ['codex'],
+        [],
+        {},
+      );
+      assert.equal(changed.outcome, 'updated');
+      return claim(...args);
+    };
+    const response = await app.inject({
+      method: 'DELETE',
+      url: `/api/threads/t1/queue/${r.entry.id}?expectedSourceMessageId=request-source&expectedTargetCatId=opus`,
+      headers: { 'x-cat-cafe-user': 'user-a' },
+    });
+    assert.equal(response.statusCode, 409, response.body);
+    assert.deepEqual(deps.invocationQueue.list('t1', 'user-a')[0].targets, ['opus', 'codex']);
+    assert.equal(deps.invocationQueue.list('t1', 'user-a')[0].status, 'queued');
+    assert.equal(deps.messageStore.markCanceled.mock.callCount(), 0);
+  });
+
   it('DELETE /queue/:entryId withdraws the pending row and cancels its hidden source', async () => {
     const r = enqueueEntry(deps.invocationQueue, {
       ownerAuthProvenance: 'strict',

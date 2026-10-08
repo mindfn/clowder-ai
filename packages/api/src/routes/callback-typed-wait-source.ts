@@ -16,15 +16,17 @@ export async function captureTypedWaitSource(
     readonly invocationTracker?: Pick<InvocationTracker, 'getActiveSlots'>;
   },
 ): Promise<TypedWaitSource | undefined> {
-  const activeRun = deps.invocationTracker
-    ?.getActiveSlots(auth.threadId)
-    .find((slot) => slot.catId === auth.catId && slot.activeRun?.invocationId === auth.invocationId)?.activeRun;
-  const inputMessageIds = activeRun ? [...activeRun.inputMessageIds] : [];
-
   try {
+    const activeRun = deps.invocationTracker
+      ?.getActiveSlots(auth.threadId)
+      .find((slot) => slot.catId === auth.catId && slot.activeRun?.invocationId === auth.invocationId)?.activeRun;
+    if (!activeRun || activeRun.threadId !== auth.threadId || activeRun.targetId !== auth.catId) return undefined;
+    const inputMessageIds = [...activeRun.inputMessageIds];
     const managedHoldSources: Extract<TypedWaitSource, { holdTaskId?: string }>[] = [];
     for (const sourceMessageId of inputMessageIds) {
       const source = await deps.messageStore.getById(sourceMessageId);
+      // A visible managed source can belong to a different thread; visibility is not authority.
+      if (source && source.threadId !== auth.threadId) return undefined;
       const taskId = source?.source?.meta?.taskId;
       if (
         !source ||

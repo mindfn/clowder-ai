@@ -55,6 +55,7 @@ import { ThreadChatExport, ThreadChatSurface, useThreadChatRuntime } from './thr
 import { type VoteConfig, VoteConfigModal } from './VoteConfigModal';
 import { WorkspacePanel } from './WorkspacePanel';
 import { useF307ExperienceWorkbenchStore } from './workbench/experience-workbench-store';
+import { useArtifactWorkHostPresentation } from './workbench/useArtifactWorkHostPresentation';
 import { ContextualWorkspaceChrome } from './workspace/ContextualWorkspaceChrome';
 import { FloatingTranscriptContainer } from './workspace/FloatingTranscriptContainer';
 import { ResizeHandle } from './workspace/ResizeHandle';
@@ -89,6 +90,7 @@ function InteractiveChatContainer({ threadId }: ChatContainerProps) {
   const bottomChromeRef = useRef<HTMLDivElement | null>(null);
   const bottomChromeObserverRef = useRef<ResizeObserver | null>(null);
   const bottomChromeObserverRafRef = useRef<number | null>(null);
+  const [bottomChromeHeight, setBottomChromeHeight] = useState(0);
   const {
     setCurrentThread,
     viewMode,
@@ -223,6 +225,16 @@ function InteractiveChatContainer({ threadId }: ChatContainerProps) {
     'cat-cafe:statusPanelWidth',
     STATUS_PANEL_DEFAULT,
   );
+  const isDesktop = useIsDesktop();
+  const {
+    hostEligible: artifactHostEligible,
+    fullWindowActive: artifactFullWindowActive,
+    chatBasis: artifactWorkChatBasis,
+    invalidateHost: invalidateArtifactWorkHost,
+    resizeChatBasis: resizeArtifactWorkChatBasis,
+    resetChatBasis: resetArtifactWorkChatBasis,
+  } = useArtifactWorkHostPresentation({ threadId, viewMode, isDesktop, statusPanelOpen, rightPanelMode });
+  const activeChatBasis = artifactHostEligible ? artifactWorkChatBasis : chatBasis;
   const containerRef = useRef<HTMLDivElement>(null);
   const handleHorizontalResize = useCallback(
     (delta: number) => {
@@ -230,9 +242,13 @@ function InteractiveChatContainer({ threadId }: ChatContainerProps) {
       const totalWidth = containerRef.current.offsetWidth;
       if (totalWidth === 0) return;
       const pct = (delta / totalWidth) * 100;
-      setChatBasis((prev) => Math.min(80, Math.max(20, prev + pct)));
+      if (artifactHostEligible) {
+        resizeArtifactWorkChatBasis(pct);
+        return;
+      }
+      setChatBasis((previous) => Math.min(80, Math.max(20, previous + pct)));
     },
-    [setChatBasis],
+    [artifactHostEligible, resizeArtifactWorkChatBasis, setChatBasis],
   );
   // clowder-ai#28: drag-to-resize for right status panel (negative delta = panel wider)
   const handleStatusPanelResize = useCallback(
@@ -256,8 +272,9 @@ function InteractiveChatContainer({ threadId }: ChatContainerProps) {
   // F284 × F120: closeRightPanel 同时退出 mode 并关闭 canonical visibility。
   const closeStatusPanel = useCallback(() => {
     exitMainAreaAttention();
+    invalidateArtifactWorkHost();
     closeRightPanel();
-  }, [closeRightPanel, exitMainAreaAttention]);
+  }, [closeRightPanel, exitMainAreaAttention, invalidateArtifactWorkHost]);
 
   const openWorkspaceLauncher = useCallback(() => {
     setWorkspacePanelMounted(true);
@@ -267,7 +284,6 @@ function InteractiveChatContainer({ threadId }: ChatContainerProps) {
     setRightPanelOpen(true);
   }, [setRightPanelMode, setWorkspaceMode, setWorkspaceSurface, setRightPanelOpen]);
 
-  const isDesktop = useIsDesktop();
   const mainAreaAttentionActive =
     viewMode === 'single' &&
     isDesktop &&
@@ -700,6 +716,7 @@ function InteractiveChatContainer({ threadId }: ChatContainerProps) {
     (node: HTMLDivElement | null) => {
       bottomChromeRef.current = node;
       disconnectBottomChromeObserver();
+      setBottomChromeHeight(node ? Math.ceil(node.getBoundingClientRect().height) : 0);
 
       if (typeof window === 'undefined' || typeof window.ResizeObserver !== 'function' || !node) return;
 
@@ -708,6 +725,7 @@ function InteractiveChatContainer({ threadId }: ChatContainerProps) {
         const nextHeight = entry?.contentRect.height ?? node.getBoundingClientRect().height;
         if (Math.abs(nextHeight - lastHeight) <= 1) return;
         lastHeight = nextHeight;
+        setBottomChromeHeight(Math.ceil(nextHeight));
 
         if (bottomChromeObserverRafRef.current !== null) {
           cancelAnimationFrame(bottomChromeObserverRafRef.current);
@@ -829,38 +847,47 @@ function InteractiveChatContainer({ threadId }: ChatContainerProps) {
       )}
 
       <div
-        className={`flex min-w-0 flex-col ${mainAreaAttentionActive ? 'invisible pointer-events-none' : ''}`}
+        className={`flex min-w-0 flex-col ${mainAreaAttentionActive ? 'invisible pointer-events-none' : ''} ${
+          artifactFullWindowActive ? 'absolute inset-0 z-50 pointer-events-none' : ''
+        }`}
         aria-hidden={mainAreaAttentionActive || undefined}
         data-testid="thread-chat-host"
+        data-presentation={artifactFullWindowActive ? 'artifact-full-window' : 'conversation'}
         style={
-          statusPanelOpen && isDesktop && (rightPanelMode === 'workspace' || rightPanelMode === 'transcript')
-            ? { flexBasis: `${chatBasis}%`, flexGrow: 0, flexShrink: 0 }
+          !artifactFullWindowActive &&
+          statusPanelOpen &&
+          isDesktop &&
+          (rightPanelMode === 'workspace' || rightPanelMode === 'transcript')
+            ? { flexBasis: `${activeChatBasis}%`, flexGrow: 0, flexShrink: 0 }
             : { flex: '1 1 0%' }
         }
       >
-        <ChatContainerHeader
-          sidebarOpen={sidebarOpen}
-          onToggleSidebar={toggleSidebar}
-          threadId={threadId}
-          viewMode={viewMode}
-          onToggleViewMode={() => setViewMode(viewMode === 'single' ? 'split' : 'single')}
-          statusPanelOpen={statusPanelOpen && rightPanelMode === 'workspace'}
-          hasWorkspaceActivity={hasProjectedExecution || workspaceSurface !== 'home' || presentationLock !== null}
-          onToggleStatusPanel={() => {
-            if (statusPanelOpen && rightPanelMode === 'workspace') {
-              closeStatusPanel();
-            } else {
-              setWorkspacePanelMounted(true);
-              setRightPanelMode('workspace');
-              setRightPanelOpen(true);
-            }
-          }}
-        />
+        {!artifactFullWindowActive && (
+          <ChatContainerHeader
+            sidebarOpen={sidebarOpen}
+            onToggleSidebar={toggleSidebar}
+            threadId={threadId}
+            viewMode={viewMode}
+            onToggleViewMode={() => setViewMode(viewMode === 'single' ? 'split' : 'single')}
+            statusPanelOpen={statusPanelOpen && rightPanelMode === 'workspace'}
+            hasWorkspaceActivity={hasProjectedExecution || workspaceSurface !== 'home' || presentationLock !== null}
+            onToggleStatusPanel={() => {
+              if (statusPanelOpen && rightPanelMode === 'workspace') {
+                closeStatusPanel();
+              } else {
+                setWorkspacePanelMounted(true);
+                setRightPanelMode('workspace');
+                setRightPanelOpen(true);
+              }
+            }}
+          />
+        )}
 
-        {intentMode === 'ideate' && <IdeateHeader />}
+        {!artifactFullWindowActive && intentMode === 'ideate' && <IdeateHeader />}
         <ThreadChatSurface
           threadId={threadId}
           density="full"
+          presentation={artifactFullWindowActive ? 'composer-only' : 'conversation'}
           messageConfirmations={messageConfirmations}
           acceptUnscopedInteractiveSend
           footerRef={attachBottomChromeRef}
@@ -1074,6 +1101,7 @@ function InteractiveChatContainer({ threadId }: ChatContainerProps) {
       {statusPanelOpen &&
         isDesktop &&
         !mainAreaAttentionActive &&
+        !artifactFullWindowActive &&
         (rightPanelMode === 'status' ? (
           <ResizeHandle
             direction="horizontal"
@@ -1088,7 +1116,13 @@ function InteractiveChatContainer({ threadId }: ChatContainerProps) {
             label="右侧面板"
             onResize={handleHorizontalResize}
             onCollapse={closeStatusPanel}
-            onDoubleClick={resetChatBasis}
+            onDoubleClick={() => {
+              if (artifactHostEligible) {
+                resetArtifactWorkChatBasis();
+                return;
+              }
+              resetChatBasis();
+            }}
           />
         ))}
       {(statusPanelOpen || workspacePanelMounted || activityPanelMounted) && (
@@ -1096,24 +1130,36 @@ function InteractiveChatContainer({ threadId }: ChatContainerProps) {
           className={
             !statusPanelOpen
               ? 'hidden'
-              : mainAreaAttentionActive
-                ? 'absolute inset-0 z-40 flex min-h-0 flex-col overflow-hidden bg-[var(--console-panel-bg)]'
-                : isDesktop
-                  ? 'flex min-h-0 flex-col overflow-hidden'
-                  : 'fixed inset-0 z-50 flex min-h-0 flex-col overflow-hidden bg-[var(--console-panel-bg)]'
+              : artifactFullWindowActive
+                ? 'absolute inset-x-0 top-0 z-40 flex min-h-0 flex-col overflow-hidden bg-[var(--console-panel-bg)]'
+                : mainAreaAttentionActive
+                  ? 'absolute inset-0 z-40 flex min-h-0 flex-col overflow-hidden bg-[var(--console-panel-bg)]'
+                  : isDesktop
+                    ? 'flex min-h-0 flex-col overflow-hidden'
+                    : 'fixed inset-0 z-50 flex min-h-0 flex-col overflow-hidden bg-[var(--console-panel-bg)]'
           }
           style={
-            statusPanelOpen && isDesktop && !mainAreaAttentionActive
-              ? rightPanelMode === 'status'
-                ? { width: statusPanelWidth, flexShrink: 0 }
-                : { flex: '1 1 0%', minWidth: 0 }
-              : undefined
+            artifactFullWindowActive
+              ? { bottom: bottomChromeHeight }
+              : statusPanelOpen && isDesktop && !mainAreaAttentionActive
+                ? rightPanelMode === 'status'
+                  ? { width: statusPanelWidth, flexShrink: 0 }
+                  : { flex: '1 1 0%', minWidth: 0 }
+                : undefined
           }
           role="region"
-          aria-label={mainAreaAttentionActive ? '主区 Workspace' : '上下文侧栏'}
+          aria-label={
+            artifactFullWindowActive ? '整窗作品 Workspace' : mainAreaAttentionActive ? '主区 Workspace' : '上下文侧栏'
+          }
           aria-hidden={!statusPanelOpen}
           data-testid="contextual-workspace-host"
-          data-presentation={mainAreaAttentionActive ? 'main-area-attention' : 'right-rail'}
+          data-presentation={
+            artifactFullWindowActive
+              ? 'artifact-full-window'
+              : mainAreaAttentionActive
+                ? 'main-area-attention'
+                : 'right-rail'
+          }
           data-attention-surface={mainAreaAttentionActive ? mainAreaAttentionSurfaceId : undefined}
         >
           <ContextualWorkspaceChrome
@@ -1146,6 +1192,7 @@ function InteractiveChatContainer({ threadId }: ChatContainerProps) {
                   threadId={threadId}
                   defaultCatId={targetCats[0] || 'opus'}
                   visible={statusPanelOpen && rightPanelMode === 'workspace' && documentVisible}
+                  artifactWorkHostAvailable
                   statusSurface={
                     <RightStatusPanel
                       intentMode={intentMode}

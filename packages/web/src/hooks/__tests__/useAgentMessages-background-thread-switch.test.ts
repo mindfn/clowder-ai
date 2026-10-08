@@ -29,7 +29,6 @@ function simulate(msg: BackgroundAgentMessage) {
     store: useChatStore.getState(),
     nextBgSeq: () => bgSeq++,
     addToast: (toast) => useToastStore.getState().addToast(toast),
-    clearDoneTimeout: () => {},
   });
 }
 

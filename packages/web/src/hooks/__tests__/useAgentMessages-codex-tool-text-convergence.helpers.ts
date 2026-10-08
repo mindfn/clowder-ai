@@ -96,7 +96,6 @@ export function installBackgroundHarness() {
         store: useChatStore.getState(),
         nextBgSeq: () => bgSeq++,
         addToast: () => {},
-        clearDoneTimeout: () => {},
       });
     },
   };
