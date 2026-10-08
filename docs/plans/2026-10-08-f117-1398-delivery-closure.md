@@ -12,7 +12,7 @@ created: 2026-10-08
 Operator source：`thread_msr51149hym0i79f#0001791431589436-000016-027ee9e2`。
 这是原 task `0001791275498653-000300-2a121472` 的恢复与范围纠正，不另建任务。
 sol 继续唯一源码写入，astra 负责来源审计、独立复验和交付协调。
-本计划覆盖旧路线图中与之冲突的读取阶段、F202 整体前置要求和逐批停等安排；历史证据保留。
+本计划纠正实现和旧路线图对原 RFC 的偏离，包括读取阶段、F202 整体前置要求和逐批停等安排；不是 operator 新增或调整 A2A 目标，历史证据保留。
 
 终点：同一个公开 #1398 包含合理、完整的 A2A 实现，与最新 public main 无冲突；
 在 fork 同步该基线并接入同一候选后验证，再交 Landy review。公开最终合入由 maintainer 决定。
@@ -112,10 +112,19 @@ Operator `0001791441081560-000110-e3f79b33` 追问同类问题。astra 只读核
 
 边界：未投递/待绑定的 cloud bridge 结果、治理初始化阻塞、没有 response 的准入失败确有用户动作或唯一失败事实，不能全部吞掉。后台完成 toast 是跨 thread 提醒，不等同另一条 History 消息。本轮不扩成重新设计全部通知。原 task300 唯一 writer 继续按同一机制及 active/background/F5/晚到事件/成功恢复/最终失败场景验证，astra 不改其 checkout。
 
-### Operator 补充：结果消息本身就是统一协议
+### 原 RFC 既定约束：结果消息本身就是统一协议
 
-Operator 随后明确：dispatch 目标成员的成功、失败、取消及内容由普通 message 承载，用户和其他成员读取同一份结果并按语义采取行动；失败结果通过既有 callback 与任务关系驱动后续分发。因此上述提示清单只是同根因证据，不应变成逐项 if/else 清理工程。
+Operator 随后重申既定设计：dispatch 目标成员的成功、失败、取消及内容由普通 message 承载，用户和其他成员读取同一份结果并按语义采取行动；失败结果通过既有 callback 与任务关系驱动后续分发。因此上述提示清单只是同根因证据，不应变成逐项 if/else 清理工程。这不是本轮新增目标。
 
 统一终态要求是精确 dispatch 的结果 message 同时承载可见结果及回调依据；等待、自动重连、接力、补同步只更新执行状态/诊断，不制造第二条聊天结果。无正文、进入模型前失败、取消及崩溃恢复也要保有对应的可见结果。前文“无 response 的准入失败独立 error row”仅描述审计时实现，不能升格为终态例外；应核对统一 dispatch 入口建立结果身份的机制。发生在 dispatch 创建之前的请求拒绝仍是请求错误，不伪造已投递事实。
 
 后续 callback/分发沿已有授权、任务关系及幂等边界消费结果 message；不得靠额外 system notice 驱动，也不引入无条件失败递归重派。以正常完成、未入模型失败、取消、重启恢复和 callback 重放验证同一机制。若现有契约无法满足，携具体设计取舍核定，不叠加兼容流程。
+
+原文核验（operator 纠正来源 `0001791441454334-000128-0eec0c1a`）：以公开 #1398 冻结 HEAD `fd4bd45d0857bddaf49dfbe6f41b6e2d160ef57e` 中 `docs/architecture/message-delivery-handling-handoff-audit.md` 为依据，其最近提交 `f426fb7902837d95286ea98207ef39afb038106c` 日期为 2026-09-21，早于此次提醒。
+
+- §1.2 第5/9条、§2 第4–6步：admission 先建立固定 response，成功/失败/取消原位终局，具体结果唯一由关联 response 表达。
+- §1.3、§7.6：failed 的 exact `a2a_failure` wake 引用既有 failed response，是幂等控制边，不创建第二条结果或递归 fail-back。
+- §2.5：取消保留原正文并在同一 bubble 表达原因，不追加第二条 system chat；§2 第5步与 A65：内部 compact/session rollover/continuation 不新增主生命周期对象。
+- ADR-043 D2 同样明确失败传播直接引用原 failed response，不复制正文、不创建第二条失败通知。
+
+因此本轮缺陷归因为原设计未贯彻、旧路径残留及整合审计遗漏；不得标记成 operator 改目标或新 feature。原 RFC §7.5 示例仍有“failed 不自动唤醒”的旧行，与同文 §1.3/§7.6 的 exact failed wake 冲突，需按明确既定失败传播契约机械校正文档，不据此重开产品设计。
