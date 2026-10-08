@@ -68,8 +68,9 @@ operator experience：
 2. **Queue 修改**：Steer add/remove、整条撤回等先提交 durable Queue mutation，再 touch 对应 view item。未提交或
    输掉并发的操作不能留下 view 变化。尚未 actual dispatch 的 remove 由 view 保留 `withdrawn` 说明；
 3. **actual admission**：per-thread drain 按 comparator 顺序领取 source entry；普通 drain 的领取单位是完整 source
-   entry，只有本轮完整 pending target set 都可 admission 时才一次并发 fan-out。任一 sibling 忙碌时，本次尝试
-   无副作用返回，entry 的 `targets[]` 与顺序均不变；enqueue/cutover/执行终局会再次触发 try-drain。领取成功后，
+   entry，只有本轮完整 pending target set 都可 admission 时才一次并发 fan-out。任一 sibling 忙碌（或该 entry 的
+   重试尚在等待）时，这条 entry 原样等待，`targets[]` 与顺序均不变；drain 继续看后面的 entry：与它没有共同目标的
+   可以先启动，有共同目标的仍排在它后面（KD-25）；enqueue/cutover/执行终局会再次触发 try-drain。领取成功后，
    每个 target 先建立自己的持久 processing response receiver，并给实际输入 source 写 exact dispatchRef，再独立从
    `targets[]` 退役并启动 provider。Steer 或未读接管是显式 singleton cutover，可以只领取一个 exact target；
    它们不把普通 drain 改成空闲子集循环。不同 source 不在 Queue admission 中合并；view 只 touch 对应
@@ -191,6 +192,12 @@ operator experience：
   `CapabilityTipStrip`（无 tip 时为最小处理中动效）。它不是另造的 system/provider 状态消息；正文开始
   stream 后原位升级为 response 气泡，terminal 仍更新同一 identity。消息操作 dock 归真实气泡所有；只有
   lifecycle tip、尚无正文气泡时不得在作者行旁悬浮引用/复制按钮。
+- 这一轮流式输出的每条事件（文本、工具调用/结果、思考、富文本块、用量、done、error）都带该 response 的
+  `messageId`，回调生成、挂在本轮回复上的富文本块也一样；前端按 ID 写进这条消息，本地还没有时按这个 ID
+  建。前端不自造气泡 ID、不猜哪个是实时气泡、不改名或合并气泡；历史合并也只认 ID。草稿只是处理中
+  response 的可恢复正文，历史接口把它并进同 `lifecycle.invocationId` 的处理中 response，不另出记录。
+- `post_message` 永远是一次性入库、自带 ID 的独立消息，和本轮 response 是两条输出；不存在"用 post 替代
+  最终回复"的模式（已删除 `streamDisposition=replace_final`）。
 - 成功、失败、取消和中断都必须有一个可关联的 terminal response 气泡；不得另追加 system row、
   provider notice 或第二条状态消息表达同一结果。
 - 结构化 `system_info warning` 默认是 provider/routing 诊断，留在日志/telemetry，不进入对话。只有显式标记
@@ -644,6 +651,11 @@ Why: 持久真相边界不变；view 只让成员在自己的后续自然 turn �
 | KD-18 | 「能否引导当前 invocation」与「当前可见 provider turn 是否精确读取」是两个独立声明 | `activeInvocationGuidance` 只回答 concrete adapter 能否非中断地追加到当前 invocation；`deliverySemantics` 只回答 provider 何时读取。Claude Agent SDK 显式声明前者 `supported`、后者 `queued_internal_turn`：允许「引导回复」，但绝不冒充当前可见同轮已读取。API admission、catalog 与 Web 只消费前者决定可用性，展示层消费后者说明精度 | 2026-09-20 |
 | KD-19 | 内部协议诊断只进入 telemetry/private evidence，不先写 History 再由 API/Web 隐藏 | 展示层屏蔽不能修复错误的生产边界；新代码停止生成 `routing-guard-failure`，API 读取过滤只保留为旧版本存量兼容 | 2026-09-20 |
 | KD-20 | terminal 后的任何显式路由凭据永远开启新 active hop；只有无行首 `@`、无 structured `targetCats` 的礼貌文本可 quiet ACK | 文本与结构化目标都是明确路由指令，生命周期投影不能静默吞掉；新的 generation 与统一 loop-streak 足以防止 ACK 乒乓 | 2026-09-20 |
+| KD-21 | 流式草稿的生命周期跟随 response R：草稿不设过期时间；R 进入任何终态（完成、失败、停止、中断，含重启收尾与僵死回收）时，先把草稿中已输出的内容写进 R 并提交终态，提交成功后才删除草稿；提交失败则保留草稿供重试。重试入口是 response-pending 账本：子轮写入终态时在同一原子操作里进入账本，R 确认终态后才移出；每次启动都会结算账本里上一个进程留下的子轮，所以 R 提交失败、或子轮已终态而 R 尚未提交时崩溃，都会在下次启动收尾。草稿能否公开看子轮上持久的 `outputFence`，每个子轮创建时都写明：不受 action fence 约束的是 `open`，受约束的是 `gated`。gated 子轮只有 fence 放行（`allowed`）后，结算路径才用草稿正文；route 放行后先把 `allowed` 写进子轮、再提交 R，写入失败就不提交，按执行失败收尾。fence 拒绝（`rejected`）的输出，在任何路径上都收成 interrupted / `output_commit_rejected`，正文为空；拒绝判定同样先写进子轮、再提交 R，所以保密不依赖“先删草稿”。读不到 fence 时一律不公开。升级前旧版本写的子轮没有这个字段：按其父 invocation 记录的 action lease carrier 判定，`none` 可公开，`action_successor` 视为 gated，父记录读不到时不公开；父就是自己的子轮没有派发，不受 fence 约束 | co-creator：正常的消息一定会进入终态，草稿应随 R 结束，而不是靠计时器过期。此前重启与僵死回收都不收 R，300 秒后草稿过期会丢掉这一轮已输出的内容（铁律 5：用户可见数据默认持久化） | 2026-09-23 |
+| KD-22 | 超时归一：每个 dispatch 成员只有一个超时，即 `CLI_TIMEOUT_MS` 内没有任何实际输出（进程占用 CPU 时有上限地顺延）；触发后走与「停止」相同的路径停掉该成员，R 收成失败、原因为超时并附诊断；只停超时的成员，同一轮其他成员不受影响 | co-creator：超时是 dispatch 执行失败的一种原因，应按正常失败流程处理。此前 CLI 层与 2× 外层各自收尾：CLI 超时的 R 原因记为 `provider_error`；外层超时时路由看不到超时，provider 静默退出时 R 甚至记为已完成，与 TurnExecution 的 `invocation_timeout` 不一致 | 2026-09-23 |
+| KD-23 | 不再按草稿更新时间判定「僵死」：「正在处理」只看 R 是否处理中、当前进程是否持有这一轮；删除按 `draft.updatedAt` 的新鲜度判断、僵死分类与 60 秒心跳定时器 | co-creator：报僵死不会结束这一轮，用户只能干等或手动停止；卡住的一轮由 KD-22 的超时收成终态，服务重启由 KD-21 的启动收尾处理 | 2026-09-23 |
+| KD-24 | `CLI_TIMEOUT_MS` 代码默认值在本 PR 保持 0（F118 KD-7）；「默认 60 分钟没有任何输出即超时」作为推翻 F118 KD-7 的独立提议，在 KD-22 合入后提交上游维护者；`.env.example` 与配置文档里「默认 30 分钟」的旧注释随 KD-22 更正 | co-creator 同意：默认值影响所有未配置的部署，需上游决定。F118 KD-7 当时误杀的是 7 分钟的卡顿保护，正常的长时间静默在分钟量级；KD-22 之后超时是可以重发的普通失败，而卡死的代价是整晚空转 | 2026-09-23 |
+| KD-25 | 队列 drain 按 comparator 顺序扫描，启动第一条“完整 pending target set 此刻都可 admission”的 source；等待中的 source 只挡住后面与它有共同目标的 source，所以每个目标仍按 comparator 顺序收到 source；等待空闲 thread 的 targetless 输入挡住其后全部 source。扫描期间 owner 可能重排，领取前（中间没有 await）按当前 comparator 复核：排在被选 source 前面的只能是本次扫描已越过、且请求目标未变的 source，否则重新扫描。尝试结束时仍留在 Queue 的 source（交接前失败，或 actual-send 拒绝了部分目标）等到重试时间：取本次尝试中 route 回报的被拒目标 `automaticRetryAt`（targetless source 恢复后不再记得解析到的目标，所以不重新 preflight）与逐次翻倍的退避（10 秒起，最长 60 分钟）两者中较晚的时刻，到点由定时器触发 drain，其余 source 照常派发；这个等待是进程内状态，重启后直接重试 | fork soak（2026-09-24，C1 插件 thread）：给空闲 Fable 的复审请求排在 4 条给忙碌 kimi 的通知后面，一直派不出去；前一晚一次 preflight 拒绝后，整个 thread 停摆 11 小时，直到有新消息进来。严格队头（ADR-043 D4 原文）与“交接前失败就拒绝 drain”都是 #1398 相对上游的退化：上游 F175 跳过忙目标，#595 让失败的槽位 10 秒后自动恢复。UI 写着“自动调用可在 HH:MM 后重新尝试”，此前却没有代码按这个时间重试 | 2026-09-24 |
 
 ### Phase I（producer 统一登记表，2026-09-21）— 已收口
 
@@ -862,6 +874,430 @@ managed wake 的投递契约**，影响面是每只猫的 `hold_ball(wakeWhen)`�
   装配错误必须在编译期或装配期暴露，不能推迟到投递时。
 - **INV-I4** 信封自述事实（priority、timestamp、provenance）；admission 不得从载荷推断。
 
+### Phase J（第二批：KD-22～24 实现设计，2026-09-24）— 设计已复审（砚砚 `…1174`），J2 + J3 已由 kimi 审过（#189）
+
+基点 `69a60d7af`（KD-21 与 KD-25 已过跨族复审）。代码地图（锚点 @`72c6df162`）整理自两份只读普查，
+下文只写设计选择与理由。按[推进路线](../plans/2026-09-24-f117-1398-phase-roadmap.md)分两个 phase 落地，
+各自一个 fork PR：路线 Phase 2 = J2 + J3（KD-23），路线 Phase 4 = J1 + J4（KD-22、KD-24）。
+
+#### J1 · KD-24：只改说明
+
+`.env.example:66-68`、`docs/configuration/environment.md:63`、`environment.zh-CN.md:63` 里写的「默认 30 分钟」
+改为「默认 0，即不超时」；同步修正 `invoke-single-cat.ts` 里「30-min kill deadline」的注释、F254 文档与
+`FreshnessInvocationStateStore.ts` 头注释。代码默认值不变。
+
+#### J2 · KD-23 第一半：草稿活到它的 R 终局
+
+现状：Memory store 在读取时丢弃超过 300 秒的草稿；Redis store 在每次 upsert/touch 时设 300 秒过期。
+两条 route 的 60 秒定时器存在的唯一理由就是续这个过期。settlement 只按 id 读草稿，所以只删定时器、不删
+过期，任何静默超过 300 秒的一轮都会丢掉已输出的正文。二者必须同一个 commit 落地。
+
+- `IDraftStore` 删除 `touch` 与全部过期逻辑（Memory 的读时回收、Redis 的 `EXPIRE`、`DRAFT_TTL_SECONDS`）。
+  草稿只在 R 终局后被删除。
+- **草稿删除是一轮离开 response-pending 账本的前提**：
+  - `settleResponseFromDraft` 的 `no_response` 分支也要删草稿，再清账本；
+  - QueueProcessor 在 R 已终局、清账本前（`releaseSettledResponseTurn`），先删这一轮的草稿；
+  - route 自己的 fire-and-forget 删除保留，只作为提前清理。
+
+  这样删草稿失败、或进程在 R 提交与删草稿之间崩溃，这一轮都还在账本里，下次启动会再结算一次，所以不需要
+  额外的草稿扫描。升级前写入的草稿保留原有 Redis 过期时间，自然消失。
+- 删除 route-serial / route-parallel 的 60 秒定时器，以及工具阶段 flush 时的 `touch`。ball-custody 的
+  `invocation.heartbeat` 只保留由 flush 触发的那一份：静默阶段不再发心跳，J3 同时去掉按心跳判定「死球」的读法。
+
+#### J3 · KD-23 第二半：「正在处理」只看 R 与可核实的持有者
+
+- `getThreadLiveInvocations` 不再读草稿、不再有宽限窗口，也不再输出 `zombies[]`。一个成员算「正在处理」，
+  当且仅当它的调用记录为 running，并且有一个不依赖时间戳、可以核实的持有者：
+  - 本进程的 InvocationTracker 持有该成员的槽位，且 executionId 与记录一致（来源 `record+tracker`）；或
+  - 调用方取到的 CLI owner 快照里，有这个成员、这次执行的存活 owner，即它的 supervisor 进程仍在
+    （`record+owner`）。快照即使不完整，已列出的 owner 也是核实过的。
+
+  R 若已建立，还必须处于 processing（由 `live-invocation-projection` 过滤）。槽位在、记录还没置为 running 的
+  那几次 await 仍算正在处理（`tracker-only`）；追踪器说不出执行 id 的槽位也照样列出（`tracker-only`，不带
+  executionId，路由把它显示为 `unresolved:…`，停止照常可用，F295 已有这条契约）。删除的来源：`record+draft`、
+  `tracker+draft`、`parent+child-draft`、`record-only` 按时间给的宽限（`liveness_pending`），以及全部 zombie 判定。
+- **持久的 running 子轮本身不是持有证据**（砚砚 `…1174`）。CLI owner 快照不完整时，启动结算整段跳过中断
+  （`index.ts` 的 `cli_execution_owner_snapshot_incomplete` 分支），上一个进程的 running 子轮原样保留；
+  `InvocationOwnerReaper.classifyIndependentOwner` 也把有 running 子轮的执行判为 active。所以：
+  - **快照完整**：没有槽位、也没有存活 owner 的 running 子轮不算正在处理；
+  - **拿不到快照，或快照不完整**：无法核实 owner 在不在，running 子轮保守地代替 owner，成员仍算正在处理，
+    但标为 degraded（来源 `parent+child-execution`，reason `child_running_owner_unverified`）。能活过本进程的
+    owner，一定在本进程启动之前就开始了这一轮，也就建好了子轮，所以子轮是它唯一可用的替身；
+  - **快照不完整**（调用方取了快照，但读不全）：一条 running 记录如果槽位、owner、子轮都没有列出它，就按它的
+    目标成员保守列出（来源 `record-only`，reason `record_running_owner_unverified`，开始时间取记录的
+    `updatedAt`）。这是 AC-E7 已有的契约：真相未知时，控制面（执行条、「正在发生」、GET /queue）不能把 running
+    记录藏起来，要让用户停得了它。记录只要已经有一个成员被列出，就不再补列其他成员：这条执行在控制面上已经
+    看得见、停得了，其他成员不是已经结束，就是还在接力里排队，不该显示为正在处理；
+  - **调用方没取快照**（侧栏 presence、session seal 只问「这里有没有人在跑」）：槽位、owner、子轮都没有的
+    running 记录不算正在处理。
+- **为什么不单列「待对账」**：`…1174` 建议证据不全时显示「待对账」。这和 KD-10（co-creator 09-03：用户只有
+  运行 / 未运行两态，停止是唯一的用户动作）以及 AC-E7（退役「运行状态待确认」横幅）冲突，所以不新增这一态，
+  改为保守地显示为运行中：用户看得到它，也停得了它，停止在快照不完整时有界重试后按 failed
+  （`control_plane_unavailable`）终局（AC-E7）。它也不会无限挂着：下一次拿到完整快照，read-repair 就会收尾
+  （见下）。启动场景本来就不会挂着：`StartupReconciler.sweepRunning` 把上一个进程遗留的 running 调用记录一律
+  标成 failed（`process_restart`），不看快照也不看子轮，而这里要求调用记录为 running。
+- **快照从哪来**：classifier 只有一个入口 `resolveActiveInvocationsStrict`（及其 fail-open 包装）。
+  - GET /queue 和 active-execution 路由（执行条、「正在发生」拉取活跃执行时）在配置了 owner 服务时，把本次
+    请求的快照（`processOwnerSnapshotForRequest`，同一请求只读一次）传进来；同一份快照也用来把 owner 列为可
+    停止的候选，以及做 read-repair。
+  - 侧栏 presence 与 active-execution 服务的定性通道不取快照，按「无法核实」处理：running 子轮仍代替 owner，
+    但不补列没有任何证据的记录（见上）。这些调用方不为每次请求多跑一次进程表扫描。
+- **read-repair**（`resolveAndRepairLiveExecutions`，active-execution 路由读取时触发；本文较早的段落称它为
+  「GET /queue 的 read-repair」）：快照完整时，把「running 超过 30 秒（`DEFAULT_PRESTART_RESERVATION_TTL_MS`）、
+  本进程没有槽位、也没有存活 owner」的记录判为失败（`execution_owner_lost`），经 KD-21 的结算把 R 收成终态、
+  带上草稿正文。快照不完整时它不收尾任何记录。
+- **一只猫只显示一个槽位**：同一只猫可能同时有几条候选（例如旧执行的无法核实子轮，和本进程持有的新槽位），
+  取证据最强的一条：本进程槽位与存活 owner 最强，只持有槽位的预启动窗口次之，无法核实的子轮和记录最弱；
+  同一档取最早开始的一条。
+- **开始时间**：本进程槽位取它已绑定的 activeRun 的开始时间，也就是这一轮自己的开始；还没绑定时取占槽时间。
+  多猫接力时，槽位在接力开始时就被占住，用 activeRun 才不会让后接棒的成员从整条接力开始计时（F194 Phase Z4）。
+- **pre-start 的投影**：QueueProcessor 只在 `invocationTracker.startAll` 成功之后才把记录置为 running
+  （`executeEntry`：`startAll` → 可能停在 session-seal 等待 → `update(status:'running')`）。所以：
+  - **只持有 processing 预留**（记录仍是 queued）：不是 running，不进这个投影（今天也不进），
+    read-repair 只扫 running 记录，同样碰不到它；
+  - **槽位已被持有、R 还没建立**（例如 invoke-single-cat 在等 session custody）：由槽位单独证明，
+    不需要 R，也不受时间影响。
+  read-repair 对 running 记录的持有者检查（tracker 槽位或 CLI owner）因此覆盖所有合法持有者：超过 30 秒、
+  但槽位仍被持有的慢启动不会被误收尾。
+- 口径与 `thread-execution-situation` 使用的 `hasExactLifecycleProcessingDispatch`（R processing + 本进程
+  active run）一致；那个原语按 source message 取数，classifier 按调用记录取数，所以共用判断规则，不共用入口。
+- 消费方（GET /queue 的 `activeInvocations`、active-execution 路由、侧栏 presence）的返回形状不变，
+  只是不会再因为「草稿久未更新」把正在跑的一轮藏掉。
+- 删除 `record_zombie_detected` / `liveness_pending` 事件（连同 classifier 的 onLog 钩子）。值班简报不再把运行中的
+  调用列为死球：只有 failed 记录是死球，running 一律计入 healthy，也不再贡献「心跳年龄」（F233 的简报已于
+  08-17 sunset，球权事件账本保留）。
+- **保留**真正收尾的路径：`InvocationOwnerReaper` + `reconcileZombies`（持久化的 reason
+  `zombie_record_detected` 保持原名，兼容历史数据），KD-21 的启动结算，read-repair。三者都不读草稿。
+- **待砚砚确认、本 phase 暂不实现的缺口**（Phase 1 就存在）：启动时被保留的 running 子轮（快照不完整，或
+  owner 还活着），父记录已被 `sweepRunning` 标成 failed，子轮不进 response-pending 账本，它的 R 会一直停在
+  processing，执行条上也没有它，只能等下次重启、且 owner 已不在时才结算。提议：子轮本身保持 running（保住
+  callback 授权），R 立即按 KD-21 结算（中断，带草稿正文）。理由是 R 的流式正文只由 API 进程里的 route 写入，
+  重启后不会再有新内容进这个 R；CLI 若还活着，它通过 callback 发的是新消息。需先核实没有 carrier 能跨重启
+  接回同一轮的流式输出（Codex app-server 的 host 复用只在单个进程内）。
+- **测试**：classifier（tracker、owner、快照完整与不完整时的子轮、快照不完整时没有任何证据的记录、说不出
+  执行 id 的槽位、预启动窗口、范围隔离、存储失败上抛、开始时间）；GET /queue 与 /messages 配对（只有草稿时 /messages 仍显示处理中的 R、/queue 不列这个成员；两个
+  父执行时本进程槽位胜出，读取不收尾任何一方）；侧栏 presence（只有草稿不算 working；tracker 空但子轮在跑
+  仍算 working）；值班简报（failed 才是死球）。
+- F194 文档写一条 post-close 更正（F194 已于 05-12 完成，本实例没有 owner thread）。
+
+#### J4 · KD-22：每个成员只有一个超时，触发后走 Stop
+
+现状有三层，各自收尾，结果互相矛盾：
+- **CLI 层**（cli-spawn 的无输出定时器，CPU 忙时有上限地顺延）：R 为 failed，reason 是 `PROVIDER_EXECUTION_FAILED`；
+- **外层 2× 定时器**（invoke-single-cat）：R 为 failed/`provider_error`；在等 session custody 时，R 甚至记为 completed；
+- **carrier 自带的定时器**（Codex app-server 空闲中断、tmux 空闲、AGY `--print-timeout`）：只发 status，R 记为 completed。
+
+TurnExecution 又是 `invocation_timeout`；重启后的 settlement 再把它抄进 R。
+
+- **唯一的定时器放在 invoke-single-cat**：它对每个成员、每种 carrier 都只跑一次。只有实际输出才重置，
+  判定按语义，不只看 `AgentMessage.type`：
+  - **算输出**：text、tool_use/tool_result、thinking，以及 `system_info` 里载荷为 thinking 或 rich_block 的事件；
+  - **不算输出**：provider_signal、liveness_signal、status，以及其余 `system_info`（liveness_warning、
+    timeout_diagnostics、invocation_created、routing 回执等）。
+- **CPU 顺延**：触发时若成员进程正占用 CPU，则顺延，但距上一次实际输出总共不超过 2×`CLI_TIMEOUT_MS`。
+  上限按「距上次输出」计，而不是现在的「距 spawn」：否则一个跑了很久、一直有输出的成员，后面就再也拿
+  不到顺延。进程状态从 cli-spawn 的 liveness probe 按 invocation 读；没有进程号的常驻 carrier 不顺延。
+- **触发 = Stop**：与「停止」走同一个成员级取消，abort reason 不同。QueueProcessor 经 route options 给
+  invoke-single-cat 注入成员 stop hook `stopMember(catId, executionId, reason)`。`executionId` 必须是
+  **父执行 ID**，即 invoke-single-cat 的 `executionParentInvocationId`（`params.parentInvocationId`，
+  QueueProcessor 用它 `startAll` 占槽），不是 invoke-single-cat 自己在 `registry.create` 得到的子轮 ID。
+  传子轮 ID 会让下面的比对永远不等，超时静默失效。实现为：
+  1. 同步比对 `invocationTracker.getExecutionId(threadId, catId) === executionId`。不一致（槽位已换成
+     下一次执行）就什么都不做，只记日志；比对与下一步之间没有 await；
+  2. 调用 `invocationTracker.cancel(threadId, catId, ownerUserId, 'timeout')`。签名是
+     `(threadId, catId, requestUserId?, abortReason?)`；`ownerUserId` 是这次执行的 owner，所以 tracker
+     的 owner 校验成立。只 tombstone 这一个成员的 controller。
+
+  abort 之后由这次执行自己收尾：invoke-single-cat 的 `abortableNext` 在 provider 不再产出时也会结束；
+  cli-spawn 在 abort 时杀进程；route 提交 R；QueueProcessor 释放槽位。Stop 路由另外做的锁释放、取消广播、
+  槽位释放，是为可能已经卡死的执行准备的；超时发生在仍然存活的执行内部，这些由正常收尾完成，
+  不重复广播「已取消」。测试走真实派发（父执行 ID 与子轮 ID 不同），必须断言：这个成员真的被取消，
+  tombstone 的 reason 为 `timeout`，同一轮的其他成员照常跑完；旧一轮遗留的定时器触发时，不能取消后来
+  占到同一槽位的新一轮。
+  abort reason `timeout` 被映射为：
+  - R failed / `timeout`；
+  - TurnExecution failed / `timeout`；
+  - Queue 结果为 failed，不再被当成 `canceled_by_user`；
+  - routing 信号计为 `provider_timeout`。
+
+  超时诊断在 abort 之前由定时器留存，R 提交时附上，因为 abort 之后到达的事件会被 route 丢弃。
+- **删除**：外层 2× 定时器与 `invocation_timeout` 路径；cli-spawn 为 invocation 设的无输出定时器与
+  `__cliTimeout` 的超时产出（liveness probe 保留，供顺延判断）；Codex app-server 空闲中断、tmux 空闲、
+  AGY `--print-timeout` 这些由 `CLI_TIMEOUT_MS` 驱动的定时器；#774 对超时的自愈重试。统一超时走 Stop，
+  #774 本来也看不到它；tmux 首事件看门狗在 resume 旧 session 时的重试另算，见下表。
+
+**与 `CLI_TIMEOUT_MS` 无关、也能结束成员的计时器**（普查 @`69a60d7af`）：
+
+| 计时器 | 量的是什么 | 默认；`CLI_TIMEOUT_MS=0` 时 | 触发后 R | 类别 |
+|---|---|---|---|---|
+| A2A 请求（`A2AAgentService`） | 整个 `tasks/send` 往返；不流式，等于整轮 | 120 s，生产不可配；照常生效 | failed / `provider_error`；远端任务不取消 | 整轮预算 |
+| Claude bg carrier | 从开工到终态的墙钟 | 30 min；照常生效 | failed / `provider_error` | 整轮预算 |
+| ACP idle stall（及其 +60 s 兜底） | 两次 session 更新的间隔 | 池 idleTtl，默认 30 min；照常生效 | failed / `PROVIDER_EXECUTION_FAILED`（`stream_idle_stall`） | 重复的无输出超时 |
+| Antigravity stall | 没有新步骤 | 60 s，最多再轮询 2 次；照常生效 | failed / `PROVIDER_EXECUTION_FAILED` | 重复的无输出超时 |
+| Claude interactive-PTY 静默 | 两次 hook 事件（只有 Stop / PostToolUse）的间隔 | 5 min；照常生效 | **completed**：静默被当成完成 | 重复的无输出超时，且被报成成功 |
+| tmux 首事件 | 建 pane 到第一条可解析的 JSON | 30 s；照常生效 | failed / `PROVIDER_EXECUTION_FAILED`；resume 时 #774 换新 session 重试一次 | 启动看门狗 |
+| 其他启动期调用 | ACP setup 60 s、Codex app-server socket 10 s / 握手 3 s、tmux 命令 5 s | 照常生效 | 启动失败 | 启动看门狗 |
+
+上表记录 Phase 4 当时的普查基线，不再是「等 co-creator 决定」的待办。09-29 G1 候选实现按 KD-22 继续统一：
+A2A 的整个 `tasks/send` 请求预算、Claude bg 的整轮墙钟预算、ACP prompt 的 idle/budget/request
+计时、Antigravity 的无步骤 stall、interactive-PTY 的 hook 静默成功兜底，不再作为成员运行时的独立截止时间。
+`CLI_TIMEOUT_MS=0` 时，运行中成员没有自动的无输出超时，可以由用户手动停止；这正是 KD-24 的默认值语义。
+启动、连接、控制请求的有限等待与空闲进程池回收仍保留。远端 A2A 的本地 fetch 中止不等于远端任务取消，
+不能由此宣称远端已经停止；缺少已确认的远端取消能力时，错误与交付记录必须如实标出这个边界。
+
+G1 候选实现的输出与取消边界（未审查、未合入；不能替代 alpha 验收）：
+
+| 接入 | 实际输出依据 | 统一超时 / Stop 的传播与停止对象 | 终局证据与未确认边界 |
+|---|---|---|---|
+| A2A | 同步 `tasks/send` 返回的 artifacts；等待期间没有流式输出证据 | 成员的 AbortSignal 中止对应 fetch；不影响其他成员的请求 | 只有 completed 能报成功；submitted/working/input-required 等不补成功 done。本地中止报错误，明确远端任务终止未确认；当前 adapter 没有 `tasks/cancel` 请求/确认路径，不以 HTTP 断开冒充远端停止 |
+| Claude bg | transcript 的文本、工具、thinking；state detail 不算实际输出 | 成员信号结束轮询并发 `claude stop <shortId>` | 原生 done/error 是终态；stop 失败或超时保留 owner manifest 供恢复，不能当作已经停止；不再有整轮 30 分钟预算 |
+| Claude interactive-PTY | hook sidecar 的 PostToolUse 和 Stop 输出 | 成员信号调用对应 driver.cancel，finally dispose 其 pane/session | 只有 Stop hook 能证明正常完成；没有 hook 时继续等，不能因静默产出 completed |
+| ACP stdio / HTTP | session/update 经统一 transformer 产生的文本、工具、thinking | 只给当前 active session 发 session/cancel；本地 pending prompt 结算，未确认 session 封存、非多路复用 carrier 退役 | 显式取消为 SESSION_CANCELLED，不伪报 idle stall；协议取消是通知，没有远端停止确认。进程池 idle TTL 与活跃 prompt 分离 |
+| Antigravity bridge | trajectory step 经 transformer 产生的实际输出 | 成员信号传到对应 cascade 的 polling；不停止另一成员的轮询 | 当前 adapter 只中止本地观察，明确 remote cascade termination 未确认；没有整 cascade 停止确认，不能宣称远端已停。真实 provider error、有限 RPC 连接重试仍保留 |
+
+默认 0 关闭的是生产 dispatch 的唯一成员级无输出计时。ACP 的直接 client 测试/显式调用可保留正值 watchdog，
+生产 `AcpAgentService` 总是为活跃 prompt 传零；Antigravity 的正值 pollTimeoutMs 仅为测试 seam。
+Claude bg 的 `JobEventConsumer.waitForTerminal` 是无生产调用方的独立 helper，未改其显式等待契约。
+本批不新增远端停止协议；A2A、ACP 和 Antigravity 的远端确认缺口必须进入审查与验收记录，不能以统一的本地失败终态掩盖。
+
+G1 复审修订：A2A / Antigravity 在远端发送尝试前同步登记本次 task/cascade 标识；
+取消时由串行/并行路由收尾，将 `metadata.cancellationDiagnostics` 和「本地等待已取消、远端停止未确认」正文
+写进同一 canonical R。不能依赖取消后 provider 再 yield 一个错误：`abortableNext` 可能已经结束迭代。
+超时仍为 failed/timeout，用户 Stop 仍为 canceled/user_cancel；已有正文保留，不另造 Error 气泡。
+发送前取消与正常完成不生成取消诊断。该候选的代码/回读回归不能替代隔离 alpha 的实际页面验收。
+
+#### J.不变量
+
+- **INV-J1** 草稿存在 ⇒ 它的 R 处于 processing，或这一轮仍在 response-pending 账本里。反过来不成立：
+  processing 的 R 可以还没有草稿，也可能已被 route 的提前清理删掉。一轮离开账本之前，必须已确认 R 终局
+  （或确认没有 R），并且草稿删除成功。
+- **INV-J2** 「正在处理」只由 R 的状态与可核实的持有者（本进程槽位，或 owner 快照里的存活 CLI owner）决定，
+  不读任何时间戳、也不读草稿；无法核实 owner 时，running 子轮代替它，成员仍显示为运行中（KD-10 只有两态）。
+- **INV-J3** 运行中成员的无输出超时由 `CLI_TIMEOUT_MS` 唯一决定（0 = 不自动超时）；它只能以 Stop 的方式
+  结束成员，并且只结束这一个成员。接入层仅保留启动、连接、控制请求的有限等待和空闲池回收，不能再把
+  整轮墙钟或无事件间隔计时作为第二个成功/失败终局。A2A 远端停止的确认另有能力边界，不得把本地请求中止
+  当作远端任务已经结束。
+
+#### J.设计复审结论（砚砚 `…1156`，据此修订）
+
+1. **#774 对超时的自愈重试随 J4 删除**：它在 resume 旧 session、没有实质输出就超时时，吞掉超时并重跑一次。
+   统一超时之后，超时是可以重发的普通失败，不应被静默吞掉。tmux 首事件看门狗在 resume 时的重试不在此列：
+   它恢复的是根本没起来的成员（见 J4 表），本批保留，请复审确认。
+2. **J3 的 600 秒宽限可以去掉**，前提是上文的 pre-start 论证与那两条测试成立：running 记录必然已持有槽位；
+   只持有预留的是 queued 记录。
+3. **J2 不设兜底过期**：删稿失败必须留在持久账本里，`no_response` 同样先删后清，并有重启重试的测试。
+   这些已在 J2 实现。
+4. **分两轮交审**：J1+J2+J3 一轮，J4 一轮。
+5. **KD-25 的已知边界（砚砚 P3，`…1122`）**：领取前的同步复核与 Redis Lua `claimPrefix` 之间隔一次存储往返。
+   这期间先提交的重排不被 Lua 校验，所以还不能宣称严格线性化保序；旧的队头检查也有同样窗口。若要求严格，
+   需在 claim 的原子边界校验队列 revision 或前驱。本批不改，只记录。
+
+#### J.设计复审结论（砚砚 `…1174`，据此修订）
+
+1. **J4 的 stop hook 传父执行 ID**：见 J4「触发 = Stop」；测试用父子 ID 不同的真实派发，并测旧一轮的定时器
+   不能取消新一轮。
+2. **持久 running 子轮不能单独证明有人持有**：J3 改为只认本进程槽位或 owner 快照里的存活 owner；快照完整而两者
+   都没有时不算正在处理。快照不完整时，没有任何证据的 running 记录也保守列出，保持 AC-E7 的契约。复审建议的「待对账」与 KD-10 / AC-E7 冲突，没有采用：无法核实时保守地显示为运行中，
+   由停止（AC-E7）或下一次完整快照时的 read-repair 收尾（见 J3「为什么不单列『待对账』」）。这一取舍待砚砚复审确认。
+
+#### J4 实现（路线 Phase 4，2026-09-27，基于 develop_base `5bd5e008e`）
+
+按上文 J4 落地，代码锚点对照过：外层 2× 定时器、cli-spawn 的无输出定时器、#774、Codex app-server 空闲中断、
+tmux 空闲、AGY `--print-timeout` 都还在设计写的位置；生产派发只有 QueueProcessor → `routeExecution` 一个入口，
+stop hook 从这里注入即覆盖全部。和设计的出入与补充：
+
+- **定时器**：`MemberOutputTimeout`（`member-output-timeout.ts`）在 invoke-single-cat 启动，只有 route 传入
+  `onMemberTimeout` 时才布防（生产都经 QueueProcessor 的 `stopMember`）。顺延看进程是否仍在占 CPU
+  （`ProcessLivenessProbe.activity()`，按两次采样的 CPU 增长，与最近是否有 stdout 无关），由 cli-spawn 按 invocation
+  登记（`process-activity-registry.ts`）。没有登记进程的接入不顺延，其中包括 **SDK 接入**：它的引擎子进程由 SDK
+  自己拉起，拿不到进程号。以前 SDK 接入只受外层 2× 定时器约束（3001 上是 60 分钟），现在是 `CLI_TIMEOUT_MS`
+  （30 分钟）无输出就停；Claude Code 的 Bash 工具本身 10 分钟封顶，更长的命令本来就该交给托管命令。
+- **触发 = Stop**：定时器触发时先把诊断交给 route（abort 之后的事件会被 route 丢弃），再由 QueueProcessor 的
+  `createMemberTimeoutStop` 同步比对 `getExecutionId === executionId`（父执行 ID）后 `cancel(…, 'timeout')`。
+- **结局**：R 的终态规则收成一处 `resolveResponseTerminal`（原来 route-serial 两份、route-parallel 一份），`timeout`
+  → failed / `timeout`，R 带 `timeoutDiagnostics` 和失败文字。R 提交后 route 补发一条带诊断的 error 事件，
+  QueueProcessor 因此把该成员记为失败：`resolveFinalStatus` 与 disposition 的 `isCanceled` 都不把 timeout 墓碑
+  算作用户取消。TurnExecution failed / `timeout`，路由信号 `timeout` → `provider_timeout`；旧记录里的
+  `invocation_timeout` 仍按 `provider_timeout` 读。
+- **删除范围**：cli-spawn 与 tmux 的超时不再默认读 `CLI_TIMEOUT_MS`，只给显式传 `timeoutMs` 的调用（例如 opencode
+  自动审批探测）；成员派发从不传。AGY 不再传 `--print-timeout`（其默认 0，等整轮结束）。Codex app-server 不再传
+  空闲超时，客户端的 `timeoutMs` 选项已无调用方，留待后续清理。
+- **#774**：重试条件收窄为「未收到首帧」的启动超时（`isCliStartupTimeoutError`），保留 tmux 首事件看门狗在 resume
+  时的重试；成员开始输出之后的静默不再被吞掉重跑。
+- **alpha 自测补丁（09-27）**：在 alpha（develop_base `900d87835`，`CLI_TIMEOUT_MS=60000`）里让 codex-sol 执行
+  `sleep 150`：它在距最后一次输出 120 秒时被停下，R 为 failed / `timeout`，诊断 `silenceDurationMs=120001`，之后同一只猫
+  照常应答。发现并修了一处：超时成员原本在串行时没有 done、在并行时 done 不带 errorCode，QueueProcessor 只能走抛异常的
+  兜底路径，于是对话底部多出一行「Error: 响应超时…」，还会推送「猫猫出错了」。现在超时成员以一个 errorCode 为 `timeout` 的
+  done 收尾，和 provider 失败的 done 带 `PROVIDER_EXECUTION_FAILED` 一样，由 QueueProcessor 直接记为失败。
+- **CLI 接入实际按 2× 顺延**：同一次自测里，Codex CLI 空等时每 60 秒约有 400ms CPU，超过存活探针 50ms / 60s 的「忙」
+  门槛，所以 CLI 接入的成员实际要静默 2×`CLI_TIMEOUT_MS` 才会停。这是 F118 原有的门槛，旧的 cli-spawn 计时器也按它顺延；
+  这次不改，若要让顺延只给真正在算的进程，另议门槛。
+
+
+### Phase K（路线 Phase 2b：Claude Agent SDK 接入，2026-09-25）
+
+来源：Landy `…000158` 问，为什么 SDK 接入的布偶猫也经常显示「已完成，没有返回可显示内容」。SDK 接入
+（`ClaudeSdkAgentService`）是 #1398 新增的（`f426fb790`）：每轮调用一次 `query()`，带 `resume` 恢复会话，
+收到最后一个结果就关闭 query，引擎进程随之退出，所以一轮里开的后台任务活不过这一轮。
+
+#### K1 · 服务方自己起的一轮，不核销用户的输入（`cfd2f0225`）
+
+- **证据**：09-25 06:35、07:05 两轮在任何模型调用之前就结束了。用 SDK 0.3.280 在隔离目录复现
+  （`f117-notes/phase2b-sdk-task-notification`）：上一次 query 退出时杀掉的后台任务，会在恢复会话时先以一个
+  零轮次的 result 交付通知（`origin.kind: 'task-notification'`，没有输入身份，`queued_turn_count: 0`），之后才
+  跑用户的输入。`ClaudeSdkTurnInputState` 对「没有输入身份的结果」有一个兼容兜底，把它当成了用户输入的结果：
+  输入被关闭，`ClaudeSdkAgentService` 随即退出，用户的输入从未到达模型。
+- **规则**：结果的 `origin` 指向非 human 来源（任务通知、channel、peer）时，除非回写了我们输入的身份，否则
+  不核销任何输入；没有 `origin` 的结果保留原来的兼容兜底。这个结果的 `queued_turn_count` 是 0，按计数区分
+  不了，只能看 origin。
+- **测试**：按录下的事件流回放（task_notification → 零轮次 result → 回答 → 回答的 result）。修复前回答不出现，
+  修复后出现。
+
+#### K2 · SDK 接入的压缩要能被权威证明（A′，Fable `…000225`）
+
+- **现状**：F296（上游 `bc9ff2d39`，08-23）规定，无法权威证明的压缩让整轮失败（B4b、AC-B8）。能证明的只有
+  `print_sdk` 加三段钩子证明：callback registry 就绪、工作目录里有 project 的 PreCompact 钩子、本轮有 seal
+  观测。SDK 接入的 `compact_boundary` 已经是 typed 信号（复用 `transformClaudeEvent`），被判
+  `typed_event_unroutable` 只是因为 `resolveAuthoritativeCompactionSupport` 只认 `print_sdk`。09-25 07:24 opus
+  的一轮因此失败（`…000141`）。
+- **做法**：SDK 接入在 `query()` 的 `hooks` 选项里，进程内注册 PreCompact 回调。回调在 API 进程里执行，自带
+  `session_id`，调用与 `POST /api/sessions/seal` 相同的逻辑（抽成共享函数：按 cliSessionId 找到会话，按策略
+  记下本轮的压缩观测，经钩子路径推进 epoch，按 hybrid 策略判断要不要 seal），然后放行，不阻止压缩，与
+  `f24-pre-compact.sh` 一样尽力而为。这样三段证明都由载体自己给出：认证由构造保证（进程内调用，不走 HTTP
+  回调）；载体就绪是载体本身的事实，而不是工作目录里的文件；本轮观测就是这个回调写下的。动态证明通过之后，
+  再把 `agent_sdk` 加进 `resolveAuthoritativeCompactionSupport` 的 Claude 分支。
+- **动态证明**（KD-16，不能省）：在隔离目录里让一个真实的 SDK 会话压缩，手动 `/compact` 和自动压缩各一次，
+  确认四件事按顺序到达：进程内 PreCompact 回调 → seal 观测入账 → 流上的 `compact_boundary` →
+  `observeCompaction` 推进 epoch、下一代冷启动。同时验证 AC-B7：hook 和 stream 报告同一次压缩时保持冷，
+  不重复推进。
+- **不做**：B（证明不了时降级、不让整轮失败）和 C（给仓库加上 `.claude/settings.json`）。B 如果将来要做，只能
+  是「证明不了的 typed 事件规范化为 `unknown` → epoch+1」，而不是「不推进 epoch、只标记冷启动」：presentation
+  账本按 `scopeKey × contextEpoch` 分代，冷启动本身就意味着 epoch+1。这属于 F296 的契约变更，留给 sol
+  （09-28 恢复额度）和上游决定；A′ 落地后，SDK 接入不会再走到那个分支。print 接入在本工作目录同样会报
+  `hook_carrier_unavailable`，这是上游既有的行为，负责人是 sol。
+- **压缩后的上下文注入**：print 接入靠 `f24-post-compact-bootstrap.sh`（SessionStart:compact 钩子）完成。SDK 接入
+  改为进程内 `SessionStart` 回调：source 为 `compact` 时，返回与 latest-digest 路由相同的冷启动投影，作为
+  additionalContext。放进 K2。
+- **已观测到的事实**（SDK 0.3.280，`f117-notes/phase2b-sdk-precompact`，手动 `/compact`）：进程内 PreCompact 回调
+  带着 `session_id` 和 `trigger` 被调用，引擎**等回调返回之后**才开始压缩；压缩完成后，进程内 SessionStart
+  回调以 source `compact` 触发，它返回的 additionalContext 确实进入了模型上下文；两个回调都完成之后，流上才
+  出现 `compact_boundary`。所以回调写下的 seal 观测，一定早于运行时处理 `compact_boundary`。
+- **动态证明**（`2e775bc56`，`f117-notes/phase2b-sdk-precompact` 里的 `live-chain*.mjs`）：真实 SDK 引擎，加上真实的
+  seal、会话链存储、压缩 surface、epoch owner，边界按 invoke-single-cat 的判定函数判断。手动 `/compact` 和自动
+  压缩（连续 5 轮 `cat` 约 24KB 的文件，压缩发生在第 6 轮中途，这一轮照常结束）结果一致：PreCompact 回调经
+  seal 记下本轮观测，epoch 经钩子路径推进一次（epoch 1，cold，`context_compacted`）；`compact_boundary` 判定为
+  supported；流路径再观测时是 `context_compaction_replay`、`replayed: true`，不重复推进（AC-B7）。
+- **另记**（Fable）：opus 的会话在 80% 的 seal 阈值之前就被自动压缩了。seal 只在回合之间测量，一个很大的工具
+  结果可以一步越过阈值。如果这是常态，F211 的 seal 策略需要按单个工具结果设护栏；这是另一条线，先记着。
+
+
+### Phase L（路线 Phase 2c：投递失败不能丢信息，也不能永远重试，2026-09-26）
+
+来源：tracking 线程（`thread_mt1ds98ez28ocq81`）的 opus 交来的两个缺陷（本线 `…000289`；锚点已在 develop_base
+上核实，`…000293`）。两者都是 F117 把「投递失败就中止」改成不抛错的 `admitted: false` / `unrecorded` 之后才可达的；
+上游一直靠「投递失败就中止整次观察」这条隐含不变量兜底。
+
+#### L1 · 没送达的 wait outcome 不能被同一次观察顶掉
+
+- **链路**：`observe` 先 `drainOutbox`，把 pending 的 outcome 交给 `publishPending`。队列没收下时，`publishPending`
+  返回 `{kind:'unrecorded', reason:'queue_admission_unavailable'}`，不抛错，outcome 仍是 `pending`；`drainOutbox`
+  照样返回 `'drained'`。下一轮因为 `outbox.ids` 里已经有这个 id，`drainOutbox` 返回 `'empty'`，流程进入
+  `evaluate`。新的匹配经 `transitionWaitState` 写进 `automationState.waitOutcome` 这个单槽，把没送达的旧 outcome
+  覆盖掉（实证：F202 #1487 的 g5 被 07:46:30Z 的 g6 顶掉，两条审阅评论的提醒丢了）。存储层唯一针对 pending
+  outcome 的判断（`TaskWaitReplacement`）只拦「有 pending 投递时换 owner」，不拦这里的替换。
+- **规则**：`drainOutbox` 发布的 outcome 没被收下时，这次 `observe` 直接返回这个 `unrecorded`，不进 `evaluate`，
+  也不写入这次观察的 `collectorPatch`。outcome 保持 pending，下一次观察先重新投递它。
+- **调用方的游标**（审计结论）：四个调用方都靠 `collectorPatch` 或 `recorded:false` 保住游标，拿到 `unrecorded`
+  时不会跳过这次观察。ReviewFeedbackTaskSpec 只在 `recorded !== false` 时 `commitCursor`（`routeResultOf` 把
+  `unrecorded` 映射成 `recorded:false`）；IssueCommentTaskSpec 的 waitLifecycle 分支只经 `collectorPatch` 推进
+  `lastCommentCursor` / `lastDeliveredCursor`，双游标模式每次从投递游标往后抓取；ConflictRouter、CiCdRouter 的
+  游标也只在 `collectorPatch` 里。
+
+#### L2 · 永久冲突给终态和告警，不再无限重试
+
+- **现状**：`deliverConnectorMessage` 把 `conflict`（同一个 key 已经持久化了另一份 envelope，content 或
+  `source.meta` 不同，`PersistedQueueDelivery.matchesPersistedEnvelope`）和 `unavailable` 一并当成「没收下，下次
+  再试」。GitHub wait 的 outcome 因此大约每 30 秒重投一次、只打 warn，没有终态（#1487 实测失败 1,374 次）。
+- **规则**：
+  - `deliverConnectorMessage` 在没收下时带上 `rejection: 'conflict' | 'unavailable'`（新增字段，原有调用方不受影响）。
+  - GitHub wait 遇到 `conflict`：outcome 转成新的终态 `delivery: 'queue_conflict'`，打一次 error 级告警（带 taskId
+    和 outcomeId；投递键由 outcomeId 派生，上游 #1528 在前面加了任务 id），终态本身持久化在任务状态上；这次观察随后照常继续，后续观察可以产生新的
+    outcome。`unavailable` 仍按 L1 等下一次重试。
+  - 为什么终态不会丢信息：#1528（投递键带上任务 id）之后，同一个 key 冲突只可能是同一个 outcome 在升级前后渲染
+    不同，owner 已经收到过较早的那一份；#1528 之前跨任务撞键的那一类由 #1528 消除。
+- **同类审计**：会「保留游标、下次再试」的调用方只有 GitHub wait 和 IssueCommentRouter。IssueCommentRouter 在
+  生产上走不到：issue tracking 的工厂要求必须接 waitLifecycle，否则直接抛错（`github-schedule-factories.ts`），
+  而 waitLifecycle 分支在调用 IssueCommentRouter 之前就返回了。ConnectorRouter 没收下时会结束这次任务
+  （`onDeliveryBatchDone`），不会循环。这两处本 phase 不改。
+- **回退兼容**：`queue_conflict` 是 `WaitOutcomeDelivery` 的新值。所有读取方都只判断 `delivery === 'pending'`（另有
+  一处按 `'suppressed'` 选原因文案），没有穷举，也没有 schema 约束，web 端不读这个字段；旧版本读到它会当作非
+  pending，既不重试也不投递，等同终态。L1 不改持久格式。
+- **测试**：队列拒收时，同一次观察不顶掉 pending outcome、不写 `collectorPatch`，队列恢复后先送出旧的 outcome；
+  `conflict` 转终态且只投递一次、打 error 告警，之后的观察可以产生新 outcome；`unavailable` 仍保持 pending；
+  `deliverConnectorMessage` 对两种拒收给出正确的 `rejection`。
+
+
+### Phase M（路线 Phase 3：追加的消息读到了才算已读，2026-09-26）
+
+**依据**。Landy 的原话在 `…1294` 第三条引用评论里（引用评论，正文在 contentBlocks）：「我发的那条消息你要等下个turn才会真的
+进入到你的上下文吧？所以如果一条消息没有真实进入你的上下文是不是应该放在queue？这是现在开源社区的行为……不然我会认为你在我发送的
+那一秒就收到了」。当场的对齐见 `…1295`：进入模型上下文之前，消息留在队列里，显示「等待读取」；carrier 确认进入模型输入之后，
+再挂到这次回复下面，并标上读取时间。KD-18 把「能否引导」和「何时读取」分开声明。路线 Phase 3（astra 修订）另外规定：
+被接受但消费未确认的消息，不能再当作可派发的工作重新发送。调研见 `f117-notes/phase3-read-semantics/findings.md`。
+取舍经 Fable 商定（`…000134`；owner 从队列行改放到 ref/R，是 Fable 对 `…000201` 的判定）。
+
+**现状**。「（已读）」的判断条件是「R.inputMessageIds 含这条输入」（web `readTargetIdsFromHistory`）。追加路径
+（`QueueProcessor` 约 L940–1100）照抄了普通投递的顺序：先 `commitLifecycleAppendAdmission`，也就是写 R 成员、写
+dispatchRef、让队列行退役，然后才交给 provider。普通投递这样排是对的，因为 prompt 本身就是消费。追加路径照抄就错了：
+provider 接受不等于模型消费，于是 carrier 还没接受，界面就已经显示「已读」。
+
+#### M1 · 「已读」只看消费证据（按 carrier 定义）
+
+- **普通投递**：prompt 本身就是消费，现状不变。
+- **Claude SDK（`queued_internal_turn`）**：实测（`f117-notes/phase3-read-semantics/exp-fold.mjs`，SDK 0.3.280）表明，工具运行
+  期间追加的输入会在下一个工具边界并进**当前**回合；typed prompt 的回合只在 result 里回写它的 uuid。引擎另有一个未入类型的帧
+  `command_lifecycle {command_uuid, state}`，其中 `started` 表示「下一次 API 调用带着它」，不等于模型读到。规则（Fable）：
+  `started` 之后第一个主线程、非 ping、非 API 错误的 assistant/stream 帧才算读到，晚一帧，不会早；文档回写
+  `user_message_uuid(s)`（错误帧、错误 result 不算）作兜底。版本钉死的契约测试 + 实跑脚本
+  `packages/api/scripts/f117-sdk-read-evidence-contract.mjs`：SDK 升级若拿掉这个帧，测试会大声失败。
+- **Codex app-server（`exact_active_turn`）**：`turn/steer` 被接受只是承诺。steer 带上 `clientUserMessageId`，注入线程时的
+  `userMessage` item 以 `clientId` 回写它（codex-cli 0.156.0 实测：接受 +4.1s，8 秒命令结束后 +16.2s 注入）。item 出现的
+  时刻就是读取时间；app-server 不认识该参数时会忽略它，这时只是观察不到消费。
+- carrier 在被接受的 dispatch 结果上返回一个只 settle 一次、从不 reject 的 `consumption`：读到给 `{consumed, at}`，运行结束
+  仍无证据给 `{consumed: false}`。
+
+#### M2 · 接受时：dispatch 的状态住在 ref 和 R 上，不住在队列行上
+
+原设计让队列行保持 claimed 到读到为止，动手时发现它破坏 ledger 的四条既有事实：claim 是整行的（两只猫的追加第二次 claim 失败）、
+drain 只领 `queued`（兄弟目标被卡住）、claimed 超过 10 分钟会被当成僵尸、行级操作把 claimed 当 processing。更根本的是
+`targets[]` 的定义是「尚未投递」，接受即投递；「已交给、未读」不是队列 custody 的状态，而是这次 dispatch 的状态（Fable 判定）。
+- **接受前（和今天 admission 同一位置）一次提交**：输入的 ref 写成 `{phase:'dispatched', statusMessageId: R, dispatchedAt,
+  readState:'awaiting'}`；R 的 `handedInputEntryIds/handedInputMessageIds` 记下它，**不写** `inputMessageIds`。之后 ledger
+  目标照旧退役，claim 仍然短、多目标互不影响；崩溃残留的 claim 由启动收敛按 ref 退役。输入保持 `deliveryStatus: queued`，
+  不进时间线、不进任何猫的普通上下文。确定被拒（mismatch/closed/invalid）走今天的拒收补偿。
+- **canonical**：输入上的 ref 是真相，R 上的 handed 列表只是索引，二者同一次提交写入。不变量：ref 的
+  `readState:'awaiting'` ⇔ R.handed 含它；不一致就是 bug，不是修复对象。没有 `readState` 的 ref 仍是已读（旧数据、普通投递），
+  不从缺少 `readAt` 推断未读。
+- **读到时（`consumed`）一次提交**：R 上从 handed 挪进 `inputEntryIds/inputMessageIds`，ref 去掉 `readState`、补 `readAt`；
+  随后 `markDelivered`（时间线归位）、tracker 的 activeRun inputs 镜像。发布写是幂等的，失败由终局补齐。R 已终局时（读到的
+  提交和终局赛跑）照样升级为已读，因为证据说它被读了。
+
+#### M3 · R 终局时：settle 并发布，挂成「未读取」，不还回队列
+
+所有终局路径都会经过 `settleLifecycleResponseInputs`（包括启动时的 `settleResponseFromDraft`）。那里除了今天的
+`inputMessageIds`，还要处理 R.handed 里剩下的输入：ref 置为 `settled` + `readState:'unread'`，并且 **`markDelivered`**。
+只 settle 不发布的话，它会永远停在 `queued` 且没有 ledger 行，这是唯一能真正丢消息的口子。不变量（有测试）：R 终局后不存在
+`deliveryStatus=queued` 且无 ledger 行的 source。系统从不自动重投；启动对账也没有按 `deliveryStatus` 扫描「搁浅 source」
+再入队的路径（Fable 核过），所以「不重派」成立。
+
+#### M4 · 界面与操作
+
+- **队列面板 = pending targets ∪ handed 未读**，后者从 ref/R 投影，显示「等待读取 → 猫」。RFC
+  （`docs/architecture/message-delivery-handling-handoff-audit.md` L729）「Queue Panel 是排队阶段唯一可见位置」同步改成这个定义。
+- 回复下的「补充消息」：已读的带读取时间；R 终局后仍在 handed 列表里的显示「未读取」。「（已读）」仍只看 `R.inputMessageIds`，不动。
+- handed 输入上的撤回、Steer：SDK 没有撤出队列的接口，Codex 已注入，所以**明确拒绝**，说明「已交给 X，等待读取」，不静默。
+- Steer 弹窗的精度文案沿用 KD-18。**一个 phase 做完**，交 kimi 审。
+
 ## Review Gate
 
 The latest-main replay continuity and retirement account is recorded in
@@ -880,3 +1316,5 @@ evidence that main composition roots survived.
 - Phase I: 登记表（I.2）必须先于实现更新；跨族 reviewer 核验 INV-I1..I4 与 I.3 三项剩余收口，
   co-creator worktree 体验验收与 fork soak 仍是上游前硬门
 - Phase H: 「source dispatchRefs 语义不变 + caller runtime view + revision compare-and-clear + failed-only exact fail-back」实现与跨族复审已完成；co-creator 的完整 worktree UAT 仍覆盖初始多目标、Steer 增删、不可用目标、连续新 source、正常终局与 runtime restart
+- Phase J: 设计（J1–J4 与 INV-J1..J3）先过跨族复审再实现；J1+J2+J3 一轮、J4 一轮，各自 exact-HEAD 复审。
+  co-creator worktree 体验验收与 fork soak 仍是上游前硬门
