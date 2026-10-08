@@ -103,7 +103,8 @@ describe('live member carriers', () => {
       { expectedInvocationId: registration.invocationId, force: false },
     );
     assert.equal(appended.accepted, true);
-    assert.equal((await sdkInput.next()).value.message.content[0].text, 'append body');
+    const appendedInput = (await sdkInput.next()).value;
+    assert.equal(appendedInput.message.content[0].text, 'append body');
     assert.equal(interruptCount, 0);
 
     const steered = await registration.dispatcher.dispatch(
@@ -112,7 +113,8 @@ describe('live member carriers', () => {
     );
     assert.equal(steered.accepted, true);
     assert.equal(interruptCount, 1);
-    assert.equal((await sdkInput.next()).value.message.content[0].text, 'steer body');
+    const steeredInput = (await sdkInput.next()).value;
+    assert.equal(steeredInput.message.content[0].text, 'steer body');
 
     events.push({
       type: 'stream_event',
@@ -120,6 +122,12 @@ describe('live member carriers', () => {
       event: { type: 'content_block_delta', delta: { type: 'text_delta', text: 'done' } },
     });
     assert.equal((await output.next()).value.content, 'done');
+    events.push({
+      type: 'result',
+      subtype: 'success',
+      session_id: 'sdk-session-1',
+      user_message_uuids: [initialInput.value.uuid, appendedInput.uuid, steeredInput.uuid],
+    });
     events.close();
     assert.equal((await output.next()).value.type, 'done');
     assert.equal(registration.released, true);
@@ -217,7 +225,171 @@ describe('live member carriers', () => {
     assert.equal(registration.released, true);
   });
 
-  it('Claude SDK consumes the response for an Append accepted before the current result terminal', async () => {
+  it('Claude SDK does not let a provider-internal turn result settle the user input (task notification)', async () => {
+    const events = new AsyncInbox();
+    const registration = activeRunRegistration();
+    let sdkInput;
+    const service = new ClaudeSdkAgentService({
+      catId: 'opus',
+      model: 'claude-test',
+      l0CompilerFn: async () => 'compiled L0',
+      queryFn: ({ prompt }) => {
+        sdkInput = prompt[Symbol.asyncIterator]();
+        return {
+          interrupt: async () => {},
+          [Symbol.asyncIterator]: () => events[Symbol.asyncIterator](),
+        };
+      },
+    });
+
+    const output = service
+      .invoke('initial body', {
+        invocationId: registration.invocationId,
+        activeRunDispatch: registration,
+        toolExecutionPolicy: { mode: 'read_only', replayDeniedToolNames: [] },
+      })
+      [Symbol.asyncIterator]();
+    const initialized = output.next();
+    while (!sdkInput) await new Promise((resolve) => setImmediate(resolve));
+    const sent = (await sdkInput.next()).value;
+    events.push({ type: 'system', subtype: 'init', session_id: 'sdk-task-notification' });
+    assert.equal((await initialized).value.type, 'session_init');
+
+    // Recorded from SDK 0.3.280 (f117-notes/phase2b-sdk-task-notification): when the previous query's
+    // exit killed a background task, the resumed session first delivers the task's notification as a
+    // zero-turn result of its own, with no input identity, and only then runs the user's input.
+    events.push({
+      type: 'system',
+      subtype: 'task_notification',
+      status: 'stopped',
+      task_id: 'task-killed-at-exit',
+      session_id: 'sdk-task-notification',
+    });
+    events.push({
+      type: 'result',
+      subtype: 'success',
+      origin: { kind: 'task-notification' },
+      queued_turn_count: 0,
+      num_turns: 0,
+      is_error: false,
+      result: '',
+      session_id: 'sdk-task-notification',
+      usage: { input_tokens: 0, output_tokens: 0 },
+    });
+    events.push({
+      type: 'assistant',
+      session_id: 'sdk-task-notification',
+      user_message_uuids: [sent.uuid],
+      message: { id: 'answer', content: [{ type: 'text', text: 'PONG' }] },
+    });
+    events.push({
+      type: 'result',
+      subtype: 'success',
+      session_id: 'sdk-task-notification',
+      user_message_uuid: sent.uuid,
+      user_message_uuids: [sent.uuid],
+      queued_turn_count: 0,
+      num_turns: 1,
+      usage: { input_tokens: 10, output_tokens: 2 },
+    });
+
+    const rest = [];
+    for (;;) {
+      const next = await Promise.race([
+        output.next(),
+        new Promise((_, reject) => setTimeout(() => reject(new Error('invocation did not finish')), 1000)),
+      ]);
+      if (next.done) break;
+      rest.push(next.value);
+    }
+    assert.deepEqual(
+      rest.filter((message) => message.type === 'text').map((message) => message.content),
+      ['PONG'],
+      'the user input is answered, not swallowed by the notification turn',
+    );
+    assert.equal(rest.at(-1).type, 'done');
+    assert.equal(registration.released, true);
+  });
+
+  it('Claude SDK runs the compaction hooks it is handed in-process, and none otherwise (F117 K2)', async () => {
+    const sdkOptions = [];
+    const service = new ClaudeSdkAgentService({
+      catId: 'opus',
+      model: 'claude-test',
+      l0CompilerFn: async () => 'compiled L0',
+      queryFn: ({ options }) => {
+        sdkOptions.push(options);
+        const events = new AsyncInbox();
+        events.push({ type: 'result', subtype: 'success', session_id: 'sdk-hooks', usage: {} });
+        events.close();
+        return { interrupt: async () => {}, [Symbol.asyncIterator]: () => events[Symbol.asyncIterator]() };
+      },
+    });
+    const calls = [];
+    let failPreCompact = false;
+    const claudeCompactionHooks = {
+      async preCompact(input) {
+        calls.push(['preCompact', input]);
+        if (failPreCompact) throw new Error('seal store down');
+      },
+      async postCompactContext(input) {
+        calls.push(['postCompactContext', input]);
+        return 'COLD PACKET';
+      },
+    };
+    const drain = async (options) => {
+      for await (const _ of service.invoke('body', options)) {
+        // drain
+      }
+    };
+    await drain({ claudeCompactionHooks, toolExecutionPolicy: { mode: 'read_only', replayDeniedToolNames: [] } });
+    await drain({ toolExecutionPolicy: { mode: 'read_only', replayDeniedToolNames: [] } });
+
+    assert.equal(sdkOptions[1].hooks, undefined, 'no hooks unless the invocation hands them over');
+    const { PreCompact, SessionStart } = sdkOptions[0].hooks;
+    const signal = new AbortController().signal;
+    const base = { session_id: 'claude-session-1', transcript_path: '/tmp/t.jsonl', cwd: '/tmp' };
+    const preCompact = PreCompact[0].hooks[0];
+    const sessionStart = SessionStart[0].hooks[0];
+
+    assert.deepEqual(
+      await preCompact(
+        { ...base, hook_event_name: 'PreCompact', trigger: 'auto', custom_instructions: null },
+        undefined,
+        {
+          signal,
+        },
+      ),
+      {},
+    );
+    assert.deepEqual(
+      await sessionStart({ ...base, hook_event_name: 'SessionStart', source: 'compact' }, undefined, { signal }),
+      { hookSpecificOutput: { hookEventName: 'SessionStart', additionalContext: 'COLD PACKET' } },
+    );
+    assert.deepEqual(
+      await sessionStart({ ...base, hook_event_name: 'SessionStart', source: 'startup' }, undefined, { signal }),
+      {},
+    );
+    failPreCompact = true;
+    assert.deepEqual(
+      await preCompact(
+        { ...base, hook_event_name: 'PreCompact', trigger: 'manual', custom_instructions: null },
+        undefined,
+        {
+          signal,
+        },
+      ),
+      {},
+      'a failed seal never blocks the compaction',
+    );
+    assert.deepEqual(calls, [
+      ['preCompact', { cliSessionId: 'claude-session-1', trigger: 'auto' }],
+      ['postCompactContext', { cliSessionId: 'claude-session-1' }],
+      ['preCompact', { cliSessionId: 'claude-session-1', trigger: 'manual' }],
+    ]);
+  });
+
+  it('Claude SDK keeps the response open for an Append accepted before the current result terminal', async () => {
     const events = new AsyncInbox();
     const registration = activeRunRegistration();
     let sdkInput;
@@ -247,21 +419,19 @@ describe('live member carriers', () => {
     events.push({ type: 'system', subtype: 'init', session_id: 'sdk-append-result-race' });
     assert.equal((await initialized).value.type, 'session_init');
 
-    assert.deepEqual(
-      await registration.dispatcher.dispatch(
-        { text: 'accepted follow-up' },
-        { expectedInvocationId: registration.invocationId, force: false },
-      ),
-      {
-        accepted: true,
-        handle: {
-          provider: 'anthropic',
-          carrier: 'claude_agent_sdk',
-          threadId: 'sdk-append-result-race',
-          turnId: registration.dispatcher.handle.turnId,
-        },
-      },
+    const accepted = await registration.dispatcher.dispatch(
+      { text: 'accepted follow-up' },
+      { expectedInvocationId: registration.invocationId, force: false },
     );
+    assert.deepEqual(accepted, {
+      accepted: true,
+      handle: {
+        provider: 'anthropic',
+        carrier: 'claude_agent_sdk',
+        threadId: 'sdk-append-result-race',
+        turnId: registration.dispatcher.handle.turnId,
+      },
+    });
     const appendedInput = (await sdkInput.next()).value;
 
     const secondTurnOutput = output.next();
@@ -695,6 +865,9 @@ describe('live member carriers', () => {
     assert.deepEqual(rejected, { accepted: false, reason: 'provider_rejected' });
 
     events.close();
+    const failure = await output.next();
+    assert.equal(failure.value.type, 'error');
+    assert.equal(failure.value.error, 'claude_sdk_stream_ended_without_result');
     assert.equal((await output.next()).value.type, 'done');
   });
 });

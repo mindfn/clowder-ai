@@ -109,6 +109,7 @@ export function useQueueActionConvergence(threadId: string) {
   );
 
   return {
+    refreshQueue,
     steerEntryId,
     handleSteerConfirm,
     handleSteerOpen: setSteerEntryId,

@@ -46,6 +46,7 @@
  */
 
 import { getBubbleInvocationId } from '@/debug/bubbleIdentity';
+import { retainPublicationOrigin, retainRichPublicationOrigins } from './bubble-publication-origins';
 import type { ChatMessage } from './chat-types';
 import { getOrderedMessageTimeline } from './message-timeline';
 
@@ -272,6 +273,7 @@ function projectGroup(records: ChatMessage[], preferredBase?: ChatMessage): Chat
   // cloud R2 P2 (codex): merge contentBlocks across records — stream may have
   // image/structured blocks that callback doesn't, dropping them = data loss.
   const contentBlocks: NonNullable<ChatMessage['contentBlocks']> = [];
+  const publicationOrigins: NonNullable<ChatMessage['projectionPublicationOrigins']> = {};
   let mentionsUser = false;
 
   for (const r of sorted) {
@@ -293,8 +295,13 @@ function projectGroup(records: ChatMessage[], preferredBase?: ChatMessage): Chat
       if (seenBlockIds.has(b.id)) continue;
       seenBlockIds.add(b.id);
       richBlocks.push(b);
+      retainRichPublicationOrigins(publicationOrigins, r, b);
     }
-    for (const block of r.contentBlocks ?? []) {
+    for (const [index, block] of (r.contentBlocks ?? []).entries()) {
+      retainPublicationOrigin(publicationOrigins, { kind: 'content-block', index: contentBlocks.length }, r, {
+        kind: 'content-block',
+        index,
+      });
       contentBlocks.push(block);
     }
   }
@@ -342,6 +349,7 @@ function projectGroup(records: ChatMessage[], preferredBase?: ChatMessage): Chat
     ...base,
     id: canonicalId,
     projectionSourceMessageIds,
+    ...(Object.keys(publicationOrigins).length ? { projectionPublicationOrigins: publicationOrigins } : {}),
     type: 'assistant',
     catId: first.catId,
     content: projectedContent,

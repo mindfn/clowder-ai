@@ -19,7 +19,9 @@ export interface QueueLedgerAdmissionInput {
   authorIntentByCatId?: Readonly<Record<string, QueueAuthorIntent>>;
   intent: string;
   ownerAuthProvenance: OwnerAuthProvenance;
+  executionScope?: QueueLedgerEntry['execution']['executionScope'];
   autoExecute?: boolean;
+  liveSessionId?: string;
   priority?: QueueLedgerEntry['priority'];
   sourceCategory?: QueueLedgerEntry['sourceCategory'];
   a2aParentInvocationId?: string;
@@ -60,7 +62,9 @@ export function createQueueLedgerAdmission(input: QueueLedgerAdmissionInput): Qu
       execution: {
         intent: input.intent,
         ownerAuthProvenance: input.ownerAuthProvenance,
+        ...(input.executionScope !== undefined ? { executionScope: input.executionScope } : {}),
         autoExecute: input.autoExecute ?? false,
+        ...(input.liveSessionId ? { liveSessionId: input.liveSessionId } : {}),
         ...(input.a2aParentInvocationId ? { a2aParentInvocationId: input.a2aParentInvocationId } : {}),
         ...(input.readOnlyToolPolicy ? { readOnlyToolPolicy: structuredClone(input.readOnlyToolPolicy) } : {}),
         ...(input.actionSuccessorFence ? { actionSuccessorFence: structuredClone(input.actionSuccessorFence) } : {}),

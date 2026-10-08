@@ -11,7 +11,14 @@ import type { WaitContinuationCarrierV1 } from '@cat-cafe/shared';
 export type TurnCustodyWakeProvenance =
   | {
       readonly kind: 'unstructured';
-      readonly source: 'user_chat' | 'roam' | 'cron' | 'brainstorm' | 'protocol_decline' | 'queue_delivery';
+      readonly source:
+        | 'user_chat'
+        | 'roam'
+        | 'cron'
+        | 'brainstorm'
+        | 'protocol_decline'
+        | 'queue_delivery'
+        | 'producer_return';
     }
   | {
       readonly kind: 'non_obligation';

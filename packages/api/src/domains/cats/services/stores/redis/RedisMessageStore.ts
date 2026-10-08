@@ -3142,7 +3142,8 @@ export class RedisMessageStore {
       evolutionPreparationSubmissionV1: _stripPreparation,
       deliveryBoundary: _stripBoundary,
       collectiveOwnerAdmissionV1: _stripCollectiveAdmission,
-      collectiveWorkInvocationV1: _stripCollectiveWork,
+      collectiveWorkInvocationV1: _stripCollectiveInvocation,
+      collectiveWorkDelegationV1: _stripCollectiveDelegation,
       collectiveAuthorizationInvalid: _stripCollectiveInvalid,
       ...hostPatch
     } = extra as Record<string, unknown>;

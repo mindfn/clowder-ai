@@ -203,6 +203,8 @@ describe('MCP Server Tool Registration', () => {
     const tool = callbackTools.find((candidate) => candidate.name === 'cat_cafe_get_thread_context');
     assert.ok(tool);
     assert.doesNotMatch(tool.description, /freshness notice/i);
+    assert.match(tool.description, /readIntent="unread"/);
+    assert.equal(tool.inputSchema.readIntent.parse(undefined), 'history');
     assert.match(tool.description, /same-target queued bodies/i);
     assert.match(tool.description, /complete catch-up/i);
     assert.match(tool.description, /contextScope="unread_delta"/);
@@ -210,6 +212,8 @@ describe('MCP Server Tool Registration', () => {
     assert.match(tool.inputSchema.responseMode.description, /contextScope="unread_delta"/);
     assert.match(tool.inputSchema.responseMode.description, /hasMore=false.*all thread history/i);
     assert.match(tool.description, /GOTCHA:/);
+    assert.match(tool.description, /cursor.*limit/i);
+    assert.match(tool.inputSchema.cursor.description, /same.*limit/i);
     assert.doesNotMatch(tool.description, /full" ONLY.*bulk analysis, export/i);
   });
 
@@ -279,6 +283,7 @@ describe('MCP Server Tool Registration', () => {
       'cat_cafe_create_task',
       'cat_cafe_create_rich_block',
       'cat_cafe_generate_document',
+      'cat_cafe_register_deployment_wait',
       'cat_cafe_register_pr_tracking',
       'cat_cafe_register_issue_tracking',
       'cat_cafe_community_await_external',
@@ -362,6 +367,8 @@ describe('MCP Server Tool Registration', () => {
       'cat_cafe_prepare_artifact_review',
       'cat_cafe_act_artifact_review',
       'cat_cafe_respond_artifact_review',
+      'cat_cafe_read_content_modification',
+      'cat_cafe_respond_content_modification',
       'cat_cafe_edit_office_document',
     ];
 

@@ -7,11 +7,12 @@
  */
 
 import assert from 'node:assert/strict';
-import { mkdtemp, readdir, readFile, rm } from 'node:fs/promises';
+import { mkdtemp, readdir, readFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { Readable } from 'node:stream';
 import { afterEach, beforeEach, describe, it } from 'node:test';
+import './helpers/setup-cat-registry.js';
 import Fastify from 'fastify';
 import { ensureFakeCliOnPath } from './helpers/fake-cli-path.js';
 import { fakeL0Compiler } from './helpers/fake-l0-compiler.js';
@@ -29,7 +30,7 @@ describe('saveUploadedImages', () => {
   });
 
   afterEach(async () => {
-    if (uploadDir) await rm(uploadDir, { recursive: true, force: true });
+    if (uploadDir) console.log('retained own upload fixture:', uploadDir);
   });
 
   it('saves a valid PNG file and returns metadata', async () => {
@@ -379,10 +380,10 @@ describe('multipart image target routing', () => {
 
   afterEach(async () => {
     if (app) await app.close();
-    if (uploadDir) await rm(uploadDir, { recursive: true, force: true });
+    if (uploadDir) console.log('retained own upload fixture:', uploadDir);
   });
 
-  it('routes multipart image messages to the mentioned cat (not forced to codex)', async () => {
+  const sendImageMessage = () => {
     const boundary = '----cat-cafe-test-boundary';
     const payload = Buffer.concat([
       Buffer.from(`--${boundary}\r\nContent-Disposition: form-data; name="content"\r\n\r\n请看图\r\n`),
@@ -391,8 +392,7 @@ describe('multipart image target routing', () => {
       ),
       Buffer.from(`--${boundary}--\r\n`),
     ]);
-
-    const res = await app.inject({
+    return app.inject({
       method: 'POST',
       url: '/api/messages',
       headers: {
@@ -401,6 +401,30 @@ describe('multipart image target routing', () => {
       },
       payload,
     });
+  };
+
+  it('returns the stored upload URLs and time so the sender can replace its local preview', async () => {
+    const res = await sendImageMessage();
+
+    assert.equal(res.statusCode, 202);
+    const body = res.json();
+    const stored = messageStore.getById(body.userMessageId);
+    assert.ok(stored, 'the user message is stored');
+    assert.deepEqual(body.userMessage, {
+      id: stored.id,
+      timestamp: stored.timestamp,
+      contentBlocks: stored.contentBlocks,
+    });
+    assert.ok(
+      body.userMessage.contentBlocks.some(
+        (block) => block.type === 'image' && /^\/uploads\/[^/]+\.png$/.test(block.url),
+      ),
+      'the receipt carries the stored upload URL, not a client-local one',
+    );
+  });
+
+  it('routes multipart image messages to the mentioned cat (not forced to codex)', async () => {
+    const res = await sendImageMessage();
 
     assert.equal(res.statusCode, 202);
     const [entry] = invocationQueue.list('default', 'alice');

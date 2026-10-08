@@ -27,6 +27,12 @@ class AsyncInputQueue<T> implements AsyncIterable<T> {
     for (const waiter of this.waiters.splice(0)) waiter({ value: undefined, done: true });
   }
 
+  remove(predicate: (value: T) => boolean): void {
+    for (let i = this.values.length - 1; i >= 0; i--) {
+      if (predicate(this.values[i].value)) this.values.splice(i, 1);
+    }
+  }
+
   [Symbol.asyncIterator](): AsyncIterator<T> {
     return {
       next: () => {
@@ -62,6 +68,19 @@ function resultConsumedInputIds(result: Record<string, unknown>): string[] {
 function resultQueuedTurnCount(result: Record<string, unknown>): number | undefined {
   const count = result.queued_turn_count;
   return typeof count === 'number' && Number.isSafeInteger(count) && count >= 0 ? count : undefined;
+}
+
+/**
+ * A turn the provider started on its own answers none of our sends: SDK 0.3.280 delivers the
+ * notification of a background task the previous query's exit killed as a zero-turn result with
+ * `origin.kind === 'task-notification'` and no input identity, before it runs the input we sent.
+ * Channel and peer deliveries carry their own origin the same way; our sends carry none, or 'human'.
+ */
+function isProviderInitiatedTurn(result: Record<string, unknown>): boolean {
+  const origin = result.origin;
+  if (typeof origin !== 'object' || origin === null) return false;
+  const kind = (origin as { kind?: unknown }).kind;
+  return typeof kind === 'string' && kind !== 'human';
 }
 
 function deleteOldestPendingInput(pendingInputIds: Set<string>, inputOrdinals: Map<string, number>): void {
@@ -100,7 +119,7 @@ function settleProviderOwnedTurnInputs(
       providerOwnedInputIds.delete(id);
       inputOrdinals.delete(id);
     }
-  } else if (consumedIds.length === 0) {
+  } else if (consumedIds.length === 0 && !isProviderInitiatedTurn(result)) {
     deleteOldestPendingInput(providerOwnedInputIds, inputOrdinals);
   }
   for (const id of consumedIds) inputOrdinals.delete(id);
@@ -118,6 +137,17 @@ export class ClaudeSdkTurnInputState {
   private activeDispatches = 0;
   private terminalWaitingForDispatch = false;
   private accepting = true;
+
+  // Content-free freshness is an auxiliary owner, not an accepted business
+  // input. It cannot keep a primary query open or settle a promised Append.
+  pushNotice(text: string, sessionId: string, uuid = randomUUID()): string | null {
+    if (!this.accepting) return null;
+    return this.queue.push(createSdkUserMessage(text, sessionId, uuid)) ? uuid : null;
+  }
+
+  withdrawNotice(uuid: string): void {
+    this.queue.remove((message) => message.uuid === uuid);
+  }
 
   constructor() {
     this.input = this.queue;

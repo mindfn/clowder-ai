@@ -576,6 +576,11 @@ describe('F280 GitHub wait lifecycle integration', () => {
       outcomeId: 'wait:pr:owner/repo#7:g3:matched',
       ownerFence: { kind: 'containing_task', generation: 3 },
     });
+    assert.deepEqual(
+      connector.admitted('thread_1')[0].execution.waitContinuationCarrier,
+      messages[0].source.meta.waitContinuationCarrier,
+      'the actual wait publisher must preserve its typed authority on the canonical Queue row',
+    );
     assert.equal((await taskStore.get(task.id)).automationState.waitOutcome.delivery, 'delivered');
     const events = await eventLog.read(task.id);
     assert.equal(events.length, 1);

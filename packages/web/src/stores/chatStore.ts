@@ -1,11 +1,9 @@
-import { timelineMessageKind } from '@cat-cafe/shared';
+import { type ThreadArtifactDTO, timelineMessageKind } from '@cat-cafe/shared';
 import { create } from 'zustand';
-import { getBubbleInvocationId } from '@/debug/bubbleIdentity';
-import { isBubbleInvariantStrictModeOn, recordBubbleInvariantViolation } from '@/debug/bubbleInvariantDiagnostics';
-import { recordDebugEvent } from '@/debug/invocationEventDebug';
 import { getCachedCats } from '@/hooks/useCatData';
 import { formatCatDisplayName } from '@/lib/cat-display-name';
 import { inferFileKind, inferRenderMode } from '@/lib/file-kind';
+import type { ServedModelFacts } from '@/lib/served-model-facts';
 import { isWorkspaceMode, type WorkspaceMode } from '@/lib/workspace-modes';
 import {
   resolveNavigateTargetWorktreeId,
@@ -18,7 +16,6 @@ import {
   saveThreads as saveThreadsSnapshot,
   saveThreadWorkspaceState,
 } from '../utils/offline-store';
-import { findBubbleStoreInvariantViolations } from './bubble-invariants';
 import type {
   CatInvocationInfo,
   CatStatusType,
@@ -36,7 +33,9 @@ import type {
   ThreadState,
   TokenUsage,
   ToolEvent,
+  WorkspaceFileNavigationOrigin,
   WorkspaceOpenRequest,
+  WorkspacePathOpenTarget,
   WorkspacePreviewState,
   WorkspaceSurface,
 } from './chat-types';
@@ -48,7 +47,6 @@ import {
   getMessageTimelineOrderTime,
   isMessageTimelineActive,
 } from './message-timeline';
-import { crossesUserTurnBoundary } from './turn-boundary';
 
 // Re-export types so existing consumers keep working with `import { ... } from '@/stores/chatStore'`
 export type {
@@ -495,29 +493,6 @@ function collectBlobUrls(messages: ChatMessage[]): Set<string> {
   return blobUrls;
 }
 
-/**
- * F183 Phase E AC-E2 (砚砚 R2 P1 fix) — strict-only invariant forward for
- * caller-driven writers (replaceMessages, replaceThreadMessages,
- * hydrateThread). When `BUBBLE_INVARIANT_STRICT=1` /
- * `NEXT_PUBLIC_BUBBLE_INVARIANT_STRICT=1` /
- * `localStorage[catcafe.bubbleInvariantStrict]==='1'` is on, runs the
- * post-mutation duplicate-identity scan and forwards each violation to
- * `recordBubbleInvariantViolation` (which throws under strict). Off mode is
- * a 1-instruction early-out — no O(n) cost in production hot paths.
- */
-function forwardStoreInvariantViolationsStrict(messages: ChatMessage[], threadId: string | null): void {
-  if (!isBubbleInvariantStrictModeOn()) return;
-  if (!threadId) return;
-  const violations = findBubbleStoreInvariantViolations(messages, {
-    threadId,
-    eventType: 'history_hydrate',
-    sourcePath: 'hydration',
-  });
-  for (const v of violations) {
-    recordBubbleInvariantViolation(v, 'warn');
-  }
-}
-
 function revokeRemovedBlobUrls(previousMessages: ChatMessage[], nextMessages: ChatMessage[]) {
   const retainedBlobUrls = collectBlobUrls(nextMessages);
   for (const msg of previousMessages) {
@@ -534,61 +509,6 @@ function revokeRemovedBlobUrls(previousMessages: ChatMessage[], nextMessages: Ch
   }
 }
 
-type ReplaceMessageIdResult = {
-  messages: ChatMessage[];
-  droppedMessage?: ChatMessage;
-  retainedMessage?: ChatMessage;
-};
-
-function rekeyMessageIdentity(message: ChatMessage, fromId: string, toId: string): ChatMessage {
-  const sourceIds = message.projectionSourceMessageIds;
-  if (!sourceIds?.includes(fromId)) return { ...message, id: toId };
-
-  return {
-    ...message,
-    id: toId,
-    projectionSourceMessageIds: [...new Set(sourceIds.map((sourceId) => (sourceId === fromId ? toId : sourceId)))],
-  };
-}
-
-function replaceMessageIdInList(messages: ChatMessage[], fromId: string, toId: string): ReplaceMessageIdResult {
-  if (fromId === toId) return { messages };
-  const fromIndex = messages.findIndex((msg) => msg.id === fromId);
-  if (fromIndex === -1) return { messages };
-
-  const fromMessage = messages[fromIndex];
-  const retainedMessage = messages.find((msg) => msg.id === toId);
-  if (retainedMessage) {
-    return {
-      messages: messages.filter((msg) => msg.id !== fromId),
-      droppedMessage: fromMessage,
-      retainedMessage,
-    };
-  }
-
-  return { messages: messages.map((msg) => (msg.id === fromId ? rekeyMessageIdentity(msg, fromId, toId) : msg)) };
-}
-
-function recordMessageIdDedupDrop(
-  threadId: string,
-  droppedMessage: ChatMessage | undefined,
-  retainedMessage: ChatMessage | undefined,
-  toId: string,
-) {
-  if (!droppedMessage || !retainedMessage) return;
-  recordDebugEvent({
-    event: 'bubble_lifecycle',
-    threadId,
-    timestamp: Date.now(),
-    action: 'drop',
-    reason: 'replace_message_id_dedup',
-    catId: droppedMessage.catId ?? retainedMessage.catId,
-    messageId: toId,
-    invocationId: droppedMessage.extra?.stream?.invocationId ?? retainedMessage.extra?.stream?.invocationId,
-    origin: droppedMessage.origin ?? retainedMessage.origin,
-  });
-}
-
 function applyMessagePatch(message: ChatMessage, patch: ChatMessagePatch): ChatMessage {
   return {
     ...message,
@@ -598,6 +518,51 @@ function applyMessagePatch(message: ChatMessage, patch: ChatMessagePatch): ChatM
       ? { metadata: message.metadata ? { ...message.metadata, ...patch.metadata } : patch.metadata }
       : {}),
   };
+}
+
+export interface DefinitiveRichBlockOwner {
+  catId: string;
+  invocationId?: string;
+  turnInvocationId?: string;
+}
+
+/** A messageId-bound callback owns its block; an earlier same-turn stream copy was only a preview. */
+function appendRichBlockToMessages(
+  messages: ChatMessage[],
+  messageId: string,
+  block: RichBlock,
+  owner?: DefinitiveRichBlockOwner,
+): ChatMessage[] {
+  const target = messages.find((message) => message.id === messageId);
+  if (!target) return messages;
+  const definitiveCallback = owner && target.origin === 'callback';
+  let changed = false;
+  const next = messages.map((message) => {
+    if (message.id === messageId) {
+      const rich = message.extra?.rich ?? { v: 1 as const, blocks: [] };
+      if (rich.blocks.some((existing) => existing.id === block.id)) return message;
+      changed = true;
+      return { ...message, extra: { ...message.extra, rich: { ...rich, blocks: [...rich.blocks, block] } } };
+    }
+    if (!definitiveCallback || message.origin !== 'stream' || message.catId !== owner.catId) return message;
+    const stream = message.extra?.stream;
+    const sameTurn = owner.turnInvocationId
+      ? (stream?.turnInvocationId ?? stream?.invocationId) === owner.turnInvocationId
+      : Boolean(owner.invocationId && stream?.invocationId === owner.invocationId);
+    if (!sameTurn || !message.extra?.rich?.blocks.some((existing) => existing.id === block.id)) return message;
+    changed = true;
+    return {
+      ...message,
+      extra: {
+        ...message.extra,
+        rich: {
+          ...message.extra.rich,
+          blocks: message.extra.rich.blocks.filter((existing) => existing.id !== block.id),
+        },
+      },
+    };
+  });
+  return changed ? next : messages;
 }
 
 function patchMessageInList(messages: ChatMessage[], id: string, patch: ChatMessagePatch): ChatMessage[] {
@@ -642,123 +607,6 @@ function fireOwnerMentionNotification(msg: ChatMessage, threadId: string) {
     window.focus();
     notification.close();
     window.location.assign(`/thread/${encodeURIComponent(threadId)}`);
-  };
-}
-
-/**
- * TD112: Store-level assistant bubble dedup invariant.
- *
- * When an incoming assistant message enters the store, check if a semantically
- * equivalent bubble already exists. Returns the index of the existing message
- * to merge into, or -1 if no duplicate found.
- *
- * Two-layer strategy (per 砚砚 review):
- * 1. Hard rule: same catId + invocationId → always merge
- * 2. Soft rule: callback→stream upgrade — incoming is callback, candidate is
- *    same catId's latest stream assistant with no invocationId, within 8s,
- *    matching replyTo/visibility
- */
-function findAssistantDuplicate(messages: ChatMessage[], incoming: ChatMessage): number {
-  if (incoming.type !== 'assistant' || !incoming.catId) return -1;
-
-  // #814: Explicit post_message callbacks are independent messages — never merge.
-  // post_message is a cat-initiated separate communication (e.g., @mention to another cat),
-  // not a duplicate of the same response arriving via stream+callback paths.
-  if (incoming.origin === 'callback' && incoming.extra?.isExplicitPost) return -1;
-
-  const incomingInvId = getBubbleInvocationId(incoming);
-
-  // Phase 1: Hard rule — scan ALL same-cat assistants for exact invocationId match.
-  // Must run first because bridge/soft rules on a newer message would mis-associate.
-  if (incomingInvId) {
-    const exactIndex = findLatestMessageIndexByTimeline(messages, (existing) => {
-      if (existing.type !== 'assistant' || existing.catId !== incoming.catId) return false;
-      // #814: explicit post_message is standalone — never match as merge target,
-      // even though it carries stream.invocationId for #573 correlation.
-      // Without this guard, a stream chunk arriving after F5/hydration would
-      // match the hydrated explicit post by invocationId and overwrite it.
-      if (existing.extra?.isExplicitPost) return false;
-      if (getBubbleInvocationId(existing) !== incomingInvId) return false;
-      return existing.id === incoming.id || !crossesUserTurnBoundary(messages, existing, incoming);
-    });
-    if (exactIndex >= 0) return exactIndex;
-  }
-
-  // Phase 2: Soft rule — check only the MOST RECENT same-cat assistant.
-  // Only for callbacks WITHOUT an invocationId → stream(no invocationId) upgrade.
-  // Callbacks WITH invocationId are fully handled by Phase 1 (hard match);
-  // if Phase 1 didn't match, the invocationId is stale/unrelated and soft bridge
-  // must not merge into an invocationless stream from a different invocation.
-  if (incoming.origin !== 'callback') return -1;
-  if (incomingInvId) return -1;
-
-  const latestStreamIndex = findLatestMessageIndexByTimeline(
-    messages,
-    (existing) => existing.type === 'assistant' && existing.catId === incoming.catId && existing.origin === 'stream',
-  );
-  if (latestStreamIndex < 0) return -1;
-
-  const existing = messages[latestStreamIndex]!;
-  const existingInvId = getBubbleInvocationId(existing);
-  return !existingInvId &&
-    Math.abs((incoming.timestamp ?? 0) - (existing.timestamp ?? 0)) < 8_000 &&
-    incoming.replyTo === existing.replyTo &&
-    (incoming.visibility ?? 'public') === (existing.visibility ?? 'public')
-    ? latestStreamIndex
-    : -1;
-}
-
-function mergeRichBlocks(existingBlocks: RichBlock[] = [], incomingBlocks: RichBlock[] = []): RichBlock[] | undefined {
-  const merged: RichBlock[] = [];
-  const seen = new Set<string>();
-  for (const block of [...existingBlocks, ...incomingBlocks]) {
-    if (seen.has(block.id)) continue;
-    seen.add(block.id);
-    merged.push(block);
-  }
-  return merged.length > 0 ? merged : undefined;
-}
-
-/** Merge incoming message into existing, preferring callback content over stream */
-function mergeAssistantBubble(existing: ChatMessage, incoming: ChatMessage): ChatMessage {
-  // Bridge rule: backfill invocationId from callback into stream placeholder
-  const incomingInvId = getBubbleInvocationId(incoming);
-  const existingInvId = getBubbleInvocationId(existing);
-  const mergedExtra: ChatMessage['extra'] = { ...existing.extra, ...incoming.extra };
-  const mergedRichBlocks = mergeRichBlocks(existing.extra?.rich?.blocks, incoming.extra?.rich?.blocks);
-  if (mergedRichBlocks) {
-    mergedExtra.rich = { v: 1, blocks: mergedRichBlocks };
-  }
-  const needsStreamMerge = [existing.extra?.stream, incoming.extra?.stream, incomingInvId && !existingInvId].some(
-    Boolean,
-  );
-  if (needsStreamMerge) {
-    mergedExtra.stream = {
-      ...existing.extra?.stream,
-      ...incoming.extra?.stream,
-      ...(incomingInvId && !existingInvId ? { invocationId: incomingInvId } : {}),
-    };
-  }
-  if (incoming.extra?.crossPost) {
-    mergedExtra.crossPost = incoming.extra.crossPost;
-  }
-
-  return {
-    ...existing,
-    // Prefer incoming content if non-empty
-    content: incoming.content || existing.content,
-    // Callback > stream origin
-    origin: incoming.origin === 'callback' ? 'callback' : existing.origin,
-    isStreaming: false,
-    // Merge metadata (incoming takes precedence)
-    ...(incoming.metadata ? { metadata: incoming.metadata } : {}),
-    ...(incoming.deliveredAt ? { deliveredAt: incoming.deliveredAt } : {}),
-    ...(incoming.timelineOrderAt !== undefined ? { timelineOrderAt: incoming.timelineOrderAt } : {}),
-    ...(incoming.replyTo ? { replyTo: incoming.replyTo } : {}),
-    ...(incoming.replyPreview ? { replyPreview: incoming.replyPreview } : {}),
-    // Preserve extra from existing (CLI Output/rich blocks) + merge callback metadata
-    extra: Object.keys(mergedExtra).length > 0 ? mergedExtra : undefined,
-    ...(incoming.mentionsUser ? { mentionsUser: true } : {}),
   };
 }
 
@@ -872,13 +720,12 @@ export interface ChatState {
    * mirrors flat when threadId === currentThreadId.
    */
   replaceThreadMessages: (threadId: string, msgs: ChatMessage[], hasMore?: boolean) => void;
-  replaceMessageId: (fromId: string, toId: string) => void;
   patchMessage: (id: string, patch: ChatMessagePatch) => void;
   appendToLastMessage: (content: string) => void;
   appendToMessage: (id: string, content: string) => void;
   appendToolEvent: (id: string, event: ToolEvent) => void;
   /** F22: Append a rich block to a message */
-  appendRichBlock: (id: string, block: RichBlock) => void;
+  appendRichBlock: (id: string, block: RichBlock, owner?: DefinitiveRichBlockOwner) => void;
   /** F096: Update a specific rich block within a message */
   updateRichBlock: (messageId: string, blockId: string, patch: Record<string, unknown>) => void;
   setStreaming: (id: string, streaming: boolean) => void;
@@ -901,10 +748,14 @@ export interface ChatState {
   setMessageUsage: (messageId: string, usage: TokenUsage) => void;
   /** Merge metadata onto an active-thread message (parallel to setThreadMessageMetadata) */
   setMessageMetadata: (messageId: string, metadata: ChatMessageMetadata) => void;
+  /**
+   * F319 Phase E.1: merge the upstream served facts onto an active-thread message.
+   * `setMessageMetadata` is first-write-wins (per-chunk render guard), and served facts
+   * only exist at `done`, so they need their own merging path. No-op without metadata.
+   */
+  mergeMessageServedFacts: (messageId: string, facts: ServedModelFacts) => void;
   /** F045: Set or append extended thinking content on an assistant message */
   setMessageThinking: (messageId: string, thinking: string) => void;
-  /** F081: Persist stream invocation identity onto a message for replace/hydration reconcile */
-  setMessageStreamInvocation: (messageId: string, invocationId: string, turnInvocationId?: string) => void;
   clearMessages: () => void;
   /** Bug C: Monotonic counter + target threadId — increment to request a history catch-up fetch */
   /**
@@ -1043,22 +894,20 @@ export interface ChatState {
   /** Upsert a same-id durable lifecycle snapshot without manufacturing unread work. */
   upsertLifecycleMessage: (threadId: string, msg: ChatMessage) => void;
   removeThreadMessage: (threadId: string, messageId: string) => void;
-  replaceThreadMessageId: (threadId: string, fromId: string, toId: string) => void;
   patchThreadMessage: (threadId: string, messageId: string, patch: ChatMessagePatch) => void;
   appendToThreadMessage: (threadId: string, messageId: string, content: string) => void;
   appendToolEventToThread: (threadId: string, messageId: string, event: ToolEvent) => void;
   /** F22: Append a rich block to a message in a specific thread */
-  appendRichBlockToThread: (threadId: string, messageId: string, block: RichBlock) => void;
+  appendRichBlockToThread: (
+    threadId: string,
+    messageId: string,
+    block: RichBlock,
+    owner?: DefinitiveRichBlockOwner,
+  ) => void;
   setThreadCatInvocation: (threadId: string, catId: string, info: Partial<CatInvocationInfo>) => void;
   setThreadMessageMetadata: (threadId: string, messageId: string, metadata: ChatMessageMetadata) => void;
   setThreadMessageUsage: (threadId: string, messageId: string, usage: TokenUsage) => void;
   setThreadMessageThinking: (threadId: string, messageId: string, thinking: string) => void;
-  setThreadMessageStreamInvocation: (
-    threadId: string,
-    messageId: string,
-    invocationId: string,
-    turnInvocationId?: string,
-  ) => void;
   setThreadMessageStreaming: (threadId: string, messageId: string, streaming: boolean) => void;
   setThreadLoading: (threadId: string, loading: boolean) => void;
   setThreadHasActiveInvocation: (threadId: string, active: boolean) => void;
@@ -1167,13 +1016,29 @@ export interface ChatState {
   /** Explicit deep-link/navigation action; reveals the canonical Team workspace. */
   openTeamSubject: (subject: TeamWorkspaceSubject | null) => void;
   openEvolutionProgram: (programId: string) => void;
+  openPublishedArtifact: (
+    threadId: string,
+    artifact: ThreadArtifactDTO,
+    navigationOrigin?: WorkspaceFileNavigationOrigin,
+  ) => void;
+  /**
+   * Open one exact workspace file, or show one path in its file tree, in the Workbench of `threadId`.
+   * The request survives a route change and is consumed once by whichever Workbench mounts for that
+   * thread; it does not switch projects. Returns false when `threadId` is not the current thread, so a
+   * caller never navigates to nothing.
+   */
+  openWorkspacePath: (threadId: string, target: WorkspacePathOpenTarget) => boolean;
+  openPublication: (
+    target: Extract<WorkspaceOpenRequest['target'], { kind: 'publication' | 'message-publication' }>,
+    hostThreadId: string,
+  ) => boolean;
   /** Acknowledge one exact transient request after F307 has consumed it. */
   consumeWorkspaceOpenRequest: (revision: number) => void;
   workspaceEditToken: string | null;
   workspaceEditTokenExpiry: number | null;
   /** @internal Last workspace-file-set event context (timestamp + threadId).
    * Used by WorkspacePanel to distinguish fresh navigate from stale leftovers on mount. */
-  _workspaceFileSetAt: { ts: number; threadId: string | null };
+  _workspaceFileSetAt: { ts: number; threadId: string | null; navigationOrigin?: WorkspaceFileNavigationOrigin };
   setRightPanelMode: (mode: 'status' | 'workspace' | 'transcript') => void;
   /** F284 × F120 review P1: canonical right panel visibility (orthogonal to
    * rightPanelMode). Snapshotted per thread — see ThreadState.rightPanelOpen. */
@@ -1189,13 +1054,11 @@ export interface ChatState {
     line?: number | null,
     worktreeId?: string | null,
     originThreadId?: string | null,
+    navigationOrigin?: WorkspaceFileNavigationOrigin,
   ) => void;
   closeWorkspaceTab: (path: string) => void;
   restoreWorkspaceTabs: (tabs: string[], openFile: string | null) => void;
   setWorkspaceEditToken: (token: string | null, expiresIn?: number) => void;
-
-  workspaceRevealPath: string | null;
-  setWorkspaceRevealPath: (path: string | null, originThreadId?: string | null) => void;
 
   // F063: Presentation Lock — freeze workspace during demos
   presentationLock: PresentationLockSnapshot | null;
@@ -1417,24 +1280,11 @@ export const useChatStore = create<ChatState>((set, get) => ({
               ...(sm.mentionsUser ? { mentionsUser: true } : {}),
             };
 
-            const dupIdx = findAssistantDuplicate(updated, incoming);
-            if (dupIdx >= 0) {
-              const existing = updated[dupIdx]!;
-              updated[dupIdx] = {
-                ...mergeAssistantBubble(existing, incoming),
-                id: incoming.id,
-              };
-              existingIds.add(incoming.id);
-              if (incoming.mentionsUser && !existing.mentionsUser) {
-                mentionMessages.push(incoming);
-              }
-            } else {
-              updated.push(incoming);
-              existingIds.add(incoming.id);
-              insertedIds.add(incoming.id);
-              if (incoming.mentionsUser) {
-                mentionMessages.push(incoming);
-              }
+            updated.push(incoming);
+            existingIds.add(incoming.id);
+            insertedIds.add(incoming.id);
+            if (incoming.mentionsUser) {
+              mentionMessages.push(incoming);
             }
           }
         }
@@ -1518,6 +1368,36 @@ export const useChatStore = create<ChatState>((set, get) => ({
         ...mirrorActiveFlat(state, durablePatch),
       };
     }),
+  openPublishedArtifact: (threadId, artifact, navigationOrigin) =>
+    set((state) => {
+      if (state.currentThreadId !== threadId) return {};
+      const patch = { rightPanelOpen: true, rightPanelMode: 'workspace' as const, workspaceMode: 'dev' as const };
+      const revision = state.workspaceOpenRevision + 1;
+      return {
+        ...patch,
+        ...mirrorActiveFlat(state, patch),
+        workspaceOpenRevision: revision,
+        workspaceOpenRequest: {
+          revision,
+          threadId,
+          target: { kind: 'artifact' as const, artifact, ...(navigationOrigin ? { navigationOrigin } : {}) },
+        },
+      };
+    }),
+  // An explicit open is honoured under a presentation lock too, as the file-stamp path it replaces was.
+  openWorkspacePath: (threadId, target) => {
+    const state = get();
+    if (state.currentThreadId !== threadId) return false;
+    const patch = { rightPanelOpen: true, rightPanelMode: 'workspace' as const, workspaceMode: 'dev' as const };
+    const revision = state.workspaceOpenRevision + 1;
+    set({
+      ...patch,
+      ...mirrorActiveFlat(state, patch),
+      workspaceOpenRevision: revision,
+      workspaceOpenRequest: { revision, threadId, target },
+    });
+    return true;
+  },
   consumeWorkspaceOpenRequest: (revision) =>
     set((state) => (state.workspaceOpenRequest?.revision === revision ? { workspaceOpenRequest: null } : {})),
   workspaceEditToken: null,
@@ -1584,9 +1464,13 @@ export const useChatStore = create<ChatState>((set, get) => ({
       workspaceWorktreeAliases: aliases,
       workspaceWorktreeAliasesProjectPath: projectPath ?? get().currentProjectPath,
     }),
-  setWorkspaceOpenFile: (path, line, targetWorktreeId, originThreadId) => {
+  setWorkspaceOpenFile: (path, line, targetWorktreeId, originThreadId, navigationOrigin) => {
     if (path) {
-      const stamp = { ts: Date.now(), threadId: originThreadId ?? get().currentThreadId };
+      const stamp = {
+        ts: Date.now(),
+        threadId: originThreadId ?? get().currentThreadId,
+        ...(navigationOrigin ? { navigationOrigin } : {}),
+      };
       const currentWorktreeId = get().workspaceWorktreeId;
       const state = get();
       const scopedAliases = scopeWorktreeAliases(
@@ -1687,15 +1571,6 @@ export const useChatStore = create<ChatState>((set, get) => ({
       workspaceEditToken: token,
       workspaceEditTokenExpiry: token && expiresIn ? Date.now() + expiresIn * 1000 : null,
     }),
-
-  workspaceRevealPath: null,
-  setWorkspaceRevealPath: (path, originThreadId) =>
-    set((state) => ({
-      workspaceRevealPath: path,
-      ...(path ? { workspaceSurface: 'files' as const } : {}),
-      rightPanelMode: 'workspace' as const,
-      _workspaceFileSetAt: { ts: Date.now(), threadId: originThreadId ?? state.currentThreadId },
-    })),
 
   // F063: Presentation Lock
   presentationLock: null,
@@ -1863,6 +1738,21 @@ export const useChatStore = create<ChatState>((set, get) => ({
 
   // Phase H: Workspace mode
   workspaceMode: 'dev' as const,
+  openPublication: (target, hostThreadId) => {
+    // An asynchronous owner read must not steal focus in a conversation opened in the meantime.
+    if (get().currentThreadId !== hostThreadId) return false;
+    set((state) => {
+      const revision = state.workspaceOpenRevision + 1;
+      const patch = { workspaceMode: 'dev' as const, rightPanelMode: 'workspace' as const, rightPanelOpen: true };
+      return {
+        ...patch,
+        workspaceOpenRevision: revision,
+        workspaceOpenRequest: { revision, threadId: hostThreadId, target },
+        ...mirrorActiveFlat(state, patch),
+      };
+    });
+    return true;
+  },
   openEvolutionProgram: (programId) =>
     set((state) => {
       if (!/^evolution-program:[0-9a-f]{32}$/.test(programId)) return {};
@@ -1985,12 +1875,6 @@ export const useChatStore = create<ChatState>((set, get) => ({
     }),
 
   replaceMessages: (msgs, hasMore) => {
-    // F183 Phase E AC-E2 (砚砚 R2 P1 fix): caller-driven writer must forward
-    // post-mutation invariant violations to the diagnostic layer so strict
-    // mode (BUBBLE_INVARIANT_STRICT=1 / NEXT_PUBLIC_*=1 / localStorage) can
-    // throw on bypass-of-reducer mutations. No-op when strict is off — keeps
-    // production hot path free of the O(n) scan.
-    forwardStoreInvariantViolationsStrict(msgs, get().currentThreadId);
     set((state) => {
       revokeRemovedBlobUrls(state.messages, msgs);
       return { messages: msgs, hasMore };
@@ -1999,8 +1883,6 @@ export const useChatStore = create<ChatState>((set, get) => ({
 
   // F183 Phase B1.7 — see interface comment.
   replaceThreadMessages: (threadId, msgs, hasMore) => {
-    // F183 Phase E AC-E2 (砚砚 R2 P1 fix): same strict-gate as replaceMessages
-    forwardStoreInvariantViolationsStrict(msgs, threadId);
     return set((state) => {
       if (threadId === state.currentThreadId) {
         revokeRemovedBlobUrls(state.messages, msgs);
@@ -2036,7 +1918,6 @@ export const useChatStore = create<ChatState>((set, get) => ({
     //
     // F183 Phase E AC-E2 (砚砚 R2 P1 fix): same strict-gate as the other
     // caller-driven writers. Runs only when strict mode is on.
-    forwardStoreInvariantViolationsStrict(msgs, threadId);
     set((state) => {
       if (threadId === state.currentThreadId) {
         revokeRemovedBlobUrls(state.messages, msgs);
@@ -2072,15 +1953,6 @@ export const useChatStore = create<ChatState>((set, get) => ({
     }
   },
 
-  replaceMessageId: (fromId, toId) =>
-    set((state) => {
-      const result = replaceMessageIdInList(state.messages, fromId, toId);
-      if (result.messages === state.messages) return state;
-      recordMessageIdDedupDrop(state.currentThreadId, result.droppedMessage, result.retainedMessage, toId);
-      revokeRemovedBlobUrls(state.messages, result.messages);
-      return { messages: result.messages };
-    }),
-
   patchMessage: (id, patch) =>
     set((state) => {
       const nextMessages = patchMessageInList(state.messages, id, patch);
@@ -2109,15 +1981,9 @@ export const useChatStore = create<ChatState>((set, get) => ({
       messages: state.messages.map((m) => (m.id === id ? { ...m, toolEvents: [...(m.toolEvents ?? []), event] } : m)),
     })),
 
-  appendRichBlock: (id, block) =>
+  appendRichBlock: (id, block, owner) =>
     set((state) => ({
-      messages: state.messages.map((m) => {
-        if (m.id !== id) return m;
-        const rich = m.extra?.rich ?? { v: 1 as const, blocks: [] };
-        // Defensive dedup by block.id (server already deduplicates, this is a safety net)
-        if (rich.blocks.some((b: { id: string }) => b.id === block.id)) return m;
-        return { ...m, extra: { ...m.extra, rich: { ...rich, blocks: [...rich.blocks, block] } } };
-      }),
+      messages: appendRichBlockToMessages(state.messages, id, block, owner),
     })),
 
   /** F096: Update a specific rich block within a message (e.g. set disabled + selectedIds) */
@@ -2366,30 +2232,16 @@ export const useChatStore = create<ChatState>((set, get) => ({
     }));
   },
 
+  mergeMessageServedFacts: (messageId, facts) =>
+    set((state) => ({
+      messages: state.messages.map((m) =>
+        m.id === messageId && m.metadata ? { ...m, metadata: { ...m.metadata, ...facts } } : m,
+      ),
+    })),
+
   setMessageThinking: (messageId, thinking) =>
     set((state) => ({
       messages: state.messages.map((m) => (m.id === messageId ? { ...m, ...appendThinkingChunk(m, thinking) } : m)),
-    })),
-
-  setMessageStreamInvocation: (messageId, invocationId, turnInvocationId) =>
-    set((state) => ({
-      messages: state.messages.map((m) =>
-        m.id === messageId
-          ? {
-              ...m,
-              extra: {
-                ...m.extra,
-                stream: {
-                  ...m.extra?.stream,
-                  invocationId,
-                  // F194 Phase Z3 R10 P1-1 (砚砚): preserve dual id contract — bubble identity SoT = turn,
-                  // chain SoT = parent. Caller passes both; without turn, leave key untouched (legacy bubble).
-                  ...(turnInvocationId ? { turnInvocationId } : {}),
-                },
-              },
-            }
-          : m,
-      ),
     })),
 
   clearMessages: () =>
@@ -2657,34 +2509,6 @@ export const useChatStore = create<ChatState>((set, get) => ({
       if (threadId === state.currentThreadId) {
         if (state.messages.some((m) => m.id === msg.id)) return state;
 
-        // TD112: Store-level dedup for active thread
-        const dupIdx = findAssistantDuplicate(state.messages, msg);
-        if (dupIdx >= 0) {
-          const merged = mergeAssistantBubble(state.messages[dupIdx]!, msg);
-          const updated = [...state.messages];
-          updated[dupIdx] = merged;
-          const messages = updated;
-          recordDebugEvent({
-            event: 'bubble_lifecycle',
-            threadId,
-            timestamp: Date.now(),
-            action: 'merge',
-            reason: 'td112_store_dedup_active',
-            catId: msg.catId,
-            messageId: state.messages[dupIdx]!.id,
-            invocationId: getBubbleInvocationId(msg),
-            origin: msg.origin,
-          });
-          // P2 fix: propagate mention notification even on merge
-          if (msg.mentionsUser && typeof document !== 'undefined' && !document.hasFocus()) {
-            fireOwnerMentionNotification(msg, threadId);
-          }
-          return {
-            messages,
-            ...mirrorActiveToThreadStates(state, threadId, { messages }),
-          };
-        }
-
         const messages = [...state.messages, msg];
         if (messages.length > MAX_BLOB_MESSAGES) {
           revokeBlobUrls(messages.slice(0, messages.length - MAX_BLOB_MESSAGES));
@@ -2704,38 +2528,6 @@ export const useChatStore = create<ChatState>((set, get) => ({
       // Background thread — update map + increment unread
       const existing = state.threadStates[threadId] ?? { ...DEFAULT_THREAD_STATE };
       if (existing.messages.some((m) => m.id === msg.id)) return state;
-
-      // TD112: Store-level dedup for background thread
-      const bgDupIdx = findAssistantDuplicate(existing.messages, msg);
-      if (bgDupIdx >= 0) {
-        const merged = mergeAssistantBubble(existing.messages[bgDupIdx]!, msg);
-        const updated = [...existing.messages];
-        updated[bgDupIdx] = merged;
-        const updatedMessages = updated;
-        recordDebugEvent({
-          event: 'bubble_lifecycle',
-          threadId,
-          timestamp: Date.now(),
-          action: 'merge',
-          reason: 'td112_store_dedup_background',
-          catId: msg.catId,
-          messageId: existing.messages[bgDupIdx]!.id,
-          invocationId: getBubbleInvocationId(msg),
-          origin: msg.origin,
-        });
-        // Cloud review P1: Propagate mention state even on merge
-        if (msg.mentionsUser) fireOwnerMentionNotification(msg, threadId);
-        return {
-          threadStates: {
-            ...state.threadStates,
-            [threadId]: {
-              ...existing,
-              messages: updatedMessages,
-              hasUserMention: existing.hasUserMention || !!msg.mentionsUser,
-            },
-          },
-        };
-      }
 
       // F067 Phase 2: Fire macOS notification for @co-creator mention
       if (msg.mentionsUser) fireOwnerMentionNotification(msg, threadId);
@@ -2771,14 +2563,16 @@ export const useChatStore = create<ChatState>((set, get) => ({
         ) {
           return messages;
         }
+        const processingResponse = msg.lifecycle?.kind === 'response' && msg.lifecycle.status === 'processing';
+        const committedResponse = msg.lifecycle?.kind === 'response' && msg.lifecycle.status !== 'processing';
         const merged: ChatMessage = {
           ...existing,
           ...msg,
-          content:
-            msg.lifecycle?.kind === 'response' && msg.lifecycle.status === 'processing' && existing.content
-              ? existing.content
-              : msg.content,
+          // While the turn streams, the live body is ahead of the stored one; once the
+          // response commits, the stored message is the truth and nothing streams into it.
+          content: processingResponse && existing.content ? existing.content : msg.content,
           extra: existing.extra || msg.extra ? { ...existing.extra, ...msg.extra } : undefined,
+          ...(committedResponse ? { isStreaming: false } : {}),
         };
         const next = [...messages];
         next[existingIndex] = merged;
@@ -2827,35 +2621,6 @@ export const useChatStore = create<ChatState>((set, get) => ({
       };
     }),
 
-  replaceThreadMessageId: (threadId, fromId, toId) =>
-    set((state) => {
-      if (threadId === state.currentThreadId) {
-        const result = replaceMessageIdInList(state.messages, fromId, toId);
-        if (result.messages === state.messages) return state;
-        recordMessageIdDedupDrop(threadId, result.droppedMessage, result.retainedMessage, toId);
-        revokeRemovedBlobUrls(state.messages, result.messages);
-        return { messages: result.messages };
-      }
-
-      const existing = state.threadStates[threadId];
-      if (!existing) return state;
-
-      const result = replaceMessageIdInList(existing.messages, fromId, toId);
-      if (result.messages === existing.messages) return state;
-      recordMessageIdDedupDrop(threadId, result.droppedMessage, result.retainedMessage, toId);
-      revokeRemovedBlobUrls(existing.messages, result.messages);
-      return {
-        threadStates: {
-          ...state.threadStates,
-          [threadId]: {
-            ...existing,
-            messages: result.messages,
-            lastActivity: Date.now(),
-          },
-        },
-      };
-    }),
-
   patchThreadMessage: (threadId, messageId, patch) =>
     set((state) => updateThreadMessage(state, threadId, messageId, (m) => applyMessagePatch(m, patch))),
 
@@ -2878,14 +2643,24 @@ export const useChatStore = create<ChatState>((set, get) => ({
     ),
 
   /** F22: Append a rich block to a message in a specific thread. */
-  appendRichBlockToThread: (threadId, messageId, block) =>
-    set((state) =>
-      updateThreadMessage(state, threadId, messageId, (m) => {
-        const rich = m.extra?.rich ?? { v: 1 as const, blocks: [] };
-        if (rich.blocks.some((b: { id: string }) => b.id === block.id)) return m;
-        return { ...m, extra: { ...m.extra, rich: { ...rich, blocks: [...rich.blocks, block] } } };
-      }),
-    ),
+  appendRichBlockToThread: (threadId, messageId, block, owner) =>
+    set((state) => {
+      if (threadId === state.currentThreadId) {
+        const messages = appendRichBlockToMessages(state.messages, messageId, block, owner);
+        if (messages === state.messages) return state;
+        return { messages, ...mirrorActiveFlat(state, { messages }) };
+      }
+      const existing = state.threadStates[threadId];
+      if (!existing) return state;
+      const messages = appendRichBlockToMessages(existing.messages, messageId, block, owner);
+      if (messages === existing.messages) return state;
+      return {
+        threadStates: {
+          ...state.threadStates,
+          [threadId]: { ...existing, messages, lastActivity: Date.now() },
+        },
+      };
+    }),
 
   /** Set/merge cat invocation info for a specific thread (active or background). */
   setThreadCatInvocation: (threadId, catId, info) =>
@@ -2939,19 +2714,6 @@ export const useChatStore = create<ChatState>((set, get) => ({
       updateThreadMessage(state, threadId, messageId, (m) => ({
         ...m,
         ...appendThinkingChunk(m, thinking),
-      })),
-    ),
-
-  setThreadMessageStreamInvocation: (threadId, messageId, invocationId, turnInvocationId) =>
-    set((state) =>
-      updateThreadMessage(state, threadId, messageId, (m) => ({
-        ...m,
-        extra: {
-          ...m.extra,
-          // F194 Phase Z3 R12 P1 (砚砚): preserve dual id — invocationId=parent (chain SoT),
-          // turnInvocationId=child (bubble SoT). Background bind same contract as active.
-          stream: { ...m.extra?.stream, invocationId, ...(turnInvocationId ? { turnInvocationId } : {}) },
-        },
       })),
     ),
 

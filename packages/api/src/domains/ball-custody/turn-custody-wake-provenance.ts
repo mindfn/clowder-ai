@@ -183,6 +183,9 @@ export async function resolveQueueTurnCustodyWake(
   if (entry.sourceCategory === 'scheduled') return resolveScheduledWake(entry, messageStore);
   if (entry.sourceCategory === 'freshness') return { kind: 'unstructured', source: 'protocol_decline' };
   if (entry.sourceCategory === 'a2a') return resolveA2AWake(entry, messageStore);
+  // Keep the upstream producer's explicit provenance while preserving the
+  // fork's obligation-free policy for every other declared ordinary return.
+  if (entry.sourceCategory === 'producer_return') return { kind: 'unstructured', source: 'producer_return' };
   if (entry.sourceCategory) {
     // ADR-043 D6: ordinary Queue delivery owns its own lifecycle. CI,
     // review, conflict, issue, continuation, and A2A-failure messages are
@@ -216,5 +219,6 @@ export function turnCustodyWakeSourceCategory(wake: TurnCustodyWakeProvenance): 
   if (wake.source === 'cron') return 'scheduled';
   if (wake.source === 'protocol_decline') return 'freshness';
   if (wake.source === 'queue_delivery') return 'queue';
+  if (wake.source === 'producer_return') return 'producer_return';
   return 'unknown';
 }

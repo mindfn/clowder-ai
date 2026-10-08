@@ -74,6 +74,7 @@ export const reminderTemplate: TaskTemplate = {
       trigger: p.trigger,
       ...(deferWhileThreadBusy && threadId ? { firePolicy: { deferWhileThreadBusy: true, threadId } } : {}),
       admission: {
+        dependsOnThreadActivity: false,
         async gate() {
           if (!threadId) return { run: false, reason: 'no deliveryThreadId' };
           return { run: true, workItems: [{ signal: message, subjectKey: `thread-${threadId}` }] };
@@ -121,25 +122,33 @@ export const reminderTemplate: TaskTemplate = {
             // A managed hold still owes the user a visible end-of-wait fact when its wake cannot be
             // admitted. Nothing partial exists to roll back — the admission either happened or not.
             const detail = err instanceof Error ? err.message.slice(0, 500) : String(err).slice(0, 500);
-            await ctx.deliver({
-              threadId: tid,
-              userId: triggerUserId,
-              content: `等待已结束：唤醒入队失败（${detail}）`,
-              idempotencyKey: `hold-ball-wake-failed:${instanceId}`,
-              source: {
-                connector: 'hold-ball',
-                label: '持球状态',
-                icon: '🏓',
-                meta: {
-                  managedHold: true,
-                  phase: 'status',
-                  cancelable: false,
-                  taskId: instanceId,
-                  threadId: tid,
-                  catId,
+            await ctx
+              .deliver({
+                threadId: tid,
+                userId: triggerUserId,
+                content: `等待条件已满足：唤醒入队失败（${detail}）；原任务保留，等待恢复。`,
+                idempotencyKey: `hold-ball-wake-failed:${instanceId}`,
+                source: {
+                  connector: 'hold-ball',
+                  label: '持球状态',
+                  icon: '🏓',
+                  meta: {
+                    managedHold: true,
+                    phase: 'status',
+                    cancelable: false,
+                    taskId: instanceId,
+                    threadId: tid,
+                    catId,
+                  },
                 },
-              },
-            });
+              })
+              .catch((statusError) => {
+                throw new AggregateError([err, statusError], 'Hold wake admission and failure receipt both failed');
+              });
+            // Saving a failure receipt is not wake admission. Keep RUN_FAILED so
+            // the same owned identity can retry within its lifecycle; never retire
+            // the continuation merely because its diagnostic reached History.
+            throw err;
           }
         },
       },

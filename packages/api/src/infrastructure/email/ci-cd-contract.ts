@@ -1,4 +1,4 @@
-import type { AwaitStateV1, WaitOutcomeV1 } from '@cat-cafe/shared';
+import type { AwaitStateV1, GitHubWaitOutcomeV1 } from '@cat-cafe/shared';
 
 export type CiBucket = 'pass' | 'fail' | 'pending' | 'external_infrastructure';
 export type CiExecutionFailure = 'billing_spending_limit_zero_step';
@@ -19,7 +19,7 @@ export interface CiPollResult {
   readonly headSha: string;
   readonly prState: 'open' | 'merged' | 'closed';
   readonly aggregateBucket: CiBucket;
-  /** Raw GitHub rollup presence before the poller's empty-rollup stability guard. */
+  /** Raw GitHub rollup presence; an empty rollup is never positive CI evidence. */
   readonly checkRollup?: 'empty' | 'present';
   readonly checks: readonly CiCheckDetail[];
   /** GitHub login of the user who merged the PR (only present when prState=merged). */
@@ -57,7 +57,7 @@ export interface TrackedTaskLike {
   readonly automationState?: {
     readonly ci?: { readonly prState?: 'merged' | 'closed'; readonly headSha?: string };
     readonly await?: AwaitStateV1;
-    readonly waitOutcome?: WaitOutcomeV1;
+    readonly waitOutcome?: GitHubWaitOutcomeV1;
   };
 }
 

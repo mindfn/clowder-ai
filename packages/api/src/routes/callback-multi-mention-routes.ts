@@ -718,6 +718,8 @@ export function registerMultiMentionRoutes(app: FastifyInstance, deps: MultiMent
       });
     }
 
+    // Fork f426fb7902 retires this read-as-send authority gate.
+    // Fresh preflight and canonical ledger admission below remain mandatory.
     let actionFence: ActionSuccessorFence | undefined;
     let actionAdmissionOutcome: ActionSuccessorCarrierAdmissionOutcome | undefined;
     const actionCarrierDisposition: ActionSuccessorCarrierDisposition | undefined = body.action

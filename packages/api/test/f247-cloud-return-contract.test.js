@@ -137,19 +137,6 @@ describe('F247 source-bound Remote MCP return contract', () => {
     assert.ok(proactiveStored);
     assert.equal(proactiveStored.replyTo, undefined);
 
-    const proactiveReplace = await app.inject({
-      method: 'POST',
-      url: '/api/callbacks/post-message',
-      headers: { 'x-agent-key-secret': secret },
-      payload: {
-        content: 'must not replace a source without invocation provenance',
-        threadId: thread.id,
-        streamDisposition: 'replace_final',
-      },
-    });
-    assert.equal(proactiveReplace.statusCode, 400);
-    assert.equal(proactiveReplace.json().kind, 'replace_final_agent_key_unsupported');
-
     const missingReplyTo = await app.inject({
       method: 'POST',
       url: '/api/callbacks/post-message',

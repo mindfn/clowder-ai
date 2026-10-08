@@ -332,4 +332,19 @@ describe('F293 pure routing-context reducer', () => {
       revisionTwoWithPending.candidates.map((entry) => [entry.binding.catId, entry.effect]),
     );
   });
+
+  it('keeps capability context out of availability decision reasons', () => {
+    const snapshot = reduce({
+      profiles: [profile('sol', 'dossier:v1', 0), profile('terra', 'dossier:terra-v1', 0)],
+    });
+
+    assert.deepEqual(byCat(snapshot, 'sol').reasons, []);
+    assert.deepEqual(byCat(snapshot, 'sol').profile.revision.relevantSignals, [
+      {
+        kind: 'strength',
+        summary: 'sol is strong at architecture',
+        evidenceRefs: ['dossier:dossier:v1'],
+      },
+    ]);
+  });
 });

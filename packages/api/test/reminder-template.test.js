@@ -286,26 +286,50 @@ describe('reminderTemplate managed-hold terminal visibility', () => {
       deliveryThreadId: 'thread-1',
     });
 
-    await spec.run.execute('continue after wait', 'thread-thread-1', {
-      assignedCatId: 'codex',
-      deliver: async (input) => {
-        delivered.push(input);
-        if (delivered.length === 1) throw new Error('queue admission rejected');
-        return 'status-message-1';
-      },
-    });
+    await assert.rejects(
+      () =>
+        spec.run.execute('continue after wait', 'thread-thread-1', {
+          assignedCatId: 'codex',
+          deliver: async (input) => {
+            delivered.push(input);
+            if (delivered.length === 1) throw new Error('queue admission rejected');
+            return 'status-message-1';
+          },
+        }),
+      /queue admission rejected/,
+      'a failure receipt must not settle the wake obligation',
+    );
 
     assert.equal(delivered.length, 2);
     assert.equal(delivered[0].targetCatId, 'codex', 'the wake envelope names its member');
     assert.equal(delivered[0].idempotencyKey, `hold-ball-wake:${taskId}`);
     assert.equal(delivered[1].idempotencyKey, `hold-ball-wake-failed:${taskId}`);
     assert.equal(delivered[1].source.meta.phase, 'status');
-    // Both cards this run emits are terminal: the wake itself ends the wait, and
-    // a failed wake admission ends it too. Neither phase (`wake`, `status`) can
-    // carry that, so each card states its own cancelability for the consumer.
+    // Cards have explicit cancelability, but a diagnostic receipt does not
+    // certify admission or suppress lifecycle-bounded retries of the same wake.
     assert.equal(delivered[0].source.meta.cancelable, false);
     assert.equal(delivered[1].source.meta.cancelable, false);
     assert.match(delivered[1].content, /唤醒入队失败/);
     assert.match(delivered[1].content, /queue admission rejected/);
+  });
+
+  it('keeps both failures when admission and the diagnostic receipt are unavailable', async () => {
+    const spec = reminderTemplate.createSpec('hold-ball-double-failure', {
+      trigger: { type: 'once', fireAt: Date.now() },
+      params: { message: 'continue', holdLifecycle: { mode: 'timer', status: 'active' } },
+      deliveryThreadId: 'thread-1',
+    });
+    const admissionError = new Error('admission failed');
+    const statusError = new Error('status failed');
+    await assert.rejects(
+      () =>
+        spec.run.execute('continue', 'thread-thread-1', {
+          deliver: async (input) => {
+            throw input.targetCatId ? admissionError : statusError;
+          },
+        }),
+      (error) =>
+        error instanceof AggregateError && error.errors[0] === admissionError && error.errors[1] === statusError,
+    );
   });
 });

@@ -12,6 +12,7 @@
  */
 
 import { createHash, randomUUID } from 'node:crypto';
+import { isDeepStrictEqual } from 'node:util';
 import type {
   CatRoutingError,
   MessageFrom,
@@ -45,6 +46,7 @@ import {
   queueOwner,
 } from './queue-ledger/QueueLedger.js';
 import { createQueueLedgerAdmission } from './queue-ledger/QueueLedgerAdmission.js';
+import { assertQueueLedgerExecutionScope } from './queue-ledger/QueueLedgerValidation.js';
 
 export type QueueEntry = QueueLedgerEntry;
 
@@ -68,6 +70,7 @@ export interface QueueEnqueueInput {
   sourceId?: string;
   kind: QueueLedgerEntry['kind'];
   ownerAuthProvenance: OwnerAuthProvenance;
+  executionScope?: QueueLedgerEntry['execution']['executionScope'];
   idempotencyKey?: string;
   content: string;
   messageId?: string | null;
@@ -77,6 +80,7 @@ export interface QueueEnqueueInput {
   authorIntentByCatId?: Record<string, QueueAuthorIntent>;
   intent: string;
   autoExecute?: boolean;
+  liveSessionId?: string;
   priority?: QueueLedgerEntry['priority'];
   sourceCategory?: QueueLedgerEntry['sourceCategory'];
   continuationKey?: string;
@@ -152,6 +156,20 @@ export function actionSuccessorInvocationIdempotencyKey(queueIdempotencyKey: str
   return `action-successor:${queueIdempotencyKey}`;
 }
 
+/** Legacy public carrier identity. Pure codec only; it owns no pending work. */
+export function actionSuccessorCarrierKey(
+  fence: Pick<ActionSuccessorFence, 'leaseId' | 'generation'>,
+  catId: string,
+): string {
+  return `action:${fence.leaseId}:${fence.generation}:${catId}`;
+}
+
+/** The source × target key used by the canonical Queue executor and History recovery. */
+export function actionSuccessorInvocationKeyForTarget(sourceRecordId: string, catId: string): string {
+  const key = actionSuccessorInvocationIdempotencyKey(sourceRecordId);
+  return key.endsWith(`:${catId}`) ? key : `${key}:${catId}`;
+}
+
 export function queueEntrySource(entry: Pick<QueueEntry, 'from'>): 'user' | 'connector' | 'agent' | 'system' {
   if (entry.from.kind === 'user') return 'user';
   if (entry.from.kind === 'agent') return 'agent';
@@ -201,6 +219,17 @@ function isQueueTargetPending(entry: Pick<QueueEntry, 'status' | 'targets'>, cat
   return entry.status !== 'terminal' && entry.targets.includes(catId);
 }
 
+/** Ordinary History reads cannot acquire a typed/domain continuation owner's work. */
+function isOrdinaryBodyReadEntry(entry: Pick<QueueEntry, 'sourceCategory' | 'execution'>): boolean {
+  return (
+    entry.sourceCategory !== 'scheduled' &&
+    !entry.execution.liveSessionId &&
+    !entry.execution.actionSuccessorFence &&
+    !entry.execution.waitContinuationCarrier &&
+    !entry.execution.executionScope
+  );
+}
+
 export class InvocationQueue {
   static readonly STALE_PROCESSING_THRESHOLD_MS = 600_000;
 
@@ -217,6 +246,23 @@ export class InvocationQueue {
   private lastEnqueuedAt = 0;
   /** Claimed rows remain reversible until tracker admission owns execution. */
   private readonly ledgerClaimIds = new Map<string, string>();
+  private readonly sourceListeners = new Set<(threadId: string, userId: string) => void>();
+
+  /** Notification only. QueueLedger and History remain the sources of truth. */
+  onSourceChanged(listener: (threadId: string, userId: string) => void): () => void {
+    this.sourceListeners.add(listener);
+    return () => this.sourceListeners.delete(listener);
+  }
+
+  private signalSourceChanged(threadId: string, userId: string): void {
+    for (const listener of this.sourceListeners) {
+      try {
+        listener(threadId, userId);
+      } catch {
+        // A disposable consumer cannot reverse a committed Queue mutation.
+      }
+    }
+  }
 
   constructor(private readonly ledgerStore: QueueLedgerStore = new InMemoryQueueLedgerStore()) {}
 
@@ -252,6 +298,7 @@ export class InvocationQueue {
     messageId?: unknown;
     a2aTriggerMessageId?: unknown;
     ownerAuthProvenance: unknown;
+    executionScope?: QueueLedgerEntry['execution']['executionScope'];
   }): { kind: QueueEntry['kind']; ownerAuthProvenance: OwnerAuthProvenance } {
     const kind = input.kind;
     if (kind !== 'conversation_input' && kind !== 'message_wake' && kind !== 'private_input') {
@@ -287,6 +334,16 @@ export class InvocationQueue {
     ) {
       throw new Error('ownerAuthProvenance must be explicit on every Queue producer');
     }
+    assertQueueLedgerExecutionScope({
+      from: input.from,
+      targets: input.targetCats,
+      execution: {
+        intent: 'validate-admission',
+        autoExecute: false,
+        ownerAuthProvenance,
+        ...(input.executionScope !== undefined ? { executionScope: input.executionScope } : {}),
+      },
+    });
     return { kind, ownerAuthProvenance };
   }
 
@@ -324,7 +381,9 @@ export class InvocationQueue {
       ...(input.authorIntentByCatId ? { authorIntentByCatId: input.authorIntentByCatId } : {}),
       intent: input.intent,
       ownerAuthProvenance: input.ownerAuthProvenance,
+      executionScope: input.executionScope,
       autoExecute: input.autoExecute,
+      liveSessionId: input.liveSessionId,
       priority: input.priority,
       sourceCategory: input.sourceCategory,
       a2aParentInvocationId: input.a2aParentInvocationId,
@@ -346,6 +405,7 @@ export class InvocationQueue {
 
   private cacheLedgerEntries(entries: readonly QueueLedgerEntry[]): QueueEntry[] {
     const projected: QueueEntry[] = [];
+    const changedPublicScopes = new Map<string, { threadId: string; userId: string }>();
     for (const row of entries) {
       if (row.status === 'terminal') {
         this.removeCachedEntry(row.threadId, row.id);
@@ -354,10 +414,16 @@ export class InvocationQueue {
       const entry = InvocationQueue.projectLedgerEntry(row);
       const queue = this.getOrCreate(this.scopeKey(entry.threadId, queueEntryOwnerId(entry)));
       const index = queue.findIndex((candidate) => candidate.id === entry.id);
+      const changed = index < 0 || !isDeepStrictEqual(queue[index], entry);
       if (index >= 0) queue[index] = entry;
       else queue.push(entry);
       projected.push(structuredClone(entry));
+      if (changed && entry.payload.messageId) {
+        const userId = queueEntryOwnerId(entry);
+        changedPublicScopes.set(this.scopeKey(entry.threadId, userId), { threadId: entry.threadId, userId });
+      }
     }
+    for (const scope of changedPublicScopes.values()) this.signalSourceChanged(scope.threadId, scope.userId);
     return projected;
   }
 
@@ -852,6 +918,7 @@ export class InvocationQueue {
     const assignsTargetlessConversation = entry.kind === 'conversation_input' && entry.targets.length === 0;
     if (
       isSystemPinnedQueueEntry(entry) ||
+      entry.execution.liveSessionId ||
       (!assignsTargetlessConversation && !isOrdinaryQueueTargetEligible(entry, targetCatId))
     ) {
       return { outcome: 'rejected', reason: 'entry_ineligible' };
@@ -1129,6 +1196,7 @@ export class InvocationQueue {
       !entry ||
       entry.status !== 'queued' ||
       !entry.targets.includes(targetCatId) ||
+      !isOrdinaryBodyReadEntry(entry) ||
       entry.payload.messageId !== messageId
     ) {
       return null;
@@ -1209,35 +1277,40 @@ export class InvocationQueue {
     return this.claimLedgerEntry(best, selectedTargetCatId);
   }
 
+  /**
+   * Claims the exact queued entry the drain selected, with the prefix members it names. The drain
+   * passes over entries that wait for a busy or deferred target, so the selected entry need not be
+   * the comparator head; the drain keeps each target's sources in comparator order itself.
+   */
   async markProcessingGroupAcrossUsersDurable(
     threadId: string,
-    resolvedHead: { readonly entryId: string; readonly targetCats: readonly string[] },
+    resolvedEntry: { readonly entryId: string; readonly targetCats: readonly string[] },
     entryIds: readonly string[],
   ): Promise<{ entry: QueueEntry; members: QueueEntry[] } | null> {
-    const best = this.peekOldestAcrossUsers(threadId);
+    const primary = this.findEntryAcrossUsers(threadId, resolvedEntry.entryId);
     if (
-      !best ||
-      best.id !== resolvedHead.entryId ||
-      entryIds[0] !== best.id ||
+      !primary ||
+      primary.status !== 'queued' ||
+      entryIds[0] !== primary.id ||
       entryIds.length === 0 ||
       new Set(entryIds).size !== entryIds.length ||
-      resolvedHead.targetCats.length === 0 ||
-      new Set(resolvedHead.targetCats).size !== resolvedHead.targetCats.length
+      resolvedEntry.targetCats.length === 0 ||
+      new Set(resolvedEntry.targetCats).size !== resolvedEntry.targetCats.length
     ) {
       return null;
     }
-    const selectedTargetCatId = resolvedHead.targetCats.length === 1 ? resolvedHead.targetCats[0]! : undefined;
+    const selectedTargetCatId = resolvedEntry.targetCats.length === 1 ? resolvedEntry.targetCats[0]! : undefined;
     const selected = entryIds.map((entryId) => this.findEntryAcrossUsers(threadId, entryId));
     if (
       selected.some(
         (entry) =>
           !entry ||
           entry.status !== 'queued' ||
-          queueEntryOwnerId(entry) !== queueEntryOwnerId(best) ||
+          queueEntryOwnerId(entry) !== queueEntryOwnerId(primary) ||
           (selectedTargetCatId
             ? entry.targets.length > 0 && !entry.targets.includes(selectedTargetCatId)
-            : entry.targets.length !== resolvedHead.targetCats.length ||
-              resolvedHead.targetCats.some((catId) => !entry.targets.includes(catId))),
+            : entry.targets.length !== resolvedEntry.targetCats.length ||
+              resolvedEntry.targetCats.some((catId) => !entry.targets.includes(catId))),
       )
     ) {
       return null;
@@ -1248,10 +1321,10 @@ export class InvocationQueue {
     if (claimed.outcome !== 'claimed') return null;
     const projected = this.cacheLedgerClaim(claimed.entries, claimId);
     const byId = new Map(projected.map((entry) => [entry.id, entry]));
-    const primary = byId.get(best.id);
-    if (!primary) return null;
+    const claimedPrimary = byId.get(primary.id);
+    if (!claimedPrimary) return null;
     return {
-      entry: primary,
+      entry: claimedPrimary,
       members: entryIds
         .slice(1)
         .map((entryId) => byId.get(entryId))
@@ -1434,7 +1507,9 @@ export class InvocationQueue {
       if (!this.queueMatchesThread(queue, threadId)) continue;
       const index = queue.findIndex((entry) => entry.id === entryId);
       if (index < 0) continue;
-      return queue.splice(index, 1)[0] ?? null;
+      const removed = queue.splice(index, 1)[0] ?? null;
+      if (removed?.payload.messageId) this.signalSourceChanged(threadId, queueEntryOwnerId(removed));
+      return removed;
     }
     return null;
   }
@@ -1531,7 +1606,7 @@ export class InvocationQueue {
     return null;
   }
 
-  /** Backfill messageId on a new entry (null → value). */
+  /** Retire a structured successor through the canonical ledger transaction. */
   async retireActionSuccessorFenceDurable(fence: ActionSuccessorFence): Promise<ActionSuccessorQueueRetirement[]> {
     const retired: ActionSuccessorQueueRetirement[] = [];
     const matches = [...this.queues.values()]
@@ -1670,15 +1745,15 @@ export class InvocationQueue {
   }> {
     return this.list(threadId, userId)
       .filter((entry) => entry.status === 'queued' && isOrdinaryQueueTargetEligible(entry, catId))
+      .filter(isOrdinaryBodyReadEntry)
       .filter((entry) => InvocationQueue.canExposeToCurrentParent(entry, catId, parentInvocationId))
       .map((entry) => ({
         entryId: entry.id,
         from: structuredClone(entry.from),
         content: entry.payload.content,
         alreadyExposed: false,
-        // A full-body read is actual delivery. Structured successor/hold truth
-        // moves to its own store after adoption; Queue must not retain the
-        // target merely to mirror that later lifecycle.
+        // Only an ordinary full-body read may adopt this exact pending target.
+        // Structured wait/action/scheduled/domain owners were excluded above.
         readDisposition: entry.payload.messageId !== undefined ? 'adopt' : 'seen_only',
         ...(entry.payload.messageId !== undefined ? { messageId: entry.payload.messageId } : {}),
       }));
@@ -1721,7 +1796,7 @@ export class InvocationQueue {
     return structuredClone(queued[0]!);
   }
 
-  /** Rollback a processing entry back to queued (undo markProcessing/markProcessingAcrossUsers). */
+  /** The comparator head: the oldest queued entry of the thread across users. */
   peekOldestAcrossUsers(threadId: string): QueueEntry | null {
     let best: QueueEntry | null = null;
     for (const q of this.queues.values()) {
@@ -1734,6 +1809,22 @@ export class InvocationQueue {
       }
     }
     return best ? { ...best } : null;
+  }
+
+  /** Every queued entry of the thread across users, in comparator order, head first. */
+  listQueuedAcrossUsers(threadId: string): QueueEntry[] {
+    const queued: QueueEntry[] = [];
+    for (const q of this.queues.values()) {
+      if (!this.queueMatchesThread(q, threadId)) continue;
+      for (const e of q) if (e.status === 'queued') queued.push(e);
+    }
+    return queued.sort(InvocationQueue.compareEntries).map((entry) => ({ ...entry }));
+  }
+
+  /** One entry of the thread by id, whichever user owns it. */
+  getEntrySnapshotAcrossUsers(threadId: string, entryId: string): QueueEntry | null {
+    const entry = this.findEntryAcrossUsers(threadId, entryId);
+    return entry ? structuredClone(entry) : null;
   }
 
   /** Mark the strict comparator head across users as processing. */

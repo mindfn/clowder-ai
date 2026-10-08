@@ -28,6 +28,8 @@ import type {
 } from '@cat-cafe/shared';
 import {
   collectiveOwnerAdmissionV1Schema,
+  collectiveSourceIdentitySchema,
+  collectiveWorkDelegationV1Schema,
   collectiveWorkInvocationV1Schema,
   custodyOfferV1Schema,
   evolutionPreparationSubmissionV1Schema,
@@ -257,9 +259,36 @@ export interface StoredMessage {
   metadata?: MessageMetadata;
   /** F022+F052+F098-C1+F153-F: Extensible extra data (rich blocks, stream metadata, cross-post origin, explicit targets, tracing pointers) */
   extra?: {
+    /** Immutable Live ingress receipt, not executable media or an ownership record. */
+    liveAdmission?: { sessionId: string; targetId: string };
+    /** F309: a confirmed human request; technical coordinates resolve through the request ref. */
+    contentModificationRequestV1?: import('@cat-cafe/shared').ContentModificationSourceMessageV1;
+    /** F317: Host-persisted typed input or provider-committed speech/result. Never a task grant. */
+    liveCompanion?: {
+      callId: string;
+      /** Display identity frozen when this Live call began; author/source remain on the message. */
+      identity?: import('@cat-cafe/shared').CompanionIdentitySnapshotV1;
+    } & (
+      | {
+          modality: 'typed';
+          role: 'user';
+          clientMessageId: string;
+        }
+      | {
+          nativeThreadId: string;
+          realtimeSessionId: string;
+          nativeItemId: string;
+          modality: 'voice' | 'result';
+          /** Explicit source role; legacy records without it remain in complete chat. */
+          role?: 'user' | 'assistant';
+          nativeTurnId?: string;
+        }
+    );
     /** F290: canonical owner receipt and exact Task execution trigger; written by owner admission routes only. */
     collectiveOwnerAdmissionV1?: import('@cat-cafe/shared').CollectiveOwnerAdmissionV1;
     collectiveWorkInvocationV1?: import('@cat-cafe/shared').CollectiveWorkInvocationV1;
+    /** F290: authenticated Task owner explicitly names home Cats allowed to continue this private Work. */
+    collectiveWorkDelegationV1?: import('@cat-cafe/shared').CollectiveWorkDelegationV1;
     collectiveAuthorizationInvalid?: true;
     /** F306 durable provider-neutral event; native wire vocabulary is never stored here. */
     semanticEvent?: ProviderSemanticEvent;
@@ -586,6 +615,7 @@ export type HostMessageExtra = Omit<
   | 'deliveryBoundary'
   | 'collectiveOwnerAdmissionV1'
   | 'collectiveWorkInvocationV1'
+  | 'collectiveWorkDelegationV1'
   | 'collectiveAuthorizationInvalid'
 >;
 
@@ -750,6 +780,37 @@ export function prepareQueueLedgerSourceLifecycle(
   message: StoredMessage,
   entries: readonly QueueLedgerEntry[],
 ): LifecycleStoredMessageMetadata {
+  // Scope limits execution; it is not a grant manufactured by the Queue label.
+  // Bind it to immutable History source evidence before either store commits.
+  for (const entry of entries) {
+    if (entry.execution.executionScope && !isDeepStrictEqual(entry.from, message.from)) {
+      throw new Error('Collective Queue admission sender must match its durable source');
+    }
+    if (entry.execution.executionScope === 'collective-participation') {
+      const source = collectiveSourceIdentitySchema.safeParse(message.source?.meta?.participation);
+      if (
+        !source.success ||
+        message.source?.connector !== 'collective' ||
+        message.from?.kind !== 'external' ||
+        message.from.connectorId !== 'collective' ||
+        entry.targets.length !== 1 ||
+        entry.targets[0] !== source.data.catId
+      ) {
+        throw new Error('Collective participation Queue admission requires its exact durable source and target');
+      }
+    } else if (entry.execution.executionScope === 'collective-work') {
+      const invocation = collectiveWorkInvocationV1Schema.safeParse(message.extra?.collectiveWorkInvocationV1);
+      if (
+        !invocation.success ||
+        message.from?.kind !== 'system' ||
+        message.from.service !== 'collective-work' ||
+        message.source ||
+        message.extra?.collectiveAuthorizationInvalid
+      ) {
+        throw new Error('Collective work Queue admission requires its durable invocation receipt');
+      }
+    }
+  }
   const targetIds = entries.flatMap((entry) => entry.targets);
   const dispatchedTargets = new Set(message.lifecycle?.dispatchRefs?.map((ref) => ref.targetId) ?? []);
   if (targetIds.some((targetId) => dispatchedTargets.has(targetId))) {
@@ -1065,6 +1126,7 @@ export function advanceLifecycleInputDispatchMetadata(
   } else if (existing.phase === 'settled' || patch.phase !== 'settled') {
     return { kind: 'conflict', reason: 'invalid_transition' };
   }
+  // Settlement keeps the exact delivery identity.
   const nextRef: LifecycleDispatchRef = {
     targetId: patch.targetId,
     phase: patch.phase,
@@ -1185,6 +1247,26 @@ export function prepareLifecycleAppendAdmission(
   return { kind: 'prepared', lifecycles, replayed };
 }
 
+function removeLifecycleResponseInputs(
+  current: Extract<LifecycleStoredMessageMetadata, { kind: 'response' }>,
+  entryId: string,
+  inputMessageIds: readonly string[],
+): { kind: 'applied'; lifecycle: typeof current } | { kind: 'replayed' } | { kind: 'conflict' } {
+  const hasEntry = current.inputEntryIds.includes(entryId);
+  const ids = new Set(inputMessageIds);
+  const present = current.inputMessageIds.filter((id) => ids.has(id));
+  if (!hasEntry && present.length === 0) return { kind: 'replayed' };
+  if (!hasEntry || present.length !== ids.size) return { kind: 'conflict' };
+  return {
+    kind: 'applied',
+    lifecycle: {
+      ...current,
+      inputEntryIds: current.inputEntryIds.filter((id) => id !== entryId),
+      inputMessageIds: current.inputMessageIds.filter((id) => !ids.has(id)),
+    },
+  };
+}
+
 export function prepareLifecycleAppendRejection(
   messages: readonly StoredMessage[],
   input: LifecycleAppendRejectionInput,
@@ -1253,22 +1335,13 @@ export function prepareLifecycleAppendRejection(
   ) {
     return { kind: 'conflict', reason: 'lifecycle_conflict' };
   }
-  const hasEntry = responseLifecycle.inputEntryIds.includes(input.entryId);
-  const presentMessageIds = input.inputMessageIds.filter((messageId) =>
-    responseLifecycle.inputMessageIds.includes(messageId),
-  );
-  if (!hasEntry && presentMessageIds.length === 0) {
+  const removal = removeLifecycleResponseInputs(responseLifecycle, input.entryId, input.inputMessageIds);
+  if (removal.kind === 'conflict') return { kind: 'conflict', reason: 'lifecycle_conflict' };
+  if (removal.kind === 'replayed') {
     lifecycles.push(responseLifecycle);
-  } else if (!hasEntry || presentMessageIds.length !== input.inputMessageIds.length) {
-    return { kind: 'conflict', reason: 'lifecycle_conflict' };
   } else {
     replayed = false;
-    const rejectedIds = new Set(input.inputMessageIds);
-    lifecycles.push({
-      ...responseLifecycle,
-      inputEntryIds: responseLifecycle.inputEntryIds.filter((entryId) => entryId !== input.entryId),
-      inputMessageIds: responseLifecycle.inputMessageIds.filter((messageId) => !rejectedIds.has(messageId)),
-    });
+    lifecycles.push(removal.lifecycle);
   }
   return { kind: 'prepared', lifecycles, replayed };
 }
@@ -1536,6 +1609,10 @@ export function assertValidAppendMessageInput(msg: AppendMessageInput): void {
   }
   const ownerAdmission = msg.extra?.collectiveOwnerAdmissionV1;
   const workInvocation = msg.extra?.collectiveWorkInvocationV1;
+  const workDelegation = msg.extra?.collectiveWorkDelegationV1;
+  if (workDelegation !== undefined && (ownerAdmission !== undefined || workInvocation !== undefined)) {
+    throw new TypeError('Collective Work Message cannot combine Host authority and home delegation carriers');
+  }
   if (ownerAdmission !== undefined) {
     if (msg.from.kind !== 'user' || msg.source || msg.extra?.collectiveAuthorizationInvalid) {
       throw new TypeError('Collective owner receipts require a Host-owned user Message');
@@ -1552,6 +1629,19 @@ export function assertValidAppendMessageInput(msg: AppendMessageInput): void {
       throw new TypeError('Collective Work invocations require the canonical system producer');
     }
     collectiveWorkInvocationV1Schema.parse(workInvocation);
+  }
+  if (workDelegation !== undefined) {
+    const parsed = collectiveWorkDelegationV1Schema.parse(workDelegation);
+    if (
+      msg.from.kind !== 'agent' ||
+      msg.from.catId !== parsed.ownerCatId ||
+      msg.source ||
+      msg.origin !== 'callback' ||
+      msg.extra?.collectiveAuthorizationInvalid ||
+      JSON.stringify([...msg.mentions].sort()) !== JSON.stringify([...parsed.targetCatIds].sort())
+    ) {
+      throw new TypeError('Collective Work delegation requires an exact authenticated owner callback Message');
+    }
   }
   const custody = msg.extra?.custodyOfferV1;
   if (custody) {
@@ -1628,7 +1718,8 @@ export function mergeMessageExtra(
     evolutionPreparationSubmissionV1: _stripPreparation,
     deliveryBoundary: _stripBoundary,
     collectiveOwnerAdmissionV1: _stripCollectiveAdmission,
-    collectiveWorkInvocationV1: _stripCollectiveWork,
+    collectiveWorkInvocationV1: _stripCollectiveInvocation,
+    collectiveWorkDelegationV1: _stripCollectiveDelegation,
     collectiveAuthorizationInvalid: _stripCollectiveInvalid,
     ...incomingHost
   } = incoming ?? {};
@@ -3079,7 +3170,8 @@ export class MessageStore {
       evolutionPreparationSubmissionV1: _stripPreparation,
       deliveryBoundary: _stripBoundary,
       collectiveOwnerAdmissionV1: _stripCollectiveAdmission,
-      collectiveWorkInvocationV1: _stripCollectiveWork,
+      collectiveWorkInvocationV1: _stripCollectiveInvocation,
+      collectiveWorkDelegationV1: _stripCollectiveDelegation,
       collectiveAuthorizationInvalid: _stripCollectiveInvalid,
       ...hostOnly
     } = extra as Record<string, unknown>;

@@ -7,17 +7,20 @@
  *
  * Follows F139 TaskSpec_P1 consumer pattern (CiCdCheckTaskSpec etc).
  */
-import type { CatId, CommunityEvent, ConnectorSource } from '@cat-cafe/shared';
+import type { CommunityEvent, ConnectorSource } from '@cat-cafe/shared';
 import type { ICommunityEventLog } from '../../../domains/community/CommunityEventLog.js';
 import type {
   ConnectorDeliveryDeps,
   ConnectorDeliveryInput,
   ConnectorDeliveryResult,
 } from '../../email/deliver-connector-message.js';
+import { gitHubAdmissionCanContinue } from '../../github/admission-budget.js';
+import { GitHubRateLimitError } from '../../github/request-budget.js';
 import type { ExecuteContext, GateCtx, TaskSpec_P1, WorkItem } from '../../scheduler/types.js';
 import type { IConnectorThreadBindingStore } from '../ConnectorThreadBindingStore.js';
 import { type InboxThreadStore, selfHealInboxThreadKind } from './inbox-thread-resolver.js';
 import type { ReconciliationDedup } from './ReconciliationDedup.js';
+import type { ResolveRepoInboxCatId } from './RepoInboxOwnerResolver.js';
 import type { RepoInboxSignal } from './types.js';
 
 /** Minimal projector interface — only apply() needed here. */
@@ -49,7 +52,10 @@ export interface GhIssueItem {
 
 export interface RepoScanTaskSpecOptions {
   repoAllowlist: string[];
+  /** Compatibility fallback when a repo has no canonical community routing config. */
   inboxCatId: string;
+  /** Dynamic canonical owner lookup. Called once immediately before each delivery. */
+  resolveInboxCatId?: ResolveRepoInboxCatId;
   defaultUserId: string;
   reconciliationDedup: Pick<
     ReconciliationDedup,
@@ -65,8 +71,8 @@ export interface RepoScanTaskSpecOptions {
   threadStore?: Pick<InboxThreadStore, 'get' | 'updateThreadKind'>;
   deliverFn: (deps: ConnectorDeliveryDeps, input: ConnectorDeliveryInput) => Promise<ConnectorDeliveryResult>;
   deliveryDeps: ConnectorDeliveryDeps;
-  fetchOpenPRs: (repo: string) => Promise<GhPrItem[]>;
-  fetchOpenIssues: (repo: string) => Promise<GhIssueItem[]>;
+  fetchOpenPRs: (repo: string, signal?: AbortSignal) => Promise<GhPrItem[]>;
+  fetchOpenIssues: (repo: string, signal?: AbortSignal) => Promise<GhIssueItem[]>;
   log: { info(...args: unknown[]): void; warn(...args: unknown[]): void };
   pollIntervalMs?: number;
   maxWorkItemsPerRun?: number;
@@ -92,6 +98,7 @@ export function createRepoScanTaskSpec(opts: RepoScanTaskSpecOptions): TaskSpec_
   const maxWorkItemsPerRun = Math.max(1, opts.maxWorkItemsPerRun ?? DEFAULT_MAX_WORK_ITEMS_PER_RUN);
   const skipHistoricalOnFirstRun = opts.skipHistoricalOnFirstRun ?? true;
   let nextWorkItemOffset = 0;
+  let nextRepoIndex = 0;
 
   function selectWorkItems(workItems: WorkItem<RepoInboxSignal>[]): WorkItem<RepoInboxSignal>[] {
     if (workItems.length <= maxWorkItemsPerRun) {
@@ -113,7 +120,9 @@ export function createRepoScanTaskSpec(opts: RepoScanTaskSpecOptions): TaskSpec_
     profile: 'poller',
     trigger: { type: 'interval', ms: opts.pollIntervalMs ?? 300_000 },
     admission: {
-      async gate(_ctx: GateCtx) {
+      async gate(ctx: GateCtx) {
+        const signal = ctx?.signal;
+        signal?.throwIfAborted();
         if (opts.repoAllowlist.length === 0) {
           return { run: false, reason: 'no repos in allowlist' };
         }
@@ -122,7 +131,13 @@ export function createRepoScanTaskSpec(opts: RepoScanTaskSpecOptions): TaskSpec_
         let baselinedItemCount = 0;
         let baselinedRepoCount = 0;
 
-        for (const repo of opts.repoAllowlist) {
+        const startIndex = nextRepoIndex % opts.repoAllowlist.length;
+        for (let step = 0; step < opts.repoAllowlist.length; step++) {
+          signal?.throwIfAborted();
+          if (step > 0 && !gitHubAdmissionCanContinue(ctx)) break;
+          const index = (startIndex + step) % opts.repoAllowlist.length;
+          const repo = opts.repoAllowlist[index]!;
+          nextRepoIndex = (index + 1) % opts.repoAllowlist.length;
           try {
             // F167 R2 P2: self-heal gate-keeping marker for every allowlisted
             // repo's inbox binding at admission.gate, INDEPENDENT of whether
@@ -158,8 +173,11 @@ export function createRepoScanTaskSpec(opts: RepoScanTaskSpecOptions): TaskSpec_
             const baselineEstablished =
               !skipHistoricalOnFirstRun || (await opts.reconciliationDedup.isBaselineEstablished(repo));
 
-            const prs = await opts.fetchOpenPRs(repo);
+            signal?.throwIfAborted();
+            const prs = await opts.fetchOpenPRs(repo, signal);
+            signal?.throwIfAborted();
             for (const pr of prs) {
+              signal?.throwIfAborted();
               if (pr.draft) continue;
               if (SKIP_AUTHOR_ASSOCIATIONS.has(pr.author_association)) continue;
               if (await opts.reconciliationDedup.isNotified(repo, 'pr', pr.number)) continue;
@@ -180,8 +198,11 @@ export function createRepoScanTaskSpec(opts: RepoScanTaskSpecOptions): TaskSpec_
               });
             }
 
-            const issues = await opts.fetchOpenIssues(repo);
+            signal?.throwIfAborted();
+            const issues = await opts.fetchOpenIssues(repo, signal);
+            signal?.throwIfAborted();
             for (const issue of issues) {
+              signal?.throwIfAborted();
               if (SKIP_AUTHOR_ASSOCIATIONS.has(issue.author_association)) continue;
               if (await opts.reconciliationDedup.isNotified(repo, 'issue', issue.number)) continue;
               repoWorkItems.push({
@@ -201,6 +222,7 @@ export function createRepoScanTaskSpec(opts: RepoScanTaskSpecOptions): TaskSpec_
               });
             }
 
+            signal?.throwIfAborted();
             if (!baselineEstablished) {
               await Promise.all(
                 repoWorkItems.map((item) =>
@@ -218,11 +240,14 @@ export function createRepoScanTaskSpec(opts: RepoScanTaskSpecOptions): TaskSpec_
             }
 
             workItems.push(...repoWorkItems);
-          } catch {
+          } catch (error) {
+            signal?.throwIfAborted();
+            if (error instanceof GitHubRateLimitError) continue;
             opts.log.warn(`[repo-scan] Failed to scan ${repo}, skipping`);
           }
         }
 
+        signal?.throwIfAborted();
         if (workItems.length === 0) {
           if (baselinedRepoCount > 0) {
             return {
@@ -262,6 +287,8 @@ export function createRepoScanTaskSpec(opts: RepoScanTaskSpecOptions): TaskSpec_
           );
         }
 
+        const inboxCatId = opts.resolveInboxCatId ? await opts.resolveInboxCatId(signal.repoFullName) : opts.inboxCatId;
+
         const content = formatReconciliationMessage(signal);
         const source: ConnectorSource = {
           connector: CONNECTOR_ID,
@@ -283,11 +310,14 @@ export function createRepoScanTaskSpec(opts: RepoScanTaskSpecOptions): TaskSpec_
         const delivered = await opts.deliverFn(opts.deliveryDeps, {
           threadId: binding.threadId,
           userId: opts.defaultUserId,
-          catId: opts.inboxCatId,
+          catId: inboxCatId,
           content,
           source,
           idempotencyKey: `github-repo-event:${signal.deliveryId}`,
         });
+        if (!delivered.admitted) {
+          throw new Error(`Repository scan admission refused: ${delivered.rejection ?? 'unproven'}`);
+        }
 
         // Delivery, its dedup marker, event projection, and wake are one bounded
         // completion group. Cancellation is safe before delivery, never between

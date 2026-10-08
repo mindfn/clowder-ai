@@ -23,6 +23,7 @@ import type { Span } from '@opentelemetry/api';
 import type { CliDiagnostics } from '../../../utils/cli-diagnostics.js';
 import type { CliSpawnOptions } from '../../../utils/cli-types.js';
 import type { AntigravitySessionLifecycle } from './agents/providers/antigravity/antigravity-runtime-lifecycle.js';
+import type { ClaudeCompactionLaunchPlanResult } from './agents/providers/claude-compaction-launch-plan.js';
 import type { CodexSessionReplacementProvenance } from './runtime-session/CodexSessionReplacementProvenance.js';
 import type { TurnExecutionMessageProjection } from './stores/ports/TurnExecutionStore.js';
 
@@ -131,8 +132,33 @@ export interface MessageMetadata {
   subexecutionEvents?: readonly ProviderSubexecutionSemanticEvent[];
   /** F061: false when provider cannot verify which model actually ran (e.g. CDP bridge) */
   modelVerified?: boolean;
+  /**
+   * F319: model the upstream declared in its response object. Absent = not
+   * observed (honest unknown), never a copy of `model`. Compare with `model`
+   * to detect silent substitution.
+   */
+  servedModel?: string;
+  /** F319: upstream response id the served model was read from (for provider support lookups). */
+  servedResponseId?: string;
+  /** F319: how servedModel was observed (HTTPS SSE trace or builtin websocket frame trace). */
+  servedModelSource?: 'sse_response_object' | 'ws_response_object';
+  /**
+   * F319 Phase B.2: length of the upstream `x-codex-turn-state` sticky-routing
+   * token for this turn (the token itself is never stored). Informational —
+   * measured identical on normal and rerouted turns, so not a reroute signal.
+   */
+  upstreamTurnStateLength?: number;
+  /** F319 Phase B.2: `x-codex-safety-buffering-faster-model` header (account-level, informational). */
+  upstreamSafetyBufferingFasterModel?: string;
+  /** F319 Phase B.2: `response.safety_buffering` flag from the upstream response object. */
+  upstreamSafetyBuffering?: boolean;
   /** F061: diagnostic context attached when empty_response is triggered */
   diagnostics?: Record<string, unknown>;
+  /** Carrier-owned pre-turn tool availability failure for recoverable callers. */
+  requiredToolsUnavailable?: {
+    readonly code: 'required_tools_unavailable';
+    readonly missingTools: readonly string[];
+  };
   /** F061 Phase 3: structured upstream error classification for recovery decisions */
   upstreamError?: {
     kind: 'capacity' | 'network' | 'stream_interrupted' | 'invalid_tool_call' | 'unknown';
@@ -143,6 +169,32 @@ export interface MessageMetadata {
    *  Populated by providers when isCliError/isCliTimeout fires, consumed by Phase B folded panel.
    *  Carries `__cliError.cliDiagnostics` / `__cliTimeout.cliDiagnostics` from cli-spawn. */
   cliDiagnostics?: CliDiagnostics;
+  /** F118 AC-C3 / F117: what the provider observed when it gave up on a silent CLI. It explains
+   *  the failure of the turn's response, so it persists with that response's terminal state. */
+  timeoutDiagnostics?: TimeoutDiagnostics;
+  /** Local cancellation does not attest termination of a dispatched remote run. */
+  cancellationDiagnostics?: {
+    localWaitCancelled: true;
+    remoteTermination: 'unconfirmed';
+    remoteExecution: RemoteExecutionRef;
+  };
+}
+
+export interface RemoteExecutionRef {
+  kind: 'a2a_task' | 'antigravity_cascade';
+  id: string;
+}
+
+/** F118 AC-C3: the `timeout_diagnostics` system_info payload, reduced to its rendered fields. */
+export interface TimeoutDiagnostics {
+  silenceDurationMs: number;
+  processAlive: boolean;
+  lastEventType?: string;
+  firstEventAt?: number;
+  lastEventAt?: number;
+  cliSessionId?: string;
+  invocationId?: string;
+  rawArchivePath?: string;
 }
 
 /**
@@ -292,6 +344,8 @@ export interface AgentMessage {
   toolChannel?: 'analysis' | 'commentary' | 'final' | 'unknown';
   /** Tool input parameters (for 'tool_use' type) */
   toolInput?: Record<string, unknown>;
+  /** Native completed-file result captured at event birth; never inferred from a later session directory. */
+  fileResultEvidence?: import('./agents/providers/native-file-result-evidence.js').NativeFileResultEvidence;
   /** F153 Phase J AC-J1: native provider tool call id; used to pair tool_use ↔ tool_result for real-duration spans.
    *  Provider transformers MUST inject this from raw payload when available (Claude tool_use.id,
    *  CatAgent tool_use_id, Codex item.id, etc). Providers without native id may omit; ToolSpanTracker treats
@@ -325,6 +379,8 @@ export interface AgentMessage {
   origin?: 'stream' | 'callback';
   /** Canonical stored-message ID once persistence has completed. */
   messageId?: string;
+  /** F309: the stored message's own timestamp (its publication revision); absent when unknown. */
+  messageTimestamp?: number;
   /** F52: Cross-thread origin metadata (set for cross-thread callback messages) */
   extra?: {
     crossPost?: {
@@ -848,7 +904,10 @@ export interface AgentClientDispatchOptions {
 }
 
 export type AgentClientDispatchResult =
-  | { readonly accepted: true; readonly handle: AgentClientActiveRunHandle }
+  | {
+      readonly accepted: true;
+      readonly handle: AgentClientActiveRunHandle;
+    }
   | {
       readonly accepted: false;
       readonly reason: 'active_run_mismatch' | 'active_run_closed' | 'invalid_input' | 'provider_rejected';
@@ -874,7 +933,18 @@ export type ToolExecutionPolicy =
       readonly mode: 'read_only';
       readonly replayDeniedToolNames: readonly string[];
     }
-  | { readonly mode: 'collective_participation' };
+  | { readonly mode: 'collective_participation' }
+  | { readonly mode: 'callback_allowlist'; readonly allowedCallbackRoutes: readonly string[] }
+  | {
+      readonly mode: 'collective_work';
+      readonly taskId: string;
+      readonly threadId: string;
+      readonly executionRevision: number;
+      readonly executionRef: string;
+      readonly workspaceRoot: string;
+      /** Only host-resolved, explicitly admitted resources; never inferred from external prose. */
+      readonly readOnlyRoots: readonly string[];
+    };
 
 /**
  * Route-owned intent projection for provider behavior controls.
@@ -889,15 +959,48 @@ export interface AgentRouteIntent {
 /**
  * Options for invoking an agent
  */
+/**
+ * F117 K2: the Claude compaction hooks the Agent SDK carrier registers in-process. The carrier then
+ * proves its own compaction to F296 (authoritative-compaction), instead of a project hook in the
+ * workspace: the seal observation is written before the provider compacts, by this invocation.
+ */
+export interface ClaudeCompactionHooks {
+  /** Before the provider compacts: record this invocation's compression observation and apply the session policy. */
+  preCompact(input: { readonly cliSessionId: string; readonly trigger: 'manual' | 'auto' }): Promise<void>;
+  /** After the provider compacted: the cold context packet to inject, when the epoch owner projected one. */
+  postCompactContext(input: { readonly cliSessionId: string }): Promise<string | undefined>;
+}
+
+/** Builds one invocation's in-process compaction hooks; the identity names whose observation they record. */
+export type ClaudeCompactionHooksFactory = (identity: {
+  readonly invocationId: string;
+  readonly userId: string;
+  readonly catId: string;
+  readonly threadId: string;
+}) => ClaudeCompactionHooks;
+
 export interface AgentServiceOptions {
+  /** Synchronous pre-send fact: survives abort racing the provider iterator. */
+  onRemoteExecutionDispatched?: (execution: RemoteExecutionRef) => void;
   /** Provider-neutral interaction port bound to this invocation. */
   runtimeInteractionPort?: import('../../runtime-interaction/ports/RuntimeInteractionPort.js').RuntimeInteractionPort;
   /** F310: source-bound Task relation resolved from canonical Task truth for an F306 question. */
   resolveEntrustedWorkTaskRef?: () => Promise<import('@cat-cafe/shared').EntrustedWorkTaskRefV1 | undefined>;
+  /** F317 Host-only continuous companion port; no model-supplied configuration. */
+  liveCompanion?: import('./agents/providers/CodexLiveRunPort.js').CodexLiveRunPort;
   /** Route-owned intent. Providers may project only explicit behavior intent onto native modes. */
   routeIntent?: AgentRouteIntent;
   /** Session ID to resume (optional) */
   sessionId?: string;
+  /** MCP server-qualified tool IDs (`serverName::toolName`) required before this invocation may start. */
+  requiredTools?: readonly string[];
+  /**
+   * #1542: launch plan for the managed Claude compaction carrier. Built once
+   * per print-SDK attempt by invoke-single-cat; ClaudeAgentService derives the
+   * single final `--settings` injection from it, and the compaction boundary
+   * consumes the same plan as its carrier-readiness evidence.
+   */
+  compactionLaunchPlan?: ClaudeCompactionLaunchPlanResult;
   /** #1208: same capacity snapshot used by prompt assembly and lifecycle health. */
   contextCapacity?: AgentContextCapacity;
   /**
@@ -945,6 +1048,8 @@ export interface AgentServiceOptions {
   activeInvocationFreshness?: import('./freshness/FreshnessNoticeBroker.js').ActiveInvocationFreshnessController;
   /** #1354: expose an exact provider-native active-turn dispatcher after turn acceptance. */
   activeRunDispatch?: AgentClientActiveRunDispatchRegistration;
+  /** F117 K2: Claude compaction hooks for a carrier that runs them in-process (the Agent SDK carrier). */
+  claudeCompactionHooks?: ClaudeCompactionHooks;
   /** F210-H1b: Override AGY --log-file path (test seam for the trajectory progress observer). */
   agyLogPathOverride?: string;
   /** F118: Invocation ID for diagnostic enrichment of __cliTimeout */
@@ -967,12 +1072,27 @@ export interface AgentServiceOptions {
   parentSpan?: Span;
   /** ADR-042 hard execution boundary for automatic supplement checks. */
   toolExecutionPolicy?: ToolExecutionPolicy;
+  /** F325: host-authored, per-turn AGY native grants. Never derive from model text or member CLI args. */
+  agyNativeScope?: {
+    readonly workspaceRoot?: string;
+    readonly taskId?: string;
+    readonly testFile?: string;
+    readonly writableFiles: readonly string[];
+    readonly mcpTools: readonly string[];
+  };
   /**
    * F299 Phase D: fail-closed recorder invoked by the concrete adapter after
    * its final message/native channels are immutable and immediately before
    * those same values cross the provider boundary.
    */
   beforeProviderLaunch?: (request: PreparedProviderRequestV1) => Promise<ProviderRequestGenerationCommitV1>;
+  onLiveInputOutcome?: (receipt: LiveProviderInputOutcome) => Promise<void>;
+}
+
+export interface LiveProviderInputOutcome {
+  request: ProviderRequestGenerationCommitV1;
+  outcome: 'accepted' | 'rejected' | 'error' | 'cancelled';
+  nativeTurnId?: string;
 }
 
 export interface PreparedProviderRequestV1 {
@@ -1119,7 +1239,9 @@ export interface AgentService {
   supportsToolExecutionPolicy?(policy: ToolExecutionPolicy): boolean;
 
   /** F254 D2: effective carrier capability for this concrete service instance. */
-  freshnessCarrierCapability?(): AgentFreshnessCarrierCapability;
+  freshnessCarrierCapability?(
+    options?: Pick<AgentServiceOptions, 'liveCompanion' | 'requiredTools'>,
+  ): AgentFreshnessCarrierCapability;
 
   /** #1208: effective context capability for this concrete service/carrier. */
   contextCapability?(): AgentContextCapability;
@@ -1170,6 +1292,7 @@ export interface AgentService {
 export type L0CompilerFn = (options: {
   catId: string;
   userId?: string;
+  projection?: 'owner' | 'public';
   dataDir?: string;
   outPath?: string;
 }) => Promise<string>;

@@ -9,7 +9,7 @@
  */
 
 import assert from 'node:assert/strict';
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { describe, test } from 'node:test';
@@ -134,12 +134,6 @@ function makeHarness(options = {}) {
       appended.push(stored);
       return { messageId: stored.id };
     },
-    async adoptLegacyWake(input) {
-      triggerCalls.push(input);
-      const outcome = triggerOutcomes.shift() ?? 'full';
-      if (outcome instanceof Error) throw outcome;
-      return { adopted: outcome === 'enqueued' || outcome === 'dispatched' };
-    },
     ...(options.eventCarrier ? { getEventCarrier: () => eventCarrier } : {}),
     ...(options.retryEventCarrierOutcomes
       ? {
@@ -179,6 +173,95 @@ async function loadSweep() {
 }
 
 describe('F167 S.1-c ManagedCommandWakeRecoverySweep', () => {
+  test('startup recovery consumes a resumable gate terminal with its executable continuation', async () => {
+    const { ManagedCommandWakeRecoverySweep } = await loadSweep();
+    const { createResumableDurableManagedGateJob } = await import(
+      '../dist/domains/ball-custody/durable-managed-gate-consumer.js'
+    );
+    const { initializeDurableManagedGateJob, settleDurableManagedGateJobFromRunner } = await import(
+      '../dist/domains/ball-custody/durable-managed-gate-job.js'
+    );
+    const { initializeDurableGateRecovery, synchronizeDurableGateFrozenIdentity } = await import(
+      '../dist/domains/ball-custody/durable-managed-gate-recovery.js'
+    );
+    const root = mkdtempSync(path.join(os.tmpdir(), 'managed-command-resumable-sweep-'));
+    const runId = '11111111-2222-4333-8444-555555555555';
+    const frozenIdentity = {
+      headSha: '1'.repeat(40),
+      treeSha: '2'.repeat(40),
+      baseSha: '3'.repeat(40),
+      route: 'full',
+      risk: 'contract',
+      mode: 'full',
+      fingerprint: '4'.repeat(64),
+      runnerFingerprint: '5'.repeat(64),
+      toolchainFingerprint: '6'.repeat(64),
+    };
+    const previousDataRoot = process.env.CAT_CAFE_DATA_DIR;
+    process.env.CAT_CAFE_DATA_DIR = root;
+    try {
+      const job = createResumableDurableManagedGateJob(
+        'hold-ball-task-1',
+        60_000,
+        { threadId: 'thread-1', catId: 'codex-sol', userId: 'user-1' },
+        root,
+      );
+      initializeDurableManagedGateJob(job, 1_000);
+      initializeDurableGateRecovery(job, { pid: 41, ppid: 1, pgid: 41, startedAt: 'birth-41' }, 1_000);
+      writeFileSync(
+        job.gateReceiptPath,
+        `${JSON.stringify({
+          version: 1,
+          jobId: job.jobId,
+          runId,
+          state: 'terminal',
+          terminalStatus: 'failed',
+          result: { exitCode: 1, timedOut: false, durationMs: 500 },
+          recovery: { protocolVersion: 2, frozenIdentity },
+        })}\n`,
+      );
+      synchronizeDurableGateFrozenIdentity(job, 1_001);
+      settleDurableManagedGateJobFromRunner(job, { exitCode: 1, timedOut: false, durationMs: 500 }, 1_500);
+      const task = makeTask({
+        params: {
+          message: 'fallback',
+          targetCatId: 'codex-sol',
+          triggerUserId: 'user-1',
+          holdLifecycle: {
+            mode: 'wake_when',
+            status: 'active',
+            wakeAt: 99_000,
+            createdBy: 'hold-ball:codex-sol',
+            managedCommand: {
+              state: 'command_running',
+              command: 'pnpm gate --risk contract',
+              startedAt: 1_000,
+              durableJob: job,
+            },
+          },
+        },
+      });
+      const h = makeHarness({ task });
+      const stats = await new ManagedCommandWakeRecoverySweep(h.deps).runOnce();
+      assert.equal(stats.scanned, 1);
+      assert.equal(stats.pending, 1, 'an enqueued invocation remains pending until its managed disposition');
+      assert.equal(
+        h.appended.some((message) => message.content.includes(`pnpm gate --risk contract --resume ${runId}`)),
+        true,
+        'restart delivery must preserve one executable continuation instead of a generic lost-gate message',
+      );
+      assert.equal(
+        h.appended.some((message) => message.content.includes(`pnpm gate --risk contract -- --resume ${runId}`)),
+        false,
+        'restart delivery must not invent a pnpm separator that changes the frozen invocation identity',
+      );
+    } finally {
+      if (previousDataRoot === undefined) delete process.env.CAT_CAFE_DATA_DIR;
+      else process.env.CAT_CAFE_DATA_DIR = previousDataRoot;
+      console.info(`Retained isolated managed-command evidence: ${root}`);
+    }
+  });
+
   test('dispatches strict-owner holds through canonical urgent Queue ingress', async () => {
     const { ManagedCommandWakeRecoverySweep } = await loadSweep();
     const h = makeHarness({ ownerAuthProvenance: 'strict' });
@@ -380,20 +463,9 @@ describe('F167 S.1-c ManagedCommandWakeRecoverySweep', () => {
     assert.deepEqual(await sweep.runOnce(), { scanned: 0, recovered: 0, pending: 0 });
   });
 
-  /**
-   * The historical states this migration exists for, driven end to end through the recovery engine.
-   *
-   * A task persisted as `message_written` (or `dispatch_pending`) by the pre-atomic producer has a
-   * durable Message and no Queue row. An active generation must be adopted; a superseded one must
-   * be refused and the carrier retired — the engine's cancel/retire branch is what the adoption's
-   * `ManagedCommandWakeActionLeaseAdmissionError` is raised for.
-   */
   for (const legacyState of ['message_written', 'dispatch_pending']) {
-    test(`a stale legacy ${legacyState} carrier is canceled and retired, with nothing enqueued`, async () => {
+    test(`a legacy ${legacyState} reference never reconstructs a Queue owner`, async () => {
       const { ManagedCommandWakeRecoverySweep } = await loadSweep();
-      const { ManagedCommandWakeActionLeaseAdmissionError } = await import(
-        '../dist/domains/ball-custody/managed-command-wake-action-lease-admission.js'
-      );
       const task = makeTask();
       task.params.holdLifecycle.managedCommand = {
         state: legacyState,
@@ -408,21 +480,18 @@ describe('F167 S.1-c ManagedCommandWakeRecoverySweep', () => {
         task,
         messages: [{ id: 'legacy-message-1', threadId: 'thread-1', deliveryStatus: 'queued' }],
       });
-      const adoptions = [];
-      h.deps.adoptLegacyWake = async (input) => {
-        adoptions.push(input);
-        throw new ManagedCommandWakeActionLeaseAdmissionError('generation no longer matches canonical truth');
+      let adoptions = 0;
+      h.deps.adoptLegacyWake = async () => {
+        adoptions += 1;
+        return { adopted: true };
       };
       const sweep = new ManagedCommandWakeRecoverySweep(h.deps);
-
-      assert.equal(await sweep.recoverTask(h.task?.id ?? 'hold-ball-task-1'), 'recovered');
-
-      assert.equal(adoptions.length, 1, 'the legacy carrier is offered for adoption exactly once');
-      assert.equal(adoptions[0].messageId, 'legacy-message-1');
-      const command = h.tasks.get('hold-ball-task-1').params.holdLifecycle.managedCommand;
-      assert.equal(command.state, 'consumed', 'a superseded generation retires rather than retrying forever');
-      assert.equal(command.carrierTerminalReason, 'canceled');
-      assert.equal(h.appended.length, 0, 'no new message is written for a refused adoption');
+      assert.equal(await sweep.recoverTask('hold-ball-task-1'), 'pending');
+      assert.equal(adoptions, 0, 'old message-only references confer no new admission authority');
+      assert.equal(h.triggerCalls.length, 0);
+      assert.equal(h.appended.length, 0);
+      assert.equal(h.tasks.get('hold-ball-task-1').params.holdLifecycle.managedCommand.state, legacyState);
+      assert.equal(h.tasks.get('hold-ball-task-1').enabled, task.enabled);
     });
   }
 
@@ -896,7 +965,7 @@ describe('F167 S.1-c ManagedCommandWakeRecoverySweep', () => {
     } finally {
       if (previousDataDir === undefined) delete process.env.CAT_CAFE_DATA_DIR;
       else process.env.CAT_CAFE_DATA_DIR = previousDataDir;
-      rmSync(tempDir, { recursive: true, force: true });
+      console.info(`Retained isolated managed-command evidence: ${tempDir}`);
     }
   });
 
@@ -949,7 +1018,7 @@ describe('F167 S.1-c ManagedCommandWakeRecoverySweep', () => {
     } finally {
       if (previousDataDir === undefined) delete process.env.CAT_CAFE_DATA_DIR;
       else process.env.CAT_CAFE_DATA_DIR = previousDataDir;
-      rmSync(tempDir, { recursive: true, force: true });
+      console.info(`Retained isolated managed-command evidence: ${tempDir}`);
     }
   });
 

@@ -26,7 +26,6 @@ import {
 import multipart from '@fastify/multipart';
 import type { FastifyPluginAsync } from 'fastify';
 import { z } from 'zod';
-import { getThreadLiveInvocations } from '../domains/cats/services/agents/invocation/getThreadLiveInvocations.js';
 import {
   type InvocationQueue,
   queueEntryTargetCats,
@@ -53,10 +52,7 @@ import type { IInvocationRecordStore } from '../domains/cats/services/stores/por
 import type { IMessageStore, StoredMessage } from '../domains/cats/services/stores/ports/MessageStore.js';
 import { isTimelinePublished } from '../domains/cats/services/stores/ports/MessageStore.js';
 import { deriveAutoThreadTitle, type IThreadStore } from '../domains/cats/services/stores/ports/ThreadStore.js';
-import {
-  type ITurnExecutionStore,
-  projectTurnExecutionMessage,
-} from '../domains/cats/services/stores/ports/TurnExecutionStore.js';
+import type { ITurnExecutionStore } from '../domains/cats/services/stores/ports/TurnExecutionStore.js';
 import {
   getTimelineOrderTime,
   isInternalNonQuotableParent,
@@ -67,6 +63,7 @@ import type { SocketManager } from '../infrastructure/websocket/index.js';
 import { normalizeJsonUnicode } from '../utils/json-unicode.js';
 import { getDefaultUploadDir } from '../utils/upload-paths.js';
 import { admitThreadParticipants } from './thread-participant-admission.js';
+import { readUserMessageReceipt } from './user-message-receipt.js';
 
 type StoredRecovery = NonNullable<StoredMessage['extra']>['recovery'];
 
@@ -149,7 +146,7 @@ export interface MessagesRoutesOptions {
   uploadDir?: string;
   invocationTracker?: InvocationTracker;
   invocationRecordStore?: IInvocationRecordStore;
-  /** Durable per-child lifecycle truth used to bridge tracker/draft handoff gaps. */
+  /** Not read by these routes; kept so existing callers still type-check. */
   turnExecutionStore?: Pick<ITurnExecutionStore, 'get' | 'listByParent'>;
 
   /** #80: Streaming draft store for F5 recovery */
@@ -304,7 +301,6 @@ const MAX_FILES = 5;
 
 export const messagesRoutes: FastifyPluginAsync<MessagesRoutesOptions> = async (app, opts) => {
   const uploadDir = getDefaultUploadDir(opts.uploadDir ?? process.env.UPLOAD_DIR);
-  const turnExecutionStore = opts.turnExecutionStore;
 
   // Register multipart parser for image uploads
   await app.register(multipart, {
@@ -413,13 +409,29 @@ export const messagesRoutes: FastifyPluginAsync<MessagesRoutesOptions> = async (
     }
     const ownerAuthProvenance: OwnerAuthProvenance =
       resolveStrictUserId(request) === userId ? 'strict' : 'compatibility_fallback';
+    const liveSessionHeader = request.headers['x-cat-cafe-live-session'];
+    if (
+      liveSessionHeader !== undefined &&
+      (typeof liveSessionHeader !== 'string' ||
+        !liveSessionHeader ||
+        ownerAuthProvenance !== 'strict' ||
+        messageBundleRequest ||
+        whisperVisibility ||
+        messageDisposition === 'continue_current')
+    )
+      return reply.code(400).send({ error: 'Invalid Live admission', code: 'INVALID_LIVE_ADMISSION' });
+    const liveSessionId = typeof liveSessionHeader === 'string' ? liveSessionHeader : undefined;
 
     // Default to 'default' thread for lobby (prevents global broadcast)
     const resolvedThreadId = threadId ?? 'default';
+    if (!opts.invocationQueue || !opts.queueProcessor) {
+      return reply.code(503).send({ error: 'Message delivery is unavailable', code: 'MESSAGE_DELIVERY_UNAVAILABLE' });
+    }
     // A retried no-mention send must retain the target that won the original
     // atomic admission even if a newer reply has since changed the fallback.
     // Queue remains the sole owner of this immutable admission fact; History is
     // consulted only to locate the exact source record named by the idempotency key.
+    const receiptOwner = { userId, threadId: resolvedThreadId };
     const replayedSource =
       idempotencyKey && opts.invocationQueue
         ? await opts.messageStore.getByIdempotencyKey(userId, resolvedThreadId, idempotencyKey)
@@ -694,6 +706,27 @@ export const messagesRoutes: FastifyPluginAsync<MessagesRoutesOptions> = async (
         : sourceTargetCats;
     const visibleRoutingWarnings =
       whisperVisibility !== 'whisper' && routing_warnings?.length ? [...routing_warnings] : [];
+    if (liveSessionId && targetCats.length !== 1)
+      return reply.code(400).send({ error: 'Live requires one exact member', code: 'INVALID_LIVE_ADMISSION' });
+    if (replayedSource && (liveSessionId || replayedSource.extra?.liveAdmission)) {
+      const receipt = replayedSource.extra?.liveAdmission;
+      if (
+        !receipt ||
+        receipt.sessionId !== liveSessionId ||
+        receipt.targetId !== targetCats[0] ||
+        replayedSource.content !== content ||
+        replayedSource.threadId !== resolvedThreadId ||
+        replayedSource.userId !== userId
+      )
+        return reply.code(409).send({ error: 'Live admission identity conflict', code: 'LIVE_ADMISSION_CONFLICT' });
+      // Already accepted: return the same durable receipt before touching an ephemeral handle.
+      return reply.code(202).send({
+        status: 'queued',
+        merged: false,
+        userMessageId: replayedSource.id,
+        ...(await readUserMessageReceipt(opts.messageStore, replayedSource.id, receiptOwner, replayedSource)),
+      });
+    }
 
     // Sidebar participant presence is canonical ThreadStore truth, not a
     // side-effect of the first CLI event. Persist every resolved target (the
@@ -737,6 +770,7 @@ export const messagesRoutes: FastifyPluginAsync<MessagesRoutesOptions> = async (
     // Server-generated idempotency key if client didn't provide one
     const resolvedIdempotencyKey = idempotencyKey ?? randomUUID();
     const sourcePayloadExtra: NonNullable<StoredMessage['extra']> = {
+      ...(liveSessionId ? { liveAdmission: { sessionId: liveSessionId, targetId: targetCats[0]! } } : {}),
       ...(admittedMessageBundle ? { messageBundle: admittedMessageBundle.carrier } : {}),
       ...(visibleRoutingWarnings.length > 0 ? { routingWarnings: visibleRoutingWarnings } : {}),
     };
@@ -752,6 +786,7 @@ export const messagesRoutes: FastifyPluginAsync<MessagesRoutesOptions> = async (
         threadId: resolvedThreadId,
       });
       const queueInput = {
+        ...(liveSessionId ? { liveSessionId } : {}),
         from: { kind: 'user' as const, userId },
         threadId: resolvedThreadId,
         userId,
@@ -777,27 +812,54 @@ export const messagesRoutes: FastifyPluginAsync<MessagesRoutesOptions> = async (
           }),
         intent: intent.intent,
       };
-      const enqueueResult = await opts.invocationQueue.appendAndEnqueueDurable(
-        opts.messageStore,
-        {
-          from: queueInput.from,
-          userId,
-          content,
-          // Routing fallback is server-owned metadata, not an @mention the user wrote.
-          mentions: sourceTargetCats,
-          timestamp: Date.now(),
-          threadId: resolvedThreadId,
-          idempotencyKey: resolvedIdempotencyKey,
-          deliveryStatus: 'queued',
-          ...(contentBlocks ? { contentBlocks } : {}),
-          ...(whisperVisibility && whisperRecipients
-            ? { visibility: whisperVisibility, whisperTo: whisperRecipients }
-            : {}),
-          ...(replyTo ? { replyTo } : {}),
-          ...sourcePayloadWrite,
-        },
-        queueInput,
-      );
+      const enqueueResult = await opts.invocationQueue
+        .appendAndEnqueueDurable(
+          opts.messageStore,
+          {
+            from: queueInput.from,
+            userId,
+            content,
+            // Routing fallback is server-owned metadata, not an @mention the user wrote.
+            mentions: sourceTargetCats,
+            timestamp: Date.now(),
+            threadId: resolvedThreadId,
+            idempotencyKey: resolvedIdempotencyKey,
+            deliveryStatus: 'queued',
+            ...(contentBlocks ? { contentBlocks } : {}),
+            ...(whisperVisibility && whisperRecipients
+              ? { visibility: whisperVisibility, whisperTo: whisperRecipients }
+              : {}),
+            ...(replyTo ? { replyTo } : {}),
+            ...sourcePayloadWrite,
+          },
+          queueInput,
+        )
+        .catch(async (error: unknown) => {
+          if (!liveSessionId) throw error;
+          // The preflight replay lookup may precede another request's atomic
+          // admission. Only the immutable committed source can prove a conflict;
+          // an unknown write/read outcome must retain its original error.
+          const committed = await opts.messageStore.getByIdempotencyKey(
+            userId,
+            resolvedThreadId,
+            resolvedIdempotencyKey,
+          );
+          if (!committed) throw error;
+          const receipt = committed.extra?.liveAdmission;
+          if (
+            !receipt ||
+            receipt.sessionId !== liveSessionId ||
+            receipt.targetId !== targetCats[0] ||
+            committed.content !== content ||
+            committed.threadId !== resolvedThreadId ||
+            committed.userId !== userId
+          ) {
+            reply.code(409).send({ error: 'Live admission identity conflict', code: 'LIVE_ADMISSION_CONFLICT' });
+            return null;
+          }
+          throw error;
+        });
+      if (!enqueueResult) return;
 
       // Queue full → 429, no message written (no ghost message)
       if (enqueueResult.outcome === 'full') {
@@ -835,7 +897,11 @@ export const messagesRoutes: FastifyPluginAsync<MessagesRoutesOptions> = async (
       if (admittedMessageBundle) await publishAdmittedBundleParticipants();
 
       const admittedEntries = enqueueResult.entries ?? (enqueueResult.entry ? [enqueueResult.entry] : []);
-      if (requestedDisposition === 'continue_current' && opts.queueProcessor?.tryAutoAppendExactEntry) {
+      if (
+        !liveSessionId &&
+        requestedDisposition === 'continue_current' &&
+        opts.queueProcessor?.tryAutoAppendExactEntry
+      ) {
         for (const admittedEntry of admittedEntries) {
           if (admittedEntry.targets.length === 0) continue;
           for (const targetCatId of admittedEntry.targets) {
@@ -874,7 +940,6 @@ export const messagesRoutes: FastifyPluginAsync<MessagesRoutesOptions> = async (
           userId,
           resolvedThreadId,
           opts.invocationQueue.list(resolvedThreadId, userId),
-          opts.messageStore,
           enqueueResult.outcome,
         );
       }
@@ -892,6 +957,7 @@ export const messagesRoutes: FastifyPluginAsync<MessagesRoutesOptions> = async (
         ),
         merged: false,
         ...(storedUserMessageId ? { userMessageId: storedUserMessageId } : {}),
+        ...(await readUserMessageReceipt(opts.messageStore, storedUserMessageId, receiptOwner, enqueueResult.message)),
         ...(admittedMessageBundle && storedUserMessageId ? { messageBundleId: storedUserMessageId } : {}),
       };
     }
@@ -1011,7 +1077,6 @@ export const messagesRoutes: FastifyPluginAsync<MessagesRoutesOptions> = async (
         userId,
         source.threadId,
         opts.invocationQueue.list(source.threadId, userId),
-        opts.messageStore,
         admitted.outcome,
       );
       void opts.queueProcessor.requestDrain(source.threadId);
@@ -1135,6 +1200,7 @@ export const messagesRoutes: FastifyPluginAsync<MessagesRoutesOptions> = async (
       catId: string | null;
       content: string;
       timestamp: number;
+      lifecycle?: StoredMessage['lifecycle'];
       summary?: { id: string; topic: string; conclusions: string[]; openQuestions: string[]; createdBy: string };
       [key: string]: unknown;
     };
@@ -1155,7 +1221,11 @@ export const messagesRoutes: FastifyPluginAsync<MessagesRoutesOptions> = async (
         ...(m.metadata ? { metadata: m.metadata } : {}),
         ...(m.origin ? { origin: m.origin } : {}),
         ...(m.thinking ? { thinking: m.thinking } : {}),
-        ...(m.extra?.rich ||
+        ...(m.extra?.semanticEvent ||
+        m.extra?.liveCompanion ||
+        m.extra?.contentModificationRequestV1 ||
+        m.extra?.systemInfo ||
+        m.extra?.rich ||
         m.extra?.routingWarnings ||
         isCrossThreadProvenance(m.extra?.crossPost?.sourceThreadId, m.threadId) ||
         m.extra?.coordination ||
@@ -1174,6 +1244,14 @@ export const messagesRoutes: FastifyPluginAsync<MessagesRoutesOptions> = async (
         m.extra?.recovery
           ? {
               extra: {
+                ...(m.extra?.semanticEvent ? { semanticEvent: m.extra.semanticEvent } : {}),
+                ...(m.extra?.liveCompanion?.identity
+                  ? { liveCompanion: { identity: m.extra.liveCompanion.identity } }
+                  : {}),
+                ...(m.extra?.contentModificationRequestV1
+                  ? { contentModificationRequestV1: m.extra.contentModificationRequestV1 }
+                  : {}),
+                ...(m.extra?.systemInfo ? { systemInfo: m.extra.systemInfo } : {}),
                 ...(m.extra?.rich ? { rich: m.extra.rich } : {}),
                 ...(m.extra?.routingWarnings ? { routingWarnings: m.extra.routingWarnings } : {}),
                 ...(isCrossThreadProvenance(m.extra?.crossPost?.sourceThreadId, m.threadId)
@@ -1243,227 +1321,32 @@ export const messagesRoutes: FastifyPluginAsync<MessagesRoutesOptions> = async (
       );
     }
 
-    // #80: Merge active streaming drafts (first page only — no before cursor)
-    if (!before && opts.draftStore) {
-      const draftStore = opts.draftStore;
-      const drafts = await draftStore.getByThread(userId, resolvedThreadId);
-      let activeDrafts = drafts;
-      const processingResponseByInvocationId = new Map<string, StoredMessage>();
-      const ambiguousProcessingParentInvocationIds = new Set<string>();
-      // #80 fix-B diagnostic: trace draft merge for F5 recovery verification
-      if (drafts.length > 0) {
-        request.log.info(
-          { threadId: resolvedThreadId, draftCount: drafts.length, draftIds: drafts.map((d) => d.invocationId) },
-          '#80 draft merge: found active drafts',
-        );
-        // P1-2 dedup: filter out drafts whose invocationId matches a formal message.
-        // F194 Phase Z3 P1-3 (砚砚 R): formal set MUST collect both `invocationId` (parent SoT) and
-        // `turnInvocationId` (Z3 dual id, where draft.invocationId === turnInvocationId for new
-        // formal messages). Without this, append-success-but-draft-not-yet-deleted window double-shows
-        // formal + draft for the same turn.
-        const formalInvocationIds = new Set<string>();
-        for (const m of page) {
-          const parentInv = m.extra?.stream?.invocationId;
-          const turnInv = m.extra?.stream?.turnInvocationId;
-          if (parentInv) formalInvocationIds.add(parentInv);
-          if (turnInv) formalInvocationIds.add(turnInv);
-          if (m.lifecycle?.kind === 'response' && m.lifecycle.status === 'processing') {
-            // DraftStore is keyed by the child turn. Only fall back to the
-            // legacy parent id when no child identity exists; one parent can
-            // own several concurrent target responses.
-            if (turnInv) {
-              processingResponseByInvocationId.set(turnInv, m);
-            } else if (parentInv && !ambiguousProcessingParentInvocationIds.has(parentInv)) {
-              if (processingResponseByInvocationId.has(parentInv)) {
-                // A parent can fan out to several target responses. A legacy
-                // parent-keyed draft cannot identify which child owns it, so
-                // fail closed instead of placing one cat's text in another's bubble.
-                processingResponseByInvocationId.delete(parentInv);
-                ambiguousProcessingParentInvocationIds.add(parentInv);
-              } else {
-                processingResponseByInvocationId.set(parentInv, m);
-              }
-            }
-          }
-        }
-        // A lifecycle response is created before provider output. Its matching
-        // DraftStore row is not a duplicate while that response is processing:
-        // it is the recoverable body for the exact canonical bubble.
-        activeDrafts = drafts.filter(
-          (d) => !formalInvocationIds.has(d.invocationId) || processingResponseByInvocationId.has(d.invocationId),
-        );
-        // Cloud R4 P2: if drafts survive page-level dedup, widen the check to cover
-        // formal messages pushed off the first page (race window: TTL > page depth).
-        // Cloud R5 P2: wider window must always exceed page limit (limit max=200 → worst case 800).
-        if (activeDrafts.length > 0 && page.length >= limit) {
-          const widerLimit = Math.max(200, limit * 4);
-          const wider = await opts.messageStore.getByThread(resolvedThreadId, widerLimit, userId, browserTimelineRead);
-          for (const m of wider) {
-            const parentInv = m.extra?.stream?.invocationId;
-            const turnInv = m.extra?.stream?.turnInvocationId;
-            if (parentInv) formalInvocationIds.add(parentInv);
-            if (turnInv) formalInvocationIds.add(turnInv);
-          }
-          activeDrafts = activeDrafts.filter(
-            (d) => !formalInvocationIds.has(d.invocationId) || processingResponseByInvocationId.has(d.invocationId),
-          );
+    // #80 / F117: a streaming draft is only the in-flight body of its durable response R.
+    // R is admitted empty as a processing lifecycle response whose lifecycle.invocationId is
+    // the child turn id that keys DraftStore, so a draft folds into R by that exact id on
+    // whichever page holds R — a long turn pushed to an older page by newer messages still
+    // reads its body. A draft without a processing R on this page is ignored here: it never
+    // becomes a standalone record and this read never deletes it.
+    if (opts.draftStore) {
+      const processingResponseIndexByInvocationId = new Map<string, number>();
+      for (const [index, item] of chatItems.entries()) {
+        if (item.lifecycle?.kind === 'response' && item.lifecycle.status === 'processing') {
+          processingResponseIndexByInvocationId.set(item.lifecycle.invocationId, index);
         }
       }
-
-      // F194 Phase B step 2b: canonical getThreadLiveInvocations helper.
-      // Cloud R17 P1: helper MUST run even when activeDrafts is empty — zombies
-      // (record running + no fresh draft + age past grace) are exactly the empty-drafts
-      // case. Skipping the helper here means /messages never reconciles them; only /queue
-      // would, and a thread that's read but not queue-checked stays phantom forever.
-      //
-      // AC-B5 preservation (砚砚 R6 P1 fix): gate only requires `invocationRecordStore` —
-      // tracker is OPTIONAL. Embedded modes / legacy tests that wire recordStore but not
-      // tracker still get zombie detection + orphan filtering.
-      if (opts.invocationRecordStore) {
-        const recordStore = opts.invocationRecordStore;
-        const tracker = opts.invocationTracker;
-        const draftsForHelper = activeDrafts; // already deduped against formal messages (or empty)
-        try {
-          const liveness = await getThreadLiveInvocations(resolvedThreadId, userId, {
-            listRunningRecords: (tid, uid) => recordStore.listRunningByThread(tid, uid),
-            getActiveSlots: (tid) => tracker?.getActiveSlots(tid) ?? [],
-            getTrackerUserId: (tid, cid) => tracker?.getUserId(tid, cid) ?? null,
-            getDrafts: () => draftsForHelper,
-            ...(turnExecutionStore
-              ? { listTurnExecutionsByParent: (parentId: string) => turnExecutionStore.listByParent(parentId) }
-              : {}),
-            // F194 Phase Z (KD-22): namespace bridge — child registry id → parent recordStore id.
-            // Wraps existing InvocationRegistry.getRecord (parentInvocationId field) + getLatestId.
-            // Helper uses these to detect parent+child execution chain liveness and cat-slot reuse
-            // zombies (砚砚 R1 P1-1: 结构化 dep, not boolean black-box).
-            getTurnInvocation: async (id) => {
-              const rec = await opts.registry.getRecord(id);
-              if (!rec) return null;
-              return {
-                parentInvocationId: rec.parentInvocationId,
-                threadId: rec.threadId,
-                userId: rec.userId,
-                catId: rec.catId,
-                createdAt: rec.createdAt,
-              };
-            },
-            getLatestTurnInvocationId: (tid, cat) => opts.registry.getLatestId(tid, cat),
-            // F194 AC-B12: route diagnostic events into request log. NB: do NOT spread
-            // `source: 'F194'` — that would clobber LivenessEvent.source (record+draft /
-            // record-only / tracker+draft / null), losing the diagnostic. Use `feature`.
-            onLog: (event) => request.log.info({ ...event, feature: 'F194' }, 'F194 liveness event'),
-          });
-          const liveInvocationIds = new Set(liveness.active.map((s) => s.invocationId));
-          const orphanDrafts = activeDrafts.filter((d) => !liveInvocationIds.has(d.invocationId));
-          activeDrafts = activeDrafts.filter((d) => liveInvocationIds.has(d.invocationId));
-          // Zombie candidates remain diagnostic-only here. Explicit owner reconciliation
-          // is serialized outside the GET path so reads cannot terminate provider work.
-          if (orphanDrafts.length > 0) {
-            request.log.info(
-              {
-                threadId: resolvedThreadId,
-                orphanCount: orphanDrafts.length,
-                draftIds: orphanDrafts.map((d) => d.invocationId),
-                cleanup: 'helper-canonical',
-              },
-              '#80 draft merge: filtered orphan drafts (F194 helper-canonical)',
-            );
-          }
-        } catch (err) {
-          // F194 AC-B13: fail-open + fallback metric — record/tracker error must not 500
-          // the read endpoint, but split-brain protection is bypassed during fallback.
-          request.log.warn(
-            {
-              err,
-              kind: 'liveness_fallback',
-              threadId: resolvedThreadId,
-              userId,
-              feature: 'F194',
-              endpoint: '/messages',
-              draftCount: activeDrafts.length,
-            },
-            '#80 draft merge: F194 helper threw, fall-open keep all drafts',
-          );
+      if (processingResponseIndexByInvocationId.size > 0) {
+        const drafts = await opts.draftStore.getByThread(userId, resolvedThreadId);
+        for (const d of drafts) {
+          const index = processingResponseIndexByInvocationId.get(d.invocationId);
+          if (index === undefined) continue;
+          chatItems[index] = {
+            ...chatItems[index],
+            content: d.content,
+            isDraft: true,
+            ...(d.toolEvents ? { toolEvents: d.toolEvents } : {}),
+            ...(d.thinking ? { thinking: d.thinking } : {}),
+          };
         }
-      }
-
-      // P2: stable sort by updatedAt for parallel multi-cat drafts
-      activeDrafts.sort((a, b) => a.updatedAt - b.updatedAt);
-      if (activeDrafts.length > 0) {
-        request.log.info(
-          { threadId: resolvedThreadId, mergedCount: activeDrafts.length, cats: activeDrafts.map((d) => d.catId) },
-          '#80 draft merge: merging drafts into response',
-        );
-      }
-      const draftTurnExecutions = new Map<string, Awaited<ReturnType<ITurnExecutionStore['get']>>>();
-      if (turnExecutionStore) {
-        await Promise.all(
-          activeDrafts.map(async (draft) => {
-            try {
-              const execution = await turnExecutionStore.get(draft.invocationId);
-              if (
-                execution &&
-                execution.threadId === resolvedThreadId &&
-                execution.userId === userId &&
-                execution.catId === draft.catId
-              ) {
-                draftTurnExecutions.set(draft.invocationId, execution);
-              }
-            } catch (err) {
-              request.log.warn(
-                {
-                  err,
-                  threadId: resolvedThreadId,
-                  invocationId: draft.invocationId,
-                  feature: 'F194',
-                },
-                '#80 draft merge: turn execution identity lookup failed',
-              );
-            }
-          }),
-        );
-      }
-
-      for (const d of activeDrafts) {
-        const turnExecution = draftTurnExecutions.get(d.invocationId);
-        const lifecycleResponse = processingResponseByInvocationId.get(d.invocationId);
-        if (lifecycleResponse) {
-          const responseIndex = chatItems.findIndex((item) => item.id === lifecycleResponse.id);
-          if (responseIndex >= 0) {
-            const responseItem = chatItems[responseIndex]!;
-            chatItems[responseIndex] = {
-              ...responseItem,
-              content: d.content,
-              isDraft: true,
-              ...(d.toolEvents ? { toolEvents: d.toolEvents } : {}),
-              ...(d.thinking ? { thinking: d.thinking } : {}),
-            };
-          }
-          continue;
-        }
-        chatItems.push({
-          id: `draft-${d.invocationId}`,
-          type: 'assistant',
-          catId: d.catId as string | null,
-          content: d.content,
-          timestamp: d.updatedAt,
-          isDraft: true,
-          origin: 'stream',
-          // DraftStore is keyed by the child turn id. Preserve the real dual identity
-          // whenever TurnExecutionStore can resolve it: the active slot uses the parent
-          // invocation while the visible bubble uses the child turn. Collapsing both
-          // fields to the child makes the pending-member projection see two unrelated
-          // Kimi invocations and render a duplicate placeholder beside live tool output.
-          extra: {
-            stream: {
-              invocationId: turnExecution?.parentInvocationId ?? d.invocationId,
-              turnInvocationId: d.invocationId,
-            },
-            ...(turnExecution ? { turnExecution: projectTurnExecutionMessage(turnExecution) } : {}),
-          },
-          ...(d.toolEvents ? { toolEvents: d.toolEvents } : {}),
-          ...(d.thinking ? { thinking: d.thinking } : {}),
-        });
       }
     }
 

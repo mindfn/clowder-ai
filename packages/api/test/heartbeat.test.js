@@ -106,16 +106,9 @@ describe('Frontend timeout logic (source verification)', () => {
     assert.ok(source.includes('resetTimeout()'), 'Should reset timeout on message');
   });
 
-  it('useAgentMessages.ts clears timeout on done with isFinal', async () => {
-    const fs = await import('node:fs/promises');
-    const source = await fs.readFile(new URL('../../web/src/hooks/useAgentMessages.ts', import.meta.url), 'utf8');
-
-    // Should call clearDoneTimeout() when msg.isFinal
-    assert.ok(
-      source.includes('if (msg.isFinal)') && source.includes('clearDoneTimeout()'),
-      'Should clear timeout on isFinal',
-    );
-  });
+  // "A final done clears the timeout" is verified by behaviour in the web suite
+  // (hooks/__tests__/useAgentMessages-loading.test.ts, "done watchdog"): F117 moved done handling to
+  // agent-messages/active-terminal.ts, where it clears the watchdog only once the last running cat is done.
 
   it('useAgentMessages.ts projects timeout through identity-preserving system_info', async () => {
     const fs = await import('node:fs/promises');

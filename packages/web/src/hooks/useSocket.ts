@@ -26,6 +26,7 @@ import { useToastStore } from '@/stores/toastStore';
 import { API_URL, apiFetch } from '@/utils/api-client';
 import { invalidateSidebarProjection } from '@/utils/sidebar-thread-snapshot';
 import { getUserId } from '@/utils/userId';
+import { writeStoredSnapshot } from './named-message-writer';
 import {
   deliverPreviewAutoOpenEvent,
   type PreviewAutoOpenEvent,
@@ -80,6 +81,8 @@ interface AgentMessage {
   /** F108: Invocation ID — distinguishes messages from concurrent invocations */
   invocationId?: string;
   turnInvocationId?: string;
+  /** The stored message this event writes to: the turn's response, or a post's own record. */
+  messageId?: string;
   lifecycleResponseMessageId?: string;
   activeRun?: import('@cat-cafe/shared').LifecycleActiveRun;
   /**
@@ -154,7 +157,6 @@ export interface SocketCallbacks {
     timestamp: number;
   }) => void;
   /** #80 fix-C: Clear the done-timeout guard (called when background thread completes) */
-  clearDoneTimeout?: (threadId?: string) => void;
   /** F39: Queue updated */
   onQueueUpdated?: (data: {
     threadId: string;
@@ -229,8 +231,11 @@ export async function reconcileThreadWithServer(
     queue: import('../stores/chat-types').QueueEntry[];
   },
 ): Promise<void> {
+  // Reconnect/watchdog GETs must also yield to newer committed socket truth,
+  // not just to another probe of their own kind.
+  const queueEpoch = getLiveQueueHydrateEpoch(threadId);
   const data = await fetchQueueReconciliationSnapshot(threadId);
-  if (shouldAbort()) return;
+  if (shouldAbort() || getLiveQueueHydrateEpoch(threadId) !== queueEpoch) return;
   const queue = Array.isArray(data?.queue) ? data.queue : socketFallback?.queue;
   const store = useChatStore.getState();
   if (queue) {
@@ -360,8 +365,6 @@ export function useSocket(callbacks: SocketCallbacks, threadId?: string, foregro
   const pendingGuideStartsRef = useRef<Map<string, { guideId: string; threadId: string; timestamp: number }>>(
     new Map(),
   );
-  // F173 Phase E (KD-1): bg refs (bgStreamRefs / bgFinalizedRefs / bgSeq) moved to
-  // useAgentMessages — single dispatch handler owns them now。
   const userIdRef = useRef(getUserId());
   const cancelClientInstanceIdRef = useRef<string | null>(null);
   if (cancelClientInstanceIdRef.current === null) {
@@ -681,6 +684,16 @@ export function useSocket(callbacks: SocketCallbacks, threadId?: string, foregro
         window.dispatchEvent(new Event('cat-cafe:entrusted-work-projection-invalidated'));
       }
     });
+    const onArtifactReviewChanged = (data: { reviewId: string }) => {
+      if (typeof window !== 'undefined')
+        window.dispatchEvent(new CustomEvent('cat-cafe:artifact-review-changed', { detail: data }));
+    };
+    const onContentModificationSourceSaved = (data: { threadId: string; messageId: string }) => {
+      if (typeof data.threadId === 'string' && data.threadId && typeof data.messageId === 'string' && data.messageId)
+        useChatStore.getState().requestStreamCatchUp(data.threadId);
+    };
+    socket.on('artifact_review_changed', onArtifactReviewChanged);
+    socket.on('content_modification_source_saved', onContentModificationSourceSaved);
     socket.on('custody_offer_updated', (data: { messageId: string; threadId: string }) => {
       if (typeof window !== 'undefined') {
         window.dispatchEvent(new CustomEvent('cat-cafe:custody-offer-updated', { detail: data }));
@@ -875,20 +888,38 @@ export function useSocket(callbacks: SocketCallbacks, threadId?: string, foregro
         const status = (entry as { status?: unknown }).status;
         return typeof status === 'string' ? status : 'unknown';
       });
-    // F39: Queue events — reconcile the full canonical projection before
-    // replacing the thread-scoped Queue. Socket rows intentionally omit some
-    // server-only actions (for example exact active-run Append), so committing
-    // them first would create a false-negative action surface.
+    // The socket event is committed pending-target truth. Apply it immediately;
+    // /queue adds rich previews and fenced actions without delaying retirement.
     socket.on('queue_updated', (data: { threadId: string; queue: unknown[]; action: string }) => {
       void invalidateSidebarProjection();
       const store = useChatStore.getState();
       const queue = normalizeQueueEntries(data.queue);
       const epoch = bumpLiveQueueHydrateEpoch(data.threadId);
+      const known = data.threadId === store.currentThreadId ? store.queue : store.getThreadState(data.threadId).queue;
+      const projected = queue.map((entry) => {
+        const previous = known.find((candidate) => candidate.id === entry.id);
+        // Retain only presentation and already-fenced controls for the same
+        // source/targets. Never carry controls onto a mutated pending target set.
+        const sameSource =
+          previous &&
+          previous.messageId === entry.messageId &&
+          previous.content === entry.content &&
+          JSON.stringify(previous.from) === JSON.stringify(entry.from) &&
+          JSON.stringify(previous.targetCats) === JSON.stringify(entry.targetCats) &&
+          JSON.stringify(previous.authorIntentByTarget) === JSON.stringify(entry.authorIntentByTarget);
+        return sameSource
+          ? {
+              ...entry,
+              messagePreview: entry.messagePreview ?? previous.messagePreview,
+              lifecycleActions: entry.lifecycleActions ?? previous.lifecycleActions,
+            }
+          : entry;
+      });
+      store.setQueue(data.threadId, projected);
       void reconcileThreadWithServer(
         data.threadId,
         () => getLiveQueueHydrateEpoch(data.threadId) !== epoch,
         'QueueUpdated',
-        { queue },
       );
       // Queue processor started executing an entry: restore the coarse "active"
       // marker immediately, then hydrate current-thread slot truth from /queue.
@@ -996,6 +1027,13 @@ export function useSocket(callbacks: SocketCallbacks, threadId?: string, foregro
           timestamp: number;
           timelineOrderAt?: number;
           contentBlocks?: readonly unknown[];
+          toolEvents?: import('../stores/chat-types').ToolEvent[];
+          thinking?: string;
+          metadata?: import('../stores/chat-types').ChatMessageMetadata & {
+            cliDiagnostics?: import('@cat-cafe/shared').CliDiagnostics;
+            timeoutDiagnostics?: import('../stores/chat-types').TimeoutDiagnostics;
+          };
+          mentionsUser?: boolean;
           extra?: Record<string, unknown>;
           origin?: 'stream' | 'callback' | 'briefing';
           replyTo?: string;
@@ -1005,22 +1043,7 @@ export function useSocket(callbacks: SocketCallbacks, threadId?: string, foregro
         if (!isLifecycleStoredMessageMetadata(data.message.lifecycle)) return;
         const lifecycle = data.message.lifecycle;
         const isDeliveryFailure = lifecycle.kind === 'delivery_failure';
-        const store = useChatStore.getState();
-        if (lifecycle.kind === 'response') {
-          const threadState = store.getThreadState(data.threadId);
-          const exactRun = threadState.catInvocations[lifecycle.targetId]?.activeRun;
-          if (exactRun?.responseMessageId === data.message.id && exactRun.invocationId === lifecycle.invocationId) {
-            const liveBubble = threadState.messages.find(
-              (candidate) =>
-                candidate.id !== data.message.id &&
-                candidate.type === 'assistant' &&
-                candidate.catId === lifecycle.targetId &&
-                candidate.extra?.stream?.turnInvocationId === lifecycle.invocationId,
-            );
-            if (liveBubble) store.replaceThreadMessageId(data.threadId, liveBubble.id, data.message.id);
-          }
-        }
-        store.upsertLifecycleMessage(data.threadId, {
+        writeStoredSnapshot(data.threadId, {
           id: data.message.id,
           type: isDeliveryFailure
             ? 'system'
@@ -1040,8 +1063,23 @@ export function useSocket(callbacks: SocketCallbacks, threadId?: string, foregro
                   .contentBlocks as import('../stores/chat-types').ChatMessage['contentBlocks'],
               }
             : {}),
-          ...(data.message.extra
-            ? { extra: data.message.extra as import('../stores/chat-types').ChatMessage['extra'] }
+          ...(data.message.toolEvents ? { toolEvents: data.message.toolEvents } : {}),
+          ...(data.message.thinking ? { thinking: data.message.thinking } : {}),
+          ...(data.message.metadata ? { metadata: data.message.metadata } : {}),
+          ...(data.message.mentionsUser ? { mentionsUser: true } : {}),
+          ...(data.message.extra || data.message.metadata?.cliDiagnostics || data.message.metadata?.timeoutDiagnostics
+            ? {
+                extra: {
+                  ...(data.message.extra as import('../stores/chat-types').ChatMessage['extra']),
+                  // F212 / F118: same folding as history hydration, so a failed response keeps its panel.
+                  ...(data.message.metadata?.cliDiagnostics
+                    ? { cliDiagnostics: data.message.metadata.cliDiagnostics }
+                    : {}),
+                  ...(data.message.metadata?.timeoutDiagnostics
+                    ? { timeoutDiagnostics: data.message.metadata.timeoutDiagnostics }
+                    : {}),
+                },
+              }
             : {}),
           ...(data.message.origin ? { origin: data.message.origin } : {}),
           ...(data.message.replyTo ? { replyTo: data.message.replyTo } : {}),
@@ -1281,6 +1319,8 @@ export function useSocket(callbacks: SocketCallbacks, threadId?: string, foregro
     }
 
     return () => {
+      socket.off('artifact_review_changed', onArtifactReviewChanged);
+      socket.off('content_modification_source_saved', onContentModificationSourceSaved);
       clearInterval(watchdogTimer);
       clearInterval(connectionWatchdogTimer);
       if (visibilityHandler) {

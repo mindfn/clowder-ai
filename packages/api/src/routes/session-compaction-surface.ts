@@ -10,8 +10,8 @@ import {
   authenticatedCompactionSequenceFromSession,
   authoritativeCompactionEventFromSession,
   resolveAuthoritativeCompactionSupport,
-} from '../domains/cats/services/session/authoritative-compaction.js';
-import type { ContextEpochOwner } from '../domains/cats/services/session/ContextEpochOwner.js';
+} from '../domains/cats/services/session/context/authoritative-compaction.js';
+import type { ContextEpochOwner } from '../domains/cats/services/session/context/ContextEpochOwner.js';
 import type { TranscriptReader } from '../domains/cats/services/session/TranscriptReader.js';
 import type { ISessionChainStore } from '../domains/cats/services/stores/ports/SessionChainStore.js';
 import type { AgentContextCapability } from '../domains/cats/services/types.js';
@@ -204,5 +204,13 @@ export function createSessionCompactionSurface(deps: SessionCompactionSurfaceDep
     });
   }
 
-  return { observeAuthoritativeCompaction, compactContinuityFor, registerLatestDigestRoute };
+  /** F117 K2: the cold context packet an in-process SessionStart(compact) hook hands the model. */
+  async function postCompactContextFor(cliSessionId: string): Promise<string | undefined> {
+    const record = await deps.sessionChainStore.getByCliSessionId(cliSessionId);
+    if (record?.status !== 'active') return undefined;
+    const projection = await projectPostCompact(record);
+    return projection.status === 'projected' ? projection.contextPacket : undefined;
+  }
+
+  return { observeAuthoritativeCompaction, compactContinuityFor, registerLatestDigestRoute, postCompactContextFor };
 }

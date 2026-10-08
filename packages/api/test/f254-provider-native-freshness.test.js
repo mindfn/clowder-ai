@@ -1298,6 +1298,7 @@ describe('F254 D2 provider-native freshness truth', () => {
     const archived = [];
     const service = new CodexAgentService({
       carrierMode: 'app_server',
+      cliCommand: process.execPath,
       l0CompilerFn: fakeL0Compiler,
       model: 'gpt-5.3-codex',
       rawArchive: { append: async (invocationId, payload) => archived.push({ invocationId, payload }) },
@@ -1345,6 +1346,7 @@ describe('F254 D2 provider-native freshness truth', () => {
     let attempts = 0;
     const service = new CodexAgentService({
       carrierMode: 'app_server',
+      cliCommand: process.execPath,
       l0CompilerFn: fakeL0Compiler,
       model: 'gpt-5.3-codex',
     });
@@ -1379,6 +1381,7 @@ describe('F254 D2 provider-native freshness truth', () => {
 
   it('projects app-server lifecycle and routes user cancel through turn/interrupt', async () => {
     const wire = new FakeAppServerWire();
+    const { promise: turnStarted, resolve: onTurnStarted } = Promise.withResolvers();
     const controller = new AbortController();
     const originalWrite = wire.write.bind(wire);
     wire.write = async (message) => {
@@ -1396,6 +1399,7 @@ describe('F254 D2 provider-native freshness truth', () => {
     let factoryInput;
     const service = new CodexAgentService({
       carrierMode: 'app_server',
+      cliCommand: process.execPath,
       l0CompilerFn: fakeL0Compiler,
       model: 'gpt-5.3-codex',
     });
@@ -1410,12 +1414,11 @@ describe('F254 D2 provider-native freshness truth', () => {
         },
       })) {
         messages.push(message);
+        if (message.metadata?.diagnostics?.appServerLifecycle?.stage === 'turn_accepted') onTurnStarted();
       }
     })();
 
-    while (!wire.writes.some((message) => message.method === 'turn/start')) {
-      await new Promise((resolve) => setImmediate(resolve));
-    }
+    await Promise.race([turnStarted, run.then(() => assert.fail('invocation ended before turn/start'))]);
     controller.abort('user_cancel');
     await run;
 
@@ -1457,7 +1460,7 @@ describe('F254 D2 provider-native freshness truth', () => {
     assert.equal(messages.at(-1).type, 'done');
   });
 
-  it('honors the global CLI_TIMEOUT_MS opt-in through protocol interruption', async () => {
+  it('arms no app-server idle interrupt from CLI_TIMEOUT_MS; only a stop interrupts the turn (F117 KD-22)', async () => {
     const previousTimeout = process.env.CLI_TIMEOUT_MS;
     process.env.CLI_TIMEOUT_MS = '20';
     const wire = new FakeAppServerWire();
@@ -1477,6 +1480,7 @@ describe('F254 D2 provider-native freshness truth', () => {
     };
     const service = new CodexAgentService({
       carrierMode: 'app_server',
+      cliCommand: process.execPath,
       l0CompilerFn: fakeL0Compiler,
       model: 'gpt-5.3-codex',
     });
@@ -1502,13 +1506,13 @@ describe('F254 D2 provider-native freshness truth', () => {
       .filter(Boolean);
     assert.equal(
       lifecycle.some((event) => event.interruptReason === 'timeout'),
-      true,
-      'the process-level /config timeout must reach the app-server client',
+      false,
+      "the member's one timeout is its invocation's, not an app-server idle interrupt",
     );
     assert.equal(
       lifecycle.some((event) => event.interruptReason === 'user_cancel'),
-      false,
-      'the failsafe should not be the source of interruption',
+      true,
+      'the turn ran until its signal stopped it',
     );
   });
 
@@ -1536,6 +1540,7 @@ describe('F254 D2 provider-native freshness truth', () => {
     };
     const service = new CodexAgentService({
       carrierMode: 'app_server',
+      cliCommand: process.execPath,
       l0CompilerFn: fakeL0Compiler,
       model: 'gpt-5.3-codex',
       spawnFn: () => assert.fail('failed app-server turn must not replay through exec'),

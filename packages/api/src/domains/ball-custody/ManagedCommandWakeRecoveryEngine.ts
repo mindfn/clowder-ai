@@ -1,14 +1,11 @@
 import { createModuleLogger } from '../../infrastructure/logger.js';
-import { managedCommandDispatchRetryTotal } from '../../infrastructure/telemetry/instruments.js';
 import type { InvocationRecord } from '../cats/services/stores/ports/InvocationRecordStore.js';
 import { classifyInvocationRecoveryStatus } from '../cats/services/stores/ports/invocation-state-machine.js';
-import { ManagedCommandWakeActionLeaseAdmissionError } from './managed-command-wake-action-lease-admission.js';
 import {
   type ManagedCommandWakeCarrierTerminalReason,
   type ManagedCommandWakeProjection,
   type ManagedCommandWakeRecoveryDeps,
   type ManagedCommandWakeRecoveryResult,
-  type ManagedCommandWakeTriggerOutcome,
   type ParsedManagedCommandWakeTask,
   parseManagedCommandWakeTask as parseWakeTask,
 } from './managed-command-wake-lifecycle.js';
@@ -23,12 +20,10 @@ const log = createModuleLogger('ball-custody/managed-command-wake-recovery-engin
 /** Reconciles one managed wake after its command has produced durable evidence. */
 export class ManagedCommandWakeRecoveryEngine {
   private readonly now: () => number;
-  private readonly dispatchedCarrierGraceMs: number;
   private readonly wakeSlaMs: number;
 
   constructor(private readonly deps: ManagedCommandWakeRecoveryDeps) {
     this.now = deps.now ?? Date.now;
-    this.dispatchedCarrierGraceMs = deps.dispatchedCarrierGraceMs ?? 15_000;
     this.wakeSlaMs = deps.wakeSlaMs ?? 60_000;
   }
 
@@ -119,9 +114,9 @@ export class ManagedCommandWakeRecoveryEngine {
       if (recoveryStatus === 'completed') return this.consume(parsed, carrier.id);
       if (recoveryStatus === 'in_flight' || recoveryStatus === 'terminal') return 'pending';
     }
-    const lastDispatchAt = parsed.command.lastDispatchAt ?? 0;
-    if (lastDispatchAt > 0 && this.now() - lastDispatchAt < this.dispatchedCarrierGraceMs) return 'pending';
-    return this.dispatch(parsed);
+    // Recovery observes canonical delivery only; a Message reference cannot
+    // mint another Queue admission or an execution after a restart.
+    return 'pending';
   }
 
   private async persistLostCommandStatus(
@@ -189,103 +184,6 @@ export class ManagedCommandWakeRecoveryEngine {
         timestamp: stored.timestamp,
       },
     });
-  }
-
-  /**
-   * Adopt a wake that a previous deployment left half-committed.
-   *
-   * New wakes never reach here: the fence commits Message and Queue row together and lands on
-   * `enqueued` directly. But tasks persisted as `message_written` / `dispatch_pending` before that
-   * change have a durable message and no Queue row, and dropping them would mean those owners are
-   * never woken. So this is a migration path, not a production one — the two-phase producer is gone.
-   */
-  private async dispatch(parsed: ParsedManagedCommandWakeTask): Promise<ManagedCommandWakeRecoveryResult> {
-    const messageId = parsed.command.messageId;
-    const wakeContent = parsed.command.wakeContent;
-    if (!messageId || !wakeContent) return 'pending';
-    if (parsed.command.state === 'enqueued') return 'pending';
-
-    const adopt = this.deps.adoptLegacyWake;
-    if (!adopt) return 'pending';
-
-    const attemptCount = (parsed.command.dispatchAttemptCount ?? 0) + 1;
-    if (attemptCount > 1) managedCommandDispatchRetryTotal.add(1);
-    if (
-      !this.updateCommand(parsed, {
-        ...parsed.command,
-        state: 'dispatch_pending',
-        dispatchAttemptCount: attemptCount,
-        lastDispatchAt: this.now(),
-      })
-    ) {
-      return 'pending';
-    }
-
-    let adopted: { adopted: boolean };
-    try {
-      adopted = await adopt({
-        messageId,
-        threadId: parsed.threadId,
-        userId: parsed.userId,
-        catId: parsed.catId,
-        content: `[定时任务] ${wakeContent}`,
-      });
-    } catch (err) {
-      return this.handleDispatchError(parsed, messageId, err);
-    }
-    return this.commitDispatchOutcome(parsed, adopted.adopted ? 'enqueued' : 'full');
-  }
-
-  private async handleDispatchError(
-    parsed: ParsedManagedCommandWakeTask,
-    messageId: string,
-    err: unknown,
-  ): Promise<ManagedCommandWakeRecoveryResult> {
-    if (err instanceof ManagedCommandWakeActionLeaseAdmissionError) {
-      try {
-        const canceled = await this.deps.messageStore.markCanceled(messageId);
-        if (canceled?.deliveryStatus === 'canceled' && this.retireTask(parsed.task.id, 'canceled', messageId)) {
-          log.info({ code: err.code, taskId: parsed.task.id, messageId }, 'stale managed-command wake retired');
-          return 'recovered';
-        }
-      } catch (cancelError) {
-        log.warn({ err, cancelError, taskId: parsed.task.id, messageId }, 'managed-command wake retirement failed');
-      }
-    } else {
-      log.warn(
-        { err, taskId: parsed.task.id, threadId: parsed.threadId, messageId },
-        'managed-command execution-plane dispatch failed',
-      );
-    }
-    this.persistDispatchOutcome(parsed.task.id, 'failed');
-    return 'pending';
-  }
-
-  private async commitDispatchOutcome(
-    parsed: ParsedManagedCommandWakeTask,
-    outcome: ManagedCommandWakeTriggerOutcome,
-  ): Promise<ManagedCommandWakeRecoveryResult> {
-    const latest = parseWakeTask(this.deps.dynamicTaskStore.getById(parsed.task.id));
-    if (!latest) return 'missing';
-    if (outcome === 'full') {
-      this.updateCommand(latest, { ...latest.command, state: 'dispatch_pending', lastDispatchOutcome: 'full' });
-      return 'pending';
-    }
-    if (!this.updateCommand(latest, { ...latest.command, state: outcome, lastDispatchOutcome: outcome })) {
-      return 'pending';
-    }
-    const acknowledged = parseWakeTask(this.deps.dynamicTaskStore.getById(parsed.task.id));
-    if (!acknowledged) return 'missing';
-    const carrier = await this.findInvocationCarrier(acknowledged);
-    return carrier && classifyInvocationRecoveryStatus(carrier.status) === 'completed'
-      ? this.consume(acknowledged, carrier.id)
-      : 'pending';
-  }
-
-  private persistDispatchOutcome(taskId: string, outcome: 'failed' | 'unavailable'): void {
-    const latest = parseWakeTask(this.deps.dynamicTaskStore.getById(taskId));
-    if (!latest) return;
-    this.updateCommand(latest, { ...latest.command, state: 'dispatch_pending', lastDispatchOutcome: outcome });
   }
 
   private async findInvocationCarrier(parsed: ParsedManagedCommandWakeTask): Promise<InvocationRecord | null> {

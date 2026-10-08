@@ -39,6 +39,11 @@ import {
   bindAsrPersonMemoryPresentationRetryFromSchedulerMessage,
   bindAsrPersonMemoryReentryFromSchedulerMessage,
 } from '../../../../memory/people/AsrPersonMemoryReentryCarrier.js';
+import {
+  checkDeploymentWaitStart,
+  type DeploymentWaitStartDecision,
+  type DeploymentWaitStartGuard,
+} from '../../../../runtime-deployment/DeploymentWaitStartGuard.js';
 import { bindAsrPersonMemoryScenesFromQueueMessage } from '../../../../signal-intake/AsrPersonMemoryQueueCarrier.js';
 import {
   MessageBundlePromptUnavailableError,
@@ -50,6 +55,7 @@ import { shouldMarkDecisionNotification } from '../../push/decision-notification
 import type { PushPayload } from '../../push/PushNotificationService.js';
 import { messageFrom } from '../../stores/message-from.js';
 import type { DeliveryCursorStore } from '../../stores/ports/DeliveryCursorStore.js';
+import type { IDraftStore } from '../../stores/ports/DraftStore.js';
 import type {
   InvocationActionLeaseCarrier,
   InvocationRecord,
@@ -80,6 +86,7 @@ import {
   type PersistenceContext,
   type RouteExecutionOptions,
   type RouteOptions,
+  type RoutingDispatchRejection,
 } from '../routing/route-helpers.js';
 import {
   accumulateTextAggregate,
@@ -100,7 +107,7 @@ import {
 import { type EnsureTerminalDeps, ensureTerminalStatus, RouteChainCompletionTracker } from './ensureTerminalStatus.js';
 import type { StaleProcessingOwnerLease } from './InvocationOwnerLeaseCandidates.js';
 import {
-  actionSuccessorInvocationIdempotencyKey,
+  actionSuccessorInvocationKeyForTarget,
   type InvocationQueue,
   isOrdinaryQueueTargetEligible,
   type QueueEntry,
@@ -118,6 +125,12 @@ import {
   type ExecutionOwnerMatch,
 } from './InvocationTracker.js';
 import { projectLifecycleAppendAction } from './lifecycle-append-projection.js';
+import { emitLifecycleMessageUpdated } from './lifecycle-message-update.js';
+import {
+  appendLifecycleResponseWithReadBack,
+  LifecycleResponseAdmissionUnknownError,
+} from './lifecycle-response-admission.js';
+import { createMemberTimeoutStop } from './member-output-timeout.js';
 import { requireOwnerAuthProvenance } from './owner-auth-provenance.js';
 import {
   isTerminalDispositionEvent,
@@ -136,7 +149,19 @@ import {
   preparePrestartRetirements,
   terminalizePreparedPrestartRetirements,
 } from './queue-prestart-group-retirement.js';
+import {
+  collectiveQueueRefusalError,
+  isPermanentCollectiveQueueRefusal,
+  persistCollectiveRefusalRecord,
+  retireRefusedCollectiveQueueCarrier,
+} from './queue-private-refusal-disposition.js';
+import { type QueueRetryDeferralOptions, QueueRetryDeferrals } from './queue-retry-deferrals.js';
 import { requireInvocationRecordUpdate } from './require-invocation-record-update.js';
+import {
+  lifecycleResponseIdempotencyKey,
+  recordTurnOutputVerdict,
+  settleResponseFromDraft,
+} from './response-draft-settlement.js';
 import {
   type CommitInvocationInput,
   type ConsumedContinuationToken,
@@ -170,6 +195,10 @@ interface TrackerLike {
   ): boolean;
   has(threadId: string, catId?: string): boolean;
   cancelInvocation(threadId: string, catIds: string[], userId?: string, reason?: string): unknown;
+  /** F117 KD-22: stop one member the way Stop does (the member timeout passes reason `timeout`). */
+  cancel?(threadId: string, catId: string, requestUserId?: string, abortReason?: string): { cancelled: boolean };
+  /** F117 KD-22: the member was stopped by its output timeout — a failure, not a cancellation. */
+  isTimedOut?(threadId: string, catId: string): boolean;
   getUserId?(threadId: string, catId: string): string | null;
   getExecutionId?(threadId: string, catId: string): string | undefined;
   /** F-parallel-cancel: expose a slot's own controller for per-cat cancel isolation. */
@@ -222,8 +251,18 @@ interface QueueExecutionResult {
   invocationId?: string;
   /** Queue rows actually reserved into this attempt, including F175 batch siblings. */
   attemptedQueueEntryIds: string[];
-  /** Exact primary settlement failed, so automatic draining must stop for recovery. */
+  /** Actual children admitted through durable History; never inferred from a Queue parent ID. */
+  terminalInvocationIdByCatId: Record<string, string>;
+  /**
+   * The attempt failed before its handoff (or its Queue settlement failed), so its entries must not
+   * be retried at once: each waits for its retry time while the rest of the thread keeps draining.
+   */
   primarySettlementIncomplete?: boolean;
+  /**
+   * The targets actual-send routing refused in this attempt, as the route saw them. The Queue row
+   * forgets a targetless entry's resolved target when it goes back, so the retry wait is read here.
+   */
+  routingRejections: RoutingDispatchRejection[];
 }
 
 type ProcessingSlotReservation = PrestartRetirementReservation;
@@ -307,6 +346,11 @@ function readOrdinaryInvocationCreated(
   };
 }
 
+/** The targets a queued entry asks for, independent of their order. */
+function requestedTargetsKey(entry: QueueEntry): string {
+  return JSON.stringify([...queueEntryTargetCats(entry)].sort());
+}
+
 function sameActionLeaseCarrier(actual: InvocationActionLeaseCarrier, expected: InvocationActionLeaseCarrier): boolean {
   if (actual.kind !== expected.kind) return false;
   if (actual.kind === 'none' || expected.kind === 'none') return true;
@@ -361,6 +405,7 @@ interface SocketManagerLike {
 }
 
 interface LoggerLike {
+  debug?(obj: unknown, msg?: string): void;
   info(obj: unknown, msg?: string): void;
   warn(obj: unknown, msg?: string): void;
   error(obj: unknown, msg?: string): void;
@@ -442,11 +487,17 @@ interface ThreadMetaLike {
 
 export interface QueueProcessorDeps {
   queue: InvocationQueue;
+  liveCompanionSessions?: Pick<
+    import('../../../../concierge/live/LiveCompanionSessions.js').LiveCompanionSessions,
+    'claim' | 'rejectUnclaimed'
+  >;
   invocationTracker: TrackerLike;
   invocationRecordStore: InvocationRecordStoreLike;
   router: RouterLike;
   socketManager: SocketManagerLike;
   messageStore: IMessageStore;
+  /** F117 KD-21: the in-flight bodies of responses an execution that throws leaves processing. */
+  draftStore?: Pick<IDraftStore, 'getByThread' | 'delete'>;
   /** F254: durable owner for ordinary queued-user lifecycle transitions. */
   log: LoggerLike;
   /** User-facing completion/error notifications for canonical queued web ingress. */
@@ -467,9 +518,10 @@ export interface QueueProcessorDeps {
   freshnessEventLog?: FreshnessAttentionEventLog;
   /** F254 Phase E: typed successor preflight/adoption and crash closure. */
   /** Durable child lifecycle and causal coverage; auth registry is not historical truth. */
-  turnExecutionStore?: Pick<ITurnExecutionStore, 'get'>;
+  turnExecutionStore?: Pick<ITurnExecutionStore, 'get' | 'clearResponsePending' | 'settleOutputFence'>;
   /** F167 Phase S.1: carrier preflight plus failed/canceled runtime outcomes; success requires Evidence→Verdict. */
   actionSuccessorLeaseStore?: Pick<ActionSuccessorLeaseStore, 'preflight' | 'preflightOutput' | 'commitOutcome'>;
+  deploymentWaitStartGuard?: Pick<DeploymentWaitStartGuard, 'check'>;
   /**
    * F254 Phase E (ADR-041 §5): seed the freshness seenCursor when closure adoption
    * injects required bodies — injection must count as seen, or the output gate
@@ -578,15 +630,23 @@ export class QueueProcessor {
   private readonly callerDispatchProcessStart?: {
     processGenerationId: string;
   };
+  /** F117 soak: entries whose attempt failed before handoff, each waiting for its retry time. */
+  private readonly retryDeferrals: QueueRetryDeferrals;
 
   constructor(
     deps: QueueProcessorDeps,
     opts?: {
       processingSlotTtlMs?: number;
       callerDispatchProcessStart?: { processGenerationId: string };
+      retryDeferral?: QueueRetryDeferralOptions;
     },
   ) {
     this.deps = deps;
+    this.retryDeferrals = new QueueRetryDeferrals((threadId) => {
+      this.requestDrain(threadId).catch((err) =>
+        deps.log.error({ err, threadId }, '[QueueProcessor] drain after a retry wait failed'),
+      );
+    }, opts?.retryDeferral);
     this.processingSlotTtlMs = opts?.processingSlotTtlMs ?? DEFAULT_PRESTART_RESERVATION_TTL_MS;
     this.sessionContinuationCoordinator =
       deps.sessionContinuationCoordinator ?? QueueProcessor.createSessionContinuationCoordinator(deps.threadStore);
@@ -685,6 +745,16 @@ export class QueueProcessor {
     this.entryCompleteHooks.delete(entryId);
   }
 
+  private isExactActiveRun(
+    threadId: string,
+    run: { targetId: string; invocationId: string; responseMessageId: string },
+  ) {
+    const current = this.deps.invocationTracker
+      .getActiveSlots?.(threadId)
+      .find((slot) => slot.catId === run.targetId)?.activeRun;
+    return current?.invocationId === run.invocationId && current.responseMessageId === run.responseMessageId;
+  }
+
   private async compensateLifecycleAppendTargets(input: {
     entry: QueueEntry;
     inputMessageIds: readonly string[];
@@ -752,6 +822,18 @@ export class QueueProcessor {
         this.emitLifecycleMessageUpdated(queueEntryOwnerId(input.entry), message);
       }
     }
+    {
+      const delivery = await this.markDeliveredAndEmit(
+        queueEntryOwnerId(input.entry),
+        input.entry.threadId,
+        [...input.inputMessageIds],
+        Math.max(Date.now(), input.failedAtLowerBound),
+        new Set(),
+      );
+      if (delivery.failedIds.length > 0) {
+        throw new Error(`rejected Append could not be published: ${delivery.failedIds.join(',')}`);
+      }
+    }
   }
 
   /**
@@ -769,7 +851,7 @@ export class QueueProcessor {
   }): Promise<AppendExactEntryResult> {
     const { queue, invocationTracker } = this.deps;
     const entry = queue.getEntrySnapshot(input.threadId, input.userId, input.entryId);
-    if (!entry || (entry.from.kind !== 'user' && entry.from.kind !== 'agent')) {
+    if (!entry || entry.execution.liveSessionId || (entry.from.kind !== 'user' && entry.from.kind !== 'agent')) {
       return { outcome: 'rejected', reason: 'append_unavailable' };
     }
     if (entry.from.kind === 'user') {
@@ -867,6 +949,7 @@ export class QueueProcessor {
     const entry = queue.getEntrySnapshot(input.threadId, input.userId, input.entryId);
     if (
       !entry ||
+      entry.execution.liveSessionId ||
       input.expectedRuns.length !== 1 ||
       input.expectedRuns.some((run) => !queueEntryTargetCats(entry).includes(run.targetId))
     ) {
@@ -915,9 +998,7 @@ export class QueueProcessor {
       return { outcome: 'rejected', reason: 'lifecycle_conflict' };
     }
     let removed: QueueEntry | null = null;
-    let lifecycleAdmissionCommitted = false;
     let providerDispatchStarted = false;
-    const mirroredRuns: (typeof input.expectedRuns)[number][] = [];
     let sourceMessages: StoredMessage[] = [];
     try {
       const sourceMessagesBeforeAdmission = (
@@ -928,19 +1009,11 @@ export class QueueProcessor {
       }
       sourceMessages = sourceMessagesBeforeAdmission;
       const imagePaths = sourceMessagesBeforeAdmission.flatMap((message) => extractImagePaths(message.contentBlocks));
+      // Fence the response receiving this delivery. Model consumption is not a second admission.
       for (const run of input.expectedRuns) {
-        if (
-          !invocationTracker.appendLifecycleActiveRunInputs?.(
-            input.threadId,
-            run.targetId,
-            run,
-            input.entryId,
-            inputMessageIds,
-          )
-        ) {
+        if (!this.isExactActiveRun(input.threadId, run)) {
           throw new Error(`Active Run changed during Append admission: ${run.targetId}/${run.invocationId}`);
         }
-        mirroredRuns.push(run);
       }
 
       const admission = await messageStore.commitLifecycleAppendAdmission({
@@ -954,23 +1027,33 @@ export class QueueProcessor {
           `lifecycle Append admission ${admission.kind}:${'reason' in admission ? admission.reason : ''}`,
         );
       }
-      lifecycleAdmissionCommitted = true;
       sourceMessages = admission.messages.slice(0, inputMessageIds.length);
+      for (const run of input.expectedRuns) {
+        if (
+          !invocationTracker.appendLifecycleActiveRunInputs?.(
+            input.threadId,
+            run.targetId,
+            run,
+            input.entryId,
+            inputMessageIds,
+          )
+        ) {
+          throw new Error(`Active Run changed after Append admission: ${run.targetId}/${run.invocationId}`);
+        }
+      }
+      const delivery = await this.markDeliveredAndEmit(
+        input.userId,
+        input.threadId,
+        [...inputMessageIds],
+        seenAt,
+        new Set(),
+      );
+      if (delivery.failedIds.length > 0) throw new Error(`Append publication failed: ${delivery.failedIds.join(',')}`);
       for (const sourceMessage of sourceMessages) {
         this.callerDispatchObservations.registerPersistedSource(
           sourceMessage,
           input.expectedRuns.map((run) => run.targetId),
         );
-      }
-      const delivery = await this.markDeliveredAndEmit(
-        input.userId,
-        input.threadId,
-        inputMessageIds,
-        seenAt,
-        new Set(),
-      );
-      if (delivery.failedIds.length > 0) {
-        throw new Error(`lifecycle Append delivery transition failed: ${delivery.failedIds.join(',')}`);
       }
       if (!(await queue.commitClaimedProcessing(input.threadId, [input.entryId], seenAt))) {
         throw new Error(`claimed Append Queue target retirement did not commit: ${input.entryId}`);
@@ -979,13 +1062,15 @@ export class QueueProcessor {
       if (!removed) throw new Error(`claimed Append Queue entry vanished: ${input.entryId}`);
 
       try {
-        for (const message of admission.messages) this.emitLifecycleMessageUpdated(input.userId, message);
+        for (const message of admission.messages) {
+          const current = await messageStore.getById(message.id);
+          if (current) this.emitLifecycleMessageUpdated(input.userId, current);
+        }
         await emitQueueUpdated(
           socketManager,
           input.userId,
           input.threadId,
           queue.list(input.threadId, input.userId),
-          messageStore,
           'appended',
         );
       } catch (projectionErr) {
@@ -1023,65 +1108,54 @@ export class QueueProcessor {
           failedTargetIds: rejectedTargetIds,
           failedAtLowerBound: seenAt + 1,
         });
+        await emitQueueUpdated(
+          socketManager,
+          input.userId,
+          input.threadId,
+          queue.list(input.threadId, input.userId),
+          'append_rejected',
+        ).catch((projectionErr: unknown) =>
+          this.deps.log.warn(
+            { projectionErr, threadId: input.threadId, entryId: input.entryId },
+            '[QueueProcessor] rejected Append compensated but its Queue projection emit failed',
+          ),
+        );
         return { outcome: 'rejected', reason: 'provider_rejected', rejectedTargetIds };
       }
       return { outcome: 'appended', entry: removed, acceptedTargetIds: input.expectedRuns.map((run) => run.targetId) };
     } catch (err) {
-      if (!providerDispatchStarted && lifecycleAdmissionCommitted) {
+      if (!providerDispatchStarted) {
         try {
-          if (!removed) {
-            await queue.reconcileClaimedLifecycleTargets(input.threadId, [input.entryId], messageStore);
-            removed = claimed;
-          }
-          await this.compensateLifecycleAppendTargets({
-            entry: claimed,
-            inputMessageIds,
-            sourceMessages,
+          const recovered = await this.recoverLifecycleAdmission({
+            threadId: input.threadId,
+            entryId: input.entryId,
+            messageIds: inputMessageIds,
             runs: input.expectedRuns,
-            failedTargetIds: input.expectedRuns.map((run) => run.targetId),
-            failedAtLowerBound: seenAt + 1,
           });
+          if (recovered.committed) {
+            // A lost store reply is not proof of rollback. The provider has not
+            // been called, so compensate only the exact durable hand-over.
+            await this.compensateLifecycleAppendTargets({
+              entry: claimed,
+              inputMessageIds,
+              sourceMessages: recovered.messages,
+              runs: input.expectedRuns,
+              failedTargetIds: input.expectedRuns.map((run) => run.targetId),
+              failedAtLowerBound: seenAt + 1,
+            });
+          }
           await emitQueueUpdated(
             socketManager,
             input.userId,
             input.threadId,
             queue.list(input.threadId, input.userId),
-            messageStore,
-            'append_failed',
+            recovered.committed ? 'append_failed' : 'append_rollback',
           );
         } catch (compensationErr) {
           this.deps.log.error(
             { compensationErr, threadId: input.threadId, entryId: input.entryId },
-            '[QueueProcessor] failed to compensate lifecycle Append after durable admission',
+            '[QueueProcessor] lifecycle Append recovery remains uncertain; preserving its claim',
           );
-        }
-      } else if (!providerDispatchStarted) {
-        for (const run of mirroredRuns) {
-          invocationTracker.detachLifecycleActiveRunInputs?.(
-            input.threadId,
-            run.targetId,
-            run,
-            input.entryId,
-            inputMessageIds,
-          );
-        }
-        const restored = await queue.restoreClaimedEntries(input.threadId, [input.entryId]);
-        if (restored) {
-          try {
-            await emitQueueUpdated(
-              socketManager,
-              input.userId,
-              input.threadId,
-              queue.list(input.threadId, input.userId),
-              messageStore,
-              'append_rollback',
-            );
-          } catch (restoreErr) {
-            this.deps.log.error(
-              { restoreErr, threadId: input.threadId, entryId: input.entryId },
-              '[QueueProcessor] failed to project lifecycle Append rollback',
-            );
-          }
         }
       }
       this.deps.log.error(
@@ -1090,6 +1164,42 @@ export class QueueProcessor {
       );
       return { outcome: 'rejected', reason: 'lifecycle_conflict' };
     }
+  }
+
+  /** Recover a lost History acknowledgement without guessing that admission rolled back. */
+  private async recoverLifecycleAdmission(input: {
+    threadId: string;
+    entryId: string;
+    messageIds: readonly string[];
+    runs: readonly { targetId: string; responseMessageId: string }[];
+  }): Promise<{ committed: boolean; messages: StoredMessage[] }> {
+    const messages = await Promise.all(
+      input.messageIds.map(async (id) => {
+        const message = await this.deps.messageStore.getById(id);
+        if (!message || message.threadId !== input.threadId)
+          throw new Error(`History recovery evidence unavailable: ${id}`);
+        return message;
+      }),
+    );
+    const committed = messages.every((message) =>
+      input.runs.every((run) =>
+        message.lifecycle?.dispatchRefs?.some(
+          (ref) => ref.targetId === run.targetId && ref.statusMessageId === run.responseMessageId,
+        ),
+      ),
+    );
+    const sources = new Map(messages.map((message) => [message.id, message]));
+    if (
+      !(await this.deps.queue.reconcileClaimedLifecycleTargets(input.threadId, [input.entryId], {
+        getById: async (id) => {
+          const message = sources.get(id);
+          if (!message) throw new Error(`History recovery source unavailable: ${id}`);
+          return message;
+        },
+      }))
+    )
+      throw new Error(`History claim recovery did not converge: ${input.entryId}`);
+    return { committed, messages };
   }
 
   /**
@@ -1146,7 +1256,6 @@ export class QueueProcessor {
       input.userId,
       input.threadId,
       queue.list(input.threadId, input.userId),
-      messageStore,
       'queued_adopted',
     );
     return { outcome: 'adopted', adoptedEntryIds };
@@ -1173,7 +1282,6 @@ export class QueueProcessor {
 
     const messageIds = queueEntryMessageIds(claimed);
     const newlySeen = true;
-    let lifecycleCommitted = false;
     let liveProjectionExtended = false;
     try {
       liveProjectionExtended =
@@ -1220,7 +1328,6 @@ export class QueueProcessor {
         await queue.restoreClaimedEntries(input.threadId, [claimed.id]);
         return { outcome: 'rejected', reason: 'lifecycle_conflict', entryId: claimed.id };
       }
-      lifecycleCommitted = true;
       for (const sourceMessage of admission.messages.slice(0, messageIds.length)) {
         this.callerDispatchObservations.registerPersistedSource(sourceMessage, [input.catId]);
       }
@@ -1248,8 +1355,14 @@ export class QueueProcessor {
       for (const message of admission.messages) this.emitLifecycleMessageUpdated(input.userId, message);
       return { outcome: 'adopted', adoptedEntryIds: [claimed.id] };
     } catch (err) {
-      if (!lifecycleCommitted) {
-        if (liveProjectionExtended) {
+      try {
+        const recovered = await this.recoverLifecycleAdmission({
+          threadId: input.threadId,
+          entryId: claimed.id,
+          messageIds,
+          runs: [input.run],
+        });
+        if (!recovered.committed && liveProjectionExtended) {
           invocationTracker.detachLifecycleActiveRunInputs?.(
             input.threadId,
             input.catId,
@@ -1258,14 +1371,13 @@ export class QueueProcessor {
             messageIds,
           );
         }
-        await queue.restoreClaimedEntries(input.threadId, [claimed.id]);
-      } else {
-        // Once the source is attached to the response, queued is no longer a
-        // truthful recovery state. Preserve processing ownership if storage
-        // recovers enough to accept this final defensive write.
-        await queue
-          .commitClaimedProcessing(input.threadId, [claimed.id], input.seenAt ?? Date.now())
-          .catch(() => false);
+      } catch (recoveryErr) {
+        // Unknown History cannot justify restoring executable work. Leave the
+        // exact claim for canonical recovery once persistence is readable.
+        this.deps.log.error(
+          { recoveryErr, threadId: input.threadId, entryId: claimed.id },
+          '[QueueProcessor] queued-body recovery evidence unavailable; preserving its claim',
+        );
       }
       this.deps.log.error(
         { err, threadId: input.threadId, entryId: claimed.id, invocationId: input.invocationId },
@@ -1273,7 +1385,9 @@ export class QueueProcessor {
       );
       return {
         outcome: 'rejected',
-        reason: lifecycleCommitted ? 'persistence_unavailable' : 'lifecycle_conflict',
+        // Explicit lifecycle conflicts returned above are 409s. A thrown store
+        // operation is unavailable persistence, even before History commits.
+        reason: 'persistence_unavailable',
         entryId: claimed.id,
       };
     }
@@ -1328,7 +1442,6 @@ export class QueueProcessor {
           queueEntryOwnerId(entry),
           entry.threadId,
           this.deps.queue.list(entry.threadId, queueEntryOwnerId(entry)),
-          this.deps.messageStore,
           'zombie_prestart_requeued',
         );
       } catch (err) {
@@ -1555,7 +1668,6 @@ export class QueueProcessor {
       userId,
       threadId,
       this.deps.queue.list(threadId, userId),
-      this.deps.messageStore,
       'pre_admission_failed',
     );
     return 'retired';
@@ -2026,7 +2138,6 @@ export class QueueProcessor {
       userId,
       threadId,
       this.deps.queue.list(threadId, userId),
-      this.deps.messageStore,
       'continuation_enqueued',
     );
     return { outcome: 'enqueued', entry: result.entry };
@@ -2141,7 +2252,18 @@ export class QueueProcessor {
     entries: readonly QueueEntry[],
     targetCatId: string,
   ): Promise<boolean> {
-    const hasExistingReceiver = await this.claimGroupHasExistingReceiver(entries, targetCatId);
+    let hasExistingReceiver: boolean;
+    try {
+      hasExistingReceiver = await this.claimGroupHasExistingReceiver(entries, targetCatId);
+    } catch (error) {
+      // No receiver/admission decision was made. Release only this already-owned
+      // claim; every later admission must re-check canonical History evidence.
+      await this.deps.queue.restoreClaimedEntries(
+        entries[0]!.threadId,
+        entries.map((entry) => entry.id),
+      );
+      throw error;
+    }
     if (!hasExistingReceiver) return false;
 
     const entryIds = entries.map((entry) => entry.id);
@@ -2265,24 +2387,81 @@ export class QueueProcessor {
 
   /** Publish one exact same-id lifecycle snapshot; clients upsert without inventing state. */
   private emitLifecycleMessageUpdated(userId: string, message: StoredMessage): void {
-    if (!message.lifecycle) return;
-    this.deps.socketManager.emitToUser(userId, 'message_lifecycle_updated', {
-      threadId: message.threadId,
-      message: {
-        id: message.id,
-        ...(message.from ? { from: message.from } : {}),
-        catId: message.catId,
-        content: message.content,
-        lifecycle: message.lifecycle,
-        timestamp: message.timestamp,
-        ...(message.timelineOrderAt !== undefined ? { timelineOrderAt: message.timelineOrderAt } : {}),
-        ...(message.contentBlocks ? { contentBlocks: message.contentBlocks } : {}),
-        ...(message.extra ? { extra: message.extra } : {}),
-        ...(message.origin ? { origin: message.origin } : {}),
-        ...(message.replyTo ? { replyTo: message.replyTo } : {}),
-        ...(message.source ? { source: message.source } : {}),
-      },
-    });
+    emitLifecycleMessageUpdated(this.deps.socketManager, userId, message);
+  }
+
+  /**
+   * F117 KD-21: settle the responses a thrown execution left processing. An exposed failure fails
+   * each R with its draft body; a fenced action whose failure stays hidden ends R the way a route
+   * ends a rejected output. The fence's verdict is written to the turn first, so this pass and any
+   * later one read it from there: a hidden failure's draft is never published, even when its R
+   * commit fails. A settlement that throws leaves the ended turn in the response-pending ledger,
+   * and the next startup settles it.
+   */
+  private async settleAbandonedResponses(
+    userId: string,
+    threadId: string,
+    responseIds: ReadonlySet<string>,
+    outcome: 'failed' | 'output_rejected',
+  ): Promise<void> {
+    for (const responseId of responseIds) {
+      try {
+        const response = await this.deps.messageStore.getById(responseId);
+        if (response?.lifecycle?.kind !== 'response' || response.lifecycle.status !== 'processing') continue;
+        const { invocationId } = response.lifecycle;
+        await recordTurnOutputVerdict(
+          this.deps.turnExecutionStore,
+          invocationId,
+          outcome === 'failed' ? 'allowed' : 'rejected',
+          (err) =>
+            this.deps.log.warn(
+              { err, threadId, invocationId },
+              '[QueueProcessor] failed to record the output fence verdict; the turn stays gated',
+            ),
+        );
+        await settleResponseFromDraft(
+          {
+            messageStore: this.deps.messageStore,
+            ...(this.deps.draftStore ? { draftStore: this.deps.draftStore } : {}),
+            ...(this.deps.turnExecutionStore ? { turnStore: this.deps.turnExecutionStore } : {}),
+            emit: (recipient, message) => this.emitLifecycleMessageUpdated(recipient, message),
+          },
+          {
+            userId,
+            threadId,
+            invocationId,
+            endedAt: Date.now(),
+            ...(outcome === 'failed'
+              ? { status: 'failed', reason: 'execution_error' }
+              : { status: 'interrupted', reason: 'output_commit_rejected' }),
+          },
+        );
+      } catch (err) {
+        this.deps.log.warn(
+          { err, threadId, responseId },
+          '[QueueProcessor] failed to settle a response its failed execution left processing',
+        );
+      }
+    }
+  }
+
+  /**
+   * F117 KD-21: a response R confirmed terminal takes its ended turn out of the response-pending ledger.
+   * KD-23: its draft goes first. Drafts no longer expire, so if deleting it fails the turn stays in the
+   * ledger, and the next startup settles it again: R is already terminal, so that only deletes the draft.
+   */
+  private async releaseSettledResponseTurn(message: StoredMessage | null | undefined, log: LoggerLike): Promise<void> {
+    const lifecycle = message?.lifecycle;
+    if (!message || lifecycle?.kind !== 'response' || lifecycle.status === 'processing') return;
+    try {
+      await this.deps.draftStore?.delete(message.userId, message.threadId, lifecycle.invocationId);
+      await this.deps.turnExecutionStore?.clearResponsePending(lifecycle.invocationId);
+    } catch (err) {
+      log.warn(
+        { err, invocationId: lifecycle.invocationId },
+        '[QueueProcessor] failed to release a settled response turn; the next startup settles it',
+      );
+    }
   }
 
   private async cancelMessageIds(messageIds: readonly string[], log: LoggerLike, reason: string): Promise<void> {
@@ -2429,14 +2608,21 @@ export class QueueProcessor {
     catId: string,
     status: 'succeeded' | 'failed' | 'canceled' | 'canceled_by_user',
     invocationId?: string,
-    _completedCatIds: readonly string[] = [],
+    completedCatIds: readonly string[] = [],
     options: {
       suppressAutomaticDrain?: boolean;
       attemptedQueueEntryIds?: readonly string[];
+      routingRejections?: readonly RoutingDispatchRejection[];
       suppressAutomaticFollowUp?: boolean;
+      terminalInvocationIdByCatId?: Readonly<Record<string, string>>;
     } = {},
   ): Promise<void> {
-    const { suppressAutomaticDrain = false, attemptedQueueEntryIds = [], suppressAutomaticFollowUp = false } = options;
+    const {
+      suppressAutomaticDrain = false,
+      attemptedQueueEntryIds = [],
+      routingRejections = [],
+      suppressAutomaticFollowUp = false,
+    } = options;
     const sk = QueueProcessor.slotKey(threadId, catId);
     const isSuperseded = (candidateCatId: string): boolean =>
       invocationId !== undefined && this.hasReplacementExecutionOwner(threadId, candidateCatId, invocationId);
@@ -2451,18 +2637,51 @@ export class QueueProcessor {
       return;
     }
     if (isSuperseded(catId) || suppressAutomaticFollowUp) return;
-    if (suppressAutomaticDrain) {
-      this.deps.log.error(
-        { threadId, catId, status, invocationId, attemptedQueueEntryIds },
-        '[QueueProcessor] Queue settlement needs recovery; refusing blind same-attempt drain',
-      );
-      return;
+    if (suppressAutomaticDrain || routingRejections.length > 0) {
+      // F117 soak: the attempt failed before its handoff, or routing refused some of its targets at
+      // actual send. What went back to the Queue waits for its retry time rather than looping on the
+      // same failure, and the rest of the thread keeps draining.
+      this.deferFailedAttempt(threadId, catId, status, attemptedQueueEntryIds, routingRejections);
+    } else {
+      for (const entryId of attemptedQueueEntryIds) this.retryDeferrals.forget(entryId);
     }
     if (this.hasDispatchableQueuedForThread(threadId)) {
       const bypassSuppressionEpoch = this.autoResumeSuppressionEpochForDifferentExecution(sk, invocationId);
       await this.requestDrain(
         threadId,
         bypassSuppressionEpoch === undefined ? undefined : { bypassSuppressionForCatId: catId, bypassSuppressionEpoch },
+      );
+    }
+  }
+
+  /**
+   * Each entry the attempt left in the Queue waits for its retry time: the later of its backoff and
+   * the latest retry time routing named for a target it refused in this attempt. The refusal is the
+   * attempt's own, because a targetless entry goes back without the target it resolved to.
+   */
+  private deferFailedAttempt(
+    threadId: string,
+    catId: string,
+    status: string,
+    entryIds: readonly string[],
+    routingRejections: readonly RoutingDispatchRejection[],
+  ): void {
+    const retryAts = routingRejections.flatMap((rejection) =>
+      rejection.automaticRetryAt !== undefined ? [rejection.automaticRetryAt] : [],
+    );
+    const targetRetryAt = retryAts.length > 0 ? Math.max(...retryAts) : undefined;
+    const refusedTargets = routingRejections.map((rejection) => rejection.catId);
+    for (const entryId of entryIds) {
+      const entry = this.deps.queue.getEntrySnapshotAcrossUsers(threadId, entryId);
+      if (!entry) {
+        // Every target of the entry was handed off: nothing is left to wait.
+        this.retryDeferrals.forget(entryId);
+        continue;
+      }
+      const retryAt = this.retryDeferrals.defer(threadId, entryId, targetRetryAt);
+      this.deps.log.warn(
+        { threadId, catId, status, entryId, retryAt, refusedTargets, queued: entry.status === 'queued' },
+        '[QueueProcessor] an attempt left its entry in the Queue; the entry waits for its retry time',
       );
     }
   }
@@ -2696,8 +2915,29 @@ export class QueueProcessor {
     claimedBatchMembers: readonly QueueEntry[] = [],
   ): Promise<boolean> {
     const attemptedQueueEntryIds = [entry.id, ...claimedBatchMembers.map((candidate) => candidate.id)];
-
     const reservation = this.reserveProcessingSlot(slotKey, entry.id, queueEntryOwnerId(entry));
+    let liveCall: import('../../../../concierge/live/LiveCompanionCall.js').LiveCompanionCall | undefined;
+    if (entry.execution.liveSessionId) {
+      try {
+        if (!this.deps.liveCompanionSessions || claimedBatchMembers.length || entry.targets.length !== 1)
+          throw new Error('Live admission unavailable');
+        liveCall = await this.deps.liveCompanionSessions.claim(
+          entry.execution.liveSessionId,
+          queueEntryOwnerId(entry),
+          entry.threadId,
+          executionTargetCats ?? entry.targets,
+        );
+        // Verification awaited: neither an external invocation nor Stop may have taken this slot.
+        if (this.deps.invocationTracker.has(entry.threadId, catId) || !liveCall.acceptsAdmission())
+          throw new Error('Live admission lost its immediate slot');
+      } catch (error) {
+        // Only the call actually acquired here belongs to this execution.
+        await liveCall?.stop();
+        this.releaseProcessingSlot(slotKey, reservation);
+        await this.terminalizeUnavailableConversationHead(entry, 'explicit', true);
+        return true;
+      }
+    }
 
     void this.executeEntry(
       entry,
@@ -2705,6 +2945,7 @@ export class QueueProcessor {
       executionTargetCats,
       [...claimedBatchMembers],
       conversationBatchResolution,
+      liveCall,
     ).then(
       (result) => {
         if (!this.releaseProcessingSlot(slotKey, reservation)) {
@@ -2718,7 +2959,9 @@ export class QueueProcessor {
         void this.onInvocationComplete(entry.threadId, catId, result.status, result.invocationId, [], {
           suppressAutomaticDrain: result.primarySettlementIncomplete,
           attemptedQueueEntryIds: result.attemptedQueueEntryIds,
+          routingRejections: result.routingRejections,
           suppressAutomaticFollowUp,
+          terminalInvocationIdByCatId: result.terminalInvocationIdByCatId,
         }).catch(() => {});
         this.signalDeliveryBatchDone(entry.threadId, result.status);
       },
@@ -2745,91 +2988,206 @@ export class QueueProcessor {
     return true;
   }
 
+  /**
+   * F117 soak: one drain starts at most one source entry, the first in comparator order whose whole
+   * pending target set can start now. An entry that waits (a target busy or suppressed, or its retry
+   * deferred) no longer stops the entries behind it; it holds back only the later entries that share
+   * one of its targets, so every target still receives its sources in comparator order. A targetless
+   * input that waits for an idle thread holds back everything behind it: its target is not known yet.
+   * The scan reads one snapshot and awaits target resolution, so the claim re-checks the order.
+   */
   private async tryExecuteNextAcrossUsers(
     threadId: string,
     bypassSuppressionEpochByCatId: ReadonlyMap<string, number> = new Map(),
   ): Promise<QueueAdmissionAttempt> {
-    const comparatorHead = this.deps.queue.peekOldestAcrossUsers(threadId);
-    if (!comparatorHead) {
+    const candidates = this.deps.queue.listQueuedAcrossUsers(threadId);
+    if (candidates.length === 0) {
       this.emitContinuationDiagnostic(threadId, 'unknown', classifyContinuationOutcome(0), 0);
       return { started: false };
     }
-
-    let resolvedTargetCats = queueEntryTargetCats(comparatorHead).filter((targetCatId) =>
-      isOrdinaryQueueTargetEligible(comparatorHead, targetCatId),
-    );
-    let conversationBatchResolution: ConversationBatchResolution | undefined;
-    if (comparatorHead.kind === 'conversation_input') {
-      const routingClass = queueEntryTargetCats(comparatorHead).length === 0 ? 'targetless' : 'explicit';
-      if (routingClass === 'targetless' && this.deps.invocationTracker.has(threadId)) {
-        this.emitContinuationDiagnostic(threadId, 'targetless', 'all_candidate_slots_busy', 1, comparatorHead.id);
+    const heldTargets = new Set<string>();
+    // The entries this scan passed over, each with the targets it asked for when it was passed over.
+    const passedOver = new Map<string, string>();
+    let waitingEntries = 0;
+    let firstWaitingTarget: string | undefined;
+    for (const [index, candidate] of candidates.entries()) {
+      if (
+        candidate.execution.liveSessionId &&
+        candidate.targets.length === 1 &&
+        (await this.claimGroupHasExistingReceiver([candidate], candidate.targets[0]!))
+      ) {
+        const claimed = await this.deps.queue.markProcessingByIdDurable(threadId, candidate.id, candidate.targets[0]!);
+        if (claimed) await this.reconcileClaimedGroupWithExistingReceiver([claimed], candidate.targets[0]!);
+        return { started: false, progressed: Boolean(claimed) };
+      }
+      if (
+        candidate.execution.liveSessionId &&
+        (candidate.targets.length !== 1 ||
+          !candidate.targets.every(
+            (catId) => !heldTargets.has(catId) && this.isSlotAdmissible(threadId, catId, new Map()),
+          ))
+      ) {
+        const settled = await this.terminalizeUnavailableConversationHead(candidate, 'explicit');
+        return QueueProcessor.terminalizedHeadAttempt(settled);
+      }
+      const admission = await this.resolveAdmissionTargets(threadId, candidate, index === 0);
+      if (admission.kind === 'settled') return admission.attempt;
+      if (admission.kind === 'barrier') {
+        this.emitContinuationDiagnostic(
+          threadId,
+          'targetless',
+          'all_candidate_slots_busy',
+          waitingEntries + 1,
+          candidate.id,
+        );
         return { started: false };
       }
-      resolvedTargetCats = await this.deps.router.resolveConversationTargetsAtAdmission(
-        queueEntryTargetCats(comparatorHead),
-        threadId,
-      );
-      if (resolvedTargetCats.length === 0) {
-        const terminalized = await this.terminalizeUnavailableConversationHead(comparatorHead, routingClass);
-        return { started: false, progressed: terminalized !== null, ...(terminalized ? { entry: terminalized } : {}) };
+      const targets = admission.kind === 'resolved' ? admission.targets : queueEntryTargetCats(candidate);
+      const canStart =
+        admission.kind === 'resolved' &&
+        !this.retryDeferrals.isDeferred(candidate.id) &&
+        targets.every(
+          (catId) => !heldTargets.has(catId) && this.isSlotAdmissible(threadId, catId, bypassSuppressionEpochByCatId),
+        );
+      if (canStart) {
+        const attempt = await this.startSelectedEntry(threadId, candidate, admission, passedOver);
+        if (attempt) return attempt;
       }
-      conversationBatchResolution = {
-        routingClass,
-        requestedTargets: [...queueEntryTargetCats(comparatorHead)],
-        resolvedTargets: [...resolvedTargetCats],
-      };
-    } else {
-      resolvedTargetCats = await this.deps.router.resolveExplicitTargets(
-        queueEntryTargetCats(comparatorHead),
-        threadId,
-      );
-      if (resolvedTargetCats.length === 0) {
-        const terminalized =
-          comparatorHead.kind === 'private_input'
-            ? await this.terminalizeUnavailablePrivateHead(comparatorHead)
-            : await this.terminalizeUnavailableConversationHead(comparatorHead, 'explicit');
-        return { started: false, progressed: terminalized !== null, ...(terminalized ? { entry: terminalized } : {}) };
-      }
+      passedOver.set(candidate.id, requestedTargetsKey(candidate));
+      for (const catId of [...queueEntryTargetCats(candidate), ...targets]) heldTargets.add(catId);
+      waitingEntries += 1;
+      firstWaitingTarget ??= targets[0];
     }
+    this.emitContinuationDiagnostic(
+      threadId,
+      firstWaitingTarget ?? 'unknown',
+      'all_candidate_slots_busy',
+      waitingEntries,
+      candidates[0]?.id,
+    );
+    return { started: false };
+  }
 
-    const idleTargetCats = resolvedTargetCats.filter((targetCatId) => {
-      const slotKey = QueueProcessor.slotKey(threadId, targetCatId);
-      const remainingMs = this.autoResumeSuppressionRemainingMs(slotKey);
-      const suppression = remainingMs > 0 ? this.suppressedAutoResume.get(slotKey) : undefined;
-      const bypassEpoch = bypassSuppressionEpochByCatId.get(targetCatId);
-      const bypassesExactSuppression = bypassEpoch !== undefined && suppression?.epoch === bypassEpoch;
-      return (
-        (bypassesExactSuppression || remainingMs === 0) &&
-        !this.processingSlots.has(slotKey) &&
-        !this.deps.invocationTracker.has(threadId, targetCatId)
-      );
-    });
-    if (idleTargetCats.length !== resolvedTargetCats.length) {
-      this.emitContinuationDiagnostic(
-        threadId,
-        resolvedTargetCats[0] ?? 'unknown',
-        'all_candidate_slots_busy',
-        resolvedTargetCats.length,
-        comparatorHead.id,
-      );
-      return { started: false };
+  /**
+   * The targets a queued entry would start with now. Only the comparator head settles an entry that
+   * resolves no target (it fails in place); a later one waits, holding its requested targets.
+   */
+  private async resolveAdmissionTargets(
+    threadId: string,
+    entry: QueueEntry,
+    isHead: boolean,
+  ): Promise<
+    | {
+        readonly kind: 'resolved';
+        readonly targets: string[];
+        readonly conversationBatchResolution?: ConversationBatchResolution;
+      }
+    | { readonly kind: 'unresolved' }
+    | { readonly kind: 'barrier' }
+    | { readonly kind: 'settled'; readonly attempt: QueueAdmissionAttempt }
+  > {
+    const requestedTargets = queueEntryTargetCats(entry);
+    if (entry.kind === 'conversation_input') {
+      const routingClass = requestedTargets.length === 0 ? 'targetless' : 'explicit';
+      if (routingClass === 'targetless' && this.deps.invocationTracker.has(threadId)) return { kind: 'barrier' };
+      const targets = await this.deps.router.resolveConversationTargetsAtAdmission(requestedTargets, threadId);
+      if (targets.length > 0) {
+        return {
+          kind: 'resolved',
+          targets,
+          conversationBatchResolution: {
+            routingClass,
+            requestedTargets: [...requestedTargets],
+            resolvedTargets: [...targets],
+          },
+        };
+      }
+      if (!isHead) return { kind: 'unresolved' };
+      const terminalized = await this.terminalizeUnavailableConversationHead(entry, routingClass);
+      return { kind: 'settled', attempt: QueueProcessor.terminalizedHeadAttempt(terminalized) };
     }
+    const targets = await this.deps.router.resolveExplicitTargets(requestedTargets, threadId);
+    if (targets.length > 0) return { kind: 'resolved', targets };
+    if (!isHead) return { kind: 'unresolved' };
+    const terminalized =
+      entry.kind === 'private_input'
+        ? await this.terminalizeUnavailablePrivateHead(entry)
+        : await this.terminalizeUnavailableConversationHead(entry, 'explicit');
+    return { kind: 'settled', attempt: QueueProcessor.terminalizedHeadAttempt(terminalized) };
+  }
+
+  private static terminalizedHeadAttempt(terminalized: QueueEntry | null): QueueAdmissionAttempt {
+    return { started: false, progressed: terminalized !== null, ...(terminalized ? { entry: terminalized } : {}) };
+  }
+
+  /** A slot may take new work: no execution holds it and no cancel fence suppresses it. */
+  private isSlotAdmissible(
+    threadId: string,
+    catId: string,
+    bypassSuppressionEpochByCatId: ReadonlyMap<string, number>,
+  ): boolean {
+    const slotKey = QueueProcessor.slotKey(threadId, catId);
+    const remainingMs = this.autoResumeSuppressionRemainingMs(slotKey);
+    const suppression = remainingMs > 0 ? this.suppressedAutoResume.get(slotKey) : undefined;
+    const bypassEpoch = bypassSuppressionEpochByCatId.get(catId);
+    const bypassesExactSuppression = bypassEpoch !== undefined && suppression?.epoch === bypassEpoch;
+    return (
+      (bypassesExactSuppression || remainingMs === 0) &&
+      !this.processingSlots.has(slotKey) &&
+      !this.deps.invocationTracker.has(threadId, catId)
+    );
+  }
+
+  /**
+   * Whether every entry now ahead of the selected one in comparator order is one the scan passed
+   * over while it still asked for the same targets. Only then does the selection keep each target's
+   * sources in comparator order. An entry no longer queued is left for the claim to refuse.
+   */
+  private onlyPassedOverEntriesAhead(
+    threadId: string,
+    entryId: string,
+    passedOver: ReadonlyMap<string, string>,
+  ): boolean {
+    const queued = this.deps.queue.listQueuedAcrossUsers(threadId);
+    const index = queued.findIndex((entry) => entry.id === entryId);
+    if (index < 0) return true;
+    return queued.slice(0, index).every((entry) => passedOver.get(entry.id) === requestedTargetsKey(entry));
+  }
+
+  /**
+   * Claims and starts the entry the drain selected. Returns null when the claim does not hold (the
+   * entry changed, or a target became busy after the claim and the entry went back), so the drain
+   * treats the entry as waiting and looks further. When the Queue order changed under the scan, it
+   * claims nothing and reports progress, so the drain scans the current order again.
+   */
+  private async startSelectedEntry(
+    threadId: string,
+    candidate: QueueEntry,
+    admission: { readonly targets: string[]; readonly conversationBatchResolution?: ConversationBatchResolution },
+    passedOver: ReadonlyMap<string, string>,
+  ): Promise<QueueAdmissionAttempt | null> {
     const staleReceiverTarget =
-      idleTargetCats.length > 1
-        ? await this.firstTargetWithExistingReceiver([comparatorHead], idleTargetCats)
+      admission.targets.length > 1
+        ? await this.firstTargetWithExistingReceiver([candidate], admission.targets)
         : undefined;
-    const selectedTargetCats = staleReceiverTarget ? [staleReceiverTarget] : idleTargetCats;
+    const selectedTargetCats = staleReceiverTarget ? [staleReceiverTarget] : admission.targets;
 
+    // Checked with no await before the claim: an owner may have moved another entry ahead of this
+    // one while the scan awaited, and that entry may share a target.
+    if (!this.onlyPassedOverEntriesAhead(threadId, candidate.id, passedOver)) {
+      this.deps.log.info(
+        { threadId, entryId: candidate.id },
+        '[QueueProcessor] the Queue order changed during the drain scan; scanning again',
+      );
+      return { started: false, progressed: true };
+    }
     const claimedGroup = await this.deps.queue.markProcessingGroupAcrossUsersDurable(
       threadId,
-      { entryId: comparatorHead.id, targetCats: selectedTargetCats },
-      [comparatorHead.id],
+      { entryId: candidate.id, targetCats: selectedTargetCats },
+      [candidate.id],
     );
     const entry = claimedGroup?.entry;
-    if (!entry) {
-      this.emitContinuationDiagnostic(threadId, resolvedTargetCats[0] ?? 'unknown', classifyContinuationOutcome(0), 0);
-      return { started: false };
-    }
+    if (!entry) return null;
 
     for (const targetCatId of selectedTargetCats) {
       if (await this.reconcileClaimedGroupWithExistingReceiver([entry, ...claimedGroup.members], targetCatId)) {
@@ -2841,9 +3199,12 @@ export class QueueProcessor {
     const entrySk = QueueProcessor.slotKey(threadId, entryCat);
 
     if (this.processingSlots.has(entrySk) || this.deps.invocationTracker.has(threadId, entryCat)) {
+      if (entry.execution.liveSessionId) {
+        const settled = await this.terminalizeUnavailableConversationHead(entry, 'explicit', true);
+        return QueueProcessor.terminalizedHeadAttempt(settled);
+      }
       await this.deps.queue.rollbackProcessingDurable(threadId, entry.id);
-      this.emitContinuationDiagnostic(threadId, entryCat, 'all_candidate_slots_busy', 1, entry.id);
-      return { started: false };
+      return null;
     }
 
     if (
@@ -2853,7 +3214,7 @@ export class QueueProcessor {
         entryCat,
         selectedTargetCats,
         false,
-        conversationBatchResolution,
+        admission.conversationBatchResolution,
         [],
       ))
     ) {
@@ -2987,8 +3348,13 @@ export class QueueProcessor {
   private async terminalizeUnavailableConversationHead(
     expected: QueueEntry,
     routingClass: ConversationBatchResolution['routingClass'],
+    alreadyClaimed = false,
   ): Promise<QueueEntry | null> {
-    const claimed = await this.deps.queue.claimPreAdmissionFailureAcrossUsersDurable(expected.threadId, expected.id);
+    const claimed = alreadyClaimed
+      ? expected
+      : expected.execution.liveSessionId
+        ? await this.deps.queue.markProcessingByIdDurable(expected.threadId, expected.id, expected.targets[0] ?? '')
+        : await this.deps.queue.claimPreAdmissionFailureAcrossUsersDurable(expected.threadId, expected.id);
     if (!claimed) return null;
     try {
       if (!claimed.payload.messageId) {
@@ -2998,11 +3364,16 @@ export class QueueProcessor {
       if (!source) {
         throw new Error(`public Queue head source message is missing: ${claimed.id}`);
       }
-      const reason = routingClass === 'targetless' ? 'no_available_target' : 'invalid_explicit_target';
+      const reason = claimed.execution.liveSessionId
+        ? 'control_carrier_missing'
+        : routingClass === 'targetless'
+          ? 'no_available_target'
+          : 'invalid_explicit_target';
       const failedTargets = [...queueEntryTargetCats(claimed)];
       const wakeTargetLabel = failedTargets.length > 0 ? failedTargets.join('、') : '处理成员';
-      const content =
-        reason === 'no_available_target'
+      const content = claimed.execution.liveSessionId
+        ? '语音交流未投递：成员或语音窗口当前不可用。'
+        : reason === 'no_available_target'
           ? `唤起${wakeTargetLabel}失败：当前没有可用的接收对象。`
           : `唤起${wakeTargetLabel}失败：指定的接收对象当前无效。`;
       const result = await this.deps.messageStore.commitLifecyclePreAdmissionFailure({
@@ -3020,6 +3391,13 @@ export class QueueProcessor {
           }`,
         );
       }
+      if (claimed.execution.liveSessionId)
+        await this.deps.liveCompanionSessions?.rejectUnclaimed(
+          claimed.execution.liveSessionId,
+          queueEntryOwnerId(claimed),
+          claimed.threadId,
+          failedTargets,
+        );
       this.callerDispatchObservations.registerPersistedSource(result.inputMessage, failedTargets);
       const removed = await this.deps.queue.removeProcessedAcrossUsersDurable(
         claimed.threadId,
@@ -3037,7 +3415,6 @@ export class QueueProcessor {
         queueEntryOwnerId(claimed),
         claimed.threadId,
         this.deps.queue.list(claimed.threadId, queueEntryOwnerId(claimed)),
-        this.deps.messageStore,
         'pre_admission_failed',
       );
       this.deps.log.warn(
@@ -3046,6 +3423,8 @@ export class QueueProcessor {
       );
       return removed;
     } catch (error) {
+      // A lost durable acknowledgement is unknown, not permission to re-admit Live.
+      if (claimed.execution.liveSessionId) throw error;
       await this.deps.queue.rollbackProcessingDurable(claimed.threadId, claimed.id);
       throw error;
     }
@@ -3089,7 +3468,6 @@ export class QueueProcessor {
         queueEntryOwnerId(claimed),
         claimed.threadId,
         this.deps.queue.list(claimed.threadId, queueEntryOwnerId(claimed)),
-        this.deps.messageStore,
         'pre_admission_failed',
       );
     } catch (error) {
@@ -3112,6 +3490,7 @@ export class QueueProcessor {
     executionTargetCats?: readonly string[],
     exactBatchEntries: readonly QueueEntry[] = [],
     conversationBatchResolution?: ConversationBatchResolution,
+    liveCall?: import('../../../../concierge/live/LiveCompanionCall.js').LiveCompanionCall,
   ): Promise<QueueExecutionResult> {
     const { queue, invocationTracker, invocationRecordStore, router, socketManager, messageStore, log } = this.deps;
     const threadId = entry.threadId;
@@ -3120,6 +3499,18 @@ export class QueueProcessor {
     const messageId = entry.payload.messageId;
     const targetCats = [...(executionTargetCats ?? queueEntryTargetCats(entry))];
     const primaryCat = targetCats[0] ?? 'unknown';
+    const executionPreparationStartedAt = performance.now();
+    let routePreparationStartedAt = executionPreparationStartedAt;
+    log.debug?.(
+      {
+        threadId,
+        entryId: entry.id,
+        sourceMessageId: messageId,
+        targetCats,
+        queueAgeMs: Date.now() - entry.enqueuedAt,
+      },
+      'Delivery queue preparation started',
+    );
 
     const batchedEntryIds: string[] = exactBatchEntries.map((candidate) => candidate.id);
     const batchedMessageIds: string[] = exactBatchEntries.flatMap(queueEntryMessageIds);
@@ -3134,11 +3525,15 @@ export class QueueProcessor {
     let prestartClaimRestored = false;
     let lifecycleTransferStarted = false;
     let lifecycleReceiverPersisted = false;
+    let lifecycleAdmissionUnknown = false;
     let lifecycleQueueTargetsRetired = false;
     let lifecycleClaimRestorePromise: Promise<boolean> | undefined;
     const terminalDispositions = new PerCatTerminalDispositionCollector({
       targetCatIds: targetCats,
-      isCanceled: (catId) => invocationTracker.getSlotState?.(threadId, catId) === 'canceled',
+      // A member stopped by its output timeout failed (F117 KD-22); its route reports the failure.
+      isCanceled: (catId) =>
+        invocationTracker.getSlotState?.(threadId, catId) === 'canceled' &&
+        !invocationTracker.isTimedOut?.(threadId, catId),
     });
     let responseText = '';
     // F122B B6: completion hooks are registered before drain; keep their
@@ -3166,6 +3561,12 @@ export class QueueProcessor {
       ...batchedMessageIds,
     ];
     const lifecycleResponseMessageIds = new Set<string>();
+    // The response each target is currently streaming into. Every event a target
+    // streams names this message, so clients write by id instead of guessing.
+    const lifecycleResponseMessageIdByCat = new Map<string, string>();
+    const terminalInvocationIdByCatId: Record<string, string> = {};
+    // F117 soak: the exact targets actual-send routing refused, kept for the retry wait.
+    const routingRejections: RoutingDispatchRejection[] = [];
     let returnedExecutionResult: QueueExecutionResult | undefined;
     const executionResult = (status: InvocationFinalStatus): QueueExecutionResult => {
       // Keep finally cleanup and the caller-visible completion status on one
@@ -3182,9 +3583,28 @@ export class QueueProcessor {
         status,
         ...(invocationId ? { invocationId } : {}),
         attemptedQueueEntryIds: [entry.id, ...batchedEntryIds],
+        terminalInvocationIdByCatId,
+        routingRejections,
       };
       returnedExecutionResult = result;
       return result;
+    };
+    const refuseDeploymentWaitStart = async (
+      decision: Extract<DeploymentWaitStartDecision, { ok: false }>,
+    ): Promise<QueueExecutionResult> => {
+      finalStatus = decision.reason === 'evidence_stale' ? 'failed' : 'canceled';
+      if (invocationId) await invocationRecordStore.update(invocationId, { status: finalStatus });
+      if (decision.reason === 'evidence_stale') {
+        // Nothing reached a response. Retain the exact pending owner when
+        // runtime readiness is unknown, including if restoration itself fails.
+        prestartClaimRestored = true;
+        if (!(await queue.restoreClaimedEntries(threadId, [entry.id, ...batchedEntryIds]))) {
+          throw new Error('deployment readiness refusal could not restore the exact Queue claim');
+        }
+      } else {
+        await this.cancelMessageIds([messageId!], log, 'deployment_wait_authority_stale');
+      }
+      return executionResult(finalStatus);
     };
     const cancelPrestartTargetSetConflict = async (message: string): Promise<QueueExecutionResult> => {
       if (!invocationId) throw new Error('pre-start target-set conflict requires an invocation record');
@@ -3198,6 +3618,14 @@ export class QueueProcessor {
           ),
       );
       if (stillOwnsPrimaryReservation) {
+        if (entry.execution.liveSessionId) {
+          await this.terminalizeUnavailableConversationHead(entry, 'explicit', true);
+          await invocationRecordStore.update(invocationId, {
+            status: 'canceled',
+            error: 'live_immediate_slot_unavailable',
+          });
+          return executionResult('canceled');
+        }
         if (!(await queue.restoreClaimedEntries(threadId, [entry.id, ...batchedEntryIds]))) {
           throw new Error('pre-start target-set conflict could not restore the exact Queue claim');
         }
@@ -3397,6 +3825,25 @@ export class QueueProcessor {
         }
       }
 
+      if (queueEntrySource(entry) === 'connector' && messageId) {
+        let decision: DeploymentWaitStartDecision = { ok: false, reason: 'evidence_stale' };
+        try {
+          decision = await checkDeploymentWaitStart(
+            {
+              messageId,
+              threadId,
+              userId,
+              catId: primaryCat,
+              expectedWaitCarrier: !!entry.execution.waitContinuationCarrier,
+            },
+            { guard: this.deps.deploymentWaitStartGuard, messageStore: this.deps.messageStore },
+          );
+        } catch (error) {
+          log.warn({ error, messageId }, '[F323] queued deployment wait start guard unavailable');
+        }
+        if (!decision.ok) return await refuseDeploymentWaitStart(decision);
+      }
+
       // 1. Create InvocationRecord (before batching — avoid claiming entries on duplicate)
       // Invocation identity is source × target: one source row can dispatch its
       // pending targets independently without treating a sibling as a replay.
@@ -3404,15 +3851,13 @@ export class QueueProcessor {
       const connectorReplayCarrier = source === 'connector' || entry.sourceCategory === 'scheduled';
       const actionSuccessorKey =
         entry.execution.actionSuccessorFence && entry.payload.sourceRecordId
-          ? actionSuccessorInvocationIdempotencyKey(entry.payload.sourceRecordId)
+          ? actionSuccessorInvocationKeyForTarget(entry.payload.sourceRecordId, primaryCat)
           : undefined;
       const idempotencyKey =
         connectorReplayCarrier && messageId
           ? `connector-${messageId}:${primaryCat}`
           : actionSuccessorKey
-            ? actionSuccessorKey.endsWith(`:${primaryCat}`)
-              ? actionSuccessorKey
-              : `${actionSuccessorKey}:${primaryCat}`
+            ? actionSuccessorKey
             : `queue-${entry.id}:${primaryCat}`;
       const actionLeaseCarrier: InvocationActionLeaseCarrier = entry.execution.actionSuccessorFence
         ? {
@@ -3435,11 +3880,31 @@ export class QueueProcessor {
 
       invocationId = createResult.invocationId;
       if (createResult.outcome === 'duplicate') {
+        let existing: InvocationRecord | null;
+        let pendingSource: StoredMessage | null;
+        // A failed preparation can leave the same durable input pending. Source kind does not
+        // decide its retry authority: canonical History must prove this target was never handed
+        // off. Unknown History preserves the claim rather than creating another receiver.
+        try {
+          existing = invocationRecordStore.get ? await invocationRecordStore.get(invocationId) : null;
+          pendingSource = messageId ? await messageStore.getById(messageId) : null;
+        } catch (error) {
+          lifecycleAdmissionUnknown = true;
+          throw error;
+        }
+        const pendingInputReplay =
+          pendingSource?.lifecycle?.kind === 'input' &&
+          pendingSource.userId === userId &&
+          pendingSource.threadId === threadId &&
+          pendingSource.deliveryStatus === 'queued' &&
+          existing?.userMessageId === messageId &&
+          !pendingSource.lifecycle.dispatchRefs?.some((ref) => targetCats.includes(ref.targetId as CatId));
         const replayEligible =
-          (connectorReplayCarrier && Boolean(messageId)) || Boolean(entry.execution.actionSuccessorFence);
-        const existing =
-          replayEligible && invocationRecordStore.get ? await invocationRecordStore.get(invocationId) : null;
+          (connectorReplayCarrier && Boolean(messageId)) ||
+          Boolean(entry.execution.actionSuccessorFence) ||
+          pendingInputReplay;
         if (
+          !replayEligible ||
           !isExactReplayableQueueRecord(existing, {
             threadId,
             userId,
@@ -3575,12 +4040,21 @@ export class QueueProcessor {
       // 5. intent_mode deferred to first CLI event (#768: avoid "replying" when CLI never starts)
       let intentModeBroadcast = false;
 
-      for (const queueEntryId of [entry.id, ...batchedEntryIds]) {
-        const queueEntry =
-          queue.getEntrySnapshot(threadId, userId, queueEntryId) ?? (queueEntryId === entry.id ? entry : null);
-        if (queueEntry) {
-          await this.ensureAttemptMessageCustody(queueEntry);
+      try {
+        for (const queueEntryId of [entry.id, ...batchedEntryIds]) {
+          const queueEntry =
+            queue.getEntrySnapshot(threadId, userId, queueEntryId) ?? (queueEntryId === entry.id ? entry : null);
+          if (queueEntry) {
+            await this.ensureAttemptMessageCustody(queueEntry);
+          }
         }
+      } catch (error) {
+        // Provider admission did not happen. Unknown/missing source evidence
+        // cannot consume the pending work as a failed delivery or business result.
+        prestartClaimRestored = await queue.restoreClaimedEntries(threadId, [entry.id, ...batchedEntryIds]);
+        if (!prestartClaimRestored)
+          throw new Error('source admission claim restoration did not converge', { cause: error });
+        throw error;
       }
       // 6b. F224: single-cat continuation lifecycle is owned by
       // SessionContinuationCoordinator. Multi-target still skips prepare because
@@ -3807,6 +4281,24 @@ export class QueueProcessor {
         if (prompt) callerDispatchPromptByCat[catId] = prompt;
       }
 
+      if (queueEntrySource(entry) === 'connector' && messageId) {
+        let decision: DeploymentWaitStartDecision = { ok: false, reason: 'evidence_stale' };
+        try {
+          decision = await checkDeploymentWaitStart(
+            {
+              messageId,
+              threadId,
+              userId,
+              catId: primaryCat,
+              expectedWaitCarrier: !!entry.execution.waitContinuationCarrier,
+            },
+            { guard: this.deps.deploymentWaitStartGuard, messageStore: this.deps.messageStore },
+          );
+        } catch (error) {
+          log.warn({ error, messageId }, '[F323] queued deployment wait execution guard unavailable');
+        }
+        if (!decision.ok) return await refuseDeploymentWaitStart(decision);
+      }
       const admissionEntries = [entry.id, ...batchedEntryIds].map((entryId) => {
         const current = queue.getEntrySnapshot(threadId, userId, entryId);
         if (!current || current.status !== 'claimed') {
@@ -3827,6 +4319,7 @@ export class QueueProcessor {
       }, HEARTBEAT_INTERVAL_MS);
       heartbeatInterval.unref();
 
+      routePreparationStartedAt = performance.now();
       for await (const msg of router.routeExecution(
         userId,
         content,
@@ -3838,15 +4331,20 @@ export class QueueProcessor {
           ...(entry.execution.suggestedSkill ? { promptTags: [`skill:${entry.execution.suggestedSkill}`] } : {}),
         },
         {
+          ...(liveCall ? { liveCompanion: liveCall } : {}),
           ownerAuthProvenance: entry.execution.ownerAuthProvenance,
           humanDispositionInvocationOrigin: 'queue_replay',
           routingQueueSource: source,
+          ...(entry.execution.executionScope ? { executionScope: entry.execution.executionScope } : {}),
           ...(memoryCueOpportunitySeeds.length > 0 ? { memoryCueOpportunitySeeds } : {}),
           ...(asrPersonMemoryScenes.length > 0 ? { asrPersonMemoryScenes } : {}),
           ...(Object.keys(callerDispatchPromptByCat).length > 0
             ? { modeSystemPromptByCat: callerDispatchPromptByCat }
             : {}),
           turnCustodyWakeForCat: (catId: string) => retargetTurnCustodyWake(turnCustodyWake, catId),
+          onRoutingDispatchRejected: (rejection: RoutingDispatchRejection) => {
+            routingRejections.push(rejection);
+          },
           ...(contentBlocks.length > 0 ? { contentBlocks } : {}),
           ...(controller.signal ? { signal: controller.signal } : {}),
           // F-parallel-cancel: per-cat signal so canceling one concurrent cat (e.g. @codex)
@@ -3859,6 +4357,22 @@ export class QueueProcessor {
           // abort (cancelAll / force / thread-delete), never on single-cat cancel — the sibling
           // keeps streaming. (See InvocationTracker.startAll returning a fresh batchController.)
           signalForCat: (catId: string) => invocationTracker.getController?.(threadId, catId)?.signal,
+          // F117 KD-22 (J4): a member's own invocation owns its output timeout; when it fires, the
+          // Queue stops only that member, and only while its slot still runs this execution.
+          ...(invocationTracker.getExecutionId && invocationTracker.cancel
+            ? {
+                stopMember: createMemberTimeoutStop({
+                  invocationTracker: {
+                    getExecutionId: (tid, catId) => invocationTracker.getExecutionId?.(tid, catId),
+                    cancel: (tid, catId, requestUserId, abortReason) =>
+                      invocationTracker.cancel?.(tid, catId, requestUserId, abortReason) ?? { cancelled: false },
+                  },
+                  threadId,
+                  ownerUserId: userId,
+                  log,
+                }),
+              }
+            : {}),
           getQueuedFreshnessMessagesForCat: (tid: string, uid: string, catId: string, parentInvocationId?: string) =>
             queue.getQueuedFreshnessMessagesForCat(tid, uid, catId, { excludeEntryId: entry.id, parentInvocationId }),
           commitCompletedA2AWake: (input: Parameters<NonNullable<RouteOptions['commitCompletedA2AWake']>>[0]) =>
@@ -3902,6 +4416,7 @@ export class QueueProcessor {
           onLifecycleInvocationStarted: async (
             input: Parameters<NonNullable<RouteOptions['onLifecycleInvocationStarted']>>[0],
           ) => {
+            const responseAdmissionStartedAt = performance.now();
             let interruptLifecycleResponse: ((reason: string) => Promise<void>) | undefined;
             let lifecycleResponseInterrupted = false;
             let lifecycleTargetRetired = false;
@@ -3934,7 +4449,7 @@ export class QueueProcessor {
                   return resolveDeliveryTimelineScore(message, deliveredAt);
                 }),
               );
-              const observed = await messageStore.appendAndObservePriorFrontier({
+              const observed = await appendLifecycleResponseWithReadBack(messageStore, {
                 from: { kind: 'agent', catId: input.catId },
                 userId: input.userId,
                 content: '',
@@ -3943,7 +4458,7 @@ export class QueueProcessor {
                 timestamp: input.startedAt,
                 threadId: input.threadId,
                 ...(lifecycleReplyTo ? { replyTo: lifecycleReplyTo } : {}),
-                idempotencyKey: `message-lifecycle-response:${input.invocationId}`,
+                idempotencyKey: lifecycleResponseIdempotencyKey(input.invocationId),
                 extra: {
                   stream: {
                     invocationId: input.parentInvocationId,
@@ -3970,6 +4485,8 @@ export class QueueProcessor {
                 throw new Error(`Lifecycle response admission conflict: ${input.invocationId}`);
               }
               lifecycleResponseMessageIds.add(observed.message.id);
+              lifecycleResponseMessageIdByCat.set(input.catId, observed.message.id);
+              terminalInvocationIdByCatId[input.catId] = input.invocationId;
               lifecycleReceiverPersisted = true;
               interruptLifecycleResponse = async (reason: string): Promise<void> => {
                 const terminal = await messageStore.commitLifecycleResponseTerminal(observed.message.id, {
@@ -4028,6 +4545,20 @@ export class QueueProcessor {
                 retirements.push(retirement);
               }
               lifecycleTargetRetired = true;
+              log.info(
+                {
+                  threadId: input.threadId,
+                  entryId: entry.id,
+                  catId: input.catId,
+                  invocationId: input.invocationId,
+                  responseMessageId: observed.message.id,
+                  queueAgeMs: Date.now() - entry.enqueuedAt,
+                  queuePreparationMs: routePreparationStartedAt - executionPreparationStartedAt,
+                  routePreparationMs: responseAdmissionStartedAt - routePreparationStartedAt,
+                  responseAdmissionMs: performance.now() - responseAdmissionStartedAt,
+                },
+                'Delivery admission timing',
+              );
               if (retirements.every((retirement) => retirement.rowStatus === 'absent')) {
                 lifecycleQueueTargetsRetired = true;
               }
@@ -4089,7 +4620,6 @@ export class QueueProcessor {
                   input.userId,
                   input.threadId,
                   queue.list(input.threadId, input.userId),
-                  messageStore,
                   'processing',
                 );
               } catch (err) {
@@ -4104,6 +4634,10 @@ export class QueueProcessor {
                 activeRun,
               };
             } catch (error) {
+              if (error instanceof LifecycleResponseAdmissionUnknownError) {
+                lifecycleAdmissionUnknown = true;
+                throw error;
+              }
               if (!lifecycleTargetRetired) {
                 lifecycleClaimRestorePromise ??= (async () => {
                   const entryIds = admissionEntries.map((candidate) => candidate.id);
@@ -4348,14 +4882,39 @@ export class QueueProcessor {
 
         // F194 Phase Z9 (砚砚 R1 P1-2): unified visible turn stamp via helper.
         const msgInvocationId = (msg as { invocationId?: string }).invocationId;
+        // An event that already names its own stored message (a persisted system
+        // row, the done of a committed turn) keeps it; every other event of an
+        // admitted target belongs to that target's response.
+        const responseMessageId =
+          typeof msg.catId === 'string' && !msg.messageId ? lifecycleResponseMessageIdByCat.get(msg.catId) : undefined;
         const visibleMessage = {
           ...msg,
           ...(invocationId ? stampVisibleTurn(invocationId, msgInvocationId) : {}),
+          ...(responseMessageId ? { messageId: responseMessageId } : {}),
         };
         // History owns one response lifecycle for every admitted dispatch.
         // Action-successor custody may still accept/reject the terminal commit,
         // but it must not create a second, terminal-only presentation protocol.
         socketManager.broadcastAgentMessage(visibleMessage, threadId);
+        // A target's done follows its response commit: publish that committed truth
+        // now instead of when the whole entry (every sibling target) settles.
+        const doneResponseMessageId =
+          msg.type === 'done' && typeof msg.catId === 'string'
+            ? lifecycleResponseMessageIdByCat.get(msg.catId)
+            : undefined;
+        if (doneResponseMessageId) {
+          try {
+            const committed = await messageStore.getById(doneResponseMessageId);
+            if (committed?.lifecycle?.kind === 'response' && committed.lifecycle.status !== 'processing') {
+              this.emitLifecycleMessageUpdated(userId, committed);
+            }
+          } catch (err) {
+            log.warn(
+              { err, threadId, responseMessageId: doneResponseMessageId },
+              '[QueueProcessor] failed to publish a committed response at its done',
+            );
+          }
+        }
       }
 
       // 8. Check abort before marking succeeded (F122B B6 P1: abort→succeeded bug fix)
@@ -4604,7 +5163,11 @@ export class QueueProcessor {
           /* best-effort — don't mask the original error */
         }
       }
-      const errMsg = err instanceof Error ? err.message : String(err);
+      const errMsg = isPermanentCollectiveQueueRefusal(err)
+        ? collectiveQueueRefusalError(err)
+        : err instanceof Error
+          ? err.message
+          : String(err);
       const exposeFailure = entry.execution.actionSuccessorFence
         ? await finalizeActionFenceOutcome('failed', false, targetCats)
         : true;
@@ -4649,6 +5212,15 @@ export class QueueProcessor {
           '[QueueProcessor] Failed to update invocation record to failed; terminal backstop will retry',
         );
       }
+      // F117 KD-21: the route threw before committing its responses. Each R it left processing ends
+      // now rather than waiting for the next restart; a fenced action whose failure stays hidden
+      // keeps its output uncommitted.
+      await this.settleAbandonedResponses(
+        userId,
+        threadId,
+        lifecycleResponseMessageIds,
+        exposeFailure ? 'failed' : 'output_rejected',
+      );
 
       // R4 fix (#873): correct failure cleanup sequence per messages.ts
       // cleanupStreamingOnFailure — onStreamEnd moves sessions from active →
@@ -4683,6 +5255,7 @@ export class QueueProcessor {
 
       return executionResult('failed');
     } finally {
+      await liveCall?.stop();
       if (heartbeatInterval !== undefined) clearInterval(heartbeatInterval);
       if (!replayClaimLost && invocationId && typeof invocationRecordStore.get === 'function') {
         try {
@@ -4704,6 +5277,7 @@ export class QueueProcessor {
         try {
           const lifecycleMessage = await messageStore.getById(lifecycleMessageId);
           if (lifecycleMessage?.lifecycle) this.emitLifecycleMessageUpdated(userId, lifecycleMessage);
+          await this.releaseSettledResponseTurn(lifecycleMessage, log);
         } catch (err) {
           log.warn(
             { err, threadId, lifecycleMessageId },
@@ -4726,7 +5300,32 @@ export class QueueProcessor {
         try {
           const preReceiverUserCancel =
             lifecycleTransferStarted && !lifecycleReceiverPersisted && finalStatus === 'canceled_by_user';
-          if (lifecycleTransferStarted && !lifecycleReceiverPersisted && !preReceiverUserCancel) {
+          if (isPermanentCollectiveQueueRefusal(executionError) && !lifecycleReceiverPersisted && invocationId) {
+            const refusal = executionError;
+            const refusalInvocationId = invocationId;
+            if (batchedEntryIds.length !== 0) throw new Error('Collective refusal cannot retire a batched claim');
+            const current = queue.getEntrySnapshot(threadId, userId, entry.id);
+            if (
+              !current ||
+              !(await retireRefusedCollectiveQueueCarrier({
+                entry: current,
+                queue,
+                messages: messageStore,
+                refusal,
+                persistRefusal: () =>
+                  persistCollectiveRefusalRecord({
+                    store: invocationRecordStore,
+                    invocationId: refusalInvocationId,
+                    entry: current,
+                    refusal,
+                  }),
+              }))
+            )
+              throw new Error('Collective refusal claim retirement did not commit');
+          } else if (lifecycleAdmissionUnknown) {
+            // The original short claim fences an uncertain durable commit until canonical recovery.
+            if (returnedExecutionResult) returnedExecutionResult.primarySettlementIncomplete = true;
+          } else if (lifecycleTransferStarted && !lifecycleReceiverPersisted && !preReceiverUserCancel) {
             if (!(await queue.restoreClaimedEntries(threadId, [entry.id, ...batchedEntryIds]))) {
               throw new Error('pre-receiver Queue claim restoration did not converge');
             }
@@ -4755,9 +5354,10 @@ export class QueueProcessor {
           '[QueueProcessor] skipped stale Queue settlement after durable retirement barrier replaced the attempt',
         );
       } else {
+        if (returnedExecutionResult) returnedExecutionResult.primarySettlementIncomplete = true;
         log.info(
           { threadId, queueEntryId: entry.id, invocationId },
-          '[QueueProcessor] kept the exact Queue entry pending after a pre-start target became busy',
+          '[QueueProcessor] kept the exact Queue entry pending after pre-start admission was refused',
         );
       }
       // F175 batch members settle through the same per-entry decision as the primary.
@@ -4815,7 +5415,7 @@ export class QueueProcessor {
           log.warn({ threadId, targetCats, err }, '[QueueProcessor] F224: commitInvocationOutcome failed');
         }
       }
-      await emitQueueUpdated(socketManager, userId, threadId, queue.list(threadId, userId), messageStore, 'completed');
+      await emitQueueUpdated(socketManager, userId, threadId, queue.list(threadId, userId), 'completed');
       let completionHookStatus = finalStatus;
       let completionHookResponse = responseText;
       if (entry.execution.actionSuccessorFence && !actionFencePreflightRejected && !replayClaimLost) {

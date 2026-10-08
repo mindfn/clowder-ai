@@ -2,7 +2,7 @@
  * Queue Enrichment Utility
  *
  * Enriches raw QueueEntry[] with messagePreview data from MessageStore
- * before sending to the frontend via SSE or HTTP.
+ * for HTTP. Mutation SSE publishes the pending ledger immediately.
  *
  * This is a presentation-layer concern: InvocationQueue stores lightweight
  * pointers; the enrichment layer joins persisted message data at emit time.
@@ -21,6 +21,8 @@ import type { SocketManager } from '../infrastructure/websocket/index.js';
 export interface QueueEntryMessagePreview {
   contentBlocks?: readonly MessageContent[];
   replyTo?: string;
+  /** Stored connector identity, so a queue row can render the same summary as its timeline bubble. */
+  connector?: string;
 }
 
 /** Stable browser DTO. The durable ledger remains nested and is never leaked to clients. */
@@ -49,32 +51,9 @@ export interface EnrichedQueueEntry {
 
 type QueueUpdateEmitter = Pick<SocketManager, 'emitToUser'>;
 
-const QUEUE_ENRICHMENT_TIMEOUT_MS = 2_000;
-
 /** RFC #1356 private inputs are execution custody, never user-visible Queue rows. */
 export function isPublicQueueEntry(entry: Pick<QueueEntry, 'kind'>): boolean {
   return entry.kind !== 'private_input';
-}
-
-/**
- * Queue updates are full-state replacements in the browser. Keep one ordered
- * publication tail for each runtime/thread/user scope so a slow older preview
- * lookup cannot arrive after a newer queue mutation. Weak ownership isolates
- * runtime and test SocketManager instances without retaining them globally.
- */
-const queueUpdatePublicationTails = new WeakMap<QueueUpdateEmitter, Map<string, Promise<void>>>();
-
-function freezeQueueSnapshot(entries: QueueEntry[]): QueueEntry[] {
-  return structuredClone(entries);
-}
-
-function publicationTailsFor(socketManager: QueueUpdateEmitter): Map<string, Promise<void>> {
-  let tails = queueUpdatePublicationTails.get(socketManager);
-  if (!tails) {
-    tails = new Map();
-    queueUpdatePublicationTails.set(socketManager, tails);
-  }
-  return tails;
 }
 
 function projectAuthorIntents(entry: QueueEntry): Record<string, QueueAuthorIntentReceipt> | undefined {
@@ -125,19 +104,22 @@ async function buildMessageEnrichment(
 ): Promise<{ messagePreview: QueueEntryMessagePreview } | null> {
   const blocks: MessageContent[] = [];
   let replyTo: string | undefined;
+  let connector: string | undefined;
 
   for (const msgId of msgIds) {
     const msg = await messageStore.getById(msgId);
     if (!msg) continue;
     if (msg.contentBlocks) blocks.push(...msg.contentBlocks);
     if (!replyTo && msg.replyTo) replyTo = msg.replyTo;
+    if (!connector && msg.source?.connector) connector = msg.source.connector;
   }
 
-  if (blocks.length === 0 && !replyTo) return null;
+  if (blocks.length === 0 && !replyTo && !connector) return null;
   return {
     messagePreview: {
       ...(blocks.length > 0 ? { contentBlocks: blocks } : {}),
       ...(replyTo ? { replyTo } : {}),
+      ...(connector ? { connector } : {}),
     },
   };
 }
@@ -179,59 +161,19 @@ async function enrichProjectedQueueEntries(
   }
 }
 
-async function buildQueueUpdateProjectionWithinDeadline(
-  entries: QueueEntry[],
-  messageStore: IMessageStore | null | undefined,
-): Promise<{ queue: EnrichedQueueEntry[] }> {
-  const projected = entries.filter(isPublicQueueEntry).map(projectPublicQueueEntry);
-  if (!messageStore || projected.length === 0) return { queue: projected };
-
-  let timer: ReturnType<typeof setTimeout> | undefined;
-  const deadline = new Promise<undefined>((resolve) => {
-    timer = setTimeout(() => resolve(undefined), QUEUE_ENRICHMENT_TIMEOUT_MS);
-    timer.unref?.();
-  });
-  try {
-    const update = enrichProjectedQueueEntries(projected, messageStore).then((queue) => ({ queue }));
-    return (await Promise.race([update, deadline])) ?? { queue: projected };
-  } finally {
-    if (timer) clearTimeout(timer);
-  }
-}
-
 /**
- * Emit an enriched queue_updated SSE event.
- *
- * Convenience wrapper: enriches entries then emits. All 14+ emit points
- * should use this instead of raw socketManager.emitToUser('queue_updated', ...).
+ * Publish committed pending targets without joining presentation data.
+ * /queue supplies rich previews and fenced actions after this event. Waiting
+ * for History here delays scheduling and retirement even with an idle member.
+ * One synchronous publication prevents late preview work from restoring targets.
  */
-export function emitQueueUpdated(
+export async function emitQueueUpdated(
   socketManager: QueueUpdateEmitter,
   userId: string,
   threadId: string,
   entries: QueueEntry[],
-  messageStore: IMessageStore | null | undefined,
   action: string,
 ): Promise<void> {
-  const snapshot = freezeQueueSnapshot(entries);
-  const scopeKey = JSON.stringify([threadId, userId]);
-  const tails = publicationTailsFor(socketManager);
-  const previous = tails.get(scopeKey) ?? Promise.resolve();
-  const publication = previous.then(async () => {
-    const payload = await buildQueueUpdateProjectionWithinDeadline(snapshot, messageStore);
-    socketManager.emitToUser(userId, 'queue_updated', {
-      threadId,
-      ...payload,
-      action,
-    });
-  });
-
-  // The caller still observes its own failure, while later publications chain
-  // from a neutral tail and remain able to advance the same scope.
-  const tail: Promise<void> = publication.catch(() => undefined);
-  tails.set(scopeKey, tail);
-  void tail.then(() => {
-    if (tails.get(scopeKey) === tail) tails.delete(scopeKey);
-  });
-  return publication;
+  const queue = entries.filter(isPublicQueueEntry).map(projectPublicQueueEntry);
+  socketManager.emitToUser(userId, 'queue_updated', { threadId, queue, action });
 }

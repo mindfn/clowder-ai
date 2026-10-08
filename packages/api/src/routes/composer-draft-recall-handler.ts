@@ -295,6 +295,10 @@ export function createRecallMessageHandler(
     if (!resolved.ok) return resolved.body;
     const context = resolved.value;
     if (context.target.recall) return buildAlreadyRecalledResponse(context, context.target);
+    if (context.target.deliveryStatus !== 'queued') {
+      reply.status(409);
+      return { error: 'Message is not recallable', code: 'MESSAGE_NOT_RECALLABLE' };
+    }
     const prepared = await prepareSuppression(context, reply);
     if (!prepared.ok) return prepared.body;
     const preparation = prepared.value;

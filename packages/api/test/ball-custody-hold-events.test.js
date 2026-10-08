@@ -53,6 +53,18 @@ describe('F117 Phase G: managed hold stays out of ordinary Ball custody', () => 
       reflectionService: { async run() {} },
       holdBallDeps: {
         registry,
+        holdQuotaStore: {
+          async tryAdmit() {
+            return { admitted: true, count: 1, eventId: `stub-${Date.now()}` };
+          },
+          async releaseByEventId() {
+            return true;
+          },
+          async getCount() {
+            return 0;
+          },
+          async close() {},
+        },
         taskRunner: {
           registerDynamic() {},
           unregister() {
@@ -156,7 +168,8 @@ describe('F117 Phase G: managed hold stays out of ordinary Ball custody', () => 
           // biome-ignore lint/suspicious/noThenProperty: F280's frozen wait contract field.
           then: 'check status',
         },
-        expiresAt: insertedTasks[0].trigger.fireAt,
+        autoRenew: false,
+        expiresAt: 3_600_000,
         createdAt: awaitState.createdAt,
         provenance: 'explicit_registration',
       },

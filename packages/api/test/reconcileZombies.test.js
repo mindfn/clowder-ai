@@ -82,6 +82,7 @@ describe('F194 reconcileZombies — cleanup pathway', () => {
     assert.deepEqual(terminalEvents, [
       {
         invocationId: created.invocationId,
+        userId: 'u1',
         threadId: 'thread-zombie',
         catId: 'codex-sol',
         targetCats: ['codex-sol', 'opus'],

@@ -22,12 +22,28 @@ code_anchors:
   - packages/api/src/domains/cats/services/stores/redis/RedisInvocationRecordStore.ts
   - packages/api/src/domains/cats/services/agents/invocation/CollaborationContinuityCapsule.ts
   - packages/api/src/domains/ball-custody/ManagedCommandWakeRecoverySweep.ts
+  - packages/api/src/infrastructure/managed-runner-durable-worker.ts
+  - packages/api/src/infrastructure/managed-runner-durable-attempt.ts
+  - scripts/gate-terminal-receipt.mjs
+  - scripts/lib/gate-terminal-receipt.mjs
+  - scripts/lib/gate-execution-attempt-store.mjs
+  - scripts/lib/gate-execution-finalization.mjs
+  - scripts/lib/gate-execution-release-settlement.mjs
+  - scripts/lib/gate-execution-unit-settlement.mjs
+  - scripts/lib/gate-execution-runner.mjs
+  - scripts/lib/gate-resource-request-continuation.mjs
+  - scripts/pre-merge-check.sh
   - packages/api/src/domains/ball-custody/ActionSuccessorRecoverySweep.ts
   - packages/api/src/domains/ball-custody/turn-custody-wake-provenance.ts
   - packages/api/src/domains/ball-custody/wait-continuation-carrier.ts
   - packages/api/src/domains/cats/services/agents/invocation/InvocationTracker.ts
   - packages/api/src/domains/cats/services/stores/ports/MessageStore.ts
   - packages/api/src/domains/cats/services/stores/redis/RedisMessageStore.ts
+  - packages/api/src/domains/cats/services/agents/invocation/InvocationOwnerReaper.ts
+  - packages/api/src/domains/cats/services/agents/invocation/ExitedCliExecutionRecovery.ts
+  - packages/api/src/domains/cats/services/agents/invocation/RetireExitedChildExecutions.ts
+  - packages/api/src/domains/cats/services/agents/invocation/InvocationSettlementProjection.ts
+  - packages/api/src/utils/CliExecutionObservation.ts
   - packages/shared/src/types/queue-receipt.ts
   - packages/api/src/utils/queue-enrichment.ts
   - packages/api/src/infrastructure/email/ConnectorInvokeTrigger.ts
@@ -56,6 +72,7 @@ doc_anchors:
   - docs/features/F295-cancelable-execution-projection.md
   - docs/features/F177-harness-update.md
   - docs/features/F167-a2a-chain-quality.md
+  - feature-specs/2026-09-20-gate-feedback-time-delivery.md
   - feature-specs/2026-07-11-f167-phase-s-action-successor-single-flight.md
   - docs/features/F175-unified-message-queue.md
   - docs/features/F185-dispatch-busy-gate-unification.md

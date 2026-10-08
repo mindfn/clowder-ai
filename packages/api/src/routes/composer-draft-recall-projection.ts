@@ -43,7 +43,6 @@ export async function emitRecallProjection(
       context.ownerUserId,
       context.threadId,
       context.invocationQueue.list(context.threadId, context.ownerUserId),
-      context.messageStore,
       context.result.verdict === 'zero_exposure' ? 'recalled' : 'withdrawn_after_exposure',
     );
   } catch (error) {

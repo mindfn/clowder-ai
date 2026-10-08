@@ -48,6 +48,22 @@ function createCliErrorWithDiagnosticsService(catId, errorMsg, cliDiagnostics) {
   };
 }
 
+/** F118 AC-C3: a provider gives up on a silent CLI — diagnostics, then the timeout error. */
+function createTimeoutWithDiagnosticsService(catId, diagnostics, errorMsg) {
+  return {
+    async *invoke() {
+      yield {
+        type: 'system_info',
+        catId,
+        content: JSON.stringify({ type: 'timeout_diagnostics', ...diagnostics }),
+        timestamp: Date.now(),
+      };
+      yield { type: 'error', catId, error: errorMsg, timestamp: Date.now() };
+      yield { type: 'done', catId, timestamp: Date.now() };
+    },
+  };
+}
+
 function createTextThenErrorService(catId, text, errorMsg) {
   return {
     async *invoke() {
@@ -179,6 +195,54 @@ describe('route-serial error persistence (F5 reload)', () => {
         false,
         'a response-owned failure must update its canonical response instead of creating a live system error surface',
       );
+    });
+
+    it(`${strategy}: persists timeout diagnostics with the failed response they explain (F117 / F118)`, async () => {
+      const route =
+        strategy === 'serial'
+          ? (await import('../dist/domains/cats/services/agents/routing/route-serial.js')).routeSerial
+          : (await import('../dist/domains/cats/services/agents/routing/route-parallel.js')).routeParallel;
+      const deps = createMockDeps(
+        {
+          gemini: createTimeoutWithDiagnosticsService(
+            'gemini',
+            {
+              silenceDurationMs: 1_800_000,
+              processAlive: true,
+              lastEventType: 'thread.started',
+              invocationId: 'turn-timeout',
+              terminalContext: { stderrExcerpt: 'never persisted' },
+            },
+            'CLI 响应超时 (1800s)',
+          ),
+        },
+        [],
+      );
+      let lifecycleStore;
+      let responseMessageId;
+
+      for await (const _event of route(deps, ['gemini'], 'hello', 'user1', 'thread1', {
+        onLifecycleInvocationStarted: async (input) => {
+          const admission = await lifecycleResponseStoreFor(input);
+          lifecycleStore = admission.store;
+          deps.messageStore = admission.store;
+          responseMessageId = admission.response.id;
+          return { responseMessageId: admission.response.id, priorFrontierMessageId: null };
+        },
+      })) {
+        // drain
+      }
+
+      const response = lifecycleStore
+        .getByThread('thread1', 100, 'user1')
+        .find((message) => message.id === responseMessageId);
+      assert.equal(response?.lifecycle?.status, 'failed');
+      assert.deepEqual(response?.metadata?.timeoutDiagnostics, {
+        silenceDurationMs: 1_800_000,
+        processAlive: true,
+        lastEventType: 'thread.started',
+        invocationId: 'turn-timeout',
+      });
     });
 
     it(`${strategy}: closes a canceled run on the fixed member response without a silent-completion notice`, async () => {

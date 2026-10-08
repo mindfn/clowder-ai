@@ -40,8 +40,6 @@ export interface ManagedCommandWakeRecoveryStats {
   readonly pending: number;
 }
 
-export type ManagedCommandWakeTriggerOutcome = 'enqueued' | 'full';
-
 export type ManagedCommandWakeEventCarrier =
   | { state: 'missing' | 'pending' | 'orphaned' }
   | {
@@ -126,16 +124,9 @@ export interface ManagedCommandWakeAdmissionInput {
   readonly actionSuccessorFence?: ActionSuccessorFence;
 }
 
-export interface ManagedCommandWakeLegacyAdoption {
-  readonly messageId: string;
-  readonly threadId: string;
-  readonly userId: string;
-  readonly catId: string;
-  readonly content: string;
-}
-
 export interface ManagedCommandWakeDynamicTaskStore {
   getAll(): DynamicTaskDef[];
+  listManagedCommandCandidates?(): DynamicTaskDef[];
   getById(id: string): DynamicTaskDef | null;
   updateParamsIfCurrent(id: string, current: Record<string, unknown>, next: Record<string, unknown>): boolean;
   setEnabled(id: string, enabled: boolean): boolean;
@@ -164,14 +155,6 @@ export interface ManagedCommandWakeRecoveryDeps {
   readonly admitWake: (input: ManagedCommandWakeAdmissionInput) => Promise<{ messageId?: string }>;
   /** Canonical lease truth, consulted BEFORE the envelope is written. */
   readonly actionSuccessorLeaseStore?: Pick<ActionSuccessorLeaseStore, 'get'>;
-  /**
-   * Adopt a message persisted by the pre-atomic two-phase path into the Queue.
-   *
-   * Only reachable for tasks that were already `message_written` / `dispatch_pending` when this
-   * deployment started. New wakes never take this path, but the old persisted states have to keep
-   * recovering or those owners are never woken at all.
-   */
-  readonly adoptLegacyWake?: (input: ManagedCommandWakeLegacyAdoption) => Promise<{ adopted: boolean }>;
   /** F167×F254: current Queue/F264 carrier truth for event wakes. */
   readonly getEventCarrier?: (input: {
     threadId: string;

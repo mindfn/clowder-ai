@@ -12,6 +12,8 @@ export interface MessageScrollAnchor {
   blockIndex?: number;
   blockFingerprint?: string;
   blockViewportOffsetPx?: number;
+  /** Existing timeline-owner score bounds history lookup without retaining a body. */
+  timelineOrderAt?: number;
 }
 
 export type TimelineScrollAnchor = { kind: 'bottom' } | { kind: 'message'; messageAnchor: MessageScrollAnchor };
@@ -150,10 +152,11 @@ export function restoreMessageScrollAnchor(container: HTMLElement, anchor: Messa
   const anchorNode = block ?? boundary;
   const desiredOffset = block ? (anchor.blockViewportOffsetPx ?? anchor.viewportOffsetPx) : anchor.viewportOffsetPx;
   const currentOffset = anchorNode.getBoundingClientRect().top - container.getBoundingClientRect().top;
-  if (Math.abs(currentOffset - desiredOffset) > 0.5) {
-    container.scrollTop = Math.max(0, container.scrollTop + currentOffset - desiredOffset);
-  }
-  return true;
+  const targetTop = Math.max(0, container.scrollTop + currentOffset - desiredOffset);
+  container.scrollTop = targetTop;
+  // A mounted row can still sit behind a temporarily short layout. Do not
+  // declare restoration complete when the browser clamps the requested offset.
+  return Math.abs(container.scrollTop - targetTop) <= 1;
 }
 
 /** Restore the user's viewing intent after the same messages change timeline order. */
@@ -183,8 +186,8 @@ export function markMessageJumpTarget(node: HTMLElement): void {
  * Returns true when the target element was found (so callers can retry on a
  * raf loop until the message DOM has rendered after a thread switch).
  */
-export function scrollToMessage(messageId: string): boolean {
-  const el = resolveMessageElements([messageId])[0];
+export function scrollToMessage(messageId: string, root: ParentNode = document): boolean {
+  const el = resolveMessageElements([messageId], root)[0];
   if (!el) return false;
 
   revealFoldedSourceAnchor(el);

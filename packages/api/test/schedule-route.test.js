@@ -4,9 +4,21 @@
  */
 import assert from 'node:assert/strict';
 import { afterEach, beforeEach, describe, it } from 'node:test';
+import { catRegistry } from '@cat-cafe/shared';
 import Database from 'better-sqlite3';
 import Fastify from 'fastify';
 import './helpers/setup-cat-registry.js';
+
+// These cases assert delivery-thread boundaries, not cat identity. Naming a cat
+// couples them to roster availability: disabling that cat turns the whole block
+// into `cat_disabled` (happened once, hand-patched gemini35 -> gemini38 in #4652).
+const PRINCIPAL_CAT_ID = (() => {
+  const found = Object.entries(catRegistry.getAllConfigs()).find(([, config]) => config?.available !== false);
+  assert.ok(found, 'cat template must define at least one available cat');
+  return found[0];
+})();
+const PRINCIPAL_SECRET = `${PRINCIPAL_CAT_ID}-secret`;
+const PRINCIPAL_AGENT_KEY_ID = `ak-${PRINCIPAL_CAT_ID}`;
 
 async function registerScheduleRoutesForTest(app, scheduleRoutes, db, options, ownerUserId = 'user-1') {
   const { ScheduleMutationProposalStore } = await import(
@@ -539,12 +551,12 @@ describe('Schedule Routes', () => {
     it('P2: agent-key preview draft mirrors the default wake target used by registration', async () => {
       const agentKeyRegistry = {
         verify: async (secret) =>
-          secret === 'gemini35-secret'
+          secret === PRINCIPAL_SECRET
             ? {
                 ok: true,
                 record: {
-                  agentKeyId: 'ak-gemini35',
-                  catId: 'gemini35',
+                  agentKeyId: PRINCIPAL_AGENT_KEY_ID,
+                  catId: PRINCIPAL_CAT_ID,
                   userId: 'user-1',
                   secretHash: 'hash',
                   salt: 'salt',
@@ -574,7 +586,7 @@ describe('Schedule Routes', () => {
       const res = await appDyn.inject({
         method: 'POST',
         url: '/api/schedule/tasks/preview',
-        headers: { 'x-agent-key-secret': 'gemini35-secret' },
+        headers: { 'x-agent-key-secret': PRINCIPAL_SECRET },
         payload: {
           templateId: 'reminder',
           trigger: { type: 'once', delayMs: 1000 },
@@ -586,7 +598,7 @@ describe('Schedule Routes', () => {
       assert.equal(res.statusCode, 200, res.body);
       const body = res.json();
       assert.equal(body.draft.params.triggerUserId, 'user-1');
-      assert.equal(body.draft.params.targetCatId, 'gemini35');
+      assert.equal(body.draft.params.targetCatId, PRINCIPAL_CAT_ID);
       assert.equal(body.draft.deliveryThreadId, deliveryThread.id);
     });
   });
@@ -1030,12 +1042,12 @@ describe('Schedule Routes', () => {
     it('P1: agent-key schedule writes derive actor and default target from selected cat principal', async () => {
       const agentKeyRegistry = {
         verify: async (secret) =>
-          secret === 'gemini35-secret'
+          secret === PRINCIPAL_SECRET
             ? {
                 ok: true,
                 record: {
-                  agentKeyId: 'ak-gemini35',
-                  catId: 'gemini35',
+                  agentKeyId: PRINCIPAL_AGENT_KEY_ID,
+                  catId: PRINCIPAL_CAT_ID,
                   userId: 'user-1',
                   secretHash: 'hash',
                   salt: 'salt',
@@ -1064,7 +1076,7 @@ describe('Schedule Routes', () => {
       const res = await appDyn.inject({
         method: 'POST',
         url: '/api/schedule/tasks',
-        headers: { 'x-agent-key-secret': 'gemini35-secret' },
+        headers: { 'x-agent-key-secret': PRINCIPAL_SECRET },
         payload: {
           templateId: 'reminder',
           trigger: { type: 'once', delayMs: 1000 },
@@ -1079,7 +1091,7 @@ describe('Schedule Routes', () => {
       assert.equal(proposal.mutation.kind, 'create');
       assert.equal(
         proposal.mutation.task.createdBy,
-        'gemini35',
+        PRINCIPAL_CAT_ID,
         'createdBy must come from the verified agent-key principal',
       );
       assert.equal(
@@ -1089,7 +1101,7 @@ describe('Schedule Routes', () => {
       );
       assert.equal(
         proposal.mutation.task.params.targetCatId,
-        'gemini35',
+        PRINCIPAL_CAT_ID,
         'agent-key reminder should wake the selected cat by default',
       );
       assert.equal(proposal.mutation.task.deliveryThreadId, deliveryThread.id);
@@ -1099,12 +1111,12 @@ describe('Schedule Routes', () => {
     it('P1: agent-key schedule writes cannot target another user thread', async () => {
       const agentKeyRegistry = {
         verify: async (secret) =>
-          secret === 'gemini35-secret'
+          secret === PRINCIPAL_SECRET
             ? {
                 ok: true,
                 record: {
-                  agentKeyId: 'ak-gemini35',
-                  catId: 'gemini35',
+                  agentKeyId: PRINCIPAL_AGENT_KEY_ID,
+                  catId: PRINCIPAL_CAT_ID,
                   userId: 'user-1',
                   secretHash: 'hash',
                   salt: 'salt',
@@ -1133,7 +1145,7 @@ describe('Schedule Routes', () => {
       const res = await appDyn.inject({
         method: 'POST',
         url: '/api/schedule/tasks',
-        headers: { 'x-agent-key-secret': 'gemini35-secret' },
+        headers: { 'x-agent-key-secret': PRINCIPAL_SECRET },
         payload: {
           templateId: 'reminder',
           trigger: { type: 'once', delayMs: 1000 },
@@ -1151,12 +1163,12 @@ describe('Schedule Routes', () => {
     it('P2: agent-key schedule writes cannot target a soft-deleted delivery thread', async () => {
       const agentKeyRegistry = {
         verify: async (secret) =>
-          secret === 'gemini35-secret'
+          secret === PRINCIPAL_SECRET
             ? {
                 ok: true,
                 record: {
-                  agentKeyId: 'ak-gemini35',
-                  catId: 'gemini35',
+                  agentKeyId: PRINCIPAL_AGENT_KEY_ID,
+                  catId: PRINCIPAL_CAT_ID,
                   userId: 'user-1',
                   secretHash: 'hash',
                   salt: 'salt',
@@ -1187,7 +1199,7 @@ describe('Schedule Routes', () => {
       const previewRes = await appDyn.inject({
         method: 'POST',
         url: '/api/schedule/tasks/preview',
-        headers: { 'x-agent-key-secret': 'gemini35-secret' },
+        headers: { 'x-agent-key-secret': PRINCIPAL_SECRET },
         payload: {
           templateId: 'reminder',
           trigger: { type: 'once', delayMs: 1000 },
@@ -1203,7 +1215,7 @@ describe('Schedule Routes', () => {
       const createRes = await appDyn.inject({
         method: 'POST',
         url: '/api/schedule/tasks',
-        headers: { 'x-agent-key-secret': 'gemini35-secret' },
+        headers: { 'x-agent-key-secret': PRINCIPAL_SECRET },
         payload: {
           templateId: 'reminder',
           trigger: { type: 'once', delayMs: 1000 },
@@ -1222,13 +1234,13 @@ describe('Schedule Routes', () => {
     it('P1: agent-key schedule writes without deliveryThreadId are rejected', async () => {
       const agentKeyRegistry = {
         verify: async (secret) =>
-          secret === 'gemini35-secret'
+          secret === PRINCIPAL_SECRET
             ? {
                 ok: true,
                 record: {
-                  agentKeyId: 'ak-gemini35',
+                  agentKeyId: PRINCIPAL_AGENT_KEY_ID,
                   userId: 'user-1',
-                  catId: 'gemini35',
+                  catId: PRINCIPAL_CAT_ID,
                   secretHash: 'hash',
                   salt: 'salt',
                   scope: 'user-bound',
@@ -1254,7 +1266,7 @@ describe('Schedule Routes', () => {
       const res = await appDyn.inject({
         method: 'POST',
         url: '/api/schedule/tasks',
-        headers: { 'x-agent-key-secret': 'gemini35-secret' },
+        headers: { 'x-agent-key-secret': PRINCIPAL_SECRET },
         payload: {
           templateId: 'reminder',
           trigger: { type: 'once', delayMs: 1000 },

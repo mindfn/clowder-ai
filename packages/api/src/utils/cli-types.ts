@@ -26,12 +26,17 @@ export interface CliSpawnOptions {
   outputMode?: 'ndjson' | 'plainText';
   /** Working directory for the process */
   cwd?: string;
-  /** Opt-in timeout in milliseconds before automatic termination (default: 0 = manual cancel only) */
+  /**
+   * Opt-in response timeout in milliseconds for probes and other one-off commands (default: 0 =
+   * none). A dispatched member never sets it: its one timeout is its invocation's (F117 KD-22).
+   */
   timeoutMs?: number;
   /** AbortSignal to cancel the process externally */
   signal?: AbortSignal;
   /** Environment overrides. `null` means delete inherited var from child env. */
   env?: Record<string, string | null>;
+  /** Start from only env overrides, never the API process environment. Defaults to inheritance for existing providers. */
+  inheritParentEnv?: boolean;
   /** False for probes/non-invocation commands that must never create an execution-owner manifest. */
   bindExecutionOwner?: boolean;
   /** F118: Invocation context for diagnostic enrichment of __cliTimeout */
@@ -82,6 +87,13 @@ export interface CliSpawnOptions {
    * event counts.
    */
   onSuccessfulExitStderr?: (summary: { stderrPresent: boolean; stderrExcerpt?: string }) => void;
+  /**
+   * F319: observe child stderr one complete line at a time (trailing partial
+   * line is flushed at stream end). Consumers must not retain lines: providers
+   * running trace-level logging emit megabytes per turn. Never resets the
+   * timeout or the liveness probe — stderr stays transport noise for those.
+   */
+  onStderrLine?: (line: string) => void;
 }
 
 /**

@@ -24,9 +24,9 @@ import {
 } from '../domains/cats/services/agents/invocation/AgentSessionMutex.js';
 import {
   type ActiveInvocationProjection,
-  type InvocationRegistryPort,
   type InvocationTrackerLike,
   resolveActiveInvocations,
+  responseStatusFromMessages,
 } from '../domains/cats/services/agents/invocation/active-execution-service.js';
 import {
   type InvocationQueue,
@@ -41,15 +41,14 @@ import {
   projectLifecycleAppendAction,
   projectLifecycleAppendCapability,
 } from '../domains/cats/services/agents/invocation/lifecycle-append-projection.js';
+import { emitLifecycleMessageUpdated } from '../domains/cats/services/agents/invocation/lifecycle-message-update.js';
+import type { NativeControlReceiptPort } from '../domains/cats/services/agents/invocation/NativeControlReceipt.js';
 import type { QueueProcessor } from '../domains/cats/services/agents/invocation/QueueProcessor.js';
 import { queueEntryId } from '../domains/cats/services/agents/invocation/queue-ledger/QueueLedger.js';
+import { settleResponseFromDraft } from '../domains/cats/services/agents/invocation/response-draft-settlement.js';
 import type { IDraftStore } from '../domains/cats/services/stores/ports/DraftStore.js';
 import type { IInvocationRecordStore } from '../domains/cats/services/stores/ports/InvocationRecordStore.js';
-import {
-  type IMessageStore,
-  type StoredMessage,
-  settleLifecycleResponseInputs,
-} from '../domains/cats/services/stores/ports/MessageStore.js';
+import type { IMessageStore } from '../domains/cats/services/stores/ports/MessageStore.js';
 import type { IThreadStore, Thread } from '../domains/cats/services/stores/ports/ThreadStore.js';
 import type { ITurnExecutionStore } from '../domains/cats/services/stores/ports/TurnExecutionStore.js';
 import type { DynamicTaskStore } from '../infrastructure/scheduler/DynamicTaskStore.js';
@@ -65,6 +64,7 @@ import { resolveUserId } from '../utils/request-identity.js';
 import { type LiveExecutionCandidate, registerActiveExecutionRoutes } from './active-execution-routes.js';
 import { getMultiMentionOrchestrator } from './callback-multi-mention-routes.js';
 import { resolveQueueAuthorIntentByCatId } from './message-disposition-admission.js';
+import { nativeControlReceiptHooks, nativeQueueControlCommand } from './native-control-receipts.js';
 import { admitThreadParticipants } from './thread-participant-admission.js';
 
 interface ManagedCommandWakeRecoveryLike {
@@ -77,6 +77,7 @@ interface ManagedCommandWakeRecoveryLike {
 }
 
 export interface QueueRoutesOptions {
+  controlReceipts?: () => NativeControlReceiptPort | undefined;
   threadStore: IThreadStore;
   invocationQueue: InvocationQueue;
   queueProcessor: QueueProcessor;
@@ -90,19 +91,16 @@ export interface QueueRoutesOptions {
   socketManager: SocketManager;
   /** MessageStore supplies History preview/lifecycle truth; Queue withdrawal never deletes author history. */
   messageStore?: IMessageStore;
-  /** F194 Phase B: canonical liveness read sources (record + draft). When omitted,
-   *  GET /queue's activeInvocations falls back to legacy tracker-only enumeration
-   *  for backward compat in tests. */
+  /** F194 Phase B: canonical liveness read source. When omitted, GET /queue's activeInvocations
+   *  falls back to legacy tracker-only enumeration for backward compat in tests. */
   invocationRecordStore?: IInvocationRecordStore;
+  /** F117 KD-21: the streamed body a response R settles with when a stop ends it outside its route. */
   draftStore?: IDraftStore;
-  /** Durable per-child lifecycle truth used to bridge tracker/draft handoff gaps. */
-  turnExecutionStore?: Pick<ITurnExecutionStore, 'listByParent' | 'transitionTerminal'>;
-  /** F194 Phase Z (KD-22): InvocationRegistry — provides namespace bridge between
-   *  parent recordStore invocation and per-cat-turn child registry invocation.
-   *  When wired, helper uses parentInvocationId / latestId to detect parent+child
-   *  chain liveness and cat-slot reuse zombies. Optional for backward compat;
-   *  fall-back to single-namespace classification when absent. */
-  invocationRegistry?: InvocationRegistryPort;
+  /** Durable child turns: the KD-21 ledger, and a running child standing in for an owner no snapshot can verify. */
+  turnExecutionStore?: Pick<
+    ITurnExecutionStore,
+    'get' | 'listByParent' | 'transitionTerminal' | 'clearResponsePending'
+  >;
   /** Existing managed-wake receipt owner; late-bound after delivery composition. */
   getManagedCommandWakeRecovery?: () => ManagedCommandWakeRecoveryLike | undefined;
   /** F295: existing durable task truth used only to project active managed commands. */
@@ -135,12 +133,6 @@ type ExecutionFailureReason = 'control_plane_unavailable' | 'execution_owner_los
 
 function executionFailureExplanation(reason: ExecutionFailureReason): string {
   return reason === 'control_plane_unavailable' ? '执行控制面不可用' : '执行进程归属已丢失';
-}
-
-function completeExecutionFailureContent(response: StoredMessage, reason: ExecutionFailureReason): string {
-  const existing = response.content.trim();
-  const failureMessage = executionFailureExplanation(reason);
-  return [existing, ...(!existing.includes(failureMessage) ? [failureMessage] : [])].filter(Boolean).join('\n\n');
 }
 
 async function waitForControlPlaneRetry(): Promise<void> {
@@ -185,26 +177,6 @@ async function retryProcessOwnerSnapshot(
   return latest;
 }
 
-function emitLifecycleMessageUpdated(socketManager: SocketManager, userId: string, message: StoredMessage): void {
-  if (!message.lifecycle) return;
-  socketManager.emitToUser(userId, 'message_lifecycle_updated', {
-    threadId: message.threadId,
-    message: {
-      id: message.id,
-      ...(message.from ? { from: message.from } : {}),
-      catId: message.catId,
-      content: message.content,
-      lifecycle: message.lifecycle,
-      timestamp: message.timestamp,
-      ...(message.timelineOrderAt !== undefined ? { timelineOrderAt: message.timelineOrderAt } : {}),
-      ...(message.contentBlocks ? { contentBlocks: message.contentBlocks } : {}),
-      ...(message.extra ? { extra: message.extra } : {}),
-      ...(message.origin ? { origin: message.origin } : {}),
-      ...(message.replyTo ? { replyTo: message.replyTo } : {}),
-    },
-  });
-}
-
 function projectCanonicalLiveCandidate(
   threadId: string,
   fallbackUserId: string,
@@ -235,22 +207,24 @@ async function resolveLiveExecutionCandidates(
   request: FastifyRequest,
   opts: QueueRoutesOptions,
 ): Promise<LiveExecutionCandidate[]> {
+  // F117 KD-23: one owner snapshot per request. The classifier weighs running children against it,
+  // and the same owners become process-owned candidates below.
+  const processOwnerSnapshot = await processOwnerSnapshotForRequest(request, opts.cliExecutionOwnerService);
   const canonical = await resolveActiveInvocations(
     threadId,
     userId,
     opts.invocationTracker,
     opts.invocationRecordStore,
-    opts.draftStore,
+    opts.messageStore ? responseStatusFromMessages(opts.messageStore) : undefined,
     opts.turnExecutionStore,
     request.log,
-    opts.invocationRegistry,
+    opts.cliExecutionOwnerService ? processOwnerSnapshot : undefined,
   );
   const byExecution = new Map<string, LiveExecutionCandidate>();
   for (const candidate of canonical) {
     const projected = projectCanonicalLiveCandidate(threadId, userId, candidate, opts.invocationTracker);
     byExecution.set(liveExecutionCandidateKey(projected), projected);
   }
-  const processOwnerSnapshot = await processOwnerSnapshotForRequest(request, opts.cliExecutionOwnerService);
   for (const owner of processOwnerSnapshot.owners) {
     if (owner.threadId !== threadId) continue;
     const candidate: LiveExecutionCandidate = {
@@ -528,44 +502,37 @@ export const queueRoutes: FastifyPluginAsync<QueueRoutesOptions> = async (app, o
         ...childExecutions.map((child) => child.invocationId),
       ]),
     ];
+    // KD-21: the turn ends first, which enters it in the response-pending ledger atomically; its R
+    // settles next, so a settlement that fails here is retried by the next startup.
+    for (const invocationId of childInvocationIds) {
+      await opts.turnExecutionStore?.transitionTerminal(invocationId, {
+        status: 'failed',
+        endedAt: failedAt,
+        terminalReason: failureReason,
+      });
+    }
     let responseTerminalized = false;
     for (const invocationId of childInvocationIds) {
-      const response = await messageStore.getByIdempotencyKey(
-        input.userId,
-        input.threadId,
-        `message-lifecycle-response:${invocationId}`,
+      // KD-21: the failed R carries what the turn had streamed, then the draft goes.
+      const settlement = await settleResponseFromDraft(
+        {
+          messageStore,
+          ...(opts.draftStore ? { draftStore: opts.draftStore } : {}),
+          ...(opts.turnExecutionStore ? { turnStore: opts.turnExecutionStore } : {}),
+          ...(opts.invocationRecordStore ? { invocationRecords: opts.invocationRecordStore } : {}),
+          emit: (userId, message) => emitLifecycleMessageUpdated(socketManager, userId, message),
+        },
+        {
+          userId: input.userId,
+          threadId: input.threadId,
+          invocationId,
+          status: 'failed',
+          reason: failureReason,
+          endedAt: failedAt,
+          explanation: executionFailureExplanation(failureReason),
+        },
       );
-      if (!response?.lifecycle || response.lifecycle.kind !== 'response') continue;
-      const result = await messageStore.commitLifecycleResponseTerminal(response.id, {
-        invocationId,
-        status: 'failed',
-        completedAt: Math.max(failedAt, response.lifecycle.startedAt),
-        reason: failureReason,
-        content: completeExecutionFailureContent(response, failureReason),
-        ...(response.contentBlocks ? { contentBlocks: response.contentBlocks } : {}),
-        ...(response.toolEvents ? { toolEvents: response.toolEvents } : {}),
-        ...(response.metadata ? { metadata: response.metadata } : {}),
-        ...(response.extra ? { extra: response.extra } : {}),
-        ...(response.thinking ? { thinking: response.thinking } : {}),
-        ...(response.origin ? { origin: response.origin } : {}),
-        mentions: response.mentions,
-        ...(response.mentionsUser ? { mentionsUser: true } : {}),
-        ...(response.replyTo ? { replyTo: response.replyTo } : {}),
-      });
-      if (result.kind !== 'applied' && result.kind !== 'replayed') {
-        const resultLifecycle = result.kind === 'conflict' ? result.message.lifecycle : undefined;
-        if (
-          result.kind !== 'conflict' ||
-          resultLifecycle?.kind !== 'response' ||
-          resultLifecycle.status === 'processing'
-        ) {
-          throw new Error(`control-plane failure response terminalization rejected: ${result.kind}`);
-        }
-      }
-      const terminalMessage = result.message;
-      await settleLifecycleResponseInputs(messageStore, terminalMessage, terminalMessage.id);
-      emitLifecycleMessageUpdated(socketManager, input.userId, terminalMessage);
-      responseTerminalized = true;
+      if (settlement.kind !== 'no_response') responseTerminalized = true;
     }
 
     const inflight = invocationQueue.findProcessingByCat(input.threadId, input.catId);
@@ -580,13 +547,6 @@ export const queueRoutes: FastifyPluginAsync<QueueRoutesOptions> = async (app, o
       if (outcome !== 'retired') throw new Error(`pre-start failure terminalization ${outcome}`);
     }
 
-    for (const invocationId of childInvocationIds) {
-      await opts.turnExecutionStore?.transitionTerminal(invocationId, {
-        status: 'failed',
-        endedAt: failedAt,
-        terminalReason: failureReason,
-      });
-    }
     const record = await opts.invocationRecordStore.get(input.executionId);
     const siblingCatIds = (record?.targetCats ?? []).filter((catId) => catId !== input.catId);
     const ownerSnapshot = await processOwnerSnapshotForRequest(input.request, opts.cliExecutionOwnerService);
@@ -868,7 +828,9 @@ export const queueRoutes: FastifyPluginAsync<QueueRoutesOptions> = async (app, o
     request: FastifyRequest,
   ): Promise<LiveExecutionCandidate[]> => {
     const candidates = await resolveLiveExecutionCandidates(threadId, userId, request, opts);
-    if (!opts.invocationRecordStore) return candidates;
+    // Without an owner service nobody can tell whether a process owns a running record: the
+    // classifier then lists it as unverified, and repairing it here would erase that.
+    if (!opts.invocationRecordStore || !opts.cliExecutionOwnerService) return candidates;
     const processSnapshot = await processOwnerSnapshotForRequest(request, opts.cliExecutionOwnerService);
     if (!processSnapshot.complete) return candidates;
     const ownerExecutionTargets = new Set(
@@ -915,6 +877,8 @@ export const queueRoutes: FastifyPluginAsync<QueueRoutesOptions> = async (app, o
 
   registerActiveExecutionRoutes(app, {
     threadStore,
+    ...(opts.controlReceipts ? { controlReceipts: opts.controlReceipts } : {}),
+    ...(opts.turnExecutionStore ? { turnExecutions: opts.turnExecutionStore } : {}),
     invocationTracker,
     dynamicTaskStore: opts.dynamicTaskStore,
     // F297 AC-D3：与 Sidebar 共用同一个 composition service；project scan 只取
@@ -932,6 +896,8 @@ export const queueRoutes: FastifyPluginAsync<QueueRoutesOptions> = async (app, o
         }
       : {}),
     resolveLiveExecutions: resolveAndRepairLiveExecutions,
+    isLiveExecutionControlPlaneComplete: async (request) =>
+      (await processOwnerSnapshotForRequest(request, opts.cliExecutionOwnerService)).complete,
     cancelExactLiveInvocation: async ({ threadId, userId, catId, executionId, candidate, request }) => {
       if (candidate.controlSource === 'process_owner' && opts.cliExecutionOwnerService && candidate.invocationId) {
         return cancelProcessOwnedInvocation({
@@ -994,16 +960,19 @@ export const queueRoutes: FastifyPluginAsync<QueueRoutesOptions> = async (app, o
     const guard = await guardThreadOwnership(request, reply, threadStore, threadId);
     if (!guard) return;
 
+    const ownerSnapshot = opts.cliExecutionOwnerService
+      ? await processOwnerSnapshotForRequest(request, opts.cliExecutionOwnerService)
+      : undefined;
     const activeInvocations = (
       await resolveActiveInvocations(
         threadId,
         guard.userId,
         invocationTracker,
         opts.invocationRecordStore,
-        opts.draftStore,
+        opts.messageStore ? responseStatusFromMessages(opts.messageStore) : undefined,
         opts.turnExecutionStore,
         request.log,
-        opts.invocationRegistry,
+        ownerSnapshot,
       )
     ).map((invocation) => ({
       ...invocation,
@@ -1078,8 +1047,12 @@ export const queueRoutes: FastifyPluginAsync<QueueRoutesOptions> = async (app, o
   );
 
   // DELETE /api/threads/:threadId/queue/:entryId
-  app.delete<{ Params: { threadId: string; entryId: string }; Querystring: { deleteMessage?: string } }>(
+  app.delete<{
+    Params: { threadId: string; entryId: string };
+    Querystring: { deleteMessage?: string; expectedSourceMessageId?: string; expectedTargetCatId?: string };
+  }>(
     '/api/threads/:threadId/queue/:entryId',
+    nativeControlReceiptHooks(opts.controlReceipts, nativeQueueControlCommand),
     async (request, reply) => {
       const { threadId, entryId } = request.params;
       const guard = await guardThreadOwnership(request, reply, threadStore, threadId);
@@ -1096,6 +1069,22 @@ export const queueRoutes: FastifyPluginAsync<QueueRoutesOptions> = async (app, o
         reply.status(409);
         return { error: '条目正在处理中，无法撤回', code: 'ENTRY_PROCESSING' };
       }
+      const { expectedSourceMessageId, expectedTargetCatId } = request.query;
+      const scoped = expectedSourceMessageId !== undefined || expectedTargetCatId !== undefined;
+      const expected = scoped
+        ? z
+            .object({ messageId: z.string().min(1).max(256), catId: z.string().min(1).max(100) })
+            .safeParse({ messageId: expectedSourceMessageId, catId: expectedTargetCatId })
+        : undefined;
+      if (expected && !expected.success)
+        return reply.code(400).send({ error: 'Invalid exact queue source', code: 'INVALID_REQUEST' });
+      const matchesScope = (row: QueueEntry) =>
+        !expected?.success ||
+        (row.payload.messageId === expected.data.messageId &&
+          row.targets.length === 1 &&
+          row.targets[0] === expected.data.catId);
+      if (!matchesScope(entry))
+        return reply.code(409).send({ error: '该队列项不再只包含这次请求，尚未撤回', code: 'ENTRY_SCOPE_CHANGED' });
       const claimed = await invocationQueue.claimQueuedEntryForWithdrawal(threadId, guard.userId, entryId);
       if (!claimed) {
         reply.status(409);
@@ -1103,6 +1092,23 @@ export const queueRoutes: FastifyPluginAsync<QueueRoutesOptions> = async (app, o
       }
       let removed: QueueEntry | null = null;
       try {
+        // The async canonical claim may return a newer target set. Never apply a
+        // frozen native control request to it, and never leave a rejected claim held.
+        if (!matchesScope(claimed)) {
+          if (!(await invocationQueue.restoreClaimedEntries(threadId, [entryId])))
+            throw new Error('Scoped Queue withdrawal could not release its claim');
+          return reply.code(409).send({ error: '该队列项范围已变化，尚未撤回', code: 'ENTRY_SCOPE_CHANGED' });
+        }
+        if (expected?.success) {
+          const source = await messageStore?.getById(expected.data.messageId);
+          if (!source || source.userId !== guard.userId || source.threadId !== threadId)
+            throw new Error('Exact Queue source History unavailable');
+          if (source.lifecycle?.dispatchRefs?.some((ref) => ref.targetId !== expected.data.catId)) {
+            if (!(await invocationQueue.restoreClaimedEntries(threadId, [entryId])))
+              throw new Error('Scoped Queue withdrawal could not release its claim');
+            return reply.code(409).send({ error: '该消息还对应其他目标，尚未撤回', code: 'ENTRY_SCOPE_CHANGED' });
+          }
+        }
         const messageIds = queueEntryMessageIds(claimed);
         const remaining = invocationQueue.list(threadId, guard.userId).filter((candidate) => candidate.id !== entryId);
         for (const messageId of messageIds) {
@@ -1119,7 +1125,6 @@ export const queueRoutes: FastifyPluginAsync<QueueRoutesOptions> = async (app, o
           guard.userId,
           threadId,
           invocationQueue.list(threadId, guard.userId),
-          messageStore,
           'withdraw_failed',
         );
         reply.status(503);
@@ -1145,7 +1150,6 @@ export const queueRoutes: FastifyPluginAsync<QueueRoutesOptions> = async (app, o
         guard.userId,
         threadId,
         invocationQueue.list(threadId, guard.userId),
-        messageStore,
         'removed',
       );
 
@@ -1405,7 +1409,6 @@ export const queueRoutes: FastifyPluginAsync<QueueRoutesOptions> = async (app, o
         guard.userId,
         threadId,
         invocationQueue.list(threadId, guard.userId),
-        messageStore,
         'steer_targets_resolved',
       );
       // Mapping is a durable Queue mutation in its own right. If the browser
@@ -1516,7 +1519,6 @@ export const queueRoutes: FastifyPluginAsync<QueueRoutesOptions> = async (app, o
         guard.userId,
         threadId,
         invocationQueue.list(threadId, guard.userId),
-        messageStore,
         'continue_current_fallback',
       );
       return {
@@ -1607,7 +1609,6 @@ export const queueRoutes: FastifyPluginAsync<QueueRoutesOptions> = async (app, o
           guard.userId,
           threadId,
           invocationQueue.list(threadId, guard.userId),
-          messageStore,
           'steer_failed',
         );
         reply.status(503);
@@ -1619,7 +1620,6 @@ export const queueRoutes: FastifyPluginAsync<QueueRoutesOptions> = async (app, o
         guard.userId,
         threadId,
         invocationQueue.list(threadId, guard.userId),
-        messageStore,
         'steer_immediate',
       );
 
@@ -1676,7 +1676,6 @@ export const queueRoutes: FastifyPluginAsync<QueueRoutesOptions> = async (app, o
         guard.userId,
         threadId,
         invocationQueue.list(threadId, guard.userId),
-        messageStore,
         'reordered',
       );
 
@@ -1738,7 +1737,6 @@ export const queueRoutes: FastifyPluginAsync<QueueRoutesOptions> = async (app, o
       guard.userId,
       threadId,
       invocationQueue.list(threadId, guard.userId),
-      messageStore,
       'reordered',
     );
     return { ok: true };
@@ -1776,7 +1774,7 @@ export const queueRoutes: FastifyPluginAsync<QueueRoutesOptions> = async (app, o
           'durable Queue clear stopped; unsettled entries retained',
         );
         const remaining = invocationQueue.list(threadId, guard.userId);
-        await emitQueueUpdated(socketManager, guard.userId, threadId, remaining, messageStore, 'withdraw_failed');
+        await emitQueueUpdated(socketManager, guard.userId, threadId, remaining, 'withdraw_failed');
         reply.status(503);
         return {
           error:
@@ -1808,7 +1806,6 @@ export const queueRoutes: FastifyPluginAsync<QueueRoutesOptions> = async (app, o
       guard.userId,
       threadId,
       invocationQueue.list(threadId, guard.userId),
-      messageStore,
       'cleared',
     );
 
@@ -1955,7 +1952,6 @@ export const queueRoutes: FastifyPluginAsync<QueueRoutesOptions> = async (app, o
         guard.userId,
         threadId,
         invocationQueue.list(threadId, guard.userId),
-        messageStore,
         'force_reset',
       );
     }
@@ -1991,7 +1987,6 @@ export const queueRoutes: FastifyPluginAsync<QueueRoutesOptions> = async (app, o
         guard.userId,
         threadId,
         invocationQueue.list(threadId, guard.userId),
-        messageStore,
         'force_reset',
       );
     }
@@ -2070,9 +2065,4 @@ export const queueRoutes: FastifyPluginAsync<QueueRoutesOptions> = async (app, o
  * Re-export：`resolveActiveInvocations` 的实现已迁到 domain
  * (`active-execution-service.ts`，R3 P2-1)，此处仅为既有 import 路径保持兼容。
  */
-export {
-  type ActiveInvocationProjection,
-  type InvocationRegistryPort,
-  type InvocationTrackerLike,
-  resolveActiveInvocations,
-};
+export { type ActiveInvocationProjection, type InvocationTrackerLike, resolveActiveInvocations };

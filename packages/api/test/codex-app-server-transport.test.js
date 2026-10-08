@@ -221,7 +221,9 @@ test('app-server registers one exact active-run dispatcher and fences it at turn
   const steer = wire.writes.find(
     (message) => message.method === 'turn/steer' && message.params.input?.[0]?.text === 'follow-up while still working',
   );
-  assert.deepEqual(steer.params, {
+  const { clientUserMessageId, ...steerParams } = steer.params;
+  assert.match(clientUserMessageId, /^[0-9a-f-]{36}$/);
+  assert.deepEqual(steerParams, {
     threadId: 'thread-1',
     expectedTurnId: 'turn-1',
     input: [
@@ -247,6 +249,42 @@ test('app-server registers one exact active-run dispatcher and fences it at turn
     { force: false, expectedInvocationId: 'turn-invocation-1' },
   );
   assert.deepEqual(terminal, { accepted: false, reason: 'active_run_closed' });
+});
+
+test('a rejected steer cannot bind another turn', async () => {
+  const wire = new ProtocolWire();
+  const originalWrite = wire.write.bind(wire);
+  wire.write = async (message) => {
+    if (message.method !== 'turn/steer') return originalWrite(message);
+    wire.writes.push(message);
+    wire.inbox.push({ id: message.id, result: { turnId: 'turn-stale' } });
+  };
+  let dispatcher;
+  const client = new CodexAppServerClient({ wire });
+  const outputPromise = collect(
+    client.run({
+      prompt: frozenPrompt('initial work'),
+      thread: { kind: 'start' },
+      activeRunDispatch: {
+        invocationId: 'turn-invocation-rejected',
+        register: (candidate) => {
+          dispatcher = candidate;
+          return () => {};
+        },
+      },
+    }),
+  );
+  await waitFor(() => dispatcher !== undefined);
+  const rejected = await dispatcher.dispatch(
+    { text: 'lands on another turn', messageIds: ['message-stale'] },
+    { force: false, expectedInvocationId: 'turn-invocation-rejected' },
+  );
+  assert.deepEqual(rejected, { accepted: false, reason: 'active_run_mismatch' });
+  wire.inbox.push({
+    method: 'turn/completed',
+    params: { threadId: 'thread-1', turn: { id: 'turn-1', status: 'completed' } },
+  });
+  await outputPromise;
 });
 
 test('F306 keeps sticky controls single-writer while mapping approved native parameters', async () => {

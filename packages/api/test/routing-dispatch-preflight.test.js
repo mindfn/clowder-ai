@@ -464,6 +464,37 @@ describe('F293 actual-send routing preflight', () => {
     );
   });
 
+  test('serial and parallel report each refused requested target with routing’s retry time', async () => {
+    const { routeSerial } = await import('../dist/domains/cats/services/agents/routing/route-serial.js');
+    const { routeParallel } = await import('../dist/domains/cats/services/agents/routing/route-parallel.js');
+    const automaticRetryAt = Date.now() + 5 * 60_000;
+    for (const route of [routeSerial, routeParallel]) {
+      const calls = [];
+      const rejections = [];
+      const deps = routeDeps(
+        { opus: service('opus', calls), codex: service('codex', calls) },
+        {
+          preflight: async (input) => {
+            const refused = decision(input, { opus: 'rejected' });
+            return {
+              ...refused,
+              targets: refused.targets.map((target) =>
+                target.disposition === 'rejected' ? { ...target, automaticRetryAt } : target,
+              ),
+            };
+          },
+        },
+      );
+      for await (const _event of route(deps, ['opus', 'codex'], 'request', 'owner-1', 'retry-at-thread', {
+        onRoutingDispatchRejected: (rejection) => rejections.push(rejection),
+      })) {
+        /* drain real route */
+      }
+      assert.deepEqual(rejections, [{ catId: 'opus', automaticRetryAt }], `${route.name} reports the exact refusal`);
+      assert.deepEqual(calls, ['codex'], `${route.name} still starts the accepted target`);
+    }
+  });
+
   test('serial and parallel invocations retain the exact actual-send decision through durable terminal observation', async () => {
     const { routeSerial } = await import('../dist/domains/cats/services/agents/routing/route-serial.js');
     const { routeParallel } = await import('../dist/domains/cats/services/agents/routing/route-parallel.js');

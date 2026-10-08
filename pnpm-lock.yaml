@@ -39,8 +39,8 @@ importers:
   packages/api:
     dependencies:
       '@anthropic-ai/claude-agent-sdk':
-        specifier: 0.3.280
-        version: 0.3.280(@anthropic-ai/sdk@0.124.0(zod@3.25.76))(@modelcontextprotocol/sdk@1.30.0(zod@3.25.76))(zod@3.25.76)
+        specifier: 0.3.285
+        version: 0.3.285(@anthropic-ai/sdk@0.129.0(zod@3.25.76))(@modelcontextprotocol/sdk@1.26.0(zod@3.25.76))(zod@3.25.76)
       '@cat-cafe/collective-connector':
         specifier: workspace:*
         version: link:../collective-connector
@@ -54,11 +54,17 @@ importers:
         specifier: 0.1.0-alpha.9
         version: 0.1.0-alpha.9
       '@clowder-ai/plugin-contract':
-        specifier: 0.1.0-beta.15
-        version: 0.1.0-beta.15
+        specifier: 0.1.0-beta.21
+        version: 0.1.0-beta.21
+      '@clowder-ai/plugin-contract-beta23':
+        specifier: npm:@clowder-ai/plugin-contract@0.1.0-beta.23
+        version: '@clowder-ai/plugin-contract@0.1.0-beta.23'
+      '@clowder-ai/plugin-contract-beta24':
+        specifier: npm:@clowder-ai/plugin-contract@0.1.0-beta.24
+        version: '@clowder-ai/plugin-contract@0.1.0-beta.24'
       '@clowder-ai/plugin-sdk':
-        specifier: 0.1.0-beta.10
-        version: 0.1.0-beta.10
+        specifier: 0.1.0-beta.17
+        version: 0.1.0-beta.17
       '@fastify/cookie':
         specifier: '9'
         version: 9.4.0
@@ -126,8 +132,8 @@ importers:
         specifier: 1.0.4
         version: 1.0.4
       better-sqlite3:
-        specifier: ^12.6.2
-        version: 12.6.2
+        specifier: ^12.8.0
+        version: 12.8.0
       cheerio:
         specifier: ^1.1.2
         version: 1.2.0
@@ -201,6 +207,9 @@ importers:
         specifier: ^3.22.0
         version: 3.25.76
     devDependencies:
+      '@clowder-ai/plugin-contract-beta20':
+        specifier: npm:@clowder-ai/plugin-contract@0.1.0-beta.20
+        version: '@clowder-ai/plugin-contract@0.1.0-beta.20'
       '@types/better-sqlite3':
         specifier: ^7.6.13
         version: 7.6.13
@@ -249,6 +258,15 @@ importers:
       react-dom:
         specifier: ^18.2.0
         version: 18.3.1(react@18.3.1)
+      react-markdown:
+        specifier: ^10.1.0
+        version: 10.1.0(@types/react@18.3.27)(react@18.3.1)
+      remark-breaks:
+        specifier: ^4.0.0
+        version: 4.0.0
+      remark-gfm:
+        specifier: ^4.0.1
+        version: 4.0.1
     devDependencies:
       '@types/node':
         specifier: ^20.11.0
@@ -531,6 +549,9 @@ importers:
       postcss:
         specifier: ^8.4.0
         version: 8.5.6
+      sharp:
+        specifier: ^0.34.5
+        version: 0.34.5
       tailwindcss:
         specifier: ^3.4.0
         version: 3.4.19(tsx@4.21.0)(yaml@2.8.2)
@@ -553,60 +574,56 @@ packages:
   '@antfu/install-pkg@1.1.0':
     resolution: {integrity: sha512-MGQsmw10ZyI+EJo45CdSER4zEb+p31LpDAFp2Z3gkSd1yqVZGi0Ebx++YTEMonJy4oChEMLsxZ64j8FH6sSqtQ==}
 
-  '@anthropic-ai/claude-agent-sdk-darwin-arm64@0.3.280':
-    resolution: {integrity: sha512-Yws14X5g5hgDtF565Tld/+dILAhH9QZpundjKMyO3dFasq9miXZlhU0NwXqwTO2xP0jDjJ54zduIiJwkcfcvGw==}
+  '@anthropic-ai/claude-agent-sdk-darwin-arm64@0.3.285':
+    resolution: {integrity: sha512-2h6iCTH5uPYKA9jBXB7Of0dXZ5hUdu88VnXq9u50AFfMnusy+w83dKgpu+TD+mWiO+mbvMdi1ZsGaoI8HPFTXQ==}
     cpu: [arm64]
     os: [darwin]
 
-  '@anthropic-ai/claude-agent-sdk-darwin-x64@0.3.280':
-    resolution: {integrity: sha512-B1eLx/oZ5RL1c3a13nQ4cRUksWyhGcVNS5vbCHnOVu4Pz+dH0moZ+iY8VaE6FvikVAQwFEW6VDU00b6m3tYdsQ==}
+  '@anthropic-ai/claude-agent-sdk-darwin-x64@0.3.285':
+    resolution: {integrity: sha512-r9ulSFGRV+I5ztFvUBGoLCDGM4cJNQcZ/5+WWFCVaVj55FYB8wVcFA1tXvKwXfWYgYgnuglDRgPwQktsNAisPQ==}
     cpu: [x64]
     os: [darwin]
 
-  '@anthropic-ai/claude-agent-sdk-linux-arm64-musl@0.3.280':
-    resolution: {integrity: sha512-uDh+Ggjb36l+jcVgaYxSziGHmBSSR3clqvGlQ0Bgc1v5dLF4igwqZ6ZPW/hS9dArG27fislIOetH1waEgIr+GA==}
+  '@anthropic-ai/claude-agent-sdk-linux-arm64-musl@0.3.285':
+    resolution: {integrity: sha512-EgsXJQJpspdSEJSwNl3tWILqJSmVoYje1c2gleHQrQAybNlvk9wx0EXoKrn55NjfoXW+qV1pWL9SeYa1QEuGuQ==}
     cpu: [arm64]
     os: [linux]
-    libc: [musl]
 
-  '@anthropic-ai/claude-agent-sdk-linux-arm64@0.3.280':
-    resolution: {integrity: sha512-6s96OIvBHT2817hCFLIZ421JBpQnvrmZucpjlWsyCODKmwGsSxiEhlWqK2h5Q7lwS6F7bzeAhqjGvC7FzDl9Rw==}
+  '@anthropic-ai/claude-agent-sdk-linux-arm64@0.3.285':
+    resolution: {integrity: sha512-YbYXqKGtyqpyqY92U8TRcKdrsnO38Ys6oO8aSBqugQyILcv9JEau8/Gtsw1e9cbkGyuNiUP2e2HIiwK3wMa9mg==}
     cpu: [arm64]
     os: [linux]
-    libc: [glibc]
 
-  '@anthropic-ai/claude-agent-sdk-linux-x64-musl@0.3.280':
-    resolution: {integrity: sha512-IVbIgvi5C0sdLg/p9hpiVvAQ/ikvTKwOOEy5C1aT7w8XLqBgfpJbzzVuk06df1Q0HlILUmf63EKPmq48lbxtqA==}
+  '@anthropic-ai/claude-agent-sdk-linux-x64-musl@0.3.285':
+    resolution: {integrity: sha512-3i2Pt5of+uqwWzrKzg5Duk3DQSKVkRqm4j9Nfy002XlV20/+z5fviHDjb/3urbI6dE9VYPVVb9L/dKm7uVOcrg==}
     cpu: [x64]
     os: [linux]
-    libc: [musl]
 
-  '@anthropic-ai/claude-agent-sdk-linux-x64@0.3.280':
-    resolution: {integrity: sha512-vpPyxYLy+zNc7LwQDWsZf0GZtTYa0PJLxzuv2vK9iV2dG+hrbRNTl35NSKKRR9rMj6RpKz0i2NLyVQ+D4mREgw==}
+  '@anthropic-ai/claude-agent-sdk-linux-x64@0.3.285':
+    resolution: {integrity: sha512-yVxQ3Xsmme5M9iXnpVQKaBxhGXktl2m2f19fEig30BblvhhRTjF/H1PY4SCA7g9V1D8Ety+0SKMhGZTca4WcWQ==}
     cpu: [x64]
     os: [linux]
-    libc: [glibc]
 
-  '@anthropic-ai/claude-agent-sdk-win32-arm64@0.3.280':
-    resolution: {integrity: sha512-heTflHwciJF+Hrf7v0J53QBzD+9mxN9gt2VVmEJAN0+ejbPcOcqnGGZHvyc9aZUuGh5INN0ECaiL4Fn1X2vXQQ==}
+  '@anthropic-ai/claude-agent-sdk-win32-arm64@0.3.285':
+    resolution: {integrity: sha512-7vJftvSY9KIt1GCrRipwDAzHzoMGkVuUPuErXkHCf2mjMNZt2YTnAbvMWxx2lV6wyfSzLMgxSJjKsikKYgL91A==}
     cpu: [arm64]
     os: [win32]
 
-  '@anthropic-ai/claude-agent-sdk-win32-x64@0.3.280':
-    resolution: {integrity: sha512-N+Y1zJb19nx0oPTvzkl/E3ng9AtWGW+K4hySmSHCgYSsgIwfs1YzDj/F5eHDMrxgklTuzFp76TvL3S75z5ge+g==}
+  '@anthropic-ai/claude-agent-sdk-win32-x64@0.3.285':
+    resolution: {integrity: sha512-mzHxNJsKDJDKNbGkPZU7FFqqWqQAXbTyuDRyGeeVLCCxy89mfyvIOC4ko2yiPXsIFsK+F2rbVnFOBhsl2dtaow==}
     cpu: [x64]
     os: [win32]
 
-  '@anthropic-ai/claude-agent-sdk@0.3.280':
-    resolution: {integrity: sha512-aIQSTKcCJcOgi125GAGQaNZUYgxbEBQwV2Ac+Utp0+gGUjIEWjTqz4B8kXr9XjkcCTYiRUMTDsXPAUfIcBDjnw==}
+  '@anthropic-ai/claude-agent-sdk@0.3.285':
+    resolution: {integrity: sha512-e98yZH3cWjQ2nSXGxOcx5BrEqG9Y0+CoSoVIN1BaypxT7yGVShdhhH8ROYcJZWqjgiTFyTaN56JQSPJAjarOSg==}
     engines: {node: '>=18.0.0'}
     peerDependencies:
       '@anthropic-ai/sdk': '>=0.93.0'
       '@modelcontextprotocol/sdk': ^1.29.0
       zod: ^4.0.0
 
-  '@anthropic-ai/sdk@0.124.0':
-    resolution: {integrity: sha512-cN5O8i9UVxHeOQAzj/XjshWXG8KiibJDw9OGpH2Z/eR3n/RBxdoLxDJOcfqAJWvjaMDFfHTBADU04hWRJVkDyA==}
+  '@anthropic-ai/sdk@0.129.0':
+    resolution: {integrity: sha512-MH7LB20kNpGLUpPTe2OG5XvL/KhX8HUO9XyBaFjgFk6TLS4Xjt0VPIuMKywe7POKKPslX+QxSlVok9e+8kG5Nw==}
     hasBin: true
     peerDependencies:
       zod: ^3.25.0 || ^4.0.0
@@ -1207,16 +1224,24 @@ packages:
       - require-from-string
       - sisteransi
 
-  '@clowder-ai/plugin-contract@0.1.0-beta.14':
-    resolution: {integrity: sha512-LvgAAlwlqTaQjhmbTP/b/IoDIwovGuGvROnXqbv2qoKhrQzvLWNpxIXpmsCARvj2HiB9a2Ko4L4OkmBGTtKBLw==}
+  '@clowder-ai/plugin-contract@0.1.0-beta.20':
+    resolution: {integrity: sha512-7Fi37hDjzUuMPRFo9D2wX+Zzxl+cKNKFDgeFxJFgBcXl8e4CYNXYcbEXYsi7nm8eGiCIBFV79whZrFqvwluyAw==}
     engines: {node: '>=20.0.0'}
 
-  '@clowder-ai/plugin-contract@0.1.0-beta.15':
-    resolution: {integrity: sha512-i6M6d6bEhL97gVsop2V5hG0lGMrmOVc2/0+7PAHxLhFCg2zIZ0LCd8HDJRYrD3E7QpcezgRzUiWbzRTMnTGdYA==}
+  '@clowder-ai/plugin-contract@0.1.0-beta.21':
+    resolution: {integrity: sha512-RgTXaJRA/CodLHoMNuzRQI6SWOkdbv6naVtnjh/5xHJwWkPthG7lzqCob6XKUWLwviTke7W9bruWwfOn23Pupg==}
     engines: {node: '>=20.0.0'}
 
-  '@clowder-ai/plugin-sdk@0.1.0-beta.10':
-    resolution: {integrity: sha512-FAdAAbFRgHInUmIw1fm343KyCgltcnBa0cT12nU+npEw5QLrnyNidcHfqPtrWmUaruv8Q+J24VVYa5cU9fTy1w==}
+  '@clowder-ai/plugin-contract@0.1.0-beta.23':
+    resolution: {integrity: sha512-caurD1D1HoNQ6vSvRZn/NfbZdpjrh42zYRiIm3fw6w3Gykf524Aiot9sMPqeFJ/Qefl3nhdxrIpdlNEKc6xhzg==}
+    engines: {node: '>=20.0.0'}
+
+  '@clowder-ai/plugin-contract@0.1.0-beta.24':
+    resolution: {integrity: sha512-spinIWG2RkZ10ZSgr7RhRcCoO6+8mwroipxLBGkxIAIa8SZW4hpBp+kpXAHdYOhGPzAWroVLWcG+GPq+W8t2Vg==}
+    engines: {node: '>=20.0.0'}
+
+  '@clowder-ai/plugin-sdk@0.1.0-beta.17':
+    resolution: {integrity: sha512-rDQIJKYziKN5BNGsSJqwBP27pzQkBGLqHT4s+h+BERyCdT1VOzn8zYaE1r3AceoJ2veo7jd7eKf2Lww0rqcIYQ==}
     engines: {node: '>=20.0.0'}
 
   '@codemirror/autocomplete@6.20.1':
@@ -3154,8 +3179,8 @@ packages:
     engines: {node: '>=10.0.0'}
     deprecated: Security vulnerability fixed in 5.2.1, please upgrade
 
-  better-sqlite3@12.6.2:
-    resolution: {integrity: sha512-8VYKM3MjCa9WcaSAI3hzwhmyHVlH8tiGFwf0RlTsZPWJ1I5MkzjiudCo4KC4DxOaL/53A5B1sI/IbldNFDbsKA==}
+  better-sqlite3@12.8.0:
+    resolution: {integrity: sha512-RxD2Vd96sQDjQr20kdP+F+dK/1OUNiVOl200vKBZY8u0vTwysfolF6Hq+3ZK2+h8My9YvZhHsF+RSGZW2VYrPQ==}
     engines: {node: 20.x || 22.x || 23.x || 24.x || 25.x}
 
   bidi-js@1.0.3:
@@ -6939,46 +6964,46 @@ snapshots:
       package-manager-detector: 1.6.0
       tinyexec: 1.0.2
 
-  '@anthropic-ai/claude-agent-sdk-darwin-arm64@0.3.280':
+  '@anthropic-ai/claude-agent-sdk-darwin-arm64@0.3.285':
     optional: true
 
-  '@anthropic-ai/claude-agent-sdk-darwin-x64@0.3.280':
+  '@anthropic-ai/claude-agent-sdk-darwin-x64@0.3.285':
     optional: true
 
-  '@anthropic-ai/claude-agent-sdk-linux-arm64-musl@0.3.280':
+  '@anthropic-ai/claude-agent-sdk-linux-arm64-musl@0.3.285':
     optional: true
 
-  '@anthropic-ai/claude-agent-sdk-linux-arm64@0.3.280':
+  '@anthropic-ai/claude-agent-sdk-linux-arm64@0.3.285':
     optional: true
 
-  '@anthropic-ai/claude-agent-sdk-linux-x64-musl@0.3.280':
+  '@anthropic-ai/claude-agent-sdk-linux-x64-musl@0.3.285':
     optional: true
 
-  '@anthropic-ai/claude-agent-sdk-linux-x64@0.3.280':
+  '@anthropic-ai/claude-agent-sdk-linux-x64@0.3.285':
     optional: true
 
-  '@anthropic-ai/claude-agent-sdk-win32-arm64@0.3.280':
+  '@anthropic-ai/claude-agent-sdk-win32-arm64@0.3.285':
     optional: true
 
-  '@anthropic-ai/claude-agent-sdk-win32-x64@0.3.280':
+  '@anthropic-ai/claude-agent-sdk-win32-x64@0.3.285':
     optional: true
 
-  '@anthropic-ai/claude-agent-sdk@0.3.280(@anthropic-ai/sdk@0.124.0(zod@3.25.76))(@modelcontextprotocol/sdk@1.30.0(zod@3.25.76))(zod@3.25.76)':
+  '@anthropic-ai/claude-agent-sdk@0.3.285(@anthropic-ai/sdk@0.129.0(zod@3.25.76))(@modelcontextprotocol/sdk@1.26.0(zod@3.25.76))(zod@3.25.76)':
     dependencies:
-      '@anthropic-ai/sdk': 0.124.0(zod@3.25.76)
-      '@modelcontextprotocol/sdk': 1.30.0(zod@3.25.76)
+      '@anthropic-ai/sdk': 0.129.0(zod@3.25.76)
+      '@modelcontextprotocol/sdk': 1.26.0(zod@3.25.76)
       zod: 3.25.76
     optionalDependencies:
-      '@anthropic-ai/claude-agent-sdk-darwin-arm64': 0.3.280
-      '@anthropic-ai/claude-agent-sdk-darwin-x64': 0.3.280
-      '@anthropic-ai/claude-agent-sdk-linux-arm64': 0.3.280
-      '@anthropic-ai/claude-agent-sdk-linux-arm64-musl': 0.3.280
-      '@anthropic-ai/claude-agent-sdk-linux-x64': 0.3.280
-      '@anthropic-ai/claude-agent-sdk-linux-x64-musl': 0.3.280
-      '@anthropic-ai/claude-agent-sdk-win32-arm64': 0.3.280
-      '@anthropic-ai/claude-agent-sdk-win32-x64': 0.3.280
+      '@anthropic-ai/claude-agent-sdk-darwin-arm64': 0.3.285
+      '@anthropic-ai/claude-agent-sdk-darwin-x64': 0.3.285
+      '@anthropic-ai/claude-agent-sdk-linux-arm64': 0.3.285
+      '@anthropic-ai/claude-agent-sdk-linux-arm64-musl': 0.3.285
+      '@anthropic-ai/claude-agent-sdk-linux-x64': 0.3.285
+      '@anthropic-ai/claude-agent-sdk-linux-x64-musl': 0.3.285
+      '@anthropic-ai/claude-agent-sdk-win32-arm64': 0.3.285
+      '@anthropic-ai/claude-agent-sdk-win32-x64': 0.3.285
 
-  '@anthropic-ai/sdk@0.124.0(zod@3.25.76)':
+  '@anthropic-ai/sdk@0.129.0(zod@3.25.76)':
     dependencies:
       json-schema-to-ts: 3.1.1
       standardwebhooks: 1.1.1
@@ -7705,19 +7730,29 @@ snapshots:
 
   '@clowder-ai/feishu-meeting-intake@0.1.0-alpha.9': {}
 
-  '@clowder-ai/plugin-contract@0.1.0-beta.14':
+  '@clowder-ai/plugin-contract@0.1.0-beta.20':
     dependencies:
       ajv: 8.17.1
       ajv-formats: 3.0.1(ajv@8.17.1)
 
-  '@clowder-ai/plugin-contract@0.1.0-beta.15':
+  '@clowder-ai/plugin-contract@0.1.0-beta.21':
     dependencies:
       ajv: 8.17.1
       ajv-formats: 3.0.1(ajv@8.17.1)
 
-  '@clowder-ai/plugin-sdk@0.1.0-beta.10':
+  '@clowder-ai/plugin-contract@0.1.0-beta.23':
     dependencies:
-      '@clowder-ai/plugin-contract': 0.1.0-beta.14
+      ajv: 8.17.1
+      ajv-formats: 3.0.1(ajv@8.17.1)
+
+  '@clowder-ai/plugin-contract@0.1.0-beta.24':
+    dependencies:
+      ajv: 8.17.1
+      ajv-formats: 3.0.1(ajv@8.17.1)
+
+  '@clowder-ai/plugin-sdk@0.1.0-beta.17':
+    dependencies:
+      '@clowder-ai/plugin-contract': 0.1.0-beta.21
 
   '@codemirror/autocomplete@6.20.1':
     dependencies:
@@ -9730,7 +9765,7 @@ snapshots:
 
   basic-ftp@5.2.0: {}
 
-  better-sqlite3@12.6.2:
+  better-sqlite3@12.8.0:
     dependencies:
       bindings: 1.5.0
       prebuild-install: 7.1.3

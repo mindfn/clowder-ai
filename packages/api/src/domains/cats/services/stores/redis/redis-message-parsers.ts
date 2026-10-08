@@ -24,7 +24,10 @@ import {
   CatRoutingErrorSchema,
   catOwnedSeedCueCarrierV1Schema,
   collectiveOwnerAdmissionV1Schema,
+  collectiveWorkDelegationV1Schema,
   collectiveWorkInvocationV1Schema,
+  companionIdentitySnapshotV1Schema,
+  contentModificationSourceMessageV1Schema,
   deliveryDecisionCueCarrierV1Schema,
   evolutionPreparationSubmissionV1Schema,
   isCloudBridgeRetryV1,
@@ -241,11 +244,15 @@ type ExtraCarrierPersistenceClassification<
  * Every StoredMessage.extra key must be classified when it is introduced.
  */
 type ExtraCarrierPersistence = ExtraCarrierPersistenceClassification<{
+  contentModificationRequestV1: 'parsed';
   collectiveOwnerAdmissionV1: 'parsed';
   collectiveWorkInvocationV1: 'parsed';
+  collectiveWorkDelegationV1: 'parsed';
   collectiveAuthorizationInvalid: 'derived';
   semanticEvent: 'parsed';
   realtimeCompanion: 'parsed';
+  liveCompanion: 'parsed';
+  liveAdmission: 'parsed';
   rich: 'parsed';
   isExplicitPost: 'parsed';
   stream: 'parsed';
@@ -354,6 +361,48 @@ function parseProactiveCarrier(value: unknown): StoredMessageExtra['proactive'] 
   return { visitId: candidate.visitId, intentId: candidate.intentId, source: 'private_time' };
 }
 
+function parseLiveCompanionCarrier(value: unknown): StoredMessageExtra['liveCompanion'] {
+  if (typeof value !== 'object' || value === null) return undefined;
+  const candidate = value as Record<string, unknown>;
+  const validId = (id: unknown): id is string => typeof id === 'string' && /^[A-Za-z0-9_-]{1,160}$/.test(id);
+  const identity = companionIdentitySnapshotV1Schema.safeParse(candidate.identity);
+  if (candidate.modality === 'typed') {
+    if (
+      !validId(candidate.callId) ||
+      candidate.role !== 'user' ||
+      !isNonEmptyString(candidate.clientMessageId) ||
+      candidate.clientMessageId.length > 256
+    )
+      return undefined;
+    return {
+      callId: candidate.callId,
+      modality: 'typed',
+      role: 'user',
+      clientMessageId: candidate.clientMessageId,
+      ...(identity.success ? { identity: identity.data } : {}),
+    };
+  }
+  if (
+    (candidate.modality !== 'voice' && candidate.modality !== 'result') ||
+    !validId(candidate.callId) ||
+    !validId(candidate.nativeThreadId) ||
+    !validId(candidate.realtimeSessionId) ||
+    !validId(candidate.nativeItemId) ||
+    (candidate.modality === 'result' && !validId(candidate.nativeTurnId)) ||
+    (candidate.modality === 'voice' && candidate.nativeTurnId !== undefined)
+  )
+    return undefined;
+  return {
+    callId: candidate.callId,
+    nativeThreadId: candidate.nativeThreadId,
+    realtimeSessionId: candidate.realtimeSessionId,
+    nativeItemId: candidate.nativeItemId,
+    modality: candidate.modality,
+    ...(candidate.role === 'user' || candidate.role === 'assistant' ? { role: candidate.role } : {}),
+    ...(candidate.modality === 'result' ? { nativeTurnId: candidate.nativeTurnId as string } : {}),
+    ...(identity.success ? { identity: identity.data } : {}),
+  };
+}
 function parseMeetingArtifactCarrier(value: unknown): StoredMessageExtra['meetingArtifact'] {
   if (typeof value !== 'object' || value === null) return undefined;
   const candidate = value as Record<string, unknown>;
@@ -406,8 +455,9 @@ export function safeParseExtra(raw: string | undefined): StoredMessage['extra'] 
     if (typeof parsed !== 'object' || parsed === null) return undefined;
 
     const result: StoredMessageExtra = {};
-    let hasField = false;
-
+    const modification = contentModificationSourceMessageV1Schema.safeParse(parsed.contentModificationRequestV1);
+    if (modification.success) result.contentModificationRequestV1 = modification.data;
+    let hasField = modification.success;
     if (parsed.collectiveOwnerAdmissionV1 !== undefined) {
       const admission = collectiveOwnerAdmissionV1Schema.safeParse(parsed.collectiveOwnerAdmissionV1);
       if (admission.success) result.collectiveOwnerAdmissionV1 = admission.data;
@@ -417,6 +467,12 @@ export function safeParseExtra(raw: string | undefined): StoredMessage['extra'] 
     if (parsed.collectiveWorkInvocationV1 !== undefined) {
       const invocation = collectiveWorkInvocationV1Schema.safeParse(parsed.collectiveWorkInvocationV1);
       if (invocation.success) result.collectiveWorkInvocationV1 = invocation.data;
+      else result.collectiveAuthorizationInvalid = true;
+      hasField = true;
+    }
+    if (parsed.collectiveWorkDelegationV1 !== undefined) {
+      const delegation = collectiveWorkDelegationV1Schema.safeParse(parsed.collectiveWorkDelegationV1);
+      if (delegation.success) result.collectiveWorkDelegationV1 = delegation.data;
       else result.collectiveAuthorizationInvalid = true;
       hasField = true;
     }
@@ -441,6 +497,23 @@ export function safeParseExtra(raw: string | undefined): StoredMessage['extra'] 
     const realtimeCompanion = parseRealtimeCompanionCarrier(parsed.realtimeCompanion);
     if (realtimeCompanion) {
       result.realtimeCompanion = realtimeCompanion;
+      hasField = true;
+    }
+    if (
+      typeof parsed.liveAdmission === 'object' &&
+      parsed.liveAdmission !== null &&
+      !Array.isArray(parsed.liveAdmission) &&
+      typeof parsed.liveAdmission.sessionId === 'string' &&
+      parsed.liveAdmission.sessionId &&
+      typeof parsed.liveAdmission.targetId === 'string' &&
+      parsed.liveAdmission.targetId
+    ) {
+      result.liveAdmission = { sessionId: parsed.liveAdmission.sessionId, targetId: parsed.liveAdmission.targetId };
+      hasField = true;
+    }
+    const liveCompanion = parseLiveCompanionCarrier(parsed.liveCompanion);
+    if (liveCompanion) {
+      result.liveCompanion = liveCompanion;
       hasField = true;
     }
 

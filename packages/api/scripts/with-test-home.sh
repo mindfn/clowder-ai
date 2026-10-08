@@ -50,4 +50,23 @@ unset API_SERVER_HOST
 # inherited makes routing tests depend on which cat launched the test command.
 unset DEFAULT_CAT_ID
 
+# REDIS_URL is a runtime binding like the variables above, but unsetting it is
+# not enough: an absent URL can select a shared default endpoint. Nor is 6398
+# proof of an owned test store: another checkout may be using it. Non-Redis
+# suites must have a non-connectable binding, and discard inherited data paths.
+#
+# This is the single pin for every test entrypoint that goes through this
+# wrapper, sharded or not. run-isolated-redis-tests.sh deliberately exports its
+# own randomly-allocated endpoint *after* this wrapper runs, so Redis suites keep
+# their per-run isolation; that ordering is a contract, not an accident.
+#
+# Shard children are narrowed further by PUBLIC_TEST_DENY_REDIS_URL in
+# packages/api/scripts/public-test-isolation-preflight.mjs, which rewrites them
+# to a non-connectable endpoint. This pin is the floor, that rewrite is the
+# stricter case; they are not duplicates of each other.
+if [[ "${CAT_CAFE_REDIS_TEST_ISOLATED:-}" != "1" ]]; then
+  unset REDIS_PORT REDIS_DATA_DIR REDIS_BACKUP_DIR REDIS_KEY_PREFIX
+  export REDIS_URL="redis://127.0.0.1:0"
+fi
+
 exec "$@"

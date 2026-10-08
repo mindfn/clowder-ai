@@ -1,4 +1,4 @@
-import type { CatId, ConnectorSource } from '@cat-cafe/shared';
+import type { CatId, ConnectorSource, WaitContinuationCarrierV1 } from '@cat-cafe/shared';
 import type { PersistedQueueDeliveryPort } from '../../domains/cats/services/agents/invocation/PersistedQueueDelivery.js';
 
 /**
@@ -28,6 +28,7 @@ export interface ConnectorDeliveryInput {
   readonly timestamp?: number;
   /** How the Queue row should be filed. Stated by the producer; never inferred from the payload. */
   readonly sourceCategory?: 'ci' | 'review' | 'conflict' | 'scheduled' | 'a2a' | 'issue';
+  readonly waitContinuationCarrier?: WaitContinuationCarrierV1;
 }
 
 export interface ConnectorDeliveryResult {
@@ -35,6 +36,11 @@ export interface ConnectorDeliveryResult {
   readonly content: string;
   /** True once the input is durably in the Queue — the only fact a caller may settle an outbox on. */
   readonly admitted: boolean;
+  /**
+   * F117 L2: why the Queue refused, when it did. `conflict` is permanent: the Queue already holds a
+   * different envelope under this key, so a retry can never be admitted. `unavailable` may pass later.
+   */
+  readonly rejection?: 'conflict' | 'unavailable';
 }
 
 export async function deliverConnectorMessage(
@@ -65,11 +71,17 @@ export async function deliverConnectorMessage(
     ...(input.priority ? { priority: input.priority } : {}),
     ...(input.timestamp !== undefined ? { timestamp: input.timestamp } : {}),
     ...(input.sourceCategory ? { sourceCategory: input.sourceCategory } : {}),
+    ...(input.waitContinuationCarrier ? { waitContinuationCarrier: input.waitContinuationCarrier } : {}),
   });
 
   // `conflict` and `unavailable` mean the envelope never reached the Queue. Every other state is a
   // durable admission — including an idempotent replay of work already claimed or finished.
-  const admitted = result.state !== 'conflict' && result.state !== 'unavailable';
+  const rejection = result.state === 'conflict' || result.state === 'unavailable' ? result.state : undefined;
 
-  return { messageId: result.message?.id ?? '', content: input.content, admitted };
+  return {
+    messageId: result.message?.id ?? '',
+    content: input.content,
+    admitted: rejection === undefined,
+    ...(rejection ? { rejection } : {}),
+  };
 }

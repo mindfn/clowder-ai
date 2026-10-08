@@ -104,6 +104,7 @@ import {
   turnCustodyWakeSourceCategory,
 } from '../../../../ball-custody/turn-custody-wake-provenance.js';
 import { conciergeContextForCat, prepareConciergeContext } from '../../../../concierge/ConciergeRoutingInterceptor.js';
+import { createConciergeMessageSearch } from '../../../../concierge/concierge-message-search.js';
 import {
   buildConciergeActions,
   extractTriagePlanIdsFromActions,
@@ -143,7 +144,7 @@ import {
 import { mayDeleteDraft } from '../../freshness/FreshnessDraftCustody.js';
 import { formatDegradationMessage } from '../../orchestration/DegradationPolicy.js';
 import { AuditEventTypes, getEventAuditLog } from '../../orchestration/EventAuditLog.js';
-import { mergePresentationCounts, type PresentationCounts } from '../../session/context-surface-projection.js';
+import { mergePresentationCounts, type PresentationCounts } from '../../session/context/context-surface-projection.js';
 import { buildSessionBootstrap, MAX_SESSION_BOOTSTRAP_TOKENS } from '../../session/SessionBootstrap.js';
 import { createMessageDeliveryBoundary } from '../../stores/message-delivery-boundary.js';
 import { messageFrom } from '../../stores/message-from.js';
@@ -183,21 +184,20 @@ import {
 } from '../invocation/invocation-capacity-snapshot.js';
 import { type InvocationParams, invokeSingleCat } from '../invocation/invoke-single-cat.js';
 import { buildMcpCallbackInstructions, needsMcpInjection } from '../invocation/McpPromptInjector.js';
+import {
+  MEMBER_TIMEOUT_REASON,
+  type MemberTimeoutEvent,
+  memberTimeoutErrorText,
+} from '../invocation/member-output-timeout.js';
 import { getRichBlockBuffer } from '../invocation/RichBlockBuffer.js';
+import { recordTurnOutputVerdict, requireTurnOutputAllowed } from '../invocation/response-draft-settlement.js';
 import { resolveManagedSessionPolicySnapshot } from '../invocation/session-policy-snapshot.js';
 import { resolveDefaultClaudeMcpServerPath } from '../providers/ClaudeAgentService.js';
 import { AgentServiceUnavailableError } from '../registry/AgentServiceUnavailableError.js';
 import { detectInlineActionMentionsWithShadow, getMaxA2ADepth, parseA2AMentions } from '../routing/a2a-mentions.js';
 import { registerWorklist, unregisterWorklist } from '../routing/WorklistRegistry.js';
 import { accumulateTextAggregate } from '../text-aggregation.js';
-import {
-  buildCallbackFinalReplacementMetadataPatch,
-  CallbackFinalReplacementTracker,
-  type CallbackStreamDisposition,
-  hasCallbackFinalReplacementMetadata,
-  parseCallbackPostResult,
-  readCallbackStreamDisposition,
-} from './callback-final-replacement.js';
+import { CallbackPostTracker, parseCallbackPostResult } from './callback-post-result.js';
 import { extractContextEvalSignals } from './context-eval.js';
 import { readDurableA2ALineage } from './durable-a2a-lineage.js';
 import { validateRoutingSyntax } from './final-routing-slot.js';
@@ -205,6 +205,8 @@ import { buildBriefingMessage } from './format-briefing.js';
 import { resolveEventBackedRoutingExit } from './guards/event-backed-routing-exit.js';
 import { isDirectOwnerDispositionOrigin } from './human-disposition-invocation-origin.js';
 import { persistUserFacingSystemInfoNotices } from './persist-system-info-warnings.js';
+import { appendRemoteCancellationNotice, createRemoteCancellationObserver } from './remote-cancellation.js';
+import { resolveResponseTerminal, stoppedByMemberTimeout } from './response-terminal.js';
 import { extractRichFromText, isValidRichBlock } from './rich-block-extract.js';
 import type { RouteOptions, RouteStrategyDeps } from './route-helpers.js';
 import {
@@ -227,6 +229,7 @@ import {
   routeContentBlocksForCat,
   sanitizeInjectedContent,
   shouldPersistContextBriefing,
+  storedMessageTimestamp,
   subjectSeenCueSeeds,
   toStoredToolEvent,
   upsertMaxBoundary,
@@ -234,6 +237,7 @@ import {
 import { isRoutingOwnerAttempt } from './routing-owner-attempt.js';
 import { routingPreflightNotice } from './routing-preflight-notice.js';
 import { appendThinkingChunk, renderThinkingChunks } from './thinking-chunks.js';
+import { withTimeoutDiagnostics } from './timeout-diagnostics-metadata.js';
 import { detectMatchedVerdictKeyword, shouldWarnVerdictWithoutPass } from './verdict-detect.js';
 import { evaluateVoidHold } from './void-hold-detect.js';
 import { buildVoteTally, checkVoteCompletion, extractVoteFromText, VOTE_RESULT_SOURCE } from './vote-intercept.js';
@@ -443,7 +447,6 @@ function toolNamesMatch(a: string, b: string): boolean {
 type PendingToolResult = {
   toolName: string;
   toolUseId?: string;
-  streamDisposition?: CallbackStreamDisposition;
 };
 
 function consumePendingToolResult(
@@ -491,6 +494,27 @@ export async function* routeSerial(
   threadId: string,
   options: RouteOptions = {},
 ): AsyncIterable<AgentMessage> {
+  const preparationStartedAt = performance.now();
+  let memberPreparationStartedAt = preparationStartedAt;
+  let preparationCheckpointAt = preparationStartedAt;
+  const preparationTimings: Array<{ stage: string; durationMs: number }> = [];
+  const checkpointPreparation = (stage: string): void => {
+    const now = performance.now();
+    const durationMs = now - preparationCheckpointAt;
+    preparationTimings.push({ stage, durationMs });
+    log.debug(
+      {
+        threadId,
+        targetCats,
+        parentInvocationId: options.parentInvocationId,
+        stage,
+        durationMs,
+        elapsedMs: now - preparationStartedAt,
+      },
+      'Delivery route preparation checkpoint',
+    );
+    preparationCheckpointAt = now;
+  };
   const {
     contentBlocks,
     uploadDir,
@@ -545,6 +569,7 @@ export async function* routeSerial(
     }
   }
   // F042: Fetch thread routingPolicy once before loop (threadId doesn't change).
+  checkpointPreparation('lineage_and_participants');
   let routingPolicy: ThreadRoutingPolicyV1 | undefined;
   // F073 P4: SOP stage hint from workflow-sop (告示牌 — info only, cats decide actions)
   let sopStageHint:
@@ -585,6 +610,7 @@ export async function* routeSerial(
     }
   }
   const bootcampMemberCount = getThreadBootcampMemberCount(routeThread);
+  checkpointPreparation('thread_and_workflow');
 
   // F153: Trace propagation — track per-invocation spans and route-level token totals
   let routeTotalTokens = 0;
@@ -603,18 +629,26 @@ export async function* routeSerial(
 
   // F229: Concierge interceptor — load duty-cat 岗位 context for concierge threads
   const conciergeCtx = await prepareConciergeContext(routeThread, userId, deps.invocationDeps.conciergeConfigStore);
+  checkpointPreparation('guide_and_concierge');
 
   // F229 KD-23: Pre-fetch search context → per-invocation handle table + prompt context.
   // Handle table flows from here to buildConciergeActions (same function scope).
   // No shared storage — cross-turn overwrites impossible by construction.
   let conciergeSearchContextString = '';
   let conciergeHandles: HandleEntry[] = [];
-  if ('conciergeConfig' in conciergeCtx) {
+  if (!options.liveCompanion && 'conciergeConfig' in conciergeCtx) {
     try {
       const searchResult = await buildConciergeSearchContext({
         userMessage: message,
         threadId,
         evidenceStore: deps.evidenceStore,
+        messageSearch: createConciergeMessageSearch({
+          evidenceStore: deps.evidenceStore,
+          threadStore: deps.invocationDeps.threadStore,
+          messageStore: deps.messageStore,
+          userId,
+          ...(currentUserMessageId ? { source: { threadId, messageId: currentUserMessageId } } : {}),
+        }),
       });
       conciergeSearchContextString = searchResult.contextString;
       conciergeHandles = searchResult.handles;
@@ -624,6 +658,7 @@ export async function* routeSerial(
   }
 
   // F260 AC-B8: Entity nudge — scan HUMAN input only.
+  checkpointPreparation('concierge_search');
   // P1-1 R2 fix: Gate on frustrationAutoIssueEligible (typed user-origin flag plumbed
   // through routeExecution). This excludes A2A, connector, callback multi-mention, and
   // queue-replayed messages — not just those with a2aTriggerMessageId.
@@ -747,12 +782,12 @@ export async function* routeSerial(
     );
   }
   const routeLevelNudgePromptContext = routeOwnedNudgePromptContext + humanDispositionFeedbackPromptContext;
+  checkpointPreparation('memory_and_feedback');
 
   const completedCatInvocationIds: Array<[string, string]> = [];
   const pushRecallPresentationsByInvocation = new Map<string, PushRecallPresentation[]>();
   const pendingTurnCustodyShadowCloses: Array<(checkpoint: 'next_turn_boundary' | 'route_settled') => Promise<void>> =
     [];
-  let keepaliveTimer: ReturnType<typeof setInterval> | undefined;
 
   const flushTurnCustodyShadowCloses = async (checkpoint: 'next_turn_boundary' | 'route_settled'): Promise<void> => {
     const closes = pendingTurnCustodyShadowCloses.splice(0);
@@ -768,6 +803,11 @@ export async function* routeSerial(
   try {
     while (index < worklist.length) {
       const catId = worklist[index]!;
+      if (index > 0) {
+        memberPreparationStartedAt = performance.now();
+        preparationCheckpointAt = memberPreparationStartedAt;
+        preparationTimings.length = 0;
+      }
       let stopGateRemedialAttempted = false;
       let routingDispatchPreflightDecision: RoutingPreflightDecisionV1 | undefined;
       // F-parallel-cancel: per-cat signal — canceling one cat skips ONLY that cat, not the
@@ -802,6 +842,13 @@ export async function* routeSerial(
           if (notice) yield notice;
         }
         if (receipt.target.disposition === 'rejected') {
+          if (index < targetCats.length) {
+            const { automaticRetryAt } = receipt.target;
+            options.onRoutingDispatchRejected?.({
+              catId,
+              ...(automaticRetryAt !== undefined ? { automaticRetryAt } : {}),
+            });
+          }
           yield {
             type: 'error',
             catId,
@@ -814,6 +861,7 @@ export async function* routeSerial(
         }
       }
       // F148 OQ-2: briefing→invocation link + context eval
+      checkpointPreparation('routing_preflight');
       let briefingMessageId: string | undefined;
       let briefingCoverageMap: import('./context-transport.js').CoverageMap | undefined;
       const currentPushRecallPresentations: PushRecallPresentation[] = [];
@@ -852,6 +900,15 @@ export async function* routeSerial(
       const activeA2ATriggerMessageId = isOriginalTarget ? a2aTriggerMessageId : undefined;
       const streamReplyTo = activeA2ATriggerMessageId ?? queueTriggerReplyTo;
       const turnTriggerMessageId = streamReplyTo ?? currentUserMessageId ?? a2aTriggerMessageId;
+      const turnTriggerMessage = turnTriggerMessageId ? await deps.messageStore.getById(turnTriggerMessageId) : null;
+      const collectiveBoundTurn =
+        options.executionScope === 'collective-work' ||
+        options.executionScope === 'collective-participation' ||
+        turnTriggerMessage?.source?.connector === 'collective' ||
+        Boolean(
+          turnTriggerMessage?.extra?.collectiveWorkInvocationV1 ||
+            turnTriggerMessage?.extra?.collectiveWorkDelegationV1,
+        );
       const streamReplyPreview = streamReplyTo
         ? await hydrateReplyPreview(deps.messageStore, streamReplyTo)
         : undefined;
@@ -861,6 +918,16 @@ export async function* routeSerial(
       const activeA2ATriggerContent =
         activeA2ATriggerMessage && !activeA2ATriggerMessage.deletedAt && !activeA2ATriggerMessage._tombstone
           ? activeA2ATriggerMessage.content
+          : undefined;
+      // The original request's provenance belongs only to its original targets.
+      // A downstream cloud turn must carry the persisted cat handoff, not the
+      // human message that started this serial chain.
+      const initialCloudProvenance = isOriginalTarget ? options.cloudDispatchProvenance : undefined;
+      const cloudA2AContent =
+        activeA2ATriggerMessage?.threadId === threadId &&
+        activeA2ATriggerMessage.userId === userId &&
+        activeA2ATriggerMessage.catId === directMessageFrom
+          ? activeA2ATriggerContent
           : undefined;
       const exactA2ATriggerPromptMessage = incrementalMode
         ? await hydrateVisibleA2ATriggerPromptMessage(deps, streamReplyTo, threadId, catId, thinkingMode)
@@ -916,6 +983,7 @@ export async function* routeSerial(
         packBlocks = await getActivePackBlocks(deps.packStore);
       }
       let service: AgentService;
+      checkpointPreparation('source_and_pack');
       try {
         service = getService(deps.services, catId, deps.unavailableServices);
       } catch (error) {
@@ -976,6 +1044,7 @@ export async function* routeSerial(
         clearProviderSession: () => deps.invocationDeps.sessionManager.delete(userId, catId, threadId),
       });
       if (sealedForCapacity) capacitySnapshot = resolvedCapacitySnapshot;
+      checkpointPreparation('service_capacity_and_session');
       const declaredTurnCustodyWake =
         options.turnCustodyWakeForCat?.(catId) ??
         options.turnCustodyWake ??
@@ -1124,6 +1193,7 @@ export async function* routeSerial(
           )
         : '';
       const invocationContext = [
+        // Budget and identity work is measured separately from History assembly.
         buildInvocationContext({
           catId,
           mode: invocationMode,
@@ -1149,6 +1219,14 @@ export async function* routeSerial(
           threadId,
           ...(worldContext ? { worldContext } : {}),
           ...catConciergeContext,
+          ...(options.liveCompanion && index === 0
+            ? {
+                liveCompanion: {
+                  householdToolsEnabled: options.liveCompanion.householdToolsEnabled === true,
+                  compositionInstructions: options.liveCompanion.compositionInstructions,
+                },
+              }
+            : {}),
         }),
         personMemoryProposalStatusContext,
       ]
@@ -1174,6 +1252,7 @@ export async function* routeSerial(
       // duplicate records. Phase 2 will take over persistence when migration completes.
 
       // F24 Phase E: Bootstrap context for Session #2+
+      checkpointPreparation('identity_and_linked_context');
       // #836: Reborn cats skip bootstrap — every invocation starts with zero prior context.
       // Uses store lookup (not thread field) — Redis memberSS:* fields aren't hydrated by get().
       let bootstrapContext = '';
@@ -1507,9 +1586,11 @@ export async function* routeSerial(
       }
 
       let textContent = '';
+      checkpointPreparation('history_and_prompt');
       let persistedDoneContent: string | undefined;
       const thinkingChunks: string[] = [];
       let persistedMetadata: MessageMetadata | undefined;
+      const remoteCancellation = createRemoteCancellationObserver();
       let doneMsg: AgentMessage | undefined;
       let lifecycleResponseMessageId: string | undefined;
       let lifecyclePriorFrontierMessageId: string | null | undefined;
@@ -1526,6 +1607,14 @@ export async function* routeSerial(
       let hadProviderError = false;
       // Collect error text separately for system-message persistence (F5 reload)
       let collectedErrorText = '';
+      // F117 KD-22: kept when this member's output timeout fires, before it is stopped.
+      let memberTimeout: MemberTimeoutEvent | undefined;
+      const onMemberTimeout = options.stopMember
+        ? (timeout: MemberTimeoutEvent): void => {
+            memberTimeout = timeout;
+            options.stopMember?.(catId as string, timeout.executionId);
+          }
+        : undefined;
       // F212 Phase B (云端 codex P2-8 2026-05-27): persist Phase A's structured
       // cliDiagnostics alongside the error text so cold hydration (F5 reload) can
       // restore the folded panel — without this, only the legacy red-pill survives.
@@ -1542,8 +1631,8 @@ export async function* routeSerial(
         if (existing.includes(messageId)) return;
         persistenceContext.persistedOutputMessageIds = [...existing, messageId];
       };
-      // #573/#1332: Keep callback replacement state behind one focused boundary.
-      const callbackFinalReplacement = new CallbackFinalReplacementTracker(recordPersistedOutputMessageId);
+      // #573: a confirmed post_message is its own durable output, never the turn's final.
+      const callbackPosts = new CallbackPostTracker(recordPersistedOutputMessageId);
       const verifiedConciergeToolTargets = new VerifiedConciergeToolTargetCollector();
       const pendingCallbackRoutingExits: CallbackContentRoutingExit[] = [];
       const confirmedCallbackRoutingGuardMentions = new Set<CatId>();
@@ -1632,43 +1721,6 @@ export async function* routeSerial(
           ...(auxiliaryTurnExecutions.length > 0 ? { auxiliaryTurnExecutions } : {}),
         };
       };
-      const augmentFinalReplacementMessage = async (
-        messageId: string,
-        visibleTurnInvocationId: string | undefined,
-        richBlocks: readonly import('@cat-cafe/shared').RichBlock[],
-        replacementMentionsUser: boolean,
-      ): Promise<void> => {
-        const metadataPatch = buildCallbackFinalReplacementMetadataPatch({
-          thinkingChunks,
-          ...(persistedMetadata ? { metadata: persistedMetadata } : {}),
-          toolEvents: collectedToolEvents,
-          ...(streamReplyTo ? { replyTo: streamReplyTo } : {}),
-          mentionsUser: replacementMentionsUser,
-          richBlocks,
-          ...(visibleTurnInvocationId ? { visibleTurnInvocationId } : {}),
-          ...((options.parentInvocationId ?? visibleTurnInvocationId)
-            ? { persistedInvocationId: options.parentInvocationId ?? visibleTurnInvocationId }
-            : {}),
-          ...(turnTriggerMessageId ? { turnTriggerMessageId } : {}),
-          ...(doneMsg?.tracing ? { tracing: doneMsg.tracing } : {}),
-          executionProjections: await readTurnExecutionProjections(visibleTurnInvocationId),
-        });
-        if (!hasCallbackFinalReplacementMetadata(metadataPatch)) return;
-        try {
-          const augmented = await deps.messageStore.augmentStreamMetadata(messageId, metadataPatch);
-          if (!augmented) {
-            log.warn(
-              { threadId, catId: catId as string, callbackMessageId: messageId },
-              'Callback message metadata augment skipped: message not found',
-            );
-          }
-        } catch (augmentErr) {
-          log.warn(
-            { threadId, catId: catId as string, callbackMessageId: messageId, err: augmentErr },
-            'Callback message metadata augment failed; continuing without duplicate stream append',
-          );
-        }
-      };
       let eventBackedRoutingExitPromise: ReturnType<typeof resolveEventBackedRoutingExit> | undefined;
       let verifiedEventBackedRoutingExit = false;
       const hasVerifiedEventBackedRoutingExit = async (): Promise<boolean> => {
@@ -1731,9 +1783,8 @@ export async function* routeSerial(
       const FLUSH_CHAR_DELTA = 2000;
       const noop = () => {};
 
-      // Issue #83: Independent keepalive timer — touch draft every 60s during long tool calls.
-      // Stream events alone can't keep draft alive when tools execute silently for >300s.
-      const KEEPALIVE_INTERVAL_MS = 60_000;
+      // F117 KD-23: drafts no longer expire, so nothing renews them on a timer. The ball-custody
+      // heartbeat comes only from real stream activity (the draft flushes below).
       let lastBallCustodyHeartbeatAt: number | null = null;
       const emitThrottledBallInvocationHeartbeat = (draftUpdatedAt: number): void => {
         if (
@@ -1886,7 +1937,20 @@ export async function* routeSerial(
             }
           : projectedMsg;
       };
+      checkpointPreparation('callback_setup');
+      log.info(
+        {
+          threadId,
+          catId,
+          parentInvocationId: options.parentInvocationId,
+          elapsedMs: preparationCheckpointAt - memberPreparationStartedAt,
+          stages: preparationTimings.splice(0),
+        },
+        'Delivery route preparation timing',
+      );
       for await (const msg of invokeSingleCat(deps.invocationDeps, {
+        onRemoteExecutionDispatched: remoteCancellation.onDispatched,
+        ...(options.liveCompanion && index === 0 ? { liveCompanion: options.liveCompanion } : {}),
         ...(options.routeIntent ? { routeIntent: options.routeIntent } : {}),
         ...(options.routingContextIntent ? { routingContextIntent: options.routingContextIntent } : {}),
         ...(routingDispatchPreflightDecision ? { routingDispatchPreflightDecision } : {}),
@@ -1905,6 +1969,7 @@ export async function* routeSerial(
         ...(targetContentBlocks ? { contentBlocks: targetContentBlocks } : {}),
         ...(targetUploadDir ? { uploadDir: targetUploadDir } : {}),
         ...(catSignal ? { signal: catSignal } : {}),
+        ...(onMemberTimeout ? { onMemberTimeout } : {}),
         ...(staticIdentity ? { systemPrompt: staticIdentity } : {}),
         ...(options.parentInvocationId ? { parentInvocationId: options.parentInvocationId } : {}),
         continuityCapsule,
@@ -1914,15 +1979,14 @@ export async function* routeSerial(
         ...(options.asrPersonMemoryScenes?.length ? { asrPersonMemoryScenes: options.asrPersonMemoryScenes } : {}),
         ...(memoryCueLegacyFallbacks.length > 0 ? { memoryCueLegacyFallbacks } : {}),
         ...(options.toolExecutionPolicy ? { toolExecutionPolicy: options.toolExecutionPolicy } : {}),
+        ...(options.executionScope ? { executionScope: options.executionScope } : {}),
         executionKind: initialExecutionKind,
+        ...(options.beforeOutputCommit ? { outputFenced: true } : {}),
         executionCausal: {
-          ...((options.cloudDispatchProvenance?.sourceMessageId ??
-          streamReplyTo ??
-          currentUserMessageId ??
-          a2aTriggerMessageId)
+          ...((initialCloudProvenance?.sourceMessageId ?? streamReplyTo ?? currentUserMessageId ?? a2aTriggerMessageId)
             ? {
                 triggerMessageId:
-                  options.cloudDispatchProvenance?.sourceMessageId ??
+                  initialCloudProvenance?.sourceMessageId ??
                   streamReplyTo ??
                   currentUserMessageId ??
                   a2aTriggerMessageId,
@@ -1947,13 +2011,11 @@ export async function* routeSerial(
         // - mentionContent: the raw user/cat message (NOT the orchestrated prompt with system context)
         // - mentioningCatId: A2A → the cat that @ mentioned; user-initiated → userId as fallback
         //   so the cloud cat knows "who called" (gpt52 R1 P1-2 contract: calledBy ≠ thread owner)
-        mentionContent: options.cloudDispatchProvenance?.intent ?? message,
+        mentionContent: isOriginalTarget ? (initialCloudProvenance?.intent ?? message) : cloudA2AContent,
         mentioningCatId:
-          options.cloudDispatchProvenance?.calledByCatId ??
-          ((directMessageFrom ?? userId) as import('@cat-cafe/shared').CatId),
-        ...(isOriginalTarget && options.cloudDispatchProvenance
-          ? { cloudDispatchProvenance: options.cloudDispatchProvenance }
-          : {}),
+          initialCloudProvenance?.calledByCatId ??
+          (isOriginalTarget ? ((directMessageFrom ?? userId) as import('@cat-cafe/shared').CatId) : directMessageFrom),
+        ...(initialCloudProvenance ? { cloudDispatchProvenance: initialCloudProvenance } : {}),
         ...(isOriginalTarget && options.requiresExactCloudDispatchProvenance
           ? { requiresExactCloudDispatchProvenance: true }
           : {}),
@@ -2019,16 +2081,6 @@ export async function* routeSerial(
                 if (voiceMode) {
                   voiceChunker = createVoiceChunker(ownInvocationId!);
                 }
-                // Issue #83: Start keepalive timer once we have an invocationId.
-                // This ensures draft TTL is renewed even during long silent tool calls.
-                if (deps.draftStore && !keepaliveTimer) {
-                  const keepInvId = ownInvocationId!;
-                  keepaliveTimer = setInterval(() => {
-                    const now = Date.now();
-                    deps.draftStore!.touch(userId, threadId, keepInvId)?.catch?.(noop);
-                    emitThrottledBallInvocationHeartbeat(now);
-                  }, KEEPALIVE_INTERVAL_MS);
-                }
               }
             } catch {
               /* ignore parse errors */
@@ -2062,6 +2114,8 @@ export async function* routeSerial(
               if (parsed.type === 'invocation_usage' && parsed.usage) {
                 routeTotalTokens += (parsed.usage.inputTokens ?? 0) + (parsed.usage.outputTokens ?? 0);
               }
+              // F118 AC-C3 / F117: timeout diagnostics persist with the response they explain.
+              persistedMetadata = withTimeoutDiagnostics(persistedMetadata, parsed);
               // F215 AC-C3: detect 46-接力 relay signal — set flag to push opus-4.6 after loop.
               // This is an internal routing signal; must be consumed here and NOT yielded to the frontend.
               if (parsed.type === 'malformed_toolcall_relay_46') {
@@ -2107,9 +2161,6 @@ export async function* routeSerial(
             pendingToolResults.push({
               toolName: effectiveMsg.toolName,
               ...(effectiveMsg.toolUseId ? { toolUseId: effectiveMsg.toolUseId } : {}),
-              ...(isPostMessageToolName(effectiveMsg.toolName)
-                ? { streamDisposition: readCallbackStreamDisposition(effectiveMsg.toolInput) }
-                : {}),
             });
             const callbackExit = collectCallbackContentRoutingExit(
               effectiveMsg.toolName,
@@ -2129,10 +2180,7 @@ export async function* routeSerial(
               Boolean(callbackResult.messageId && callbackResult.threadId),
             );
             if (completedToolName && isPostMessageToolName(completedToolName.toolName) && callbackResult.confirmed) {
-              callbackFinalReplacement.recordConfirmedPost(
-                completedToolName.streamDisposition ?? 'independent',
-                callbackResult,
-              );
+              callbackPosts.recordConfirmedPost(callbackResult);
             }
             if (completedToolName) {
               const settledExit = settleCallbackRoutingExit(completedToolName, callbackResult.confirmed);
@@ -2279,7 +2327,6 @@ export async function* routeSerial(
                 lastFlushLen = textContent.length;
                 lastFlushToolLen = collectedToolEvents.length;
               } else {
-                deps.draftStore.touch(userId, threadId, ownInvocationId)?.catch?.(noop);
                 emitThrottledBallInvocationHeartbeat(now);
               }
               lastFlushTime = now;
@@ -2319,10 +2366,20 @@ export async function* routeSerial(
         }
       }
 
-      // Issue #83: Stop keepalive timer — streaming loop has exited.
-      if (keepaliveTimer) {
-        clearInterval(keepaliveTimer);
-        keepaliveTimer = undefined;
+      // F117 KD-22: a member stopped by its output timeout failed, like a provider failure. The
+      // events it produced after the stop were dropped above, so its failure text and diagnostics
+      // come from what its timer kept before stopping it, and it ends with a done that names the
+      // timeout, as a failed provider turn's done names its failure: the Queue settles the entry
+      // failed from that done rather than throwing and broadcasting a second error.
+      if (stoppedByMemberTimeout(catSignal) && memberTimeout) {
+        hadError = true;
+        hadProviderError = true;
+        collectedErrorText += `${collectedErrorText ? '\n' : ''}${memberTimeoutErrorText(memberTimeout.diagnostics)}`;
+        persistedMetadata = {
+          ...(persistedMetadata ?? { provider: '', model: '' }),
+          timeoutDiagnostics: memberTimeout.diagnostics,
+        };
+        doneMsg ??= { type: 'done', catId, errorCode: MEMBER_TIMEOUT_REASON, timestamp: Date.now() };
       }
 
       // F167 Phase S: this is the single route-side visibility barrier. The
@@ -2330,6 +2387,14 @@ export async function* routeSerial(
       // may enqueue, persist, mutate thread state, synthesize visible output, or
       // broadcast until it succeeds.
       const actionOutputCommitAllowed = options.beforeOutputCommit ? await options.beforeOutputCommit(catId) : true;
+      // F117 KD-21: the allowed verdict becomes the turn's durable truth before anything visible, so
+      // a settlement after a crash in between publishes the approved draft. A write that fails throws:
+      // the output stays uncommitted and the execution's failure path settles R. Without a turn store
+      // no child was recorded, so there is no fence to write and no settlement that could read one.
+      const fencedTurnStore = deps.invocationDeps.turnExecutionStore;
+      if (options.beforeOutputCommit && actionOutputCommitAllowed && ownInvocationId && fencedTurnStore) {
+        await requireTurnOutputAllowed(fencedTurnStore, ownInvocationId);
+      }
 
       if (voiceChunker) {
         // F111 Phase B: Flush remaining buffered text and send voice_stream_end.
@@ -2576,6 +2641,7 @@ export async function* routeSerial(
         textContent = '';
         thinkingChunks.splice(0, thinkingChunks.length);
         persistedMetadata = undefined;
+        remoteCancellation.reset();
         doneMsg = undefined;
         collectedToolEvents.splice(0, collectedToolEvents.length);
         collectedToolNames.splice(0, collectedToolNames.length);
@@ -2588,7 +2654,7 @@ export async function* routeSerial(
         confirmedLocalCallbackRoutingMentions.clear();
         confirmedCallbackRoutingGuardHasCoCreatorLineStartMention = false;
         confirmedLocalCallbackRoutingHasCoCreatorLineStartMention = false;
-        callbackFinalReplacement.reset();
+        callbackPosts.reset();
         ownInvocationId = undefined;
 
         const remedialStreamEvents: AgentMessage[] = remedialRoutingPreflightNotice
@@ -2654,6 +2720,7 @@ export async function* routeSerial(
           remedialPrompt = await rebuildRemedialPromptAfterSessionSeal();
         }
         for await (const remedialMsg of invokeSingleCat(deps.invocationDeps, {
+          onRemoteExecutionDispatched: remoteCancellation.onDispatched,
           ...(options.routeIntent ? { routeIntent: options.routeIntent } : {}),
           ...(options.routingContextIntent ? { routingContextIntent: options.routingContextIntent } : {}),
           ...(remedialRoutingDispatchPreflightDecision
@@ -2673,6 +2740,7 @@ export async function* routeSerial(
           invocationOrigin: resolveInvocationOrigin(options.humanDispositionInvocationOrigin),
           routeTopology: 'serial',
           ...(catSignal ? { signal: catSignal } : {}),
+          ...(onMemberTimeout ? { onMemberTimeout } : {}),
           ...(staticIdentity ? { systemPrompt: staticIdentity } : {}),
           ...(options.parentInvocationId ? { parentInvocationId: options.parentInvocationId } : {}),
           continuityCapsule,
@@ -2680,7 +2748,9 @@ export async function* routeSerial(
           ...(options.routeSpan ? { routeSpan: options.routeSpan } : {}),
           invocationSpanRef,
           ...(options.toolExecutionPolicy ? { toolExecutionPolicy: options.toolExecutionPolicy } : {}),
+          ...(options.executionScope ? { executionScope: options.executionScope } : {}),
           executionKind: 'routing_guard',
+          ...(options.beforeOutputCommit ? { outputFenced: true } : {}),
           executionCausal: {
             ...((streamReplyTo ?? currentUserMessageId ?? a2aTriggerMessageId)
               ? { triggerMessageId: streamReplyTo ?? currentUserMessageId ?? a2aTriggerMessageId }
@@ -2757,6 +2827,7 @@ export async function* routeSerial(
                 if (parsed.type === 'invocation_usage' && parsed.usage) {
                   routeTotalTokens += (parsed.usage.inputTokens ?? 0) + (parsed.usage.outputTokens ?? 0);
                 }
+                persistedMetadata = withTimeoutDiagnostics(persistedMetadata, parsed);
               } catch {
                 /* ignore parse errors */
               }
@@ -2778,9 +2849,6 @@ export async function* routeSerial(
               pendingToolResults.push({
                 toolName: effectiveMsg.toolName,
                 ...(effectiveMsg.toolUseId ? { toolUseId: effectiveMsg.toolUseId } : {}),
-                ...(isPostMessageToolName(effectiveMsg.toolName)
-                  ? { streamDisposition: readCallbackStreamDisposition(effectiveMsg.toolInput) }
-                  : {}),
               });
               const callbackExit = collectCallbackContentRoutingExit(
                 effectiveMsg.toolName,
@@ -2799,10 +2867,7 @@ export async function* routeSerial(
                 Boolean(callbackResult.messageId && callbackResult.threadId),
               );
               if (completedToolName && isPostMessageToolName(completedToolName.toolName) && callbackResult.confirmed) {
-                callbackFinalReplacement.recordConfirmedPost(
-                  completedToolName.streamDisposition ?? 'independent',
-                  callbackResult,
-                );
+                callbackPosts.recordConfirmedPost(callbackResult);
               }
               if (completedToolName) {
                 const settledExit = settleCallbackRoutingExit(completedToolName, callbackResult.confirmed);
@@ -2989,18 +3054,37 @@ export async function* routeSerial(
       let outputCommitDecision: OutputCommitDecision | undefined;
       if (!actionOutputCommitAllowed && textContent) await scheduleTurnCustodyStopGate(false);
 
-      const terminalFailureContent = lifecycleResponseMessageId && collectedErrorText ? collectedErrorText : undefined;
+      const cancellationDiagnostics = remoteCancellation.afterAbort(catSignal);
+      if (cancellationDiagnostics) {
+        persistedMetadata = {
+          ...(persistedMetadata ?? { provider: '', model: '' }),
+          cancellationDiagnostics,
+        };
+        // The serial loop breaks on abort before the provider's done arrives.
+        // Publish the committed response through the ordinary per-member done.
+        doneMsg ??= { type: 'done', catId, timestamp: Date.now() };
+      }
+      const terminalFailureContent = cancellationDiagnostics
+        ? appendRemoteCancellationNotice(collectedErrorText)
+        : lifecycleResponseMessageId && collectedErrorText
+          ? collectedErrorText
+          : undefined;
 
       if (!actionOutputCommitAllowed) {
         catProducedOutput = Boolean(textContent || bufferedBlocks.length > 0 || collectedToolEvents.length > 0);
         if (options.persistenceContext) {
           options.persistenceContext.actionOutputCommitRejected = true;
-          if (callbackFinalReplacement.postMessageId) {
-            recordPersistedOutputMessageId(callbackFinalReplacement.postMessageId);
+          if (callbackPosts.postMessageId) {
+            recordPersistedOutputMessageId(callbackPosts.postMessageId);
           }
         }
         a2aMentions = [];
         if (lifecycleResponseMessageId && ownInvocationId) {
+          // F117 KD-21: the rejection is the turn's durable truth before R commits, so no later
+          // settlement can publish this draft even if the commit below fails.
+          await recordTurnOutputVerdict(deps.invocationDeps.turnExecutionStore, ownInvocationId, 'rejected', (err) =>
+            log.warn({ err, catId, invocationId: ownInvocationId }, 'rejected output fence verdict not recorded'),
+          );
           await commitLifecycleResponseFromAppendInput(
             deps.messageStore,
             lifecycleResponseMessageId,
@@ -3020,6 +3104,8 @@ export async function* routeSerial(
               threadId,
             },
           );
+          // F117 KD-21: R is terminal and its output was rejected, so its draft has no reader left.
+          deps.draftStore?.delete(userId, threadId, ownInvocationId)?.catch?.(noop);
         }
       } else if (textContent) {
         catProducedOutput = true;
@@ -3064,7 +3150,8 @@ export async function* routeSerial(
 
         // A2A mention detection (缅因猫 P1-3: only after full text accumulated)
         // Line-start @mention = always actionable (no keyword gate)
-        a2aMentions = parseA2AMentions(storedContent, catId);
+        // Collective relay uses the authenticated post-message carrier. Plain prose cannot mint an unscoped queue item.
+        a2aMentions = collectiveBoundTurn ? [] : parseA2AMentions(storedContent, catId);
 
         // clowder-ai#489: baseline counter — line-start mentions
         if (a2aMentions.length > 0) {
@@ -3345,10 +3432,7 @@ export async function* routeSerial(
         // #1332: a proactive callback is already durable before a later independent
         // final is committed. Timestamp that final at commit time so hydrated history
         // preserves the same callback-before-final order users saw live.
-        const storedTimestamp =
-          callbackFinalReplacement.postConfirmed && !callbackFinalReplacement.finalReplacementConfirmed
-            ? Date.now()
-            : invocationStartedAt;
+        const storedTimestamp = callbackPosts.postConfirmed ? Date.now() : invocationStartedAt;
 
         // F061: Detect local @co-creator mentions for browser/unread notification.
         // Cross-post callbacks can satisfy the guard and emit target-thread operator, but must not
@@ -3356,10 +3440,6 @@ export async function* routeSerial(
         mentionsUser = Boolean(
           (storedContent ? detectUserMention(storedContent) : false) || localCvoHasCoCreatorLineStartMention,
         );
-
-        // #573/#1332: callback success alone does not prove the final is a duplicate.
-        // Suppression is opt-in through streamDisposition="replace_final".
-        const callbackAlreadyStored = callbackFinalReplacement.finalReplacementConfirmed;
 
         // Store with actual mentions — degrade on failure to ensure done reaches frontend
         // (缅因猫 review P1-2: Redis failure must not block done yield)
@@ -3426,239 +3506,180 @@ export async function* routeSerial(
             }
           }
 
-          if (!callbackAlreadyStored) {
-            const executionProjections = await readTurnExecutionProjections(visibleTurnInvocationId);
-            const deliveryBoundary = createMessageDeliveryBoundary({
-              cursor: deliveryBoundaryId,
-              userId,
-              threadId,
-              catId,
-              turnInvocationId: visibleTurnInvocationId,
-              sourceMessageId: turnTriggerMessageId,
-              succeeded:
-                Boolean(doneMsg) &&
-                !hadError &&
-                !doneMsg?.errorCode &&
-                !catSignal?.aborted &&
-                actionOutputCommitAllowed &&
-                visibleTurnInvocationId === ownInvocationId,
-            });
-            const streamMessageInput: AppendMessageInput = {
-              from: { kind: 'agent', catId },
-              userId,
-              content: terminalFailureContent ? `${storedContent}\n\n${terminalFailureContent}` : storedContent,
-              mentions: a2aMentions,
-              origin: 'stream',
-              timestamp: storedTimestamp,
-              threadId,
-              ...(mentionsUser ? { mentionsUser } : {}),
-              ...(thinkingChunks.length > 0 ? { thinking: renderThinkingChunks(thinkingChunks) } : {}),
-              ...(persistedMetadata ? { metadata: persistedMetadata } : {}),
-              ...(collectedToolEvents.length > 0 ? { toolEvents: collectedToolEvents } : {}),
-              ...(streamReplyTo ? { replyTo: streamReplyTo } : {}),
-              extra: {
-                ...(allRichBlocks.length > 0 ? { rich: { v: 1 as const, blocks: allRichBlocks } } : {}),
-                ...(deliveryBoundary ? { deliveryBoundary } : {}),
-                // F194 Phase Z3: dual id — invocationId=parent (legacy SoT for liveness/queue/cancel),
-                // turnInvocationId=own (Z3 new SoT for frontend bubble identity stable key, prevents
-                // same-parent multi-turn-same-cat bubble merge).
-                // F194 Phase Z9 AC-Z25 (KD-28): always stamp turnInvocationId.
-                // First-in-chain (ownInvocationId === parent) still gets explicit
-                // turn stamp so frontend bubble identity never falls back to parent
-                // (which would let multi-turn same-cat under same parent collapse).
-                ...(persistedInvocationId
-                  ? {
-                      stream: {
-                        invocationId: persistedInvocationId,
-                        turnInvocationId: visibleTurnInvocationId ?? persistedInvocationId,
-                      },
-                    }
-                  : {}),
-                ...(turnTriggerMessageId
-                  ? { causal: { kind: 'invocation_reply' as const, triggerMessageId: turnTriggerMessageId } }
-                  : {}),
-                ...executionProjections,
-                ...(doneMsg?.tracing ? { tracing: doneMsg.tracing } : {}),
-              },
-            };
-            const abortReason = catSignal?.reason;
-            const lifecycleTerminalStatus: 'completed' | 'failed' | 'canceled' | 'interrupted' = catSignal?.aborted
-              ? abortReason === 'user_cancel' || abortReason === 'cancel_all'
-                ? 'canceled'
-                : 'interrupted'
-              : hadProviderError
-                ? 'failed'
-                : 'completed';
-            const lifecycleTerminalReason =
-              lifecycleTerminalStatus === 'completed'
-                ? undefined
-                : typeof doneMsg?.errorCode === 'string' && doneMsg.errorCode.length > 0
-                  ? doneMsg.errorCode
-                  : typeof abortReason === 'string' && abortReason.length > 0
-                    ? abortReason
-                    : lifecycleTerminalStatus === 'failed'
-                      ? 'provider_error'
-                      : lifecycleTerminalStatus;
-            const lifecycleResponse =
-              lifecycleResponseMessageId && lifecyclePriorFrontierMessageId !== undefined && ownInvocationId
+          const executionProjections = await readTurnExecutionProjections(visibleTurnInvocationId);
+          const deliveryBoundary = createMessageDeliveryBoundary({
+            cursor: deliveryBoundaryId,
+            userId,
+            threadId,
+            catId,
+            turnInvocationId: visibleTurnInvocationId,
+            sourceMessageId: turnTriggerMessageId,
+            succeeded:
+              Boolean(doneMsg) &&
+              !hadError &&
+              !doneMsg?.errorCode &&
+              !catSignal?.aborted &&
+              actionOutputCommitAllowed &&
+              visibleTurnInvocationId === ownInvocationId,
+          });
+          const streamMessageInput: AppendMessageInput = {
+            from: { kind: 'agent', catId },
+            userId,
+            content: terminalFailureContent ? `${storedContent}\n\n${terminalFailureContent}` : storedContent,
+            mentions: a2aMentions,
+            origin: 'stream',
+            timestamp: storedTimestamp,
+            threadId,
+            ...(mentionsUser ? { mentionsUser } : {}),
+            ...(thinkingChunks.length > 0 ? { thinking: renderThinkingChunks(thinkingChunks) } : {}),
+            ...(persistedMetadata ? { metadata: persistedMetadata } : {}),
+            ...(collectedToolEvents.length > 0 ? { toolEvents: collectedToolEvents } : {}),
+            ...(streamReplyTo ? { replyTo: streamReplyTo } : {}),
+            extra: {
+              ...(allRichBlocks.length > 0 ? { rich: { v: 1 as const, blocks: allRichBlocks } } : {}),
+              ...(deliveryBoundary ? { deliveryBoundary } : {}),
+              // F194 Phase Z3: dual id — invocationId=parent (legacy SoT for liveness/queue/cancel),
+              // turnInvocationId=own (Z3 new SoT for frontend bubble identity stable key, prevents
+              // same-parent multi-turn-same-cat bubble merge).
+              // F194 Phase Z9 AC-Z25 (KD-28): always stamp turnInvocationId.
+              // First-in-chain (ownInvocationId === parent) still gets explicit
+              // turn stamp so frontend bubble identity never falls back to parent
+              // (which would let multi-turn same-cat under same parent collapse).
+              ...(persistedInvocationId
                 ? {
-                    messageId: lifecycleResponseMessageId,
-                    priorFrontierMessageId: lifecyclePriorFrontierMessageId,
-                    status: lifecycleTerminalStatus,
-                    completedAt: Math.max(Date.now(), invocationStartedAt),
-                    ...(lifecycleTerminalReason ? { reason: lifecycleTerminalReason } : {}),
+                    stream: {
+                      invocationId: persistedInvocationId,
+                      turnInvocationId: visibleTurnInvocationId ?? persistedInvocationId,
+                    },
                   }
-                : undefined;
-            const completedA2AWakeCommit =
-              lifecycleResponse?.status === 'completed' && a2aMentions.length > 0
-                ? async (message: AppendMessageInput) => {
-                    if (!commitCompletedA2AWake) {
-                      throw new Error('completed response A2A wake admission unavailable');
-                    }
-                    return commitCompletedA2AWake({
-                      responseMessageId: lifecycleResponse.messageId,
-                      invocationId: ownInvocationId!,
-                      terminal: {
-                        status: 'completed',
-                        completedAt: lifecycleResponse.completedAt,
-                      },
-                      message,
-                      targetCats: a2aMentions,
-                      userId,
-                      ownerAuthProvenance,
-                      threadId,
-                      callerCatId: catId,
-                      ...(options.parentInvocationId ? { parentInvocationId: options.parentInvocationId } : {}),
-                    });
+                : {}),
+              ...(turnTriggerMessageId
+                ? { causal: { kind: 'invocation_reply' as const, triggerMessageId: turnTriggerMessageId } }
+                : {}),
+              ...executionProjections,
+              ...(doneMsg?.tracing ? { tracing: doneMsg.tracing } : {}),
+            },
+          };
+          const { status: lifecycleTerminalStatus, reason: lifecycleTerminalReason } = resolveResponseTerminal({
+            aborted: catSignal?.aborted === true,
+            abortReason: catSignal?.reason,
+            failed: hadProviderError,
+            errorCode: doneMsg?.errorCode,
+          });
+          const lifecycleResponse =
+            lifecycleResponseMessageId && lifecyclePriorFrontierMessageId !== undefined && ownInvocationId
+              ? {
+                  messageId: lifecycleResponseMessageId,
+                  priorFrontierMessageId: lifecyclePriorFrontierMessageId,
+                  status: lifecycleTerminalStatus,
+                  completedAt: Math.max(Date.now(), invocationStartedAt),
+                  ...(lifecycleTerminalReason ? { reason: lifecycleTerminalReason } : {}),
+                }
+              : undefined;
+          const completedA2AWakeCommit =
+            lifecycleResponse?.status === 'completed' && a2aMentions.length > 0
+              ? async (message: AppendMessageInput) => {
+                  if (!commitCompletedA2AWake) {
+                    throw new Error('completed response A2A wake admission unavailable');
                   }
-                : undefined;
-            const failedA2AReportCommit =
-              lifecycleResponse?.status === 'failed' &&
-              a2aTriggerMessageId &&
-              options.a2aCallerCatId &&
-              !options.a2aFailureReport
-                ? async (message: AppendMessageInput) => {
-                    if (!commitFailedA2AReport) {
-                      throw new Error('failed response A2A report admission unavailable');
-                    }
-                    return commitFailedA2AReport({
-                      responseMessageId: lifecycleResponse.messageId,
-                      invocationId: ownInvocationId!,
-                      terminal: {
-                        status: 'failed',
-                        completedAt: lifecycleResponse.completedAt,
-                        ...(lifecycleResponse.reason ? { reason: lifecycleResponse.reason } : {}),
-                      },
-                      message,
-                      userId,
-                      ownerAuthProvenance,
-                      threadId,
-                      reporterCatId: catId,
-                      predecessorCatId: options.a2aCallerCatId as CatId,
-                      ...(options.parentInvocationId ? { parentInvocationId: options.parentInvocationId } : {}),
-                    });
+                  return commitCompletedA2AWake({
+                    responseMessageId: lifecycleResponse.messageId,
+                    invocationId: ownInvocationId!,
+                    terminal: {
+                      status: 'completed',
+                      completedAt: lifecycleResponse.completedAt,
+                    },
+                    message,
+                    targetCats: a2aMentions,
+                    userId,
+                    ownerAuthProvenance,
+                    threadId,
+                    callerCatId: catId,
+                    ...(options.parentInvocationId ? { parentInvocationId: options.parentInvocationId } : {}),
+                  });
+                }
+              : undefined;
+          const failedA2AReportCommit =
+            lifecycleResponse?.status === 'failed' &&
+            a2aTriggerMessageId &&
+            options.a2aCallerCatId &&
+            !options.a2aFailureReport
+              ? async (message: AppendMessageInput) => {
+                  if (!commitFailedA2AReport) {
+                    throw new Error('failed response A2A report admission unavailable');
                   }
-                : undefined;
-            const lifecycleWakeCommit = completedA2AWakeCommit ?? failedA2AReportCommit;
-            let storedMsg = null;
-            if (deps.freshnessOutputCommitCoordinator && ownInvocationId) {
-              const decision = await deps.freshnessOutputCommitCoordinator.commit({
-                userId,
-                threadId,
-                catId: catId as string,
-                invocationId: options.parentInvocationId ?? ownInvocationId,
-                turnInvocationId: ownInvocationId,
-                originTriggerMessageId: streamReplyTo ?? currentUserMessageId ?? a2aTriggerMessageId ?? null,
-                message: streamMessageInput,
-                ...(lifecycleResponse ? { lifecycleResponse } : {}),
-                ...(lifecycleWakeCommit ? { commitLifecycleResponse: lifecycleWakeCommit } : {}),
-              });
-              outputCommitDecision = decision;
-              if (options.persistenceContext) {
-                options.persistenceContext.outputCommitDecisions = {
-                  ...(options.persistenceContext.outputCommitDecisions ?? {}),
-                  [catId as string]: decision,
-                };
-              }
-              storedMsg = await deps.messageStore.getById(decision.messageId);
-            } else if (lifecycleResponse && ownInvocationId) {
-              storedMsg = lifecycleWakeCommit
-                ? await lifecycleWakeCommit(streamMessageInput)
-                : await commitLifecycleResponseFromAppendInput(
-                    deps.messageStore,
-                    lifecycleResponse.messageId,
-                    ownInvocationId,
-                    lifecycleResponse,
-                    streamMessageInput,
-                  );
-            } else {
-              storedMsg = await deps.messageStore.append(streamMessageInput);
+                  return commitFailedA2AReport({
+                    responseMessageId: lifecycleResponse.messageId,
+                    invocationId: ownInvocationId!,
+                    terminal: {
+                      status: 'failed',
+                      completedAt: lifecycleResponse.completedAt,
+                      ...(lifecycleResponse.reason ? { reason: lifecycleResponse.reason } : {}),
+                    },
+                    message,
+                    userId,
+                    ownerAuthProvenance,
+                    threadId,
+                    reporterCatId: catId,
+                    predecessorCatId: options.a2aCallerCatId as CatId,
+                    ...(options.parentInvocationId ? { parentInvocationId: options.parentInvocationId } : {}),
+                  });
+                }
+              : undefined;
+          const lifecycleWakeCommit = completedA2AWakeCommit ?? failedA2AReportCommit;
+          let storedMsg = null;
+          if (deps.freshnessOutputCommitCoordinator && ownInvocationId) {
+            const decision = await deps.freshnessOutputCommitCoordinator.commit({
+              userId,
+              threadId,
+              catId: catId as string,
+              invocationId: options.parentInvocationId ?? ownInvocationId,
+              turnInvocationId: ownInvocationId,
+              originTriggerMessageId: streamReplyTo ?? currentUserMessageId ?? a2aTriggerMessageId ?? null,
+              message: streamMessageInput,
+              ...(lifecycleResponse ? { lifecycleResponse } : {}),
+              ...(lifecycleWakeCommit ? { commitLifecycleResponse: lifecycleWakeCommit } : {}),
+            });
+            outputCommitDecision = decision;
+            if (options.persistenceContext) {
+              options.persistenceContext.outputCommitDecisions = {
+                ...(options.persistenceContext.outputCommitDecisions ?? {}),
+                [catId as string]: decision,
+              };
             }
-            storedMsgId = storedMsg?.id;
-            turnStoredMessageId = storedMsgId;
-            if (storedMsgId) recordPersistedOutputMessageId(storedMsgId);
-            const triagePlanStore = deps.invocationDeps.conciergeTriagePlanStore;
-            if (storedMsg && triagePlanStore && triagePlanIdsToLink.length > 0) {
-              try {
-                await Promise.all(
-                  triagePlanIdsToLink.map((planId) => triagePlanStore.setConfirmationMessageId(planId, storedMsg.id)),
+            storedMsg = await deps.messageStore.getById(decision.messageId);
+          } else if (lifecycleResponse && ownInvocationId) {
+            storedMsg = lifecycleWakeCommit
+              ? await lifecycleWakeCommit(streamMessageInput)
+              : await commitLifecycleResponseFromAppendInput(
+                  deps.messageStore,
+                  lifecycleResponse.messageId,
+                  ownInvocationId,
+                  lifecycleResponse,
+                  streamMessageInput,
                 );
-              } catch (err) {
-                log.warn({ err, threadId, messageId: storedMsg.id }, 'Failed to link triage plan confirmation message');
-              }
-            }
-            // F088-P3: Stash rich blocks for outbound delivery
-            if (storedMsg && options.persistenceContext && allRichBlocks.length > 0) {
-              options.persistenceContext.richBlocks = allRichBlocks;
-            }
           } else {
-            log.info(
-              {
-                threadId,
-                catId: catId as string,
-                callbackMessageId: callbackFinalReplacement.finalReplacementMessageId,
-              },
-              'Stream store skipped — cat_cafe_post_message explicitly replaced the final',
-            );
-            const callbackTriagePlanStore = deps.invocationDeps.conciergeTriagePlanStore;
-            const linkedCallbackMessageId = callbackFinalReplacement.finalReplacementMessageId;
-            if (linkedCallbackMessageId && callbackTriagePlanStore && triagePlanIdsToLink.length > 0) {
-              try {
-                await Promise.all(
-                  triagePlanIdsToLink.map((planId) =>
-                    callbackTriagePlanStore.setConfirmationMessageId(planId, linkedCallbackMessageId),
-                  ),
-                );
-              } catch (err) {
-                log.warn(
-                  { err, threadId, messageId: linkedCallbackMessageId },
-                  'Failed to link callback triage plan confirmation message',
-                );
-              }
-            }
-            if (callbackFinalReplacement.finalReplacementMessageId) {
-              // F192 Phase D: bind sample anchor in callback path so post-storage
-              // emission uses the actual cat-stored message id (via callback).
-              storedMsgId = callbackFinalReplacement.finalReplacementMessageId;
-              turnStoredMessageId = callbackFinalReplacement.finalReplacementMessageId;
-              recordPersistedOutputMessageId(callbackFinalReplacement.finalReplacementMessageId);
-              await augmentFinalReplacementMessage(
-                callbackFinalReplacement.finalReplacementMessageId,
-                visibleTurnInvocationId,
-                allRichBlocks,
-                mentionsUser,
+            storedMsg = await deps.messageStore.append(streamMessageInput);
+          }
+          storedMsgId = storedMsg?.id;
+          turnStoredMessageId = storedMsgId;
+          if (storedMsgId) recordPersistedOutputMessageId(storedMsgId);
+          const triagePlanStore = deps.invocationDeps.conciergeTriagePlanStore;
+          if (storedMsg && triagePlanStore && triagePlanIdsToLink.length > 0) {
+            try {
+              await Promise.all(
+                triagePlanIdsToLink.map((planId) => triagePlanStore.setConfirmationMessageId(planId, storedMsg.id)),
               );
+            } catch (err) {
+              log.warn({ err, threadId, messageId: storedMsg.id }, 'Failed to link triage plan confirmation message');
             }
           }
+          // F088-P3: Stash rich blocks for outbound delivery
+          if (storedMsg && options.persistenceContext && allRichBlocks.length > 0) {
+            options.persistenceContext.richBlocks = allRichBlocks;
+          }
           // #80/F254: Delete only after MessageStore or closure truth proves custody.
-          if (
-            deps.draftStore &&
-            ownInvocationId &&
-            mayDeleteDraft(
-              outputCommitDecision,
-              Boolean(storedMsgId || callbackFinalReplacement.finalReplacementMessageId),
-            )
-          ) {
+          if (deps.draftStore && ownInvocationId && mayDeleteDraft(outputCommitDecision, Boolean(storedMsgId))) {
             deps.draftStore.delete(userId, threadId, ownInvocationId)?.catch?.(noop);
           }
           // Cloud Codex R4 P1 fix: Update activity in isolated try/catch to not affect append status
@@ -3674,7 +3695,7 @@ export async function* routeSerial(
               log.warn({ catId: catId as string, err: activityErr }, 'updateParticipantActivity failed');
             }
           }
-          if (!callbackAlreadyStored && localCvoHasCoCreatorLineStartMention && storedMsgId) {
+          if (localCvoHasCoCreatorLineStartMention && storedMsgId) {
             emitBallHandedCvoOnce(storedMsgId);
           }
           // F192 Phase D — deferred per-fire sample emission (local R1 P1-1 fix +
@@ -3754,14 +3775,14 @@ export async function* routeSerial(
         // Purely empty turns should not create blank chat bubbles.
         const noTextBlocks = [...bufferedBlocks, ...streamRichBlocks];
         const hasRichBlocks = noTextBlocks.length > 0;
-        const callbackAlreadyStored = callbackFinalReplacement.finalReplacementConfirmed;
         const hasNoTextStreamPayload =
           hasRichBlocks ||
           collectedToolEvents.length > 0 ||
           Boolean(renderThinkingChunks(thinkingChunks).trim().length > 0);
-        const shouldPersistNoTextMessage = !callbackAlreadyStored && hasNoTextStreamPayload;
-        const shouldEmitSilentCompletion =
-          !callbackAlreadyStored && collectedToolEvents.length > 0 && !hasRichBlocks && !sawUserFacingSystemInfo;
+        // A callback is its own named Message, never a replacement for R
+        // (fork f8071e44ae). Retired glass-box supplements (c94a58ac73)
+        // cannot suppress or own this turn's persistence.
+        const shouldPersistNoTextMessage = hasNoTextStreamPayload;
 
         log.debug(
           {
@@ -3775,165 +3796,115 @@ export async function* routeSerial(
           },
           'Cat produced no text — evaluating silent_completion',
         );
-        // Diagnostic: if cat ran tools but produced no text, emit a system_info so the
-        // user sees *something* instead of a silent vanish (bugfix: silent-exit P1).
-        if (shouldEmitSilentCompletion) {
-          yield {
-            type: 'system_info' as AgentMessageType,
-            catId,
-            content: JSON.stringify({
-              type: 'silent_completion',
-              detail: `${catConfig?.displayName ?? (catId as string)} completed with tool calls but no text response.`,
-              toolCount: collectedToolEvents.length,
-            }),
-            timestamp: Date.now(),
-          } as AgentMessage;
-        }
-        if (
-          callbackAlreadyStored ||
-          shouldPersistNoTextMessage ||
-          sawUserFacingSystemInfo ||
-          shouldEmitSilentCompletion
-        ) {
+        // The response owns its terminal result even when its body is empty.
+        // A transport/status notice cannot acknowledge a business guide outcome.
+        if (shouldPersistNoTextMessage) {
           catProducedOutput = true;
         }
 
-        if (shouldPersistNoTextMessage || callbackAlreadyStored || lifecycleResponseMessageId) {
+        if (shouldPersistNoTextMessage || lifecycleResponseMessageId || cancellationDiagnostics) {
           try {
             const visibleTurnInvocationId = visibleContentInvocationIdOverride ?? ownInvocationId;
             let storedNoText = null;
-            if (callbackAlreadyStored) {
-              log.info(
-                {
-                  threadId,
-                  catId: catId as string,
-                  callbackMessageId: callbackFinalReplacement.finalReplacementMessageId,
-                },
-                'No-text stream store skipped — cat_cafe_post_message explicitly replaced the final',
-              );
-              if (callbackFinalReplacement.finalReplacementMessageId) {
-                turnStoredMessageId = callbackFinalReplacement.finalReplacementMessageId;
-                recordPersistedOutputMessageId(callbackFinalReplacement.finalReplacementMessageId);
-                await augmentFinalReplacementMessage(
-                  callbackFinalReplacement.finalReplacementMessageId,
-                  visibleTurnInvocationId,
-                  noTextBlocks,
-                  hasLocalCoCreatorLineStartMention(''),
-                );
-              }
-            } else {
-              const executionProjections = await readTurnExecutionProjections(visibleTurnInvocationId);
-              const deliveryBoundary = createMessageDeliveryBoundary({
-                cursor: deliveryBoundaryId,
-                userId,
-                threadId,
-                catId,
-                turnInvocationId: visibleTurnInvocationId,
-                sourceMessageId: turnTriggerMessageId,
-                succeeded:
-                  Boolean(doneMsg) &&
-                  !hadError &&
-                  !doneMsg?.errorCode &&
-                  !catSignal?.aborted &&
-                  actionOutputCommitAllowed &&
-                  visibleTurnInvocationId === ownInvocationId,
-              });
-              const noTextMessageInput: AppendMessageInput = {
-                from: { kind: 'agent', catId },
-                userId,
-                content: '',
-                mentions: [],
-                origin: 'stream',
-                timestamp: invocationStartedAt,
-                threadId,
-                ...(streamReplyTo ? { replyTo: streamReplyTo } : {}),
-                ...(thinkingChunks.length > 0 ? { thinking: renderThinkingChunks(thinkingChunks) } : {}),
-                ...(persistedMetadata ? { metadata: persistedMetadata } : {}),
-                ...(collectedToolEvents.length > 0 ? { toolEvents: collectedToolEvents } : {}),
-                extra: {
-                  ...(noTextBlocks.length > 0 ? { rich: { v: 1 as const, blocks: noTextBlocks } } : {}),
-                  ...(deliveryBoundary ? { deliveryBoundary } : {}),
-                  // F194 Phase Z9 AC-Z25 (KD-28): always stamp turnInvocationId
-                  // (= ownInvocationId, else parent fallback).
-                  ...((options.parentInvocationId ?? visibleTurnInvocationId)
-                    ? {
-                        stream: {
-                          invocationId: (options.parentInvocationId ?? visibleTurnInvocationId) as string,
-                          turnInvocationId: (visibleTurnInvocationId ?? options.parentInvocationId) as string,
-                        },
-                      }
-                    : {}),
-                  ...(turnTriggerMessageId
-                    ? { causal: { kind: 'invocation_reply' as const, triggerMessageId: turnTriggerMessageId } }
-                    : {}),
-                  ...executionProjections,
-                  ...(doneMsg?.tracing ? { tracing: doneMsg.tracing } : {}),
-                },
-              };
-              const abortReason = catSignal?.reason;
-              const lifecycleTerminalStatus: 'completed' | 'failed' | 'canceled' | 'interrupted' = catSignal?.aborted
-                ? abortReason === 'user_cancel' || abortReason === 'cancel_all'
-                  ? 'canceled'
-                  : 'interrupted'
-                : hadProviderError
-                  ? 'failed'
-                  : 'completed';
-              const lifecycleTerminalReason =
-                lifecycleTerminalStatus === 'completed'
-                  ? undefined
-                  : typeof doneMsg?.errorCode === 'string' && doneMsg.errorCode.length > 0
-                    ? doneMsg.errorCode
-                    : typeof abortReason === 'string' && abortReason.length > 0
-                      ? abortReason
-                      : lifecycleTerminalStatus === 'failed'
-                        ? 'provider_error'
-                        : lifecycleTerminalStatus;
-              const lifecycleResponse =
-                lifecycleResponseMessageId && lifecyclePriorFrontierMessageId !== undefined && ownInvocationId
+            const executionProjections = await readTurnExecutionProjections(visibleTurnInvocationId);
+            const deliveryBoundary = createMessageDeliveryBoundary({
+              cursor: deliveryBoundaryId,
+              userId,
+              threadId,
+              catId,
+              turnInvocationId: visibleTurnInvocationId,
+              sourceMessageId: turnTriggerMessageId,
+              succeeded:
+                Boolean(doneMsg) &&
+                !hadError &&
+                !doneMsg?.errorCode &&
+                !catSignal?.aborted &&
+                actionOutputCommitAllowed &&
+                visibleTurnInvocationId === ownInvocationId,
+            });
+            const noTextMessageInput: AppendMessageInput = {
+              from: { kind: 'agent', catId },
+              userId,
+              content: cancellationDiagnostics ? (terminalFailureContent ?? '') : '',
+              mentions: [],
+              origin: 'stream',
+              timestamp: invocationStartedAt,
+              threadId,
+              ...(streamReplyTo ? { replyTo: streamReplyTo } : {}),
+              ...(thinkingChunks.length > 0 ? { thinking: renderThinkingChunks(thinkingChunks) } : {}),
+              ...(persistedMetadata ? { metadata: persistedMetadata } : {}),
+              ...(collectedToolEvents.length > 0 ? { toolEvents: collectedToolEvents } : {}),
+              extra: {
+                ...(noTextBlocks.length > 0 ? { rich: { v: 1 as const, blocks: noTextBlocks } } : {}),
+                ...(deliveryBoundary ? { deliveryBoundary } : {}),
+                // F194 Phase Z9 AC-Z25 (KD-28): always stamp turnInvocationId
+                // (= ownInvocationId, else parent fallback).
+                ...((options.parentInvocationId ?? visibleTurnInvocationId)
                   ? {
-                      messageId: lifecycleResponseMessageId,
-                      priorFrontierMessageId: lifecyclePriorFrontierMessageId,
-                      status: lifecycleTerminalStatus,
-                      completedAt: Math.max(Date.now(), invocationStartedAt),
-                      ...(lifecycleTerminalReason ? { reason: lifecycleTerminalReason } : {}),
+                      stream: {
+                        invocationId: (options.parentInvocationId ?? visibleTurnInvocationId) as string,
+                        turnInvocationId: (visibleTurnInvocationId ?? options.parentInvocationId) as string,
+                      },
                     }
-                  : undefined;
-              const answerBearingNoText =
-                hasRichBlocks || Boolean(renderThinkingChunks(thinkingChunks).trim().length > 0);
-              if (answerBearingNoText && deps.freshnessOutputCommitCoordinator && ownInvocationId) {
-                const decision = await deps.freshnessOutputCommitCoordinator.commit({
-                  userId,
-                  threadId,
-                  catId: catId as string,
-                  invocationId: options.parentInvocationId ?? ownInvocationId,
-                  turnInvocationId: ownInvocationId,
-                  originTriggerMessageId: streamReplyTo ?? currentUserMessageId ?? a2aTriggerMessageId ?? null,
-                  message: noTextMessageInput,
-                  ...(lifecycleResponse ? { lifecycleResponse } : {}),
-                });
-                outputCommitDecision = decision;
-                if (options.persistenceContext) {
-                  options.persistenceContext.outputCommitDecisions = {
-                    ...(options.persistenceContext.outputCommitDecisions ?? {}),
-                    [catId as string]: decision,
-                  };
-                }
-                storedNoText = await deps.messageStore.getById(decision.messageId);
-              } else if (lifecycleResponse && ownInvocationId) {
-                storedNoText = await commitLifecycleResponseFromAppendInput(
-                  deps.messageStore,
-                  lifecycleResponse.messageId,
-                  ownInvocationId,
-                  lifecycleResponse,
-                  noTextMessageInput,
-                );
-              } else {
-                // A tool-only record is audit output, not answer content: no frontier-annotated
-                // commit, because there is no bubble whose position anyone reads. The replay-unsafe
-                // distinction that used to route mutating tools here belonged to the closure gate,
-                // which is retired — nothing downstream re-runs a turn behind the cat's back.
-                storedNoText = await deps.messageStore.append(noTextMessageInput);
+                  : {}),
+                ...(turnTriggerMessageId
+                  ? { causal: { kind: 'invocation_reply' as const, triggerMessageId: turnTriggerMessageId } }
+                  : {}),
+                ...executionProjections,
+                ...(doneMsg?.tracing ? { tracing: doneMsg.tracing } : {}),
+              },
+            };
+            const { status: lifecycleTerminalStatus, reason: lifecycleTerminalReason } = resolveResponseTerminal({
+              aborted: catSignal?.aborted === true,
+              abortReason: catSignal?.reason,
+              failed: hadProviderError,
+              errorCode: doneMsg?.errorCode,
+            });
+            const lifecycleResponse =
+              lifecycleResponseMessageId && lifecyclePriorFrontierMessageId !== undefined && ownInvocationId
+                ? {
+                    messageId: lifecycleResponseMessageId,
+                    priorFrontierMessageId: lifecyclePriorFrontierMessageId,
+                    status: lifecycleTerminalStatus,
+                    completedAt: Math.max(Date.now(), invocationStartedAt),
+                    ...(lifecycleTerminalReason ? { reason: lifecycleTerminalReason } : {}),
+                  }
+                : undefined;
+            const answerBearingNoText =
+              hasRichBlocks || Boolean(renderThinkingChunks(thinkingChunks).trim().length > 0);
+            if (answerBearingNoText && deps.freshnessOutputCommitCoordinator && ownInvocationId) {
+              const decision = await deps.freshnessOutputCommitCoordinator.commit({
+                userId,
+                threadId,
+                catId: catId as string,
+                invocationId: options.parentInvocationId ?? ownInvocationId,
+                turnInvocationId: ownInvocationId,
+                originTriggerMessageId: streamReplyTo ?? currentUserMessageId ?? a2aTriggerMessageId ?? null,
+                message: noTextMessageInput,
+                ...(lifecycleResponse ? { lifecycleResponse } : {}),
+              });
+              outputCommitDecision = decision;
+              if (options.persistenceContext) {
+                options.persistenceContext.outputCommitDecisions = {
+                  ...(options.persistenceContext.outputCommitDecisions ?? {}),
+                  [catId as string]: decision,
+                };
               }
+              storedNoText = await deps.messageStore.getById(decision.messageId);
+            } else if (lifecycleResponse && ownInvocationId) {
+              storedNoText = await commitLifecycleResponseFromAppendInput(
+                deps.messageStore,
+                lifecycleResponse.messageId,
+                ownInvocationId,
+                lifecycleResponse,
+                noTextMessageInput,
+              );
+            } else {
+              // A tool-only record is audit output, not answer content: no frontier-annotated
+              // commit, because there is no bubble whose position anyone reads. The replay-unsafe
+              // distinction that used to route mutating tools here belonged to the closure gate,
+              // which is retired — nothing downstream re-runs a turn behind the cat's back.
+              storedNoText = await deps.messageStore.append(noTextMessageInput);
             }
             // F088-P3: Stash rich blocks for outbound delivery (no-text branch)
             if (storedNoText && options.persistenceContext && noTextBlocks.length > 0) {
@@ -3947,14 +3918,7 @@ export async function* routeSerial(
               recordPersistedOutputMessageId(storedNoText.id);
             }
             // #80/F254: retained means DraftStore is still the only recoverable copy.
-            if (
-              deps.draftStore &&
-              ownInvocationId &&
-              mayDeleteDraft(
-                outputCommitDecision,
-                Boolean(storedNoText || callbackFinalReplacement.finalReplacementMessageId),
-              )
-            ) {
+            if (deps.draftStore && ownInvocationId && mayDeleteDraft(outputCommitDecision, Boolean(storedNoText))) {
               deps.draftStore.delete(userId, threadId, ownInvocationId)?.catch?.(noop);
             }
             // Cloud Codex R4 P1 fix: Update activity in isolated try/catch to not affect append status
@@ -3982,22 +3946,7 @@ export async function* routeSerial(
           }
         }
 
-        if (!shouldPersistNoTextMessage && !callbackAlreadyStored) {
-          if (!catSignal?.aborted && !sawUserFacingSystemInfo) {
-            yield {
-              type: 'system_info' as AgentMessageType,
-              catId,
-              content: JSON.stringify({
-                type: 'silent_completion',
-                detail: `${catConfig?.displayName ?? (catId as string)} completed without textual output.`,
-                toolCount: collectedToolEvents.length,
-                provider: persistedMetadata?.provider,
-                model: persistedMetadata?.model,
-                invocationId: ownInvocationId,
-              }),
-              timestamp: Date.now(),
-            } as AgentMessage;
-          }
+        if (!shouldPersistNoTextMessage) {
           // No persisted message for fully silent turns; clean up draft for turns whose
           // only user-visible content was a system_info warning (persisted in the common path below).
           if (deps.draftStore && ownInvocationId) {
@@ -4009,100 +3958,88 @@ export async function* routeSerial(
         // refreshing the page still shows what the cat attempted before the error.
         try {
           const visibleTurnInvocationId = visibleContentInvocationIdOverride ?? ownInvocationId;
-          if (
-            callbackFinalReplacement.finalReplacementConfirmed &&
-            callbackFinalReplacement.finalReplacementMessageId
-          ) {
-            catProducedOutput = true;
-            turnStoredMessageId = callbackFinalReplacement.finalReplacementMessageId;
-            recordPersistedOutputMessageId(callbackFinalReplacement.finalReplacementMessageId);
-            await augmentFinalReplacementMessage(
-              callbackFinalReplacement.finalReplacementMessageId,
-              visibleTurnInvocationId,
-              [...bufferedBlocks, ...streamRichBlocks],
-              false,
-            );
-          } else {
-            const executionProjections = await readTurnExecutionProjections(visibleTurnInvocationId);
-            const errorMessageInput: AppendMessageInput = {
-              from: { kind: 'agent', catId },
-              userId,
-              content: terminalFailureContent ?? '',
-              mentions: [],
-              origin: 'stream',
-              timestamp: invocationStartedAt,
-              threadId,
-              ...(streamReplyTo ? { replyTo: streamReplyTo } : {}),
-              ...(persistedMetadata ? { metadata: persistedMetadata } : {}),
-              ...(collectedToolEvents.length > 0 ? { toolEvents: collectedToolEvents } : {}),
-              ...((options.parentInvocationId ?? visibleTurnInvocationId) || doneMsg?.tracing
-                ? {
-                    extra: {
-                      // F194 Phase Z9 AC-Z25 (KD-28): always stamp turnInvocationId
-                      // for error+toolEvents records too.
-                      ...((options.parentInvocationId ?? visibleTurnInvocationId)
-                        ? {
-                            stream: {
-                              invocationId: (options.parentInvocationId ?? visibleTurnInvocationId) as string,
-                              turnInvocationId: (visibleTurnInvocationId ?? options.parentInvocationId) as string,
-                            },
-                          }
-                        : {}),
-                      ...(turnTriggerMessageId
-                        ? { causal: { kind: 'invocation_reply' as const, triggerMessageId: turnTriggerMessageId } }
-                        : {}),
-                      ...executionProjections,
-                      ...(doneMsg?.tracing ? { tracing: doneMsg.tracing } : {}),
-                    },
-                  }
-                : {}),
-            };
-            let storedErrorTools;
-            if (lifecycleResponseMessageId && ownInvocationId) {
-              const terminal = {
-                status: catSignal?.aborted ? ('interrupted' as const) : ('failed' as const),
-                completedAt: Math.max(Date.now(), invocationStartedAt),
-                reason:
-                  typeof doneMsg?.errorCode === 'string' && doneMsg.errorCode.length > 0
-                    ? doneMsg.errorCode
-                    : 'provider_error',
-              };
-              if (
-                terminal.status === 'failed' &&
-                a2aTriggerMessageId &&
-                options.a2aCallerCatId &&
-                !options.a2aFailureReport
-              ) {
-                if (!commitFailedA2AReport) {
-                  throw new Error('failed response A2A report admission unavailable');
+          const executionProjections = await readTurnExecutionProjections(visibleTurnInvocationId);
+          const errorMessageInput: AppendMessageInput = {
+            from: { kind: 'agent', catId },
+            userId,
+            content: terminalFailureContent ?? '',
+            mentions: [],
+            origin: 'stream',
+            timestamp: invocationStartedAt,
+            threadId,
+            ...(streamReplyTo ? { replyTo: streamReplyTo } : {}),
+            ...(persistedMetadata ? { metadata: persistedMetadata } : {}),
+            ...(collectedToolEvents.length > 0 ? { toolEvents: collectedToolEvents } : {}),
+            ...((options.parentInvocationId ?? visibleTurnInvocationId) || doneMsg?.tracing
+              ? {
+                  extra: {
+                    // F194 Phase Z9 AC-Z25 (KD-28): always stamp turnInvocationId
+                    // for error+toolEvents records too.
+                    ...((options.parentInvocationId ?? visibleTurnInvocationId)
+                      ? {
+                          stream: {
+                            invocationId: (options.parentInvocationId ?? visibleTurnInvocationId) as string,
+                            turnInvocationId: (visibleTurnInvocationId ?? options.parentInvocationId) as string,
+                          },
+                        }
+                      : {}),
+                    ...(turnTriggerMessageId
+                      ? { causal: { kind: 'invocation_reply' as const, triggerMessageId: turnTriggerMessageId } }
+                      : {}),
+                    ...executionProjections,
+                    ...(doneMsg?.tracing ? { tracing: doneMsg.tracing } : {}),
+                  },
                 }
-                storedErrorTools = await commitFailedA2AReport({
-                  responseMessageId: lifecycleResponseMessageId,
-                  invocationId: ownInvocationId,
-                  terminal: { ...terminal, status: 'failed' },
-                  message: errorMessageInput,
-                  userId,
-                  ownerAuthProvenance,
-                  threadId,
-                  reporterCatId: catId,
-                  predecessorCatId: options.a2aCallerCatId as CatId,
-                  ...(options.parentInvocationId ? { parentInvocationId: options.parentInvocationId } : {}),
-                });
-              } else {
-                storedErrorTools = await commitLifecycleResponseFromAppendInput(
-                  deps.messageStore,
-                  lifecycleResponseMessageId,
-                  ownInvocationId,
-                  terminal,
-                  errorMessageInput,
-                );
+              : {}),
+          };
+          let storedErrorTools;
+          if (lifecycleResponseMessageId && ownInvocationId) {
+            // F117 KD-22: a member stopped by its output timeout failed; any other stop interrupted it.
+            const timedOut = stoppedByMemberTimeout(catSignal);
+            const terminal = {
+              status: catSignal?.aborted && !timedOut ? ('interrupted' as const) : ('failed' as const),
+              completedAt: Math.max(Date.now(), invocationStartedAt),
+              reason: timedOut
+                ? MEMBER_TIMEOUT_REASON
+                : typeof doneMsg?.errorCode === 'string' && doneMsg.errorCode.length > 0
+                  ? doneMsg.errorCode
+                  : 'provider_error',
+            };
+            if (
+              terminal.status === 'failed' &&
+              a2aTriggerMessageId &&
+              options.a2aCallerCatId &&
+              !options.a2aFailureReport
+            ) {
+              if (!commitFailedA2AReport) {
+                throw new Error('failed response A2A report admission unavailable');
               }
+              storedErrorTools = await commitFailedA2AReport({
+                responseMessageId: lifecycleResponseMessageId,
+                invocationId: ownInvocationId,
+                terminal: { ...terminal, status: 'failed' },
+                message: errorMessageInput,
+                userId,
+                ownerAuthProvenance,
+                threadId,
+                reporterCatId: catId,
+                predecessorCatId: options.a2aCallerCatId as CatId,
+                ...(options.parentInvocationId ? { parentInvocationId: options.parentInvocationId } : {}),
+              });
             } else {
-              storedErrorTools = await deps.messageStore.append(errorMessageInput);
+              storedErrorTools = await commitLifecycleResponseFromAppendInput(
+                deps.messageStore,
+                lifecycleResponseMessageId,
+                ownInvocationId,
+                terminal,
+                errorMessageInput,
+              );
             }
-            turnStoredMessageId = storedErrorTools.id;
-            recordPersistedOutputMessageId(storedErrorTools.id);
+          } else {
+            storedErrorTools = await deps.messageStore.append(errorMessageInput);
           }
+          turnStoredMessageId = storedErrorTools.id;
+          recordPersistedOutputMessageId(storedErrorTools.id);
           // #80: Clean up draft only after successful append
           if (deps.draftStore && ownInvocationId) {
             deps.draftStore.delete(userId, threadId, ownInvocationId)?.catch?.(noop);
@@ -4154,8 +4091,8 @@ export async function* routeSerial(
         contents: userFacingSystemInfoContents,
         ...(turnTriggerMessageId ? { expectedSourceMessageId: turnTriggerMessageId } : {}),
         ...(ownInvocationId ? { expectedDispatchInvocationId: ownInvocationId } : {}),
-        ...(lifecycleResponseMessageId && turnStoredMessageId === lifecycleResponseMessageId && terminalFailureContent
-          ? { terminalFailureText: terminalFailureContent }
+        ...(lifecycleResponseMessageId && turnStoredMessageId === lifecycleResponseMessageId
+          ? { responseMessageId: lifecycleResponseMessageId }
           : {}),
         ...(options.persistenceContext ? { persistenceContext: options.persistenceContext } : {}),
       });
@@ -4184,6 +4121,20 @@ export async function* routeSerial(
         } catch (err) {
           log.error({ catId: catId as string, err }, 'messageStore.append (error system msg) failed');
         }
+      }
+
+      // F117 KD-22: the response is committed; now report the timeout like a provider failure, so
+      // the Queue counts this member failed (not cancelled) and releases its slot.
+      if (stoppedByMemberTimeout(catSignal) && memberTimeout) {
+        yield {
+          type: 'error' as const,
+          catId,
+          error: cancellationDiagnostics
+            ? appendRemoteCancellationNotice(memberTimeoutErrorText(memberTimeout.diagnostics))
+            : memberTimeoutErrorText(memberTimeout.diagnostics),
+          metadata: persistedMetadata,
+          timestamp: Date.now(),
+        };
       }
 
       // F222: Frustration auto-issue — detect CLI error + cancel burst signals.
@@ -4313,13 +4264,19 @@ export async function* routeSerial(
       }
 
       if (doneMsg) {
+        if (cancellationDiagnostics) {
+          const stored = turnStoredMessageId ? await deps.messageStore.getById(turnStoredMessageId) : undefined;
+          persistedDoneContent = stored?.content ?? appendRemoteCancellationNotice(textContent);
+        }
         const isFinal = index === worklist.length - 1;
         const ownStampedDone =
           ownInvocationId && !doneMsg.invocationId ? { ...doneMsg, invocationId: ownInvocationId } : doneMsg;
         yield projectLiveTurnExecution({
           ...ownStampedDone,
+          ...(cancellationDiagnostics ? { metadata: persistedMetadata } : {}),
           ...(persistedDoneContent !== undefined ? { content: persistedDoneContent } : {}),
           ...(turnStoredMessageId ? { messageId: turnStoredMessageId } : {}),
+          ...(await storedMessageTimestamp(deps.messageStore, turnStoredMessageId)),
           ...(mentionsUser ? { mentionsUser } : {}),
           ...(turnCustodyTerminalWitnesses[0] ? { turnCustodyTerminalWitness: turnCustodyTerminalWitnesses[0] } : {}),
           ...(turnCustodyTerminalWitnesses.length > 0 ? { turnCustodyTerminalWitnesses } : {}),
@@ -4335,10 +4292,6 @@ export async function* routeSerial(
       index++;
     }
   } finally {
-    // Provider/route failure after system_info must revoke callback ownership
-    // before any adopted projections are closed or the route exits.
-    if (keepaliveTimer) clearInterval(keepaliveTimer);
-
     // Phase T stop gate is a turn-settled verdict: current output persistence,
     // operator handoff writes, and inline child receiver-boundary handoffs must all
     // have had a chance to establish machine evidence before the projection closes.

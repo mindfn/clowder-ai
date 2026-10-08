@@ -3,15 +3,14 @@ import { isAbsolute, resolve } from 'node:path';
 import {
   type Options as ClaudeSdkOptions,
   query as claudeQuery,
-  type EffortLevel,
-  type McpServerConfig,
-  type Query,
-  type SDKMessage,
+  type SDKUserMessage,
 } from '@anthropic-ai/claude-agent-sdk';
 import { type CatId, createCatId } from '@cat-cafe/shared';
 import { getCatModel } from '../../../../../config/cat-models.js';
 import { createModuleLogger } from '../../../../../infrastructure/logger.js';
+import { buildCliDiagnostics } from '../../../../../utils/cli-diagnostics.js';
 import { sanitizeCliStderr } from '../../../../../utils/sanitize-cli-stderr.js';
+import { CliRawArchive } from '../../session/CliRawArchive.js';
 import type {
   AgentClientActiveRunHandle,
   AgentFreshnessCarrierCapability,
@@ -19,69 +18,38 @@ import type {
   AgentService,
   AgentServiceOptions,
   MessageMetadata,
-  PreparedProviderRequestV1,
   ToolExecutionPolicy,
 } from '../../types.js';
-import {
-  ANTHROPIC_PROFILE_MODE_KEY,
-  buildClaudeEnvOverrides,
-  resolveClaudeEffortLevel,
-  resolveClaudeModelSelection,
-  resolveDefaultClaudeMcpServerPath,
-  SUBSCRIPTION_MODE_DENY_KEYS,
-} from './ClaudeAgentService.js';
-import { resolveClaudeMcpConfig } from './claude-mcp-config.js';
+import { resolveDefaultClaudeMcpServerPath } from './ClaudeAgentService.js';
+import { ClaudeNativeToolBoundaryClassifier } from './claude-native-tool-boundary.js';
 import { extractClaudeUsage, transformClaudeEvent } from './claude-ndjson-parser.js';
+import { sdkCompactionHooks } from './claude-sdk-compaction-hooks.js';
+import { ClaudeSdkFreshness } from './claude-sdk-input.js';
+import { prepareClaudeSdkLaunch } from './claude-sdk-launch.js';
+import { withActiveRunControlDeadline } from './claude-sdk-runtime-helpers.js';
 import { ClaudeSdkTurnInputState, createSdkUserMessage } from './claude-sdk-turn-input-state.js';
-import { appendLocalImagePathHints, collectImageAccessDirectories } from './image-cli-bridge.js';
-import { extractImagePaths } from './image-paths.js';
+import { type RawArchiveSink, sanitizeRawEvent } from './codex-audit-hooks.js';
+import { appendLocalImagePathHints } from './image-cli-bridge.js';
 import { compileL0ViaSubprocess } from './l0-compiler.js';
 
 const log = createModuleLogger('claude-sdk-agent');
 
-type ClaudeQueryPrompt = Parameters<typeof claudeQuery>[0]['prompt'];
-type ClaudeQueryFn = (params: { prompt: ClaudeQueryPrompt; options?: ClaudeSdkOptions }) => Query;
-
+export type ClaudeSdkQueryFn = (params: {
+  prompt: AsyncIterable<SDKUserMessage>;
+  options: ClaudeSdkOptions;
+}) => AsyncIterable<unknown> & { close(): void; interrupt?(): Promise<unknown> };
 interface ClaudeSdkAgentServiceOptions {
   catId?: CatId;
   model?: string;
   mcpServerPath?: string;
   l0CompilerFn?: typeof compileL0ViaSubprocess;
-  queryFn?: ClaudeQueryFn;
+  queryFn?: ClaudeSdkQueryFn;
+  rawArchive?: RawArchiveSink;
   activeRunControlTimeoutMs?: number;
 }
 
 const DEFAULT_ACTIVE_RUN_CONTROL_TIMEOUT_MS = 15_000;
 const MAX_SDK_STDERR_CHARS = 4_000;
-
-function toClaudeSdkEffortLevel(effort: string): EffortLevel {
-  if (effort === 'low' || effort === 'medium' || effort === 'high' || effort === 'xhigh' || effort === 'max') {
-    return effort;
-  }
-  throw new Error(`claude_sdk_effort_unsupported:${effort}`);
-}
-
-async function withActiveRunControlDeadline<T>(operation: Promise<T>, timeoutMs: number): Promise<T> {
-  let timer: ReturnType<typeof setTimeout> | undefined;
-  const deadline = new Promise<never>((_resolve, reject) => {
-    timer = setTimeout(() => reject(new Error('claude_sdk_active_run_control_timeout')), timeoutMs);
-    timer.unref();
-  });
-  try {
-    return await Promise.race([operation, deadline]);
-  } finally {
-    if (timer) clearTimeout(timer);
-  }
-}
-
-function toSdkEnvironment(overrides: Record<string, string | null>): Record<string, string | undefined> {
-  const env: Record<string, string | undefined> = { ...process.env };
-  for (const [key, value] of Object.entries(overrides)) {
-    if (value === null) delete env[key];
-    else env[key] = value;
-  }
-  return env;
-}
 
 /**
  * Claude's official Agent SDK carrier. Unlike `claude -p`, the SDK exposes a
@@ -90,10 +58,12 @@ function toSdkEnvironment(overrides: Record<string, string | null>): Record<stri
  */
 export class ClaudeSdkAgentService implements AgentService {
   readonly catId: CatId;
+  readonly _carrierTier = 'agent_sdk';
   private readonly model: string;
   private readonly mcpServerPath: string | undefined;
   private readonly l0CompilerFn: typeof compileL0ViaSubprocess;
-  private readonly queryFn: ClaudeQueryFn;
+  private readonly queryFn: ClaudeSdkQueryFn;
+  private readonly rawArchive: RawArchiveSink;
   private readonly activeRunControlTimeoutMs: number;
 
   constructor(options?: ClaudeSdkAgentServiceOptions) {
@@ -101,13 +71,17 @@ export class ClaudeSdkAgentService implements AgentService {
     this.model = options?.model ?? getCatModel(this.catId as string);
     this.l0CompilerFn = options?.l0CompilerFn ?? compileL0ViaSubprocess;
     this.queryFn = options?.queryFn ?? claudeQuery;
+    this.rawArchive = options?.rawArchive ?? new CliRawArchive();
     this.activeRunControlTimeoutMs = options?.activeRunControlTimeoutMs ?? DEFAULT_ACTIVE_RUN_CONTROL_TIMEOUT_MS;
     const configuredPath = options?.mcpServerPath ?? process.env.CAT_CAFE_MCP_SERVER_PATH;
-    this.mcpServerPath = configuredPath
-      ? isAbsolute(configuredPath)
-        ? configuredPath
-        : resolve(process.cwd(), configuredPath)
-      : resolveDefaultClaudeMcpServerPath();
+    this.mcpServerPath =
+      configuredPath === ''
+        ? undefined
+        : configuredPath
+          ? isAbsolute(configuredPath)
+            ? configuredPath
+            : resolve(process.cwd(), configuredPath)
+          : resolveDefaultClaudeMcpServerPath();
   }
 
   injectsL0Natively(): boolean {
@@ -126,7 +100,6 @@ export class ClaudeSdkAgentService implements AgentService {
       activeInvocationGuidance: 'supported',
     };
   }
-
   contextCapability(): import('../../types.js').AgentContextCapability {
     return {
       provider: 'anthropic',
@@ -142,103 +115,63 @@ export class ClaudeSdkAgentService implements AgentService {
   }
 
   async *invoke(prompt: string, options?: AgentServiceOptions): AsyncIterable<AgentMessage> {
-    const readOnly = options?.toolExecutionPolicy?.mode === 'read_only';
-    const imagePaths = extractImagePaths(options?.contentBlocks, options?.uploadDir);
-    const effectivePrompt = appendLocalImagePathHints(prompt, imagePaths);
-    const { effectiveModel, useEnvModelOverride } = resolveClaudeModelSelection(options?.callbackEnv, this.model);
-    const effort = resolveClaudeEffortLevel(this.catId as string, effectiveModel, options?.reasoningEffortOverride);
-    const l0 = await this.l0CompilerFn({ catId: this.catId as string, userId: options?.auditContext?.userId });
-    const nativeInstructions: PreparedProviderRequestV1['nativeInstructions'] = [
-      { body: l0, injectionDecision: 'native_l0_compiled' },
-      ...(options?.systemPrompt
-        ? [{ body: options.systemPrompt, injectionDecision: 'route_append_system_prompt' }]
-        : []),
-    ];
-    const systemPrompt = nativeInstructions.map((entry) => entry.body).join('\n\n');
-    const mcpResolution = readOnly
-      ? undefined
-      : await resolveClaudeMcpConfig({
-          callbackEnv: options?.callbackEnv,
-          workingDirectory: options?.workingDirectory,
-          mcpServerPath: this.mcpServerPath,
-        });
-    const declaredServerNames = Object.keys(mcpResolution?.servers ?? {});
-    const preparedRequest: PreparedProviderRequestV1 = Object.freeze({
-      v: 1,
-      message: Object.freeze({ body: effectivePrompt }),
-      nativeInstructions: Object.freeze(nativeInstructions.map((entry) => Object.freeze(entry))),
-      runtime: Object.freeze({
-        provider: 'anthropic',
-        carrier: 'agent_sdk',
-        ...(effectiveModel ? { model: effectiveModel } : {}),
-        protocol: 'sdk-streaming-input',
-        reasoningEffort: effort,
-        ...(readOnly ? { toolExecutionPolicy: 'read_only' as const } : {}),
-      }),
-      tools: Object.freeze({
-        finalSurface: readOnly ? ('exact' as const) : ('declared_only' as const),
-        declaredServerNames: Object.freeze(readOnly ? [] : declaredServerNames),
-        ...(readOnly ? { catCafeSchemas: Object.freeze([]) } : {}),
-      }),
-      providerNativeVisibility: 'unknown',
-    });
-    await options?.beforeProviderLaunch?.(preparedRequest);
-    if (!('body' in preparedRequest.message)) throw new Error('claude_sdk_prepared_message_not_exact');
-
-    const envOverrides = buildClaudeEnvOverrides(options?.callbackEnv);
-    if (options?.accountEnv) {
-      for (const [key, value] of Object.entries(options.accountEnv)) envOverrides[key] = value;
-    }
-    if (options?.callbackEnv?.[ANTHROPIC_PROFILE_MODE_KEY] === 'subscription') {
-      for (const key of SUBSCRIPTION_MODE_DENY_KEYS) envOverrides[key] = null;
-    }
-    if (readOnly) envOverrides.CAT_CAFE_READONLY = 'true';
     const abortController = new AbortController();
-    const abort = () => abortController.abort(options?.signal?.reason);
+    const turnInputs = new ClaudeSdkTurnInputState();
+    const initialMessageId = randomUUID();
+    let noticeId: string | null = null;
+    const freshness = new ClaudeSdkFreshness(
+      {
+        push: (text, sessionId) => (noticeId = turnInputs.pushNotice(text, sessionId)),
+        close: () => {
+          if (noticeId) turnInputs.withdrawNotice(noticeId);
+        },
+      },
+      initialMessageId,
+      options?.auditContext?.threadId ?? 'unknown',
+      options?.activeInvocationFreshness,
+      (err) => log.warn({ err, invocationId: options?.invocationId }, 'SDK freshness owner operation failed'),
+      async (notice, uuid) => {
+        if (options?.invocationId)
+          await this.rawArchive.append(options.invocationId, {
+            type: 'sdk_input',
+            kind: 'freshness_notice',
+            uuid,
+            noticeId: notice.noticeId,
+            expectedInputUuid: initialMessageId,
+            contentFree: true,
+          });
+      },
+    );
+    const abort = () => {
+      abortController.abort(options?.signal?.reason);
+      freshness.cancel();
+      turnInputs.close();
+    };
     options?.signal?.addEventListener('abort', abort, { once: true });
     if (options?.signal?.aborted) abort();
 
-    const turnInputs = new ClaudeSdkTurnInputState();
     let stderrBuffer = '';
     let activeSessionId = options?.sessionId ?? '';
-    const initialMessageId = randomUUID();
-    const sdkOptions: ClaudeSdkOptions = {
-      abortController,
-      ...(options?.workingDirectory ? { cwd: options.workingDirectory } : {}),
-      env: toSdkEnvironment(envOverrides),
-      ...(imagePaths.length > 0 ? { additionalDirectories: collectImageAccessDirectories(imagePaths) } : {}),
-      ...(useEnvModelOverride || !effectiveModel ? {} : { model: effectiveModel }),
-      effort: toClaudeSdkEffortLevel(effort),
-      systemPrompt,
-      includePartialMessages: true,
-      permissionMode: readOnly ? 'plan' : 'bypassPermissions',
-      ...(readOnly ? { tools: [] } : {}),
-      ...(!readOnly ? { allowDangerouslySkipPermissions: true } : {}),
-      settingSources:
-        options?.callbackEnv?.[ANTHROPIC_PROFILE_MODE_KEY] === 'api_key'
-          ? ['project', 'local']
-          : ['user', 'project', 'local'],
-      ...(options?.sessionId ? { resume: options.sessionId } : {}),
-      ...(readOnly ? { mcpServers: {}, strictMcpConfig: true } : {}),
-      ...(!readOnly && mcpResolution
-        ? { mcpServers: mcpResolution.servers as Record<string, McpServerConfig>, strictMcpConfig: true }
-        : {}),
-      stderr: (data) => {
-        // Sanitize before bounding the retained window. Truncating raw stderr
-        // first can cut a provider-token prefix at the boundary and leave the
-        // secret suffix looking harmless to the later sanitizer.
-        stderrBuffer = sanitizeCliStderr(`${stderrBuffer}${data}`).slice(-MAX_SDK_STDERR_CHARS);
-      },
-    };
-
-    const metadata: MessageMetadata = { provider: 'anthropic', model: effectiveModel };
+    const metadata: MessageMetadata = { provider: 'anthropic', model: this.model };
     const streamState = {
       currentMessageId: undefined as string | undefined,
       partialTextMessageIds: new Set<string>(),
       lastTurnInputTokens: undefined as number | undefined,
       thinkingBuffer: '',
     };
-    let query: Query | undefined;
+    const boundaries = new ClaudeNativeToolBoundaryClassifier();
+    let query: ReturnType<ClaudeSdkQueryFn> | undefined;
+    let terminal = false;
+    let failed = false;
+    let lastTransientError: string | undefined;
+    let archiveWrites = Promise.resolve();
+    const archive = (event: unknown) => {
+      if (!options?.invocationId) return;
+      const invocationId = options.invocationId;
+      archiveWrites = archiveWrites
+        .then(() => this.rawArchive.append(invocationId, sanitizeRawEvent(event)))
+        .catch((err) => log.warn({ err }, 'SDK raw archive failed'));
+    };
     let releaseDispatch: (() => void) | undefined;
     let dispatcherRegistered = false;
 
@@ -266,10 +199,14 @@ export class ClaudeSdkAgentService implements AgentService {
           turnInputs.beginDispatch();
           try {
             if (dispatchOptions.force) {
+              if (!query.interrupt) return { accepted: false, reason: 'provider_rejected' };
               await withActiveRunControlDeadline(query.interrupt(), this.activeRunControlTimeoutMs);
             }
-            const accepted = turnInputs.push(createSdkUserMessage(text, activeSessionId));
-            return accepted ? { accepted: true, handle } : { accepted: false, reason: 'active_run_closed' };
+            const message = createSdkUserMessage(text, activeSessionId);
+            if (!turnInputs.push(message)) {
+              return { accepted: false, reason: 'active_run_closed' };
+            }
+            return { accepted: true, handle };
           } catch (err) {
             log.warn({ err, invocationId }, 'Claude SDK active-run dispatch rejected');
             return { accepted: false, reason: 'provider_rejected' };
@@ -282,17 +219,66 @@ export class ClaudeSdkAgentService implements AgentService {
     };
 
     try {
+      const prepared = await prepareClaudeSdkLaunch({
+        prompt,
+        model: this.model,
+        catId: this.catId,
+        mcpServerPath: this.mcpServerPath,
+        l0CompilerFn: this.l0CompilerFn,
+        abortController,
+        options,
+      });
+      if (abortController.signal.aborted) {
+        yield { type: 'done', catId: this.catId, metadata, timestamp: Date.now() };
+        return;
+      }
+      metadata.model = prepared.model;
+      const sdkOptions = prepared.sdkOptions;
+      if (options?.claudeCompactionHooks) sdkOptions.hooks = sdkCompactionHooks(options.claudeCompactionHooks, log);
+      sdkOptions.stderr = (data) => {
+        stderrBuffer = sanitizeCliStderr(`${stderrBuffer}${data}`).slice(-MAX_SDK_STDERR_CHARS);
+      };
       query = this.queryFn({ prompt: turnInputs.input, options: sdkOptions });
-      turnInputs.push(createSdkUserMessage(preparedRequest.message.body, activeSessionId, initialMessageId));
-      for await (const event of query as AsyncIterable<SDKMessage>) {
-        const raw = event as unknown as Record<string, unknown>;
+      turnInputs.push(createSdkUserMessage(prepared.prompt, activeSessionId, initialMessageId));
+      archive({ type: 'sdk_input', kind: 'primary', uuid: initialMessageId });
+      freshness.start();
+      for await (const event of query) {
+        if (abortController.signal.aborted) break;
+        if (typeof event !== 'object' || event === null) continue;
+        const raw = event as Record<string, unknown>;
+        // The archive is ordered best-effort diagnostics, not the receipt
+        // authority. Disk I/O must not delay cancellation or member output.
+        archive(event);
         const isResultTerminal = raw.type === 'result';
         if (typeof raw.session_id === 'string' && raw.session_id) {
           activeSessionId = raw.session_id;
           metadata.sessionId = raw.session_id;
+          freshness.setSession(raw.session_id);
           registerDispatcher();
         }
         if (isResultTerminal) {
+          terminal = true;
+          failed ||= raw.subtype !== 'success' || raw.is_error === true;
+          const ids = Array.isArray(raw.user_message_uuids) ? raw.user_message_uuids : [];
+          const origin = raw.origin as { kind?: string } | undefined;
+          if (
+            ids.includes(initialMessageId) ||
+            raw.user_message_uuid === initialMessageId ||
+            (ids.length === 0 && !raw.user_message_uuid && (!origin?.kind || origin.kind === 'human'))
+          ) {
+            const outcome = await freshness.settle(raw);
+            if (outcome === 'missed' || outcome === 'unconfirmed')
+              yield {
+                type: 'system_info',
+                catId: this.catId,
+                content: JSON.stringify({
+                  type: `claude_sdk_notice_${outcome}`,
+                  responsibility: 'freshness_owner',
+                  terminalReason: raw.terminal_reason ?? 'unknown',
+                }),
+                timestamp: Date.now(),
+              };
+          }
           // The SDK may coalesce several queued sends into one provider turn.
           // Its result echoes every consumed user-message uuid, so settle the
           // accepted messages by identity instead of assuming one result per
@@ -300,16 +286,32 @@ export class ClaudeSdkAgentService implements AgentService {
           // result on the clean path; a crash may reverse those two, and the
           // identity join remains correct in either order. queued_turn_count
           // provides a provider-authored backstop when a result lacks an input
-          // identity (including an interrupted-turn compatibility edge).
+          // identity (including an interrupted-turn compatibility edge). A turn
+          // the provider started itself, such as a killed task's notification,
+          // settles none of our inputs.
           turnInputs.settleResult(raw);
           metadata.usage = extractClaudeUsage(raw);
           if (streamState.lastTurnInputTokens != null && metadata.usage) {
             metadata.usage.lastTurnInputTokens = streamState.lastTurnInputTokens;
           }
         }
+        for (const surface of boundaries.observe(event)) await freshness.poll(surface);
         const transformed = transformClaudeEvent(event, this.catId, streamState);
         if (transformed) {
           for (const message of Array.isArray(transformed) ? transformed : [transformed]) {
+            if (message.type === 'error') {
+              if (message.errorDisposition === 'transient') {
+                lastTransientError = message.error;
+                continue;
+              }
+              failed = true;
+              metadata.cliDiagnostics = buildCliDiagnostics({
+                rawText: stderrBuffer,
+                structuredErrorText: message.error,
+                stderrEmpty: !stderrBuffer,
+                debugRef: { command: 'claude-agent-sdk', signal: null, invocationId: options?.invocationId },
+              });
+            }
             yield { ...message, metadata };
           }
         }
@@ -319,22 +321,46 @@ export class ClaudeSdkAgentService implements AgentService {
         // performs AsyncIteratorClose (Query.return), terminating the SDK query.
         if (isResultTerminal && !turnInputs.isAccepting) break;
       }
+      if ((!terminal || turnInputs.isAccepting) && !abortController.signal.aborted)
+        throw new Error('claude_sdk_stream_ended_without_result');
     } catch (err) {
+      failed = true;
       if (!abortController.signal.aborted) {
-        const stderr = sanitizeCliStderr(stderrBuffer).trim();
+        const error = sanitizeCliStderr(
+          stderrBuffer.trim() || lastTransientError || (err instanceof Error ? err.message : String(err)),
+        );
+        metadata.cliDiagnostics = buildCliDiagnostics({
+          rawText: stderrBuffer || error,
+          stderrEmpty: !stderrBuffer,
+          debugRef: { command: 'claude-agent-sdk', signal: null, invocationId: options?.invocationId },
+        });
         yield {
           type: 'error',
           catId: this.catId,
-          error: stderr || (err instanceof Error ? err.message : String(err)),
+          error,
           metadata,
           timestamp: Date.now(),
         };
       }
     } finally {
       turnInputs.close();
+      try {
+        query?.close();
+      } catch (err) {
+        log.warn({ err }, 'SDK query cleanup failed');
+      }
       releaseDispatch?.();
+      abortController.abort();
       options?.signal?.removeEventListener('abort', abort);
+      await archiveWrites;
+      await freshness.close(failed).catch((err) => log.warn({ err }, 'SDK freshness terminal bookkeeping failed'));
     }
-    yield { type: 'done', catId: this.catId, metadata, timestamp: Date.now() };
+    yield {
+      type: 'done',
+      catId: this.catId,
+      metadata,
+      ...(failed && !options?.signal?.aborted ? { errorCode: 'claude_sdk_failed' } : {}),
+      timestamp: Date.now(),
+    };
   }
 }

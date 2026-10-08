@@ -32,14 +32,14 @@ import { buildMessageMap, formatMessage } from '../../context/ContextAssembler.j
 import { BRIEFING_TIMEZONE } from '../../duty-briefing/constants.js';
 import { formatPromptTime } from '../../format-time.js';
 import type { DegradationResult } from '../../orchestration/DegradationPolicy.js';
-import { mapToPresentation } from '../../session/context-presentation.js';
+import { mapToPresentation } from '../../session/context/context-presentation.js';
 import {
   type ContextModeProjection,
   type ContextSurfaceProjection,
   countPresentedTiers,
   projectContextMode,
   withSurfaceShape,
-} from '../../session/context-surface-projection.js';
+} from '../../session/context/context-surface-projection.js';
 import { cursorFor } from '../../stores/cursor.js';
 import { messageFrom } from '../../stores/message-from.js';
 import { DeliveryCursorStore } from '../../stores/ports/DeliveryCursorStore.js';
@@ -252,11 +252,19 @@ export function mergePersistedPromptMessages(
   return [...persistedPromptMessages, exactTrigger];
 }
 
+/** Actual-send routing refused one of a route's requested targets. */
+export interface RoutingDispatchRejection {
+  readonly catId: string;
+  /** When routing will next accept an automatic attempt at this target, if routing names a time. */
+  readonly automaticRetryAt?: number;
+}
+
 /** Common options for both strategies */
 export interface RouteOptions {
   /** Execution-owned fan-out policy. Queue dequeue uses parallel fan-out for one source
    *  with multiple targets; ordinary routes retain their intent-derived default. */
   targetDispatchMode?: 'serial' | 'parallel' | undefined;
+  liveCompanion?: import('../../types.js').AgentServiceOptions['liveCompanion'];
   /** Route-owned intent plus whether the user explicitly selected it. */
   routeIntent?: AgentRouteIntent;
   /** F293: deterministic scope used to resolve sparse routing cognition. */
@@ -267,6 +275,8 @@ export interface RouteOptions {
   humanDispositionInvocationOrigin?: HumanDispositionInvocationOrigin;
   /** Canonical Queue source class for admission/retry policy. */
   routingQueueSource?: 'user' | 'connector' | 'agent' | 'system';
+  /** Immutable Host domain scope forwarded to children; it limits execution, never grants authority. */
+  executionScope?: 'collective-participation' | 'collective-work';
   /** F167 Phase T: exact protocol wake carrier for this route, never inferred from response prose. */
   turnCustodyWake?: import('../../../../ball-custody/TurnCustodyProjectionService.js').TurnCustodyWakeProvenance;
   /** Per-cat carrier resolver for multi-holder routes. Takes precedence over turnCustodyWake. */
@@ -281,6 +291,8 @@ export interface RouteOptions {
    *  canceling one concurrent cat does not abort its siblings (并发取消误伤根因修复).
    *  Absent → fall back to the shared `signal` (route-serial / legacy callers). */
   signalForCat?: ((catId: CatId) => AbortSignal | undefined) | undefined;
+  /** F117 KD-22 (J4): Queue-owned stop for one member whose output timeout fired. Absent → no timeout. */
+  stopMember?: import('../invocation/member-output-timeout.js').MemberTimeoutStop | undefined;
   promptTags?: readonly string[] | undefined;
   /** Trusted server-owned Cue seeds supplied by connector/workflow ingress. */
   memoryCueOpportunitySeeds?: readonly MemoryCueOpportunitySeed[] | undefined;
@@ -365,6 +377,12 @@ export interface RouteOptions {
   persistenceContext?: PersistenceContext;
   /** F167 Phase S: durable outcome CAS run after model completion and before every route-side side effect. */
   beforeOutputCommit?: ((catId: CatId) => Promise<boolean>) | undefined;
+  /**
+   * F117 soak: called once for each requested target that actual-send routing refused (A2A follow-up
+   * targets are not requested targets). A Queue attempt keeps the exact refusal, so its entry waits
+   * for that target's retry time even when the entry named no target.
+   */
+  onRoutingDispatchRejected?: ((rejection: RoutingDispatchRejection) => void) | undefined;
   /** F11: Mode-specific system prompt section (appended after identity prompt) */
   modeSystemPrompt?: string | undefined;
   /** F11: Per-cat mode prompt override (takes precedence over modeSystemPrompt) */
@@ -2684,4 +2702,22 @@ async function assembleSmartWindowContext(
         }
       : {}),
   };
+}
+
+/**
+ * F309: a publication names a message by its stored time, which the live bubble cannot know on its
+ * own clock. Read it back with the stored id; an unreadable time is left unknown, never guessed.
+ */
+export async function storedMessageTimestamp(
+  store: Pick<IMessageStore, 'getById'>,
+  messageId: string | undefined,
+): Promise<{ messageTimestamp: number } | Record<string, never>> {
+  if (!messageId) return {};
+  try {
+    const stored = await store.getById(messageId);
+    return stored?.id === messageId ? { messageTimestamp: stored.timestamp } : {};
+  } catch (err) {
+    log.warn({ err, messageId }, 'stored message time unreadable; done leaves it unknown');
+    return {};
+  }
 }

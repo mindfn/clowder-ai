@@ -7,10 +7,10 @@
  * with the answer — the notice broker owns that.
  */
 
-import type { MessageFrom } from '@cat-cafe/shared';
+import type { MessageFrom, PublishedFreshnessAnnotation } from '@cat-cafe/shared';
 import { getSourceDisplayName } from '../context/ContextAssembler.js';
 import { messageFrom } from '../stores/message-from.js';
-import type { ThreadMessageReadOptions } from '../stores/ports/MessageStore.js';
+import type { StoredMessage, ThreadMessageReadOptions } from '../stores/ports/MessageStore.js';
 
 export interface FreshnessReadableMessage {
   id: string;
@@ -27,6 +27,10 @@ export interface FreshnessReadableMessage {
   userId?: string;
   contentBlocks?: readonly unknown[];
   extra?: {
+    liveCompanion?: NonNullable<StoredMessage['extra']>['liveCompanion'];
+    freshness?:
+      | PublishedFreshnessAnnotation
+      | { kind: 'closure_replacement'; closureId: string; targetCatId: string; originTriggerMessageId?: string | null };
     systemKind?: string;
     rich?: { blocks?: readonly unknown[] };
     stream?: { parallelBatchId?: string };
