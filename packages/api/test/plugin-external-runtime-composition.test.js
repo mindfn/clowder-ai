@@ -236,11 +236,14 @@ test('production handshake policy covers verified external source readiness with
 test('production composition constructs and recovers K-2D but exposes no startup activation', async () => {
   const source = readFileSync(new URL('../src/index.ts', import.meta.url), 'utf8');
 
+  const cloudBinding = source.match(/const\s+([A-Za-z_$][\w$]*)\s*=\s*createCloudConversationComposition\(\{/);
+  assert.ok(cloudBinding, 'production must own one cloud conversation composition');
+  const runtimeFactory = `${cloudBinding[1]}.createRuntime`;
   const routeBootstrapIndex = source.indexOf('await ensureOfficialPluginSignalRoutes({');
-  const runtimeCompositionIndex = source.indexOf('createDormantPluginRuntimeComposition({');
+  const runtimeCompositionIndex = source.indexOf(`${runtimeFactory}({`);
   const managerCompositionIndex = source.indexOf('createPluginManagerRuntimeComposition({');
 
-  assert.match(source, /createDormantPluginRuntimeComposition/);
+  assert.ok(runtimeCompositionIndex >= 0, 'runtime must be created by the shared cloud composition');
   const compositionSource = source.slice(runtimeCompositionIndex, managerCompositionIndex);
   for (const seam of [
     /messageStore,/,
@@ -257,7 +260,9 @@ test('production composition constructs and recovers K-2D but exposes no startup
     routeBootstrapIndex < runtimeCompositionIndex,
     'Host signal routes must exist before the external runtime can accept owner activation',
   );
-  const runtimeBinding = source.match(/const\s+([A-Za-z_$][\w$]*)\s*=\s*createDormantPluginRuntimeComposition\(\{/);
+  const runtimeBinding = source.match(
+    new RegExp(`const\\s+([A-Za-z_$][\\w$]*)\\s*=\\s*${cloudBinding[1]}\\.createRuntime\\(\\{`),
+  );
   assert.ok(runtimeBinding, 'production must bind the dormant plugin runtime composition');
   const runtimeName = runtimeBinding[1];
   const recoveryCall = source.match(
