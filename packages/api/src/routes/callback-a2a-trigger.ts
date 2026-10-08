@@ -33,6 +33,7 @@ import type {
 } from '../domains/cats/services/stores/ports/MessageStore.js';
 import {
   commitLifecycleResponseFromAppendInput,
+  commitLifecycleResponseFromTerminalPatch,
   lifecycleResponseTerminalPatchFromAppendInput,
   settleLifecycleResponseInputs,
 } from '../domains/cats/services/stores/ports/MessageStore.js';
@@ -459,9 +460,30 @@ export async function commitFailedResponseAndEnqueueA2ACaller(
   },
 ): Promise<StoredMessage> {
   if (!deps.messageStore) throw new Error('failed response A2A report requires MessageStore');
+  const current = await deps.messageStore.getById(opts.responseMessageId);
+  if (!current) throw new Error(`lifecycle response not found: ${opts.responseMessageId}`);
+  return commitFailedResponsePatchAndEnqueueA2ACaller(deps, {
+    ...opts,
+    terminalPatch: lifecycleResponseTerminalPatchFromAppendInput(
+      current,
+      opts.invocationId,
+      opts.terminal,
+      opts.message,
+    ),
+  });
+}
+
+/** Normal commits and recovery share this transaction; recovery supplies its exact durable patch. */
+async function commitFailedResponsePatchAndEnqueueA2ACaller(
+  deps: A2ATriggerDeps,
+  opts: Omit<Parameters<typeof commitFailedResponseAndEnqueueA2ACaller>[1], 'terminal' | 'message'> & {
+    terminalPatch: LifecycleResponseTerminalPatch;
+  },
+): Promise<StoredMessage> {
+  if (!deps.messageStore) throw new Error('failed response A2A report requires MessageStore');
   const routingPreflight = await preflightA2ATargets(deps, {
     targetCats: [opts.predecessorCatId],
-    content: opts.message.content,
+    content: opts.terminalPatch.content,
     userId: opts.userId,
   });
   if (!routingPreflight.acceptedTargetCats.includes(opts.predecessorCatId)) {
@@ -470,35 +492,21 @@ export async function commitFailedResponseAndEnqueueA2ACaller(
       receiptCatId: opts.reporterCatId,
       threadId: opts.threadId,
     });
-    return commitLifecycleResponseFromAppendInput(
-      deps.messageStore,
-      opts.responseMessageId,
-      opts.invocationId,
-      opts.terminal,
-      opts.message,
-    );
+    return commitLifecycleResponseFromTerminalPatch(deps.messageStore, opts.responseMessageId, opts.terminalPatch);
   }
   if (!deps.invocationQueue) throw new Error('failed response A2A report requires InvocationQueue');
 
-  const current = await deps.messageStore.getById(opts.responseMessageId);
-  if (!current) throw new Error(`lifecycle response not found: ${opts.responseMessageId}`);
-  const terminalPatch = lifecycleResponseTerminalPatchFromAppendInput(
-    current,
-    opts.invocationId,
-    opts.terminal,
-    opts.message,
-  );
   const admission = await deps.invocationQueue.terminalizeResponseAndEnqueueDurable(
     deps.messageStore,
     opts.responseMessageId,
-    terminalPatch,
+    opts.terminalPatch,
     {
       from: { kind: 'agent', catId: opts.reporterCatId },
       threadId: opts.threadId,
       userId: opts.userId,
       kind: 'message_wake',
       ownerAuthProvenance: normalizeOwnerAuthProvenance(opts.ownerAuthProvenance),
-      content: opts.message.content,
+      content: opts.terminalPatch.content,
       messageId: opts.responseMessageId,
       sourceId: opts.responseMessageId,
       sourceCategory: 'a2a_failure',
@@ -518,7 +526,7 @@ export async function commitFailedResponseAndEnqueueA2ACaller(
 
   await enqueueA2ATargets(deps, {
     targetCats: [opts.predecessorCatId],
-    content: opts.message.content,
+    content: opts.terminalPatch.content,
     userId: opts.userId,
     ownerAuthProvenance: opts.ownerAuthProvenance,
     threadId: opts.threadId,
@@ -536,6 +544,72 @@ export async function commitFailedResponseAndEnqueueA2ACaller(
     preAdmittedReplayed: admission.deduped,
   });
   return (await deps.messageStore.getById(stored.id)) ?? stored;
+}
+
+/** Recover the same failed-result transaction using the response's exact admitted source. */
+export async function commitRecoveredFailedResponse(
+  deps: A2ATriggerDeps,
+  response: StoredMessage,
+  patch: LifecycleResponseTerminalPatch,
+): Promise<StoredMessage> {
+  const store = deps.messageStore;
+  const lifecycle = response.lifecycle;
+  if (
+    !store ||
+    lifecycle?.kind !== 'response' ||
+    patch.status !== 'failed' ||
+    patch.invocationId !== lifecycle.invocationId ||
+    response.from?.kind !== 'agent' ||
+    response.from.catId !== lifecycle.targetId
+  ) {
+    throw new Error('failed recovery response identity mismatch');
+  }
+  const commitOnly = () => commitLifecycleResponseFromTerminalPatch(store, response.id, patch);
+  const receipt = response.extra?.a2aFailureReturn;
+  const triggerId = response.replyTo;
+  if (receipt && receipt.triggerMessageId !== triggerId) throw new Error('failed recovery source identity mismatch');
+  if (!triggerId) return commitOnly();
+  const trigger = await store.getById(triggerId);
+  if (
+    !trigger ||
+    trigger.userId !== response.userId ||
+    trigger.threadId !== response.threadId ||
+    !lifecycle.inputMessageIds.includes(triggerId) ||
+    response.replyTo !== triggerId
+  ) {
+    throw new Error('failed recovery source identity mismatch');
+  }
+  if (trigger.from?.kind !== 'agent') {
+    if (receipt) throw new Error('failed recovery caller identity mismatch');
+    return commitOnly();
+  }
+  if (!receipt) throw new Error('failed recovery requires durable A2A admission provenance');
+  if (receipt.callerCatId !== trigger.from.catId) throw new Error('failed recovery caller identity mismatch');
+  const refs = trigger.lifecycle?.dispatchRefs?.filter((r) => r.targetId === lifecycle.targetId) ?? [];
+  if (refs.length !== 1 || refs[0]?.statusMessageId !== response.id) {
+    throw new Error('failed recovery source dispatch mismatch');
+  }
+  // The original Queue admission classification survives retirement and restart; no body/status inference.
+  if (
+    receipt.isFailureReport ||
+    trigger.from.catId === response.from.catId ||
+    trigger.deliveryStatus === 'canceled' ||
+    trigger.visibility === 'whisper' ||
+    trigger.recall ||
+    trigger._tombstone
+  )
+    return commitOnly();
+  return commitFailedResponsePatchAndEnqueueA2ACaller(deps, {
+    responseMessageId: response.id,
+    invocationId: lifecycle.invocationId,
+    terminalPatch: patch,
+    userId: response.userId,
+    threadId: response.threadId,
+    reporterCatId: response.from.catId as CatId,
+    predecessorCatId: trigger.from.catId as CatId,
+    ownerAuthProvenance: receipt.ownerAuthProvenance,
+    parentInvocationId: receipt.parentInvocationId,
+  });
 }
 
 /**

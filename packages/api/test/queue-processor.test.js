@@ -936,6 +936,40 @@ describe('QueueProcessor over the source-row pending Queue', () => {
     assert.deepEqual(pendingTurnIds(turns), []);
   });
 
+  it('a thrown admitted agent route preserves strict caller return provenance and wakes only that caller', async () => {
+    const turns = new InMemoryTurnExecutionStore();
+    let responseMessageId;
+    const harness = createHarness({
+      turnExecutionStore: turns,
+      routeExecution: async function* (...args) {
+        responseMessageId = (await startLifecycle(args, 'agent-thrown')).responseMessageId;
+        await endChildTurn(turns, args, 'agent-thrown', { status: 'failed', terminalReason: 'provider_error' });
+        throw new Error('admitted agent route failed');
+      },
+    });
+    // The callback remains queued while its caller is busy; no test provider runs it.
+    harness.invocationTracker.start('thread-1', 'codex', 'user-1', ['codex'], 'caller-busy');
+    const admitted = await admitMessage(harness, { from: { kind: 'agent', catId: 'codex' } });
+    await harness.processor.requestDrain('thread-1');
+    await waitFor(
+      () => responseMessageId && harness.messageStore.getById(responseMessageId)?.lifecycle.status === 'failed',
+    );
+    const response = harness.messageStore.getById(responseMessageId);
+    assert.deepEqual(response.extra.a2aFailureReturn, {
+      triggerMessageId: admitted.message.id,
+      callerCatId: 'codex',
+      ownerAuthProvenance: 'strict',
+      parentInvocationId: response.extra.stream.invocationId,
+      isFailureReport: false,
+    });
+    const rows = await harness.queue.listAllDurable('thread-1');
+    const wake = rows.find((row) => row.sourceCategory === 'a2a_failure');
+    assert.ok(wake);
+    assert.deepEqual(wake.targets, ['codex']);
+    assert.equal(wake.payload.messageId, response.id);
+    await waitFor(() => pendingTurnIds(turns).length === 0);
+  });
+
   it('keeps an exact target set queued when one sibling is busy', async () => {
     const harness = createHarness();
     bindActiveRun(harness, { catId: 'opus', invocationId: 'turn-busy-opus' });

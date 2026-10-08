@@ -24,7 +24,7 @@ describe('formatVisibleSystemInfo — a2a_multi_target_serialized', () => {
   };
 
   it('renders readable text instead of raw JSON', () => {
-    const visible = formatVisibleSystemInfo(payload, (c) => c, 'opus');
+    const visible = formatVisibleSystemInfo(payload, (c) => c);
     expect(visible, 'null here means the UI prints the raw payload').not.toBeNull();
     expect(visible?.content).not.toContain('a2a_multi_target_serialized');
     expect(visible?.content).toContain('串行');
@@ -38,7 +38,7 @@ describe('formatVisibleSystemInfo — a2a_multi_target_serialized', () => {
       mode: payload.mode,
       order: payload.order,
     };
-    const visible = formatVisibleSystemInfo(withoutMessage, (c) => (c === 'codex' ? '缅因猫' : '暹罗猫'), 'opus');
+    const visible = formatVisibleSystemInfo(withoutMessage, (c) => (c === 'codex' ? '缅因猫' : '暹罗猫'));
     expect(visible?.content).toContain('第 1 棒 缅因猫');
     expect(visible?.content).toContain('第 2 棒 暹罗猫');
     expect(visible?.content).toContain('cat_cafe_multi_mention');

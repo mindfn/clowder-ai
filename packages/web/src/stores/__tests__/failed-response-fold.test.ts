@@ -1,9 +1,10 @@
 import { describe, expect, it } from 'vitest';
+import { chatMessagesToTranscriptEvents } from '@/lib/story-player/thread-message-events';
 import type { ChatMessage } from '../chat-types';
-import { foldFailedResponseRetries } from '../failed-response-fold';
+import { getOrderedMessageTimeline } from '../message-timeline';
 
-describe('failed response retries fold into the final failure', () => {
-  it('folds an exact failed frontier chain into the final source-bound response bubble', () => {
+describe('independent failed responses retain their durable identities', () => {
+  it('keeps chronological private-input failures separate in current/history and replay', () => {
     const source: ChatMessage = {
       id: 'source-1',
       type: 'user',
@@ -65,16 +66,22 @@ describe('failed response retries fold into the final failure', () => {
       },
     };
 
-    const messages = foldFailedResponseRetries([source, auxiliaryFailure, finalFailure]);
+    const messages = getOrderedMessageTimeline([source, auxiliaryFailure, finalFailure]);
 
-    expect(messages).toHaveLength(2);
-    expect(messages[1]).toMatchObject({
-      id: finalFailure.id,
-      replyTo: source.id,
-      content: 'Error: first attempt\n\nError: final attempt',
-      lifecycle: finalFailure.lifecycle,
-      projectionSourceMessageIds: [auxiliaryFailure.id, finalFailure.id],
-    });
+    expect(messages.map((message) => message.id)).toEqual([source.id, auxiliaryFailure.id, finalFailure.id]);
+    expect(messages.map((message) => message.content)).toEqual([
+      source.content,
+      auxiliaryFailure.content,
+      finalFailure.content,
+    ]);
+    expect(messages[1]).toBe(auxiliaryFailure);
+    expect(messages[2]).toBe(finalFailure);
+    const replay = chatMessagesToTranscriptEvents([source, auxiliaryFailure, finalFailure], 'thread-1');
+    expect(replay.filter((event) => event.event.content).map((event) => event.event.content)).toEqual([
+      source.content,
+      auxiliaryFailure.content,
+      finalFailure.content,
+    ]);
   });
 
   it('does not fold a prior failed response without the exact final source/ref/frontier chain', () => {
@@ -111,6 +118,6 @@ describe('failed response retries fold into the final failure', () => {
       } as ChatMessage['lifecycle'],
     };
 
-    expect(foldFailedResponseRetries([source, first, second])).toHaveLength(3);
+    expect(getOrderedMessageTimeline([source, first, second])).toHaveLength(3);
   });
 });

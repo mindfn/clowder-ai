@@ -224,11 +224,8 @@ function ChatMessageContent({
   const isConnector = message.type === 'connector';
   const cloudBindingRecovery = isUser ? projectCloudBindingRecovery(message, threadMessages) : undefined;
   const projectedSystemContent = message.extra?.systemInfo
-    ? (formatVisibleSystemInfo(
-        message.extra.systemInfo.payload,
-        (catId) => resolveCatDisplayName(catId, getCatById),
-        message.extra.systemInfo.fallbackCatId,
-      )?.content ?? message.content)
+    ? (formatVisibleSystemInfo(message.extra.systemInfo.payload, (catId) => resolveCatDisplayName(catId, getCatById))
+        ?.content ?? message.content)
     : message.content;
 
   const catData = message.catId ? getCatById(message.catId) : undefined;

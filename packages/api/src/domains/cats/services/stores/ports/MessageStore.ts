@@ -259,6 +259,14 @@ export interface StoredMessage {
   metadata?: MessageMetadata;
   /** F022+F052+F098-C1+F153-F: Extensible extra data (rich blocks, stream metadata, cross-post origin, explicit targets, tracing pointers) */
   extra?: {
+    /** Server-written admission provenance for the original response's failure return, not another owner. */
+    a2aFailureReturn?: {
+      triggerMessageId: string;
+      callerCatId: string;
+      ownerAuthProvenance: 'strict' | 'compatibility_fallback' | 'unknown';
+      parentInvocationId: string;
+      isFailureReport: boolean;
+    };
     /** Immutable Live ingress receipt, not executable media or an ownership record. */
     liveAdmission?: { sessionId: string; targetId: string };
     /** F309: a confirmed human request; technical coordinates resolve through the request ref. */
@@ -1380,6 +1388,15 @@ export async function commitLifecycleResponseFromAppendInput(
   const current = await store.getById(responseMessageId);
   if (!current) throw new Error(`lifecycle response not found: ${responseMessageId}`);
   const terminalPatch = lifecycleResponseTerminalPatchFromAppendInput(current, invocationId, terminal, message);
+  return commitLifecycleResponseFromTerminalPatch(store, responseMessageId, terminalPatch);
+}
+
+/** Commit or replay an exact terminal snapshot without append/draft normalization. */
+export async function commitLifecycleResponseFromTerminalPatch(
+  store: IMessageStore,
+  responseMessageId: string,
+  terminalPatch: LifecycleResponseTerminalPatch,
+): Promise<StoredMessage> {
   const result = await store.commitLifecycleResponseTerminal(responseMessageId, terminalPatch);
   if (result.kind !== 'applied' && result.kind !== 'replayed') {
     throw new Error(

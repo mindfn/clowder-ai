@@ -62,6 +62,7 @@ import {
 } from '../utils/queue-enrichment.js';
 import { resolveUserId } from '../utils/request-identity.js';
 import { type LiveExecutionCandidate, registerActiveExecutionRoutes } from './active-execution-routes.js';
+import { commitRecoveredFailedResponse } from './callback-a2a-trigger.js';
 import { getMultiMentionOrchestrator } from './callback-multi-mention-routes.js';
 import { resolveQueueAuthorIntentByCatId } from './message-disposition-admission.js';
 import { nativeControlReceiptHooks, nativeQueueControlCommand } from './native-control-receipts.js';
@@ -520,6 +521,18 @@ export const queueRoutes: FastifyPluginAsync<QueueRoutesOptions> = async (app, o
           ...(opts.draftStore ? { draftStore: opts.draftStore } : {}),
           ...(opts.turnExecutionStore ? { turnStore: opts.turnExecutionStore } : {}),
           ...(opts.invocationRecordStore ? { invocationRecords: opts.invocationRecordStore } : {}),
+          commitFailedResponse: (response, patch) =>
+            commitRecoveredFailedResponse(
+              {
+                socketManager,
+                messageStore,
+                invocationQueue,
+                queueProcessor,
+                log: app.log,
+              },
+              response,
+              patch,
+            ),
           emit: (userId, message) => emitLifecycleMessageUpdated(socketManager, userId, message),
         },
         {

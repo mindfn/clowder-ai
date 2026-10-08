@@ -25,6 +25,7 @@ import {
 import {
   commitCompletedResponseAndEnqueueA2ATargets,
   commitFailedResponseAndEnqueueA2ACaller,
+  commitRecoveredFailedResponse,
 } from '../../../../../routes/callback-a2a-trigger.js';
 import { emitQueueUpdated, isPublicQueueEntry } from '../../../../../utils/queue-enrichment.js';
 import type { ActionSuccessorLeaseStore } from '../../../../ball-custody/ActionSuccessorLeaseStore.js';
@@ -2424,6 +2425,18 @@ export class QueueProcessor {
             messageStore: this.deps.messageStore,
             ...(this.deps.draftStore ? { draftStore: this.deps.draftStore } : {}),
             ...(this.deps.turnExecutionStore ? { turnStore: this.deps.turnExecutionStore } : {}),
+            commitFailedResponse: (response, patch) =>
+              commitRecoveredFailedResponse(
+                {
+                  socketManager: this.deps.socketManager,
+                  queueProcessor: this,
+                  messageStore: this.deps.messageStore,
+                  invocationQueue: this.deps.queue,
+                  log: this.deps.log,
+                },
+                response,
+                patch,
+              ),
             emit: (recipient, message) => this.emitLifecycleMessageUpdated(recipient, message),
           },
           {
@@ -4460,6 +4473,17 @@ export class QueueProcessor {
                 ...(lifecycleReplyTo ? { replyTo: lifecycleReplyTo } : {}),
                 idempotencyKey: lifecycleResponseIdempotencyKey(input.invocationId),
                 extra: {
+                  ...(lifecycleReplyTo && queueEntryCallerCatId(entry)
+                    ? {
+                        a2aFailureReturn: {
+                          triggerMessageId: lifecycleReplyTo,
+                          callerCatId: queueEntryCallerCatId(entry)!,
+                          ownerAuthProvenance: entry.execution.ownerAuthProvenance,
+                          parentInvocationId: input.parentInvocationId,
+                          isFailureReport: entry.sourceCategory === 'a2a_failure',
+                        },
+                      }
+                    : {}),
                   stream: {
                     invocationId: input.parentInvocationId,
                     turnInvocationId: input.invocationId,

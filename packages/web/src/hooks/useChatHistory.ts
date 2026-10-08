@@ -1,12 +1,6 @@
 'use client';
 
-import {
-  type CliDiagnostics,
-  type ProviderSemanticEvent,
-  type ReplyPreview,
-  type SchedulerMessageExtra,
-  timelineMessageKind,
-} from '@cat-cafe/shared';
+import { type CliDiagnostics, type ReplyPreview, timelineMessageKind } from '@cat-cafe/shared';
 import { type MouseEvent, useCallback, useEffect, useLayoutEffect, useMemo, useRef } from 'react';
 import { useShallow } from 'zustand/react/shallow';
 import { useThreadChatHistoryAdmission } from '@/components/thread-chat/ThreadChatRuntimeProvider';
@@ -20,7 +14,6 @@ import {
   hydrateThreadWorkspaceState,
   useChatStore,
 } from '@/stores/chatStore';
-import { foldFailedResponseRetries } from '@/stores/failed-response-fold';
 import {
   findEarliestMessageByCursor,
   getMessageTimelineCursorTime,
@@ -521,8 +514,7 @@ export function useChatHistory(threadId: string) {
 
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const scrollContainerRef = useRef<HTMLDivElement>(null);
-  const timelineMessages = useMemo(() => foldFailedResponseRetries(rawMessages), [rawMessages]);
-  const messages = useViewportMessageTimeline(threadId, timelineMessages, () => {
+  const messages = useViewportMessageTimeline(threadId, rawMessages, () => {
     if (useChatStore.getState().currentThreadId !== threadId) return;
     const el = scrollContainerRef.current;
     const saved = readChatScrollState(threadId);

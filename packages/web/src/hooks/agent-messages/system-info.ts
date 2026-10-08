@@ -74,7 +74,7 @@ function projectPayload(
     out.consumed = true;
     return;
   }
-  const visible = formatVisibleSystemInfo(parsed, port.resolveCatName, msg.catId);
+  const visible = formatVisibleSystemInfo(parsed, port.resolveCatName);
   if (visible) {
     out.content = visible.content;
     out.variant = visible.variant;

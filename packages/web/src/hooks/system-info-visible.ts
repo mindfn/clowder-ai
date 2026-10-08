@@ -185,7 +185,6 @@ function formatInvocationPreempted(parsed: Record<string, unknown>): VisibleSyst
 export function formatVisibleSystemInfo(
   parsed: Record<string, unknown>,
   resolveCatName: ResolveCatName = identityCatName,
-  _fallbackCatId?: string,
 ): VisibleSystemInfoResult | null {
   return (
     formatA2AFollowupAvailable(parsed, resolveCatName) ??

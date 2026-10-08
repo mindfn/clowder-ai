@@ -54,7 +54,7 @@ function entry(id: string, threadId: string, over: Partial<QueueEntry> = {}): Qu
   };
 }
 
-const threadState = (queue: QueueEntry[], _retiredPause = false) => ({
+const threadState = (queue: QueueEntry[]) => ({
   queue,
   activeInvocations: {},
   catInvocations: {},
@@ -62,7 +62,7 @@ const threadState = (queue: QueueEntry[], _retiredPause = false) => ({
   hasActiveInvocation: false,
 });
 
-function seedCurrent(queue: QueueEntry[], _retiredPause = false, others: Record<string, unknown> = {}) {
+function seedCurrent(queue: QueueEntry[], others: Record<string, unknown> = {}) {
   useActiveExecutionStore.getState().reset();
   useChatStore.setState({
     currentThreadId: A,
@@ -123,8 +123,8 @@ describe('the row operates the thread it shows', () => {
 
   describe('P1-1 pending Queue comes from the row’s own thread', () => {
     it('a row for thread B shows B’s Queue, and its clear is sent to B', async () => {
-      seedCurrent([entry('a-only', A)], false, {
-        [B]: threadState([entry('b-one', B), entry('b-two', B)], true),
+      seedCurrent([entry('a-only', A)], {
+        [B]: threadState([entry('b-one', B), entry('b-two', B)]),
       });
       await renderRow(B);
       expect($('execution-row-text')?.textContent).toBe('排队 2');
@@ -137,7 +137,7 @@ describe('the row operates the thread it shows', () => {
     });
 
     it('A’s Queue does not leak into thread B', async () => {
-      seedCurrent([entry('a-1', A)], true, { [B]: threadState([entry('b-one', B)], false) });
+      seedCurrent([entry('a-1', A)], { [B]: threadState([entry('b-one', B)]) });
       await renderRow(B);
       expect($('execution-row-text')?.textContent).toBe('排队 1');
       // B's queued message has no live execution; recovery stays scoped to B.
@@ -145,13 +145,13 @@ describe('the row operates the thread it shows', () => {
     });
 
     it('control: the current thread is read from the flat state as before', async () => {
-      seedCurrent([entry('a-1', A), entry('a-2', A)], true, { [B]: threadState([entry('b-one', B)]) });
+      seedCurrent([entry('a-1', A), entry('a-2', A)], { [B]: threadState([entry('b-one', B)]) });
       await renderRow(A);
       expect($('execution-row-text')?.textContent).toBe('排队 2');
     });
 
     it('with nothing known about thread B the row shows nothing and no command sends anything', async () => {
-      seedCurrent([entry('a-only', A)], true, {});
+      seedCurrent([entry('a-only', A)], {});
       await renderRow(B);
       expect($('execution-row')).toBeNull();
       root.unmount();
@@ -225,7 +225,7 @@ describe('the row operates the thread it shows', () => {
         if (path.endsWith('/queue') && !init?.method) throw new Error('reread offline');
         return json({ ok: true });
       });
-      seedCurrent([entry('a-1', A)], true);
+      seedCurrent([entry('a-1', A)]);
       await renderRow(A);
       await click($('execution-row-resume'));
       expect(toastTitles()).toEqual(['队列未启动']);
