@@ -24,7 +24,7 @@ async function waitFile(path) {
   }
   throw new Error(`fake gh did not create ${path}`);
 }
-async function fakeGh(ignoreTerm, run) {
+async function fakeGh(ignoreTerm, run, startupDelayMs = 0) {
   const dir = await mkdtemp(join(tmpdir(), 'cat-cafe-gh-cleanup-'));
   const started = join(dir, 'started'),
     term = join(dir, 'term'),
@@ -34,7 +34,7 @@ async function fakeGh(ignoreTerm, run) {
   const oldLocalCommandFixtures = process.env.CAT_CAFE_PUBLIC_TEST_LOCAL_COMMAND_FIXTURES;
   await writeFile(
     join(dir, 'gh'),
-    `#!${process.execPath}\nconst fs=require('node:fs');\nprocess.on('SIGTERM',()=>{fs.writeFileSync(${JSON.stringify(term)},'term');${ignoreTerm ? '' : `setInterval(()=>{if(fs.existsSync(${JSON.stringify(release)}))process.exit(0);},10);`}});\nprocess.on('exit',()=>fs.writeFileSync(${JSON.stringify(closed)},'closed'));\nfs.writeFileSync(${JSON.stringify(started)},String(process.pid));\nsetInterval(()=>{},1000);\n`,
+    `#!${process.execPath}\nconst fs=require('node:fs');\nsetTimeout(()=>{\nprocess.on('SIGTERM',()=>{fs.writeFileSync(${JSON.stringify(term)},'term');${ignoreTerm ? '' : `setInterval(()=>{if(fs.existsSync(${JSON.stringify(release)}))process.exit(0);},10);`}});\nprocess.on('exit',()=>fs.writeFileSync(${JSON.stringify(closed)},'closed'));\nfs.writeFileSync(${JSON.stringify(started)},String(process.pid));\nsetInterval(()=>{},1000);\n},${startupDelayMs});\n`,
     { mode: 0o755 },
   );
   process.env.PATH = `${dir}:${oldPath}`;
@@ -120,7 +120,7 @@ test(
       } finally {
         t.mock.timers.reset();
       }
-    });
+    }, 1700);
   },
 );
 test('real gh ignoring SIGTERM is forcibly reaped before the cancelled caller completes', unixOnly, async () => {
