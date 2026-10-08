@@ -114,18 +114,10 @@ export async function settleResponseFromDraft(
     settled.message.lifecycle?.kind === 'response' &&
     settled.message.lifecycle.status === 'failed'
   ) {
-    const completedAt = settled.message.lifecycle.completedAt;
-    if (completedAt === undefined) throw new Error('failed response recovery requires its terminal timestamp');
     const recovered = await commitFailedTerminal(
       deps,
       settled.message,
-      terminalPatchFromDraft(settled.message, undefined, {
-        ...input,
-        status: 'failed',
-        reason: settled.message.lifecycle.reason ?? input.reason,
-        endedAt: completedAt,
-        explanation: undefined,
-      }),
+      terminalPatchFromCommittedResponse(settled.message),
     );
     if (recovered.kind !== 'applied' && recovered.kind !== 'replayed') {
       throw new Error(`failed response recovery rejected: ${recovered.kind}`);
@@ -137,6 +129,30 @@ export async function settleResponseFromDraft(
   await deps.draftStore?.delete(input.userId, input.threadId, input.invocationId);
   await deps.turnStore?.clearResponsePending(input.invocationId);
   return settled;
+}
+
+/** A durable terminal snapshot is replayed byte-for-byte, never processed as a draft. */
+function terminalPatchFromCommittedResponse(response: StoredMessage): LifecycleResponseTerminalPatch {
+  const lifecycle = response.lifecycle;
+  if (lifecycle?.kind !== 'response' || lifecycle.status === 'processing' || lifecycle.completedAt === undefined) {
+    throw new Error('response recovery requires a complete terminal snapshot');
+  }
+  return {
+    invocationId: lifecycle.invocationId,
+    status: lifecycle.status,
+    completedAt: lifecycle.completedAt,
+    reason: lifecycle.reason,
+    content: response.content,
+    contentBlocks: response.contentBlocks,
+    toolEvents: response.toolEvents,
+    metadata: response.metadata,
+    extra: response.extra,
+    thinking: response.thinking,
+    origin: response.origin,
+    mentions: response.mentions,
+    mentionsUser: response.mentionsUser,
+    replyTo: response.replyTo,
+  };
 }
 
 /**

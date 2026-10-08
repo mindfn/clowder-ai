@@ -1388,6 +1388,15 @@ export async function commitLifecycleResponseFromAppendInput(
   const current = await store.getById(responseMessageId);
   if (!current) throw new Error(`lifecycle response not found: ${responseMessageId}`);
   const terminalPatch = lifecycleResponseTerminalPatchFromAppendInput(current, invocationId, terminal, message);
+  return commitLifecycleResponseFromTerminalPatch(store, responseMessageId, terminalPatch);
+}
+
+/** Commit or replay an exact terminal snapshot without append/draft normalization. */
+export async function commitLifecycleResponseFromTerminalPatch(
+  store: IMessageStore,
+  responseMessageId: string,
+  terminalPatch: LifecycleResponseTerminalPatch,
+): Promise<StoredMessage> {
   const result = await store.commitLifecycleResponseTerminal(responseMessageId, terminalPatch);
   if (result.kind !== 'applied' && result.kind !== 'replayed') {
     throw new Error(

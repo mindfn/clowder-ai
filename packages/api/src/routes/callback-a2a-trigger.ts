@@ -33,6 +33,7 @@ import type {
 } from '../domains/cats/services/stores/ports/MessageStore.js';
 import {
   commitLifecycleResponseFromAppendInput,
+  commitLifecycleResponseFromTerminalPatch,
   lifecycleResponseTerminalPatchFromAppendInput,
   settleLifecycleResponseInputs,
 } from '../domains/cats/services/stores/ports/MessageStore.js';
@@ -459,9 +460,30 @@ export async function commitFailedResponseAndEnqueueA2ACaller(
   },
 ): Promise<StoredMessage> {
   if (!deps.messageStore) throw new Error('failed response A2A report requires MessageStore');
+  const current = await deps.messageStore.getById(opts.responseMessageId);
+  if (!current) throw new Error(`lifecycle response not found: ${opts.responseMessageId}`);
+  return commitFailedResponsePatchAndEnqueueA2ACaller(deps, {
+    ...opts,
+    terminalPatch: lifecycleResponseTerminalPatchFromAppendInput(
+      current,
+      opts.invocationId,
+      opts.terminal,
+      opts.message,
+    ),
+  });
+}
+
+/** Normal commits and recovery share this transaction; recovery supplies its exact durable patch. */
+async function commitFailedResponsePatchAndEnqueueA2ACaller(
+  deps: A2ATriggerDeps,
+  opts: Omit<Parameters<typeof commitFailedResponseAndEnqueueA2ACaller>[1], 'terminal' | 'message'> & {
+    terminalPatch: LifecycleResponseTerminalPatch;
+  },
+): Promise<StoredMessage> {
+  if (!deps.messageStore) throw new Error('failed response A2A report requires MessageStore');
   const routingPreflight = await preflightA2ATargets(deps, {
     targetCats: [opts.predecessorCatId],
-    content: opts.message.content,
+    content: opts.terminalPatch.content,
     userId: opts.userId,
   });
   if (!routingPreflight.acceptedTargetCats.includes(opts.predecessorCatId)) {
@@ -470,35 +492,21 @@ export async function commitFailedResponseAndEnqueueA2ACaller(
       receiptCatId: opts.reporterCatId,
       threadId: opts.threadId,
     });
-    return commitLifecycleResponseFromAppendInput(
-      deps.messageStore,
-      opts.responseMessageId,
-      opts.invocationId,
-      opts.terminal,
-      opts.message,
-    );
+    return commitLifecycleResponseFromTerminalPatch(deps.messageStore, opts.responseMessageId, opts.terminalPatch);
   }
   if (!deps.invocationQueue) throw new Error('failed response A2A report requires InvocationQueue');
 
-  const current = await deps.messageStore.getById(opts.responseMessageId);
-  if (!current) throw new Error(`lifecycle response not found: ${opts.responseMessageId}`);
-  const terminalPatch = lifecycleResponseTerminalPatchFromAppendInput(
-    current,
-    opts.invocationId,
-    opts.terminal,
-    opts.message,
-  );
   const admission = await deps.invocationQueue.terminalizeResponseAndEnqueueDurable(
     deps.messageStore,
     opts.responseMessageId,
-    terminalPatch,
+    opts.terminalPatch,
     {
       from: { kind: 'agent', catId: opts.reporterCatId },
       threadId: opts.threadId,
       userId: opts.userId,
       kind: 'message_wake',
       ownerAuthProvenance: normalizeOwnerAuthProvenance(opts.ownerAuthProvenance),
-      content: opts.message.content,
+      content: opts.terminalPatch.content,
       messageId: opts.responseMessageId,
       sourceId: opts.responseMessageId,
       sourceCategory: 'a2a_failure',
@@ -518,7 +526,7 @@ export async function commitFailedResponseAndEnqueueA2ACaller(
 
   await enqueueA2ATargets(deps, {
     targetCats: [opts.predecessorCatId],
-    content: opts.message.content,
+    content: opts.terminalPatch.content,
     userId: opts.userId,
     ownerAuthProvenance: opts.ownerAuthProvenance,
     threadId: opts.threadId,
@@ -556,29 +564,7 @@ export async function commitRecoveredFailedResponse(
   ) {
     throw new Error('failed recovery response identity mismatch');
   }
-  const message: AppendMessageInput = {
-    from: response.from,
-    userId: response.userId,
-    threadId: response.threadId,
-    timestamp: response.timestamp,
-    content: patch.content,
-    mentions: patch.mentions ?? [],
-    ...(patch.contentBlocks ? { contentBlocks: patch.contentBlocks } : {}),
-    ...(patch.toolEvents ? { toolEvents: patch.toolEvents } : {}),
-    ...(patch.metadata ? { metadata: patch.metadata } : {}),
-    ...(patch.extra ? { extra: patch.extra } : {}),
-    ...(patch.thinking ? { thinking: patch.thinking } : {}),
-    ...(patch.origin ? { origin: patch.origin } : {}),
-    ...(patch.replyTo ? { replyTo: patch.replyTo } : {}),
-    ...(patch.mentionsUser ? { mentionsUser: true } : {}),
-  };
-  const terminal = {
-    status: 'failed' as const,
-    completedAt: patch.completedAt,
-    ...(patch.reason ? { reason: patch.reason } : {}),
-  };
-  const commitOnly = () =>
-    commitLifecycleResponseFromAppendInput(store, response.id, lifecycle.invocationId, terminal, message);
+  const commitOnly = () => commitLifecycleResponseFromTerminalPatch(store, response.id, patch);
   const receipt = response.extra?.a2aFailureReturn;
   const triggerId = response.replyTo;
   if (receipt && receipt.triggerMessageId !== triggerId) throw new Error('failed recovery source identity mismatch');
@@ -613,11 +599,10 @@ export async function commitRecoveredFailedResponse(
     trigger._tombstone
   )
     return commitOnly();
-  return commitFailedResponseAndEnqueueA2ACaller(deps, {
+  return commitFailedResponsePatchAndEnqueueA2ACaller(deps, {
     responseMessageId: response.id,
     invocationId: lifecycle.invocationId,
-    terminal,
-    message,
+    terminalPatch: patch,
     userId: response.userId,
     threadId: response.threadId,
     reporterCatId: response.from.catId as CatId,

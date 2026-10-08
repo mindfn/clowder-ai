@@ -4,6 +4,7 @@ import { InvocationQueue } from '../dist/domains/cats/services/agents/invocation
 import { InMemoryQueueLedgerStore } from '../dist/domains/cats/services/agents/invocation/queue-ledger/InMemoryQueueLedgerStore.js';
 import { InMemoryTurnExecutionStore } from '../dist/domains/cats/services/stores/memory/InMemoryTurnExecutionStore.js';
 import { MessageStore } from '../dist/domains/cats/services/stores/ports/MessageStore.js';
+import { commitFailedResponseAndEnqueueA2ACaller } from '../dist/routes/callback-a2a-trigger.js';
 import { failedResponseFixture } from './helpers/1398-failed-response-fixture.mjs';
 
 const fixture = (options) =>
@@ -13,6 +14,100 @@ const fixture = (options) =>
   );
 const wakeRows = async (f) =>
   (await f.queue.listAllDurable('thread')).filter((row) => row.sourceCategory === 'a2a_failure');
+
+for (const [name, fields] of [
+  ['plain', { content: 'failure explanation' }],
+  ['leading whitespace', { content: '\n\nfailure explanation' }],
+  ['trailing whitespace', { content: 'failure explanation \n\t' }],
+  ['whitespace only', { content: '\n \t\n' }],
+  ['empty', { content: '' }],
+  [
+    'rich/tool/metadata',
+    {
+      content: '\n\nrich result\n',
+      contentBlocks: [{ type: 'text', text: 'original block' }],
+      toolEvents: [{ id: 'tool', type: 'tool_result', label: 'original tool', timestamp: 115 }],
+      extra: { rich: { v: 1, blocks: [{ id: 'card', kind: 'card', v: 1, title: 'Original', tone: 'info' }] } },
+      metadata: { provider: 'openai', model: 'original-model' },
+      thinking: '\noriginal thinking\n',
+      mentionsUser: true,
+    },
+  ],
+]) {
+  test(`normal failed transaction then lost settlement acknowledgement replays exact ${name} snapshot`, async () => {
+    const f = await fixture();
+    await commitFailedResponseAndEnqueueA2ACaller(f.deps, {
+      responseMessageId: f.response.id,
+      invocationId: 'child',
+      terminal: { status: 'failed', completedAt: 120, reason: 'provider_error' },
+      message: {
+        from: { kind: 'agent', catId: 'opus' },
+        userId: 'owner',
+        threadId: 'thread',
+        mentions: [],
+        timestamp: 110,
+        replyTo: f.input.id,
+        origin: 'stream',
+        ...fields,
+      },
+      userId: 'owner',
+      threadId: 'thread',
+      reporterCatId: 'opus',
+      predecessorCatId: 'codex',
+      ownerAuthProvenance: 'strict',
+      parentInvocationId: 'parent',
+    });
+    const before = structuredClone(f.messages.getById(f.response.id));
+    assert.equal(f.turns.listResponsePending().length, 1);
+    const outcome = await f.recovery().reconcile({ processStartedAt: 200 });
+    assert.deepEqual(outcome.responseSettlementFailures, []);
+    assert.deepEqual(f.turns.listResponsePending(), []);
+    assert.deepEqual(f.messages.getById(f.response.id), before);
+    assert.equal((await wakeRows(f)).length, 1);
+    await f.recovery().reconcile({ processStartedAt: 200 });
+    assert.equal((await wakeRows(f)).length, 1);
+  });
+}
+
+test('terminal recovery preserves explicit empty optional fields and absent reason without normalization', async () => {
+  const f = await fixture();
+  await f.messages.commitLifecycleResponseTerminal(f.response.id, {
+    invocationId: 'child',
+    status: 'failed',
+    completedAt: 120,
+    content: ' \n ',
+    mentions: [],
+    contentBlocks: [],
+    toolEvents: [],
+    metadata: {},
+    thinking: '',
+    mentionsUser: false,
+    extra: f.response.extra,
+    replyTo: f.input.id,
+  });
+  const before = structuredClone(f.messages.getById(f.response.id));
+  const outcome = await f.recovery().reconcile({ processStartedAt: 200 });
+  assert.deepEqual(outcome.responseSettlementFailures, []);
+  assert.deepEqual(f.turns.listResponsePending(), []);
+  const after = f.messages.getById(f.response.id);
+  for (const key of [
+    'content',
+    'contentBlocks',
+    'toolEvents',
+    'metadata',
+    'extra',
+    'thinking',
+    'origin',
+    'mentions',
+    'mentionsUser',
+    'replyTo',
+  ]) {
+    assert.deepEqual(after[key], before[key], key);
+    assert.equal(Object.hasOwn(after, key), Object.hasOwn(before, key), `presence: ${key}`);
+  }
+  assert.equal(Object.hasOwn(after.lifecycle, 'reason'), false);
+  assert.equal((await wakeRows(f)).length, 1);
+});
 
 test('startup failed response settles through the original response/caller-wake transaction exactly once', async () => {
   const f = await fixture();
