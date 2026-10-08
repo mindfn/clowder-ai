@@ -111,3 +111,11 @@ Operator `0001791441081560-000110-e3f79b33` 追问同类问题。astra 只读核
 | 失败去重仍依赖文本 | `persist-system-info-warnings.ts` 的 `duplicatesTerminalFailure` 用去前缀后的 substring 比较 | 按结果所属 response / 未接纳失败的责任边界处理，用措辞变化场景检验，不把文本相同当成唯一性机制 |
 
 边界：未投递/待绑定的 cloud bridge 结果、治理初始化阻塞、没有 response 的准入失败确有用户动作或唯一失败事实，不能全部吞掉。后台完成 toast 是跨 thread 提醒，不等同另一条 History 消息。本轮不扩成重新设计全部通知。原 task300 唯一 writer 继续按同一机制及 active/background/F5/晚到事件/成功恢复/最终失败场景验证，astra 不改其 checkout。
+
+### Operator 补充：结果消息本身就是统一协议
+
+Operator 随后明确：dispatch 目标成员的成功、失败、取消及内容由普通 message 承载，用户和其他成员读取同一份结果并按语义采取行动；失败结果通过既有 callback 与任务关系驱动后续分发。因此上述提示清单只是同根因证据，不应变成逐项 if/else 清理工程。
+
+统一终态要求是精确 dispatch 的结果 message 同时承载可见结果及回调依据；等待、自动重连、接力、补同步只更新执行状态/诊断，不制造第二条聊天结果。无正文、进入模型前失败、取消及崩溃恢复也要保有对应的可见结果。前文“无 response 的准入失败独立 error row”仅描述审计时实现，不能升格为终态例外；应核对统一 dispatch 入口建立结果身份的机制。发生在 dispatch 创建之前的请求拒绝仍是请求错误，不伪造已投递事实。
+
+后续 callback/分发沿已有授权、任务关系及幂等边界消费结果 message；不得靠额外 system notice 驱动，也不引入无条件失败递归重派。以正常完成、未入模型失败、取消、重启恢复和 callback 重放验证同一机制。若现有契约无法满足，携具体设计取舍核定，不叠加兼容流程。
