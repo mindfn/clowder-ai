@@ -164,10 +164,8 @@ export function MessageDispatchAvatars({
       {projections.map((projection) => {
         const label = getCatLabel(projection.targetId);
         const processing = projection.phase === 'processing';
-        const title =
-          projection.dispatchedAt === undefined
-            ? `${label} 已投递`
-            : `${label} 已投递 · ${formatDispatchTime(projection.dispatchedAt)}`;
+        const at = projection.dispatchedAt === undefined ? '' : ` · ${formatDispatchTime(projection.dispatchedAt)}`;
+        const title = `${label} 已投递${at}`;
         return (
           <li
             key={`${projection.targetId}:${projection.evidenceKey}`}

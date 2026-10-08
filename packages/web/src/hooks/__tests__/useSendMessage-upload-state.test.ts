@@ -6,15 +6,10 @@ const mockApiFetch = vi.fn();
 const mockAddMessageToThread = vi.fn();
 const mockSetThreadLoading = vi.fn();
 const mockSetThreadHasActiveInvocation = vi.fn();
-const mockResetRefs = vi.fn();
 const mockProcessCommand = vi.fn(async () => false);
 
 vi.mock('@/utils/api-client', () => ({
   apiFetch: (...args: unknown[]) => mockApiFetch(...args),
-}));
-
-vi.mock('@/hooks/useAgentMessages', () => ({
-  useAgentMessages: () => ({ resetRefs: mockResetRefs }),
 }));
 
 vi.mock('@/hooks/useChatCommands', () => ({
@@ -100,7 +95,6 @@ describe('useSendMessage upload status', () => {
     mockAddMessageToThread.mockReset();
     mockSetThreadLoading.mockReset();
     mockSetThreadHasActiveInvocation.mockReset();
-    mockResetRefs.mockReset();
     mockProcessCommand.mockReset();
     mockProcessCommand.mockResolvedValue(false);
 

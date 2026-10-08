@@ -4,6 +4,7 @@ import { useMemo } from 'react';
 import type { ThreadState } from '@/stores/chat-types';
 import type { ChatMessage } from '@/stores/chatStore';
 import { getOrderedMessageTimeline } from '@/stores/message-timeline';
+import { doesAssistantMessageRenderBubble } from './assistant-message-renderability';
 import { CatAvatar } from './CatAvatar';
 import { getCatStatusType } from './ThreadCatStatus';
 
@@ -45,8 +46,12 @@ export function SplitPaneCell({
   onDoubleClick,
 }: SplitPaneCellProps) {
   const catStatus = getCatStatusType(threadState.catStatuses);
+  // A processing response with nothing streamed yet is a tip in the full view, not a bubble.
   const recentMessages = useMemo(
-    () => getOrderedMessageTimeline(threadState.messages).slice(-VISIBLE_MESSAGES),
+    () =>
+      getOrderedMessageTimeline(threadState.messages)
+        .filter((message) => message.type !== 'assistant' || doesAssistantMessageRenderBubble(message))
+        .slice(-VISIBLE_MESSAGES),
     [threadState.messages],
   );
 

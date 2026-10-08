@@ -48,6 +48,19 @@ function deliveredHoldBallNotice(id: string) {
   };
 }
 
+/** A plain system line, in the same socket envelope (`mentions`/`userId` included) as above. */
+function deliveredSystemNotice(id: string) {
+  return {
+    id,
+    from: { kind: 'system' as const, service: 'routing-guard' },
+    content: 'plain system notice',
+    catId: null,
+    timestamp: NOW,
+    mentions: [] as readonly string[],
+    userId: 'default-user',
+  };
+}
+
 describe('markMessagesDelivered connector framing', () => {
   beforeEach(() => {
     useChatStore.setState({ currentThreadId: 'thread-1', messages: [], threadStates: {} });
@@ -73,17 +86,7 @@ describe('markMessagesDelivered connector framing', () => {
   });
 
   it('still classifies a system notice with no source as a system message', () => {
-    useChatStore.getState().markMessagesDelivered('thread-1', ['m2'], NOW + 1, [
-      {
-        id: 'm2',
-        from: { kind: 'system' as const, service: 'routing-guard' },
-        content: 'plain system notice',
-        catId: null,
-        timestamp: NOW,
-        mentions: [] as readonly string[],
-        userId: 'default-user',
-      },
-    ]);
+    useChatStore.getState().markMessagesDelivered('thread-1', ['m2'], NOW + 1, [deliveredSystemNotice('m2')]);
 
     const message = useChatStore.getState().messages.find((candidate) => candidate.id === 'm2');
     expect(message?.type).toBe('system');

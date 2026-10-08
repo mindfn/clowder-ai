@@ -117,6 +117,32 @@ describe('chat connection recovery without a page reload', () => {
     // `active` remains true, so application ownership still requests a connection.
   }
 
+  it('routes saved modification and artifact review events to their existing projection owners', () => {
+    const review = vi.fn();
+    window.addEventListener('cat-cafe:artifact-review-changed', review);
+    try {
+      mount();
+      act(() =>
+        socket.serverEvent('content_modification_source_saved', { threadId: 'thread-source', messageId: 'source-id' }),
+      );
+      act(() => socket.serverEvent('artifact_review_changed', { reviewId: 'review-id' }));
+      expect(requestCatchUp).toHaveBeenCalledExactlyOnceWith('thread-source');
+      expect(review).toHaveBeenCalledTimes(1);
+      expect((review.mock.calls[0]![0] as CustomEvent).detail).toEqual({ reviewId: 'review-id' });
+    } finally {
+      window.removeEventListener('cat-cafe:artifact-review-changed', review);
+    }
+  });
+
+  it('retired socket listeners cannot invalidate a new surface after the owning runtime unmounts', () => {
+    mount();
+    act(() => root.render(null));
+    act(() =>
+      socket.serverEvent('content_modification_source_saved', { threadId: 'thread-source', messageId: 'source-id' }),
+    );
+    expect(requestCatchUp).not.toHaveBeenCalled();
+  });
+
   it('recovers a disconnected active socket, rejoins rooms and catches up the missed tail', async () => {
     mount();
     loseAutomaticRetry();

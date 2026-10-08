@@ -14,6 +14,11 @@ import {
 } from '../message-disposition-presentation';
 import { QueuePanel } from '../QueuePanel';
 
+/** The panel header itself reads 排队等待中; the claims below are about per-row route chips. */
+function textWithoutPanelHeader(container: HTMLElement): string {
+  return (container.textContent ?? '').replace('排队等待中', '');
+}
+
 vi.mock('@/utils/api-client', () => ({
   apiFetch: vi.fn(async () => ({ ok: true, json: async () => ({}) })),
 }));
@@ -248,7 +253,7 @@ describe('F264 Queue UX hierarchy — component claims', () => {
     useChatStore.setState({ queue: [continueEntry, nextEntry] });
     renderQueuePanel();
 
-    const text = container.textContent ?? '';
+    const text = textWithoutPanelHeader(container);
     expect(text).not.toContain('立即发送，引导回复');
     expect(text).not.toContain('排队等待');
     expect(container.querySelectorAll('[data-queue-target-row="opus"]')).toHaveLength(2);
@@ -276,7 +281,7 @@ describe('F264 Queue UX hierarchy — component claims', () => {
     renderQueuePanel();
 
     expect(container.querySelector(`[data-testid="intent-chip-q-${source}-opus"]`)).toBeNull();
-    expect(container.textContent).not.toContain('排队等待');
+    expect(textWithoutPanelHeader(container)).not.toContain('排队等待');
     expect(container.textContent).not.toContain('立即发送，引导回复');
   });
 
@@ -451,7 +456,7 @@ describe('F264 Queue UX hierarchy — component claims', () => {
     renderQueuePanel();
 
     expect(container.querySelectorAll('[data-queue-target-row]')).toHaveLength(2);
-    const text = container.textContent ?? '';
+    const text = textWithoutPanelHeader(container);
     expect(text).not.toContain('立即发送，引导回复');
     expect(text).not.toContain('排队等待');
     expect(text).not.toContain('当前接入不支持');

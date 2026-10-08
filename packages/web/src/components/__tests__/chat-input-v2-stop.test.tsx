@@ -79,7 +79,6 @@ function renderButton(props: Partial<ButtonProps>) {
         onStop: vi.fn(),
         stopState: 'available',
         hasActiveInvocation: true,
-        activeExecutionKey: 'exec-1',
         hasText: false,
         ...props,
       }),
@@ -92,16 +91,16 @@ const stopIndex = () => labels().indexOf('Stop generation');
 const micIndex = () => labels().findIndex((label) => label.startsWith('Start voice input'));
 
 describe('ChatInputActionButton: where the stop button sits', () => {
-  it('classic, empty draft, a cat running: the stop comes first, then the mic (unchanged)', () => {
+  it('classic, empty draft, a cat running: stop is available without another voice input', () => {
     renderButton({ presentation: 'classic' });
     expect(stopIndex()).toBe(0);
-    expect(micIndex()).toBe(1);
+    expect(micIndex()).toBe(-1);
   });
 
   it('classic, text in the draft, a cat running: the stop is still there beside queue-send (unchanged)', () => {
     renderButton({ presentation: 'classic', hasText: true });
     expect(labels()).toContain('Stop generation');
-    expect(labels()).toContain('排队发送');
+    expect(labels()).toContain('Send message');
   });
 
   it('no presentation given renders exactly what classic renders', () => {
@@ -113,17 +112,17 @@ describe('ChatInputActionButton: where the stop button sits', () => {
     }
   });
 
-  it('v2, empty draft, a cat running: the mic then the stop — the stop is the last control', () => {
+  it('v2, empty draft, a cat running: stop is the last control without another voice input', () => {
     renderButton({ presentation: 'v2' });
-    expect(micIndex()).toBe(0);
-    expect(stopIndex()).toBe(1);
+    expect(micIndex()).toBe(-1);
+    expect(stopIndex()).toBe(0);
     expect(stopIndex()).toBe(labels().length - 1);
   });
 
   it('v2, text in the draft: no stop button; queue-send is the way forward', () => {
     renderButton({ presentation: 'v2', hasText: true });
     expect(labels()).not.toContain('Stop generation');
-    expect(labels()).toContain('排队发送');
+    expect(labels()).toContain('Send message');
   });
 
   it('v2, no cat running: no stop button at all', () => {
@@ -237,7 +236,6 @@ describe('ChatInput: the "猫猫正在回复中… 取消" bar', () => {
       currentThreadId: ROUTE,
       threads: [thread(ROUTE), thread(SELECTED)],
       queue: [],
-      queuePaused: false,
       hasActiveInvocation: false,
       activeInvocations: {},
       catStatuses: {},
@@ -250,7 +248,6 @@ describe('ChatInput: the "猫猫正在回复中… 取消" bar', () => {
           catInvocations: {},
           catStatuses: {},
           queue: [],
-          queuePaused: false,
         },
       },
     });

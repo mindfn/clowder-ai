@@ -8,6 +8,7 @@ import { catColorVar } from '@/lib/cat-slug';
 import { activeExecutionKey, useActiveExecutionStore } from '@/stores/activeExecutionStore';
 import { useChatStore } from '@/stores/chatStore';
 import { ExecutionCancelButton } from './ExecutionCancelButton';
+import { executionKindLabel } from './execution-kind-label';
 
 interface ThreadExecutionBarProps {
   threadId?: string;
@@ -112,6 +113,9 @@ function CatStatusChip({
     <span className="flex items-center gap-1.5 px-2 py-0.5 rounded-full bg-cafe-surface/50">
       <span className="w-1.5 h-1.5 rounded-full animate-pulse" style={{ backgroundColor: color }} />
       <span className="text-cafe-secondary font-medium">{label}</span>
+      <span className="text-cafe-muted" data-testid="execution-kind">
+        {executionKindLabel(execution.kind)}
+      </span>
       <span className="text-cafe-muted tabular-nums">{timeStr}</span>
       <ExecutionCancelButton execution={execution} label="×" />
     </span>

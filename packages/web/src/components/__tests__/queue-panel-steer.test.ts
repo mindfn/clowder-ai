@@ -12,6 +12,11 @@ import { useToastStore } from '@/stores/toastStore';
 import { apiFetch } from '@/utils/api-client';
 import { QueuePanel } from '../QueuePanel';
 
+/** The panel header itself reads 排队等待中; the claims below are about per-row route chips. */
+function textWithoutPanelHeader(container: HTMLElement): string {
+  return (container.textContent ?? '').replace('排队等待中', '');
+}
+
 vi.mock('@/hooks/useCatData', () => ({
   useCatData: () => {
     const cats = [
@@ -225,7 +230,7 @@ describe('QueuePanel steer (F047)', () => {
     act(() => root.render(React.createElement(QueuePanel, { threadId: 'thread-1' })));
 
     const route = container.querySelector('[data-testid="queue-route-q1"]');
-    expect(route?.textContent).toContain('布偶猫（已读）');
+    expect(route?.textContent).toContain('布偶猫（已投递）');
     expect(route?.textContent).toContain('缅因猫');
     expect(route?.textContent).not.toContain('opus');
     expect(route?.textContent).not.toContain('codex');
@@ -277,12 +282,12 @@ describe('QueuePanel steer (F047)', () => {
 
     act(() => useChatStore.setState({ messages: [deliveredSource, responseMessage] }));
     route = container.querySelector('[data-testid="queue-route-q1"]');
-    expect(route?.textContent).toContain('布偶猫（已读）');
+    expect(route?.textContent).toContain('布偶猫（已投递）');
     expect(route?.textContent).toContain('缅因猫');
 
     act(() => useChatStore.setState({ queue: [{ ...QUEUED_ENTRY, targetCats: ['codex'] }] }));
     route = container.querySelector('[data-testid="queue-route-q1"]');
-    expect(route?.textContent).toContain('布偶猫（已读）');
+    expect(route?.textContent).toContain('布偶猫（已投递）');
     expect(route?.textContent).toContain('缅因猫');
   });
 
@@ -339,7 +344,7 @@ describe('QueuePanel steer (F047)', () => {
     act(() => root.render(React.createElement(QueuePanel, { threadId: 'thread-1' })));
 
     expect(container.querySelector('[data-testid="queue-route-successor-entry"]')?.textContent).toContain(
-      '缅因猫（已读）',
+      '缅因猫（已投递）',
     );
   });
 
@@ -844,7 +849,7 @@ describe('QueuePanel steer (F047)', () => {
       root.render(React.createElement(QueuePanel, { threadId: 'thread-1' }));
     });
 
-    expect(container.textContent).not.toContain('排队等待');
+    expect(textWithoutPanelHeader(container)).not.toContain('排队等待');
     expect(container.textContent).not.toContain('当前接入不支持引导回复');
     expect(container.querySelector('[data-testid="remind-q1-opus"]')).toBeNull();
   });

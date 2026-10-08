@@ -248,6 +248,7 @@ describe('ThreadExecutionBar (F122B AC-B8 + B8/B9 polish)', () => {
     // Should show display name (布偶猫) not raw catId (opus)
     expect(text).toContain('布偶猫');
     expect(text).toMatch(/0:0[0-9]/);
+    expect(container.querySelector('[data-testid="execution-kind"]')?.textContent).toBe('实时回合');
   });
 
   it('renders multiple active cats with their respective display names', async () => {
@@ -262,10 +263,11 @@ describe('ThreadExecutionBar (F122B AC-B8 + B8/B9 polish)', () => {
     expect(text).toContain('缅因猫');
   });
 
-  it('keeps managed work compact without exposing activity or thread detail', async () => {
+  it('names managed work 托管命令 without exposing its activity or thread detail', async () => {
     seedExecutions([managedGateExecution()]);
     await act(async () => root.render(React.createElement(ThreadExecutionBar)));
 
+    expect(container.querySelector('[data-testid="execution-kind"]')?.textContent).toBe('托管命令');
     expect(container.textContent).not.toContain('全量门禁');
     expect(container.textContent).not.toContain('Gate thread');
     expect(container.textContent).not.toContain('pnpm gate');
@@ -280,6 +282,7 @@ describe('ThreadExecutionBar (F122B AC-B8 + B8/B9 polish)', () => {
     ]);
     await act(async () => root.render(React.createElement(ThreadExecutionBar)));
 
+    expect(container.querySelector('[data-testid="execution-kind"]')?.textContent).toBe('托管命令');
     expect(container.textContent).not.toContain('future_activity');
     expect(container.textContent).not.toContain('Gate thread');
   });

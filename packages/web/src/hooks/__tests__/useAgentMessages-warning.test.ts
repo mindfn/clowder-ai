@@ -1,7 +1,6 @@
 import React, { act } from 'react';
 import { createRoot, type Root } from 'react-dom/client';
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
-import { resetThreadRuntimeSingleton } from '@/hooks/thread-runtime-singleton';
 import { useAgentMessages } from '@/hooks/useAgentMessages';
 import type { ChatMessage } from '@/stores/chat-types';
 
@@ -14,6 +13,7 @@ const mockSetLoading = vi.fn();
 const mockSetHasActiveInvocation = vi.fn();
 const mockSetIntentMode = vi.fn();
 const mockSetCatStatus = vi.fn();
+const mockUpdateThreadCatStatus = vi.fn();
 const mockClearCatStatuses = vi.fn();
 const mockSetCatInvocation = vi.fn();
 const mockSetMessageUsage = vi.fn();
@@ -40,6 +40,7 @@ const storeState = {
   setHasActiveInvocation: mockSetHasActiveInvocation,
   setIntentMode: mockSetIntentMode,
   setCatStatus: mockSetCatStatus,
+  updateThreadCatStatus: mockUpdateThreadCatStatus,
   clearCatStatuses: mockClearCatStatuses,
   setCatInvocation: mockSetCatInvocation,
   setMessageUsage: mockSetMessageUsage,
@@ -90,9 +91,9 @@ describe('useAgentMessages system_info warning', () => {
     document.body.appendChild(container);
     root = createRoot(container);
     captured = undefined;
-    resetThreadRuntimeSingleton();
     storeState.messages = [];
     mockAddMessage.mockClear();
+    mockAddMessageToThread.mockClear();
     mockRemoveMessage.mockClear();
     mockPatchMessage.mockClear();
   });
@@ -159,104 +160,24 @@ describe('useAgentMessages system_info warning', () => {
     );
   });
 
-  it('updates one invocation-scoped reconnect notice to recovered', () => {
-    act(() => {
-      root.render(React.createElement(Harness));
-    });
-
-    act(() => {
-      captured?.handleAgentMessage({
-        type: 'system_info',
-        catId: 'codex-sol',
-        invocationId: 'parent-inv',
-        turnInvocationId: 'turn-inv',
-        content: JSON.stringify({
-          type: 'provider_recovery',
-          provider: 'codex',
-          phase: 'reconnecting',
-          invocationId: 'turn-inv',
-          attempt: 1,
-          attempts: ['Reconnecting... 1/5 (stream disconnected before completion)'],
-        }),
-      });
-    });
-
-    expect(mockAddMessage).toHaveBeenCalledWith(
-      expect.objectContaining({
-        id: 'provider-recovery:codex-sol:turn-inv',
-        type: 'system',
-        variant: 'info',
-        content: expect.stringContaining('Reconnecting'),
-        extra: expect.objectContaining({
-          providerRecovery: expect.objectContaining({ phase: 'reconnecting', invocationId: 'turn-inv' }),
-        }),
-      }),
-    );
-    storeState.messages = [mockAddMessage.mock.calls.at(-1)?.[0] as ChatMessage];
-
-    act(() => {
-      captured?.handleAgentMessage({
-        type: 'system_info',
-        catId: 'codex-sol',
-        invocationId: 'parent-inv',
-        turnInvocationId: 'turn-inv',
-        content: JSON.stringify({
-          type: 'provider_recovery',
-          provider: 'codex',
-          phase: 'recovered',
-          invocationId: 'turn-inv',
-          attempt: 1,
-          attempts: ['Reconnecting... 1/5 (stream disconnected before completion)'],
-          evidence: 'item.completed',
-        }),
-      });
-    });
-
-    expect(mockPatchMessage).toHaveBeenCalledWith(
-      'provider-recovery:codex-sol:turn-inv',
-      expect.objectContaining({
-        content: 'Connection recovered.',
-        extra: expect.objectContaining({
-          providerRecovery: expect.objectContaining({
-            phase: 'recovered',
-            invocationId: 'turn-inv',
-            attempts: ['Reconnecting... 1/5 (stream disconnected before completion)'],
-          }),
-        }),
-      }),
-    );
-    expect(mockAddMessage).toHaveBeenCalledTimes(1);
-  });
-
-  it('keeps an unrecovered reconnect notice in failed state', () => {
+  it.each([
+    'reconnecting',
+    'recovered',
+    'failed',
+  ])('does not create a result row for unnamed provider recovery %s', (phase) => {
     act(() => root.render(React.createElement(Harness)));
-
-    act(() => {
+    act(() =>
       captured?.handleAgentMessage({
         type: 'system_info',
         catId: 'codex-sol',
-        turnInvocationId: 'turn-failed',
-        content: JSON.stringify({
-          type: 'provider_recovery',
-          provider: 'codex',
-          phase: 'failed',
-          invocationId: 'turn-failed',
-          attempts: ['Reconnecting... 1/5'],
-          evidence: 'cli_error',
-        }),
-      });
-    });
-
-    expect(mockAddMessage).toHaveBeenCalledWith(
-      expect.objectContaining({
-        id: 'provider-recovery:codex-sol:turn-failed',
-        variant: 'error',
-        content: 'Reconnect failed.',
-        extra: expect.objectContaining({
-          providerRecovery: expect.objectContaining({ phase: 'failed', evidence: 'cli_error' }),
-        }),
+        invocationId: 'parent-inv',
+        turnInvocationId: 'turn-inv',
+        content: JSON.stringify({ type: 'provider_recovery', provider: 'codex', phase, attempts: ['disconnect'] }),
       }),
     );
+    expect(mockAddMessage).not.toHaveBeenCalled();
+    expect(mockAddMessageToThread).not.toHaveBeenCalled();
+    expect(mockPatchMessage).not.toHaveBeenCalled();
   });
 
   it('suppresses tool_activity telemetry on the active stream path', () => {
@@ -273,6 +194,7 @@ describe('useAgentMessages system_info warning', () => {
     });
 
     expect(mockAddMessage).not.toHaveBeenCalled();
+    expect(mockAddMessageToThread).not.toHaveBeenCalled();
   });
 
   it('suppresses mcp_server_status telemetry on the active stream path', () => {
@@ -295,6 +217,7 @@ describe('useAgentMessages system_info warning', () => {
     });
 
     expect(mockAddMessage).not.toHaveBeenCalled();
+    expect(mockAddMessageToThread).not.toHaveBeenCalled();
   });
 
   it('renders a2a_pingpong_terminated JSON as readable system message', () => {
@@ -336,39 +259,29 @@ describe('useAgentMessages system_info warning', () => {
     );
   });
 
-  // Bug-J: provider_signal messages carry upstream-origin warnings (Antigravity
-  // capacity retry notices, stream_error grace-window hints). Before this
-  // handler they were silently dropped — users saw bubbles hang without any
-  // explanation. Route them through the same formatVisibleSystemInfo pipeline
-  // as system_info so capacity warnings become visible ⚠️ system bubbles.
-  it('Bug-J: renders Antigravity provider_signal capacity warning as visible system message', () => {
-    act(() => {
-      root.render(React.createElement(Harness));
-    });
-
-    act(() => {
+  it('keeps provider capacity retries in execution detail, not chat', () => {
+    act(() => root.render(React.createElement(Harness)));
+    act(() =>
       captured?.handleAgentMessage({
         type: 'provider_signal',
         catId: 'antig-opus',
         content: JSON.stringify({
           type: 'warning',
           presentation: 'transient_status',
-          message: '上游模型服务端容量不足，系统将在 20s 后自动重试（1/3）',
+          message: 'capacity retry in 20s',
         }),
-      });
-    });
-
-    expect(mockAddMessage).toHaveBeenCalledWith(
-      expect.objectContaining({
-        type: 'system',
-        variant: 'info',
-        catId: 'antig-opus',
-        content: '⚠️ 上游模型服务端容量不足，系统将在 20s 后自动重试（1/3）',
       }),
+    );
+    expect(mockAddMessage).not.toHaveBeenCalled();
+    expect(mockUpdateThreadCatStatus).toHaveBeenCalledWith(
+      'thread-1',
+      'antig-opus',
+      'spawning',
+      'capacity retry in 20s',
     );
   });
 
-  it('Bug-J: renders provider_signal plain-text payload verbatim (non-JSON)', () => {
+  it('keeps unstructured provider signals in execution detail rather than chat', () => {
     act(() => {
       root.render(React.createElement(Harness));
     });
@@ -381,14 +294,8 @@ describe('useAgentMessages system_info warning', () => {
       });
     });
 
-    expect(mockAddMessage).toHaveBeenCalledWith(
-      expect.objectContaining({
-        type: 'system',
-        variant: 'info',
-        catId: 'antig-opus',
-        content: 'raw upstream notice',
-      }),
-    );
+    expect(mockAddMessage).not.toHaveBeenCalled();
+    expect(mockUpdateThreadCatStatus).toHaveBeenCalledWith('thread-1', 'antig-opus', 'spawning', 'raw upstream notice');
   });
 
   it('Bug-J: empty provider_signal payload is not surfaced (no ghost bubble)', () => {
@@ -406,5 +313,6 @@ describe('useAgentMessages system_info warning', () => {
     });
 
     expect(mockAddMessage).not.toHaveBeenCalled();
+    expect(mockAddMessageToThread).not.toHaveBeenCalled();
   });
 });

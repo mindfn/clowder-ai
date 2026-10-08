@@ -114,7 +114,7 @@ describe('split-pane canonical execution projection', () => {
   it('does not let another thread snapshot clear selected-thread liveness', () => {
     renderScenario({ snapshotProject: '/same-project', selectedProject: '/same-project', hydration: 'ready' });
 
-    expect(container.querySelector('[data-testid="active-invocation-banner"]')).toBeNull();
+    expect(container.querySelectorAll('[data-testid="active-invocation-banner"]')).toHaveLength(1);
     const textarea = container.querySelector('textarea');
     if (!textarea) throw new Error('textarea missing');
     act(() => setTextareaValue(textarea, 'new work'));
@@ -127,7 +127,7 @@ describe('split-pane canonical execution projection', () => {
   it('keeps selected-thread Stop available across project boundaries', () => {
     renderScenario({ snapshotProject: '/project-a', selectedProject: '/project-b', hydration: 'ready' });
 
-    expect(container.querySelector('[data-testid="active-invocation-banner"]')).toBeNull();
+    expect(container.querySelectorAll('[data-testid="active-invocation-banner"]')).toHaveLength(1);
     expect((container.querySelector('[aria-label="Stop generation"]') as HTMLButtonElement | null)?.disabled).toBe(
       false,
     );
@@ -136,7 +136,7 @@ describe('split-pane canonical execution projection', () => {
   it('keeps selected-thread Stop available while canonical hydration retries', () => {
     renderScenario({ snapshotProject: '/same-project', selectedProject: '/same-project', hydration: 'error' });
 
-    expect(container.querySelector('[data-testid="active-invocation-banner"]')).toBeNull();
+    expect(container.querySelectorAll('[data-testid="active-invocation-banner"]')).toHaveLength(1);
     expect((container.querySelector('[aria-label="Stop generation"]') as HTMLButtonElement | null)?.disabled).toBe(
       false,
     );

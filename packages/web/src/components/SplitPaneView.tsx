@@ -149,7 +149,7 @@ export function SplitPaneView({
           </div>
 
           {/* Shared input bar */}
-          <div className="border-t border-cafe-subtle bg-cafe-surface px-3 py-2">
+          <div data-concierge-action-zone className="border-t border-cafe-subtle bg-cafe-surface px-3 py-2">
             <div className="flex items-center gap-2 mb-1">
               <span className="text-micro text-cafe-muted">
                 {splitPaneTargetId

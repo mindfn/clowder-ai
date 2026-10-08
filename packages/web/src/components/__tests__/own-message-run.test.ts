@@ -68,7 +68,7 @@ describe('isLastOfOwnRun', () => {
     expect(isLastOfOwnRun(b, [a, emptyCat, b])).toBe(true);
   });
 
-  it('still ends the run on a cat row that is drawn even with no text: streaming, or only thinking', () => {
+  it('steps over an empty pending stream but ends the run on thinking or an explicit terminal response', () => {
     const a = own('a');
     const b = own('b');
     const streaming: ChatMessage = {
@@ -88,8 +88,24 @@ describe('isLastOfOwnRun', () => {
       thinking: '想',
     };
 
-    expect(isLastOfOwnRun(a, [a, streaming, b])).toBe(true);
+    expect(isLastOfOwnRun(a, [a, streaming, b])).toBe(false);
     expect(isLastOfOwnRun(a, [a, thinking, b])).toBe(true);
+    const completed: ChatMessage = {
+      ...streaming,
+      isStreaming: false,
+      lifecycle: {
+        kind: 'response',
+        orderKey: '2:s',
+        invocationId: 'child',
+        targetId: 'opus',
+        inputEntryIds: ['entry'],
+        inputMessageIds: [a.id],
+        startedAt: 1,
+        completedAt: 3,
+        status: 'completed',
+      },
+    };
+    expect(isLastOfOwnRun(a, [a, completed, b])).toBe(true);
   });
 
   it('a cross-thread source keeps an otherwise empty cat message on screen, judged against the thread it is drawn in', () => {

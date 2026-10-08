@@ -234,7 +234,7 @@ describe('F128 proposal card realtime socket journey', () => {
     const snapshotCard = currentMessages.find((message) => message.id === cardMessageId);
     expect(snapshotCard).toBeDefined();
     if (!snapshotCard) throw new Error('Expected the persisted proposal card in the active thread snapshot');
-    const replay = mergeReplaceHydrationMessages([snapshotCard], currentMessages, {});
+    const replay = mergeReplaceHydrationMessages([snapshotCard], currentMessages);
     act(() => useChatStore.getState().hydrateThread(THREAD_ID, replay.messages, false));
     expect(container.querySelectorAll(`[data-message-id="${cardMessageId}"]`)).toHaveLength(1);
     expect(

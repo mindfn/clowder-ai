@@ -84,7 +84,7 @@ const mockKnownThreadIds = new Set(['thread-A', 'thread-B', 'thread-C']);
 const mockGetThreadState = vi.fn((threadId: string) => {
   return {
     messages: [],
-    queue: [] as Array<{ id: string }>,
+    queue: mockThreadQueues.get(threadId) ?? [],
     isLoading: false,
     isLoadingHistory: false,
     hasMore: true,
@@ -275,7 +275,7 @@ describe('useSocket thread guard (P1 regression: cross-thread event leakage)', (
     mockGetThreadState.mockReset();
     mockGetThreadState.mockImplementation((threadId: string) => ({
       messages: [],
-      queue: [],
+      queue: mockThreadQueues.get(threadId) ?? [],
       isLoading: false,
       isLoadingHistory: false,
       hasMore: true,
@@ -415,6 +415,45 @@ describe('useSocket thread guard (P1 regression: cross-thread event leakage)', (
         type: 'assistant',
         replyTo: 'source-1',
       }),
+    );
+  });
+
+  it('folds the timeout diagnostics a failed response persisted into its panel carrier', () => {
+    const callbacks: SocketCallbacks = { onMessage: vi.fn() };
+    act(() => {
+      root.render(React.createElement(HookWrapper, { callbacks, threadId: 'thread-A' }));
+    });
+    const timeoutDiagnostics = { silenceDurationMs: 1_800_000, processAlive: true, invocationId: 'turn-1' };
+
+    act(() => {
+      simulateServerEvent('message_lifecycle_updated', {
+        threadId: 'thread-A',
+        message: {
+          id: 'response-1',
+          from: { kind: 'agent', catId: 'opus' },
+          catId: 'opus',
+          content: '缅因猫 CLI 响应超时 (1800s)',
+          timestamp: 120,
+          metadata: { provider: 'openai', model: 'gpt', timeoutDiagnostics },
+          lifecycle: {
+            kind: 'response',
+            orderKey: '120:turn-1',
+            invocationId: 'turn-1',
+            targetId: 'opus',
+            inputEntryIds: ['entry-1'],
+            inputMessageIds: ['source-1'],
+            status: 'failed',
+            startedAt: 100,
+            completedAt: 120,
+            reason: 'provider_error',
+          },
+        },
+      });
+    });
+
+    expect(mockUpsertLifecycleMessage).toHaveBeenCalledWith(
+      'thread-A',
+      expect.objectContaining({ id: 'response-1', extra: expect.objectContaining({ timeoutDiagnostics }) }),
     );
   });
 
@@ -1186,7 +1225,7 @@ describe('useSocket thread guard (P1 regression: cross-thread event leakage)', (
       });
     });
 
-    expect(mockSetQueue).not.toHaveBeenCalled();
+    expect(mockSetQueue).toHaveBeenCalledWith('thread-B', [canonicalEntry]);
     await act(async () => {
       resolveQueueJson?.({ queue: [canonicalEntry], activeInvocations: [] });
       await Promise.resolve();
@@ -1194,8 +1233,53 @@ describe('useSocket thread guard (P1 regression: cross-thread event leakage)', (
     });
 
     expect(mockApiFetch).toHaveBeenCalledWith('/api/threads/thread-B/queue');
-    expect(mockSetQueue).toHaveBeenCalledTimes(1);
+    expect(mockSetQueue).toHaveBeenCalledTimes(2);
     expect(mockSetQueue).toHaveBeenCalledWith('thread-B', [canonicalEntry]);
+  });
+
+  it('retires delivered targets immediately and rejects a late GET snapshot after a newer socket event', async () => {
+    const row = {
+      id: 'q-1',
+      from: { kind: 'user', userId: 'test-user' },
+      targetCats: ['opus', 'codex'],
+      status: 'queued',
+      content: 'one source',
+      messageId: 'm-1',
+    };
+    mockThreadQueues.set('thread-B', [row]);
+    const resolvers: Array<(value: unknown) => void> = [];
+    mockApiFetch.mockImplementation(() =>
+      Promise.resolve({ ok: true, json: () => new Promise((resolve) => resolvers.push(resolve)) }),
+    );
+    act(() =>
+      root.render(React.createElement(HookWrapper, { callbacks: { onMessage: vi.fn() }, threadId: 'thread-B' })),
+    );
+    act(() =>
+      simulateServerEvent('queue_updated', {
+        threadId: 'thread-B',
+        queue: [{ ...row, targetCats: ['codex'] }],
+        action: 'processing',
+      }),
+    );
+    expect(mockThreadQueues.get('thread-B')).toEqual([{ ...row, targetCats: ['codex'] }]);
+    await act(async () => {
+      await Promise.resolve();
+    });
+    act(() => simulateServerEvent('queue_updated', { threadId: 'thread-B', queue: [], action: 'processing' }));
+    expect(mockThreadQueues.get('thread-B')).toEqual([]);
+    await act(async () => {
+      await Promise.resolve();
+    });
+    await act(async () => {
+      resolvers[0]?.({ queue: [row], activeInvocations: [] });
+      await Promise.resolve();
+    });
+    expect(mockThreadQueues.get('thread-B')).toEqual([]);
+    await act(async () => {
+      resolvers[1]?.({ queue: [], activeInvocations: [] });
+      await Promise.resolve();
+    });
+    expect(mockThreadQueues.get('thread-B')).toEqual([]);
   });
 
   it('forwards true recall and late receipt events with their source thread intact', () => {

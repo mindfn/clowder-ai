@@ -191,6 +191,7 @@ describe('CatOverviewTab', () => {
       accountRef: 'codex',
       defaultModel: 'gpt-pro',
       provider: 'openai-chatgpt-pro',
+      carrier: 'cli',
       mcpSupport: true,
       color: { primary: '#2196F3', secondary: '#90CAF9' },
       mentionPatterns: ['@gpt-pro'],

@@ -1,7 +1,6 @@
 'use client';
 
 import type { InvocationTrajectoryStatus } from '@cat-cafe/shared';
-import { getBubbleInvocationId } from '@/debug/bubbleIdentity';
 import type { ChatMessage } from '@/stores/chat-types';
 import { useChatStore } from '@/stores/chatStore';
 import { captureMessageScrollAnchorForMessage } from '@/utils/scrollToMessage';
@@ -36,21 +35,24 @@ function responseLifecycleTrajectoryStatus(message: ChatMessage): InvocationTraj
   }
 }
 
+/** The turn a streamed message came from; a post_message stands alone and names no trajectory. */
+function streamInvocationId(message: ChatMessage): string | undefined {
+  if (message.extra?.isExplicitPost) return undefined;
+  return message.extra?.stream?.turnInvocationId ?? message.extra?.stream?.invocationId;
+}
+
 export function describeMessageInvocationTrajectory(
   message: ChatMessage,
 ): MessageInvocationTrajectoryDescriptor | undefined {
   const invocationId =
-    getBubbleInvocationId(message) ??
+    streamInvocationId(message) ??
     message.extra?.timeoutDiagnostics?.invocationId ??
     message.extra?.cliDiagnostics?.debugRef.invocationId;
   if (!invocationId || !message.catId) return undefined;
   const responseLifecycleStatus = responseLifecycleTrajectoryStatus(message);
-  const phase = message.extra?.invocationReconciliation?.phase;
   let status: InvocationTrajectoryStatus;
   if (responseLifecycleStatus) status = responseLifecycleStatus;
-  else if (phase === 'failed') status = hasTimeoutEvidence(message) ? 'timeout' : 'error';
-  else if (phase === 'canceled') status = 'cancelled';
-  else if (phase === 'running' || phase === 'unknown_running' || message.isStreaming) status = 'running';
+  else if (message.isStreaming) status = 'running';
   else if (hasTimeoutEvidence(message)) status = 'timeout';
   else if (message.variant === 'error' || message.content.trimStart().startsWith('Error:')) status = 'error';
   else status = 'done';

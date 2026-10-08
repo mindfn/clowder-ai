@@ -1,5 +1,6 @@
 import type { CapabilityTipContext } from '@cat-cafe/shared';
 import type { AppServerLifecycleSnapshot, CatInvocationInfo, CatStatusType, ChatMessage } from '@/stores/chat-types';
+import { hasAssistantBody } from './assistant-message-renderability';
 
 export const DEFAULT_STREAMING_TIP_CONTEXTS = [
   'thinking',
@@ -34,13 +35,10 @@ export function isStreamingTipSuppressed(
   return status === 'suspected_stall' || status === 'alive_but_silent' || isSilentActiveTurn(lifecycle, now);
 }
 
+/** The tip owns a processing response only while that response has nothing to show. */
 function isBodylessProcessingResponse(message: ChatMessage): boolean {
   return (
-    message.lifecycle?.kind === 'response' &&
-    message.lifecycle.status === 'processing' &&
-    message.content.trim().length === 0 &&
-    !message.contentBlocks?.length &&
-    !message.toolEvents?.length
+    message.lifecycle?.kind === 'response' && message.lifecycle.status === 'processing' && !hasAssistantBody(message)
   );
 }
 
