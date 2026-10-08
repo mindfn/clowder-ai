@@ -244,7 +244,7 @@ test('instances installed before a table change are brought to it at startup, ne
 test('production reconciles official grants before any plugin runtime resumes', async () => {
   const source = await readFile(new URL('../src/index.ts', import.meta.url), 'utf8');
   const reconcile = source.indexOf('await reconcileOfficialPluginGrants(');
-  const recovery = source.indexOf('await pluginRuntime.recoverAfterRestart()');
+  const recovery = source.indexOf('await pluginRuntime.recoverAfterRestart(');
   assert.ok(reconcile > 0 && reconcile < recovery, 'grants are reconciled before recovery resumes any runtime');
   assert.match(source.slice(reconcile, recovery), /hostPolicies: pluginManagerHostPolicies/);
 });

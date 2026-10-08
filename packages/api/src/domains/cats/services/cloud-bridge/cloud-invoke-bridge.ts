@@ -12,7 +12,7 @@
  *  - AC-B1c-12: source-bound delta payload format (delegated to build-delta-payload)
  *
  * The legacy PinchTab bridge, which drove the foreground ChatGPT tab and could
- * open a fresh chat, was removed (F202 W2-3 h3a, issue #1538): the bridge never
+ * open a fresh chat, was removed (issue #1538): the bridge never
  * sends through a second transport after the Host declines.
  */
 

@@ -62,6 +62,41 @@ describe('Plugin Manager operation refresh', () => {
   afterEach(() => {
     act(() => root.unmount());
     container.remove();
+    window.history.replaceState(null, '', '/');
+    vi.restoreAllMocks();
+  });
+
+  it('opens the requested package from a recovery settings link instead of selecting the first item', async () => {
+    const interval = vi.spyOn(window, 'setInterval');
+    window.history.replaceState(null, '', '/settings?s=plugins&plugin=official.companion.personal-chrome');
+    const companion = { ...plugin, pluginId: 'official.companion.personal-chrome', displayName: 'Companion' };
+    mockApiFetch.mockImplementation(async (url) => {
+      if (url === '/api/plugin-manager/plugins')
+        return json({ plugins: [plugin, companion], catalog: { status: 'fresh', refreshedAt: 1 } });
+      if (url.endsWith('/documentation')) return json({});
+      if (url === '/api/plugin-manager/plugins/official.companion.personal-chrome')
+        return json({
+          plugin: { ...companion, configFields: [], capabilities: [], steps: ['Companion setup'], testable: false },
+          catalog: { status: 'fresh', refreshedAt: 1 },
+        });
+      return json({}, 404);
+    });
+    await act(async () => root.render(<PluginManagerLiveContent />));
+    await flushEffects();
+    expect(container.textContent).toContain('Companion setup');
+    const detailPanel = container.querySelector('[data-mobile-panel="detail"]');
+    expect(detailPanel?.classList.contains('hidden')).toBe(false);
+    const back = Array.from(container.querySelectorAll('button')).find((button) =>
+      button.textContent?.includes('返回插件列表'),
+    );
+    await act(async () => back?.click());
+    const poll = interval.mock.calls.find((call) => call[1] === 5_000)?.[0];
+    expect(typeof poll).toBe('function');
+    await act(async () => {
+      if (typeof poll === 'function') poll();
+    });
+    await flushEffects();
+    expect(detailPanel?.classList.contains('hidden')).toBe(true);
   });
 
   it('reloads detail after an operation advances using GET invalidation ordering', async () => {

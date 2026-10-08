@@ -77,18 +77,18 @@ export class FakeHost {
 
   handle(path: string, init?: RequestInit, options?: unknown): Promise<Response> | undefined {
     const method = init?.method ?? 'GET';
-    if (path === '/api/plugins/personal-chrome' && method === 'GET') {
+    const actions = '/api/plugins/official.companion.personal-chrome/actions/personalChromeAuthorizations/';
+    if (path === actions + 'list' && method === 'POST') {
       this.calls.push({ path, method });
       if (this.pluginPlan.shift() === 'fail') return Promise.resolve(jsonResponse({ error: 'down' }, 503));
-      return Promise.resolve(jsonResponse({ authorization: { conversations: this.candidates } }));
+      return Promise.resolve(jsonResponse(packageRows(this.candidates)));
     }
-    if (path === '/api/plugins/personal-chrome/refresh-titles' && method === 'POST') {
+    if (path === actions + 'status')
+      return Promise.resolve(jsonResponse({ ok: true, data: { helper: { state: 'connected' } } }));
+    if (path === actions + 'refresh-titles' && method === 'POST') {
       this.calls.push({ path, method });
       return Promise.resolve(
-        jsonResponse({
-          authorization: { conversations: this.candidates },
-          titleSync: { status: 'synced', updatedCount: 0, requestedCount: 0 },
-        }),
+        jsonResponse({ ok: true, data: { titleSync: { status: 'synced', updatedCount: 0, requestedCount: 0 } } }),
       );
     }
     if (path !== this.bindingsPath) return undefined;
@@ -214,4 +214,18 @@ export function mountPanel() {
     },
   };
   return panel;
+}
+
+/** Package action rows deliberately carry no timestamps. */
+export function packageRows(conversations: Array<{ conversationId: string; displayTitle?: string }>) {
+  return {
+    ok: true,
+    render: 'rows',
+    data: {
+      rows: conversations.map(({ conversationId, displayTitle }) => ({
+        key: conversationId,
+        label: displayTitle ?? conversationId,
+      })),
+    },
+  };
 }

@@ -8,7 +8,7 @@ import {
 
 import type { PluginPackageRecord } from '../host-inventory/types.js';
 import { COLLECTIVE_CONNECTOR_PLUGIN_MANIFEST } from '../official-catalog.js';
-import type { BundledPluginRuntime } from './bundled-runtime-carrier.js';
+import type { BundledPluginRuntime } from './carriers/bundled-runtime-carrier.js';
 
 export interface CollectiveConnectorBuiltinRuntimeOptions {
   readonly dataDirectory: string;

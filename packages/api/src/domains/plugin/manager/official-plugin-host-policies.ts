@@ -37,6 +37,10 @@ function connectorGrants(...unused: readonly (typeof CONNECTOR_GRANTS)[number][]
  * only ever receive what its entry lists and its manifest requests.
  */
 export const OFFICIAL_PLUGIN_HOST_POLICIES: readonly MachineCatalogHostPolicy[] = [
+  {
+    pluginId: 'official.companion.personal-chrome',
+    effectiveGrants: ['data.directory', 'cloud.conversation.host'],
+  },
   { pluginId: 'official.connector.dingtalk', effectiveGrants: connectorGrants() },
   { pluginId: 'official.connector.feishu', effectiveGrants: connectorGrants() },
   // Telegram takes its settings from its credentials alone; it reads no plain configuration.

@@ -22,14 +22,16 @@ export function ConversationSummary({
   return (
     <span className="min-w-0 flex-1">
       <span className="block break-words text-sm font-semibold text-cafe" title={candidate.displayTitle}>
-        {candidate.displayTitle ?? '名称尚未同步'}
+        {candidate.displayTitle ?? candidate.conversationId}
       </span>
       <span className="mt-0.5 block text-xs text-cafe-muted">
         {connected
           ? '已连接当前对话'
           : candidate.displayTitle
             ? '已授权，可连接当前对话'
-            : `授权于 ${authorizationTime(candidate.authorizedAt)}`}
+            : candidate.authorizedAt
+              ? `授权于 ${authorizationTime(candidate.authorizedAt)}`
+              : '已授权会话'}
       </span>
     </span>
   );
@@ -53,7 +55,7 @@ export function ConversationDetails({ candidate }: { candidate: AuthorizedConver
   return (
     <details className="mt-1 text-xs text-cafe-muted">
       <summary className="cursor-pointer py-1">授权信息</summary>
-      <p>授权于 {authorizationTime(candidate.authorizedAt)}</p>
+      {candidate.authorizedAt && <p>授权于 {authorizationTime(candidate.authorizedAt)}</p>}
       <code title={candidate.conversationId} className="block break-all font-mono">
         {candidate.conversationId}
       </code>

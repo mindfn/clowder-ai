@@ -1,7 +1,7 @@
 export type CloudBridgeOutboundStatus = 'sent' | 'failed' | 'unknown';
 /**
  * `legacy-pinchtab` is read-only history: receipts written while the legacy PinchTab bridge existed
- * stay valid, but the Host no longer produces it (F202 W2-3 h3a, issue #1538).
+ * stay valid, but the Host no longer produces it (issue #1538).
  */
 export type CloudBridgeOutboundTransport = 'host' | 'legacy-pinchtab' | 'none';
 export type CloudBridgeIdempotencyDisposition = 'fresh' | 'replayed' | 'not_attempted' | 'unknown';

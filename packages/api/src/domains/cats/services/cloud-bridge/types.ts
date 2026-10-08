@@ -61,7 +61,7 @@ export type BridgeDispatchOutcome =
   | {
       readonly kind: 'sent';
       readonly capturedUrl: string;
-      /** The only transport; the legacy PinchTab bridge was removed (F202 W2-3 h3a, issue #1538). */
+      /** The only transport; the legacy PinchTab bridge was removed (issue #1538). */
       readonly transport: 'host';
       readonly hostMessageId: string;
       readonly idempotentReplay?: boolean;

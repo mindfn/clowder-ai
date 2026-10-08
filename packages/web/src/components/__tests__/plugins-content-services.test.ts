@@ -9,32 +9,6 @@ vi.mock('@/utils/api-client', () => ({
 import { apiFetch } from '@/utils/api-client';
 import { PluginsContent } from '../settings/PluginsContent';
 
-function personalChromeResponse() {
-  return {
-    ok: true,
-    json: async () => ({
-      pluginId: 'personal-chrome-host',
-      channel: 'developer_preview',
-      platform: 'darwin',
-      platformSupport: 'supported',
-      artifact: {
-        helper: 'absent',
-        extension: 'chrome_web_store',
-      },
-      distribution: {
-        channel: 'chrome_web_store',
-        integration: 'ready',
-        publication: 'unavailable',
-        blockerCode: 'CHROME_WEB_STORE_LISTING_NOT_CONFIGURED',
-      },
-      config: { status: 'absent' },
-      authorization: { status: 'empty', count: 0, limit: 32, conversations: [] },
-      intent: { status: 'developer_preview' },
-      live: { status: 'dormant' },
-    }),
-  };
-}
-
 describe('PluginsContent — GitHub plugin config', () => {
   let container: HTMLDivElement;
   let root: Root;
@@ -50,10 +24,7 @@ describe('PluginsContent — GitHub plugin config', () => {
     document.body.appendChild(container);
     root = createRoot(container);
     mockFetch.mockReset();
-    mockFetch.mockImplementation(async (path: string) => {
-      if (path === '/api/plugins/personal-chrome') {
-        return personalChromeResponse();
-      }
+    mockFetch.mockImplementation(async () => {
       return { ok: true, json: async () => ({ ok: true }) };
     });
   });
@@ -84,9 +55,6 @@ describe('PluginsContent — GitHub plugin config', () => {
 
   it('renders expandable GitHub token config via plugin framework', async () => {
     mockFetch.mockImplementation(async (path: string) => {
-      if (path === '/api/plugins/personal-chrome') {
-        return personalChromeResponse();
-      }
       if (path === '/api/plugins') {
         return {
           ok: true,

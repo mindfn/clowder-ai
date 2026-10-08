@@ -12,11 +12,16 @@ export const PLUGIN_CONTRACT_VERSION = '0.1.0' as const;
 /** Published Train B packages still declare this beta manifest line. */
 export const PUBLISHED_PLUGIN_MANIFEST_CONTRACT_VERSION = '0.1.0-beta.13' as const;
 /**
- * Train C1 packages already admitted under earlier beta lines remain installed (beta.20, beta.21,
- * beta.22, beta.24). The Host never consumed beta.23 (a version-only sync), so no manifest declares
+ * Train B and C1 packages already admitted under earlier beta lines remain installed
+ * (beta.15–beta.22, beta.24). The Host never consumed beta.23 (a version-only sync), so no manifest declares
  * it here.
  */
 export const PREVIOUS_PLUGIN_MANIFEST_CONTRACT_VERSIONS = [
+  '0.1.0-beta.15',
+  '0.1.0-beta.16',
+  '0.1.0-beta.17',
+  '0.1.0-beta.18',
+  '0.1.0-beta.19',
   '0.1.0-beta.20',
   '0.1.0-beta.21',
   '0.1.0-beta.22',

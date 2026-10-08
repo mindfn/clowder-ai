@@ -16,7 +16,7 @@
  * Host-side code the package never wrote and report success for it. Only a method the instance
  * actually owns may be called.
  *
- * STATUS when written: RED — `builtin-runtime/module-host-invocation.js` does not exist.
+ * STATUS when written: RED — `builtin-runtime/carriers/module-host-invocation.js` does not exist.
  */
 import assert from 'node:assert/strict';
 import { beforeEach, describe, test } from 'node:test';
@@ -29,7 +29,9 @@ let calls;
 const INSTANCE = 'inst-feishu';
 
 beforeEach(async () => {
-  ({ createModuleHostInvocation } = await import('../dist/domains/plugin/builtin-runtime/module-host-invocation.js'));
+  ({ createModuleHostInvocation } = await import(
+    '../dist/domains/plugin/builtin-runtime/carriers/module-host-invocation.js'
+  ));
   calls = [];
   loaded = new Map();
   invocation = createModuleHostInvocation({

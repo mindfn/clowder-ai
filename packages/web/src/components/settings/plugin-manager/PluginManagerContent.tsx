@@ -1,7 +1,7 @@
 'use client';
 
 import { pluginDescriptionVariants } from '@cat-cafe/shared';
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { ConnectorPluginInstallButton } from '../../ConnectorPluginInstallButton';
 import { HubIcon } from '../../hub-icons';
 import { settingsResourceCardClass } from '../../SettingsResourceCard';
@@ -81,6 +81,7 @@ export function PluginManagerContent({
   error,
   busyPluginId = null,
   selectedPluginId,
+  initialDetailPluginId,
   onPluginSelect,
   onSearchChange,
   onInstall,
@@ -100,6 +101,8 @@ export function PluginManagerContent({
   error?: string | null;
   busyPluginId?: string | null;
   selectedPluginId?: string | null;
+  /** A validated deep link opens detail once; later refreshes preserve the user's panel. */
+  initialDetailPluginId?: string | null;
   onPluginSelect?: (pluginId: string | null) => void;
   onSearchChange?: (query: string) => void;
   onInstall?: (pluginId: string) => void;
@@ -115,6 +118,7 @@ export function PluginManagerContent({
 }) {
   const [query, setQuery] = useState('');
   const [mobileDetailOpen, setMobileDetailOpen] = useState(false);
+  const initialDetailOpened = useRef(false);
   const [configurationValidation, setConfigurationValidation] = useState({ pluginId: '', request: 0 });
 
   const filtered = useMemo(() => fixtures.filter((plugin) => matchesSearch(plugin, query)), [fixtures, query]);
@@ -126,6 +130,12 @@ export function PluginManagerContent({
   const visible = [...leadingGroups.flatMap((group) => group.plugins), ...recommendedPlugins, ...otherPlugins];
   const selection = usePluginSelection(visible, selectedPluginId, onPluginSelect);
   const selected = selection.selected;
+  useEffect(() => {
+    if (!initialDetailOpened.current && initialDetailPluginId && selected?.id === initialDetailPluginId) {
+      initialDetailOpened.current = true;
+      setMobileDetailOpen(true);
+    }
+  }, [initialDetailPluginId, selected?.id]);
 
   const renderRows = (plugins: readonly PluginManagerDesignFixture[]) =>
     plugins.map((plugin) => (

@@ -12,8 +12,8 @@ import {
   settingsResourceCardClass,
   settingsResourceRowClass,
 } from '../SettingsResourceCard';
+import { useShellPresentation } from '../shell/shell-presentation';
 import { OfficialPluginsPanel } from './OfficialPluginsPanel';
-import { PersonalChromePluginPanel } from './PersonalChromePluginPanel';
 import { PluginConfigPanel } from './PluginConfigPanel';
 import { PluginManagerContent } from './plugin-manager/PluginManagerContent';
 import { PluginManagerLiveContent } from './plugin-manager/PluginManagerLiveContent';
@@ -123,6 +123,7 @@ function RepositoryPluginCard({
 }
 
 export function PluginsContent() {
+  const isV2 = useShellPresentation() === 'v2';
   const [designGate, setDesignGate] = useState({
     resolved: false,
     enabled: false,
@@ -179,12 +180,12 @@ export function PluginsContent() {
 
   useEffect(() => {
     if (!designGate.resolved) return;
-    if (designGate.enabled || designGate.live) {
+    if (isV2 || designGate.enabled || designGate.live) {
       setLoading(false);
       return;
     }
     void fetchPlugins();
-  }, [designGate.enabled, designGate.live, designGate.resolved, fetchPlugins]);
+  }, [isV2, designGate.enabled, designGate.live, designGate.resolved, fetchPlugins]);
 
   if (!designGate.resolved) {
     return (
@@ -199,18 +200,18 @@ export function PluginsContent() {
   if (designGate.enabled) {
     return (
       <PluginManagerContent
+        presentation={isV2 ? 'v2' : 'v1'}
         fixtures={PLUGIN_MANAGER_DESIGN_FIXTURES}
         catalogStatus={designGate.degradedCatalog ? 'degraded' : 'fresh'}
       />
     );
   }
 
-  if (designGate.live) return <PluginManagerLiveContent />;
+  if (isV2 || designGate.live) return <PluginManagerLiveContent presentation={isV2 ? 'v2' : 'v1'} />;
 
   if (loading) {
     return (
       <div className="flex flex-col gap-3.5" data-testid="plugins-list">
-        <PersonalChromePluginPanel />
         <OfficialPluginsPanel />
         <SettingsText as="p" variant="sm" tone="muted">
           加载本地插件中...
@@ -222,7 +223,6 @@ export function PluginsContent() {
   if (plugins.length === 0) {
     return (
       <div className="flex flex-col gap-3.5" data-testid="plugins-list">
-        <PersonalChromePluginPanel />
         <OfficialPluginsPanel />
         <div
           className="flex flex-col items-center justify-center"
@@ -249,7 +249,6 @@ export function PluginsContent() {
 
   return (
     <div className="flex flex-col gap-3.5" data-testid="plugins-list">
-      <PersonalChromePluginPanel />
       <OfficialPluginsPanel />
       {toggleError && (
         <div className="rounded-md bg-conn-red-bg px-3 py-2 text-sm text-conn-red-text">{toggleError}</div>

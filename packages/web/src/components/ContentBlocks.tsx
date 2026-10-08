@@ -5,6 +5,11 @@ import type { MessageContent } from '@/stores/chatStore';
 import { API_URL } from '@/utils/api-client';
 import { AuthenticatedMediaImage } from './AuthenticatedMediaImage';
 import { ContextAttachmentView } from './ContextAttachmentView';
+import {
+  messagePublicationSource,
+  type PublishedMessageCoordinate,
+  usePublishedContent,
+} from './content-review/usePublishedContent';
 import { Lightbox } from './Lightbox';
 import { MarkdownContent } from './MarkdownContent';
 
@@ -29,8 +34,15 @@ function resolveUrl(url: string): string {
   return url;
 }
 
-export function ContentBlocks({ blocks }: { blocks: MessageContent[] }) {
+export function ContentBlocks({
+  blocks,
+  publication,
+}: {
+  blocks: MessageContent[];
+  publication?: PublishedMessageCoordinate;
+}) {
   const [lightboxSrc, setLightboxSrc] = useState<string | null>(null);
+  const published = usePublishedContent();
   return (
     <>
       {blocks.map((block, i) => {
@@ -38,18 +50,38 @@ export function ContentBlocks({ blocks }: { blocks: MessageContent[] }) {
           return <MarkdownContent key={i} content={block.text} />;
         }
         if (block.type === 'image') {
+          const source = messagePublicationSource(publication, { kind: 'content-block', index: i }, block.url);
           return (
             <AuthenticatedMediaImage
               key={i}
               url={block.url}
               alt="attached image"
               className="max-w-full sm:max-w-sm rounded-lg mt-2 border border-cafe cursor-pointer hover:opacity-90 transition-opacity"
-              onOpen={setLightboxSrc}
+              onOpen={
+                published.busy
+                  ? undefined
+                  : (src) => (source ? void published.open(source, '图片') : setLightboxSrc(src))
+              }
             />
           );
         }
         if (block.type === 'file') {
           const src = resolveUrl(block.url);
+          const source = messagePublicationSource(publication, { kind: 'content-block', index: i }, block.url);
+          if (source)
+            return (
+              <button
+                key={i}
+                type="button"
+                disabled={published.busy}
+                onClick={() => void published.open(source, block.fileName)}
+                className="mt-2 flex max-w-sm items-center gap-2 rounded-lg border border-cafe bg-cafe-surface px-3 py-2 text-left hover:border-cafe-accent"
+              >
+                <span aria-hidden="true">{fileIcon(block.mimeType)}</span>
+                <span className="min-w-0 truncate">{block.fileName}</span>
+                <span className="shrink-0 text-xs text-cafe-muted">打开作品</span>
+              </button>
+            );
           return (
             <a
               key={i}
@@ -73,6 +105,16 @@ export function ContentBlocks({ blocks }: { blocks: MessageContent[] }) {
         }
         return null;
       })}
+      {published.busy ? (
+        <p role="status" className="text-xs text-cafe-muted">
+          正在打开作品…
+        </p>
+      ) : null}
+      {published.error ? (
+        <p role="alert" className="text-xs text-cafe-error">
+          {published.error}
+        </p>
+      ) : null}
       {lightboxSrc && <Lightbox url={lightboxSrc} alt="attached image" onClose={() => setLightboxSrc(null)} />}
     </>
   );

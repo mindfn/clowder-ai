@@ -1,11 +1,11 @@
 /**
  * F202 C1 cross-repository gate — the one place the approved connector artifacts are pinned.
  *
- * Sixth connector batch (supersedes the fifth): built from plugins PR #54 at `60d3bfecb9c1` with the
+ * Eighth connector batch (supersedes the sixth): built from plugins PR #54 at `553f9e3c7267` with the
  * frozen toolchain and reproducible packaging (canonical shrinkwrap, `npm ci`, deterministic members
- * and metadata). The dependency closure carries contract beta.27 / SDK 0.2.0-beta.11; Feishu's start
- * no longer leaves an unhandled rejection after stop; the connectors are 0.1.0-alpha.1. Verified in
- * the ledger entry 「第六批制品」. The self-contained archives are darwin-arm64 builds; they are
+ * and metadata). The dependency closure carries contract beta.29 / SDK 0.2.0-beta.12;
+ * the connectors are 0.1.0-alpha.2. Verified in the ledger entry 「第八批制品」.
+ * The self-contained archives are darwin-arm64 builds; they are
  * published unchanged, with SHA256SUMS, as release assets so a reviewer can fetch exactly these
  * bytes. No module here imports Host code, so the mandatory runner can check digests before it
  * rebuilds the Host.
@@ -14,18 +14,18 @@
 export const PLUGIN_SOURCE = Object.freeze({
   repository: 'zts212653/clowder-ai-plugins',
   pullRequest: 54,
-  sourceSha: '60d3bfecb9c153352317a1a96fbc94fb9a1b2fb9',
-  batch: 6,
+  sourceSha: '553f9e3c72673be08ea08d0dfbac003c275ecb2f',
+  batch: 8,
 });
 
 /** Where reviewers and the mandatory runner fetch the archives: `<owner>/<repo>@<tag>`. */
 export const ARTIFACT_RELEASE = Object.freeze({
   repository: 'mindfn/clowder-ai-plugins',
-  tag: 'f202-c1-connectors-batch6-60d3bfecb9c',
+  tag: 'f202-c1-batch8-553f9e3c7267',
 });
 
 /** The version every connector in this batch carries; it is part of each archive's file name. */
-export const CONNECTOR_VERSION = '0.1.0-alpha.1';
+export const CONNECTOR_VERSION = '0.1.0-alpha.2';
 
 /** The platform the self-contained archives were built for; the gate refuses to run elsewhere. */
 export const ARTIFACT_PLATFORM = Object.freeze({ platform: 'darwin', arch: 'arm64' });
@@ -35,31 +35,31 @@ export const RELEASES = Object.freeze(
   [
     [
       'dingtalk',
-      '412fc483bb455b708797edf6d03eb5b921849ba2b151bac2418df732bc7a0001',
+      '1e6d0313e853603463924d5796046d4ee864b954c5a0e6507cccddb5611fb2aa',
       'createDingTalkPluginModule',
       true,
     ],
-    ['feishu', '96fea826c973c4ebcf580c8fe14a1d43fd21858b90a81d0307e673d1c6a4bf70', 'createFeishuPluginModule', true],
+    ['feishu', '3a33fff7b5a0279a48b94db9fd9e590289f51f811e65ade0bc259e105c23f1a5', 'createFeishuPluginModule', true],
     [
       'telegram',
-      'ea16a927b0acd93d3f4f677b061309680be99827252784ff88747185e987d5d5',
+      '7ec4239e64d96b5484a42c1beeed4e498e09fecfc1644da3924c3e1487f41ab9',
       'createTelegramPluginModule',
       true,
     ],
     [
       'wecom-agent',
-      '2206b37d6d2a5c4cc7065babaf9bbba5ae4c89378cca63e6dbccb13dab91724f',
+      '56fd5dd4a8a69603ef2449c09c6673e7ebcdd101e298170deea0969871846d0e',
       'createWeComAgentPluginModule',
       true,
     ],
     [
       'wecom-bot',
-      'dfcfeed7458c4ff2f343dc9c5d9cade3f41508b7d1629eacba2892004422c77e',
+      '9c0c9ed83a3e26522f2d6ba8a688242e3d48cf35bd4202b6a41423e11170c54f',
       'createWeComBotPluginModule',
       true,
     ],
-    ['weixin', '341d32ac953fe1e60fb9de30581af9ad80a4ae24079018d85613eb080066a5bc', 'createWeixinPluginModule', true],
-    ['xiaoyi', '54e442698339a369e90e2936276a91208db63e1df42569432b31edb8b9c11131', 'createXiaoyiPluginModule', false],
+    ['weixin', 'e6fe5d0bea4b3c6feb5c4117cb32245a9709aee02d60f8eeb6152484a2739695', 'createWeixinPluginModule', true],
+    ['xiaoyi', 'e91756b354dc0ce6e78111cc952ca92882dcdfb63d0c369a20d6d2b2c1144924', 'createXiaoyiPluginModule', false],
   ].map(([name, sha, factory, media]) => Object.freeze({ name, sha, factory, media })),
 );
 

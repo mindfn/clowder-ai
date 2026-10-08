@@ -26,12 +26,14 @@ export function PluginManagerLiveContent({ presentation = 'v1' }: { presentation
   const [busyPluginId, setBusyPluginId] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [selectedPluginId, setSelectedPluginId] = useState<string | null>(null);
+  const [initialDetailPluginId, setInitialDetailPluginId] = useState<string | null>(null);
   const [configurationSavedPluginId, setConfigurationSavedPluginId] = useState<string | null>(null);
   const selectedPluginIdRef = useRef<string | null>(null);
   const query = useRef('');
   const listGeneration = useRef(0);
   const detailGeneration = useRef(0);
   const mounted = useRef(true);
+  const initialSelection = useRef<string | null>(null);
 
   const loadDetail = useCallback(async (pluginId: string, afterMutation = false) => {
     const generation = ++detailGeneration.current;
@@ -72,6 +74,13 @@ export function PluginManagerLiveContent({ presentation = 'v1' }: { presentation
         const value = await fetchManagerList(search, afterMutation);
         if (!mounted.current || generation !== listGeneration.current) return;
         setSnapshot(value);
+        const requested = initialSelection.current;
+        initialSelection.current = null;
+        if (requested && value.plugins.some((plugin) => plugin.pluginId === requested)) {
+          setInitialDetailPluginId(requested);
+          selectPlugin(requested);
+          return;
+        }
         const current = selectedPluginIdRef.current;
         if (current && value.plugins.some((plugin) => plugin.pluginId === current)) {
           await loadDetail(current, afterMutation);
@@ -81,11 +90,12 @@ export function PluginManagerLiveContent({ presentation = 'v1' }: { presentation
         setError('插件列表加载失败；现有状态没有被改写。');
       }
     },
-    [loadDetail],
+    [loadDetail, selectPlugin],
   );
 
   useEffect(() => {
     mounted.current = true;
+    initialSelection.current = new URLSearchParams(window.location.search).get('plugin');
     void loadList('');
     const timer = window.setInterval(() => void loadList(query.current), POLL_INTERVAL_MS);
     return () => {
@@ -188,6 +198,7 @@ export function PluginManagerLiveContent({ presentation = 'v1' }: { presentation
       error={error}
       busyPluginId={busyPluginId}
       selectedPluginId={selectedPluginId}
+      initialDetailPluginId={initialDetailPluginId}
       onPluginSelect={selectPlugin}
       onSearchChange={(value) => {
         query.current = value;

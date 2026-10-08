@@ -49,6 +49,13 @@ jobs:
           node --test packages/api/test/cli-spawn-win.test.js
           node --test packages/api/test/process-liveness-probe.test.js
           node --test packages/api/test/pick-directory.test.js
+      # #1542: the compaction launch plan must hold on Windows (realpath
+      # backslash semantics, junction escapes, canonical containment).
+      - name: F296 compaction launch plan (Windows paths)
+        run: >-
+          node --test
+          packages/api/test/f296-claude-compaction-launch-plan.test.js
+          packages/api/test/f296-invocation-carrier-identity.test.js
       - name: ManagedRunner Windows process-tree cleanup
         run: >-
           node --test
@@ -56,3 +63,46 @@ jobs:
           packages/api/test/managed-runner-windows.test.js
       - name: Desktop config behavioral tests (PowerShell)
         run: node --test desktop/generate-desktop-config-behavior.test.js
+
+  # #1542 final acceptance: package the artifact (pnpm deploy, the same
+  # self-contained layout the desktop installer ships), stage the install
+  # tree (packages/api + .claude/hooks carrier per cat-cafe.iss), then run
+  # the installed-layout suite AGAINST THE PACKAGED ARTIFACT — not the
+  # source checkout. Covers: ready plan from installed module, Apps/apps
+  # case-variant spelling, root junction alias, external-project CWD, and
+  # the Node/legacy overlap single-observation guarantee.
+  test-windows-installed:
+    name: Test (Windows, installed layout)
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm --filter @cat-cafe/shared build
+      - run: pnpm --filter @cat-cafe/api build
+      - name: Record artifact identity
+        run: |
+          echo "commit=$env:GITHUB_SHA" | Tee-Object artifact-identity.txt
+          Get-Content artifact-identity.txt
+      - name: Package the API artifact (pnpm deploy)
+        run: >-
+          $env:CAT_CAFE_SKIP_NODE_RUNTIME_GUARD = "1";
+          pnpm --filter @cat-cafe/api --prod --config.node-linker=hoisted deploy ${{ runner.temp }}\clowder-deploy
+      - name: Stage the installed layout (installer file contract)
+        shell: pwsh
+        run: |
+          $install = "${{ runner.temp }}\clowder-install"
+          New-Item -ItemType Directory -Force -Path "$install\packages" | Out-Null
+          Copy-Item -Recurse "${{ runner.temp }}\clowder-deploy" "$install\packages\api"
+          New-Item -ItemType Directory -Force -Path "$install\.claude\hooks" | Out-Null
+          Copy-Item ".claude\hooks\f24-compaction.mjs" "$install\.claude\hooks\f24-compaction.mjs"
+          Write-Host "staged install root: $install"
+          Get-ChildItem "$install\.claude\hooks"
+      - name: Installed-layout acceptance (packaged artifact)
+        env:
+          CAT_CAFE_INSTALLED_LAYOUT_ROOT: ${{ runner.temp }}\clowder-install
+        run: node --test packages/api/test/f296-installed-layout.test.js

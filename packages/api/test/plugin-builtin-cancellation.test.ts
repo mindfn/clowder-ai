@@ -3,7 +3,7 @@ import { test } from 'node:test';
 import {
   type BundledPluginRuntime,
   BundledPluginRuntimeCarrier,
-} from '../src/domains/plugin/builtin-runtime/bundled-runtime-carrier.js';
+} from '../src/domains/plugin/builtin-runtime/carriers/bundled-runtime-carrier.js';
 import { HostInventoryControlPlane } from '../src/domains/plugin/host-inventory/control-plane.js';
 import { MemoryPluginInventoryStore } from '../src/domains/plugin/host-inventory/stores.js';
 import {

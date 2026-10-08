@@ -124,6 +124,25 @@ export const ENV_VARS: EnvDefinition[] = [
     runtimeEditable: false,
   },
   {
+    name: 'CAT_CAFE_RUNTIME_WEB_PORT',
+    defaultValue: '(由启动入口设置)',
+    description: '当前部署的 Web 回环探测端口；由启动入口注入，用于核实实时服务就绪状态',
+    category: 'server',
+    sensitive: false,
+    hubVisible: false,
+    runtimeEditable: false,
+  },
+  {
+    name: 'CAT_CAFE_ALPHA_COORDINATES',
+    defaultValue: '(仅命名 Alpha 启动入口设置)',
+    description:
+      '命名 Alpha 的单一坐标包；由 canonical launcher 固定 main revision、私有 checkout 和回环端口，各消费者仍须核实实际 Git/build/path 事实',
+    category: 'server',
+    sensitive: false,
+    hubVisible: false,
+    runtimeEditable: false,
+  },
+  {
     name: 'API_SERVER_PORT',
     defaultValue: '3004',
     description: 'API 服务端口',
@@ -405,45 +424,6 @@ export const ENV_VARS: EnvDefinition[] = [
     runtimeEditable: false,
   },
   {
-    name: 'CAT_CAFE_PERSONAL_CHROME_SOCKET',
-    defaultValue: '(空)',
-    description:
-      'F247 Personal Chrome Host Adapter — operator-provisioned Unix socket path；仅与 pairing secret 同时存在时启用。',
-    category: 'server',
-    sensitive: false,
-    hubVisible: false,
-    runtimeEditable: false,
-  },
-  {
-    name: 'CAT_CAFE_PERSONAL_CHROME_PAIRING_SECRET',
-    defaultValue: '(空)',
-    description:
-      'F247 Personal Chrome Host Adapter — 本地 API ↔ Native Messaging helper 配对密钥；仅 operator/dev seam，禁止日志输出。',
-    category: 'server',
-    sensitive: true,
-    hubVisible: false,
-    runtimeEditable: false,
-  },
-  {
-    name: 'CAT_CAFE_PERSONAL_CHROME_WEB_STORE_URL',
-    defaultValue: '(空)',
-    description:
-      'F247 Personal Chrome 安装旅程 — 已公开发布且扩展 ID 匹配的 Chrome Web Store listing URL；为空时诚实阻断产品安装。',
-    category: 'server',
-    sensitive: false,
-    hubVisible: false,
-    runtimeEditable: false,
-  },
-  {
-    name: 'CAT_CAFE_ENABLE_LEGACY_PINCHTAB_BRIDGE',
-    defaultValue: '0',
-    description:
-      'F247 Cloud Cat — 显式启用会控制前台浏览器的 legacy PinchTab bridge；默认 0，Host Adapter 缺失时 fail closed。',
-    category: 'server',
-    sensitive: false,
-    runtimeEditable: false,
-  },
-  {
     name: 'CAT_CAFE_REMOTE_TOKEN',
     defaultValue: '(空)',
     description:
@@ -459,6 +439,24 @@ export const ENV_VARS: EnvDefinition[] = [
       'F247 B1a Cloud Cat — remote-spike.ts 工具白名单 mode 选择（fable-phase0 / cloud-pro-phase0；收窄到 10 项 collab+memory 工具）',
     category: 'server',
     sensitive: false,
+    runtimeEditable: false,
+  },
+  {
+    name: 'CAT_CAFE_NATIVE_TURN_CREDENTIAL_FILE',
+    defaultValue: '(Host 投影)',
+    description: 'F317 当前持续调用的原生轮次凭据文件，由 Host 创建和撤销，禁止用户配置。',
+    category: 'codex',
+    sensitive: true,
+    hubVisible: false,
+    runtimeEditable: false,
+  },
+  {
+    name: 'CAT_CAFE_NATIVE_CONNECTION_ID',
+    defaultValue: '(Host 投影)',
+    description: 'F317 本次 Live 连接代际，用于验证原生工具凭据归属。',
+    category: 'codex',
+    sensitive: true,
+    hubVisible: false,
     runtimeEditable: false,
   },
   {
@@ -518,6 +516,16 @@ export const ENV_VARS: EnvDefinition[] = [
     name: 'CAT_CAFE_REDIS_TEST_ISOLATED',
     defaultValue: '(未设置)',
     description: 'F254 隔离 Redis 迁移测试授权开关（仅随机 loopback 端口与独立 DB 的测试 harness 使用）',
+    category: 'server',
+    sensitive: false,
+    hubVisible: false,
+    runtimeEditable: false,
+    allowedValues: ['1'],
+  },
+  {
+    name: 'CAT_CAFE_F317_LOCAL_NOTE_LAB',
+    defaultValue: '(未设置)',
+    description: '仅在隔离内存 worktree 的 loopback 开发服务中启用 F317 具名本地便签试验',
     category: 'server',
     sensitive: false,
     hubVisible: false,
@@ -695,6 +703,15 @@ export const ENV_VARS: EnvDefinition[] = [
     defaultValue: '(未设置 → process.cwd())',
     description:
       'F061: Clowder AI runtime 二进制根目录（runtime startup 自动 export 为 $RUNTIME_DIR），优先级高于 capability orchestrator 的 auto-detection，用于 Antigravity MCP config args 路径',
+    category: 'server',
+    sensitive: false,
+    runtimeEditable: false,
+  },
+  {
+    name: 'CAT_CAFE_COMPACTION_CARRIER_ROOT',
+    defaultValue: '(未设置 → 从模块位置锚定的 install root 解析)',
+    description:
+      'F296/#1542: managed Claude compaction carrier（f24-compaction.mjs）的可信安装根覆盖。仅在部署布局不含标准 packages/api 结构时使用；该根下的 .claude/hooks/f24-compaction.mjs 是唯一被接受的 carrier 坐标，绝不向上搜索',
     category: 'server',
     sensitive: false,
     runtimeEditable: false,
@@ -1340,7 +1357,7 @@ export const ENV_VARS: EnvDefinition[] = [
   {
     name: 'GITHUB_REPO_INBOX_CAT_ID',
     defaultValue: '(未设置)',
-    description: 'GitHub Repo Inbox 默认收件猫 catId',
+    description: 'GitHub Repo Inbox 启动必填 fallback catId；已登记仓库以 Community Repo guardCatId 为准',
     category: 'github_review',
     sensitive: false,
     exampleRecommended: true,
@@ -1393,6 +1410,15 @@ export const ENV_VARS: EnvDefinition[] = [
     sensitive: false,
   },
   {
+    name: 'CAT_CAFE_CLAUDE_CARRIER',
+    defaultValue: 'print_sdk',
+    description: 'F318 Claude carrier；agent_sdk 仅显式 canary，默认不变。SDK 已接受执行后故障不会自动降级重放',
+    category: 'cli',
+    sensitive: false,
+    runtimeEditable: false,
+    allowedValues: ['print_sdk', 'agent_sdk', 'interactive_pty', 'bg_daemon', 'api_key'],
+  },
+  {
     name: 'CAT_CAFE_CODEX_CARRIER',
     defaultValue: 'exec_json',
     description:
@@ -1410,6 +1436,16 @@ export const ENV_VARS: EnvDefinition[] = [
     sensitive: false,
     runtimeEditable: true,
     allowedValues: ['builtin', 'https'],
+  },
+  {
+    name: 'CAT_CAFE_CODEX_SERVED_MODEL_OBSERVATION',
+    defaultValue: 'on',
+    description:
+      'F319：记录上游自述的应答模型（on 默认：无自定义 base_url 的 Codex 会话——不论 Clowder AI 的认证标签——在原生传输上加 trace（websocket 帧 / SSE 事件），不改传输；off 回到 F319 之前的启动方式）',
+    category: 'codex',
+    sensitive: false,
+    runtimeEditable: true,
+    allowedValues: ['on', 'off'],
   },
   {
     name: 'CAT_CAFE_CODEX_APP_SERVER_IDLE_TTL_MS',
@@ -1923,8 +1959,8 @@ export const ENV_VARS: EnvDefinition[] = [
   },
   {
     name: 'GLOBAL_KNOWLEDGE_DB',
-    defaultValue: '~/.cat-cafe/global_knowledge.sqlite',
-    description: 'F-4: 全局知识 SQLite 路径（Skills + MEMORY.md 编译产物）',
+    defaultValue: `\${CAT_CAFE_DATA_DIR:-~/.cat-cafe}/global_knowledge.sqlite`,
+    description: 'F-4: 全局知识 SQLite 路径；设置后覆盖 CAT_CAFE_DATA_DIR 下的默认位置',
     category: 'evidence',
     sensitive: false,
   },
@@ -2103,13 +2139,6 @@ export const ENV_VARS: EnvDefinition[] = [
     name: 'ANTIGRAVITY_PORT',
     defaultValue: '(未设置 → 自动发现)',
     description: 'Antigravity Language Server ConnectRPC 端口（覆盖自动发现）',
-    category: 'antigravity',
-    sensitive: false,
-  },
-  {
-    name: 'PINCHTAB_CDP_PORT',
-    defaultValue: '9870',
-    description: 'PinchTab Chrome CDP 调试端口（覆盖默认 remote-debugging-port）',
     category: 'antigravity',
     sensitive: false,
   },
