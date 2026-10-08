@@ -1,12 +1,6 @@
 'use client';
 
-import {
-  type CliDiagnostics,
-  type ProviderSemanticEvent,
-  type ReplyPreview,
-  type SchedulerMessageExtra,
-  timelineMessageKind,
-} from '@cat-cafe/shared';
+import { type CliDiagnostics, type ReplyPreview, timelineMessageKind } from '@cat-cafe/shared';
 import { type MouseEvent, useCallback, useEffect, useLayoutEffect, useMemo, useRef } from 'react';
 import { useShallow } from 'zustand/react/shallow';
 import { useThreadChatHistoryAdmission } from '@/components/thread-chat/ThreadChatRuntimeProvider';

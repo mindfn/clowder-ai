@@ -19,7 +19,8 @@ it('keeps SDK current-invocation guidance separate from exact provider-turn read
 });
 
 it('fails closed for absent guidance declaration, unsupported adapters and unknown carriers', () => {
-  const { activeInvocationGuidance: _guidance, ...undeclared } = capability;
+  const undeclared: Partial<typeof capability> = { ...capability };
+  delete undeclared.activeInvocationGuidance;
   expect(parseFreshnessCarrierCapability(undeclared)).toBeUndefined();
   expect(classifyFreshnessCarrierSupport([undefined])).toBe('undeclared');
   expect(classifyFreshnessCarrierSupport([{ ...capability, activeInvocationGuidance: 'unsupported' }])).toBe(

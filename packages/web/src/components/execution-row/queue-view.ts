@@ -17,7 +17,7 @@ export interface QueueLiveFacts {
 }
 
 /** The server already projects pending targets; no local receipt state filters them. */
-export function selectVisibleQueueEntries(queue: readonly QueueEntry[], _live?: QueueLiveFacts): QueueEntry[] {
+export function selectVisibleQueueEntries(queue: readonly QueueEntry[]): QueueEntry[] {
   return queue
     .filter(
       (entry) =>
