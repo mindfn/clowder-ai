@@ -86,3 +86,15 @@ Operator `0001791433289819-000025-740e3876` 要求核实作品审查通知合理
 
 本轮更新原 task300 为 doing 的请求被服务器 409 `ENTRUSTED_WORK_TERMINAL_ACTION_REQUIRED` 拒绝，
 虽然请求不是终态操作。未伪造状态或重复建任务；本计划和原消息保存实际恢复授权，沿原 writer 链继续。
+
+## 06:12 F286 公开来源边界核对
+
+来源：sol `0001791439949904-000080-b50aa4f4`；只读核对回流 `0001791440231277-000088-c1626b78`。本节不批准尚未审查的生成基线，也不改变原 attestation。
+
+- 原 attestation 绑定 `zts212653/cat-cafe` 的 `origin/main`，bootstrap 为 `265f7b998f7b8cae81d26d88db58351cf02b030d`。它不能证明公开 `clowder-ai` 或当前 fork 的祖先关系。
+- 已落地公开处置：`5115761a67dd30a6a7af57a9bb4c07c4f5dd5762`（同步 PR #1297）新增 `scripts/check-sync-docs-runtime-assets.test.mjs` 的公开脚本剥离断言，明确移除根 `check:mcp-surface-governance` 和 MCP 的 `governance:*`，原因正是原仓 attestation 的历史不适用。该提交经 `git merge-base --is-ancestor` 核实为冻结 public main `3e70e1d6805be24672e8f841861f180d20b184c2` 的祖先，exit 0。
+- `scripts/check-env-port-drift.test.mjs` 同样记录此公开边界；冻结 main 的 MCP package 与当前整合 package 均不暴露这些命令。因此手工调用原仓 CLI 的祖先拒绝，不应成为 #1398 新的私有历史前置工程。不得更改授权、digest 或伪造替代祖先。
+- 生成 JSON 仍有实际测试消费者：`packages/mcp-server/test/opensource-ops-surface-regression.test.ts` 要求 `propose_thread` 描述与 registry 一致。不能删除此测试或盲选冲突一侧；应按公开产物用途核对快照与当前定义，保留历史来源与当前验证的区别。实际 MCP registry/schema/runtime 需在候选中自行验证。
+- 原对象在扫描的 34 个本地 Git common database 中均不存在，包含非浅克隆；原仓 GitHub commit 查询被 403 rate limit 拒绝，不是 404，不能据此声称远端对象不存在。未查到新的具名迁移授权；结论依据是已有公开导出边界。
+
+astra 未修改整合 checkout、未运行绕过检查的生成器。sol 继续唯一源码写入；本次来源核定不等于完整候选通过。
