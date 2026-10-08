@@ -14,7 +14,6 @@ import {
   hydrateThreadWorkspaceState,
   useChatStore,
 } from '@/stores/chatStore';
-import { foldFailedResponseRetries } from '@/stores/failed-response-fold';
 import {
   findEarliestMessageByCursor,
   getMessageTimelineCursorTime,
@@ -515,8 +514,7 @@ export function useChatHistory(threadId: string) {
 
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const scrollContainerRef = useRef<HTMLDivElement>(null);
-  const timelineMessages = useMemo(() => foldFailedResponseRetries(rawMessages), [rawMessages]);
-  const messages = useViewportMessageTimeline(threadId, timelineMessages, () => {
+  const messages = useViewportMessageTimeline(threadId, rawMessages, () => {
     if (useChatStore.getState().currentThreadId !== threadId) return;
     const el = scrollContainerRef.current;
     const saved = readChatScrollState(threadId);
