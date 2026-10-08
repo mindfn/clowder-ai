@@ -64,5 +64,25 @@ CUT31 未复验改动与暂停清单保留，不能硬重置或覆盖。当前�
 
 ## 工具记录
 
+## 04:21 通知同类审计与后续范围纠正
+
+Operator `0001791433289819-000025-740e3876` 要求核实作品审查通知合理性，清除统一 A2A 后仍残留的额外超时/失败通知。随后明确：引用和长文本不属于本次 A2A 范围，仅把已做、改动小且合理的修复一起完成；不得为每个场景叠加 if/else，应由机制满足统一规则，再用场景验证。若方案涉及新的产品/责任边界，先带具体取舍向 operator 确认。
+
+因此上表第3组降为有限附带修复，不是新的 A2A 前置工程。没有必要的大幅 tokenizer/引用重构不纳入；已有小修仍需解释适用性并验证。
+
+只读源码审计覆盖业务通知 producer、前端超时及诊断 writer、active/background/冷恢复消费者与既有测试。发现如下（尚未修复验证）：
+
+| 项 | 实际证据 | 处置 |
+|---|---|---|
+| 作品页意见回送 | `ArtifactReviewReturnStore.record` 仅 applied human receipt + returnTarget + 明确提交/裁决/重开/修改操作创建 intent；`ArtifactReviewReturnDispatcher` 按 receiptRef 幂等走统一 delivery，原 Task 续办 | 这是人从作品页送意见给原成员，有明确业务意义；不等于猫每次审查结束额外通知，不是 managed hold。保留统一投递适配，不扩做 F309 体验；普通批注不制造回流 |
+| **P2：客户端超时第二消息链** | `useAgentMessages.ts` 5min DONE_TIMEOUT → `invocation-timeout-reconciliation.ts` 的 `reconciliationNotice/upsertNotice` 构造 `invocation-status-*`；running/unknown 与成功/失败/取消都生成系统行；终态与 history/queue hydrate 继续驱动通知恢复；loading 测试固定断言额外 error row | 去掉额外消息与 notice 驱动恢复。丢 socket/重连需要查证时，刷新原响应和执行事实；未知不能伪造失败或停止，不丢真实结果 |
+| **P2：CLI 分支仍重复失败卡片** | `TerminalDiagnosticsPanel` 只在 timeout 分支消费 responseOwnsFailure；CLI 分支直接调用始终渲染 `cli-diagnostics-banner` 的 `CliDiagnosticsPanel` | 不能再按 reasonCode 加隐藏分支。把失败结果与诊断详情的职责拆清，原响应只表达一次结果，诊断提供按需详情及有用建议 |
+| 尚未投递的追加失败 | `QueueProcessor.compensateLifecycleAppendTargets` 按 source×target 幂等记录 delivery_failure | 这是未投递事实，不能当执行超时重复消息直接删；场景应证明每个失败投递只有一个结果，不能吞失败或串到别的成员 |
+| 无响应的准入失败及后台 toast | active/background error writer 仅无 named response 时另写错误行；后台另有完成/失败 toast | 核查准入失败有唯一出口，后台提示不产生第二条 History/任务。不要为了“去重复”隐藏唯一失败证据 |
+
+机制验收规则：同一次已接纳执行的结果归原 response；断线恢复刷新同一事实；诊断不成为另一结果；业务新输入按唯一 delivery 投递。用 active/background、F5、晚到 socket、未知查证、CLI/timeout、无 response 准入失败、通知重试/取消等场景验证这条规则，不按场景增加平行 writer。
+
+审计已以 `0001791433393303-000028-44b1e70d` 投递给正在执行的 sol，沿原 task300 处理；astra 未改其源码。此表是具名静态发现，不声称全仓不存在其他重复通知或已通过运行验证。
+
 本轮更新原 task300 为 doing 的请求被服务器 409 `ENTRUSTED_WORK_TERMINAL_ACTION_REQUIRED` 拒绝，
 虽然请求不是终态操作。未伪造状态或重复建任务；本计划和原消息保存实际恢复授权，沿原 writer 链继续。
