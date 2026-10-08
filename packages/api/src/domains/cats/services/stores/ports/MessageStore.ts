@@ -259,6 +259,14 @@ export interface StoredMessage {
   metadata?: MessageMetadata;
   /** F022+F052+F098-C1+F153-F: Extensible extra data (rich blocks, stream metadata, cross-post origin, explicit targets, tracing pointers) */
   extra?: {
+    /** Server-written admission provenance for the original response's failure return, not another owner. */
+    a2aFailureReturn?: {
+      triggerMessageId: string;
+      callerCatId: string;
+      ownerAuthProvenance: 'strict' | 'compatibility_fallback' | 'unknown';
+      parentInvocationId: string;
+      isFailureReport: boolean;
+    };
     /** Immutable Live ingress receipt, not executable media or an ownership record. */
     liveAdmission?: { sessionId: string; targetId: string };
     /** F309: a confirmed human request; technical coordinates resolve through the request ref. */

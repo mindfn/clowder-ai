@@ -385,6 +385,7 @@ import { SocketManager } from './infrastructure/websocket/index.js';
 import { avatarsRoutes } from './routes/avatars.js';
 import {
   appendA2ASourceWithLedgerAdmission,
+  commitRecoveredFailedResponse,
   emitA2ARoutingPreflightReceipts,
   enqueueA2ATargets,
   planA2AFanoutAdmission,
@@ -3113,6 +3114,7 @@ async function main(): Promise<void> {
   // response R ends with the body its draft streamed. Settlement clears the turn from the
   // response-pending ledger; a turn whose settlement fails stays there for the next startup.
   const lifecycleSocket = socketManager;
+  if (!lifecycleSocket) throw new Error('SocketManager unavailable for lifecycle response recovery');
   const settleTurnResponse = (
     turn: TurnExecutionRecord,
     outcome: Pick<Parameters<typeof settleResponseFromDraft>[1], 'status' | 'reason' | 'endedAt'>,
@@ -3123,6 +3125,19 @@ async function main(): Promise<void> {
         draftStore,
         turnStore: turnExecutionStore,
         invocationRecords: invocationRecordStore,
+        commitFailedResponse: (response, patch) =>
+          commitRecoveredFailedResponse(
+            {
+              socketManager: lifecycleSocket,
+              queueProcessor,
+              messageStore,
+              invocationQueue,
+              log: app.log,
+              ...(routingContextRuntime ? { routingDispatchPreflight: routingContextRuntime.dispatchPreflight } : {}),
+            },
+            response,
+            patch,
+          ),
         ...(lifecycleSocket
           ? {
               emit: (userId: string, message: StoredMessage) =>

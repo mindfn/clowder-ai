@@ -244,6 +244,7 @@ type ExtraCarrierPersistenceClassification<
  * Every StoredMessage.extra key must be classified when it is introduced.
  */
 type ExtraCarrierPersistence = ExtraCarrierPersistenceClassification<{
+  a2aFailureReturn: 'parsed';
   contentModificationRequestV1: 'parsed';
   collectiveOwnerAdmissionV1: 'parsed';
   collectiveWorkInvocationV1: 'parsed';
@@ -289,6 +290,28 @@ type ExtraCarrierPersistence = ExtraCarrierPersistenceClassification<{
 
 function isNonEmptyString(value: unknown): value is string {
   return typeof value === 'string' && value.trim().length > 0;
+}
+
+function parseA2AFailureReturn(value: unknown): StoredMessageExtra['a2aFailureReturn'] {
+  if (typeof value !== 'object' || value === null || Array.isArray(value)) return undefined;
+  const receipt = value as Record<string, unknown>;
+  if (
+    !isNonEmptyString(receipt.triggerMessageId) ||
+    !isNonEmptyString(receipt.callerCatId) ||
+    !isNonEmptyString(receipt.parentInvocationId) ||
+    typeof receipt.isFailureReport !== 'boolean' ||
+    (receipt.ownerAuthProvenance !== 'strict' &&
+      receipt.ownerAuthProvenance !== 'compatibility_fallback' &&
+      receipt.ownerAuthProvenance !== 'unknown')
+  )
+    return undefined;
+  return {
+    triggerMessageId: receipt.triggerMessageId,
+    callerCatId: receipt.callerCatId,
+    parentInvocationId: receipt.parentInvocationId,
+    isFailureReport: receipt.isFailureReport,
+    ownerAuthProvenance: receipt.ownerAuthProvenance,
+  };
 }
 
 function parseRealtimeCompanionCarrier(value: unknown): StoredMessageExtra['realtimeCompanion'] {
@@ -458,6 +481,11 @@ export function safeParseExtra(raw: string | undefined): StoredMessage['extra'] 
     const modification = contentModificationSourceMessageV1Schema.safeParse(parsed.contentModificationRequestV1);
     if (modification.success) result.contentModificationRequestV1 = modification.data;
     let hasField = modification.success;
+    const failureReturn = parseA2AFailureReturn(parsed.a2aFailureReturn);
+    if (failureReturn) {
+      result.a2aFailureReturn = failureReturn;
+      hasField = true;
+    }
     if (parsed.collectiveOwnerAdmissionV1 !== undefined) {
       const admission = collectiveOwnerAdmissionV1Schema.safeParse(parsed.collectiveOwnerAdmissionV1);
       if (admission.success) result.collectiveOwnerAdmissionV1 = admission.data;

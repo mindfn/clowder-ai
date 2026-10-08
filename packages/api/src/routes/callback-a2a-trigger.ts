@@ -538,6 +538,95 @@ export async function commitFailedResponseAndEnqueueA2ACaller(
   return (await deps.messageStore.getById(stored.id)) ?? stored;
 }
 
+/** Recover the same failed-result transaction using the response's exact admitted source. */
+export async function commitRecoveredFailedResponse(
+  deps: A2ATriggerDeps,
+  response: StoredMessage,
+  patch: LifecycleResponseTerminalPatch,
+): Promise<StoredMessage> {
+  const store = deps.messageStore;
+  const lifecycle = response.lifecycle;
+  if (
+    !store ||
+    lifecycle?.kind !== 'response' ||
+    patch.status !== 'failed' ||
+    patch.invocationId !== lifecycle.invocationId ||
+    response.from?.kind !== 'agent' ||
+    response.from.catId !== lifecycle.targetId
+  ) {
+    throw new Error('failed recovery response identity mismatch');
+  }
+  const message: AppendMessageInput = {
+    from: response.from,
+    userId: response.userId,
+    threadId: response.threadId,
+    timestamp: response.timestamp,
+    content: patch.content,
+    mentions: patch.mentions ?? [],
+    ...(patch.contentBlocks ? { contentBlocks: patch.contentBlocks } : {}),
+    ...(patch.toolEvents ? { toolEvents: patch.toolEvents } : {}),
+    ...(patch.metadata ? { metadata: patch.metadata } : {}),
+    ...(patch.extra ? { extra: patch.extra } : {}),
+    ...(patch.thinking ? { thinking: patch.thinking } : {}),
+    ...(patch.origin ? { origin: patch.origin } : {}),
+    ...(patch.replyTo ? { replyTo: patch.replyTo } : {}),
+    ...(patch.mentionsUser ? { mentionsUser: true } : {}),
+  };
+  const terminal = {
+    status: 'failed' as const,
+    completedAt: patch.completedAt,
+    ...(patch.reason ? { reason: patch.reason } : {}),
+  };
+  const commitOnly = () =>
+    commitLifecycleResponseFromAppendInput(store, response.id, lifecycle.invocationId, terminal, message);
+  const receipt = response.extra?.a2aFailureReturn;
+  const triggerId = response.replyTo;
+  if (receipt && receipt.triggerMessageId !== triggerId) throw new Error('failed recovery source identity mismatch');
+  if (!triggerId) return commitOnly();
+  const trigger = await store.getById(triggerId);
+  if (
+    !trigger ||
+    trigger.userId !== response.userId ||
+    trigger.threadId !== response.threadId ||
+    !lifecycle.inputMessageIds.includes(triggerId) ||
+    response.replyTo !== triggerId
+  ) {
+    throw new Error('failed recovery source identity mismatch');
+  }
+  if (trigger.from?.kind !== 'agent') {
+    if (receipt) throw new Error('failed recovery caller identity mismatch');
+    return commitOnly();
+  }
+  if (!receipt) throw new Error('failed recovery requires durable A2A admission provenance');
+  if (receipt.callerCatId !== trigger.from.catId) throw new Error('failed recovery caller identity mismatch');
+  const refs = trigger.lifecycle?.dispatchRefs?.filter((r) => r.targetId === lifecycle.targetId) ?? [];
+  if (refs.length !== 1 || refs[0]?.statusMessageId !== response.id) {
+    throw new Error('failed recovery source dispatch mismatch');
+  }
+  // The original Queue admission classification survives retirement and restart; no body/status inference.
+  if (
+    receipt.isFailureReport ||
+    trigger.from.catId === response.from.catId ||
+    trigger.deliveryStatus === 'canceled' ||
+    trigger.visibility === 'whisper' ||
+    trigger.recall ||
+    trigger._tombstone
+  )
+    return commitOnly();
+  return commitFailedResponseAndEnqueueA2ACaller(deps, {
+    responseMessageId: response.id,
+    invocationId: lifecycle.invocationId,
+    terminal,
+    message,
+    userId: response.userId,
+    threadId: response.threadId,
+    reporterCatId: response.from.catId as CatId,
+    predecessorCatId: trigger.from.catId as CatId,
+    ownerAuthProvenance: receipt.ownerAuthProvenance,
+    parentInvocationId: receipt.parentInvocationId,
+  });
+}
+
 /**
  * Enqueue @mentioned cats into the canonical InvocationQueue lifecycle.
  */

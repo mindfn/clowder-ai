@@ -54,6 +54,8 @@ export interface ResponseDraftSettlementDeps {
   invocationRecords?: Pick<IInvocationRecordStore, 'get'>;
   /** Publishes the terminal R to its user's live timeline. */
   emit?: (userId: string, message: StoredMessage) => void;
+  /** Same failed-result/caller-wake transaction as normal execution; throws before clearing the ledger. */
+  commitFailedResponse?: (response: StoredMessage, patch: LifecycleResponseTerminalPatch) => Promise<StoredMessage>;
 }
 
 export interface ResponseDraftSettlementInput {
@@ -107,6 +109,29 @@ export async function settleResponseFromDraft(
     response.lifecycle.status === 'processing'
       ? await commitFromDraft(deps, response, input)
       : { kind: 'already_terminal' as const, message: response };
+  if (
+    settled.kind === 'already_terminal' &&
+    settled.message.lifecycle?.kind === 'response' &&
+    settled.message.lifecycle.status === 'failed'
+  ) {
+    const completedAt = settled.message.lifecycle.completedAt;
+    if (completedAt === undefined) throw new Error('failed response recovery requires its terminal timestamp');
+    const recovered = await commitFailedTerminal(
+      deps,
+      settled.message,
+      terminalPatchFromDraft(settled.message, undefined, {
+        ...input,
+        status: 'failed',
+        reason: settled.message.lifecycle.reason ?? input.reason,
+        endedAt: completedAt,
+        explanation: undefined,
+      }),
+    );
+    if (recovered.kind !== 'applied' && recovered.kind !== 'replayed') {
+      throw new Error(`failed response recovery rejected: ${recovered.kind}`);
+    }
+    settled.message = recovered.message;
+  }
   await settleLifecycleResponseInputs(deps.messageStore, settled.message, settled.message.id);
   deps.emit?.(input.userId, settled.message);
   await deps.draftStore?.delete(input.userId, input.threadId, input.invocationId);
@@ -185,7 +210,7 @@ async function commitFromDraft(
     disposition === 'reject'
       ? rejectedOutputPatch(response, input)
       : terminalPatchFromDraft(response, disposition === 'publish' ? await readDraft(deps, input) : undefined, input);
-  const result = await deps.messageStore.commitLifecycleResponseTerminal(response.id, patch);
+  const result = await commitFailedTerminal(deps, response, patch);
   if (result.kind === 'applied' || result.kind === 'replayed') return { kind: 'committed', message: result.message };
   const endedByAnotherWriter =
     result.kind === 'conflict' &&
@@ -195,6 +220,24 @@ async function commitFromDraft(
   throw new Error(
     `response draft settlement rejected: ${result.kind}${result.kind === 'conflict' ? `:${result.reason}` : ''}`,
   );
+}
+
+async function commitFailedTerminal(
+  deps: ResponseDraftSettlementDeps,
+  response: StoredMessage,
+  patch: LifecycleResponseTerminalPatch,
+) {
+  if (patch.status === 'failed') {
+    if (deps.commitFailedResponse) {
+      return { kind: 'replayed' as const, message: await deps.commitFailedResponse(response, patch) };
+    }
+    const triggerId = response.extra?.a2aFailureReturn?.triggerMessageId ?? response.replyTo;
+    const trigger = triggerId ? await deps.messageStore.getById(triggerId) : null;
+    if (response.extra?.a2aFailureReturn || trigger?.from?.kind === 'agent') {
+      throw new Error('failed response settlement requires the caller-wake transaction');
+    }
+  }
+  return deps.messageStore.commitLifecycleResponseTerminal(response.id, patch);
 }
 
 async function readDraft(
