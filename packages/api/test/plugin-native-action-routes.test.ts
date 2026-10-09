@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
-import { type DirectToolContribution, validateManifest } from '@clowder-ai/plugin-contract';
+import { type McpContribution, validateManifest } from '@clowder-ai/plugin-contract';
 import Fastify from 'fastify';
 import { currentPluginCallContext } from '../src/domains/plugin/carrier/plugin-call-context.js';
 import { NativePluginActions } from '../src/domains/plugin/declared/native-plugin-actions.js';
@@ -47,17 +47,16 @@ test('native route authenticates separately, captures optional source, and refus
             name: 'Main',
             resources: [],
             capabilities: [],
-            contributions: [{ type: 'tool', id: 'example' }],
+            contributions: [{ type: 'mcp', id: 'example' }],
           },
         ],
         contributions: [
           {
-            type: 'tool',
+            type: 'mcp',
             id: 'example',
-            name: 'example',
-            inputSchema: { type: 'object' },
-            action: { method: 'example.run' },
-          } satisfies DirectToolContribution,
+            runtime: { transport: 'stdio', entrypoint: 'dist/mcp.js' },
+            actions: [{ method: 'example.run' }],
+          } satisfies McpContribution,
         ],
       },
     },
@@ -90,7 +89,7 @@ test('native route authenticates separately, captures optional source, and refus
     headers: {
       'x-invocation-id': 'inv',
       'x-callback-token': 'secret',
-      'x-clowder-plugin-action-token': actions.environment('plugin-instance').CLOWDER_PLUGIN_ACTION_TOKEN!,
+      'x-clowder-plugin-action-token': actions.environment('plugin-instance', 'example').CLOWDER_PLUGIN_ACTION_TOKEN!,
     },
     payload: { method: 'example.run', input: { catId: 'spoof' } },
   };

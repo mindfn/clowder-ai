@@ -13,7 +13,8 @@ end
 if redis.call('HEXISTS', KEYS[2], 'entrustedWork') == 1 then return -1 end
 if redis.call('HGET', KEYS[2], 'updatedAt') ~= ARGV[3] then return -2 end
 if (redis.call('HGET', KEYS[2], 'deploymentWait') or '') ~= ARGV[4] then return -2 end
-redis.call('HSET', KEYS[2], unpack(ARGV, 5, #ARGV))
+if (redis.call('HGET', KEYS[2], 'pluginWait') or '') ~= ARGV[5] then return -2 end
+redis.call('HSET', KEYS[2], unpack(ARGV, 6, #ARGV))
 redis.call('ZADD', KEYS[3], ARGV[2], ARGV[1])
 redis.call('ZADD', KEYS[4], ARGV[2], ARGV[1])
 return 1
@@ -70,6 +71,7 @@ export async function writeTaskForSubjectOwner(
     ...args.slice(0, 6),
     String(existing.updatedAt),
     expectedDeploymentWait,
+    serializeTask(existing).pluginWait ?? '',
     ...args.slice(6),
   );
   if (result === -1) throw createEntrustedWorkTerminalActionRequiredError(task.id);

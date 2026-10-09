@@ -105,7 +105,7 @@ export class PluginRuntimeCarrierRouter implements PluginRuntimeLifecyclePort {
         admission,
         this.resources && {
           ...this.resources,
-          nativeActionEnvironment: this.nativeActions.environment(pluginInstanceId),
+          nativeActionEnvironment: (contributionId) => this.nativeActions.environment(pluginInstanceId, contributionId),
         },
       );
       await this.#runtimeContributions.activate(

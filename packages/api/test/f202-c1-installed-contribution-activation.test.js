@@ -178,6 +178,44 @@ test('an installed package activates and removes its declared MCP capability', a
   );
 });
 
+test('installed native MCP receives its scoped action token without exposing a public direct tool', async () => {
+  const projectRoot = await tempRoot('cat-cafe-f202-native-action-project-');
+  const packageRoot = await writeFixturePackage({
+    pluginId: 'dev.clowder.native-action-fixture',
+    contribution: {
+      type: 'mcp',
+      id: 'native',
+      runtime: { transport: 'stdio', entrypoint: 'dist/mcp.js' },
+      actions: [{ method: 'native.run' }],
+    },
+    actions: "{ 'native.run': async input => ({ value: input.value }) }",
+    files: { 'dist/mcp.js': 'process.exit(0);\n' },
+  });
+  const { runtime } = createRuntime(projectRoot);
+  const { composition, installed } = await installAndEnable(runtime, packageRoot);
+  const capability = (await readCapabilitiesConfig(projectRoot)).capabilities.find(
+    (item) => item.type === 'mcp' && item.pluginId === installed.pluginId,
+  );
+  const token = capability.mcpServer.env.CLOWDER_PLUGIN_ACTION_TOKEN;
+  assert.ok(token);
+  assert.equal(capability.mcpServer.env.CLOWDER_PLUGIN_ACTION_PATH, '/api/plugin-runtime/action');
+  await assert.rejects(runtime.supervisor.listPluginTools(installed.pluginId), /is not active/);
+  await assert.rejects(runtime.supervisor.callPluginTool(installed.pluginId, 'native', 'native.run', {}));
+  const caller = {
+    userId: 'owner',
+    catId: 'codex',
+    threadId: 'thread',
+    invocationId: 'inv',
+    assertCurrent: async () => {},
+  };
+  assert.deepEqual(await runtime.supervisor.nativeActions.call(token, 'native.run', { value: 'called' }, caller), {
+    value: 'called',
+  });
+  await assert.rejects(runtime.supervisor.nativeActions.call(token, 'not.declared', {}, caller));
+  await disable(composition, installed.pluginId);
+  await assert.rejects(runtime.supervisor.nativeActions.call(token, 'native.run', {}, caller));
+});
+
 test('declared MCP materialization preserves the verified runtime dependency closure', async () => {
   const projectRoot = await tempRoot('cat-cafe-f202-mcp-dependency-project-');
   const closureRoot = await tempRoot('cat-cafe-f202-mcp-dependency-closure-');

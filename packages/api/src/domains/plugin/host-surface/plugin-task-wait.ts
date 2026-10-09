@@ -52,7 +52,9 @@ export async function setPluginTaskWait(
   if (!task) return null;
   const old = task.pluginWait;
   if (!old && !caller) throw new Error('First wait registration requires an authenticated invocation');
-  const owner = old ?? caller!;
+  const newRegistration = !!caller && value.generation > (old?.generation ?? 0);
+  if (old?.invalidated && !newRegistration) throw new Error('Wait was invalidated by a task mutation');
+  const owner = old?.invalidated && newRegistration ? caller! : (old ?? caller!);
   if (
     (old && old.pluginInstanceId !== instanceId) ||
     task.userId !== owner.userId ||
@@ -82,5 +84,11 @@ export async function setPluginTaskWait(
     ...(registration ? { registration } : {}),
   };
   await caller?.assertCurrent();
-  return store.replacePluginWait(taskId, { expectedGeneration: value.expectedGeneration, expectedState: old, state });
+  return store.replacePluginWait(taskId, {
+    expectedGeneration: value.expectedGeneration,
+    expectedState: old,
+    expectedStatus: task.status,
+    newRegistration,
+    state,
+  });
 }

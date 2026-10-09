@@ -1,4 +1,4 @@
-import { replaceTaskPluginWait } from './TaskPluginWait.js';
+import { reconcilePluginWaitTaskMutation, replaceTaskPluginWait } from './TaskPluginWait.js';
 import type { ReplacePluginWaitInput } from './TaskStoreContract.js';
 /**
  * Task Store (毛线球)
@@ -177,7 +177,8 @@ export class TaskStore implements ITaskStore {
       threadId: input.threadId,
       title: input.title,
       ownerCatId: input.ownerCatId ?? existing.ownerCatId,
-      status: isTrackingKind(existing.kind) && existing.status === 'done' ? 'todo' : existing.status,
+      status:
+        isTrackingKind(existing.kind) && existing.status === 'done' && !existing.pluginWait ? 'todo' : existing.status,
       why: input.why,
       userId: input.userId ?? existing.userId,
       probe: input.probe !== undefined ? input.probe : existing.probe,
@@ -187,7 +188,10 @@ export class TaskStore implements ITaskStore {
         : existing.automationState,
       updatedAt: Date.now(),
     };
-    const reconciled = reconcileDeploymentWaitTaskMutation(existing, updated);
+    const reconciled = reconcilePluginWaitTaskMutation(
+      existing,
+      reconcileDeploymentWaitTaskMutation(existing, updated),
+    );
     this.tasks.set(existing.id, reconciled);
     return reconciled;
   }
@@ -286,7 +290,10 @@ export class TaskStore implements ITaskStore {
       updatedAt: Date.now(),
     };
 
-    const reconciled = reconcileDeploymentWaitTaskMutation(existing, updated);
+    const reconciled = reconcilePluginWaitTaskMutation(
+      existing,
+      reconcileDeploymentWaitTaskMutation(existing, updated),
+    );
     this.tasks.set(taskId, reconciled);
     return reconciled;
   }

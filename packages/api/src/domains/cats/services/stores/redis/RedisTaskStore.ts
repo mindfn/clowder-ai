@@ -1,4 +1,4 @@
-import { replaceTaskPluginWait } from '../ports/TaskPluginWait.js';
+import { reconcilePluginWaitTaskMutation, replaceTaskPluginWait } from '../ports/TaskPluginWait.js';
 import type { ReplacePluginWaitInput } from '../ports/TaskStoreContract.js';
 /**
  * Redis Task Store (毛线球)
@@ -281,21 +281,27 @@ export class RedisTaskStore implements ITaskStore {
     assertEntrustedWorkGenericUpsertAllowed(existing);
 
     const now = Date.now();
-    const updated: TaskItem = reconcileDeploymentWaitTaskMutation(existing, {
-      ...existing,
-      threadId: input.threadId,
-      title: input.title,
-      ownerCatId: input.ownerCatId ?? existing.ownerCatId,
-      status: isTrackingKind(existing.kind) && existing.status === 'done' ? 'todo' : existing.status,
-      why: input.why,
-      userId: input.userId ?? existing.userId,
-      probe: input.probe !== undefined ? input.probe : existing.probe,
-      resolveMode: input.resolveMode !== undefined ? input.resolveMode : existing.resolveMode,
-      automationState: input.automationState
-        ? mergeTaskAutomationState(existing.automationState, input.automationState)
-        : existing.automationState,
-      updatedAt: now,
-    });
+    const updated: TaskItem = reconcilePluginWaitTaskMutation(
+      existing,
+      reconcileDeploymentWaitTaskMutation(existing, {
+        ...existing,
+        threadId: input.threadId,
+        title: input.title,
+        ownerCatId: input.ownerCatId ?? existing.ownerCatId,
+        status:
+          isTrackingKind(existing.kind) && existing.status === 'done' && !existing.pluginWait
+            ? 'todo'
+            : existing.status,
+        why: input.why,
+        userId: input.userId ?? existing.userId,
+        probe: input.probe !== undefined ? input.probe : existing.probe,
+        resolveMode: input.resolveMode !== undefined ? input.resolveMode : existing.resolveMode,
+        automationState: input.automationState
+          ? mergeTaskAutomationState(existing.automationState, input.automationState)
+          : existing.automationState,
+        updatedAt: now,
+      }),
+    );
 
     const written = await writeTaskForSubjectOwner(this.redis, existing, updated);
     if (written === 'stale') {
@@ -558,21 +564,24 @@ export class RedisTaskStore implements ITaskStore {
 
   private applyTaskUpdate(existing: TaskItem, input: UpdateTaskInput): TaskItem {
     assertEntrustedWorkGenericUpdateAllowed(existing);
-    return reconcileDeploymentWaitTaskMutation(existing, {
-      ...existing,
-      ...(input.title !== undefined ? { title: input.title } : {}),
-      ...(input.ownerCatId !== undefined ? { ownerCatId: input.ownerCatId } : {}),
-      ...(input.status !== undefined ? { status: input.status } : {}),
-      ...(input.why !== undefined ? { why: input.why } : {}),
-      ...(input.automationState !== undefined ? { automationState: input.automationState } : {}),
-      ...(input.probe !== undefined ? { probe: input.probe } : {}),
-      ...(input.resolveMode !== undefined ? { resolveMode: input.resolveMode } : {}),
-      // Generic task move support: callers that change threadId own the UX contract.
-      ...(input.threadId !== undefined ? { threadId: input.threadId } : {}),
-      // F193-E1 P1-4: allow patching dispatchGate
-      ...(input.dispatchGate !== undefined ? { dispatchGate: input.dispatchGate } : {}),
-      updatedAt: Date.now(),
-    });
+    return reconcilePluginWaitTaskMutation(
+      existing,
+      reconcileDeploymentWaitTaskMutation(existing, {
+        ...existing,
+        ...(input.title !== undefined ? { title: input.title } : {}),
+        ...(input.ownerCatId !== undefined ? { ownerCatId: input.ownerCatId } : {}),
+        ...(input.status !== undefined ? { status: input.status } : {}),
+        ...(input.why !== undefined ? { why: input.why } : {}),
+        ...(input.automationState !== undefined ? { automationState: input.automationState } : {}),
+        ...(input.probe !== undefined ? { probe: input.probe } : {}),
+        ...(input.resolveMode !== undefined ? { resolveMode: input.resolveMode } : {}),
+        // Generic task move support: callers that change threadId own the UX contract.
+        ...(input.threadId !== undefined ? { threadId: input.threadId } : {}),
+        // F193-E1 P1-4: allow patching dispatchGate
+        ...(input.dispatchGate !== undefined ? { dispatchGate: input.dispatchGate } : {}),
+        updatedAt: Date.now(),
+      }),
+    );
   }
 
   async deleteByThread(threadId: string): Promise<number> {

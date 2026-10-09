@@ -54,8 +54,11 @@ importers:
         specifier: 0.1.0-alpha.9
         version: 0.1.0-alpha.9
       '@clowder-ai/plugin-contract':
-        specifier: file:vendor/clowder-ai-plugin-contract-0.1.0-beta.25.tgz
-        version: file:packages/api/vendor/clowder-ai-plugin-contract-0.1.0-beta.25.tgz
+        specifier: file:vendor/clowder-ai-plugin-contract-0.1.0-beta.32.tgz
+        version: file:packages/api/vendor/clowder-ai-plugin-contract-0.1.0-beta.32.tgz
+      '@clowder-ai/plugin-contract-beta21':
+        specifier: npm:@clowder-ai/plugin-contract@0.1.0-beta.21
+        version: '@clowder-ai/plugin-contract@0.1.0-beta.21'
       '@clowder-ai/plugin-contract-beta23':
         specifier: npm:@clowder-ai/plugin-contract@0.1.0-beta.23
         version: '@clowder-ai/plugin-contract@0.1.0-beta.23'
@@ -1238,9 +1241,9 @@ packages:
     resolution: {integrity: sha512-7Fi37hDjzUuMPRFo9D2wX+Zzxl+cKNKFDgeFxJFgBcXl8e4CYNXYcbEXYsi7nm8eGiCIBFV79whZrFqvwluyAw==}
     engines: {node: '>=20.0.0'}
 
-  '@clowder-ai/plugin-contract@file:packages/api/vendor/clowder-ai-plugin-contract-0.1.0-beta.25.tgz':
-    resolution: {integrity: sha512-3JNcEetQYhZPzg2hZ3398JZJq69MgTi49D7oDtKRDQT7Cl2XSCk1nu+Gf+YM4Z5cDIy+NCXsbP4rSksJrtPZJw==, tarball: file:packages/api/vendor/clowder-ai-plugin-contract-0.1.0-beta.25.tgz}
-    version: 0.1.0-beta.25
+  '@clowder-ai/plugin-contract@file:packages/api/vendor/clowder-ai-plugin-contract-0.1.0-beta.32.tgz':
+    resolution: {integrity: sha512-FOn+kczQwcHRz1sW4N95QOILz0IVYPlFSc4S86isqWtNOwWiOMeQDOVqVqi1ptOCW/P/wUUYgxZ7nWxHx2UMJA==, tarball: file:packages/api/vendor/clowder-ai-plugin-contract-0.1.0-beta.32.tgz}
+    version: 0.1.0-beta.32
     engines: {node: '>=20.0.0'}
 
   '@clowder-ai/plugin-contract@0.1.0-beta.21':
@@ -7758,7 +7761,7 @@ snapshots:
       ajv: 8.17.1
       ajv-formats: 3.0.1(ajv@8.17.1)
 
-  '@clowder-ai/plugin-contract@file:packages/api/vendor/clowder-ai-plugin-contract-0.1.0-beta.25.tgz':
+  '@clowder-ai/plugin-contract@file:packages/api/vendor/clowder-ai-plugin-contract-0.1.0-beta.32.tgz':
     dependencies:
       ajv: 8.17.1
       ajv-formats: 3.0.1(ajv@8.17.1)

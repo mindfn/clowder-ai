@@ -14,16 +14,15 @@ export class NativePluginActionError extends Error {
 
 interface Binding {
   readonly instanceId: string;
-  readonly token: string;
   readonly admission: PluginRuntimeAdmission;
-  readonly methods: ReadonlySet<string>;
+  readonly connections: ReadonlyMap<string, { readonly token: string; readonly methods: ReadonlySet<string> }>;
   readonly invoke: (method: string, input: unknown) => Promise<unknown>;
 }
 
 /** A native MCP transport can call only actions belonging to its current local activation. */
 export class NativePluginActions {
   readonly #bindings = new Map<string, Binding>();
-  readonly #tokens = new Map<string, Binding>();
+  readonly #tokens = new Map<string, { readonly binding: Binding; readonly methods: ReadonlySet<string> }>();
   readonly #generations = new Map<string, number>();
 
   constructor(private readonly admission: (instanceId: string) => Promise<PluginRuntimeAdmission>) {}
@@ -38,28 +37,39 @@ export class NativePluginActions {
     if (generation !== this.generation(instanceId) || this.#bindings.has(instanceId)) {
       throw new NativePluginActionError(409, 'Plugin activation changed during startup');
     }
-    const methods = new Set<string>();
+    const allowed = new Set(
+      admission.packageRecord.manifest.features
+        .filter((feature) => feature.capabilities.every((capability) => admission.effectiveGrants.includes(capability)))
+        .flatMap((feature) =>
+          (feature.contributions ?? []).filter((item) => item.type === 'mcp').map((item) => item.id),
+        ),
+    );
+    const connections = new Map<string, { token: string; methods: ReadonlySet<string> }>();
     for (const contribution of admission.packageRecord.manifest.contributions ?? []) {
-      if (contribution.type === 'tool') {
-        methods.add(contribution.action.method);
+      if (contribution.type === 'mcp' && allowed.has(contribution.id) && contribution.actions?.length) {
+        connections.set(contribution.id, {
+          token: randomBytes(32).toString('hex'),
+          methods: new Set(contribution.actions.map((action) => action.method)),
+        });
       }
     }
     const binding: Binding = {
       instanceId,
-      token: randomBytes(32).toString('hex'),
       admission: structuredClone(admission),
-      methods,
+      connections,
       invoke,
     };
     this.#bindings.set(instanceId, binding);
-    this.#tokens.set(binding.token, binding);
+    for (const connection of connections.values())
+      this.#tokens.set(connection.token, { binding, methods: connection.methods });
   }
 
-  environment(instanceId: string): Readonly<Record<string, string>> {
+  environment(instanceId: string, contributionId: string): Readonly<Record<string, string>> {
     const binding = this.#bindings.get(instanceId);
-    if (!binding) return {};
+    const connection = binding?.connections.get(contributionId);
+    if (!connection) return {};
     return {
-      CLOWDER_PLUGIN_ACTION_TOKEN: binding.token,
+      CLOWDER_PLUGIN_ACTION_TOKEN: connection.token,
       CLOWDER_PLUGIN_ACTION_PATH: '/api/plugin-runtime/action',
     };
   }
@@ -67,7 +77,7 @@ export class NativePluginActions {
   deactivate(instanceId: string): void {
     this.#generations.set(instanceId, this.generation(instanceId) + 1);
     const binding = this.#bindings.get(instanceId);
-    if (binding) this.#tokens.delete(binding.token);
+    if (binding) for (const connection of binding.connections.values()) this.#tokens.delete(connection.token);
     this.#bindings.delete(instanceId);
   }
 
@@ -76,9 +86,10 @@ export class NativePluginActions {
   }
 
   async call(token: string, method: string, input: unknown, caller: PluginCallContext): Promise<unknown> {
-    const binding = this.#tokens.get(token);
-    if (!binding) throw new NativePluginActionError(401, 'Plugin connection is not active');
-    if (!binding.methods.has(method)) throw new NativePluginActionError(403, 'Action is not declared by this plugin');
+    const connection = this.#tokens.get(token);
+    if (!connection) throw new NativePluginActionError(401, 'Plugin connection is not active');
+    const { binding, methods } = connection;
+    if (!methods.has(method)) throw new NativePluginActionError(403, 'Action is not declared by this MCP contribution');
     let finished = false;
     const assertCurrent = async () => {
       await caller.assertCurrent();

@@ -16,6 +16,8 @@ export interface PluginWaitUpdate {
 }
 
 export interface PluginWaitState {
+  /** Host task mutation revoked this projection; only a new authenticated registration may replace it. */
+  readonly invalidated?: 'owner_changed' | 'user_cancel';
   readonly pluginInstanceId: string;
   readonly generation: number;
   readonly userId: string;

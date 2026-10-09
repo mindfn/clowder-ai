@@ -248,6 +248,9 @@ export interface ReplaceDeploymentWaitIfGenerationInput {
 }
 
 export interface ReplacePluginWaitInput {
+  readonly expectedStatus: TaskItem['status'];
+  /** Derived by Host from the current native invocation, never accepted as plugin input. */
+  readonly newRegistration?: boolean;
   readonly expectedState: PluginWaitState | undefined;
   readonly expectedGeneration: number | null;
   readonly state: PluginWaitState;

@@ -241,7 +241,7 @@ async function mcpEnvironment(
   );
   const env = {
     ...Object.fromEntries(envEntries.filter((entry): entry is readonly [string, string] => entry !== undefined)),
-    ...host.nativeActionEnvironment,
+    ...host.nativeActionEnvironment?.(contribution.id),
   };
   return Object.keys(env).length === 0 ? {} : { env };
 }

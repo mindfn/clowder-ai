@@ -1,9 +1,10 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
-import { type DirectToolContribution, validateManifest } from '@clowder-ai/plugin-contract';
+import { type McpContribution, validateManifest } from '@clowder-ai/plugin-contract';
 import { pluginMcpEnvironment } from '../src/config/capabilities/plugin-mcp-environment.js';
 import { createModuleHostInvocation } from '../src/domains/plugin/builtin-runtime/carriers/module-host-invocation.js';
 import { currentPluginCallContext } from '../src/domains/plugin/carrier/plugin-call-context.js';
+import { DeclaredRuntimeContributions } from '../src/domains/plugin/declared/declared-runtime-contributions.js';
 import { NativePluginActions } from '../src/domains/plugin/declared/native-plugin-actions.js';
 import { createPluginTaskHost } from '../src/domains/plugin/host-surface/plugin-task-host.js';
 
@@ -27,16 +28,15 @@ const admission = (id = 'instance') => ({
       runtime: { transport: 'builtin', entrypoint: 'dist/plugin.js' },
       name: 'Native action fixture',
       features: [
-        { id: 'main', name: 'Main', resources: [], capabilities: [], contributions: [{ type: 'tool', id: 'example' }] },
+        { id: 'main', name: 'Main', resources: [], capabilities: [], contributions: [{ type: 'mcp', id: 'example' }] },
       ],
       contributions: [
         {
-          type: 'tool',
+          type: 'mcp',
           id: 'example',
-          name: 'example',
-          inputSchema: { type: 'object' },
-          action: { method: 'example.run' },
-        } satisfies DirectToolContribution,
+          runtime: { transport: 'stdio', entrypoint: 'dist/mcp.js' },
+          actions: [{ method: 'example.run' }],
+        } satisfies McpContribution,
       ],
     },
   },
@@ -57,6 +57,59 @@ const fixture = () => {
   return { actions, authority };
 };
 
+test('installed contract rejects MCP action params, extra fields and duplicate methods', () => {
+  for (const actions of [
+    [{ method: 'example.run', params: { injected: true } }],
+    [{ method: 'example.run', extra: true }],
+    [{ method: 'example.run' }, { method: 'example.run' }],
+  ]) {
+    const manifest = admission().packageRecord.manifest;
+    manifest.contributions[0]!.actions = actions;
+    assert.equal(validateManifest(manifest).valid, false, JSON.stringify(actions));
+  }
+});
+
+test('MCP actions stay private to their contribution and require the owning feature grants', async () => {
+  const authority = admission();
+  authority.packageRecord.manifest.features.push(
+    { id: 'other', name: 'Other', resources: [], capabilities: [], contributions: [{ type: 'mcp', id: 'other' }] },
+    {
+      id: 'denied',
+      name: 'Denied',
+      resources: [],
+      capabilities: ['secret.read'],
+      contributions: [{ type: 'mcp', id: 'denied' }],
+    },
+  );
+  for (const id of ['other', 'denied'])
+    authority.packageRecord.manifest.contributions.push({
+      type: 'mcp',
+      id,
+      runtime: { transport: 'stdio', entrypoint: `dist/${id}.js` },
+      actions: [{ method: `${id}.run` }],
+    });
+  const validation = validateManifest(authority.packageRecord.manifest);
+  assert.equal(validation.valid, true, JSON.stringify(validation.errors));
+  const actions = new NativePluginActions(async () => authority as never);
+  actions.activate(authority as never, 0, async (method) => method);
+  const token = actions.environment('instance', 'example').CLOWDER_PLUGIN_ACTION_TOKEN!;
+  assert.equal(await actions.call(token, 'example.run', {}, caller()), 'example.run');
+  await assert.rejects(actions.call(token, 'other.run', {}, caller()), /not declared/);
+  const otherToken = actions.environment('instance', 'other').CLOWDER_PLUGIN_ACTION_TOKEN!;
+  assert.notEqual(otherToken, token);
+  assert.equal(await actions.call(otherToken, 'other.run', {}, caller()), 'other.run');
+  assert.deepEqual(actions.environment('instance', 'denied'), {});
+  assert.deepEqual(actions.environment('instance', 'undeclared'), {});
+  const declared = new DeclaredRuntimeContributions({} as never);
+  await declared.activate(authority as never, async () => {
+    throw Error('direct tool must not run');
+  });
+  assert.equal((declared.listPluginTools('instance') ?? []).length, 0);
+  assert.deepEqual(await declared.callPluginTool('instance', 'example', 'example.run', {}), { handled: false });
+  actions.deactivate('instance');
+  await assert.rejects(actions.call(otherToken, 'other.run', {}, caller()));
+});
+
 test('native MCP calls only the declared action of its activation and carries separate verified context', async () => {
   const { actions, authority } = fixture();
   const invocation = createModuleHostInvocation({
@@ -65,7 +118,7 @@ test('native MCP calls only the declared action of its activation and carries se
   actions.activate(authority as never, actions.generation('instance'), (method, input) =>
     invocation.invoke('instance', method, input),
   );
-  const token = actions.environment('instance').CLOWDER_PLUGIN_ACTION_TOKEN!;
+  const token = actions.environment('instance', 'example').CLOWDER_PLUGIN_ACTION_TOKEN!;
   const result = (await actions.call(token, 'example.run', { catId: 'spoofed' }, caller())) as any;
   assert.equal(result.input.catId, 'spoofed');
   assert.equal(result.context.catId, 'cat');
@@ -93,7 +146,7 @@ test('stop invalidates an in-flight call before its task mutation, and reload ne
     await context.assertCurrent();
     writes++;
   });
-  const token = actions.environment('instance').CLOWDER_PLUGIN_ACTION_TOKEN!;
+  const token = actions.environment('instance', 'example').CLOWDER_PLUGIN_ACTION_TOKEN!;
   const pending = actions.call(token, 'example.run', {}, caller());
   await started;
   actions.deactivate('instance');
@@ -118,7 +171,7 @@ for (const change of ['grant', 'disabled', 'revision', 'caller'] as const) {
     actions.activate(authority as never, 0, async () => {
       calls++;
     });
-    const token = actions.environment('instance').CLOWDER_PLUGIN_ACTION_TOKEN!;
+    const token = actions.environment('instance', 'example').CLOWDER_PLUGIN_ACTION_TOKEN!;
     const identity = caller();
     if (change === 'grant') authority.effectiveGrants = [];
     if (change === 'disabled') authority.instance.activationState = 'disabled';
@@ -158,7 +211,7 @@ test('SDK task mutation checks the invoking turn after provider work without rel
     },
   };
   await assert.rejects(
-    actions.call(actions.environment('instance').CLOWDER_PLUGIN_ACTION_TOKEN!, 'example.run', {}, identity),
+    actions.call(actions.environment('instance', 'example').CLOWDER_PLUGIN_ACTION_TOKEN!, 'example.run', {}, identity),
   );
   assert.equal(writes, 0);
 });
@@ -190,7 +243,7 @@ test('concurrent requests keep caller identity isolated and nested other-package
     assert.equal(await invocation.invoke('another-instance', 'example.run', {}), undefined);
     return invocation.invoke('instance', 'example.run', {});
   });
-  const token = actions.environment('instance').CLOWDER_PLUGIN_ACTION_TOKEN!;
+  const token = actions.environment('instance', 'example').CLOWDER_PLUGIN_ACTION_TOKEN!;
   const [first, second] = (await Promise.all([
     actions.call(token, 'example.run', {}, { ...caller(), invocationId: 'first' }),
     actions.call(token, 'example.run', {}, { ...caller(), invocationId: 'second' }),
