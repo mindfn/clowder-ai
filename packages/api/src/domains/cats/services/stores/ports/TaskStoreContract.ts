@@ -24,6 +24,22 @@ export const ENTRUSTED_WORK_TERMINAL_ACTION_REQUIRED = 'ENTRUSTED_WORK_TERMINAL_
 export const ENTRUSTED_WORK_ADMISSION_CONFLICT = 'ENTRUSTED_WORK_ADMISSION_CONFLICT' as const;
 export const TASK_SUBJECT_ALREADY_EXISTS = 'TASK_SUBJECT_ALREADY_EXISTS' as const;
 export const TASK_SUBJECT_NAMESPACE_RESERVED = 'TASK_SUBJECT_NAMESPACE_RESERVED' as const;
+export const TASK_SUBJECT_SNAPSHOT_CONFLICT = 'TASK_SUBJECT_SNAPSHOT_CONFLICT' as const;
+
+/** Internal read/authorize/write fence. Null asserts that the subject is still absent. */
+export interface TaskSubjectUpsertCondition {
+  readonly expected: TaskItem | null;
+}
+
+export function createTaskSubjectSnapshotConflictError(subjectKey: string): Error & { code: string } {
+  return Object.assign(new Error(`Task subject ${subjectKey} changed after authorization`), {
+    code: TASK_SUBJECT_SNAPSHOT_CONFLICT,
+  });
+}
+
+export function isTaskSubjectSnapshotConflictError(error: unknown): boolean {
+  return error instanceof Error && (error as Error & { code?: string }).code === TASK_SUBJECT_SNAPSHOT_CONFLICT;
+}
 
 export type EntrustedWorkTerminalClosure = Exclude<EntrustedWorkV1['closure'], { state: 'open' }>;
 
@@ -186,7 +202,8 @@ export interface ITaskStore {
   delete(taskId: string): boolean | Promise<boolean>;
   deleteByThread(threadId: string): number | Promise<number>;
   getBySubject(subjectKey: string): TaskItem | null | Promise<TaskItem | null>;
-  upsertBySubject(input: CreateTaskInput): TaskItem | Promise<TaskItem>;
+  /** A supplied condition must be checked atomically with the subject aggregate write. */
+  upsertBySubject(input: CreateTaskInput, condition?: TaskSubjectUpsertCondition): TaskItem | Promise<TaskItem>;
   upsertBySubjectWithManagedWorkBinding(
     input: CreateTaskInput,
     binding: ManagedWorkBinding,

@@ -40,7 +40,7 @@ import {
   reconcileDeploymentWaitTaskMutation,
 } from '../ports/TaskDeploymentWaitState.js';
 import { createEntrustedTaskItem, createGenericTaskItem } from '../ports/TaskItemFactory.js';
-import { assertSubjectUpdateOwnership, type ITaskStore } from '../ports/TaskStore.js';
+import type { ITaskStore } from '../ports/TaskStore.js';
 import {
   type AdmitEntrustedWorkStoreInput,
   type AdmitEntrustedWorkStoreResult,
@@ -55,9 +55,11 @@ import {
   isEntrustedWorkSubjectKey,
   type ReplaceAutomationStateIfGenerationInput,
   type ReplaceDeploymentWaitIfGenerationInput,
+  type TaskSubjectUpsertCondition,
   type UpdateEntrustedWorkStoreInput,
   type UpdateEntrustedWorkStoreResult,
 } from '../ports/TaskStoreContract.js';
+import { buildSubjectTaskUpdate } from '../ports/TaskSubjectUpsert.js';
 import { buildTaskWaitReplacement } from '../ports/TaskWaitReplacement.js';
 import { TaskKeys } from '../redis-keys/task-keys.js';
 import { DEPLOYMENT_WAIT_INDEX, listDeploymentWaitProjectionCandidates } from './deployment-wait-index.js';
@@ -71,6 +73,7 @@ import { RedisTaskManagedWorkRegistrationStore } from './RedisTaskManagedWorkReg
 import {
   type AtomicSubjectCreateResult,
   tryCreateTaskWithAtomicSubject,
+  upsertTaskWithSubjectSnapshot,
   writeTaskForSubjectOwner,
 } from './RedisTaskSubjectTransactions.js';
 import { runWithExclusiveRedisWatchSession } from './RedisWatchSession.js';
@@ -235,7 +238,7 @@ export class RedisTaskStore implements ITaskStore {
     return null;
   }
 
-  async upsertBySubject(input: CreateTaskInput): Promise<TaskItem> {
+  async upsertBySubject(input: CreateTaskInput, condition?: TaskSubjectUpsertCondition): Promise<TaskItem> {
     const subjectKey = input.subjectKey;
     if (subjectKey && isEntrustedWorkSubjectKey(subjectKey)) {
       const existingId = await this.redis.get(TaskKeys.subject(subjectKey));
@@ -245,7 +248,18 @@ export class RedisTaskStore implements ITaskStore {
       }
       assertGenericTaskSubjectNamespaceAllowed(subjectKey);
     }
-    if (!subjectKey) return this.create(input);
+    if (!subjectKey) {
+      if (condition) throw new Error('Conditional subject upsert requires a subject key');
+      return this.create(input);
+    }
+    if (condition) {
+      const updated = await upsertTaskWithSubjectSnapshot(this.redis, input, condition);
+      await this.applyTtl(updated);
+      if (condition.expected && condition.expected.threadId !== updated.threadId) {
+        await this.applyThreadTtl(condition.expected.threadId);
+      }
+      return updated;
+    }
 
     const existingId = await this.redis.get(TaskKeys.subject(subjectKey));
     if (!existingId) {
@@ -277,31 +291,7 @@ export class RedisTaskStore implements ITaskStore {
       return this.createWithUniqueSubject(input);
     }
 
-    assertSubjectUpdateOwnership(sk, existing, input);
-    assertEntrustedWorkGenericUpsertAllowed(existing);
-
-    const now = Date.now();
-    const updated: TaskItem = reconcilePluginWaitTaskMutation(
-      existing,
-      reconcileDeploymentWaitTaskMutation(existing, {
-        ...existing,
-        threadId: input.threadId,
-        title: input.title,
-        ownerCatId: input.ownerCatId ?? existing.ownerCatId,
-        status:
-          isTrackingKind(existing.kind) && existing.status === 'done' && !existing.pluginWait
-            ? 'todo'
-            : existing.status,
-        why: input.why,
-        userId: input.userId ?? existing.userId,
-        probe: input.probe !== undefined ? input.probe : existing.probe,
-        resolveMode: input.resolveMode !== undefined ? input.resolveMode : existing.resolveMode,
-        automationState: input.automationState
-          ? mergeTaskAutomationState(existing.automationState, input.automationState)
-          : existing.automationState,
-        updatedAt: now,
-      }),
-    );
+    const updated = buildSubjectTaskUpdate(sk, existing, input);
 
     const written = await writeTaskForSubjectOwner(this.redis, existing, updated);
     if (written === 'stale') {

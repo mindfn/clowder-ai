@@ -17,7 +17,6 @@ import type {
   TaskKind,
   UpdateTaskInput,
 } from '@cat-cafe/shared';
-import { isTrackingKind } from '@cat-cafe/shared';
 import {
   type TypedWaitRegistration,
   type TypedWaitRegistrationSnapshot,
@@ -45,10 +44,11 @@ import {
   isEntrustedWorkSubjectKey,
   type ReplaceAutomationStateIfGenerationInput,
   type ReplaceDeploymentWaitIfGenerationInput,
+  type TaskSubjectUpsertCondition,
   type UpdateEntrustedWorkStoreInput,
   type UpdateEntrustedWorkStoreResult,
 } from './TaskStoreContract.js';
-import { assertSubjectUpdateOwnership } from './TaskSubjectOwnership.js';
+import { assertTaskSubjectSnapshot, buildSubjectTaskUpdate } from './TaskSubjectUpsert.js';
 import { TaskWaitMutationStore } from './TaskWaitMutationStore.js';
 
 export type { ITaskStore } from './TaskStoreContract.js';
@@ -144,13 +144,17 @@ export class TaskStore implements ITaskStore {
     return this.tasks.get(taskId) ?? null;
   }
 
-  upsertBySubject(input: CreateTaskInput): TaskItem {
+  upsertBySubject(input: CreateTaskInput, condition?: TaskSubjectUpsertCondition): TaskItem {
     const sk = input.subjectKey;
-    if (!sk) return this.create(input);
+    if (!sk) {
+      if (condition) throw new Error('Conditional subject upsert requires a subject key');
+      return this.create(input);
+    }
 
     this.assertGenericUpsertSubjectAllowed(sk);
 
     const existingId = this.subjectIndex.get(sk);
+    if (condition) assertTaskSubjectSnapshot(sk, existingId ? (this.tasks.get(existingId) ?? null) : null, condition);
     if (!existingId) return this.create(input);
     const existing = this.tasks.get(existingId);
     if (!existing) {
@@ -170,28 +174,7 @@ export class TaskStore implements ITaskStore {
   }
 
   private updateExistingSubjectTask(subjectKey: string, existing: TaskItem, input: CreateTaskInput): TaskItem {
-    assertSubjectUpdateOwnership(subjectKey, existing, input);
-    assertEntrustedWorkGenericUpsertAllowed(existing);
-    const updated: TaskItem = {
-      ...existing,
-      threadId: input.threadId,
-      title: input.title,
-      ownerCatId: input.ownerCatId ?? existing.ownerCatId,
-      status:
-        isTrackingKind(existing.kind) && existing.status === 'done' && !existing.pluginWait ? 'todo' : existing.status,
-      why: input.why,
-      userId: input.userId ?? existing.userId,
-      probe: input.probe !== undefined ? input.probe : existing.probe,
-      resolveMode: input.resolveMode !== undefined ? input.resolveMode : existing.resolveMode,
-      automationState: input.automationState
-        ? mergeTaskAutomationState(existing.automationState, input.automationState)
-        : existing.automationState,
-      updatedAt: Date.now(),
-    };
-    const reconciled = reconcilePluginWaitTaskMutation(
-      existing,
-      reconcileDeploymentWaitTaskMutation(existing, updated),
-    );
+    const reconciled = buildSubjectTaskUpdate(subjectKey, existing, input);
     this.tasks.set(existing.id, reconciled);
     return reconciled;
   }

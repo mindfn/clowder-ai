@@ -1,8 +1,55 @@
-import type { TaskItem } from '@cat-cafe/shared';
+import type { CreateTaskInput, TaskItem } from '@cat-cafe/shared';
 import type { RedisClient } from '@cat-cafe/shared/utils';
-import { createEntrustedWorkTerminalActionRequiredError } from '../ports/TaskStoreContract.js';
+import { createGenericTaskItem } from '../ports/TaskItemFactory.js';
+import {
+  createEntrustedWorkTerminalActionRequiredError,
+  createTaskSubjectSnapshotConflictError,
+  type TaskSubjectUpsertCondition,
+} from '../ports/TaskStoreContract.js';
+import { assertTaskSubjectSnapshot, buildSubjectTaskUpdate } from '../ports/TaskSubjectUpsert.js';
 import { TaskKeys } from '../redis-keys/task-keys.js';
-import { serializeTask } from './RedisTaskCodec.js';
+import { hydrateTask, serializeTask } from './RedisTaskCodec.js';
+import { runWithExclusiveRedisWatchSession } from './RedisWatchSession.js';
+
+/** The caller authorized this aggregate; never retry a different aggregate inside the store. */
+export async function upsertTaskWithSubjectSnapshot(
+  redis: RedisClient,
+  input: CreateTaskInput,
+  condition: TaskSubjectUpsertCondition,
+): Promise<TaskItem> {
+  const subjectKey = input.subjectKey;
+  if (!subjectKey) throw new Error('Conditional subject upsert requires a subject key');
+  const key = TaskKeys.subject(subjectKey);
+  return runWithExclusiveRedisWatchSession(redis, key, async (session) => {
+    const existingId = await session.get(key);
+    if (existingId !== (condition.expected?.id ?? null)) throw createTaskSubjectSnapshotConflictError(subjectKey);
+    let existing: TaskItem | null = null;
+    if (existingId) {
+      await session.watch(TaskKeys.detail(existingId));
+      const data = await session.hgetall(TaskKeys.detail(existingId));
+      existing = data.id ? hydrateTask(data) : null;
+    }
+    assertTaskSubjectSnapshot(subjectKey, existing, condition);
+    const updated = existing ? buildSubjectTaskUpdate(subjectKey, existing, input) : createGenericTaskItem(input);
+    const detail = TaskKeys.detail(updated.id);
+    if (!existing) {
+      await session.watch(detail);
+      if (await session.exists(detail)) throw createTaskSubjectSnapshotConflictError(subjectKey);
+    }
+    const tx = session.multi();
+    if (!existing) tx.set(key, updated.id);
+    tx.hset(detail, serializeTask(updated));
+    tx.zadd(TaskKeys.thread(updated.threadId), updated.createdAt, updated.id);
+    tx.zadd(TaskKeys.kind(updated.kind), updated.createdAt, updated.id);
+    if (existing && existing.threadId !== updated.threadId) {
+      tx.zrem(TaskKeys.thread(existing.threadId), existing.id);
+    }
+    const committed = await tx.exec();
+    if (!committed) throw createTaskSubjectSnapshotConflictError(subjectKey);
+    for (const [error] of committed) if (error) throw error;
+    return updated;
+  });
+}
 
 export type AtomicSubjectCreateResult = 'created' | 'subject_exists' | 'task_id_exists';
 

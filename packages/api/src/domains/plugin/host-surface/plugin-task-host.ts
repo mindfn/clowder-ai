@@ -8,9 +8,12 @@ import type {
   UpdateTaskInput,
 } from '@cat-cafe/shared';
 import type { ITaskStore } from '../../cats/services/stores/ports/TaskStore.js';
+import { isTaskSubjectSnapshotConflictError } from '../../cats/services/stores/ports/TaskStoreContract.js';
+import type { IThreadStore } from '../../cats/services/stores/ports/ThreadStore.js';
 import { currentPluginCallContext } from '../carrier/plugin-call-context.js';
 import { ExternalPluginRuntimeError } from '../external-runtime/types.js';
 import { hostCapabilityRefusal } from './host-capability-refusal.js';
+import { assertPluginTaskGovernance } from './plugin-task-governance.js';
 import { setPluginTaskWait } from './plugin-task-wait.js';
 
 const TASK_KINDS = new Set<TaskKind>(['work', 'pr_tracking', 'issue_tracking']);
@@ -50,6 +53,7 @@ export interface PluginTaskHostDeps {
   readonly pluginId: string;
   readonly effectiveGrants: readonly string[];
   readonly taskStore: ITaskStore | undefined;
+  readonly threadStore?: Pick<IThreadStore, 'get'>;
 }
 
 function boundedString(value: unknown, field: string, maximum: number, allowEmpty = false): string {
@@ -127,6 +131,15 @@ export function createPluginTaskHost(input: PluginTaskHostDeps): PluginTaskHost 
     const caller = currentPluginCallContext(input.pluginInstanceId);
     return caller ? { ...value, userId: caller.userId } : value;
   };
+  const authorizeTask = async (task: Pick<CreateTaskInput, 'kind' | 'threadId' | 'subjectKey'>) => {
+    await assertPluginTaskGovernance(
+      requireGrant('task.write'),
+      input.threadStore,
+      task,
+      currentPluginCallContext(input.pluginInstanceId)?.threadId,
+    );
+    await assertCurrentCall();
+  };
   return {
     setWait: (taskId, value) =>
       setPluginTaskWait(
@@ -135,6 +148,7 @@ export function createPluginTaskHost(input: PluginTaskHostDeps): PluginTaskHost 
         currentPluginCallContext(input.pluginInstanceId),
         boundedString(taskId, 'taskId', 500),
         value,
+        authorizeTask,
       ),
     get: async (taskId) => requireGrant('task.read').get(boundedString(taskId, 'taskId', 500)),
     listByThread: async (threadId) => requireGrant('task.read').listByThread(boundedString(threadId, 'threadId', 500)),
@@ -144,26 +158,54 @@ export function createPluginTaskHost(input: PluginTaskHostDeps): PluginTaskHost 
     create: async (value) => {
       const store = requireGrant('task.write');
       await assertCurrentCall();
-      return store.create(withCallerUser(createInput(value)));
+      const task = withCallerUser(createInput(value));
+      await authorizeTask(task);
+      return store.create(task);
     },
     upsertBySubject: async (value) => {
       const store = requireGrant('task.write');
       await assertCurrentCall();
-      return store.upsertBySubject(withCallerUser(subjectUpsertInput(value)));
+      const task = withCallerUser(subjectUpsertInput(value));
+      for (let attempt = 0; ; attempt++) {
+        // Snapshot before authorization, including absence. The store must fence this exact
+        // aggregate at the write, since upsert retains its kind rather than the input kind.
+        const expected = structuredClone(await store.getBySubject(task.subjectKey!));
+        await authorizeTask(task);
+        if (expected) await authorizeTask({ ...expected, threadId: task.threadId });
+        await assertCurrentCall();
+        try {
+          return await store.upsertBySubject(task, { expected });
+        } catch (error) {
+          if (!isTaskSubjectSnapshotConflictError(error) || attempt >= 2) throw error;
+        }
+      }
     },
     update: async (taskId, value) => {
       const store = requireGrant('task.write');
       await assertCurrentCall();
-      return store.update(boundedString(taskId, 'taskId', 500), updateInput(value));
+      const id = boundedString(taskId, 'taskId', 500);
+      const patch = updateInput(value);
+      const task = await store.get(id);
+      if (!task) return null;
+      if (patch.threadId !== undefined || (patch.status !== undefined && patch.status !== 'done')) {
+        await authorizeTask({ ...task, threadId: patch.threadId ?? task.threadId });
+      }
+      await assertCurrentCall();
+      return store.updateIfThreadId(id, task.threadId, patch);
     },
-    updateIfThreadId: async (taskId, expectedThreadId, input) => {
+    updateIfThreadId: async (taskId, expectedThreadId, value) => {
       const store = requireGrant('task.write');
       await assertCurrentCall();
-      return store.updateIfThreadId(
-        boundedString(taskId, 'taskId', 500),
-        boundedString(expectedThreadId, 'expectedThreadId', 500),
-        updateInput(input),
-      );
+      const id = boundedString(taskId, 'taskId', 500);
+      const expected = boundedString(expectedThreadId, 'expectedThreadId', 500);
+      const patch = updateInput(value);
+      const task = await store.get(id);
+      if (!task || task.threadId !== expected) return null;
+      if (patch.threadId !== undefined || (patch.status !== undefined && patch.status !== 'done')) {
+        await authorizeTask({ ...task, threadId: patch.threadId ?? task.threadId });
+      }
+      await assertCurrentCall();
+      return store.updateIfThreadId(id, expected, patch);
     },
   };
 }

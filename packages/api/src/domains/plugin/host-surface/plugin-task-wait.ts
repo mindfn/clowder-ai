@@ -44,6 +44,7 @@ export async function setPluginTaskWait(
   caller: PluginCallContext | undefined,
   taskId: string,
   input: PluginWaitUpdate,
+  authorizeTask?: (task: TaskItem) => Promise<void>,
 ): Promise<TaskItem | null> {
   if (!instanceId) throw new Error('Plugin instance is required');
   const value = updateSchema.parse(input);
@@ -53,6 +54,8 @@ export async function setPluginTaskWait(
   const old = task.pluginWait;
   if (!old && !caller) throw new Error('First wait registration requires an authenticated invocation');
   const newRegistration = !!caller && value.generation > (old?.generation ?? 0);
+  // Existing terminal projections may still repair delivery or clear a revoked wait.
+  if (value.active || newRegistration) await authorizeTask?.(task);
   if (old?.invalidated && !newRegistration) throw new Error('Wait was invalidated by a task mutation');
   const owner = old?.invalidated && newRegistration ? caller! : (old ?? caller!);
   if (

@@ -20,6 +20,7 @@ import type {
   ReplaceAutomationStateIfGenerationInput,
   ReplaceDeploymentWaitIfGenerationInput,
   ReplacePluginWaitInput,
+  TaskSubjectUpsertCondition,
   UpdateEntrustedWorkStoreInput,
   UpdateEntrustedWorkStoreResult,
 } from '../cats/services/stores/ports/TaskStoreContract.js';
@@ -158,8 +159,8 @@ class BallCustodyTaskStore implements ITaskStore {
     return this.inner.getBySubject(subjectKey);
   }
 
-  upsertBySubject(input: CreateTaskInput): MaybePromise<TaskItem> {
-    return this.inner.upsertBySubject(input);
+  upsertBySubject(input: CreateTaskInput, condition?: TaskSubjectUpsertCondition): MaybePromise<TaskItem> {
+    return this.inner.upsertBySubject(input, condition);
   }
 
   upsertBySubjectWithManagedWorkBinding(input: CreateTaskInput, binding: ManagedWorkBinding): MaybePromise<TaskItem> {

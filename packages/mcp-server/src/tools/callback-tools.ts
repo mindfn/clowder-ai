@@ -42,8 +42,6 @@ import {
   entrustedWorkV1Schema,
   executableActionSuccessorMetadataSchema,
   extractFeatureIds,
-  GITHUB_ISSUE_WAIT_PREDICATE_LIMIT,
-  GITHUB_PR_WAIT_PREDICATE_LIMIT,
   isCallbackAuthFailureReason,
   isValidAcceptedSource,
   isValidReviewSubjectRef,
@@ -2033,96 +2031,8 @@ export async function handleGenerateDocument(input: {
   return result;
 }
 
-/**
- * #1392 AC-3: a positive audience — the GitHub logins whose comments may wake the owner, compared
- * case-insensitively. Required on PR comment predicates, optional on `issue_comment_added`; never
- * empty, because an empty list matches nobody and the wait would never fire. A blank login names
- * nobody either, so logins are trimmed before that check, exactly as the server does.
- */
-const githubWaitAuthorLoginsSchema = z
-  .array(z.string().trim().min(1))
-  .min(1)
-  .max(20)
-  .describe('GitHub logins whose comments may wake you, compared case-insensitively. Never empty.');
-
-const githubWaitPredicateInputSchema = z.discriminatedUnion('kind', [
-  z.object({ kind: z.literal('pr_head_changed') }).strict(),
-  z
-    .object({
-      kind: z.literal('pr_review_result_available'),
-      triggerCommentId: z.number().int().positive().optional(),
-    })
-    .strict(),
-  z.object({ kind: z.literal('pr_review_decision_changed') }).strict(),
-  z
-    .object({
-      kind: z.literal('pr_review_thread_changed'),
-      reviewThreadIds: z.array(z.string().min(1)).min(1).max(20),
-    })
-    .strict(),
-  z.object({ kind: z.literal('pr_ci_terminal') }).strict(),
-  z.object({ kind: z.literal('pr_became_conflicting') }).strict(),
-  z.object({ kind: z.literal('pr_conversation_comment_added'), authorLogins: githubWaitAuthorLoginsSchema }).strict(),
-  z.object({ kind: z.literal('pr_inline_comment_added'), authorLogins: githubWaitAuthorLoginsSchema }).strict(),
-]);
-
-// F280: server-bound typed wait registration — baseline and owner are never caller input.
-export const registerPrTrackingInputSchema = {
-  repoFullName: z.string().min(1).describe('Repository full name in owner/repo format (e.g. "zts212653/cat-cafe")'),
-  prNumber: z.number().int().positive().describe('PR number'),
-  when: z
-    .array(githubWaitPredicateInputSchema)
-    .min(1)
-    .max(GITHUB_PR_WAIT_PREDICATE_LIMIT)
-    .optional()
-    .describe(
-      `ADVANCED, and usually omit it. One to ${GITHUB_PR_WAIT_PREDICATE_LIMIT} typed conditions for a precise wait. Omitting this is the normal path: the server then arms every condition the PR raises about itself — review decision, CI terminal and conflict, plus a new HEAD unless you are the PR author (as the author, that push is your own) — AND both comment surfaces, with an audience it derives from your role on that PR. As its author you hear every reply that is not your own, bots included; as a reviewer you hear the PR author's replies, with bots and pure summon commands filtered. Supply this only when you need something narrower or need a condition with its own anchor, such as pr_review_thread_changed; a comment predicate you write here still requires its own explicit \`authorLogins\`. Duplicate kinds, unknown kinds and conditions missing their required parameters are rejected. At most one of \`when\` or \`goal\`.`,
-    ),
-  goal: z
-    .object({
-      kind: z.literal('await_reply_from'),
-      authorLogins: z.array(z.string().trim().min(1)).min(1).max(20),
-    })
-    .strict()
-    .optional()
-    .describe(
-      'OPTIONAL narrowing, not a precondition. Comments already wake you by default; add this only to hear from specific people and nobody else. It narrows the audience the server derives from your role on both comment surfaces rather than replacing it: both rules apply, so a comment wakes you only when the derived rule admits it AND you named its author. Naming someone that rule already excludes therefore matches nobody instead of adding them — as the PR author, naming yourself; as a reviewer, naming anyone but the PR author. An empty one is refused rather than widened to everyone. What was actually armed, and what will be filtered, comes back to you in `await.continuation.when` and `notification`. At most one of `when` or `goal`.',
-    ),
-  nextStep: z
-    .string()
-    .min(1)
-    .max(500)
-    .optional()
-    .describe(
-      'Optional note to yourself, shown with the wake. Omit it and the server writes a deterministic one. Display-only either way: the matcher never reads it, and it decides nothing.',
-    ),
-  expiresAt: z
-    .number()
-    .int()
-    .positive()
-    .optional()
-    .describe(
-      'Optional absolute deadline, Unix ms. Omit it and tracking has no time-based termination. ' +
-        'If supplied it must be in the future, it is returned in the registration response, and reaching it ' +
-        'ends tracking with an explicit terminal outcome. History is never deleted.',
-    ),
-  autoRenew: z
-    .boolean()
-    .optional()
-    .describe(
-      'Default true: after a match, tracking re-arms automatically with a fresh baseline, so you do not ' +
-        'register again. Set false for a single-fire wait that ends after its first match.',
-    ),
-};
-
-// Registering tracking reads a live GitHub baseline (several paginated reads) and installs the next
-// wait generation, so it is not idempotent. A replay reruns all of it against the same slow GitHub:
-// it either loses the generation race or registers again with a later baseline, which absorbs
-// whatever arrived in between. Either way the caller hears "timed out" although a registration
-// landed. So, as with publish_verdict, the original POST is never replayed. Its one attempt stays
-// under the shortest host deadline for a tool call (Antigravity's McpToolExecutor defaults to 60 s),
-// so the caller always gets this handler's answer, note included, and never the host's timeout.
-const TRACKING_REGISTRATION_TRANSPORT: CallbackTransportOptions = {
+// Deployment registration must remain single-attempt: a transport failure may follow a committed wait.
+const DEPLOYMENT_WAIT_REGISTRATION_TRANSPORT: CallbackTransportOptions = {
   retryDelaysMs: [],
   fetchTimeoutMs: 50_000,
 };
@@ -2147,124 +2057,6 @@ function withUnknownRegistrationOutcome(result: ToolResult): ToolResult {
     'The registration may still have been applied. Check cat_cafe_list_tasks for this subject ' +
     '(its await generation and baseline capture time) before registering again.';
   return { ...result, content: [{ type: 'text', text: `${block.text}\n\n${note}` }] };
-}
-
-export async function handleRegisterPrTracking(input: {
-  repoFullName: string;
-  prNumber: number;
-  when:
-    | Array<
-        | { kind: 'pr_head_changed' }
-        | { kind: 'pr_review_result_available'; triggerCommentId?: number }
-        | { kind: 'pr_review_decision_changed' }
-        | { kind: 'pr_review_thread_changed'; reviewThreadIds: string[] }
-        | { kind: 'pr_ci_terminal' }
-        | { kind: 'pr_became_conflicting' }
-        | { kind: 'pr_conversation_comment_added'; authorLogins: string[] }
-        | { kind: 'pr_inline_comment_added'; authorLogins: string[] }
-      >
-    | undefined;
-  goal?: { kind: 'await_reply_from'; authorLogins: string[] } | undefined;
-  nextStep?: string | undefined;
-  expiresAt?: number;
-  autoRenew?: boolean;
-  agentKeyCatId?: string | undefined;
-}): Promise<ToolResult> {
-  // F174 Phase E (AC-E2/E5): explicit kind:'none'. PR tracking is one-shot
-  // registration, no useful local fallback. Surface `[degrade]` hint.
-  const result = await withDegradation({
-    toolName: 'register_pr_tracking',
-    primary: () =>
-      callbackPost(
-        '/api/callbacks/register-pr-tracking',
-        {
-          repoFullName: input.repoFullName,
-          prNumber: input.prNumber,
-          // #1392 AC-7: forward whichever the caller supplied and let the route enforce "exactly one".
-          // Serializing an absent `when` as null would turn a goal-only call into a contradiction.
-          ...(input.when !== undefined ? { when: input.when } : {}),
-          ...(input.goal !== undefined ? { goal: input.goal } : {}),
-          ...(input.nextStep !== undefined ? { nextStep: input.nextStep } : {}),
-          ...(input.expiresAt !== undefined ? { expiresAt: input.expiresAt } : {}),
-          ...(input.autoRenew !== undefined ? { autoRenew: input.autoRenew } : {}),
-        },
-        { ...agentKeyOptions(input), ...TRACKING_REGISTRATION_TRANSPORT },
-      ),
-    policy: { kind: 'none' },
-  });
-  return withUnknownRegistrationOutcome(result);
-}
-
-// F202 Phase 2D (AC-D3): Register issue tracking
-export const registerIssueTrackingInputSchema = {
-  repoFullName: z.string().min(1).describe('Repository full name in owner/repo format (e.g. "zts212653/cat-cafe")'),
-  issueNumber: z.number().int().positive().describe('Issue number'),
-  when: z
-    .array(
-      z.discriminatedUnion('kind', [
-        z
-          .object({ kind: z.literal('issue_comment_added'), authorLogins: githubWaitAuthorLoginsSchema.optional() })
-          .strict(),
-        z.object({ kind: z.literal('issue_author_commented') }).strict(),
-      ]),
-    )
-    .min(1)
-    .max(GITHUB_ISSUE_WAIT_PREDICATE_LIMIT)
-    .optional()
-    .describe(
-      `ADVANCED, and usually omit it. One to ${GITHUB_ISSUE_WAIT_PREDICATE_LIMIT} typed issue conditions, evaluated as flat any-of against a server-frozen baseline. Omitting this is the normal path: the server arms every comment on the issue that is not your own.`,
-    ),
-  nextStep: z
-    .string()
-    .min(1)
-    .max(500)
-    .optional()
-    .describe(
-      'Optional note to yourself, shown with the wake. Omit it and the server writes a deterministic one. Display-only either way: the matcher never reads it, and it decides nothing.',
-    ),
-  expiresAt: z
-    .number()
-    .int()
-    .positive()
-    .optional()
-    .describe('Optional absolute deadline, Unix ms. Omit it and tracking has no time-based termination.'),
-  autoRenew: z
-    .boolean()
-    .optional()
-    .describe('Default true: tracking re-arms after each match. Set false for a single-fire wait.'),
-};
-
-export async function handleRegisterIssueTracking(input: {
-  repoFullName: string;
-  issueNumber: number;
-  when?:
-    | Array<{ kind: 'issue_comment_added'; authorLogins?: string[] } | { kind: 'issue_author_commented' }>
-    | undefined;
-  nextStep?: string | undefined;
-  expiresAt?: number;
-  autoRenew?: boolean;
-  agentKeyCatId?: string | undefined;
-}): Promise<ToolResult> {
-  const result = await withDegradation({
-    toolName: 'register_issue_tracking',
-    primary: () =>
-      callbackPost(
-        '/api/callbacks/register-issue-tracking',
-        {
-          repoFullName: input.repoFullName,
-          issueNumber: input.issueNumber,
-          // #1392 AC-7: forward `when` only when the caller wrote one. Serializing an absent list as
-          // null would turn "arm the normal default" into a schema violation at the route.
-          ...(input.when !== undefined ? { when: input.when } : {}),
-          ...(input.nextStep !== undefined ? { nextStep: input.nextStep } : {}),
-          ...(input.expiresAt !== undefined ? { expiresAt: input.expiresAt } : {}),
-          ...(input.autoRenew !== undefined ? { autoRenew: input.autoRenew } : {}),
-        },
-        { ...agentKeyOptions(input), ...TRACKING_REGISTRATION_TRANSPORT },
-      ),
-    policy: { kind: 'none' },
-  });
-  return withUnknownRegistrationOutcome(result);
 }
 
 const deploymentServicesInputSchema = z
@@ -2326,30 +2118,11 @@ export async function handleRegisterDeploymentWait(input: {
           when: input.when,
           nextStep: input.nextStep,
         },
-        TRACKING_REGISTRATION_TRANSPORT,
+        DEPLOYMENT_WAIT_REGISTRATION_TRANSPORT,
       ),
     policy: { kind: 'none' },
   });
   return withUnknownRegistrationOutcome(result);
-}
-
-// F202 Phase 2C (AC-C3): Unregister tracking task by subjectKey
-export const unregisterTrackingInputSchema = {
-  subjectKey: z
-    .string()
-    .min(1)
-    .describe('Subject key to unregister. Format: "pr:{owner/repo}#{num}" or "issue:{owner/repo}#{num}"'),
-};
-
-export async function handleUnregisterTracking(input: { subjectKey: string }): Promise<ToolResult> {
-  return withDegradation({
-    toolName: 'unregister_tracking',
-    primary: () =>
-      callbackPost('/api/callbacks/unregister-tracking', {
-        subjectKey: input.subjectKey,
-      }),
-    policy: { kind: 'none' },
-  });
 }
 
 // F168 Phase B Task 6: Declare awaiting_external state for a community case
@@ -4412,62 +4185,6 @@ export const callbackTools = [
         kind: 'resource-entry',
         admissionRef: 'file:docs/features/F323-runtime-restart-coordination.md',
       },
-    },
-  }),
-  defineCanonicalTool({
-    name: 'cat_cafe_register_pr_tracking',
-    description:
-      'Register continuous tracking of one PR for the current task owner. ' +
-      'Use when: you want to hear about what happens on a PR — its review decision, CI, conflicts, a new HEAD unless you are the PR author, and the replies people leave on it. Naming the subject is the whole call. ' +
-      'NOT for: another cat’s responsibility, or a different PR subject. ' +
-      'Output: validates subject/owner, freezes a live GitHub baseline, atomically installs the next generation, and answers with what was armed and which audience was applied (`notification`). Registration history is baseline, never a wake. ' +
-      'GOTCHA: For exact-HEAD external PR review, run the Review Entry Mode Classifier before registration: formal instructions containing a no-comment / do-not-comment-on-GitHub directive fail closed; only explicit advisory_read_only may stay private, and advisory must never claim review-complete. ' +
-      `GOTCHA: \`repoFullName\` + \`prNumber\` is the whole normal call — omit \`when\`, \`goal\` and \`nextStep\`. The server then arms every condition the PR raises about itself, plus a new HEAD unless you are the PR author (as the author, that push is your own), AND both comment surfaces, with the audience your role gives you: as the PR author, every reply that is not your own, bots included; as a reviewer with checkable grounds, the PR author's replies with bots and pure summon commands filtered. If it cannot establish identity it delivers every comment flagged rather than filtering on a rule it could not verify — read \`notification.perspective\`. \`goal\` optionally narrows the comment audience to people you name. \`when\` is the advanced path: up to ${GITHUB_PR_WAIT_PREDICATE_LIMIT} flat any-of typed predicates, one per distinct condition in the catalog, where \`pr_conversation_comment_added\` and \`pr_inline_comment_added\` still require a non-empty \`authorLogins\`; there is no omitted-means-anyone form on that path. \`nextStep\` is display-only and never parsed. \`expiresAt\` is optional: omit it for no time-based termination; supply it for a visible deadline. It never deletes task history.`,
-    inputSchema: registerPrTrackingInputSchema,
-    handler: handleRegisterPrTracking,
-    governance: {
-      implementationExport: 'handleRegisterPrTracking',
-      resourceFamily: 'tracking-review',
-      action: 'create',
-      authority: 'callback-owner',
-      risk: { level: 'write', openWorld: false },
-      runtimeProfiles: ['full'],
-    },
-  }),
-  defineCanonicalTool({
-    name: 'cat_cafe_register_issue_tracking',
-    description:
-      'Register continuous tracking of one GitHub issue for the current task owner. ' +
-      'Use when: you want to hear about new comments on an issue. Naming the subject is the whole call. ' +
-      'NOT for: actor-type guessing, source prose, another cat’s responsibility, or a different issue subject. ' +
-      'Output: validates subject/owner, freezes a live issue baseline, atomically installs the next generation, and answers with what was armed and which audience was applied (`notification`). Registration history is baseline, never a wake. ' +
-      'GOTCHA: `repoFullName` + `issueNumber` is the whole normal call — omit `when` and `nextStep`. The server then wakes you on every comment that is not your own. `when` is the advanced path: a bounded typed predicate set for a narrower wait. `nextStep` is display-only and never parsed. `expiresAt` is optional: omit it for no time-based termination; supply it for a visible deadline. It never deletes task history.',
-    inputSchema: registerIssueTrackingInputSchema,
-    handler: handleRegisterIssueTracking,
-    governance: {
-      implementationExport: 'handleRegisterIssueTracking',
-      resourceFamily: 'tracking-review',
-      action: 'create',
-      authority: 'callback-owner',
-      risk: { level: 'write', openWorld: false },
-      runtimeProfiles: ['full'],
-    },
-  }),
-  defineTool({
-    name: 'cat_cafe_unregister_tracking',
-    description:
-      'Unregister a PR or issue tracking task by subjectKey. Stops all automated notifications ' +
-      '(review feedback, CI/CD, conflict detection, issue comments) for this subject. ' +
-      'Format: "pr:{owner/repo}#{num}" or "issue:{owner/repo}#{num}".',
-    inputSchema: unregisterTrackingInputSchema,
-    handler: handleUnregisterTracking,
-    governance: {
-      implementationExport: 'handleUnregisterTracking',
-      resourceFamily: 'tracking-review',
-      action: 'close',
-      authority: 'callback-owner',
-      risk: { level: 'destructive', openWorld: false },
-      runtimeProfiles: ['full'],
     },
   }),
   defineTool({

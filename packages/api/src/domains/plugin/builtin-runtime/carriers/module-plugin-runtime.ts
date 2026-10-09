@@ -301,6 +301,7 @@ export class ModulePluginRuntime implements BundledPluginRuntime {
           pluginId: packageRecord.pluginId,
           effectiveGrants,
           taskStore: this.options.taskStore,
+          threadStore: this.options.messaging?.threadStore,
         }),
         threads,
         messaging,

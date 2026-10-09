@@ -11,14 +11,12 @@ import type {
   CatId,
   CatRoutingError,
   CrossThreadCoordination,
-  GitHubIssueAwaitStateV1,
-  GitHubPrAwaitStateV1,
-  GitHubPrWaitPredicate,
-  GitHubTrackingIdentityV1,
-  IssueWaitAutomationState,
   LocalReviewVerdict,
+<<<<<<< HEAD
   MessageContent,
   PrAutomationState,
+=======
+>>>>>>> 422e496249 (refactor(plugin): retire legacy tracking entrypoints and fence task governance)
   RichBlock,
   SuggestedCrossPostAction,
 } from '@cat-cafe/shared';
@@ -28,18 +26,11 @@ import {
   actionSuccessorMetadataSchema,
   catRegistry,
   createCatId,
-  DEFAULT_GITHUB_TRACKING_NEXT_STEP,
-  describeGitHubNotificationCoverage,
-  expandGitHubIssueTracking,
-  expandGitHubPrTrackingGoal,
-  isTrackingKind,
   isValidAcceptedSource,
   isValidReviewSubjectRef,
   localReviewVerdictSchema,
   normalizeRichBlock,
   normalizeSopDefinitionId,
-  resolveGitHubIssueNotificationPerspective,
-  resolveGitHubNotificationPerspective,
   resolveWorkflowSopSkill,
   reviewSubjectRefSchema,
   runtimeConversationResponseSchema,
@@ -77,8 +68,13 @@ import {
   actionSuccessorFencesMatch,
   reconcileActionSuccessorEnqueue,
 } from '../domains/ball-custody/reconcile-action-successor-enqueue.js';
+<<<<<<< HEAD
 import { createTypedWaitRegistration } from '../domains/ball-custody/TypedWaitRegistration.js';
 import { transitionWaitState } from '../domains/ball-custody/wait-state-machine.js';
+=======
+import { turnCustodyAdoptionRegistry } from '../domains/ball-custody/TurnCustodyAdoptionRegistry.js';
+import type { TurnCustodyWakeProvenance } from '../domains/ball-custody/TurnCustodyProjectionService.js';
+>>>>>>> 422e496249 (refactor(plugin): retire legacy tracking entrypoints and fence task governance)
 import {
   type InvocationQueue,
   type QueueEntry,
@@ -126,11 +122,7 @@ import {
   isDelivered,
   type StoredMessage,
 } from '../domains/cats/services/stores/ports/MessageStore.js';
-import { isManagedWorkBindingConflictError } from '../domains/cats/services/stores/ports/TaskManagedWorkBinding.js';
-import { type ITaskStore, isSubjectOwnershipConflictError } from '../domains/cats/services/stores/ports/TaskStore.js';
-import { TASK_SUBJECT_ALREADY_EXISTS } from '../domains/cats/services/stores/ports/TaskStoreContract.js';
-import { assertSubjectUpdateOwnership } from '../domains/cats/services/stores/ports/TaskSubjectOwnership.js';
-import { isTrackingRegistrationConflict } from '../domains/cats/services/stores/ports/TaskWaitReplacement.js';
+import type { ITaskStore } from '../domains/cats/services/stores/ports/TaskStore.js';
 import type { IThreadStore, VotingStateV1 } from '../domains/cats/services/stores/ports/ThreadStore.js';
 import {
   type ITurnExecutionStore,
@@ -157,13 +149,6 @@ import {
   hasConciergeNavigationMarker,
   projectConciergeStoredContent,
 } from '../domains/concierge/concierge-reply-validator.js';
-import type { InitialIssueWaitSnapshot } from '../domains/github-signals/GitHubIssueWaitBaselineReader.js';
-import type { InitialPrWaitSnapshot } from '../domains/github-signals/GitHubWaitBaselineReader.js';
-import type { GitHubWaitLifecycleService } from '../domains/github-signals/GitHubWaitLifecycleService.js';
-import {
-  githubIssueWaitPredicatesSchema,
-  githubWaitPredicatesSchema,
-} from '../domains/github-signals/GitHubWaitPredicateCatalog.js';
 import type { IEvidenceStore, IMarkerQueue, IReflectionService } from '../domains/memory/interfaces.js';
 import { projectCollectiveWorkDelegation } from '../domains/plugin/builtin-runtime/collective-work/collective-work-delegation.js';
 import {
@@ -173,9 +158,6 @@ import {
   readEngagementPolicy,
 } from '../domains/routing-context/ScarceSeatNotificationPolicy.js';
 import { buildThreadDeepLink } from '../infrastructure/connectors/connector-command-helpers.js';
-import { extractIssueTrackingClaims, extractPrTrackingClaims } from '../infrastructure/grounding/claim-extractors.js';
-import { checkGrounding } from '../infrastructure/grounding/grounding-checker.js';
-import { groundingSampleStore } from '../infrastructure/grounding/grounding-sample-singleton.js';
 import { createModuleLogger } from '../infrastructure/logger.js';
 import {
   coordinationActiveDispatchCount,
@@ -223,7 +205,6 @@ import { registerCallbackDocumentRoutes } from './callback-document-routes.js';
 import { registerCallbackExternalReviewRecoveryRoutes } from './callback-external-review-recovery-route.js';
 import { registerCallbackExternalReviewTransferRoute } from './callback-external-review-transfer-route.js';
 import { registerCallbackGameRoutes } from './callback-game-routes.js';
-import { resolveGitHubValidation } from './callback-github-validation.js';
 import { registerCallbackGuideRoutes } from './callback-guide-routes.js';
 import { type HoldBallRouteDeps, registerCallbackHoldBallRoutes } from './callback-hold-ball-routes.js';
 import { registerCallbackImageRoutes } from './callback-image-routes.js';
@@ -270,15 +251,18 @@ import {
 } from './callback-skill-consumption-routes.js';
 import { registerCallbackTaskRoutes } from './callback-task-routes.js';
 import { registerCallbackThreadCatsRoutes } from './callback-thread-cats-routes.js';
-import { captureTypedWaitSource } from './callback-typed-wait-source.js';
 import { registerCallbackWithdrawThreadProposalRoutes } from './callback-withdraw-thread-proposal-routes.js';
 import { registerCallbackWorkflowSopRoutes } from './callback-workflow-sop-routes.js';
 import { registerCompanionWorkReadRoutes } from './companion-work-read.js';
 import { resolveCrossThreadCoordination } from './cross-thread-coordination.js';
 import { type FeatIndexEntry, readFeatIndexEntries } from './feat-index-doc-import.js';
+<<<<<<< HEAD
 import { buildThreadIdsByFeatId, normalizeFeatId } from './feature-thread-resolver.js';
 import { verifyKeeperOwnership } from './gate-keeping-cross-store.js';
 import { checkGateKeepingGuard } from './gate-keeping-guard.js';
+=======
+import { buildThreadIdsByFeatId, normalizeFeatId, resolveFeatureOwnerCatId } from './feature-thread-resolver.js';
+>>>>>>> 422e496249 (refactor(plugin): retire legacy tracking entrypoints and fence task governance)
 import { guardLiveCarrierRead } from './live-carrier-read-guard.js';
 import {
   decodeThreadContextCursor,
@@ -961,45 +945,6 @@ export interface CallbackRoutesOptions {
   invocationTracker?: InvocationTracker;
   /** For mention ack cursor tracking (#77) */
   deliveryCursorStore?: DeliveryCursorStore;
-  /** Phase D: validates GitHub repo exists before PR tracking registration */
-  validateRepo?: (repoFullName: string) => Promise<boolean>;
-  /** F202 Phase 2 follow-up: validates specific PR exists (number-level validation) */
-  validatePr?: (repoFullName: string, prNumber: number) => Promise<boolean>;
-  /** F202 Phase 2 follow-up: validates specific issue exists (number-level validation) */
-  validateIssue?: (repoFullName: string, issueNumber: number) => Promise<boolean>;
-  /**
-   * #1392 AC-7: authoritative GitHub identity for a tracking subject, resolved server-side.
-   *
-   * The normal entry no longer asks the caller who they are waiting on, so the server has to know
-   * who *we* are and who opened the subject before it can arm an audience. Every field is optional
-   * because an unresolved one is a state the owner is told about, never an error that closes
-   * tracking (#1392 AC-7).
-   */
-  resolveGitHubPrTrackingIdentity?: (repoFullName: string, prNumber: number) => Promise<GitHubTrackingIdentityV1>;
-  /** #1392 AC-7: the authenticated GitHub login every cat posts as; `undefined` when unresolvable. */
-  resolveGitHubSelfLogin?: () => Promise<string | undefined>;
-  /** F280: server-owned baseline and collector frontier for a typed PR wait. */
-  fetchPrWaitBaseline?: (
-    repoFullName: string,
-    prNumber: number,
-    when: readonly GitHubPrWaitPredicate[],
-  ) => Promise<InitialPrWaitSnapshot>;
-  /** F177 Phase J: server-side proof that the cloud review callback owns the current wait. */
-  verifyPrReviewEventWaitCoverage?: (input: {
-    repoFullName: string;
-    prNumber: number;
-    triggerCommentId: number;
-  }) => Promise<
-    | { covered: true; triggerCommentId: number; observedAt: number }
-    | {
-        covered: false;
-        reason: 'subject_mismatch' | 'not_review_trigger' | 'review_not_accepted' | 'feedback_already_posted';
-        triggerCommentId: number;
-        observedAt: number;
-      }
-  >;
-  /** Late-bound so callback registration and boot migration share the lifecycle owner. */
-  waitLifecycleHolder?: { current?: Pick<GitHubWaitLifecycleService, 'recordOutcomeEvent'> };
   /** F323: server-owned deployment evidence and late-bound one-shot delivery lifecycle. */
   deploymentObservationProvider?: DeploymentObservationProvider;
   deploymentWaitLifecycleHolder?: {
@@ -1013,10 +958,6 @@ export interface CallbackRoutesOptions {
   externalReviewTransferService?: import('../domains/community/external-review/ExternalReviewTransferService.js').ExternalReviewTransferService;
   /** F167: settle stale external-review lease when GitHub HEAD has advanced. */
   externalReviewRecoveryService?: import('../domains/ball-custody/ExternalReviewRecoveryService.js').ExternalReviewRecoveryService;
-  /** F202-2D: seeds issue tracking from the current highest issue comment ID. */
-  fetchIssueCommentCursor?: (repoFullName: string, issueNumber: number) => Promise<number>;
-  /** F280 Phase C: server-owned issue baseline; author/cursor never come from the caller. */
-  fetchIssueWaitBaseline?: (repoFullName: string, issueNumber: number) => Promise<InitialIssueWaitSnapshot>;
   /** F043 P1: feat_index provider override for tests */
   featIndexProvider?: () => Promise<FeatIndexEntry[]>;
   /** F073 P1: workflow SOP store for bulletin board */
@@ -1333,6 +1274,7 @@ const createRichBlockSchema = z.object({
     .optional(),
 });
 
+<<<<<<< HEAD
 function conversationDecisionInteractionId(invocationId: string, blockId: string): string {
   const digest = createHash('sha256')
     .update('cat-cafe:runtime-interaction:conversation:v1\0')
@@ -1353,6 +1295,8 @@ function canUnregisterTrackingTask(
   return Boolean(record.threadId && task.threadId === record.threadId);
 }
 
+=======
+>>>>>>> 422e496249 (refactor(plugin): retire legacy tracking entrypoints and fence task governance)
 const externalReviewVerdictSchema = z
   .object({
     repoFullName: z
@@ -1404,45 +1348,6 @@ function deriveCallbackOriginRef(
   };
 }
 
-/**
- * #1392 AC-7: identity lookup never decides whether tracking exists.
- *
- * A missing resolver or a GitHub call that throws both come back as "nothing known", which the
- * perspective turns into the unresolved arm: the registration still installs, both comment surfaces
- * are still armed, and every comment is delivered flagged. Turning this into a non-2xx was the
- * earlier plan and was explicitly corrected — an error left in a return value is a silence to the
- * one party structurally unable to notice it (#1392 AC-7, issue comment 5747771227).
- */
-async function resolvePrTrackingIdentity(
-  resolve: ((repoFullName: string, prNumber: number) => Promise<GitHubTrackingIdentityV1>) | undefined,
-  repoFullName: string,
-  prNumber: number,
-  log: FastifyBaseLogger,
-): Promise<GitHubTrackingIdentityV1> {
-  if (!resolve) return {};
-  try {
-    return await resolve(repoFullName, prNumber);
-  } catch (err) {
-    log.warn({ err, repoFullName, prNumber }, '#1392 AC-7: PR tracking identity unresolved; arming the flagged path');
-    return {};
-  }
-}
-
-/** #1392 AC-7: the issue default needs only our own login, and the same failure shape applies. */
-async function resolveTrackingSelfLogin(
-  resolve: (() => Promise<string | undefined>) | undefined,
-  log: FastifyBaseLogger,
-): Promise<GitHubTrackingIdentityV1> {
-  if (!resolve) return {};
-  try {
-    const selfLogin = await resolve();
-    return selfLogin ? { selfLogin } : {};
-  } catch (err) {
-    log.warn({ err }, '#1392 AC-7: GitHub self login unresolved; arming the flagged path');
-    return {};
-  }
-}
-
 export const callbacksRoutes: FastifyPluginAsync<CallbackRoutesOptions> = async (app, opts) => {
   const engagementPolicyReader = opts.getEngagementPolicy ?? readEngagementPolicy;
   const {
@@ -1458,13 +1363,6 @@ export const callbacksRoutes: FastifyPluginAsync<CallbackRoutesOptions> = async 
     invocationRecordStore,
     invocationTracker,
     deliveryCursorStore,
-    validateRepo,
-    validatePr,
-    validateIssue,
-    fetchPrWaitBaseline,
-    fetchIssueWaitBaseline,
-    resolveGitHubPrTrackingIdentity,
-    resolveGitHubSelfLogin,
     featIndexProvider,
     queueProcessor,
   } = opts;
@@ -5575,6 +5473,7 @@ export const callbacksRoutes: FastifyPluginAsync<CallbackRoutesOptions> = async 
     threadStore,
   });
 
+<<<<<<< HEAD
   registerCallbackExternalReviewTransferRoute(app, opts.externalReviewTransferService);
 
   const registerPrTrackingSchema = z
@@ -6217,6 +6116,8 @@ export const callbacksRoutes: FastifyPluginAsync<CallbackRoutesOptions> = async 
     return { status: 'ok', deleted: { id: task.id, subjectKey: parsed.data.subjectKey } };
   });
 
+=======
+>>>>>>> 422e496249 (refactor(plugin): retire legacy tracking entrypoints and fence task governance)
   // F174 Phase C compatibility endpoint. Active credentials no longer expire
   // with elapsed time; this endpoint validates exact-attempt ownership and
   // returns lifecycle state without extending an auth deadline.

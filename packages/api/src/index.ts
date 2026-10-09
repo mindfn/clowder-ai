@@ -359,7 +359,6 @@ import type { ReviewFeedbackPrMetadata } from './infrastructure/email/ReviewFeed
 import { fetchLatestIssueCommentCursor } from './infrastructure/github/comment-cursors.js';
 import { fetchGitHubReviewThreads } from './infrastructure/github/fetch-review-threads.js';
 import { buildGhCliEnv, resolveGhCliToken, withHiddenGhCliWindow } from './infrastructure/github/gh-cli-env.js';
-import { readGitHubApiResource, validateGitHubApiResource } from './infrastructure/github/github-object-validator.js';
 import { createGitHubRepoPollReaders } from './infrastructure/github/repo-poll-readers.js';
 import { executeGitHubRequest, GitHubRateLimitError } from './infrastructure/github/request-budget.js';
 import type { EvalDomainId } from './infrastructure/harness-eval/domain/eval-domain-registry.js';
@@ -4569,28 +4568,6 @@ async function main(): Promise<void> {
     app.log.info('[api] F101 game routes registered');
   }
 
-  // Phase D (AC-D1): validate the repository through the same REST credential path
-  // as PR/issue validation. Only a verified 404 is represented as false.
-  const validateRepo = async (repoFullName: string): Promise<boolean> => {
-    return validateGitHubApiResource(`repos/${repoFullName}`, '.full_name', { token: getGitHubToken() });
-  };
-
-  // F202 Phase 2 follow-up: validate specific PR exists (number-level, not just repo)
-  const validatePr = async (repoFullName: string, prNumber: number): Promise<boolean> => {
-    return validateGitHubApiResource(`repos/${repoFullName}/pulls/${prNumber}`, '.number', {
-      token: getGitHubToken(),
-    });
-  };
-
-  // F202 Phase 2 follow-up: validate specific issue exists (number-level, not just repo)
-  // P2-cloud: also reject PR numbers — GitHub Issues API returns PRs with .pull_request set
-  const validateIssue = async (repoFullName: string, issueNumber: number): Promise<boolean> => {
-    const stdout = await readGitHubApiResource(`repos/${repoFullName}/issues/${issueNumber}`, '.pull_request != null', {
-      token: getGitHubToken(),
-    });
-    return stdout !== null && stdout.trim() !== 'true';
-  };
-
   // F126: Create LimbRegistry + Phase B deps for device/hardware capability management
   const { LimbRegistry } = await import('./domains/limb/LimbRegistry.js');
   const { LimbAccessPolicy } = await import('./domains/limb/LimbAccessPolicy.js');
@@ -4670,79 +4647,6 @@ async function main(): Promise<void> {
   ): Promise<readonly import('@cat-cafe/shared').GitHubReviewThreadBaseline[]> =>
     fetchGitHubReviewThreads(repo, pr, reviewThreadIds, { ghToken: getGitHubToken(), signal });
 
-  /**
-   * #1392 AC-7: the authenticated GitHub identity, late-bound.
-   *
-   * The resolver itself is built much later in boot, next to the feedback filter that has always
-   * owned this question, and the callback routes are registered before that. Holding the resolver
-   * rather than copying a login keeps one source of truth — including the `GITHUB_SELF_LOGIN`
-   * override and the token-fingerprint cache — instead of a second, quietly divergent answer.
-   */
-  const githubSelfLoginHolder: {
-    current?: import('./infrastructure/github/self-login-resolver.js').GitHubSelfLoginResolver;
-  } = {};
-  const resolveTrackingSelfLogin = async (): Promise<string | undefined> =>
-    githubSelfLoginHolder.current ? await githubSelfLoginHolder.current.refreshIfNeeded() : undefined;
-
-  /**
-   * #1392 AC-7: who opened this PR, and whether we have checkable grounds to call ourselves one of
-   * its reviewers. Both come from GitHub, never from the caller and never from an inference: being
-   * "not the author" is an absence, and treating an absence as a role would hand a passer-by the
-   * maintainer's narrow audience and then tell them almost nothing.
-   *
-   * A throw here is not rethrown into registration. An unresolved field becomes the flagged path,
-   * where every comment is delivered and the owner is told coverage was not established.
-   */
-  const resolveGitHubPrTrackingIdentity = async (
-    repoFullName: string,
-    prNumber: number,
-  ): Promise<import('@cat-cafe/shared').GitHubTrackingIdentityV1> => {
-    const { fetchPaginated } = await import('./infrastructure/github/fetch-paginated.js');
-    const { execFile } = await import('node:child_process');
-    const { promisify } = await import('node:util');
-    const execFileAsync = promisify(execFile);
-    const [selfLogin, metadata, reviews] = await Promise.all([
-      resolveTrackingSelfLogin(),
-      (async () => {
-        const { stdout } = await execFileAsync(
-          'gh',
-          [
-            'api',
-            `/repos/${repoFullName}/pulls/${prNumber}`,
-            '--jq',
-            '{authorLogin: .user.login, requestedReviewers: [.requested_reviewers[]?.login], canPush: (.base.repo.permissions.push // false)}',
-          ],
-          getGitHubExecOptions(15_000),
-        );
-        return JSON.parse(stdout.trim() || '{}') as {
-          authorLogin?: string;
-          requestedReviewers?: string[];
-          canPush?: boolean;
-        };
-      })(),
-      fetchPaginated(`/repos/${repoFullName}/pulls/${prNumber}/reviews`, { ghToken: getGitHubToken() }).catch(
-        () => [] as unknown[],
-      ),
-    ]);
-    const matchesSelf = (login: unknown): boolean =>
-      typeof login === 'string' && !!selfLogin && login.toLowerCase() === selfLogin.toLowerCase();
-    const submittedReview = (reviews as { user?: { login?: string } }[]).some((review) =>
-      matchesSelf(review?.user?.login),
-    );
-    const ground = (metadata.requestedReviewers ?? []).some(matchesSelf)
-      ? ('review_requested' as const)
-      : submittedReview
-        ? ('review_submitted' as const)
-        : metadata.canPush === true
-          ? ('repo_write_access' as const)
-          : undefined;
-    return {
-      ...(selfLogin ? { selfLogin } : {}),
-      ...(metadata.authorLogin ? { subjectAuthorLogin: metadata.authorLogin } : {}),
-      ...(ground ? { reviewerGround: ground } : {}),
-    };
-  };
-
   const fetchPrWaitBaseline = async (
     repoFullName: string,
     prNumber: number,
@@ -4814,17 +4718,6 @@ async function main(): Promise<void> {
       },
     );
   };
-  const verifyPrReviewEventWaitCoverage = async (input: {
-    repoFullName: string;
-    prNumber: number;
-    triggerCommentId: number;
-  }) => {
-    const { verifyPrReviewEventWaitCoverage: verify } = await import(
-      './infrastructure/github/pr-review-event-wait-coverage.js'
-    );
-    return verify(input, { ghToken: getGitHubToken() });
-  };
-
   let loadRepositoryPluginInfo: (() => Promise<readonly import('@cat-cafe/shared').PluginInfo[]>) | undefined;
   let runInstalledPluginTest:
     | ((
@@ -5235,21 +5128,12 @@ async function main(): Promise<void> {
     turnExecutionStore,
     invocationTracker,
     deliveryCursorStore,
-    validateRepo,
-    validatePr,
-    validateIssue,
-    fetchPrWaitBaseline,
-    fetchIssueWaitBaseline,
-    resolveGitHubPrTrackingIdentity,
-    resolveGitHubSelfLogin: resolveTrackingSelfLogin,
-    waitLifecycleHolder,
     ...(runtimeDeploymentContext
       ? {
           deploymentObservationProvider: runtimeDeploymentContext.provider,
           deploymentWaitLifecycleHolder,
         }
       : {}),
-    verifyPrReviewEventWaitCoverage,
     ...(externalReviewVerdictService ? { externalReviewVerdictService } : {}),
     ...(externalReviewTransferService ? { externalReviewTransferService } : {}),
     ...(externalReviewRecoveryService ? { externalReviewRecoveryService } : {}),
@@ -8451,7 +8335,6 @@ async function main(): Promise<void> {
   };
   await refreshGitHubSelfLogin();
   // #1392 AC-7: tracking registration now asks the same resolver the feedback filter has always used.
-  githubSelfLoginHolder.current = selfLoginResolver;
   const feedbackFilter = createGitHubFeedbackFilter({ getSelfGitHubLogin: () => selfLoginResolver.getCurrent() });
 
   // F140 Phase E.2 cutover: setup-noise bot allowlist env name切换
