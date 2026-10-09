@@ -622,7 +622,7 @@ export default {
     assert.deepEqual(listed.plugin.source, {
       kind: 'local-archive',
       packageName: '@clowder-ai/official-test-source',
-      trust: 'local-trusted',
+      trust: 'unverified',
     });
     assert.equal(JSON.stringify(snapshot).includes(archivePath), false);
   });

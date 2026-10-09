@@ -365,8 +365,8 @@ function managerSource(source: PluginPackageQuarantineSource): PluginManagerPack
         trust: 'official',
       }
     : source.kind === 'git'
-      ? { kind: 'git', url: source.url, packageName: null, trust: 'local-trusted' }
-      : { kind: source.kind, packageName: null, trust: 'local-trusted' };
+      ? { kind: 'git', url: source.url, packageName: null, trust: 'unverified' }
+      : { kind: source.kind, packageName: null, trust: 'unverified' };
 }
 
 function managerDetail(record: PluginPackageQuarantineRecord): PluginManagerDetail {

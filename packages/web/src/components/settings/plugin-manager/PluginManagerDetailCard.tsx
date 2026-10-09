@@ -10,6 +10,7 @@ import { DotConnectionDetail } from './DotConnectionDetail';
 import { PluginManagerBindings } from './PluginManagerBindings';
 import { PluginManagerConfigurationSection } from './PluginManagerConfigurationSection';
 import { PluginManagerDetailPrelude } from './PluginManagerDetailPrelude';
+import { PluginSourceLabel } from './PluginSourceLabel';
 import { PluginVisual } from './PluginVisual';
 import type { PluginManagerPresentation } from './plugin-manager-attention';
 import { pluginCapabilityKind, pluginCapabilityName } from './plugin-manager-copy';
@@ -216,6 +217,7 @@ export function PluginManagerDetailCard({
               <SettingsText as="h3" variant="sm" tone="default" className="font-semibold">
                 {plugin.displayName}
               </SettingsText>
+              <PluginSourceLabel trust={plugin.trust} />
               <SettingsText as="p" variant="xs" tone="muted" className="mt-0.5 break-all">
                 {plugin.installedVersion ?? plugin.availableVersion} · {plugin.packageName} · {plugin.publisher}
               </SettingsText>

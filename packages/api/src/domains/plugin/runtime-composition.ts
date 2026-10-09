@@ -869,7 +869,7 @@ export class InventoryPluginManagerCompatibilityAdapter implements PluginManager
                     kind: 'git' as const,
                     url: provenance.url,
                     packageName: provenance.packageName ?? null,
-                    trust: 'local-trusted' as const,
+                    trust: 'unverified' as const,
                     ...(provenance.dependencyClosure === undefined
                       ? {}
                       : { dependencyClosure: provenance.dependencyClosure }),
@@ -877,7 +877,7 @@ export class InventoryPluginManagerCompatibilityAdapter implements PluginManager
                 : {
                     kind: provenance.kind,
                     packageName: provenance.packageName ?? null,
-                    trust: 'local-trusted' as const,
+                    trust: 'unverified' as const,
                     ...(provenance.dependencyClosure === undefined
                       ? {}
                       : { dependencyClosure: provenance.dependencyClosure }),

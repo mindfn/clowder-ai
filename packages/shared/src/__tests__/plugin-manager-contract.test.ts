@@ -72,7 +72,7 @@ describe('F202 terminal Plugin Manager contract', () => {
     expectTypeOf<Extract<PluginManagerPackageSource, { kind: 'local-directory' | 'local-archive' }>>().toEqualTypeOf<{
       kind: 'local-directory' | 'local-archive';
       packageName: string | null;
-      trust: 'local-trusted';
+      trust: 'unverified';
       dependencyClosure?: 'shipped' | 'materialized';
     }>();
   });
@@ -90,7 +90,7 @@ describe('F202 terminal Plugin Manager contract', () => {
       kind: 'compatibility';
       adapter: 'connector';
       packageName: string;
-      trust: 'local-trusted';
+      trust: 'unverified';
     }>();
   });
 

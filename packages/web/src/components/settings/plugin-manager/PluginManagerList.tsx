@@ -11,6 +11,7 @@ import {
 import { SettingsDeleteButton } from '../primitives/SettingsDeleteButton';
 import { SettingsPrimaryButton } from '../primitives/SettingsPrimaryButton';
 import { SettingsText } from '../primitives/SettingsText';
+import { PluginSourceLabel } from './PluginSourceLabel';
 import { PluginVisual } from './PluginVisual';
 import { type PluginManagerPresentation, pluginAttentionReason } from './plugin-manager-attention';
 import type { PluginManagerDesignFixture } from './plugin-manager-fixtures';
@@ -155,6 +156,7 @@ export function PluginListRow({
             <SettingsText as="span" variant="sm" tone="default" className="block truncate font-semibold">
               {plugin.displayName}
             </SettingsText>
+            <PluginSourceLabel trust={plugin.trust} />
             <span
               data-plugin-description="true"
               className={`mt-0.5 block overflow-hidden ${presentation === 'v2' ? 'truncate' : 'line-clamp-2'}`}

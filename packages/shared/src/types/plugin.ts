@@ -154,14 +154,14 @@ export type PluginManagerPackageSource =
   | {
       kind: 'local-directory' | 'local-archive';
       packageName: string | null;
-      trust: 'local-trusted';
+      trust: 'unverified';
       dependencyClosure?: 'shipped' | 'materialized';
     }
   | {
       kind: 'git';
       url: string;
       packageName: string | null;
-      trust: 'local-trusted';
+      trust: 'unverified';
       dependencyClosure?: 'shipped' | 'materialized';
     }
   | {
@@ -181,7 +181,7 @@ export type PluginManagerPackageSource =
       kind: 'compatibility';
       adapter: 'connector';
       packageName: string;
-      trust: 'local-trusted';
+      trust: 'unverified';
     }
   | {
       /** Pre-provenance inventory retained for safe disable/uninstall only. */

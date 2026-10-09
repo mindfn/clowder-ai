@@ -205,7 +205,7 @@ function candidateSource(
     return {
       kind: provenance.kind,
       packageName: provenance.packageName ?? null,
-      trust: 'local-trusted',
+      trust: 'unverified',
       ...(provenance.dependencyClosure === undefined ? {} : { dependencyClosure: provenance.dependencyClosure }),
     };
   }
@@ -214,9 +214,12 @@ function candidateSource(
       kind: 'git',
       url: provenance.url,
       packageName: provenance.packageName ?? null,
-      trust: 'local-trusted',
+      trust: 'unverified',
       ...(provenance.dependencyClosure === undefined ? {} : { dependencyClosure: provenance.dependencyClosure }),
     };
+  }
+  if (packageRecord && provenance?.kind !== 'catalog') {
+    return { kind: 'legacy', packageName: null, trust: 'unknown' };
   }
   return {
     kind: 'catalog',

@@ -68,7 +68,7 @@ export function designFixture(
     publisher: plugin.publisher ?? (plugin.source.trust === 'official' ? 'Clowder AI' : 'Local Host'),
     packageName: packageName(plugin),
     source: plugin.source.kind === 'catalog' ? 'catalog' : 'local',
-    trust: plugin.source.trust === 'official' ? 'official' : 'local-trusted',
+    trust: plugin.source.trust,
     ...('dependencyClosure' in plugin.source && plugin.source.dependencyClosure !== undefined
       ? { dependencyClosure: plugin.source.dependencyClosure }
       : {}),

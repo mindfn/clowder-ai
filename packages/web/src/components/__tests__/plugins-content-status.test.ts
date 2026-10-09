@@ -116,7 +116,7 @@ describe('PluginsContent GitHub configuration', () => {
       ...github,
       pluginId: 'fixture-plugin',
       displayName: 'Fixture Plugin',
-      source: { kind: 'local-archive' as const, packageName: 'fixture-plugin', trust: 'local-trusted' as const },
+      source: { kind: 'local-archive' as const, packageName: 'fixture-plugin', trust: 'unverified' as const },
       config: 'incomplete' as const,
       intent: 'enabled' as const,
       live: 'crashed' as const,

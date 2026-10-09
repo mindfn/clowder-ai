@@ -59,6 +59,26 @@ describe('Plugin Manager v2 detail guidance', () => {
     expect([...container.querySelectorAll('code')].map((x) => x.textContent)).toContain('gh auth login');
     expect(container.textContent).not.toContain('Log in with the GitHub CLI');
   });
+  it('shows trusted catalog provenance in both the list and detail', () => {
+    render({ source: 'catalog', trust: 'official' });
+    expect(container.querySelectorAll('[data-plugin-source-trust="official"]').length).toBe(2);
+    expect(container.textContent).toContain('可信来源');
+  });
+  it('labels local sources without disabling their existing controls', () => {
+    render({ source: 'local', trust: 'unverified' });
+    expect(container.querySelectorAll('[data-plugin-source-trust="unverified"]').length).toBe(2);
+    expect(container.textContent).toContain('非可信来源');
+    const toggle = container.querySelector<HTMLButtonElement>(`button[aria-label="禁用${base.displayName}"]`);
+    expect(toggle).not.toBeNull();
+    expect(toggle?.disabled).toBe(false);
+  });
+  it('distinguishes missing provenance from an unverified local source', () => {
+    render({ source: 'local', trust: 'unknown' });
+    const labels = [...container.querySelectorAll('[data-plugin-source-trust="unknown"]')];
+    expect(labels).toHaveLength(2);
+    for (const label of labels) expect(label.textContent).toBe('来源未知 · 缺少安装来源记录');
+    expect(container.textContent).not.toContain('非可信来源');
+  });
   it('retains unknown instruction content as escaped text with inline code only', () => {
     render({ id: 'third-party', steps: ['Run `<script>bad</script>` and `tool start`; unknown instructions.'] });
     expect(container.querySelector('script')).toBeNull();

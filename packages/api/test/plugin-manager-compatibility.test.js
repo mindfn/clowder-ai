@@ -141,7 +141,7 @@ describe('F202 Plugin Manager migration compatibility', () => {
       kind: 'compatibility',
       adapter: 'connector',
       packageName: 'connector:telegram',
-      trust: 'local-trusted',
+      trust: 'unverified',
     });
     assert.equal(rows[1].publisher, 'Local Host');
     assert.equal(rows[1].config, 'incomplete');

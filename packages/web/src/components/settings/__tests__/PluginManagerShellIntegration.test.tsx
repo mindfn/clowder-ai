@@ -13,7 +13,7 @@ const failed = {
   pluginInstanceId: 'pi_failed',
   displayName: '启动失败的插件',
   description: '此插件需要处理',
-  source: { kind: 'local', trust: 'local-trusted' },
+  source: { kind: 'local', trust: 'unverified' },
   artifact: 'installed',
   config: 'ready',
   auth: 'not-required',

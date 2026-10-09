@@ -340,7 +340,7 @@ describe('F202 live Plugin Manager Console wiring', () => {
         kind: 'local-archive',
         fileName: 'video-analysis.tgz',
         packageName: '@clowder-ai/video-analysis',
-        trust: 'local-trusted',
+        trust: 'unverified',
         dependencyClosure: 'shipped',
       },
     } as const;

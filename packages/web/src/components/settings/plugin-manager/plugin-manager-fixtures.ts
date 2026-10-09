@@ -28,7 +28,7 @@ export interface PluginManagerDesignFixture {
   publisher: string;
   packageName: string;
   source: 'catalog' | 'local';
-  trust: 'official' | 'local-trusted';
+  trust: 'official' | 'first-party' | 'unverified' | 'unknown';
   dependencyClosure?: 'shipped' | 'materialized';
   sourceAdapter?: 'repository-local' | 'connector';
   availableVersion: string;
@@ -65,7 +65,7 @@ export const PLUGIN_MANAGER_DESIGN_FIXTURES: readonly PluginManagerDesignFixture
     publisher: 'Clowder AI',
     packageName: '@clowder-ai/github',
     source: 'local',
-    trust: 'local-trusted',
+    trust: 'unverified',
     availableVersion: '1.0.0',
     installedVersion: '1.0.0',
     artifact: 'installed',
@@ -208,7 +208,7 @@ export const PLUGIN_MANAGER_DESIGN_FIXTURES: readonly PluginManagerDesignFixture
     publisher: 'Clowder AI',
     packageName: '@clowder-ai/wechat-visible-reader',
     source: 'local',
-    trust: 'local-trusted',
+    trust: 'unverified',
     availableVersion: '0.1.0-alpha.1',
     installedVersion: '0.1.0-alpha.1',
     artifact: 'installed',
@@ -274,7 +274,7 @@ export const PLUGIN_MANAGER_DESIGN_FIXTURES: readonly PluginManagerDesignFixture
     publisher: 'Local Host',
     packageName: 'personal-chrome-host',
     source: 'local',
-    trust: 'local-trusted',
+    trust: 'unverified',
     availableVersion: '1.0.0',
     installedVersion: '1.0.0',
     artifact: 'installed',

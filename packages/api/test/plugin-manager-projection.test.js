@@ -89,6 +89,36 @@ function installedSnapshot(overrides = {}) {
 
 const emptySnapshot = { schemaVersion: 1, packages: [], instances: [], grants: [] };
 
+describe('client source trust is descriptive, not an install or enable gate', () => {
+  it('retains trusted catalog provenance recorded at installation', () => {
+    const snapshot = installedSnapshot();
+    snapshot.packages[0].provenance = {
+      kind: 'catalog',
+      catalogId: candidate.catalogId,
+      packageName: candidate.packageName,
+    };
+    assert.equal(projectPluginManagerCatalogCandidate(candidate, snapshot).source.trust, 'official');
+  });
+  for (const kind of ['local-directory', 'local-archive', 'git']) {
+    it(`${kind} remains usable and is not labeled trusted even when its identity matches the catalog`, () => {
+      const snapshot = installedSnapshot();
+      snapshot.packages[0].provenance = {
+        kind,
+        packageName: candidate.packageName,
+        ...(kind === 'git' ? { url: 'https://example.com/plugin.git' } : {}),
+      };
+      const result = projectPluginManagerCatalogCandidate(candidate, snapshot);
+      assert.equal(result.source.trust, 'unverified');
+      assert.equal(result.actions.setEnabled, true);
+    });
+  }
+  it('a missing admission origin cannot borrow a current catalog identity', () => {
+    const result = projectPluginManagerCatalogCandidate(candidate, installedSnapshot());
+    assert.equal(result.source.kind, 'legacy');
+    assert.equal(result.source.trust, 'unknown');
+  });
+});
+
 describe('F202 terminal Plugin Manager projection', () => {
   it('projects declared contributions without relabeling permission grants as tools', () => {
     const manifest = {
@@ -217,7 +247,7 @@ describe('F202 terminal Plugin Manager projection', () => {
       assert.deepEqual(projected.source, {
         kind: 'local-archive',
         packageName: candidate.packageName,
-        trust: 'local-trusted',
+        trust: 'unverified',
         dependencyClosure,
       });
     }

@@ -150,7 +150,7 @@ function projectCompatibilityRecord(record: PluginManagerCompatibilityRecord): P
         kind: 'compatibility' as const,
         adapter: 'connector' as const,
         packageName: `connector:${record.pluginId}`,
-        trust: 'local-trusted' as const,
+        trust: 'unverified' as const,
       };
   return {
     pluginId: record.pluginId,
