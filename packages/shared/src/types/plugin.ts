@@ -379,6 +379,8 @@ export interface PluginManagerListItem {
 }
 
 export interface PluginManagerDetail extends PluginManagerListItem {
+  /** Owner-scoped Host bindings; absent when this projection is unavailable. */
+  bindings?: Array<{ key: string; threadId: string; threadTitle: string | null; createdAt: number }>;
   capabilities: PluginManagerCapability[];
   /** Absent only when legacy/catalog metadata cannot yet expose a verified manifest. */
   contributions?: PluginManagerContribution[];

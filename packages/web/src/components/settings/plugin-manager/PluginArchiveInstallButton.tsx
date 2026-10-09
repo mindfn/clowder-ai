@@ -1,10 +1,9 @@
 'use client';
 
 /**
- * ConnectorPluginInstallButton — F240 Phase B
+ * Generic plugin archive upload.
  *
- * Upload button + plugin-dev-doc link, rendered at page-top-right
- * inside HubConnectorConfigTab. Self-contained upload state.
+ * Upload button with optional documentation link and self-contained upload state.
  *
  * macOS file-picker fix: no `accept` filter (macOS cannot match
  * compound extensions like ".tar.gz"). Validation is done in JS
@@ -22,12 +21,12 @@ interface Props {
   docsLabel?: string;
 }
 
-export function ConnectorPluginInstallButton({
+export function PluginArchiveInstallButton({
   onInstalled,
-  endpoint = '/api/connectors/plugins/install',
-  label = '安装 IM Connector',
-  docsHref = '/docs/guides/im-connector-dev-guide.md',
-  docsLabel = 'IM Connector 开发文档',
+  endpoint = '/api/plugin-manager/plugins/install/upload',
+  label = '离线安装',
+  docsHref = false,
+  docsLabel = '插件开发文档',
 }: Props) {
   const [uploading, setUploading] = useState(false);
   const [message, setMessage] = useState<{ type: 'success' | 'error'; text: string } | null>(null);

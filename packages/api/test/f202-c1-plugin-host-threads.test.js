@@ -20,6 +20,7 @@ function hostOf(options = {}) {
   const threadStore = options.threadStore ?? new ThreadStore();
   const bindingStore = options.bindingStore ?? new MemoryConnectorThreadBindingStore();
   const host = createPluginThreadHost({
+    threadDeepLinkUrl: (id) => `https://cafe.example.test/thread/${encodeURIComponent(id)}`,
     pluginId: options.pluginId ?? 'dev.clowder.fixture',
     pluginInstanceId: options.pluginInstanceId ?? 'instance-1',
     ownerUserId: OWNER,

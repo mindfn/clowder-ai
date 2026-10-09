@@ -49,10 +49,11 @@ const CONNECTOR = [
   'plugin.state.set',
   'secret.read',
   'thread.listMetadata',
+  'thread.readContent',
   'thread.write',
 ];
 const without = (...unused) => CONNECTOR.filter((capability) => !unused.includes(capability));
-/** What each package of the fifth batch requests, per its manifest (ledger「基线验收」). */
+/** What the task296 alpha.3 packages request, verified from their actual archives. */
 const EXPECTED = {
   'official.connector.dingtalk': CONNECTOR,
   'official.connector.feishu': CONNECTOR,
@@ -62,8 +63,50 @@ const EXPECTED = {
   'official.connector.weixin': CONNECTOR,
   'official.connector.xiaoyi': without('media.read'),
 };
-const W2_1_GRANTS = without('media.read', 'plugin.state.get', 'plugin.state.set');
+const W2_1_GRANTS = without('media.read', 'plugin.state.get', 'plugin.state.set', 'thread.readContent');
 const sorted = (values) => [...values].sort();
+
+const GITHUB = [
+  'schedule.register',
+  'plugin.config.read',
+  'secret.read',
+  'plugin.state.get',
+  'plugin.state.set',
+  'thread.listMetadata',
+  'thread.write',
+  'messaging.send',
+];
+
+test('GitHub operations receives only its requested shipped capabilities without retiring the legacy source', () => {
+  const policy = OFFICIAL_PLUGIN_HOST_POLICIES.find((entry) => entry.pluginId === 'official.github-operations');
+  assert.deepEqual(sorted(policy?.effectiveGrants ?? []), sorted(GITHUB));
+  assert.equal(policy.replacesRepositoryPluginId, undefined, 'granting capabilities is not a legacy cutover');
+  assert.deepEqual(
+    resolveLocalPluginEffectiveGrants(
+      OFFICIAL_PLUGIN_HOST_POLICIES,
+      manifest('official.github-operations', ['thread.listMetadata']),
+    ),
+    ['thread.listMetadata'],
+  );
+  assert.deepEqual(
+    resolveLocalPluginEffectiveGrants(OFFICIAL_PLUGIN_HOST_POLICIES, manifest('dev.example.github-operations', GITHUB)),
+    [],
+  );
+});
+
+test('installed GitHub operations cannot widen its Host grants through its manifest', async () => {
+  const host = await installed(manifest('official.github-operations', [...GITHUB, 'task.read']));
+  try {
+    assert.deepEqual(sorted(host.grants.effectiveGrants), sorted(GITHUB));
+    await host.enable();
+    await assert.rejects(
+      host.runtime.supervisor.invoke(host.pluginInstanceId, 'probe.read-task', {}),
+      (error) => error?.code === 'DELIVERY_REJECTED' && /lacks task\.read/.test(error.message),
+    );
+  } finally {
+    await host.shutdown();
+  }
+});
 
 test('each official connector is granted exactly what its shipped features use', () => {
   for (const [pluginId, expected] of Object.entries(EXPECTED)) {
@@ -95,7 +138,7 @@ export default {
       async start(host) {
         await host.threads.listBindings();
         return {
-          actions: { 'probe.read-thread': async () => host.threads.get('thread-1') },
+          actions: { 'probe.read-task': async () => host.tasks.get('task-1') },
           async stop() {},
         };
       },
@@ -161,14 +204,14 @@ test('a package asking for less than its entry still installs and starts, with w
 });
 
 test('a manifest cannot widen the grant: what it asks beyond the table is not granted, and using it is refused', async () => {
-  const host = await installed(manifest('official.connector.wecom-bot', [...CONNECTOR, 'thread.readContent']));
-  assert.deepEqual(sorted(host.grants.requestedCapabilities), sorted([...CONNECTOR, 'thread.readContent']));
+  const host = await installed(manifest('official.connector.wecom-bot', [...CONNECTOR, 'task.read']));
+  assert.deepEqual(sorted(host.grants.requestedCapabilities), sorted([...CONNECTOR, 'task.read']));
   assert.deepEqual(sorted(host.grants.effectiveGrants), sorted(CONNECTOR));
   await host.enable();
 
   await assert.rejects(
-    host.runtime.supervisor.invoke(host.pluginInstanceId, 'probe.read-thread', {}),
-    (error) => error?.code === 'DELIVERY_REJECTED' && /lacks thread\.readContent/.test(error.message),
+    host.runtime.supervisor.invoke(host.pluginInstanceId, 'probe.read-task', {}),
+    (error) => error?.code === 'DELIVERY_REJECTED' && /lacks task\.read/.test(error.message),
   );
   await host.shutdown();
 });
@@ -192,7 +235,7 @@ test('instances installed before a table change are brought to it at startup, ne
   const feishu = await install('official.connector.feishu', W2_1_GRANTS);
   const wecomBot = await install('official.connector.wecom-bot', []);
   const olderDingtalk = await install('official.connector.dingtalk', [], without('media.read'));
-  const askingMore = await install('official.connector.xiaoyi', [], [...CONNECTOR, 'thread.readContent']);
+  const askingMore = await install('official.connector.xiaoyi', [], [...CONNECTOR, 'task.read']);
   const unlisted = await install('dev.example.unlisted-connector', []);
   const grantsOf = async (id) => (await store.snapshot()).grants.find((grant) => grant.pluginInstanceId === id);
   const reconcile = (hostPolicies = OFFICIAL_PLUGIN_HOST_POLICIES) =>
@@ -203,7 +246,7 @@ test('instances installed before a table change are brought to it at startup, ne
   assert.deepEqual(
     changes.map(({ pluginId, added, removed }) => [pluginId, sorted(added), removed]),
     [
-      ['official.connector.feishu', ['media.read', 'plugin.state.get', 'plugin.state.set'], []],
+      ['official.connector.feishu', ['media.read', 'plugin.state.get', 'plugin.state.set', 'thread.readContent'], []],
       ['official.connector.wecom-bot', sorted(CONNECTOR), []],
       ['official.connector.dingtalk', sorted(without('media.read')), []],
       ['official.connector.xiaoyi', sorted(without('media.read')), []],

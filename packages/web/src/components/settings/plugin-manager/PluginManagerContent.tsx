@@ -4,11 +4,7 @@ function PluginManagerToolbar({ onGitInstall }: { onGitInstall?: (url: string) =
   return (
     <div data-plugin-manager-toolbar className="flex flex-wrap justify-end gap-2">
       {onGitInstall && <PluginGitInstallButton onInstall={onGitInstall} />}
-      <ConnectorPluginInstallButton
-        endpoint="/api/plugin-manager/plugins/install/upload"
-        label="离线安装"
-        docsHref={false}
-      />
+      <PluginArchiveInstallButton />
     </div>
   );
 }
@@ -19,7 +15,7 @@ import { PluginGitInstallButton } from './PluginGitInstallButton';
 import { pluginDescriptionVariants } from '@cat-cafe/shared';
 import type { ReactNode } from 'react';
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { ConnectorPluginInstallButton } from '../../ConnectorPluginInstallButton';
+import { PluginArchiveInstallButton } from './PluginArchiveInstallButton';
 import { HubIcon } from '../../hub-icons';
 import { settingsResourceCardClass } from '../../SettingsResourceCard';
 import { SettingsText } from '../primitives/SettingsText';

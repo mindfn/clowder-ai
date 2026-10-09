@@ -19,6 +19,7 @@ export type PluginManagerReadmeState =
   | { readonly state: 'available'; readonly markdown: string };
 
 export interface PluginManagerDesignFixture {
+  bindings?: PluginManagerDetail['bindings'];
   id: string;
   displayName: string;
   description: PluginDescription;

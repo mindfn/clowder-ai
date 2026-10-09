@@ -7,6 +7,7 @@ import { MarkdownContent } from '../../MarkdownContent';
 import { settingsResourceCardClass, settingsResourceRowClass } from '../../SettingsResourceCard';
 import { SettingsText } from '../primitives/SettingsText';
 import { DotConnectionDetail } from './DotConnectionDetail';
+import { PluginManagerBindings } from './PluginManagerBindings';
 import { PluginManagerConfigurationSection } from './PluginManagerConfigurationSection';
 import { PluginManagerDetailPrelude } from './PluginManagerDetailPrelude';
 import { PluginVisual } from './PluginVisual';
@@ -264,6 +265,15 @@ export function PluginManagerDetailCard({
               validationRequest={configurationValidationRequest}
               saved={configurationSaved}
             />
+
+        {plugin.bindings !== undefined && (
+          <PluginManagerBindings
+            key={plugin.id}
+            pluginId={plugin.id}
+            bindings={plugin.bindings}
+            onChange={onOperationChange}
+          />
+        )}
 
             <CapabilityDocumentation plugin={plugin} installed={installed} groups={capabilityGroups} presentation={presentation} />
           </>

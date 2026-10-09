@@ -6,13 +6,11 @@ import { useCatData } from '@/hooks/useCatData';
 import { catDossierCoversStrengths, useDossierProfiles } from '@/hooks/useDossierProfiles';
 import { apiFetch } from '@/utils/api-client';
 import { accountsCopy } from '../accounts/accounts.shell-copy';
-import { ConnectorPluginInstallButton } from '../ConnectorPluginInstallButton';
 import { CatOverviewTab, type ConfigData } from '../config-viewer-tabs';
 import { DesktopUpdateSettingsPanel } from '../DesktopUpdateSettingsPanel';
 import { HubAccountsTab } from '../HubAccountsTab';
 import { HubCatEditor } from '../HubCatEditor';
 import { HubCoCreatorEditor } from '../HubCoCreatorEditor';
-import { HubConnectorConfigTab } from '../HubConnectorConfigTab';
 import { HubEnvFilesTab } from '../HubEnvFilesTab';
 import { MemberCopyProvider } from '../members/editor-presentation';
 import { type MemberDeleteCopy, MemberEditorHost } from '../members/MemberEditorHost';
@@ -66,7 +64,6 @@ export function SettingsContent({ section, initialEditCatId }: SettingsContentPr
   const [createDraft, setCreateDraft] = useState<Parameters<typeof HubCatEditor>[0]['draft']>(null);
   const [togglingCatId, setTogglingCatId] = useState<string | null>(null);
   const [coCreatorEditorOpen, setCoCreatorEditorOpen] = useState(false);
-  const [imRefreshKey, setImRefreshKey] = useState(0);
   const confirm = useConfirm();
 
   // F208 OQ-9: per-field check — badge only when dossier l0RosterSummary covers teamStrengths (KD-14)
@@ -259,8 +256,6 @@ export function SettingsContent({ section, initialEditCatId }: SettingsContentPr
         );
       case 'accounts':
         return <HubAccountsTab />;
-      case 'im':
-        return <HubConnectorConfigTab refreshKey={imRefreshKey} />;
       case 'voice':
         return (
           <div className="space-y-6">
@@ -342,7 +337,6 @@ export function SettingsContent({ section, initialEditCatId }: SettingsContentPr
                 : meta.description
           }
         >
-          {section === 'im' && <ConnectorPluginInstallButton onInstalled={() => setImRefreshKey((k) => k + 1)} />}
         </SettingsPageHeader>
       )}
       {isV2 && section === 'members' ? (

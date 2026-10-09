@@ -146,7 +146,9 @@ export async function resolveManifestConfiguration(
 ): Promise<readonly ResolvedConfigurationField[]> {
   const grants = new Set(input.effectiveGrants);
   const resolved: ResolvedConfigurationField[] = [];
-  const fields = input.manifest.configuration ?? [];
+  // Operations describe owner actions and have no config/secret value to project.
+  // Their target fields carry the resulting values and retain their own grants.
+  const fields = (input.manifest.configuration ?? []).filter((field) => field.kind !== 'operation');
   const byKey = new Map(fields.map((field) => [field.key, field]));
   const values = new Map<string, Promise<string | undefined>>();
   async function effectiveValue(field: ConfigurationField): Promise<string | undefined> {

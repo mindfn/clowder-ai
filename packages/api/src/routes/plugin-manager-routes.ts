@@ -25,6 +25,7 @@ import {
   type PluginManagerService,
   PluginManagerServiceError,
 } from '../domains/plugin/index.js';
+import type { PluginManagerBindings } from '../domains/plugin/manager/plugin-manager-bindings.js';
 import { MAX_PLUGIN_PACKAGE_BYTES } from '../domains/plugin/official-package-archive.js';
 import { OfficialPluginInstallError } from '../domains/plugin/official-package-errors.js';
 import type { CallbackAuthRegistry } from './callback-auth-prehandler.js';
@@ -44,6 +45,7 @@ type PluginManagerRouteService = Pick<
 export interface PluginManagerRouteOptions {
   readonly manager: PluginManagerRouteService;
   readonly contributions?: Pick<PluginRuntimeCarrierRouter, 'listPluginTools' | 'callPluginTool'>;
+  readonly bindings?: Pick<PluginManagerBindings, 'list' | 'disconnect'>;
   readonly asset?: PluginManagerPackageAssetPort;
   readonly documentation?: PluginManagerPackageDocumentationPort;
   readonly auditLog?: Pick<EventAuditLog, 'append'>;
@@ -77,6 +79,14 @@ const canonicalDigestSchema = z.string().refine((value) => {
 });
 
 const searchQuerySchema = z.object({ q: z.string().trim().max(200) }).strict();
+const disconnectBindingSchema = z
+  .object({
+    key: z.string().min(1).max(1024),
+    threadId: z.string().min(1).max(256),
+    createdAt: z.number().int().safe().min(0),
+    confirmed: z.literal(true),
+  })
+  .strict();
 const catalogInstallSchema = z
   .object({
     source: z.object({ kind: z.literal('catalog'), catalogId: catalogIdSchema }).strict(),
@@ -456,11 +466,41 @@ export function registerPluginManagerRoutes(app: FastifyInstance, options: Plugi
     const parsedId = pluginIdSchema.safeParse(request.params.pluginId);
     if (!parsedId.success) return invalidRequest(reply);
     try {
-      return await options.manager.get(parsedId.data);
+      const detail = await options.manager.get(parsedId.data);
+      if (options.bindings && detail.plugin.artifact === 'installed') {
+        const owner = request.callbackPrincipal?.userId ?? access.operator;
+        detail.plugin = { ...detail.plugin, bindings: await options.bindings.list(parsedId.data, owner) };
+      }
+      return detail;
     } catch (error) {
       return sendManagerError(reply, error);
     }
   });
+
+  app.post<{ Params: { pluginId: string } }>(
+    '/api/plugin-manager/plugins/:pluginId/bindings/disconnect',
+    async (request, reply) => {
+      const access = requirePluginWriteAccess(request, accessOptions);
+      if ('error' in access) return pluginAccessError(reply, access);
+      const id = pluginIdSchema.safeParse(request.params.pluginId);
+      const input = disconnectBindingSchema.safeParse(request.body);
+      if (!id.success || !input.success) return invalidRequest(reply);
+      if (!options.bindings) return reply.status(503).send({ code: 'BINDINGS_UNAVAILABLE' });
+      try {
+        const detail = await options.manager.get(id.data);
+        if (detail.plugin.artifact !== 'installed') return reply.status(409).send({ code: 'ACTION_NOT_ALLOWED' });
+        const owner = request.callbackPrincipal?.userId ?? access.operator;
+        const removed = await options.bindings.disconnect(id.data, owner, input.data);
+        if (!removed)
+          return reply
+            .status(409)
+            .send({ code: 'STALE_BINDING', error: 'Binding changed; refresh before disconnecting.' });
+        return { ok: true };
+      } catch (error) {
+        return sendManagerError(reply, error);
+      }
+    },
+  );
 
   app.post('/api/plugin-manager/plugins/install', async (request, reply) => {
     const access = requirePluginWriteAccess(request, accessOptions);

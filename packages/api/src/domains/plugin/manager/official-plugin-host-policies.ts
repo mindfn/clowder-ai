@@ -14,6 +14,7 @@ import type { MachineCatalogHostPolicy } from './machine-catalog-provider.js';
  * - `message.event.subscribe`, `messaging.send`: thread activity out to the platform, and platform
  *   messages into their threads.
  * - `thread.listMetadata`, `thread.write`: the thread bindings and the connector's system thread.
+ * - `thread.readContent`: the installed connector's history command; thread access checks still apply.
  */
 const CONNECTOR_GRANTS = [
   'plugin.config.read',
@@ -24,6 +25,7 @@ const CONNECTOR_GRANTS = [
   'messaging.send',
   'secret.read',
   'thread.listMetadata',
+  'thread.readContent',
   'thread.write',
 ] as const satisfies readonly Capability[];
 
@@ -50,6 +52,20 @@ export const OFFICIAL_PLUGIN_HOST_POLICIES: readonly MachineCatalogHostPolicy[] 
   { pluginId: 'official.connector.weixin', effectiveGrants: connectorGrants() },
   // XiaoYi sends no media.
   { pluginId: 'official.connector.xiaoyi', effectiveGrants: connectorGrants('media.read') },
+  {
+    pluginId: 'official.github-operations',
+    // Declared schedules, private state and owner-bound notifications; no legacy cutover implied.
+    effectiveGrants: [
+      'schedule.register',
+      'plugin.config.read',
+      'secret.read',
+      'plugin.state.get',
+      'plugin.state.set',
+      'thread.listMetadata',
+      'thread.write',
+      'messaging.send',
+    ],
+  },
   {
     pluginId: 'official.wechat-visible-reader',
     effectiveGrants: ['plugin.state.get', 'plugin.state.set'],
