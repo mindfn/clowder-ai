@@ -15,7 +15,9 @@ import type { SteerSubmission } from './SteerQueuedEntryModal';
 
 function steerFailureMessage(status: number, code: unknown, error: unknown): string {
   if (code === 'ENTRY_PROCESSING') return '该消息正在处理，已刷新最新队列';
-  if (status === 409) return '队列状态已更新，请按最新可用操作继续';
+  if (status === 409 && (code === 'CONTINUE_STATE_CHANGED' || code === 'STEER_ENTRY_UNAVAILABLE')) {
+    return '队列状态已更新，请按最新可用操作继续';
+  }
   return typeof error === 'string' ? error : 'Steer 失败，请重试';
 }
 

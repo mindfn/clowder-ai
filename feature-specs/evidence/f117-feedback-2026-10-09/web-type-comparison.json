@@ -1,0 +1,21 @@
+{
+  "base": "d015c806d91839658788a32593735e3f4ff99254",
+  "replacedBaseFiles": 28,
+  "candidate": [
+    {
+      "file": "packages/web/src/hooks/__tests__/proposal-card-realtime-socket.integration.test.tsx",
+      "line": 152,
+      "code": 2322,
+      "message": "Type 'boolean | null' is not assignable to type 'boolean'.\n  Type 'null' is not assignable to type 'boolean'."
+    }
+  ],
+  "baseDiagnostics": [
+    {
+      "file": "packages/web/src/hooks/__tests__/proposal-card-realtime-socket.integration.test.tsx",
+      "line": 152,
+      "code": 2322,
+      "message": "Type 'boolean | null' is not assignable to type 'boolean'.\n  Type 'null' is not assignable to type 'boolean'."
+    }
+  ],
+  "sameDiagnostics": true
+}

@@ -1,0 +1,106 @@
+{
+  "runtimeHead": "d015c806d91839658788a32593735e3f4ff99254",
+  "runtimePid": 75466,
+  "contentIncluded": false,
+  "summary": {
+    "memory_and_feedback": {
+      "count": 36,
+      "minMs": 0.04179200017824769,
+      "medianMs": 0.30466649995651096,
+      "maxMs": 527.0105419999454
+    },
+    "identity_and_linked_context": {
+      "count": 36,
+      "minMs": 203.08762499992736,
+      "medianMs": 310.81531199999154,
+      "maxMs": 1403.3772499999031
+    }
+  },
+  "admissions": [
+    {
+      "time": "2026-10-09T12:26:12.091Z",
+      "threadId": "thread_msr51149hym0i79f",
+      "entryId": "queue:b740c70f814b0848e485069e9d67dc27",
+      "invocationId": "299f34ba-59c2-4dc0-87ec-4b00d853fd33",
+      "queueAgeMs": 1056,
+      "queuePreparationMs": 14.272583000012673,
+      "routePreparationMs": 984.8188340000343,
+      "responseAdmissionMs": 3.2681249999441206
+    }
+  ],
+  "runs": [
+    {
+      "threadId": "thread_msr51149hym0i79f",
+      "parentInvocationId": "c37d60ee-f4c0-4b35-9e61-c9bce570eac8",
+      "stages": [
+        {
+          "time": "2026-10-09T12:26:11.143Z",
+          "stage": "lineage_and_participants",
+          "durationMs": 5.342083999887109,
+          "elapsedMs": 5.342083999887109
+        },
+        {
+          "time": "2026-10-09T12:26:11.149Z",
+          "stage": "thread_and_workflow",
+          "durationMs": 6.126666000112891,
+          "elapsedMs": 11.46875
+        },
+        {
+          "time": "2026-10-09T12:26:11.149Z",
+          "stage": "guide_and_concierge",
+          "durationMs": 0.147374999942258,
+          "elapsedMs": 11.616124999942258
+        },
+        {
+          "time": "2026-10-09T12:26:11.149Z",
+          "stage": "concierge_search",
+          "durationMs": 0.009959000046364963,
+          "elapsedMs": 11.626083999988623
+        },
+        {
+          "time": "2026-10-09T12:26:11.617Z",
+          "stage": "memory_and_feedback",
+          "durationMs": 467.75312499993015,
+          "elapsedMs": 479.3792089999188
+        },
+        {
+          "time": "2026-10-09T12:26:11.640Z",
+          "stage": "routing_preflight",
+          "durationMs": 22.709625000017695,
+          "elapsedMs": 502.08883399993647
+        },
+        {
+          "time": "2026-10-09T12:26:11.645Z",
+          "stage": "source_and_pack",
+          "durationMs": 5.108291000011377,
+          "elapsedMs": 507.19712499994785
+        },
+        {
+          "time": "2026-10-09T12:26:11.646Z",
+          "stage": "service_capacity_and_session",
+          "durationMs": 1.44074999995064,
+          "elapsedMs": 508.6378749998985
+        },
+        {
+          "time": "2026-10-09T12:26:12.001Z",
+          "stage": "identity_and_linked_context",
+          "durationMs": 354.8482920000097,
+          "elapsedMs": 863.4861669999082
+        },
+        {
+          "time": "2026-10-09T12:26:12.070Z",
+          "stage": "history_and_prompt",
+          "durationMs": 69.11025000002701,
+          "elapsedMs": 932.5964169999352
+        },
+        {
+          "time": "2026-10-09T12:26:12.070Z",
+          "stage": "callback_setup",
+          "durationMs": 0.10162500001024455,
+          "elapsedMs": 932.6980419999454
+        }
+      ]
+    }
+  ],
+  "scope": "Anonymous aggregate of 36 runtime preparations; detailed coordinates restricted to this feedback thread."
+}

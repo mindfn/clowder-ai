@@ -175,6 +175,21 @@ describe('QueuePanel steer (F047)', () => {
     expect(html).toContain('Steer');
   });
 
+  it("offers the target's supported guidance for a GitHub Wait event", async () => {
+    useChatStore.setState({ queue: [{ ...QUEUED_ENTRY, from: { kind: 'system', service: 'github-wait' } }] });
+    await act(async () => root.render(React.createElement(QueuePanel, { threadId: 'thread-1' })));
+    await act(async () => container.querySelector<HTMLButtonElement>('[data-testid="steer-q1"]')?.click());
+    const guide = container.querySelector<HTMLButtonElement>('[data-testid="steer-guide-reply"]');
+    expect(guide).not.toBeNull();
+    expect(guide?.disabled).toBe(false);
+    await act(async () => guide?.click());
+    await act(async () => container.querySelector<HTMLButtonElement>('[data-testid="steer-confirm"]')?.click());
+    expect(apiFetch).toHaveBeenCalledWith(
+      '/api/threads/thread-1/queue/q1/continue',
+      expect.objectContaining({ method: 'POST' }),
+    );
+  });
+
   it('renders friendly pending targets without internal queue diagnostics', () => {
     useChatStore.setState({
       queue: [
@@ -582,6 +597,21 @@ describe('QueuePanel steer (F047)', () => {
     });
     expect(apiFetch).toHaveBeenCalledWith('/api/threads/thread-1/queue');
     expect(useChatStore.getState().queue).toEqual([]);
+  });
+
+  it('preserves an explicit entry restriction instead of calling every 409 a stale queue', async () => {
+    vi.mocked(apiFetch).mockImplementation(async (path, init) => {
+      if (path.endsWith('/continue'))
+        return response({ code: 'ENTRY_CONTINUE_UNAVAILABLE', error: '该条目不支持不中断发送' }, 409) as Response;
+      return defaultApiFetch(path, init) as Promise<Response>;
+    });
+    useChatStore.setState({ queue: [QUEUED_ENTRY] });
+    await act(async () => root.render(React.createElement(QueuePanel, { threadId: 'thread-1' })));
+    await openSteer(container);
+    act(() => container.querySelector<HTMLButtonElement>('[data-testid="steer-guide-reply"]')?.click());
+    await act(async () => container.querySelector<HTMLButtonElement>('[data-testid="steer-confirm"]')?.click());
+    expect(useToastStore.getState().toasts.at(-1)?.message).toContain('该条目不支持不中断发送');
+    expect(useToastStore.getState().toasts.at(-1)?.message).not.toContain('队列状态已更新');
   });
 
   it('treats a follow-up action that loses to ordinary drain as converged', async () => {

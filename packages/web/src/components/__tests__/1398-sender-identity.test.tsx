@@ -127,7 +127,7 @@ describe('1398 canonical sender identity across Queue and reply surfaces', () =>
     { name: 'plugin', from: { kind: 'plugin', instanceId: 'plugin-instance' }, label: 'Plugin · plugin-instance' },
     { name: 'system', from: { kind: 'system', service: 'system-service' }, label: 'system-service' },
     { name: 'user', from: { kind: 'user', userId: 'owner' }, label: 'lang' },
-    { name: 'agent', from: { kind: 'agent', catId: member.id }, label: '@Member One' },
+    { name: 'agent', from: { kind: 'agent', catId: member.id }, label: 'Member One' },
   ];
   it.each(cases)('$name retains the same identity through body, Queue, reply and JSON refresh', ({
     from,

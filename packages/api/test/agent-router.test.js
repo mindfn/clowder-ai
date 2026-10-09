@@ -4232,3 +4232,46 @@ describe('F229: Concierge thread routing (duty-cat always takes priority)', () =
     assert.deepEqual(result.targetCats, ['opus'], 'concierge duty cat wins over prior user @mention fallback');
   });
 });
+
+for (const [mode, text, targets] of [
+  ['serial', '@opus ordinary message', ['opus']],
+  ['parallel', '@opus @codex ordinary message', ['opus', 'codex']],
+]) {
+  test(`${mode}: ordinary delivery does not query the signal library`, async () => {
+    const { AgentRouter } = await import('../dist/domains/cats/services/agents/routing/AgentRouter.js');
+    const services = {
+      opus: createMockAgentService('opus', 'Opus response'),
+      codex: createMockAgentService('codex', 'Codex response'),
+      gemini: createMockAgentService('gemini', 'Gemini response'),
+    };
+    // Model a legacy injected dependency: normal delivery must not consult it,
+    // even if the library lookup would return content linked to this thread.
+    const lookup = mock.fn(async () => [
+      {
+        id: 'unrequested-article',
+        title: 'Unrequested article',
+        source: 'synthetic',
+        tier: 1,
+        contentSnippet: 'unrequested-library-content',
+      },
+    ]);
+    const router = new AgentRouter(
+      await migrateRouterOpts({
+        claudeService: services.opus,
+        codexService: services.codex,
+        geminiService: services.gemini,
+        registry: createMockRegistry(),
+        messageStore: createMockMessageStore(),
+        signalArticleLookup: lookup,
+      }),
+    );
+    const output = [];
+    for await (const message of router.route('user-1', text)) output.push(message);
+    for (const target of targets) {
+      assert.equal(services[target].invoke.mock.callCount(), 1);
+      assert.ok(output.some((message) => message.catId === target && message.type === 'done'));
+      assert.ok(!services[target].invoke.mock.calls[0].arguments[0].includes('unrequested-library-content'));
+    }
+    assert.equal(lookup.mock.callCount(), 0, 'normal delivery must perform no article lookup');
+  });
+}

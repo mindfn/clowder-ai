@@ -33,7 +33,14 @@ describe('ReplyPill', () => {
       />,
     );
     expect(html).toContain('↩');
-    expect(html).toContain('@宪宪');
+    expect(html).not.toContain('@宪宪');
+    const node = document.createElement('div');
+    node.innerHTML = html;
+    const button = node.querySelector('button')!;
+    expect(button.classList.contains('items-center')).toBe(true);
+    expect(button.firstElementChild?.textContent).toBe('↩');
+    expect(button.children[1]?.getAttribute('aria-hidden')).toBe('true');
+    expect(html).toContain('宪宪');
     expect(html).toContain('这是预览内容');
     expect(html).toContain('#8B5CF6');
   });
@@ -121,6 +128,6 @@ describe('ReplyPill', () => {
     );
     // Fallback color is ragdoll purple
     expect(html).toContain('#9B7EBD');
-    expect(html).toContain('@unknown-cat');
+    expect(html).toContain('unknown-cat');
   });
 });

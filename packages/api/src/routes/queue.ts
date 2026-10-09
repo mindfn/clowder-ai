@@ -1459,7 +1459,7 @@ export const queueRoutes: FastifyPluginAsync<QueueRoutesOptions> = async (app, o
         reply.status(409);
         return { error: '条目正在处理中，无法改派', code: 'ENTRY_PROCESSING' };
       }
-      if (isSystemPinnedQueueEntry(entry) || entry.kind !== 'conversation_input' || entry.from.kind !== 'user') {
+      if (isSystemPinnedQueueEntry(entry) || entry.kind !== 'conversation_input') {
         reply.status(409);
         return { error: '该条目不支持不中断发送', code: 'ENTRY_CONTINUE_UNAVAILABLE' };
       }

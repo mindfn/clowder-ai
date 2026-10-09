@@ -57,7 +57,7 @@ export function ChatInputActionButton({
       ? '正在停止'
       : resolvedStopState === 'unavailable'
         ? '正在确认可停止的运行状态'
-        : '停止生成';
+        : '停止当前对话全部回复';
 
   useEffect(() => {
     if (voice.transcript) onTranscript(voice.transcript);

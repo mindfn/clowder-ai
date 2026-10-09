@@ -6,6 +6,7 @@ import { useMeasuredOverflow } from '@/components/content-overflow/useMeasuredOv
 import { ChevronIcon } from '@/components/hub-icons';
 import type { CatData } from '@/hooks/useCatData';
 import { useCoCreatorConfig } from '@/hooks/useCoCreatorConfig';
+import { catColorVar } from '@/lib/cat-slug';
 import { resolveMessageSender } from '@/lib/resolve-sender';
 import type { ChatMessage } from '@/stores/chat-types';
 import { focusLineageMessage } from '@/utils/focusLineageMessage';
@@ -45,6 +46,7 @@ interface AppendedInputRowProps {
   expanded: boolean;
   onToggle: () => void;
   response: ChatMessage;
+  color: string;
 }
 
 /** Only the exact delivered source × response can supply a read observation. */
@@ -56,13 +58,23 @@ export function appendedInputReadDisplay(source: ChatMessage, response: ChatMess
           (ref) => ref.targetId === lifecycle.targetId && ref.statusMessageId === response.id,
         ) ?? [])
       : [];
-  const receipt = refs.length === 1 ? refs[0]?.inputRead : undefined;
-  if (receipt?.status === 'read') return { state: 'read', label: '已读取', pulse: false };
-  if (!receipt) return { state: 'unavailable', label: '已投递；读取状态不可用', pulse: false };
+  const ref = refs.length === 1 ? refs[0] : undefined;
+  const receipt = ref?.inputRead;
+  const label =
+    typeof ref?.dispatchedAt === 'number' && Number.isFinite(ref.dispatchedAt)
+      ? `投递于: ${formatReceiptTimestamp(ref.dispatchedAt)}`
+      : '已投递';
+  if (receipt?.status === 'read')
+    return {
+      state: 'read',
+      label: `读取于: ${formatReceiptTimestamp(receipt.at)}`,
+      pulse: false,
+    };
+  if (!receipt) return { state: 'unavailable', label, pulse: false };
   const running = lifecycle?.kind === 'response' && lifecycle.status === 'processing';
   return {
     state: running ? 'pending' : 'unconfirmed',
-    label: running ? '已投递；等待读取反馈' : '已投递；读取未确认',
+    label: running ? label : `${label}（未确认读取）`,
     pulse: running,
   };
 }
@@ -71,51 +83,52 @@ export function appendedInputReadDisplay(source: ChatMessage, response: ChatMess
  * One appended input: a single line that expands in place when it is actually truncated (the F269
  * overflow rule shared with ExpandableProse), and a separate jump back to the original message.
  */
-function AppendedInputRow({ source, label, expanded, onToggle, response }: AppendedInputRowProps) {
+function AppendedInputRow({ source, label, expanded, onToggle, response, color }: AppendedInputRowProps) {
   const contentId = useId();
   const { ref, overflowing } = useMeasuredOverflow<HTMLSpanElement>({ axis: 'inline', active: !expanded });
   const content = source.content.trim() || '（无文字内容）';
   const read = appendedInputReadDisplay(source, response);
+  const canToggle = overflowing || expanded;
   return (
     <li
       data-appended-input-id={source.id}
       data-expanded={expanded ? 'true' : 'false'}
-      title={expanded ? undefined : `${label} · ${formatReceiptTimestamp(source.timestamp)}\n${content}`}
       className={expanded ? 'flex min-w-0 items-start gap-1.5 py-1' : 'flex h-7 min-w-0 items-center gap-1.5'}
     >
-      <AppTooltip label={read.label} showOnClick side="top">
+      <AppTooltip
+        label={`${label} · ${read.label}`}
+        detail={<span className="block max-h-[45vh] overflow-y-auto">{content}</span>}
+        delayMs={1_000}
+        multiline
+        side="top"
+      >
         <button
           type="button"
-          aria-label={read.label}
+          aria-label={`${label} · ${read.label} · ${content}`}
+          aria-expanded={canToggle ? expanded : undefined}
+          aria-controls={canToggle ? contentId : undefined}
           data-append-delivery-state={read.state}
-          className="inline-flex h-7 w-5 shrink-0 items-center justify-center rounded text-cafe-muted focus-visible:outline focus-visible:outline-2 focus-visible:outline-current"
+          className={`flex min-w-0 gap-1.5 rounded text-left focus-visible:outline focus-visible:outline-2 focus-visible:outline-current ${expanded ? 'flex-1 items-start' : 'h-7 items-center'} ${canToggle ? 'cursor-pointer' : 'cursor-default'}`}
+          onClick={canToggle ? onToggle : undefined}
         >
           <span
             aria-hidden="true"
-            className={`h-1.5 w-1.5 rounded-full bg-current ${read.pulse ? 'animate-pulse motion-reduce:animate-none' : ''}`}
+            style={{ backgroundColor: color }}
+            className={`mt-0.5 h-1.5 w-1.5 shrink-0 rounded-full ${expanded ? 'mt-1.5' : ''} ${read.pulse ? 'animate-pulse motion-reduce:animate-none' : ''}`}
           />
+          <span className="shrink-0 font-medium">{label}:</span>
+          <span
+            id={contentId}
+            ref={ref}
+            data-overflow-measure="inline"
+            className={
+              expanded ? 'min-w-0 flex-1 whitespace-pre-wrap break-words' : 'w-72 max-w-[35vw] shrink truncate'
+            }
+          >
+            {content}
+          </span>
         </button>
       </AppTooltip>
-      <span className="shrink-0 font-medium">{label}:</span>
-      <span
-        id={contentId}
-        ref={ref}
-        data-overflow-measure="inline"
-        className={expanded ? 'min-w-0 flex-1 whitespace-pre-wrap break-words' : 'w-72 max-w-[35vw] shrink truncate'}
-      >
-        {content}
-      </span>
-      {(overflowing || expanded) && (
-        <button
-          type="button"
-          aria-expanded={expanded}
-          aria-controls={contentId}
-          className="shrink-0 font-medium text-cafe-muted hover:text-cafe-secondary"
-          onClick={onToggle}
-        >
-          {expanded ? '收起' : '展开全文'}
-        </button>
-      )}
       <button
         type="button"
         className="shrink-0 font-medium text-[var(--color-cocreator-primary)] hover:underline"
@@ -187,6 +200,11 @@ export function AppendedInputReceipts({ response, timelineMessages, getCatById }
             key={source.id}
             source={source}
             response={response}
+            color={
+              response.lifecycle?.kind === 'response' && getCatById(response.lifecycle.targetId)
+                ? catColorVar(response.lifecycle.targetId, 'primary')
+                : 'var(--cafe-accent)'
+            }
             label={resolveMessageSender(source, getCatById, coCreator).label}
             expanded={expandedRowIds.has(source.id)}
             onToggle={() => toggleRow(source.id)}

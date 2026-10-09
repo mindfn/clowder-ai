@@ -838,9 +838,9 @@ export class QueueProcessor {
   }
 
   /**
-   * Admission-owned automatic Queue -> Active Run transfer. Human work must
-   * still be bound to the same parent selected by its continue-current intent;
-   * agent A2A carriers have no human disposition and are eligible by default.
+   * Admission-owned automatic Queue -> Active Run transfer. An explicit delivery
+   * choice must remain bound to its selected parent for every source kind.
+   * Source identity does not determine the target's guidance capability.
    * The exact run/capability/revision fences remain owned by the shared
    * lifecycle projection and append transaction below.
    */
@@ -852,14 +852,14 @@ export class QueueProcessor {
   }): Promise<AppendExactEntryResult> {
     const { queue, invocationTracker } = this.deps;
     const entry = queue.getEntrySnapshot(input.threadId, input.userId, input.entryId);
-    if (!entry || entry.execution.liveSessionId || (entry.from.kind !== 'user' && entry.from.kind !== 'agent')) {
+    if (!entry || entry.execution.liveSessionId) {
       return { outcome: 'rejected', reason: 'append_unavailable' };
     }
-    if (entry.from.kind === 'user') {
+    const requestedTargets = input.targetCatId ? [input.targetCatId] : queueEntryTargetCats(entry);
+    if (requestedTargets.some((targetId) => entry.delivery.authorIntentByTarget?.[targetId])) {
       if (!invocationTracker.getExecutionId) {
         return { outcome: 'rejected', reason: 'append_unavailable' };
       }
-      const requestedTargets = input.targetCatId ? [input.targetCatId] : queueEntryTargetCats(entry);
       const remainsBoundToRequestedParent = requestedTargets.every((targetId) => {
         const intent = entry.delivery.authorIntentByTarget?.[targetId];
         return (

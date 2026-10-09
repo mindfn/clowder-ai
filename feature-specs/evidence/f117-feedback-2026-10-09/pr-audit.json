@@ -1,0 +1,65 @@
+{
+  "closedAndProviderVerified": [191, 199, 211, 212, 213, 214, 216, 210],
+  "doNotMerge": {
+    "185": {
+      "additions": 61419,
+      "baseRefName": "develop_base",
+      "baseRefOid": "3e70e1d6805be24672e8f841861f180d20b184c2",
+      "deletions": 128976,
+      "headRefName": "fix/f192-evidence-gate-durable",
+      "headRefOid": "bf13816d740d61207871a1a82e570de98d8742bd",
+      "isDraft": false,
+      "number": 185,
+      "state": "OPEN",
+      "title": "fix(F192): restore evidence gate + guard fork-only patches against rebuild loss"
+    },
+    "210": {
+      "additions": 82242,
+      "baseRefName": "develop_base",
+      "baseRefOid": "3e70e1d6805be24672e8f841861f180d20b184c2",
+      "deletions": 164536,
+      "headRefName": "fix/f117-quote-context",
+      "headRefOid": "0c24872112df67856091379a9061674080cf09f4",
+      "isDraft": true,
+      "number": 210,
+      "state": "CLOSED",
+      "title": "fix(F117): \u8865\u9f50\u5f15\u7528\u8bc4\u8bba\u8bfb\u53d6\u6295\u5f71\u4e0e\u6392\u961f\u94bb\u53d6\u8fb9\u754c",
+      "closedAt": "2026-10-09T13:58:25Z"
+    },
+    "215": {
+      "additions": 83110,
+      "baseRefName": "develop_base",
+      "baseRefOid": "3e70e1d6805be24672e8f841861f180d20b184c2",
+      "deletions": 164599,
+      "headRefName": "fix/fork-verdict-publish-classification",
+      "headRefOid": "96384e3ef10ae63dd18cab6354af1a0edc9ee13d",
+      "isDraft": true,
+      "number": 215,
+      "state": "OPEN",
+      "title": "fix: bind fork sync guard to the actual PR candidate"
+    }
+  },
+  "originalSlices": {
+    "185": {
+      "range": "aa409203b..bf13816d74",
+      "files": 11,
+      "additions": 1787,
+      "deletions": 1,
+      "purpose": "Missing-evidence daily eval gate plus fork rebuild guard/registry/workflow"
+    },
+    "210": {
+      "range": "9f235f083e..0c24872112",
+      "files": 5,
+      "additions": 427,
+      "deletions": 23,
+      "purpose": "Preserve quoted comment/contentBlocks in MCP reads, previews, keyword ranking and bounded drilldown"
+    },
+    "215": {
+      "range": "d35f3b8e54..96384e3ef1",
+      "files": 4,
+      "additions": 838,
+      "deletions": 79,
+      "purpose": "Published-main sync classification, remote candidate/base and CLI argv binding guard"
+    }
+  }
+}

@@ -6,7 +6,7 @@
  *
  * Usage:
  *   const sender = resolveSender(senderCatId, getCatById, coCreator);
- *   // sender.label  → "@宪宪" | "始皇帝" | "@unknown-cat"
+ *   // sender.label  → "宪宪" | "始皇帝" | "unknown-cat"
  *   // sender.color  → resolved primary color (the identity fill), always non-null
  *   // sender.textColor → the colour to write text in: the readable name role for the co-creator, else the cat colour
  */
@@ -23,7 +23,7 @@ import { formatCatDisplayName } from '@/lib/cat-display-name';
 import { CO_CREATOR_COLOR, UNKNOWN_CAT_COLOR } from '@/lib/color-defaults';
 
 export interface SenderMeta {
-  /** Display label: "@猫名" for cats, co-creator name for user, "@rawId" for unknown */
+  /** Display name only; routing @handles belong to message content, not this label. */
   label: string;
   /** Resolved primary color — always a valid hex string. An identity fill, which may be dark in a dark theme. */
   color: string;
@@ -107,7 +107,7 @@ export function resolveSender(
   const cat = getCatById(senderCatId);
   if (cat) {
     return {
-      label: `@${formatCatDisplayName(cat)}`,
+      label: formatCatDisplayName(cat),
       color: cat.color.primary,
       textColor: cat.color.primary,
       isCoCreator: false,
@@ -116,7 +116,7 @@ export function resolveSender(
 
   // Unknown cat ID
   return {
-    label: `@${senderCatId}`,
+    label: senderCatId,
     color: UNKNOWN_CAT_COLOR.primary,
     textColor: UNKNOWN_CAT_COLOR.primary,
     isCoCreator: false,

@@ -173,6 +173,8 @@ describe('F264 author message disposition selector', () => {
     const onSend = vi.fn(async () => true);
     await renderThreadInput({ threadId: 'thread-active', onSend, hasActiveInvocation: true });
     await chooseContinueCurrent();
+    expect(container.querySelector('textarea')?.placeholder).toBe('继续输入，消息可不中断追加给当前成员...');
+    expect(container.querySelector('[data-testid="active-invocation-banner"]')).toBeNull();
 
     act(() => setTextarea(container.querySelector('textarea') as HTMLTextAreaElement, '继续补充约束'));
     expect(container.querySelectorAll('button[aria-label="Send message"]')).toHaveLength(1);
