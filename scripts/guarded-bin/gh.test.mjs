@@ -85,6 +85,9 @@ function run(f, extra = [], env = {}) {
     'Integrate A2A',
     ...extra,
   ];
+  return runArgs(f, args, env);
+}
+function runArgs(f, args, env = {}) {
   const r = spawnSync(process.execPath, [guard, ...args], {
     cwd: f.repo,
     encoding: 'utf8',
@@ -407,3 +410,107 @@ test('empty diff still requires both remote branch coordinates to match', () => 
   assert.equal(existsSync(f.checked), false);
   assert.deepEqual(JSON.parse(readFileSync(f.delegated)), r.args);
 });
+
+for (const option of [
+  '--body',
+  '--title',
+  '--body-file',
+  '--assignee',
+  '--label',
+  '--milestone',
+  '--project',
+  '--reviewer',
+  '--template',
+  '--recover',
+]) {
+  test(`${option} consumes option-looking data without changing the checked head`, () => {
+    const f = fixture();
+    git(f.repo, 'switch', '-c', 'protected-change');
+    write(f.repo, census, 'guarded change\n');
+    const head = commit(f.repo);
+    git(f.repo, 'switch', 'integration');
+    checker(f, 7);
+    const r = run(f, ['--head', 'protected-change', option, '--head=integration']);
+    assert.equal(r.status, 7, r.stderr);
+    assert.equal(JSON.parse(readFileSync(f.checked)).at(-1), head);
+    assert.equal(existsSync(f.delegated), false);
+  });
+}
+
+test('aliases, equals, short groups and repeated values share one consumed invocation', () => {
+  const f = fixture();
+  git(f.repo, 'switch', '-c', 'protected-change');
+  write(f.repo, census, 'guarded change\n');
+  const head = commit(f.repo);
+  git(f.repo, 'switch', 'integration');
+  checker(f, 7);
+  const args = [
+    '-Rmindfn/clowder-ai',
+    'pr',
+    '--repo=mindfn/clowder-ai',
+    'new',
+    '-B=develop_base',
+    '-Hintegration',
+    '-dHprotected-change',
+    '-b--head=integration',
+    '--title=ordinary',
+    '-t',
+    '--base=main',
+    '--label=--repo=another/repo',
+    '--fill=false',
+  ];
+  const r = runArgs(f, args);
+  assert.equal(r.status, 7, r.stderr);
+  assert.equal(JSON.parse(readFileSync(f.checked)).at(-1), head);
+  assert.equal(existsSync(f.delegated), false);
+});
+
+test('later repeated head wins without treating attached body data as another head', () => {
+  const f = fixture();
+  git(f.repo, 'switch', '-c', 'protected-change');
+  write(f.repo, census, 'guarded change\n');
+  commit(f.repo);
+  git(f.repo, 'switch', 'integration');
+  const r = run(f, ['--head=protected-change', '-H', 'integration', '-b', '--head=protected-change']);
+  assert.equal(r.status, 0, r.stderr);
+  assert.deepEqual(JSON.parse(readFileSync(f.delegated)), r.args);
+  assert.equal(existsSync(f.checked), false);
+});
+
+test('a string value equal to the separator does not terminate option parsing', () => {
+  const f = fixture();
+  git(f.repo, 'switch', '-c', 'protected-change');
+  write(f.repo, census, 'guarded change\n');
+  const head = commit(f.repo);
+  git(f.repo, 'switch', 'integration');
+  checker(f, 7);
+  const r = run(f, ['--body', '--', '--head', 'protected-change']);
+  assert.equal(r.status, 7, r.stderr);
+  assert.equal(JSON.parse(readFileSync(f.checked)).at(-1), head);
+});
+
+test('separator data cannot supply publication flags', () => {
+  const f = fixture();
+  const r = run(f, ['--', '--head=integration']);
+  assert.equal(r.status, 1);
+  assert.match(r.stderr, /^verdict_publish_arguments_unavailable:/);
+  assert.equal(existsSync(f.delegated), false);
+});
+
+test('default head is inserted before a terminal separator', () => {
+  const f = fixture();
+  const r = run(f, ['--']);
+  assert.equal(r.status, 0, r.stderr);
+  assert.deepEqual(JSON.parse(readFileSync(f.delegated)), [...r.args.slice(0, -1), '--head', 'integration', '--']);
+});
+
+for (const extra of [['--future-option', '--head=integration'], ['-Zintegration'], ['--body'], ['--fill=invalid']]) {
+  test(`unsupported or incomplete argv refuses before delegation: ${extra.join(' ')}`, () => {
+    const f = fixture();
+    const r = run(f, extra);
+    assert.equal(r.status, 1);
+    assert.match(r.stderr, /^verdict_publish_arguments_unavailable:/);
+    assert.equal(existsSync(f.checked), false);
+    assert.equal(existsSync(f.delegated), false);
+  });
+}

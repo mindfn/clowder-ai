@@ -56,6 +56,12 @@ be removed from the path-trigger classification:
   becoming the publication candidate. Push the branch normally before retrying.
 - Explicit verdict title/head/branch/commit intent still enables the original
   target and publication-contract checks. Any unexempted protected path does too.
+- Command and all option facts come from one argv consumption pass. All installed
+  create-command value options consume their data once, including option-looking
+  values; short aliases/groups, attached or equals values and repeated options
+  retain their CLI meaning. A real separator ends option parsing, while a
+  separator consumed as a string value remains data. Unsupported publication
+  flags, missing values or positional data refuse before delegation.
 
 Git query failures refuse publication; they cannot become empty diffs. Missing
 checker is a named `verdict_publish_guard_unavailable` refusal. No checker,
@@ -78,6 +84,12 @@ counterexample are retained as red evidence; the successor verifies all remote
 publication coordinates before even the empty-diff fast path. Fixtures now
 publish positive candidates explicitly; negative cases retain mismatched or
 missing remote refs.
+The next review found another candidate mismatch: independently scanning options
+could mistake a body/title value for the selected head. That review's original
+three-scene script remains unchanged and is replayed against the successor.
+The parser is shared by command, repository, head, base and title consumers;
+no body/title-specific exemption is introduced. Default-head normalization is
+inserted before a real terminal separator so delegation consumes it as an option.
 
 Independent review precedes the maintenance PR. Normal merge/pull delivery must
 activate the reviewed guard before the original A2A fork PR is retried through

@@ -14,66 +14,108 @@ const VALUE_OPTION_ALIASES = Object.freeze({
   head: Object.freeze(['--head', '-H']),
   base: Object.freeze(['--base', '-B']),
   hostname: Object.freeze(['--hostname']),
+  assignee: Object.freeze(['--assignee', '-a']),
+  body: Object.freeze(['--body', '-b']),
+  bodyFile: Object.freeze(['--body-file', '-F']),
+  label: Object.freeze(['--label', '-l']),
+  milestone: Object.freeze(['--milestone', '-m']),
+  project: Object.freeze(['--project', '-p']),
+  recover: Object.freeze(['--recover']),
+  reviewer: Object.freeze(['--reviewer', '-r']),
+  template: Object.freeze(['--template', '-T']),
 });
+const BOOLEAN_OPTIONS = Object.freeze([
+  '--help',
+  '--version',
+  '--draft',
+  '-d',
+  '--dry-run',
+  '--editor',
+  '-e',
+  '--fill',
+  '-f',
+  '--fill-first',
+  '--fill-verbose',
+  '--no-maintainer-edit',
+  '--web',
+  '-w',
+]);
+const OPTION_DEFINITIONS = new Map([
+  ...Object.entries(VALUE_OPTION_ALIASES).flatMap(([key, aliases]) =>
+    aliases.map((alias) => [alias, { key, takesValue: true }]),
+  ),
+  ...BOOLEAN_OPTIONS.map((alias) => [alias, { takesValue: false }]),
+]);
 
-function valueOptionAt(index, names) {
-  const arg = args[index];
-  if (names.includes(arg)) {
-    return { value: args[index + 1], width: args[index + 1] === undefined ? 1 : 2 };
-  }
-  for (const name of names) {
-    const prefix = `${name}=`;
-    if (arg.startsWith(prefix)) return { value: arg.slice(prefix.length), width: 1 };
-    if (/^-[^-]$/.test(name) && arg.startsWith(name) && arg.length > name.length) {
-      return { value: arg.slice(name.length), width: 1 };
+// One pflag-style consumption pass supplies every publication fact. String
+// values consume the next token even when it looks like another option.
+// Unsupported publication syntax is refused, never partially interpreted.
+function parseInvocation(argv) {
+  const values = new Map();
+  const command = [];
+  let separatorIndex;
+  let optionsEnded = false;
+  const addValue = (key, value) => {
+    if (!values.has(key)) values.set(key, []);
+    values.get(key).push(value);
+  };
+  for (let index = 0; index < argv.length; index += 1) {
+    const arg = argv[index];
+    if (!optionsEnded && arg === '--') {
+      optionsEnded = true;
+      separatorIndex = index;
+      continue;
+    }
+    if (optionsEnded || !arg.startsWith('-') || arg === '-') {
+      command.push(arg);
+      // Other commands keep their own grammar and are delegated unchanged.
+      if (command.length === 1 && arg !== 'pr') return { command, values };
+      if (command.length === 2 && !['create', 'new'].includes(arg)) return { command, values };
+      if (command.length > 2)
+        fail('verdict_publish_arguments_unavailable', 'publication takes no positional arguments');
+      continue;
+    }
+    if (arg.startsWith('--')) {
+      const equals = arg.indexOf('=');
+      const name = equals === -1 ? arg : arg.slice(0, equals);
+      const definition = OPTION_DEFINITIONS.get(name);
+      if (!definition) fail('verdict_publish_arguments_unavailable', 'unsupported CLI option');
+      if (definition.takesValue) {
+        const value = equals === -1 ? argv[++index] : arg.slice(equals + 1);
+        if (value === undefined) fail('verdict_publish_arguments_unavailable', 'missing option value');
+        addValue(definition.key, value);
+      } else if (equals !== -1 && !/^(?:true|false|1|0|t|f|T|F|TRUE|FALSE|True|False)$/.test(arg.slice(equals + 1))) {
+        fail('verdict_publish_arguments_unavailable', 'invalid boolean option value');
+      }
+      continue;
+    }
+    // Short boolean groups and attached string values follow pflag's rules.
+    for (let offset = 1; offset < arg.length; offset += 1) {
+      const definition = OPTION_DEFINITIONS.get(`-${arg[offset]}`);
+      if (!definition) fail('verdict_publish_arguments_unavailable', 'unsupported CLI shorthand');
+      const rest = arg.slice(offset + 1);
+      if (definition.takesValue) {
+        const value = rest ? rest.replace(/^=/, '') : argv[++index];
+        if (value === undefined) fail('verdict_publish_arguments_unavailable', 'missing option value');
+        addValue(definition.key, value);
+        break;
+      }
+      if (rest.startsWith('=')) {
+        if (!/^(?:true|false|1|0|t|f|T|F|TRUE|FALSE|True|False)$/.test(rest.slice(1)))
+          fail('verdict_publish_arguments_unavailable', 'invalid boolean shorthand value');
+        break;
+      }
     }
   }
-  return undefined;
+  return { command, values, separatorIndex };
 }
 
 function optionValues(option) {
-  const names = VALUE_OPTION_ALIASES[option];
-  const values = [];
-  for (let index = 0; index < args.length; index += 1) {
-    const parsed = valueOptionAt(index, names);
-    if (!parsed) continue;
-    if (parsed.value !== undefined) values.push(parsed.value);
-    index += parsed.width - 1;
-  }
-  return values;
+  return invocation.values.get(option) ?? [];
 }
 
 function optionValue(option) {
   return optionValues(option).at(-1);
-}
-
-function commandArgs() {
-  let index = 0;
-  while (index < args.length) {
-    const arg = args[index];
-    const repository = valueOptionAt(index, VALUE_OPTION_ALIASES.repository);
-    if (repository) {
-      index += repository.width;
-      continue;
-    }
-    const hostname = valueOptionAt(index, ['--hostname']);
-    if (hostname) {
-      index += hostname.width;
-      continue;
-    }
-    if (arg === 'pr') {
-      index += 1;
-      while (index < args.length) {
-        const inheritedRepository = valueOptionAt(index, VALUE_OPTION_ALIASES.repository);
-        if (!inheritedRepository) break;
-        index += inheritedRepository.width;
-      }
-      return ['pr', ...args.slice(index)];
-    }
-    if (!arg.startsWith('-')) return args.slice(index);
-    index += 1;
-  }
-  return [];
 }
 
 function gitOutput(gitArgs) {
@@ -160,7 +202,10 @@ function candidateContext() {
     .filter(protectedArtifact);
   // Explicit --head skips gh's automatic push/fork selection. A default head
   // is only supported after verifying its already-published same-repo branch.
-  return { sourceRef, baseBranch, paths, delegateArgs: head === undefined ? [...args, '--head', headBranch] : args };
+  const insertAt = invocation.separatorIndex ?? args.length;
+  const delegateArgs =
+    head === undefined ? [...args.slice(0, insertAt), '--head', headBranch, ...args.slice(insertAt)] : args;
+  return { sourceRef, baseBranch, paths, delegateArgs };
 }
 
 function isVerdictCandidate(candidate) {
@@ -206,7 +251,8 @@ function fail(code, detail) {
   process.exit(1);
 }
 
-const command = commandArgs();
+const invocation = parseInvocation(args);
+const command = invocation.command;
 const candidate = command[0] === 'pr' && ['create', 'new'].includes(command[1]) ? candidateContext() : undefined;
 if (candidate && isVerdictCandidate(candidate)) {
   const expectedRepo =
