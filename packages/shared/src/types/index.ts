@@ -1362,6 +1362,7 @@ export {
   pluginDescriptionVariants,
   resolvePluginDescription,
 } from './plugin.js';
+export type { PluginWaitState, PluginWaitUpdate } from './plugin-wait.js';
 export {
   DEFERRED_PERSON_MEMORY_CLERK_DISPOSITIONS,
   DEFERRED_PERSON_MEMORY_RECEIPT_STATES,

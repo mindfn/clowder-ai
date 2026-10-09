@@ -5,6 +5,7 @@ import type {
   DevelopmentScopeV1,
   EntrustedWorkV1,
   ManagedWorkBinding,
+  PluginWaitState,
   TaskItem,
   TaskKind,
   UpdateTaskInput,
@@ -165,6 +166,7 @@ export function assertEntrustedWorkGenericUpsertAllowed(task: TaskItem): void {
 
 /** Common server-side contract for in-memory and Redis task stores. */
 export interface ITaskStore {
+  replacePluginWait(taskId: string, input: ReplacePluginWaitInput): TaskItem | null | Promise<TaskItem | null>;
   hasDevelopmentSource(query: DevelopmentSourceQuery): boolean | Promise<boolean>;
   findDevelopmentWork(userId: string, scope: DevelopmentScopeV1): TaskItem[] | Promise<TaskItem[]>;
   transitionDevelopmentWork(input: DevelopmentWorkTransition): DevelopmentWorkResult | Promise<DevelopmentWorkResult>;
@@ -243,4 +245,10 @@ export interface ReplaceDeploymentWaitIfGenerationInput {
   readonly expectedUpdatedAt?: number;
   readonly deploymentWait: DeploymentWaitStateV1 | undefined;
   readonly status?: Exclude<TaskItem['status'], 'done'>;
+}
+
+export interface ReplacePluginWaitInput {
+  readonly expectedState: PluginWaitState | undefined;
+  readonly expectedGeneration: number | null;
+  readonly state: PluginWaitState;
 }

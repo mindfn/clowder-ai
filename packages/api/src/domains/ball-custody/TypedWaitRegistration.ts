@@ -6,6 +6,7 @@ import {
   type TaskItem,
 } from '@cat-cafe/shared';
 import { z } from 'zod';
+import { isLivePluginWait } from './PluginWaitContinuation.js';
 
 const nonEmpty = z.string().min(1);
 const generation = z.number().int().positive().safe();
@@ -186,6 +187,7 @@ export function isLiveTypedWaitRegistration(
   now: number,
   reference?: TypedWaitReference,
 ): boolean {
+  if (snapshot?.task.pluginWait) return isLivePluginWait(snapshot.task, identity, now, reference);
   if (!snapshot?.receipt) return false;
   const { task, receipt } = snapshot;
   const isDeployment = receipt.subjectRef.startsWith('deployment:');

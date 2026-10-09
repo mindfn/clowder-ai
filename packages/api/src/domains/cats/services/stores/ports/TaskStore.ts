@@ -1,3 +1,5 @@
+import { replaceTaskPluginWait } from './TaskPluginWait.js';
+import type { ReplacePluginWaitInput } from './TaskStoreContract.js';
 /**
  * Task Store (毛线球)
  * 内存实现，Map-based，有界 (MAX=500)。
@@ -122,6 +124,13 @@ export class TaskStore implements ITaskStore {
 
   get(taskId: string): TaskItem | null {
     return this.tasks.get(taskId) ?? null;
+  }
+
+  replacePluginWait(taskId: string, input: ReplacePluginWaitInput): TaskItem | null {
+    const task = this.tasks.get(taskId);
+    const updated = task ? replaceTaskPluginWait(task, input) : null;
+    if (updated) this.tasks.set(taskId, updated);
+    return updated;
   }
 
   getWaitRegistration(taskId: string): TypedWaitRegistrationSnapshot | null {

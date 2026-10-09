@@ -1,8 +1,17 @@
-import type { CatId, CreateTaskInput, TaskItem, TaskKind, TaskStatus, UpdateTaskInput } from '@cat-cafe/shared';
+import type {
+  CatId,
+  CreateTaskInput,
+  PluginWaitUpdate,
+  TaskItem,
+  TaskKind,
+  TaskStatus,
+  UpdateTaskInput,
+} from '@cat-cafe/shared';
 import type { ITaskStore } from '../../cats/services/stores/ports/TaskStore.js';
 import { currentPluginCallContext } from '../carrier/plugin-call-context.js';
 import { ExternalPluginRuntimeError } from '../external-runtime/types.js';
 import { hostCapabilityRefusal } from './host-capability-refusal.js';
+import { setPluginTaskWait } from './plugin-task-wait.js';
 
 const TASK_KINDS = new Set<TaskKind>(['work', 'pr_tracking', 'issue_tracking']);
 const TASK_STATUSES = new Set<TaskStatus>(['todo', 'doing', 'blocked', 'done']);
@@ -25,6 +34,7 @@ export interface PluginTaskUpdateInput {
 }
 
 export interface PluginTaskHost {
+  setWait(taskId: string, input: PluginWaitUpdate): Promise<TaskItem | null>;
   get(taskId: string): Promise<TaskItem | null>;
   listByThread(threadId: string): Promise<readonly TaskItem[]>;
   listByKind(kind: TaskKind): Promise<readonly TaskItem[]>;
@@ -113,7 +123,19 @@ export function createPluginTaskHost(input: PluginTaskHostDeps): PluginTaskHost 
     }
     return input.taskStore;
   };
+  const withCallerUser = (value: CreateTaskInput): CreateTaskInput => {
+    const caller = currentPluginCallContext(input.pluginInstanceId);
+    return caller ? { ...value, userId: caller.userId } : value;
+  };
   return {
+    setWait: (taskId, value) =>
+      setPluginTaskWait(
+        requireGrant('task.write'),
+        input.pluginInstanceId,
+        currentPluginCallContext(input.pluginInstanceId),
+        boundedString(taskId, 'taskId', 500),
+        value,
+      ),
     get: async (taskId) => requireGrant('task.read').get(boundedString(taskId, 'taskId', 500)),
     listByThread: async (threadId) => requireGrant('task.read').listByThread(boundedString(threadId, 'threadId', 500)),
     listByKind: async (kind) => requireGrant('task.read').listByKind(taskKind(kind)),
@@ -122,12 +144,12 @@ export function createPluginTaskHost(input: PluginTaskHostDeps): PluginTaskHost 
     create: async (value) => {
       const store = requireGrant('task.write');
       await assertCurrentCall();
-      return store.create(createInput(value));
+      return store.create(withCallerUser(createInput(value)));
     },
     upsertBySubject: async (value) => {
       const store = requireGrant('task.write');
       await assertCurrentCall();
-      return store.upsertBySubject(subjectUpsertInput(value));
+      return store.upsertBySubject(withCallerUser(subjectUpsertInput(value)));
     },
     update: async (taskId, value) => {
       const store = requireGrant('task.write');

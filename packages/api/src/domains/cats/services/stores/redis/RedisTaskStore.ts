@@ -1,3 +1,5 @@
+import { replaceTaskPluginWait } from '../ports/TaskPluginWait.js';
+import type { ReplacePluginWaitInput } from '../ports/TaskStoreContract.js';
 /**
  * Redis Task Store (毛线球)
  * Redis-backed task storage with same interface as in-memory TaskStore.
@@ -105,6 +107,25 @@ async function replaceDeploymentWaitInSession(
 }
 
 export class RedisTaskStore implements ITaskStore {
+  async replacePluginWait(taskId: string, input: ReplacePluginWaitInput): Promise<TaskItem | null> {
+    const key = TaskKeys.detail(taskId);
+    for (let attempt = 0; attempt < MAX_CONDITIONAL_TASK_UPDATE_RETRIES; attempt++) {
+      const result = await runWithExclusiveRedisWatchSession<TaskItem | null | undefined>(
+        this.redis,
+        key,
+        async (session) => {
+          const raw = await session.hgetall(key);
+          if (!raw.id) return null;
+          const updated = replaceTaskPluginWait(hydrateTask(raw), input);
+          if (!updated) return null;
+          return (await session.multi().hset(key, serializeTask(updated)).exec()) ? updated : undefined;
+        },
+      );
+      if (result !== undefined) return result;
+    }
+    return null;
+  }
+
   async getWaitRegistration(taskId: string): Promise<TypedWaitRegistrationSnapshot | null> {
     return hydrateWaitRegistration(await this.redis.hgetall(TaskKeys.detail(taskId)));
   }

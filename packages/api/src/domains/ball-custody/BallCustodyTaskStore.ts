@@ -19,6 +19,7 @@ import type {
   CloseEntrustedWorkStoreResult,
   ReplaceAutomationStateIfGenerationInput,
   ReplaceDeploymentWaitIfGenerationInput,
+  ReplacePluginWaitInput,
   UpdateEntrustedWorkStoreInput,
   UpdateEntrustedWorkStoreResult,
 } from '../cats/services/stores/ports/TaskStoreContract.js';
@@ -65,6 +66,10 @@ class BallCustodyTaskStore implements ITaskStore {
 
   get(taskId: string): MaybePromise<TaskItem | null> {
     return this.inner.get(taskId);
+  }
+
+  replacePluginWait(taskId: string, input: ReplacePluginWaitInput) {
+    return this.inner.replacePluginWait(taskId, input);
   }
 
   getWaitRegistration(taskId: string): ReturnType<ITaskStore['getWaitRegistration']> {
