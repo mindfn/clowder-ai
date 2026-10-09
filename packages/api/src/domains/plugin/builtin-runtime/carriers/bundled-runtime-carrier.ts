@@ -6,6 +6,7 @@ import {
   reportedPluginInvocation,
   settlePluginInvocation,
 } from '../../carrier/host-invocation.js';
+import type { HostProofActivation, ProcessLocalProofAdmissionSection } from '../../carrier/proof-admission-section.js';
 import type { PluginRuntimeAdmission, PluginRuntimeCarrier } from '../../carrier/runtime-carrier.js';
 import { startFailureRecord } from '../../diagnostics/plugin-start-failure.js';
 import { ExternalPluginRuntimeError } from '../../external-runtime/types.js';
@@ -45,6 +46,8 @@ export interface BundledPluginRuntimeCarrierOptions {
   readonly inventory: Pick<PluginInventoryStore, 'snapshot' | 'transaction'>;
   readonly runtimes: readonly BundledPluginRuntime[];
   readonly now?: () => number;
+  /** Isolated Host composition only until authority-writer topology is independently established. */
+  readonly proofAdmissionSection?: ProcessLocalProofAdmissionSection;
 }
 
 interface RuntimeAuthority {
@@ -57,12 +60,18 @@ interface ActiveBundled {
   readonly runtime: BundledPluginRuntime;
   readonly closed: Promise<void>;
   readonly resolveClosed: () => void;
+  validForProof: boolean;
+  readyForProof: boolean;
+  readonly startSettled: Promise<void>;
+  starting: boolean;
+  stopping: boolean;
 }
 
 /** The in-Host-process carrier. It runs packages a bundled runtime implements; every
  * other admitted package belongs to another carrier and is declined here. */
 export class BundledPluginRuntimeCarrier implements PluginRuntimeCarrier {
   readonly #active = new Map<string, ActiveBundled>();
+  readonly #startEpoch = new Map<string, number>();
   readonly #now: () => number;
 
   constructor(private readonly options: BundledPluginRuntimeCarrierOptions) {
@@ -75,7 +84,11 @@ export class BundledPluginRuntimeCarrier implements PluginRuntimeCarrier {
   }
 
   async start(pluginInstanceId: string): Promise<unknown> {
+    const epoch = this.#startEpoch.get(pluginInstanceId) ?? 0;
     const authority = await this.authority(pluginInstanceId);
+    if (epoch !== (this.#startEpoch.get(pluginInstanceId) ?? 0)) {
+      throw new ExternalPluginRuntimeError('INSTANCE_NOT_RUNNABLE', 'builtin startup was cancelled');
+    }
     if (this.#active.has(pluginInstanceId)) {
       throw new ExternalPluginRuntimeError(
         'RUNTIME_ALREADY_ACTIVE',
@@ -93,7 +106,21 @@ export class BundledPluginRuntimeCarrier implements PluginRuntimeCarrier {
     const closed = new Promise<void>((resolve) => {
       resolveClosed = resolve;
     });
-    this.#active.set(pluginInstanceId, { runtime, closed, resolveClosed });
+    let settleStart = () => {};
+    const startSettled = new Promise<void>((resolve) => {
+      settleStart = resolve;
+    });
+    const active: ActiveBundled = {
+      runtime,
+      closed,
+      resolveClosed,
+      validForProof: true,
+      readyForProof: false,
+      startSettled,
+      starting: true,
+      stopping: false,
+    };
+    this.#active.set(pluginInstanceId, active);
     // Only a throw out of the package's own start counts as a package failure. A Host-side
     // refusal or a lost startup race is the Host's business and must not be written into the
     // owner's diagnostic as if the package misbehaved.
@@ -106,31 +133,72 @@ export class BundledPluginRuntimeCarrier implements PluginRuntimeCarrier {
         packageFailed = true;
         throw error;
       }
-      if (this.#active.get(pluginInstanceId)?.closed !== closed) {
+      if (this.#active.get(pluginInstanceId) !== active || !active.validForProof) {
         throw new ExternalPluginRuntimeError('INSTANCE_NOT_RUNNABLE', 'builtin startup was cancelled');
       }
       await this.setBundledRuntimeState(authority, 'healthy');
+      if (!active.validForProof)
+        throw new ExternalPluginRuntimeError('INSTANCE_NOT_RUNNABLE', 'builtin startup was cancelled');
+      active.readyForProof = true;
       return { pluginInstanceId, closed };
     } catch (error) {
-      if (this.#active.get(pluginInstanceId)?.closed === closed) {
-        await runtime.stop(pluginInstanceId, 'start_failed').catch(() => undefined);
-        await this.setBundledRuntimeState(
-          authority,
-          'stopped',
-          packageFailed ? this.#startFailure(error, authority.instance.packageDigest) : undefined,
-        ).catch(() => undefined);
-        if (this.#active.get(pluginInstanceId)?.closed === closed) this.#active.delete(pluginInstanceId);
-      }
-      resolveClosed();
+      await this.cleanupFailedStart(pluginInstanceId, authority, active, error, packageFailed);
       throw error;
+    } finally {
+      active.starting = false;
+      settleStart();
     }
   }
 
+  private async cleanupFailedStart(
+    pluginInstanceId: string,
+    authority: RuntimeAuthority,
+    active: ActiveBundled,
+    error: unknown,
+    packageFailed: boolean,
+  ): Promise<void> {
+    active.validForProof = false;
+    // Once stop is requested it owns cleanup, and joins startup before resolving closed.
+    if (active.stopping) return;
+    if (this.#active.get(pluginInstanceId) === active) {
+      try {
+        await active.runtime.stop(pluginInstanceId, 'start_failed');
+      } catch (cleanupError) {
+        // Retain the invalid activation and unresolved closed handle for an explicit stop retry.
+        throw new AggregateError([error, cleanupError], 'builtin start and cleanup failed');
+      }
+      await this.setBundledRuntimeState(
+        authority,
+        'stopped',
+        packageFailed ? this.#startFailure(error, authority.instance.packageDigest) : undefined,
+      ).catch(() => undefined);
+      if (this.#active.get(pluginInstanceId) === active) this.#active.delete(pluginInstanceId);
+    }
+    active.resolveClosed();
+  }
+
   async stop(pluginInstanceId: string, reason = 'host_stop'): Promise<void> {
+    this.#startEpoch.set(pluginInstanceId, (this.#startEpoch.get(pluginInstanceId) ?? 0) + 1);
+    const captured = this.#active.get(pluginInstanceId);
+    if (captured) {
+      captured.validForProof = false;
+      captured.stopping = true;
+    }
+    const stop = () => this.finishStop(pluginInstanceId, reason);
+    if (this.options.proofAdmissionSection) return this.options.proofAdmissionSection.invalidate(stop);
+    return stop();
+  }
+
+  private async finishStop(pluginInstanceId: string, reason: string): Promise<void> {
     const authority = await this.authority(pluginInstanceId, true);
     const active = this.#active.get(pluginInstanceId);
     if (active) {
+      const wasStarting = active.starting;
+      // Abort pending startup before joining it: startup may itself await the abort signal.
       await active.runtime.stop(pluginInstanceId, reason);
+      await active.startSettled;
+      // A start implementation may allocate after the first stop; clean that tail as well.
+      if (wasStarting) await active.runtime.stop(pluginInstanceId, reason);
       try {
         await this.setBundledRuntimeState(authority, 'stopped');
       } finally {
@@ -140,6 +208,36 @@ export class BundledPluginRuntimeCarrier implements PluginRuntimeCarrier {
     } else {
       await this.setBundledRuntimeState(authority, 'stopped');
     }
+  }
+
+  /** Captures the actual activation, not an instance/digest/enabled reconstruction. */
+  captureProofActivation(pluginInstanceId: string): HostProofActivation {
+    const active = this.#active.get(pluginInstanceId);
+    const isCurrent = () =>
+      Boolean(active?.validForProof && active.readyForProof && this.#active.get(pluginInstanceId) === active);
+    if (!isCurrent() || !active)
+      throw new ExternalPluginRuntimeError('INSTANCE_NOT_RUNNABLE', 'proof activation unavailable');
+    return {
+      isCurrent,
+      invoke: async (method, params) => {
+        const authority = await this.authority(pluginInstanceId);
+        if (!isCurrent()) throw new ExternalPluginRuntimeError('INSTANCE_NOT_RUNNABLE', 'proof activation invalidated');
+        if (
+          method === 'host.messaging.deliver' &&
+          !authority.effectiveGrants.includes(WIRE_METHOD_REGISTRY['host.messaging.deliver'].grant)
+        ) {
+          throw new ExternalPluginRuntimeError('DELIVERY_REJECTED', 'Host delivery authority unavailable');
+        }
+        const runtime = active.runtime;
+        const attempt = runtime.attemptInvoke?.bind(runtime);
+        if (attempt)
+          return settlePluginInvocation(
+            await reportedPluginInvocation(() => attempt(pluginInstanceId, method, params)),
+          );
+        if (!runtime.invoke) throw new ExternalPluginRuntimeError('DELIVERY_REJECTED', 'proof invocation unavailable');
+        return runtime.invoke(pluginInstanceId, method, params);
+      },
+    };
   }
 
   async stopAll(reason = 'host_shutdown'): Promise<void> {

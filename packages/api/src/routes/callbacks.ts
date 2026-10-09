@@ -172,6 +172,8 @@ import {
   partitionNotificationTargets,
   readEngagementPolicy,
 } from '../domains/routing-context/ScarceSeatNotificationPolicy.js';
+import { ProofAdmissionUnavailable } from '../domains/plugin/carrier/proof-admission-section.js';
+import type { ReviewProofAdmissionPort } from '../domains/plugin/carrier/review-proof-admission.js';
 import { buildThreadDeepLink } from '../infrastructure/connectors/connector-command-helpers.js';
 import { extractIssueTrackingClaims, extractPrTrackingClaims } from '../infrastructure/grounding/claim-extractors.js';
 import { checkGrounding } from '../infrastructure/grounding/grounding-checker.js';
@@ -998,6 +1000,8 @@ export interface CallbackRoutesOptions {
         observedAt: number;
       }
   >;
+  /** Host-only isolated admission seam. Production continues using the existing verifier. */
+  reviewProofAdmission?: ReviewProofAdmissionPort;
   /** Late-bound so callback registration and boot migration share the lifecycle owner. */
   waitLifecycleHolder?: { current?: Pick<GitHubWaitLifecycleService, 'recordOutcomeEvent'> };
   /** F323: server-owned deployment evidence and late-bound one-shot delivery lifecycle. */
@@ -5761,127 +5765,145 @@ export const callbacksRoutes: FastifyPluginAsync<CallbackRoutesOptions> = async 
           ? [predicate.triggerCommentId]
           : [],
       );
+      let admitRegistration = <T>(mutation: () => Promise<T>) => mutation();
       if (triggerCommentIds.length > 0) {
-        if (!record.invocationId || !opts.verifyPrReviewEventWaitCoverage) {
+        if (!record.invocationId || (!opts.reviewProofAdmission && !opts.verifyPrReviewEventWaitCoverage)) {
           reply.status(503);
           return { error: 'Exact review-result coverage verifier not configured' };
         }
         try {
-          for (const triggerCommentId of triggerCommentIds) {
-            const coverage = await opts.verifyPrReviewEventWaitCoverage({
-              repoFullName,
-              prNumber,
-              triggerCommentId,
-            });
-            if (!coverage.covered) {
+          if (opts.reviewProofAdmission) {
+            const prepared = await opts.reviewProofAdmission.prepare(
+              triggerCommentIds.map((triggerCommentId) => ({ repoFullName, prNumber, triggerCommentId })),
+            );
+            if (!prepared.covered) {
               reply.status(422);
-              return { error: 'Review-result trigger is not covered', reason: coverage.reason };
+              return { error: 'Review-result trigger is not covered', reason: prepared.reason };
             }
-          }
+            admitRegistration = (mutation) => prepared.admit(mutation);
+          } else
+            for (const triggerCommentId of triggerCommentIds) {
+              const coverage = await opts.verifyPrReviewEventWaitCoverage!({
+                repoFullName,
+                prNumber,
+                triggerCommentId,
+              });
+              if (!coverage.covered) {
+                reply.status(422);
+                return { error: 'Review-result trigger is not covered', reason: coverage.reason };
+              }
+            }
         } catch {
           reply.status(503);
           return { error: 'Review-result coverage unavailable — try again later' };
         }
       }
 
-      const taskInput = {
-        kind: 'pr_tracking',
-        subjectKey,
-        threadId: record.threadId,
-        title: `PR tracking: ${repoFullName}#${prNumber}`,
-        ownerCatId: catId,
-        why: `Waiting on typed GitHub predicates for ${repoFullName}#${prNumber}.`,
-        createdBy: catId,
-        userId: record.userId,
-      } as const;
-      // Existing registrations are read-only until the generation/metadata CAS succeeds.
-      const task = (await taskStore.getBySubject(subjectKey)) ?? (await taskStore.create(taskInput));
-      assertSubjectUpdateOwnership(subjectKey, task, taskInput);
-      const previousState = task.automationState as PrAutomationState | undefined;
-      const previousGeneration = previousState?.await?.generation ?? previousState?.waitOutcome?.generation ?? 0;
-      const generation = previousGeneration + 1;
-      const awaitState: GitHubPrAwaitStateV1 = {
-        v: 1,
-        generation,
-        subjectRef: subjectKey,
-        ownerFence: { kind: 'containing_task', generation },
-        baseline: snapshot.baseline,
-        continuation: {
-          when,
-          // biome-ignore lint/suspicious/noThenProperty: F280's frozen wait contract names this field `then`.
-          then: nextStep,
-        },
-        ...(expiresAt !== undefined ? { expiresAt } : {}),
-        ...(autoRenew !== undefined ? { autoRenew } : {}),
-        createdAt: Date.now(),
-        provenance: 'explicit_registration',
-      };
-      const superseded = previousState?.await
-        ? transitionWaitState(previousState, {
-            type: 'superseded',
-            generation: previousState.await.generation,
-            at: Date.now(),
-          })
-        : undefined;
-      const supersededOutcome =
-        superseded?.applied === true ? (superseded.state as PrAutomationState).waitOutcome : undefined;
-      // A new wait does not revoke a result already owed to its owner. Preserve the outbox
-      // in the same CAS, including after a single-fire wait has consumed its active generation.
-      const pendingOutcome = previousState?.waitOutcome?.delivery === 'pending' ? previousState.waitOutcome : undefined;
-      if (pendingOutcome && supersededOutcome?.delivery === 'pending') {
-        // A passed deadline produced a second deliverable result; one slot cannot retain both.
-        reply.status(409);
-        return { error: 'PR wait has a pending delivery — retry registration after recovery' };
-      }
-      const retainedOutcome = pendingOutcome ?? supersededOutcome;
-      const replacement: PrAutomationState = {
-        ...(previousState?.review ? { review: previousState.review } : {}),
-        ...(previousState?.ci ? { ci: previousState.ci } : {}),
-        ...(previousState?.conflict ? { conflict: previousState.conflict } : {}),
-        ...snapshot.collectorState,
-        await: awaitState,
-        ...(retainedOutcome ? { waitOutcome: retainedOutcome } : {}),
-      };
-      const waitSource = await waitSourcePromise;
-      if (!(await registry.isLatest(record.invocationId))) {
-        reply.status(409);
-        return { error: 'Wait registration invocation is no longer current' };
-      }
-      const waitRegistration = waitSource
-        ? createTypedWaitRegistration({
-            task: { ...task, ...taskInput, status: task.status === 'done' ? 'todo' : task.status },
-            active: awaitState,
-            invocationId: record.invocationId,
-            source: waitSource,
-          })
-        : null;
-      const installed = await taskStore.replaceAutomationStateIfGeneration(task.id, {
-        expectedGeneration: previousGeneration === 0 ? null : previousGeneration,
-        expectedUpdatedAt: task.updatedAt,
-        automationState: replacement,
-        trackingRegistration: {
-          ...taskInput,
-          ...(record.managedWorkBinding ? { managedWorkBinding: record.managedWorkBinding } : {}),
-        },
-        ...(waitRegistration ? { waitRegistration } : {}),
-      });
-      if (!installed) {
-        reply.status(409);
-        return { error: 'PR wait changed concurrently — retry registration' };
-      }
-      if (supersededOutcome) {
-        await opts.waitLifecycleHolder?.current?.recordOutcomeEvent(installed, supersededOutcome);
-      }
+      return await admitRegistration(async () => {
+        const taskInput = {
+          kind: 'pr_tracking',
+          subjectKey,
+          threadId: record.threadId,
+          title: `PR tracking: ${repoFullName}#${prNumber}`,
+          ownerCatId: catId,
+          why: `Waiting on typed GitHub predicates for ${repoFullName}#${prNumber}.`,
+          createdBy: catId,
+          userId: record.userId,
+        } as const;
+        // Existing registrations are read-only until the generation/metadata CAS succeeds.
+        const task = (await taskStore.getBySubject(subjectKey)) ?? (await taskStore.create(taskInput));
+        assertSubjectUpdateOwnership(subjectKey, task, taskInput);
+        const previousState = task.automationState as PrAutomationState | undefined;
+        const previousGeneration = previousState?.await?.generation ?? previousState?.waitOutcome?.generation ?? 0;
+        const generation = previousGeneration + 1;
+        const awaitState: GitHubPrAwaitStateV1 = {
+          v: 1,
+          generation,
+          subjectRef: subjectKey,
+          ownerFence: { kind: 'containing_task', generation },
+          baseline: snapshot.baseline,
+          continuation: {
+            when,
+            // biome-ignore lint/suspicious/noThenProperty: F280's frozen wait contract names this field `then`.
+            then: nextStep,
+          },
+          ...(expiresAt !== undefined ? { expiresAt } : {}),
+          ...(autoRenew !== undefined ? { autoRenew } : {}),
+          createdAt: Date.now(),
+          provenance: 'explicit_registration',
+        };
+        const superseded = previousState?.await
+          ? transitionWaitState(previousState, {
+              type: 'superseded',
+              generation: previousState.await.generation,
+              at: Date.now(),
+            })
+          : undefined;
+        const supersededOutcome =
+          superseded?.applied === true ? (superseded.state as PrAutomationState).waitOutcome : undefined;
+        // A new wait does not revoke a result already owed to its owner. Preserve the outbox
+        // in the same CAS, including after a single-fire wait has consumed its active generation.
+        const pendingOutcome =
+          previousState?.waitOutcome?.delivery === 'pending' ? previousState.waitOutcome : undefined;
+        if (pendingOutcome && supersededOutcome?.delivery === 'pending') {
+          // A passed deadline produced a second deliverable result; one slot cannot retain both.
+          reply.status(409);
+          return { error: 'PR wait has a pending delivery — retry registration after recovery' };
+        }
+        const retainedOutcome = pendingOutcome ?? supersededOutcome;
+        const replacement: PrAutomationState = {
+          ...(previousState?.review ? { review: previousState.review } : {}),
+          ...(previousState?.ci ? { ci: previousState.ci } : {}),
+          ...(previousState?.conflict ? { conflict: previousState.conflict } : {}),
+          ...snapshot.collectorState,
+          await: awaitState,
+          ...(retainedOutcome ? { waitOutcome: retainedOutcome } : {}),
+        };
+        const waitSource = await waitSourcePromise;
+        if (!(await registry.isLatest(record.invocationId))) {
+          reply.status(409);
+          return { error: 'Wait registration invocation is no longer current' };
+        }
+        const waitRegistration = waitSource
+          ? createTypedWaitRegistration({
+              task: { ...task, ...taskInput, status: task.status === 'done' ? 'todo' : task.status },
+              active: awaitState,
+              invocationId: record.invocationId,
+              source: waitSource,
+            })
+          : null;
+        const installed = await taskStore.replaceAutomationStateIfGeneration(task.id, {
+          expectedGeneration: previousGeneration === 0 ? null : previousGeneration,
+          expectedUpdatedAt: task.updatedAt,
+          automationState: replacement,
+          trackingRegistration: {
+            ...taskInput,
+            ...(record.managedWorkBinding ? { managedWorkBinding: record.managedWorkBinding } : {}),
+          },
+          ...(waitRegistration ? { waitRegistration } : {}),
+        });
+        if (!installed) {
+          reply.status(409);
+          return { error: 'PR wait changed concurrently — retry registration' };
+        }
+        if (supersededOutcome) {
+          await opts.waitLifecycleHolder?.current?.recordOutcomeEvent(installed, supersededOutcome);
+        }
 
-      return {
-        status: 'ok',
-        threadId: record.threadId,
-        task: installed,
-        await: awaitState,
-        // #1392 AC-7: the caller named nothing, so the answer says what was armed and what is filtered.
-        notification: describeGitHubNotificationCoverage(perspective, when),
-      };
+        return {
+          status: 'ok',
+          threadId: record.threadId,
+          task: installed,
+          await: awaitState,
+          // #1392 AC-7: the caller named nothing, so the answer says what was armed and what is filtered.
+          notification: describeGitHubNotificationCoverage(perspective, when),
+        };
+      });
     } catch (error) {
+      if (error instanceof ProofAdmissionUnavailable) {
+        reply.status(503);
+        return { error: 'Review-result coverage unavailable — try again later' };
+      }
       if (
         isTrackingRegistrationConflict(error) ||
         (error instanceof Error && 'code' in error && error.code === TASK_SUBJECT_ALREADY_EXISTS)
