@@ -62,6 +62,7 @@ describe('F247 normal owner-Chrome product chain', () => {
         {
           registry: new InvocationRegistry(),
           sessionManager: {},
+          messageStore,
           threadStore,
           apiUrl: 'http://localhost:0',
           cloudInvokeBridge: {

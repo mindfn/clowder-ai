@@ -30,6 +30,19 @@ async function drain(generator) {
   return messages;
 }
 
+function sourceRead(id) {
+  if (!['source-message-9', 'source-message-parallel-4', 'source-message-parallel-5'].includes(id)) return null;
+  return {
+    id,
+    threadId: 'thread-f247',
+    userId: 'alice',
+    from: { kind: 'agent', catId: 'codex-sol' },
+    catId: 'codex-sol',
+    content: '@gpt-pro verify the live bridge',
+    timestamp: 1,
+  };
+}
+
 function makeParallelDeps({ bridge }) {
   let messageSeq = 0;
   return {
@@ -53,6 +66,7 @@ function makeParallelDeps({ bridge }) {
       sessionManager: {},
       threadStore: makeThreadStore(),
       apiUrl: 'http://localhost:0',
+      messageStore: { getById: async (id) => sourceRead(id) },
       cloudInvokeBridge: bridge,
       cloudReturnGrantStore: { issue: async () => ({ ok: true, status: 'issued' }) },
     },
@@ -62,7 +76,7 @@ function makeParallelDeps({ bridge }) {
         threadId: message.threadId ?? 'thread-f247',
         ...message,
       }),
-      getById: async () => null,
+      getById: async (id) => sourceRead(id),
       getRecent: async () => [],
       getMentionsFor: async () => [],
       getRecentMentionsFor: async () => [],
@@ -113,6 +127,7 @@ describe('F247 cloud runtime terminal contract', () => {
           sessionManager: {},
           threadStore: makeThreadStore(),
           apiUrl: 'http://localhost:0',
+          messageStore: { getById: async (id) => sourceRead(id) },
           cloudInvokeBridge: {
             dispatch: async () => ({ kind: 'fallback', reason: 'needs-binding', detail: 'route absent' }),
           },
@@ -142,6 +157,7 @@ describe('F247 cloud runtime terminal contract', () => {
           sessionManager: {},
           threadStore: makeThreadStore(),
           apiUrl: 'http://localhost:0',
+          messageStore: { getById: async (id) => sourceRead(id) },
           cloudInvokeBridge: {
             dispatch: async (params) => {
               bridgeCalls.push(params);
@@ -204,7 +220,7 @@ describe('F247 cloud runtime terminal contract', () => {
     assert.deepEqual(fallbackStatus.outboundReceipt, {
       v: 1,
       sourceMessageId: 'source-message-9',
-      sourceSender: { kind: 'cat', id: 'codex-sol', invocationId: 'parent-invocation' },
+      sourceSender: { kind: 'cat', id: 'codex-sol' },
       dispatchInvocationId: createdPayload.invocationId,
       targetCatId: 'gpt-pro',
       status: 'failed',
@@ -226,6 +242,7 @@ describe('F247 cloud runtime terminal contract', () => {
           sessionManager: {},
           threadStore: makeThreadStore(),
           apiUrl: 'http://localhost:0',
+          messageStore: { getById: async (id) => sourceRead(id) },
           cloudInvokeBridge: {
             dispatch: async () => ({
               kind: 'sent',
@@ -261,7 +278,6 @@ describe('F247 cloud runtime terminal contract', () => {
     assert.deepEqual(outboundReceipt.sourceSender, {
       kind: 'cat',
       id: 'codex-sol',
-      invocationId: 'parent-invocation',
     });
     assert.equal(outboundReceipt.status, 'sent');
     assert.equal(outboundReceipt.transport, 'host');
@@ -355,6 +371,7 @@ describe('F247 cloud runtime terminal contract', () => {
             },
           },
           apiUrl: 'http://localhost:0',
+          messageStore: { getById: async (id) => sourceRead(id) },
           cloudInvokeBridge: {
             dispatch: async (params) => {
               bridgeCalls.push(params);
