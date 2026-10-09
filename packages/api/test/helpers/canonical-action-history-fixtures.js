@@ -88,14 +88,19 @@ function recordHolderExecution({ current, admitted, messages, records, turns }, 
 }
 
 /** Real pending owner and durable source/response/child/parent; no receipt reconstruction. */
-export async function canonicalActionFixture({ status = 'completed', leaseChanges = {}, legacyKey = false } = {}) {
+export async function canonicalActionFixture({
+  status = 'completed',
+  leaseChanges = {},
+  legacyKey = false,
+  stores = {},
+} = {}) {
   const current = lease(leaseChanges);
   const fence = buildActionSuccessorFence(current, current.dispatchId);
-  const ledger = new InMemoryQueueLedgerStore();
-  const queue = new InvocationQueue(ledger);
-  const messages = new MessageStore();
-  const records = new InvocationRecordStore();
-  const turns = new InMemoryTurnExecutionStore();
+  const ledger = stores.ledger ?? new InMemoryQueueLedgerStore();
+  const queue = stores.queue ?? new InvocationQueue(ledger);
+  const messages = stores.messages ?? new MessageStore();
+  const records = stores.records ?? new InvocationRecordStore();
+  const turns = stores.turns ?? new InMemoryTurnExecutionStore();
   const admitted = await queue.appendAndEnqueueDurable(
     messages,
     {

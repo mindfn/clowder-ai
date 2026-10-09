@@ -7,9 +7,13 @@ import { buildActionSuccessorFence } from '../dist/domains/ball-custody/ActionSu
 import { canonicalizeActionTerminalPredicate } from '../dist/domains/ball-custody/ActionTerminalPredicateCatalog.js';
 import { InvocationQueue } from '../dist/domains/cats/services/agents/invocation/InvocationQueue.js';
 import { InvocationRegistry } from '../dist/domains/cats/services/agents/invocation/InvocationRegistry.js';
+import { InMemoryQueueLedgerStore } from '../dist/domains/cats/services/agents/invocation/queue-ledger/InMemoryQueueLedgerStore.js';
+import { InMemoryTurnExecutionStore } from '../dist/domains/cats/services/stores/memory/InMemoryTurnExecutionStore.js';
+import { InvocationRecordStore } from '../dist/domains/cats/services/stores/ports/InvocationRecordStore.js';
 import { MessageStore } from '../dist/domains/cats/services/stores/ports/MessageStore.js';
 import { ThreadStore } from '../dist/domains/cats/services/stores/ports/ThreadStore.js';
 import { callbacksRoutes } from '../dist/routes/callbacks.js';
+import { canonicalActionFixture } from './helpers/canonical-action-history-fixtures.js';
 
 const action = {
   subjectRef: 'subject:task:task-4058',
@@ -53,7 +57,11 @@ function carrierLease(sourceThreadId, targetThreadId) {
   };
 }
 
-async function appendCarrier(messageStore, invocationQueue, lease, state) {
+async function appendCarrier(messageStore, invocationQueue, lease, state, stores) {
+  if (state === 'interrupted') {
+    const f = await canonicalActionFixture({ status: 'interrupted', leaseChanges: lease, stores });
+    return f.admitted.message;
+  }
   const fence = buildActionSuccessorFence(lease, lease.dispatchId);
   const from = { kind: 'agent', catId: lease.predecessorCatId };
   const message = await messageStore.append({
@@ -104,16 +112,34 @@ describe('direct action carrier restart recovery', () => {
   let lease;
   let unavailable;
   let registry;
+  let stores;
 
   beforeEach(async () => {
     app = Fastify();
     messageStore = new MessageStore();
-    invocationQueue = new InvocationQueue();
+    const ledger = new InMemoryQueueLedgerStore();
+    invocationQueue = new InvocationQueue(ledger);
+    stores = {
+      ledger,
+      queue: invocationQueue,
+      messages: messageStore,
+      records: new InvocationRecordStore(),
+      turns: new InMemoryTurnExecutionStore(),
+    };
     const threadStore = new ThreadStore();
     registry = new InvocationRegistry();
     source = await threadStore.create('user-1', 'Author');
     target = await threadStore.create('user-1', 'Reviewer');
     auth = await registry.create('user-1', 'opus', source.id);
+    stores.turns.createRunning({
+      invocationId: auth.invocationId,
+      parentInvocationId: auth.invocationId,
+      threadId: source.id,
+      userId: 'user-1',
+      catId: 'opus',
+      executionKind: 'ordinary',
+      startedAt: Date.now(),
+    });
     lease = carrierLease(source.id, target.id);
     unavailable = [];
 
@@ -124,11 +150,8 @@ describe('direct action carrier restart recovery', () => {
       invocationQueue,
       socketManager: { broadcastAgentMessage() {}, broadcastToRoom() {}, emitToUser() {} },
       router: { async *routeExecution() {}, getExecutions: () => [] },
-      invocationRecordStore: {
-        create: () => ({ outcome: 'created', invocationId: 'child-invocation' }),
-        update() {},
-        get: () => null,
-      },
+      invocationRecordStore: stores.records,
+      turnExecutionStore: stores.turns,
       queueProcessor: {
         async requestDrain() {},
         async tryAutoExecute() {},
@@ -173,7 +196,7 @@ describe('direct action carrier restart recovery', () => {
   });
 
   test('re-establishes exact active-generation custody after runtime interruption', async () => {
-    await appendCarrier(messageStore, invocationQueue, lease, 'interrupted');
+    await appendCarrier(messageStore, invocationQueue, lease, 'interrupted', stores);
     const response = await post('review-4058-recover-interrupted');
 
     assert.equal(response.statusCode, 200, response.body);
@@ -184,7 +207,7 @@ describe('direct action carrier restart recovery', () => {
   });
 
   test('same-client retry observes an atomically admitted replacement carrier', async () => {
-    await appendCarrier(messageStore, invocationQueue, lease, 'interrupted');
+    await appendCarrier(messageStore, invocationQueue, lease, 'interrupted', stores);
     const clientMessageId = 'review-4058-crash-after-append';
     const fence = buildActionSuccessorFence(lease, lease.dispatchId);
     const replacement = await invocationQueue.appendAndEnqueueDurable(
@@ -229,28 +252,30 @@ describe('direct action carrier restart recovery', () => {
     const recoveryKey = () => `action-carrier-recovery:${lease.leaseId}:${lease.generation}`;
     const replacement = () => messageStore.getByIdempotencyKey('user-1', target.id, recoveryKey());
 
-    test('consecutive failures keep the replacement queued, and the first healthy retry delivers exactly one entry', async () => {
-      appendCarrier(messageStore, lease, 'interrupted');
-      const healthyAdmission = messageStore.initializeQueueCustodyAdmission.bind(messageStore);
-      messageStore.initializeQueueCustodyAdmission = () => {
+    test('consecutive atomic failures publish no replacement, and the first healthy retry admits exactly one entry', async () => {
+      await appendCarrier(messageStore, invocationQueue, lease, 'interrupted', stores);
+      const healthyAdmission = invocationQueue.appendAndEnqueueDurable.bind(invocationQueue);
+      let failedAdmissions = 0;
+      invocationQueue.appendAndEnqueueDurable = () => {
+        failedAdmissions++;
         throw new Error('admission store unavailable');
       };
 
       const first = await post('review-4058-retry');
       const second = await post('review-4058-retry');
 
-      assert.equal(first.statusCode, 503, first.body);
-      assert.equal(second.statusCode, 503, 'a retry that could not deliver is pending, not a handled duplicate');
-      assert.equal(second.json().messageId, first.json().messageId);
-      assert.equal(replacement().deliveryStatus, 'queued', 'a failed retry must not mark the carrier delivered');
+      assert.equal(first.statusCode, 500, first.body);
+      assert.equal(second.statusCode, 500, 'a rejected atomic request is never an accepted duplicate');
+      assert.equal(failedAdmissions, 2, 'both retries must actually reach the failed atomic dependency');
+      assert.equal(replacement(), null, 'failed atomic admission must publish neither source nor pending work');
       assert.equal(invocationQueue.list(target.id, 'user-1').length, 0);
 
-      messageStore.initializeQueueCustodyAdmission = healthyAdmission;
+      invocationQueue.appendAndEnqueueDurable = healthyAdmission;
       const third = await post('review-4058-retry');
       assert.equal(third.statusCode, 200, third.body);
       const queued = invocationQueue.list(target.id, 'user-1');
       assert.equal(queued.length, 1);
-      assert.equal(queued[0].messageId, first.json().messageId);
+      assert.equal(queued[0].payload.messageId, replacement().id);
 
       const again = await post('review-4058-retry');
       assert.equal(again.statusCode, 200, again.body);
@@ -258,18 +283,38 @@ describe('direct action carrier restart recovery', () => {
     });
 
     test('a failure BEFORE durable admission is not promised to startup reconciliation', async () => {
-      appendCarrier(messageStore, lease, 'interrupted');
-      messageStore.initializeQueueCustodyAdmission = () => {
+      await appendCarrier(messageStore, invocationQueue, lease, 'interrupted', stores);
+      let attempts = 0;
+      invocationQueue.appendAndEnqueueDurable = () => {
+        attempts++;
         throw new Error('admission write unavailable');
       };
 
       const response = await post('review-4058-no-admission');
 
-      assert.equal(response.statusCode, 503, response.body);
-      assert.equal(response.json().kind, 'action_carrier_retry_required');
-      assert.equal(response.json().admission, 'not_persisted');
-      assert.doesNotMatch(response.json().message, /startup/i);
-      assert.equal(replacement().queueCustodyAdmission, undefined);
+      assert.equal(response.statusCode, 500, response.body);
+      assert.equal(attempts, 1);
+      assert.equal(replacement(), null);
+      assert.equal(invocationQueue.list(target.id, 'user-1').length, 0);
+      assert.doesNotMatch(response.body, /startup|recovery_pending/);
+    });
+    test('lost atomic commit receipt replays the existing carrier without a second admission', async () => {
+      await appendCarrier(messageStore, invocationQueue, lease, 'interrupted', stores);
+      const healthyAdmission = invocationQueue.appendAndEnqueueDurable.bind(invocationQueue);
+      let commits = 0;
+      invocationQueue.appendAndEnqueueDurable = async (...args) => {
+        commits++;
+        await healthyAdmission(...args);
+        throw new Error('commit receipt lost');
+      };
+      const first = await post('review-4058-lost-receipt');
+      assert.equal(first.statusCode, 500);
+      const committedId = replacement().id;
+      const again = await post('review-4058-lost-receipt');
+      assert.equal(again.statusCode, 200, again.body);
+      assert.equal(commits, 1);
+      assert.equal(replacement().id, committedId);
+      assert.equal(invocationQueue.list(target.id, 'user-1').length, 1);
     });
   });
 });

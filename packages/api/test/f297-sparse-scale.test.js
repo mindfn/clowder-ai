@@ -93,6 +93,23 @@ async function buildScaleFixture() {
     });
     await recordStore.update(created.invocationId, { status: 'running' });
     invocationTracker.start(id, 'opus5', USER_ID, ['opus5'], created.invocationId);
+    assert.equal(
+      invocationTracker.bindLifecycleActiveRun(
+        {
+          threadId: id,
+          targetId: 'opus5',
+          invocationId: `child-${created.invocationId}`,
+          responseMessageId: `response-${created.invocationId}`,
+          inputEntryIds: [],
+          inputMessageIds: [],
+          privateInputEntryIds: [],
+          startedAt: Date.now(),
+        },
+        created.invocationId,
+      ),
+      true,
+      'scale fixture must publish an exact admitted member identity',
+    );
   }
 
   const service = createActiveExecutionService({

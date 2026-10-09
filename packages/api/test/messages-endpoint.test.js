@@ -5,7 +5,20 @@
 import assert from 'node:assert/strict';
 import { afterEach, beforeEach, describe, it } from 'node:test';
 import Fastify from 'fastify';
+import { InvocationQueue } from '../dist/domains/cats/services/agents/invocation/InvocationQueue.js';
+import { InMemoryQueueLedgerStore } from '../dist/domains/cats/services/agents/invocation/queue-ledger/InMemoryQueueLedgerStore.js';
 import { canonicalTestMessageInput } from './helpers/message-from-fixtures.js';
+
+function refusalDeliveryDependencies() {
+  return {
+    invocationQueue: new InvocationQueue(new InMemoryQueueLedgerStore()),
+    queueProcessor: {
+      requestDrain() {
+        assert.fail('rejected thread must not schedule an execution');
+      },
+    },
+  };
+}
 
 describe('GET /api/messages', () => {
   let app;
@@ -61,7 +74,7 @@ describe('GET /api/messages', () => {
     };
     messageStore.append({
       userId: 'default-user',
-      catId: null,
+      from: { kind: 'user', userId: 'default-user' },
       content: '请保留手写文字',
       mentions: [],
       timestamp: 1000,
@@ -182,6 +195,7 @@ describe('GET /api/messages', () => {
     const receipt = body.messages.find((message) => message.source?.connector === 'cloud-bridge-status');
     assert.equal(receipt.replyTo, source.id);
     assert.deepEqual(receipt.replyPreview, {
+      from: { kind: 'agent', catId: 'codex-sol' },
       senderCatId: 'codex-sol',
       content: 'Please inspect the source-bound transport behavior',
     });
@@ -1148,6 +1162,7 @@ describe('POST /api/messages orphan rejection (#21)', () => {
 
     const app = Fastify();
     await app.register(messagesRoutes, {
+      ...refusalDeliveryDependencies(),
       registry: new InvocationRegistry(),
       messageStore: new MessageStore(),
       socketManager: { broadcastAgentMessage: () => {}, broadcastToRoom: () => {} },
@@ -1187,6 +1202,7 @@ describe('POST /api/messages rejects soft-deleted thread (Phase D P1)', () => {
 
     const app = Fastify();
     await app.register(messagesRoutes, {
+      ...refusalDeliveryDependencies(),
       registry: new InvocationRegistry(),
       messageStore: new MessageStore(),
       socketManager: { broadcastAgentMessage: () => {}, broadcastToRoom: () => {} },
@@ -1249,6 +1265,7 @@ describe('POST /api/messages delete-guard protection', () => {
 
     const app = Fastify();
     await app.register(messagesRoutes, {
+      ...refusalDeliveryDependencies(),
       registry: new InvocationRegistry(),
       messageStore,
       socketManager: { broadcastAgentMessage: () => {}, broadcastToRoom: () => {} },

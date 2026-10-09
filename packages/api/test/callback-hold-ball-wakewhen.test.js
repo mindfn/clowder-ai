@@ -618,7 +618,10 @@ describe('F167 Phase P: wakeWhen cancel/replace/delivery tests', () => {
 
     await tryAutoCancelPendingHolds('thread-auto-retire', deps);
 
-    assert.deepEqual(deps._removedIds, ['hold-ball-auto-retire']);
+    assert.deepEqual(deps._removedIds, [], 'typed terminal facts retain their durable task identity');
+    assert.equal(deps._insertedTasks[0].enabled, false);
+    assert.equal(deps._insertedTasks[0].params.holdLifecycle.status, 'cancelled_by_user');
+    assert.deepEqual(deps._unregisteredIds, ['hold-ball-auto-retire']);
     const terminal = deps._appendedMessages.find(
       (message) => message.idempotencyKey === 'hold-ball-terminal:hold-ball-auto-retire:retired_by_user_message',
     );

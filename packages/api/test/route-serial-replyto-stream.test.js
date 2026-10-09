@@ -101,6 +101,7 @@ describe('routeSerial replyTo on stream messages', () => {
     assert.equal(codexText.replyTo, 'msg-trigger', 'live stream text should carry trigger replyTo');
     assert.deepEqual(codexText.replyPreview, {
       senderCatId: 'opus',
+      from: { kind: 'agent', catId: 'opus' },
       content: '@缅因猫 帮忙复核',
     });
     assert.equal(

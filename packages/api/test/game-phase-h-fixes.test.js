@@ -7,6 +7,8 @@
 
 import assert from 'node:assert/strict';
 import { beforeEach, describe, it } from 'node:test';
+import { InvocationQueue } from '../dist/domains/cats/services/agents/invocation/InvocationQueue.js';
+import { InMemoryQueueLedgerStore } from '../dist/domains/cats/services/agents/invocation/queue-ledger/InMemoryQueueLedgerStore.js';
 import { GameOrchestrator } from '../dist/domains/cats/services/game/GameOrchestrator.js';
 import './helpers/setup-cat-registry.js';
 
@@ -280,6 +282,12 @@ describe('Phase H P1 Fixes — definition-level regression guards', () => {
     let threadCounter = 0;
     const app = Fastify();
     await app.register(messagesRoutes, {
+      invocationQueue: new InvocationQueue(new InMemoryQueueLedgerStore()),
+      queueProcessor: {
+        requestDrain() {
+          assert.fail('game command must not dispatch an agent');
+        },
+      },
       registry: {
         get() {
           return undefined;

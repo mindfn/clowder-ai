@@ -90,46 +90,39 @@ describe('SocketManager heartbeat listener', () => {
 });
 
 describe('Frontend timeout logic (source verification)', () => {
-  it('useAgentMessages.ts has 5-minute timeout constant', async () => {
+  it('socket message projection owns no client deadline for the server execution', async () => {
     const fs = await import('node:fs/promises');
     const source = await fs.readFile(new URL('../../web/src/hooks/useAgentMessages.ts', import.meta.url), 'utf8');
 
-    // 5 * 60 * 1000 = 300000
-    assert.ok(source.includes('DONE_TIMEOUT_MS = 5 * 60 * 1000'), 'Should have 5-minute timeout constant');
+    assert.doesNotMatch(source, /DONE_TIMEOUT_MS|setTimeout\(/);
+    assert.match(source, /handleActiveAgentMessage\(msg, ctx\)/);
   });
 
-  it('useAgentMessages.ts resets timeout on each message', async () => {
+  it('every socket message dispatches to its exact active or background thread', async () => {
     const fs = await import('node:fs/promises');
     const source = await fs.readFile(new URL('../../web/src/hooks/useAgentMessages.ts', import.meta.url), 'utf8');
 
-    // Should call resetTimeout() at the start of handleAgentMessage
-    assert.ok(source.includes('resetTimeout()'), 'Should reset timeout on message');
+    assert.match(source, /msg.threadId === store.currentThreadId/);
+    assert.match(source, /handleBackgroundAgentMessage\(/);
+    assert.doesNotMatch(source, /resetTimeout\(/);
   });
 
-  // "A final done clears the timeout" is verified by behaviour in the web suite
-  // (hooks/__tests__/useAgentMessages-loading.test.ts, "done watchdog"): F117 moved done handling to
-  // agent-messages/active-terminal.ts, where it clears the watchdog only once the last running cat is done.
+  // Loading and terminal behaviour is verified by the web useAgentMessages-loading suite.
 
-  it('useAgentMessages.ts projects timeout through identity-preserving system_info', async () => {
+  it('timeout diagnostics settle the named result without a second reconciliation notice', async () => {
     const fs = await import('node:fs/promises');
     const source = await fs.readFile(new URL('../../web/src/hooks/useAgentMessages.ts', import.meta.url), 'utf8');
-    const reconciliationSource = await fs.readFile(
-      new URL('../../web/src/hooks/invocation-timeout-reconciliation.ts', import.meta.url),
+    const terminalSource = await fs.readFile(
+      new URL('../../web/src/hooks/agent-messages/active-terminal.ts', import.meta.url),
       'utf8',
     );
 
-    assert.ok(
-      source.includes('reconcileTimedOutInvocations(timeoutThreadId)'),
-      'Should reconcile canonical invocation truth when the client wait window ends',
-    );
-
-    assert.ok(
-      reconciliationSource.includes('`invocation-status-${candidate.invocationId}`') &&
-        reconciliationSource.includes('Client wait window ended') &&
-        reconciliationSource.includes("type: 'system'") &&
-        reconciliationSource.includes("let variant: ChatMessage['variant'] = 'info'") &&
-        reconciliationSource.includes('variant,'),
-      'Should preserve invocation identity in a system info reconciliation notice',
+    assert.doesNotMatch(source, /reconcileTimedOutInvocations|invocation-status-/);
+    assert.match(terminalSource, /timeoutDiagnostics.take\(threadId, msg.catId\)/);
+    assert.match(terminalSource, /if \(!stale && !target\) upsertUnansweredErrorRow/);
+    await assert.rejects(
+      fs.access(new URL('../../web/src/hooks/invocation-timeout-reconciliation.ts', import.meta.url)),
+      { code: 'ENOENT' },
     );
   });
 });

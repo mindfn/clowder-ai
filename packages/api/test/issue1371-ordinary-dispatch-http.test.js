@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
-import { settleLifecycleResponseInputs } from '../src/domains/cats/services/stores/ports/MessageStore.js';
+import { settleLifecycleResponseInputs } from '../dist/domains/cats/services/stores/ports/MessageStore.js';
 import { ordinaryDispatchFixture } from './helpers/ordinary-dispatch-fixture.js';
 
 for (const read of ['window', 'drill']) {
