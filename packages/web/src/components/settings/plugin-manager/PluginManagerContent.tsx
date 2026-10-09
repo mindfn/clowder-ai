@@ -2,10 +2,10 @@
 
 import { pluginDescriptionVariants } from '@cat-cafe/shared';
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { ConnectorPluginInstallButton } from '../../ConnectorPluginInstallButton';
 import { HubIcon } from '../../hub-icons';
 import { settingsResourceCardClass } from '../../SettingsResourceCard';
 import { SettingsText } from '../primitives/SettingsText';
+import { PluginArchiveInstallButton } from './PluginArchiveInstallButton';
 import { PluginGitInstallButton } from './PluginGitInstallButton';
 import { PluginManagerDetailCard } from './PluginManagerDetailCard';
 import { PluginListRow, PluginListSection } from './PluginManagerList';
@@ -18,11 +18,7 @@ function PluginManagerToolbar({ onGitInstall }: { onGitInstall?: (url: string) =
   return (
     <div data-plugin-manager-toolbar className="flex flex-wrap justify-end gap-2">
       {onGitInstall && <PluginGitInstallButton onInstall={onGitInstall} />}
-      <ConnectorPluginInstallButton
-        endpoint="/api/plugin-manager/plugins/install/upload"
-        label="离线安装"
-        docsHref={false}
-      />
+      <PluginArchiveInstallButton />
     </div>
   );
 }

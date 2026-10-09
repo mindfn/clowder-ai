@@ -4,6 +4,7 @@ import type { RedisClient } from '@cat-cafe/shared/utils';
 import type { DeliveryPresentationContext } from '@clowder-ai/plugin-contract';
 import { type Capability, type PluginManifest, validateManifest } from '@clowder-ai/plugin-contract';
 import { fileBasedMcpIO, type McpConfigIO } from '../../config/capabilities/capability-mcp-service.js';
+import { createThreadDeepLinkUrl, resolveFrontendBaseUrl } from '../../config/frontend-origin.js';
 import type { IConnectorThreadBindingStore } from '../../infrastructure/connectors/ConnectorThreadBindingStore.js';
 import { WhisperSttProvider } from '../../infrastructure/connectors/media/WhisperSttProvider.js';
 import { createModuleLogger } from '../../infrastructure/logger.js';
@@ -167,6 +168,8 @@ export interface DormantPluginRuntimeCompositionOptions {
   readonly threadStore?: IThreadStore;
   readonly threadBindingStore?: IConnectorThreadBindingStore;
   readonly threadOwnerUserId?: string;
+  readonly threadProjections?: import('./host-surface/plugin-thread-projections.js').PluginThreadProjectionDeps;
+  readonly threadDeepLinkUrl?: (threadId: string) => string;
   readonly getDefaultCatId?: MessagingDomainDeps['getDefaultCatId'];
   readonly getMentionPatterns?: MessagingDomainDeps['getMentionPatterns'];
   readonly desktopExecutor?: DesktopWindowExecutor;
@@ -471,6 +474,10 @@ export function createDormantPluginRuntimeComposition(
       ? {}
       : {
           threads: {
+            ...options.threadProjections,
+            threadDeepLinkUrl:
+              options.threadDeepLinkUrl ?? createThreadDeepLinkUrl(resolveFrontendBaseUrl(process.env)),
+            messageStore: options.messageStore,
             threadStore: options.threadStore,
             bindingStore: options.threadBindingStore,
             ownerUserId: options.threadOwnerUserId,

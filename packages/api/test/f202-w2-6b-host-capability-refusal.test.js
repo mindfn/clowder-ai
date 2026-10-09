@@ -90,6 +90,7 @@ test('the lookup is bounded, cycle-safe and never throws', () => {
 
 test('thread host: each of its three capabilities, refused as before and registered', async () => {
   const threads = createPluginThreadHost({
+    threadDeepLinkUrl: (id) => `https://cafe.example.test/thread/${encodeURIComponent(id)}`,
     pluginId: PLUGIN_ID,
     pluginInstanceId: INSTANCE_ID,
     ownerUserId: 'owner-1',

@@ -1823,9 +1823,11 @@ export class MessageStore {
     const matches: StoredMessage[] = [];
     const isVisible = resolveThreadMessageVisibility(options, userId);
 
-    for (let i = this.messages.length - 1; i >= 0 && matches.length < n; i--) {
-      const msg = this.messages[i]!;
-      if (msg.threadId !== threadId) continue;
+    const timeline = this.messages
+      .filter((message) => message.threadId === threadId)
+      .sort((a, b) => getTimelineOrderTime(a) - getTimelineOrderTime(b) || (a.id < b.id ? -1 : a.id > b.id ? 1 : 0));
+    for (let i = timeline.length - 1; i >= 0 && matches.length < n; i--) {
+      const msg = timeline[i]!;
       if (msg.deletedAt) continue;
       if (!isVisible(msg)) continue;
       if (userId && msg.userId !== userId && !isSystemUserMessage(msg)) continue;
@@ -2055,9 +2057,11 @@ export class MessageStore {
     const matches: StoredMessage[] = [];
     const isVisible = resolveThreadMessageVisibility(options, userId);
 
-    for (let i = this.messages.length - 1; i >= 0 && matches.length < n; i--) {
-      const msg = this.messages[i]!;
-      if (msg.threadId !== threadId) continue;
+    const timeline = this.messages
+      .filter((message) => message.threadId === threadId)
+      .sort((a, b) => getTimelineOrderTime(a) - getTimelineOrderTime(b) || (a.id < b.id ? -1 : a.id > b.id ? 1 : 0));
+    for (let i = timeline.length - 1; i >= 0 && matches.length < n; i--) {
+      const msg = timeline[i]!;
       if (msg.deletedAt) continue;
       if (!isVisible(msg)) continue;
       if (userId && msg.userId !== userId && !isSystemUserMessage(msg)) continue;

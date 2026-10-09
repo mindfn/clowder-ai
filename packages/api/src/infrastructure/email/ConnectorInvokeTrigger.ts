@@ -167,7 +167,7 @@ export interface ConnectorInvokeTriggerOptions {
   readonly queueProcessor?: QueueProcessor;
   /** Gate 2: exact queued-source CAS used when recovery must replace an absent carrier. */
   readonly queueCustodyCoordinator?: QueuedMessageCustodyCoordinator;
-  readonly outboundHook?: OutboundDeliveryHook;
+  readonly outboundHook?: Pick<OutboundDeliveryHook, 'deliver'>;
   readonly streamingHook?: StreamingOutboundHookLike;
   readonly threadMetaLookup?: (threadId: string) => ThreadMeta | undefined | Promise<ThreadMeta | undefined>;
   /** Per-cat outbound deliver timeout in ms (default 10000). Prevents hanging deliver from blocking cleanup. */
@@ -240,8 +240,8 @@ export class ConnectorInvokeTrigger {
   }
 
   /** Late-bind outbound hook (set after gateway bootstrap) */
-  setOutboundHook(hook: OutboundDeliveryHook): void {
-    (this.opts as { outboundHook?: OutboundDeliveryHook }).outboundHook = hook;
+  setOutboundHook(hook: Pick<OutboundDeliveryHook, 'deliver'>): void {
+    (this.opts as { outboundHook?: Pick<OutboundDeliveryHook, 'deliver'> }).outboundHook = hook;
   }
 
   /** Late-bind streaming hook (set after gateway bootstrap) */

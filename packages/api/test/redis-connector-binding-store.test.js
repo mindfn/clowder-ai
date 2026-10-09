@@ -69,6 +69,18 @@ describe('RedisConnectorThreadBindingStore', { skip: redisIsolationSkipReason(RE
     assert.equal(typeof binding.createdAt, 'number');
   });
 
+  it('disconnect atomically rejects stale or foreign bindings and updates both indexes', async () => {
+    const shown = await store.bind('arbitrary.plugin', 'room/1', 'old-thread', 'owner');
+    const latest = await store.bind('arbitrary.plugin', 'room/1', 'new-thread', 'owner');
+    assert.equal(await store.removeIfMatches(shown), false);
+    assert.equal(await store.removeIfMatches({ ...latest, userId: 'other' }), false);
+    assert.equal((await store.getByExternal('arbitrary.plugin', 'room/1')).threadId, 'new-thread');
+    assert.equal(await store.removeIfMatches(latest), true);
+    assert.deepEqual(await store.getByThread('new-thread'), []);
+    assert.deepEqual(await store.listByUser('arbitrary.plugin', 'owner'), []);
+    assert.equal(await store.removeIfMatches(latest), false);
+  });
+
   it('getByExternal returns the bound thread', async () => {
     await store.bind('feishu', 'oc_chat_123', 'thread-abc', 'user-1');
     const result = await store.getByExternal('feishu', 'oc_chat_123');

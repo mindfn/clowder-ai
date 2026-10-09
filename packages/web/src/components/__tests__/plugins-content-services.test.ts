@@ -9,7 +9,9 @@ vi.mock('@/utils/api-client', () => ({
 import { apiFetch } from '@/utils/api-client';
 import { PluginsContent } from '../settings/PluginsContent';
 
-describe('PluginsContent — GitHub plugin config', () => {
+import { catalog, jsonResponse, managerResponse } from './plugin-manager-compat-fixture';
+
+describe('PluginsContent — Manager plugin config', () => {
   let container: HTMLDivElement;
   let root: Root;
   const mockFetch = apiFetch as ReturnType<typeof vi.fn>;
@@ -45,58 +47,20 @@ describe('PluginsContent — GitHub plugin config', () => {
     });
   }
 
-  it('renders GitHub plugin without fetching services', async () => {
+  it('does not invent a builtin GitHub row or fetch services when the Manager is empty', async () => {
+    mockFetch.mockResolvedValue(jsonResponse({ plugins: [], catalog }));
     await renderPluginsContent();
-
-    expect(container.textContent).toContain('GitHub');
-    expect(container.textContent).toContain('内置插件');
-    expect(mockFetch).not.toHaveBeenCalledWith('/api/services');
+    expect(container.textContent).not.toContain('GitHub');
+    expect(mockFetch.mock.calls.some(([path]) => path === '/api/services' || path === '/api/plugins')).toBe(false);
   });
 
-  it('renders expandable GitHub token config via plugin framework', async () => {
-    mockFetch.mockImplementation(async (path: string) => {
-      if (path === '/api/plugins') {
-        return {
-          ok: true,
-          json: async () => ({
-            plugins: [
-              {
-                id: 'github',
-                name: 'GitHub',
-                version: '1.0.0',
-                icon: 'github',
-                iconBg: '#24292e',
-                status: 'configured',
-                hasHealthCheck: false,
-                config: [
-                  {
-                    envName: 'GITHUB_TOKEN',
-                    label: 'Personal Access Token',
-                    sensitive: true,
-                    currentValue: null,
-                  },
-                ],
-                resources: [],
-              },
-            ],
-          }),
-        };
-      }
-      return { ok: true, json: async () => ({ ok: true }) };
-    });
-
+  it('opens GitHub token configuration supplied by the generic Manager', async () => {
+    mockFetch.mockImplementation(async (path: string) => managerResponse(path));
     await renderPluginsContent();
-
-    const githubButton = Array.from(container.querySelectorAll('button')).find((button) =>
-      button.textContent?.includes('GitHub'),
-    );
-    expect(githubButton).toBeTruthy();
-
-    await act(async () => {
-      githubButton?.dispatchEvent(new MouseEvent('click', { bubbles: true }));
-    });
-
-    expect(container.textContent).toContain('Personal Access Token');
-    expect(container.querySelector('[data-testid="field-GITHUB_TOKEN"]')).toBeTruthy();
+    const row = container.querySelector('[data-plugin-id="github"]');
+    expect(row).toBeTruthy();
+    await act(async () => row?.dispatchEvent(new MouseEvent('click', { bubbles: true })));
+    await vi.waitFor(() => expect(container.textContent).toContain('Personal Access Token'));
+    expect(container.querySelector('#plugin-manager-github-GITHUB_TOKEN')).toBeTruthy();
   });
 });

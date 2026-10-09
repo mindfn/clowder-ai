@@ -3,6 +3,7 @@ import { mkdir, mkdtemp, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { basename, join } from 'node:path';
 import { test } from 'node:test';
+import { createThreadDeepLinkUrl } from '../dist/config/frontend-origin.js';
 import { MessageStore } from '../dist/domains/cats/services/stores/ports/MessageStore.js';
 import { ThreadStore } from '../dist/domains/cats/services/stores/ports/ThreadStore.js';
 import { createMessagingDomain } from '../dist/domains/messaging/index.js';
@@ -318,7 +319,14 @@ function hostOf(records, options = {}) {
       readConfig: async () => undefined,
       readSecret: async () => undefined,
     },
-    ...(options.threads === undefined ? {} : { threads: options.threads }),
+    ...(options.threads === undefined
+      ? {}
+      : {
+          threads: {
+            threadDeepLinkUrl: createThreadDeepLinkUrl('https://cafe.example.test'),
+            ...options.threads,
+          },
+        }),
     ...(options.messaging === undefined ? {} : { messaging: options.messaging }),
     ...(options.media === undefined ? {} : { media: options.media }),
     log: options.log ?? (() => {}),
@@ -515,6 +523,72 @@ test('start receives only the admitted config, secrets and log Host surface', as
   ]);
 });
 
+test('module config preserves declared scalar types while secrets remain strings', async () => {
+  resetModuleLog();
+  const rootDir = await writePackage(`
+export default { create() { return { async start(host) {
+  globalThis[${JSON.stringify(MODULE_LOG)}].push(await Promise.all([
+    host.config.get('disabled'), host.config.get('enabled'), host.config.get('limit'),
+    host.secrets.get('token'),
+  ]));
+  return { actions: {}, stop() {} };
+} }; } };
+`);
+  const host = hostOf(
+    [
+      {
+        rootDir,
+        manifest: manifest({
+          configuration: [
+            { key: 'disabled', label: 'Disabled', kind: 'boolean', required: false, default: false },
+            { key: 'enabled', label: 'Enabled', kind: 'boolean', required: false },
+            { key: 'limit', label: 'Limit', kind: 'number', required: false },
+
+            { key: 'token', label: 'Token', kind: 'secret', required: false },
+          ],
+        }),
+        effectiveGrants: ['plugin.config.read', 'secret.read'],
+      },
+    ],
+    {
+      configuration: {
+        readConfig: async (_id, key) => ({ enabled: 'true', limit: '12' })[key],
+        readSecret: async () => 'false',
+      },
+    },
+  );
+  await host.router.start('instance-0');
+  assert.deepEqual(moduleLog(), [[false, true, 12, 'false']]);
+  await host.router.stop('instance-0');
+});
+
+test('module configuration rejects malformed typed storage before package activation', async () => {
+  for (const [kind, value] of [
+    ['boolean', 'FALSE'],
+    ['number', 'Infinity'],
+    ['number', '  '],
+  ]) {
+    resetModuleLog();
+    const rootDir = await writePackage(wellFormedModule);
+    const host = hostOf(
+      [
+        {
+          rootDir,
+          manifest: manifest({ configuration: [{ key: 'setting', label: 'Setting', kind, required: false }] }),
+          effectiveGrants: ['plugin.config.read'],
+        },
+      ],
+      { configuration: { readConfig: async () => value, readSecret: async () => undefined } },
+    );
+    await assert.rejects(host.router.start('instance-0'), /Invalid .* configuration field setting/);
+    assert.equal(
+      moduleLog().some((entry) => entry.call === 'start'),
+      false,
+    );
+    assert.equal(host.released.length, 1, 'failed projection releases the verified package');
+  }
+});
+
 test('module start receives caller-bound media.read and cannot read after revocation', async () => {
   resetModuleLog();
   const rootDir = await writePackage(`
@@ -601,6 +675,99 @@ test('start receives the caller-bound Host thread surface', async () => {
   });
   assert.equal((await threadStore.get(entry.systemThreadId)).createdBy, 'owner-1');
   assert.equal((await threadStore.get(entry.systemThreadId)).projectPath, '/workspace/clowder-ai');
+});
+
+test('a real builtin module consumes thread listing, safe history, roster and routing patches', async () => {
+  resetModuleLog();
+  const rootDir = await writePackage(`
+    export default { create() { return { async start(host) {
+      const thread = await host.threads.ensureByKey('projection', { title: 'Projected' });
+      await host.threads.update(thread.id, { preferredCats: ['a'] });
+      globalThis[${JSON.stringify(MODULE_LOG)}].push({
+        thread: await host.threads.get(thread.id), list: await host.threads.list({ limit: 1 }),
+        whereReply: 'Current thread: ' + (await host.threads.findByKey('projection')).deepLinkUrl,
+        messages: await host.threads.readMessages(thread.id, { limit: 5 }),
+        cats: await host.threads.getCats(thread.id),
+      });
+      return { actions: {}, stop() {} };
+    } }; } };
+  `);
+  const threadStore = new ThreadStore();
+  const messageStore = new MessageStore();
+  const bindingStore = new MemoryConnectorThreadBindingStore();
+  const existing = await threadStore.create('owner-1', 'Existing');
+  await bindingStore.bind('dev.clowder.module-fixture', 'projection', existing.id, 'owner-1');
+  await messageStore.append({ threadId: existing.id, userId: 'owner-1', catId: null, timestamp: 1, content: 'hello' });
+  const grants = ['thread.write', 'thread.listMetadata', 'thread.readContent'];
+  const pluginManifest = manifest({ features: [{ id: 'main', name: 'Main', resources: [], capabilities: grants }] });
+  const host = hostOf([{ manifest: pluginManifest, rootDir, effectiveGrants: grants }], {
+    threads: {
+      threadStore,
+      messageStore,
+      bindingStore,
+      ownerUserId: 'owner-1',
+      projectPath: '/workspace/clowder-ai',
+      cats: {
+        getAllCatIds: () => ['a'],
+        getCatDisplayName: () => 'A',
+        getCatAliases: () => ['@a'],
+        isCatAvailable: () => true,
+        getRegisteredServices: () => new Map([['a', {}]]),
+      },
+    },
+  });
+  try {
+    await host.router.start('instance-0');
+    const entry = moduleLog()[0];
+    assert.deepEqual(entry.thread.preferredCats, ['a']);
+    assert.equal(entry.list[0].id, existing.id);
+    assert.equal(entry.thread.deepLinkUrl, `https://cafe.example.test/thread/${existing.id}`);
+    assert.equal(entry.list[0].deepLinkUrl, entry.thread.deepLinkUrl);
+    assert.equal(entry.whereReply, `Current thread: https://cafe.example.test/thread/${existing.id}`);
+    assert.equal(entry.messages[0].content, 'hello');
+    assert.deepEqual(entry.cats.routableNotJoined, [{ catId: 'a', displayName: 'A', aliases: ['@a'] }]);
+    assert.deepEqual((await threadStore.get(existing.id)).preferredCats, ['a']);
+  } finally {
+    await host.router.stop('instance-0', 'host_stop');
+  }
+});
+
+test('real builtin thread surface paginates past fifty owner threads', async () => {
+  resetModuleLog();
+  const rootDir = await writePackage(`
+    export default { create() { return { async start(host) {
+      const rows = [];
+      let before;
+      for (let page = 0; page < 3; page++) {
+        const batch = await host.threads.list({ limit: 50, ...(before ? { before } : {}) });
+        rows.push(...batch);
+        if (batch.length < 50) break;
+        const last = batch.at(-1);
+        before = { lastActiveAt: last.lastActiveAt, id: last.id };
+      }
+      globalThis[${JSON.stringify(MODULE_LOG)}].push(rows.map(row => row.id));
+      return { actions: {}, stop() {} };
+    } }; } };
+  `);
+  const threadStore = new ThreadStore();
+  const expected = [];
+  for (let index = 0; index < 51; index++) {
+    const thread = await threadStore.create('owner-1', `Thread ${index}`);
+    thread.lastActiveAt = 100 - index;
+    expected.push(thread.id);
+  }
+  await threadStore.create('other-owner', 'Hidden');
+  const grants = ['thread.listMetadata'];
+  const pluginManifest = manifest({ features: [{ id: 'main', name: 'Main', resources: [], capabilities: grants }] });
+  const host = hostOf([{ manifest: pluginManifest, rootDir, effectiveGrants: grants }], {
+    threads: { threadStore, bindingStore: new MemoryConnectorThreadBindingStore(), ownerUserId: 'owner-1' },
+  });
+  try {
+    await host.router.start('instance-0');
+    assert.deepEqual(moduleLog()[0], expected);
+  } finally {
+    await host.router.stop('instance-0', 'host_stop');
+  }
 });
 
 test('start receives the caller-bound Host messaging surface', async () => {

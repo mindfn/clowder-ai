@@ -47,6 +47,7 @@ function fixtureDetail(detail: ConsolePluginManagerDetail | undefined): Partial<
     ...(detail.testable === undefined ? {} : { testable: detail.testable }),
     ...(detail.docsUrl === undefined ? {} : { docsUrl: detail.docsUrl }),
     ...(detail.configFields === undefined ? {} : { configFields: detail.configFields }),
+    ...(detail.bindings === undefined ? {} : { bindings: detail.bindings }),
   };
 }
 

@@ -57,6 +57,33 @@ const BOT_TOKEN = { key: 'BOT_TOKEN', label: 'Bot token', kind: 'secret', requir
 const API_BASE = { key: 'API_BASE', label: 'API base', kind: 'string', required: false };
 
 describe('F202 C1 — carrier-neutral configuration authority', () => {
+  test('required operations are actions, never runtime config values or store reads', async () => {
+    const reads = [];
+    const args = {
+      pluginInstanceId: INSTANCE_ID,
+      manifest: manifestWith([
+        { key: 'login', label: 'Sign in', kind: 'operation', required: true, target: ['token'], actions: [] },
+        { key: 'token', label: 'Token', kind: 'secret', required: false },
+      ]),
+      effectiveGrants: ['secret.read'],
+      configuration: {
+        async readConfig(_id, key) {
+          reads.push(key);
+          throw new Error('operation cannot be read');
+        },
+        async readSecret(_id, key) {
+          reads.push(key);
+          return 'configured-token';
+        },
+      },
+    };
+    assert.deepEqual(await resolveManifestConfiguration(args), [
+      { key: 'token', kind: 'secret', value: 'configured-token' },
+    ]);
+    assert.deepEqual(await projectManifestConfigurationEnv(args), { token: 'configured-token' });
+    assert.deepEqual(reads, ['token', 'token']);
+  });
+
   test('resolution keeps each field kind, so config and secrets stay separable namespaces', async () => {
     const resolved = await resolveManifestConfiguration(
       input({

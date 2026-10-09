@@ -67,14 +67,14 @@ it('uses the real Manager endpoint and v2 attention presentation from the persis
   expect(host.querySelector('[data-plugin-scroll-region="detail"]')).not.toBeNull();
 });
 
-it('keeps classic on the existing default page and responds to an explicit shell switch', async () => {
+it('uses the installed Manager in both shells without a second legacy plugin page', async () => {
   await render();
-  expect(fetch.mock.calls.some(([path]) => path === '/api/plugins')).toBe(true);
-  expect(host.querySelector('[data-testid="plugin-manager"]')).toBeNull();
+  await vi.waitFor(() => expect(host.querySelector('[data-plugin-id="official.failed-start"]')).not.toBeNull());
+  expect(fetch.mock.calls.some(([path]) => path === '/api/plugins')).toBe(false);
   await act(async () => writeShellPresentation('v2'));
   await vi.waitFor(() => expect(host.querySelector('[data-plugin-section="attention"]')).not.toBeNull());
   await act(async () => writeShellPresentation('classic'));
-  expect(host.querySelector('[data-testid="plugin-manager"]')).toBeNull();
+  expect(host.querySelector('[data-testid="plugin-manager"]')).not.toBeNull();
 });
 
 it('retains the classic opt-in Manager without enabling v2 attention', async () => {

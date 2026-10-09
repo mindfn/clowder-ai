@@ -30,7 +30,11 @@ import {
 import { getCatModel } from './config/cat-models.js';
 import { resolveCodexCarrierTruth } from './config/codex-cli.js';
 import { configEventBus } from './config/config-event-bus.js';
-import { resolveFrontendBaseUrl, resolveFrontendCorsOrigins } from './config/frontend-origin.js';
+import {
+  createThreadDeepLinkUrl,
+  resolveFrontendBaseUrl,
+  resolveFrontendCorsOrigins,
+} from './config/frontend-origin.js';
 import { readMountRules } from './config/mount/mount-rules-store.js';
 import {
   resolveRuntimeDeploymentCandidate,
@@ -304,14 +308,8 @@ import { createRequestReviewCommitVersionVerifier } from './infrastructure/capab
 import { CommandRegistry } from './infrastructure/commands/CommandRegistry.js';
 import { parseManifestSlashCommands } from './infrastructure/commands/manifest-commands.js';
 import { buildThreadDeepLink } from './infrastructure/connectors/connector-command-helpers.js';
-import {
-  loadConnectorGatewayConfig,
-  type PreconfiguredConnectorAutostartStatus,
-  startConnectorGateway,
-} from './infrastructure/connectors/connector-gateway-bootstrap.js';
-import { restartConnectorGateway } from './infrastructure/connectors/connector-gateway-lifecycle.js';
-import { createConnectorReloadSubscriber } from './infrastructure/connectors/connector-reload-subscriber.js';
 import type { RepoIssueComment } from './infrastructure/connectors/github-repo-event/RepoCommentPollTaskSpec.js';
+import { registerGitHubRepoWebhook } from './infrastructure/connectors/github-repo-event/register-github-repo-webhook.js';
 import { catRegistryMentionPatterns } from './infrastructure/connectors/mention-parser.js';
 import { fetchPrCiStatuses, type PrCiStatusTarget } from './infrastructure/email/ci-status-batch-fetcher.js';
 import { IssueCommentRouter } from './infrastructure/email/IssueCommentRouter.js';
@@ -425,9 +423,7 @@ import {
   communityRepoConfigRoutes,
   conciergeRoutes,
   configRoutes,
-  connectorHubRoutes,
   connectorMediaRoutes,
-  connectorPluginRoutes,
   debugInvocationExportRoutes,
   distillationOpportunityRoutes,
   distillationRoutes,
@@ -4425,9 +4421,6 @@ async function main(): Promise<void> {
       host: liveCompanionSessions,
     });
   }
-  const connectorHubOpts: Parameters<typeof connectorHubRoutes>[1] = { threadStore, redis: redisClient ?? undefined };
-  await app.register(connectorHubRoutes, connectorHubOpts);
-  await app.register(connectorPluginRoutes);
   await app.register(dossierRoutes, { projectRoot: resolveActiveProjectRoot() });
 
   // F208 Phase D: operator observation staging layer (AC-D1)
@@ -5585,6 +5578,17 @@ async function main(): Promise<void> {
     threadStore,
     threadBindingStore: connectorBindingStore,
     threadOwnerUserId: privateUserId,
+    threadDeepLinkUrl: createThreadDeepLinkUrl(frontendBaseUrl),
+    threadProjections: {
+      backlogStore,
+      cats: {
+        getAllCatIds: () => [...catRegistry.getAllIds()],
+        getCatDisplayName: (id) => catRegistry.tryGet(id)?.config.displayName ?? id,
+        getCatAliases: (id) => catRegistryMentionPatterns().get(id) ?? [],
+        isCatAvailable,
+        getRegisteredServices: () => agentRegistry.getAllEntries(),
+      },
+    },
     getDefaultCatId,
     getMentionPatterns: catRegistryMentionPatterns,
     collectiveConnector: {
@@ -5773,9 +5777,11 @@ async function main(): Promise<void> {
       `live=${externalPluginRecovery.resumeRequested > 0 ? 'reconciling' : 'dormant'})`,
   );
   const { pluginManagerUploadRoutes, registerPluginManagerRoutes } = await import('./routes/plugin-manager-routes.js');
+  const { PluginManagerBindings } = await import('./domains/plugin/manager/plugin-manager-bindings.js');
   await app.register(async (managerApp) => {
     registerPluginManagerRoutes(managerApp, {
       manager: pluginManagerRuntime.manager,
+      bindings: new PluginManagerBindings(connectorBindingStore, threadStore),
       contributions: pluginRuntime.supervisor,
       asset: pluginManagerRuntime.assets,
       documentation: pluginManagerRuntime.assets,
@@ -7731,9 +7737,7 @@ async function main(): Promise<void> {
   });
 
   type StreamingHookPort = Parameters<typeof queueProcessor.setStreamingHook>[0];
-  const composeStreamingHook = (
-    legacy?: NonNullable<Awaited<ReturnType<typeof startConnectorGateway>>>['streamingHook'],
-  ): StreamingHookPort => {
+  const composeStreamingHook = (): StreamingHookPort => {
     const lifecycle = pluginRuntime.lifecycleDelivery;
     const project = async (operation: string, call: () => Promise<void>): Promise<void> => {
       try {
@@ -7743,38 +7747,24 @@ async function main(): Promise<void> {
       }
     };
     return {
-      async onStreamStart(threadId, catId, invocationId, senderHint) {
+      async onStreamStart(threadId, catId, invocationId) {
         if (catId && invocationId)
           await project('lifecycle.started', () => lifecycle.onStreamStart(threadId, catId, invocationId));
-        if (legacy)
-          await project('legacy.started', () =>
-            legacy.onStreamStart(threadId, catId as CatId, invocationId, senderHint),
-          );
       },
-      async onStreamChunk(threadId, text, invocationId) {
-        if (legacy) await project('legacy.chunk', () => legacy.onStreamChunk(threadId, text, invocationId));
-      },
+      async onStreamChunk() {},
       async onStreamEnd(threadId, text, invocationId) {
-        if (legacy) await project('legacy.ended', () => legacy.onStreamEnd(threadId, text, invocationId));
         if (invocationId) await project('lifecycle.ended', () => lifecycle.onStreamEnd(threadId, text, invocationId));
       },
       async onClosureCatchingUp(threadId, catId, invocationId) {
         if (invocationId)
           await project('lifecycle.catching_up', () => lifecycle.onClosureCatchingUp(threadId, catId, invocationId));
-        if (legacy)
-          await project('legacy.catching_up', () => legacy.onClosureCatchingUp(threadId, catId, invocationId));
       },
       async onClosureBlocked(threadId, catId, reason, invocationId) {
         if (invocationId)
           await project('lifecycle.blocked', () => lifecycle.onClosureBlocked(threadId, catId, reason, invocationId));
-        if (legacy)
-          await project('legacy.blocked', () => legacy.onClosureBlocked(threadId, catId, reason, invocationId));
       },
-      async cleanupPlaceholders(threadId, invocationId) {
-        if (legacy) await project('legacy.cleanup', () => legacy.cleanupPlaceholders(threadId, invocationId));
-      },
+      async cleanupPlaceholders() {},
       async notifyDeliveryBatchDone(threadId, chainDone, status, invocationId) {
-        if (legacy) await project('legacy.settled', () => legacy.notifyDeliveryBatchDone(threadId, chainDone));
         await project('lifecycle.settled', () =>
           lifecycle.notifyDeliveryBatchDone(threadId, chainDone, status, invocationId),
         );
@@ -7798,6 +7788,22 @@ async function main(): Promise<void> {
     bindingStore: limbEmbodimentBindingStore,
     limbRegistry,
   });
+
+  // Physical embodiment is independent of IM packages and their subscriptions.
+  const embodimentOutbound: NonNullable<typeof callbackOpts.outboundHook> = {
+    async deliver(threadId, content, catId, _rich, _meta, _origin, triggerMessageId) {
+      try {
+        await limbOutboundDelivery.deliver(threadId, content, catId as CatId | undefined, triggerMessageId);
+      } catch (err) {
+        app.log.error({ err, threadId, catId }, 'Physical limb outbound delivery failed');
+      }
+    },
+  };
+  invokeTrigger.setOutboundHook(embodimentOutbound);
+  queueProcessor.setOutboundHook(embodimentOutbound);
+  callbackOpts.outboundHook = embodimentOutbound;
+  (messagesOpts as { outboundHook?: typeof embodimentOutbound }).outboundHook = embodimentOutbound;
+  queueProcessor.setThreadMetaLookup(deliveryThreadMeta);
 
   // F167 Phase P: late-bind invokeTrigger into holdBallDeps for wakeWhen command completion.
   // holdBallDeps is defined before invokeTrigger exists, but the route handler reads
@@ -8855,139 +8861,20 @@ async function main(): Promise<void> {
   taskRunnerV2.start();
   app.log.info(`[api] F139: unified scheduler started (${taskRunnerV2.getRegisteredTasks().join(', ')})`);
 
-  // F088: Start connector gateway (best-effort, after listen)
-  const gatewayDeps = {
-    messageStore: {
-      async append(input: Parameters<typeof messageStore.append>[0]) {
-        const result = await messageStore.append(input);
-        return { id: result.id };
-      },
-      async getById(id: string) {
-        const msg = messageStore.getById?.(id);
-        if (!msg) return null;
-        const resolved = msg instanceof Promise ? await msg : msg;
-        return resolved ? { source: resolved.source } : null;
-      },
-      async getByThreadBefore(threadId: string, timestamp: number, limit?: number) {
-        return messageStore.getByThreadBefore(threadId, timestamp, limit);
-      },
-    },
-    threadStore,
-    invokeTrigger,
-    socketManager,
-    defaultUserId: 'default-user' as const,
-    // clowder-ai#910 + cloud P1: pass a getter (not a value) so runtime
-    // `PUT /api/config/default-cat` (which calls `setRuntimeDefaultCatId` →
-    // updates `_runtimeDefaultCatId`) propagates to ConnectorRouter's
-    // per-message parseMentions resolve, without needing a gateway restart.
-    // An object getter or a one-shot value would still be copied as a
-    // string into `new ConnectorRouter({ defaultCatId, ... })` and frozen.
-    defaultCatId: getDefaultCatId,
+  // Repo Inbox is a separate W3 consumer. It survives IM gateway retirement.
+  await registerGitHubRepoWebhook(connectorWebhookHandlers, {
     redis: redisClient ?? undefined,
     log: app.log,
-    agentRegistry,
-    commandRegistry,
+    defaultUserId: process.env.DEFAULT_OWNER_USER_ID || 'default-user',
     bindingStore: connectorBindingStore,
+    threadStore,
+    invokeTrigger,
     repoConfigStore: communityRepoConfigStore,
     classifyGitHubIssueComment,
-    frontendBaseUrl,
-  };
-
-  /** Re-wire all hook consumers after gateway (re)start */
-  function syncConnectorWebhookHandlers(handle: NonNullable<Awaited<ReturnType<typeof startConnectorGateway>>>): void {
-    // P1-1 fix: clear stale handlers before re-populating (hot-reload may remove connectors)
-    connectorWebhookHandlers.clear();
-    for (const [id, handler] of handle.webhookHandlers) {
-      connectorWebhookHandlers.set(id, handler);
-    }
-  }
-
-  function wireGatewayHooks(handle: NonNullable<Awaited<ReturnType<typeof startConnectorGateway>>>): void {
-    handle.outboundHook.setLimbDelivery(limbOutboundDelivery);
-    invokeTrigger.setOutboundHook(handle.outboundHook);
-    const streamingHook = composeStreamingHook(handle.streamingHook);
-    invokeTrigger.setStreamingHook(streamingHook);
-    queueProcessor.setOutboundHook(handle.outboundHook as Parameters<typeof queueProcessor.setOutboundHook>[0]);
-    queueProcessor.setStreamingHook(streamingHook);
-    (callbackOpts as { outboundHook?: typeof handle.outboundHook }).outboundHook = handle.outboundHook;
-    (messagesOpts as { outboundHook?: typeof handle.outboundHook }).outboundHook = handle.outboundHook;
-    (messagesOpts as { streamingHook?: StreamingHookPort }).streamingHook = streamingHook;
-    syncConnectorWebhookHandlers(handle);
-    (connectorHubOpts as { weixinAdapter?: unknown }).weixinAdapter = handle.weixinAdapter;
-    (connectorHubOpts as { startWeixinPolling?: () => void }).startWeixinPolling = handle.startWeixinPolling;
-    // F132 Phase E: WeCom Bot dynamic start/stop
-    (
-      connectorHubOpts as { startWeComBotStream?: (botId: string, secret: string) => Promise<void> }
-    ).startWeComBotStream = handle.startWeComBotStream;
-    (connectorHubOpts as { stopWeComBot?: () => Promise<void> }).stopWeComBot = handle.stopWeComBot;
-    // F132 bugfix: live health getter for status endpoint
-    (connectorHubOpts as { getWeComBotAdapter?: () => unknown }).getWeComBotAdapter = handle.getWeComBotAdapter;
-    (connectorHubOpts as { permissionStore?: unknown }).permissionStore = handle.permissionStore;
-    // F240: generic manifest action endpoint needs the live gateway registries/lifecycle hooks.
-    (connectorHubOpts as { pluginRegistry?: typeof handle.pluginRegistry }).pluginRegistry = handle.pluginRegistry;
-    (connectorHubOpts as { adapterRegistry?: typeof handle.adapterRegistry }).adapterRegistry = handle.adapterRegistry;
-    (connectorHubOpts as { activateConnector?: typeof handle.activateConnector }).activateConnector =
-      handle.activateConnector;
-    (connectorHubOpts as { deactivateConnector?: typeof handle.deactivateConnector }).deactivateConnector =
-      handle.deactivateConnector;
-  }
-
-  let connectorGatewayHandle: Awaited<ReturnType<typeof startConnectorGateway>> = null;
-  let connectorReloadUnsub: (() => void) | null = null;
-  const logConnectorAutostartStatus = (autostartStatus: PreconfiguredConnectorAutostartStatus) => {
-    if (autostartStatus === 'disabled-credentials-suppressed') {
-      app.log.warn(
-        { nodeEnv: process.env.NODE_ENV ?? '(unset)', autostartStatus },
-        '[api] Preconfigured connector credentials present but suppressed by lifecycle policy; use the managed `pnpm start` runtime or intentionally set CONNECTOR_GATEWAY_AUTOSTART=1 in the launching process',
-      );
-    } else if (autostartStatus === 'disabled-no-credentials') {
-      app.log.info(
-        { nodeEnv: process.env.NODE_ENV ?? '(unset)', autostartStatus },
-        '[api] Preconfigured connector autostart disabled; no preconfigured credentials detected; starting connector gateway in QR-only mode',
-      );
-    }
-  };
-  const startGatewayWithAutostartPolicy = async () => {
-    const handle = await startConnectorGateway(loadConnectorGatewayConfig(), gatewayDeps);
-    if (handle) logConnectorAutostartStatus(handle.preconfiguredAutostartStatus);
-    return handle;
-  };
-  try {
-    connectorGatewayHandle = await startGatewayWithAutostartPolicy();
-    if (connectorGatewayHandle) {
-      wireGatewayHooks(connectorGatewayHandle);
-      queueProcessor.setThreadMetaLookup(async (threadId) => {
-        const thread = await threadStore.get(threadId);
-        if (!thread) return undefined;
-        return {
-          threadShortId: threadId.slice(0, 15),
-          threadTitle: thread.title ?? undefined,
-          deepLinkUrl: buildThreadDeepLink(frontendBaseUrl, threadId),
-        };
-      });
-
-      app.log.info('[api] Connector gateway started');
-    }
-  } catch (err) {
-    app.log.warn(`[api] Connector gateway startup failed (best-effort): ${String(err)}`);
-  }
-
-  // F136 Phase 2: Always subscribe — enables self-healing when initial startup fails (P1-2)
-  const reloadSubscriber = createConnectorReloadSubscriber({
-    log: app.log,
-    debounceMs: 500,
-    async onRestart() {
-      app.log.info('[api] F136: Hot-reloading connector gateway...');
-      const newHandle = await restartConnectorGateway(connectorGatewayHandle, startGatewayWithAutostartPolicy);
-      if (newHandle) {
-        connectorGatewayHandle = newHandle;
-        wireGatewayHooks(newHandle);
-      }
-      app.log.info('[api] F136: Connector gateway hot-reload complete');
-    },
+    deliveryDeps: { messageStore, socketManager },
+  }).catch((err: unknown) => {
+    app.log.error({ err }, 'GitHub Repo Inbox webhook initialization failed');
   });
-  connectorReloadUnsub = () => reloadSubscriber.unsubscribe();
-  app.log.info('[api] Connector hot-reload subscriber active');
 
   // Graceful shutdown handler: persist Redis before exit
   let shuttingDown = false;
@@ -9032,12 +8919,6 @@ async function main(): Promise<void> {
       accountBindingSubscriber.unsubscribe();
       pushConfigUnsub?.();
       pushConfigUnsub = null;
-      connectorReloadUnsub?.();
-      try {
-        await connectorGatewayHandle?.stop();
-      } catch (err) {
-        app.log.error(`[api] ConnectorGateway stop failed: ${String(err)}`);
-      }
 
       // Stop preview gateway (F120)
       try {

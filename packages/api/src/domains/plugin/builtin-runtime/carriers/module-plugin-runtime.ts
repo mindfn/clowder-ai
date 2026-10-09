@@ -42,9 +42,11 @@ import {
   createUnavailablePluginThreadHost,
   type PluginThreadHost,
 } from '../../host-surface/plugin-thread-host.js';
+import type { PluginThreadProjectionDeps } from '../../host-surface/plugin-thread-projections.js';
 import type { BuiltinPluginPackageMaterializer } from '../../manager/builtin-package-materializer.js';
 import {
   type PluginRuntimeConfigurationPort,
+  type ResolvedConfigurationField,
   resolveManifestConfiguration,
 } from '../../manifest-configuration-projection.js';
 import type { BundledPluginRuntime } from './bundled-runtime-carrier.js';
@@ -104,7 +106,8 @@ export interface ModulePluginRuntimeOptions {
   readonly configuration: PluginRuntimeConfigurationPort;
   readonly storage?: PluginPrivateStoragePort;
   readonly taskStore?: ITaskStore;
-  readonly threads?: {
+  readonly threads?: PluginThreadProjectionDeps & {
+    readonly threadDeepLinkUrl: (threadId: string) => string;
     readonly threadStore: IThreadStore;
     readonly bindingStore: IConnectorThreadBindingStore;
     readonly ownerUserId: string;
@@ -127,6 +130,24 @@ interface LoadedModule {
   readonly located: VerifiedPluginPackage;
   readonly activation: PluginModuleActivationShape;
   readonly subscriptions: PluginMessagingSubscriptionSession;
+}
+
+/** Storage and child environments use strings; builtin config retains YAML field types. */
+function moduleConfigValue(field: ResolvedConfigurationField): unknown {
+  switch (field.kind) {
+    case 'boolean':
+      if (field.value === 'true') return true;
+      if (field.value === 'false') return false;
+      break;
+    case 'number': {
+      const value = Number(field.value);
+      if (field.value.trim().length > 0 && Number.isFinite(value)) return value;
+      break;
+    }
+    default:
+      return field.value;
+  }
+  throw new TypeError(`Invalid ${field.kind} configuration field ${field.key}`);
 }
 
 /**
@@ -214,7 +235,7 @@ export class ModulePluginRuntime implements BundledPluginRuntime {
         configuration: this.options.configuration,
       });
       const config = new Map(
-        resolved.filter((field) => field.kind !== 'secret').map((field) => [field.key, field.value]),
+        resolved.filter((field) => field.kind !== 'secret').map((field) => [field.key, moduleConfigValue(field)]),
       );
       const secrets = new Map(
         resolved.filter((field) => field.kind === 'secret').map((field) => [field.key, field.value]),
@@ -226,6 +247,7 @@ export class ModulePluginRuntime implements BundledPluginRuntime {
       });
       const threads = this.options.threads
         ? createPluginThreadHost({
+            ...this.options.threads,
             pluginId: packageRecord.pluginId,
             pluginInstanceId,
             ownerUserId: this.options.threads.ownerUserId,
