@@ -24,7 +24,7 @@ import { useGuideStore } from '@/stores/guideStore';
 import { findLatestMessageByTimeline } from '@/stores/message-timeline';
 import { useSidebarProjectionStore } from '@/stores/sidebarProjectionStore';
 import { useToastStore } from '@/stores/toastStore';
-import { API_URL, apiFetch } from '@/utils/api-client';
+import { API_URL, apiFetch, refreshApiSession } from '@/utils/api-client';
 import { invalidateSidebarProjection } from '@/utils/sidebar-thread-snapshot';
 import { getUserId } from '@/utils/userId';
 import { writeStoredSnapshot } from './named-message-writer';
@@ -445,6 +445,9 @@ export function useSocket(callbacks: SocketCallbacks, threadId?: string, foregro
 
     const socket = io(API_URL, {
       transports: ['websocket', 'polling'],
+      autoConnect: false,
+      reconnection: false,
+      withCredentials: true,
       auth: { userId: userIdRef.current },
     });
     socketRef.current = socket;
@@ -1290,13 +1293,27 @@ export function useSocket(callbacks: SocketCallbacks, threadId?: string, foregro
     // Stale-invocation watchdog: periodic probe to catch missed done(isFinal) events
     // on a still-connected socket (won't trigger reconcile-on-reconnect).
     const watchdogTimer = setInterval(checkForStaleActiveInvocations, STALE_WATCHDOG_INTERVAL_MS);
-    // Reconcile the connection before its rooms. Socket.IO can remain active
-    // without a retry after a synchronous disconnect listener throws. Its
-    // public connect() resumes that state and leaves an ongoing retry alone;
-    // inactive sockets (explicit disconnect / namespace rejection) stay closed.
+    // Socket authority is bound at handshake time. Revalidate the shared HTTP
+    // cookie before each physical connection, including API restart recovery.
+    // The existing watchdog owns retries; the manager must not race ahead with
+    // an old cookie. Explicit disconnect/namespace rejection stays closed.
+    let disposed = false;
+    let hasStartedConnection = socket.connected || socket.active;
+    let connectionSessionGate: Promise<void> | null = null;
     const resumeActiveConnection = () => {
-      if (!socket.connected && socket.active) socket.connect();
+      if (disposed || socket.connected || connectionSessionGate || (hasStartedConnection && !socket.active)) return;
+      connectionSessionGate = refreshApiSession()
+        .then(() => {
+          if (disposed || socket.connected || (hasStartedConnection && !socket.active)) return;
+          hasStartedConnection = true;
+          socket.connect();
+        })
+        .catch((error) => console.error('[ws] session recovery failed', error))
+        .finally(() => {
+          connectionSessionGate = null;
+        });
     };
+    resumeActiveConnection();
     const connectionWatchdogTimer = setInterval(() => {
       resumeActiveConnection();
       // Confirmed rooms and exhausted/rejected joins remain a no-op.
@@ -1325,6 +1342,7 @@ export function useSocket(callbacks: SocketCallbacks, threadId?: string, foregro
     }
 
     return () => {
+      disposed = true;
       socket.off('artifact_review_changed', onArtifactReviewChanged);
       socket.off('content_modification_source_saved', onContentModificationSourceSaved);
       clearInterval(watchdogTimer);

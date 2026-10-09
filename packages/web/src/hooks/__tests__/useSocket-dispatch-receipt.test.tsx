@@ -24,6 +24,7 @@ vi.mock('socket.io-client', () => ({ io: () => mockSocket }));
 
 const apiFetchMock = vi.hoisted(() => vi.fn());
 vi.mock('@/utils/api-client', () => ({
+  refreshApiSession: vi.fn(async () => {}),
   API_URL: 'http://localhost:3100',
   apiFetch: (...args: unknown[]) => apiFetchMock(...args),
 }));
