@@ -32,9 +32,12 @@ function Proof() {
   const [mode, setMode] = useState('pending');
   const pending = source('supported', true);
   if (mode === 'read' && pending.lifecycle?.dispatchRefs)
-    pending.lifecycle.dispatchRefs[0] = {
-      ...pending.lifecycle.dispatchRefs[0]!,
-      inputRead: { status: 'read', at: 22 },
+    pending.lifecycle = {
+      ...pending.lifecycle,
+      dispatchRefs: pending.lifecycle.dispatchRefs.map((ref) => ({
+        ...ref,
+        inputRead: { status: 'read' as const, at: 22 },
+      })),
     };
   const response: ChatMessage = {
     id: 'r',

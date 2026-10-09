@@ -1086,7 +1086,7 @@ export function advanceLifecycleInputDispatchMetadata(
             targetId: patch.targetId,
             phase: 'dispatched',
             statusMessageId: patch.statusMessageId,
-            dispatchedAt: patch.dispatchedAt,
+            ...(patch.dispatchedAt !== undefined ? { dispatchedAt: patch.dispatchedAt } : {}),
             ...(patch.inputRead ? { inputRead: patch.inputRead } : {}),
           },
         ],
@@ -1116,7 +1116,7 @@ export function advanceLifecycleInputDispatchMetadata(
             targetId: patch.targetId,
             phase: 'dispatched',
             statusMessageId: patch.statusMessageId,
-            dispatchedAt: patch.dispatchedAt,
+            ...(patch.dispatchedAt !== undefined ? { dispatchedAt: patch.dispatchedAt } : {}),
             ...(patch.inputRead ? { inputRead: patch.inputRead } : {}),
           },
         ],
@@ -1147,7 +1147,7 @@ export function advanceLifecycleInputDispatchMetadata(
       existing.inputRead?.status === 'read' ? existing.inputRead : (patch.inputRead ?? existing.inputRead);
     const nextRef: LifecycleDispatchRef = {
       ...existing,
-      ...(existing.dispatchedAt === undefined && patch.phase === 'dispatched'
+      ...(existing.dispatchedAt === undefined && patch.phase === 'dispatched' && patch.dispatchedAt !== undefined
         ? { dispatchedAt: patch.dispatchedAt }
         : {}),
       ...(inputRead ? { inputRead } : {}),

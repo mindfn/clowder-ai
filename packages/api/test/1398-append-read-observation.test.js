@@ -11,6 +11,13 @@ const patch = {
   dispatchedAt: 10,
 };
 const admitted = () => advance(undefined, { ...patch, inputRead: { status: 'pending' } }).lifecycle;
+test('absent optional delivery time stays absent through replay and settlement', () => {
+  const { dispatchedAt, ...withoutTime } = patch;
+  const initial = advance(undefined, withoutTime).lifecycle;
+  const settled = advance(initial, { ...withoutTime, phase: 'settled' }).lifecycle;
+  assert.equal(Object.hasOwn(settled.dispatchRefs[0], 'dispatchedAt'), false);
+  assert.equal(advance(initial, withoutTime).kind, 'replayed');
+});
 test('optional read feedback persists without changing delivery identity or phase', () => {
   const initial = admitted();
   assert.deepEqual(initial.dispatchRefs[0].inputRead, { status: 'pending' });

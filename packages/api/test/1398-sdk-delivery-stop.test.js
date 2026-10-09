@@ -30,6 +30,133 @@ class AsyncInbox {
   }
 }
 
+describe('SDK correlation does not invent optional model-read evidence', () => {
+  for (const scenario of [
+    ['delivery-error', false],
+    ['synthetic-api-error', false],
+    ['heartbeat', false],
+    ['local-command', false],
+    ['real-assistant-single', true],
+    ['consumed-error-result', true],
+  ]) {
+    it(scenario[0], async () => {
+      const [kind, consumed] = scenario;
+      const events = new AsyncInbox();
+      const controller = new AbortController();
+      let input;
+      let dispatcher;
+      const reads = [];
+      const service = new ClaudeSdkAgentService({
+        catId: 'opus',
+        model: 'claude-test',
+        l0CompilerFn: async () => 'L0',
+        queryFn: ({ prompt, options }) => {
+          input = prompt[Symbol.asyncIterator]();
+          options.abortController.signal.addEventListener('abort', () => events.close(), { once: true });
+          return {
+            close: () => events.close(),
+            interrupt: async () => {},
+            [Symbol.asyncIterator]: () => events[Symbol.asyncIterator](),
+          };
+        },
+      });
+      const output = service
+        .invoke('initial', {
+          invocationId: 'read-proof',
+          signal: controller.signal,
+          activeRunDispatch: {
+            invocationId: 'read-proof',
+            register(value) {
+              dispatcher = value;
+              return () => {};
+            },
+          },
+          toolExecutionPolicy: { mode: 'read_only', replayDeniedToolNames: [] },
+        })
+        [Symbol.asyncIterator]();
+      const initialized = output.next();
+      while (!input) await new Promise((resolve) => setImmediate(resolve));
+      await input.next();
+      events.push({ type: 'system', subtype: 'init', session_id: 'read-proof-session' });
+      await initialized;
+      await dispatcher.dispatch(
+        { text: 'append', messageIds: ['exact-source'], onInputRead: async () => reads.push('exact-source') },
+        { expectedInvocationId: 'read-proof', force: false },
+      );
+      const send = (await input.next()).value;
+      const pending = output.next();
+      const echo = { user_message_uuid: send.uuid, parent_tool_use_id: null, session_id: 'read-proof-session' };
+      switch (kind) {
+        case 'delivery-error':
+          events.push({
+            ...echo,
+            type: 'result',
+            subtype: 'error_during_execution',
+            is_error: true,
+            num_turns: 0,
+            errors: ['delivery failed'],
+            usage: { input_tokens: 0, output_tokens: 0 },
+            modelUsage: {},
+          });
+          break;
+        case 'synthetic-api-error':
+          events.push({
+            ...echo,
+            type: 'assistant',
+            error: 'authentication_failed',
+            message: { model: '<synthetic>', content: [{ type: 'text', text: 'API Error' }] },
+          });
+          break;
+        case 'heartbeat':
+          events.push({ ...echo, type: 'stream_event', user_message_uuids: [send.uuid], event: { type: 'ping' } });
+          break;
+        case 'local-command':
+          events.push({
+            ...echo,
+            type: 'result',
+            subtype: 'success',
+            local_command: '/help',
+            user_message_uuids: [send.uuid],
+            result: 'help',
+            usage: {},
+            modelUsage: {},
+          });
+          break;
+        case 'real-assistant-single':
+          events.push({
+            ...echo,
+            type: 'assistant',
+            message: { model: 'claude-test', content: [{ type: 'text', text: 'reply' }] },
+          });
+          break;
+        case 'consumed-error-result':
+          events.push({
+            ...echo,
+            type: 'result',
+            subtype: 'error_max_turns',
+            user_message_uuids: [send.uuid],
+            is_error: true,
+            num_turns: 1,
+            errors: ['turn limit'],
+            usage: { input_tokens: 10, output_tokens: 1 },
+            modelUsage: {},
+          });
+          break;
+      }
+      await new Promise((resolve) => setImmediate(resolve));
+      controller.abort();
+      events.close();
+      await pending.catch(() => {});
+      await output.return();
+      assert.deepEqual(
+        reads,
+        consumed ? ['exact-source'] : [],
+        'correlation-only feedback is not consumption evidence',
+      );
+    });
+  }
+});
+
 describe('accepted SDK input does not delay exact Stop', () => {
   it('observes only exact main-query input UUIDs without waiting for presentation persistence', async () => {
     const events = new AsyncInbox();
@@ -102,7 +229,11 @@ describe('accepted SDK input does not delay exact Stop', () => {
     events.push({ type: 'stream_event', user_message_uuid: 'unknown', event: { type: 'ping' } });
     await new Promise((resolve) => setImmediate(resolve));
     assert.deepEqual(reads, []);
-    events.push({ type: 'stream_event', user_message_uuids: [second.uuid, second.uuid], event: { type: 'ping' } });
+    events.push({
+      type: 'stream_event',
+      user_message_uuids: [second.uuid, second.uuid],
+      event: { type: 'message_start', message: { content: [] } },
+    });
     await new Promise((resolve) => setImmediate(resolve));
     assert.deepEqual(reads, ['second'], 'folded UUID is exact and duplicate proof is idempotent');
     controller.abort('user_stop');
