@@ -221,7 +221,7 @@ describe('publish_verdict eval:freshness measurement maturity', () => {
     assert.match(attribution.noFindingRecord.evidence, /owner-scoped lifecycle\/signal observations resolved/);
   });
 
-  it('writes Queue, gate, notice, and reinvoke signals into the verdict trend packet', async () => {
+  it('writes canonical Queue/History and provider signals without retired lifecycle certificates', async () => {
     const base = new FreshnessReplayProviderImpl({ fixtureRoot });
     const replay = signalReplay(await base.resolve(sourceRefs), sourceRefs, {
       status: 'ready',
@@ -244,5 +244,10 @@ describe('publish_verdict eval:freshness measurement maturity', () => {
     assert.equal(artifact.packet.dailyTrend.current.provider_notice_missed, 0);
     assert.ok(artifact.packet.evidencePacket.metricRefs.includes('metric:freshness.queued_seen'));
     assert.ok(artifact.packet.evidencePacket.metricRefs.includes('metric:freshness.provider_notice_missed'));
+    assert.equal(
+      artifact.packet.evidencePacket.metricRefs.some((ref) => /^metric:freshness\.(?:supplement_|notice_)/.test(ref)),
+      false,
+    );
+    assert.equal('notice_acked' in artifact.packet.dailyTrend.current, false);
   });
 });
