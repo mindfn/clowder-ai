@@ -30,6 +30,7 @@ export async function publishDevelopmentReturnRetirement(
     threadId: state.ownerThreadId,
     message: {
       id: message.id,
+      from: message.from,
       type: 'connector',
       content: message.content,
       source: message.source,

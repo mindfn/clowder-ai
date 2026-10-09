@@ -26,7 +26,6 @@ import { isTrackingKind } from '@cat-cafe/shared';
 import type { RedisClient } from '@cat-cafe/shared/utils';
 import {
   assertTypedWaitRegistrationInstallation,
-  parseTypedWaitRegistration,
   TYPED_WAIT_REGISTRATION_FIELD,
   type TypedWaitRegistrationSnapshot,
 } from '../../../../ball-custody/TypedWaitRegistration.js';
@@ -60,7 +59,7 @@ import {
 import { buildTaskWaitReplacement } from '../ports/TaskWaitReplacement.js';
 import { TaskKeys } from '../redis-keys/task-keys.js';
 import { DEPLOYMENT_WAIT_INDEX, listDeploymentWaitProjectionCandidates } from './deployment-wait-index.js';
-import { hydrateTask, serializeTask } from './RedisTaskCodec.js';
+import { hydrateTask, hydrateWaitRegistration, serializeTask } from './RedisTaskCodec.js';
 import { fetchRedisTasksByIds } from './RedisTaskCollectionReader.js';
 import { RedisTaskDevelopmentWorkStore } from './RedisTaskDevelopmentWorkStore.js';
 import { RedisTaskEntrustedWorkMutationStore } from './RedisTaskEntrustedWorkMutationStore.js';
@@ -107,10 +106,7 @@ async function replaceDeploymentWaitInSession(
 
 export class RedisTaskStore implements ITaskStore {
   async getWaitRegistration(taskId: string): Promise<TypedWaitRegistrationSnapshot | null> {
-    const raw = await this.redis.hgetall(TaskKeys.detail(taskId));
-    return raw.id
-      ? { task: hydrateTask(raw), receipt: parseTypedWaitRegistration(raw[TYPED_WAIT_REGISTRATION_FIELD]) }
-      : null;
+    return hydrateWaitRegistration(await this.redis.hgetall(TaskKeys.detail(taskId)));
   }
   private readonly redis: RedisClient;
   private readonly developmentWork: RedisTaskDevelopmentWorkStore;

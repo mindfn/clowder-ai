@@ -1,15 +1,18 @@
 'use client';
 
-import { getConnectorDefinition } from '@cat-cafe/shared';
 import { useSortable } from '@dnd-kit/sortable';
 import { CSS } from '@dnd-kit/utilities';
 import { LongFormReader } from '@/components/content-overflow';
 import { HOST_CONTENT_REVIEW_CONNECTOR, hostReturnHeadline } from '@/components/content-review/host-return-headline';
+import { useCatData } from '@/hooks/useCatData';
+import { useCoCreatorConfig } from '@/hooks/useCoCreatorConfig';
+import { resolveMessageSender } from '@/lib/resolve-sender';
 import type { ChatMessage } from '@/stores/chat-types';
 import type { QueueEntry } from '@/stores/chatStore';
 import { AvatarImageWithFallback } from './AvatarImageWithFallback';
 import { QueueEntryActions } from './QueueEntryActions';
 import { RoutingWarningNotice } from './RoutingWarningNotice';
+import { SenderAvatar } from './SenderAvatar';
 
 const SOURCE_CATEGORY_LABEL: Record<string, string> = {
   ci: 'CI',
@@ -109,22 +112,14 @@ function QueueEntryRow({
 
   const deliveredTargets = new Set(deliveredTargetIds);
   const targetIds = [...new Set([...entry.targetCats, ...deliveredTargets])];
-  const sourceLabel =
-    entry.from.kind === 'agent'
-      ? resolveCatName(entry.from.catId)
-      : entry.from.kind === 'external'
-        ? (getConnectorDefinition(entry.from.connectorId)?.displayName ?? entry.from.sender?.name ?? 'Connector')
-        : entry.from.kind === 'plugin'
-          ? 'Plugin'
-          : entry.from.kind === 'system'
-            ? entry.from.service
-            : ownerName;
-  const sourceAvatar =
-    entry.from.kind === 'agent'
-      ? resolveCatAvatar(entry.from.catId)
-      : entry.from.kind === 'user'
-        ? ownerAvatar
-        : undefined;
+  const coCreator = useCoCreatorConfig();
+  const { getCatById } = useCatData({ fetch: false });
+  const sender = resolveMessageSender({ from: entry.from, source: entry.messagePreview?.source }, getCatById, {
+    ...coCreator,
+    name: ownerName,
+    avatar: ownerAvatar,
+  });
+  const sourceLabel = sender.label;
   const summary =
     entry.from.kind === 'external' && entry.from.connectorId === HOST_CONTENT_REVIEW_CONNECTOR
       ? hostReturnHeadline(entry.content)
@@ -159,10 +154,8 @@ function QueueEntryRow({
         <RoutingWarningNotice warnings={entry.routingWarnings} />
         <div className="mt-1 flex flex-wrap items-center gap-x-2 gap-y-1" data-testid={`queue-route-${entry.id}`}>
           <span className="inline-flex items-center gap-1 whitespace-nowrap">
-            <AvatarImageWithFallback src={sourceAvatar} alt="" className="h-5 w-5 rounded-full object-cover" />
-            <span
-              className={`text-xs ${isAgent ? 'text-[var(--color-cocreator-primary)] font-medium' : isUrgent ? 'text-conn-red-text' : 'text-cafe-muted'}`}
-            >
+            <SenderAvatar sender={sender} />
+            <span className={`text-xs ${isAgent ? 'font-medium' : ''}`} style={{ color: sender.textColor }}>
               {sourceLabel}
             </span>
           </span>

@@ -894,6 +894,8 @@ export interface AgentClientDispatchInput {
   readonly text: string;
   readonly imagePaths?: readonly string[];
   readonly messageIds: readonly string[];
+  /** Exact adapter evidence; delivery and Stop never wait for this callback. */
+  readonly onInputRead?: () => Promise<void>;
 }
 
 export interface AgentClientDispatchOptions {
@@ -916,7 +918,7 @@ export type AgentClientDispatchResult =
 /** Live-only adapter. Durable Queue/History state must never be stored here. */
 export interface AgentClientActiveRunDispatcher {
   readonly invocationId: string;
-  readonly capabilities: { readonly append: boolean; readonly steer: boolean };
+  readonly capabilities: { readonly append: boolean; readonly steer: boolean; readonly inputReadReceipt?: boolean };
   readonly handle: AgentClientActiveRunHandle;
   dispatch(input: AgentClientDispatchInput, options: AgentClientDispatchOptions): Promise<AgentClientDispatchResult>;
 }

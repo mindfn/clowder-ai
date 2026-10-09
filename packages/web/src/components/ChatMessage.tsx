@@ -17,6 +17,7 @@ import { hexToOklch } from '@/lib/color-utils';
 import { getMentionRe, getMentionToCat } from '@/lib/mention-highlight';
 import { parseDirection, parseImplicitStructuredTargets } from '@/lib/parse-direction';
 import { CLASSIC_NAME_OPACITY } from '@/lib/readable-name-role';
+import { resolveMessageSender } from '@/lib/resolve-sender';
 import { type ChatMessage as ChatMessageType, resolveBubbleExpanded, useChatStore } from '@/stores/chatStore';
 import { getMessageTimelineOrderTime, getOrderedMessageTimeline } from '@/stores/message-timeline';
 import { setPendingCrossPostScroll } from '@/utils/crosspost-scroll-target';
@@ -105,14 +106,20 @@ function exactReplyPreview(
   message: ChatMessageType,
   timelineMessages: readonly ChatMessageType[],
 ): ChatMessageType['replyPreview'] | undefined {
-  if (message.replyPreview) return message.replyPreview;
-  if (!message.replyTo) return undefined;
+  if (message.replyPreview?.deleted) return message.replyPreview;
+  if (!message.replyTo) return message.replyPreview;
   const parents = timelineMessages.filter((candidate) => candidate.id === message.replyTo);
-  if (parents.length !== 1) return undefined;
+  if (parents.length !== 1) return message.replyPreview;
   const [parent] = parents;
   if (!parent) return undefined;
   const senderCatId = parent.from?.kind === 'agent' ? parent.from.catId : (parent.catId ?? null);
-  return { senderCatId, content: parent.content };
+  return {
+    ...message.replyPreview,
+    from: parent.from,
+    source: parent.source,
+    senderCatId,
+    content: message.replyPreview?.content ?? parent.content,
+  };
 }
 
 interface ChatMessageProps {
@@ -218,17 +225,19 @@ function ChatMessageContent({
   const crossThreadSourceThreadId = isCrossThreadProvenance(candidateSourceThreadId, renderThreadId)
     ? candidateSourceThreadId
     : undefined;
-  const isUser = message.type === 'user' && !message.catId;
+  const sender = resolveMessageSender(message, getCatById, coCreator);
+  const isUser = message.from?.kind === 'user';
   const isSystem = message.type === 'system';
   const isSummary = message.type === 'summary';
-  const isConnector = message.type === 'connector';
+  const isConnector =
+    message.from?.kind === 'external' || message.from?.kind === 'plugin' || message.type === 'connector';
   const cloudBindingRecovery = isUser ? projectCloudBindingRecovery(message, threadMessages) : undefined;
   const projectedSystemContent = message.extra?.systemInfo
     ? (formatVisibleSystemInfo(message.extra.systemInfo.payload, (catId) => resolveCatDisplayName(catId, getCatById))
         ?.content ?? message.content)
     : message.content;
 
-  const catData = message.catId ? getCatById(message.catId) : undefined;
+  const catData = message.from?.kind === 'agent' ? getCatById(message.from.catId) : undefined;
   const parsedCompanionIdentity = companionIdentitySnapshotV1Schema.safeParse(message.extra?.liveCompanion?.identity);
   const companionIdentity =
     message.type === 'assistant' &&
@@ -244,7 +253,7 @@ function ChatMessageContent({
   const catStyle = catData
     ? (() => {
         const breed = BREED_STYLES[catData.breedId ?? ''] ?? DEFAULT_BREED_STYLE;
-        const label = formatCatName(catData);
+        const label = sender.label;
         const isCallback = message.origin === 'callback';
         /* F056: Route bubble background through CSS vars so the OKLCH Tuner
          * (which writes --color-{slug}-surface) actually controls bubble color.
@@ -473,7 +482,7 @@ function ChatMessageContent({
     );
   }
 
-  if (isConnector && message.source) {
+  if (isConnector) {
     if (isConnectorSystemNotice(message)) {
       if (isLinkedCloudBindingRecoveryNotice(message, threadMessages)) return null;
       return <SystemNoticeBar message={message} />;
@@ -696,11 +705,11 @@ function ChatMessageContent({
     if (notice?.tone === 'processing') {
       return (
         <div data-message-id={message.id} data-testid="response-lifecycle-tip" className="mb-4 flex items-start gap-2">
-          {catData && message.catId ? <CatAvatar catId={message.catId} size={32} status="streaming" /> : null}
+          {catData ? <CatAvatar catId={catData.id} size={32} status="streaming" /> : null}
           <div className="min-w-0 flex-1 pt-1">
             <div className="flex items-center gap-2 text-xs">
               <span className="font-semibold" style={{ color: catStyle?.textColor }}>
-                {catStyle?.label ?? message.catId}
+                {catStyle?.label ?? sender.label}
               </span>
               <span className="text-cafe-muted">{formatTime(assistantPresentationTime)}</span>
             </div>
@@ -752,13 +761,13 @@ function ChatMessageContent({
         data-turn-execution-owner={message.extra?.turnExecution?.invocationId}
       >
         <div className="flex items-center gap-2 min-w-0">
-          {showsNameplate && message.catId && catStyle ? (
+          {showsNameplate && catData && catStyle ? (
             <>
               <CatNameplate
-                catId={message.catId}
+                catId={catData.id}
                 name={catStyle.label}
                 streaming={message.isStreaming}
-                onEditCat={onEditCat ? () => onEditCat(message.catId!) : undefined}
+                onEditCat={onEditCat && catData ? () => onEditCat(catData.id) : undefined}
               />
               <span
                 data-testid="cat-nameplate-time"
@@ -776,12 +785,12 @@ function ChatMessageContent({
                 title={
                   companionIdentity
                     ? `猫猫球 · ${companionIdentity.partner.displayName}`
-                    : (catStyle?.label ?? message.catId)
+                    : (catStyle?.label ?? sender.label)
                 }
               >
                 {companionIdentity
                   ? `猫猫球 · ${companionIdentity.partner.displayName}`
-                  : (catStyle?.label ?? message.catId)}
+                  : (catStyle?.label ?? sender.label)}
               </span>
               <span className="text-xs text-cafe-muted shrink-0">{formatTime(assistantPresentationTime)}</span>
             </>
@@ -886,14 +895,14 @@ function ChatMessageContent({
           <CompanionMessageAvatar identity={companionIdentity} />
         ) : catData ? (
           <CatAvatar
-            catId={message.catId!}
+            catId={catData.id}
             size={32}
             status={
               message.lifecycle?.kind === 'response' && message.lifecycle.status === 'processing'
                 ? 'streaming'
                 : undefined
             }
-            onClick={onEditCat && message.catId ? () => onEditCat(message.catId!) : undefined}
+            onClick={onEditCat ? () => onEditCat(catData.id) : undefined}
           />
         ) : null
       }
@@ -943,15 +952,7 @@ function ChatMessageContent({
             </div>
           ) : null}
           {!message.isStreaming && message.metadata ? <MetadataBadge metadata={message.metadata} /> : null}
-          <AppendedInputReceipts
-            response={message}
-            timelineMessages={threadMessages}
-            coCreatorName={coCreator.name}
-            getCatLabel={(catId) => {
-              const cat = getCatById(catId);
-              return cat ? formatCatName(cat) : catId;
-            }}
-          />
+          <AppendedInputReceipts response={message} timelineMessages={threadMessages} getCatById={getCatById} />
         </>
       }
     >

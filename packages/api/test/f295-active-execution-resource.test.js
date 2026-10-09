@@ -42,7 +42,14 @@ function buildDeps() {
     resolveLiveExecutions: mock.fn(async (threadId, userId) => {
       const execution = executions.get(threadId);
       if (!execution || userId !== USER_ID) return [];
-      return [{ ...execution, ownerUserId: USER_ID, controlSource: 'tracker' }];
+      return [
+        {
+          ...execution,
+          invocationId: `child-${execution.executionId}`,
+          ownerUserId: USER_ID,
+          controlSource: 'tracker',
+        },
+      ];
     }),
     cancelExactLiveInvocation: mock.fn(async () => ({ cancelled: true })),
   };
@@ -77,6 +84,37 @@ describe('F295 user/project active execution resource', () => {
 
   afterEach(async () => {
     await app?.close();
+  });
+
+  it('keeps pre-admission tracker reservations out of running replies without dropping exact cancellation', async () => {
+    deps.resolveLiveExecutions.mock.mockImplementation(async (threadId) =>
+      threadId === 'thread-a'
+        ? [
+            {
+              catId: 'codex-sol',
+              executionId: 'inv-a',
+              startedAt: 100,
+              ownerUserId: USER_ID,
+              controlSource: 'tracker',
+            },
+          ]
+        : [],
+    );
+    const list = await app.inject({
+      method: 'GET',
+      url: '/api/executions/active?projectPath=%2Fproject%2Fcafe',
+      headers: { 'x-cat-cafe-user': USER_ID },
+    });
+    assert.equal(list.statusCode, 200, list.body);
+    assert.deepEqual(list.json().executions, []);
+    const cancel = await app.inject({
+      method: 'POST',
+      url: '/api/threads/thread-a/executions/live/inv-a/cancel',
+      headers: { 'x-cat-cafe-user': USER_ID },
+      payload: { catId: 'codex-sol' },
+    });
+    assert.equal(cancel.statusCode, 200, cancel.body);
+    assert.equal(deps.cancelExactLiveInvocation.mock.callCount(), 1);
   });
 
   it('a frozen child selector cannot cancel a replacement child under the same parent execution', async () => {

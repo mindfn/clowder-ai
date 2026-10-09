@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import { InMemoryQueueLedgerStore } from '../../src/domains/cats/services/agents/invocation/queue-ledger/InMemoryQueueLedgerStore.js';
+import { InMemoryQueueLedgerStore } from '../../dist/domains/cats/services/agents/invocation/queue-ledger/InMemoryQueueLedgerStore.js';
 import { createCanonicalLiveSourceFixture } from './1398-live-source-fixture.mjs';
 
 export async function ordinaryDispatchFixture(t) {

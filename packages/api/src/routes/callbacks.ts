@@ -4629,12 +4629,14 @@ export const callbacksRoutes: FastifyPluginAsync<CallbackRoutesOptions> = async 
         : {};
       const anchorProjection: Record<string, unknown> = {
         ...anchored,
+        from: messageFrom(item),
         ...queuedProjection,
         ...localReviewProjection,
         ...(keywordTerms.length > 0 ? { relevanceScore: getKeywordScore(item) } : {}),
       };
       const fullProjection: Record<string, unknown> = {
         id: item.id,
+        from: messageFrom(item),
         threadId: effectiveThreadId,
         timestamp: item.timestamp,
         speaker: getMessageSpeakerName(item),
@@ -4649,6 +4651,7 @@ export const callbacksRoutes: FastifyPluginAsync<CallbackRoutesOptions> = async 
       };
       const oversizedProjection: Record<string, unknown> = {
         id: item.id,
+        from: messageFrom(item),
         threadId: effectiveThreadId,
         timestamp: item.timestamp,
         speaker: getMessageSpeakerName(item),

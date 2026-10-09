@@ -80,6 +80,19 @@ function makeUserMessageRetiredRunningCommandTask() {
   };
 }
 
+function fixtureActiveRun(threadId, catId, invocationId, startedAt) {
+  return {
+    threadId,
+    targetId: catId,
+    invocationId,
+    responseMessageId: `response-${invocationId}`,
+    inputEntryIds: [],
+    inputMessageIds: [],
+    privateInputEntryIds: [],
+    startedAt,
+  };
+}
+
 function buildDeps() {
   const threads = new Map([
     [
@@ -103,8 +116,14 @@ function buildDeps() {
   ]);
   const indexedThreadIds = new Set();
   const executions = new Map([
-    ['thread-a:kimi', { executionId: 'inv-a', startedAt: 100 }],
-    ['thread-b:kimi', { executionId: 'inv-b', startedAt: 200 }],
+    [
+      'thread-a:kimi',
+      { executionId: 'inv-a', startedAt: 100, activeRun: fixtureActiveRun('thread-a', 'kimi', 'inv-a', 100) },
+    ],
+    [
+      'thread-b:kimi',
+      { executionId: 'inv-b', startedAt: 200, activeRun: fixtureActiveRun('thread-b', 'kimi', 'inv-b', 200) },
+    ],
   ]);
   const cancelCalls = [];
   const processOwnerCancelCalls = [];
@@ -183,6 +202,7 @@ function buildDeps() {
       ),
       retirePrestartProcessingGroup: mock.fn(async () => 'retired'),
       processNext: mock.fn(async () => ({ started: false })),
+      requestDrain: mock.fn(async () => {}),
       isPaused: mock.fn(() => false),
       getPauseReason: mock.fn(() => undefined),
       clearPause: mock.fn(),
@@ -873,6 +893,7 @@ describe('F295 active execution projection', () => {
 
   it('F117 KD-23: a slot this process still holds keeps a slow-starting running record from read-repair', async () => {
     await app.close();
+    deps._executions.set('thread-a:kimi', { executionId: 'inv-a', startedAt: 100 });
     // kimi's slot is held for inv-a (buildDeps), but the record turned running a minute ago and no
     // response exists yet, e.g. invoke-single-cat still waits for session custody.
     const record = {
@@ -911,9 +932,10 @@ describe('F295 active execution projection', () => {
 
     assert.equal(projection.statusCode, 200, projection.body);
     assert.deepEqual(updates, [], 'a record whose slot is still held is never failed by read-repair');
-    assert.ok(
+    assert.equal(
       projection.json().executions.some((execution) => execution.executionId === 'inv-a' && execution.catId === 'kimi'),
-      'the held execution stays listed as running',
+      false,
+      'a held reservation has no executing reply before response admission',
     );
   });
 
@@ -1276,6 +1298,15 @@ describe('F295 active execution projection', () => {
         timestamp: 110,
         replyTo: source.id,
         idempotencyKey: `message-lifecycle-response:${childInvocationId}`,
+        extra: {
+          a2aFailureReturn: {
+            triggerMessageId: source.id,
+            callerCatId: 'opus5',
+            ownerAuthProvenance: 'strict',
+            parentInvocationId: parent.invocationId,
+            isFailureReport: false,
+          },
+        },
         lifecycle: {
           kind: 'response',
           orderKey: '110:response',
@@ -1313,7 +1344,7 @@ describe('F295 active execution projection', () => {
       payload: { catId: 'kimi' },
     });
 
-    assert.equal(stopped.statusCode, 200);
+    assert.equal(stopped.statusCode, 200, stopped.body);
     assert.equal(stopped.json().reconciled, true);
     assert.equal(messageStore.getById(response.id).lifecycle.status, 'failed');
     assert.equal(messageStore.getById(response.id).lifecycle.reason, 'control_plane_unavailable');
@@ -1327,6 +1358,12 @@ describe('F295 active execution projection', () => {
     ]);
     assert.equal(recordStore.get(parent.invocationId).status, 'failed');
     assert.equal(turnStore.get(childInvocationId).status, 'failed');
+    const wakes = await deps.invocationQueue.listAllDurable('thread-a');
+    assert.equal(wakes.length, 1);
+    assert.equal(wakes[0].sourceCategory, 'a2a_failure');
+    assert.deepEqual(wakes[0].targets, ['opus5']);
+    assert.equal(wakes[0].payload.messageId, response.id);
+    assert.equal(deps.queueProcessor.requestDrain.mock.callCount(), 1);
   });
 
   /** F117 KD-21: stops a turn whose R is processing while its streamed body lives only in its draft. */
@@ -1501,6 +1538,15 @@ describe('F295 active execution projection', () => {
         timestamp: 210,
         replyTo: source.id,
         idempotencyKey: `message-lifecycle-response:${failedChildId}`,
+        extra: {
+          a2aFailureReturn: {
+            triggerMessageId: source.id,
+            callerCatId: 'opus5',
+            ownerAuthProvenance: 'strict',
+            parentInvocationId: parent.invocationId,
+            isFailureReport: false,
+          },
+        },
         lifecycle: {
           kind: 'response',
           orderKey: '210:response',
@@ -1515,13 +1561,23 @@ describe('F295 active execution projection', () => {
     );
     messageStore.advanceLifecycleInputDispatch(source.id, {
       orderKey: '200:source',
-      from: { kind: 'user', userId: USER_ID },
+      from: { kind: 'agent', catId: 'opus5' },
       targetId: 'opus5',
       phase: 'dispatched',
       statusMessageId: response.id,
     });
     deps._executions.set('thread-a:kimi', {
       executionId: parent.invocationId,
+      startedAt: 210,
+      activeRun: fixtureActiveRun('thread-a', 'kimi', 'turn-sibling-live', 210),
+    });
+    turnStore.createRunning({
+      invocationId: 'turn-sibling-live',
+      parentInvocationId: parent.invocationId,
+      threadId: 'thread-a',
+      userId: USER_ID,
+      catId: 'kimi',
+      executionKind: 'ordinary',
       startedAt: 210,
     });
     deps.messageStore = messageStore;

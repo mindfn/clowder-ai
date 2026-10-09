@@ -1,18 +1,18 @@
 import assert from 'node:assert/strict';
 import Fastify from 'fastify';
 import './setup-cat-registry.js';
-import { InvocationQueue } from '../../src/domains/cats/services/agents/invocation/InvocationQueue.ts';
-import { InvocationRegistry } from '../../src/domains/cats/services/agents/invocation/InvocationRegistry.ts';
-import { InvocationTracker } from '../../src/domains/cats/services/agents/invocation/InvocationTracker.ts';
-import { QueueProcessor } from '../../src/domains/cats/services/agents/invocation/QueueProcessor.ts';
-import { InMemoryTurnExecutionStore } from '../../src/domains/cats/services/stores/memory/InMemoryTurnExecutionStore.ts';
-import { DeliveryCursorStore } from '../../src/domains/cats/services/stores/ports/DeliveryCursorStore.ts';
-import { InvocationRecordStore } from '../../src/domains/cats/services/stores/ports/InvocationRecordStore.ts';
-import { MessageStore } from '../../src/domains/cats/services/stores/ports/MessageStore.ts';
-import { LiveInbox } from '../../src/domains/concierge/live/inbox/LiveInbox.ts';
-import { MessageLiveInboxSource } from '../../src/domains/concierge/live/inbox/MessageLiveInboxSource.ts';
-import { LiveCarrierOperationGate } from '../../src/domains/concierge/live/LiveCarrierOperationGate.ts';
-import { callbacksRoutes } from '../../src/routes/callbacks.ts';
+import { InvocationQueue } from '../../dist/domains/cats/services/agents/invocation/InvocationQueue.js';
+import { InvocationRegistry } from '../../dist/domains/cats/services/agents/invocation/InvocationRegistry.js';
+import { InvocationTracker } from '../../dist/domains/cats/services/agents/invocation/InvocationTracker.js';
+import { QueueProcessor } from '../../dist/domains/cats/services/agents/invocation/QueueProcessor.js';
+import { InMemoryTurnExecutionStore } from '../../dist/domains/cats/services/stores/memory/InMemoryTurnExecutionStore.js';
+import { DeliveryCursorStore } from '../../dist/domains/cats/services/stores/ports/DeliveryCursorStore.js';
+import { InvocationRecordStore } from '../../dist/domains/cats/services/stores/ports/InvocationRecordStore.js';
+import { MessageStore } from '../../dist/domains/cats/services/stores/ports/MessageStore.js';
+import { LiveInbox } from '../../dist/domains/concierge/live/inbox/LiveInbox.js';
+import { MessageLiveInboxSource } from '../../dist/domains/concierge/live/inbox/MessageLiveInboxSource.js';
+import { LiveCarrierOperationGate } from '../../dist/domains/concierge/live/LiveCarrierOperationGate.js';
+import { callbacksRoutes } from '../../dist/routes/callbacks.js';
 import { appendTestLifecycleResponseSource } from './message-from-fixtures.js';
 
 // Actual atomic Queue admission, callback auth, exact Live child and close gate.

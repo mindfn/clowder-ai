@@ -51,6 +51,31 @@ interface ClaudeSdkAgentServiceOptions {
 const DEFAULT_ACTIVE_RUN_CONTROL_TIMEOUT_MS = 15_000;
 const MAX_SDK_STDERR_CHARS = 4_000;
 
+/** SDK send correlation and model consumption have different contracts. */
+function consumedClientInputIds(raw: Record<string, unknown>): readonly unknown[] {
+  if (raw.parent_tool_use_id) return [];
+  switch (raw.type) {
+    case 'assistant':
+      // Synthetic API-error assistants also echo the triggering send UUID.
+      if (raw.error !== undefined) return [];
+      break;
+    case 'stream_event': {
+      const event = raw.event as { type?: unknown } | null | undefined;
+      if (!event || typeof event !== 'object' || typeof event.type !== 'string' || event.type === 'ping') return [];
+      break;
+    }
+    case 'result':
+      // The consumed list is absent on failed delivery/zeroed results. A single
+      // result UUID is only a join key; num_turns and eventual success are not proof.
+      if (raw.local_command !== undefined) return [];
+      return Array.isArray(raw.user_message_uuids) ? raw.user_message_uuids : [];
+    default:
+      return [];
+  }
+  // Older main-query reply frames have the documented single-UUID form.
+  return Array.isArray(raw.user_message_uuids) ? raw.user_message_uuids : [raw.user_message_uuid];
+}
+
 /**
  * Claude's official Agent SDK carrier. Unlike `claude -p`, the SDK exposes a
  * streaming input channel and an explicit interrupt operation, so Append and
@@ -117,6 +142,8 @@ export class ClaudeSdkAgentService implements AgentService {
   async *invoke(prompt: string, options?: AgentServiceOptions): AsyncIterable<AgentMessage> {
     const abortController = new AbortController();
     const turnInputs = new ClaudeSdkTurnInputState();
+    const inputReadCallbacks = new Map<string, () => Promise<void>>();
+    const inputReadInFlight = new Set<string>();
     const initialMessageId = randomUUID();
     let noticeId: string | null = null;
     const freshness = new ClaudeSdkFreshness(
@@ -187,7 +214,7 @@ export class ClaudeSdkAgentService implements AgentService {
       };
       const release = options.activeRunDispatch.register({
         invocationId,
-        capabilities: { append: true, steer: true },
+        capabilities: { append: true, steer: true, inputReadReceipt: true },
         handle,
         dispatch: async (dispatchInput, dispatchOptions) => {
           if (dispatchOptions.expectedInvocationId !== invocationId) {
@@ -203,7 +230,9 @@ export class ClaudeSdkAgentService implements AgentService {
               await withActiveRunControlDeadline(query.interrupt(), this.activeRunControlTimeoutMs);
             }
             const message = createSdkUserMessage(text, activeSessionId);
+            if (dispatchInput.onInputRead) inputReadCallbacks.set(message.uuid, dispatchInput.onInputRead);
             if (!turnInputs.push(message)) {
+              inputReadCallbacks.delete(message.uuid);
               return { accepted: false, reason: 'active_run_closed' };
             }
             return { accepted: true, handle };
@@ -246,6 +275,19 @@ export class ClaudeSdkAgentService implements AgentService {
         if (abortController.signal.aborted) break;
         if (typeof event !== 'object' || event === null) continue;
         const raw = event as Record<string, unknown>;
+        for (const id of consumedClientInputIds(raw)) {
+          if (typeof id !== 'string') continue;
+          const notify = inputReadCallbacks.get(id);
+          if (!notify || inputReadInFlight.has(id)) continue;
+          inputReadInFlight.add(id);
+          // Optional presentation persistence must never hold output or Stop.
+          void notify()
+            .then(() => inputReadCallbacks.delete(id))
+            .catch((err) => {
+              log.warn({ err, invocationId: options?.invocationId }, 'Optional input-read presentation update failed');
+            })
+            .finally(() => inputReadInFlight.delete(id));
+        }
         // The archive is ordered best-effort diagnostics, not the receipt
         // authority. Disk I/O must not delay cancellation or member output.
         archive(event);
@@ -343,6 +385,8 @@ export class ClaudeSdkAgentService implements AgentService {
         };
       }
     } finally {
+      inputReadCallbacks.clear();
+      inputReadInFlight.clear();
       turnInputs.close();
       try {
         query?.close();

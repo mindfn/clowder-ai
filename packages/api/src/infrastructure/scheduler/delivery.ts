@@ -66,6 +66,7 @@ export function createDeliverFn(deps: DeliveryDeps): (opts: DeliverOpts) => Prom
       threadId: opts.threadId,
       message: {
         id: stored.id,
+        from: stored.from,
         type: 'connector',
         content: typeof stored.content === 'string' ? stored.content : opts.content,
         source,
@@ -151,6 +152,7 @@ export function createLifecycleToastFn(
       threadId: notice.threadId,
       message: {
         id: `scheduler-toast-${Date.now()}-${randomUUID().slice(0, 8)}`,
+        from: { kind: 'system', service: 'scheduler' },
         type: 'connector',
         content: notice.toast.message,
         source: SCHEDULER_SOURCE,

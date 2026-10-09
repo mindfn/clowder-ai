@@ -24,6 +24,7 @@ vi.mock('@/hooks/useCatData', () => ({
         id: 'opus',
         displayName: '布偶猫',
         avatar: '/opus.png',
+        color: { primary: '#123456', secondary: '#abcdef' },
         roster: { available: true },
         isDefaultResponder: true,
         messageDeliveryCapabilities: { guideReply: true },
@@ -32,6 +33,7 @@ vi.mock('@/hooks/useCatData', () => ({
         id: 'codex',
         displayName: '缅因猫',
         avatar: '/codex.png',
+        color: { primary: '#456789', secondary: '#abcdef' },
         roster: { available: true },
         messageDeliveryCapabilities: { guideReply: true },
       },
@@ -198,6 +200,7 @@ describe('QueuePanel steer (F047)', () => {
     const source: ChatMessage = {
       id: 'm1',
       type: 'user',
+      from: { kind: 'user', userId: 'test-user' },
       content: 'queued message',
       timestamp: NOW,
       lifecycle: {
@@ -209,6 +212,7 @@ describe('QueuePanel steer (F047)', () => {
     const responseMessage: ChatMessage = {
       id: 'response-opus',
       type: 'assistant',
+      from: { kind: 'agent', catId: 'opus' },
       catId: 'opus',
       content: '',
       timestamp: NOW + 1,
@@ -240,6 +244,7 @@ describe('QueuePanel steer (F047)', () => {
     const pendingSource: ChatMessage = {
       id: 'm1',
       type: 'user',
+      from: { kind: 'user', userId: 'test-user' },
       content: 'queued message',
       timestamp: NOW,
       lifecycle: { kind: 'input', orderKey: 'order-source', dispatchRefs: [] },
@@ -254,6 +259,7 @@ describe('QueuePanel steer (F047)', () => {
     const responseMessage: ChatMessage = {
       id: 'response-opus',
       type: 'assistant',
+      from: { kind: 'agent', catId: 'opus' },
       catId: 'opus',
       content: '',
       timestamp: NOW + 1,
@@ -295,6 +301,7 @@ describe('QueuePanel steer (F047)', () => {
     const source: ChatMessage = {
       id: 'response-source',
       type: 'assistant',
+      from: { kind: 'agent', catId: 'opus' },
       catId: 'opus',
       content: 'source response',
       timestamp: NOW,
@@ -314,6 +321,7 @@ describe('QueuePanel steer (F047)', () => {
     const responseMessage: ChatMessage = {
       id: 'response-codex',
       type: 'assistant',
+      from: { kind: 'agent', catId: 'codex' },
       catId: 'codex',
       content: '',
       timestamp: NOW + 1,
@@ -352,6 +360,7 @@ describe('QueuePanel steer (F047)', () => {
     const source: ChatMessage = {
       id: 'm1',
       type: 'user',
+      from: { kind: 'user', userId: 'test-user' },
       content: 'queued message',
       timestamp: NOW,
       lifecycle: {

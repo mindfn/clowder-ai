@@ -3409,6 +3409,7 @@ export async function* routeSerial(
                         threadId,
                         message: {
                           id: stored.id,
+                          from: stored.from,
                           type: 'connector',
                           content: stored.content,
                           source: VOTE_RESULT_SOURCE,

@@ -8,7 +8,13 @@
  * pointers; the enrichment layer joins persisted message data at emit time.
  */
 
-import type { CatRoutingError, MessageContent, MessageFrom, QueueAuthorIntentReceipt } from '@cat-cafe/shared';
+import type {
+  CatRoutingError,
+  ConnectorSource,
+  MessageContent,
+  MessageFrom,
+  QueueAuthorIntentReceipt,
+} from '@cat-cafe/shared';
 import {
   type QueueEntry,
   queueEntryOwnerId,
@@ -23,6 +29,7 @@ export interface QueueEntryMessagePreview {
   replyTo?: string;
   /** Stored connector identity, so a queue row can render the same summary as its timeline bubble. */
   connector?: string;
+  source?: ConnectorSource;
 }
 
 /** Stable browser DTO. The durable ledger remains nested and is never leaked to clients. */
@@ -105,6 +112,7 @@ async function buildMessageEnrichment(
   const blocks: MessageContent[] = [];
   let replyTo: string | undefined;
   let connector: string | undefined;
+  let source: ConnectorSource | undefined;
 
   for (const msgId of msgIds) {
     const msg = await messageStore.getById(msgId);
@@ -112,6 +120,7 @@ async function buildMessageEnrichment(
     if (msg.contentBlocks) blocks.push(...msg.contentBlocks);
     if (!replyTo && msg.replyTo) replyTo = msg.replyTo;
     if (!connector && msg.source?.connector) connector = msg.source.connector;
+    if (!source && msg.source) source = structuredClone(msg.source);
   }
 
   if (blocks.length === 0 && !replyTo && !connector) return null;
@@ -120,6 +129,7 @@ async function buildMessageEnrichment(
       ...(blocks.length > 0 ? { contentBlocks: blocks } : {}),
       ...(replyTo ? { replyTo } : {}),
       ...(connector ? { connector } : {}),
+      ...(source ? { source } : {}),
     },
   };
 }

@@ -300,6 +300,7 @@ export class ApprovalIngress {
         threadId: draft.cardThreadId,
         message: {
           id: stored.id,
+          from: stored.from,
           type: 'cat',
           catId: draft.requesterCatId,
           content: stored.content,

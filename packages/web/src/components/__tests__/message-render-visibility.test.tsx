@@ -65,7 +65,13 @@ const diag = {
   debugRef: { command: 'codex', exitCode: 1, signal: null, invocationId: 'inv-x' },
 } as NonNullable<Message['extra']>['cliDiagnostics'];
 
-const sourceOwn: Message = { id: 'src', type: 'user', content: 'src', timestamp: 1 };
+const sourceOwn: Message = {
+  id: 'src',
+  type: 'user',
+  from: { kind: 'user', userId: 'test-user' },
+  content: 'src',
+  timestamp: 1,
+};
 const noticeMeta = (linked: boolean) => ({
   presentation: 'system_notice',
   cloudBridgeRecovery: {
@@ -83,11 +89,18 @@ function cases(): Case[] {
 
   // Your own message.
   for (const content of ['', 'hi']) {
-    add(`own, content ${JSON.stringify(content)}`, { id: 'm', type: 'user', content, timestamp: 2 });
+    add(`own, content ${JSON.stringify(content)}`, {
+      id: 'm',
+      type: 'user',
+      from: { kind: 'user', userId: 'test-user' },
+      content,
+      timestamp: 2,
+    });
     for (const exposure of ['none', 'seen'] as const) {
       add(`own, recalled (${exposure}), content ${JSON.stringify(content)}`, {
         id: 'm',
         type: 'user',
+        from: { kind: 'user', userId: 'test-user' },
         content,
         timestamp: 2,
         extra: { recall: { version: 1, exposure, recalledAt: 3 } },
@@ -99,6 +112,7 @@ function cases(): Case[] {
     {
       id: 'm',
       type: 'user',
+      from: { kind: 'user', userId: 'test-user' },
       content: 'hi',
       timestamp: 2,
       lifecycle: {
@@ -111,6 +125,7 @@ function cases(): Case[] {
       {
         id: 'terminal',
         type: 'assistant',
+        from: { kind: 'agent', catId: 'opus' },
         catId: 'opus',
         content: '已回复',
         timestamp: 3,

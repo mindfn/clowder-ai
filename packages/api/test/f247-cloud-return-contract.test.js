@@ -53,6 +53,7 @@ describe('F247 source-bound Remote MCP return contract', () => {
     assert.equal(remoteReply.replyTo, source.id);
     assert.deepEqual(await hydrateReplyPreview(store, remoteReply.replyTo), {
       senderCatId: 'codex-sol',
+      from: { kind: 'agent', catId: 'codex-sol' },
       content: '@gpt-pro inspect this exact source',
     });
   });

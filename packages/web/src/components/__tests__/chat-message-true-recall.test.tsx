@@ -48,6 +48,7 @@ describe('ChatMessage true recall tombstone', () => {
     const message: ChatMessageType = {
       id: 'message-recalled',
       type: 'user',
+      from: { kind: 'user', userId: 'test-user' },
       content: '这段正文必须消失',
       timestamp: 1,
       extra: {
@@ -75,6 +76,7 @@ describe('ChatMessage true recall tombstone', () => {
     const message: ChatMessageType = {
       id: 'message-zero-exposure',
       type: 'user',
+      from: { kind: 'user', userId: 'test-user' },
       content: '零曝光正文不能闪现',
       timestamp: 1,
       extra: { recall: { version: 1, exposure: 'none', recalledAt: 2 } },
@@ -95,6 +97,7 @@ describe('ChatMessage true recall tombstone', () => {
     const source: ChatMessageType = {
       id: 'message-folded-source',
       type: 'user',
+      from: { kind: 'user', userId: 'test-user' },
       content: '这段原消息必须留在作者位置',
       timestamp: authoredAt,
       lifecycle: {
@@ -113,6 +116,7 @@ describe('ChatMessage true recall tombstone', () => {
     const terminal: ChatMessageType = {
       id: 'message-terminal-surface',
       type: 'assistant',
+      from: { kind: 'agent', catId: 'codex' },
       catId: 'codex',
       content: '本轮最终答复',
       timestamp: handledAt,
@@ -169,6 +173,7 @@ describe('ChatMessage true recall tombstone', () => {
     const actionable: ChatMessageType = {
       id: 'message-actionable-source',
       type: 'user',
+      from: { kind: 'user', userId: 'test-user' },
       content: '这条仍待处理，不能为了消重隐藏',
       timestamp: 1,
     };

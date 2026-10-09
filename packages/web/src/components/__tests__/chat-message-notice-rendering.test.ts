@@ -184,12 +184,14 @@ describe('ChatMessage notice rendering', () => {
     const source = {
       id: 'source-needs-binding',
       type: 'user',
+      from: { kind: 'user', userId: 'test-user' },
       content: '@gpt-pro hello',
       timestamp: 1,
     } as ChatMessageType;
     const notice = {
       id: 'notice-needs-binding',
       type: 'connector',
+      from: { kind: 'external', connectorId: 'cloud-bridge-status' },
       content: '这条消息还没有发送',
       timestamp: 2,
       replyTo: source.id,
@@ -244,6 +246,7 @@ describe('ChatMessage notice rendering', () => {
           message: {
             id: 'notice-inline',
             type: 'connector',
+            from: { kind: 'external', connectorId: 'inline-mention-hint' },
             content: '把 @gpt52 单独放到新起一行开头，才能交接。',
             timestamp: Date.now(),
             source: {
@@ -295,6 +298,7 @@ describe('ChatMessage notice rendering', () => {
           message: {
             id: 'connector-vote',
             type: 'connector',
+            from: { kind: 'external', connectorId: 'vote-result' },
             content: '投票结果：2 票',
             timestamp: Date.now(),
             source: {
@@ -332,6 +336,7 @@ describe('ChatMessage notice rendering', () => {
           message: {
             id: 'response-processing',
             type: 'assistant',
+            from: { kind: 'agent', catId: 'opus' },
             catId: 'opus',
             content: '',
             timestamp: Date.now(),
@@ -414,6 +419,7 @@ describe('ChatMessage notice rendering', () => {
           message: {
             id: 'msg-scan-pending',
             type: 'assistant',
+            from: { kind: 'agent', catId: 'opus' },
             catId: 'opus',
             content: 'published answer',
             timestamp: Date.now(),
@@ -437,6 +443,7 @@ describe('ChatMessage notice rendering', () => {
           message: {
             id: 'msg-routing-guard',
             type: 'assistant',
+            from: { kind: 'agent', catId: 'codex' },
             catId: 'codex',
             content: '',
             timestamp: Date.now(),
@@ -465,6 +472,7 @@ describe('ChatMessage notice rendering', () => {
           message: {
             id: 'msg-ordinary-with-guard',
             type: 'assistant',
+            from: { kind: 'agent', catId: 'codex' },
             catId: 'codex',
             content: 'original ordinary answer',
             timestamp: Date.now(),
@@ -500,6 +508,7 @@ describe('ChatMessage notice rendering', () => {
           message: {
             id: 'msg-guard-with-bodyless-ordinary',
             type: 'assistant',
+            from: { kind: 'agent', catId: 'codex' },
             catId: 'codex',
             content: '@co-creator',
             timestamp: Date.now(),

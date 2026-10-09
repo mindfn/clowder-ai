@@ -92,6 +92,7 @@ export function callbackPost(msg: AgentEventFields, timestamp: number): ChatMess
   return {
     id: msg.messageId,
     type: 'assistant',
+    from: { kind: 'agent', catId: msg.catId },
     catId: msg.catId,
     content: msg.content ?? '',
     origin: 'callback',

@@ -53,6 +53,8 @@ export function resetAppTooltipWarmState(): void {
 }
 
 interface AppTooltipProps {
+  /** Read-only status controls can reveal their explanation on a tap. */
+  showOnClick?: boolean;
   /** The control's name. Keep it short; it is also what a screen reader should hear on the control. */
   label: string;
   /** Optional second line (state / count / unavailable reason). */
@@ -80,6 +82,7 @@ function matchesFocusVisible(target: EventTarget | null): boolean {
 }
 
 export function AppTooltip({
+  showOnClick = false,
   label,
   detail,
   shortcut,
@@ -228,7 +231,7 @@ export function AppTooltip({
       return;
     }
     // A click is the user acting on the control; the name tip has done its job.
-    close();
+    if (!showOnClick) close();
   };
   const cancelLongPress = (event: ReactPointerEvent) => {
     if (event.pointerType !== 'touch') return;
@@ -240,6 +243,12 @@ export function AppTooltip({
     swallowClick.current = false;
     event.stopPropagation();
     event.preventDefault();
+  };
+  const onClick = () => {
+    if (showOnClick) {
+      dismissed.current = false;
+      openNow();
+    }
   };
   const onFocus = (event: FocusEvent) => {
     if (!matchesFocusVisible(event.target)) return;
@@ -268,6 +277,7 @@ export function AppTooltip({
       onPointerUp={cancelLongPress}
       onPointerCancel={cancelLongPress}
       onClickCapture={onClickCapture}
+      onClick={onClick}
       onFocusCapture={onFocus}
       onBlurCapture={onBlur}
       onKeyDownCapture={onKeyDownCapture}

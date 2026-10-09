@@ -16,6 +16,7 @@ import type {
   EvolutionPreparationSubmissionV1,
   LifecycleDeliveryFailureReason,
   LifecycleDispatchRef,
+  LifecycleInputReadReceipt,
   LifecycleStoredMessageMetadata,
   MessageBundleCarrierV1,
   MessageContent,
@@ -34,6 +35,7 @@ import {
   custodyOfferV1Schema,
   evolutionPreparationSubmissionV1Schema,
   isCrossThreadProvenance,
+  isLifecycleInputReadReceipt,
   isLifecycleStoredMessageMetadata,
   isMessageFrom,
 } from '@cat-cafe/shared';
@@ -862,6 +864,7 @@ export type CommitLifecycleResponseTerminalResult =
   | { kind: 'not_found' };
 
 export type LifecycleInputDispatchPatch = {
+  inputRead?: LifecycleInputReadReceipt;
   orderKey: string;
   producerInvocationId?: string;
   targetId: string;
@@ -885,6 +888,8 @@ export interface LifecycleAppendAdmissionInput {
     targetId: string;
     invocationId: string;
     responseMessageId: string;
+    /** Optional adapter capability; presentation only. */
+    inputReadSupported?: boolean;
     /** Exact time this source was admitted to the target response. */
     dispatchedAt: number;
   }[];
@@ -1062,13 +1067,16 @@ export function advanceLifecycleInputDispatchMetadata(
   current: LifecycleStoredMessageMetadata | undefined,
   patch: LifecycleInputDispatchPatch,
 ): LifecycleInputDispatchMetadataResult {
+  if (patch.inputRead !== undefined && !isLifecycleInputReadReceipt(patch.inputRead))
+    return { kind: 'conflict', reason: 'invalid_transition' };
   const identity = {
     kind: 'input' as const,
     orderKey: patch.orderKey,
     ...(patch.producerInvocationId ? { producerInvocationId: patch.producerInvocationId } : {}),
   };
   if (!current) {
-    if (patch.phase !== 'dispatched') return { kind: 'conflict', reason: 'invalid_transition' };
+    if (patch.phase !== 'dispatched' || patch.inputRead?.status === 'read')
+      return { kind: 'conflict', reason: 'invalid_transition' };
     return {
       kind: 'applied',
       lifecycle: {
@@ -1078,7 +1086,8 @@ export function advanceLifecycleInputDispatchMetadata(
             targetId: patch.targetId,
             phase: 'dispatched',
             statusMessageId: patch.statusMessageId,
-            dispatchedAt: patch.dispatchedAt,
+            ...(patch.dispatchedAt !== undefined ? { dispatchedAt: patch.dispatchedAt } : {}),
+            ...(patch.inputRead ? { inputRead: patch.inputRead } : {}),
           },
         ],
       },
@@ -1095,7 +1104,8 @@ export function advanceLifecycleInputDispatchMetadata(
   if (matching.length > 1) return { kind: 'conflict', reason: 'duplicate_target' };
   const existing = matching[0];
   if (!existing) {
-    if (patch.phase !== 'dispatched') return { kind: 'conflict', reason: 'invalid_transition' };
+    if (patch.phase !== 'dispatched' || patch.inputRead?.status === 'read')
+      return { kind: 'conflict', reason: 'invalid_transition' };
     return {
       kind: 'applied',
       lifecycle: {
@@ -1106,7 +1116,8 @@ export function advanceLifecycleInputDispatchMetadata(
             targetId: patch.targetId,
             phase: 'dispatched',
             statusMessageId: patch.statusMessageId,
-            dispatchedAt: patch.dispatchedAt,
+            ...(patch.dispatchedAt !== undefined ? { dispatchedAt: patch.dispatchedAt } : {}),
+            ...(patch.inputRead ? { inputRead: patch.inputRead } : {}),
           },
         ],
       },
@@ -1114,28 +1125,44 @@ export function advanceLifecycleInputDispatchMetadata(
   }
   if (existing.statusMessageId !== patch.statusMessageId) {
     return { kind: 'conflict', reason: 'status_message_mismatch' };
-  } else if (existing.phase === patch.phase) {
-    if (
-      existing.phase === 'dispatched' &&
-      patch.phase === 'dispatched' &&
-      existing.dispatchedAt === undefined &&
-      patch.dispatchedAt !== undefined
-    ) {
-      const nextRef: LifecycleDispatchRef = { ...existing, dispatchedAt: patch.dispatchedAt };
-      return {
-        kind: 'applied',
-        lifecycle: {
-          ...current,
-          dispatchRefs: refs.map((ref) => (ref.targetId === patch.targetId ? nextRef : ref)),
-        },
-      };
-    }
-    return { kind: 'replayed' };
+  }
+  // Read evidence cannot advance or revert execution phase. A terminal commit
+  // may race the observer, so preserve the latest durable phase atomically.
+  if (patch.inputRead?.status === 'read') {
+    if (!existing.inputRead || patch.inputRead.at < (existing.dispatchedAt ?? 0))
+      return { kind: 'conflict', reason: 'invalid_transition' };
+    if (existing.inputRead.status === 'read') return { kind: 'replayed' };
+    return {
+      kind: 'applied',
+      lifecycle: {
+        ...current,
+        dispatchRefs: refs.map((ref) =>
+          ref.targetId === patch.targetId ? { ...ref, inputRead: patch.inputRead } : ref,
+        ),
+      },
+    };
+  }
+  if (existing.phase === patch.phase) {
+    const inputRead =
+      existing.inputRead?.status === 'read' ? existing.inputRead : (patch.inputRead ?? existing.inputRead);
+    const nextRef: LifecycleDispatchRef = {
+      ...existing,
+      ...(existing.dispatchedAt === undefined && patch.phase === 'dispatched' && patch.dispatchedAt !== undefined
+        ? { dispatchedAt: patch.dispatchedAt }
+        : {}),
+      ...(inputRead ? { inputRead } : {}),
+    };
+    if (isDeepStrictEqual(existing, nextRef)) return { kind: 'replayed' };
+    return {
+      kind: 'applied',
+      lifecycle: { ...current, dispatchRefs: refs.map((ref) => (ref.targetId === patch.targetId ? nextRef : ref)) },
+    };
   } else if (existing.phase === 'settled' || patch.phase !== 'settled') {
     return { kind: 'conflict', reason: 'invalid_transition' };
   }
   // Settlement keeps the exact delivery identity.
   const nextRef: LifecycleDispatchRef = {
+    ...existing,
     targetId: patch.targetId,
     phase: patch.phase,
     statusMessageId: patch.statusMessageId,
@@ -1225,6 +1252,7 @@ export function prepareLifecycleAppendAdmission(
         phase: 'dispatched',
         statusMessageId: run.responseMessageId,
         dispatchedAt: run.dispatchedAt,
+        ...(run.inputReadSupported ? { inputRead: { status: 'pending' as const } } : {}),
       });
       if (transition.kind === 'conflict') return { kind: 'conflict', reason: 'input_lifecycle_conflict' };
       if (transition.kind === 'applied') {
@@ -3558,13 +3586,15 @@ export async function hydrateReplyPreview(store: IMessageStore, replyToId: strin
   if (!parent) return null;
 
   if (parent.deletedAt || parent._tombstone) {
-    return { senderCatId: parent.catId, content: '', deleted: true };
+    return { from: messageFrom(parent), senderCatId: parent.catId, content: '', deleted: true };
   }
 
   const truncated =
     parent.content.length > PREVIEW_MAX_LENGTH ? parent.content.slice(0, PREVIEW_MAX_LENGTH) : parent.content;
 
   return {
+    from: messageFrom(parent),
+    ...(parent.source ? { source: structuredClone(parent.source) } : {}),
     senderCatId: parent.catId,
     content: truncated,
     ...(parent.extra?.scheduler?.hiddenTrigger ? { kind: 'scheduler_trigger' as const } : {}),

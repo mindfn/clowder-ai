@@ -11,9 +11,6 @@ export const FRESHNESS_WINDOWED_METRIC_REFS = [
   'metric:freshness.queue_pending_at_window_end',
   'metric:freshness.gate_held',
   'metric:freshness.gate_forward',
-  'metric:freshness.notice_attached',
-  'metric:freshness.notice_acked',
-  'metric:freshness.notice_deferred',
   'metric:freshness.reinvoke_triggered',
   'metric:freshness.reinvoke_skipped',
   'metric:freshness.stream_stale',
@@ -64,7 +61,7 @@ export function addWindowedSnapshotCounts(
 export function windowedSignalComponent(replay: FreshnessReplayBundle) {
   return {
     id: 'freshness-windowed-signal-plane',
-    name: 'F254 owner-scoped Queue, Supplement, gate, notice, and reinvoke signals',
+    name: 'F254 owner-scoped Queue/History and provider signals',
     confidence: 'high',
     activationCounts: {
       observations: replay.windowedSignals.observedActivityCount,

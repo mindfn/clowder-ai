@@ -1,7 +1,9 @@
+import type { CatId, ConnectorSource, MessageFrom } from '@cat-cafe/shared';
 import { getCoCreatorConfig } from '../../../../../config/cat-config-loader.js';
-import { getSenderName } from '../../context/ContextAssembler.js';
+import { getMessageSpeakerName, getSenderName } from '../../context/ContextAssembler.js';
 import { renderSegment } from '../../context/prompt-template-loader.js';
 import { formatPromptTime } from '../../format-time.js';
+import { messageFrom } from '../../stores/message-from.js';
 import type { ThreadExecutionSituation } from '../invocation/thread-execution-situation.js';
 import { formatThreadContextDrill } from './thread-drill-pointer.js';
 
@@ -14,18 +16,17 @@ export interface BatonContext {
   staleHoldWarning: boolean;
 }
 
-const HOLD_PATTERNS = /别动|你.*等|不要.*动|等等|稍等|\bhold\b|\bwait\b/i;
-
 export function extractBatonContext(
   messages: Array<{
     id: string;
-    catId: string | null;
+    catId: CatId | null;
+    from?: MessageFrom;
     content: string;
     timestamp: number;
     userId: string;
-    origin?: string;
+    origin?: 'stream' | 'callback' | 'briefing';
     mentions?: readonly string[];
-    source?: { label: string };
+    source?: ConnectorSource;
   }>,
   targetCatId: string,
 ): BatonContext | null {
@@ -37,18 +38,17 @@ export function extractBatonContext(
       m.mentions && m.mentions.length > 0 ? m.mentions.includes(targetCatId) : mentionPattern.test(m.content);
     if (!mentioned) continue;
 
-    const fromSpeaker = m.catId ?? 'user';
-
-    let staleHoldWarning = false;
-    for (let j = i - 1; j >= 0; j--) {
-      const prev = messages[j];
-      const prevSpeaker = prev.catId ?? 'user';
-      if (prevSpeaker !== fromSpeaker) continue;
-      if (HOLD_PATTERNS.test(prev.content)) {
-        staleHoldWarning = true;
-      }
-      break;
-    }
+    const from = messageFrom(m);
+    const fromSpeaker =
+      from.kind === 'user'
+        ? 'user'
+        : from.kind === 'agent'
+          ? from.catId
+          : from.kind === 'external'
+            ? `external:${from.connectorId}:${from.sender?.id ?? ''}`
+            : from.kind === 'plugin'
+              ? `plugin:${from.instanceId}`
+              : `system:${from.service}`;
 
     const excerpt = m.content
       .split('\n')[0]
@@ -58,10 +58,11 @@ export function extractBatonContext(
     return {
       fromMessageId: m.id,
       fromSpeaker,
-      fromSpeakerDisplay: m.source?.label || getSenderName(m.catId),
+      fromSpeakerDisplay: getMessageSpeakerName(m),
       timestamp: m.timestamp,
       mentionExcerpt: excerpt,
-      staleHoldWarning,
+      // Navigation presents provenance. Only an explicit custody action can supersede a hold.
+      staleHoldWarning: false,
     };
   }
   return null;

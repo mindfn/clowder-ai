@@ -134,6 +134,20 @@ describe('chat connection recovery without a page reload', () => {
     }
   });
 
+  it('invalidates disconnected approval projections exactly when the socket reconnects', () => {
+    const invalidate = vi.fn();
+    window.addEventListener('cat-cafe:socket-reconnected', invalidate);
+    try {
+      mount();
+      expect(invalidate).not.toHaveBeenCalled();
+      loseAutomaticRetry();
+      act(() => socket.connect());
+      expect(invalidate).toHaveBeenCalledTimes(1);
+    } finally {
+      window.removeEventListener('cat-cafe:socket-reconnected', invalidate);
+    }
+  });
+
   it('retired socket listeners cannot invalidate a new surface after the owning runtime unmounts', () => {
     mount();
     act(() => root.render(null));

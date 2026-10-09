@@ -13,6 +13,7 @@
  */
 
 import { CONNECTOR_DEFINITIONS } from './connector-definitions.js';
+import type { MessageFrom } from './message-lifecycle.js';
 
 // ── Connector Source (附加到 StoredMessage) ──
 
@@ -52,6 +53,9 @@ export interface SchedulerMessageExtra {
 export type ReplyPreviewKind = 'scheduler_trigger';
 
 export interface ReplyPreview {
+  /** Canonical identity of the referenced message, not inferred from a null cat ID. */
+  from?: MessageFrom;
+  source?: ConnectorSource;
   senderCatId: string | null;
   content: string;
   deleted?: true;

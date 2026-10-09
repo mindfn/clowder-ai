@@ -39,7 +39,7 @@ describe('test entry Redis isolation', () => {
       REDIS_KEY_PREFIX: 'cat-cafe:',
       CAT_CAFE_REDIS_TEST_ISOLATED: undefined,
     });
-    assert.deepEqual(seen, { REDIS_URL: null, REDIS_PORT: null, REDIS_KEY_PREFIX: null });
+    assert.deepEqual(seen, { REDIS_URL: 'redis://127.0.0.1:0', REDIS_PORT: null, REDIS_KEY_PREFIX: null });
   });
 
   it('passes an isolated test Redis through when the caller vouches for it', () => {
@@ -50,6 +50,9 @@ describe('test entry Redis isolation', () => {
 
 /** Files that read REDIS_URL or open a Redis client without the isolation gate, and why that is safe. */
 const EXCEPTIONS = {
+  'with-test-home.test.js': 'probes child environment only; never creates or connects a Redis client',
+  'a2a-1577-turn-redis-seam.test.mjs':
+    'owns its random-directory Unix socket child with port 0; SAVE and retains all artifacts',
   'plugin-external-runtime-package.test.js': 'sets a fake REDIS_URL to prove it does not leak; never connects',
   'auth-invocation-restart.test.js': 'connects only when REDIS_URL names the dedicated :6398 dev Redis',
   'harness-eval/eval-domain-trigger-store-redis.test.js':

@@ -1,8 +1,12 @@
 'use client';
 
 import { useId, useState } from 'react';
+import { AppTooltip } from '@/components/AppTooltip';
 import { useMeasuredOverflow } from '@/components/content-overflow/useMeasuredOverflow';
 import { ChevronIcon } from '@/components/hub-icons';
+import type { CatData } from '@/hooks/useCatData';
+import { useCoCreatorConfig } from '@/hooks/useCoCreatorConfig';
+import { resolveMessageSender } from '@/lib/resolve-sender';
 import type { ChatMessage } from '@/stores/chat-types';
 import { focusLineageMessage } from '@/utils/focusLineageMessage';
 
@@ -35,38 +39,43 @@ function formatReceiptTimestamp(timestamp: number): string {
   return `${part(date.getMonth() + 1)}/${part(date.getDate())} ${part(date.getHours())}:${part(date.getMinutes())}:${part(date.getSeconds())}`;
 }
 
-function sourceLabel(message: ChatMessage, coCreatorName: string, getCatLabel: (catId: string) => string): string {
-  switch (message.from?.kind) {
-    case 'user':
-      return coCreatorName;
-    case 'agent':
-      return getCatLabel(message.from.catId);
-    case 'external':
-      return message.from.sender?.name ?? message.source?.label ?? message.from.connectorId;
-    case 'plugin':
-      return message.source?.label ?? message.from.instanceId;
-    case 'system':
-      return message.from.service;
-    default:
-      return message.catId ? getCatLabel(message.catId) : coCreatorName;
-  }
-}
-
 interface AppendedInputRowProps {
   source: ChatMessage;
   label: string;
   expanded: boolean;
   onToggle: () => void;
+  response: ChatMessage;
+}
+
+/** Only the exact delivered source × response can supply a read observation. */
+export function appendedInputReadDisplay(source: ChatMessage, response: ChatMessage) {
+  const lifecycle = response.lifecycle;
+  const refs =
+    lifecycle?.kind === 'response'
+      ? (source.lifecycle?.dispatchRefs?.filter(
+          (ref) => ref.targetId === lifecycle.targetId && ref.statusMessageId === response.id,
+        ) ?? [])
+      : [];
+  const receipt = refs.length === 1 ? refs[0]?.inputRead : undefined;
+  if (receipt?.status === 'read') return { state: 'read', label: '已读取', pulse: false };
+  if (!receipt) return { state: 'unavailable', label: '已投递；读取状态不可用', pulse: false };
+  const running = lifecycle?.kind === 'response' && lifecycle.status === 'processing';
+  return {
+    state: running ? 'pending' : 'unconfirmed',
+    label: running ? '已投递；等待读取反馈' : '已投递；读取未确认',
+    pulse: running,
+  };
 }
 
 /**
  * One appended input: a single line that expands in place when it is actually truncated (the F269
  * overflow rule shared with ExpandableProse), and a separate jump back to the original message.
  */
-function AppendedInputRow({ source, label, expanded, onToggle }: AppendedInputRowProps) {
+function AppendedInputRow({ source, label, expanded, onToggle, response }: AppendedInputRowProps) {
   const contentId = useId();
   const { ref, overflowing } = useMeasuredOverflow<HTMLSpanElement>({ axis: 'inline', active: !expanded });
   const content = source.content.trim() || '（无文字内容）';
+  const read = appendedInputReadDisplay(source, response);
   return (
     <li
       data-appended-input-id={source.id}
@@ -74,6 +83,19 @@ function AppendedInputRow({ source, label, expanded, onToggle }: AppendedInputRo
       title={expanded ? undefined : `${label} · ${formatReceiptTimestamp(source.timestamp)}\n${content}`}
       className={expanded ? 'flex min-w-0 items-start gap-1.5 py-1' : 'flex h-7 min-w-0 items-center gap-1.5'}
     >
+      <AppTooltip label={read.label} showOnClick side="top">
+        <button
+          type="button"
+          aria-label={read.label}
+          data-append-delivery-state={read.state}
+          className="inline-flex h-7 w-5 shrink-0 items-center justify-center rounded text-cafe-muted focus-visible:outline focus-visible:outline-2 focus-visible:outline-current"
+        >
+          <span
+            aria-hidden="true"
+            className={`h-1.5 w-1.5 rounded-full bg-current ${read.pulse ? 'animate-pulse motion-reduce:animate-none' : ''}`}
+          />
+        </button>
+      </AppTooltip>
       <span className="shrink-0 font-medium">{label}:</span>
       <span
         id={contentId}
@@ -108,16 +130,11 @@ function AppendedInputRow({ source, label, expanded, onToggle }: AppendedInputRo
 interface AppendedInputReceiptsProps {
   response: ChatMessage;
   timelineMessages: readonly ChatMessage[];
-  coCreatorName: string;
-  getCatLabel: (catId: string) => string;
+  getCatById: (catId: string) => CatData | undefined;
 }
 
-export function AppendedInputReceipts({
-  response,
-  timelineMessages,
-  coCreatorName,
-  getCatLabel,
-}: AppendedInputReceiptsProps) {
+export function AppendedInputReceipts({ response, timelineMessages, getCatById }: AppendedInputReceiptsProps) {
+  const coCreator = useCoCreatorConfig();
   const [listExpanded, setListExpanded] = useState(false);
   const [expandedRowIds, setExpandedRowIds] = useState<ReadonlySet<string>>(() => new Set());
   const appendedInputs = projectAppendedInputReceipts(response, timelineMessages);
@@ -169,7 +186,8 @@ export function AppendedInputReceipts({
           <AppendedInputRow
             key={source.id}
             source={source}
-            label={sourceLabel(source, coCreatorName, getCatLabel)}
+            response={response}
+            label={resolveMessageSender(source, getCatById, coCreator).label}
             expanded={expandedRowIds.has(source.id)}
             onToggle={() => toggleRow(source.id)}
           />

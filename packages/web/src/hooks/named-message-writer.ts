@@ -91,6 +91,7 @@ function writeStreamed(target: NamedMessageTarget, write: (store: NamedMessageSt
     store.addMessageToThread(target.threadId, {
       id: target.messageId,
       type: 'assistant',
+      from: { kind: 'agent', catId: target.catId },
       catId: target.catId,
       content: '',
       origin: 'stream',

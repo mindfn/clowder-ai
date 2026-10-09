@@ -75,7 +75,7 @@ async function buildScanSpec(extraOpts = {}) {
         externalId: 'owner/repo',
       }),
     },
-    deliverFn: async () => ({ messageId: 'msg-1', threadId: 'thread-inbox' }),
+    deliverFn: async (_deps, input) => ({ messageId: 'msg-1', content: input.content, admitted: true }),
     deliveryDeps: {},
     invokeTrigger: { trigger: () => {} },
     fetchOpenPRs: async () => [
@@ -202,6 +202,32 @@ describe('Task 7b — RepoScan emits community events', () => {
     // No assertion on events — just verifies no crash
   });
 
+  for (const delivery of [
+    { messageId: 'unproven', content: 'x' },
+    { messageId: 'refused', content: 'x', admitted: false, rejection: 'unavailable' },
+  ]) {
+    it(`does not mark or project a scan without admission (${delivery.messageId})`, async () => {
+      const eventLog = makeInMemoryEventLog();
+      const projector = makeInMemoryProjector();
+      let calls = 0;
+      const { spec, notified } = await buildScanSpec({
+        eventLog,
+        projector,
+        deliverFn: async () => {
+          calls++;
+          return delivery;
+        },
+      });
+      const gate = await spec.admission.gate({});
+      const item = gate.workItems.find((work) => work.signal.subjectType === 'pr');
+      await assert.rejects(spec.run.execute(item.signal, item.subjectKey, {}), /admission refused/i);
+      assert.equal(calls, 1);
+      assert.equal(notified.size, 0);
+      assert.deepEqual(eventLog.events, []);
+      assert.deepEqual(projector.applied, []);
+    });
+  }
+
   // P1-1 factory wiring: GitHubScheduleDeps must thread eventLog through to spec
   it('P1-1: repoScanFactory passes eventLog through GitHubScheduleDeps to the spec', async () => {
     const mod = await import('../dist/domains/plugin/github-schedule-factories.js');
@@ -247,7 +273,7 @@ describe('Task 7b — RepoScan emits community events', () => {
           externalId: 'owner/repo',
         }),
       },
-      deliverFn: async () => ({ messageId: 'msg-1', threadId: 'thread-1' }),
+      deliverFn: async (_deps, input) => ({ messageId: 'msg-1', content: input.content, admitted: true }),
       deliveryDeps: {},
       fetchOpenPRs: async () => [
         {

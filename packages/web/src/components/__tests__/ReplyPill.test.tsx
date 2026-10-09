@@ -27,7 +27,7 @@ describe('ReplyPill', () => {
   it('renders cat reply with sender name and truncated content', () => {
     const html = renderToStaticMarkup(
       <ReplyPill
-        replyPreview={{ senderCatId: 'opus', content: '这是预览内容' }}
+        replyPreview={{ from: { kind: 'agent', catId: 'opus' }, senderCatId: 'opus', content: '这是预览内容' }}
         replyToId="msg-123"
         getCatById={mockGetCatById}
       />,
@@ -41,7 +41,7 @@ describe('ReplyPill', () => {
   it('renders user reply with configured co-creator label', () => {
     const html = renderToStaticMarkup(
       <ReplyPill
-        replyPreview={{ senderCatId: null, content: '用户消息' }}
+        replyPreview={{ from: { kind: 'user', userId: 'owner' }, senderCatId: null, content: '用户消息' }}
         replyToId="msg-456"
         getCatById={mockGetCatById}
       />,
@@ -53,7 +53,7 @@ describe('ReplyPill', () => {
   it('renders deleted message placeholder', () => {
     const html = renderToStaticMarkup(
       <ReplyPill
-        replyPreview={{ senderCatId: 'opus', content: '', deleted: true }}
+        replyPreview={{ from: { kind: 'agent', catId: 'opus' }, senderCatId: 'opus', content: '', deleted: true }}
         replyToId="msg-789"
         getCatById={mockGetCatById}
       />,
@@ -65,7 +65,7 @@ describe('ReplyPill', () => {
   it('renders as a clickable button', () => {
     const html = renderToStaticMarkup(
       <ReplyPill
-        replyPreview={{ senderCatId: 'opus', content: '内容' }}
+        replyPreview={{ from: { kind: 'agent', catId: 'opus' }, senderCatId: 'opus', content: '内容' }}
         replyToId="msg-123"
         getCatById={mockGetCatById}
       />,
@@ -77,7 +77,7 @@ describe('ReplyPill', () => {
   it('uses co-creator color for user reply (senderCatId=null)', () => {
     const html = renderToStaticMarkup(
       <ReplyPill
-        replyPreview={{ senderCatId: null, content: '用户消息' }}
+        replyPreview={{ from: { kind: 'user', userId: 'owner' }, senderCatId: null, content: '用户消息' }}
         replyToId="msg-456"
         getCatById={mockGetCatById}
       />,
@@ -90,7 +90,7 @@ describe('ReplyPill', () => {
   it('writes the co-creator pill text with the readable name role and tints it with the identity fill', () => {
     const html = renderToStaticMarkup(
       <ReplyPill
-        replyPreview={{ senderCatId: null, content: '用户消息' }}
+        replyPreview={{ from: { kind: 'user', userId: 'owner' }, senderCatId: null, content: '用户消息' }}
         replyToId="msg-456"
         getCatById={mockGetCatById}
       />,
@@ -103,7 +103,7 @@ describe('ReplyPill', () => {
   it('keeps a cat pill in the cat colour', () => {
     const html = renderToStaticMarkup(
       <ReplyPill
-        replyPreview={{ senderCatId: 'opus', content: '内容' }}
+        replyPreview={{ from: { kind: 'agent', catId: 'opus' }, senderCatId: 'opus', content: '内容' }}
         replyToId="msg-1"
         getCatById={mockGetCatById}
       />,
@@ -114,7 +114,7 @@ describe('ReplyPill', () => {
   it('uses fallback color for unknown cat', () => {
     const html = renderToStaticMarkup(
       <ReplyPill
-        replyPreview={{ senderCatId: 'unknown-cat', content: '内容' }}
+        replyPreview={{ from: { kind: 'agent', catId: 'unknown-cat' }, senderCatId: 'unknown-cat', content: '内容' }}
         replyToId="msg-123"
         getCatById={mockGetCatById}
       />,

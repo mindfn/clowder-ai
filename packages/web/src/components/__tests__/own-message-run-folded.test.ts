@@ -3,7 +3,13 @@ import type { ChatMessage } from '@/stores/chat-types';
 
 import { isLastOfOwnRun } from '../own-message-run';
 
-const own = (id: string): ChatMessage => ({ id, type: 'user', content: id, timestamp: 1 });
+const own = (id: string): ChatMessage => ({
+  id,
+  type: 'user',
+  from: { kind: 'user', userId: 'default-user' },
+  content: id,
+  timestamp: 1,
+});
 const cat = (id: string): ChatMessage => ({ id, type: 'assistant', catId: 'opus', content: id, timestamp: 2 });
 
 describe('isLastOfOwnRun and retained source bodies', () => {

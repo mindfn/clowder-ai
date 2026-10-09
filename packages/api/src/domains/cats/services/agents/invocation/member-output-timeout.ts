@@ -126,6 +126,12 @@ export class MemberOutputTimeout {
     if (this.#finished) return;
     const { timeoutMs } = this.#options;
     const silenceMs = this.#now() - this.#lastOutputAt;
+    // Timer scheduling and the sampled clock can straddle the deadline. The
+    // measured silence, rather than arrival of the callback, authorizes Stop.
+    if (silenceMs < timeoutMs) {
+      this.#arm(timeoutMs - silenceMs);
+      return;
+    }
     const activity = this.#options.probeProcess();
     const cap = 2 * timeoutMs;
     if (activity === 'busy' && silenceMs < cap) {

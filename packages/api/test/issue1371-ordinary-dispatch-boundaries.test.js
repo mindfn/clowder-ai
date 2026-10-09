@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
-import { InvocationQueue } from '../src/domains/cats/services/agents/invocation/InvocationQueue.js';
+import { InvocationQueue } from '../dist/domains/cats/services/agents/invocation/InvocationQueue.js';
 import { ordinaryDispatchFixture } from './helpers/ordinary-dispatch-fixture.js';
 
 for (const boundary of [

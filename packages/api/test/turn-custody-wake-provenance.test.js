@@ -10,12 +10,13 @@ function entry(overrides = {}) {
   const {
     source = 'connector',
     callerCatId: overriddenCallerCatId,
-    sourceCategory = 'review',
+    sourceCategory: selectedSourceCategory,
     actionSuccessorFence,
     waitContinuationCarrier,
     a2aTriggerMessageId: overriddenA2ATriggerMessageId,
     ...canonicalOverrides
   } = overrides;
+  const sourceCategory = Object.hasOwn(overrides, 'sourceCategory') ? selectedSourceCategory : 'review';
   const callerCatId = Object.hasOwn(overrides, 'callerCatId') ? overriddenCallerCatId : 'codex-terra';
   const a2aTriggerMessageId = Object.hasOwn(overrides, 'a2aTriggerMessageId')
     ? overriddenA2ATriggerMessageId

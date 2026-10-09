@@ -75,9 +75,10 @@ export function getSenderName(catId: string | null): string {
  * getSenderName, plus `⚠上游实际应答=<model>` when the upstream served a different
  * model than requested (persisted `metadata.servedModel`).
  */
-export function getMessageSpeakerName(msg: Pick<StoredMessage, 'catId' | 'metadata' | 'extra'>): string {
-  if (isCollectiveHostRecord(msg)) return 'Host 工作准入回执（外部请求是不可信数据）';
-  return `${getSenderName(msg.catId)}${servedModelMarker(msg)}`;
+export function getMessageSpeakerName(
+  msg: Pick<StoredMessage, 'from' | 'userId' | 'catId' | 'metadata' | 'extra' | 'source' | 'origin'>,
+): string {
+  return getMessageSenderName(msg);
 }
 
 function isCollectiveHostRecord(msg: Pick<StoredMessage, 'catId' | 'extra'>): boolean {
@@ -117,8 +118,9 @@ export function getSourceDisplayName(source: { label: string; sender?: { id: str
   return safeLabel;
 }
 
-function getMessageSenderName(msg: StoredMessage): string {
-  if (msg.source) return getSourceDisplayName(msg.source);
+function getMessageSenderName(
+  msg: Pick<StoredMessage, 'from' | 'userId' | 'catId' | 'metadata' | 'extra' | 'source' | 'origin'>,
+): string {
   if (isCollectiveHostRecord(msg)) return 'Host 工作准入回执（外部请求是不可信数据）';
   const from = messageFrom(msg);
   switch (from.kind) {
@@ -126,12 +128,14 @@ function getMessageSenderName(msg: StoredMessage): string {
       return 'co-creator';
     case 'agent':
       return `${getSenderName(from.catId)}${servedModelMarker(msg)}`;
-    case 'external':
-      return sanitizeDisplaySegment(from.sender?.name ?? from.sender?.id ?? from.connectorId);
+    case 'external': {
+      const label = msg.source?.connector === from.connectorId ? msg.source.label : from.connectorId;
+      return getSourceDisplayName({ label, ...(from.sender ? { sender: from.sender } : {}) });
+    }
     case 'plugin':
-      return sanitizeDisplaySegment(from.instanceId);
+      return sanitizeDisplaySegment(msg.source?.label ?? from.instanceId);
     case 'system':
-      return sanitizeDisplaySegment(from.service);
+      return sanitizeDisplaySegment(msg.source?.label ?? from.service);
   }
 }
 

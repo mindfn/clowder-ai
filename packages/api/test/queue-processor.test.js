@@ -1444,6 +1444,62 @@ describe('QueueProcessor over the source-row pending Queue', () => {
     );
   });
 
+  it('retires Append on client acceptance and keeps optional read proof on its exact response only', async () => {
+    const harness = createHarness();
+    const admitted = await admitMessage(harness, { targetCats: ['opus', 'codex'] });
+    const runs = ['opus', 'codex'].map((catId) =>
+      bindActiveRun(harness, { catId, invocationId: `read-${catId}`, parentInvocationId: `parent-${catId}` }),
+    );
+    const inputs = new Map();
+    for (let index = 0; index < runs.length; index++) {
+      const run = runs[index];
+      const catId = index === 0 ? 'opus' : 'codex';
+      harness.invocationTracker.bindAgentClientActiveRunDispatcher('thread-1', catId, {
+        invocationId: run.invocationId,
+        capabilities: { append: true, steer: true, ...(catId === 'opus' ? { inputReadReceipt: true } : {}) },
+        handle: { provider: 'anthropic', carrier: 'claude_agent_sdk' },
+        dispatch: async (input) => {
+          inputs.set(catId, input);
+          return { accepted: true, handle: {} };
+        },
+      });
+    }
+    const result = await harness.processor.appendExactEntry({
+      threadId: 'thread-1',
+      userId: 'user-1',
+      entryId: admitted.entry.id,
+      expectedQueueRevision: harness.queue.snapshotRevision('thread-1', 'user-1'),
+      expectedRuns: runs.map((run, index) => ({
+        targetId: index === 0 ? 'opus' : 'codex',
+        invocationId: run.invocationId,
+        responseMessageId: run.response.id,
+      })),
+    });
+    assert.equal(result.outcome, 'appended');
+    assert.equal(await harness.queue.getDurableEntry('thread-1', admitted.entry.id), null);
+    const before = await harness.messageStore.getById(admitted.message.id);
+    assert.deepEqual(before.lifecycle.dispatchRefs[0].inputRead, { status: 'pending' });
+    assert.equal(before.lifecycle.dispatchRefs[1].inputRead, undefined);
+    assert.equal(inputs.get('codex').onInputRead, undefined);
+    // A terminal event may win the persistence race; late proof must not revert it.
+    const ref = before.lifecycle.dispatchRefs[0];
+    await harness.messageStore.advanceLifecycleInputDispatch(admitted.message.id, {
+      ...ref,
+      orderKey: before.lifecycle.orderKey,
+      phase: 'settled',
+    });
+    await inputs.get('opus').onInputRead();
+    await inputs.get('opus').onInputRead();
+    const after = await harness.messageStore.getById(admitted.message.id);
+    assert.equal(after.lifecycle.dispatchRefs[0].phase, 'settled');
+    assert.equal(after.lifecycle.dispatchRefs[0].inputRead.status, 'read');
+    assert.deepEqual(after.lifecycle.dispatchRefs[1], before.lifecycle.dispatchRefs[1]);
+    assert.equal(await harness.queue.getDurableEntry('thread-1', admitted.entry.id), null);
+    assert.deepEqual((await harness.messageStore.getById(runs[0].response.id)).lifecycle.inputMessageIds, [
+      admitted.message.id,
+    ]);
+  });
+
   it('restores the exact row without attaching it when History publication fails', async () => {
     const harness = createHarness();
     const admitted = await admitMessage(harness);

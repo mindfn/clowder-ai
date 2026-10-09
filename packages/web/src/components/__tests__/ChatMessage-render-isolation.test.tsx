@@ -40,6 +40,7 @@ describe('ChatMessage render isolation', () => {
     const message: ChatMessageData = {
       id: 'message-stable',
       type: 'assistant',
+      from: { kind: 'agent', catId: 'codex-sol' },
       catId: 'codex-sol',
       content: 'stable historical reply',
       timestamp: 1,
@@ -59,6 +60,7 @@ describe('ChatMessage render isolation', () => {
           {
             id: 'message-streaming',
             type: 'assistant',
+            from: { kind: 'agent', catId: 'opus' },
             catId: 'opus',
             content: 'new streaming delta',
             isStreaming: true,
@@ -75,6 +77,7 @@ describe('ChatMessage render isolation', () => {
     const message: ChatMessageData = {
       id: 'message-with-routing-warning',
       type: 'user',
+      from: { kind: 'user', userId: 'test-user' },
       content: '@missing-cat please inspect this',
       timestamp: 1,
       extra: {
@@ -94,6 +97,7 @@ describe('ChatMessage render isolation', () => {
     const message: ChatMessageData = {
       id: 'message-empty-stream',
       type: 'assistant',
+      from: { kind: 'agent', catId: 'codex-sol' },
       catId: 'codex-sol',
       content: '',
       isStreaming: true,
@@ -237,6 +241,7 @@ describe('ChatMessage render isolation', () => {
     const message: ChatMessageData = {
       id: 'explicit-post-with-structured-target',
       type: 'assistant',
+      from: { kind: 'agent', catId: 'cat-author' },
       catId: 'cat-author',
       origin: 'callback',
       content: '正文',
@@ -274,6 +279,7 @@ describe('ChatMessage render isolation', () => {
     const message: ChatMessageData = {
       id: 'canceled-response',
       type: 'assistant',
+      from: { kind: 'agent', catId: 'cat-1' },
       catId: 'cat-1',
       origin: 'stream',
       content: '',
@@ -308,6 +314,7 @@ describe('ChatMessage render isolation', () => {
     const message: ChatMessageData = {
       id: 'completed-response-time',
       type: 'assistant',
+      from: { kind: 'agent', catId: 'cat-1' },
       catId: 'cat-1',
       content: 'done',
       timestamp: startedAt,
@@ -364,6 +371,7 @@ describe('ChatMessage render isolation', () => {
     const message: ChatMessageData = {
       id: 'human-modification-source',
       type: 'user',
+      from: { kind: 'user', userId: 'test-user' },
       content: '请移除画面右上角的标志。',
       timestamp: 1,
       extra: {
@@ -390,6 +398,7 @@ describe('ChatMessage render isolation', () => {
     const message: ChatMessageData = {
       id: 'live-history-1',
       type: 'assistant',
+      from: { kind: 'agent', catId: 'codex6-sol' },
       catId: 'codex6-sol',
       content: '我找到了上次说的那一段。',
       timestamp: 1,
@@ -435,6 +444,7 @@ describe('ChatMessage render isolation', () => {
     const message: ChatMessageData = {
       id: 'legacy-live-history',
       type: 'assistant',
+      from: { kind: 'agent', catId: 'codex6-sol' },
       catId: 'codex6-sol',
       content: '旧语音消息',
       timestamp: 2,
@@ -452,6 +462,7 @@ describe('ChatMessage render isolation', () => {
     const message: ChatMessageData = {
       id: 'deep-history-1',
       type: 'assistant',
+      from: { kind: 'agent', catId: 'fable-5' },
       catId: 'fable-5',
       content: '这是我想清楚后的回答。',
       timestamp: 3,

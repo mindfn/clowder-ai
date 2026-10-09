@@ -11,6 +11,7 @@
 
 import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
+import { cloudDispatchSourceMatches } from '../../cloud-bridge/cloud-dispatch-source.js';
 
 const execFileAsync = promisify(execFile);
 
@@ -2278,17 +2279,28 @@ export async function* invokeSingleCat(deps: InvocationDeps, params: InvocationP
             ? {
                 kind: 'cat' as const,
                 id: cloudCalledBy,
-                ...(params.parentInvocationId ? { invocationId: params.parentInvocationId } : {}),
               }
             : ({ kind: 'user' as const, id: userId } satisfies CloudBridgeAuditContext['sourceSender'])
           : undefined);
+      const sourceMatches =
+        sourceMessageId && sourceSender
+          ? await cloudDispatchSourceMatches({
+              messageStore: deps.messageStore,
+              sourceMessageId,
+              sourceSender,
+              threadId,
+              userId,
+              targetCatId: catId,
+            })
+          : false;
       if (
         deps.cloudInvokeBridge &&
         deps.cloudReturnGrantStore &&
         cloudIntent &&
         cloudCalledBy &&
         sourceMessageId &&
-        sourceSender
+        sourceSender &&
+        sourceMatches
       ) {
         let threadMetadata = null;
         if (threadStore) {
@@ -2340,7 +2352,8 @@ export async function* invokeSingleCat(deps: InvocationDeps, params: InvocationP
       } else {
         const reason = !sourceMessageId
           ? 'missing-source-message-id'
-          : deps.cloudInvokeBridge && (!deps.cloudReturnGrantStore || !cloudIntent || !cloudCalledBy || !sourceSender)
+          : deps.cloudInvokeBridge &&
+              (!deps.cloudReturnGrantStore || !cloudIntent || !cloudCalledBy || !sourceSender || !sourceMatches)
             ? 'incomplete-dispatch-provenance'
             : 'no-adapter';
         const detail = !sourceMessageId

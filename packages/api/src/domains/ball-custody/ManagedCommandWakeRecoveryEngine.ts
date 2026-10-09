@@ -178,6 +178,7 @@ export class ManagedCommandWakeRecoveryEngine {
       threadId: parsed.threadId,
       message: {
         id: stored.id,
+        from: stored.from,
         type: 'connector',
         content: stored.content,
         source: stored.source,

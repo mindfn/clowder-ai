@@ -1,20 +1,20 @@
 import assert from 'node:assert/strict';
 import { randomUUID } from 'node:crypto';
 import { createCatId } from '@cat-cafe/shared';
-import { InvocationQueue } from '../../src/domains/cats/services/agents/invocation/InvocationQueue.js';
-import { InvocationTracker } from '../../src/domains/cats/services/agents/invocation/InvocationTracker.js';
-import type { PersistedQueueDeliveryInput } from '../../src/domains/cats/services/agents/invocation/PersistedQueueDelivery.js';
-import { PersistedQueueDelivery } from '../../src/domains/cats/services/agents/invocation/PersistedQueueDelivery.js';
-import type { QueueProcessorDeps } from '../../src/domains/cats/services/agents/invocation/QueueProcessor.js';
-import { QueueProcessor } from '../../src/domains/cats/services/agents/invocation/QueueProcessor.js';
-import { InMemoryQueueLedgerStore } from '../../src/domains/cats/services/agents/invocation/queue-ledger/InMemoryQueueLedgerStore.js';
-import type { RouteExecutionOptions } from '../../src/domains/cats/services/agents/routing/route-helpers.js';
-import { InMemoryTurnExecutionStore } from '../../src/domains/cats/services/stores/memory/InMemoryTurnExecutionStore.js';
-import { InvocationRecordStore } from '../../src/domains/cats/services/stores/ports/InvocationRecordStore.js';
+import { InvocationQueue } from '../../dist/domains/cats/services/agents/invocation/InvocationQueue.js';
+import { InvocationTracker } from '../../dist/domains/cats/services/agents/invocation/InvocationTracker.js';
+import { PersistedQueueDelivery } from '../../dist/domains/cats/services/agents/invocation/PersistedQueueDelivery.js';
+import { QueueProcessor } from '../../dist/domains/cats/services/agents/invocation/QueueProcessor.js';
+import { InMemoryQueueLedgerStore } from '../../dist/domains/cats/services/agents/invocation/queue-ledger/InMemoryQueueLedgerStore.js';
+import { InMemoryTurnExecutionStore } from '../../dist/domains/cats/services/stores/memory/InMemoryTurnExecutionStore.js';
+import { InvocationRecordStore } from '../../dist/domains/cats/services/stores/ports/InvocationRecordStore.js';
 import {
   MessageStore,
   settleLifecycleResponseInputs,
-} from '../../src/domains/cats/services/stores/ports/MessageStore.js';
+} from '../../dist/domains/cats/services/stores/ports/MessageStore.js';
+import type { PersistedQueueDeliveryInput } from '../../src/domains/cats/services/agents/invocation/PersistedQueueDelivery.js';
+import type { QueueProcessorDeps } from '../../src/domains/cats/services/agents/invocation/QueueProcessor.js';
+import type { RouteExecutionOptions } from '../../src/domains/cats/services/agents/routing/route-helpers.js';
 
 /** Actual atomic admission/QueueProcessor/child History; controlled provider, not a model or successful Task verdict. */
 export function createPersistedQueueFixture(

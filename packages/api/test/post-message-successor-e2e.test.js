@@ -8,6 +8,7 @@ import assert from 'node:assert/strict';
 import { afterEach, beforeEach, test } from 'node:test';
 import './helpers/setup-cat-registry.js';
 import Fastify from 'fastify';
+import { appendTestLifecycleResponseSource } from './helpers/message-from-fixtures.js';
 
 let app;
 let originalEnv;
@@ -185,12 +186,39 @@ test('ordinary request, one typed reply, and author HTTP reads need no F100 meas
   assert.equal(replay.messageId, verdict.messageId);
   const authorEntries = harness.invocationQueue
     .list(harness.thread.id, 'user-1')
-    .filter((entry) => entry.targetCats.includes('codex'));
+    .filter((entry) => entry.targets.includes('codex'));
   assert.equal(authorEntries.length, 1);
-  // This harness has no Queue worker; settle its one carrier before testing
-  // the author's normal durable read surface.
-  harness.messageStore.markDelivered(verdict.messageId, Date.now());
-  harness.invocationQueue.remove(harness.thread.id, 'user-1', authorEntries[0].id);
+  // This read-surface fixture has no provider. Commit the same exact receiver
+  // and input ref that Queue admission uses, then retire only that target.
+  const entry = authorEntries[0];
+  assert.ok(await harness.invocationQueue.markProcessingByIdDurable(harness.thread.id, entry.id, 'codex'));
+  const response = appendTestLifecycleResponseSource(harness.messageStore, {
+    invocationId: author.invocationId,
+    catId: 'codex',
+    threadId: harness.thread.id,
+    userId: 'user-1',
+    timestamp: Date.now(),
+  });
+  assert.equal(
+    harness.messageStore.commitLifecycleAppendAdmission({
+      threadId: harness.thread.id,
+      entryId: entry.id,
+      inputMessageIds: [verdict.messageId],
+      runs: [
+        {
+          targetId: 'codex',
+          invocationId: author.invocationId,
+          responseMessageId: response.id,
+          dispatchedAt: Date.now(),
+        },
+      ],
+    }).kind,
+    'applied',
+  );
+  assert.equal(
+    (await harness.invocationQueue.retireClaimedLifecycleTarget(harness.thread.id, entry.id, 'codex')).outcome,
+    'retired',
+  );
 
   const single = await fetch(`${harness.apiUrl}/api/callbacks/get-message?messageId=${verdict.messageId}&mode=full`, {
     headers: authorHeaders,
@@ -210,7 +238,7 @@ test('ordinary request, one typed reply, and author HTTP reads need no F100 meas
   assert.equal(
     harness.messageStore
       .getByThreadIncludingQueued(harness.thread.id, 20, 'user-1')
-      .filter((message) => message.extra.localReviewVerdict).length,
+      .filter((message) => message.extra?.localReviewVerdict).length,
     1,
   );
 });

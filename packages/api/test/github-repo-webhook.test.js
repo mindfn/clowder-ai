@@ -254,7 +254,7 @@ describe('GitHubRepoWebhookHandler', () => {
         },
         deliverFn: async (_deps, input) => {
           deliveredMessages.push(input);
-          return { messageId: `msg-${deliveredMessages.length}`, content: input.content };
+          return { messageId: `msg-${deliveredMessages.length}`, content: input.content, admitted: true };
         },
         invokeTrigger: {
           trigger(...args) {
@@ -414,10 +414,7 @@ describe('GitHubRepoWebhookHandler', () => {
       deliveredMessages.map((message) => message.catId),
       ['codex-sol', 'codex61-sol'],
     );
-    assert.deepEqual(
-      triggeredCalls.map((call) => call[1]),
-      ['codex-sol', 'codex61-sol'],
-    );
+    assert.deepEqual(triggeredCalls, [], 'Queue admission must not dispatch the same source through a second trigger');
   });
 
   it('skips unhandled event types', async () => {
