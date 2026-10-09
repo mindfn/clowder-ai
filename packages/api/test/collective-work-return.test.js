@@ -12,6 +12,7 @@ import { F232PreparedArtifactReader } from '../dist/domains/growing/F232Prepared
 import { CollectiveCurrentContext } from '../dist/domains/plugin/builtin-runtime/collective-current-context.js';
 import { CollectiveWorkAuthority } from '../dist/domains/plugin/builtin-runtime/collective-work-authority.js';
 import { CollectiveWorkDispatcher } from '../dist/domains/plugin/builtin-runtime/collective-work-dispatcher.js';
+import { adaptMessageStore } from './helpers/message-from-fixtures.js';
 
 catRegistry.register('codex-astra', {
   ...catRegistry.tryGet('codex-sol').config,
@@ -21,7 +22,7 @@ catRegistry.register('codex-astra', {
 });
 
 function fixture() {
-  const messages = new MessageStore();
+  const messages = adaptMessageStore(new MessageStore());
   const tasks = new TaskStore();
   const operations = new Map();
   const source = {
@@ -225,7 +226,7 @@ async function privateAuth(f, result, revision = result.revision, resultRevision
   const trigger = f.messages.append({
     userId: 'owner',
     threadId: 'private',
-    catId: null,
+    from: { kind: 'system', service: 'collective-work' },
     content: 'Resume current Work',
     mentions: [],
     timestamp: Date.now(),

@@ -76,7 +76,7 @@ export async function bootstrapFixture({ persistBirth = true } = {}) {
       await messages.appendIdempotent({
         userId: cafe.ownerUserId,
         threadId: endpoint.id,
-        catId: null,
+        from: { kind: 'external', connectorId: 'collective' },
         mentions: [],
         timestamp: Date.parse(event.acceptedAt),
         content: event.body,

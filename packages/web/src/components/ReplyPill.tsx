@@ -1,13 +1,15 @@
 'use client';
 
+import type { ReplyPreview } from '@cat-cafe/shared';
 import type { CatData } from '@/hooks/useCatData';
 import { useCoCreatorConfig } from '@/hooks/useCoCreatorConfig';
 import { tintOf } from '@/lib/hex-color';
-import { resolveSender } from '@/lib/resolve-sender';
-import { scrollToMessage } from '@/utils/scrollToMessage';
+import { resolveMessageSender } from '@/lib/resolve-sender';
+import { focusLineageMessage } from '@/utils/focusLineageMessage';
+import { SenderAvatar } from './SenderAvatar';
 
 interface ReplyPillProps {
-  replyPreview: { senderCatId: string | null; content: string; deleted?: true };
+  replyPreview: ReplyPreview;
   replyToId: string;
   getCatById: (id: string) => CatData | undefined;
 }
@@ -18,14 +20,14 @@ interface ReplyPillProps {
  */
 export function ReplyPill({ replyPreview, replyToId, getCatById }: ReplyPillProps) {
   const coCreator = useCoCreatorConfig();
-  const { senderCatId, content, deleted } = replyPreview;
+  const { content, deleted } = replyPreview;
 
-  const sender = resolveSender(senderCatId, getCatById, coCreator);
+  const sender = resolveMessageSender(replyPreview, getCatById, coCreator);
   const senderLabel = deleted ? '' : sender.label;
   const previewText = deleted ? '消息已删除' : content;
 
   const handleClick = () => {
-    scrollToMessage(replyToId);
+    focusLineageMessage(replyToId);
   };
 
   return (
@@ -36,7 +38,7 @@ export function ReplyPill({ replyPreview, replyToId, getCatById }: ReplyPillProp
       style={{ backgroundColor: tintOf(sender.color, '20'), color: sender.textColor }}
       title={deleted ? '消息已删除' : `${senderLabel}: ${content}`}
     >
-      ↩ {senderLabel}
+      {!deleted && <SenderAvatar sender={sender} className="inline-block h-3 w-3" />}↩ {senderLabel}
       {senderLabel && !deleted ? ': ' : ''}
       {previewText}
     </button>
