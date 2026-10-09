@@ -48,7 +48,7 @@ export function PluginArchiveInstallButton({
       });
       const data = await res.json();
       if (res.ok) {
-        setMessage({ type: 'success', text: `${data.action === 'updated' ? '更新' : '安装'}成功: ${data.id}` });
+        setMessage({ type: 'success', text: `安装成功: ${data.pluginId}` });
         onInstalled?.();
       } else {
         setMessage({ type: 'error', text: data.error ?? '安装失败' });

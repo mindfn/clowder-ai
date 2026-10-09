@@ -31,7 +31,7 @@ async function select(name: string) {
 }
 
 it.each(['plugin.tgz', 'plugin.tar.gz'])('uploads %s through the generic Manager endpoint', async (name) => {
-  vi.mocked(apiFetch).mockResolvedValue(Response.json({ action: 'installed', id: 'example.plugin' }));
+  vi.mocked(apiFetch).mockResolvedValue(Response.json({ pluginId: 'example.plugin', pluginInstanceId: 'pi_example' }));
   await select(name);
   expect(apiFetch).toHaveBeenCalledWith('/api/plugin-manager/plugins/install/upload', {
     method: 'POST',
@@ -39,6 +39,7 @@ it.each(['plugin.tgz', 'plugin.tar.gz'])('uploads %s through the generic Manager
   });
   expect(onInstalled).toHaveBeenCalledOnce();
   expect(container.textContent).toContain('安装成功: example.plugin');
+  expect(container.textContent).not.toContain('undefined');
   expect(container.textContent).not.toContain('IM Connector');
   expect(container.querySelector('a')).toBeNull();
 });
