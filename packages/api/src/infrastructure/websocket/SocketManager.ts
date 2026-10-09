@@ -5,6 +5,7 @@
 
 import { Server as HttpServer } from 'node:http';
 import { createCatId, isExplicitStopGesture, isExplicitStopSourceControl, type RoomJoinAck } from '@cat-cafe/shared';
+import { fastifyCookie } from '@fastify/cookie';
 import { Server, Socket } from 'socket.io';
 import { isOriginAllowed, resolveFrontendCorsOrigins } from '../../config/frontend-origin.js';
 import {
@@ -17,6 +18,7 @@ import type {
 } from '../../domains/cats/services/agents/invocation/InvocationTracker.js';
 import type { AgentMessage } from '../../domains/cats/services/types.js';
 import { createModuleLogger } from '../logger.js';
+import { sessionUserIdForCookies } from '../session-auth.js';
 import { BroadcastRateMonitor, type BroadcastRateMonitorOptions } from './BroadcastRateMonitor.js';
 import { ThreadSequencer } from './ThreadSequencer.js';
 
@@ -163,10 +165,11 @@ export class SocketManager {
 
   private setupEventHandlers(): void {
     this.io.on('connection', (socket: Socket) => {
-      // F156: Server determines identity — never trust client-supplied userId.
-      // In single-user mode, all connections are 'default-user'.
-      // F077 will replace this with session/cookie-based identity.
-      const userId = 'default-user';
+      // Reuse HTTP's validated session principal, never handshake.auth.userId.
+      // Keep the legacy anonymous boundary; a missing/invalid session cannot
+      // promote a connection to a configured instance owner.
+      const userId =
+        sessionUserIdForCookies(fastifyCookie.parse(socket.handshake.headers.cookie ?? '')) ?? 'default-user';
       log.info({ socketId: socket.id, userId }, 'Client connected');
       log.debug(
         {
@@ -179,8 +182,6 @@ export class SocketManager {
       );
 
       // F39: Auto-join user-scoped room for emitToUser (multi-tab support)
-      // F156: userId is always 'default-user' in single-user mode (F077 will
-      // derive it from session). Auto-join is unconditional.
       socket.join(`user:${userId}`);
 
       socket.on('disconnect', () => {
