@@ -9,6 +9,7 @@ import { isLastOfOwnRun, isOwnHumanMessage } from '../own-message-run';
 const own = (id: string, extra: Partial<ChatMessage> = {}): ChatMessage => ({
   id,
   type: 'user',
+  from: { kind: 'user', userId: 'default-user' },
   content: id,
   timestamp: 1,
   ...extra,
@@ -21,10 +22,12 @@ const recalledUnseen = (id: string): ChatMessage =>
   });
 
 describe('isOwnHumanMessage', () => {
-  it('is a user message with no cat author', () => {
+  it('uses canonical user identity rather than missing or stale cat fields', () => {
     expect(isOwnHumanMessage(own('a'))).toBe(true);
     expect(isOwnHumanMessage(cat('a'))).toBe(false);
-    expect(isOwnHumanMessage({ ...own('a'), catId: 'opus' })).toBe(false);
+    expect(isOwnHumanMessage({ ...own('a'), catId: 'opus' })).toBe(true);
+    expect(isOwnHumanMessage({ ...own('a'), from: undefined })).toBe(false);
+    expect(isOwnHumanMessage({ ...own('a'), from: { kind: 'external', connectorId: 'github-wait' } })).toBe(false);
     expect(isOwnHumanMessage(system('a'))).toBe(false);
   });
 });

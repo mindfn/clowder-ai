@@ -141,6 +141,7 @@ describe('F220 intake: queue snapshot publication ordering', () => {
       contentBlocks: [{ kind: 'text', text: 'preview text' }],
       replyTo: 'msg-parent',
       connector: 'content-review',
+      source: { connector: 'content-review' },
     });
     assert.deepEqual(queue[0].targetCats, []);
   });
