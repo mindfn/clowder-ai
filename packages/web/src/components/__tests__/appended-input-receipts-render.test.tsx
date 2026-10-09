@@ -125,6 +125,72 @@ describe('AppendedInputReceipts: expand in place, jump separately', () => {
     return element;
   }
 
+  it('keeps unsupported delivery static without claiming a model read', async () => {
+    await render([source('unsupported', '补充一条消息', 5)]);
+    const status = row('unsupported').querySelector<HTMLButtonElement>('[data-append-delivery-state]');
+    expect(status?.dataset.appendDeliveryState).toBe('unavailable');
+    expect(status?.getAttribute('aria-label')).toBe('已投递；读取状态不可用');
+    expect(status?.querySelector('.animate-pulse')).toBeNull();
+    await act(async () => status?.click());
+    expect(document.querySelector('[role="tooltip"]')?.textContent).toContain('已投递；读取状态不可用');
+  });
+
+  it('joins only the exact target and stops animation when its response terminates', async () => {
+    const input = source('tracked', '稍后给出结论', 8);
+    input.lifecycle = {
+      kind: 'input',
+      orderKey: 'input:tracked',
+      dispatchRefs: [
+        {
+          targetId: 'opus',
+          statusMessageId: 'response-1',
+          phase: 'dispatched',
+          dispatchedAt: input.timestamp,
+          inputRead: { status: 'pending' },
+        },
+        {
+          targetId: 'other-cat',
+          statusMessageId: 'other-response',
+          phase: 'dispatched',
+          dispatchedAt: input.timestamp,
+          inputRead: { status: 'read', at: input.timestamp + 1 },
+        },
+      ],
+    };
+    await render([input]);
+    expect(
+      row('tracked').querySelector('[data-append-delivery-state]')?.getAttribute('data-append-delivery-state'),
+    ).toBe('pending');
+    expect(row('tracked').querySelector('.animate-pulse')).not.toBeNull();
+    const lifecycle = responseFor([input]).lifecycle;
+    if (lifecycle?.kind !== 'response') throw new Error('Expected response');
+    const terminal: ChatMessage = {
+      ...responseFor([input]),
+      lifecycle: { ...lifecycle, status: 'canceled', completedAt: input.timestamp + 2 },
+    };
+    await act(async () =>
+      root.render(
+        <AppendedInputReceipts response={terminal} timelineMessages={[input]} getCatById={() => undefined} />,
+      ),
+    );
+    expect(row('tracked').querySelector('.animate-pulse')).toBeNull();
+    expect(row('tracked').querySelector('[data-append-delivery-state]')?.getAttribute('aria-label')).toBe(
+      '已投递；读取未确认',
+    );
+    input.lifecycle = {
+      ...input.lifecycle,
+      dispatchRefs: input.lifecycle.dispatchRefs?.map((ref) =>
+        ref.targetId === 'opus' ? { ...ref, inputRead: { status: 'read', at: input.timestamp + 3 } } : ref,
+      ),
+    };
+    await act(async () =>
+      root.render(
+        <AppendedInputReceipts response={terminal} timelineMessages={[input]} getCatById={() => undefined} />,
+      ),
+    );
+    expect(row('tracked').querySelector('[data-append-delivery-state]')?.getAttribute('aria-label')).toBe('已读取');
+  });
+
   it('offers 展开全文 only when the line is truncated, and expands the full text in place', async () => {
     await render([source('short', '好的', 5), source('long', LONG_TEXT, 8)]);
 

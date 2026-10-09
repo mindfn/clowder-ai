@@ -70,7 +70,20 @@ export interface ReorderVisibleLifecycleEntriesCommand {
   readonly orderedVisibleEntryIds: readonly string[];
 }
 
-export type LifecycleDispatchRef =
+/** Optional presentation evidence; never an admission, Queue owner or business result. */
+export type LifecycleInputReadReceipt =
+  | { readonly status: 'pending' }
+  | { readonly status: 'read'; readonly at: number };
+
+export function isLifecycleInputReadReceipt(value: unknown): value is LifecycleInputReadReceipt {
+  if (!value || typeof value !== 'object') return false;
+  const receipt = value as Record<string, unknown>;
+  return receipt.status === 'pending'
+    ? receipt.at === undefined
+    : receipt.status === 'read' && isFiniteTimestamp(receipt.at);
+}
+
+export type LifecycleDispatchRef = { readonly inputRead?: LifecycleInputReadReceipt } & (
   | {
       readonly targetId: string;
       readonly phase: 'dispatched';
@@ -84,7 +97,8 @@ export type LifecycleDispatchRef =
       readonly statusMessageId: string;
       /** Missing only on hydrated pre-v2 refs; new writers always persist it. */
       readonly dispatchedAt?: number;
-    };
+    }
+);
 
 export interface LifecycleMessageMetadata {
   readonly orderKey: string;
@@ -222,7 +236,12 @@ function isDispatchRef(value: unknown): value is LifecycleDispatchRef {
   return (
     (candidate.phase === 'dispatched' || candidate.phase === 'settled') &&
     isNonEmptyString(candidate.statusMessageId) &&
-    (candidate.dispatchedAt === undefined || isFiniteTimestamp(candidate.dispatchedAt))
+    (candidate.dispatchedAt === undefined || isFiniteTimestamp(candidate.dispatchedAt)) &&
+    (candidate.inputRead === undefined ||
+      (isLifecycleInputReadReceipt(candidate.inputRead) &&
+        (candidate.inputRead.status !== 'read' ||
+          candidate.dispatchedAt === undefined ||
+          candidate.inputRead.at >= (candidate.dispatchedAt as number))))
   );
 }
 

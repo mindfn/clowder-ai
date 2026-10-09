@@ -1021,7 +1021,11 @@ export class QueueProcessor {
         threadId: input.threadId,
         entryId: input.entryId,
         inputMessageIds,
-        runs: input.expectedRuns.map((run) => ({ ...run, dispatchedAt: seenAt })),
+        runs: input.expectedRuns.map((run, index) => ({
+          ...run,
+          dispatchedAt: seenAt,
+          ...(dispatchers[index]?.capabilities.inputReadReceipt ? { inputReadSupported: true } : {}),
+        })),
       });
       if (admission.kind !== 'applied' && admission.kind !== 'replayed') {
         throw new Error(
@@ -1089,6 +1093,38 @@ export class QueueProcessor {
                 text: claimed.payload.content,
                 ...(imagePaths.length > 0 ? { imagePaths } : {}),
                 messageIds: inputMessageIds,
+                ...(dispatchers[index]!.capabilities.inputReadReceipt
+                  ? {
+                      onInputRead: async () => {
+                        const response = await messageStore.getById(run.responseMessageId);
+                        if (
+                          response?.lifecycle?.kind !== 'response' ||
+                          response.lifecycle.invocationId !== run.invocationId ||
+                          response.lifecycle.targetId !== run.targetId
+                        )
+                          return;
+                        for (const id of inputMessageIds) {
+                          if (!response.lifecycle.inputMessageIds.includes(id)) continue;
+                          const source = await messageStore.getById(id);
+                          const refs =
+                            source?.lifecycle?.dispatchRefs?.filter(
+                              (ref) => ref.targetId === run.targetId && ref.statusMessageId === run.responseMessageId,
+                            ) ?? [];
+                          if (!source || refs.length !== 1 || !refs[0]!.inputRead) continue;
+                          const result = await messageStore.advanceLifecycleInputDispatch(id, {
+                            ...lifecycleInputIdentityForStoredMessage(source),
+                            targetId: run.targetId,
+                            statusMessageId: run.responseMessageId,
+                            ...(refs[0]!.phase === 'dispatched'
+                              ? { phase: 'dispatched' as const, dispatchedAt: refs[0]!.dispatchedAt ?? seenAt }
+                              : { phase: 'settled' as const }),
+                            inputRead: { status: 'read', at: Math.max(Date.now(), refs[0]!.dispatchedAt ?? seenAt) },
+                          });
+                          if (result.kind === 'applied') this.emitLifecycleMessageUpdated(input.userId, result.message);
+                        }
+                      },
+                    }
+                  : {}),
               },
               { force: false, expectedInvocationId: run.invocationId },
             );

@@ -73,7 +73,7 @@ Why: the RFC makes one end-to-end contract from existing owner facts so implemen
 
 - 持久化 Active Run、重建 provider client 或重启后自动重放；
 - 在 Queue 中保存 per-target attempt、seen/handled 或 terminal owner；这些事实分别归 History response lifecycle、普通未读 cursor、provider presentation 与 structured owner；
-- 面向用户新增另一套已读/未读回执，或把 `dispatchRefs` 升格为 provider-presented / responsibility receipt；
+- 新增影响 Queue 或执行归属的已读/未读回执，或把 `dispatchRefs` 升格为 provider-presented / responsibility receipt；追加消息可按下述规则展示可选读取证据；
 - 把 `private_input`、action/wait carrier 或其他隐藏协议输入公开成 Chat History 消息、Queue Panel row 或头像锚点；未来若需要公开，必须另行定义可见性、迁移与权限契约；
 - 将多条消息拼成一条正文、覆盖消息边界，或绕过 Queue 顺序的 batching；
 - Queue entry 的 `queued / processing / handled / failed` 状态机；
@@ -1203,6 +1203,8 @@ Agent 可以从被投递 History 消息的 `dispatchRefs` 与关联 bubble/threa
 | Cancel queued | coordinator 删除选中 entry 或 pending target；actual dispatch 前没有需要删除的 History ref | 不影响任何 Active Run |
 | Stop 指定 Agent | Queue 不参与，也不改变自动 drain | 只选择该 Agent 在操作边界仍 live 的 exact run，调用对应 Agent Client `cancel(exact invocation)`；client 正常回调 canceled terminal 后释放 run |
 | Stop thread 全部活动 Agent | Queue 不参与，也不改变自动 drain | 只对操作边界的全部 live Agent Client runs 做 exact snapshot，逐一调用各 Agent Client cancel；managed command/job/wait 不在集合中；各自正常 terminal closure 后释放 |
+
+追加消息的可选读取展示（operator 2026-10-09 确认）：client 接收即完成投递并退出 Queue；消息自身可在 exact source×target×response 的 dispatch ref 上保存 `inputRead` 展示证据，缺省表示 client 未提供此能力。支持反馈且未确认时只让消息旁的小状态点呼吸；精确 client 输入 UUID 回显证明已纳入模型输入后静止。hover、键盘焦点或手机点按分别显示「已投递；等待读取反馈」「已读取」。不支持反馈直接静止，提示「已投递；读取状态不可用」；原响应终态仍未确认时停止动画，提示「已投递；读取未确认」。读取不意味着模型理解，不用本地 iterator 出队、文本相似或 turn 顺序推断，也不改变 Queue、执行归属、Stop、失败结果或 caller wake。晚到证据只能单调更新原消息的原目标，持久化失败不阻塞执行；重连按 canonical History 恢复。
 
 Queue row 可见只表示它仍有 pending work，不授予 Steer。静态 guide capability 由 configured Agent Client 声明并随成员信息逐成员投影；exact active parent、pending/terminal 状态与 membership/availability 则来自当前 canonical snapshot。共享 capability predicate 把 `exact_active_turn` 和 `queued_internal_turn` 都归为「可引导当前 invocation」，但不会把后者说成精确同轮读取。Steer modal 的候选集合为 thread participants、stored routed targets 与 fallback 的并集去重；fallback 不在 Web 重算，而是读取 message ingress 与 Queue admission 共用 resolver 的只读投影：最近一条已完成 lifecycle 回复的实际 target，无此记录才取全局默认回复者。History 中已经存在 dispatch ref 的 target 显示已投递并禁选。打开 modal 不写 membership；命令端点确认时重读 live join，跳过已经投递或当前不可用的成员；新选择的可用成员只在确认时持久加入 thread，并在 exact pending-target cutover 成功后才产生 client side effect。`private_input` 不对用户显示，只走正常 drain。
 

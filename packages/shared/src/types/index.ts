@@ -1066,6 +1066,7 @@ export type {
   LifecycleDispatchRef,
   LifecycleInlinePayload,
   LifecycleInputCapabilities,
+  LifecycleInputReadReceipt,
   LifecycleMessageFrom,
   LifecycleMessageMetadata,
   LifecycleMessageRefPayload,
@@ -1081,6 +1082,7 @@ export type {
 } from './message-lifecycle.js';
 export {
   hasExactLifecycleProcessingDispatch,
+  isLifecycleInputReadReceipt,
   isLifecycleStoredMessageMetadata,
   isMessageFrom,
   timelineMessageKind,

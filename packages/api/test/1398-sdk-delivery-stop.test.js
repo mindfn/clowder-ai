@@ -31,6 +31,90 @@ class AsyncInbox {
 }
 
 describe('accepted SDK input does not delay exact Stop', () => {
+  it('observes only exact main-query input UUIDs without waiting for presentation persistence', async () => {
+    const events = new AsyncInbox();
+    const controller = new AbortController();
+    let dispatcher;
+    let sdkInput;
+    let releaseRead;
+    const reads = [];
+    const delayedRead = new Promise((resolve) => {
+      releaseRead = resolve;
+    });
+    const service = new ClaudeSdkAgentService({
+      catId: 'opus',
+      model: 'claude-test',
+      l0CompilerFn: async () => 'compiled L0',
+      queryFn: ({ prompt, options }) => {
+        sdkInput = prompt[Symbol.asyncIterator]();
+        options.abortController.signal.addEventListener('abort', () => events.close(), { once: true });
+        return { close() {}, interrupt: async () => {}, [Symbol.asyncIterator]: () => events[Symbol.asyncIterator]() };
+      },
+    });
+    const output = service
+      .invoke('initial', {
+        invocationId: 'inv-read',
+        signal: controller.signal,
+        activeRunDispatch: {
+          invocationId: 'inv-read',
+          register(value) {
+            dispatcher = value;
+            return () => {};
+          },
+        },
+        toolExecutionPolicy: { mode: 'read_only', replayDeniedToolNames: [] },
+      })
+      [Symbol.asyncIterator]();
+    const initialized = output.next();
+    while (!sdkInput) await new Promise((resolve) => setImmediate(resolve));
+    await sdkInput.next();
+    events.push({ type: 'system', subtype: 'init', session_id: 'sdk-read' });
+    await initialized;
+    assert.equal(dispatcher.capabilities.inputReadReceipt, true);
+    for (const id of ['first', 'second']) {
+      assert.equal(
+        (
+          await dispatcher.dispatch(
+            {
+              text: id,
+              messageIds: [id],
+              onInputRead: async () => {
+                reads.push(id);
+                if (id === 'second') await delayedRead;
+              },
+            },
+            { expectedInvocationId: 'inv-read', force: false },
+          )
+        ).accepted,
+        true,
+      );
+    }
+    const first = (await sdkInput.next()).value;
+    const second = (await sdkInput.next()).value;
+    assert.deepEqual(reads, [], 'client iterator dequeue is not model input evidence');
+    const pendingOutput = output.next();
+    events.push({
+      type: 'assistant',
+      parent_tool_use_id: 'subagent',
+      user_message_uuid: first.uuid,
+      message: { content: [] },
+    });
+    events.push({ type: 'stream_event', user_message_uuid: 'unknown', event: { type: 'ping' } });
+    await new Promise((resolve) => setImmediate(resolve));
+    assert.deepEqual(reads, []);
+    events.push({ type: 'stream_event', user_message_uuids: [second.uuid, second.uuid], event: { type: 'ping' } });
+    await new Promise((resolve) => setImmediate(resolve));
+    assert.deepEqual(reads, ['second'], 'folded UUID is exact and duplicate proof is idempotent');
+    controller.abort('user_stop');
+    const terminal = await Promise.race([
+      pendingOutput,
+      new Promise((_, reject) => setTimeout(() => reject(new Error('read persistence blocked Stop')), 1000)),
+    ]);
+    assert.equal(terminal.value.type, 'done');
+    releaseRead();
+    await new Promise((resolve) => setImmediate(resolve));
+    assert.deepEqual(reads, ['second']);
+  });
   it('closes the query on abort even before its engine dequeues an accepted input', async () => {
     const events = new AsyncInbox();
     const controller = new AbortController();
