@@ -114,7 +114,10 @@ export const useApprovalHubStore = create<ApprovalHubState>((set, get) => ({
     const itemsAtRequest = get().items;
     set({ pendingRequestVersion: requestVersion, isLoading: true, error: null });
     try {
-      const res = await apiFetch('/api/approval-hub/pending');
+      // A refresh can follow a proposal event or decision while an earlier
+      // read is still in flight. Join the bounded trailing generation so its
+      // pre-change snapshot cannot satisfy the new refresh.
+      const res = await apiFetch('/api/approval-hub/pending', undefined, { afterCurrentGet: true });
       if (!res.ok) throw new Error(`Failed to fetch: ${res.status}`);
       const data = (await res.json()) as { items: ApprovalHubItem[]; count: number };
       if (get().pendingRequestVersion !== requestVersion) return;
@@ -132,7 +135,7 @@ export const useApprovalHubStore = create<ApprovalHubState>((set, get) => ({
     const requestVersion = get().settledRequestVersion + 1;
     set({ settledRequestVersion: requestVersion, settledIsLoading: true, settledError: null });
     try {
-      const res = await apiFetch(`/api/approval-hub/settled?limit=${limit}`);
+      const res = await apiFetch(`/api/approval-hub/settled?limit=${limit}`, undefined, { afterCurrentGet: true });
       if (!res.ok) throw new Error(`Failed to fetch: ${res.status}`);
       const data = (await res.json()) as { items: SettledApprovalHubItem[]; count: number };
       if (get().settledRequestVersion !== requestVersion) return;
