@@ -71,6 +71,24 @@ describe('ThreadExecutionBar Stop surface', () => {
     container.remove();
   });
 
+  it('keeps the canonical running slot and Stop visible when the chat cache is absent, then retires on server truth', () => {
+    setActive('opus', 'streaming');
+    act(() => {
+      useChatStore.setState({ catInvocations: {} });
+      root.render(React.createElement(ThreadExecutionBar, { threadId: 'thread-a' }));
+    });
+    expect(container.textContent).toContain('执行中');
+    expect(container.querySelector('button[aria-label="Stop opus live_invocation inv-a"]')).not.toBeNull();
+    act(() => {
+      const store = useActiveExecutionStore.getState();
+      store.applySnapshot('thread-a', store.beginHydration('thread-a', '/project/cafe'), {
+        projectPath: '/project/cafe',
+        executions: [],
+      });
+    });
+    expect(container.textContent).toBe('');
+  });
+
   it.each<CatStatusType>([
     'streaming',
     'suspected_stall',

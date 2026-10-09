@@ -194,18 +194,18 @@ describe('ThreadExecutionBar (F122B AC-B8 + B8/B9 polish)', () => {
     expect(container.textContent).toBe('');
   });
 
-  it('does not present a pre-admission tracker reservation as an executing response', () => {
+  it('presents a server-verified execution without requiring a second chat cache', () => {
     useActiveExecutionStore.setState({
       anchorThreadId: 'thread-1',
       projectPath: '/project/cafe',
       executionsByKey: {
-        reservation: liveExecution({ executionId: 'pre-admission', catId: 'opus' }),
+        execution: liveExecution({ executionId: 'admitted-response', catId: 'opus' }),
       },
       hydration: 'ready',
       hydrationError: null,
     });
     act(() => root.render(React.createElement(ThreadExecutionBar)));
-    expect(container.textContent).toBe('');
+    expect(container.textContent).toContain('执行中');
   });
 
   it('keeps no-execution hydration states out of the bottom-chrome layout', () => {

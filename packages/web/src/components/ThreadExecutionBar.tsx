@@ -3,7 +3,6 @@
 import type { ActiveExecutionProjection } from '@cat-cafe/shared';
 import { useEffect, useMemo, useState } from 'react';
 import { formatCatName, useCatData } from '@/hooks/useCatData';
-import { useThreadLiveness } from '@/hooks/useThreadScopedSelectors';
 import { catColorVar } from '@/lib/cat-slug';
 import { activeExecutionKey, useActiveExecutionStore } from '@/stores/activeExecutionStore';
 import { useChatStore } from '@/stores/chatStore';
@@ -19,7 +18,6 @@ interface ThreadExecutionBarProps {
 export function ThreadExecutionBar({ threadId }: ThreadExecutionBarProps) {
   const currentThreadId = useChatStore((s) => s.currentThreadId);
   const effectiveThreadId = threadId ?? currentThreadId;
-  const { catInvocations } = useThreadLiveness(effectiveThreadId);
   const executionsByKey = useActiveExecutionStore((state) => state.executionsByKey);
   const executionHydration = useActiveExecutionStore((state) => state.hydration);
   const executionAnchorThreadId = useActiveExecutionStore((state) => state.anchorThreadId);
@@ -29,13 +27,9 @@ export function ThreadExecutionBar({ threadId }: ThreadExecutionBarProps) {
   const activeExecutions = useMemo(
     () =>
       Object.values(executionsByKey)
-        .filter(
-          (execution) =>
-            execution.threadId === effectiveThreadId &&
-            (execution.kind === 'managed_command' || Boolean(catInvocations[execution.catId]?.activeRun)),
-        )
+        .filter((execution) => execution.threadId === effectiveThreadId)
         .sort((left, right) => left.startedAt - right.startedAt || left.executionId.localeCompare(right.executionId)),
-    [catInvocations, effectiveThreadId, executionsByKey],
+    [effectiveThreadId, executionsByKey],
   );
 
   // Build display info from cat-config (dynamic, not hardcoded)

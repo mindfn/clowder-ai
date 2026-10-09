@@ -1,6 +1,7 @@
 import type {
   ActiveExecutionListResponse,
   ActiveExecutionProjection,
+  LifecycleActiveRun,
   LifecycleInputCapabilities,
 } from '@cat-cafe/shared';
 import type { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify';
@@ -19,6 +20,7 @@ import { resolveUserId } from '../utils/request-identity.js';
 import { nativeControlReceiptHooks, nativeLiveControlCommand } from './native-control-receipts.js';
 
 export interface LiveExecutionCandidate {
+  readonly activeRun?: LifecycleActiveRun;
   readonly catId: string;
   readonly startedAt: number;
   readonly executionId?: string;
@@ -331,7 +333,12 @@ async function buildActiveExecutionList(
     })),
   );
   const executions = liveGroups.flatMap(({ thread, candidates }) =>
-    candidates.map((candidate) => projectLiveExecution(thread, userId, candidate)),
+    candidates
+      // A tracker reservation has no admitted response yet. Its exact control
+      // handle remains available to the cancel route, but is not a running reply.
+      // Durable child/process-owner candidates retain their existing read/control contract.
+      .filter((candidate) => candidate.controlSource !== 'tracker' || candidate.activeRun || candidate.invocationId)
+      .map((candidate) => projectLiveExecution(thread, userId, candidate)),
   );
 
   for (const execution of managed) {

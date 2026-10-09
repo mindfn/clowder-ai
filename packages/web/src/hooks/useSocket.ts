@@ -520,6 +520,7 @@ export function useSocket(callbacks: SocketCallbacks, threadId?: string, foregro
       // useChatHistory's Phase C subscription (debounce + retry + ack +
       // Phase D merge filter); see useChatHistory.ts:872 catchUpVersion.
       if (hasConnectedOnceRef.current) {
+        window.dispatchEvent(new Event('cat-cafe:socket-reconnected'));
         void invalidateSidebarProjection();
         const store = useChatStore.getState();
         const bumped = new Set<string>();
@@ -568,6 +569,7 @@ export function useSocket(callbacks: SocketCallbacks, threadId?: string, foregro
       agentMessageCoalescerRef.current?.push(msg);
       if (msg.isFinal === true || msg.type === 'done' || msg.type === 'error') {
         void invalidateSidebarProjection();
+        if (msg.threadId) refreshActiveExecutionForThread(msg.threadId);
       }
     });
 
@@ -1122,8 +1124,9 @@ export function useSocket(callbacks: SocketCallbacks, threadId?: string, foregro
       if (semantic?.action === 'suppress') return;
       store.addMessageToThread(data.threadId, {
         id: data.message.id,
-        type: 'connector',
+        type: timelineMessageKind(data.message.from, Boolean(data.message.source)) ?? 'connector',
         ...(data.message.from ? { from: data.message.from } : {}),
+        ...(data.message.from?.kind === 'agent' ? { catId: data.message.from.catId } : {}),
         content: semantic?.action === 'replace' ? semantic.projection.content : (data.message.content ?? ''),
         ...(data.message.source ? { source: data.message.source } : {}),
         ...(data.message.extra ? { extra: data.message.extra } : {}),
