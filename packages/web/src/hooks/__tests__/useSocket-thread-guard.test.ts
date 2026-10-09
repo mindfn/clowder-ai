@@ -167,6 +167,7 @@ vi.mock('@/utils/userId', () => ({
 }));
 
 vi.mock('@/utils/api-client', () => ({
+  refreshApiSession: vi.fn(async () => {}),
   API_URL: 'http://localhost:3100',
   apiFetch: (...args: unknown[]) => mockApiFetch(...args),
 }));
