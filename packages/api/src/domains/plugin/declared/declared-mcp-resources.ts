@@ -157,7 +157,13 @@ async function materializeMcpPackage(
   try {
     const target = resolve(temporary, 'package');
     await cp(packageRoot, target, { recursive: true, force: false, errorOnExist: true });
-    if (options.dependencyRoot !== undefined && (await directoryExists(options.dependencyRoot))) {
+    // Shipped dependencies were already copied with the package; only a separate
+    // materializer-owned closure needs to be attached here.
+    if (
+      options.dependencyRoot !== undefined &&
+      resolve(options.dependencyRoot) !== resolve(packageRoot, 'node_modules') &&
+      (await directoryExists(options.dependencyRoot))
+    ) {
       await cp(options.dependencyRoot, resolve(target, 'node_modules'), {
         recursive: true,
         force: false,
