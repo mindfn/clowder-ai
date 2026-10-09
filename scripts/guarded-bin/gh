@@ -123,17 +123,44 @@ function candidateContext() {
   // unrelated checkout and accidentally exempt a different publication.
   if (head?.includes(':'))
     fail('verdict_publish_candidate_unavailable', 'explicit --head must resolve to a local candidate');
-  const candidateRef = head === undefined ? 'HEAD' : `refs/heads/${head}`;
+  const headBranch = head ?? checkedGit(['symbolic-ref', '--quiet', '--short', 'HEAD']).trim();
+  const candidateRef = `refs/heads/${headBranch}`;
   const sourceRef = checkedGit(['rev-parse', '--verify', '--end-of-options', `${candidateRef}^{commit}`]).trim();
-  const baseBranch = optionValue('base') ?? 'main';
+  const baseBranch = optionValue('base');
+  if (!baseBranch) fail('verdict_publish_candidate_unavailable', 'publication requires an explicit --base');
+  if (!originMatchesPrTarget())
+    fail('verdict_publish_candidate_unavailable', 'cannot bind PR target to the declared origin repository');
+  const remoteHead = `refs/heads/${headBranch}`;
+  const remoteBaseBranch = `refs/heads/${baseBranch}`;
+  checkedGit(['check-ref-format', remoteHead]);
+  checkedGit(['check-ref-format', remoteBaseBranch]);
   const remoteBase = `refs/remotes/origin/${baseBranch}`;
-  const baseRef = gitOutput(['rev-parse', '--verify', remoteBase]) ? remoteBase : `refs/heads/${baseBranch}`;
-  const baseSha = checkedGit(['rev-parse', '--verify', '--end-of-options', `${baseRef}^{commit}`]).trim();
+  const baseSha = checkedGit(['rev-parse', '--verify', '--end-of-options', `${remoteBase}^{commit}`]).trim();
+  const advertised = checkedGit(['ls-remote', '--exit-code', 'origin', remoteHead, remoteBaseBranch]);
+  // Map by ref name rather than result order; duplicate/missing refs cannot
+  // supply a different branch's publication coordinates.
+  const tips = new Map(
+    advertised
+      .trim()
+      .split('\n')
+      .map((line) => {
+        const [sha, ref] = line.split('\t');
+        return [ref, sha];
+      }),
+  );
+  if (tips.get(remoteHead) !== sourceRef || tips.get(remoteBaseBranch) !== baseSha) {
+    fail(
+      'verdict_publish_candidate_unavailable',
+      'remote head/base differ from the candidate; push/fetch before retrying',
+    );
+  }
   const paths = checkedGit(['diff', '--name-only', '-z', '--no-renames', `${baseSha}...${sourceRef}`, '--'])
     .split('\0')
     .filter(Boolean)
     .filter(protectedArtifact);
-  return { sourceRef, baseBranch, paths };
+  // Explicit --head skips gh's automatic push/fork selection. A default head
+  // is only supported after verifying its already-published same-repo branch.
+  return { sourceRef, baseBranch, paths, delegateArgs: head === undefined ? [...args, '--head', headBranch] : args };
 }
 
 function isVerdictCandidate(candidate) {
@@ -149,7 +176,6 @@ function isVerdictCandidate(candidate) {
   )
     return true;
   if (candidate.paths.length === 0) return false;
-  if (!originMatchesPrTarget()) return true;
 
   // A path in an integration diff is not necessarily a new issuance. Only
   // exclude the exact object already published on origin/main, with main in
@@ -232,7 +258,7 @@ const delegatePath = (process.env.PATH ?? '')
   .filter((entry) => entry && resolve(entry) !== resolve(ownDir))
   .join(delimiter);
 const delegate = process.env.CAT_CAFE_REAL_GH_PATH ?? 'gh';
-const result = spawnSync(delegate, args, {
+const result = spawnSync(delegate, candidate?.delegateArgs ?? args, {
   env: { ...process.env, PATH: delegatePath },
   stdio: 'inherit',
 });

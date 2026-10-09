@@ -39,6 +39,10 @@ be removed from the path-trigger classification:
 
 - The declared origin is a GitHub repository matching every explicit PR target;
   a different host or repository does not receive the exemption.
+- Before computing any diff, the exact local head and cached origin/base must
+  match freshly advertised remote head/base commits in that repository. Diverged,
+  missing or stale coordinates refuse publication. An explicit base is required;
+  the guard does not guess the CLI's configured merge base or default branch.
 - Cached origin/main equals the current advertised remote main commit, and that
   commit is an ancestor of the exact candidate.
 - Every exempted path has the same nonempty NUL-delimited tree entry, including
@@ -46,6 +50,10 @@ be removed from the path-trigger classification:
 - Explicit `--head` resolves the branch itself, not the current checkout or a
   same-name tag. Owner-qualified remote heads are conservatively refused because
   this local guard cannot prove their candidate.
+- A default head must already exist remotely and match the current branch. The
+  delegated command receives that verified explicit `--head`, skipping the CLI's
+  automatic push/fork selection and preventing a different tracking branch from
+  becoming the publication candidate. Push the branch normally before retrying.
 - Explicit verdict title/head/branch/commit intent still enables the original
   target and publication-contract checks. Any unexempted protected path does too.
 
@@ -63,6 +71,13 @@ checker, contract failure/success, invalid base, explicit head and same-name tag
 The initial production baseline failed four of fifteen tests; the red log is
 retained. The final candidate also runs environment registry/example checks,
 syntax, formatting and whitespace checks. Exact logs and hashes accompany review.
+The first maintenance review found that fresh main alone did not bind PR head
+and base: a divergent remote head and an ahead-of-server base cache both escaped
+the contract. Those independent failures and a default-head automatic-push
+counterexample are retained as red evidence; the successor verifies all remote
+publication coordinates before even the empty-diff fast path. Fixtures now
+publish positive candidates explicitly; negative cases retain mismatched or
+missing remote refs.
 
 Independent review precedes the maintenance PR. Normal merge/pull delivery must
 activate the reviewed guard before the original A2A fork PR is retried through
