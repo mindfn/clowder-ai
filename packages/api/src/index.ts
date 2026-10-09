@@ -4998,11 +4998,7 @@ async function main(): Promise<void> {
     });
   }
 
-  const waitLifecycleHolder: {
-    current?: import('./domains/github-signals/GitHubWaitLifecycleService.js').GitHubWaitLifecycleService;
-  } = {};
-  // QueueLedger and exact child History own notification delivery. Do not
-  // resurrect the retired Message-custody complete-managed-hold writer.
+  // QueueLedger and exact child History own notification delivery.
   const meetingArtifactReaderHolder: import('./routes/callback-meeting-artifact-routes.js').MeetingArtifactReaderHolder =
     {};
   const namedCatContentHolder: import('./routes/callback-content-editor-routes.js').NamedCatContentHolder = {};
@@ -6839,7 +6835,6 @@ async function main(): Promise<void> {
   await app.register(tasksRoutes, {
     taskStore,
     socketManager,
-    waitLifecycleHolder,
     deploymentWaitLifecycleHolder,
     humanTerminal: entrustedWorkHumanTerminal,
   });
@@ -8402,7 +8397,6 @@ async function main(): Promise<void> {
       // same transaction that persists it, so the flush IS the owner's wake. There is no second
       // trigger that a collector could mistake for its own poll's result.
     });
-    waitLifecycleHolder.current = waitLifecycle;
     if (runtimeDeploymentContext) {
       const [{ DeploymentWaitLifecycleService }, { DeploymentWaitRecoverySweep }] = await Promise.all([
         import('./domains/runtime-deployment/DeploymentWaitLifecycleService.js'),
