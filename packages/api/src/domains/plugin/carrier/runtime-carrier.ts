@@ -15,6 +15,7 @@ import {
   type DeclaredStaticResourceHost,
   removeDeclaredStaticResources,
 } from '../declared/declared-static-resources.js';
+import { NativePluginActions } from '../declared/native-plugin-actions.js';
 import { type PluginRuntimeLifecyclePort, removesPluginOwnedResources } from '../external-plugin-lifecycle-types.js';
 import { ExternalPluginRuntimeError, type VerifiedPluginPackageLocator } from '../external-runtime/types.js';
 import type { PluginInventoryStore } from '../host-inventory/ports.js';
@@ -63,6 +64,7 @@ export interface PluginRuntimeCarrier {
 }
 
 export class PluginRuntimeCarrierRouter implements PluginRuntimeLifecyclePort {
+  readonly nativeActions = new NativePluginActions((id) => this.#admission(id));
   readonly #carriers: PluginRuntimeCarrier[] = [];
   readonly #runtimeContributions: DeclaredRuntimeContributions;
 
@@ -91,11 +93,21 @@ export class PluginRuntimeCarrierRouter implements PluginRuntimeLifecyclePort {
   }
 
   async start(pluginInstanceId: string): Promise<unknown> {
+    const generation = this.nativeActions.generation(pluginInstanceId);
     const admission = await this.#admission(pluginInstanceId);
     const carrier = this.#selectAdmission(admission);
     const result = await carrier.start(pluginInstanceId);
     try {
-      await activateDeclaredStaticResources(admission, this.resources);
+      this.nativeActions.activate(admission, generation, (method, input) =>
+        this.invoke(pluginInstanceId, method, input),
+      );
+      await activateDeclaredStaticResources(
+        admission,
+        this.resources && {
+          ...this.resources,
+          nativeActionEnvironment: this.nativeActions.environment(pluginInstanceId),
+        },
+      );
       await this.#runtimeContributions.activate(
         admission,
         (instanceId, method, params) => this.invoke(instanceId, method, params),
@@ -111,6 +123,7 @@ export class PluginRuntimeCarrierRouter implements PluginRuntimeLifecyclePort {
   }
 
   async stop(pluginInstanceId: string, reason = 'host_stop'): Promise<void> {
+    this.nativeActions.deactivate(pluginInstanceId);
     const admission = await this.#admission(pluginInstanceId);
     const carrier = this.#selectAdmission(admission);
     await this.beforeStop?.(pluginInstanceId, reason);
@@ -122,6 +135,7 @@ export class PluginRuntimeCarrierRouter implements PluginRuntimeLifecyclePort {
   }
 
   async stopAll(reason = 'host_shutdown'): Promise<void> {
+    this.nativeActions.deactivateAll();
     if (this.beforeStop) {
       const inventory = await this.inventory.snapshot();
       await Promise.all(inventory.instances.map((instance) => this.beforeStop?.(instance.pluginInstanceId, reason)));
@@ -244,6 +258,7 @@ export class PluginRuntimeCarrierRouter implements PluginRuntimeLifecyclePort {
     carrier: PluginRuntimeCarrier,
     admission: PluginRuntimeAdmission,
   ): Promise<never> {
+    this.nativeActions.deactivate(admission.instance.pluginInstanceId);
     const rollbackErrors: unknown[] = [];
     try {
       await carrier.stop(admission.instance.pluginInstanceId, 'start_failed');

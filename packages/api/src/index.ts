@@ -5938,6 +5938,13 @@ async function main(): Promise<void> {
   });
   runInstalledPluginTest = (pluginId) => installedPluginOperations.runTest(pluginId);
   await app.register(pluginOperationRoutes, { operations: installedPluginOperations });
+  const { pluginNativeActionRoutes } = await import('./routes/plugin-native-action-routes.js');
+  await app.register(pluginNativeActionRoutes, {
+    actions: pluginRuntime.supervisor.nativeActions,
+    registry,
+    threadStore,
+    sources: { messageStore, ...(managedHoldDispositionService ? { managedHoldDispositionService } : {}) },
+  });
   // F202 W2-6: grants follow the Host policy for instances installed before a policy change too;
   // done before recovery so every resumed runtime starts with the grants it will run with.
   const { reconcileOfficialPluginGrants } = await import('./domains/plugin/manager/official-plugin-grants.js');

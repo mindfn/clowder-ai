@@ -1,3 +1,4 @@
+import { pluginMcpEnvironment } from '../../../../../config/capabilities/plugin-mcp-environment.js';
 import { existsSync, readFileSync } from 'node:fs';
 import { dirname, join, resolve } from 'node:path';
 import {
@@ -111,7 +112,8 @@ export async function resolveProviderMcpConfigResolution(input: {
             command: resolveMcpCommand(s.command, workingDir, configSourceRoot),
             args: resolveMcpArgs(s.args, workingDir, configSourceRoot),
           };
-          if (s.env && Object.keys(s.env).length > 0) entry.env = s.env;
+          const environment = pluginMcpEnvironment(s, input.callbackEnv);
+          if (environment && Object.keys(environment).length > 0) entry.env = environment;
           if (workingDir) entry.cwd = workingDir;
           mcpServers[s.name] = entry;
         }

@@ -1,5 +1,6 @@
 import type { CatId, CreateTaskInput, TaskItem, TaskKind, TaskStatus, UpdateTaskInput } from '@cat-cafe/shared';
 import type { ITaskStore } from '../../cats/services/stores/ports/TaskStore.js';
+import { currentPluginCallContext } from '../carrier/plugin-call-context.js';
 import { ExternalPluginRuntimeError } from '../external-runtime/types.js';
 import { hostCapabilityRefusal } from './host-capability-refusal.js';
 
@@ -35,6 +36,7 @@ export interface PluginTaskHost {
 }
 
 export interface PluginTaskHostDeps {
+  readonly pluginInstanceId?: string;
   readonly pluginId: string;
   readonly effectiveGrants: readonly string[];
   readonly taskStore: ITaskStore | undefined;
@@ -98,6 +100,7 @@ function subjectUpsertInput(value: PluginTaskCreateInput): CreateTaskInput {
 }
 
 export function createPluginTaskHost(input: PluginTaskHostDeps): PluginTaskHost {
+  const assertCurrentCall = () => currentPluginCallContext(input.pluginInstanceId)?.assertCurrent();
   const requireGrant = (capability: 'task.read' | 'task.write') => {
     if (!input.effectiveGrants.includes(capability)) {
       throw hostCapabilityRefusal(
@@ -116,15 +119,29 @@ export function createPluginTaskHost(input: PluginTaskHostDeps): PluginTaskHost 
     listByKind: async (kind) => requireGrant('task.read').listByKind(taskKind(kind)),
     getBySubject: async (subjectKey) =>
       requireGrant('task.read').getBySubject(boundedString(subjectKey, 'subjectKey', 500)),
-    create: async (value) => requireGrant('task.write').create(createInput(value)),
-    upsertBySubject: async (value) => requireGrant('task.write').upsertBySubject(subjectUpsertInput(value)),
-    update: async (taskId, value) =>
-      requireGrant('task.write').update(boundedString(taskId, 'taskId', 500), updateInput(value)),
-    updateIfThreadId: async (taskId, expectedThreadId, input) =>
-      requireGrant('task.write').updateIfThreadId(
+    create: async (value) => {
+      const store = requireGrant('task.write');
+      await assertCurrentCall();
+      return store.create(createInput(value));
+    },
+    upsertBySubject: async (value) => {
+      const store = requireGrant('task.write');
+      await assertCurrentCall();
+      return store.upsertBySubject(subjectUpsertInput(value));
+    },
+    update: async (taskId, value) => {
+      const store = requireGrant('task.write');
+      await assertCurrentCall();
+      return store.update(boundedString(taskId, 'taskId', 500), updateInput(value));
+    },
+    updateIfThreadId: async (taskId, expectedThreadId, input) => {
+      const store = requireGrant('task.write');
+      await assertCurrentCall();
+      return store.updateIfThreadId(
         boundedString(taskId, 'taskId', 500),
         boundedString(expectedThreadId, 'expectedThreadId', 500),
         updateInput(input),
-      ),
+      );
+    },
   };
 }

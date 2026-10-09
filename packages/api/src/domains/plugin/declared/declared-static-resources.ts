@@ -20,6 +20,7 @@ export interface DeclaredStaticResourceHost {
   readonly resourcesRoot?: string;
   readonly configuration: PluginRuntimeConfigurationPort;
   readonly mcpConfigIO?: McpConfigIO;
+  readonly nativeActionEnvironment?: Readonly<Record<string, string>>;
 }
 
 interface MaterializedSkills {

@@ -26,6 +26,7 @@ import {
   type PluginInvocationOutcome,
   settlePluginInvocation,
 } from '../../carrier/host-invocation.js';
+import { currentPluginCallContext } from '../../carrier/plugin-call-context.js';
 import { ExternalPluginRuntimeError } from '../../external-runtime/types.js';
 
 export interface ModuleHostInvocationDeps {
@@ -65,7 +66,7 @@ export function createModuleHostInvocation(deps: ModuleHostInvocationDeps): Modu
       );
     }
     // The boundary: from here the package's own code runs.
-    return attemptPluginAction(() => candidate.call(actions, params));
+    return attemptPluginAction(() => candidate.call(actions, params, currentPluginCallContext(targetId)));
   };
   return {
     attempt,

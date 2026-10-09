@@ -239,7 +239,10 @@ async function mcpEnvironment(
       return value === undefined ? undefined : ([name, value] as const);
     }),
   );
-  const env = Object.fromEntries(envEntries.filter((entry): entry is readonly [string, string] => entry !== undefined));
+  const env = {
+    ...Object.fromEntries(envEntries.filter((entry): entry is readonly [string, string] => entry !== undefined)),
+    ...host.nativeActionEnvironment,
+  };
   return Object.keys(env).length === 0 ? {} : { env };
 }
 

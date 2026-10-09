@@ -62,6 +62,7 @@ import {
   resolveMcpCommand as resolveCodexMcpCommand,
   resolveMcpWorkingDir as resolveCodexMcpWorkingDir,
 } from '../../../../../config/capabilities/mcp-launch-paths.js';
+import { pluginMcpEnvironment } from '../../../../../config/capabilities/plugin-mcp-environment.js';
 import { deriveAutoCompactTokenLimit, getCatEffort } from '../../../../../config/cat-config-loader.js';
 import { getCatModel } from '../../../../../config/cat-models.js';
 import {
@@ -1046,7 +1047,7 @@ async function buildCatCafeMcpArgs(
         } else if (s.command) {
           cmd = resolveCodexMcpCommand(s.command, workingDir, configSourceRoot);
           cmdArgs = resolveCodexMcpArgs(s.args, workingDir, configSourceRoot);
-          if (s.env && Object.keys(s.env).length > 0) envEntries = s.env;
+          envEntries = pluginMcpEnvironment(s, callbackEnv);
         }
         if (!cmd) continue;
         if (envEntries) {
