@@ -1,6 +1,7 @@
 #!/usr/bin/env node
 
 import { spawnSync } from 'node:child_process';
+import { existsSync } from 'node:fs';
 import { dirname, delimiter, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
@@ -12,6 +13,7 @@ const VALUE_OPTION_ALIASES = Object.freeze({
   title: Object.freeze(['--title', '-t']),
   head: Object.freeze(['--head', '-H']),
   base: Object.freeze(['--base', '-B']),
+  hostname: Object.freeze(['--hostname']),
 });
 
 function valueOptionAt(index, names) {
@@ -79,33 +81,98 @@ function gitOutput(gitArgs) {
   return result.status === 0 ? result.stdout.trim() : '';
 }
 
-function candidateTouchesVerdictArtifacts() {
-  const baseBranch = optionValue('base') ?? 'main';
-  const remoteBase = `refs/remotes/origin/${baseBranch}`;
-  const baseRef = gitOutput(['rev-parse', '--verify', remoteBase]) ? remoteBase : baseBranch;
-  const paths = gitOutput(['diff', '--name-only', `${baseRef}...HEAD`]);
-  return paths.split('\n').some(
-    (path) =>
-      path.startsWith('docs/harness-feedback/bundles/') ||
-      path.startsWith('docs/harness-feedback/verdicts/') ||
-      path === 'docs/harness-feedback/registry/measurement-bundles.yaml',
+function checkedGit(gitArgs) {
+  const result = spawnSync('git', gitArgs, { encoding: 'utf8', maxBuffer: 16 * 1024 * 1024, timeout: 30_000 });
+  if (result.status !== 0) {
+    fail('verdict_publish_candidate_unavailable', `cannot verify candidate Git state (${gitArgs[0]})`);
+  }
+  return result.stdout;
+}
+
+function protectedArtifact(path) {
+  return (
+    path.startsWith('docs/harness-feedback/bundles/') ||
+    path.startsWith('docs/harness-feedback/verdicts/') ||
+    path === 'docs/harness-feedback/registry/measurement-bundles.yaml'
   );
 }
 
-function isVerdictPrCreate() {
-  const command = commandArgs();
-  if (command[0] !== 'pr' || !['create', 'new'].includes(command[1])) return false;
+function treeEntry(ref, path) {
+  return checkedGit(['--literal-pathspecs', 'ls-tree', '-z', ref, '--', path]);
+}
+
+function originMatchesPrTarget() {
+  const url = checkedGit(['config', '--get', 'remote.origin.url']).trim();
+  const match = url.match(
+    /^(?:git@github\.com:|https:\/\/github\.com\/|ssh:\/\/git@github\.com\/)([\w.-]+\/[\w.-]+?)(?:\.git)?\/?$/i,
+  );
+  const repositories = optionValues('repository');
+  const hosts = optionValues('hostname');
+  return (
+    match &&
+    repositories.length > 0 &&
+    repositories.every((repo) => repo.toLowerCase() === match[1].toLowerCase()) &&
+    hosts.every((host) => host === 'github.com') &&
+    (!process.env.GH_HOST || process.env.GH_HOST === 'github.com')
+  );
+}
+
+function candidateContext() {
+  const head = optionValue('head');
+  // A remote-owner head is not a local ref. Refuse rather than inspect an
+  // unrelated checkout and accidentally exempt a different publication.
+  if (head?.includes(':'))
+    fail('verdict_publish_candidate_unavailable', 'explicit --head must resolve to a local candidate');
+  const candidateRef = head === undefined ? 'HEAD' : `refs/heads/${head}`;
+  const sourceRef = checkedGit(['rev-parse', '--verify', '--end-of-options', `${candidateRef}^{commit}`]).trim();
+  const baseBranch = optionValue('base') ?? 'main';
+  const remoteBase = `refs/remotes/origin/${baseBranch}`;
+  const baseRef = gitOutput(['rev-parse', '--verify', remoteBase]) ? remoteBase : `refs/heads/${baseBranch}`;
+  const baseSha = checkedGit(['rev-parse', '--verify', '--end-of-options', `${baseRef}^{commit}`]).trim();
+  const paths = checkedGit(['diff', '--name-only', '-z', '--no-renames', `${baseSha}...${sourceRef}`, '--'])
+    .split('\0')
+    .filter(Boolean)
+    .filter(protectedArtifact);
+  return { sourceRef, baseBranch, paths };
+}
+
+function isVerdictCandidate(candidate) {
   const title = optionValue('title') ?? '';
   const head = optionValue('head') ?? '';
   const branch = gitOutput(['branch', '--show-current']);
-  const commitSubject = gitOutput(['log', '-1', '--pretty=%s']);
-  return (
+  const commitSubject = checkedGit(['log', '-1', '--pretty=%s', candidate.sourceRef]).trim();
+  if (
     title.startsWith('verdict(') ||
     head.includes('verdict/auto/') ||
     branch.startsWith('verdict/auto/') ||
-    commitSubject.startsWith('verdict(') ||
-    candidateTouchesVerdictArtifacts()
-  );
+    commitSubject.startsWith('verdict(')
+  )
+    return true;
+  if (candidate.paths.length === 0) return false;
+  if (!originMatchesPrTarget()) return true;
+
+  // A path in an integration diff is not necessarily a new issuance. Only
+  // exclude the exact object already published on origin/main, with main in
+  // the candidate's ancestry. Confirm the remote tip, not a writable cache.
+  const mainRef = 'refs/remotes/origin/main';
+  const publishedMain = gitOutput(['rev-parse', '--verify', `${mainRef}^{commit}`]);
+  if (!publishedMain) return true;
+  const advertised = checkedGit(['ls-remote', '--exit-code', 'origin', 'refs/heads/main']).trim();
+  if (advertised !== `${publishedMain}\trefs/heads/main`) {
+    fail(
+      'verdict_publish_candidate_unavailable',
+      'origin/main is not the current published main; fetch before retrying',
+    );
+  }
+  const ancestor = spawnSync('git', ['merge-base', '--is-ancestor', publishedMain, candidate.sourceRef], {
+    timeout: 30_000,
+  });
+  if (ancestor.status === 1) return true;
+  if (ancestor.status !== 0) fail('verdict_publish_candidate_unavailable', 'cannot verify published main ancestry');
+  return candidate.paths.some((path) => {
+    const entry = treeEntry(candidate.sourceRef, path);
+    return !entry || entry !== treeEntry(publishedMain, path);
+  });
 }
 
 function fail(code, detail) {
@@ -113,21 +180,18 @@ function fail(code, detail) {
   process.exit(1);
 }
 
-if (isVerdictPrCreate()) {
+const command = commandArgs();
+const candidate = command[0] === 'pr' && ['create', 'new'].includes(command[1]) ? candidateContext() : undefined;
+if (candidate && isVerdictCandidate(candidate)) {
   const expectedRepo =
-    process.env.CAT_CAFE_VERDICT_REPO_FULL_NAME ??
-    process.env.CAT_CAFE_REPO_FULL_NAME ??
-    'zts212653/cat-cafe';
+    process.env.CAT_CAFE_VERDICT_REPO_FULL_NAME ?? process.env.CAT_CAFE_REPO_FULL_NAME ?? 'zts212653/cat-cafe';
   const explicitRepos = optionValues('repository');
   if (explicitRepos.length === 0) {
     fail('verdict_publish_missing_repo_scope', `verdict PR creation requires --repo ${expectedRepo}`);
   }
   const wrongRepo = explicitRepos.find((repo) => repo.toLowerCase() !== expectedRepo.toLowerCase());
   if (wrongRepo) {
-    fail(
-      'verdict_publish_wrong_repository',
-      `gh --repo resolves to ${wrongRepo}; expected ${expectedRepo}`,
-    );
+    fail('verdict_publish_wrong_repository', `gh --repo resolves to ${wrongRepo}; expected ${expectedRepo}`);
   }
 
   const guardRoot = process.env.CAT_CAFE_VERDICT_GH_GUARD_ROOT;
@@ -136,11 +200,14 @@ if (isVerdictPrCreate()) {
   }
   const repoRoot = gitOutput(['rev-parse', '--show-toplevel']);
   if (!repoRoot) fail('verdict_publish_guard_unavailable', 'current directory is not a git repository');
-  const baseBranch = optionValue('base') ?? 'main';
+  const checker = resolve(guardRoot, 'scripts/check-verdict-publish-contract.mjs');
+  if (!existsSync(checker)) {
+    fail('verdict_publish_guard_unavailable', 'verdict publication checker is missing; publication remains refused');
+  }
   const guard = spawnSync(
     process.execPath,
     [
-      resolve(guardRoot, 'scripts/check-verdict-publish-contract.mjs'),
+      checker,
       '--repo-root',
       repoRoot,
       '--expected-repo',
@@ -148,9 +215,9 @@ if (isVerdictPrCreate()) {
       '--remote',
       'origin',
       '--fresh-base-branch',
-      baseBranch,
+      candidate.baseBranch,
       '--source-ref',
-      'HEAD',
+      candidate.sourceRef,
     ],
     { encoding: 'utf8' },
   );

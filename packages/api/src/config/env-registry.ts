@@ -343,6 +343,14 @@ export const ENV_VARS: EnvDefinition[] = [
     runtimeEditable: false,
   },
   {
+    name: 'GH_HOST',
+    defaultValue: 'github.com',
+    description: 'GitHub CLI 目标主机；发布守卫仅对 github.com 的同仓 main 原样同步应用豁免',
+    category: 'cli',
+    sensitive: false,
+    runtimeEditable: false,
+  },
+  {
     name: 'CAT_CAFE_AGENT_KEY_SECRET',
     defaultValue: '(空)',
     description: 'F178 Persistent MCP Agent-Key Auth — 共享密钥（直接环境变量提供）',
