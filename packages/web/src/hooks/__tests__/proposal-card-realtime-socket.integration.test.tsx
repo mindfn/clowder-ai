@@ -52,6 +52,7 @@ describe('F128 proposal card realtime socket journey', () => {
   let root: Root;
   let socketReady: Promise<void>;
   let resolveSocketReady: (() => void) | undefined;
+  let clientConnected = false;
   let canonicalStatus: 'pending' | 'withdrawn';
   let publicationStore: FakePublicationStore;
   let publishDraft: ApprovalPublishDraft;
@@ -74,6 +75,7 @@ describe('F128 proposal card realtime socket journey', () => {
     if (httpServer?.listening) {
       await new Promise<void>((resolve) => httpServer.close(() => resolve()));
     }
+    vi.restoreAllMocks();
     vi.unstubAllEnvs();
   });
 
@@ -147,6 +149,7 @@ describe('F128 proposal card realtime socket journey', () => {
   function Journey({ activeThreadId }: { activeThreadId: string }) {
     const messages = useThreadMessages(activeThreadId);
     const { socketConnected } = useSocket({ onMessage: () => {} }, activeThreadId, [activeThreadId]);
+    clientConnected = socketConnected;
     useEffect(() => {
       if (!socketConnected) return;
       resolveSocketReady?.();
@@ -220,7 +223,11 @@ describe('F128 proposal card realtime socket journey', () => {
 
     const initialSocketId = [...socketManager.getIO().sockets.sockets.keys()][0];
     for (const socket of socketManager.getIO().sockets.sockets.values()) socket.conn.close();
+    await waitFor(() => !clientConnected);
     await act(async () => {
+      vi.spyOn(document, 'visibilityState', 'get').mockReturnValue('visible');
+      // Wake the existing recovery mechanism; no Socket.IO manager retry is enabled.
+      document.dispatchEvent(new Event('visibilitychange'));
       await waitFor(() => {
         const socketIds = [...socketManager.getIO().sockets.sockets.keys()];
         return socketIds.length === 1 && socketIds[0] !== initialSocketId;
