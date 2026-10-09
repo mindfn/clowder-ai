@@ -379,8 +379,10 @@ export {
 export {
   describeHarnessUnitInputSchema,
   handleDescribeHarnessUnitTool,
+  handleReadCycleStatusTool,
   handleReadCycleTracesTool,
   handleSubmitCycleEvaluationTool,
+  readCycleStatusInputSchema,
   readCycleTracesInputSchema,
   submitCycleEvaluationInputSchema,
   unitEvaluationTools,

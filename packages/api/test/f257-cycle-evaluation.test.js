@@ -185,6 +185,10 @@ async function harness({ now = 1_500, traces = [trace('inv-1', 500)], annotation
       setRequestedHandler(handler) {
         this.handler = handler;
       },
+      async readStatus(ownerUserId, objectiveId, observedAt, messageStore) {
+        assert.equal(messageStore.getById, wakeQueue.messageStore.getById);
+        return { ownerUserId, objectiveId, observedAt, evalStatus: 'requested' };
+      },
     },
   };
   const messages = new Map([
@@ -223,6 +227,21 @@ const submission = {
 };
 
 describe('F257 cycle evaluation delivery and writeback', () => {
+  test('scopes cycle-status reads to the Objective thread principal', async () => {
+    const context = await harness({ now: 1_500 });
+
+    assert.deepEqual(await context.coordinator.readStatus(principal, { objectiveId: 'obj' }), {
+      ownerUserId: 'owner-1',
+      objectiveId: 'obj',
+      observedAt: 1_500,
+      evalStatus: 'requested',
+    });
+    await assert.rejects(
+      context.coordinator.readStatus({ ...principal, threadId: 'wrong-thread' }, { objectiveId: 'obj' }),
+      /cycle_evaluation_principal_mismatch:obj/,
+    );
+  });
+
   test('keeps manual-switch evidence provenance separate from insufficient-evidence carry-forward', async () => {
     const record = {
       schemaVersion: 1,

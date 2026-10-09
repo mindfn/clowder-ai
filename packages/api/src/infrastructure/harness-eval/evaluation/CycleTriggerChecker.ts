@@ -1,7 +1,9 @@
 import type { CycleRecord, CycleTriggerRoute, CycleWindow, TraceAnnotation } from '@cat-cafe/shared';
+import type { IMessageStore } from '../../../domains/cats/services/stores/ports/MessageStore.js';
 import type { InjectionTraceStore } from '../../../domains/prompt-hooks/InjectionTraceStore.js';
 import { counterexampleWakeKey } from '../trace-annotation/high-confidence-annotation.js';
 import type { TraceAnnotationStore } from '../trace-annotation/TraceAnnotationStore.js';
+import { resolveCycleWakeReceipt } from './CycleEvaluationDelivery.js';
 import { CycleRecordStore, isSkippedCycle } from './CycleRecordStore.js';
 import { cycleTriggerPolicyFor, initialCycleTriggerPolicy } from './cycle-trigger-policy.js';
 import type { EvaluationCatalog } from './evaluation-catalog.js';
@@ -14,6 +16,26 @@ export type CycleCheckResult =
 export interface CycleVersionRef {
   version: string;
   versionContentRef: string;
+}
+
+export interface CycleStatusSnapshot {
+  schemaVersion: 1;
+  objectiveId: string;
+  cycleId: string;
+  evalStatus: CycleRecord['evalStatus'];
+  cycleStartMs: number;
+  cycleEndMs: number | null;
+  triggeredBy: CycleTriggerRoute[];
+  assignmentMessageId: string | null;
+  assignedAtMs: number | null;
+  progress: {
+    minimumInterval: { elapsedMs: number; thresholdMs: number; remainingMs: number; eligible: boolean };
+    cumulative: { coordinate: 'N'; count: number; threshold: number; met: boolean };
+    recurringEvents: { coordinate: 'M'; count: number; threshold: number; met: boolean };
+    cadence: { coordinate: 'D'; elapsedMs: number; thresholdMs: number; eligible: boolean; met: boolean };
+  };
+  assignmentDelivery: 'not_requested' | 'pending' | 'delivered' | 'closed';
+  waitPolicy: { mode: 'event_driven'; holdBall: false };
 }
 
 export class CycleTriggerChecker {
@@ -73,6 +95,90 @@ export class CycleTriggerChecker {
     );
   }
 
+  async readStatus(
+    ownerUserId: string,
+    objectiveId: string,
+    now: number,
+    messages: Pick<IMessageStore, 'getById'>,
+  ): Promise<CycleStatusSnapshot> {
+    const current = await this.deps.cycles.current(ownerUserId, objectiveId);
+    if (!current) throw new Error(`cycle_evaluation_not_found:${objectiveId}`);
+    const objective = this.deps.catalog.registry.objectives.find((item) => item.id === objectiveId);
+    const model = this.deps.catalog.registry.evaluationModels.find((item) => item.id === objective?.evaluationModelId);
+    if (!model) throw new Error(`cycle_evaluation_model_not_found:${objectiveId}`);
+
+    const end = current.cycleEnd ?? now;
+    if (end < current.cycleStart) throw new Error(`cycle_start_after_now:${objectiveId}`);
+    const policy = cycleTriggerPolicyFor(this.deps.catalog, current);
+    const progress = await this.measureProgress(
+      ownerUserId,
+      objectiveId,
+      model.metrics.map((metric) => metric.id),
+      current.cycleStart,
+      end,
+      policy,
+    );
+
+    return {
+      schemaVersion: 1,
+      objectiveId,
+      cycleId: current.cycleId,
+      evalStatus: current.evalStatus,
+      cycleStartMs: current.cycleStart,
+      cycleEndMs: current.cycleEnd ?? null,
+      triggeredBy: [...(current.triggeredBy ?? [])],
+      assignmentMessageId: current.assignmentMessageId ?? null,
+      assignedAtMs: current.assignedAt ?? null,
+      progress,
+      assignmentDelivery: await assignmentDelivery(current, messages),
+      waitPolicy: { mode: 'event_driven', holdBall: false },
+    };
+  }
+
+  private async measureProgress(
+    ownerUserId: string,
+    objectiveId: string,
+    metricIds: string[],
+    start: number,
+    end: number,
+    policy: ReturnType<typeof cycleTriggerPolicyFor>,
+  ): Promise<CycleStatusSnapshot['progress']> {
+    const elapsedMs = end - start;
+    const observedInvocationCount = await this.deps.traces.countOwnerWindow(ownerUserId, start, end);
+    const recurringEventCount = (await this.distinctCounterexamples(ownerUserId, objectiveId, metricIds, start, end))
+      .size;
+    const cadenceThresholdMs = policy.cadenceDays * 24 * 60 * 60 * 1000;
+    const cadenceEligible = observedInvocationCount > 0;
+
+    return {
+      minimumInterval: {
+        elapsedMs,
+        thresholdMs: policy.minimumIntervalMs,
+        remainingMs: Math.max(0, policy.minimumIntervalMs - elapsedMs),
+        eligible: elapsedMs >= policy.minimumIntervalMs,
+      },
+      cumulative: {
+        coordinate: 'N',
+        count: observedInvocationCount,
+        threshold: policy.cumulativeThreshold,
+        met: observedInvocationCount >= policy.cumulativeThreshold,
+      },
+      recurringEvents: {
+        coordinate: 'M',
+        count: recurringEventCount,
+        threshold: policy.counterexampleThreshold,
+        met: recurringEventCount >= policy.counterexampleThreshold,
+      },
+      cadence: {
+        coordinate: 'D',
+        elapsedMs,
+        thresholdMs: cadenceThresholdMs,
+        eligible: cadenceEligible,
+        met: cadenceEligible && elapsedMs >= cadenceThresholdMs,
+      },
+    };
+  }
+
   /** Serialize eval-trigger and operator version-switch mutations in this API process. */
   async withObjectiveLock<T>(ownerUserId: string, objectiveId: string, operation: () => Promise<T>): Promise<T> {
     const key = `${ownerUserId}:${objectiveId}`;
@@ -112,21 +218,18 @@ export class CycleTriggerChecker {
     }
 
     const history = await this.deps.cycles.history(ownerUserId, objectiveId);
-
-    const observedInvocationCount = await this.deps.traces.countOwnerWindow(ownerUserId, current.cycleStart, now);
-    const counterexamples = await this.distinctCounterexamples(
+    const progress = await this.measureProgress(
       ownerUserId,
       objectiveId,
       model.metrics.map((metric) => metric.id),
       current.cycleStart,
       now,
+      policy,
     );
     const triggeredBy: CycleTriggerRoute[] = [];
-    if (observedInvocationCount >= policy.cumulativeThreshold) triggeredBy.push('cumulative');
-    if (counterexamples.size >= policy.counterexampleThreshold) triggeredBy.push('counterexamples');
-    if (observedInvocationCount > 0 && now - current.cycleStart >= policy.cadenceDays * 24 * 60 * 60 * 1000) {
-      triggeredBy.push('cadence');
-    }
+    if (progress.cumulative.met) triggeredBy.push('cumulative');
+    if (progress.recurringEvents.met) triggeredBy.push('counterexamples');
+    if (progress.cadence.met) triggeredBy.push('cadence');
     if (triggeredBy.length === 0) return { status: 'idle', record: current };
 
     const window = { start: current.cycleStart, end: now };
@@ -198,4 +301,19 @@ export function priorSkipWindows(history: CycleRecord[]): CycleWindow[] {
     windows.push({ start: record.cycleStart, end: record.cycleEnd });
   }
   return windows.reverse();
+}
+
+async function assignmentDelivery(
+  record: CycleRecord,
+  messages: Pick<IMessageStore, 'getById'>,
+): Promise<CycleStatusSnapshot['assignmentDelivery']> {
+  if (record.evalStatus === 'idle') return 'not_requested';
+  if (record.evalStatus === 'written' || record.closedAt !== undefined) return 'closed';
+  // #178 allows late stalled writeback. A send timestamp (including the dead-wake
+  // retry clock) is not a receipt: only the durable exact body exposure proves
+  // delivery. This field describes the original assignment, not the independent
+  // retrigger wake: a retry must not hide an assignment the evaluator already saw.
+  const messageId = record.assignmentMessageId;
+  if (!messageId) return 'pending';
+  return resolveCycleWakeReceipt(await messages.getById(messageId)).state === 'delivered' ? 'delivered' : 'pending';
 }

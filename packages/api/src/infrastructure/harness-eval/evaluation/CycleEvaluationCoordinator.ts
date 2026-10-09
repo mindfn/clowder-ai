@@ -142,6 +142,16 @@ export class CycleEvaluationCoordinator {
     return this.evidence.read(record, input);
   }
 
+  async readStatus(principal: CycleEvaluationPrincipal, input: { objectiveId: string }) {
+    this.requireObjectivePrincipal(principal, input.objectiveId);
+    return this.deps.runtime.cycleChecker.readStatus(
+      principal.userId,
+      input.objectiveId,
+      this.now(),
+      this.deps.messageStore,
+    );
+  }
+
   async submitEvaluation(principal: CycleEvaluationPrincipal, input: CycleEvaluationSubmission) {
     const record = await this.findSubmissionCycle(principal, input.objectiveId, input.cycleId);
     if (record.evaluation) {
@@ -303,12 +313,20 @@ export class CycleEvaluationCoordinator {
     objectiveId: string,
     cycleId: string,
   ): Promise<CycleRecord> {
-    const threadId = CycleEvaluationCoordinator.threadIdFor(objectiveId);
-    if (principal.threadId !== threadId) throw new Error(`cycle_evaluation_principal_mismatch:${cycleId}`);
+    this.requireObjectivePrincipal(principal, objectiveId, cycleId);
     const record = await this.deps.runtime.cycles.current(principal.userId, objectiveId);
     if (!record || record.cycleId !== cycleId) throw new Error(`cycle_evaluation_not_found:${cycleId}`);
     if (!cycleAcceptsEvaluationWriteback(record.evalStatus)) throw new Error(`cycle_evaluation_not_active:${cycleId}`);
     return record;
+  }
+
+  private requireObjectivePrincipal(
+    principal: CycleEvaluationPrincipal,
+    objectiveId: string,
+    errorRef = objectiveId,
+  ): void {
+    const threadId = CycleEvaluationCoordinator.threadIdFor(objectiveId);
+    if (principal.threadId !== threadId) throw new Error(`cycle_evaluation_principal_mismatch:${errorRef}`);
   }
 
   private async findSubmissionCycle(

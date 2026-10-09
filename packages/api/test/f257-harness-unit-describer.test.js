@@ -5,8 +5,14 @@ const { HarnessUnitDescriber } = await import('../dist/infrastructure/harness-ev
 const { buildCycleAssignment } = await import(
   '../dist/infrastructure/harness-eval/evaluation/CycleEvaluationContent.js'
 );
-const { handleDescribeHarnessUnit, handleReadCycleTraces, handleSubmitCycleEvaluation, handleSubmitCycleGovernance } =
-  await import('../dist/infrastructure/harness-eval/evaluation/cycle-evaluation-callbacks.js');
+const {
+  handleDescribeHarnessUnit,
+  handleReadCycleStatus,
+  handleReadCycleTraces,
+  handleSubmitCycleEvaluation,
+  handleSubmitCycleGovernance,
+  registerCycleEvaluationCallbackRoutes,
+} = await import('../dist/infrastructure/harness-eval/evaluation/cycle-evaluation-callbacks.js');
 
 function describer() {
   const manifest = {
@@ -187,6 +193,66 @@ describe('F257 harness unit and callback contracts', () => {
       },
     );
     assert.equal(missingCoverage.status, 400);
+  });
+
+  test('reads cycle status through a strict invocation-scoped callback', async () => {
+    const principal = { userId: 'owner', catId: 'cat', threadId: 'thread_eval_f257_obj' };
+    const expected = {
+      schemaVersion: 1,
+      objectiveId: 'obj',
+      cycleId: 'cycle',
+      evalStatus: 'idle',
+      progress: {},
+      assignmentDelivery: 'not_requested',
+      waitPolicy: { mode: 'event_driven', holdBall: false },
+    };
+    const coordinator = {
+      async readStatus(receivedPrincipal, input) {
+        assert.deepEqual(receivedPrincipal, principal);
+        assert.deepEqual(input, { objectiveId: 'obj' });
+        return expected;
+      },
+    };
+
+    assert.deepEqual(await handleReadCycleStatus(coordinator, principal, { objectiveId: 'obj' }), {
+      status: 200,
+      body: expected,
+    });
+    assert.equal(
+      (await handleReadCycleStatus(coordinator, principal, { objectiveId: 'obj', cycleId: 'invented' })).status,
+      400,
+    );
+
+    const missing = await handleReadCycleStatus(
+      {
+        async readStatus() {
+          throw new Error('cycle_evaluation_not_found:obj');
+        },
+      },
+      principal,
+      { objectiveId: 'obj' },
+    );
+    assert.deepEqual(missing, { status: 404, body: { error: 'cycle_evaluation_not_found' } });
+  });
+
+  test('registers the cycle-status callback on the runtime route surface', () => {
+    const paths = [];
+    registerCycleEvaluationCallbackRoutes(
+      {
+        post(path) {
+          paths.push(path);
+        },
+      },
+      {},
+      {},
+    );
+
+    assert.deepEqual(paths, [
+      '/api/callbacks/harness-signals/read-cycle-status',
+      '/api/callbacks/harness-signals/read-cycle-traces',
+      '/api/callbacks/harness-signals/submit-cycle-evaluation',
+      '/api/callbacks/harness-signals/describe-harness-unit',
+    ]);
   });
 
   test('accepts the structured governance shape and rejects unknown mutation fields', async () => {

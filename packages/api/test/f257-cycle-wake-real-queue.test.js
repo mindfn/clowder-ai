@@ -11,10 +11,12 @@ import { QueuedMessageCustodyCoordinator } from '../dist/domains/cats/services/a
 import { QueueProcessor } from '../dist/domains/cats/services/agents/invocation/QueueProcessor.js';
 import { MessageStore } from '../dist/domains/cats/services/stores/ports/MessageStore.js';
 import { ConnectorInvokeTrigger } from '../dist/infrastructure/email/ConnectorInvokeTrigger.js';
+import { CycleEvaluationCoordinator } from '../dist/infrastructure/harness-eval/evaluation/CycleEvaluationCoordinator.js';
 import {
   CycleEvaluationDelivery,
   resolveCycleWakeReceipt,
 } from '../dist/infrastructure/harness-eval/evaluation/CycleEvaluationDelivery.js';
+import { CycleTriggerChecker } from '../dist/infrastructure/harness-eval/evaluation/CycleTriggerChecker.js';
 import { createDeliverFn } from '../dist/infrastructure/scheduler/delivery.js';
 
 const noop = () => {};
@@ -141,6 +143,84 @@ function realQueue({ messageStore = new MessageStore(), busy = true, beforeAdmis
     delivery,
   };
 }
+
+test('cycle status follows a real queued assignment through exact exposure and stalled late-writeback', async () => {
+  const q = realQueue();
+  const assignmentMessageId = await q.send('assignment');
+  const current = {
+    ...record,
+    objectiveId: 'obj',
+    cycleStart: 0,
+    cycleEnd: 1_000,
+    evalStatus: 'requested',
+    assignmentMessageId,
+    assignedAt: 500,
+    pendingWakeMessageId: assignmentMessageId,
+  };
+  const catalog = {
+    registry: {
+      objectives: [{ id: 'obj', evaluationModelId: 'model' }],
+      evaluationModels: [
+        {
+          id: 'model',
+          metrics: [],
+          cycleTrigger: {
+            minimumIntervalMs: 0,
+            cumulativeThreshold: 3,
+            counterexampleThreshold: 2,
+            cadenceDays: 7,
+          },
+        },
+      ],
+    },
+  };
+  const cycles = {
+    async current() {
+      return structuredClone(current);
+    },
+  };
+  const checker = new CycleTriggerChecker({
+    catalog,
+    cycles,
+    traces: {
+      async countOwnerWindow() {
+        return 0;
+      },
+    },
+    annotations: {},
+    resolveVersion: () => {},
+  });
+  const coordinator = new CycleEvaluationCoordinator({
+    runtime: { catalog, cycles, cycleChecker: checker },
+    threadStore: {},
+    messageStore: q.messageStore,
+    deliver: () => {},
+    getInvokeTrigger: () => null,
+    getDefaultCatId: () => catId,
+    now: () => 2_000,
+  });
+  const read = () =>
+    coordinator.readStatus(
+      {
+        userId: record.ownerUserId,
+        catId,
+        threadId,
+      },
+      { objectiveId: 'obj' },
+    );
+  assert.equal((await read()).assignmentDelivery, 'pending');
+  q.evaluator.busy = false;
+  await q.processor.tryAutoExecute(threadId, { bypassNonAgentGate: true });
+  await settle();
+  assert.equal(q.providerStarts.length, 1);
+  const beforeRead = structuredClone(current);
+  assert.equal((await read()).assignmentDelivery, 'delivered');
+  assert.deepEqual(current, beforeRead, 'read status must not settle or mutate the cycle');
+  current.evalStatus = 'stalled';
+  assert.equal((await read()).assignmentDelivery, 'delivered');
+  current.evalStatus = 'written';
+  assert.equal((await read()).assignmentDelivery, 'closed');
+});
 
 test('a wake queued behind a busy evaluator is custodied; a failed start leaves it undelivered; the exposure delivers it', async () => {
   const q = realQueue();

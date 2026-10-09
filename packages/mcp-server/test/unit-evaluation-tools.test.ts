@@ -1,12 +1,17 @@
 import assert from 'node:assert/strict';
 import { describe, test } from 'node:test';
 import { z } from 'zod';
-import { submitCycleGovernanceInputSchema, unitEvaluationTools } from '../src/tools/unit-evaluation-tools.js';
+import {
+  readCycleStatusInputSchema,
+  submitCycleGovernanceInputSchema,
+  unitEvaluationTools,
+} from '../src/tools/unit-evaluation-tools.js';
 
 describe('F257 cycle evaluation MCP surface', () => {
   test('exposes only the cycle contract and its read-only unit schema', () => {
     const names = unitEvaluationTools.map((tool) => tool.name);
     assert.deepEqual(names, [
+      'cat_cafe_read_cycle_status',
       'cat_cafe_read_cycle_traces',
       'cat_cafe_submit_cycle_evaluation',
       'cat_cafe_describe_harness_unit',
@@ -14,6 +19,20 @@ describe('F257 cycle evaluation MCP surface', () => {
     ]);
     assert.equal(names.includes('cat_cafe_retrieve_unit_evaluation_traces'), false);
     assert.equal(names.includes('cat_cafe_submit_unit_evaluation'), false);
+
+    const statusTool = unitEvaluationTools[0];
+    assert.match(statusTool.description, /idle/i);
+    assert.match(statusTool.description, /event-driven/i);
+    assert.match(statusTool.description, /do not call hold_ball/i);
+    assert.match(statusTool.description, /Use when:/);
+    assert.match(statusTool.description, /NOT for:/);
+    assert.match(statusTool.description, /Output:/);
+    assert.match(statusTool.description, /GOTCHA:/);
+    assert.equal(z.object(readCycleStatusInputSchema).strict().safeParse({ objectiveId: 'obj' }).success, true);
+    assert.equal(
+      z.object(readCycleStatusInputSchema).strict().safeParse({ objectiveId: 'obj', cycleId: 'invented' }).success,
+      false,
+    );
   });
 
   test('accepts a writer-compatible numeric hook id and markdown template in an evolve draft', () => {
