@@ -58,6 +58,24 @@ describe('F117 J4: what counts as a member output', () => {
 });
 
 describe('F117 J4: the member output timeout', () => {
+  it('rechecks measured silence when a timer callback arrives before the deadline', (t) => {
+    t.mock.timers.enable({ apis: ['setTimeout'] });
+    let now = 0;
+    const { timer, fired } = timeout({ now: () => now, probeProcess: () => 'idle' });
+    try {
+      now = T - 1;
+      t.mock.timers.tick(T);
+      assert.equal(fired.length, 0, 'the measured silence deadline has not elapsed');
+      now = T;
+      t.mock.timers.tick(1);
+      assert.equal(fired.length, 1);
+      assert.equal(fired[0].silenceDurationMs, T);
+      t.mock.timers.tick(T);
+      assert.equal(fired.length, 1);
+    } finally {
+      timer.close();
+    }
+  });
   it('fires once when the member produces no output for CLI_TIMEOUT_MS', async () => {
     const { timer, fired } = timeout();
     await sleep(T * 3);
