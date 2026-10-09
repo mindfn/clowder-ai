@@ -255,6 +255,9 @@ export async function* runCodexAppServerWithRecovery(options: CodexAppServerRunn
       }
 
       if (
+        // A Live handle has immediate, single-attempt semantics. Ownership
+        // waiting is internal recovery for ordinary member execution only.
+        !options.runInput.live &&
         activeWriterThreadId &&
         isActiveWriterError(error) &&
         !capacityTerminalObserved &&
