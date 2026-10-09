@@ -3,6 +3,7 @@
 import type { ExternalReviewAggregate } from '@cat-cafe/shared';
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { CommunityPanelFilters, TIME_RANGES } from '@/components/CommunityPanelFilters';
+import { CommunityPrSyncStatus } from '@/components/CommunityPrSyncStatus';
 import { ClosureChecklistCard } from '@/components/community/ClosureChecklistCard';
 import { UserAssignIcon } from '@/components/community/community-icons';
 import { DecisionQueuePanel } from '@/components/community/DecisionQueuePanel';
@@ -62,6 +63,7 @@ interface BoardData {
   repo: string;
   issues: CommunityIssueItem[];
   prItems: PrBoardItem[];
+  prIndex?: import('./CommunityPrSyncStatus').CommunityPrIndexStatus;
 }
 
 interface ReconciliationFinding {
@@ -318,6 +320,10 @@ function PrRow({
 export function CommunityPanel({ threadId }: { threadId?: string }) {
   const [board, setBoard] = useState<BoardData | null>(null);
   const [loading, setLoading] = useState(false);
+  const [prSyncing, setPrSyncing] = useState(false);
+  const [prSyncError, setPrSyncError] = useState<{ repo: string; message: string } | null>(null);
+  const [boardReadError, setBoardReadError] = useState<{ repo: string; message: string } | null>(null);
+  const [repoDiscoveryError, setRepoDiscoveryError] = useState<string>();
   const [repo, setRepo] = useState('');
   const [collapsedIssues, setCollapsedIssues] = useState<Record<string, boolean>>({
     accepted: true,
@@ -370,10 +376,15 @@ export function CommunityPanel({ threadId }: { threadId?: string }) {
         const data = await res.json();
         if (requestId === boardRequestIdRef.current && latestRepoRef.current === activeRepo) {
           setBoard(data);
+          setBoardReadError(null);
         }
+      } else if (requestId === boardRequestIdRef.current && latestRepoRef.current === activeRepo) {
+        setBoardReadError({ repo: activeRepo, message: '无法读取社区看板，请检查 GitHub 插件是否已启用。' });
       }
     } catch {
-      /* network error — keep stale data */
+      if (requestId === boardRequestIdRef.current && latestRepoRef.current === activeRepo) {
+        setBoardReadError({ repo: activeRepo, message: '无法读取社区看板，当前内容可能已过时。' });
+      }
     } finally {
       if (requestId === boardRequestIdRef.current && latestRepoRef.current === activeRepo) {
         setLoading(false);
@@ -413,6 +424,62 @@ export function CommunityPanel({ threadId }: { threadId?: string }) {
     await Promise.all([fetchBoard(), fetchFindings(), fetchDecisionQueue()]);
   }, [fetchBoard, fetchFindings, fetchDecisionQueue]);
 
+  const syncPrs = useCallback(async (activeRepo: string, restart = false) => {
+    setPrSyncing(true);
+    setPrSyncError(null);
+    try {
+      const res = await fetch(`/api/community-issues/sync-prs?repo=${encodeURIComponent(activeRepo)}`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ restart }),
+      });
+      if (!res.ok && latestRepoRef.current === activeRepo) {
+        setPrSyncError({
+          repo: activeRepo,
+          message:
+            res.status === 401 || res.status === 403
+              ? '需要本机 owner 登录后同步 PR。'
+              : 'PR 同步失败，请检查插件状态后重试。',
+        });
+      }
+    } catch {
+      if (latestRepoRef.current === activeRepo)
+        setPrSyncError({ repo: activeRepo, message: 'PR 同步请求失败，请重试。' });
+    } finally {
+      setPrSyncing(false);
+    }
+  }, []);
+
+  const fetchRepos = useCallback(async () => {
+    const unavailable = '无法读取 PR 仓库，请检查 GitHub 插件是否已启用。';
+    try {
+      const response = await fetch('/api/community-repos');
+      if (!response.ok) throw new Error('repository discovery unavailable');
+      const data = await response.json();
+      const candidates: unknown[] = Array.isArray(data.repos) ? data.repos : [];
+      const nextRepos = candidates.filter((candidate): candidate is string => typeof candidate === 'string');
+      setRepos(nextRepos);
+      setRepo((currentRepo) => currentRepo || nextRepos[0] || '');
+      setRepoDiscoveryError(data.prSourceStatus === 'unavailable' ? unavailable : undefined);
+    } catch {
+      setRepoDiscoveryError(unavailable);
+    }
+  }, []);
+
+  const continuePrSync = useCallback(
+    async (restart: boolean) => {
+      if (repoDiscoveryError) {
+        await fetchRepos();
+        return;
+      }
+      const activeRepo = repo.trim();
+      if (!activeRepo) return;
+      await syncPrs(activeRepo, restart);
+      if (latestRepoRef.current === activeRepo) await refreshCommunityViews();
+    },
+    [repo, repoDiscoveryError, fetchRepos, syncPrs, refreshCommunityViews],
+  );
+
   const handleSync = useCallback(async () => {
     const activeRepo = repo.trim();
     if (!activeRepo) return;
@@ -420,7 +487,7 @@ export function CommunityPanel({ threadId }: { threadId?: string }) {
     try {
       await Promise.all([
         fetch(`/api/community-issues/sync?repo=${encodeURIComponent(activeRepo)}`, { method: 'POST' }),
-        fetch(`/api/community-issues/sync-prs?repo=${encodeURIComponent(activeRepo)}`, { method: 'POST' }),
+        syncPrs(activeRepo),
       ]);
       if (latestRepoRef.current === activeRepo) {
         await refreshCommunityViews();
@@ -432,7 +499,7 @@ export function CommunityPanel({ threadId }: { threadId?: string }) {
         setLoading(false);
       }
     }
-  }, [repo, refreshCommunityViews]);
+  }, [repo, refreshCommunityViews, syncPrs]);
 
   useEffect(() => {
     refreshCommunityViews();
@@ -443,16 +510,8 @@ export function CommunityPanel({ threadId }: { threadId?: string }) {
   }, [refreshCommunityViews]);
 
   useEffect(() => {
-    fetch('/api/community-repos')
-      .then((r) => (r.ok ? r.json() : null))
-      .then((data) => {
-        const repoCandidates: unknown[] = Array.isArray(data?.repos) ? data.repos : [];
-        const nextRepos = repoCandidates.filter((candidate): candidate is string => typeof candidate === 'string');
-        setRepos(nextRepos);
-        setRepo((currentRepo) => currentRepo || nextRepos[0] || '');
-      })
-      .catch(() => {});
-  }, []);
+    void fetchRepos();
+  }, [fetchRepos]);
 
   const dispatchIssue = useCallback(
     async (issueId: string) => {
@@ -533,8 +592,17 @@ export function CommunityPanel({ threadId }: { threadId?: string }) {
         timeRange={timeRange}
         onTimeRangeChange={setTimeRange}
         uniqueCats={uniqueCats}
-        loading={loading}
+        loading={loading || prSyncing}
         onSync={handleSync}
+      />
+      <CommunityPrSyncStatus
+        status={board?.repo.toLowerCase() === repo.trim().toLowerCase() ? board.prIndex : undefined}
+        error={
+          repoDiscoveryError ?? [boardReadError, prSyncError].find((error) => error?.repo === repo.trim())?.message
+        }
+        retryLabel={repoDiscoveryError ? '重新读取仓库' : undefined}
+        busy={loading || prSyncing}
+        onContinue={continuePrSync}
       />
 
       {/* Stats */}

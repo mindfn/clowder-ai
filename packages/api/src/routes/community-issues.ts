@@ -29,7 +29,6 @@ import { z } from 'zod';
 import { getRoster } from '../config/cat-config-loader.js';
 import type { VerifyResult } from '../domains/cats/services/agents/invocation/InvocationRegistry.js';
 import type { ICommunityIssueStore } from '../domains/cats/services/stores/ports/CommunityIssueStore.js';
-import type { ICommunityPrStore } from '../domains/cats/services/stores/ports/CommunityPrStore.js';
 import type { ITaskStore } from '../domains/cats/services/stores/ports/TaskStore.js';
 import type { IThreadStore } from '../domains/cats/services/stores/ports/ThreadStore.js';
 import type { ICommunityEventLog } from '../domains/community/CommunityEventLog.js';
@@ -41,7 +40,7 @@ import { parseRouteRecommendation } from '../domains/community/community-route-r
 import { derivePrGroup } from '../domains/community/derivePrGroup.js';
 import { resolveGuardian } from '../domains/community/GuardianMatcher.js';
 import { type GhIssueFull, mapGitHubIssue } from '../domains/community/github/GitHubIssueFetcher.js';
-import { type GhPrFull, type GhPrReview, mapGitHubPr } from '../domains/community/github/GitHubPrFetcher.js';
+import type { CommunityPrObservations } from '../domains/community/installed-pr-observations.js';
 import type { NarratorDriver } from '../domains/community/narrator/NarratorDriver.js';
 import { TriageOrchestrator } from '../domains/community/TriageOrchestrator.js';
 import type { SocketManager } from '../infrastructure/websocket/index.js';
@@ -52,6 +51,12 @@ import {
   requireCallbackPrincipal,
 } from './callback-auth-prehandler.js';
 import { type CommunityDecisionQueueFindingStore, communityDecisionQueueRoutes } from './community-decision-queue.js';
+import {
+  communityObjectReadView,
+  listCommunityIssuesForRepo,
+  listCommunityPrTasksForRepo,
+} from './community-read-identity.js';
+import { pluginAccessError, requirePluginOwnerLocalAccess } from './plugin-access-guards.js';
 
 interface CallbackAuthVerifier {
   verify(invocationId: string, callbackToken: string): Promise<VerifyResult>;
@@ -65,9 +70,7 @@ export interface CommunityIssuesRoutesOptions {
   registry?: CallbackAuthVerifier;
   agentKeyRegistry?: AgentKeyAuthRegistry;
   fetchIssues?: (repo: string) => Promise<GhIssueFull[]>;
-  communityPrStore?: ICommunityPrStore;
-  fetchPrs?: (repo: string) => Promise<GhPrFull[]>;
-  fetchPrReviews?: (repo: string, prNumber: number) => Promise<GhPrReview[]>;
+  pullRequests?: CommunityPrObservations;
   /** Cloud R2 P2: optional cursor seeder for auto-registered issue_tracking tasks.
    * When provided, the initial comment cursor is seeded to the current latest
    * comment ID so the first poll does not replay all historical comments. */
@@ -303,73 +306,31 @@ export const communityIssueRoutes: FastifyPluginAsync<CommunityIssuesRoutesOptio
   });
 
   app.post('/api/community-issues/sync-prs', async (request, reply) => {
-    const { repo } = request.query as { repo?: string };
+    const { repo: requestedRepo } = request.query as { repo?: string };
+    const repo = requestedRepo?.trim().toLowerCase();
     if (!repo) {
       reply.status(400);
       return { error: 'Missing repo query parameter' };
     }
-    if (!opts.fetchPrs || !opts.communityPrStore) {
-      reply.status(501);
-      return { error: 'GitHub PR fetching not configured' };
+    if (!opts.pullRequests) {
+      reply.status(503);
+      return { error: 'Installed PR observations are unavailable' };
     }
-
-    const ghPrs = await opts.fetchPrs(repo);
-    let created = 0;
-    let updated = 0;
-    let unchanged = 0;
-
-    const openPrs = ghPrs.filter((p) => p.state === 'open');
-    const CONCURRENCY = 5;
-    const reviewsByNumber = new Map<number, Array<{ user: string; state: string; commit_id: string }>>();
-    if (opts.fetchPrReviews && openPrs.length > 0) {
-      for (let i = 0; i < openPrs.length; i += CONCURRENCY) {
-        const batch = openPrs.slice(i, i + CONCURRENCY);
-        const results = await Promise.all(batch.map((p) => opts.fetchPrReviews!(repo, p.number).catch(() => [])));
-        for (let j = 0; j < batch.length; j++) reviewsByNumber.set(batch[j].number, results[j]);
-      }
+    const access = requirePluginOwnerLocalAccess(request, 'write');
+    if ('status' in access) return pluginAccessError(reply, access);
+    const restart = (request.body as { restart?: unknown } | undefined)?.restart;
+    if (restart !== undefined && typeof restart !== 'boolean') {
+      reply.status(400);
+      return { error: 'Invalid restart flag' };
     }
-
-    for (const pr of ghPrs) {
-      const reviews = reviewsByNumber.get(pr.number) ?? [];
-      const mapped = mapGitHubPr(pr, reviews);
-      const existing = await opts.communityPrStore.getByRepoAndNumber(repo, pr.number);
-
-      if (!existing) {
-        await opts.communityPrStore.create({
-          repo,
-          prNumber: pr.number,
-          title: pr.title,
-          author: pr.user,
-          state: mapped.state,
-          replyState: mapped.replyState,
-          headSha: pr.head_sha,
-          draft: pr.draft,
-        });
-        if (mapped.lastReviewedSha) {
-          const fresh = await opts.communityPrStore.getByRepoAndNumber(repo, pr.number);
-          if (fresh) await opts.communityPrStore.update(fresh.id, { lastReviewedSha: mapped.lastReviewedSha });
-        }
-        created++;
-      } else if (
-        existing.state !== mapped.state ||
-        existing.replyState !== mapped.replyState ||
-        existing.title !== pr.title ||
-        existing.headSha !== pr.head_sha
-      ) {
-        await opts.communityPrStore.update(existing.id, {
-          state: mapped.state,
-          replyState: mapped.replyState,
-          title: pr.title,
-          headSha: pr.head_sha,
-          ...(mapped.lastReviewedSha ? { lastReviewedSha: mapped.lastReviewedSha } : {}),
-        });
-        updated++;
-      } else {
-        unchanged++;
-      }
+    try {
+      const result = await opts.pullRequests.refresh(repo, restart);
+      reply.status(result.status === 'complete' ? 200 : result.status === 'incomplete' ? 202 : 502);
+      return { repo, ...result };
+    } catch {
+      reply.status(503);
+      return { error: 'Installed PR refresh is unavailable' };
     }
-
-    return { repo, created, updated, unchanged, total: ghPrs.length };
   });
 
   // F168 Phase C C2.1: narrator extension fields added (R1 fix — Zod must not strip them).
@@ -1391,9 +1352,13 @@ export const communityIssueRoutes: FastifyPluginAsync<CommunityIssuesRoutesOptio
     const prTasks = await taskStore.listByKind('pr_tracking');
     const prRepos = prTasks.map((t) => t.subjectKey?.match(/^pr:(.+)#\d+$/)?.[1]).filter(Boolean) as string[];
 
-    const communityPrRepos = opts.communityPrStore
-      ? [...new Set((await opts.communityPrStore.listAll()).map((p) => p.repo))]
-      : [];
+    let communityPrRepos: string[] = [];
+    let prSourceStatus = opts.pullRequests ? 'available' : 'unavailable';
+    try {
+      communityPrRepos = opts.pullRequests ? await opts.pullRequests.repositories() : [];
+    } catch {
+      prSourceStatus = 'unavailable';
+    }
 
     const projectionRepos: string[] = [];
     if (opts.objectStore) {
@@ -1413,24 +1378,35 @@ export const communityIssueRoutes: FastifyPluginAsync<CommunityIssuesRoutesOptio
       }
     }
 
-    const repos = [...new Set([...issueRepos, ...prRepos, ...communityPrRepos, ...projectionRepos])].sort();
-    return { repos };
+    const repos = [
+      ...new Set(
+        [...issueRepos, ...prRepos, ...communityPrRepos, ...projectionRepos].map((repo) => repo.toLowerCase()),
+      ),
+    ].sort();
+    return { repos, prSourceStatus };
   });
 
   app.get('/api/community-board', async (request, reply) => {
-    const { repo } = request.query as { repo?: string };
+    const { repo: requestedRepo } = request.query as { repo?: string };
+    const repo = requestedRepo?.trim().toLowerCase();
     if (!repo) {
       reply.status(400);
       return { error: 'Missing repo query parameter' };
     }
 
-    const issues = await communityIssueStore.listByRepo(repo);
+    const issues = await listCommunityIssuesForRepo(communityIssueStore, repo);
 
-    const subjectPrefix = `pr:${repo}#`;
-    const allTasks = await taskStore.listByKind('pr_tracking');
-    const repoPrTasks = allTasks.filter((t) => t.subjectKey?.startsWith(subjectPrefix));
+    const repoPrTasks = await listCommunityPrTasksForRepo(taskStore, repo);
 
-    const communityPrs = opts.communityPrStore ? await opts.communityPrStore.listByRepo(repo) : [];
+    let prSnapshot: Awaited<ReturnType<CommunityPrObservations['read']>> | undefined;
+    try {
+      prSnapshot = opts.pullRequests ? await opts.pullRequests.read(repo) : undefined;
+    } catch {
+      reply.status(503);
+      return { error: 'Installed PR observations are unavailable' };
+    }
+    const communityPrs = prSnapshot?.items ?? [];
+    const prIndex = prSnapshot?.status;
     const communityPrStateByNumber = new Map(communityPrs.map((p) => [p.prNumber, p.state]));
 
     const oldGroupToPhaseF: Record<string, string> = {
@@ -1493,7 +1469,7 @@ export const communityIssueRoutes: FastifyPluginAsync<CommunityIssuesRoutesOptio
     // Items that only exist in objectStore (not in legacy stores) are included via projection-only path.
     // New fields (projectionState, nextOwner, closureWaiver) are additive — zero frontend breakage.
     if (opts.objectStore) {
-      const objectStore = opts.objectStore;
+      const objectStore = communityObjectReadView(opts.objectStore);
 
       // Enrich existing legacy issues with projection fields
       const enrichedIssues = await Promise.all(
@@ -1521,7 +1497,8 @@ export const communityIssueRoutes: FastifyPluginAsync<CommunityIssuesRoutesOptio
         const allSubjectKeys = await objectStore.listSubjectKeys();
         const issuePrefix = `issue:${repo}#`;
         const projectionOnlyKeys = allSubjectKeys.filter(
-          (sk) => sk.startsWith(issuePrefix) && !legacyIssueNumbers.has(Number(sk.slice(issuePrefix.length))),
+          (sk) =>
+            sk.toLowerCase().startsWith(issuePrefix) && !legacyIssueNumbers.has(Number(sk.slice(issuePrefix.length))),
         );
 
         for (const sk of projectionOnlyKeys) {
@@ -1594,7 +1571,8 @@ export const communityIssueRoutes: FastifyPluginAsync<CommunityIssuesRoutesOptio
         const allSubjectKeys = await objectStore.listSubjectKeys();
         const prPrefix = `pr:${repo}#`;
         const projectionOnlyPrKeys = allSubjectKeys.filter(
-          (sk) => sk.startsWith(prPrefix) && !trackedAndLegacyPrNumbers.has(Number(sk.slice(prPrefix.length))),
+          (sk) =>
+            sk.toLowerCase().startsWith(prPrefix) && !trackedAndLegacyPrNumbers.has(Number(sk.slice(prPrefix.length))),
         );
         for (const sk of projectionOnlyPrKeys) {
           try {
@@ -1658,10 +1636,10 @@ export const communityIssueRoutes: FastifyPluginAsync<CommunityIssuesRoutesOptio
           ...issue,
           assignedThreadName: issue.assignedThreadId ? (threadNameMap.get(issue.assignedThreadId) ?? null) : null,
         }));
-        return { repo, issues: issuesWithThreadNames, prItems: finalPrItems };
+        return { repo, issues: issuesWithThreadNames, prItems: finalPrItems, prIndex };
       }
 
-      return { repo, issues: finalIssues, prItems: finalPrItems };
+      return { repo, issues: finalIssues, prItems: finalPrItems, prIndex };
     }
 
     // No objectStore path — still resolve thread names if threadStore available
@@ -1682,16 +1660,16 @@ export const communityIssueRoutes: FastifyPluginAsync<CommunityIssuesRoutesOptio
         ...issue,
         assignedThreadName: issue.assignedThreadId ? (threadNameMap.get(issue.assignedThreadId) ?? null) : null,
       }));
-      return { repo, issues: issuesWithThreadNames, prItems };
+      return { repo, issues: issuesWithThreadNames, prItems, prIndex };
     }
 
-    return { repo, issues, prItems };
+    return { repo, issues, prItems, prIndex };
   });
 
   await app.register(communityDecisionQueueRoutes, {
     communityIssueStore,
     taskStore,
-    communityPrStore: opts.communityPrStore,
+    pullRequests: opts.pullRequests,
     objectStore: opts.objectStore,
     findingStore: opts.findingStore,
   });

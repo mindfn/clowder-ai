@@ -73,7 +73,7 @@ export function buildCommunityDecisionQueue(input: BuildCommunityDecisionQueueIn
 
   for (const issue of input.issues) {
     const subjectKey = `issue:${issue.repo}#${issue.issueNumber}`;
-    if (issue.repo !== input.repo) continue;
+    if (issue.repo.toLowerCase() !== input.repo.toLowerCase()) continue;
 
     const directionItem = buildDirectionDecisionItem(input.repo, subjectKey, issue);
     if (directionItem) items.push(directionItem);
@@ -113,7 +113,7 @@ export function buildCommunityDecisionQueue(input: BuildCommunityDecisionQueueIn
   for (const finding of input.findings) {
     if (!isActionableFindingStatus(finding.status)) continue;
     const parsed = parseSubjectKey(finding.subjectKey);
-    if (!parsed || parsed.repo !== input.repo) continue;
+    if (!parsed || parsed.repo.toLowerCase() !== input.repo.toLowerCase()) continue;
     items.push(buildFindingItem(input.repo, parsed, finding));
   }
 
@@ -126,13 +126,13 @@ function buildThreadIdBySubject(input: BuildCommunityDecisionQueueInput): Map<st
   const threadIdBySubject = new Map<string, string>();
   for (const issue of input.issues) {
     const threadId = textField(issue.assignedThreadId);
-    if (issue.repo === input.repo && threadId)
-      threadIdBySubject.set(`issue:${issue.repo}#${issue.issueNumber}`, threadId);
+    if (issue.repo.toLowerCase() === input.repo.toLowerCase() && threadId)
+      threadIdBySubject.set(`issue:${issue.repo.toLowerCase()}#${issue.issueNumber}`, threadId);
   }
   for (const pr of input.prItems) {
     if (!pr.prNumber) continue;
     const threadId = textField(pr.threadId);
-    if (threadId) threadIdBySubject.set(`pr:${input.repo}#${pr.prNumber}`, threadId);
+    if (threadId) threadIdBySubject.set(`pr:${input.repo.toLowerCase()}#${pr.prNumber}`, threadId);
   }
   return threadIdBySubject;
 }
@@ -145,7 +145,7 @@ function ownerThreadIdForItem(
   const recommendedThreadId =
     routeRecommendation?.kind === 'existing-thread' ? textField(routeRecommendation.threadId) : undefined;
   if (recommendedThreadId) return recommendedThreadId;
-  const mappedThreadId = textField(threadIdBySubject.get(item.subjectKey));
+  const mappedThreadId = textField(threadIdBySubject.get(item.subjectKey.toLowerCase()));
   if (mappedThreadId) return mappedThreadId;
   return undefined;
 }

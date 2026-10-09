@@ -11,12 +11,13 @@
 import type { FastifyPluginAsync, FastifyRequest } from 'fastify';
 import { z } from 'zod';
 import type { ICommunityIssueStore } from '../domains/cats/services/stores/ports/CommunityIssueStore.js';
-import type { ICommunityPrStore } from '../domains/cats/services/stores/ports/CommunityPrStore.js';
 import type { ITaskStore } from '../domains/cats/services/stores/ports/TaskStore.js';
 import type { ICommunityObjectStore } from '../domains/community/CommunityObjectStore.js';
 import { buildCommunityDecisionQueue } from '../domains/community/community-decision-queue.js';
+import type { CommunityPrObservations } from '../domains/community/installed-pr-observations.js';
 import { resolveStrictUserId } from '../utils/request-identity.js';
 import { buildQueueIssues, buildQueuePrItems } from './community-decision-queue-read-model.js';
+import { communityObjectReadView, listCommunityIssuesForRepo } from './community-read-identity.js';
 
 export interface CommunityDecisionFindingWaiver {
   reason: string;
@@ -48,7 +49,7 @@ export interface CommunityDecisionQueueFindingStore {
 export interface CommunityDecisionQueueRoutesOptions {
   communityIssueStore: ICommunityIssueStore;
   taskStore: ITaskStore;
-  communityPrStore?: ICommunityPrStore;
+  pullRequests?: CommunityPrObservations;
   objectStore?: ICommunityObjectStore;
   findingStore?: CommunityDecisionQueueFindingStore;
 }
@@ -64,16 +65,25 @@ export const communityDecisionQueueRoutes: FastifyPluginAsync<CommunityDecisionQ
   opts,
 ) => {
   app.get('/api/community-decision-queue', async (request, reply) => {
-    const { repo } = request.query as { repo?: string };
+    const { repo: requestedRepo } = request.query as { repo?: string };
+    const repo = requestedRepo?.trim().toLowerCase();
     if (!repo) {
       reply.status(400);
       return { error: 'Missing repo query parameter' };
     }
 
     const warnings: string[] = [];
-    const issues = await opts.communityIssueStore.listByRepo(repo);
-    const queueIssues = await buildQueueIssues(repo, issues, opts.objectStore, warnings);
-    const prItems = await buildQueuePrItems(repo, opts.taskStore, opts.communityPrStore, opts.objectStore, warnings);
+    const issues = await listCommunityIssuesForRepo(opts.communityIssueStore, repo);
+    const objectStore = opts.objectStore ? communityObjectReadView(opts.objectStore) : undefined;
+    const queueIssues = await buildQueueIssues(repo, issues, objectStore, warnings);
+    let prSnapshot: Awaited<ReturnType<CommunityPrObservations['read']>> | undefined;
+    try {
+      prSnapshot = opts.pullRequests ? await opts.pullRequests.read(repo) : undefined;
+    } catch {
+      reply.status(503);
+      return { error: 'Installed PR observations are unavailable' };
+    }
+    const prItems = await buildQueuePrItems(repo, opts.taskStore, prSnapshot?.items ?? [], objectStore, warnings);
 
     const findings = opts.findingStore
       ? await opts.findingStore.listAll()
@@ -87,7 +97,7 @@ export const communityDecisionQueueRoutes: FastifyPluginAsync<CommunityDecisionQ
       now: Date.now(),
     });
 
-    return { repo, items, warnings };
+    return { repo, items, warnings, prIndex: prSnapshot?.status };
   });
 
   app.post('/api/community-findings/:findingId/acknowledge', async (request, reply) => {

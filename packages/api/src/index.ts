@@ -7006,60 +7006,8 @@ async function main(): Promise<void> {
       .split('\n')
       .map((line: string) => JSON.parse(line));
   };
-  const fetchPrsForSync = async (repo: string) => {
-    const { execFile } = await import('node:child_process');
-    const { promisify } = await import('node:util');
-    const execFileAsync = promisify(execFile);
-    const { stdout } = await execFileAsync(
-      'gh',
-      [
-        'api',
-        `/repos/${repo}/pulls`,
-        '--method',
-        'GET',
-        '--jq',
-        '.[] | {number, title, state, merged_at: .merged_at, user: .user.login, head_sha: .head.sha, draft, labels: [.labels[].name], updated_at: .updated_at}',
-        '--paginate',
-        '-f',
-        'state=all',
-        '-f',
-        'per_page=100',
-      ],
-      getGitHubExecOptions(60_000),
-    );
-    if (!stdout.trim()) return [];
-    return stdout
-      .trim()
-      .split('\n')
-      .map((line: string) => JSON.parse(line));
-  };
-  const fetchPrReviewsForSync = async (_repo: string, prNumber: number) => {
-    const { execFile } = await import('node:child_process');
-    const { promisify } = await import('node:util');
-    const execFileAsync = promisify(execFile);
-    const { stdout } = await execFileAsync(
-      'gh',
-      [
-        'api',
-        '--paginate',
-        `/repos/${_repo}/pulls/${prNumber}/reviews`,
-        '--method',
-        'GET',
-        '--jq',
-        '.[] | {user: .user.login, state, commit_id}',
-      ],
-      getGitHubExecOptions(30_000),
-    );
-    if (!stdout.trim()) return [];
-    return stdout
-      .trim()
-      .split('\n')
-      .map((line: string) => JSON.parse(line));
-  };
-  const { InMemoryCommunityPrStore } = await import(
-    './domains/cats/services/stores/memory/InMemoryCommunityPrStore.js'
-  );
-  const communityPrStore = new InMemoryCommunityPrStore();
+  const { InstalledPrObservations } = await import('./domains/community/installed-pr-observations.js');
+  const pullRequests = new InstalledPrObservations(pluginRuntime.inventoryStore, pluginRuntime.supervisor);
 
   // F168 Phase C C2.2: community narrator wiring (conditional — disabled without thread ID)
   // D0.3: boot warning when narrator role configured but thread ID absent
@@ -7108,9 +7056,7 @@ async function main(): Promise<void> {
     registry,
     agentKeyRegistry,
     fetchIssues: fetchIssuesForSync,
-    communityPrStore,
-    fetchPrs: fetchPrsForSync,
-    fetchPrReviews: fetchPrReviewsForSync,
+    pullRequests,
     // F168 Phase A P1-1: wire community event services
     eventLog: communityEventLog,
     projector: communityProjector,

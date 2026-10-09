@@ -27,7 +27,20 @@ describe('Community decision queue finding action routes (F168 Phase E E-PR1)', 
     await app.register(communityIssueRoutes, {
       communityIssueStore,
       taskStore,
-      communityPrStore,
+      pullRequests: {
+        async repositories() {
+          return [...new Set((await communityPrStore.listAll()).map((row) => row.repo))];
+        },
+        async read(repo) {
+          return {
+            items: await communityPrStore.listByRepo(repo),
+            status: { publishedGeneration: 'fixture', observedAt: 1, refreshStatus: 'complete', failedSubjects: [] },
+          };
+        },
+        async refresh() {
+          throw Error('fixture has no provider');
+        },
+      },
       socketManager: { broadcastToRoom() {} },
       ...opts,
     });

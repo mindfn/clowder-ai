@@ -15,16 +15,22 @@ import { CommunityKeys } from './community-keys.js';
 const MIGRATE_PROJECTION_KEY_LUA = `
 local canonical = redis.call('GET', KEYS[1])
 if canonical then return canonical end
-local legacy = redis.call('GET', KEYS[2])
-if not legacy then return false end
-local projection = cjson.decode(legacy)
-projection.subjectKey = ARGV[1]
-local migrated = cjson.encode(projection)
-redis.call('SET', KEYS[1], migrated)
-redis.call('SADD', KEYS[3], ARGV[1])
-redis.call('DEL', KEYS[2])
-redis.call('SREM', KEYS[3], ARGV[2])
-return migrated
+-- Eligible legacy keys are supplied in code-unit subject order. Choose the
+-- first live value atomically; stale index members cannot hide later values.
+for i = 3, #KEYS do
+  local legacy = redis.call('GET', KEYS[i])
+  if legacy then
+    local projection = cjson.decode(legacy)
+    projection.subjectKey = ARGV[1]
+    local migrated = cjson.encode(projection)
+    redis.call('SET', KEYS[1], migrated)
+    redis.call('SADD', KEYS[2], ARGV[1])
+    redis.call('DEL', KEYS[i])
+    redis.call('SREM', KEYS[2], ARGV[i - 1])
+    return migrated
+  end
+end
+return false
 `;
 
 export interface ICommunityObjectStore {
@@ -42,21 +48,21 @@ export class RedisCommunityObjectStore implements ICommunityObjectStore {
     const canonicalRaw = await this.redis.get(CommunityKeys.objectProjection(canonical));
     if (canonicalRaw) return JSON.parse(canonicalRaw) as CommunityObjectProjection;
 
-    const legacyKeys = await this.redis.smembers(CommunityKeys.objectsIndex);
-    const legacyKey = legacyKeys.find(
-      (candidate) => candidate !== canonical && canonicalizeCommunitySubjectKey(candidate) === canonical,
-    );
-    if (!legacyKey) return null;
-    // Read-repair is one Redis transaction: a concurrent canonical save wins,
-    // otherwise the legacy value moves without an overwrite window.
+    const legacyKeys = (await this.redis.smembers(CommunityKeys.objectsIndex))
+      .filter((candidate) => candidate !== canonical && canonicalizeCommunitySubjectKey(candidate) === canonical)
+      .sort();
+    if (legacyKeys.length === 0) return null;
+    // All current writers save canonical keys. Choose among this legacy snapshot
+    // in one transaction: a concurrent canonical save wins; otherwise the first
+    // live alias in code-unit order moves. Unselected aliases remain untouched.
     const migrated = await this.redis.eval(
       MIGRATE_PROJECTION_KEY_LUA,
-      3,
+      2 + legacyKeys.length,
       CommunityKeys.objectProjection(canonical),
-      CommunityKeys.objectProjection(legacyKey),
       CommunityKeys.objectsIndex,
+      ...legacyKeys.map(CommunityKeys.objectProjection),
       canonical,
-      legacyKey,
+      ...legacyKeys,
     );
     return migrated ? (JSON.parse(String(migrated)) as CommunityObjectProjection) : null;
   }
