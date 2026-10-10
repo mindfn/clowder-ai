@@ -48,7 +48,7 @@ function fixture({
     queue: {
       getDurableEntry: async () => (retired ? undefined : entry),
       findAdmittedEntriesForMessages: () => [],
-      send: async () => {
+      appendAndEnqueueDurable: async () => {
         admitted++;
         return { outcome: 'enqueued', message, entry };
       },

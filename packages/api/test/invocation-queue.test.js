@@ -425,11 +425,10 @@ describe('InvocationQueue ADR-043 adapter', () => {
     const admitted = await queue.enqueueDurable(queueInput({ sourceId: 'clone-source', content: 'original' }));
     const listed = queue.list('thread-1', 'user-1');
     listed[0].payload.content = 'mutated';
-    const policy = structuredClone(admitted.entry.delivery.authorIntentByTarget);
     admitted.entry.delivery.authorIntentByTarget = {};
 
     const current = queue.getEntrySnapshot('thread-1', 'user-1', admitted.entry.id);
     assert.equal(current.payload.content, 'original');
-    assert.deepEqual(current.delivery.authorIntentByTarget, policy);
+    assert.equal(current.delivery.authorIntentByTarget, undefined);
   });
 });

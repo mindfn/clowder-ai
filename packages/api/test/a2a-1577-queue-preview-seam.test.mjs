@@ -19,7 +19,7 @@ test('real preview retains public connector identity and blocks without exposing
     replyTo: 'owned-reply',
     contentBlocks: [{ type: 'text', text: 'rich body' }],
   };
-  const admitted = await queue.send(messages, message, {
+  const admitted = await queue.appendAndEnqueueDurable(messages, message, {
     ...message,
     kind: 'conversation_input',
     ownerAuthProvenance: 'unknown',

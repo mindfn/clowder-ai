@@ -214,7 +214,7 @@ test('concurrent idempotent admission leaves one canonical source and child, nev
 
 test('unrelated Queue completion cannot start a reservation before the atomic Message admission', async (t) => {
   const f = consumerFixture(t);
-  const append = f.queue.send.bind(f.queue);
+  const append = f.queue.appendAndEnqueueDurable.bind(f.queue);
   let entered!: () => void, release!: () => void;
   const appending = new Promise<void>((resolve) => {
     entered = resolve;
@@ -222,7 +222,7 @@ test('unrelated Queue completion cannot start a reservation before the atomic Me
   const barrier = new Promise<void>((resolve) => {
     release = resolve;
   });
-  f.queue.send = async (...args) => {
+  f.queue.appendAndEnqueueDurable = async (...args) => {
     entered();
     await barrier;
     return append(...args);

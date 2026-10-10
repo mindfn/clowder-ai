@@ -208,7 +208,7 @@ test('current thread legacy tasks survive missing owner metadata; explicit forei
 
 test('queued unread user sources remain body-free references with unknown playback and successor responsibility', async () => {
   const f = recoveryFixture();
-  const admission = await f.queue.send(
+  const admission = await f.queue.appendAndEnqueueDurable(
     f.messages,
     {
       userId: scope.userId,

@@ -196,11 +196,11 @@ describe('F264 author message disposition selector', () => {
     useChatStore.setState({ targetCats: ['opus', 'kimi', 'sol'] });
     await renderThreadInput({ threadId: 'thread-active', onSend, hasActiveInvocation: true });
     expect(container.querySelector('textarea')?.placeholder).toBe(
-      '想调整方向？可直接给布偶猫/缅因猫（sol）发消息，引导回复。',
+      '执行发生了偏离？布偶猫/缅因猫（sol）支持引导回复，可继续输入直接发送消息而不中断当前回复',
     );
     await chooseContinueCurrent();
     expect(container.querySelector('textarea')?.placeholder).toBe(
-      '想调整方向？可直接给布偶猫/缅因猫（sol）发消息，引导回复。',
+      '执行发生了偏离？布偶猫/缅因猫（sol）支持引导回复，可继续输入直接发送消息而不中断当前回复',
     );
     expect(container.querySelector('[data-testid="active-invocation-banner"]')).toBeNull();
 

@@ -57,8 +57,8 @@ test(
               targetCats: [target],
               intent: 'execute',
             };
-            const first = await queue.send(store, messageInput, queueInput);
-            const repeated = await queue.send(store, messageInput, queueInput);
+            const first = await queue.appendAndEnqueueDurable(store, messageInput, queueInput);
+            const repeated = await queue.appendAndEnqueueDurable(store, messageInput, queueInput);
             assert.ok(first.message && repeated.message);
             assert.equal(repeated.message.id, first.message.id);
             ids.push(first.message.id);

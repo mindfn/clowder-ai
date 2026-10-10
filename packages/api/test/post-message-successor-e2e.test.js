@@ -41,15 +41,10 @@ async function createHarness({ failEnqueueAttempts = 0, measurementRoutes = fals
   );
 
   const registry = new InvocationRegistry();
-  const drainNotifications = [];
-  const invocationQueue = new InvocationQueue(undefined, {
-    onAdmitted: ({ entries }) => {
-      drainNotifications.push(entries.map((entry) => entry.id));
-    },
-  });
-  const originalEnqueue = invocationQueue.send.bind(invocationQueue);
+  const invocationQueue = new InvocationQueue();
+  const originalEnqueue = invocationQueue.appendAndEnqueueDurable.bind(invocationQueue);
   let remainingEnqueueFailures = failEnqueueAttempts;
-  invocationQueue.send = async (...args) => {
+  invocationQueue.appendAndEnqueueDurable = async (...args) => {
     if (remainingEnqueueFailures > 0) {
       remainingEnqueueFailures -= 1;
       return { outcome: 'full' };
@@ -68,6 +63,7 @@ async function createHarness({ failEnqueueAttempts = 0, measurementRoutes = fals
   const thread = await threadStore.create('user-1', 'Local review durable fact');
   const auth = await registry.create('user-1', 'opus', thread.id);
   const admissionCalls = [];
+  const autoExecuteCalls = [];
 
   app = Fastify();
   await app.register(callbacksRoutes, {
@@ -92,6 +88,10 @@ async function createHarness({ failEnqueueAttempts = 0, measurementRoutes = fals
       },
     },
     queueProcessor: {
+      async tryAutoAppendExactEntry(...args) {
+        autoExecuteCalls.push(args);
+        return { outcome: 'rejected' };
+      },
       async requestDrain() {},
       async onInvocationComplete() {},
     },
@@ -112,7 +112,7 @@ async function createHarness({ failEnqueueAttempts = 0, measurementRoutes = fals
 
   return {
     admissionCalls,
-    drainNotifications,
+    autoExecuteCalls,
     auth,
     apiUrl,
     handlePostMessage,
@@ -272,7 +272,7 @@ test('typed local review fact needs no action lease or inherited coordination to
     'published Agent review remains visible while Queue owns wake admission in lifecycle metadata',
   );
   assert.deepEqual(harness.invocationQueue.list(harness.thread.id, 'user-1')[0].targets, ['codex']);
-  assert.equal(new Set(harness.drainNotifications.flat()).size, 1);
+  assert.equal(harness.autoExecuteCalls.length, 1);
 
   const replay = toolJson(await harness.handlePostMessage(input));
   assert.equal(replay.status, 'duplicate');
@@ -284,7 +284,7 @@ test('typed local review fact needs no action lease or inherited coordination to
   );
   assert.equal(harness.messageStore.getByThreadIncludingQueued(harness.thread.id, 20, 'user-1').length, 1);
   assert.equal(harness.invocationQueue.list(harness.thread.id, 'user-1').length, 1);
-  assert.equal(new Set(harness.drainNotifications.flat()).size, 1);
+  assert.equal(harness.autoExecuteCalls.length, 1);
 });
 
 test('typed local review fact fails closed without an exact reviewed HEAD', async () => {
@@ -391,7 +391,7 @@ test('a durable review fact recovers one author wake after transient Queue failu
   assert.equal(replay.json().status, 'ok');
   assert.equal(harness.messageStore.getByThreadIncludingQueued(harness.thread.id, 20, 'user-1').length, 1);
   assert.equal(harness.invocationQueue.list(harness.thread.id, 'user-1').length, 1);
-  assert.equal(new Set(harness.drainNotifications.flat()).size, 1);
+  assert.equal(harness.autoExecuteCalls.length, 1);
 });
 
 test('a new HEAD stores a fresh review fact while retaining the old HEAD as history', async () => {

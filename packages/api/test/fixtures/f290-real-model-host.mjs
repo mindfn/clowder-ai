@@ -157,15 +157,9 @@ export async function createModelHost(world, cafe, db, config, evidence) {
     const deps = originalStrategyDeps();
     return { ...deps, invocationDeps: { ...deps.invocationDeps, apiUrl: callbackUrl } };
   };
-  const tracker = new InvocationTracker();
-  const queue = new InvocationQueue(new RedisQueueLedgerStore(redis), {
-    invocationTracker: tracker,
-    resolveCarrierCapability: (target) => router.freshnessCarrierCapability(target),
-    onAdmitted: ({ threadId }) => {
-      void queueProcessor.requestDrain(threadId);
-    },
-  });
+  const queue = new InvocationQueue(new RedisQueueLedgerStore(redis));
   await queue.hydrateFromLedger(messages);
+  const tracker = new InvocationTracker();
   const queueProcessor = new QueueProcessor({
     queue,
     invocationTracker: tracker,
@@ -199,6 +193,7 @@ export async function createModelHost(world, cafe, db, config, evidence) {
     threadStore: threads,
     messageStore: messages,
     invocationQueue: queue,
+    queueProcessor,
     socketManager: sockets,
     isCatAvailable: (id) => id === catId,
     admitStandingWork: (source, id) => admission.admit(source, id),

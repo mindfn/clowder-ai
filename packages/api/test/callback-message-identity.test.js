@@ -98,9 +98,9 @@ for (const transport of ['invocation', 'agent-key']) {
 
   test(`${transport}: failed atomic admission does not consume the message ID`, async (t) => {
     const h = await harness(t, transport);
-    const realAdmission = h.invocationQueue.send.bind(h.invocationQueue);
+    const realAdmission = h.invocationQueue.appendAndEnqueueDurable.bind(h.invocationQueue);
     let fail = true;
-    h.invocationQueue.send = async (...args) => {
+    h.invocationQueue.appendAndEnqueueDurable = async (...args) => {
       if (fail) {
         fail = false;
         throw new Error('isolated transaction failure');

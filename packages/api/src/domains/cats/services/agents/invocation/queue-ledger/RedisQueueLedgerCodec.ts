@@ -139,13 +139,6 @@ export function hydrateQueueLedgerEntry(raw: string): QueueLedgerEntry {
   const parsed: unknown = JSON.parse(raw);
   if (!parsed || typeof parsed !== 'object') throw new Error('corrupt queue ledger row');
   const entry = parsed as QueueLedgerEntry;
-  // Recover the exact empty-array shape lost by earlier Lua transitions. Do not reinterpret
-  // nonempty objects or other malformed values, and do not alter the persisted message/identity.
-  const payload = record(entry.payload);
-  const requestedTargets = record(payload?.requestedTargetCats);
-  if (payload && requestedTargets && Object.keys(requestedTargets).length === 0) {
-    payload.requestedTargetCats = [];
-  }
   assertQueueLedgerEntry(entry);
   return entry;
 }

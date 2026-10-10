@@ -474,7 +474,7 @@ describe('MessageStore lifecycle input dispatch CAS', () => {
       },
     });
     const queue = new InvocationQueue();
-    const admission = await queue.send(
+    const admission = await queue.appendAndEnqueueDurable(
       store,
       canonicalTestMessageInput({
         userId: 'owner-1',
@@ -776,7 +776,7 @@ describe('MessageStore lifecycle pre-admission failure transaction', () => {
     const { InvocationQueue } = await import('../dist/domains/cats/services/agents/invocation/InvocationQueue.js');
     const store = new MessageStore();
     const queue = new InvocationQueue();
-    const admission = await queue.send(
+    const admission = await queue.appendAndEnqueueDurable(
       store,
       canonicalTestMessageInput({
         userId: 'owner-1',

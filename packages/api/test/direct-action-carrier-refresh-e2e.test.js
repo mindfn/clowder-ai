@@ -164,7 +164,7 @@ describe('direct action carrier refresh, route to provider', () => {
     leaseStore.install(lease);
     const fence = buildActionSuccessorFence(lease, lease.dispatchId);
     const from = { kind: 'agent', catId: PREDECESSOR };
-    const queued = await queue.send(
+    const queued = await queue.appendAndEnqueueDurable(
       messages,
       {
         userId: 'user-1',
@@ -217,11 +217,7 @@ describe('direct action carrier refresh, route to provider', () => {
     leaseStore = createLeaseStore(undefined);
     app = Fastify();
     messages = new MessageStore();
-    queue = new InvocationQueue(undefined, {
-      onAdmitted: ({ threadId }) => {
-        void processor.requestDrain(threadId);
-      },
-    });
+    queue = new InvocationQueue();
     records = new InvocationRecordStore();
     registry = new InvocationRegistry();
     unavailable = [];
@@ -470,7 +466,7 @@ describe('direct action carrier refresh, route to provider', () => {
 
     const from = { kind: 'agent', catId: PREDECESSOR };
     await assert.rejects(
-      queue.send(
+      queue.appendAndEnqueueDurable(
         messages,
         {
           threadId: target.id,

@@ -77,7 +77,7 @@ export async function createCanonicalLiveSourceFixture(intent, source = 'user', 
       : source === 'connector'
         ? { kind: 'external', connectorId: 'test' }
         : { kind: 'user', userId: 'owner' };
-  const admitted = await queue.send(
+  const admitted = await queue.appendAndEnqueueDurable(
     store,
     {
       threadId: 'home',

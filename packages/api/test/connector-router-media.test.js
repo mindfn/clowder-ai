@@ -26,7 +26,6 @@ function makeMockDeps(overrides = {}) {
     // RFC §5.1: the router hands an envelope to the one durable-admission component.
     persistedQueueDelivery: {
       async deliver(input) {
-        input = { ...input, targetCatId: input.targetCatId ?? 'opus' };
         messages.push({ ...input, mentions: [input.targetCatId], deliveryStatus: 'queued' });
         const id = `msg-${messages.length}`;
         return { state: 'started', entryId: `entry-${messages.length}`, message: { id, ...input } };

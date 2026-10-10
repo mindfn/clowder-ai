@@ -12,7 +12,7 @@ test('cross-post notice and recovery reference the persisted receiving message',
   const f = recoveryFixture();
   const queue = f.queue;
   const from = { kind: 'agent' as const, catId: scope.catId };
-  const admitted = await queue.send(
+  const admitted = await queue.appendAndEnqueueDurable(
     f.messages,
     {
       userId: scope.userId,

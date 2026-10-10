@@ -164,7 +164,7 @@ function fixture(refuse: (source: string) => unknown, unsupported = false, retry
   );
   async function enqueue(content: string) {
     const [taskId, revision] = content.split('@');
-    return queue.send(
+    return queue.appendAndEnqueueDurable(
       messages,
       {
         userId,

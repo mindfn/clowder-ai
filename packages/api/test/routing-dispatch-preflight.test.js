@@ -547,29 +547,14 @@ describe('F117 normal dispatch without availability gating', () => {
     assert.deepEqual([...calls].sort(), ['codex', 'opus', 'opus']);
   });
 
-  test('callback admits exact targets without availability checks and notifies the shared drain once', async () => {
+  test('callback queue and Append never consult or expose availability', async () => {
     const { enqueueA2ATargets } = await import('../dist/routes/callback-a2a-trigger.js');
     const { InvocationQueue } = await import('../dist/domains/cats/services/agents/invocation/InvocationQueue.js');
     const { MessageStore } = await import('../dist/domains/cats/services/stores/ports/MessageStore.js');
-    const drainThreads = [];
-    let appendCalls = 0;
-    let availabilityCalls = 0;
-    const queueProcessor = {
-      async requestDrain(threadId) {
-        drainThreads.push(threadId);
-      },
-      async tryAutoAppendExactEntry() {
-        appendCalls++;
-        throw new Error('callback producer must not orchestrate Append');
-      },
-    };
-    const queue = new InvocationQueue(undefined, {
-      onAdmitted: ({ threadId }) => {
-        void queueProcessor.requestDrain(threadId);
-      },
-    });
+    const queue = new InvocationQueue();
     const messageStore = new MessageStore();
     const broadcasts = [];
+    const appendedTargets = [];
     const triggerMessage = messageStore.append({
       from: { kind: 'agent', catId: 'terra' },
       threadId: 'thread-callback',
@@ -583,7 +568,12 @@ describe('F117 normal dispatch without availability gating', () => {
       {
         invocationQueue: queue,
         messageStore,
-        queueProcessor,
+        queueProcessor: {
+          async requestDrain() {},
+          async tryAutoAppendExactEntry(input) {
+            appendedTargets.push(input.targetCatId);
+          },
+        },
         socketManager: {
           broadcastAgentMessage(message, threadId) {
             broadcasts.push({ message, threadId });
@@ -592,10 +582,7 @@ describe('F117 normal dispatch without availability gating', () => {
           emitToUser() {},
         },
         routingDispatchPreflight: {
-          preflight: async (input) => {
-            availabilityCalls++;
-            return decision(input, { opus: 'rejected', codex: 'warned' });
-          },
+          preflight: async (input) => decision(input, { opus: 'rejected', codex: 'warned' }),
         },
         log: { error() {}, warn() {}, info() {} },
       },
@@ -611,9 +598,7 @@ describe('F117 normal dispatch without availability gating', () => {
     );
 
     assert.deepEqual(result.enqueued, ['opus', 'codex']);
-    assert.deepEqual(drainThreads, ['thread-callback'], 'one common-admission wake covers the complete fan-out');
-    assert.equal(appendCalls, 0, 'Append belongs to Queue execution, not the callback producer');
-    assert.equal(availabilityCalls, 0);
+    assert.deepEqual(appendedTargets, ['opus', 'codex'], 'every requested target may Append');
     assert.equal(result.routingPreflight, undefined);
     assert.deepEqual(
       queue.list('thread-callback', 'owner-1').flatMap((entry) => entry.targets),

@@ -94,11 +94,7 @@ async function setupScenario() {
   const threadStore = new ThreadStore();
   const invocationRecordStore = new InvocationRecordStore();
   const invocationTracker = new InvocationTracker();
-  const invocationQueue = new InvocationQueue(undefined, {
-    onAdmitted: ({ threadId }) => {
-      void queueProcessor.requestDrain(threadId);
-    },
-  });
+  const invocationQueue = new InvocationQueue();
   const socketManager = createMockSocketManager();
   const modeRef = { failPersistence: true };
   const router = createFaultDrillRouter(modeRef);

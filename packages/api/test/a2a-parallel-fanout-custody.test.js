@@ -117,12 +117,8 @@ describe('Phase C multi_mention lifecycle fan-out', () => {
     creds = registry.register('opus', 'thread-par-1', 'user-1');
     messageStore = new MessageStore();
     callerResponse = appendLifecycleSource(messageStore, creds);
+    invocationQueue = new InvocationQueue();
     queueProcessor = createMockQueueProcessor();
-    invocationQueue = new InvocationQueue(undefined, {
-      onAdmitted: ({ threadId }) => {
-        void queueProcessor.requestDrain(threadId);
-      },
-    });
     socketMessages = [];
 
     app = Fastify({ logger: false });

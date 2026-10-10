@@ -17,6 +17,7 @@ async function fixture() {
     messageStore: messages,
     invocationQueue: queue,
     threadStore: { get: async () => ({ createdBy: 'isolated-owner', participants: ['codex'] }) },
+    queueProcessor: { processNext: async () => {} },
     context: () => ({ resolvePrivate: async () => ({ admitted: true }) }),
   });
   const task = {

@@ -52,7 +52,7 @@ test('a later queued owner correction with a backdated timeline score never perm
   const queue = new InvocationQueue();
   const content = 'Wait, do something else';
   const from = { kind: 'user' as const, userId: scope.userId };
-  const admitted = await queue.send(
+  const admitted = await queue.appendAndEnqueueDurable(
     f.store,
     {
       userId: scope.userId,

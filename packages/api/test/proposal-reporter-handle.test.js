@@ -38,11 +38,7 @@ describe('F128 parallel reporter handle resolution', () => {
     // Originally砚砚 round-7 P1 (raw fallback). Round-9 plan-based:
     // reporter = primaryMentionHandleForCatId(resolved.targetCats[0]).
     const { InvocationQueue } = await import('../dist/domains/cats/services/agents/invocation/InvocationQueue.js');
-    const invocationQueue = new InvocationQueue(undefined, {
-      onAdmitted: ({ threadId, entries }) => {
-        void queueProcessor.processNext(threadId, entries[0].owner.userId).catch(() => {});
-      },
-    });
+    const invocationQueue = new InvocationQueue();
     const router = {
       async resolveTargetsAndIntent() {
         return {
@@ -60,6 +56,7 @@ describe('F128 parallel reporter handle resolution', () => {
     const ctx = await createProposalTestContext({
       routerOverride: router,
       invocationQueueOverride: invocationQueue,
+      queueProcessorOverride: queueProcessor,
     });
     const source = await ctx.threadStore.create('alice', 'Source');
     const { proposalId } = JSON.parse(
@@ -104,11 +101,7 @@ describe('F128 parallel reporter handle resolution', () => {
     // is the canonical configured handle of resolved.targetCats[0] —
     // regardless of which alias the user typed in raw.
     const { InvocationQueue } = await import('../dist/domains/cats/services/agents/invocation/InvocationQueue.js');
-    const invocationQueue = new InvocationQueue(undefined, {
-      onAdmitted: ({ threadId, entries }) => {
-        void queueProcessor.processNext(threadId, entries[0].owner.userId).catch(() => {});
-      },
-    });
+    const invocationQueue = new InvocationQueue();
     const router = {
       async resolveTargetsAndIntent() {
         // Router resolves Chinese alias `@砚砚` → catId `codex` per cat-template.json.
@@ -127,6 +120,7 @@ describe('F128 parallel reporter handle resolution', () => {
     const ctx = await createProposalTestContext({
       routerOverride: router,
       invocationQueueOverride: invocationQueue,
+      queueProcessorOverride: queueProcessor,
     });
     const source = await ctx.threadStore.create('alice', 'Source');
     const { proposalId } = JSON.parse(
@@ -161,11 +155,7 @@ describe('F128 parallel reporter handle resolution', () => {
     // reads router-resolved catId `gpt-5.2`, so the dot is naturally
     // preserved — there's no raw regex to misconfigure.
     const { InvocationQueue } = await import('../dist/domains/cats/services/agents/invocation/InvocationQueue.js');
-    const invocationQueue = new InvocationQueue(undefined, {
-      onAdmitted: ({ threadId, entries }) => {
-        void queueProcessor.processNext(threadId, entries[0].owner.userId).catch(() => {});
-      },
-    });
+    const invocationQueue = new InvocationQueue();
     const router = {
       async resolveTargetsAndIntent() {
         return {
@@ -183,6 +173,7 @@ describe('F128 parallel reporter handle resolution', () => {
     const ctx = await createProposalTestContext({
       routerOverride: router,
       invocationQueueOverride: invocationQueue,
+      queueProcessorOverride: queueProcessor,
     });
     const source = await ctx.threadStore.create('alice', 'Source');
     const { proposalId } = JSON.parse(

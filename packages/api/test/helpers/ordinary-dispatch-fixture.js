@@ -17,7 +17,7 @@ export async function ordinaryDispatchFixture(t) {
   }
   async function addSource(content) {
     return (
-      await f.queue.send(
+      await f.queue.appendAndEnqueueDurable(
         f.store,
         {
           threadId: 'home',

@@ -121,7 +121,7 @@ async function harness() {
     targetCats: ['opus', 'codex'],
     intent: 'execute',
   });
-  const admitted = await queue.send(
+  const admitted = await queue.appendAndEnqueueDurable(
     store,
     canonicalTestMessageInput({
       threadId: queueInput.threadId,

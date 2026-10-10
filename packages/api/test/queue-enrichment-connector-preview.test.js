@@ -7,7 +7,7 @@ import { enrichQueueEntries } from '../dist/utils/queue-enrichment.js';
 async function enqueueConnectorMessage(source) {
   const queue = new InvocationQueue();
   const store = new MessageStore();
-  const result = await queue.send(
+  const result = await queue.appendAndEnqueueDurable(
     store,
     {
       from: { kind: 'external', connectorId: source?.connector ?? 'test-fixture' },

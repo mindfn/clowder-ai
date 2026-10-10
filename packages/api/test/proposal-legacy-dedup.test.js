@@ -34,6 +34,11 @@ async function createDispatchContext() {
       },
     },
     invocationQueueOverride: invocationQueue,
+    queueProcessorOverride: {
+      async processNext() {
+        return { started: true };
+      },
+    },
   });
 }
 
