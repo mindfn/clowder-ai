@@ -24,7 +24,29 @@ vi.mock('@/hooks/useCatData', () => ({
         avatar: '/opus.png',
         roster: { available: true },
         isDefaultResponder: true,
+        messageDeliveryCapabilities: { guideReply: true },
       },
+      {
+        id: 'sol',
+        displayName: '缅因猫',
+        variantLabel: 'sol',
+        mentionPatterns: ['@sol'],
+        messageDeliveryCapabilities: { guideReply: true },
+      },
+      {
+        id: 'kimi',
+        displayName: '狸花猫',
+        mentionPatterns: ['@kimi'],
+        messageDeliveryCapabilities: { guideReply: false },
+      },
+      {
+        id: 'astra',
+        displayName: '缅因猫',
+        variantLabel: 'astra',
+        mentionPatterns: ['@astra'],
+        messageDeliveryCapabilities: { guideReply: true },
+      },
+      { id: 'unknown', displayName: '未知成员', mentionPatterns: [] },
     ],
     isLoading: false,
   }),
@@ -171,9 +193,12 @@ describe('F264 author message disposition selector', () => {
 
   it('uses one normal Send button during active work and lets Queue apply the selected strategy', async () => {
     const onSend = vi.fn(async () => true);
+    useChatStore.setState({ targetCats: ['opus', 'kimi', 'sol'] });
     await renderThreadInput({ threadId: 'thread-active', onSend, hasActiveInvocation: true });
     await chooseContinueCurrent();
-    expect(container.querySelector('textarea')?.placeholder).toBe('继续输入，消息可不中断追加给当前成员...');
+    expect(container.querySelector('textarea')?.placeholder).toBe(
+      '执行发生了偏离？布偶猫/缅因猫（sol）支持引导回复，可继续输入直接发送消息而不中断当前回复',
+    );
     expect(container.querySelector('[data-testid="active-invocation-banner"]')).toBeNull();
 
     act(() => setTextarea(container.querySelector('textarea') as HTMLTextAreaElement, '继续补充约束'));
@@ -186,6 +211,8 @@ describe('F264 author message disposition selector', () => {
       await Promise.resolve();
     });
     expect(onSend).toHaveBeenCalledWith('继续补充约束', undefined, undefined, undefined);
+    act(() => useChatStore.setState({ targetCats: ['kimi', 'unknown'] }));
+    expect(container.querySelector('textarea')?.placeholder).toBe('输入消息... (@ 召唤猫猫 · /thread 引用对话)');
   });
 
   it('can persist the choice for this thread', async () => {
