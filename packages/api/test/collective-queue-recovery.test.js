@@ -33,7 +33,7 @@ test('Queue restart retains singleton origin and scope; adjacent Channel request
   const queue = new InvocationQueue(ledger);
   const messages = new MessageStore();
   const admit = (sourceId, content) =>
-    queue.appendAndEnqueueDurable(
+    queue.send(
       messages,
       {
         userId: publicInput.userId,

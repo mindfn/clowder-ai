@@ -39,7 +39,11 @@ describe('F128 explicit intent override (round-5)', () => {
     // + duplicate report-back. Fix: detect explicit `#ideate` from raw
     // initialMessage in enrich, omit chain protocol in parallel mode.
     const { InvocationQueue } = await import('../dist/domains/cats/services/agents/invocation/InvocationQueue.js');
-    const invocationQueue = new InvocationQueue();
+    const invocationQueue = new InvocationQueue(undefined, {
+      onAdmitted: ({ threadId, entries }) => {
+        void queueProcessor.processNext(threadId, entries[0].owner.userId).catch(() => {});
+      },
+    });
     const router = {
       async resolveTargetsAndIntent() {
         return {
@@ -57,7 +61,6 @@ describe('F128 explicit intent override (round-5)', () => {
     const ctx = await createProposalTestContext({
       routerOverride: router,
       invocationQueueOverride: invocationQueue,
-      queueProcessorOverride: queueProcessor,
     });
     const source = await ctx.threadStore.create('alice', 'Source');
     const { proposalId } = JSON.parse(
@@ -140,7 +143,11 @@ describe('F128 explicit intent override (round-5)', () => {
     // them as serial multi-cat execution (the F088 router contract for
     // `#execute` outside F128-specific override).
     const { InvocationQueue } = await import('../dist/domains/cats/services/agents/invocation/InvocationQueue.js');
-    const invocationQueue = new InvocationQueue();
+    const invocationQueue = new InvocationQueue(undefined, {
+      onAdmitted: ({ threadId, entries }) => {
+        void queueProcessor.processNext(threadId, entries[0].owner.userId).catch(() => {});
+      },
+    });
     const router = {
       async resolveTargetsAndIntent() {
         // Simulate real router: raw `#execute @kimi @gemini @codex` →
@@ -160,7 +167,6 @@ describe('F128 explicit intent override (round-5)', () => {
     const ctx = await createProposalTestContext({
       routerOverride: router,
       invocationQueueOverride: invocationQueue,
-      queueProcessorOverride: queueProcessor,
     });
     const source = await ctx.threadStore.create('alice', 'Source');
     const { proposalId } = JSON.parse(

@@ -453,6 +453,29 @@ describe('Queue Management API', () => {
     });
   }
 
+  it('keeps a Steer intent pending while its exact active parent is preparing', async () => {
+    const queued = await enqueueDurableEntry(deps.invocationQueue, { targetCats: ['opus'] });
+    deps.invocationTracker.has.mock.mockImplementation(() => true);
+    deps.invocationTracker.getUserId.mock.mockImplementation(() => 'user-a');
+    deps.invocationTracker.getExecutionId.mock.mockImplementation(() => 'turn-1');
+    deps.queueProcessor.tryAutoAppendExactEntry.mock.mockImplementation(async () => ({
+      outcome: 'rejected',
+      reason: 'active_run_pending',
+    }));
+    const res = await app.inject({
+      method: 'POST',
+      url: `/api/threads/t1/queue/${queued.entry.id}/continue`,
+      headers: { 'x-cat-cafe-user': 'user-a' },
+      payload: { targetCatId: 'opus' },
+    });
+    assert.equal(res.statusCode, 200);
+    assert.equal(res.json().effective, 'continue_current');
+    const waiting = deps.invocationQueue.getEntrySnapshot('t1', 'user-a', queued.entry.id);
+    assert.equal(waiting.delivery.authorIntentByTarget.opus.fallbackAt, undefined);
+    assert.equal(waiting.delivery.authorIntentByTarget.opus.boundParentInvocationId, 'turn-1');
+    assert.equal(deps.invocationTracker.cancel.mock.calls.length, 0);
+  });
+
   it('POST /queue/:entryId/continue falls back to a new invocation when no reply is active', async () => {
     const queued = await enqueueDurableEntry(deps.invocationQueue, { targetCats: [] });
 
