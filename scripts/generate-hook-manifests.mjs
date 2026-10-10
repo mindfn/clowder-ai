@@ -324,7 +324,7 @@ const TIER1_HOOKS = [
     userExplanation: 'MCP 服务可用时注入的回调提示',
   },
 
-  // Per-turn stage: D1-D21, R1-R2, N1 (24 hooks)
+  // Per-turn stage: D1-D19, D21, R1-R2, N1 (23 hooks; D20 retired)
   {
     id: 'D1',
     name: '身份锚定',
