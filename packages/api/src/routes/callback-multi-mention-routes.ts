@@ -237,7 +237,6 @@ export interface MultiMentionRouteDeps {
     ActionSuccessorAdmissionService,
     'admit' | 'markUnavailable' | 'markReturnedDelivered'
   >;
-  /** F293: fresh routing policy at the actual Queue admission boundary. */
   /** F122B B6: InvocationQueue for unified dispatch */
   invocationQueue?: A2ATriggerDeps['invocationQueue'] &
     Pick<InvocationQueue, 'hasQueuedAgentForCat' | 'getQueuedFreshnessMessagesForCat'>;

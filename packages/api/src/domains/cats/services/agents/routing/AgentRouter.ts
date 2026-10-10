@@ -511,9 +511,6 @@ export interface AgentRouterOptions {
   claudeCompactionHooks?: ClaudeCompactionHooksFactory;
   /** F296 B3b-2: shared provider-presentation delivery ledger. */
   presentationLedger?: PresentationLedger;
-  /** F293: owner-scoped sparse routing projection consumed by provider generation. */
-  /** F293: shared actual-send preflight over the same resolver/catalog graph. */
-  /** F293: durable dispatch terminal observer over the same routing signal graph. */
   /** F276: terminal disposition authority for person-memory write opportunities. */
   writeOpportunityTerminalLedger?: import('../invocation/invoke-single-cat.js').InvocationDeps['writeOpportunityTerminalLedger'];
   /** F276: reservation and delivery authority for person-memory write opportunities. */

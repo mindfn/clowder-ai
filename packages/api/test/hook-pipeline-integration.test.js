@@ -80,7 +80,6 @@ function makeRichInput(overrides = {}) {
     conciergeLines: null,
     worldContext: null,
     alwaysOnDocsBlock: null,
-    activeSignalsBlock: null,
     a2aBallCheckContent: '## A2A Ball Check\nBall ownership rules...',
     handoffDecisionTreeContent: null,
     coCreatorFirstMention: '@lang',
@@ -114,7 +113,7 @@ describe('Pipeline Integration (real registry + resolvers + templates)', () => {
     const templatesDir = join(root, 'assets', 'prompt-templates');
     registry = new registryMod.HookRegistry(hooksDir, templatesDir);
     const manifests = registry.scan();
-    assert.equal(manifests.length, 46, `Expected 46 hooks, got ${manifests.length}`);
+    assert.equal(manifests.length, 45, `Expected 45 hooks, got ${manifests.length}`);
   });
 
   it('D12 manifest and fallback template describe recent speech without implying execution', () => {
@@ -179,8 +178,8 @@ describe('Pipeline Integration (real registry + resolvers + templates)', () => {
     const input = makeRichInput();
     const result = pipeline.executeStage('per-turn', input);
 
-    // 24 per-turn hooks should produce trace events
-    assert.equal(result.events.length, 24, `Expected 24 events, got ${result.events.length}`);
+    // 23 per-turn hooks should produce trace events
+    assert.equal(result.events.length, 23, `Expected 23 events, got ${result.events.length}`);
 
     const firedIds = result.events.filter((e) => e.status === 'fired').map((e) => e.hookId);
 

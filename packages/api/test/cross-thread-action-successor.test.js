@@ -568,7 +568,7 @@ describe('F167 Phase S: cross-thread action successor admission', () => {
     assert.equal(entries[1].execution.actionSuccessorFence.leaseId, 'lease-review-1');
   });
 
-  test('releases a newly claimed action lease when exact-message dedupe reuses an existing message', async () => {
+  test('a new action source is not merged with a same-text ordinary source', async () => {
     threadStore.addParticipants(target.id, ['codex']);
     const first = await post({
       targetCats: ['codex'],
@@ -576,7 +576,7 @@ describe('F167 Phase S: cross-thread action successor admission', () => {
     });
     assert.equal(first.statusCode, 200);
 
-    const duplicate = await post({
+    const successor = await post({
       targetCats: ['codex'],
       clientMessageId: 'action-review-2868',
       action: {
@@ -588,12 +588,15 @@ describe('F167 Phase S: cross-thread action successor admission', () => {
       },
     });
 
-    assert.equal(duplicate.statusCode, 200);
-    assert.equal(duplicate.json().status, 'duplicate');
-    assert.equal(actionService.unavailable.length, 1);
-    assert.equal(actionService.unavailable[0].fence.leaseId, 'lease-review-1');
-    assert.deepEqual(actionService.unavailable[0].holderCatIds, ['codex']);
-    assert.match(actionService.unavailable[0].evidenceRef, /exact_duplicate$/);
+    assert.equal(successor.statusCode, 200);
+    assert.equal(successor.json().status, 'ok');
+    assert.notEqual(successor.json().messageId, first.json().messageId);
+    assert.equal(actionService.unavailable.length, 0);
+    const entries = invocationQueue.list(target.id, 'user-1');
+    assert.equal(entries.length, 2);
+    assert.equal(entries[0].execution.actionSuccessorFence, undefined);
+    assert.equal(entries[1].execution.actionSuccessorFence.leaseId, 'lease-review-1');
+    assert.deepEqual(entries[1].targets, ['codex']);
   });
 
   test('action carrier rejects ambiguous identity and preserves explicit parallel intent', async () => {

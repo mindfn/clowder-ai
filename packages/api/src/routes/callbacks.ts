@@ -275,7 +275,6 @@ import { clearVoteTimer, closeVoteInternal, voteTimers } from './votes.js';
 import { publishDispatchProposal } from './wave2-proposal-publication.js';
 
 const log = createModuleLogger('routes/callbacks');
-const CALLBACK_EXACT_DUPLICATE_WINDOW_MS = 5_000;
 
 async function readBoundedUnreadContext(input: {
   readonly messageStore: Pick<IMessageStore, 'getByThreadAfter'>;
@@ -313,9 +312,8 @@ async function readBoundedUnreadContext(input: {
  * Mirrors authoritative server parser at a2a-mentions.ts:86-114
  * (strip code fences, trimStart, strip markdown prefix, startsWith('@')).
  *
- * Used by AC-A4 fail-closed gate which MUST run BEFORE
- * registry.claimClientMessageId (Codex review P1 round 2 close — otherwise
- * malformed retries permanently consume idempotency keys).
+ * Used by AC-A4 validation before persistence. Invalid requests must leave
+ * their message identity available for a corrected retry.
  *
  * Local mirror (no cross-package dep) — server parser remains authoritative;
  * this is just a raw caller-input signal: did the caller TRY to provide
@@ -545,7 +543,7 @@ function sameCoordinationForCallbackDedup(
   return coordinationDedupKey === 'action-active-root' && !storedKey && !readStoredCoordination(msg);
 }
 
-type CallbackDuplicateCandidateStore = IMessageStore & {
+type CallbackHistoryStore = IMessageStore & {
   getByThreadIncludingQueued?: (
     threadId: string,
     limit?: number,
@@ -553,13 +551,13 @@ type CallbackDuplicateCandidateStore = IMessageStore & {
   ) => StoredMessage[] | Promise<StoredMessage[]>;
 };
 
-async function getRecentCallbackDuplicateCandidates(
+async function getCallbackHistoryIncludingQueued(
   messageStore: IMessageStore,
   threadId: string,
   userId: string,
   limit = 20,
 ): Promise<StoredMessage[]> {
-  const store = messageStore as CallbackDuplicateCandidateStore;
+  const store = messageStore as CallbackHistoryStore;
   if (typeof store.getByThreadIncludingQueued === 'function') {
     return store.getByThreadIncludingQueued(threadId, limit, userId);
   }
@@ -598,12 +596,18 @@ function hasAnyLocalReviewAnchor(input: LocalReviewAnchorInput): boolean {
   return Boolean(input.reviewSubjectRef || input.acceptedSourceRef || input.acceptedRevision);
 }
 
+/** Message identity is scoped by the authenticated sender; text never identifies a retry. */
+function buildCallbackMessageIdempotencyKey(catId: string, clientMessageId: string): string {
+  const digest = createHash('sha256').update(clientMessageId).digest('hex');
+  return `callback:post:${catId}:${digest}`;
+}
+
 function buildLocalReviewFactMessageIdempotencyKey(catId: string, clientMessageId: string): string {
   const digest = createHash('sha256').update(clientMessageId).digest('hex');
   return `callback:local-review:${catId}:${digest}`;
 }
 
-function isExactCallbackDuplicate(
+function matchesCallbackPayload(
   msg: StoredMessage,
   input: {
     catId: string;
@@ -635,39 +639,6 @@ function isExactCallbackDuplicate(
   if ((msg.extra?.localReviewVerdict?.acceptedSourceRef ?? undefined) !== input.acceptedSourceRef) return false;
   if ((msg.extra?.localReviewVerdict?.acceptedRevision ?? undefined) !== input.acceptedRevision) return false;
   return sameCoordinationForCallbackDedup(msg, input.coordination, input.coordinationDedupKey);
-}
-
-async function findRecentExactCallbackDuplicate(
-  messageStore: IMessageStore,
-  input: {
-    threadId: string;
-    userId: string;
-    catId: string;
-    content: string;
-    richBlocks?: readonly RichBlock[] | undefined;
-    mentions: readonly CatId[];
-    mentionsUser?: boolean | undefined;
-    replyTo?: string | undefined;
-    isExplicitPost?: boolean | undefined;
-    coordination?: CrossThreadCoordination | undefined;
-    coordinationDedupKey?: CallbackCoordinationDedupKey | undefined;
-    localReviewVerdict?: LocalReviewVerdict | undefined;
-    reviewedHeadSha?: string | undefined;
-    reviewSubjectRef?: string | undefined;
-    acceptedSourceRef?: string | undefined;
-    acceptedRevision?: string | undefined;
-    now: number;
-  },
-): Promise<StoredMessage | undefined> {
-  const recent = await getRecentCallbackDuplicateCandidates(messageStore, input.threadId, input.userId);
-  for (let i = recent.length - 1; i >= 0; i -= 1) {
-    const msg = recent[i];
-    if (!msg) continue;
-    const ts = msg.deliveredAt ?? msg.timestamp;
-    if (input.now - ts > CALLBACK_EXACT_DUPLICATE_WINDOW_MS) continue;
-    if (isExactCallbackDuplicate(msg, input)) return msg;
-  }
-  return undefined;
 }
 
 type CallbackContentProjection =
@@ -729,53 +700,6 @@ async function projectCallbackContentForStorage(
   }
 }
 
-/**
- * Stable fingerprint over the exact dimensions findRecentExactCallbackDuplicate compares
- * (thread/user/cat/content/richBlocks/replyTo/isExplicitPost/mentionsUser/mentions). Used as the key for the atomic
- * content-dedup claim that closes the check-then-act race in the duplicate scan. Hashed so
- * the key stays bounded regardless of message length.
- */
-function buildCallbackContentDedupFingerprint(input: {
-  threadId: string;
-  userId: string;
-  catId: string;
-  content: string;
-  richBlocks?: readonly RichBlock[] | undefined;
-  mentions: readonly CatId[];
-  mentionsUser?: boolean | undefined;
-  replyTo?: string | undefined;
-  isExplicitPost?: boolean | undefined;
-  coordination?: CrossThreadCoordination | undefined;
-  coordinationDedupKey?: CallbackCoordinationDedupKey | undefined;
-  localReviewVerdict?: LocalReviewVerdict | undefined;
-  reviewedHeadSha?: string | undefined;
-  reviewSubjectRef?: string | undefined;
-  acceptedSourceRef?: string | undefined;
-  acceptedRevision?: string | undefined;
-}): string {
-  const parts = [
-    input.threadId,
-    input.userId,
-    input.catId,
-    input.replyTo ?? '',
-    input.isExplicitPost ? '1' : '0',
-    input.mentionsUser ? '1' : '0',
-    [...input.mentions].join(','),
-    input.content,
-    richBlocksFingerprintPart(input.richBlocks),
-    input.localReviewVerdict ?? '',
-    input.reviewedHeadSha ?? '',
-    input.reviewSubjectRef ?? '',
-    input.acceptedSourceRef ?? '',
-    input.acceptedRevision ?? '',
-    input.coordinationDedupKey === 'action-active-root'
-      ? ''
-      : (input.coordinationDedupKey ??
-        (input.coordination ? `${input.coordination.id}:${input.coordination.phase}:${input.coordination.hop}` : '')),
-  ].join('\u0000');
-  return createHash('sha256').update(parts).digest('hex');
-}
-
 async function commitCloudReturnGrantAfterPersistence(input: {
   store: Pick<import('../domains/cats/services/cloud-bridge/cloud-return-grant.js').CloudReturnGrantStore, 'commit'>;
   claim: import('../domains/cats/services/cloud-bridge/cloud-return-grant.js').CloudReturnGrantClaim;
@@ -798,96 +722,6 @@ async function commitCloudReturnGrantAfterPersistence(input: {
     );
     return false;
   }
-}
-
-type CallbackDuplicateResponse = {
-  status: 'duplicate';
-  threadId: string;
-  messageId?: string;
-  replyTo?: string;
-  clientMessageId?: string;
-};
-
-/**
- * Atomic content-dedup gate shared by the invocation-auth and agent-key post-message paths.
- * findRecentExactCallbackDuplicate is check-then-act (read recent → append later), so two
- * concurrent byte-identical deliveries can both pass it before either appends. This claims the
- * content fingerprint atomically: the winner gets null (proceed to append); a loser (or any
- * recent identical post within the window) gets a 'duplicate' response without a second append —
- * closing the byte-identical duplicate-message race. Returns null when routing warnings are
- * present, matching the existing scan's gate.
- */
-async function claimCallbackContentOrDuplicate(
-  messageStore: IMessageStore,
-  input: {
-    threadId: string;
-    userId: string;
-    catId: string;
-    content: string;
-    richBlocks?: readonly RichBlock[] | undefined;
-    mentions: readonly CatId[];
-    mentionsUser?: boolean | undefined;
-    replyTo?: string | undefined;
-    isExplicitPost?: boolean | undefined;
-    coordination?: CrossThreadCoordination | undefined;
-    coordinationDedupKey?: CallbackCoordinationDedupKey | undefined;
-    localReviewVerdict?: LocalReviewVerdict | undefined;
-    reviewedHeadSha?: string | undefined;
-    reviewSubjectRef?: string | undefined;
-    acceptedSourceRef?: string | undefined;
-    acceptedRevision?: string | undefined;
-    clientMessageId?: string | undefined;
-    now: number;
-    hasRoutingWarnings: boolean;
-  },
-): Promise<CallbackDuplicateResponse | null> {
-  if (input.hasRoutingWarnings) return null;
-  const fingerprint = buildCallbackContentDedupFingerprint({
-    threadId: input.threadId,
-    userId: input.userId,
-    catId: input.catId,
-    content: input.content,
-    ...(input.richBlocks && input.richBlocks.length > 0 ? { richBlocks: input.richBlocks } : {}),
-    mentions: input.mentions,
-    ...(input.mentionsUser ? { mentionsUser: input.mentionsUser } : {}),
-    ...(input.replyTo ? { replyTo: input.replyTo } : {}),
-    isExplicitPost: Boolean(input.isExplicitPost),
-    ...(input.coordination ? { coordination: input.coordination } : {}),
-    ...(input.coordinationDedupKey ? { coordinationDedupKey: input.coordinationDedupKey } : {}),
-    ...(input.localReviewVerdict ? { localReviewVerdict: input.localReviewVerdict } : {}),
-    ...(input.reviewedHeadSha ? { reviewedHeadSha: input.reviewedHeadSha } : {}),
-    ...(input.reviewSubjectRef ? { reviewSubjectRef: input.reviewSubjectRef } : {}),
-    ...(input.acceptedSourceRef ? { acceptedSourceRef: input.acceptedSourceRef } : {}),
-    ...(input.acceptedRevision ? { acceptedRevision: input.acceptedRevision } : {}),
-  });
-  const claimed = await messageStore.claimContentDedupKey(fingerprint, CALLBACK_EXACT_DUPLICATE_WINDOW_MS);
-  if (claimed) return null;
-  const raced = await findRecentExactCallbackDuplicate(messageStore, {
-    threadId: input.threadId,
-    userId: input.userId,
-    catId: input.catId,
-    content: input.content,
-    ...(input.richBlocks && input.richBlocks.length > 0 ? { richBlocks: input.richBlocks } : {}),
-    mentions: input.mentions,
-    ...(input.mentionsUser ? { mentionsUser: input.mentionsUser } : {}),
-    ...(input.replyTo ? { replyTo: input.replyTo } : {}),
-    isExplicitPost: Boolean(input.isExplicitPost),
-    ...(input.coordination ? { coordination: input.coordination } : {}),
-    ...(input.coordinationDedupKey ? { coordinationDedupKey: input.coordinationDedupKey } : {}),
-    ...(input.localReviewVerdict ? { localReviewVerdict: input.localReviewVerdict } : {}),
-    ...(input.reviewedHeadSha ? { reviewedHeadSha: input.reviewedHeadSha } : {}),
-    ...(input.reviewSubjectRef ? { reviewSubjectRef: input.reviewSubjectRef } : {}),
-    ...(input.acceptedSourceRef ? { acceptedSourceRef: input.acceptedSourceRef } : {}),
-    ...(input.acceptedRevision ? { acceptedRevision: input.acceptedRevision } : {}),
-    now: input.now,
-  });
-  return {
-    status: 'duplicate',
-    threadId: input.threadId,
-    ...(raced ? { messageId: raced.id } : {}),
-    ...(input.replyTo ? { replyTo: input.replyTo } : {}),
-    ...(input.clientMessageId ? { clientMessageId: input.clientMessageId } : {}),
-  };
 }
 
 function hasQueuedA2AEntryForMessage(
@@ -1028,7 +862,6 @@ export interface CallbackRoutesOptions {
   agentRegistry?: { getAllEntries(): Map<string, unknown> };
   /** For post_message @mention → invocation triggering */
   router?: AgentRouter;
-  /** F293: shared per-target decision before callback dispatch admission. */
   invocationRecordStore?: IInvocationRecordStore;
   /** Durable child lifecycle truth. InvocationRegistry remains callback auth only. */
   turnExecutionStore?: Pick<ITurnExecutionStore, 'get'>;
@@ -1906,7 +1739,7 @@ export const callbacksRoutes: FastifyPluginAsync<CallbackRoutesOptions> = async 
       const localReviewDuplicateMatches = (message: StoredMessage) =>
         Boolean(
           localReviewFactInput &&
-            isExactCallbackDuplicate(message, {
+            matchesCallbackPayload(message, {
               catId: principal.catId,
               content: persistedContent,
               ...(richBlocks.length > 0 ? { richBlocks } : {}),
@@ -1930,23 +1763,14 @@ export const callbacksRoutes: FastifyPluginAsync<CallbackRoutesOptions> = async 
           clientMessageId,
         };
       }
-      const duplicateMsg =
-        durableCloudReturnDuplicate ??
-        durableLocalReviewDuplicate ??
-        (!localReviewVerdict && routing_warnings.length === 0
-          ? await findRecentExactCallbackDuplicate(messageStore, {
-              threadId: effectiveThreadId,
-              userId: principal.userId,
-              catId: principal.catId,
-              content: persistedContent,
-              ...(richBlocks.length > 0 ? { richBlocks } : {}),
-              mentions,
-              ...(mentionsUser ? { mentionsUser } : {}),
-              ...(validatedReplyTo ? { replyTo: validatedReplyTo } : {}),
-              isExplicitPost: true,
-              now,
-            })
-          : undefined);
+      const callbackMessageIdempotencyKey =
+        clientMessageId && !usesServerGrant && !localReviewVerdict
+          ? buildCallbackMessageIdempotencyKey(principal.catId, clientMessageId)
+          : undefined;
+      const durableCallbackDuplicate = callbackMessageIdempotencyKey
+        ? await messageStore.getByIdempotencyKey(principal.userId, effectiveThreadId, callbackMessageIdempotencyKey)
+        : null;
+      const duplicateMsg = durableCloudReturnDuplicate ?? durableLocalReviewDuplicate ?? durableCallbackDuplicate;
       const recoverPersistedCallbackMessage = async (persisted: StoredMessage) => {
         const persistedMentions = [...persisted.mentions];
         const persistedReplyTo = persisted.replyTo;
@@ -2012,34 +1836,6 @@ export const callbacksRoutes: FastifyPluginAsync<CallbackRoutesOptions> = async 
       };
       if (duplicateMsg) return recoverPersistedCallbackMessage(duplicateMsg);
 
-      // Server-custodied returns use a durable exact-source idempotency key in
-      // the message store. Consuming the short-lived agent-key key would make
-      // retryable grant/store failures unrecoverable before any append exists.
-      if (clientMessageId && agentKeyRegistry && !usesServerGrant && !localReviewVerdict) {
-        const isFirst = await agentKeyRegistry.claimClientMessageId(principal.agentKeyId, clientMessageId);
-        if (!isFirst) {
-          return { status: 'duplicate', replyTo, clientMessageId };
-        }
-      }
-
-      if (!usesServerGrant && !localReviewVerdict) {
-        const agentKeyContentDuplicate = await claimCallbackContentOrDuplicate(messageStore, {
-          threadId: effectiveThreadId,
-          userId: principal.userId,
-          catId: principal.catId,
-          content: persistedContent,
-          ...(richBlocks.length > 0 ? { richBlocks } : {}),
-          mentions,
-          ...(mentionsUser ? { mentionsUser } : {}),
-          ...(validatedReplyTo ? { replyTo: validatedReplyTo } : {}),
-          isExplicitPost: true,
-          ...(clientMessageId ? { clientMessageId } : {}),
-          now,
-          hasRoutingWarnings: routing_warnings.length > 0,
-        });
-        if (agentKeyContentDuplicate) return agentKeyContentDuplicate;
-      }
-
       let a2aAdmissionPlan: A2AFanoutAdmissionPlan | undefined;
 
       const a2aAdmissionOptions = hasA2AMentions
@@ -2083,8 +1879,13 @@ export const callbacksRoutes: FastifyPluginAsync<CallbackRoutesOptions> = async 
         timestamp: now,
         ...(extra ? { extra } : {}),
         ...(validatedReplyTo ? { replyTo: validatedReplyTo } : {}),
-        ...(cloudReturnMessageIdempotencyKey || localReviewFactMessageIdempotencyKey
-          ? { idempotencyKey: cloudReturnMessageIdempotencyKey ?? localReviewFactMessageIdempotencyKey }
+        ...(cloudReturnMessageIdempotencyKey || localReviewFactMessageIdempotencyKey || callbackMessageIdempotencyKey
+          ? {
+              idempotencyKey:
+                cloudReturnMessageIdempotencyKey ??
+                localReviewFactMessageIdempotencyKey ??
+                callbackMessageIdempotencyKey,
+            }
           : {}),
       };
       let atomicAdmission: Awaited<ReturnType<typeof appendA2ASourceWithLedgerAdmission>>;
@@ -2304,9 +2105,8 @@ export const callbacksRoutes: FastifyPluginAsync<CallbackRoutesOptions> = async 
     // #814: a post_message is always its own message, never a replacement for a final.
     const standaloneExplicitPostExtra = { isExplicitPost: true as const };
     const { invocationId } = actor;
-    // #573: identity for cross-handler dedup. stream + callback for same logical
-    // response must broadcast/persist with the same id; QueueProcessor + route-serial
-    // use the parent (outer) id, so callback aligns to it.
+    // Attribute callbacks to the parent execution scope. Each callback and final
+    // response keeps its own durable message/source identity.
     const effectiveInvId = effectiveInvocationId(actor);
 
     const invocationIsLatest = await registry.isLatest(invocationId);
@@ -2426,12 +2226,8 @@ export const callbacksRoutes: FastifyPluginAsync<CallbackRoutesOptions> = async 
       return deletedThreadGuard.body;
     }
 
-    // F193 AC-A4: cross-post fail-closed BEFORE idempotency claim.
-    // Closes Codex review P1 round 2 (2026-05-08): if AC-A4 reject runs AFTER
-    // claimClientMessageId, a malformed first attempt permanently consumes
-    // the idempotency key — corrected retry with the same key is then
-    // treated as `duplicate` and silently dropped. Validation errors must
-    // not be terminal for clients that correctly reuse the same key.
+    // F193 AC-A4: validate the cross-post before persistence. Invalid requests
+    // leave the clientMessageId available for a corrected retry.
     //
     // Raw caller-input check (does NOT depend on contentAnalysis which runs
     // later) — see hasPlausibleLineStartMention() docstring. Server-side
@@ -3088,7 +2884,7 @@ export const callbacksRoutes: FastifyPluginAsync<CallbackRoutesOptions> = async 
       }
     }
 
-    // Content-shape rejection must precede the idempotency claim so a corrected
+    // Content-shape rejection must precede persistence so a corrected
     // retry can reuse its clientMessageId. Buffered blocks are intentionally not
     // admission evidence: a navigation action must be carried by this callback.
     const contentProjection = await projectCallbackContentForStorage(
@@ -3104,36 +2900,6 @@ export const callbacksRoutes: FastifyPluginAsync<CallbackRoutesOptions> = async 
       reply.status(contentProjection.statusCode);
       return { kind: contentProjection.kind, message: contentProjection.message };
     }
-    // At-least-once de-duplication: retries with same clientMessageId are treated as duplicate.
-    if (clientMessageId && !localReviewVerdict) {
-      const isFirstSeen = await registry.claimClientMessageId(invocationId, clientMessageId);
-      if (!isFirstSeen && !interruptedActionCarrierRecoveryKey) {
-        if (actionFence && actionCarrierDisposition === 'return') {
-          const accepted = hasQueuedActionSuccessorFence(
-            opts.invocationQueue,
-            effectiveThreadId,
-            actor.userId,
-            actionFence,
-          );
-          await reconcileActionSuccessorEnqueue({
-            service: opts.actionSuccessorAdmissionService,
-            fence: actionFence,
-            disposition: actionCarrierDisposition,
-            unavailableCatIds: accepted ? [] : actionHolderCatIds,
-            now: Date.now(),
-          });
-        } else if (actionFence && actionAdmissionOutcome !== 'replayed') {
-          await opts.actionSuccessorAdmissionService?.markUnavailable({
-            fence: actionFence,
-            holderCatIds: actionHolderCatIds,
-            evidenceRef: `callback:${invocationId}:${clientMessageId}:duplicate`,
-            now: Date.now(),
-          });
-        }
-        return { status: 'duplicate', replyTo, clientMessageId };
-      }
-    }
-
     // Attach blocks to this callback message without closing the invocation.
     // The routing final append closes it; later blocks must remain writable until then.
     const bufferedBlocks = getRichBlockBuffer().consume(effectiveThreadId, actor.catId as string, invocationId, {
@@ -3237,12 +3003,9 @@ export const callbacksRoutes: FastifyPluginAsync<CallbackRoutesOptions> = async 
     if (suppressTerminalRouting && mergedTargets.size > 0) {
       throw new Error('terminal ACK projection cannot suppress explicit routing targets');
     }
-    const hasDedupBlockingRoutingWarnings = routing_warnings.length > 0;
+    const hasRoutingWarnings = routing_warnings.length > 0;
     const mentions: CatId[] = [...mergedTargets];
-    if (
-      localReviewVerdict &&
-      (mentions.length !== 1 || mentions[0] === senderCatId || hasDedupBlockingRoutingWarnings)
-    ) {
+    if (localReviewVerdict && (mentions.length !== 1 || mentions[0] === senderCatId || hasRoutingWarnings)) {
       reply.status(400);
       return {
         kind: 'invalid_review_fact',
@@ -3396,7 +3159,7 @@ export const callbacksRoutes: FastifyPluginAsync<CallbackRoutesOptions> = async 
     const localReviewDuplicateMatches = (message: StoredMessage) =>
       Boolean(
         localReviewFactInput &&
-          isExactCallbackDuplicate(message, {
+          matchesCallbackPayload(message, {
             catId: actor.catId,
             content: persistedContent,
             ...(richBlocks.length > 0 ? { richBlocks } : {}),
@@ -3427,7 +3190,7 @@ export const callbacksRoutes: FastifyPluginAsync<CallbackRoutesOptions> = async 
       : null;
     if (
       durableActionCarrierDuplicate &&
-      !isExactCallbackDuplicate(durableActionCarrierDuplicate, {
+      !matchesCallbackPayload(durableActionCarrierDuplicate, {
         catId: actor.catId,
         content: persistedContent,
         ...(richBlocks.length > 0 ? { richBlocks } : {}),
@@ -3447,32 +3210,26 @@ export const callbacksRoutes: FastifyPluginAsync<CallbackRoutesOptions> = async 
         clientMessageId,
       };
     }
-    const duplicateMsg =
-      durableLocalReviewDuplicate ??
-      durableActionCarrierDuplicate ??
-      (!localReviewVerdict && !hasDedupBlockingRoutingWarnings && !interruptedActionCarrierRecoveryKey
-        ? await findRecentExactCallbackDuplicate(messageStore, {
-            threadId: effectiveThreadId,
-            userId: actor.userId,
-            catId: actor.catId,
-            content: persistedContent,
-            ...(richBlocks.length > 0 ? { richBlocks } : {}),
-            mentions,
-            ...(mentionsUser ? { mentionsUser } : {}),
-            ...(validatedReplyTo ? { replyTo: validatedReplyTo } : {}),
-            isExplicitPost: true,
-            ...(coordinationResult.coordination ? { coordination: coordinationResult.coordination } : {}),
-            ...(coordinationDedupKey ? { coordinationDedupKey } : {}),
-            now,
-          })
-        : undefined);
+    const callbackMessageIdempotencyKey =
+      clientMessageId && !localReviewVerdict && !interruptedActionCarrierRecoveryKey
+        ? buildCallbackMessageIdempotencyKey(actor.catId, clientMessageId)
+        : undefined;
+    const durableCallbackDuplicate = callbackMessageIdempotencyKey
+      ? await messageStore.getByIdempotencyKey(actor.userId, effectiveThreadId, callbackMessageIdempotencyKey)
+      : null;
+    const duplicateMsg = durableLocalReviewDuplicate ?? durableActionCarrierDuplicate ?? durableCallbackDuplicate;
     const recoverPersistedCallbackMessage = async (duplicateMsg: StoredMessage) => {
       const newlyClaimedActionLease = Boolean(actionFence && actionAdmissionOutcome !== 'replayed');
       let recoveredDuplicateCarrier = false;
       if (!newlyClaimedActionLease) {
         recoveredDuplicateCarrier = await ensureDuplicateCallbackWake({
           duplicateMsg,
-          canEnqueueA2A: !!(hasA2AMentions && opts.invocationQueue),
+          canEnqueueA2A: !!(
+            duplicateMsg.mentions.length > 0 &&
+            router &&
+            invocationRecordStore &&
+            opts.invocationQueue
+          ),
           ...(opts.invocationQueue ? { invocationQueue: opts.invocationQueue } : {}),
           threadId: effectiveThreadId,
           userId: actor.userId,
@@ -3490,8 +3247,8 @@ export const callbacksRoutes: FastifyPluginAsync<CallbackRoutesOptions> = async 
                 log: app.log,
               },
               {
-                targetCats: mentions,
-                content: storedContent,
+                targetCats: [...duplicateMsg.mentions],
+                content: duplicateMsg.content,
                 userId: actor.userId,
                 threadId: effectiveThreadId,
                 triggerMessage: duplicateMsg,
@@ -3564,7 +3321,7 @@ export const callbacksRoutes: FastifyPluginAsync<CallbackRoutesOptions> = async 
         status: 'duplicate',
         threadId: effectiveThreadId,
         messageId: duplicateMsg.id,
-        ...(validatedReplyTo ? { replyTo: validatedReplyTo } : {}),
+        ...(duplicateMsg.replyTo ? { replyTo: duplicateMsg.replyTo } : {}),
         ...(clientMessageId ? { clientMessageId } : {}),
       };
     };
@@ -3610,38 +3367,6 @@ export const callbacksRoutes: FastifyPluginAsync<CallbackRoutesOptions> = async 
         },
       );
     }
-    // Race-safe backstop: the exact-duplicate scan above is check-then-act, so an atomic content
-    // claim makes the at-most-once decision (root cause of the byte-identical duplicate bug).
-    const contentDuplicate =
-      localReviewVerdict || interruptedActionCarrierRecoveryKey
-        ? null
-        : await claimCallbackContentOrDuplicate(messageStore, {
-            threadId: effectiveThreadId,
-            userId: actor.userId,
-            catId: actor.catId,
-            content: persistedContent,
-            ...(richBlocks.length > 0 ? { richBlocks } : {}),
-            mentions,
-            ...(mentionsUser ? { mentionsUser } : {}),
-            ...(validatedReplyTo ? { replyTo: validatedReplyTo } : {}),
-            isExplicitPost: true,
-            ...(coordinationResult.coordination ? { coordination: coordinationResult.coordination } : {}),
-            ...(coordinationDedupKey ? { coordinationDedupKey } : {}),
-            ...(clientMessageId ? { clientMessageId } : {}),
-            now,
-            hasRoutingWarnings: hasDedupBlockingRoutingWarnings,
-          });
-    if (contentDuplicate) {
-      if (actionFence && actionAdmissionOutcome !== 'replayed' && actionCarrierDisposition !== 'return') {
-        await opts.actionSuccessorAdmissionService?.markUnavailable({
-          fence: actionFence,
-          holderCatIds: actionHolderCatIds,
-          evidenceRef: `callback:${invocationId}:${clientMessageId}:content_duplicate`,
-          now: Date.now(),
-        });
-      }
-      return contentDuplicate;
-    }
     const appendInput: AppendMessageInput = {
       from: { kind: 'agent', catId: actor.catId },
       userId: actor.userId,
@@ -3653,8 +3378,13 @@ export const callbacksRoutes: FastifyPluginAsync<CallbackRoutesOptions> = async 
       threadId: effectiveThreadId,
       extra: persistedExtra,
       ...(validatedReplyTo ? { replyTo: validatedReplyTo } : {}),
-      ...(interruptedActionCarrierRecoveryKey || localReviewFactMessageIdempotencyKey
-        ? { idempotencyKey: interruptedActionCarrierRecoveryKey ?? localReviewFactMessageIdempotencyKey }
+      ...(interruptedActionCarrierRecoveryKey || localReviewFactMessageIdempotencyKey || callbackMessageIdempotencyKey
+        ? {
+            idempotencyKey:
+              interruptedActionCarrierRecoveryKey ??
+              localReviewFactMessageIdempotencyKey ??
+              callbackMessageIdempotencyKey,
+          }
         : {}),
     };
     let atomicAdmission: Awaited<ReturnType<typeof appendA2ASourceWithLedgerAdmission>>;
@@ -4557,7 +4287,7 @@ export const callbacksRoutes: FastifyPluginAsync<CallbackRoutesOptions> = async 
     // complete review history. Read one item beyond the bounded history window;
     // if it fills, warn-open instead of asserting a fourth-arrival decision.
     const localReviewHistoryMessages = hasLocalReviewFact
-      ? await getRecentCallbackDuplicateCandidates(messageStore, effectiveThreadId, principalUserId, 201)
+      ? await getCallbackHistoryIncludingQueued(messageStore, effectiveThreadId, principalUserId, 201)
       : [];
     const localReviewHistoryComplete = localReviewHistoryMessages.length < 201;
     const durableLocalReviewHistory = localReviewHistoryComplete

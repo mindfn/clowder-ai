@@ -3639,22 +3639,6 @@ export class RedisMessageStore {
   }
 
   /**
-   * Atomic content-dedup claim via SET NX PX. Returns true on first claim within the window,
-   * false if an identical claim is still live (concurrent or recent byte-identical post). This
-   * is the race-safe gate for the callback exact-duplicate scan.
-   */
-  async claimContentDedupKey(key: string, ttlMs: number): Promise<boolean> {
-    const claimed = await this.redis.set(
-      MessageKeys.contentDedup(key),
-      '1',
-      'PX',
-      Math.max(1, Math.floor(ttlMs)),
-      'NX',
-    );
-    return claimed === 'OK';
-  }
-
-  /**
    * #697: Scan for message IDs matching a given deliveryStatus.
    * Uses SCAN + pipeline HGET pattern (same as InvocationRecordStore.scanByStatus).
    * Called by StartupReconciler to find orphaned queued messages after restart.

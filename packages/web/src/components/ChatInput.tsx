@@ -21,6 +21,7 @@ import { useMessageDispositionPreference } from '@/hooks/useMessageDispositionPr
 import { usePathCompletion } from '@/hooks/usePathCompletion';
 import type { UploadStatus, WhisperOptions } from '@/hooks/useSendMessage';
 import { useThreadLiveness } from '@/hooks/useThreadScopedSelectors';
+import { formatCatDisplayName } from '@/lib/cat-display-name';
 import { useChatStore } from '@/stores/chatStore';
 import { useInputHistoryStore } from '@/stores/inputHistoryStore';
 import { apiFetch } from '@/utils/api-client';
@@ -225,6 +226,13 @@ export function ChatInput({
     return ![...whisperTargets].some((catId) => activeCatIds.has(catId));
   }, [whisperMode, whisperTargets, activeCatIds]);
   const messageDisposition = useMessageDispositionPreference(effectiveThreadId, Boolean(effectiveThreadId));
+  const guideReplyNames = cats
+    .filter((cat) => activeCatIds.has(cat.id) && cat.messageDeliveryCapabilities?.guideReply === true)
+    .map(formatCatDisplayName);
+  const guideReplyHint =
+    guideReplyNames.length > 0
+      ? `执行发生了偏离？${guideReplyNames.join('/')}支持引导回复，可继续输入直接发送消息而不中断当前回复`
+      : undefined;
 
   const [addMenuOpen, setAddMenuOpen] = useState(false);
   const [contextPickerMode, setContextPickerMode] = useState<ContextPickerMode | null>(null);
@@ -791,7 +799,7 @@ export function ChatInput({
     const isMobile = typeof window.matchMedia === 'function' ? window.matchMedia('(max-width: 767px)').matches : false;
     const maxH = isMobile ? 120 : 200; // ~5 lines mobile, ~8 lines desktop
     ta.style.height = `${Math.min(ta.scrollHeight, maxH)}px`;
-  }, [input]);
+  }, [input, guideReplyHint]);
 
   useEffect(() => {
     if (!activeMenu) return;
@@ -968,11 +976,7 @@ export function ChatInput({
             placeholder={
               whisperMode
                 ? '悄悄话...'
-                : hasActiveInvocation && !whisperTargetsAllIdle
-                  ? messageDisposition.effective === 'continue_current'
-                    ? '继续输入，消息可不中断追加给当前成员...'
-                    : '继续输入，发送后进入队列...'
-                  : (placeholder ?? '输入消息... (@ 召唤猫猫 · /thread 引用对话)')
+                : (guideReplyHint ?? placeholder ?? '输入消息... (@ 召唤猫猫 · /thread 引用对话)')
             }
             className={`w-full resize-none rounded-xl border p-3 text-sm focus:outline-none focus:ring-2 placeholder:text-cafe-muted ${
               whisperMode

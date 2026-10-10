@@ -58,7 +58,6 @@ function makeInput(overrides = {}) {
     conciergeLines: null,
     worldContext: null,
     alwaysOnDocsBlock: null,
-    activeSignalsBlock: null,
     a2aBallCheckContent: null,
     handoffDecisionTreeContent: null,
     coCreatorFirstMention: '@lang',
@@ -346,11 +345,6 @@ describe('Turn resolvers D11-D21, R1-R2, N1', () => {
   it('D19 fires with always-on docs', () => {
     const input = makeInput({ alwaysOnDocsBlock: '### Doc1\n\nContent' });
     assert.equal(new mod.D19Resolver().resolve(input).status, 'fired');
-  });
-
-  it('D20 fires with signals', () => {
-    const input = makeInput({ activeSignalsBlock: '### [S1] Title (HN/T1)\nContent' });
-    assert.equal(new mod.D20Resolver().resolve(input).status, 'fired');
   });
 
   it('D21 fires when a2a needed and returns CC_MENTION', () => {

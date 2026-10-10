@@ -22,9 +22,6 @@ export const MessageKeys = {
   /** Idempotency index: msg:idem:{userId}:{threadId}:{key} -> messageId */
   idempotency: (userId: string, threadId: string, key: string) => `msg:idem:${userId}:${threadId}:${key}`,
 
-  /** Callback content-dedup claim (race-safe exact-duplicate gate): msg:cbdedup:{fingerprint} */
-  contentDedup: (fingerprint: string) => `msg:cbdedup:${fingerprint}`,
-
   /** F264 Gap F: TTL=0 owner+thread composer draft. */
   ownerComposerDraft: (ownerUserId: string, threadId: string) =>
     `msg:composer-draft:${encodeURIComponent(ownerUserId)}:${encodeURIComponent(threadId)}`,

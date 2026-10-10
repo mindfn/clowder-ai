@@ -120,6 +120,10 @@ export async function appendA2ASourceWithLedgerAdmission(
 ): Promise<AtomicA2ASourceAdmission> {
   if (!deps.messageStore) throw new Error('A2A source admission requires MessageStore');
   if (options.plan.acceptedTargetCats.length === 0) {
+    if (message.idempotencyKey) {
+      const result = await deps.messageStore.appendIdempotent(message);
+      return { message: result.message, preAdmittedReplayed: result.idempotent };
+    }
     return { message: await deps.messageStore.append(message) };
   }
   if (!deps.invocationQueue) throw new Error('A2A source admission requires InvocationQueue');

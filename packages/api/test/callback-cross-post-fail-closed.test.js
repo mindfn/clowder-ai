@@ -294,7 +294,7 @@ describe('F193 AC-A4: cross-post fail-closed when no routing credentials', () =>
   });
 
   test('codex P1 round 2 (2026-05-08): AC-A4 reject does not consume clientMessageId — corrected retry delivers', async () => {
-    // Closes Codex P1 round 2: AC-A4 reject MUST run before claimClientMessageId.
+    // AC-A4 validation must leave a corrected retry with the same message ID admissible.
     // Otherwise a malformed first attempt permanently consumes the idempotency
     // key, and the corrected retry with same key gets `duplicate` (silent drop).
     const app = await createApp();

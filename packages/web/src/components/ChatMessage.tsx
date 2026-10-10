@@ -25,7 +25,6 @@ import { AppendedInputReceipts } from './AppendedInputReceipts';
 import {
   doesAssistantMessageRenderBubble,
   projectEmptyResponseLifecycleNotice,
-  projectFailedResponseLabel,
 } from './assistant-message-renderability';
 import { CapabilityTipStrip } from './CapabilityTipStrip';
 import { CatAvatar } from './CatAvatar';
@@ -35,7 +34,7 @@ import { CollapsibleMarkdown } from './CollapsibleMarkdown';
 import { ConnectorBubble } from './ConnectorBubble';
 import { ContentBlocks } from './ContentBlocks';
 import { CopyIdButton } from './CopyIdButton';
-import { isHiddenChatRow, projectFailedResponseDiagnostics, projectSystemRowSurface } from './chat-row-surface';
+import { isHiddenChatRow, projectSystemRowSurface } from './chat-row-surface';
 import { CliOutputBlock } from './cli-output/CliOutputBlock';
 import { toCliEvents } from './cli-output/toCliEvents';
 import {
@@ -381,13 +380,6 @@ function ChatMessageContent({
   const cliEvents = toCliEvents(message.toolEvents, cliStdoutContent);
   const hasCliBlock = cliEvents.length > 0;
   const emptyResponseNotice = projectEmptyResponseLifecycleNotice(message, { hasCliBlock });
-  // The failure's diagnostics render under the response whether it streamed a body or only shows
-  // the failure notice.
-  const failedResponseLabel = projectFailedResponseLabel(message);
-  const failedResponseDiagnostics = projectFailedResponseDiagnostics(message);
-  // A duplicate of the CLI panel directly above hides only its panel; the response stays.
-  const visibleFailedResponseDiagnostics =
-    failedResponseDiagnostics?.kind === 'cli' && hideDiagnosticsPanel ? null : failedResponseDiagnostics;
   const assistantPresentationTime =
     message.lifecycle?.kind === 'response' ? getMessageTimelineOrderTime(message) : message.timestamp;
   const cliStatus = message.isStreaming
@@ -941,16 +933,6 @@ function ChatMessageContent({
       }
       footer={
         <>
-          {failedResponseLabel && visibleFailedResponseDiagnostics ? (
-            <div className="mt-2">
-              <TerminalDiagnosticsPanel
-                selected={visibleFailedResponseDiagnostics}
-                errorMessage={failedResponseLabel}
-                dedupCount={dedupCount}
-                responseOwnsFailure
-              />
-            </div>
-          ) : null}
           {!message.isStreaming && message.metadata ? <MetadataBadge metadata={message.metadata} /> : null}
           <AppendedInputReceipts response={message} timelineMessages={threadMessages} getCatById={getCatById} />
         </>

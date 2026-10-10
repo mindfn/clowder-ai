@@ -344,15 +344,9 @@ export interface ChatMessage {
      *    - `turnInvocationId` is the per-cat-turn invocation id (bubble identity stable key — required
      *      for same-parent multi-turn-same-cat bubbles to NOT merge; see砚砚 catch 2026-05-09 17:32)
      *  Frontend `getBubbleInvocationId` prefers `turnInvocationId` (fallback `invocationId` for legacy).
-     *  F194 Phase Z11: when projection merges a stream record + a post_message callback into one
-     *  canonical bubble (Z8 KD-27), the bubble origin becomes `callback`. ChatMessage then loses the
-     *  CLI Output stdout (it only feeds content to toCliEvents when origin==='stream'). To keep CLI
-     *  Output behavior consistent regardless of post_msg, projection exposes:
-     *    - `cliStdout`: the stream-origin content portion → ChatMessage feeds this to the CLI Output
-     *    - `speechContent`: the callback-origin content portion → ChatMessage renders this as the
-     *      main bubble body (the post_msg speech), instead of the full concat
-     *  Both are set ONLY when a group contains BOTH stream and callback records (the merge case);
-     *  pure-stream / pure-callback groups leave them undefined so existing rendering is unchanged. */
+     *  Legacy persisted records may contain merged stream/callback projections.
+     *  `cliStdout` and `speechContent` preserve their historical rendering; new callback
+     *  messages and final responses have independent identities and are not merged. */
     stream?: {
       invocationId?: string;
       turnInvocationId?: string;

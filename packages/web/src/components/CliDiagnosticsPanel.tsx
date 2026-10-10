@@ -196,16 +196,9 @@ interface CliDiagnosticsPanelProps {
    *  panel entirely via ChatMessage's hideDiagnosticsPanel prop, so this Panel only needs
    *  to render the count badge for the head. */
   dedupCount?: number;
-  /** The owning response already renders its failure; diagnostics are disclosed on demand. */
-  showErrorBanner?: boolean;
 }
 
-export function CliDiagnosticsPanel({
-  errorMessage,
-  diagnostics,
-  dedupCount,
-  showErrorBanner = true,
-}: CliDiagnosticsPanelProps) {
+export function CliDiagnosticsPanel({ errorMessage, diagnostics, dedupCount }: CliDiagnosticsPanelProps) {
   const [expanded, setExpanded] = useState(false);
 
   // 云端 codex P2 (2026-05-27): membership check before indexing — stale/newer/malformed
@@ -233,43 +226,41 @@ export function CliDiagnosticsPanel({
   return (
     <div data-testid="cli-diagnostics" className="flex flex-col gap-2.5">
       {/* Error banner */}
-      {(showErrorBanner || expanded) && (
-        <div
-          data-testid={showErrorBanner ? 'cli-diagnostics-banner' : 'cli-diagnostics-cause'}
-          className="flex items-start gap-2.5 rounded-xl"
-          style={{ backgroundColor: bg, border: `1px solid ${border}`, padding: '10px 14px' }}
-        >
-          <Icon
-            className="w-4 h-4 flex-shrink-0 mt-0.5"
-            style={{ color: accent }}
-            ariaLabel={knownReason ?? 'cli-error-unknown'}
-          />
-          <div className="flex flex-col gap-1 min-w-0">
-            <span className="text-sm font-semibold flex items-center gap-2 flex-wrap" style={{ color: text }}>
-              <span>{summary}</span>
-              {dedupCount !== undefined && dedupCount > 1 && (
-                <span
-                  data-testid="cli-diagnostics-dedup-badge"
-                  role="img"
-                  aria-label={`Same error occurred ${dedupCount} times`}
-                  className="text-xs font-normal px-1.5 py-0.5 rounded"
-                  style={{ backgroundColor: accent, color: bg }}
-                >
-                  ×{dedupCount}
-                </span>
-              )}
-            </span>
-            {diagnostics.publicHint && (
-              <span className="text-xs" style={{ color: 'var(--cli-diag-hint)', lineHeight: 1.5 }}>
-                {diagnostics.publicHint}
+      <div
+        data-testid="cli-diagnostics-banner"
+        className="flex items-start gap-2.5 rounded-xl"
+        style={{ backgroundColor: bg, border: `1px solid ${border}`, padding: '10px 14px' }}
+      >
+        <Icon
+          className="w-4 h-4 flex-shrink-0 mt-0.5"
+          style={{ color: accent }}
+          ariaLabel={knownReason ?? 'cli-error-unknown'}
+        />
+        <div className="flex flex-col gap-1 min-w-0">
+          <span className="text-sm font-semibold flex items-center gap-2 flex-wrap" style={{ color: text }}>
+            <span>{summary}</span>
+            {dedupCount !== undefined && dedupCount > 1 && (
+              <span
+                data-testid="cli-diagnostics-dedup-badge"
+                role="img"
+                aria-label={`Same error occurred ${dedupCount} times`}
+                className="text-xs font-normal px-1.5 py-0.5 rounded"
+                style={{ backgroundColor: accent, color: bg }}
+              >
+                ×{dedupCount}
               </span>
             )}
-          </div>
+          </span>
+          {diagnostics.publicHint && (
+            <span className="text-xs" style={{ color: 'var(--cli-diag-hint)', lineHeight: 1.5 }}>
+              {diagnostics.publicHint}
+            </span>
+          )}
         </div>
-      )}
+      </div>
 
       {/* Excerpt toggle — only shown when Phase A populated safeExcerpt (reasonCode whitelisted) */}
-      {(hasExcerpt || !showErrorBanner) && (
+      {hasExcerpt && (
         <>
           <button
             type="button"
@@ -303,43 +294,41 @@ export function CliDiagnosticsPanel({
         </>
       )}
 
-      {/* Standalone errors disclose metadata immediately; response diagnostics disclose it on demand. */}
-      {(showErrorBanner || expanded) && (
-        <div
-          data-testid="cli-diagnostics-debug-ref"
-          className="flex flex-wrap gap-x-3 gap-y-1 text-xs"
-          style={{ color: 'var(--cli-diag-meta)' }}
-        >
+      {/* Standalone error metadata */}
+      <div
+        data-testid="cli-diagnostics-debug-ref"
+        className="flex flex-wrap gap-x-3 gap-y-1 text-xs"
+        style={{ color: 'var(--cli-diag-meta)' }}
+      >
+        <span>
+          <span className="font-medium">command:</span>{' '}
+          {truncateMiddle(sanitizePathLeaks(diagnostics.debugRef.command), 40)}
+        </span>
+        {hasExitCode && (
           <span>
-            <span className="font-medium">command:</span>{' '}
-            {truncateMiddle(sanitizePathLeaks(diagnostics.debugRef.command), 40)}
+            <span className="font-medium">exit:</span>{' '}
+            {diagnostics.debugRef.exitCode == null ? 'null' : diagnostics.debugRef.exitCode}
           </span>
-          {hasExitCode && (
-            <span>
-              <span className="font-medium">exit:</span>{' '}
-              {diagnostics.debugRef.exitCode == null ? 'null' : diagnostics.debugRef.exitCode}
+        )}
+        {diagnostics.debugRef.signal != null && (
+          <span>
+            <span className="font-medium">signal:</span> {String(diagnostics.debugRef.signal)}
+          </span>
+        )}
+        {diagnostics.debugRef.invocationId && (
+          <span>
+            <span className="font-medium">invocationId:</span> {truncateMiddle(diagnostics.debugRef.invocationId, 32)}
+          </span>
+        )}
+        {DEBUG_REF_CONTEXT_FIELDS.map(([key, label]) => {
+          const value = diagnostics.debugRef[key];
+          return value ? (
+            <span key={key}>
+              <span className="font-medium">{label}:</span> {String(value)}
             </span>
-          )}
-          {diagnostics.debugRef.signal != null && (
-            <span>
-              <span className="font-medium">signal:</span> {String(diagnostics.debugRef.signal)}
-            </span>
-          )}
-          {diagnostics.debugRef.invocationId && (
-            <span>
-              <span className="font-medium">invocationId:</span> {truncateMiddle(diagnostics.debugRef.invocationId, 32)}
-            </span>
-          )}
-          {DEBUG_REF_CONTEXT_FIELDS.map(([key, label]) => {
-            const value = diagnostics.debugRef[key];
-            return value ? (
-              <span key={key}>
-                <span className="font-medium">{label}:</span> {String(value)}
-              </span>
-            ) : null;
-          })}
-        </div>
-      )}
+          ) : null;
+        })}
+      </div>
     </div>
   );
 }

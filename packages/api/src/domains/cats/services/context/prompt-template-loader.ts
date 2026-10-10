@@ -244,7 +244,6 @@ const TEMPLATE_FILES: Record<string, { base: string; local: string }> = {
   D17: { base: 'd17-guide-candidate.md', local: '' },
   D18: { base: 'd18-world-context.md', local: '' },
   D19: { base: 'd19-constitutional-knowledge.md', local: '' },
-  D20: { base: 'd20-signal-articles.md', local: '' },
 };
 
 /**

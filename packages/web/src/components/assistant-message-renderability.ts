@@ -47,15 +47,6 @@ export function hasAssistantBody(message: ChatMessage, context: AssistantMessage
 const FAILED_RESPONSE_LABEL = '回复失败。';
 const INTERRUPTED_RESPONSE_LABEL = '回复已中断。';
 
-/** Copy naming how a response ended without success; its failure diagnostics render under it. */
-export function projectFailedResponseLabel(message: ChatMessage): string | null {
-  const lifecycle = message.lifecycle;
-  if (lifecycle?.kind !== 'response') return null;
-  if (lifecycle.status === 'failed') return FAILED_RESPONSE_LABEL;
-  if (lifecycle.status === 'interrupted') return INTERRUPTED_RESPONSE_LABEL;
-  return null;
-}
-
 /** Copy owned by the lifecycle frame while no streamed body exists yet. */
 export function projectEmptyResponseLifecycleNotice(
   message: ChatMessage,

@@ -177,20 +177,6 @@ export class D19Resolver implements HookResolver {
 }
 
 // ---------------------------------------------------------------------------
-// D20 — Signal 文章 (Signal Articles)
-// Pre-formatted by ContextAssembler into activeSignalsBlock.
-// ---------------------------------------------------------------------------
-
-export class D20Resolver implements HookResolver {
-  resolve(input: AssemblerInput): ResolveResult {
-    if (!input.activeSignalsBlock) {
-      return skip('no_active_signals', 'No active signal articles');
-    }
-    return { status: 'fired', vars: { SIGNAL_ARTICLES_BLOCK: input.activeSignalsBlock } };
-  }
-}
-
-// ---------------------------------------------------------------------------
 // D21 — 传球决策树 (Handoff Decision Tree)
 // Same condition as D8. Template uses {{CC_MENTION}} for co-creator mention.
 // Pipeline renders via renderSegment('D21', { CC_MENTION }) — no pre-load needed.
