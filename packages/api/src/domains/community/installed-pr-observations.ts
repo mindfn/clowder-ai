@@ -1,5 +1,6 @@
 import { z } from 'zod';
 import type { CommunityPrItem } from '../cats/services/stores/ports/CommunityPrStore.js';
+import type { SignalTaskItem } from '../memory/ThreadAwareSignalSources.js';
 import type { HostPluginInvocationPort } from '../plugin/carrier/host-invocation.js';
 import type { PluginInventoryStore } from '../plugin/host-inventory/ports.js';
 
@@ -46,6 +47,35 @@ const refreshSchema = z.object({
   observedAt: z.number().finite().nonnegative().nullable().optional(),
   failedSubjects,
 });
+const observationTime = z.number().finite().nonnegative();
+const headSha = z.string().regex(/^(?:[a-fA-F0-9]{40}|[a-fA-F0-9]{64})$/);
+// Deliberate whitelist: plugin-private owner, mode, verdict and delivery fields
+// are stripped. They cannot become Host governance inputs through this reader.
+const subjectObservationSchema = z.object({
+  data: z.object({
+    subjectKey: z.string(),
+    projection: z
+      .object({
+        subjectKey: z.string(),
+        externalReview: z
+          .object({
+            currentHeadSha: headSha.nullable(),
+            headGeneration: z.number().int().positive(),
+            currentHeadObservedAt: observationTime.nullable(),
+            ci: z
+              .object({
+                headSha,
+                headGeneration: z.number().int().positive(),
+                status: z.enum(['pending', 'pass', 'fail']),
+                observedAt: observationTime,
+              })
+              .nullable(),
+          })
+          .nullish(),
+      })
+      .nullable(),
+  }),
+});
 
 export type PrObservationStatus = z.infer<typeof statusSchema>;
 export type PrObservationItem = Omit<CommunityPrItem, 'createdAt'>;
@@ -55,11 +85,12 @@ export interface CommunityPrObservations {
   refresh(repo: string, restart?: boolean): Promise<z.infer<typeof refreshSchema>>;
 }
 
-/** UI observations only. This adapter never supplies proof or admission authority. */
+/** Read-only provider observations for UI and memory signals, never admission authority. */
 export class InstalledPrObservations implements CommunityPrObservations {
   constructor(
     private readonly inventory: Pick<PluginInventoryStore, 'snapshot'>,
     private readonly invocation: Pick<HostPluginInvocationPort, 'invoke'>,
+    private readonly now: () => number = Date.now,
   ) {}
 
   private async binding() {
@@ -79,8 +110,10 @@ export class InstalledPrObservations implements CommunityPrObservations {
     };
   }
 
-  private async session() {
+  private async session(expectedInstanceId?: string) {
     const binding = await this.binding();
+    if (expectedInstanceId !== undefined && binding.id !== expectedInstanceId)
+      throw new Error('GitHub observation task instance changed');
     return async (method: string, params: unknown) => {
       if (JSON.stringify(await this.binding()) !== JSON.stringify(binding))
         throw new Error('GitHub observation instance changed');
@@ -88,6 +121,80 @@ export class InstalledPrObservations implements CommunityPrObservations {
       if (JSON.stringify(await this.binding()) !== JSON.stringify(binding))
         throw new Error('GitHub observation instance changed');
       return result;
+    };
+  }
+
+  /**
+   * Memory signals are observations, not review/merge authorization. Canonical
+   * task identity is supplied by the Host, never read from private projections.
+   * A stopped collection may leave historical CI: require an active Host wait
+   * and an aligned observation made in this registration before reporting pass.
+   */
+  async taskSignals(task: SignalTaskItem): Promise<{ ciPassed: boolean; merged: boolean } | null> {
+    const match = /^pr:([^#]+)#([1-9][0-9]*)$/.exec(task.subjectKey ?? '');
+    if (task.kind !== 'pr_tracking' || !match || !repoSchema.safeParse(match[1]).success) return null;
+    const repo = repoSchema.parse(match[1]);
+    const number = Number(match[2]);
+    if (!Number.isSafeInteger(number)) return null;
+    const subjectKey = `pr:${repo}#${number}`;
+    const wait = task.pluginWait;
+    if (wait?.invalidated) return null;
+    if (task.status === 'done') {
+      const invoke = await this.session(wait?.pluginInstanceId);
+      const result = await this.traverse(repo, invoke);
+      if (
+        result.status.refreshStatus !== 'complete' ||
+        !result.status.publishedGeneration ||
+        result.status.observedAt === null ||
+        result.status.failedSubjects.length > 0
+      )
+        return null;
+      return {
+        ciPassed: false,
+        merged: result.items.some((item) => item.id === subjectKey && item.state === 'merged'),
+      };
+    }
+    return this.ciSignals(task, subjectKey);
+  }
+
+  private async ciSignals(task: SignalTaskItem, subjectKey: string) {
+    const none = { ciPassed: false, merged: false };
+    const wait = task.pluginWait;
+    const checkedAt = this.now();
+    const registeredAt = wait?.registration?.registeredAt;
+    if (
+      !wait ||
+      !wait.await ||
+      wait.await.generation !== wait.generation ||
+      wait.threadId !== task.threadId ||
+      wait.catId !== task.ownerCatId ||
+      wait.userId !== task.userId ||
+      typeof registeredAt !== 'number' ||
+      !Number.isFinite(registeredAt) ||
+      registeredAt < 0 ||
+      registeredAt > checkedAt ||
+      (wait.await.expiresAt !== undefined && wait.await.expiresAt <= checkedAt)
+    )
+      return null;
+    const invoke = await this.session(wait.pluginInstanceId);
+    const data = subjectObservationSchema.parse(await invoke('github.subject.inspect', { subjectKey, limit: 1 })).data;
+    if (data.subjectKey !== subjectKey || (data.projection && data.projection.subjectKey !== subjectKey))
+      throw new Error('Invalid PR observation identity');
+    const head = data.projection?.externalReview;
+    const ci = head?.ci;
+    const returnedAt = this.now();
+    if (wait.await.expiresAt !== undefined && wait.await.expiresAt <= returnedAt) return null;
+    if (!head || !ci || head.currentHeadSha === null || head.currentHeadObservedAt === null) return none;
+    return {
+      merged: false,
+      ciPassed:
+        ci.status === 'pass' &&
+        ci.headSha === head.currentHeadSha &&
+        ci.headGeneration === head.headGeneration &&
+        ci.observedAt >= head.currentHeadObservedAt &&
+        ci.observedAt >= registeredAt &&
+        ci.observedAt <= returnedAt &&
+        head.currentHeadObservedAt <= returnedAt,
     };
   }
 

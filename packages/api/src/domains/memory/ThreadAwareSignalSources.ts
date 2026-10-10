@@ -1,4 +1,6 @@
 import type { MessageFrom } from '@cat-cafe/shared';
+import { isDeepStrictEqual } from 'node:util';
+import type { PluginWaitState } from '@cat-cafe/shared';
 import type Database from 'better-sqlite3';
 import type { OutputVerifiedSignalSources } from './output-verified-detector.js';
 import { SqliteSignalSources } from './SqliteSignalSources.js';
@@ -7,11 +9,11 @@ import { SqliteSignalSources } from './SqliteSignalSources.js';
  * F200 AC-D2.1/D2.2/D2.3 — Thread-aware signal sources for OutputVerifiedDetector.
  *
  * Extends SqliteSignalSources (invocation status from evidence.sqlite) with
- * Redis-backed signals from thread messages and PR tracking tasks:
+ * Host thread messages and installed provider observations scoped by canonical tasks:
  *
  * - AC-D2.1: operator accept + reviewer approval detected via thread message scanning
- * - AC-D2.2: CI passed detected via pr_tracking task automationState
- * - AC-D2.3: PR merged detected via pr_tracking task status='done'
+ * - AC-D2.2: CI passed from an installed observation for current active work
+ * - AC-D2.3: PR merged from an explicit provider observation, never task completion alone
  *
  * Design: optional interface methods (`isCvoAcceptedForThread?` etc.) keep
  * backward compatibility — old callers using plain SqliteSignalSources still work.
@@ -34,25 +36,25 @@ export interface SignalMessageStore {
   getByThread(threadId: string, limit?: number, userId?: string): Promise<SignalMessage[]> | SignalMessage[];
 }
 
-/** Minimal task item for signal detection (subset of TaskItem). */
+/** Canonical Host task fields used to scope an installed provider observation. */
 export interface SignalTaskItem {
+  id?: string;
   kind: string;
   status: string;
   threadId: string;
-  automationState?: {
-    ci?: {
-      lastBucket?: string;
-      headSha?: string;
-      lastFingerprint?: string;
-      /** Terminal PR state — 'merged' | 'closed'. Persisted by CiCdRouter on lifecycle close. */
-      prState?: string;
-    };
-  };
+  subjectKey?: string | null;
+  ownerCatId?: string | null;
+  userId?: string;
+  pluginWait?: PluginWaitState;
 }
 
-/** Minimal task store interface (subset of ITaskStore). */
 export interface SignalTaskStore {
   listByThread(threadId: string): Promise<SignalTaskItem[]> | SignalTaskItem[];
+}
+
+/** Internal read-only observations, not plugin-supplied task ownership or verdicts. */
+export interface TaskOutputObservationSource {
+  read(task: SignalTaskItem): Promise<{ ciPassed: boolean; merged: boolean } | null>;
 }
 
 /**
@@ -143,6 +145,7 @@ export class ThreadAwareSignalSources implements OutputVerifiedSignalSources {
     db: Database.Database,
     private readonly messageStore: SignalMessageStore,
     private readonly taskStore: SignalTaskStore,
+    private readonly observations?: TaskOutputObservationSource,
   ) {
     this.sqliteSources = new SqliteSignalSources(db);
   }
@@ -152,23 +155,20 @@ export class ThreadAwareSignalSources implements OutputVerifiedSignalSources {
     return this.sqliteSources.getInvocationStatus(invocationId);
   }
 
-  /**
-   * AC-D2.3: Detect PR merge by checking if any pr_tracking task for this thread
-   * has status='done' AND automationState.ci.prState='merged'.
-   * CiCdRouter marks done on BOTH merged and closed — we must distinguish.
-   */
+  /** Latest terminal work requires an explicit provider merge observation. */
   async isPrMergedForThread(threadId: string): Promise<boolean> {
-    const tasks = await this.taskStore.listByThread(threadId);
-    const prTasks = tasks.filter((t) => t.kind === 'pr_tracking');
-    if (prTasks.length === 0) return false;
-    // If any pr_tracking task is still active, thread has pending PR work.
-    // Old merged PRs must not leak into new trajectories.
-    if (prTasks.some((t) => t.status !== 'done')) return false;
-    // All terminal — only the LAST (most recently created) task determines
-    // the thread's merge status. An old merged PR followed by a newer closed
-    // PR means the thread's latest work ended in closure, not merge.
-    const lastTask = prTasks[prTasks.length - 1];
-    return lastTask.automationState?.ci?.prState === 'merged';
+    if (!this.observations) return false;
+    const tasks = await this.taskSnapshot(threadId);
+    if (tasks.length === 0 || tasks.some((t) => t.status !== 'done')) return false;
+    const last = tasks[tasks.length - 1];
+    const observed = await this.observations.read(structuredClone(last));
+    return observed?.merged === true && isDeepStrictEqual(tasks, await this.taskSnapshot(threadId));
+  }
+
+  private async taskSnapshot(threadId: string): Promise<SignalTaskItem[]> {
+    return structuredClone(
+      (await this.taskStore.listByThread(threadId)).filter((t) => t.threadId === threadId && t.kind === 'pr_tracking'),
+    );
   }
 
   /**
@@ -223,25 +223,17 @@ export class ThreadAwareSignalSources implements OutputVerifiedSignalSources {
     return false;
   }
 
-  /**
-   * AC-D2.2: Detect CI passed by checking pr_tracking task automationState.
-   * Requires both a pass/success bucket AND fingerprint alignment with current
-   * headSha to reject stale passes from old commits.
-   */
+  /** Read installed observations only for active work; never revive old task CI fields. */
   async isCiPassedForThread(threadId: string): Promise<boolean> {
-    const tasks = await this.taskStore.listByThread(threadId);
-    // Only check ACTIVE pr_tracking tasks — done tasks reflect old PR work.
-    const activePrTasks = tasks.filter((t) => t.kind === 'pr_tracking' && t.status !== 'done');
-    return activePrTasks.some((t) => {
-      const ci = t.automationState?.ci;
-      if (!ci) return false;
-      const isBucketPass = ci.lastBucket === 'pass' || ci.lastBucket === 'success';
-      if (!isBucketPass) return false;
-      // Require fingerprint alignment: lastFingerprint = `${headSha}:${bucket}`.
-      // If headSha changed (new commit), fingerprint won't match → stale pass rejected.
-      if (!ci.headSha || !ci.lastFingerprint) return false;
-      return ci.lastFingerprint.startsWith(`${ci.headSha}:`);
-    });
+    if (!this.observations) return false;
+    const tasks = await this.taskSnapshot(threadId);
+    for (const task of tasks.filter((t) => t.status !== 'done')) {
+      const observed = await this.observations.read(structuredClone(task));
+      if (observed?.ciPassed === true) {
+        return isDeepStrictEqual(tasks, await this.taskSnapshot(threadId));
+      }
+    }
+    return false;
   }
 }
 

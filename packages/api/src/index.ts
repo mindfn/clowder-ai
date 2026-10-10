@@ -3424,6 +3424,7 @@ async function main(): Promise<void> {
     evidenceDb: memoryServices.store.getDb(),
     messageStore,
     taskStore,
+    taskObservations: { read: (task) => pullRequests.taskSignals(task) },
     threadStore,
     ...(personMemoryStore ? { personMemoryStore } : {}),
     cueSourceReader: memoryCueRuntime.sourceReader,

@@ -13,6 +13,7 @@ import { SqliteSignalSources } from '../domains/memory/SqliteSignalSources.js';
 import {
   type SignalMessageStore,
   type SignalTaskStore,
+  type TaskOutputObservationSource,
   ThreadAwareSignalSources,
 } from '../domains/memory/ThreadAwareSignalSources.js';
 import { TrajectoryQueryService } from '../domains/memory/TrajectoryQueryService.js';
@@ -33,6 +34,7 @@ export interface RecallMetricsRoutesOptions {
   taskStore?: SignalTaskStore;
   personMemoryStore?: RecallSourceReaders['personMemoryStore'];
   cueSourceReader?: RecallSourceReaders['cueSourceReader'];
+  taskObservations?: TaskOutputObservationSource;
   /** Optional: pass threadStore to enable thread ownership validation on /api/recall/events. */
   threadStore?: Pick<IThreadStore, 'get' | 'list'>;
 }
@@ -143,7 +145,7 @@ export const recallMetricsRoutes: FastifyPluginAsync<RecallMetricsRoutesOptions>
     // fall back to SqliteSignalSources (v1 behavior) otherwise.
     const sources =
       opts.messageStore && opts.taskStore
-        ? new ThreadAwareSignalSources(opts.evidenceDb, opts.messageStore, opts.taskStore)
+        ? new ThreadAwareSignalSources(opts.evidenceDb, opts.messageStore, opts.taskStore, opts.taskObservations)
         : new SqliteSignalSources(opts.evidenceDb);
     const detector = new OutputVerifiedDetector(sources);
 
