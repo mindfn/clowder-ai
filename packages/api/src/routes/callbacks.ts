@@ -129,36 +129,30 @@ import {
   type Viewer,
 } from '../domains/cats/services/stores/visibility.js';
 import { getVoiceBlockSynthesizer } from '../domains/cats/services/tts/VoiceBlockSynthesizer.js';
-import {
-  ExternalReviewVerdictError,
-  type ExternalReviewVerdictService,
-} from '../domains/community/external-review/ExternalReviewVerdictService.js';
 import type { IConciergeConfigStore } from '../domains/concierge/ConciergeConfigStore.js';
 import {
   hasConciergeNavigationMarker,
   projectConciergeStoredContent,
 } from '../domains/concierge/concierge-reply-validator.js';
 import type { IEvidenceStore, IMarkerQueue, IReflectionService } from '../domains/memory/interfaces.js';
-import { projectCollectiveWorkDelegation } from '../domains/plugin/builtin-runtime/collective-work/collective-work-delegation.js';
 import {
   type EngagementPolicyReader,
   notificationDeliveryReceipt,
   partitionNotificationTargets,
   readEngagementPolicy,
 } from '../domains/routing-context/ScarceSeatNotificationPolicy.js';
-import { buildThreadDeepLink } from '../infrastructure/connectors/connector-command-helpers.js';
 import { createModuleLogger } from '../infrastructure/logger.js';
 import {
   coordinationActiveDispatchCount,
   coordinationTerminalAckSuppressedCount,
   coordinationTerminalDispatchCount,
-  externalCaseVerdictReadyWithoutDelivery,
   protocolActionWithoutCustodyTotal,
   successorActionFenceUnavailable,
   successorAgentKeyActionRejected,
 } from '../infrastructure/telemetry/instruments.js';
 import type { SocketManager } from '../infrastructure/websocket/index.js';
 import { scoreKeywordRelevance, tokenizeKeyword } from '../utils/keyword-relevance.js';
+import { buildThreadDeepLink } from '../utils/thread-deep-link.js';
 import { getDefaultUploadDir } from '../utils/upload-paths.js';
 import { recordAnchorDrillEvent, recordAnchorPreviewEvent } from './anchor-event-log.js';
 import { recordAnchorFullDrill, recordAnchorReturned } from './anchor-telemetry.js';
@@ -191,17 +185,11 @@ import {
   registerCallbackDeploymentWaitRoutes,
 } from './callback-deployment-wait-routes.js';
 import { registerCallbackDocumentRoutes } from './callback-document-routes.js';
-import { registerCallbackExternalReviewRecoveryRoutes } from './callback-external-review-recovery-route.js';
-import { registerCallbackExternalReviewTransferRoute } from './callback-external-review-transfer-route.js';
 import { registerCallbackGameRoutes } from './callback-game-routes.js';
 import { registerCallbackGuideRoutes } from './callback-guide-routes.js';
 import { type HoldBallRouteDeps, registerCallbackHoldBallRoutes } from './callback-hold-ball-routes.js';
 import { registerCallbackImageRoutes } from './callback-image-routes.js';
 import { registerCallbackLimbRoutes } from './callback-limb-routes.js';
-import {
-  type MeetingArtifactReaderHolder,
-  registerCallbackMeetingArtifactRoutes,
-} from './callback-meeting-artifact-routes.js';
 import { type CallbackMemoryCueDeps, registerCallbackMemoryCueRoutes } from './callback-memory-cue-routes.js';
 import { registerCallbackMemoryRoutes } from './callback-memory-routes.js';
 import { projectCallbackMessageBody, projectQueuedCallbackMessageBody } from './callback-message-body.js';
@@ -902,8 +890,6 @@ export interface CallbackRoutesOptions {
   proactiveCandidateRegistryResolver?: import('../domains/memory/ProactiveCandidateRegistryResolver.js').ProactiveCandidateRegistryResolver;
   /** F276 KD-12: read-only workspace person identity root resolver. */
   workspacePersonResolver?: import('../domains/memory/people/WorkspacePersonResolver.js').WorkspacePersonResolver;
-  /** F292: late-bound, source-authoritative, version-fenced meeting artifact reader. */
-  meetingArtifactReaderHolder?: MeetingArtifactReaderHolder;
   /** F202: late-bound named-cat content editor shared with the human surface. */
   namedCatContentHolder?: NamedCatContentHolder;
   /** F287 Phase C: owner-scoped opaque cue drill and content-free outcome callbacks. */
@@ -936,11 +922,6 @@ export interface CallbackRoutesOptions {
       'observe' | 'releaseCurrentExecutionClaim'
     >;
   };
-  /** F168 F-Step3: invocation-bound atomic verdict + delivery-custody recorder. */
-  externalReviewVerdictService?: Pick<ExternalReviewVerdictService, 'record'>;
-  externalReviewTransferService?: import('../domains/community/external-review/ExternalReviewTransferService.js').ExternalReviewTransferService;
-  /** F167: settle stale external-review lease when GitHub HEAD has advanced. */
-  externalReviewRecoveryService?: import('../domains/ball-custody/ExternalReviewRecoveryService.js').ExternalReviewRecoveryService;
   /** F043 P1: feat_index provider override for tests */
   featIndexProvider?: () => Promise<FeatIndexEntry[]>;
   /** F073 P1: workflow SOP store for bulletin board */
@@ -1267,37 +1248,6 @@ function conversationDecisionInteractionId(invocationId: string, blockId: string
   return `conversation:${digest}`;
 }
 
-const externalReviewVerdictSchema = z
-  .object({
-    repoFullName: z
-      .string()
-      .min(1)
-      .regex(/^[^/]+\/[^/]+$/, 'Must be owner/repo format'),
-    prNumber: z.number().int().positive(),
-    reviewedHeadSha: z.string().min(7).max(64),
-    verdict: z.enum(['approved', 'changes_requested', 'commented']),
-    summary: z.string().trim().min(1).max(4000),
-    userNudgeRequired: z.boolean().optional(),
-    delivery: z.discriminatedUnion('kind', [
-      z.object({ kind: z.literal('delivered'), githubUrl: z.string().url() }).strict(),
-      z.object({ kind: z.literal('pending_delivery'), reason: z.string().trim().min(1).max(2000) }).strict(),
-    ]),
-    actionLeaseRef: z
-      .object({ leaseId: z.string().min(1), generation: z.number().int().positive() })
-      .strict()
-      .optional(),
-  })
-  .strict();
-
-function externalReviewVerdictErrorStatus(code: ExternalReviewVerdictError['code']): number {
-  if (code === 'observe_only' || code === 'wrong_principal') return 403;
-  if (code === 'invalid_delivery_proof' || code === 'invalid_pending_reason') return 422;
-  if (code === 'projection_unavailable' || code === 'action_lease_preflight_unavailable' || code === 'not_configured') {
-    return 503;
-  }
-  return 409;
-}
-
 /**
  * Derive an ApprovalOriginRef from a callback invocation record.
  * Prefers the verified message trigger; falls back to a stable event anchor.
@@ -1361,12 +1311,6 @@ export const callbacksRoutes: FastifyPluginAsync<CallbackRoutesOptions> = async 
     });
   }
   registerNativeTurnAdmissionRoute(app);
-  if (opts.meetingArtifactReaderHolder) {
-    registerCallbackMeetingArtifactRoutes(app, {
-      readerHolder: opts.meetingArtifactReaderHolder,
-      ...(threadStore ? { threadStore } : {}),
-    });
-  }
   if (opts.namedCatContentHolder) {
     registerCallbackContentEditorRoutes(app, {
       holder: opts.namedCatContentHolder,
@@ -3262,29 +3206,6 @@ export const callbacksRoutes: FastifyPluginAsync<CallbackRoutesOptions> = async 
     const richExtra = richBlocks.length > 0 ? { rich: { v: 1 as const, blocks: richBlocks } } : {};
     const targetCatsExtra =
       !suppressTerminalRouting && validExplicitTargets.length ? { targetCats: validExplicitTargets } : {};
-    const collectiveWorkDelegation = projectCollectiveWorkDelegation({
-      record,
-      originMessage: record.originTriggerMessageId
-        ? await messageStore.getById(record.originTriggerMessageId)
-        : undefined,
-      targetThreadId: effectiveThreadId,
-      targetCatIds: mentions,
-      crossThread: isCrossThread,
-    });
-    if (
-      mentions.length > 0 &&
-      (record.collectiveWorkBinding || record.toolExecutionPolicy?.mode === 'collective_work') &&
-      !collectiveWorkDelegation
-    ) {
-      reply.status(403);
-      return {
-        error: 'collective_work_delegation_unavailable',
-        message: 'Named relay requires a verifiable current Work delegation.',
-      };
-    }
-    const collectiveWorkDelegationExtra = collectiveWorkDelegation
-      ? { collectiveWorkDelegationV1: collectiveWorkDelegation }
-      : {};
     const extraParts = {
       ...standaloneExplicitPostExtra,
       ...(deliveredWithoutWake.length
@@ -3303,7 +3224,6 @@ export const callbacksRoutes: FastifyPluginAsync<CallbackRoutesOptions> = async 
       ...localReviewVerdictExtra,
       ...callbackDedupExtra,
       ...targetCatsExtra,
-      ...collectiveWorkDelegationExtra,
     };
     const extra = Object.keys(extraParts).length > 0 ? extraParts : undefined;
 
@@ -5346,104 +5266,6 @@ export const callbacksRoutes: FastifyPluginAsync<CallbackRoutesOptions> = async 
     };
   });
 
-  app.post('/api/callbacks/record-external-review-verdict', async (request, reply) => {
-    if (!opts.externalReviewVerdictService) {
-      reply.status(503);
-      return { error: 'External review verdict service not configured' };
-    }
-    const record = requireCallbackAuth(request, reply);
-    if (!record) return;
-    const parsed = externalReviewVerdictSchema.safeParse(request.body);
-    if (!parsed.success) {
-      if (
-        request.body &&
-        typeof request.body === 'object' &&
-        'verdict' in request.body &&
-        !('delivery' in request.body)
-      ) {
-        externalCaseVerdictReadyWithoutDelivery.add(1);
-      }
-      reply.status(400);
-      return { error: 'Invalid request body', details: parsed.error.issues };
-    }
-    if (!record.invocationId) {
-      reply.status(403);
-      return { error: 'External review verdict requires invocation-bound callback authentication' };
-    }
-    const deletedThreadGuard = await getDeletedCallbackThreadGuard(threadStore, record.threadId);
-    if (deletedThreadGuard) {
-      reply.status(deletedThreadGuard.statusCode);
-      return deletedThreadGuard.body;
-    }
-
-    try {
-      let actionLeaseRef = parsed.data.actionLeaseRef;
-      if (record.parentInvocationId) {
-        if (!invocationRecordStore) {
-          throw new ExternalReviewVerdictError(
-            'action_lease_preflight_unavailable',
-            'Invocation carrier read surface is unavailable',
-          );
-        }
-        const parentRecord = await invocationRecordStore.get(record.parentInvocationId);
-        if (!parentRecord) {
-          throw new ExternalReviewVerdictError('action_lease_required', 'Parent invocation carrier is unavailable');
-        }
-        if (
-          parentRecord.threadId !== record.threadId ||
-          parentRecord.userId !== record.userId ||
-          !parentRecord.targetCats.includes(record.catId)
-        ) {
-          throw new ExternalReviewVerdictError(
-            'wrong_principal',
-            'Invocation carrier is outside the callback principal scope',
-          );
-        }
-        const carrier = parentRecord.actionLeaseCarrier;
-        if (!carrier) {
-          throw new ExternalReviewVerdictError(
-            'action_lease_required',
-            'Parent invocation carrier classification is unavailable',
-          );
-        }
-        if (carrier.kind === 'action_successor') {
-          if (
-            actionLeaseRef &&
-            (actionLeaseRef.leaseId !== carrier.leaseId || actionLeaseRef.generation !== carrier.generation)
-          ) {
-            throw new ExternalReviewVerdictError(
-              'action_lease_mismatch',
-              'Provided action lease does not match the invocation carrier',
-            );
-          }
-          actionLeaseRef = { leaseId: carrier.leaseId, generation: carrier.generation };
-        } else if (actionLeaseRef) {
-          throw new ExternalReviewVerdictError(
-            'action_lease_mismatch',
-            'Invocation is explicitly classified as not carrying an action lease',
-          );
-        }
-      }
-      return await opts.externalReviewVerdictService.record({
-        ...parsed.data,
-        ...(actionLeaseRef ? { actionLeaseRef } : {}),
-        principal: { catId: record.catId, threadId: record.threadId },
-      });
-    } catch (error) {
-      if (error instanceof ExternalReviewVerdictError) {
-        reply.status(externalReviewVerdictErrorStatus(error.code));
-        return { error: error.message, code: error.code };
-      }
-      throw error;
-    }
-  });
-
-  registerCallbackExternalReviewRecoveryRoutes(app, {
-    externalReviewRecoveryService: opts.externalReviewRecoveryService,
-    threadStore,
-  });
-
-  registerCallbackExternalReviewTransferRoute(app, opts.externalReviewTransferService);
   // F174 Phase C compatibility endpoint. Active credentials no longer expire
   // with elapsed time; this endpoint validates exact-attempt ownership and
   // returns lifecycle state without extending an auth deadline.

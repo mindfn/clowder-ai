@@ -10,7 +10,7 @@ vi.mock('@/utils/api-client', () => ({
 import { apiFetch } from '@/utils/api-client';
 import { PluginsContent } from '../settings/PluginsContent';
 
-import { github, jsonResponse, managerResponse } from './plugin-manager-compat-fixture';
+import { github, jsonResponse, managerResponse } from './plugin-manager-installed-fixture';
 
 const mockApiFetch = vi.mocked(apiFetch);
 
@@ -53,7 +53,7 @@ describe('PluginsContent GitHub configuration', () => {
 
   it('opens editable GitHub config fields and saves via plugin path', async () => {
     mockApiFetch.mockImplementation(async (url, init) => {
-      if (url === '/api/plugins/github/config' && init?.method === 'POST') {
+      if (url === '/api/plugin-manager/plugins/github/contributions/configuration' && init?.method === 'POST') {
         return jsonResponse({ ok: true });
       }
       return managerResponse(String(url));
@@ -98,13 +98,16 @@ describe('PluginsContent GitHub configuration', () => {
     });
     await flushEffects();
 
-    const saveCall = mockApiFetch.mock.calls.find((call) => call[0] === '/api/plugins/github/config');
+    const saveCall = mockApiFetch.mock.calls.find(
+      (call) => call[0] === '/api/plugin-manager/plugins/github/contributions/configuration',
+    );
     expect(saveCall).toBeTruthy();
     expect(JSON.parse((saveCall?.[1] as { body: string }).body)).toEqual({
+      expectedRevision: 1,
       updates: [
-        { name: 'GITHUB_TOKEN', value: 'ghp_new' },
+        { key: 'GITHUB_TOKEN', value: 'ghp_new' },
         {
-          name: 'GITHUB_SETUP_NOISE_BOT_LOGINS',
+          key: 'GITHUB_SETUP_NOISE_BOT_LOGINS',
           value: 'chatgpt-codex-connector[bot],github-actions[bot]',
         },
       ],

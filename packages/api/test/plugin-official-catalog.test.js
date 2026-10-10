@@ -83,7 +83,7 @@ test('bootstraps alpha.9 policy and hot-refreshes release coordinates without wi
   assert.equal(fresh.entries[0].packageDigest, alpha10Digest);
   assert.equal(fresh.entries[0].pluginId, 'official.feishu-meeting-intake');
   assert.deepEqual(fresh.entries[0].effectiveGrants, ['events.publish']);
-  assert.deepEqual(fresh.entries[0].ownerAuth?.domains, ['event', 'minutes', 'note', 'vc']);
+  assert.equal(Object.hasOwn(fresh.entries[0], 'ownerAuth'), false);
 
   now = 1_999;
   assert.equal((await catalog.snapshot()).entries[0].version, '0.1.0-alpha.10');

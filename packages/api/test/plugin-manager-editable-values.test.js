@@ -1,30 +1,44 @@
 import assert from 'node:assert/strict';
-import { resolve } from 'node:path';
+import { mkdtempSync, rmSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import { test } from 'node:test';
-import { RepositoryPluginManagerCompatibilityProvider } from '../dist/domains/plugin/manager/plugin-manager-compatibility.js';
-import { PluginRegistry } from '../dist/domains/plugin/PluginRegistry.js';
+import { HostPluginConfigurationService } from '../dist/domains/plugin/manager/plugin-manager-configuration.js';
+import { writePluginConfig } from '../dist/domains/plugin/plugin-config-store.js';
 
-test('Manager edits complete non-sensitive values while secrets and legacy reads remain masked', async () => {
-  const registry = new PluginRegistry(resolve('src/plugins'));
-  registry.scan();
-  const manifest = registry.getManifest('github');
-  assert.ok(manifest);
-  const env = {
-    GITHUB_SETUP_NOISE_BOT_LOGINS: 'acceptance-bot,second-bot',
-    GITHUB_TOKEN: 'test-only-secret-value',
-    GITHUB_MCP_PAT: 'test-only-mcp-secret',
-  };
-  const legacy = registry.getPluginInfo(manifest, null, env);
-  assert.equal(legacy.config.find((f) => f.envName === 'GITHUB_SETUP_NOISE_BOT_LOGINS').currentValue, 'accept****');
-  const provider = new RepositoryPluginManagerCompatibilityProvider(() => [
-    registry.getPluginInfo(manifest, null, env, { includeNonSensitiveValues: true }),
+test('installed Manager configuration exposes complete editable values and masks declared secrets', async (t) => {
+  const projectRoot = mkdtempSync(join(tmpdir(), 'plugin-editable-values-'));
+  t.after(() => rmSync(projectRoot, { recursive: true, force: true }));
+  const pluginId = 'example.installed';
+  writePluginConfig(projectRoot, pluginId, [
+    { name: 'labels', value: 'acceptance-bot,second-bot' },
+    { name: 'token', value: 'test-only-secret-value' },
+    { name: 'undeclared', value: 'must-not-be-exposed' },
   ]);
-  const [row] = await provider.list();
-  assert.equal(
-    row.configFields.find((f) => f.envName === 'GITHUB_SETUP_NOISE_BOT_LOGINS').currentValue,
-    env.GITHUB_SETUP_NOISE_BOT_LOGINS,
-  );
-  assert.equal(row.configFields.find((f) => f.envName === 'GITHUB_TOKEN').currentValue, '••••••');
-  assert.equal(row.configFields.find((f) => f.envName === 'GITHUB_MCP_PAT').currentValue, '••••••');
-  assert.equal(JSON.stringify(row).includes('test-only-'), false);
+  const service = new HostPluginConfigurationService({
+    projectRoot,
+    inventory: {
+      snapshot: async () => ({
+        instances: [{ pluginId, lifecycleState: 'installed', packageDigest: 'digest' }],
+        packages: [
+          {
+            packageDigest: 'digest',
+            manifest: {
+              configuration: [
+                { key: 'labels', label: 'Labels', kind: 'text', required: false },
+                { key: 'token', label: 'Token', kind: 'secret', required: true },
+              ],
+            },
+          },
+        ],
+      }),
+    },
+  });
+  const fields = await service.fields(pluginId);
+  assert.equal(fields.find((field) => field.key === 'labels').currentValue, 'acceptance-bot,second-bot');
+  assert.equal(fields.find((field) => field.key === 'token').currentValue, '••••••');
+  assert.equal(fields.length, 2);
+  assert.equal(JSON.stringify(fields).includes('test-only-'), false);
+  assert.equal(JSON.stringify(fields).includes('must-not-be-exposed'), false);
+  assert.deepEqual(await service.readActionInput(pluginId), { labels: 'acceptance-bot,second-bot' });
 });

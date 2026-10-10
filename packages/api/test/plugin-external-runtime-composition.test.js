@@ -12,7 +12,6 @@ import {
   EXTERNAL_PLUGIN_PRE_ACTIVE_TIMEOUT_MS,
   resolvePluginRuntimePersistencePaths,
 } from '../dist/domains/plugin/index.js';
-import { MemoryMeetingIntakeStore, MemorySignalRouteStore } from '../dist/domains/signal-intake/index.js';
 import { callbacksRoutes } from '../dist/routes/callbacks.js';
 import {
   completeExternalHandshake,
@@ -27,8 +26,6 @@ async function composition(projectRoot, processes = new FakePluginProcessAdapter
     processes,
     runtime: createDormantPluginRuntimeComposition({
       projectRoot,
-      routes: new MemorySignalRouteStore(),
-      intakes: new MemoryMeetingIntakeStore(),
       messageStore: new MessageStore(),
       processes,
       ...(packages === undefined ? {} : { packages }),
@@ -37,7 +34,7 @@ async function composition(projectRoot, processes = new FakePluginProcessAdapter
   };
 }
 
-test('current-main compatibility paths are explicit, project-scoped, and replaceable at one seam', async () => {
+test('installed runtime persistence paths are explicit, project-scoped, and replaceable at one seam', async () => {
   const projectRoot = await mkdtemp(resolve(tmpdir(), 'cat-cafe-k2d-composition-paths-'));
 
   assert.deepEqual(resolvePluginRuntimePersistencePaths(projectRoot), {
@@ -54,8 +51,6 @@ test('current-main compatibility paths are explicit, project-scoped, and replace
   const runtime = createDormantPluginRuntimeComposition({
     projectRoot,
     paths: injected,
-    routes: new MemorySignalRouteStore(),
-    intakes: new MemoryMeetingIntakeStore(),
     messageStore: new MessageStore(),
   });
   assert.deepEqual(runtime.paths, injected);
@@ -133,8 +128,6 @@ test('dormant composition binds messaging routes to its single K-1 domain', asyn
   manifest.features[0].capabilities = grants;
   const runtime = createDormantPluginRuntimeComposition({
     projectRoot,
-    routes: new MemorySignalRouteStore(),
-    intakes: new MemoryMeetingIntakeStore(),
     messageStore: new MessageStore(),
     now: () => 5_000,
   });
@@ -191,8 +184,6 @@ test('production handshake policy covers verified external source readiness with
   let now = 5_000;
   const runtime = createDormantPluginRuntimeComposition({
     projectRoot,
-    routes: new MemorySignalRouteStore(),
-    intakes: new MemoryMeetingIntakeStore(),
     messageStore: new MessageStore(),
     processes: new FakePluginProcessAdapter(),
     now: () => now,
@@ -239,7 +230,6 @@ test('production composition constructs and recovers K-2D but exposes no startup
   const cloudBinding = source.match(/const\s+([A-Za-z_$][\w$]*)\s*=\s*createCloudConversationComposition\(\{/);
   assert.ok(cloudBinding, 'production must own one cloud conversation composition');
   const runtimeFactory = `${cloudBinding[1]}.createRuntime`;
-  const routeBootstrapIndex = source.indexOf('await ensureOfficialPluginSignalRoutes({');
   const runtimeCompositionIndex = source.indexOf(`${runtimeFactory}({`);
   const managerCompositionIndex = source.indexOf('createPluginManagerRuntimeComposition({');
 
@@ -254,12 +244,6 @@ test('production composition constructs and recovers K-2D but exposes no startup
   ]) {
     assert.match(compositionSource, seam, 'production must share the publishing stores and subscription drain seam');
   }
-  assert.match(source, /routes: signalRouteStore,\s*ownerId: privateUserId/);
-  assert.ok(routeBootstrapIndex >= 0, 'production must provision official Host signal routes');
-  assert.ok(
-    routeBootstrapIndex < runtimeCompositionIndex,
-    'Host signal routes must exist before the external runtime can accept owner activation',
-  );
   const runtimeBinding = source.match(
     new RegExp(`const\\s+([A-Za-z_$][\\w$]*)\\s*=\\s*${cloudBinding[1]}\\.createRuntime\\(\\{`),
   );
@@ -290,57 +274,29 @@ test('production composition constructs and recovers K-2D but exposes no startup
     managerCompositionIndex >= 0 && managerCompositionIndex < recoveryIndex,
     'Plugin Manager state projection must be composed before durable instances resume',
   );
-  assert.match(source, new RegExp(`await ${runtimeName}\\.shutdown\\('api_shutdown'\\)`));
-  assert.match(source, /OfficialPluginHistoryImportService/);
-  assert.match(source, /createLarkCliFeishuArtifactInspector/);
-  assert.match(source, /historyImport:/);
+  assert.match(
+    source,
+    new RegExp(`app\\.addHook\\('onClose', async \\(\\) => ${runtimeName}\\.shutdown\\('api_shutdown'\\)\\)`),
+  );
   assert.match(source, /createPluginManagerRuntimeComposition\(\{/);
   assert.match(source, /new MachineOfficialPluginCatalog\(\{/);
   assert.match(source, /validateCatalog: validatePluginCatalog/);
   assert.match(source, /loadMachinePluginCatalog\(OFFICIAL_PLUGIN_CATALOG_URL\)/);
-  // F202 W2-6: the Host grant table is its own module, and production composes exactly that table.
-  // The per-connector grant sets are pinned in f202-w2-6-official-connector-grants.test.js.
   assert.match(source, /const pluginManagerHostPolicies = OFFICIAL_PLUGIN_HOST_POLICIES;/);
-  const { OFFICIAL_PLUGIN_HOST_POLICIES } = await import(
-    '../dist/domains/plugin/manager/official-plugin-host-policies.js'
-  );
-  const hostPolicy = (pluginId) => OFFICIAL_PLUGIN_HOST_POLICIES.find((entry) => entry.pluginId === pluginId);
-  assert.equal(hostPolicy('dev.clowder.video-generation')?.replacesRepositoryPluginId, 'video-gen');
-  assert.equal(hostPolicy('official.weixin-mp')?.replacesRepositoryPluginId, 'weixin-mp');
   assert.doesNotMatch(source, /weixinMpHandlers/);
   assert.doesNotMatch(source, /limbAdapterRegistry/);
-  assert.deepEqual(hostPolicy('official.wechat-visible-reader')?.effectiveGrants, [
-    'plugin.state.get',
-    'plugin.state.set',
-  ]);
-  assert.ok(hostPolicy('dev.clowder.video-analysis'));
-  assert.equal(hostPolicy('dev.clowder.video-analysis').replacesRepositoryPluginId, undefined);
-  assert.deepEqual(hostPolicy('official.enterprise-workflow')?.effectiveGrants, ['plugin.config.read']);
   const callbackRoutes = readFileSync(new URL('../src/routes/callbacks.ts', import.meta.url), 'utf8');
   assert.doesNotMatch(callbackRoutes, /registerCallback(?:WeCom|Lark)ActionRoutes/);
   assert.match(
     source,
     /localGrantPolicy:\s*\(manifest\)\s*=>\s*resolveLocalPluginEffectiveGrants\(pluginManagerHostPolicies, manifest\)/,
   );
-  const managerCompatibilityIndex = source.indexOf('const repositoryPluginManagerCompatibility =');
-  const managerComposition = source.slice(managerCompatibilityIndex, recoveryIndex);
-  assert.ok(managerCompatibilityIndex >= 0, 'repository compatibility must be composed after catalog policy exists');
-  assert.match(
-    managerComposition,
-    /compatibility:\s*repositoryPluginManagerCompatibility/,
-    'Train B Manager must project real repository plugins through its read-only compatibility boundary',
-  );
-  assert.match(managerComposition, /loadSuppressedPluginIds:/);
-  assert.match(managerComposition, /resolveRepositoryReplacementPluginIds\(/);
-  assert.match(managerComposition, /pluginRuntime\.inventoryStore\.snapshot\(\)/);
-  assert.match(managerComposition, /instance\.lifecycleState === 'installed'/);
+  assert.doesNotMatch(source, /repositoryPluginManagerCompatibility|resolveRepositoryReplacementPluginIds/);
+  assert.doesNotMatch(source, /ensureOfficialPluginSignalRoutes|OfficialPluginHistoryImportService/);
   assert.match(source, /registerPluginManagerRoutes\(managerApp/);
   assert.match(source, /contributions: pluginRuntime\.supervisor/);
   assert.match(source, /register\(pluginManagerUploadRoutes/);
-  assert.match(source, /officialRouteCatalogProvider:\s*officialPluginCatalog/);
-  assert.match(source, /installer: pluginManagerRuntime\.officialRouteInstaller/);
   assert.doesNotMatch(source, /new OfficialPluginPackageInstaller\(/);
-  assert.match(source, /registerOfficialPluginRoutes\(app/);
   assert.doesNotMatch(source, new RegExp(`${runtimeName}\\.supervisor\\.start\\(`));
 });
 

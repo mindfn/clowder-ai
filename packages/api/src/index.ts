@@ -83,7 +83,6 @@ import { F231ApprovalAdapter } from './domains/approval-hub/adapters/F231Approva
 import { F260ApprovalAdapter } from './domains/approval-hub/adapters/F260ApprovalAdapter.js';
 import { F266ApprovalAdapter } from './domains/approval-hub/adapters/F266ApprovalAdapter.js';
 import { F276ApprovalAdapter } from './domains/approval-hub/adapters/F276ApprovalAdapter.js';
-import { F292ApprovalAdapter } from './domains/approval-hub/adapters/F292ApprovalAdapter.js';
 import { F306ApprovalAdapter } from './domains/approval-hub/adapters/F306ApprovalAdapter.js';
 import { F321ApprovalAdapter } from './domains/approval-hub/adapters/F321ApprovalAdapter.js';
 import { createDispatchProposalStore } from './domains/approval-hub/stores/factories/DispatchProposalStoreFactory.js';
@@ -207,8 +206,6 @@ import { SessionSealer } from './domains/cats/services/session/SessionSealer.js'
 import { TranscriptReader } from './domains/cats/services/session/TranscriptReader.js';
 import { TranscriptWriter } from './domains/cats/services/session/TranscriptWriter.js';
 import { createBacklogStore } from './domains/cats/services/stores/factories/BacklogStoreFactory.js';
-import { createCommunityIssueDraftStore } from './domains/cats/services/stores/factories/CommunityIssueDraftStoreFactory.js';
-import { createCommunityIssueStore } from './domains/cats/services/stores/factories/CommunityIssueStoreFactory.js';
 import { createFrustrationIssueStore } from './domains/cats/services/stores/factories/FrustrationIssueStoreFactory.js';
 import { createLabelStore } from './domains/cats/services/stores/factories/LabelStoreFactory.js';
 import { createMemoryStore } from './domains/cats/services/stores/factories/MemoryStoreFactory.js';
@@ -251,12 +248,7 @@ import {
 } from './domains/growing/EntrustedWorkOwnerReadService.js';
 import { EntrustedWorkTaskExecutionService } from './domains/growing/EntrustedWorkTaskExecutionService.js';
 import { F232PreparedArtifactReader } from './domains/growing/F232PreparedArtifactReader.js';
-import { F290CollectiveWorkResultProducerAdapter } from './domains/growing/F290CollectiveWorkResultProducerAdapter.js';
-import {
-  F246NeedsMeProducerAdapter,
-  F292NeedsMeProducerAdapter,
-  F306NeedsMeProducerAdapter,
-} from './domains/growing/NeedsMeProducerAdapter.js';
+import { F246NeedsMeProducerAdapter, F306NeedsMeProducerAdapter } from './domains/growing/NeedsMeProducerAdapter.js';
 import { NeedsMeProducerCatalog } from './domains/growing/NeedsMeProducerCatalog.js';
 import { ActivityTracker } from './domains/health/ActivityTracker.js';
 import { shouldTrackApiActivity } from './domains/health/activity-route-filter.js';
@@ -350,17 +342,6 @@ import { RequestReviewOwnerReceiptService } from './infrastructure/capability-ev
 import { createRequestReviewCommitVersionVerifier } from './infrastructure/capability-evolution/change/request-review-owner-version-verifier.js';
 import { CommandRegistry } from './infrastructure/commands/CommandRegistry.js';
 import { parseManifestSlashCommands } from './infrastructure/commands/manifest-commands.js';
-import { buildThreadDeepLink } from './infrastructure/connectors/connector-command-helpers.js';
-import { registerGitHubRepoWebhook } from './infrastructure/connectors/github-repo-event/register-github-repo-webhook.js';
-import { createCiCollectionReaders } from './infrastructure/email/ci-status-batch-fetcher.js';
-import { IssueCommentRouter } from './infrastructure/email/IssueCommentRouter.js';
-import { CiCdRouter, ConflictRouter, fetchPrCiStatus, ReviewFeedbackRouter } from './infrastructure/email/index.js';
-import type { ReviewFeedbackPrMetadata } from './infrastructure/email/ReviewFeedbackTaskSpec.js';
-import { fetchLatestIssueCommentCursor } from './infrastructure/github/comment-cursors.js';
-import { fetchGitHubReviewThreads } from './infrastructure/github/fetch-review-threads.js';
-import { buildGhCliEnv, resolveGhCliToken, withHiddenGhCliWindow } from './infrastructure/github/gh-cli-env.js';
-import { createGitHubRepoPollReaders } from './infrastructure/github/repo-poll-readers.js';
-import { executeGitHubRequest, GitHubRateLimitError } from './infrastructure/github/request-budget.js';
 import type { EvalDomainId } from './infrastructure/harness-eval/domain/eval-domain-registry.js';
 import { EvalRepairCaseActionResolver } from './infrastructure/harness-eval/eval-repair-case-action-resolver.js';
 import type { EvalRepairOutcomeService } from './infrastructure/harness-eval/eval-repair-outcome.js';
@@ -438,7 +419,6 @@ import { callbackProposeEventMemoryCorrectionRoutes } from './routes/callback-pr
 import { callbackProposeTasteRoutes } from './routes/callback-propose-taste-routes.js';
 import { callbackRuntimeInteractionRoutes } from './routes/callback-runtime-interaction-routes.js';
 import { configSecretsRoutes } from './routes/config-secrets.js';
-import { connectorWebhookRoutes } from './routes/connector-webhooks.js';
 import { dispatchProposalRoutes } from './routes/dispatch-proposal-routes.js';
 import { entityMemoryOwnerRoutes } from './routes/entity-memory-owner.js';
 import { readEntityMemorySource } from './routes/entity-memory-source.js';
@@ -465,12 +445,8 @@ import {
   catsRoutes,
   claudeRescueRoutes,
   commandsRoutes,
-  communityIssueDraftRoutes,
-  communityIssueRoutes,
-  communityRepoConfigRoutes,
   conciergeRoutes,
   configRoutes,
-  connectorMediaRoutes,
   debugInvocationExportRoutes,
   distillationOpportunityRoutes,
   distillationRoutes,
@@ -588,6 +564,7 @@ import { emitQueueUpdated } from './utils/queue-enrichment.js';
 import { resolveUserId } from './utils/request-identity.js';
 import { buildSkillMountTargets } from './utils/skill-mount.js';
 import { resolveCatCafeSkillsSource } from './utils/skill-source.js';
+import { buildThreadDeepLink } from './utils/thread-deep-link.js';
 import { getDefaultUploadDir } from './utils/upload-paths.js';
 
 const PORT = parseInt(process.env.API_SERVER_PORT ?? '3004', 10);
@@ -1099,9 +1076,6 @@ async function main(): Promise<void> {
     lock: new SessionMutex(),
   });
 
-  // F235: Community issue draft store + publisher for "Publish to Community" flow
-  const communityIssueDraftStore = createCommunityIssueDraftStore(redis);
-
   // F155 B-4/B-6: Guide state is runtime-only (in-memory, resets on restart)
   const { InMemoryGuideSessionStore } = await import('./domains/guides/GuideSessionRepository.js');
   const guideSessionStore = new InMemoryGuideSessionStore();
@@ -1109,16 +1083,6 @@ async function main(): Promise<void> {
   const dismissTracker = new InMemoryGuideDismissTracker();
   let taskStore = createTaskStore(redis);
   const labelStore = createLabelStore(redis);
-  const communityIssueStore = createCommunityIssueStore(redis);
-  // F168 Phase F: per-repo routing config (guard thread + guard cat)
-  const { createCommunityRepoConfigStore } = await import('./domains/community/CommunityRepoConfigStore.js');
-  const communityRepoConfigStore = createCommunityRepoConfigStore(redis);
-
-  // F168 Phase A P1-1: create community event services from Redis (best-effort, optional).
-  // Passed to communityIssueRoutes, rehydrateGitHubSchedules, and connector gateway.
-  let communityEventLog: import('./domains/community/CommunityEventLog.js').ICommunityEventLog | undefined;
-  let communityObjectStore: import('./domains/community/CommunityObjectStore.js').ICommunityObjectStore | undefined;
-  let communityProjector: import('./domains/community/community-projector.js').CommunityProjector | undefined;
   let actionSuccessorLeaseStore:
     | import('./domains/ball-custody/RedisActionSuccessorLeaseStore.js').RedisActionSuccessorLeaseStore
     | undefined;
@@ -1147,15 +1111,8 @@ async function main(): Promise<void> {
   let actionSuccessorCompletionService:
     | import('./domains/ball-custody/ActionSuccessorCompletionService.js').ActionSuccessorCompletionService
     | undefined;
-  let externalReviewRecoveryService:
-    | import('./domains/ball-custody/ExternalReviewRecoveryService.js').ExternalReviewRecoveryService
-    | undefined;
   let taskActionSuccessorLifecycle:
     | import('./domains/ball-custody/TaskActionSuccessorLifecycle.js').TaskActionSuccessorLifecycle
-    | undefined;
-  // F168 Phase D D3/D4: reconciliation finding store (Redis-backed, no TTL)
-  let communityFindingStore:
-    | import('./domains/community/reconciliation/CommunityReconciliationFindingStore.js').CommunityReconciliationFindingStore
     | undefined;
   // F233 Phase B (B2): ball-custody ingest（fire-and-forget 旁路写球权事件，注入 AgentRouter）
   let ballCustodyIngest: import('./domains/ball-custody/BallCustodyIngest.js').BallCustodyIngest | undefined;
@@ -1165,18 +1122,6 @@ async function main(): Promise<void> {
     | undefined;
   let ballCustodyEventLog: import('./domains/ball-custody/BallCustodyEventLog.js').IBallCustodyEventLog | undefined;
   if (redis) {
-    const [elMod, osMod, pjMod, fsMod] = await Promise.all([
-      import('./domains/community/CommunityEventLog.js'),
-      import('./domains/community/CommunityObjectStore.js'),
-      import('./domains/community/community-projector.js'),
-      import('./domains/community/reconciliation/CommunityReconciliationFindingStore.js'),
-    ]);
-    communityEventLog = new elMod.RedisCommunityEventLog(redis);
-    communityObjectStore = new osMod.RedisCommunityObjectStore(redis);
-    communityProjector = new pjMod.CommunityProjector(communityEventLog, communityObjectStore);
-    communityFindingStore = new fsMod.CommunityReconciliationFindingStore(redis);
-    app.log.info('[api] F168 Phase A+D: community event + finding services initialized');
-
     const [
       actionStoreMod,
       actionTruthMod,
@@ -1198,26 +1143,6 @@ async function main(): Promise<void> {
     taskApprovedDelegateProvider = proposalDelegateMod.createTaskApprovedDelegateProvider(proposalStore, threadStore);
     actionSubjectTruthResolver = new actionTruthMod.ActionSubjectTruthResolver(
       actionSuccessorLeaseStore,
-      communityObjectStore,
-      // F167: bridge tracking task HEAD → freshness resolver when community
-      // projection hasn't been seeded by ExternalReviewCoordinator yet.
-      // Carry PR lifecycle metadata with the server-observed GitHub HEAD. A
-      // completed wait keeps its durable HEAD eligible, while merged/closed
-      // facts still prevent a fresh action-successor generation.
-      {
-        async getBySubject(subjectKey: string) {
-          const task = await taskStore.getBySubject(subjectKey);
-          if (!task) return null;
-          return {
-            kind: task.kind,
-            status: task.status,
-            headSha: task.automationState?.ci?.headSha ?? null,
-            ciPrState: task.automationState?.ci?.prState ?? null,
-            reviewPrState: task.automationState?.review?.prState ?? null,
-            closedAt: task.automationState?.closedAt ?? null,
-          };
-        },
-      },
       {
         async get(taskId: string) {
           const task = await taskStore.get(taskId);
@@ -1258,12 +1183,6 @@ async function main(): Promise<void> {
       projectionRetirement,
     );
     actionSuccessorCompletionService = completionService;
-    // F167: external review recovery — stale HEAD recovery for external reviews
-    const externalReviewRecoveryMod = await import('./domains/ball-custody/ExternalReviewRecoveryService.js');
-    externalReviewRecoveryService = new externalReviewRecoveryMod.ExternalReviewRecoveryService({
-      leaseStore: actionSuccessorLeaseStore,
-      truthResolver: actionSubjectTruthResolver,
-    });
     taskActionSuccessorLifecycle = new taskActionLifecycleMod.TaskActionSuccessorLifecycle({
       leaseStore: actionSuccessorLeaseStore,
       completionService: actionSuccessorCompletionService,
@@ -1309,16 +1228,6 @@ async function main(): Promise<void> {
       { warn: app.log.warn.bind(app.log) },
       taskActionSuccessorLifecycle,
     );
-  }
-
-  if (redis) {
-    const { RedisPrTrackingStore } = await import('./infrastructure/email/RedisPrTrackingStore.js');
-    const { backfillLegacyPrTracking } = await import('./infrastructure/email/backfill-legacy-pr-tracking.js');
-    await backfillLegacyPrTracking({
-      legacyStore: new RedisPrTrackingStore(redis),
-      taskStore,
-      log: app.log,
-    });
   }
 
   // F153 Phase F AC-F4: Hydrate trace store from Redis messages on cold start
@@ -2560,30 +2469,7 @@ async function main(): Promise<void> {
   });
   const { LiveCompanionSessions } = await import('./domains/concierge/live/LiveCompanionSessions.js');
   const { createLiveConfigChange } = await import('./domains/concierge/live/live-config-transition.js');
-  const { createF317MeetingSource } = await import('./domains/concierge/meeting/f317-meeting-source.js');
-  const { createRealtimeCompanionAudioSource: createF317AudioWakeSource } = await import(
-    './routes/realtime-companion-audio-source.js'
-  );
-  const { resolveAudioServiceUrl } = await import('./routes/audio-proxy.js');
-  const meetingAudioUrl = resolveAudioServiceUrl();
-  const meetingWake = createF317AudioWakeSource({ url: meetingAudioUrl });
-  const liveCompanionSessions = new LiveCompanionSessions({
-    source: createF317MeetingSource({
-      transcriptDir: process.env.TRANSCRIPT_DIR ?? join(findMonorepoRoot(), 'scripts/meeting-copilot/transcripts'),
-      audioServiceUrl: meetingAudioUrl,
-    }),
-    wakeSource: {
-      subscribe: async (threadId, callbacks) => {
-        const subscription = await meetingWake.subscribe(threadId, {
-          onTranscript: () => callbacks.onTranscript(),
-          onStopped: callbacks.onStopped,
-          onError: callbacks.onError,
-        });
-        void subscription.closed.catch((error) => callbacks.onError?.(error));
-        return { close: () => subscription.close() };
-      },
-    },
-  });
+  const liveCompanionSessions = new LiveCompanionSessions();
   const previousAppendListener = appendListener;
   appendListener = (message) => {
     previousAppendListener?.(message);
@@ -2661,9 +2547,6 @@ async function main(): Promise<void> {
     listActiveRuns: (threadId) =>
       invocationTracker.getActiveSlots(threadId).flatMap((slot) => (slot.activeRun ? [slot.activeRun] : [])),
   });
-  let collectiveContext:
-    | import('./domains/plugin/builtin-runtime/collective-current-context.js').CollectiveCurrentContext
-    | undefined;
   // F117 K2: the Claude Agent SDK carrier runs PreCompact and SessionStart(compact) in-process. They
   // reuse the session hooks route's seal and post-compact projection; an in-process hook is
   // authenticated by construction, so it needs no callback registry.
@@ -2689,11 +2572,10 @@ async function main(): Promise<void> {
     },
     postCompactContext: ({ cliSessionId }) => inProcessCompactionSurface.postCompactContextFor(cliSessionId),
   });
-  let collectivePreparedArtifactReader: PreparedArtifactReader | undefined;
   let trustedImagePathResolver: (hmrId: string) => Promise<string | undefined> = async () => undefined;
   router = new AgentRouter({
     resolveTrustedImagePath: async (hmrId) => trustedImagePathResolver(hmrId),
-    collectiveContext: () => collectiveContext,
+
     agentRegistry,
     registry,
     messageStore,
@@ -3423,8 +3305,6 @@ async function main(): Promise<void> {
   await app.register(recallMetricsRoutes, {
     evidenceDb: memoryServices.store.getDb(),
     messageStore,
-    taskStore,
-    taskObservations: { read: (task) => pullRequests.taskSignals(task) },
     threadStore,
     ...(personMemoryStore ? { personMemoryStore } : {}),
     cueSourceReader: memoryCueRuntime.sourceReader,
@@ -3688,21 +3568,6 @@ async function main(): Promise<void> {
           dispositionService: pawFeelDispositionService,
         })
       : undefined;
-  // F192 Phase H AC-H4: real GitPublisher (git worktree + gh) + per-domain generators
-  const { createGitWorktreePublisher } = await import(
-    './infrastructure/harness-eval/publish-verdict/git-worktree-publisher.js'
-  );
-  const verdictRepoFullName =
-    process.env.CAT_CAFE_VERDICT_REPO_FULL_NAME ?? process.env.CAT_CAFE_REPO_FULL_NAME ?? 'zts212653/cat-cafe';
-  const harnessGitPublisher = createGitWorktreePublisher({
-    repoRoot,
-    expectedRepoFullName: verdictRepoFullName,
-  });
-  const capabilityEvolutionMeasurementGitPublisher = createGitWorktreePublisher({
-    repoRoot,
-    expectedRepoFullName: verdictRepoFullName,
-    stageScope: 'capability-evolution-measurement',
-  });
   const { createA2aGeneratorAdapter } = await import(
     './infrastructure/harness-eval/publish-verdict/a2a-generator-adapter.js'
   );
@@ -3746,12 +3611,9 @@ async function main(): Promise<void> {
     const { DesignGateEpisodeSourceProviderImpl } = await import(
       './infrastructure/harness-eval/design-gate/design-gate-episode-source-provider.js'
     );
-    const { GhDesignGatePullRequestReader, GitDesignGateTruth } = await import(
-      './infrastructure/harness-eval/design-gate/design-gate-gh-evidence-reader.js'
-    );
+    const { GitDesignGateTruth } = await import('./infrastructure/harness-eval/design-gate/design-gate-git-truth.js');
     designGateEpisodeSourceProvider = new DesignGateEpisodeSourceProviderImpl({
       repoRoot,
-      pullRequestReader: new GhDesignGatePullRequestReader(),
       reviewMessageReader: messageStore,
       gitTruth: new GitDesignGateTruth(repoRoot),
     });
@@ -3949,6 +3811,7 @@ async function main(): Promise<void> {
     redis: redisClient ?? undefined,
     invokeTriggerProvider: invokeTriggerHolder,
     gitPublisher: harnessGitPublisher,
+    messageStore,
     verdictGenerators,
     // 砚砚 R4 P1 + cloud R4 P1: register CallbackAuthRegistry for MCP route auth.
     callbackRegistry: registry,
@@ -4176,7 +4039,6 @@ async function main(): Promise<void> {
       ).createCapabilityEvolutionMeasurementIssuer({
         repoRoot,
         programReader: evolutionProgramService,
-        gitPublisher: capabilityEvolutionMeasurementGitPublisher,
       })
     : undefined;
   const evolutionProgramPreparationService =
@@ -4621,387 +4483,11 @@ async function main(): Promise<void> {
     },
   });
 
-  // F202-2B: Hoisted for late-binding GitHub schedule rehydration (closure set inside F202 block)
-  let rehydrateGitHubSchedules: ((githubDeps: Partial<GitHubScheduleDeps>) => Promise<void>) | undefined;
-  let getGitHubPluginEnv: () => Record<string, string | undefined> = () => ({});
-  const getGitHubEnvValue = (key: string): string | undefined => {
-    const pluginEnv = getGitHubPluginEnv();
-    return Object.hasOwn(pluginEnv, key) ? pluginEnv[key] : process.env[key];
-  };
-  const getGitHubToken = (): string | undefined => {
-    return resolveGhCliToken({ pluginEnv: getGitHubPluginEnv() });
-  };
-  const getGitHubExecOptions = (timeout: number): { timeout: number; env?: NodeJS.ProcessEnv; windowsHide: true } => {
-    return withHiddenGhCliWindow({
-      timeout,
-      env: buildGhCliEnv({ token: getGitHubToken() }),
-    });
-  };
-  const repoPollReaders = createGitHubRepoPollReaders({ getGitHubToken });
-  const { createRepoActivityTemplate } = await import('./infrastructure/scheduler/templates/repo-activity.js');
-  templateRegistry.register(createRepoActivityTemplate({ getGitHubToken }));
-  const fetchPrReviewThreads = (
-    repo: string,
-    pr: number,
-    reviewThreadIds: readonly string[],
-    signal?: AbortSignal,
-  ): Promise<readonly import('@cat-cafe/shared').GitHubReviewThreadBaseline[]> =>
-    fetchGitHubReviewThreads(repo, pr, reviewThreadIds, { ghToken: getGitHubToken(), signal });
-
-  const fetchPrWaitBaseline = async (
-    repoFullName: string,
-    prNumber: number,
-    when: readonly import('@cat-cafe/shared').GitHubPrWaitPredicate[],
-  ) => {
-    const [{ readGitHubWaitBaseline }, { fetchPaginated }] = await Promise.all([
-      import('./domains/github-signals/GitHubWaitBaselineReader.js'),
-      import('./infrastructure/github/fetch-paginated.js'),
-    ]);
-    const { execFile } = await import('node:child_process');
-    const { promisify } = await import('node:util');
-    const execFileAsync = promisify(execFile);
-    return readGitHubWaitBaseline(
-      { repoFullName, prNumber, when },
-      {
-        fetchCi: (repo, pr) => fetchPrCiStatus(repo, pr, app.log, { ghToken: getGitHubToken() }),
-        fetchInlineComments: (repo, pr) =>
-          fetchPaginated(`/repos/${repo}/pulls/${pr}/comments`, { ghToken: getGitHubToken() }),
-        fetchConversationComments: (repo, pr) =>
-          fetchPaginated(`/repos/${repo}/issues/${pr}/comments`, { ghToken: getGitHubToken() }),
-        fetchReviews: (repo, pr) => fetchPaginated(`/repos/${repo}/pulls/${pr}/reviews`, { ghToken: getGitHubToken() }),
-        fetchMergeState: async (repo, pr) => {
-          const { stdout } = await execFileAsync(
-            'gh',
-            ['pr', 'view', String(pr), '-R', repo, '--json', 'mergeable', '--jq', '.mergeable'],
-            getGitHubExecOptions(15_000),
-          );
-          return stdout.trim() || 'UNKNOWN';
-        },
-        fetchReviewThreads: fetchPrReviewThreads,
-      },
-    );
-  };
-  const fetchPrCurrentHead = async (repoFullName: string, prNumber: number): Promise<string> => {
-    const status = await fetchPrCiStatus(repoFullName, prNumber, app.log, { ghToken: getGitHubToken() });
-    if (!status?.headSha) throw new Error(`Current PR HEAD unavailable for ${repoFullName}#${prNumber}`);
-    return status.headSha;
-  };
-  observeLivePrFreshness = async ({ subjectRef, repoFullName, prNumber }) => {
-    const status = await fetchPrCiStatus(repoFullName, prNumber, app.log, {
-      ghToken: getGitHubToken(),
-    });
-    if (!status) return null;
-    return { subjectRef, headSha: status.headSha, prState: status.prState };
-  };
-  const fetchIssueCommentCursor = async (repoFullName: string, issueNumber: number): Promise<number> =>
-    fetchLatestIssueCommentCursor(repoFullName, issueNumber, { ghToken: getGitHubToken() });
-  const fetchIssueWaitBaseline = async (repoFullName: string, issueNumber: number) => {
-    const { readGitHubIssueWaitBaseline } = await import('./domains/github-signals/GitHubIssueWaitBaselineReader.js');
-    const { execFile } = await import('node:child_process');
-    const { promisify } = await import('node:util');
-    const execFileAsync = promisify(execFile);
-    return readGitHubIssueWaitBaseline(
-      { repoFullName, issueNumber },
-      {
-        fetchCommentCursor: fetchIssueCommentCursor,
-        fetchMetadata: async (repo, issue) => {
-          const { stdout } = await execFileAsync(
-            'gh',
-            ['api', `/repos/${repo}/issues/${issue}`, '--jq', '{state, authorLogin: .user.login}'],
-            getGitHubExecOptions(15_000),
-          );
-          const data = JSON.parse(stdout) as { state?: string; authorLogin?: string };
-          return {
-            state: data.state === 'closed' ? ('closed' as const) : ('open' as const),
-            ...(data.authorLogin ? { authorLogin: data.authorLogin } : {}),
-          };
-        },
-      },
-    );
-  };
-  let loadRepositoryPluginInfo: (() => Promise<readonly import('@cat-cafe/shared').PluginInfo[]>) | undefined;
-  let runInstalledPluginTest:
-    | ((
-        pluginId: string,
-      ) => Promise<import('./domains/plugin/operations/plugin-operation-routes.js').InstalledPluginOperationResult>)
-    | undefined;
-
-  // F202: Plugin framework — discovery + config + resource activation
-  {
-    const { join } = await import('node:path');
-    const { PluginRegistry } = await import('./domains/plugin/PluginRegistry.js');
-    const { PluginResourceActivator, rehydrateEnabledPluginSchedules } = await import(
-      './domains/plugin/PluginResourceActivator.js'
-    );
-    const { ScheduleFactoryRegistry } = await import('./domains/plugin/ScheduleFactoryRegistry.js');
-    const { registerPluginRoutes } = await import('./routes/plugin-routes.js');
-    const { reconcileMcpRuntimeConfig, readCapabilitiesConfig, writeCapabilitiesConfig, withCapabilityLock } =
-      await import('./config/capabilities/capability-orchestrator.js');
-    const { resolveStartupCliConfigContext } = await import('./config/capabilities/startup-cli-config.js');
-    const monorepoRoot = findMonorepoRoot(process.cwd());
-    const pluginsDir = join(monorepoRoot, 'packages', 'api', 'src', 'plugins');
-    const { loadAllPluginConfigs, readPluginEnvSnapshot, resolvePluginEnv } = await import(
-      './domains/plugin/plugin-config-store.js'
-    );
-    const pluginRegistry = new PluginRegistry(pluginsDir);
-    pluginRegistry.scan();
-    const scannedManifests = pluginRegistry.getAllManifests();
-    const loadedEnvKeys = loadAllPluginConfigs(resolveActiveProjectRoot(), scannedManifests);
-    app.log.info(
-      `[api] F202: PluginRegistry scanned ${scannedManifests.length} plugin(s), loaded ${loadedEnvKeys} config key(s)`,
-    );
-    loadRepositoryPluginInfo = async () => {
-      const manifests = pluginRegistry.scan();
-      const projectRoot = resolveActiveProjectRoot();
-      const capabilities = await readCapabilitiesConfig(projectRoot);
-      const envSnapshot = readPluginEnvSnapshot(projectRoot, manifests);
-      return manifests.map((manifest) =>
-        pluginRegistry.getPluginInfo(manifest, capabilities, envSnapshot, { includeNonSensitiveValues: true }),
-      );
-    };
-    getGitHubPluginEnv = () => {
-      const githubManifest = pluginRegistry.getManifest('github');
-      return githubManifest ? resolvePluginEnv([githubManifest]) : {};
-    };
-    // F202 Phase 2: Schedule factory registry + GitHub factories
-    const scheduleFactoryRegistry = new ScheduleFactoryRegistry();
-    const { registerGitHubScheduleFactories } = await import('./domains/plugin/github-schedule-factories.js');
-    registerGitHubScheduleFactories(scheduleFactoryRegistry);
-
-    // F202-2B: Mutable deps ref — starts with just log, populated with full GitHub deps later
-    const scheduleFactoryDeps: Record<string, unknown> = { log: app.log };
-
-    const pluginActivator = new PluginResourceActivator({
-      resolveProjectRoot: () => resolveActiveProjectRoot(),
-      resolveMainProjectRoot: () => monorepoRoot,
-      pluginsDir,
-      limbRegistry,
-      skillsSourceDir: join(monorepoRoot, 'cat-cafe-skills'),
-      readCapabilities: () => readCapabilitiesConfig(resolveActiveProjectRoot()),
-      writeCapabilities: async (config) => {
-        const root = resolveActiveProjectRoot();
-        await writeCapabilitiesConfig(root, config);
-        const { projectRoot, paths } = resolveStartupCliConfigContext(root);
-        await reconcileMcpRuntimeConfig(config, paths, projectRoot);
-      },
-      withCapabilityLock: (fn) => withCapabilityLock(resolveActiveProjectRoot(), fn),
-      // F202 Phase 2: schedule resource activation deps
-      scheduleFactoryRegistry,
-      taskRunner: {
-        registerPostStart: (task) => taskRunnerV2.registerPostStart(task),
-        unregister: (taskId) => taskRunnerV2.unregister(taskId),
-      },
-      // F202-2B: Mutable deps ref — populated via rehydrateGitHubSchedules after GitHub services created
-      scheduleFactoryDeps:
-        scheduleFactoryDeps as import('./domains/plugin/ScheduleFactoryRegistry.js').ScheduleFactoryDeps,
-    });
-
-    // F202-2B: Schedule rehydration deferred — GitHub factories need deps created later.
-    // Closure captures F202 scope; called after GitHub services are created (before taskRunnerV2.start).
-    rehydrateGitHubSchedules = async (githubDeps: Partial<GitHubScheduleDeps>) => {
-      // Populate the mutable deps ref (also updates pluginActivator's reference)
-      Object.assign(scheduleFactoryDeps, githubDeps);
-
-      // Migration: auto-enable GitHub schedule resources on first startup after Phase B migration
-      // Uses marker file to prevent re-enable after explicit disable (P2-1 fix)
-      const root = resolveActiveProjectRoot();
-      const githubManifest = pluginRegistry.getManifest('github');
-      if (githubManifest) {
-        const existingCaps = await readCapabilitiesConfig(root);
-        const {
-          shouldRunGitHubScheduleMigration,
-          markGitHubScheduleMigrationDone,
-          buildGitHubMigrationEntries,
-          buildGitHubMigrationEnv,
-          buildGitHubScheduleOverrideMigrations,
-          promotePendingGitHubMigrationEntries,
-          backfillMissingGitHubScheduleEntries,
-          hasGitHubScheduleBackfillRun,
-          markGitHubScheduleBackfillDone,
-        } = await import('./domains/plugin/github-schedule-factories.js');
-        const hasRepoScanRuntimeDeps = !!githubDeps.reconciliationDedup;
-        const migrationEnv = buildGitHubMigrationEnv(getGitHubPluginEnv());
-        let latestCaps = existingCaps;
-        if (shouldRunGitHubScheduleMigration(root, existingCaps)) {
-          // P2-1 fix: gate repo-scan on both env vars AND runtime deps (Redis).
-          // Without Redis, factory construction fails at rehydration, leaving
-          // capabilities.json with "enabled" but no running task.
-          const entries = buildGitHubMigrationEntries(githubManifest, migrationEnv, {
-            repoScanDepsAvailable: hasRepoScanRuntimeDeps,
-          });
-          if (entries.length > 0) {
-            const overrideMigrations = buildGitHubScheduleOverrideMigrations(
-              entries,
-              globalControlStore.listOverrides(),
-            );
-            for (const override of overrideMigrations) {
-              globalControlStore.setTaskOverride(override.taskId, override.enabled, override.updatedBy);
-            }
-
-            // P2-cloud: spread existingCaps to preserve governancePack and other top-level fields
-            const updatedCaps: import('@cat-cafe/shared').CapabilitiesConfig = {
-              ...(existingCaps ?? { version: 1 as const, capabilities: [] }),
-              version: 1 as const,
-              capabilities: [...(existingCaps?.capabilities ?? []), ...entries],
-            };
-            await writeCapabilitiesConfig(root, updatedCaps);
-            latestCaps = updatedCaps;
-            markGitHubScheduleMigrationDone(root);
-            const enabledEntryCount = entries.filter((entry) => entry.enabled).length;
-            const pendingEntryCount = entries.length - enabledEntryCount;
-            app.log.info(
-              `[api] F202-2B migration: enabled ${enabledEntryCount} GitHub schedule resources ` +
-                `${pendingEntryCount > 0 ? `and left ${pendingEntryCount} pending ` : ''}` +
-                `and migrated ${overrideMigrations.length} scheduler overrides`,
-            );
-          }
-        }
-        // P1-1 (cloud review): backfill manifest schedule resources missing from existing
-        // installations. shouldRunGitHubScheduleMigration returns false once any github
-        // schedule exists, so a NEW resource (repo-comment-poll) added after the one-time
-        // migration ran would never be added. Runs every startup; adds only absent entries
-        // (respects explicit disable). Redis-gated entries land pending → promoted below.
-        const alreadyBackfilled = hasGitHubScheduleBackfillRun(root);
-        const backfill = backfillMissingGitHubScheduleEntries(
-          latestCaps ?? { version: 1 as const, capabilities: [] },
-          githubManifest,
-          migrationEnv,
-          { repoScanDepsAvailable: hasRepoScanRuntimeDeps, alreadyBackfilled },
-        );
-        if (backfill.changed) {
-          await writeCapabilitiesConfig(root, backfill.config);
-          latestCaps = backfill.config;
-          app.log.info('[api] F168-C0.3: backfilled missing GitHub schedule resource(s) for existing installation');
-        }
-        if (!alreadyBackfilled) {
-          // One-time (cloud R2 P1): mark backfill done so a TARGET resource the operator
-          // later disables (physically removed) is not resurrected on the next startup.
-          markGitHubScheduleBackfillDone(root);
-        }
-        const pendingPromotion = promotePendingGitHubMigrationEntries(
-          latestCaps ?? { version: 1 as const, capabilities: [] },
-          githubManifest,
-          migrationEnv,
-          { repoScanDepsAvailable: hasRepoScanRuntimeDeps },
-        );
-        if (pendingPromotion.changed) {
-          await writeCapabilitiesConfig(root, pendingPromotion.config);
-          app.log.info(
-            '[api] F202-2B migration: enabled pending GitHub repo-scan schedule after deps became available',
-          );
-        }
-      }
-
-      // Rehydrate all enabled schedule resources (includes any migrated GitHub entries)
-      const caps = await readCapabilitiesConfig(resolveActiveProjectRoot());
-      await rehydrateEnabledPluginSchedules({
-        capabilities: caps,
-        pluginRegistry,
-        scheduleFactoryRegistry,
-        taskRunner: taskRunnerV2,
-        scheduleFactoryDeps:
-          scheduleFactoryDeps as import('./domains/plugin/ScheduleFactoryRegistry.js').ScheduleFactoryDeps,
-        log: app.log,
-      });
-    };
-
-    registerPluginRoutes(app, {
-      pluginRegistry,
-      pluginActivator,
-      limbRegistry,
-      pluginsDir,
-      runInstalledTest: async (pluginId) =>
-        runInstalledPluginTest
-          ? runInstalledPluginTest(pluginId)
-          : { matched: false, status: 404, body: { error: `Plugin '${pluginId}' is not installed` } },
-    });
-  }
   // F174 D2b-1 — single notifier instance shared between callback auth preHandler
   // (posts in-context surface on 401) and the hide-similar debug endpoint
   // (lets the user 24h-suppress a (reason, tool, catId) tuple).
   const callbackAuthNotifier = new CallbackAuthSystemMessageNotifier({ messageStore, socketManager });
 
-  let externalReviewTransferService:
-    | import('./domains/community/external-review/ExternalReviewTransferService.js').ExternalReviewTransferService
-    | undefined;
-  let externalReviewVerdictService:
-    | import('./domains/community/external-review/ExternalReviewVerdictService.js').ExternalReviewVerdictService
-    | undefined;
-  if (communityEventLog && communityProjector && communityObjectStore) {
-    const { ExternalReviewVerdictService } = await import(
-      './domains/community/external-review/ExternalReviewVerdictService.js'
-    );
-    if (!actionSuccessorLeaseStore || !actionSubjectTruthResolver) {
-      throw new Error('action terminal capability runtime is incomplete');
-    }
-    const { assertActionTerminalCapabilityRegistryReady } = await import(
-      './domains/ball-custody/ActionTerminalPredicateCatalog.js'
-    );
-    if (!actionSuccessorCompletionService || !taskActionSuccessorLifecycle) {
-      throw new Error('task action terminal capability runtime is incomplete');
-    }
-    const preflightActionLease = (
-      leaseId: string,
-      generation: number,
-      catId: string,
-      terminalPredicateDigest: string,
-    ) => actionSuccessorLeaseStore.preflightOutput(leaseId, generation, catId, terminalPredicateDigest);
-    const completeActionLease = (
-      input: Parameters<NonNullable<typeof actionSuccessorCompletionService>['complete']>[0],
-    ) => actionSuccessorCompletionService.complete(input);
-    assertActionTerminalCapabilityRegistryReady({
-      runtimePorts: {
-        community_projection: communityObjectStore,
-        message_store: messageStore,
-        task_store: taskStore,
-        action_successor_preflight: preflightActionLease,
-        action_successor_completion: completeActionLease,
-      },
-      completionResolvers: new Set(['review_delivery', 'task_done_status']),
-      freshnessResolvers: new Set(['community_current_head', 'task_active_owner']),
-      producers: new Set(['external_review_verdict', 'task_status_transition']),
-    });
-    const { ExternalReviewTransferService } = await import(
-      './domains/community/external-review/ExternalReviewTransferService.js'
-    );
-    // A memory auth registry cannot participate in the Redis authority commit.
-    if (registryBackendKind === 'redis')
-      externalReviewTransferService = new ExternalReviewTransferService({
-        eventLog: communityEventLog,
-        objectStore: communityObjectStore,
-        projector: communityProjector,
-        taskStore,
-        threadStore,
-        proposalStore,
-        isLatestInvocation: async (invocationId) => registry.isLatest(invocationId),
-      });
-    externalReviewVerdictService = new ExternalReviewVerdictService({
-      repoConfigStore: communityRepoConfigStore,
-      eventLog: communityEventLog,
-      projector: communityProjector,
-      objectStore: communityObjectStore,
-      fetchCurrentHead: fetchPrCurrentHead,
-      preflightLease: preflightActionLease,
-      completeActionLease,
-      // F168 #1511: verify reviewer authority from the durable PR tracker task
-      // when projection-level ownership is unavailable (PR subjects never receive
-      // case.routed / case.bootstrap, so when the coordinator hasn't run yet,
-      // the tracker task is the only server-verified authority source).
-      verifyDurableReviewerAdmission: async (subjectKey, catId, threadId) => {
-        const task = await taskStore.getBySubject(subjectKey);
-        // Only callback-auth-verified PR tracker tasks constitute durable admission.
-        // Generic 'work' tasks can legitimately own pr: subjects (entrusted work)
-        // but were never admitted by register-pr-tracking's callback auth.
-        // A 'done' tracker is NOT rejected: the terminal-green delivery path
-        // can legitimately reach verdict recording after the tracker closes.
-        return task !== null && task.kind === 'pr_tracking' && task.ownerCatId === catId && task.threadId === threadId;
-      },
-    });
-  }
-
-  // QueueLedger and exact child History own notification delivery.
-  const meetingArtifactReaderHolder: import('./routes/callback-meeting-artifact-routes.js').MeetingArtifactReaderHolder =
-    {};
   const namedCatContentHolder: import('./routes/callback-content-editor-routes.js').NamedCatContentHolder = {};
   const skillConsumptionReceipts = new SkillConsumptionReceiptService({
     skillSourceRoot: catCafeSkillsSource,
@@ -5090,7 +4576,7 @@ async function main(): Promise<void> {
     proposalStore,
     handoffProposalStore,
     profileUpdateProposalStore,
-    meetingArtifactReaderHolder,
+
     namedCatContentHolder,
     ...(personMemoryStore
       ? {
@@ -5131,9 +4617,6 @@ async function main(): Promise<void> {
           deploymentWaitLifecycleHolder,
         }
       : {}),
-    ...(externalReviewVerdictService ? { externalReviewVerdictService } : {}),
-    ...(externalReviewTransferService ? { externalReviewTransferService } : {}),
-    ...(externalReviewRecoveryService ? { externalReviewRecoveryService } : {}),
     ...(workflowSopStore ? { workflowSopStore } : {}),
     queueProcessor,
     invocationQueue,
@@ -5323,32 +4806,6 @@ async function main(): Promise<void> {
     socketManager,
     onProposalReject: (input) => onProposalReject({ ...input, proposalType: 'session_handoff' }),
   });
-  const {
-    LarkCliFeishuSourceResolver,
-    MeetingArtifactResourceService,
-    MeetingIntakeActionService,
-    MeetingIntakeService,
-    MemoryMeetingIntakeStore,
-    MemorySignalRouteStore,
-    RedisMeetingIntakeStore,
-    RedisSignalRouteStore,
-    RedisSourceAccessLeaseStore,
-    SourceAccessLeaseService,
-    SourceResolverRegistry,
-    ThreadDestinationAuthority,
-    ThreadMeetingArtifactDispatcher,
-  } = await import('./domains/signal-intake/index.js');
-  const meetingIntakeStore = redis ? new RedisMeetingIntakeStore(redis) : new MemoryMeetingIntakeStore();
-  const signalRouteStore = redis ? new RedisSignalRouteStore(redis) : new MemorySignalRouteStore();
-  const { ensureOfficialPluginSignalRoutes } = await import('./domains/plugin/official-signal-routes.js');
-  const officialSignalRouteBootstrap = await ensureOfficialPluginSignalRoutes({
-    routes: signalRouteStore,
-    ownerId: privateUserId,
-  });
-  app.log.info(
-    `[api] official plugin Host routes ready ` +
-      `(created=${officialSignalRouteBootstrap.created}, preserved=${officialSignalRouteBootstrap.preserved})`,
-  );
   // Shared generic binding index: plugin thread lookup, thread cats and the legacy connector path
   // must observe one truth while the legacy path still exists during cutover.
   const { RedisConnectorThreadBindingStore } = await import(
@@ -5361,35 +4818,7 @@ async function main(): Promise<void> {
     ? new RedisConnectorThreadBindingStore(redisClient)
     : new MemoryConnectorThreadBindingStore();
   const { createPluginManagerRuntimeComposition } = await import('./domains/plugin/runtime-composition.js');
-  const { createCollectiveAgentVerifier } = await import(
-    './domains/plugin/builtin-runtime/collective-agent-verifier.js'
-  );
-  const { CollectiveIngressDispatcher } = await import(
-    './domains/plugin/builtin-runtime/collective-ingress-dispatcher.js'
-  );
-  const { registeredCollectiveCats } = await import(
-    './domains/plugin/builtin-runtime/collective-participation-cards.js'
-  );
-  const resolveCollectiveAgentIdentity = (catId: string) => {
-    const card = registeredCollectiveCats(Object.values(catRegistry.getAllConfigs()), () => true).find(
-      (cat) => cat.id === catId,
-    );
-    return card ? { agentId: catId, catId, displayName: card.displayName } : undefined;
-  };
   const pluginProjectRoot = resolveActiveProjectRoot();
-  const { CollectiveWorkAuthority } = await import(
-    './domains/plugin/builtin-runtime/collective-work/collective-work-authority.js'
-  );
-  const { CollectiveWorkResultReconciler } = await import(
-    './domains/plugin/builtin-runtime/collective-work-result-reconciler.js'
-  );
-  const { CollectiveWorkRevisionReconciler } = await import(
-    './domains/plugin/builtin-runtime/collective-work-revision-reconciler.js'
-  );
-  const { CollectiveWorkDispatcher } = await import('./domains/plugin/builtin-runtime/collective-work-dispatcher.js');
-  const { resolveCollectiveStandingGrant } = await import(
-    './domains/plugin/builtin-runtime/collective-standing-grant.js'
-  );
   const { buildDeliveryPresentation } = await import('./domains/messaging/lifecycle-delivery.js');
   const frontendBaseUrl = resolveFrontendBaseUrl(process.env, app.log);
   const deliveryThreadMeta = async (threadId: string) => {
@@ -5417,42 +4846,6 @@ async function main(): Promise<void> {
       },
       await deliveryThreadMeta(threadId),
     );
-  const collectiveWorkAuthority = new CollectiveWorkAuthority({
-    messageStore,
-    taskStore,
-    resolveWorkThread: async (source, catId) => {
-      const { resolveCollectiveWorkThread } = await import(
-        './domains/plugin/builtin-runtime/collective-work-thread.js'
-      );
-      return resolveCollectiveWorkThread(threadStore, taskStore, source, catId);
-    },
-    standingGrant: (source, catId) =>
-      resolveCollectiveStandingGrant(pluginRuntime.collectiveConnectorRuntime?.connector(), source, catId),
-  });
-  const collectiveWorkResultReconciler = new CollectiveWorkResultReconciler({
-    messages: messageStore,
-    tasks: taskStore,
-  });
-  const collectiveWorkDispatcher = new CollectiveWorkDispatcher({
-    context: () => collectiveContext,
-    messageStore,
-    threadStore,
-    invocationQueue,
-  });
-  const { CollectiveWorkAdmission } = await import(
-    './domains/plugin/builtin-runtime/collective-work/collective-work-admission.js'
-  );
-  const collectiveWorkAdmission = new CollectiveWorkAdmission({
-    connector: () => pluginRuntime.collectiveConnectorRuntime?.connector(),
-    authority: collectiveWorkAuthority,
-    tasks: taskStore,
-    dispatcher: collectiveWorkDispatcher,
-  });
-  const collectiveWorkRevisionReconciler = new CollectiveWorkRevisionReconciler({
-    messages: messageStore,
-    tasks: taskStore,
-    dispatcher: collectiveWorkDispatcher,
-  });
   const { DesktopWindowComponent } = await import('./domains/plugin/desktop-window-runtime/desktop-component.js');
   const { ElectronDesktopWindowExecutor } = await import(
     './domains/plugin/desktop-window-runtime/electron-executor.js'
@@ -5594,12 +4987,9 @@ async function main(): Promise<void> {
         ...(companionContract ? { companionContract } : {}),
         ...(disableCompanion ? { disableCompanion } : {}),
         ...decisions,
-        ...(work ? { work } : {}),
         openConversation,
       });
     },
-    routes: signalRouteStore,
-    intakes: meetingIntakeStore,
     messageStore,
     lifecyclePresentation: (threadId, catId) => deliveryPresentation(threadId, { kind: 'cat', id: catId }),
     // P1.3: a v2 subscription's started names the message the invocation answers (origin, else A2A).
@@ -5646,109 +5036,19 @@ async function main(): Promise<void> {
     },
     getDefaultCatId,
     getMentionPatterns: catRegistryMentionPatterns,
-    collectiveConnector: {
-      verifyAgent: createCollectiveAgentVerifier({
-        resolveCatDisplayName: (catId) => resolveCollectiveAgentIdentity(catId)?.displayName,
-        readTurnExecution: (invocationId) => turnExecutionStore.get(invocationId),
-      }),
-      createIngressDispatcher: (connector) =>
-        new CollectiveIngressDispatcher({
-          connector,
-          threadStore,
-          messageStore,
-          invocationQueue,
-          socketManager: {
-            broadcastToRoom: (room, event, data) => socketManager?.broadcastToRoom(room, event, data),
-            emitToUser: (userId, event, data) => socketManager?.emitToUser(userId, event, data),
-          },
-          isCatAvailable: (catId) => isCatAvailable(catId),
-          admitStandingWork: async (source, catId) => {
-            await collectiveWorkAdmission.admit(source, catId);
-          },
-          resumeWorkRevision: async (source, event) => {
-            const notice = event.workRevisionNotice;
-            const recipient = event.recipient;
-            if (!notice || recipient?.kind !== 'agent' || event.actor.kind !== 'human') {
-              throw Object.assign(new Error('Collective Work revision notice is invalid'), {
-                code: 'COLLECTIVE_REVISION_NOT_CURRENT',
-              });
-            }
-            const feedbackHumanId = event.actor.humanId;
-            const prepared = await connector.withAssignedWorkAuthority(
-              recipient.connectionId,
-              notice.workId,
-              async (scope) => {
-                if (
-                  scope.hostRoute?.localOwnerUserId !== source.userId ||
-                  scope.connection.authorizedHumanId !== feedbackHumanId
-                ) {
-                  throw Object.assign(new Error('Collective Work revision belongs to another owner'), {
-                    code: 'CONNECTOR_OWNER_MISMATCH',
-                  });
-                }
-                return collectiveWorkRevisionReconciler.prepare({
-                  ownerUserId: source.userId,
-                  event,
-                  inbox: scope.inbox,
-                  work: scope.work,
-                });
-              },
-            );
-            await collectiveWorkRevisionReconciler.dispatchPrepared(prepared);
-          },
-        }),
-    },
   });
   trustedImagePathResolver = (hmrId) => pluginRuntime.mediaLedger.resolveTrustedBlobPath(hmrId);
   await app.register(mediaRoutes, { ledger: pluginRuntime.mediaLedger, ownerUserId: privateUserId });
   subscriptionDrainScheduler.attach(pluginRuntime.subscriptionDelivery);
-  const { CollectiveCurrentContext } = await import('./domains/plugin/builtin-runtime/collective-current-context.js');
-  collectiveContext = new CollectiveCurrentContext({
-    connector: () => pluginRuntime.collectiveConnectorRuntime?.connector(),
-    messageStore,
-    threadStore,
-    workAuthority: collectiveWorkAuthority,
-    artifactUploadDir: getDefaultUploadDir(process.env.UPLOAD_DIR),
-    artifactReader: {
-      readPreparedArtifact: async (input) =>
-        collectivePreparedArtifactReader ? collectivePreparedArtifactReader.readPreparedArtifact(input) : null,
-    },
-  });
-  registry.setCollectiveWorkAuthorityValidator(async (record) => {
-    if (!(await collectiveContext?.resolvePrivate(record, 'callback')))
-      throw Object.assign(new Error('Current Collective Work authority is unavailable'), {
-        code: 'WORK_EXECUTION_NOT_CURRENT',
-      });
-  });
   const { registerConciergeDesktopRoutes } = await import('./routes/concierge-desktop.js');
   registerConciergeDesktopRoutes(app, { ownerUserId: privateUserId, desktop: pluginRuntime.ownerDesktop });
-  const { registerCollectiveParticipationCallbacks } = await import(
-    './routes/callback-collective-participation-routes.js'
-  );
-  await registerCollectiveParticipationCallbacks(app, { registry, context: collectiveContext });
-  const { OfficialPluginAuthService } = await import('./domains/plugin/official-plugin-auth.js');
-  const officialPluginAuth = new OfficialPluginAuthService({ packages: pluginRuntime.packages });
-  app.addHook('onClose', async () => {
-    await officialPluginAuth.shutdown();
-    await pluginRuntime.shutdown('api_shutdown');
-  });
-  const { OFFICIAL_PLUGIN_POLICIES, OFFICIAL_PLUGIN_CATALOG, OFFICIAL_BUNDLED_MANIFESTS } = await import(
-    './domains/plugin/official-catalog.js'
-  );
-  const { RefreshingOfficialPluginCatalog } = await import('./domains/plugin/official-catalog-provider.js');
-  const { OfficialPluginHistoryImportService } = await import('./domains/plugin/official-plugin-history-import.js');
-  const { OfficialPluginMeetingIntakeService } = await import('./domains/plugin/official-plugin-meeting-intake.js');
-  const { createLarkCliFeishuArtifactInspector, normalizeGeneratedArtifact, parseFeishuMinutesReference } =
-    await import('@clowder-ai/feishu-meeting-intake');
-  const { registerOfficialPluginRoutes } = await import('./routes/plugin-official-routes.js');
-  const officialPluginCatalog = new RefreshingOfficialPluginCatalog({ policies: OFFICIAL_PLUGIN_POLICIES });
+  app.addHook('onClose', async () => pluginRuntime.shutdown('api_shutdown'));
   const { validatePluginCatalog } = await import('@clowder-ai/plugin-contract');
   const {
     MachineOfficialPluginCatalog,
     OFFICIAL_PLUGIN_CATALOG_URL,
     loadMachinePluginCatalog,
     resolveLocalPluginEffectiveGrants,
-    resolveRepositoryReplacementPluginIds,
   } = await import('./domains/plugin/manager/machine-catalog-provider.js');
   const { OFFICIAL_PLUGIN_HOST_POLICIES } = await import('./domains/plugin/manager/official-plugin-host-policies.js');
   const pluginManagerHostPolicies = OFFICIAL_PLUGIN_HOST_POLICIES;
@@ -5761,38 +5061,7 @@ async function main(): Promise<void> {
   const { FilesystemBuiltinPluginPackageMaterializer } = await import(
     './domains/plugin/manager/builtin-package-materializer.js'
   );
-  const { readPluginConfig } = await import('./domains/plugin/plugin-config-store.js');
-  const readBuiltinPluginValue = async (pluginInstanceId: string, key: string) => {
-    const snapshot = await pluginRuntime.inventoryStore.snapshot();
-    const instance = snapshot.instances.find((candidate) => candidate.pluginInstanceId === pluginInstanceId);
-    return instance ? readPluginConfig(pluginProjectRoot, instance.pluginId)[key] : undefined;
-  };
-  if (loadRepositoryPluginInfo === undefined) {
-    throw new Error('Repository plugin discovery must be ready before Plugin Manager composition');
-  }
-  const { PluginManagerCompatibilityAdapter, RepositoryPluginManagerCompatibilityProvider } = await import(
-    './domains/plugin/manager/plugin-manager-compatibility.js'
-  );
-  const repositoryPluginManagerCompatibility = new PluginManagerCompatibilityAdapter([
-    new RepositoryPluginManagerCompatibilityProvider(loadRepositoryPluginInfo, {
-      loadSuppressedPluginIds: async () => {
-        const [catalog, inventory] = await Promise.all([
-          pluginManagerCatalog.snapshot(),
-          pluginRuntime.inventoryStore.snapshot(),
-        ]);
-        return resolveRepositoryReplacementPluginIds(
-          pluginManagerHostPolicies,
-          catalog.entries,
-          inventory.instances
-            .filter((instance) => instance.lifecycleState === 'installed')
-            .map((instance) => instance.pluginId),
-        );
-      },
-    }),
-  ]);
-  const { DotPluginStateProjection } = await import(
-    './domains/cats/services/cloud-bridge/dot/DotPluginStateProjection.js'
-  );
+  const { DotPluginStateProjection } = await import('./domains/cats/services/cloud-bridge/dot/DotPluginStateProjection.js');
   const pluginManagerRuntime = createPluginManagerRuntimeComposition({
     additionalStateProjection: new DotPluginStateProjection(
       () => dotConnectionService,
@@ -5800,13 +5069,11 @@ async function main(): Promise<void> {
     ),
     runtime: pluginRuntime,
     catalogProvider: pluginManagerCatalog,
-    officialRouteCatalogProvider: officialPluginCatalog,
+
     prepareDesktopComponent: async () => {
       await companionDesktopComponent.prepare();
     },
     catalogManifests: OFFICIAL_BUNDLED_MANIFESTS,
-    compatibility: repositoryPluginManagerCompatibility,
-    auth: officialPluginAuth,
     localGrantPolicy: (manifest) => resolveLocalPluginEffectiveGrants(pluginManagerHostPolicies, manifest),
   });
   const { InstalledPluginOperations, pluginOperationRoutes } = await import(
@@ -5817,7 +5084,6 @@ async function main(): Promise<void> {
     configuration: pluginManagerRuntime.configuration,
     invocation: pluginRuntime.supervisor,
   });
-  runInstalledPluginTest = (pluginId) => installedPluginOperations.runTest(pluginId);
   await app.register(pluginOperationRoutes, { operations: installedPluginOperations });
   const { pluginNativeActionRoutes } = await import('./routes/plugin-native-action-routes.js');
   await app.register(pluginNativeActionRoutes, {
@@ -5860,32 +5126,6 @@ async function main(): Promise<void> {
     });
   });
   await app.register(pluginManagerUploadRoutes, { manager: pluginManagerRuntime.manager });
-  const officialPluginHistoryImport = new OfficialPluginHistoryImportService({
-    inventory: pluginRuntime.inventoryStore,
-    broker: pluginRuntime.broker,
-    parseReference: (reference) => {
-      const locator = parseFeishuMinutesReference(reference);
-      if (locator.kind !== 'minute') {
-        throw new TypeError('Historical import only accepts Feishu Minutes references');
-      }
-      return {
-        artifactId: locator.artifactId,
-        kind: 'minute' as const,
-        ...(locator.revision === undefined ? {} : { revision: locator.revision }),
-      };
-    },
-    inspectArtifact: createLarkCliFeishuArtifactInspector({ homeDirectory: homedir() }),
-    normalizeArtifact: normalizeGeneratedArtifact,
-  });
-  registerOfficialPluginRoutes(app, {
-    inventory: pluginRuntime.inventoryStore,
-    lifecycle: pluginRuntime.lifecycle,
-    auth: officialPluginAuth,
-    catalogProvider: officialPluginCatalog,
-    installer: pluginManagerRuntime.officialRouteInstaller,
-    historyImport: officialPluginHistoryImport,
-    meetingIntake: new OfficialPluginMeetingIntakeService({ homeDirectory: homedir() }),
-  });
   const { createCollaborativeContentComposition } = await import(
     './domains/collaborative-content/runtime-composition.js'
   );
@@ -5948,238 +5188,9 @@ async function main(): Promise<void> {
     fileQuotes: { source: workspaceContentReviews.source, messages: messageStore, threads: threadStore },
     changed: (ownerUserId, reviewId) => socketManager?.emitToUser(ownerUserId, 'artifact_review_changed', { reviewId }),
   });
-  if (!pluginRuntime.collectiveConnectorRuntime) {
-    throw new Error('Collective Connector builtin runtime was not composed');
-  }
-  const { LocalCollectiveServiceManager } = await import(
-    './domains/plugin/builtin-runtime/local-collective-service-manager.js'
-  );
-  const { resolveNamedAlphaRuntimeBoundary } = await import('./config/alpha-coordinates.js');
-  const namedAlphaBoundary = await resolveNamedAlphaRuntimeBoundary(process.env);
-  const alphaCollectiveRoot =
-    process.env.CAT_CAFE_DEPLOYMENT_ID === 'alpha' ? process.env.CAT_CAFE_RUNTIME_ROOT : undefined;
-  if (process.env.CAT_CAFE_DEPLOYMENT_ID === 'alpha' && !alphaCollectiveRoot) {
-    throw new Error('Alpha Collective Service requires the exact Alpha runtime root');
-  }
-  const localCollectiveService = new LocalCollectiveServiceManager({
-    env: process.env,
-    frontendBaseUrl: resolveFrontendBaseUrl(process.env, app.log),
-    ...(alphaCollectiveRoot
-      ? {
-          alphaRoot: alphaCollectiveRoot,
-          ...(namedAlphaBoundary ? { namedAlphaBoundary } : {}),
-          dataDirectory: join(alphaCollectiveRoot, '.cat-cafe', 'collective-service'),
-          serviceUrl: `http://127.0.0.1:${namedAlphaBoundary?.coordinates.ports.service ?? 5211}`,
-        }
-      : {}),
-  });
-  const localCollectiveRecovery = await localCollectiveService.recover();
-  app.log.info(
-    {
-      state: localCollectiveRecovery.state,
-      serviceUrl: localCollectiveRecovery.serviceUrl,
-      serviceInstanceId: localCollectiveRecovery.serviceInstanceId,
-    },
-    '[api] local Collective Service recovery reconciled',
-  );
-  const { DotConnectionStore } = await import('./domains/cats/services/cloud-bridge/dot/DotConnectionStore.js');
-  const { ensureDotIdentity } = await import('./domains/cats/services/cloud-bridge/dot/dot-identity.js');
-  const { registerDotConnectionRoutes } = await import('./routes/chatgpt-dot-connection-routes.js');
-  const { createDotWebhookSender } = await import('./domains/cats/services/cloud-bridge/dot/dot-webhook.js');
-  const dotWebhookSender = createDotWebhookSender(process.env.CAT_CAFE_DOT_WEBHOOK_PROXY_URL);
-  dotConnectionService = new DotConnectionService({
-    sendWebhook: dotWebhookSender,
-    store: new DotConnectionStore(resolve(pluginProjectRoot, '.cat-cafe', 'plugin-host', 'dot-connection.json')),
-    keys: agentKeyRegistry,
-    ensureIdentity: async () => {
-      if (ensureDotIdentity(pluginProjectRoot)) {
-        await syncAgentRegistry(reconcileCatRegistry(pluginProjectRoot, new Set()));
-        await configEventBus.emitChangeAsync({
-          source: 'cat-config',
-          scope: 'domain',
-          changedKeys: ['gpt-dot'],
-          changeSetId: `dot-identity:${Date.now()}`,
-          timestamp: Date.now(),
-        });
-      }
-    },
-    authority: async () => {
-      const inventory = await pluginRuntime.inventoryStore.snapshot();
-      const instance = inventory.instances.find(
-        (candidate) => candidate.pluginId === 'official.chatgpt-dot' && candidate.lifecycleState === 'installed',
-      );
-      return instance ? { ownerUserId: privateUserId, pluginInstanceId: instance.pluginInstanceId } : null;
-    },
-  });
-  registerDotConnectionRoutes(app, {
-    connection: dotConnectionService,
-    publicBaseUrl: () => process.env.CAT_CAFE_REMOTE_PUBLIC_BASE_URL,
-  });
-  const { DotDispatchStore } = await import('./domains/cats/services/cloud-bridge/dot/DotDispatchStore.js');
-  const { DotEventsBridge } = await import('./domains/cats/services/cloud-bridge/dot/DotEventsBridge.js');
-  const { DotReturnService } = await import('./domains/cats/services/cloud-bridge/dot/DotReturnService.js');
-  const { DotImageService } = await import('./domains/cats/services/cloud-bridge/dot/DotImageService.js');
-  const dotDispatches = new DotDispatchStore(resolve(pluginProjectRoot, '.cat-cafe', 'plugin-host', 'dot-dispatches'));
-  dotRoundTripVerified = async () => {
-    const state = await dotConnectionService?.current();
-    if (!state || state.testEventIds.length !== 2) return false;
-    const records = await Promise.all(state.testEventIds.map((id) => dotDispatches.read(id)));
-    return records.every(
-      (record) =>
-        record?.attemptId === state.attemptId &&
-        record.agentKeyId === state.agentKeyId &&
-        record.connectionTest &&
-        !!record.sourceReadAt &&
-        !!record.replyMessageId,
-    );
-  };
-  const dotEnabled = async () =>
-    (await pluginRuntime.inventoryStore.snapshot()).instances.some(
-      (instance) =>
-        instance.pluginId === 'official.chatgpt-dot' &&
-        instance.lifecycleState === 'installed' &&
-        instance.activationState === 'enabled',
-    );
-  const { DotAskService } = await import('./domains/cats/services/cloud-bridge/dot/DotAskService.js');
-  dotAskService = new DotAskService({
-    connection: dotConnectionService,
-    messages: messageStore,
-    threads: threadStore,
-    enabled: dotEnabled,
-    post: async (secret, payload) => {
-      const result = await app.inject({
-        method: 'POST',
-        url: '/api/callbacks/post-message',
-        headers: { 'x-agent-key-secret': secret },
-        payload,
-      });
-      const body = result.json() as { messageId?: string; kind?: string };
-      if (result.statusCode !== 200 || !body.messageId)
-        throw new Error(
-          body.kind === 'dot_ask_idempotency_conflict' || body.kind === 'dot_ask_delivery_pending'
-            ? body.kind
-            : 'dot_ask_not_persisted',
-        );
-      return body;
-    },
-  });
-  dotEventsBridge = new DotEventsBridge({
-    sendWebhook: dotWebhookSender,
-    connection: dotConnectionService,
-    dispatches: dotDispatches,
-    messageStore,
-    threadStore,
-    enabled: dotEnabled,
-  });
-  dotReturnService = new DotReturnService({
-    connection: dotConnectionService,
-    dispatches: dotDispatches,
-    messages: messageStore,
-    threads: threadStore,
-    enabled: dotEnabled,
-    postReply: async ({ secret, eventId, threadId, sourceMessageId, content }) => {
-      const result = await app.inject({
-        method: 'POST',
-        url: '/api/callbacks/post-message',
-        headers: { 'x-agent-key-secret': secret, 'x-cat-cafe-dot-event-id': eventId },
-        payload: { threadId, replyTo: sourceMessageId, content },
-      });
-      const body = result.json() as { messageId?: string };
-      if (result.statusCode !== 200 || !body.messageId) throw new Error('dot_reply_not_persisted');
-      return { messageId: body.messageId };
-    },
-  });
-  const dotImages = new DotImageService({
-    directory: resolve(pluginProjectRoot, '.cat-cafe', 'plugin-host', 'dot-images'),
-    returns: dotReturnService,
-    connection: dotConnectionService,
-    dispatches: dotDispatches,
-    messages: messageStore,
-    threads: threadStore,
-    emit: ({ threadId, messageId, block }) => {
-      socketManager?.broadcastAgentMessage(
-        {
-          type: 'system_info',
-          catId: createCatId('gpt-dot'),
-          content: JSON.stringify({ type: 'rich_block', block, messageId }),
-          invocationId: messageId,
-          timestamp: Date.now(),
-        },
-        threadId,
-      );
-    },
-  });
-  const { registerDotMcpRoutes } = await import('./routes/chatgpt-dot-mcp-routes.js');
-  const { registerDotImageRoutes } = await import('./routes/chatgpt-dot-image-routes.js');
-  registerDotMcpRoutes(app, {
-    connection: dotConnectionService,
-    returns: dotReturnService,
-    ask: (secret, input) => dotAskService!.ask(secret, input),
-    publishImage: (secret, input) => dotImages.publish(secret, input),
-  });
-  registerDotImageRoutes(app, dotImages);
-  const { registerDotTestRoutes } = await import('./routes/chatgpt-dot-test-routes.js');
-  const { DotConnectionTestService } = await import(
-    './domains/cats/services/cloud-bridge/dot/DotConnectionTestService.js'
-  );
-  const dotConnectionTests = new DotConnectionTestService({
-    connection: dotConnectionService,
-    dispatches: dotDispatches,
-    bridge: dotEventsBridge,
-    messages: messageStore,
-    threads: threadStore,
-    grants: cloudReturnGrantStore,
-    projectPath: pluginProjectRoot,
-  });
-  registerDotTestRoutes(app, {
-    connection: dotConnectionService,
-    dispatches: dotDispatches,
-    threads: threadStore,
-    startTest: (ownerUserId) => dotConnectionTests.run(ownerUserId),
-  });
-  // Dot resume consumes its persisted connection and source proofs, composed above.
-  const externalPluginRecovery = await pluginRuntime.recoverAfterRestart({ desktopWindowsAfter: hostListening });
-  app.log.info(
-    `[api] K-2 plugin runtime recovered ` +
-      `(sessions=${externalPluginRecovery.brokerSessions}, instances=${externalPluginRecovery.inventoryInstances}, ` +
-      `resumeRequested=${externalPluginRecovery.resumeRequested}; ` +
-      `live=${externalPluginRecovery.resumeRequested > 0 ? 'reconciling' : 'dormant'})`,
-  );
-  const { registerCollectiveConnectorRoutes } = await import('./routes/collective-connector-routes.js');
-  const collectiveEntryCats = () =>
-    registeredCollectiveCats(
-      Object.values(catRegistry.getAllConfigs()),
-      (catId) => router?.supportsCollectiveParticipation(catId) === true,
-    );
-  registerCollectiveConnectorRoutes(app, {
-    runtime: pluginRuntime.collectiveConnectorRuntime,
-    localService: localCollectiveService,
-    callbackRegistry: registry,
-    resolveAgentIdentity: resolveCollectiveAgentIdentity,
-    threadStore,
-    isCatAvailable: (catId) => isCatAvailable(catId),
-    supportsParticipation: (catId) => router?.supportsCollectiveParticipation(catId) === true,
-    cats: collectiveEntryCats,
-  });
-  const { registerCollectiveOwnerParticipationRoutes } = await import(
-    './routes/collective-owner-participation-routes.js'
-  );
-  registerCollectiveOwnerParticipationRoutes(app, {
-    connector: () => pluginRuntime.collectiveConnectorRuntime?.connector(),
-    cats: collectiveEntryCats,
-    threads: threadStore,
-    messages: messageStore,
-    tasks: taskStore,
-    context: collectiveContext,
-    work: collectiveWorkAuthority,
-    dispatcher: collectiveWorkDispatcher,
-    queue: invocationQueue,
-    reconsideration: { queue: invocationQueue },
-  });
-  const { registerCollectiveWorkResultRoutes } = await import('./routes/collective-work-result-routes.js');
-  registerCollectiveWorkResultRoutes(app, {
-    connector: () => pluginRuntime.collectiveConnectorRuntime?.connector(),
-    reconciler: collectiveWorkResultReconciler,
+  const { storedAttachmentMediaRoutes } = await import('./routes/stored-attachment-media.js');
+  await app.register(storedAttachmentMediaRoutes, {
+    mediaDir: process.env.CONNECTOR_MEDIA_DIR ?? './data/connector-media',
   });
   const { pluginWebhookForwardingRoutes } = await import('./routes/plugin/plugin-webhook-forwarding-routes.js');
   await app.register(pluginWebhookForwardingRoutes, { webhooks: pluginRuntime.supervisor });
@@ -6269,7 +5280,7 @@ async function main(): Promise<void> {
     F225: bindLegacyApprovalProducer(new F225ApprovalAdapter(handoffProposalStore)),
     F231: bindLegacyApprovalProducer(new F231ApprovalAdapter(profileUpdateProposalStore)),
     F276: bindLegacyApprovalProducer(new F276ApprovalAdapter(personMemoryStore)),
-    F292: bindLegacyApprovalProducer(new F292ApprovalAdapter(meetingIntakeStore)),
+
     F306: bindLegacyApprovalProducer(new F306ApprovalAdapter(runtimeInteractionRuntime.store)),
     F321: bindLegacyApprovalProducer(new F321ApprovalAdapter(eventMemoryCorrectionProposalStore)),
     F260: bindLegacyApprovalProducer(
@@ -6346,7 +5357,6 @@ async function main(): Promise<void> {
     const { registerVideoProjectReviewRoutes } = await import('./routes/video-project-review-routes.js');
     registerVideoProjectReviewRoutes(app, artifactReview.projectMessages);
   }
-  collectivePreparedArtifactReader = artifactReview.artifactReader;
   app.addHook('onClose', async () => artifactReview.store.close());
   taskRunnerV2.register(artifactReview.recoverySpec);
   await app.register(async (scope) => registerArtifactReviewRoutes(scope, artifactReview));
@@ -6435,15 +5445,9 @@ async function main(): Promise<void> {
   app.addHook('onClose', async () => modifications.writer.close());
   const needsMeProducerCatalog = new NeedsMeProducerCatalog([
     new F246NeedsMeProducerAdapter(approvalProducerRegistry),
-    new F292NeedsMeProducerAdapter(meetingIntakeStore),
+
     new F306NeedsMeProducerAdapter(runtimeInteractionRuntime.store),
     artifactReview.producer,
-    new F290CollectiveWorkResultProducerAdapter({
-      connector: () => pluginRuntime.collectiveConnectorRuntime?.connector(),
-      tasks: taskStore,
-      messages: messageStore,
-      artifacts: artifactReview.artifactReader,
-    }),
   ]);
   const { DevelopmentReturnService } = await import(
     './infrastructure/scheduler/development-return/DevelopmentReturnService.js'
@@ -6572,54 +5576,6 @@ async function main(): Promise<void> {
       socketManager,
     });
   });
-  // F292 PR2: durable Host-owned MeetingIntake truth and recovery surface.
-  if (redis) {
-    const { registerMeetingIntakeRoutes } = await import('./routes/meeting-intake-routes.js');
-    const { supportsWriteOpportunityPresentationCapability } = await import(
-      './domains/cats/services/agents/invocation/context-continuity.js'
-    );
-    const destinations = new ThreadDestinationAuthority(threadStore);
-    const meetingService = new MeetingIntakeService(meetingIntakeStore, destinations);
-    const sourceResolvers = new SourceResolverRegistry();
-    sourceResolvers.register(new LarkCliFeishuSourceResolver());
-    const sourceAccess = new SourceAccessLeaseService({
-      intakes: meetingIntakeStore,
-      leases: new RedisSourceAccessLeaseStore(redis),
-      resolvers: sourceResolvers,
-    });
-    const meetingArtifactDispatcher = new ThreadMeetingArtifactDispatcher({
-      threadStore,
-      messageStore,
-      invocationQueue,
-      socketManager,
-      supportsPresentationRetry: (catId) =>
-        supportsWriteOpportunityPresentationCapability(router.contextCapability(catId)),
-    });
-    const actions = new MeetingIntakeActionService({
-      store: meetingIntakeStore,
-      meeting: meetingService,
-      sources: sourceAccess,
-      dispatcher: meetingArtifactDispatcher,
-    });
-    meetingArtifactReaderHolder.current = new MeetingArtifactResourceService({
-      intakes: meetingIntakeStore,
-      sources: sourceAccess,
-      messages: messageStore,
-    });
-    registerMeetingIntakeRoutes(app, {
-      store: meetingIntakeStore,
-      service: meetingService,
-      actions,
-    });
-    const { f296AlphaDynamicCanaryRoutes } = await import('./routes/f296-alpha-dynamic-canary-routes.js');
-    await app.register(f296AlphaDynamicCanaryRoutes, {
-      enabled: process.env.CAT_CAFE_DEPLOYMENT_ID === 'alpha',
-      threadStore,
-      dispatcher: meetingArtifactDispatcher,
-      invocationTracker,
-    });
-  }
-
   await app.register(approvalHubRoutes, {
     registry: approvalProducerRegistry,
   });
@@ -6798,27 +5754,6 @@ async function main(): Promise<void> {
   // F222: Frustration auto-issue routes
   await app.register(frustrationIssueRoutes, { frustrationIssueStore });
 
-  // F235: Community issue draft routes (publish to community flow)
-  {
-    const { GitHubIssuePublisher } = await import('./domains/community/github/GitHubIssuePublisher.js');
-    const defaultRepo = process.env.COMMUNITY_PUBLISH_DEFAULT_REPO ?? 'clowder-ai/cat-cafe';
-    // Phase B: default allowlist includes tutorials repo for multi-target publishing (AC-B2)
-    const repoAllowlist = (
-      process.env.COMMUNITY_PUBLISH_REPO_ALLOWLIST ?? `${defaultRepo},clowder-ai/cat-cafe-tutorials`
-    )
-      .split(',')
-      .map((s) => s.trim())
-      .filter(Boolean);
-    // Lazy token factory: resolves at publish time so late-binding plugin config is picked up (P1-1 cloud R6).
-    const publisher = new GitHubIssuePublisher({ token: getGitHubToken, repoAllowlist });
-    await app.register(communityIssueDraftRoutes, {
-      communityIssueDraftStore,
-      frustrationIssueStore,
-      publisher,
-      config: { defaultRepo, repoAllowlist },
-    });
-  }
-
   // F142: the shared binding store above is reused by threadCatsRoutes AND connector gateway.
   {
     const allCatConfigs = catRegistry.getAllConfigs();
@@ -6866,100 +5801,6 @@ async function main(): Promise<void> {
   // F093: World Engine — routes (store + coordinator initialized above, before AgentRouter)
   await app.register(worldRoutes, { worldStore, coordinator: worldCoordinator });
 
-  const fetchIssuesForSync = async (repo: string) => {
-    const { execFile } = await import('node:child_process');
-    const { promisify } = await import('node:util');
-    const execFileAsync = promisify(execFile);
-    const { stdout } = await execFileAsync(
-      'gh',
-      [
-        'api',
-        `/repos/${repo}/issues`,
-        '--method',
-        'GET',
-        '--jq',
-        '.[] | select(.pull_request == null) | {number, title, state, labels: [.labels[].name], comments, user: .user.login, html_url}',
-        '--paginate',
-        '-f',
-        'state=all',
-        '-f',
-        'per_page=100',
-      ],
-      getGitHubExecOptions(60_000),
-    );
-    if (!stdout.trim()) return [];
-    return stdout
-      .trim()
-      .split('\n')
-      .map((line: string) => JSON.parse(line));
-  };
-  const { InstalledPrObservations } = await import('./domains/community/installed-pr-observations.js');
-  const pullRequests = new InstalledPrObservations(pluginRuntime.inventoryStore, pluginRuntime.supervisor);
-
-  // F168 Phase C C2.2: community narrator wiring (conditional — disabled without thread ID)
-  // D0.3: boot warning when narrator role configured but thread ID absent
-  const communityNarratorThreadId = process.env.COMMUNITY_NARRATOR_THREAD_ID;
-  {
-    const { NarratorDriver: ND } = await import('./domains/community/narrator/NarratorDriver.js');
-    const { DEFAULT_COMMUNITY_ROLE_BINDINGS: bindings } = await import('./domains/community/RoleResolver.js');
-    ND.checkNarratorBootConfig({
-      narratorRoleConfigured: !!bindings.narrator,
-      narratorThreadId: communityNarratorThreadId,
-      log: app.log,
-    });
-  }
-  let communityNarratorDriver: import('./domains/community/narrator/NarratorDriver.js').NarratorDriver | undefined;
-  if (communityNarratorThreadId) {
-    const { NarratorDriver } = await import('./domains/community/narrator/NarratorDriver.js');
-    const { createRoleResolver, DEFAULT_COMMUNITY_ROLE_BINDINGS } = await import('./domains/community/RoleResolver.js');
-    const { createWakeCatFn } = await import('./domains/cats/services/game/wakeCatImpl.js');
-    // D0.2: persistent narrator dedup store (Redis-backed)
-    const { RedisNarratorDedupStore, InMemoryNarratorDedupStore } = await import(
-      './domains/community/narrator/RedisNarratorDedupStore.js'
-    );
-    const narratorDedupStore = redis ? new RedisNarratorDedupStore(redis) : new InMemoryNarratorDedupStore();
-    const communityWakeCat = createWakeCatFn({
-      threadStore,
-      invocationQueue,
-      queueProcessor,
-      log: app.log,
-    });
-    const communityRoleResolver = createRoleResolver(getRoster, DEFAULT_COMMUNITY_ROLE_BINDINGS);
-    communityNarratorDriver = new NarratorDriver({
-      roleResolver: communityRoleResolver,
-      narratorThreadId: communityNarratorThreadId,
-      wakeCat: communityWakeCat,
-      log: app.log,
-      dedupStore: narratorDedupStore,
-    });
-    app.log.info({ narratorThreadId: communityNarratorThreadId }, '[F168] Community NarratorDriver wired');
-  }
-
-  await app.register(communityIssueRoutes, {
-    communityIssueStore,
-    taskStore,
-    threadStore, // F168 Phase C: narrator Path 2 (new-thread routing) requires threadStore
-    socketManager,
-    registry,
-    agentKeyRegistry,
-    fetchIssues: fetchIssuesForSync,
-    pullRequests,
-    // F168 Phase A P1-1: wire community event services
-    eventLog: communityEventLog,
-    projector: communityProjector,
-    objectStore: communityObjectStore,
-    // Cloud R2 P2: seed initial comment cursor on auto-registration to avoid
-    // replaying historical comments on first poll after case.routed
-    fetchIssueCommentCursor,
-    // F168 Phase C C2.2: narrator driver (fire-and-forget after case.triaged)
-    narratorDriver: communityNarratorDriver,
-    // F168 Phase D D3/D4: reconciliation finding store for read model
-    findingStore: communityFindingStore,
-    // F168 Phase F: per-repo routing config for autoRoute
-    repoConfigStore: communityRepoConfigStore,
-  });
-  // F168 Phase F: per-repo routing config CRUD endpoints
-  await app.register(communityRepoConfigRoutes, { repoConfigStore: communityRepoConfigStore });
   await app.register(backlogRoutes, { backlogStore, threadStore, messageStore });
 
   // F233 Phase C C2b: feat trajectory query routes (Hub UI + 轨迹下钻)
@@ -7691,9 +6532,7 @@ async function main(): Promise<void> {
     threadStore,
     registry: commandRegistry,
   });
-  await app.register(signalsRoutes, {
-    getGitHubApiToken: () => getGitHubEnvValue('GITHUB_MCP_PAT'),
-  });
+  await app.register(signalsRoutes, {});
   await app.register(signalStudyRoutes, { threadStore });
   await app.register(signalCollectionRoutes);
   await app.register(signalPodcastRoutes, {
@@ -7707,10 +6546,6 @@ async function main(): Promise<void> {
   const uploadDir = getDefaultUploadDir(process.env.UPLOAD_DIR);
   await app.register(uploadsRoutes, { uploadDir });
   await app.register(refAudioUploadRoutes);
-
-  // F088: Serve downloaded connector media files
-  const connectorMediaDir = process.env.CONNECTOR_MEDIA_DIR ?? './data/connector-media';
-  await app.register(connectorMediaRoutes, { mediaDir: connectorMediaDir });
 
   // F34: TTS Provider (mlx-audio → Python TTS server)
   // Drop the eager baseUrl injection so the provider resolves the TTS
@@ -7796,10 +6631,6 @@ async function main(): Promise<void> {
 
   // F-BLOAT: Progressive disclosure docs endpoints (no auth, static content)
   await app.register(registerCallbackDocsRoutes);
-
-  // F088: Register connector webhook routes BEFORE listen (Fastify requires it)
-  const connectorWebhookHandlers = new Map<string, import('./routes/connector-webhooks.js').ConnectorWebhookHandler>();
-  await app.register(connectorWebhookRoutes, { handlers: connectorWebhookHandlers });
 
   // F149 Phase C: graceful shutdown for ACP process pools
   app.addHook('onClose', async () => {
@@ -8283,84 +7114,6 @@ async function main(): Promise<void> {
     managedCommandWakeRecoveryTimer.unref();
   }
 
-  // F140: Feedback filter (Rule A self-authored only post-E.2 cutover)
-  const { createGitHubFeedbackFilter } = await import('./infrastructure/email/github-feedback-filter.js');
-  const { createSetupNoiseFilter } = await import('./infrastructure/email/setup-noise-filter.js');
-  const { classifyIssueComment } = await import('./domains/community/issue-analysis/issue-comment-classifier.js');
-  const { createGitHubSelfLoginResolver } = await import('./infrastructure/github/self-login-resolver.js');
-  const resolveGitHubSelfLogin = async (): Promise<string | undefined> => {
-    for (let attempt = 0; attempt < 2; attempt++) {
-      try {
-        const { stdout } = await executeGitHubRequest(['api', '/user', '--jq', '.login'], {
-          ghToken: getGitHubToken(),
-          timeoutMs: 10_000,
-        });
-        const login = stdout.trim();
-        if (login) return login;
-      } catch (error) {
-        if (error instanceof GitHubRateLimitError) throw error;
-        if (attempt === 0) await new Promise((r) => setTimeout(r, 3_000));
-      }
-    }
-    return undefined;
-  };
-  const selfLoginResolver = createGitHubSelfLoginResolver({
-    getConfiguredLogin: () => getGitHubEnvValue('GITHUB_SELF_LOGIN'),
-    getTokenFingerprint: () => getGitHubToken(),
-    resolveLogin: resolveGitHubSelfLogin,
-  });
-  let loggedSelfGitHubLogin: string | undefined | null = null;
-  const logGitHubSelfLoginState = (login: string | undefined): void => {
-    if (login) {
-      if (loggedSelfGitHubLogin !== login) {
-        app.log.info(`[api] F140: feedback filter self=${login}`);
-      }
-      loggedSelfGitHubLogin = login;
-      return;
-    }
-    if (loggedSelfGitHubLogin !== undefined) {
-      app.log.error('[api] F140: self-filter DISABLED — set GITHUB_SELF_LOGIN env as fallback');
-    }
-    loggedSelfGitHubLogin = undefined;
-  };
-  const refreshGitHubSelfLogin = async (signal?: AbortSignal): Promise<string | undefined> => {
-    const login = await selfLoginResolver.refreshIfNeeded(signal);
-    signal?.throwIfAborted();
-    logGitHubSelfLoginState(login);
-    return login;
-  };
-  await refreshGitHubSelfLogin();
-  // #1392 AC-7: tracking registration now asks the same resolver the feedback filter has always used.
-  const feedbackFilter = createGitHubFeedbackFilter({ getSelfGitHubLogin: () => selfLoginResolver.getCurrent() });
-
-  // F140 Phase E.2 cutover: setup-noise bot allowlist env name切换
-  // GITHUB_SETUP_NOISE_BOT_LOGINS (new, post-E.2 semantics) takes precedence;
-  // P2-3 fix: pass a thunk so the filter reflects runtime config changes
-  // (e.g. GITHUB_SETUP_NOISE_BOT_LOGINS updated via plugin config panel)
-  // without requiring a server restart.
-  // GITHUB_AUTHORITATIVE_REVIEW_LOGINS (legacy E.1 借壳) falls back for
-  // backward compat — will be removed in a follow-up release.
-  const getSetupNoiseBotLogins = (): readonly string[] =>
-    (
-      getGitHubEnvValue('GITHUB_SETUP_NOISE_BOT_LOGINS') ||
-      process.env.GITHUB_AUTHORITATIVE_REVIEW_LOGINS ||
-      'chatgpt-codex-connector[bot]'
-    )
-      .split(',')
-      .map((s: string) => s.trim())
-      .filter(Boolean);
-  app.log.info(`[api] F140: setup-noise bot logins=${getSetupNoiseBotLogins().join(', ')}`);
-
-  const setupNoiseFilter = createSetupNoiseFilter(getSetupNoiseBotLogins);
-  const classifyGitHubIssueComment = (comment: { author: string; body: string }) =>
-    classifyIssueComment(comment, {
-      isEchoComment: (c) => feedbackFilter.shouldSkipComment(c),
-      isNoiseComment: (c) => setupNoiseFilter({ ...c, commentType: 'conversation' }),
-    });
-
-  // F140 Phase E.3 cleanup (2026-04-25): email/IMAP watcher source files removed.
-  // Polling (ReviewFeedbackTaskSpec) is the sole truth source for review feedback.
-
   // F139 Phase 4b: late-bind invokeTrigger so templates can wake cats
 
   // F192 OQ-21: late-bind invokeTrigger for manual eval trigger endpoint.
@@ -8376,28 +7129,12 @@ async function main(): Promise<void> {
   // once-task instead of delivering a stale wake ("history replay").
   taskRunnerV2.setBusyChecker((threadId) => invocationTracker.has(threadId) || queueProcessor.isThreadBusy(threadId));
 
-  // F202-2B: GitHub schedule deps + rehydration (replaces hardcoded task registrations)
-  // Router/service creation stays here — same deps available as before.
-  // Task registration moved to plugin framework via rehydrateGitHubSchedules closure.
   {
-    // RFC §5.1: a GitHub notification is a producer envelope, not its own delivery mechanism.
     const deliveryDeps = { delivery: persistedQueueDelivery };
-    const [{ GitHubWaitLifecycleService }, waitEventLogModule] = await Promise.all([
-      import('./domains/github-signals/GitHubWaitLifecycleService.js'),
-      import('./domains/ball-custody/WaitLifecycleEventLog.js'),
-    ]);
+    const waitEventLogModule = await import('./domains/ball-custody/WaitLifecycleEventLog.js');
     const waitEventLog = redisClient
       ? new waitEventLogModule.RedisWaitLifecycleEventLog(redisClient)
       : new waitEventLogModule.MemoryWaitLifecycleEventLog();
-    const waitLifecycle = new GitHubWaitLifecycleService({
-      taskStore,
-      deliveryDeps,
-      eventLog: waitEventLog,
-      log: app.log,
-      // #1392 AC-1 is structural now: publishPending admits the flushed outcome to the Queue in the
-      // same transaction that persists it, so the flush IS the owner's wake. There is no second
-      // trigger that a collector could mistake for its own poll's result.
-    });
     if (runtimeDeploymentContext) {
       const [{ DeploymentWaitLifecycleService }, { DeploymentWaitRecoverySweep }] = await Promise.all([
         import('./domains/runtime-deployment/DeploymentWaitLifecycleService.js'),
@@ -8438,375 +7175,6 @@ async function main(): Promise<void> {
       };
       await runDeploymentWaitRecovery();
       deploymentWaitRecovery.startPeriodic();
-    }
-    const [{ PrWaitMigrationService }, { IssueWaitMigrationService }, { WaitLifecycleRecoverySweep }] =
-      await Promise.all([
-        import('./domains/ball-custody/PrWaitMigrationService.js'),
-        import('./domains/ball-custody/IssueWaitMigrationService.js'),
-        import('./domains/ball-custody/WaitLifecycleRecoverySweep.js'),
-      ]);
-    await new PrWaitMigrationService({
-      taskStore,
-      readBaseline: fetchPrWaitBaseline,
-      log: app.log,
-    }).migrateAll();
-    await new IssueWaitMigrationService({
-      taskStore,
-      readBaseline: fetchIssueWaitBaseline,
-      log: app.log,
-    }).migrateAll();
-    await new WaitLifecycleRecoverySweep(taskStore, waitLifecycle, app.log).run();
-
-    let externalReviewCoordinator:
-      | import('./domains/community/external-review/ExternalReviewCoordinator.js').ExternalReviewCoordinator
-      | undefined;
-    if (communityEventLog && communityProjector && communityObjectStore) {
-      const { ExternalReviewCoordinator } = await import(
-        './domains/community/external-review/ExternalReviewCoordinator.js'
-      );
-      externalReviewCoordinator = new ExternalReviewCoordinator({
-        repoConfigStore: communityRepoConfigStore,
-        eventLog: communityEventLog,
-        projector: communityProjector,
-        objectStore: communityObjectStore,
-        settlePendingVerdict: (subjectKey) =>
-          externalReviewVerdictService?.settlePending(subjectKey) ?? Promise.resolve({ kind: 'none' as const }),
-        log: app.log,
-      });
-    }
-
-    const cicdRouter = new CiCdRouter({
-      taskStore,
-      deliveryDeps,
-      waitLifecycle,
-      log: app.log,
-      notifySkip: (threadId, reason) => {
-        socketManager?.broadcastAgentMessage(
-          {
-            type: 'system_info',
-            catId: getDefaultCatId(),
-            content: JSON.stringify({ type: 'connector_skip', reason, threadId }),
-            timestamp: Date.now(),
-          },
-          threadId,
-        );
-      },
-      // F168 Phase A: wire PR lifecycle events to community event engine
-      eventLog: communityEventLog,
-      projector: communityProjector,
-      externalReviewCoordinator,
-      // F192 Phase G: wire PR merge/close events to task-outcome episodes
-      onPrLifecycle: (event) => {
-        appendPrLifecycleEvidenceToEpisode(taskOutcomeStore, {
-          type: event.type,
-          ref: event.ref,
-          outcome: event.outcome,
-          threadId: event.threadId,
-          ...(event.attribution.kind === 'managed_attributed' ? { managedWorkBinding: event.attribution.binding } : {}),
-        });
-        return { idempotencyKey: event.idempotencyKey };
-      },
-      // F208 AC-E2: distillation checkpoint — canonical first-detection point for merge
-      distillationCheckpoint,
-    });
-
-    const conflictRouter = new ConflictRouter({
-      taskStore,
-      deliveryDeps,
-      waitLifecycle,
-      log: app.log,
-    });
-
-    const reviewFeedbackRouter = new ReviewFeedbackRouter({
-      deliveryDeps,
-      waitLifecycle,
-      log: app.log,
-    });
-
-    // F202 Phase 2D: Issue comment tracking
-    const issueCommentRouter = new IssueCommentRouter({
-      deliveryDeps,
-      log: app.log,
-    });
-
-    // F140: conflict-check with ConflictRouter + urgent trigger
-    const checkMergeable = async (repo: string, pr: number, signal?: AbortSignal) => {
-      const { stdout } = await executeGitHubRequest(
-        ['pr', 'view', String(pr), '-R', repo, '--json', 'mergeable,headRefOid'],
-        { ghToken: getGitHubToken(), signal },
-      );
-      const data = JSON.parse(stdout);
-      return { mergeState: data.mergeable ?? 'UNKNOWN', headSha: data.headRefOid ?? '' };
-    };
-
-    const { ConflictAutoExecutor } = await import('./infrastructure/email/ConflictAutoExecutor.js');
-    const autoExecutor = new ConflictAutoExecutor({ log: app.log });
-
-    const { fetchPaginated: fetchPaginatedFn } = await import('./infrastructure/github/fetch-paginated.js');
-    const fetchPaginated = (endpoint: string, sinceId?: number, signal?: AbortSignal) =>
-      fetchPaginatedFn(endpoint, { sinceId, ghToken: getGitHubToken(), signal });
-
-    const fetchPrMetadata = async (
-      repo: string,
-      pr: number,
-      signal?: AbortSignal,
-    ): Promise<ReviewFeedbackPrMetadata | null> => {
-      try {
-        const { stdout } = await executeGitHubRequest(['api', `/repos/${repo}/pulls/${pr}`], {
-          ghToken: getGitHubToken(),
-          signal,
-        });
-        const data = JSON.parse(stdout) as {
-          head?: { sha?: string };
-          state?: string;
-          merged_at?: string | null;
-          merged?: boolean;
-          title?: string;
-          user?: { login?: string; type?: string };
-        };
-        const prState = data.merged_at || data.merged ? 'merged' : data.state === 'closed' ? 'closed' : 'open';
-        return {
-          headSha: data.head?.sha ?? '',
-          prState,
-          prTitle: data.title,
-          authorLogin: data.user?.login,
-          authorType: data.user?.type,
-        };
-      } catch (error) {
-        signal?.throwIfAborted();
-        if (error instanceof GitHubRateLimitError) throw error;
-        app.log.warn(
-          { repo, pr, err: error },
-          '[api] review-feedback metadata lookup failed; continuing without PR metadata',
-        );
-        return null;
-      }
-    };
-
-    const fetchComments = async (
-      repo: string,
-      pr: number,
-      cursors: { inline: number; conversation: number },
-      signal?: AbortSignal,
-    ) => {
-      await refreshGitHubSelfLogin(signal);
-      const [reviewComments, issueComments] = await Promise.all([
-        fetchPaginated(`/repos/${repo}/pulls/${pr}/comments`, cursors.inline, signal),
-        fetchPaginated(`/repos/${repo}/issues/${pr}/comments`, cursors.conversation, signal),
-      ]);
-      return [...reviewComments, ...issueComments].map(
-        (c: {
-          id: number;
-          body: string;
-          created_at: string;
-          user?: { login: string; type?: string };
-          commit_id?: string;
-          path?: string;
-          line?: number;
-          pull_request_review_id?: number;
-          author_association?: string; // F168 Phase B: needed for delivery policy
-        }) => ({
-          id: c.id,
-          ...(c.pull_request_review_id ? { reviewId: c.pull_request_review_id } : {}),
-          author: c.user?.login ?? 'unknown',
-          actorType: c.user?.type,
-          body: c.body,
-          createdAt: c.created_at,
-          ...(c.commit_id ? { commitId: c.commit_id } : {}),
-          commentType: c.pull_request_review_id ? ('inline' as const) : ('conversation' as const),
-          ...(c.path ? { filePath: c.path } : {}),
-          ...(c.line ? { line: c.line } : {}),
-          ...(c.author_association !== undefined ? { authorAssociation: c.author_association } : {}),
-        }),
-      );
-    };
-
-    // #1392: every review, never cursor-filtered — a dismissal changes an old review in place.
-    const fetchReviews = async (repo: string, pr: number, signal?: AbortSignal) => {
-      await refreshGitHubSelfLogin(signal);
-      const reviews = await fetchPaginated(`/repos/${repo}/pulls/${pr}/reviews`, undefined, signal);
-      return reviews.map(
-        (r: {
-          id: number;
-          user?: { login: string; type?: string };
-          state: string;
-          body: string;
-          submitted_at: string;
-          commit_id?: string;
-          author_association?: string; // F168 Phase B: needed for delivery policy
-        }) => ({
-          id: r.id,
-          author: r.user?.login ?? 'unknown',
-          actorType: r.user?.type,
-          state: r.state as 'APPROVED' | 'CHANGES_REQUESTED' | 'DISMISSED' | 'COMMENTED',
-          body: r.body,
-          submittedAt: r.submitted_at,
-          ...(r.commit_id ? { commitId: r.commit_id } : {}),
-          ...(r.author_association !== undefined ? { authorAssociation: r.author_association } : {}),
-        }),
-      );
-    };
-
-    // F202 Phase 2D: Issue comment fetchers (parallel to PR comment fetchers)
-    const fetchIssueComments = async (
-      repoFullName: string,
-      issueNumber: number,
-      sinceId?: number,
-      signal?: AbortSignal,
-    ) => {
-      await refreshGitHubSelfLogin(signal);
-      const comments = await fetchPaginated(`/repos/${repoFullName}/issues/${issueNumber}/comments`, sinceId, signal);
-      return comments.map(
-        (c: {
-          id: number;
-          body: string;
-          created_at: string;
-          user?: { login: string; type?: string };
-          author_association?: string; // F168 Phase B: needed for delivery policy
-        }) => ({
-          id: c.id,
-          author: c.user?.login ?? 'unknown',
-          actorType: c.user?.type,
-          body: c.body,
-          createdAt: c.created_at,
-          // Map snake_case GitHub API field to camelCase IssueComment.authorAssociation
-          ...(c.author_association !== undefined ? { authorAssociation: c.author_association } : {}),
-        }),
-      );
-    };
-
-    const fetchIssueMetadata = async (repoFullName: string, issueNumber: number, signal?: AbortSignal) => {
-      try {
-        const { stdout } = await executeGitHubRequest(['api', `/repos/${repoFullName}/issues/${issueNumber}`], {
-          ghToken: getGitHubToken(),
-          signal,
-        });
-        const data = JSON.parse(stdout) as {
-          state?: string;
-          user?: { login?: string; type?: string };
-        };
-        return {
-          state: data.state === 'closed' ? ('closed' as const) : ('open' as const),
-          authorLogin: data.user?.login,
-          authorType: data.user?.type,
-        };
-      } catch (error) {
-        signal?.throwIfAborted();
-        if (error instanceof GitHubRateLimitError) throw error;
-        app.log.warn({ repoFullName, issueNumber, err: error }, '[api] issue metadata lookup failed; assuming open');
-        return { state: 'open' as const };
-      }
-    };
-    const fetchIssueState = async (
-      repoFullName: string,
-      issueNumber: number,
-      signal?: AbortSignal,
-    ): Promise<'open' | 'closed'> => (await fetchIssueMetadata(repoFullName, issueNumber, signal)).state;
-
-    // Repo-scan deps (conditional on env vars + redis)
-    const ghRepoAllowlist = getGitHubEnvValue('GITHUB_REPO_ALLOWLIST');
-    const ghInboxCatId = getGitHubEnvValue('GITHUB_REPO_INBOX_CAT_ID');
-    let repoScanDeps: Partial<GitHubScheduleDeps> = {};
-
-    if (ghRepoAllowlist && ghInboxCatId && redisClient) {
-      const { ReconciliationDedup } = await import(
-        './infrastructure/connectors/github-repo-event/ReconciliationDedup.js'
-      );
-      const { deliverConnectorMessage } = await import('./infrastructure/email/deliver-connector-message.js');
-      const { RedisConnectorThreadBindingStore } = await import(
-        './infrastructure/connectors/RedisConnectorThreadBindingStore.js'
-      );
-      const { createRepoInboxOwnerResolver } = await import(
-        './infrastructure/connectors/github-repo-event/RepoInboxOwnerResolver.js'
-      );
-
-      const reconciliationDedup = new ReconciliationDedup(
-        redisClient as import('./infrastructure/connectors/github-repo-event/ReconciliationDedup.js').ReconciliationRedisLike,
-      );
-
-      const { fetchOpenPRs, fetchOpenIssues, fetchRepoComments } = repoPollReaders;
-
-      const { getOwnerUserId } = await import('./config/cat-config-loader.js');
-      const effectiveUserId = getOwnerUserId();
-
-      const { RedisRepoCommentCursorStore } = await import(
-        './infrastructure/connectors/github-repo-event/RepoCommentCursorStore.js'
-      );
-      const repoCommentCursorStore = new RedisRepoCommentCursorStore(redisClient);
-
-      repoScanDeps = {
-        repoAllowlist: ghRepoAllowlist.split(',').map((r: string) => r.trim()),
-        inboxCatId: ghInboxCatId,
-        resolveInboxCatId: createRepoInboxOwnerResolver(communityRepoConfigStore, ghInboxCatId, app.log),
-        defaultUserId: effectiveUserId,
-        reconciliationDedup,
-        bindingStore: new RedisConnectorThreadBindingStore(redisClient),
-        deliverFn: deliverConnectorMessage,
-        deliveryDeps: { delivery: persistedQueueDelivery },
-        fetchOpenPRs,
-        fetchOpenIssues,
-        // F168 C0.3: repo-level comment poller wiring
-        fetchRepoComments,
-        readRepoCommentCursor: (repo: string) => repoCommentCursorStore.read(repo),
-        writeRepoCommentCursor: (repo: string, cursor: string) => repoCommentCursorStore.write(repo, cursor),
-      };
-    }
-
-    // F202-2B: Populate factory deps + rehydrate schedule resources via plugin framework
-    if (rehydrateGitHubSchedules) {
-      await rehydrateGitHubSchedules({
-        taskStore,
-        threadStore,
-        cicdRouter,
-        ...createCiCollectionReaders(app.log, getGitHubToken),
-        conflictRouter,
-        reviewFeedbackRouter,
-        checkMergeable,
-        autoExecutor,
-        fetchPrMetadata,
-        fetchComments,
-        fetchReviews,
-        fetchReviewThreads: fetchPrReviewThreads,
-        isEchoComment: (c: { author: string }) => feedbackFilter.shouldSkipComment(c),
-        isEchoReview: (r: { author: string }) => feedbackFilter.shouldSkipReview(r),
-        isNoiseComment: setupNoiseFilter,
-        externalReviewCoordinator,
-        isSelfMerge: (login: string) => feedbackFilter.isSelfAuthored(login),
-        // F202 Phase 2D: issue comment tracking deps
-        issueCommentRouter,
-        waitLifecycle,
-        fetchIssueComments,
-        fetchIssueState,
-        fetchIssueMetadata,
-        isEchoIssueComment: (c: { author: string }) => feedbackFilter.shouldSkipComment(c),
-        // F220 (clowder-ai#972): issue-path bot setup-noise filter — reuse the shared F140
-        // setup-noise filter (exact-identity allowlist via GITHUB_SETUP_NOISE_BOT_LOGINS +
-        // content-aware), adapting IssueComment to SetupNoiseContext (issue comments are
-        // always conversation-type). NOT a broad `[bot]` blanket — see IssueCommentTaskSpec.
-        isNoiseIssueComment: (c: { author: string; body: string }) =>
-          setupNoiseFilter({ author: c.author, body: c.body, commentType: 'conversation' }),
-        classifyIssueComment: classifyGitHubIssueComment,
-        ...repoScanDeps,
-        // F168 Phase A P1-1: community event services for spec wiring
-        eventLog: communityEventLog,
-        projector: communityProjector,
-        // F208 Phase E AC-E2: distillation checkpoint for review-complete + feat-phase-close hooks
-        distillationCheckpoint,
-        // F168 Phase D D3/D4: reconciler deps (Redis-gated, same as repo-scan)
-        objectStore: communityObjectStore,
-        findingStore: communityFindingStore,
-        fetchGitHubIssueState: repoPollReaders.fetchIssueState,
-        fetchGitHubPrState: repoPollReaders.fetchPrState,
-        isReconcilerBaselineEstablished: async () => {
-          if (!redisClient) return false;
-          const val = await redisClient.get('community:reconciler:baseline-established');
-          return val === '1';
-        },
-        markReconcilerBaselineEstablished: async () => {
-          if (redisClient) await redisClient.set('community:reconciler:baseline-established', '1');
-        },
-      });
-      app.log.info('[api] F202-2B: GitHub schedule resources rehydrated via plugin framework');
     }
   }
 
@@ -9282,20 +7650,6 @@ async function main(): Promise<void> {
   // F139: Start unified scheduler (all registered specs)
   taskRunnerV2.start();
   app.log.info(`[api] F139: unified scheduler started (${taskRunnerV2.getRegisteredTasks().join(', ')})`);
-
-  // Repo Inbox is a separate W3 consumer. It survives IM gateway retirement.
-  await registerGitHubRepoWebhook(connectorWebhookHandlers, {
-    redis: redisClient ?? undefined,
-    log: app.log,
-    defaultUserId: process.env.DEFAULT_OWNER_USER_ID || 'default-user',
-    bindingStore: connectorBindingStore,
-    threadStore,
-    repoConfigStore: communityRepoConfigStore,
-    classifyGitHubIssueComment,
-    deliveryDeps: { delivery: persistedQueueDelivery },
-  }).catch((err: unknown) => {
-    app.log.error({ err }, 'GitHub Repo Inbox webhook initialization failed');
-  });
 
   // Graceful shutdown handler: persist Redis before exit
   let shuttingDown = false;

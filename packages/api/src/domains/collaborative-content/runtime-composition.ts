@@ -16,9 +16,8 @@ import {
 import { readWorkspaceOfficeImport } from '../workspace/workspace-office-import.js';
 import { EditorBridgeService } from './editor-bridge/service.js';
 import { EditorSessionService } from './editor-session-service.js';
-import { NamedCatContentService } from './named-cat-content-service.js';
+import { type ContentInspectionPort, NamedCatContentService } from './named-cat-content-service.js';
 import { CollaborativePatchService, type ContentPatchMaterializerPort } from './patch-service.js';
-import { createPluginDocxMaterializer } from './plugin-docx-materializer.js';
 import { createPluginEditorAuthority } from './plugin-editor-authority.js';
 import { OfficeProviderBindingStore } from './provider-binding-store.js';
 import { SemanticOperationStore } from './semantic-operation-store.js';
@@ -27,8 +26,9 @@ import { WorkspaceEditorService } from './workspace-editor-service.js';
 export function createCollaborativeContentComposition(options: {
   readonly dataDir: string;
   readonly ownerUserId: string;
-  readonly plugins: Pick<DormantPluginRuntimeComposition, 'inventoryStore' | 'contentEditors' | 'contentMaterializers'>;
+  readonly plugins: Pick<DormantPluginRuntimeComposition, 'inventoryStore' | 'contentEditors'>;
   readonly materializer?: ContentPatchMaterializerPort;
+  readonly inspector?: ContentInspectionPort;
   readonly readSource?: (worktreeId: string, path: string) => Promise<Buffer>;
   /** Trusted invocation/delegation port; omission deliberately denies Cat project access. */
   readonly authorizeVideoProjectCat?: AuthorizeVideoProjectCat;
@@ -63,12 +63,11 @@ export function createCollaborativeContentComposition(options: {
   const bindings = new OfficeProviderBindingStore({ dataDir: options.dataDir });
   const { authority, surfaces } = createPluginEditorAuthority(runtime);
   const sessions = new EditorSessionService({ dataDir: options.dataDir, owner, bindings, authority });
-  const semantic = createPluginDocxMaterializer(options.plugins.contentMaterializers);
   const patches = new CollaborativePatchService({
     owner,
     sessions,
     semanticOperations: new SemanticOperationStore(options.dataDir),
-    materializer: options.materializer ?? semantic,
+    ...(options.materializer ? { materializer: options.materializer } : {}),
   });
   const bridge = new EditorBridgeService({ owner, sessions, patches });
   const workspace = new WorkspaceEditorService({
@@ -85,7 +84,7 @@ export function createCollaborativeContentComposition(options: {
     sessions,
     owner,
     patches,
-    inspector: semantic,
+    ...(options.inspector ? { inspector: options.inspector } : {}),
     workspace,
   });
   return {

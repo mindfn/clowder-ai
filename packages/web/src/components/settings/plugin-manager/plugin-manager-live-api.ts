@@ -72,7 +72,6 @@ export function designFixture(
     ...('dependencyClosure' in plugin.source && plugin.source.dependencyClosure !== undefined
       ? { dependencyClosure: plugin.source.dependencyClosure }
       : {}),
-    ...(plugin.source.kind === 'compatibility' ? { sourceAdapter: plugin.source.adapter } : {}),
     availableVersion: plugin.availableVersion ?? plugin.installedVersion ?? 'unknown',
     installedVersion: plugin.installedVersion,
     artifact: plugin.artifact,
@@ -192,31 +191,12 @@ export async function fetchManagerList(search: string, afterMutation: boolean): 
   return value;
 }
 
-function legacyConfigurationUpdates(updates: readonly ConfigurationUpdate[]) {
-  return updates.map(({ key, value }) => ({ name: key, value }));
-}
-
 export function configurationRequest(
   plugin: PluginManagerListItem | undefined,
   updates: readonly ConfigurationUpdate[],
 ): { readonly path: string; readonly init: RequestInit } | undefined {
   if (!plugin || plugin.artifact !== 'installed') return undefined;
   const encodedId = encodeURIComponent(plugin.pluginId);
-  if (plugin.source.kind === 'compatibility') {
-    const repositoryLocal = plugin.source.adapter === 'repository-local';
-    return {
-      path: repositoryLocal ? `/api/plugins/${encodedId}/config` : `/api/connectors/${encodedId}/config`,
-      init: {
-        method: repositoryLocal ? 'POST' : 'PUT',
-        headers: { 'content-type': 'application/json' },
-        body: JSON.stringify(
-          repositoryLocal
-            ? { updates: legacyConfigurationUpdates(updates) }
-            : { fields: legacyConfigurationUpdates(updates) },
-        ),
-      },
-    };
-  }
   if (plugin.lifecycleRevision === null) return undefined;
   return {
     path: `/api/plugin-manager/plugins/${encodedId}/contributions/configuration`,

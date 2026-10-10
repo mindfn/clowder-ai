@@ -296,9 +296,6 @@ export class OfficialPluginPackageInstaller {
     entry: OfficialPluginCatalogEntry,
     accept: (candidate: PackageAdmissionCandidate) => Promise<T>,
   ): Promise<T> {
-    if (entry.distribution === 'bundled') {
-      return this.withBundledPackage(entry, accept);
-    }
     const bytes = await this.fetchArchive(entry);
     if (bytes.byteLength > MAX_OFFICIAL_PACKAGE_BYTES) {
       throw new OfficialPluginInstallError('PACKAGE_TOO_LARGE', 'official package exceeds the Host size limit');
@@ -388,7 +385,6 @@ export class OfficialPluginPackageInstaller {
           kind: 'catalog',
           catalogId: entry.catalogId,
           packageName: entry.packageName,
-          ownerAuthRequired: entry.ownerAuth !== undefined,
         },
       });
     } finally {

@@ -2125,169 +2125,6 @@ export async function handleRegisterDeploymentWait(input: {
   return withUnknownRegistrationOutcome(result);
 }
 
-// F168 Phase B Task 6: Declare awaiting_external state for a community case
-export const communityAwaitExternalInputSchema = {
-  subjectKey: z
-    .string()
-    .min(1)
-    .describe(
-      'Community case subject key. Format: "issue:{owner/repo}#{number}" or "pr:{owner/repo}#{number}". ' +
-        'Example: "issue:my-org/my-repo#42".',
-    ),
-  reason: z
-    .string()
-    .max(500)
-    .optional()
-    .describe(
-      'Optional free-text reason describing what you are waiting for (e.g. "waiting for reporter to provide reproduction steps").',
-    ),
-};
-
-/**
- * Declare that the owner (you) is waiting for an external response on a community case.
- *
- * WHEN TO USE: After responding to an issue/PR and explicitly waiting for the reporter or
- * external contributor to reply. While in awaiting_external state:
- *  - Maintainer (OWNER/MEMBER) activity on the case is silently logged — no wake notification.
- *  - External actor (reporter, contributor) activity automatically restores the case to
- *    in_progress and sends you a wake notification.
- *
- * PRECONDITIONS:
- *  - Case must exist in the projection (404 if not tracked).
- *  - Case state must be in {in_progress, awaiting_external, routed}.
- *  - If state is `new` or `triaged`, the endpoint auto-reconciles by emitting
- *    `case.routed` first (requires your catId + threadId in callback auth).
- *    This fixes the gap where GitHub-side triage completes without an internal
- *    `case.routed` event.
- *  - Terminal states (closed, declined, fixed) return 409 — not reconcilable.
- *  - Only the case owner (ownerThreadId match) can call this. If the case has no
- *    owner yet (ownerThreadId is null), any authenticated cat is allowed.
- *
- * EFFECT: Appends case.awaiting_external to the community event log and updates the
- * projection so the community board shows the correct state.
- */
-export async function handleCommunityAwaitExternal(input: {
-  subjectKey: string;
-  reason?: string;
-  agentKeyCatId?: string | undefined;
-}): Promise<ToolResult> {
-  // URL-encode subjectKey so the colon, slashes, and hash are safe in the path segment
-  const encodedKey = encodeURIComponent(input.subjectKey);
-  return withDegradation({
-    toolName: 'community_await_external',
-    primary: () =>
-      callbackPost(
-        `/api/community-issues/${encodedKey}/await-external`,
-        {
-          ...(input.reason !== undefined ? { reason: input.reason } : {}),
-        },
-        agentKeyOptions(input),
-      ),
-    policy: { kind: 'none' },
-  });
-}
-
-// F168 Phase D: request an independently selected Guardian for an accepted intake case.
-export const communityGuardianRequestInputSchema = {
-  caseId: z.string().min(1).describe('Internal Community Issue case ID for the accepted intake case.'),
-  author: z
-    .string()
-    .min(1)
-    .describe('Author catId. Must match the server-trusted callback or agent-key principal making this request.'),
-  reviewer: z
-    .string()
-    .min(1)
-    .describe('Independent reviewer catId to exclude, together with the author, from Guardian selection.'),
-  agentKeyCatId: agentKeyCatIdSchema,
-};
-
-export async function handleCommunityRequestGuardian(input: {
-  caseId: string;
-  author: string;
-  reviewer: string;
-  agentKeyCatId?: string | undefined;
-}): Promise<ToolResult> {
-  const encodedCaseId = encodeURIComponent(input.caseId);
-  return withDegradation({
-    toolName: 'community_request_guardian',
-    primary: () =>
-      callbackPost(
-        `/api/community-issues/${encodedCaseId}/request-guardian`,
-        {
-          author: input.author,
-          reviewer: input.reviewer,
-        },
-        agentKeyOptions(input),
-      ),
-    policy: { kind: 'none' },
-  });
-}
-
-// F168 Phase D: persist the assigned Guardian's evidence-backed intake verdict.
-export const communityGuardianSignoffInputSchema = {
-  caseId: z
-    .string()
-    .min(1)
-    .describe('Internal Community Issue case ID returned by the intake board or request-guardian endpoint.'),
-  signoffToken: z
-    .string()
-    .min(1)
-    .describe('One-time Guardian signoff token returned by the request-guardian endpoint.'),
-  checklist: z
-    .array(
-      z.object({
-        id: z.string().min(1).describe('Stable checklist item ID from the current Guardian assignment.'),
-        label: z.string().min(1).describe('Human-readable checklist item label from the current assignment.'),
-        required: z.boolean().describe('Whether this checklist item is required for approval.'),
-        evidence: z.string().min(1).optional().describe('Concrete evidence supporting this checklist item.'),
-        verifiedAt: z
-          .number()
-          .int()
-          .nonnegative()
-          .optional()
-          .describe('Unix timestamp in milliseconds when the Guardian verified this item.'),
-        verifiedBy: z.string().min(1).optional().describe('Guardian catId that verified this checklist item.'),
-      }),
-    )
-    .describe('The complete current Guardian checklist, with concrete evidence for every required item.'),
-  approved: z.boolean().describe('True only when every required intake condition is satisfied.'),
-  reason: z.string().min(1).max(1000).optional().describe('Required context when the Guardian rejects the intake.'),
-  agentKeyCatId: agentKeyCatIdSchema,
-};
-
-export async function handleCommunityGuardianSignoff(input: {
-  caseId: string;
-  signoffToken: string;
-  checklist: Array<{
-    id: string;
-    label: string;
-    required: boolean;
-    evidence?: string;
-    verifiedAt?: number;
-    verifiedBy?: string;
-  }>;
-  approved: boolean;
-  reason?: string;
-  agentKeyCatId?: string | undefined;
-}): Promise<ToolResult> {
-  const encodedCaseId = encodeURIComponent(input.caseId);
-  return withDegradation({
-    toolName: 'community_guardian_signoff',
-    primary: () =>
-      callbackPost(
-        `/api/community-issues/${encodedCaseId}/guardian-signoff`,
-        {
-          signoffToken: input.signoffToken,
-          checklist: input.checklist,
-          approved: input.approved,
-          ...(input.reason !== undefined ? { reason: input.reason } : {}),
-        },
-        agentKeyOptions(input),
-      ),
-    policy: { kind: 'none' },
-  });
-}
-
 export const updateWorkflowInputSchema = {
   backlogItemId: z
     .string()
@@ -3620,7 +3457,6 @@ export const callbackTools = [
       authority: 'callback-thread',
       risk: { level: 'write', openWorld: false },
       runtimeProfiles: [
-        'collective-work',
         'full',
         'agent-key',
         'desktop:fable-phase0',
@@ -3939,7 +3775,7 @@ export const callbackTools = [
       action: 'read',
       authority: 'callback-owner',
       risk: { level: 'read', openWorld: false },
-      runtimeProfiles: ['collective-work', 'full', 'desktop:live-companion'],
+      runtimeProfiles: ['full', 'desktop:live-companion'],
       standaloneReason: {
         disposition: 'accepted-boundary',
         kind: 'authority-boundary',
@@ -3963,7 +3799,7 @@ export const callbackTools = [
       action: 'update',
       authority: 'callback-owner',
       risk: { level: 'write', openWorld: false },
-      runtimeProfiles: ['collective-work', 'full', 'desktop:live-companion'],
+      runtimeProfiles: ['full', 'desktop:live-companion'],
       standaloneReason: {
         disposition: 'accepted-boundary',
         kind: 'side-effect-boundary',
@@ -4026,7 +3862,6 @@ export const callbackTools = [
       'Use when work starts, blocks, resumes, progress/nextStep changes, or source-backed dates and Artifact refs become known; the same Task remains the owner and its revision advances once. ' +
       'Not for generic why edits, inferred dates or marking work complete. Keep actualStart, plannedStart, estimatedCompletion and businessDeadline distinct; every date and progress note cites its source. ' +
       'Artifact refs replace the canonical set and are deduplicated/sorted; null clears one time fact. ' +
-      'In an admitted Collective Work, use only taskId, expectedRevision and artifactRefs for the exact bound Task; its authorized named delegate may also register Artifact evidence without taking ownership. ' +
       'No-op, stale, foreign-owner outside that exact Work capability, and terminal updates fail closed; generic update_task remains forbidden.',
     inputSchema: updateEntrustedWorkInputSchema,
     handler: handleUpdateEntrustedWork,
@@ -4036,7 +3871,7 @@ export const callbackTools = [
       action: 'update',
       authority: 'callback-owner',
       risk: { level: 'write', openWorld: false },
-      runtimeProfiles: ['collective-work', 'full', 'desktop:live-companion'],
+      runtimeProfiles: ['full', 'desktop:live-companion'],
       standaloneReason: {
         disposition: 'accepted-boundary',
         kind: 'authority-boundary',
@@ -4139,7 +3974,7 @@ export const callbackTools = [
       action: 'create',
       authority: 'callback-owner',
       risk: { level: 'write', openWorld: false },
-      runtimeProfiles: ['collective-work', 'full', 'desktop:live-companion'],
+      runtimeProfiles: ['full', 'desktop:live-companion'],
     },
   }),
   defineTool({
@@ -4149,7 +3984,6 @@ export const callbackTools = [
       'Use when: user asks to "生成报告", "导出文档", "发PDF", "写份文档给我", "export to DOCX", or any document generation request. ' +
       'NOT for: sending an existing file you already have (use create_rich_block with kind:"file" + url pointing to /uploads/). ' +
       'Output: file saved to /uploads/, attached as file RichBlock, automatically delivered to bound IM chats. Web UI shows download link. ' +
-      'In an admitted Collective Work, only UTF8 Markdown up to 65536 bytes is supported; Host binds the immutable file to this Task and execution/result version. Publish the buffered file with post_message in this Work, read_entrusted_work for its current revision, then use update_entrusted_work with only taskId, expectedRevision and artifactRefs to register the returned URL. Generic update_task cannot update canonical Artifact refs. Refresh collective_current_context before returning the result. ' +
       'GOTCHA: Do NOT manually run pandoc + create_rich_block — that skips IM delivery and the file will NOT reach Feishu/Telegram. Always use this tool. ' +
       'Degradation: PDF needs LaTeX engine → falls back to DOCX → falls back to MD. No pandoc → .md only.',
     inputSchema: generateDocumentInputSchema,
@@ -4160,7 +3994,7 @@ export const callbackTools = [
       action: 'derive',
       authority: 'callback-owner',
       risk: { level: 'write', openWorld: false },
-      runtimeProfiles: ['collective-work', 'full'],
+      runtimeProfiles: ['full'],
     },
   }),
   defineCanonicalTool({
@@ -4185,70 +4019,6 @@ export const callbackTools = [
         kind: 'resource-entry',
         admissionRef: 'file:docs/features/F323-runtime-restart-coordination.md',
       },
-    },
-  }),
-  defineTool({
-    name: 'cat_cafe_community_await_external',
-    description:
-      'Declare that you (the case owner) are waiting for an external response on a community case. ' +
-      'WHEN: After responding to an issue/PR and explicitly waiting for the reporter or contributor to reply. ' +
-      'EFFECT WHILE WAITING: Maintainer (OWNER/MEMBER) activity → silently logged, no wake. ' +
-      'External actor (reporter, contributor) activity → auto-restores case to in_progress + wakes you. ' +
-      'Provide the subjectKey in "issue:{owner/repo}#{number}" format (e.g. "issue:my-org/my-repo#42"). ' +
-      'PRECONDITIONS: Case must exist (404 if not). State must be in {in_progress, awaiting_external, routed}. ' +
-      'Auto-reconciliation (new/triaged → routed) requires ALL of: ' +
-      '(1) issue: subject only — pr: subjects return 409 (no durable PR authority), ' +
-      '(2) accepted CommunityIssue record with non-null assignedCatId AND assignedThreadId, ' +
-      '(3) caller catId and threadId must exactly match the assigned values. ' +
-      'Terminal states (closed, declined, fixed) return 409. Only the case owner (ownerThreadId match) can call.',
-    inputSchema: communityAwaitExternalInputSchema,
-    handler: handleCommunityAwaitExternal,
-    governance: {
-      implementationExport: 'handleCommunityAwaitExternal',
-      resourceFamily: 'community-case',
-      action: 'command',
-      authority: 'callback-owner',
-      risk: { level: 'write', openWorld: false },
-      runtimeProfiles: ['full'],
-    },
-  }),
-  defineTool({
-    name: 'cat_cafe_community_request_guardian',
-    description:
-      'Request the canonical independent Guardian assignment for an accepted community intake case. ' +
-      'Use when: the named reviewer has completed review and the accepted case needs its mandatory Guardian before merge. ' +
-      'NOT for: choosing, reassigning, or bypassing a Guardian, or requesting on behalf of another author. ' +
-      'Output: the durable Guardian assignment plus its one-time signoff token. ' +
-      'GOTCHA: author must match the authenticated callback or agent-key principal; reviewer is only the independently verified reviewer excluded from Guardian selection.',
-    inputSchema: communityGuardianRequestInputSchema,
-    handler: handleCommunityRequestGuardian,
-    governance: {
-      implementationExport: 'handleCommunityRequestGuardian',
-      resourceFamily: 'community-case',
-      action: 'command',
-      authority: 'callback-owner',
-      risk: { level: 'write', openWorld: false },
-      runtimeProfiles: ['full', 'agent-key'],
-    },
-  }),
-  defineTool({
-    name: 'cat_cafe_community_guardian_signoff',
-    description:
-      "Persist the system-assigned intake Guardian's evidence-backed checklist and approve/reject verdict. " +
-      'Use only after independently verifying vision alignment, test coverage, doc/spec sync, no regression, and design fidelity when applicable. ' +
-      'NOT for requesting, choosing, or reassigning a Guardian, and never for bypassing a failed checklist. ' +
-      'The server derives Guardian identity from callback or agent-key auth; never put catId or credentials in the body. ' +
-      'Requires the internal caseId and signoffToken returned by request-guardian. ' +
-      'Output: the durable Guardian signoff state for the community case.',
-    inputSchema: communityGuardianSignoffInputSchema,
-    handler: handleCommunityGuardianSignoff,
-    governance: {
-      implementationExport: 'handleCommunityGuardianSignoff',
-      resourceFamily: 'community-case',
-      action: 'command',
-      authority: 'guardian-callback',
-      risk: { level: 'write', openWorld: false },
-      runtimeProfiles: ['full', 'agent-key'],
     },
   }),
   defineTool({

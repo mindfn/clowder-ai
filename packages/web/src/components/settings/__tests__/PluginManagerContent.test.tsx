@@ -125,21 +125,6 @@ function connectorPlugin() {
     ...managerPlugin({ installed: true }),
     pluginId: 'telegram',
     displayName: 'Telegram',
-    source: {
-      kind: 'compatibility',
-      adapter: 'connector',
-      packageName: 'connector:telegram',
-      trust: 'first-party',
-    },
-    packageDigest: null,
-    pluginInstanceId: null,
-    lifecycleRevision: null,
-    actions: {
-      install: false,
-      setEnabled: false,
-      uninstall: false,
-      blockingReasons: ['compatibility-read-only'],
-    },
   } as const;
 }
 
@@ -634,12 +619,13 @@ describe('F202 live Plugin Manager Console wiring', () => {
     expect(detailReads.at(-1)).toBe(calendar.pluginId);
   });
 
-  it('renders a compatibility configuration contribution and saves through its typed boundary', async () => {
+  it('renders an installed plugin configuration through the shared manager boundary', async () => {
     const plugin = connectorPlugin();
     mockApiFetch.mockImplementation(async (url, init) => {
       if (url === '/api/plugin-manager/plugins') return json(response(plugin));
       if (url === '/api/plugin-manager/plugins/telegram') return json(connectorDetail());
-      if (url === '/api/connectors/telegram/config' && init?.method === 'PUT') return json({ ok: true });
+      if (url === '/api/plugin-manager/plugins/telegram/contributions/configuration' && init?.method === 'POST')
+        return json({ ok: true });
       return json({}, 404);
     });
 
@@ -661,10 +647,13 @@ describe('F202 live Plugin Manager Console wiring', () => {
     await act(async () => save?.click());
     await flushEffects();
 
-    expect(mockApiFetch).toHaveBeenCalledWith('/api/connectors/telegram/config', {
-      method: 'PUT',
+    expect(mockApiFetch).toHaveBeenCalledWith('/api/plugin-manager/plugins/telegram/contributions/configuration', {
+      method: 'POST',
       headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({ fields: [{ name: 'TELEGRAM_BOT_TOKEN', value: '123456:secret' }] }),
+      body: JSON.stringify({
+        expectedRevision: plugin.lifecycleRevision,
+        updates: [{ key: 'TELEGRAM_BOT_TOKEN', value: '123456:secret' }],
+      }),
     });
   });
 

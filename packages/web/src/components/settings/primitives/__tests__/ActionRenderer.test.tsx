@@ -75,7 +75,7 @@ describe('ActionRenderer', () => {
     await act(async () => {
       root.render(
         React.createElement(ActionRenderer, {
-          target: { kind: 'connector', id: 'weixin' },
+          target: { kind: 'plugin', id: 'weixin' },
           operation: {
             name: 'connect',
             label: 'Connect',
@@ -97,12 +97,10 @@ describe('ActionRenderer', () => {
     });
     await flushEffects();
 
-    expect(mockApiFetch).toHaveBeenCalledWith('/api/connectors/weixin/operations/connect/reset', {
+    expect(mockApiFetch).toHaveBeenCalledWith('/api/plugins/weixin/operations/connect/reset', {
       method: 'POST',
-      headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({ currentAction: 'qr-generate' }),
     });
-    expect(mockApiFetch).not.toHaveBeenCalledWith('/api/connectors/weixin/actions/connect/qr-generate', {
+    expect(mockApiFetch).not.toHaveBeenCalledWith('/api/plugins/weixin/actions/connect/qr-generate', {
       method: 'POST',
     });
     expect(container.textContent).toContain('Operation timed out. Please try again.');
@@ -127,7 +125,7 @@ describe('ActionRenderer', () => {
     await act(async () => {
       root.render(
         React.createElement(ActionRenderer, {
-          target: { kind: 'connector', id: 'weixin' },
+          target: { kind: 'plugin', id: 'weixin' },
           operation: {
             name: 'connect',
             label: 'Connect',
@@ -145,10 +143,8 @@ describe('ActionRenderer', () => {
     await flushEffects();
     await flushEffects();
 
-    expect(mockApiFetch).toHaveBeenCalledWith('/api/connectors/weixin/operations/connect/reset', {
+    expect(mockApiFetch).toHaveBeenCalledWith('/api/plugins/weixin/operations/connect/reset', {
       method: 'POST',
-      headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({ currentAction: 'qr-generate' }),
     });
     expect(container.textContent).toContain('Operation timed out. Please try again.');
     expect(container.querySelector('[data-testid="weixin-qr-image"]')).toBeNull();
@@ -161,7 +157,7 @@ describe('ActionRenderer', () => {
     await act(async () => {
       root.render(
         React.createElement(ActionRenderer, {
-          target: { kind: 'connector', id: 'custom-im' },
+          target: { kind: 'plugin', id: 'custom-im' },
           operation: {
             name: 'connect',
             label: 'Connect',
@@ -192,7 +188,7 @@ describe('ActionRenderer', () => {
     await act(async () => {
       root.render(
         React.createElement(ActionRenderer, {
-          target: { kind: 'connector', id: 'wecom-bot' },
+          target: { kind: 'plugin', id: 'wecom-bot' },
           pendingConfigValues: {
             WECOM_BOT_ID: 'bot-id-from-form',
             WECOM_BOT_SECRET: 'secret-from-form',
@@ -214,14 +210,12 @@ describe('ActionRenderer', () => {
     });
     await flushEffects();
 
-    expect(mockApiFetch).toHaveBeenCalledWith('/api/connectors/wecom-bot/actions/connect/validate', {
+    expect(mockApiFetch).toHaveBeenCalledWith('/api/plugins/wecom-bot/actions/connect/validate', {
       method: 'POST',
       headers: { 'content-type': 'application/json' },
       body: JSON.stringify({
-        values: {
-          WECOM_BOT_ID: 'bot-id-from-form',
-          WECOM_BOT_SECRET: 'secret-from-form',
-        },
+        WECOM_BOT_ID: 'bot-id-from-form',
+        WECOM_BOT_SECRET: 'secret-from-form',
       }),
     });
   });
@@ -307,7 +301,7 @@ describe('ActionRenderer', () => {
     await act(async () => {
       root.render(
         React.createElement(ActionRenderer, {
-          target: { kind: 'connector', id: 'feishu' },
+          target: { kind: 'plugin', id: 'feishu' },
           operation: {
             name: 'qr_login',
             label: 'QR login',
@@ -388,7 +382,7 @@ describe('ActionRenderer', () => {
     await act(async () => {
       root.render(
         React.createElement(ActionRenderer, {
-          target: { kind: 'connector', id: 'feishu' },
+          target: { kind: 'plugin', id: 'feishu' },
           configured: true,
           operation,
         }),
@@ -401,7 +395,7 @@ describe('ActionRenderer', () => {
     await act(async () => {
       root.render(
         React.createElement(ActionRenderer, {
-          target: { kind: 'connector', id: 'feishu' },
+          target: { kind: 'plugin', id: 'feishu' },
           configured: false,
           operation: { ...operation, currentAction: 'start' },
         }),
@@ -417,7 +411,7 @@ describe('ActionRenderer', () => {
     await act(async () => {
       root.render(
         React.createElement(ActionRenderer, {
-          target: { kind: 'connector', id: 'feishu' },
+          target: { kind: 'plugin', id: 'feishu' },
           configured: false,
           operation: {
             name: 'connect',
@@ -443,7 +437,7 @@ describe('ActionRenderer', () => {
     await act(async () => {
       root.render(
         React.createElement(ActionRenderer, {
-          target: { kind: 'connector', id: 'custom-im' },
+          target: { kind: 'plugin', id: 'custom-im' },
           operation: {
             name: 'setup',
             label: 'Setup',
@@ -481,7 +475,7 @@ describe('ActionRenderer', () => {
     await act(async () => {
       root.render(
         React.createElement(ActionRenderer, {
-          target: { kind: 'connector', id: 'feishu' },
+          target: { kind: 'plugin', id: 'feishu' },
           operation: {
             name: 'connect',
             label: 'Connect',
@@ -508,7 +502,7 @@ describe('ActionRenderer', () => {
     await flushEffects();
 
     const img = container.querySelector<HTMLImageElement>('[data-testid="feishu-qr-image"]');
-    expect(mockApiFetch).toHaveBeenCalledWith('/api/connectors/feishu/actions/connect/qr-generate', {
+    expect(mockApiFetch).toHaveBeenCalledWith('/api/plugins/feishu/actions/connect/qr-generate', {
       method: 'POST',
     });
     expect(img).not.toBeNull();
@@ -536,7 +530,7 @@ describe('ActionRenderer', () => {
     await act(async () => {
       root.render(
         React.createElement(ActionRenderer, {
-          target: { kind: 'connector', id: 'weixin' },
+          target: { kind: 'plugin', id: 'weixin' },
           operation: {
             name: 'connect',
             label: 'Connect',
@@ -593,7 +587,7 @@ describe('ActionRenderer', () => {
     await act(async () => {
       root.render(
         React.createElement(ActionRenderer, {
-          target: { kind: 'connector', id: 'weixin' },
+          target: { kind: 'plugin', id: 'weixin' },
           operation: {
             name: 'connect',
             label: 'Connect',
@@ -670,7 +664,7 @@ describe('ActionRenderer', () => {
     await act(async () => {
       root.render(
         React.createElement(ActionRenderer, {
-          target: { kind: 'connector', id: 'weixin' },
+          target: { kind: 'plugin', id: 'weixin' },
           operation: {
             name: 'connect',
             label: 'Connect',
@@ -742,7 +736,7 @@ describe('ActionRenderer', () => {
     await act(async () => {
       root.render(
         React.createElement(ActionRenderer, {
-          target: { kind: 'connector', id: 'weixin' },
+          target: { kind: 'plugin', id: 'weixin' },
           operation: {
             name: 'connect',
             label: 'Connect',
@@ -796,7 +790,7 @@ describe('ActionRenderer', () => {
     await act(async () => {
       root.render(
         React.createElement(ActionRenderer, {
-          target: { kind: 'connector', id: 'feishu' },
+          target: { kind: 'plugin', id: 'feishu' },
           configured: true,
           operation: {
             name: 'connect',
@@ -819,7 +813,7 @@ describe('ActionRenderer', () => {
     });
     await flushEffects();
 
-    expect(mockApiFetch).toHaveBeenCalledWith('/api/connectors/feishu/actions/connect/disconnect', {
+    expect(mockApiFetch).toHaveBeenCalledWith('/api/plugins/feishu/actions/connect/disconnect', {
       method: 'POST',
     });
     expect(container.querySelector('[data-testid="feishu-action-qr-generate"]')).not.toBeNull();

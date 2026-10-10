@@ -1,23 +1,9 @@
 import type { MessageFrom } from '@cat-cafe/shared';
-import { isDeepStrictEqual } from 'node:util';
-import type { PluginWaitState } from '@cat-cafe/shared';
 import type Database from 'better-sqlite3';
 import type { OutputVerifiedSignalSources } from './output-verified-detector.js';
 import { SqliteSignalSources } from './SqliteSignalSources.js';
 
-/**
- * F200 AC-D2.1/D2.2/D2.3 — Thread-aware signal sources for OutputVerifiedDetector.
- *
- * Extends SqliteSignalSources (invocation status from evidence.sqlite) with
- * Host thread messages and installed provider observations scoped by canonical tasks:
- *
- * - AC-D2.1: operator accept + reviewer approval detected via thread message scanning
- * - AC-D2.2: CI passed from an installed observation for current active work
- * - AC-D2.3: PR merged from an explicit provider observation, never task completion alone
- *
- * Design: optional interface methods (`isCvoAcceptedForThread?` etc.) keep
- * backward compatibility — old callers using plain SqliteSignalSources still work.
- */
+/** Thread-local human/reviewer message signals plus generic invocation evidence. */
 
 /** Minimal message shape needed for signal detection (subset of StoredMessage). */
 export interface SignalMessage {
@@ -34,27 +20,6 @@ export interface SignalMessage {
 /** Minimal message store interface (subset of IMessageStore). */
 export interface SignalMessageStore {
   getByThread(threadId: string, limit?: number, userId?: string): Promise<SignalMessage[]> | SignalMessage[];
-}
-
-/** Canonical Host task fields used to scope an installed provider observation. */
-export interface SignalTaskItem {
-  id?: string;
-  kind: string;
-  status: string;
-  threadId: string;
-  subjectKey?: string | null;
-  ownerCatId?: string | null;
-  userId?: string;
-  pluginWait?: PluginWaitState;
-}
-
-export interface SignalTaskStore {
-  listByThread(threadId: string): Promise<SignalTaskItem[]> | SignalTaskItem[];
-}
-
-/** Internal read-only observations, not plugin-supplied task ownership or verdicts. */
-export interface TaskOutputObservationSource {
-  read(task: SignalTaskItem): Promise<{ ciPassed: boolean; merged: boolean } | null>;
 }
 
 /**
@@ -144,8 +109,6 @@ export class ThreadAwareSignalSources implements OutputVerifiedSignalSources {
   constructor(
     db: Database.Database,
     private readonly messageStore: SignalMessageStore,
-    private readonly taskStore: SignalTaskStore,
-    private readonly observations?: TaskOutputObservationSource,
   ) {
     this.sqliteSources = new SqliteSignalSources(db);
   }
@@ -153,22 +116,6 @@ export class ThreadAwareSignalSources implements OutputVerifiedSignalSources {
   /** Delegate to SqliteSignalSources for recall_events-based invocation status. */
   async getInvocationStatus(invocationId: string): Promise<string | null> {
     return this.sqliteSources.getInvocationStatus(invocationId);
-  }
-
-  /** Latest terminal work requires an explicit provider merge observation. */
-  async isPrMergedForThread(threadId: string): Promise<boolean> {
-    if (!this.observations) return false;
-    const tasks = await this.taskSnapshot(threadId);
-    if (tasks.length === 0 || tasks.some((t) => t.status !== 'done')) return false;
-    const last = tasks[tasks.length - 1];
-    const observed = await this.observations.read(structuredClone(last));
-    return observed?.merged === true && isDeepStrictEqual(tasks, await this.taskSnapshot(threadId));
-  }
-
-  private async taskSnapshot(threadId: string): Promise<SignalTaskItem[]> {
-    return structuredClone(
-      (await this.taskStore.listByThread(threadId)).filter((t) => t.threadId === threadId && t.kind === 'pr_tracking'),
-    );
   }
 
   /**
@@ -219,19 +166,6 @@ export class ThreadAwareSignalSources implements OutputVerifiedSignalSources {
       if (REVIEWER_TAGGED_PATTERNS.some((p) => p.test(text))) return true;
       // Clause-anchored: standalone short clauses (Chinese + English).
       if (matchesClause(text, REVIEWER_APPROVE_CLAUSE)) return true;
-    }
-    return false;
-  }
-
-  /** Read installed observations only for active work; never revive old task CI fields. */
-  async isCiPassedForThread(threadId: string): Promise<boolean> {
-    if (!this.observations) return false;
-    const tasks = await this.taskSnapshot(threadId);
-    for (const task of tasks.filter((t) => t.status !== 'done')) {
-      const observed = await this.observations.read(structuredClone(task));
-      if (observed?.ciPassed === true) {
-        return isDeepStrictEqual(tasks, await this.taskSnapshot(threadId));
-      }
     }
     return false;
   }

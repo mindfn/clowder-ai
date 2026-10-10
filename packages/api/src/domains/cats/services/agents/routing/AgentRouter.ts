@@ -452,7 +452,6 @@ function buildMentionData(configs: Record<string, import('@cat-cafe/shared').Cat
  */
 export interface AgentRouterOptions {
   resolveTrustedImagePath?: (hmrId: string) => Promise<string | undefined>;
-  collectiveContext?: import('../invocation/invoke-single-cat.js').InvocationDeps['collectiveContext'];
   agentRegistry: AgentRegistry;
   registry: InvocationRegistry;
   dotReplyTarget?: (
@@ -575,7 +574,6 @@ export class AgentRouter {
   private registry: InvocationRegistry;
   private messageStore: IMessageStore;
   private resolveTrustedImagePath?: (hmrId: string) => Promise<string | undefined>;
-  private collectiveContext: import('../invocation/invoke-single-cat.js').InvocationDeps['collectiveContext'];
   private sessionManager: SessionManager;
   private deliveryCursorStore: DeliveryCursorStore;
   private threadStore: IThreadStore | null;
@@ -673,7 +671,6 @@ export class AgentRouter {
     this.registry = options.registry;
     this.messageStore = options.messageStore;
     this.resolveTrustedImagePath = options.resolveTrustedImagePath;
-    this.collectiveContext = options.collectiveContext;
     this.sessionManager = new SessionManager(options.sessionStore);
     // #1200 P2-3: wire cursor canonicalizer for v1→v2 async resolution
     const canonicalizer = options.messageStore.canonicalizeCursor
@@ -774,13 +771,6 @@ export class AgentRouter {
   contextCapacitySnapshot(catId: CatId): InvocationCapacitySnapshot | undefined {
     const service = this.services[catId];
     return service ? resolveInvocationCapacitySnapshot({ catId, service }) : undefined;
-  }
-
-  supportsCollectiveParticipation(catId: string): boolean {
-    return (
-      this.isRoutableCat(catId) &&
-      this.services[catId]?.supportsToolExecutionPolicy?.({ mode: 'collective_participation' }) === true
-    );
   }
 
   private isRoutableCat(catId: string | null | undefined): catId is CatId {
@@ -1387,7 +1377,6 @@ export class AgentRouter {
       invocationDeps: {
         ...(this.resolveTrustedImagePath ? { resolveTrustedImagePath: this.resolveTrustedImagePath } : {}),
         messageStore: this.messageStore,
-        ...(this.collectiveContext ? { collectiveContext: this.collectiveContext } : {}),
         registry: this.registry,
         sessionManager: this.sessionManager,
         threadStore: this.threadStore,

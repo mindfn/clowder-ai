@@ -45,7 +45,6 @@ import {
   type DeploymentWaitStartDecision,
   type DeploymentWaitStartGuard,
 } from '../../../../runtime-deployment/DeploymentWaitStartGuard.js';
-import { bindAsrPersonMemoryScenesFromQueueMessage } from '../../../../signal-intake/AsrPersonMemoryQueueCarrier.js';
 import {
   MessageBundlePromptUnavailableError,
   resolveMessageBundlePrompt,
@@ -149,12 +148,6 @@ import {
   preparePrestartRetirements,
   terminalizePreparedPrestartRetirements,
 } from './queue-prestart-group-retirement.js';
-import {
-  collectiveQueueRefusalError,
-  isPermanentCollectiveQueueRefusal,
-  persistCollectiveRefusalRecord,
-  retireRefusedCollectiveQueueCarrier,
-} from './queue-private-refusal-disposition.js';
 import { type QueueRetryDeferralOptions, QueueRetryDeferrals } from './queue-retry-deferrals.js';
 import { requireInvocationRecordUpdate } from './require-invocation-record-update.js';
 import {
@@ -4463,9 +4456,6 @@ export class QueueProcessor {
               ...(stored.contentBlocks?.length ? { contentBlocks: stored.contentBlocks } : {}),
             });
             asrPersonMemoryScenes.push(
-              ...bindAsrPersonMemoryScenesFromQueueMessage(stored, { ownerUserId: userId, threadId }),
-            );
-            asrPersonMemoryScenes.push(
               ...(await bindAsrPersonMemoryReentryFromSchedulerMessage({
                 triggerMessage: stored,
                 ownerUserId: userId,
@@ -5530,11 +5520,7 @@ export class QueueProcessor {
           /* best-effort — don't mask the original error */
         }
       }
-      const errMsg = isPermanentCollectiveQueueRefusal(err)
-        ? collectiveQueueRefusalError(err)
-        : err instanceof Error
-          ? err.message
-          : String(err);
+      const errMsg = err instanceof Error ? err.message : String(err);
       const exposeFailure = entry.execution.actionSuccessorFence
         ? await finalizeActionFenceOutcome('failed', false, targetCats)
         : true;
@@ -5670,29 +5656,7 @@ export class QueueProcessor {
         try {
           const preReceiverUserCancel =
             lifecycleTransferStarted && !lifecycleReceiverPersisted && finalStatus === 'canceled_by_user';
-          if (isPermanentCollectiveQueueRefusal(executionError) && !lifecycleReceiverPersisted && invocationId) {
-            const refusal = executionError;
-            const refusalInvocationId = invocationId;
-            if (batchedEntryIds.length !== 0) throw new Error('Collective refusal cannot retire a batched claim');
-            const current = queue.getEntrySnapshot(threadId, userId, entry.id);
-            if (
-              !current ||
-              !(await retireRefusedCollectiveQueueCarrier({
-                entry: current,
-                queue,
-                messages: messageStore,
-                refusal,
-                persistRefusal: () =>
-                  persistCollectiveRefusalRecord({
-                    store: invocationRecordStore,
-                    invocationId: refusalInvocationId,
-                    entry: current,
-                    refusal,
-                  }),
-              }))
-            )
-              throw new Error('Collective refusal claim retirement did not commit');
-          } else if (lifecycleAdmissionUnknown) {
+          if (lifecycleAdmissionUnknown) {
             // The original short claim fences an uncertain durable commit until canonical recovery.
             if (returnedExecutionResult) returnedExecutionResult.primarySettlementIncomplete = true;
           } else if (lifecycleTransferStarted && !lifecycleReceiverPersisted && !preReceiverUserCancel) {

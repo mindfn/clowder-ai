@@ -12,7 +12,6 @@ import {
   createDormantPluginRuntimeComposition,
   createPluginManagerRuntimeComposition,
 } from '../dist/domains/plugin/index.js';
-import { MemoryMeetingIntakeStore, MemorySignalRouteStore } from '../dist/domains/signal-intake/index.js';
 
 const roots = [];
 
@@ -75,8 +74,6 @@ test('module plugin task reads and writes require their respective grants', asyn
   const projectRoot = await tempRoot('cat-cafe-f202-task-grants-project-');
   const runtime = createDormantPluginRuntimeComposition({
     projectRoot,
-    routes: new MemorySignalRouteStore(),
-    intakes: new MemoryMeetingIntakeStore(),
     messageStore: new MessageStore(),
     taskStore: new TaskStore(),
     contract: { manifestContractVersions: ['0.1.0'], validateEffectiveGrants, validateManifest },
@@ -129,8 +126,6 @@ test('module plugins create, read, and update ordinary tasks through the Host ta
   const taskStore = new TaskStore();
   const runtime = createDormantPluginRuntimeComposition({
     projectRoot,
-    routes: new MemorySignalRouteStore(),
-    intakes: new MemoryMeetingIntakeStore(),
     messageStore: new MessageStore(),
     taskStore,
     contract: { manifestContractVersions: ['0.1.0'], validateEffectiveGrants, validateManifest },

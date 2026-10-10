@@ -2,8 +2,8 @@
 
 import { useState } from 'react';
 import { apiFetch } from '@/utils/api-client';
-import { ConnectorActionBar } from '../../ConnectorActionBar';
 import { SettingsStatusStrip } from '../primitives/SettingsStatusStrip';
+import { PluginConfigurationActionBar } from './PluginConfigurationActionBar';
 
 type TestResult = { readonly ok: boolean; readonly message: string };
 
@@ -57,8 +57,8 @@ export function PluginManagerConfigurationActions({
       {testResult && (
         <SettingsStatusStrip tone={testResult.ok ? 'success' : 'error'}>{testResult.message}</SettingsStatusStrip>
       )}
-      <ConnectorActionBar
-        platformId={pluginId}
+      <PluginConfigurationActionBar
+        pluginId={pluginId}
         saveResult={null}
         saving={busy}
         onSave={onSave}

@@ -1,7 +1,7 @@
 import type { PluginDescription, PluginIconSpec } from '@cat-cafe/shared';
 import type { Capability, PluginManifest } from '@clowder-ai/plugin-contract';
 import { grantsWithinRequest } from '../host-inventory/contract-policy.js';
-import type { OfficialPluginCatalogEntry, OfficialPluginOwnerAuth } from '../official-catalog.js';
+import type { OfficialPluginCatalogEntry } from '../official-catalog.js';
 import {
   compareOfficialPluginVersions,
   type OfficialPluginCatalogProvider,
@@ -114,9 +114,7 @@ export type MachineCatalogValidationResult =
 
 export interface MachineCatalogHostPolicy {
   readonly pluginId: string;
-  readonly replacesRepositoryPluginId?: string;
   readonly effectiveGrants: readonly Capability[];
-  readonly ownerAuth?: OfficialPluginOwnerAuth;
 }
 
 export interface MachineOfficialPluginCatalogOptions {
@@ -143,24 +141,6 @@ export function resolveLocalPluginEffectiveGrants(
   return grantsWithinRequest(policy?.effectiveGrants ?? [], manifest);
 }
 
-/**
- * Resolves repository identities replaced by Host-managed catalog plugins.
- * Machine metadata can announce a current candidate, while an installed instance
- * keeps the replacement authoritative even when discovery is temporarily offline.
- */
-export function resolveRepositoryReplacementPluginIds(
-  hostPolicies: readonly MachineCatalogHostPolicy[],
-  catalogEntries: readonly Pick<OfficialPluginCatalogEntry, 'pluginId'>[],
-  installedPluginIds: readonly string[],
-): readonly string[] {
-  const authoritativePluginIds = new Set([...catalogEntries.map((entry) => entry.pluginId), ...installedPluginIds]);
-  return hostPolicies.flatMap((policy) =>
-    policy.replacesRepositoryPluginId !== undefined && authoritativePluginIds.has(policy.pluginId)
-      ? [policy.replacesRepositoryPluginId]
-      : [],
-  );
-}
-
 function projectEntry(
   plugin: ValidatedMachineCatalog['plugins'][number],
   policy: MachineCatalogHostPolicy,
@@ -179,11 +159,7 @@ function projectEntry(
     distribution: 'registry',
     archiveUrl: release.artifact.tarballUrl,
     packageDigest: release.artifact.integrity,
-    ...(policy.replacesRepositoryPluginId === undefined
-      ? {}
-      : { replacesRepositoryPluginId: policy.replacesRepositoryPluginId }),
     effectiveGrants: policy.effectiveGrants,
-    ...(policy.ownerAuth === undefined ? {} : { ownerAuth: policy.ownerAuth }),
     presentation: {
       displayName: plugin.name,
       description: plugin.description,

@@ -14,7 +14,6 @@ import {
   createDormantPluginRuntimeComposition,
   createPluginManagerRuntimeComposition,
 } from '../dist/domains/plugin/index.js';
-import { MemoryMeetingIntakeStore, MemorySignalRouteStore } from '../dist/domains/signal-intake/index.js';
 
 const roots = [];
 
@@ -31,8 +30,6 @@ async function tempRoot(label) {
 function createRuntime(projectRoot) {
   return createDormantPluginRuntimeComposition({
     projectRoot,
-    routes: new MemorySignalRouteStore(),
-    intakes: new MemoryMeetingIntakeStore(),
     messageStore: new MessageStore(),
     contract: { manifestContractVersions: ['0.1.0'], validateEffectiveGrants, validateManifest },
   });

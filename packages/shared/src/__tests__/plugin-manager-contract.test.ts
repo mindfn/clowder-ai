@@ -60,12 +60,8 @@ describe('F202 terminal Plugin Manager contract', () => {
     expectTypeOf<PluginManagerDetail['configFields'][number]['currentValue']>().toEqualTypeOf<string | null>();
   });
 
-  it('represents provenance-less legacy inventory without inventing trust', () => {
-    expectTypeOf<Extract<PluginManagerPackageSource, { kind: 'legacy' }>>().toEqualTypeOf<{
-      kind: 'legacy';
-      packageName: string | null;
-      trust: 'unknown';
-    }>();
+  it('excludes unadmitted legacy and compatibility inventories', () => {
+    expectTypeOf<Extract<PluginManagerPackageSource, { kind: 'legacy' | 'compatibility' }>>().toBeNever();
   });
 
   it('keeps owner dependency closure provenance visible without changing trust', () => {
@@ -74,23 +70,6 @@ describe('F202 terminal Plugin Manager contract', () => {
       packageName: string | null;
       trust: 'unverified';
       dependencyClosure?: 'shipped' | 'materialized';
-    }>();
-  });
-
-  it('keeps compatibility trust coupled to its source adapter', () => {
-    expectTypeOf<
-      Extract<PluginManagerPackageSource, { kind: 'compatibility'; adapter: 'repository-local' }>
-    >().toEqualTypeOf<{
-      kind: 'compatibility';
-      adapter: 'repository-local';
-      packageName: string;
-      trust: 'first-party';
-    }>();
-    expectTypeOf<Extract<PluginManagerPackageSource, { kind: 'compatibility'; adapter: 'connector' }>>().toEqualTypeOf<{
-      kind: 'compatibility';
-      adapter: 'connector';
-      packageName: string;
-      trust: 'unverified';
     }>();
   });
 

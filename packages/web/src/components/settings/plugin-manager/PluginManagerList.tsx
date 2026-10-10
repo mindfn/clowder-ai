@@ -136,7 +136,7 @@ export function PluginListRow({
   const canInstall = plugin.actions?.install ?? !installed;
   const canSetEnabled = plugin.actions?.setEnabled ?? installed;
   const canUninstall = plugin.actions?.uninstall ?? installed;
-  const showLifecycleToggle = installed && plugin.sourceAdapter === undefined;
+  const showLifecycleToggle = installed;
   const description = resolvePluginDescription(plugin.description, locale);
   const reason = presentation === 'v2' ? pluginAttentionReason(plugin) : undefined;
   return (

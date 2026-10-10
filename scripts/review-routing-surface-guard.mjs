@@ -26,7 +26,6 @@ export function checkReviewRoutingSurfaces({
   mergeGateSkill,
   ironLaw,
   inboundPrReference,
-  trackerToolSource,
   capabilityWakeupDomain,
   capabilityWakeupFixture,
 }) {
@@ -81,12 +80,6 @@ export function checkReviewRoutingSurfaces({
       mergeGate: mergeGateSkill,
       inboundPr: inboundPrReference,
     }),
-    ...requireTokens(trackerToolSource, 'register_pr_tracking description', [
-      'Review Entry Mode Classifier',
-      'advisory_read_only',
-      'no-comment',
-      'review-complete',
-    ]),
     ...requireTokens(capabilityWakeupDomain, 'capability-wakeup domain', [
       'external-pr-review-route-classifier',
       'docs/harness-feedback/fixtures/external-pr-review-route-classifier.md',

@@ -609,7 +609,10 @@ test('verified Agent principal discovers and invokes only active plugin-declared
 });
 
 test('every restricted Agent policy is denied before Manager mutations and contribution calls', async () => {
-  for (const policy of [{ mode: 'read_only', replayDeniedToolNames: [] }, { mode: 'collective_participation' }]) {
+  for (const policy of [
+    { mode: 'read_only', replayDeniedToolNames: [] },
+    { mode: 'callback_allowlist', allowedCallbackRoutes: [] },
+  ]) {
     const readOnlyHarness = await harness({ callbackRegistry: verifiedCallbackRegistry({ policy }) });
     try {
       const read = await readOnlyHarness.app.inject({
@@ -623,7 +626,10 @@ test('every restricted Agent policy is denied before Manager mutations and contr
         },
         remoteAddress: '127.0.0.1',
       });
-      assert.equal(read.statusCode, 200, read.payload);
+      assert.equal(read.statusCode, policy.mode === 'read_only' ? 200 : 403, read.payload);
+      if (policy.mode === 'callback_allowlist') {
+        assert.equal(read.json().reason, 'callback_allowlist_tool_policy');
+      }
 
       const denied = await readOnlyHarness.app.inject({
         method: 'POST',
@@ -656,7 +662,7 @@ test('every restricted Agent policy is denied before Manager mutations and contr
       });
       assert.equal(contributionDenied.statusCode, 403, `${policy.mode}: ${contributionDenied.payload}`);
       assert.deepEqual(readOnlyHarness.audits, []);
-      assert.deepEqual(readOnlyHarness.calls, [['list']]);
+      assert.deepEqual(readOnlyHarness.calls, policy.mode === 'read_only' ? [['list']] : []);
     } finally {
       await readOnlyHarness.app.close();
     }

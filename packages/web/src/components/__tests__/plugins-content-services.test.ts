@@ -9,7 +9,7 @@ vi.mock('@/utils/api-client', () => ({
 import { apiFetch } from '@/utils/api-client';
 import { PluginsContent } from '../settings/PluginsContent';
 
-import { catalog, jsonResponse, managerResponse } from './plugin-manager-compat-fixture';
+import { catalog, jsonResponse, managerResponse } from './plugin-manager-installed-fixture';
 
 describe('PluginsContent — Manager plugin config', () => {
   let container: HTMLDivElement;

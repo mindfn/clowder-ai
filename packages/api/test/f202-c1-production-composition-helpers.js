@@ -13,7 +13,6 @@ import { WIRE_METHOD_REGISTRY } from '@clowder-ai/plugin-contract';
 import { MessageStore } from '../dist/domains/cats/services/stores/ports/MessageStore.js';
 import { createDormantPluginRuntimeComposition } from '../dist/domains/plugin/index.js';
 import { HostPluginConfigurationService } from '../dist/domains/plugin/manager/plugin-manager-configuration.js';
-import { MemoryMeetingIntakeStore, MemorySignalRouteStore } from '../dist/domains/signal-intake/index.js';
 import {
   EXTERNAL_PACKAGE_DIGEST,
   EXTERNAL_PLUGIN_ID,
@@ -157,8 +156,6 @@ export async function productionComposition(projectRoot, overrides = {}) {
   const participants = [];
   const runtime = createDormantPluginRuntimeComposition({
     projectRoot,
-    routes: new MemorySignalRouteStore(),
-    intakes: new MemoryMeetingIntakeStore(),
     messageStore: new MessageStore(),
     processes,
     ...(bindingStore === undefined ? {} : { bindingStore }),

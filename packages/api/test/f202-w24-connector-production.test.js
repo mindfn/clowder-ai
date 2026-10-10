@@ -23,7 +23,6 @@ import { FilesystemBuiltinPluginPackageMaterializer } from '../dist/domains/plug
 import { resolveLocalPluginEffectiveGrants } from '../dist/domains/plugin/manager/machine-catalog-provider.js';
 import { OFFICIAL_PLUGIN_HOST_POLICIES } from '../dist/domains/plugin/manager/official-plugin-host-policies.js';
 import { resolvePluginRuntimePersistencePaths } from '../dist/domains/plugin/runtime-composition.js';
-import { MemoryMeetingIntakeStore, MemorySignalRouteStore } from '../dist/domains/signal-intake/index.js';
 import { MemoryConnectorThreadBindingStore } from '../dist/infrastructure/connectors/ConnectorThreadBindingStore.js';
 import { archiveFileName, RELEASES } from './helpers/f202-connector-artifact-pins.js';
 import { assertRedisIsolationOrThrow, redisIsolationSkipReason } from './helpers/redis-test-helpers.js';
@@ -130,8 +129,6 @@ for (const release of RELEASES) {
       const runtime = createDormantPluginRuntimeComposition({
         projectRoot: root,
         redis,
-        routes: new MemorySignalRouteStore(),
-        intakes: new MemoryMeetingIntakeStore(),
         messageStore: messages,
         messagingStores: stores,
         threadStore: threads,

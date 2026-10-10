@@ -3,8 +3,6 @@ import type {
   HostTextSubmission,
   HostVoiceObservation,
 } from '../../plugin/desktop-window-runtime/companion-private-wire.js';
-import type { F317LiveCallObservation, F317MeetingGrant } from '../meeting/f317-meeting-admission.js';
-import type { LiveMeetingDependencies } from './host/live-meeting-host.js';
 import { type LiveCarrierOperationLease, LiveCarrierUnavailableError } from './LiveCarrierOperationGate.js';
 import type { LiveCompanionCall, LiveCompanionCallOptions } from './LiveCompanionCall.js';
 import type { LivePresentationObservation, LivePresentationReply } from './live-presentation-observations.js';
@@ -24,32 +22,11 @@ export class LiveCompanionSessions {
   // Bounded surface diagnostics only: these snapshots hold no executable call or credentials.
   private readonly terminal = new Map<string, { userId: string; status: ReturnType<LiveCompanionCall['status']> }>();
 
-  constructor(private readonly meeting?: LiveMeetingDependencies) {}
-
-  async observeCall(userId: string): Promise<F317LiveCallObservation | null> {
+  async observeCall(userId: string) {
     const entries = [...this.calls.values()].filter((entry) => entry.claimed && entry.userId === userId);
     const entry = entries[0];
     if (entries.length !== 1 || !entry || !(await entry.call.hasCurrentCompanion())) return null;
     return entry.call.boundaryContexts.observeCall();
-  }
-
-  async attach(grant: F317MeetingGrant, verify: () => Promise<boolean>): Promise<void> {
-    const entry = this.calls.get(grant.callId);
-    if (!this.meeting || !entry?.claimed || entry.userId !== grant.userId || !(await entry.call.hasCurrentCompanion()))
-      throw new Error('meeting_share_not_admitted');
-    await entry.call.boundaryContexts.attachMeeting(grant, verify, this.meeting);
-  }
-
-  async detach(grant: F317MeetingGrant): Promise<void> {
-    const entry = this.calls.get(grant.callId);
-    if (entry?.userId === grant.userId) entry.call.boundaryContexts.detachMeeting(grant);
-  }
-
-  isAttached(grant: F317MeetingGrant): boolean {
-    const entry = this.calls.get(grant.callId);
-    return Boolean(
-      entry?.claimed && entry.userId === grant.userId && entry.call.boundaryContexts.isMeetingAttached(grant),
-    );
   }
 
   async prepare(options: LiveCompanionCallOptions): Promise<LiveCompanionCall> {

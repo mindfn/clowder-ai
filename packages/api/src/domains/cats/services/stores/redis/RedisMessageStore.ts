@@ -3548,10 +3548,6 @@ export class RedisMessageStore {
       evolutionPreparationSubmissionV1: _stripPreparation,
       dotAsk: _stripDotAsk,
       deliveryBoundary: _stripBoundary,
-      collectiveOwnerAdmissionV1: _stripCollectiveAdmission,
-      collectiveWorkInvocationV1: _stripCollectiveInvocation,
-      collectiveWorkDelegationV1: _stripCollectiveDelegation,
-      collectiveAuthorizationInvalid: _stripCollectiveInvalid,
       ...hostPatch
     } = extra as Record<string, unknown>;
     const merged = { ...current, ...hostPatch };

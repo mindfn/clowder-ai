@@ -24,13 +24,10 @@ export function actionCallFailure(result: ActionApiResult | null): string | null
   return actionResultFailure(result);
 }
 
-export type ActionRendererTarget =
-  | { readonly kind: 'connector'; readonly id: string }
-  | { readonly kind: 'plugin'; readonly id: string };
+export type ActionRendererTarget = { readonly kind: 'plugin'; readonly id: string };
 
 function targetBasePath(target: ActionRendererTarget): string {
-  const resource = target.kind === 'connector' ? 'connectors' : 'plugins';
-  return `/api/${resource}/${encodeURIComponent(target.id)}`;
+  return `/api/plugins/${encodeURIComponent(target.id)}`;
 }
 
 function actionUrl(target: ActionRendererTarget, operationName: string, actionId: string): string {
@@ -45,7 +42,7 @@ export function actionRequest(
 ): { readonly url: string; readonly init: RequestInit } {
   const url = actionUrl(target, operationName, actionId);
   if (!pendingValues || Object.keys(pendingValues).length === 0) return { url, init: { method: 'POST' } };
-  const body = target.kind === 'connector' ? { values: pendingValues } : pendingValues;
+  const body = pendingValues;
   return {
     url,
     init: {
@@ -72,18 +69,10 @@ export function rowActionRequest(
 export function operationResetRequest(
   target: ActionRendererTarget,
   operationName: string,
-  currentAction: string,
+  _currentAction: string,
 ): { readonly url: string; readonly init: RequestInit } {
   const url = `${targetBasePath(target)}/operations/${encodeURIComponent(operationName)}/reset`;
-  if (target.kind === 'plugin') return { url, init: { method: 'POST' } };
-  return {
-    url,
-    init: {
-      method: 'POST',
-      headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({ currentAction }),
-    },
-  };
+  return { url, init: { method: 'POST' } };
 }
 
 export function toResultState(r: ActionApiResult): ResultState {

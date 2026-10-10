@@ -219,7 +219,7 @@ function candidateSource(
     };
   }
   if (packageRecord && provenance?.kind !== 'catalog') {
-    return { kind: 'legacy', packageName: null, trust: 'unknown' };
+    throw new Error('Installed plugin package is missing admitted source provenance');
   }
   return {
     kind: 'catalog',

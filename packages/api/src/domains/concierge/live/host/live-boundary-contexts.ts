@@ -2,11 +2,9 @@ import type { CodexAppServerJsonObject } from '../../../cats/services/agents/pro
 import type { StoredMessage } from '../../../cats/services/stores/ports/MessageStore.js';
 import type { LivePageActionSelector } from '../../action/LivePageAction.js';
 import type { PageActionResult } from '../../action/PageActionLoop.js';
-import type { F317LiveCallObservation, F317MeetingGrant } from '../../meeting/f317-meeting-admission.js';
 import type { LiveCompanionCallOptions } from '../live-call-options.js';
-import { type LiveContextGate, whileNotAborted } from './live-controlled-context.js';
+import type { LiveContextGate } from './live-controlled-context.js';
 import { bindLiveInboxHost, type LiveInboxHost } from './live-inbox-host.js';
-import { type LiveMeetingDependencies, LiveMeetingHost } from './live-meeting-host.js';
 import { bindLiveRecoveryHost } from './live-recovery-binding.js';
 import type { LiveRecoveryHost } from './live-recovery-host.js';
 import { LivePageActionApprovalLedger } from './page-action/live-page-action-approval-ledger.js';
@@ -24,8 +22,6 @@ import { ownerVoiceScope } from './voice/live-owner-voice-source.js';
 export class LiveBoundaryContexts {
   private inbox?: LiveInboxHost;
   private recovery?: LiveRecoveryHost;
-  private pendingMeeting?: LiveMeetingHost;
-  private meeting?: LiveMeetingHost;
   private pageActions?: LivePageActionAuthority;
   private callbackInvocationId?: string;
   private userSpeaking = false;
@@ -145,100 +141,11 @@ export class LiveBoundaryContexts {
     await this.pageActions?.drain();
   }
 
-  observeCall(): F317LiveCallObservation | null {
+  observeCall() {
     if (this.closed) return null;
     const binding = this.options.binding;
     const scope = ownerVoiceScope(this.context, this.callbackInvocationId, binding);
     return scope ? { ...binding, generation: scope.generation, state: 'talking' } : null;
-  }
-
-  async attachMeeting(
-    grant: F317MeetingGrant,
-    verify: () => Promise<boolean>,
-    deps: LiveMeetingDependencies,
-  ): Promise<void> {
-    const call = this.observeCall();
-    const invocationId = this.callbackInvocationId;
-    if (
-      this.closed ||
-      !call ||
-      !invocationId ||
-      call.userId !== grant.userId ||
-      call.threadId !== grant.liveThreadId ||
-      call.catId !== grant.catId ||
-      call.callId !== grant.callId ||
-      call.generation !== grant.generation ||
-      grant.signal.aborted
-    )
-      throw new Error('meeting_share_not_admitted');
-    const scope = this.context.scope({ invocationId, catId: call.catId, threadId: call.threadId });
-    if (!scope) throw new Error('meeting_share_not_admitted');
-    this.pendingMeeting?.close();
-    this.pendingMeeting = undefined;
-    this.meeting?.close();
-    this.meeting = undefined;
-    let pending: LiveMeetingHost | undefined;
-    try {
-      const meeting = await LiveMeetingHost.attach(
-        {
-          scope,
-          grant,
-          verify,
-          ...deps,
-          inject: (input) => this.context.inject(input),
-          wakeNative: this.wakeNative,
-        },
-        (host) => {
-          pending = host;
-          this.pendingMeeting = host;
-        },
-      );
-      const verified = await whileNotAborted(AbortSignal.any([meeting.signal, grant.signal]), verify());
-      const current = this.observeCall();
-      if (
-        !verified ||
-        !meeting.isOpenFor(grant) ||
-        this.pendingMeeting !== meeting ||
-        !current ||
-        current.userId !== grant.userId ||
-        current.threadId !== grant.liveThreadId ||
-        current.catId !== grant.catId ||
-        current.callId !== grant.callId ||
-        current.generation !== grant.generation
-      )
-        throw new Error('meeting_share_not_admitted');
-      this.pendingMeeting = undefined;
-      this.meeting = meeting;
-    } catch (error) {
-      const revoked = this.closed || grant.signal.aborted || this.pendingMeeting !== pending;
-      pending?.close();
-      if (this.pendingMeeting === pending) this.pendingMeeting = undefined;
-      if (revoked) throw new Error('meeting_share_not_admitted');
-      throw error;
-    }
-  }
-
-  detachMeeting(grant: F317MeetingGrant): void {
-    if (this.pendingMeeting?.grantId === grant.grantId) {
-      this.pendingMeeting.close();
-      this.pendingMeeting = undefined;
-    }
-    if (this.meeting?.grantId !== grant.grantId) return;
-    this.meeting.close();
-    this.meeting = undefined;
-  }
-
-  isMeetingAttached(grant: F317MeetingGrant): boolean {
-    if (this.closed || !this.meeting?.isOpenFor(grant)) return false;
-    const call = this.observeCall();
-    return Boolean(
-      call &&
-        call.userId === grant.userId &&
-        call.threadId === grant.liveThreadId &&
-        call.catId === grant.catId &&
-        call.callId === grant.callId &&
-        call.generation === grant.generation,
-    );
   }
 
   signalInbox(): void {
@@ -249,7 +156,6 @@ export class LiveBoundaryContexts {
     return Boolean(
       this.pageResults.hasPendingWake() ||
         this.ownerVoice.hasPendingWake() ||
-        this.meeting?.hasPendingWake() ||
         this.inbox?.hasPendingWake() ||
         this.recovery?.hasPendingWake(),
     );
@@ -264,8 +170,6 @@ export class LiveBoundaryContexts {
       }
       const pageResult = await this.pageResults.atBoundary();
       if (pageResult !== 'idle') return;
-      const meeting = await this.meeting?.atBoundary();
-      if (meeting === 'accepted' || meeting === 'busy') return;
       const inbox = await this.inbox?.atBoundary(kind);
       if (inbox && inbox !== 'idle') {
         // Only an accepted notice generated a native turn; busy or cancelled attempts
@@ -299,7 +203,6 @@ export class LiveBoundaryContexts {
       this.committedVoice = false;
       this.ownerVoice.beginSpeech();
       this.pageActions?.interrupt();
-      this.meeting?.onUserSpeaking();
       this.recovery?.cancel('user_speaking');
     }
     const item = params?.item as Record<string, unknown> | undefined;
@@ -326,7 +229,6 @@ export class LiveBoundaryContexts {
   onUserTurn(): void {
     this.ownerVoice.signal();
     this.pageResults.signal();
-    this.meeting?.onUserTurn();
     this.recovery?.onUserTurn();
   }
 
@@ -338,10 +240,6 @@ export class LiveBoundaryContexts {
     this.pageActions?.close();
     const ledger = this.options.pageAction?.approvalLedger;
     if (ledger instanceof LivePageActionApprovalLedger) ledger.close();
-    this.pendingMeeting?.close();
-    this.pendingMeeting = undefined;
-    this.meeting?.close();
-    this.meeting = undefined;
     this.inbox?.close();
     this.recovery?.close();
   }

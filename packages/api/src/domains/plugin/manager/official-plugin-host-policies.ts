@@ -76,12 +76,10 @@ export const OFFICIAL_PLUGIN_HOST_POLICIES: readonly MachineCatalogHostPolicy[] 
   },
   {
     pluginId: 'official.weixin-mp',
-    replacesRepositoryPluginId: 'weixin-mp',
     effectiveGrants: ['plugin.config.read', 'secret.read'],
   },
   {
     pluginId: 'dev.clowder.video-generation',
-    replacesRepositoryPluginId: 'video-gen',
     effectiveGrants: ['plugin.config.read', 'secret.read'],
   },
   {

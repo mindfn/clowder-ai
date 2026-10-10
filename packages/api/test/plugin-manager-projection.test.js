@@ -33,6 +33,7 @@ const candidate = {
 
 function installedSnapshot(overrides = {}) {
   const packageRecord = {
+    provenance: { kind: 'catalog', catalogId: candidate.catalogId, packageName: candidate.packageName },
     packageDigest: candidate.packageDigest,
     pluginId: candidate.pluginId,
     version: candidate.version,
@@ -113,9 +114,12 @@ describe('client source trust is descriptive, not an install or enable gate', ()
     });
   }
   it('a missing admission origin cannot borrow a current catalog identity', () => {
-    const result = projectPluginManagerCatalogCandidate(candidate, installedSnapshot());
-    assert.equal(result.source.kind, 'legacy');
-    assert.equal(result.source.trust, 'unknown');
+    const snapshot = installedSnapshot();
+    delete snapshot.packages[0].provenance;
+    assert.throws(
+      () => projectPluginManagerCatalogCandidate(candidate, snapshot),
+      /missing admitted source provenance/,
+    );
   });
 });
 

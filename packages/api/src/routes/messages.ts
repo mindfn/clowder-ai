@@ -58,6 +58,7 @@ import {
 import { createModuleLogger } from '../infrastructure/logger.js';
 import type { SocketManager } from '../infrastructure/websocket/index.js';
 import { normalizeJsonUnicode } from '../utils/json-unicode.js';
+import { buildThreadDeepLink } from '../utils/thread-deep-link.js';
 import { getDefaultUploadDir } from '../utils/upload-paths.js';
 import { importStoredProjectMessage } from './messages-project-review.js';
 import { captureSentComposerDraftConsumption } from './sent-composer-draft-consumption.js';

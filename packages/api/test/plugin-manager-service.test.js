@@ -1,11 +1,6 @@
 import assert from 'node:assert/strict';
 import { createHash } from 'node:crypto';
 import { describe, it } from 'node:test';
-
-import {
-  PluginManagerCompatibilityAdapter,
-  RepositoryPluginManagerCompatibilityProvider,
-} from '../dist/domains/plugin/manager/plugin-manager-compatibility.js';
 import { PluginManagerService } from '../dist/domains/plugin/plugin-manager-service.js';
 
 function digest(value) {
@@ -29,11 +24,11 @@ const emptyInventory = { schemaVersion: 1, packages: [], instances: [], grants: 
 
 const bundledGithub = {
   pluginId: 'github',
-  pluginInstanceId: 'compat:github',
+  pluginInstanceId: 'instance:github',
   displayName: 'GitHub',
   description: 'Track pull requests and CI.',
   publisher: 'Clowder AI',
-  source: { kind: 'bundled', packageName: '@clowder-ai/github', trust: 'first-party' },
+  source: { kind: 'local-archive', packageName: '@clowder-ai/github', trust: 'unverified' },
   availableVersion: '1.0.0',
   installedVersion: '1.0.0',
   packageDigest: null,
@@ -55,7 +50,7 @@ const bundledGithub = {
 
 function service({
   catalog,
-  compatibility = [],
+  installedPackages = [],
   inventory = emptyInventory,
   installer,
   lifecycle,
@@ -72,7 +67,7 @@ function service({
         },
     },
     inventory: { snapshot: async () => inventory },
-    compatibility: { list: async () => compatibility },
+    installedPackages: { list: async () => installedPackages },
     ...(installer === undefined ? {} : { installer }),
     ...(lifecycle === undefined ? {} : { lifecycle }),
     ...(configuration === undefined ? {} : { configuration }),
@@ -119,6 +114,7 @@ function installedInventory(overrides = {}) {
     schemaVersion: 1,
     packages: [
       {
+        provenance: { kind: 'catalog', catalogId: published.catalogId, packageName: published.packageName },
         packageDigest: published.packageDigest,
         pluginId: published.pluginId,
         version: published.version,
@@ -194,8 +190,8 @@ describe('F202 terminal Plugin Manager service', () => {
     assert.equal('contributions' in result.plugin, false);
   });
 
-  it('returns one searchable list across published and compatibility plugins', async () => {
-    const manager = service({ compatibility: [bundledGithub] });
+  it('returns one searchable list across catalog and installed packages', async () => {
+    const manager = service({ installedPackages: [bundledGithub] });
 
     const all = await manager.list();
     assert.deepEqual(
@@ -231,20 +227,20 @@ describe('F202 terminal Plugin Manager service', () => {
     assert.deepEqual(result.plugins[0].description, localized.description);
   });
 
-  it('deduplicates a compatibility row once the same plugin is Host-managed', async () => {
-    const compatibilityDuplicate = { ...bundledGithub, pluginId: published.pluginId, displayName: 'Old Video' };
-    const manager = service({ compatibility: [compatibilityDuplicate] });
+  it('deduplicates an installed row when the same plugin is in catalog inventory', async () => {
+    const installedPackagesDuplicate = { ...bundledGithub, pluginId: published.pluginId, displayName: 'Old Video' };
+    const manager = service({ installedPackages: [installedPackagesDuplicate] });
 
     const result = await manager.list();
     assert.equal(result.plugins.filter((plugin) => plugin.pluginId === published.pluginId).length, 1);
     assert.equal(result.plugins.find((plugin) => plugin.pluginId === published.pluginId).displayName, 'Video Analysis');
   });
 
-  it('keeps installed compatibility plugins visible when catalog discovery fails', async () => {
+  it('keeps installed packages visible when catalog discovery fails', async () => {
     const manager = new PluginManagerService({
       catalog: { snapshot: async () => Promise.reject(new Error('offline')) },
       inventory: { snapshot: async () => emptyInventory },
-      compatibility: { list: async () => [bundledGithub] },
+      installedPackages: { list: async () => [bundledGithub] },
     });
 
     const result = await manager.list();
@@ -259,47 +255,8 @@ describe('F202 terminal Plugin Manager service', () => {
     });
   });
 
-  it('keeps repository compatibility visible when its shared catalog suppression read fails', async () => {
-    const catalog = { snapshot: async () => Promise.reject(new Error('offline')) };
-    const compatibility = new PluginManagerCompatibilityAdapter([
-      new RepositoryPluginManagerCompatibilityProvider(
-        async () => [
-          {
-            id: 'github',
-            name: 'GitHub',
-            version: '1.0.0',
-            status: 'enabled',
-            configured: true,
-            config: [],
-            resources: [{ type: 'mcp', name: 'github-toolset', enabled: true }],
-            hasHealthCheck: false,
-          },
-        ],
-        {
-          loadSuppressedPluginIds: async () =>
-            (await catalog.snapshot()).entries.flatMap((entry) =>
-              entry.replacesRepositoryPluginId === undefined ? [] : [entry.replacesRepositoryPluginId],
-            ),
-        },
-      ),
-    ]);
-    const manager = new PluginManagerService({
-      catalog,
-      inventory: { snapshot: async () => emptyInventory },
-      compatibility,
-    });
-
-    const result = await manager.list();
-
-    assert.deepEqual(
-      result.plugins.map((plugin) => plugin.pluginId),
-      ['github'],
-    );
-    assert.equal(result.catalog.status, 'unavailable');
-  });
-
   it('gets the same projection used by list and reports an unknown plugin honestly', async () => {
-    const manager = service({ compatibility: [bundledGithub] });
+    const manager = service({ installedPackages: [bundledGithub] });
 
     const detail = (await manager.get('github')).plugin;
     assert.equal(detail.pluginId, 'github');

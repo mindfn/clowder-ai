@@ -17,7 +17,6 @@ const stores = await import('../dist/domains/messaging/stores/memory.js');
 const { createDormantPluginRuntimeComposition, createPluginManagerRuntimeComposition } = await import(
   '../dist/domains/plugin/index.js'
 );
-const { MemoryMeetingIntakeStore, MemorySignalRouteStore } = await import('../dist/domains/signal-intake/index.js');
 
 const manifest = {
   contributions: [
@@ -402,8 +401,6 @@ test('an admitted in-test media-source plugin is invoked through the production 
     let wakes = 0;
     runtime = createDormantPluginRuntimeComposition({
       projectRoot,
-      routes: new MemorySignalRouteStore(),
-      intakes: new MemoryMeetingIntakeStore(),
       messageStore,
       onMessagePublished: () => {
         wakes += 1;

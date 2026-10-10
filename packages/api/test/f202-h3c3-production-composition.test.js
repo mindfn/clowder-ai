@@ -10,7 +10,6 @@ import {
 } from '../dist/domains/plugin/index.js';
 import { resolveLocalPluginEffectiveGrants } from '../dist/domains/plugin/manager/machine-catalog-provider.js';
 import { OFFICIAL_PLUGIN_HOST_POLICIES } from '../dist/domains/plugin/manager/official-plugin-host-policies.js';
-import { MemoryMeetingIntakeStore, MemorySignalRouteStore } from '../dist/domains/signal-intake/index.js';
 import { ARCHIVE } from './helpers/f202-companion-artifact.js';
 import { catConfig, manualScheduler } from './helpers/f202-return-poller-harness.js';
 
@@ -47,8 +46,6 @@ test(
     });
     const runtime = cloud.createRuntime({
       projectRoot,
-      routes: new MemorySignalRouteStore(),
-      intakes: new MemoryMeetingIntakeStore(),
       messageStore: new MessageStore(),
     });
     t.after(async () => {
@@ -110,8 +107,6 @@ test(
     const runtime = createDormantPluginRuntimeComposition({
       projectRoot,
       cloudConversationHosts: registry,
-      routes: new MemorySignalRouteStore(),
-      intakes: new MemoryMeetingIntakeStore(),
       messageStore: new MessageStore(),
     });
     t.after(async () => {

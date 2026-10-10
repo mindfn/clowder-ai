@@ -6,9 +6,7 @@ import { test } from 'node:test';
 
 import { readCapabilitiesConfig } from '../dist/config/capabilities/capability-orchestrator.js';
 import { BundledPluginRuntimeCarrier } from '../dist/domains/plugin/builtin-runtime/carriers/bundled-runtime-carrier.js';
-import { CollectiveConnectorBuiltinRuntime } from '../dist/domains/plugin/builtin-runtime/collective-connector-runtime.js';
 import { PluginRuntimeCarrierRouter } from '../dist/domains/plugin/carrier/runtime-carrier.js';
-import { COLLECTIVE_CONNECTOR_PLUGIN_MANIFEST } from '../dist/domains/plugin/official-catalog.js';
 
 /**
  * F202 Train C1 — clause 1 / 2 / 6 of the terminal acceptance contract
@@ -263,13 +261,4 @@ test('a bundled runtime claims the package it declares — the router never name
 
   await carrier.start('instance-0');
   assert.deepEqual(started, ['instance-0']);
-});
-
-test('the Collective Connector runtime claims its own bundled manifest', () => {
-  const runtime = new CollectiveConnectorBuiltinRuntime({
-    dataDirectory: '/tmp/f202-c1-carrier-neutral-lifecycle',
-    verifyAgent: async () => true,
-  });
-  assert.equal(runtime.claims({ manifest: COLLECTIVE_CONNECTOR_PLUGIN_MANIFEST }), true);
-  assert.equal(runtime.claims({ manifest: manifest({ pluginId: 'official.collective-connector-lookalike' }) }), false);
 });

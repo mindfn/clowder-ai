@@ -14,7 +14,6 @@ import {
   createDormantPluginRuntimeComposition,
   createPluginManagerRuntimeComposition,
 } from '../dist/domains/plugin/index.js';
-import { MemoryMeetingIntakeStore, MemorySignalRouteStore } from '../dist/domains/signal-intake/index.js';
 
 const roots = [];
 
@@ -60,8 +59,6 @@ test('enabling a locally installed package registers its declared skill capabili
 
   const runtime = createDormantPluginRuntimeComposition({
     projectRoot,
-    routes: new MemorySignalRouteStore(),
-    intakes: new MemoryMeetingIntakeStore(),
     messageStore: new MessageStore(),
     contract: { manifestContractVersions: ['0.1.0'], validateEffectiveGrants, validateManifest },
   });
@@ -176,8 +173,6 @@ test('a skill activation failure leaves no capability registered by the package'
 
   const runtime = createDormantPluginRuntimeComposition({
     projectRoot,
-    routes: new MemorySignalRouteStore(),
-    intakes: new MemoryMeetingIntakeStore(),
     messageStore: new MessageStore(),
     contract: { manifestContractVersions: ['0.1.0'], validateEffectiveGrants, validateManifest },
   });

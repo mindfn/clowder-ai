@@ -120,25 +120,6 @@ describe('F202 terminal Plugin Manager Design Gate', () => {
     expect(container.textContent).not.toContain('修复');
   });
 
-  it('does not draw a fake lifecycle toggle for read-only compatibility rows', async () => {
-    const compatibility = {
-      ...PLUGIN_MANAGER_DESIGN_FIXTURES[0],
-      sourceAdapter: 'repository-local' as const,
-      actions: {
-        install: false,
-        setEnabled: false,
-        uninstall: false,
-        blockingReasons: ['compatibility-read-only'],
-      },
-    };
-
-    await act(async () => root.render(<PluginManagerContent fixtures={[compatibility]} />));
-
-    const row = container.querySelector('[data-plugin-id="github"]');
-    expect(row?.querySelector('button[aria-pressed]')).toBeNull();
-    expect(row?.querySelector('button[aria-label^="卸载"]')).toBeNull();
-  });
-
   it('keeps a blocked lifecycle toggle actionable and routes it to configuration', async () => {
     const onSetEnabled = vi.fn();
     const blocked = {

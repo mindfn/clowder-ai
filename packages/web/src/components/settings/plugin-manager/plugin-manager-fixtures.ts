@@ -30,7 +30,6 @@ export interface PluginManagerDesignFixture {
   source: 'catalog' | 'local';
   trust: 'official' | 'first-party' | 'unverified' | 'unknown';
   dependencyClosure?: 'shipped' | 'materialized';
-  sourceAdapter?: 'repository-local' | 'connector';
   availableVersion: string;
   installedVersion: string | null;
   artifact: PluginManagerArtifactState;

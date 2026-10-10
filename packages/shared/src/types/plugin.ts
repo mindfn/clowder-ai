@@ -168,26 +168,6 @@ export type PluginManagerPackageSource =
       kind: 'bundled';
       packageName: string;
       trust: 'first-party';
-    }
-  | {
-      /** Train B read-only bridge. Train C replaces this row with Host inventory provenance. */
-      kind: 'compatibility';
-      adapter: 'repository-local';
-      packageName: string;
-      trust: 'first-party';
-    }
-  | {
-      /** Connector bridges are locally admitted, but they are not bundled first-party code. */
-      kind: 'compatibility';
-      adapter: 'connector';
-      packageName: string;
-      trust: 'unverified';
-    }
-  | {
-      /** Pre-provenance inventory retained for safe disable/uninstall only. */
-      kind: 'legacy';
-      packageName: string | null;
-      trust: 'unknown';
     };
 
 export type PluginManagerCapabilityKind =

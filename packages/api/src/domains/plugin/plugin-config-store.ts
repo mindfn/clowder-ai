@@ -1,13 +1,10 @@
 import { existsSync, mkdirSync, readFileSync, renameSync, unlinkSync, writeFileSync } from 'node:fs';
 import { resolve } from 'node:path';
-import type { PluginManifest } from '@cat-cafe/shared';
 import { configEventBus, createChangeSetId } from '../../config/config-event-bus.js';
 import type { OperationState } from './operations/operation-state-machine.js';
 
 const CONFIG_DIR = '.cat-cafe';
 const PLUGIN_CONFIG_SUBDIR = 'plugin-config';
-
-const configCache = new Map<string, StoredValues>();
 
 function resolvePluginConfigDir(projectRoot: string): string {
   return resolve(projectRoot, CONFIG_DIR, PLUGIN_CONFIG_SUBDIR);
@@ -32,7 +29,6 @@ function writeFileAtomic(filePath: string, content: string): void {
   }
 }
 
-type StoredValues = Record<string, string | null>;
 type StoredDocument = Record<string, unknown>;
 
 const OPERATIONS_KEY = '_operations';
@@ -56,14 +52,6 @@ function readRawConfig(projectRoot: string, pluginId: string): StoredDocument {
   } catch {
     return {};
   }
-}
-
-function storedValues(document: StoredDocument): StoredValues {
-  const values: StoredValues = {};
-  for (const [key, value] of Object.entries(document)) {
-    if (typeof value === 'string' || value === null) values[key] = value;
-  }
-  return values;
 }
 
 export function readPluginConfig(projectRoot: string, pluginId: string): Record<string, string> {
@@ -160,8 +148,6 @@ export function writePluginConfig(
   const configPath = resolvePluginConfigPath(projectRoot, pluginId);
   writeFileAtomic(configPath, `${JSON.stringify(existing, null, 2)}\n`);
 
-  configCache.set(pluginId, readPluginConfig(projectRoot, pluginId));
-
   if (changedKeys.length > 0) {
     configEventBus.emitChange({
       source: 'secrets',
@@ -173,54 +159,4 @@ export function writePluginConfig(
   }
 
   return { changedKeys };
-}
-
-export function loadAllPluginConfigs(projectRoot: string, manifests: PluginManifest[]): number {
-  let loaded = 0;
-  for (const manifest of manifests) {
-    const allowedEnvNames = new Set(manifest.config.map((f) => f.envName));
-    const raw = storedValues(readRawConfig(projectRoot, manifest.id));
-    const filtered: StoredValues = {};
-    for (const [name, value] of Object.entries(raw)) {
-      if (!allowedEnvNames.has(name)) continue;
-      filtered[name] = value;
-      if (typeof value === 'string') loaded++;
-    }
-    configCache.set(manifest.id, filtered);
-  }
-  return loaded;
-}
-
-function projectPluginEnv(
-  manifests: PluginManifest[],
-  valuesForManifest: (manifest: PluginManifest) => StoredValues | undefined,
-): Record<string, string | undefined> {
-  const result: Record<string, string | undefined> = {};
-  for (const manifest of manifests) {
-    const values = valuesForManifest(manifest);
-    for (const field of manifest.config) {
-      const fromStore = values?.[field.envName];
-      if (typeof fromStore === 'string') {
-        result[field.envName] = fromStore;
-      } else if (fromStore === null) {
-        result[field.envName] = undefined;
-      } else {
-        const fromEnv = process.env[field.envName];
-        if (fromEnv) result[field.envName] = fromEnv;
-      }
-    }
-  }
-  return result;
-}
-
-/** Reads current persisted values for UI projection without replacing the live runtime cache. */
-export function readPluginEnvSnapshot(
-  projectRoot: string,
-  manifests: PluginManifest[],
-): Record<string, string | undefined> {
-  return projectPluginEnv(manifests, (manifest) => storedValues(readRawConfig(projectRoot, manifest.id)));
-}
-
-export function resolvePluginEnv(manifests: PluginManifest[]): Record<string, string | undefined> {
-  return projectPluginEnv(manifests, (manifest) => configCache.get(manifest.id));
 }

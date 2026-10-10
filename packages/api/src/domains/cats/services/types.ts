@@ -961,18 +961,7 @@ export type ToolExecutionPolicy =
       readonly mode: 'read_only';
       readonly replayDeniedToolNames: readonly string[];
     }
-  | { readonly mode: 'collective_participation' }
-  | { readonly mode: 'callback_allowlist'; readonly allowedCallbackRoutes: readonly string[] }
-  | {
-      readonly mode: 'collective_work';
-      readonly taskId: string;
-      readonly threadId: string;
-      readonly executionRevision: number;
-      readonly executionRef: string;
-      readonly workspaceRoot: string;
-      /** Only host-resolved, explicitly admitted resources; never inferred from external prose. */
-      readonly readOnlyRoots: readonly string[];
-    };
+  | { readonly mode: 'callback_allowlist'; readonly allowedCallbackRoutes: readonly string[] };
 
 /**
  * Route-owned intent projection for provider behavior controls.

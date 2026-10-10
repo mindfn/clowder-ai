@@ -15,7 +15,6 @@ import {
   createPluginManagerRuntimeComposition,
   GitPluginPackageAdmission,
 } from '../dist/domains/plugin/index.js';
-import { MemoryMeetingIntakeStore, MemorySignalRouteStore } from '../dist/domains/signal-intake/index.js';
 
 const execFileAsync = promisify(execFile);
 const roots = [];
@@ -59,8 +58,6 @@ async function writeGitPluginRepository() {
 async function composition(projectRoot, overrides = {}) {
   const runtime = createDormantPluginRuntimeComposition({
     projectRoot,
-    routes: new MemorySignalRouteStore(),
-    intakes: new MemoryMeetingIntakeStore(),
     messageStore: new MessageStore(),
     contract: { manifestContractVersions: ['0.1.0'], validateEffectiveGrants, validateManifest },
   });

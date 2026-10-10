@@ -12,8 +12,6 @@ import {
   createPluginManagerRuntimeComposition,
 } from '../dist/domains/plugin/index.js';
 import { InstalledPluginOperations } from '../dist/domains/plugin/operations/plugin-operation-routes.js';
-import { MemoryMeetingIntakeStore, MemorySignalRouteStore } from '../dist/domains/signal-intake/index.js';
-import { registerOfficialPluginRoutes } from '../dist/routes/plugin-official-routes.js';
 import { catalogEntry, manifest, packageArchive } from './plugin-official-package-installer.fixture.js';
 
 const roots = [];
@@ -60,8 +58,6 @@ async function harness({
   let mcpConfig = null;
   const runtime = createDormantPluginRuntimeComposition({
     projectRoot,
-    routes: new MemorySignalRouteStore(),
-    intakes: new MemoryMeetingIntakeStore(),
     messageStore: new MessageStore(),
     now: () => 9_000,
     mcpConfigIO: {
@@ -92,75 +88,31 @@ function contributionContractRuntime() {
 }
 
 describe('F202 Plugin Manager runtime composition', () => {
-  it('keeps legacy official discovery and installation on the same catalog authority', async () => {
-    const projectRoot = await root('cat-cafe-f202-official-route-composition-');
-    const packageManifest = manifest();
-    const archive = await packageArchive({ packageManifest });
-    const legacyEntry = catalogEntry(archive.integrity, {
-      pluginId: packageManifest.pluginId,
-      version: packageManifest.version,
-    });
-    const legacyCatalog = {
-      snapshot: async () => ({ entries: [legacyEntry], status: 'fresh', checkedAt: 8_000 }),
-    };
-    const machineCatalog = {
-      snapshot: async () => ({
-        entries: [
-          {
-            ...legacyEntry,
-            catalogId: 'video-analysis',
-            pluginId: 'dev.clowder.video-analysis',
-            packageName: '@clowder-ai/video-analysis',
-          },
-        ],
-        status: 'fresh',
-        checkedAt: 8_000,
-      }),
-    };
+  it('constructs, lists, and shuts down with no installed business packages', async () => {
+    const projectRoot = await root('cat-cafe-f202-empty-host-');
     const runtime = createDormantPluginRuntimeComposition({
       projectRoot,
-      routes: new MemorySignalRouteStore(),
-      intakes: new MemoryMeetingIntakeStore(),
       messageStore: new MessageStore(),
-      contract: contributionContractRuntime(),
     });
-    const composition = createPluginManagerRuntimeComposition({
-      runtime,
-      catalogProvider: machineCatalog,
-      officialRouteCatalogProvider: legacyCatalog,
-      catalogManifests: [],
-      fetchOfficialArchive: async () => archive.bytes,
-    });
-    const app = Fastify();
-    app.addHook('preHandler', async (request) => {
-      request.sessionUserId = process.env.DEFAULT_OWNER_USER_ID ?? 'owner-user';
-    });
-    registerOfficialPluginRoutes(app, {
-      inventory: runtime.inventoryStore,
-      lifecycle: runtime.lifecycle,
-      catalogProvider: legacyCatalog,
-      installer: composition.officialRouteInstaller,
-    });
-    await app.ready();
     try {
-      const listed = await app.inject({ method: 'GET', url: '/api/plugins/official' });
-      assert.equal(listed.statusCode, 200, listed.payload);
-      assert.equal(listed.json().plugins[0].catalogId, legacyEntry.catalogId);
-
-      const installed = await app.inject({
-        method: 'POST',
-        url: `/api/plugins/official/${legacyEntry.catalogId}/install`,
-        headers: { host: 'localhost:3004', origin: 'http://localhost:5173' },
-        remoteAddress: '127.0.0.1',
-        payload: {
-          expectedCatalogVersion: legacyEntry.version,
-          expectedPackageDigest: legacyEntry.packageDigest,
+      const composition = createPluginManagerRuntimeComposition({
+        runtime,
+        catalogProvider: {
+          snapshot: async () => ({ entries: [], status: 'fresh', checkedAt: 9_000 }),
         },
+        catalogManifests: [],
+        fetchOfficialArchive: async () => assert.fail('an empty Host must not fetch a business package'),
+        now: () => 9_000,
       });
-      assert.equal(installed.statusCode, 200, installed.payload);
-      assert.equal(installed.json().pluginId, legacyEntry.pluginId);
+      const result = await composition.manager.list();
+      assert.deepEqual(result.plugins, []);
+      assert.equal(result.catalog.status, 'fresh');
+      const inventory = await runtime.inventoryStore.snapshot();
+      assert.deepEqual(inventory.packages, []);
+      assert.deepEqual(inventory.instances, []);
+      assert.deepEqual(inventory.grants, []);
     } finally {
-      await app.close();
+      await runtime.shutdown('empty_host_test');
     }
   });
 
@@ -191,7 +143,6 @@ describe('F202 Plugin Manager runtime composition', () => {
       kind: 'catalog',
       catalogId: entry.catalogId,
       packageName: entry.packageName,
-      ownerAuthRequired: false,
     });
     const projected = (await composition.manager.get(entry.pluginId)).plugin;
     assert.equal(projected.artifact, 'installed');
@@ -593,12 +544,7 @@ export default {
     });
     offline = true;
 
-    const [plugin] = (await composition.manager.list()).plugins;
-    assert.deepEqual(plugin.source, { kind: 'legacy', packageName: null, trust: 'unknown' });
-    assert.equal(plugin.auth, 'error');
-    assert.equal(plugin.actions.setEnabled, false);
-    assert.deepEqual(plugin.actions.blockingReasons, ['auth-error']);
-    assert.equal(plugin.actions.uninstall, true);
+    assert.deepEqual((await composition.manager.list()).plugins, [], 'only admitted packages are projected');
   });
 
   it('admits a local archive without persisting its raw host path or granting requested authority', async () => {

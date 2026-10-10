@@ -32,8 +32,8 @@ export interface PluginManagerCatalogPort {
   snapshot(): Promise<PluginManagerCatalogSnapshot>;
 }
 
-export interface PluginManagerCompatibilityPort {
-  /** Transitional rows for repository-local/builtin plugins. Train C deletes this port. */
+export interface PluginManagerInstalledPackagesPort {
+  /** Current installed packages, including local archives absent from the catalog. */
   list(): Promise<readonly PluginManagerDetail[]>;
 }
 
@@ -77,7 +77,7 @@ export interface PluginManagerConfigurationPort {
 export interface PluginManagerServiceOptions {
   readonly catalog: PluginManagerCatalogPort;
   readonly inventory: Pick<PluginInventoryStore, 'snapshot'>;
-  readonly compatibility?: PluginManagerCompatibilityPort;
+  readonly installedPackages?: PluginManagerInstalledPackagesPort;
   readonly stateProjection?: PluginManagerStateProjectionPort;
   readonly installer?: PluginManagerInstallPort;
   readonly lifecycle?: PluginManagerLifecyclePort;
@@ -334,10 +334,10 @@ export class PluginManagerService {
     readonly response: PluginManagerListResponse;
     readonly entries: readonly { readonly plugin: PluginManagerListItem; readonly detail?: PluginManagerDetail }[];
   }> {
-    const [catalog, inventory, compatibility, quarantines] = await Promise.all([
+    const [catalog, inventory, installedPackages, quarantines] = await Promise.all([
       this.readCatalog(),
       this.options.inventory.snapshot(),
-      this.options.compatibility?.list() ?? Promise.resolve([]),
+      this.options.installedPackages?.list() ?? Promise.resolve([]),
       this.options.quarantine?.list() ?? Promise.resolve([]),
     ]);
     const projectedPublished = await Promise.all(
@@ -354,7 +354,7 @@ export class PluginManagerService {
       string,
       { readonly plugin: PluginManagerListItem; readonly detail?: PluginManagerDetail }
     >(projectedPublished.map(({ plugin, detail }) => [plugin.pluginId, { plugin, detail }] as const));
-    for (const plugin of compatibility) {
+    for (const plugin of installedPackages) {
       if (!byPluginId.has(plugin.pluginId)) byPluginId.set(plugin.pluginId, { plugin, detail: plugin });
     }
     for (const plugin of quarantines) {

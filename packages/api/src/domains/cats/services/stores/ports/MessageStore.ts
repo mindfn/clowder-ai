@@ -29,10 +29,6 @@ import type {
   SchedulerMessageExtra,
 } from '@cat-cafe/shared';
 import {
-  collectiveOwnerAdmissionV1Schema,
-  collectiveSourceIdentitySchema,
-  collectiveWorkDelegationV1Schema,
-  collectiveWorkInvocationV1Schema,
   custodyOfferV1Schema,
   entrustedWorkHumanTerminalReceiptV1Schema,
   evolutionPreparationSubmissionV1Schema,
@@ -323,11 +319,7 @@ export interface StoredMessage {
         }
     );
     /** F290: canonical owner receipt and exact Task execution trigger; written by owner admission routes only. */
-    collectiveOwnerAdmissionV1?: import('@cat-cafe/shared').CollectiveOwnerAdmissionV1;
-    collectiveWorkInvocationV1?: import('@cat-cafe/shared').CollectiveWorkInvocationV1;
     /** F290: authenticated Task owner explicitly names home Cats allowed to continue this private Work. */
-    collectiveWorkDelegationV1?: import('@cat-cafe/shared').CollectiveWorkDelegationV1;
-    collectiveAuthorizationInvalid?: true;
     /** F306 durable provider-neutral event; native wire vocabulary is never stored here. */
     semanticEvent?: ProviderSemanticEvent;
     /** F306 conversation return provenance; canonical content remains on this one Message. */
@@ -1931,10 +1923,6 @@ export function mergeMessageExtra(
     evolutionPreparationSubmissionV1: _stripPreparation,
     dotAsk: _stripDotAsk,
     deliveryBoundary: _stripBoundary,
-    collectiveOwnerAdmissionV1: _stripCollectiveAdmission,
-    collectiveWorkInvocationV1: _stripCollectiveInvocation,
-    collectiveWorkDelegationV1: _stripCollectiveDelegation,
-    collectiveAuthorizationInvalid: _stripCollectiveInvalid,
     ...incomingHost
   } = incoming ?? {};
   const merged = { ...(existing ?? {}), ...incomingHost };
@@ -3645,10 +3633,6 @@ export class MessageStore {
       evolutionPreparationSubmissionV1: _stripPreparation,
       dotAsk: _stripDotAsk,
       deliveryBoundary: _stripBoundary,
-      collectiveOwnerAdmissionV1: _stripCollectiveAdmission,
-      collectiveWorkInvocationV1: _stripCollectiveInvocation,
-      collectiveWorkDelegationV1: _stripCollectiveDelegation,
-      collectiveAuthorizationInvalid: _stripCollectiveInvalid,
       ...hostOnly
     } = extra as Record<string, unknown>;
     msg.extra = { ...msg.extra, ...hostOnly };

@@ -9,7 +9,6 @@ import {
   createDormantPluginRuntimeComposition,
   createPluginManagerRuntimeComposition,
 } from '../dist/domains/plugin/index.js';
-import { MemoryMeetingIntakeStore, MemorySignalRouteStore } from '../dist/domains/signal-intake/index.js';
 import {
   assertRedisIsolationOrThrow,
   cleanupClientKeyspace,
@@ -135,8 +134,6 @@ test('module plugins receive isolated persistent storage with revision-fenced co
   const redis = new FakeStorageRedis();
   const runtime = createDormantPluginRuntimeComposition({
     projectRoot,
-    routes: new MemorySignalRouteStore(),
-    intakes: new MemoryMeetingIntakeStore(),
     messageStore: new MessageStore(),
     redis,
     contract: { manifestContractVersions: ['0.1.0'], validateEffectiveGrants, validateManifest },
@@ -314,8 +311,6 @@ test('module plugin storage fails closed when the package lacks the matching gra
   const projectRoot = await tempRoot('cat-cafe-f202-storage-grant-project-');
   const runtime = createDormantPluginRuntimeComposition({
     projectRoot,
-    routes: new MemorySignalRouteStore(),
-    intakes: new MemoryMeetingIntakeStore(),
     messageStore: new MessageStore(),
     redis: new FakeStorageRedis(),
     contract: { manifestContractVersions: ['0.1.0'], validateEffectiveGrants, validateManifest },

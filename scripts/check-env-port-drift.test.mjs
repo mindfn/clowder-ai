@@ -37,9 +37,6 @@ const ROOT = resolve(process.cwd());
 const isHomeRepo = existsSync(resolve(ROOT, 'scripts/sync-to-opensource.sh'));
 const hasEnvExampleOpensource = existsSync(resolve(ROOT, '.env.example.opensource'));
 
-// Keep the source-only export regression in the canonical check:env-ports lane.
-if (isHomeRepo) await import('./sync-to-opensource-api-build.test.mjs');
-
 function readEnvFile(relPath) {
   const content = readFileSync(resolve(ROOT, relPath), 'utf-8');
   const vars = {};
@@ -1432,26 +1429,6 @@ excluded:
           `sync-manifest should export ${fixturePath} because packages/api test:public loads it`,
         );
       }
-    });
-
-    it('sync-manifest exports the GitHub plugin manifest used by public schedule factories', () => {
-      const managedFiles = readYamlTopLevelList('sync-manifest.yaml', 'managed_files');
-      const targetOwnedFiles = readYamlTopLevelList('sync-manifest.yaml', 'target_owned_files');
-      const pluginManifest = 'packages/api/src/plugins/github/plugin.yaml';
-
-      assert.ok(
-        existsSync(resolve(ROOT, pluginManifest)),
-        `${pluginManifest} should exist in the source repo so outbound sync can export it`,
-      );
-      assert.ok(
-        managedFiles.includes(pluginManifest),
-        `${pluginManifest} must be exported because packages/api public schedule tests and runtime plugin loading depend on it`,
-      );
-      assert.equal(
-        targetOwnedFiles.includes(pluginManifest),
-        false,
-        `${pluginManifest} is source-managed after #906/#905 intake and must not be restored over from the target repo`,
-      );
     });
 
     it('sync-manifest marks the F203 native L0 template as a sanitized transform', () => {

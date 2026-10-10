@@ -19,7 +19,6 @@ import {
   createDormantPluginRuntimeComposition,
   createPluginManagerRuntimeComposition,
 } from '../dist/domains/plugin/index.js';
-import { MemoryMeetingIntakeStore, MemorySignalRouteStore } from '../dist/domains/signal-intake/index.js';
 
 const roots = [];
 const execFileAsync = promisify(execFile);
@@ -54,8 +53,6 @@ function createRuntime(projectRoot, { limbRegistry = new LimbRegistry(), taskRun
     taskRunner,
     runtime: createDormantPluginRuntimeComposition({
       projectRoot,
-      routes: new MemorySignalRouteStore(),
-      intakes: new MemoryMeetingIntakeStore(),
       messageStore: new MessageStore(),
       contract: { manifestContractVersions: ['0.1.0'], validateEffectiveGrants, validateManifest },
       limbRegistry,

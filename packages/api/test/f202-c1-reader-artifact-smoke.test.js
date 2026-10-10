@@ -16,7 +16,6 @@ import {
   createPluginManagerRuntimeComposition,
 } from '../dist/domains/plugin/index.js';
 import { InstalledPluginOperations } from '../dist/domains/plugin/operations/plugin-operation-routes.js';
-import { MemoryMeetingIntakeStore, MemorySignalRouteStore } from '../dist/domains/signal-intake/index.js';
 
 test(
   'the approved reader archive activates its own limb and operations in an isolated Host',
@@ -55,8 +54,6 @@ test(
       const runtime = createDormantPluginRuntimeComposition({
         projectRoot: root,
         redis,
-        routes: new MemorySignalRouteStore(),
-        intakes: new MemoryMeetingIntakeStore(),
         messageStore: new MessageStore(),
         contract: { manifestContractVersions: ['0.1.0'], validateEffectiveGrants, validateManifest },
         limbRegistry,

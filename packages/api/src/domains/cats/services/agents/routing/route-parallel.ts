@@ -999,7 +999,6 @@ export async function* routeParallel(
         ...(options.asrPersonMemoryScenes?.length ? { asrPersonMemoryScenes: options.asrPersonMemoryScenes } : {}),
         ...(memoryCueLegacyFallbacks.length > 0 ? { memoryCueLegacyFallbacks } : {}),
         ...(options.toolExecutionPolicy ? { toolExecutionPolicy: options.toolExecutionPolicy } : {}),
-        ...(options.executionScope ? { executionScope: options.executionScope } : {}),
         executionKind: turnExecutionKind,
         ...(options.beforeOutputCommit ? { outputFenced: true } : {}),
         executionCausal: {

@@ -1,6 +1,6 @@
 ---
 feature_ids: [F147]
-tips_exempt: "2026-10-03: this update records the F322 v2 bilingual requirement and responsibility only. Language switching is not implemented or accepted on this source cut, so there is no usable locale control to advertise."
+tips_exempt: "2026-10-10: the committed User Journey clarification describes the existing planned F322 v2 bilingual requirement only. Language switching is not implemented or accepted on this source cut, so there is no usable locale control to advertise."
 related_features: [F041, F190, F056, F322]
 topics: [i18n, hub, locale, ui]
 doc_kind: spec

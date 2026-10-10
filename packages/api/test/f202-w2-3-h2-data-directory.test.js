@@ -31,7 +31,6 @@ import {
   MemoryPluginInventoryStore,
   PluginLifecycleError,
 } from '../dist/domains/plugin/index.js';
-import { MemoryMeetingIntakeStore, MemorySignalRouteStore } from '../dist/domains/signal-intake/index.js';
 
 const LOG = '__f202H2Log';
 const FAIL_STOPS = '__f202H2FailStops';
@@ -230,8 +229,6 @@ test('the production composition gives a granted module its directory under the 
   await writeFile(join(packageRoot, 'dist/plugin.js'), moduleSource, 'utf8');
   const runtime = createDormantPluginRuntimeComposition({
     projectRoot,
-    routes: new MemorySignalRouteStore(),
-    intakes: new MemoryMeetingIntakeStore(),
     messageStore: new MessageStore(),
     contract: { manifestContractVersions: ['0.1.0'], validateEffectiveGrants, validateManifest },
   });
