@@ -230,7 +230,7 @@ export function ChatInput({
     .filter((cat) => activeCatIds.has(cat.id) && cat.messageDeliveryCapabilities?.guideReply === true)
     .map(formatCatDisplayName);
   const guideReplyHint =
-    messageDisposition.effective === 'continue_current' && guideReplyNames.length > 0
+    guideReplyNames.length > 0
       ? `执行发生了偏离？${guideReplyNames.join('/')}支持引导回复，可继续输入直接发送消息而不中断当前回复`
       : undefined;
 
