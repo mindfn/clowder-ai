@@ -19,17 +19,19 @@ it('shows incomplete and failed PR sync honestly and continues only on operator 
   const fetch = vi.spyOn(globalThis, 'fetch').mockImplementation(async (input) => {
     const url = String(input);
     let data: unknown = {};
-    if (url.startsWith('/api/community-repos')) data = { repos: ['owner/repo'] };
-    if (url.startsWith('/api/community-board'))
+    if (url.startsWith('/api/plugins/official.github-operations/github/community-repos'))
+      data = { repos: ['owner/repo'] };
+    if (url.startsWith('/api/plugins/official.github-operations/github/community-board'))
       data = {
         repo: 'owner/repo',
         issues: [],
         prItems: [],
         prIndex: { publishedGeneration: 'g1', observedAt: 1, refreshStatus: status, failedSubjects: [] },
       };
-    if (url.startsWith('/api/community-decision-queue')) data = { items: [], warnings: [] };
-    if (url.startsWith('/api/community-findings')) data = { findings: [] };
-    if (url.startsWith('/api/community-issues/sync-prs')) {
+    if (url.startsWith('/api/plugins/official.github-operations/github/community-decision-queue'))
+      data = { items: [], warnings: [] };
+    if (url.startsWith('/api/plugins/official.github-operations/github/community-findings')) data = { findings: [] };
+    if (url.startsWith('/api/plugins/official.github-operations/github/community-issues/sync-prs')) {
       syncs++;
       status = 'failed';
       data = { status, complete: false, hasMore: true };
@@ -70,8 +72,8 @@ for (const mode of ['unavailable-empty', 'http-error']) {
     let discoveryReads = 0;
     const fetch = vi.spyOn(globalThis, 'fetch').mockImplementation(async (input) => {
       const url = String(input);
-      if (url.startsWith('/api/community-repos')) discoveryReads++;
-      if (url.startsWith('/api/community-board')) boardReads++;
+      if (url.startsWith('/api/plugins/official.github-operations/github/community-repos')) discoveryReads++;
+      if (url.startsWith('/api/plugins/official.github-operations/github/community-board')) boardReads++;
       return {
         ok: mode !== 'http-error',
         json: async () => ({ repos: [], prSourceStatus: 'unavailable', findings: [] }),

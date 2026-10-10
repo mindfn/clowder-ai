@@ -350,7 +350,9 @@ export function CommunityPanel({ threadId }: { threadId?: string }) {
 
   const fetchFindings = useCallback(async () => {
     try {
-      const res = await fetch('/api/community-findings?status=open,acknowledged');
+      const res = await fetch(
+        '/api/plugins/official.github-operations/github/community-findings?status=open,acknowledged',
+      );
       if (res.ok) {
         const data = await res.json();
         setFindings(data.findings ?? []);
@@ -371,7 +373,9 @@ export function CommunityPanel({ threadId }: { threadId?: string }) {
     }
     setLoading(true);
     try {
-      const res = await fetch(`/api/community-board?repo=${encodeURIComponent(activeRepo)}`);
+      const res = await fetch(
+        `/api/plugins/official.github-operations/github/community-board?repo=${encodeURIComponent(activeRepo)}`,
+      );
       if (res.ok) {
         const data = await res.json();
         if (requestId === boardRequestIdRef.current && latestRepoRef.current === activeRepo) {
@@ -403,7 +407,9 @@ export function CommunityPanel({ threadId }: { threadId?: string }) {
     }
     setDecisionQueueLoading(true);
     try {
-      const res = await fetch(`/api/community-decision-queue?repo=${encodeURIComponent(activeRepo)}`);
+      const res = await fetch(
+        `/api/plugins/official.github-operations/github/community-decision-queue?repo=${encodeURIComponent(activeRepo)}`,
+      );
       if (res.ok) {
         const data = (await res.json()) as DecisionQueueResponse;
         if (requestId === decisionQueueRequestIdRef.current && latestRepoRef.current === activeRepo) {
@@ -428,11 +434,14 @@ export function CommunityPanel({ threadId }: { threadId?: string }) {
     setPrSyncing(true);
     setPrSyncError(null);
     try {
-      const res = await fetch(`/api/community-issues/sync-prs?repo=${encodeURIComponent(activeRepo)}`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ restart }),
-      });
+      const res = await fetch(
+        `/api/plugins/official.github-operations/github/community-issues/sync-prs?repo=${encodeURIComponent(activeRepo)}`,
+        {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ restart }),
+        },
+      );
       if (!res.ok && latestRepoRef.current === activeRepo) {
         setPrSyncError({
           repo: activeRepo,
@@ -453,7 +462,7 @@ export function CommunityPanel({ threadId }: { threadId?: string }) {
   const fetchRepos = useCallback(async () => {
     const unavailable = '无法读取 PR 仓库，请检查 GitHub 插件是否已启用。';
     try {
-      const response = await fetch('/api/community-repos');
+      const response = await fetch('/api/plugins/official.github-operations/github/community-repos');
       if (!response.ok) throw new Error('repository discovery unavailable');
       const data = await response.json();
       const candidates: unknown[] = Array.isArray(data.repos) ? data.repos : [];
@@ -486,7 +495,10 @@ export function CommunityPanel({ threadId }: { threadId?: string }) {
     setLoading(true);
     try {
       await Promise.all([
-        fetch(`/api/community-issues/sync?repo=${encodeURIComponent(activeRepo)}`, { method: 'POST' }),
+        fetch(
+          `/api/plugins/official.github-operations/github/community-issues/sync?repo=${encodeURIComponent(activeRepo)}`,
+          { method: 'POST' },
+        ),
         syncPrs(activeRepo),
       ]);
       if (latestRepoRef.current === activeRepo) {
@@ -516,11 +528,14 @@ export function CommunityPanel({ threadId }: { threadId?: string }) {
   const dispatchIssue = useCallback(
     async (issueId: string) => {
       try {
-        const res = await fetch(`/api/community-issues/${issueId}/dispatch`, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ threadId }),
-        });
+        const res = await fetch(
+          `/api/plugins/official.github-operations/github/community-issues/${encodeURIComponent(issueId)}/dispatch`,
+          {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ threadId }),
+          },
+        );
         if (res.ok) refreshCommunityViews();
       } catch {
         /* ignore */
@@ -546,11 +561,14 @@ export function CommunityPanel({ threadId }: { threadId?: string }) {
       },
     ) => {
       try {
-        const res = await fetch(`/api/community-issues/${issueId}/resolve`, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ decision, routeRecommendation: opts?.routeRecommendation }),
-        });
+        const res = await fetch(
+          `/api/plugins/official.github-operations/github/community-issues/${encodeURIComponent(issueId)}/resolve`,
+          {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ decision, routeRecommendation: opts?.routeRecommendation }),
+          },
+        );
         if (res.ok) {
           setExpandedIssue(null);
           refreshCommunityViews();

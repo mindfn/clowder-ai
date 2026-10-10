@@ -6,7 +6,6 @@ const DEFAULT_TIMEOUT_MS = 30_000;
 const MAX_RESPONSE_BODY_BYTES = 1024 * 1024;
 const MAX_RESPONSE_HEADERS = 32;
 const MAX_RESPONSE_HEADER_VALUE_BYTES = 8 * 1024;
-const FORBIDDEN_ENCODED_PATH = /%/;
 const STRIPPED_REQUEST_HEADERS = new Set([
   'authorization',
   'cookie',
@@ -31,7 +30,7 @@ const ALLOWED_RESPONSE_HEADERS = new Set([
 ]);
 
 export interface PluginWebhookForwardingPort {
-  resolvePluginWebhook(pluginId: string, path: string): DeclaredPluginWebhook | undefined;
+  resolvePluginWebhook(pluginId: string, path: string, method?: string): DeclaredPluginWebhook | undefined;
   callPluginWebhook(
     pluginId: string,
     contributionId: string,
@@ -142,11 +141,14 @@ function resolveTarget(
   webhooks: PluginWebhookForwardingPort,
 ): ResolvedTarget {
   const rawPath = request.raw.url?.split('?', 1)[0] ?? '';
-  if (FORBIDDEN_ENCODED_PATH.test(rawPath)) return { ok: false, status: 404, error: 'Webhook path not found' };
-  const path = request.params['*'];
-  const declared = webhooks.resolvePluginWebhook(request.params.pluginId, path);
-  if (!declared) return { ok: false, status: 404, error: 'Webhook path not found' };
+  const prefix = `/api/plugins/${request.params.pluginId}/`;
+  // Use raw bytes: Fastify decodes wildcard params and would turn an encoded
+  // identifier slash into a route separator. Encoded plugin-id aliases fail closed.
+  if (!rawPath.startsWith(prefix)) return { ok: false, status: 404, error: 'Webhook path not found' };
+  const path = rawPath.slice(prefix.length);
   const method = request.method.toUpperCase();
+  const declared = webhooks.resolvePluginWebhook(request.params.pluginId, path, method);
+  if (!declared) return { ok: false, status: 404, error: 'Webhook path not found' };
   if (!declared.methods.includes(method as (typeof declared.methods)[number])) {
     return {
       ok: false,

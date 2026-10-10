@@ -225,8 +225,8 @@ export class PluginRuntimeCarrierRouter implements PluginRuntimeLifecyclePort {
     throw new ExternalPluginRuntimeError('DELIVERY_REJECTED', `${pluginId} is not active`);
   }
 
-  resolvePluginWebhook(pluginId: string, path: string): DeclaredPluginWebhook | undefined {
-    return this.#runtimeContributions.resolvePluginWebhook(pluginId, path);
+  resolvePluginWebhook(pluginId: string, path: string, method?: string): DeclaredPluginWebhook | undefined {
+    return this.#runtimeContributions.resolvePluginWebhook(pluginId, path, method);
   }
 
   async callPluginWebhook(

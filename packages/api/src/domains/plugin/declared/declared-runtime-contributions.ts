@@ -24,7 +24,7 @@ import {
 } from './declared-cloud-conversation-hosts.js';
 import { resolvePackageFile } from './declared-resource-paths.js';
 import { scheduleTask } from './declared-schedule-task.js';
-import { type DeclaredPluginWebhook, validateDeclaredWebhooks } from './declared-webhooks.js';
+import { type DeclaredPluginWebhook, resolveDeclaredWebhook, validateDeclaredWebhooks } from './declared-webhooks.js';
 
 export type { DeclaredPluginWebhook } from './declared-webhooks.js';
 
@@ -192,15 +192,8 @@ export class DeclaredRuntimeContributions {
     };
   }
 
-  resolvePluginWebhook(pluginId: string, path: string): DeclaredPluginWebhook | undefined {
-    const contribution = this.#activeForPlugin(pluginId)?.webhooks.find((candidate) => candidate.path === path);
-    if (!contribution) return undefined;
-    return {
-      contributionId: contribution.id,
-      path: contribution.path,
-      methods: contribution.methods,
-      anonymous: contribution.verificationSecretRef !== undefined,
-    };
+  resolvePluginWebhook(pluginId: string, path: string, method?: string): DeclaredPluginWebhook | undefined {
+    return resolveDeclaredWebhook(this.#activeForPlugin(pluginId)?.webhooks ?? [], path, method);
   }
 
   async callPluginWebhook(

@@ -266,7 +266,7 @@ describe('ClosureChecklistCard (D5)', () => {
 
     const reportCall = fetchSpy.mock.calls.find((c: unknown[]) => typeof c[0] === 'string' && c[0].includes('/report'));
     expect(reportCall).toBeTruthy();
-    expect(reportCall![0]).toContain('/api/community-issues/iss-42/report');
+    expect(reportCall![0]).toContain('/api/plugins/official.github-operations/github/community-issues/iss-42/report');
     expect((reportCall![1] as RequestInit)?.method).toBe('POST');
 
     const body = JSON.parse((reportCall![1] as RequestInit).body as string);
@@ -594,7 +594,9 @@ describe('WaiverAuditForm (D5 — INV-D6.2)', () => {
       (c: unknown[]) => typeof c[0] === 'string' && c[0].includes('/waive-closure'),
     );
     expect(waiveCall).toBeTruthy();
-    expect(waiveCall![0]).toContain('/api/community-issues/iss-42/waive-closure');
+    expect(waiveCall![0]).toContain(
+      '/api/plugins/official.github-operations/github/community-issues/iss-42/waive-closure',
+    );
     expect((waiveCall![1] as RequestInit)?.method).toBe('POST');
 
     const body = JSON.parse((waiveCall![1] as RequestInit).body as string);

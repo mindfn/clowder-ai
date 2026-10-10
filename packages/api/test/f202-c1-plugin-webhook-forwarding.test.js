@@ -1,5 +1,7 @@
 import assert from 'node:assert/strict';
+import { readFileSync } from 'node:fs';
 import { afterEach, test } from 'node:test';
+import { validateManifest } from '@clowder-ai/plugin-contract';
 import Fastify from 'fastify';
 
 import { DeclaredRuntimeContributions } from '../dist/domains/plugin/declared/declared-runtime-contributions.js';
@@ -344,5 +346,246 @@ test('reserved declarations fail activation and invalid or slow plugin responses
   for (const warning of warnings) {
     assert.equal(Object.hasOwn(warning, 'headers'), false);
     assert.equal(Object.hasOwn(warning, 'body'), false);
+  }
+});
+
+// Runtime-boundary tests only: real manifest admission also requires the paired
+// plugin-contract schema update before dynamic declarations can be installed.
+function route(id, path, methods = ['GET'], anonymous = false) {
+  return {
+    type: 'webhook',
+    id,
+    path,
+    methods,
+    action: { method: id },
+    ...(anonymous ? { verificationSecretRef: 'WEBHOOK_SECRET' } : {}),
+  };
+}
+
+async function dynamicFixture(declared) {
+  const webhooks = contributions();
+  const calls = [];
+  await webhooks.activate(admission(declared), async (_instance, method, params) => {
+    calls.push({ method, request: params.request });
+    return { status: 200, body: { handler: method, path: params.request.path } };
+  });
+  return { webhooks, calls, app: await appFor(webhooks) };
+}
+const fixturePrefix = '/api/plugins/dev.clowder.webhook-fixture/';
+const ownerHeaders = () => ({
+  'x-cat-cafe-user': process.env.DEFAULT_OWNER_USER_ID ?? 'owner-1',
+  origin: 'http://localhost:5173',
+});
+
+test('dynamic path forwards the raw encoded identifier as one segment with Host owner identity', async () => {
+  const { app, calls, webhooks } = await dynamicFixture([route('inspect', 'cases/:subjectKey')]);
+  const path = `cases/${encodeURIComponent('pr:owner/repo#42')}`;
+  const denied = await app.inject({ method: 'GET', url: fixturePrefix + path });
+  assert.equal(denied.statusCode, 401);
+  assert.equal(calls.length, 0);
+  const response = await app.inject({ method: 'GET', url: fixturePrefix + path, headers: ownerHeaders() });
+  assert.equal(response.statusCode, 200);
+  assert.equal(calls[0].request.path, path);
+  assert.deepEqual(calls[0].request.principal, { kind: 'owner', id: ownerHeaders()['x-cat-cafe-user'] });
+  assert.equal(calls[0].request.headers['x-cat-cafe-user'], undefined);
+  webhooks.deactivate('pi_webhook');
+  assert.equal(
+    (await app.inject({ method: 'GET', url: fixturePrefix + path, headers: ownerHeaders() })).statusCode,
+    404,
+  );
+});
+
+test('same declared path chooses the handler for the requested method and reports the full Allow set', async () => {
+  const { app, calls } = await dynamicFixture([
+    route('read', 'records/item', ['GET'], true),
+    route('patch', 'records/item', ['PATCH'], true),
+  ]);
+  const response = await app.inject({ method: 'PATCH', url: `${fixturePrefix}records/item` });
+  assert.equal(response.statusCode, 200);
+  assert.equal(calls[0].method, 'patch');
+  const wrongMethod = await app.inject({ method: 'DELETE', url: `${fixturePrefix}records/item` });
+  assert.equal(wrongMethod.statusCode, 405);
+  assert.deepEqual(wrongMethod.headers.allow.split(', ').sort(), ['GET', 'PATCH']);
+  assert.equal(calls.length, 1);
+});
+
+test('each method retains its declared owner or anonymous authority', async () => {
+  const { app, calls } = await dynamicFixture([
+    route('public', 'records/:id', ['POST'], true),
+    route('private', 'records/admin', ['GET']),
+  ]);
+  assert.equal((await app.inject({ method: 'POST', url: `${fixturePrefix}records/42` })).statusCode, 200);
+  assert.equal((await app.inject({ method: 'GET', url: `${fixturePrefix}records/admin` })).statusCode, 401);
+  assert.equal((await app.inject({ method: 'POST', url: `${fixturePrefix}records/admin` })).statusCode, 200);
+  assert.equal(calls.length, 2);
+});
+
+test('encoded fixed-path aliases cannot fall through to an anonymous parameter route', async () => {
+  const { app, calls } = await dynamicFixture([
+    route('public', 'records/:id', ['POST'], true),
+    route('private', 'records/admin', ['GET']),
+  ]);
+  for (const encoded of ['%61dmin', 'ad%6Din', '%61%64%6d%69%6e']) {
+    for (const method of ['GET', 'POST']) {
+      const response = await app.inject({ method, url: `${fixturePrefix}records/${encoded}` });
+      assert.equal(response.statusCode, 404, `${method} ${encoded}`);
+    }
+  }
+  assert.equal(calls.length, 0);
+  const valid = await app.inject({ method: 'POST', url: `${fixturePrefix}records/%34%32` });
+  assert.equal(valid.statusCode, 200);
+  assert.equal(calls[0].request.path, 'records/%34%32');
+});
+
+test('dynamic matching rejects structural path aliases and unsafe single-decoded identifiers', async () => {
+  const { app, calls } = await dynamicFixture([route('read', 'records/:id', ['GET'], true)]);
+  for (const path of [
+    'records/',
+    'records/a/b',
+    '%72ecords/a',
+    'records%2Fa',
+    'records/%2e%2e',
+    'records/%252F',
+    'records/%5c',
+    'records/%00',
+    'records/a%2F..%2Fb',
+    'records/a%2F%2Fb',
+  ]) {
+    const response = await app.inject({ method: 'GET', url: fixturePrefix + path });
+    assert.equal(response.statusCode, 404, path);
+  }
+  assert.equal(calls.length, 0);
+  const valid = await app.inject({ method: 'GET', url: `${fixturePrefix}records/owner%2Frepo` });
+  assert.equal(valid.statusCode, 200);
+  assert.equal(calls[0].request.path, 'records/owner%2Frepo');
+});
+
+for (const [name, declarations] of [
+  ['dynamic first segment', [route('bad', ':root/item')]],
+  ['partial parameter', [route('bad', 'records/a:id')]],
+  ['duplicate parameter', [route('bad', 'records/:id/:id')]],
+  ['equivalent patterns', [route('one', 'records/:id'), route('two', 'records/:other')]],
+  ['crossing patterns', [route('one', 'records/:id/latest'), route('two', 'records/admin/:action')]],
+]) {
+  test(`activation refuses ${name}`, async () => {
+    await assert.rejects(
+      contributions().activate(admission(declarations), async () => ({ status: 200 })),
+      { code: 'PROTOCOL_VIOLATION' },
+    );
+  });
+}
+
+function packedManifest(routes) {
+  return {
+    pluginId: 'dev.clowder.http-pairing',
+    version: '1.0.0',
+    contractVersion: '0.1.0',
+    name: 'HTTP pairing',
+    runtime: { transport: 'builtin', entrypoint: 'dist/plugin.js' },
+    contributions: routes,
+    features: [
+      {
+        id: 'http',
+        name: 'HTTP',
+        resources: [],
+        capabilities: [],
+        contributions: routes.map(({ type, id }) => ({ type, id })),
+      },
+    ],
+  };
+}
+
+test('packed contract and Host activate and route underscore-prefixed parameter names', async () => {
+  for (const name of ['_', '_id', '_2']) {
+    const routes = [route('read', `records/:${name}`)];
+    const validated = validateManifest(packedManifest(routes));
+    assert.equal(validated.valid, true, JSON.stringify(validated.errors));
+    const { app, calls } = await dynamicFixture(routes);
+    const response = await app.inject({
+      method: 'GET',
+      url: `${fixturePrefix}records/owner%2Frepo`,
+      headers: ownerHeaders(),
+    });
+    assert.equal(response.statusCode, 200, name);
+    assert.equal(calls.length, 1);
+    assert.equal(calls[0].method, 'read');
+    assert.equal(calls[0].request.path, 'records/owner%2Frepo');
+  }
+});
+
+test('packed contract and Host reject same-method fixed/parameter overlap', async () => {
+  const routes = [route('fixed', 'records/admin'), route('parameter', 'records/:id')];
+  assert.equal(validateManifest(packedManifest(routes)).valid, false);
+  await assert.rejects(
+    contributions().activate(admission(routes), async () => ({})),
+    { code: 'PROTOCOL_VIOLATION' },
+  );
+});
+
+test('packed contract and Host admit equivalent parameters on distinct methods', async () => {
+  const routes = [route('read', 'records/:id'), route('patch', 'records/:name', ['PATCH'])];
+  const validated = validateManifest(packedManifest(routes));
+  assert.equal(validated.valid, true, JSON.stringify(validated.errors));
+  const { app, calls } = await dynamicFixture(routes);
+  for (const method of ['GET', 'PATCH']) {
+    const response = await app.inject({ method, url: `${fixturePrefix}records/a`, headers: ownerHeaders() });
+    assert.equal(response.statusCode, 200);
+  }
+  assert.deepEqual(
+    calls.map((call) => call.method),
+    ['read', 'patch'],
+  );
+});
+
+test('packed contract and Host select method before fixed versus parameter path', async () => {
+  const routes = [route('read', 'records/admin'), route('write', 'records/:id', ['POST'])];
+  assert.equal(validateManifest(packedManifest(routes)).valid, true);
+  const { app, calls } = await dynamicFixture(routes);
+  const noOrigin = await app.inject({
+    method: 'POST',
+    url: `${fixturePrefix}records/admin`,
+    headers: { 'x-cat-cafe-user': ownerHeaders()['x-cat-cafe-user'] },
+  });
+  assert.equal(noOrigin.statusCode, 403);
+  assert.equal(calls.length, 0);
+  const response = await app.inject({ method: 'POST', url: `${fixturePrefix}records/admin`, headers: ownerHeaders() });
+  assert.equal(response.statusCode, 200);
+  assert.equal(calls[0].method, 'write');
+  const denied = await app.inject({ method: 'GET', url: `${fixturePrefix}records/admin` });
+  assert.equal(denied.statusCode, 401);
+  const missing = await app.inject({ method: 'DELETE', url: `${fixturePrefix}records/admin`, headers: ownerHeaders() });
+  assert.equal(missing.statusCode, 405);
+  assert.deepEqual(missing.headers.allow.split(', ').sort(), ['GET', 'POST']);
+});
+
+// Frozen package inventory is admitted by the actual packed beta.33 validator.
+// The handler is a test double: this proves Host dispatch, not package installation.
+test('packed contract admits and Host forwards all 33 package HTTP paths with owner identity', async () => {
+  const inventory = JSON.parse(
+    readFileSync(new URL('./fixtures/f202-github-http-routes.json', import.meta.url), 'utf8'),
+  );
+  assert.equal(inventory.routes.length, 33);
+  const routes = inventory.routes.map(({ method, path }, i) => route(`route-${i}`, path, [method]));
+  const validation = validateManifest(packedManifest(routes));
+  assert.equal(validation.valid, true, JSON.stringify(validation.errors));
+  const { app, calls } = await dynamicFixture(routes);
+  for (const [i, { method, path }] of inventory.routes.entries()) {
+    const rawPath = path.replace(/:[A-Za-z_][A-Za-z0-9_]*/g, (parameter) =>
+      encodeURIComponent(
+        parameter === ':repo' ? 'owner/repo' : parameter === ':subjectKey' ? 'pr:owner/repo#42' : 'id-42',
+      ),
+    );
+    const denied = await app.inject({
+      method,
+      url: fixturePrefix + rawPath,
+      headers: { origin: 'http://localhost:5173' },
+    });
+    assert.equal(denied.statusCode, 401, `${method} ${rawPath}`);
+    assert.equal(calls.length, i);
+    const response = await app.inject({ method, url: fixturePrefix + rawPath, headers: ownerHeaders() });
+    assert.equal(response.statusCode, 200, `${method} ${rawPath}`);
+    assert.equal(calls[i].method, `route-${i}`);
+    assert.equal(calls[i].request.path, rawPath);
+    assert.deepEqual(calls[i].request.principal, { kind: 'owner', id: ownerHeaders()['x-cat-cafe-user'] });
   }
 });
