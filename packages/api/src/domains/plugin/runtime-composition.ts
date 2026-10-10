@@ -40,6 +40,7 @@ import { ModulePluginRuntime } from './builtin-runtime/carriers/module-plugin-ru
 import { StaticPluginRuntime } from './builtin-runtime/carriers/static-plugin-runtime.js';
 import { PluginRuntimeCarrierRouter } from './carrier/runtime-carrier.js';
 import { ContentEditorPluginRuntime } from './content-editor-runtime/runtime.js';
+import { PluginPredicateProviderRegistry } from './custody/predicate-provider-registry.js';
 import type { CloudConversationHostRegistry } from './declared/cloud-conversation-host-registry.js';
 import type { DeclaredScheduleTaskRunner } from './declared/declared-runtime-contributions.js';
 import { desktopWindowContribution } from './desktop-window-runtime/admission.js';
@@ -199,6 +200,7 @@ export interface DormantPluginRuntimeComposition {
   readonly inventory: HostInventoryControlPlane;
   readonly broker: HostBrokerControlPlane;
   readonly supervisor: PluginRuntimeCarrierRouter;
+  readonly predicateProvider?: PluginPredicateProviderRegistry;
   /** The child-process carrier itself. Exposed so the Host's one pre-active budget
    * stays assertable against the runtime that spends it, not just the constant. */
   readonly externalRuntime: ExternalPluginRuntimeSupervisor;
@@ -532,6 +534,12 @@ export function createDormantPluginRuntimeComposition(
     }),
   );
   supervisor.register(externalSupervisor);
+  const predicateProvider = options.threadOwnerUserId
+    ? new PluginPredicateProviderRegistry(inventoryStore, supervisor, {
+        tenantScope: options.threadOwnerUserId,
+        installationProjectRoot: options.projectRoot,
+      })
+    : undefined;
   const lifecycle = new ExternalPluginLifecycleService({
     store: inventoryStore,
     supervisor,
@@ -547,6 +555,7 @@ export function createDormantPluginRuntimeComposition(
     inventory,
     broker,
     supervisor,
+    ...(predicateProvider === undefined ? {} : { predicateProvider }),
     externalRuntime: externalSupervisor,
     ...(contentEditors === undefined ? {} : { contentEditors }),
     ...(desktopWindows === undefined ? {} : { desktopWindows }),

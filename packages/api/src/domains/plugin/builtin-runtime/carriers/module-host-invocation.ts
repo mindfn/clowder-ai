@@ -66,7 +66,18 @@ export function createModuleHostInvocation(deps: ModuleHostInvocationDeps): Modu
       );
     }
     // The boundary: from here the package's own code runs.
-    return attemptPluginAction(() => candidate.call(actions, params, currentPluginCallContext(targetId)));
+    const caller = currentPluginCallContext(targetId);
+    const publicContext = caller
+      ? Object.freeze({
+          catId: caller.catId,
+          threadId: caller.threadId,
+          userId: caller.userId,
+          invocationId: caller.invocationId,
+          ...(caller.source === undefined ? {} : { source: Object.freeze({ ...caller.source }) }),
+          assertCurrent: () => caller.assertCurrent(),
+        })
+      : undefined;
+    return attemptPluginAction(() => candidate.call(actions, params, publicContext));
   };
   return {
     attempt,

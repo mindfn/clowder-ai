@@ -13,6 +13,8 @@ export interface PluginCallContext {
   };
   /** Recheck the local activation and invoking turn after asynchronous provider work. */
   assertCurrent(): Promise<void>;
+  /** Host-only turn/activation fence; never reads inventory or crosses the package ABI. */
+  assertInvocationCurrent?(): Promise<void>;
 }
 
 const calls = new AsyncLocalStorage<{ instanceId: string; context: PluginCallContext }>();
