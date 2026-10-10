@@ -17,9 +17,13 @@ The package aggregate task `0001789822127811-001843-1c2133b0` remains owned by
 This inventory neither assigns new implementation work nor expands GitHub W3. Until an explicit
 Collective handoff is accepted, these 21 files remain pending under the C1 migration chain.
 
-Business migration uses fixed Host main `bb9f9f08ec574ee8888fbde9819ff95da96bb614`.
-The later browser journeys are not present at that commit; their separately verified source is
-`ca5b831b48c165ea10c7389fe3eb4ba03d3e01e7`. The adjacent JSON manifest records every movable
+Source correction (2026-10-10, aggregate260 → Host264): both business migration and browser
+journeys use the preserved pre-deletion feature snapshot
+`ca5b831b48c165ea10c7389fe3eb4ba03d3e01e7`, not main. The previously recorded
+`bb9f9f08ec574ee8888fbde9819ff95da96bb614` predates the three Collective packages,
+introduced by `9f6ac206988f635feddd18d8b0ed517bb7ab2b1a`; it cannot supply this migration.
+The existing 21 browser source blobs and pending status are unchanged. This corrects the source
+coordinate under the existing aggregate; it does not assign an implementation writer or move C2. The adjacent JSON manifest records every movable
 journey/fixture, its exact source blob and behavior. Retrieve a test with
 `git show <browserSourceCommit>:<path>` from the Host repository, then move it into the Collective
 plugin package test suite. Git preserves the source; no runtime or persistent data is changed.

@@ -1,5 +1,5 @@
 {
-  "businessSourceCommit": "bb9f9f08ec574ee8888fbde9819ff95da96bb614",
+  "businessSourceCommit": "ca5b831b48c165ea10c7389fe3eb4ba03d3e01e7",
   "browserSourceCommit": "ca5b831b48c165ea10c7389fe3eb4ba03d3e01e7",
   "destination": "Collective plugin package integration/browser test suite in clowder-ai-plugins",
   "status": "migration_pending_installed_package_unverified",
