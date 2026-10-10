@@ -6,7 +6,12 @@ import type { ITaskStore } from '../../../cats/services/stores/ports/TaskStore.j
 import type { IThreadStore } from '../../../cats/services/stores/ports/ThreadStore.js';
 import type { MessagingService } from '../../../messaging/messaging-service.js';
 import type { SubscriptionDelivery } from '../../../messaging/subscription-delivery.js';
-import type { PluginInvocationOutcome } from '../../carrier/host-invocation.js';
+import {
+  invocationNotStarted,
+  type PluginInvocationOutcome,
+  settlePluginInvocation,
+} from '../../carrier/host-invocation.js';
+import { invokeIsolatedPredicateVerifier, type PredicateVerifierPort } from '../../carrier/predicate-verifier.js';
 import { verifyPackageEntrypoint } from '../../external-runtime/package-entrypoint-authority.js';
 import {
   ExternalPluginRuntimeError,
@@ -57,6 +62,7 @@ import {
   rollbackModuleStart,
   runModuleTeardown,
 } from './module-plugin-teardown.js';
+import { admitModulePredicateVerifiers, type ModulePredicateVerifier } from './module-predicate-verifiers.js';
 
 /**
  * What the module at `runtime.entrypoint` must export by default.
@@ -87,6 +93,7 @@ export interface ModulePluginHostShape {
 
 export interface PluginModuleActivationShape {
   readonly actions: Readonly<Record<string, unknown>>;
+  readonly predicateVerifiers?: Readonly<Record<string, unknown>>;
   stop(reason?: string): void | Promise<void>;
 }
 
@@ -127,8 +134,11 @@ export interface ModulePluginRuntimeOptions {
 }
 
 interface LoadedModule {
+  readonly packageDigest: string;
   readonly located: VerifiedPluginPackage;
   readonly activation: PluginModuleActivationShape;
+  readonly predicateVerifiers: ReadonlyMap<string, ModulePredicateVerifier>;
+  readonly privatePredicateMethods: ReadonlySet<string>;
   readonly subscriptions: PluginMessagingSubscriptionSession;
 }
 
@@ -327,7 +337,24 @@ export class ModulePluginRuntime implements BundledPluginRuntime {
         );
       }
       activation = candidate;
-      this.#loaded.set(pluginInstanceId, { located, activation, subscriptions });
+      const predicateVerifiers = admitModulePredicateVerifiers(
+        packageRecord.manifest,
+        effectiveGrants,
+        activation,
+        actions,
+      );
+      this.#loaded.set(pluginInstanceId, {
+        located,
+        activation,
+        subscriptions,
+        predicateVerifiers,
+        packageDigest: packageRecord.packageDigest,
+        privatePredicateMethods: new Set(
+          (packageRecord.manifest.contributions ?? []).flatMap((item) =>
+            item.type === 'terminal-predicate-provider' ? [item.freshnessMethod, item.completionMethod] : [],
+          ),
+        ),
+      });
     } catch (error) {
       await rollbackModuleStart(error, activation, subscriptions, located);
     }
@@ -351,17 +378,55 @@ export class ModulePluginRuntime implements BundledPluginRuntime {
   }
 
   invoke(pluginInstanceId: string, method: string, params: unknown): Promise<unknown> {
-    return createModuleHostInvocation({ runtime: this }).invoke(pluginInstanceId, method, params);
+    return this.attemptInvoke(pluginInstanceId, method, params).then(settlePluginInvocation);
   }
 
   /** Invoke, also saying whether the module's action was entered when it fails (F202 W2-3 h3b). */
   attemptInvoke(pluginInstanceId: string, method: string, params: unknown): Promise<PluginInvocationOutcome> {
+    if (this.#loaded.get(pluginInstanceId)?.privatePredicateMethods.has(method)) {
+      return Promise.resolve(
+        invocationNotStarted(
+          new ExternalPluginRuntimeError('PROTOCOL_VIOLATION', 'Predicate verifier is not an ordinary action'),
+        ),
+      );
+    }
     return createModuleHostInvocation({ runtime: this }).attempt(pluginInstanceId, method, params);
   }
 
   exposesAction(pluginInstanceId: string, method: string): boolean {
-    return exposesModuleAction(this.actions(pluginInstanceId), method);
+    return (
+      !this.#loaded.get(pluginInstanceId)?.privatePredicateMethods.has(method) &&
+      exposesModuleAction(this.actions(pluginInstanceId), method)
+    );
   }
+
+  readonly invokePredicateVerifier: PredicateVerifierPort['invokePredicateVerifier'] = async (
+    instanceId,
+    method,
+    input,
+    context,
+  ) => {
+    const loaded = this.#loaded.get(instanceId);
+    const verifier = loaded?.predicateVerifiers.get(method);
+    if (!loaded || !verifier)
+      throw new ExternalPluginRuntimeError('PROTOCOL_VIOLATION', 'No admitted predicate verifier');
+    if (
+      context.binding.packageDigest !== loaded.packageDigest ||
+      context.binding.featureId !== verifier.featureId ||
+      context.binding.contributionId !== verifier.contribution.id ||
+      context.binding.freshnessMethod !== verifier.contribution.freshnessMethod ||
+      context.binding.completionMethod !== verifier.contribution.completionMethod ||
+      input.actionFamily !== verifier.contribution.actionFamily ||
+      input.predicate.kind !== verifier.contribution.predicateKind ||
+      !input.subjectRef.startsWith(`${verifier.contribution.subjectNamespace}:`)
+    ) {
+      throw new ExternalPluginRuntimeError('PROTOCOL_VIOLATION', 'Predicate contribution binding mismatch');
+    }
+    return invokeIsolatedPredicateVerifier(instanceId, method, verifier.phase, verifier.handler, input, context, () => {
+      if (this.#loaded.get(instanceId) !== loaded)
+        throw new ExternalPluginRuntimeError('INSTANCE_NOT_RUNNABLE', 'Predicate activation changed');
+    });
+  };
 
   actions(pluginInstanceId: string): Readonly<Record<string, unknown>> | undefined {
     return this.#loaded.get(pluginInstanceId)?.activation.actions;

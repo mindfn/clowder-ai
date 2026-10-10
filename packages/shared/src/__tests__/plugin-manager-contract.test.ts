@@ -90,6 +90,7 @@ describe('F202 terminal Plugin Manager contract', () => {
       | 'content-editor-provider'
       | 'media-source'
       | 'cloud-conversation-host'
+      | 'terminal-predicate-provider'
       | 'desktop-window'
     >();
     expectTypeOf<PluginManagerDetail['capabilities'][number]['active']>().toEqualTypeOf<boolean>();

@@ -186,6 +186,7 @@ export type PluginManagerCapabilityKind =
   | 'content-editor-provider'
   | 'media-source'
   | 'cloud-conversation-host'
+  | 'terminal-predicate-provider'
   | 'desktop-window';
 
 export interface PluginManagerCapability {

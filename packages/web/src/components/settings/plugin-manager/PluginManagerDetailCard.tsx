@@ -44,6 +44,7 @@ const contributionKindLabel: Record<string, string> = {
   service: 'Service',
   ui: 'UI',
   'content-editor-provider': 'Content Editor',
+  'terminal-predicate-provider': 'Completion Verification',
   'desktop-window': 'Desktop Window',
 };
 

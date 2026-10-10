@@ -27,3 +27,8 @@ export function withPluginCallContext<T>(
 ): Promise<T> {
   return calls.run({ instanceId, context }, run);
 }
+
+/** A verifier never inherits the native business invocation that requested completion. */
+export function withoutPluginCallContext<T>(run: () => Promise<T>): Promise<T> {
+  return calls.exit(run);
+}

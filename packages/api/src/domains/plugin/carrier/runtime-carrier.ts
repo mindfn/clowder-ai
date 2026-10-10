@@ -27,6 +27,7 @@ import {
   reportedPluginInvocation,
   settlePluginInvocation,
 } from './host-invocation.js';
+import type { PredicateVerifierPort } from './predicate-verifier.js';
 
 /**
  * F202 Train C1 — the Host's single runtime-carrier boundary.
@@ -45,6 +46,7 @@ export interface PluginRuntimeAdmission {
 }
 
 export interface PluginRuntimeCarrier {
+  invokePredicateVerifier?: PredicateVerifierPort['invokePredicateVerifier'];
   /** Derived from the admitted package alone. Carrier selection has no other input. */
   claims(admission: PluginRuntimeAdmission): boolean;
   start(pluginInstanceId: string): Promise<unknown>;
@@ -96,6 +98,12 @@ export class PluginRuntimeCarrierRouter implements PluginRuntimeLifecyclePort {
     const generation = this.nativeActions.generation(pluginInstanceId);
     const admission = await this.#admission(pluginInstanceId);
     const carrier = this.#selectAdmission(admission);
+    if (
+      admission.packageRecord.manifest.contributions?.some((item) => item.type === 'terminal-predicate-provider') &&
+      (admission.packageRecord.manifest.runtime?.transport !== 'builtin' || !carrier.invokePredicateVerifier)
+    ) {
+      throw new ExternalPluginRuntimeError('UNSUPPORTED_TRANSPORT', 'Carrier cannot isolate predicate verification');
+    }
     const result = await carrier.start(pluginInstanceId);
     try {
       this.nativeActions.activate(admission, generation, (method, input) =>
@@ -207,6 +215,21 @@ export class PluginRuntimeCarrierRouter implements PluginRuntimeLifecyclePort {
     const carrier = await this.#select(pluginInstanceId);
     return carrier.exposesAction?.(pluginInstanceId, method) ?? false;
   }
+
+  /** Host-only purpose: ordinary invoke/action input never selects this table. */
+  readonly invokePredicateVerifier: PredicateVerifierPort['invokePredicateVerifier'] = async (
+    instanceId,
+    method,
+    input,
+    context,
+  ) => {
+    const admission = await this.#admission(instanceId);
+    const carrier = this.#selectAdmission(admission);
+    if (admission.packageRecord.manifest.runtime?.transport !== 'builtin' || !carrier.invokePredicateVerifier) {
+      throw new ExternalPluginRuntimeError('UNSUPPORTED_TRANSPORT', 'Carrier cannot isolate predicate verification');
+    }
+    return carrier.invokePredicateVerifier(instanceId, method, input, context);
+  };
 
   async listPluginTools(pluginId: string): Promise<readonly DeclaredPluginTool[]> {
     const directTools = this.#runtimeContributions.listPluginTools(pluginId);

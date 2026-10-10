@@ -33,6 +33,7 @@ const capabilityKinds = new Map([
   ['service', '服务'],
   ['ui', '界面'],
   ['content-editor-provider', '内容编辑器'],
+  ['terminal-predicate-provider', '完成验证'],
 ]);
 
 export function pluginSetupStep(pluginId: string, step: string): string {

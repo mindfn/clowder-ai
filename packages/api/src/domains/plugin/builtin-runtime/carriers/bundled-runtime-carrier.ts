@@ -6,6 +6,7 @@ import {
   reportedPluginInvocation,
   settlePluginInvocation,
 } from '../../carrier/host-invocation.js';
+import type { PredicateVerifierPort } from '../../carrier/predicate-verifier.js';
 import type { PluginRuntimeAdmission, PluginRuntimeCarrier } from '../../carrier/runtime-carrier.js';
 import { startFailureRecord } from '../../diagnostics/plugin-start-failure.js';
 import { ExternalPluginRuntimeError } from '../../external-runtime/types.js';
@@ -19,6 +20,7 @@ import type { PluginInstanceRecord, PluginPackageRecord, RuntimeState } from '..
  * (F202 Train C1 terminal contract, clause 6).
  */
 export interface BundledPluginRuntime {
+  invokePredicateVerifier?: PredicateVerifierPort['invokePredicateVerifier'];
   claims(packageRecord: Pick<PluginPackageRecord, 'manifest'>): boolean;
   /**
    * The carrier hands over the package record it fenced, so a runtime that needs the
@@ -48,6 +50,7 @@ export interface BundledPluginRuntimeCarrierOptions {
 }
 
 interface RuntimeAuthority {
+  readonly grantRevision: number;
   readonly instance: PluginInstanceRecord;
   readonly packageRecord: PluginPackageRecord;
   readonly effectiveGrants: readonly string[];
@@ -246,6 +249,37 @@ export class BundledPluginRuntimeCarrier implements PluginRuntimeCarrier {
     return attemptPluginAction(() => invoke(pluginInstanceId, method, params));
   }
 
+  readonly invokePredicateVerifier: PredicateVerifierPort['invokePredicateVerifier'] = async (
+    instanceId,
+    method,
+    input,
+    context,
+  ) => {
+    const active = this.#active.get(instanceId);
+    const invoke = active?.runtime.invokePredicateVerifier?.bind(active.runtime);
+    if (!active?.valid || !invoke)
+      throw new ExternalPluginRuntimeError('INSTANCE_NOT_RUNNABLE', 'No active predicate verifier carrier');
+    const check = async () => {
+      const current = await this.authority(instanceId);
+      const binding = context.binding;
+      if (
+        this.#active.get(instanceId) !== active ||
+        !active.valid ||
+        current.instance.packageDigest !== binding.packageDigest ||
+        current.instance.lifecycleRevision !== binding.lifecycleRevision ||
+        current.grantRevision !== binding.grantRevision ||
+        !current.effectiveGrants.includes('custody.verify')
+      ) {
+        throw new ExternalPluginRuntimeError('INSTANCE_NOT_RUNNABLE', 'Predicate verifier authority changed');
+      }
+      await context.assertCurrent();
+    };
+    await check();
+    const result = await invoke(instanceId, method, input, context);
+    await check();
+    return result;
+  };
+
   /** F202 W2-3 h3b: false when no runtime is active for the instance or it cannot tell. */
   exposesAction(pluginInstanceId: string, method: string): boolean {
     return this.#active.get(pluginInstanceId)?.runtime.exposesAction?.(pluginInstanceId, method) ?? false;
@@ -306,7 +340,12 @@ export class BundledPluginRuntimeCarrier implements PluginRuntimeCarrier {
         `${pluginInstanceId} is not a runnable plugin instance`,
       );
     }
-    return { instance, packageRecord, effectiveGrants: grants?.effectiveGrants ?? [] };
+    return {
+      instance,
+      packageRecord,
+      effectiveGrants: grants?.effectiveGrants ?? [],
+      grantRevision: grants?.grantRevision ?? 0,
+    };
   }
 
   private setBundledRuntimeState(
