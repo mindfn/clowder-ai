@@ -1,0 +1,15 @@
+{
+  "api-build.log.gz": "9ceffb7310338057cfe71a4ae1e2c98d2c485d81cdef906532a801f457a38d64",
+  "api-green.log.gz": "46a880ab997620e3d18c18ace5d2cf84d0fe3c5df172b3ffba726f8751c3dbcb",
+  "commands.md": "5cdc82656846023b12a65843e4b094e49866d288b279a702b5d501c1a0d45644",
+  "finance-build.log.gz": "b89f30aaf70abb26a4cadd588400c10f84c2e45d4eb4fe95807abdfe86eca219",
+  "format.log.gz": "8476dcb5c8d1ef7a932e09d29b4adbfba1a3fb5ad22cba0f7da18398b72c2df0",
+  "mcp-build.log.gz": "9ceffb7310338057cfe71a4ae1e2c98d2c485d81cdef906532a801f457a38d64",
+  "original-reproducer-green.log.gz": "e576139ff7cad4df095e3570b9a8340a067c904cc50f1c7683179f5828ca8438",
+  "producer-green.log.gz": "9fda10d5d675d4d1414ba2cf9df4aaf72340080fab181f5c0e03a432ebe33cf7",
+  "red.log.gz": "22ad2eaed010bf2a7722fd6bcef4f2f374a89f1a98eac89a11350660c049d642",
+  "redis-green.log.gz": "8f63bbc49e3e168fe5f7c440f342c6c93a78f22575d9b56f0d41b4acdf15d8f6",
+  "redis-initial.log.gz": "ed5ef9c5a00158be1cd904bfb835d063400d1ed271f9234b391cf8465eee35b7",
+  "report.md": "d8fa1551a2dabbe1746cd8dbebbaee6f6701b9d5038db6e1bb29e8cd024e62a8",
+  "retired-search.log.gz": "9ceffb7310338057cfe71a4ae1e2c98d2c485d81cdef906532a801f457a38d64"
+}

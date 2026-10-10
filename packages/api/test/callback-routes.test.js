@@ -807,6 +807,51 @@ describe('Callback Routes', () => {
     assert.equal(response.statusCode, 401);
   });
 
+  test('invocation callback preserves different explicit message IDs with identical content', async () => {
+    const app = await createApp();
+    const { invocationId, callbackToken } = await registry.create('user-1', 'opus');
+    const headers = { 'x-invocation-id': invocationId, 'x-callback-token': callbackToken };
+    const base = { content: 'independent same-text callback' };
+    const post = (clientMessageId) =>
+      app.inject({
+        method: 'POST',
+        url: '/api/callbacks/post-message',
+        headers,
+        payload: { ...base, clientMessageId },
+      });
+    const first = await post('distinct-source-a');
+    const retry = await post('distinct-source-a');
+    const second = await post('distinct-source-b');
+    assert.equal(first.json().status, 'ok');
+    assert.equal(retry.json().status, 'duplicate');
+    assert.equal(second.json().status, 'ok', 'A different client ID is a new source, not a body duplicate');
+    assert.notEqual(first.json().messageId, second.json().messageId);
+    assert.equal(messageStore.getRecent(20).length, 2);
+  });
+
+  test('invocation callback retry restores an append that failed before persistence', async () => {
+    const app = await createApp();
+    const { invocationId, callbackToken } = await registry.create('user-1', 'opus');
+    const headers = { 'x-invocation-id': invocationId, 'x-callback-token': callbackToken };
+    const base = { content: 'independent same-text callback' };
+    const originalAppend = messageStore.append.bind(messageStore);
+    let attempts = 0;
+    messageStore.append = (input) => {
+      if (++attempts === 1) throw new Error('isolated store failure before persistence');
+      return originalAppend(input);
+    };
+    const payload = { ...base, clientMessageId: 'retry-after-store-failure' };
+    const first = await app.inject({ method: 'POST', url: '/api/callbacks/post-message', headers, payload });
+    assert.equal(first.statusCode, 500);
+    assert.equal(messageStore.getRecent(20).length, 0);
+    const retry = await app.inject({ method: 'POST', url: '/api/callbacks/post-message', headers, payload });
+    assert.equal(retry.json().status, 'ok', 'Failed persistence must not consume the source identity');
+    const replay = await app.inject({ method: 'POST', url: '/api/callbacks/post-message', headers, payload });
+    assert.equal(replay.json().status, 'duplicate');
+    assert.equal(replay.json().messageId, retry.json().messageId);
+    assert.equal(messageStore.getRecent(20).length, 1);
+  });
+
   test('POST post-message deduplicates by clientMessageId (at-least-once safe)', async () => {
     const app = await createApp();
     const { invocationId, callbackToken } = await registry.create('user-1', 'opus');
@@ -842,7 +887,7 @@ describe('Callback Routes', () => {
     assert.equal(socketManager.getMessages().length, 1);
   });
 
-  test('POST post-message suppresses exact duplicate callback posts in the retry window', async () => {
+  test('invocation callback without a client ID preserves repeated text as independent messages', async () => {
     const app = await createApp();
     const { invocationId, callbackToken } = await registry.create('user-1', 'opus');
 
@@ -865,67 +910,105 @@ describe('Callback Routes', () => {
     });
     assert.equal(second.statusCode, 200);
     const secondBody = JSON.parse(second.body);
-    assert.equal(secondBody.status, 'duplicate');
-    assert.equal(secondBody.messageId, firstBody.messageId);
+    assert.equal(secondBody.status, 'ok');
+    assert.notEqual(secondBody.messageId, firstBody.messageId);
 
     const recent = messageStore.getRecent(10);
-    assert.equal(recent.length, 1);
-    assert.equal(socketManager.getMessages().length, 1);
+    assert.equal(recent.length, 2);
+    assert.equal(socketManager.getMessages().length, 2);
   });
 
-  // Regression: byte-identical duplicate posts (the screenshot bug). The recent-message
-  // duplicate scan is check-then-act (read recent → later append); two concurrent identical
-  // deliveries (e.g. an at-least-once retry / double-dispatch, each with its own auto-generated
-  // clientMessageId so the clientMessageId SADD does not match) both pass the "no duplicate"
-  // read before either appends → both persist → two identical messages. Closing the race needs
-  // an ATOMIC claim before append. This test forces the interleave by holding the first append
-  // open until the second request has run its duplicate check.
-  test('POST post-message does not double-store byte-identical concurrent posts (atomic dedup)', async () => {
+  test('invocation callback concurrent same-ID retries share one durable message', async () => {
     const app = await createApp();
     const { invocationId, callbackToken } = await registry.create('user-1', 'opus');
-
-    const realAppend = messageStore.append.bind(messageStore);
-    let releaseFirstAppend;
-    const firstAppendGate = new Promise((resolve) => {
-      releaseFirstAppend = resolve;
-    });
-    let signalFirstAppendEntered;
-    const firstAppendEntered = new Promise((resolve) => {
-      signalFirstAppendEntered = resolve;
-    });
-    let appendCount = 0;
-    messageStore.append = async (msg) => {
-      appendCount += 1;
-      if (appendCount === 1) {
-        signalFirstAppendEntered();
-        await firstAppendGate; // hold the winner's append open
-      }
-      return realAppend(msg);
-    };
-
-    // No clientMessageId on either request → the clientMessageId dedup is skipped, exercising
-    // the content-fingerprint path specifically (matches production where two deliveries carry
-    // different auto-generated keys).
-    const payload = { content: 'concurrent identical callback report' };
     const headers = { 'x-invocation-id': invocationId, 'x-callback-token': callbackToken };
-
-    const p1 = app.inject({ method: 'POST', url: '/api/callbacks/post-message', headers, payload });
-    await firstAppendEntered; // p1 passed its duplicate check and is now blocked inside append
-    const second = await app.inject({ method: 'POST', url: '/api/callbacks/post-message', headers, payload });
-    releaseFirstAppend();
-    await p1;
-
-    assert.equal(
-      JSON.parse(second.body).status,
-      'duplicate',
-      'concurrent identical post must be detected as duplicate even before the winner commits its append',
-    );
-    const recent = messageStore.getRecent(10);
-    assert.equal(recent.length, 1, 'concurrent byte-identical posts must persist exactly ONE message');
-    assert.equal(socketManager.getMessages().length, 1, 'only one broadcast for the deduped pair');
+    const realAppendIdempotent = messageStore.appendIdempotent.bind(messageStore);
+    let releaseFirst;
+    const gate = new Promise((resolve) => {
+      releaseFirst = resolve;
+    });
+    let enteredFirst;
+    const entered = new Promise((resolve) => {
+      enteredFirst = resolve;
+    });
+    let calls = 0;
+    messageStore.appendIdempotent = async (input) => {
+      if (++calls === 1) {
+        enteredFirst();
+        await gate;
+      }
+      return realAppendIdempotent(input);
+    };
+    const payload = { content: 'concurrent identical callback', clientMessageId: 'concurrent-source-a' };
+    const firstPromise = app.inject({ method: 'POST', url: '/api/callbacks/post-message', headers, payload });
+    await entered;
+    let second;
+    try {
+      second = await app.inject({
+        method: 'POST',
+        url: '/api/callbacks/post-message',
+        headers,
+        payload: { ...payload, clientMessageId: 'concurrent-source-a' },
+      });
+    } finally {
+      releaseFirst();
+    }
+    const first = await firstPromise;
+    assert.equal(first.statusCode, 200);
+    assert.equal(second.statusCode, 200);
+    assert.equal(first.json().status, 'duplicate');
+    assert.equal(second.json().status, 'ok');
+    assert.equal(first.json().messageId, second.json().messageId);
+    assert.equal(messageStore.size, 1);
+    assert.equal(socketManager.getMessages().filter((m) => m.type === 'text').length, 1);
   });
 
-  test('POST post-message suppresses exact duplicate callback posts when first copy is queued', async () => {
+  test('invocation callback concurrent different IDs preserve identical text', async () => {
+    const app = await createApp();
+    const { invocationId, callbackToken } = await registry.create('user-1', 'opus');
+    const headers = { 'x-invocation-id': invocationId, 'x-callback-token': callbackToken };
+    const realAppendIdempotent = messageStore.appendIdempotent.bind(messageStore);
+    let releaseFirst;
+    const gate = new Promise((resolve) => {
+      releaseFirst = resolve;
+    });
+    let enteredFirst;
+    const entered = new Promise((resolve) => {
+      enteredFirst = resolve;
+    });
+    let calls = 0;
+    messageStore.appendIdempotent = async (input) => {
+      if (++calls === 1) {
+        enteredFirst();
+        await gate;
+      }
+      return realAppendIdempotent(input);
+    };
+    const payload = { content: 'concurrent identical callback', clientMessageId: 'concurrent-source-a' };
+    const firstPromise = app.inject({ method: 'POST', url: '/api/callbacks/post-message', headers, payload });
+    await entered;
+    let second;
+    try {
+      second = await app.inject({
+        method: 'POST',
+        url: '/api/callbacks/post-message',
+        headers,
+        payload: { ...payload, clientMessageId: 'concurrent-source-b' },
+      });
+    } finally {
+      releaseFirst();
+    }
+    const first = await firstPromise;
+    assert.equal(first.statusCode, 200);
+    assert.equal(second.statusCode, 200);
+    assert.equal(first.json().status, 'ok');
+    assert.equal(second.json().status, 'ok');
+    assert.notEqual(first.json().messageId, second.json().messageId);
+    assert.equal(messageStore.size, 2);
+    assert.equal(socketManager.getMessages().filter((m) => m.type === 'text').length, 2);
+  });
+
+  test('invocation callback new ID does not reuse a same-text queued source', async () => {
     const app = await createApp();
     const { invocationId, callbackToken } = await registry.create('user-1', 'opus');
 
@@ -951,18 +1034,18 @@ describe('Callback Routes', () => {
       method: 'POST',
       url: '/api/callbacks/post-message',
       headers: { 'x-invocation-id': invocationId, 'x-callback-token': callbackToken },
-      payload: { content: 'same queued callback report' },
+      payload: { clientMessageId: 'new-independent-source', content: 'same queued callback report' },
     });
     assert.equal(response.statusCode, 200);
     const body = JSON.parse(response.body);
-    assert.equal(body.status, 'duplicate');
-    assert.equal(body.messageId, queued.id);
+    assert.equal(body.status, 'ok');
+    assert.notEqual(body.messageId, queued.id);
 
-    assert.equal(messageStore.size, 1);
-    assert.equal(socketManager.getMessages().length, 0);
+    assert.equal(messageStore.size, 2);
+    assert.equal(socketManager.getMessages().length, 1);
   });
 
-  test('POST post-message duplicate scan skips stale candidates without stopping early', async () => {
+  test('invocation callback new ID is independent of same-text recent history', async () => {
     const app = await createApp();
     const { invocationId, callbackToken } = await registry.create('user-1', 'opus');
     const now = Date.now();
@@ -997,15 +1080,15 @@ describe('Callback Routes', () => {
       method: 'POST',
       url: '/api/callbacks/post-message',
       headers: { 'x-invocation-id': invocationId, 'x-callback-token': callbackToken },
-      payload: { content: 'same callback report behind stale tail' },
+      payload: { clientMessageId: 'new-history-source', content: 'same callback report behind stale tail' },
     });
     assert.equal(response.statusCode, 200);
     const body = JSON.parse(response.body);
-    assert.equal(body.status, 'duplicate');
-    assert.equal(body.messageId, freshDuplicate.id);
+    assert.equal(body.status, 'ok');
+    assert.notEqual(body.messageId, freshDuplicate.id);
 
-    assert.equal(messageStore.size, 2);
-    assert.equal(socketManager.getMessages().length, 0);
+    assert.equal(messageStore.size, 3);
+    assert.equal(socketManager.getMessages().length, 1);
   });
 
   test('POST post-message does not suppress plain text after same-text rich callback', async () => {
@@ -1075,6 +1158,35 @@ describe('Callback Routes', () => {
     assert.equal(threadAMessages.length, 0);
     assert.equal(threadBMessages.length, 1);
     assert.equal(threadBMessages[0].content, 'cross-thread hello');
+  });
+
+  test('cross-thread callback uses explicit identity for retries and independent same-text sources', async () => {
+    const app = await createApp();
+    const from = await threadStore.create('user-1', 'source-thread');
+    const to = await threadStore.create('user-1', 'target-thread');
+    const { invocationId, callbackToken } = await registry.create('user-1', 'opus', from.id);
+    const headers = { 'x-invocation-id': invocationId, 'x-callback-token': callbackToken };
+    const payload = {
+      threadId: to.id,
+      content: 'independent cross-thread notice',
+      targetCats: ['codex'],
+      clientMessageId: 'cross-source-a',
+    };
+    const first = await app.inject({ method: 'POST', url: '/api/callbacks/post-message', headers, payload });
+    const retry = await app.inject({ method: 'POST', url: '/api/callbacks/post-message', headers, payload });
+    const second = await app.inject({
+      method: 'POST',
+      url: '/api/callbacks/post-message',
+      headers,
+      payload: { ...payload, clientMessageId: 'cross-source-b' },
+    });
+    assert.equal(first.json().status, 'ok');
+    assert.equal(retry.json().status, 'duplicate');
+    assert.equal(second.json().status, 'ok');
+    assert.equal(first.json().messageId, retry.json().messageId);
+    assert.notEqual(first.json().messageId, second.json().messageId);
+    assert.equal(messageStore.getByThread(from.id, 20, 'user-1').length, 0);
+    assert.equal(messageStore.getByThread(to.id, 20, 'user-1').length, 2);
   });
 
   test('POST post-message routes cross-paragraph @mention (no keyword gate)', async () => {

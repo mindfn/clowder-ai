@@ -110,7 +110,7 @@ describe('F167 Phase R: callback ingress boundaries', () => {
     return messageStore.getByThread(threadId, 20, 'user-1').find((message) => message.content === content);
   }
 
-  test('server-minted coordination roots keep content retry suppression without clientMessageId', async () => {
+  test('server-minted coordination roots preserve independent no-ID same-text messages', async () => {
     const source = await threadStore.create('user-1', 'Source');
     const target = await threadStore.create('user-1', 'Target');
     await threadStore.addParticipants(target.id, ['codex']);
@@ -139,21 +139,22 @@ describe('F167 Phase R: callback ingress boundaries', () => {
         coordination: { phase },
       });
       assert.equal(retry.statusCode, 200);
-      assert.equal(retry.json().status, 'duplicate');
+      assert.equal(retry.json().status, 'ok');
+      assert.notEqual(retry.json().messageId, first.json().messageId);
       assert.equal(
         messageStore.getByThread(target.id, 20, 'user-1').filter((message) => message.content === content).length,
-        1,
+        2,
       );
       assert.equal(
         invocationRecordStore.getRecords().length,
         recordsBefore,
         'durable admission does not manufacture an invocation before the Queue drain owns it',
       );
-      assert.equal(invocationQueue.list(target.id, 'user-1').length, queuedBefore + 1);
+      assert.equal(invocationQueue.list(target.id, 'user-1').length, queuedBefore + 2);
     }
   });
 
-  test('caller-chosen coordination ids remain distinct content-dedup identities', async () => {
+  test('caller-chosen coordination IDs preserve distinct message sources', async () => {
     const source = await threadStore.create('user-1', 'Source');
     const target = await threadStore.create('user-1', 'Target');
     await threadStore.addParticipants(target.id, ['codex']);
