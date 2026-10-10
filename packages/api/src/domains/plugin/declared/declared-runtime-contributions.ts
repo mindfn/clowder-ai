@@ -10,6 +10,7 @@ import type { TaskSpec_P1 } from '../../../infrastructure/scheduler/types.js';
 import { LimbRegistry } from '../../limb/LimbRegistry.js';
 import { loadLimbDeclaration } from '../../limb/limb-yaml-loader.js';
 import { type InvokeContext, PluginLimbAdapter } from '../../limb/PluginLimbAdapter.js';
+import { withPluginOwnerWebhook } from '../carrier/plugin-owner-request-context.js';
 import type { PluginRuntimeAdmission } from '../carrier/runtime-carrier.js';
 import { ExternalPluginRuntimeError, type VerifiedPluginPackageLocator } from '../external-runtime/types.js';
 import { hostCapabilityRefusal } from '../host-surface/host-capability-refusal.js';
@@ -209,10 +210,25 @@ export class DeclaredRuntimeContributions {
         `${pluginId}/${contributionId} is not an active webhook`,
       );
     }
-    return active.invoke(active.pluginInstanceId, contribution.action.method, {
-      ...(contribution.action.params ?? {}),
-      request,
-    });
+    return withPluginOwnerWebhook(
+      pluginId,
+      contributionId,
+      active.pluginInstanceId,
+      Boolean(contribution.verificationSecretRef),
+      () => {
+        if (this.#active.get(active.pluginInstanceId) !== active) {
+          throw new ExternalPluginRuntimeError(
+            'DELIVERY_REJECTED',
+            'Plugin owner request activation is no longer current',
+          );
+        }
+      },
+      () =>
+        active.invoke(active.pluginInstanceId, contribution.action.method, {
+          ...(contribution.action.params ?? {}),
+          request,
+        }),
+    );
   }
 
   #activeForPlugin(pluginId: string): ActiveRuntimeContributions | undefined {

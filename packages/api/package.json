@@ -55,7 +55,7 @@
   "dependencies": {
     "@anthropic-ai/claude-agent-sdk": "0.3.285",
     "@cat-cafe/shared": "workspace:*",
-    "@clowder-ai/plugin-contract": "file:vendor/clowder-ai-plugin-contract-0.1.0-beta.34.tgz",
+    "@clowder-ai/plugin-contract": "file:vendor/clowder-ai-plugin-contract-0.1.0-beta.35.tgz",
     "@clowder-ai/plugin-contract-beta21": "npm:@clowder-ai/plugin-contract@0.1.0-beta.21",
     "@clowder-ai/plugin-contract-beta23": "npm:@clowder-ai/plugin-contract@0.1.0-beta.23",
     "@clowder-ai/plugin-contract-beta24": "npm:@clowder-ai/plugin-contract@0.1.0-beta.24",

@@ -1,4 +1,6 @@
 import type { FastifyInstance, FastifyPluginAsync, FastifyReply, FastifyRequest } from 'fastify';
+import { withoutPluginCallContext } from '../../domains/plugin/carrier/plugin-call-context.js';
+import { withPluginOwnerRequest } from '../../domains/plugin/carrier/plugin-owner-request-context.js';
 import type { DeclaredPluginWebhook } from '../../domains/plugin/declared/declared-runtime-contributions.js';
 import { pluginAccessError, requirePluginOwnerLocalAccess } from '../plugin-access-guards.js';
 
@@ -73,19 +75,37 @@ async function forwardPluginWebhook(
   const principal = authorizeRequest(request, reply, target.declared, target.method);
   if (principal === false) return undefined;
 
+  const lifetime = requestLifetime(request, reply);
   let failurePhase: 'invocation' | 'validation' = 'invocation';
   try {
-    const value = await withTimeout(
-      options.webhooks.callPluginWebhook(request.params.pluginId, target.declared.contributionId, {
-        method: target.method,
-        path: target.path,
-        query: structuredClone(request.query as Record<string, unknown>),
-        body: request.body,
-        rawBody: rawBodyFor(request),
-        headers: forwardedHeaders(request),
-        ...(principal === undefined ? {} : { principal }),
-      }),
-      options.timeoutMs ?? DEFAULT_TIMEOUT_MS,
+    const timeoutMs = options.timeoutMs ?? DEFAULT_TIMEOUT_MS;
+    if (!Number.isSafeInteger(timeoutMs) || timeoutMs <= 0) throw new TypeError('timeoutMs must be positive');
+    const invoke = () =>
+      withTimeout(
+        options.webhooks.callPluginWebhook(request.params.pluginId, target.declared.contributionId, {
+          method: target.method,
+          path: target.path,
+          query: structuredClone(request.query as Record<string, unknown>),
+          body: request.body,
+          rawBody: rawBodyFor(request),
+          headers: forwardedHeaders(request),
+          ...(principal === undefined ? {} : { principal }),
+        }),
+        timeoutMs,
+      );
+    const value = await withoutPluginCallContext(() =>
+      principal === undefined
+        ? invoke()
+        : withPluginOwnerRequest(
+            {
+              pluginId: request.params.pluginId,
+              contributionId: target.declared.contributionId,
+              userId: principal.id,
+              operation: target.method === 'GET' ? 'read' : 'write',
+              signal: lifetime.signal,
+            },
+            invoke,
+          ),
     );
     failurePhase = 'validation';
     return sendPluginResponse(reply, validatePluginResponse(value));
@@ -119,7 +139,25 @@ async function forwardPluginWebhook(
       );
     }
     return reply.status(502).send({ error: 'Plugin webhook returned an invalid response' });
+  } finally {
+    lifetime.close();
   }
+}
+
+function requestLifetime(request: FastifyRequest, reply: FastifyReply): { signal: AbortSignal; close(): void } {
+  const controller = new AbortController();
+  const abort = () => controller.abort();
+  request.raw.once('aborted', abort);
+  reply.raw.once('close', abort);
+  if (request.raw.aborted || reply.raw.destroyed) abort();
+  return {
+    signal: controller.signal,
+    close: () => {
+      controller.abort();
+      request.raw.off('aborted', abort);
+      reply.raw.off('close', abort);
+    },
+  };
 }
 
 type ResolvedTarget =

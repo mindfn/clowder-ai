@@ -1,4 +1,7 @@
 import { AsyncLocalStorage } from 'node:async_hooks';
+import { withoutPluginOwnerRequestContext } from './plugin-owner-request-context.js';
+
+export { currentPluginOwnerRequestContext } from './plugin-owner-request-context.js';
 
 /** Host-verified caller metadata, separate from the package's business input. */
 export interface PluginCallContext {
@@ -27,10 +30,10 @@ export function withPluginCallContext<T>(
   context: PluginCallContext,
   run: () => Promise<T>,
 ): Promise<T> {
-  return calls.run({ instanceId, context }, run);
+  return withoutPluginOwnerRequestContext(() => calls.run({ instanceId, context }, run));
 }
 
-/** A verifier never inherits the native business invocation that requested completion. */
+/** A verifier never inherits native or HTTP business authority. */
 export function withoutPluginCallContext<T>(run: () => Promise<T>): Promise<T> {
-  return calls.exit(run);
+  return withoutPluginOwnerRequestContext(() => calls.exit(run));
 }
