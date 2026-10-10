@@ -15,7 +15,6 @@ import {
 } from '@cat-cafe/shared';
 
 import type { InvocationQueue } from '../../cats/services/agents/invocation/InvocationQueue.js';
-import { createInitialQueuedMessageCustody } from '../../cats/services/agents/invocation/QueuedMessageCustodyCoordinator.js';
 import type { QueueProcessor } from '../../cats/services/agents/invocation/QueueProcessor.js';
 import type { IMessageStore, StoredMessage } from '../../cats/services/stores/ports/MessageStore.js';
 import { routeCollectiveChannelEvent } from './collective-channel-ingress.js';
@@ -59,8 +58,8 @@ export interface CollectiveIngressDispatcherOptions {
   readonly threadStore: {
     get(threadId: string): CollectiveIngressThread | null | Promise<CollectiveIngressThread | null>;
   };
-  readonly messageStore: Pick<IMessageStore, 'appendIdempotent'>;
-  readonly invocationQueue: Pick<InvocationQueue, 'enqueue' | 'backfillMessageId' | 'rollbackEnqueue'>;
+  readonly messageStore: IMessageStore;
+  readonly invocationQueue: Pick<InvocationQueue, 'appendAndEnqueueDurable'>;
   readonly queueProcessor: Pick<QueueProcessor, 'processNext'>;
   readonly socketManager: {
     broadcastToRoom(room: string, event: string, data: unknown): void;
@@ -208,7 +207,7 @@ export class CollectiveIngressDispatcher {
     const stored = await this.options.messageStore.appendIdempotent({
       threadId,
       userId: route.localOwnerUserId,
-      catId: null,
+      from: collectiveMessageFrom(event),
       content: event.body,
       source,
       mentions: [],
@@ -238,7 +237,7 @@ export class CollectiveIngressDispatcher {
       const stored = await this.options.messageStore.appendIdempotent({
         threadId,
         userId: route.localOwnerUserId,
-        catId: null,
+        from: collectiveMessageFrom(event),
         content: event.body,
         source,
         mentions: [catId as CatId],
@@ -251,45 +250,41 @@ export class CollectiveIngressDispatcher {
         emitConnectorMessage(this.options.socketManager, threadId, stored.message.id, event, source);
       return { kind: 'thread_message', threadId, messageId: stored.message.id, catId };
     }
-    const enqueue = this.options.invocationQueue.enqueue({
-      threadId,
-      userId: route.localOwnerUserId,
-      ownerAuthProvenance: 'unknown',
-      executionScope: 'collective-participation',
-      idempotencyKey,
-      content: event.body,
-      source: 'connector',
-      targetCats: [catId],
-      intent: 'execute',
-      senderMeta: collectiveSender(event),
-      suggestedSkill: 'collective-participation',
-    });
-    if (enqueue.outcome === 'full' || !enqueue.entry) {
-      throw ingressError('ROUTE_QUEUE_FULL', 'Configured Cat queue is full');
-    }
-    try {
-      const source = collectiveSource(event, sourceIdentity);
-      const stored = await this.options.messageStore.appendIdempotent({
+    const source = collectiveSource(event, sourceIdentity);
+    const from = collectiveMessageFrom(event);
+    const stored = await this.options.invocationQueue.appendAndEnqueueDurable(
+      this.options.messageStore,
+      {
         threadId,
         userId: route.localOwnerUserId,
-        catId: null,
+        from,
         content: event.body,
         source,
         mentions: [catId as CatId],
         timestamp: Date.parse(event.acceptedAt),
         idempotencyKey,
         deliveryStatus: 'queued',
-        queueCustody: createInitialQueuedMessageCustody(enqueue.entry),
         extra: { targetCats: [catId] },
-      });
-      this.options.invocationQueue.backfillMessageId(
+      },
+      {
         threadId,
-        route.localOwnerUserId,
-        enqueue.entry.id,
-        stored.message.id,
-      );
+        userId: route.localOwnerUserId,
+        sourceId: idempotencyKey,
+        kind: 'conversation_input',
+        from,
+        ownerAuthProvenance: 'unknown',
+        executionScope: 'collective-participation',
+        idempotencyKey,
+        content: event.body,
+        targetCats: [catId],
+        intent: 'execute',
+        suggestedSkill: 'collective-participation',
+      },
+    );
+    if (stored.outcome === 'full') throw ingressError('ROUTE_QUEUE_FULL', 'Configured Cat queue is full');
+    {
       if (event.workRequest === 'entrust') await this.options.admitStandingWork?.(stored.message, catId as CatId);
-      if (!stored.idempotent) {
+      if (!stored.deduped) {
         this.options.socketManager.emitToUser?.(route.localOwnerUserId, 'messages_queued', {
           threadId,
           messageIds: [stored.message.id],
@@ -302,11 +297,6 @@ export class CollectiveIngressDispatcher {
         // Durable Queue custody owns execution after admission.
       }
       return { kind: 'thread_message', threadId, messageId: stored.message.id, catId };
-    } catch (error) {
-      if (!enqueue.deduped) {
-        this.options.invocationQueue.rollbackEnqueue(threadId, route.localOwnerUserId, enqueue.entry.id);
-      }
-      throw error;
     }
   }
 
@@ -317,4 +307,9 @@ export class CollectiveIngressDispatcher {
     }
     return thread;
   }
+}
+
+function collectiveMessageFrom(event: CollectiveEventEnvelope) {
+  const sender = collectiveSender(event);
+  return { kind: 'external' as const, connectorId: 'collective', sender };
 }
