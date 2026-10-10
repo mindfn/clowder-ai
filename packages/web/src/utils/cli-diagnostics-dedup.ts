@@ -10,13 +10,13 @@
  *
  * Strategy: walk the rows in the order they render and group adjacent rows whose rendered CLI
  * panel shares the same reasonCode + publicSummary fingerprint within a window on the
- * presentation clock (a terminal response sits at its completion time). The group head keeps
+ * presentation clock. The group head keeps
  * the full panel + badge "×N"; later rows hide that panel only (the chat bubble and signature
  * stay).
  *
  * A row joins only with the CLI panel it actually renders (`projectRowTerminalDiagnostics`, the
  * decision ChatMessage renders), never with the raw `cliDiagnostics` it carries: a row showing
- * the timeout panel, no panel (a completed or processing response) or nothing at all breaks the
+ * the timeout panel, no panel (any response) or nothing at all breaks the
  * group like any other row, so a hidden panel is always one its group head visibly shows (F117).
  *
  * Adjacency-only dedup: any row between two same-fingerprint panels breaks the group, so

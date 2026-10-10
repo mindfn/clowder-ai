@@ -10,8 +10,7 @@ export type TerminalDiagnostics =
   | { kind: 'timeout'; diagnostics: TimeoutDiagnostics };
 
 /**
- * F212 Phase B precedence (砚砚 P1-1 + 云端 codex P2-3), shared by an error row and by the
- * response that owns its failure (F117), so both explain one failure the same way:
+ * F212 Phase B precedence for standalone error rows:
  *   1. a classified CLI error → CLI panel
  *   2. a timeout with no recognized classification → timeout panel
  *      (keeps F118 silence/processAlive; covers unknown-reason persisted payloads too)
@@ -34,28 +33,16 @@ export function TerminalDiagnosticsPanel({
   selected,
   errorMessage,
   dedupCount,
-  responseOwnsFailure = false,
 }: {
   selected: TerminalDiagnostics;
   /** Copy naming the failure; the CLI panel falls back to it when publicSummary is missing. */
   errorMessage: string;
   /** Head of an adjacent duplicate group: the CLI panel shows "×N". */
   dedupCount?: number;
-  /** The response bubble/status already explains failure; do not repeat a generic banner. */
-  responseOwnsFailure?: boolean;
 }) {
   return selected.kind === 'cli' ? (
-    <CliDiagnosticsPanel
-      errorMessage={errorMessage}
-      diagnostics={selected.diagnostics}
-      dedupCount={dedupCount}
-      showErrorBanner={!responseOwnsFailure}
-    />
+    <CliDiagnosticsPanel errorMessage={errorMessage} diagnostics={selected.diagnostics} dedupCount={dedupCount} />
   ) : (
-    <TimeoutDiagnosticsPanel
-      errorMessage={errorMessage}
-      diagnostics={selected.diagnostics}
-      showErrorBanner={!responseOwnsFailure}
-    />
+    <TimeoutDiagnosticsPanel errorMessage={errorMessage} diagnostics={selected.diagnostics} />
   );
 }

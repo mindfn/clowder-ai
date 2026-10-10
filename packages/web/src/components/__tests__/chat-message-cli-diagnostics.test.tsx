@@ -514,7 +514,7 @@ describe('F212 Phase B — ChatMessage routes cliDiagnostics to folded panel', (
     expect(container.querySelector('[data-message-id="dup-msg-unclassified"]')).toBeTruthy();
   });
 
-  describe('F117: a failed response owns its diagnostics', () => {
+  describe('F117: a response owns its complete failure body', () => {
     const timeoutDiagnostics = {
       silenceDurationMs: 1_800_000,
       processAlive: true,
@@ -578,227 +578,52 @@ describe('F212 Phase B — ChatMessage routes cliDiagnostics to folded panel', (
       });
     }
 
-    const bubbleText = () => container.querySelector('[data-testid="message-bubble"]')?.textContent ?? '';
-    const cliPanel = () => container.querySelector('[data-testid="cli-diagnostics"]');
-    const timeoutPanel = () => container.querySelector('[data-testid="timeout-diagnostics"]');
-    function expandCliPanel(panel = cliPanel()) {
-      const toggle = panel?.querySelector<HTMLButtonElement>('[data-testid="cli-diagnostics-toggle"]');
-      expect(toggle?.getAttribute('aria-expanded')).toBe('false');
-      expect(panel?.querySelector('[data-testid="cli-diagnostics-cause"]')).toBeNull();
-      act(() => toggle?.click());
-      expect(toggle?.getAttribute('aria-expanded')).toBe('true');
-      expect(panel?.querySelector('[data-testid="cli-diagnostics-banner"]')).toBeNull();
-    }
-
-    // F212 Phase B precedence carried from the error row to the response that now owns the
-    // failure: the Claude/Codex timeout paths emit timeout_diagnostics and then an error with
-    // cliDiagnostics, and both routes persist both on the failed response.
     it.each([
-      ['with nothing streamed', ''],
-      ['under a streamed body', 'partial answer before the CLI failed'],
-    ])('a classified CLI failure outranks the timeout %s', (_label, content) => {
-      renderResponse(failedResponse(content, 'failed', { cliDiagnostics: classifiedCli, timeoutDiagnostics }));
-
-      expandCliPanel();
-      expect(cliPanel()?.textContent).toContain('API 认证失败');
-      expect(timeoutPanel()).toBeNull();
-      if (content) expect(bubbleText()).toContain(content);
-    });
-
-    it('an unclassified CLI failure yields to the timeout, so silence and process state stay visible', () => {
-      renderResponse(failedResponse('', 'failed', { cliDiagnostics: unclassifiedCli, timeoutDiagnostics }));
-
-      expect(timeoutPanel()).toBeTruthy();
-      expect(cliPanel()).toBeNull();
-    });
-
-    it('a reason code this client does not know yields to the timeout', () => {
-      const newerCli = {
-        ...classifiedCli,
-        reasonCode: 'rate_limited_concurrent_future_code',
-      } as unknown as CliDiagnostics;
-      renderResponse(failedResponse('', 'failed', { cliDiagnostics: newerCli, timeoutDiagnostics }));
-
-      expect(timeoutPanel()).toBeTruthy();
-      expect(cliPanel()).toBeNull();
-    });
-
-    it('a classified CLI failure without a timeout shows its panel under the failure notice', () => {
-      renderResponse(failedResponse('', 'failed', { cliDiagnostics: classifiedCli }));
-
-      expect(bubbleText()).toContain('回复失败。');
-      expandCliPanel();
-      expect(cliPanel()?.textContent).toContain('API 认证失败');
-      expect(timeoutPanel()).toBeNull();
-    });
-
-    it('an unclassified CLI failure without a timeout still shows the CLI panel with the unknown icon', () => {
-      renderResponse(failedResponse('partial answer', 'failed', { cliDiagnostics: unclassifiedCli }));
-
-      expect(bubbleText()).toContain('partial answer');
-      expect(cliPanel()).toBeTruthy();
-      expandCliPanel();
-      expect(container.querySelector('svg[aria-label="cli-error-unknown"]')).toBeTruthy();
-      expect(timeoutPanel()).toBeNull();
-    });
-
-    it('an interrupted response shows its CLI diagnostics too', () => {
-      renderResponse(failedResponse('partial answer', 'interrupted', { cliDiagnostics: classifiedCli }));
-
-      expandCliPanel();
-      expect(cliPanel()?.textContent).toContain('API 认证失败');
-    });
-
-    it('a completed response never shows a diagnostics panel', () => {
-      renderResponse(
-        failedResponse('final answer', 'completed', { cliDiagnostics: classifiedCli, timeoutDiagnostics }),
-      );
-
-      expect(cliPanel()).toBeNull();
-      expect(timeoutPanel()).toBeNull();
-    });
-
-    it('a duplicate of the panel above hides only its panel, never the response it belongs to', () => {
-      renderResponse(failedResponse('partial answer', 'failed', { cliDiagnostics: classifiedCli }), {
-        hideDiagnosticsPanel: true,
-      });
-
-      expect(cliPanel()).toBeNull();
-      expect(bubbleText()).toContain('partial answer');
-      expect(container.querySelector('[data-message-id="response-timeout"]')).toBeTruthy();
-    });
-
-    it('the head of a duplicate group counts the repeats on its panel', () => {
-      renderResponse(failedResponse('', 'failed', { cliDiagnostics: classifiedCli }), { dedupCount: 3 });
-
-      expandCliPanel();
-      expect(cliPanel()?.textContent).toContain('×3');
-    });
-
-    it('shows the panel under the failure notice when nothing was streamed', () => {
-      render(failedResponse(''));
-
-      expect(container.querySelector('[data-testid="message-bubble"]')?.textContent).toContain('回复失败。');
-      const panel = container.querySelector('[data-testid="timeout-diagnostics"]');
-      expect(panel).toBeTruthy();
-      expect(panel?.textContent).not.toContain('回复失败。');
-      expect(panel?.textContent).toContain('查看超时诊断');
-      expect(container.querySelector('[data-message-id="response-timeout"]')).toBeTruthy();
-    });
-
-    it('keeps the streamed body and shows the panel under it', () => {
-      render(failedResponse('partial answer before the CLI went silent'));
-
-      expect(container.querySelector('[data-testid="message-bubble"]')?.textContent).toContain(
-        'partial answer before the CLI went silent',
-      );
-      const panel = container.querySelector('[data-testid="timeout-diagnostics"]');
-      expect(panel).toBeTruthy();
-      expect(panel?.textContent).not.toContain('回复失败。');
-      expect(panel?.textContent).toContain('查看超时诊断');
-    });
-
-    it('labels an interrupted response with a body as interrupted', () => {
-      render(failedResponse('partial answer', 'interrupted'));
-
-      expect(container.querySelector('[data-testid="timeout-diagnostics"]')?.textContent).not.toContain('回复已中断。');
-      expect(container.querySelector('[data-testid="timeout-diagnostics"]')?.textContent).toContain('查看超时诊断');
-    });
-
-    it('never shows timeout diagnostics on a completed response', () => {
-      render(failedResponse('final answer', 'completed'));
-
+      ['failed', { cliDiagnostics: classifiedCli, timeoutDiagnostics }],
+      ['failed', { cliDiagnostics: unclassifiedCli, timeoutDiagnostics }],
+      ['failed', { cliDiagnostics: unclassifiedCli }],
+      ['interrupted', { cliDiagnostics: classifiedCli }],
+      ['completed', { cliDiagnostics: classifiedCli, timeoutDiagnostics }],
+    ] as const)('%s preserves the body without a second diagnostic surface', (status, extra) => {
+      const message = failedResponse('partial answer\ncomplete original failure', status, extra);
+      renderResponse(message);
+      expect(container.textContent).toContain('partial answer');
+      expect(container.textContent).toContain('complete original failure');
+      expect(container.querySelector('[data-testid="cli-diagnostics"]')).toBeNull();
       expect(container.querySelector('[data-testid="timeout-diagnostics"]')).toBeNull();
+      expect(message.extra).toBe(extra);
     });
 
-    // The list-level duplicate projection and the row must agree on which panel a row shows,
-    // or a hidden duplicate can be the only place a diagnosis appears.
-    describe('adjacent responses rendered through the duplicate projection', () => {
-      function responseRow(
-        id: string,
-        extra: ChatMessageType['extra'],
-        status: 'failed' | 'completed',
-        completedAt: number,
-      ): ChatMessageType {
-        return {
-          ...failedResponse(`answer from ${id}`, status, extra),
-          id,
-          lifecycle: {
-            kind: 'response',
-            orderKey: `100:${id}`,
-            invocationId: id,
-            targetId: 'opus',
-            inputEntryIds: [`entry-${id}`],
-            inputMessageIds: [`source-${id}`],
-            status,
-            startedAt: 100,
-            completedAt,
-            ...(status === 'completed' ? {} : { reason: 'provider_error' }),
-          },
-        } as ChatMessageType;
+    it.each([
+      ['failed', '回复失败。'],
+      ['interrupted', '回复已中断。'],
+    ] as const)('an empty historic %s response keeps its single lifecycle notice', (status, label) => {
+      renderResponse(failedResponse('', status, { cliDiagnostics: classifiedCli, timeoutDiagnostics }));
+      expect(container.textContent).toContain(label);
+      expect(container.querySelector('[data-testid="cli-diagnostics"]')).toBeNull();
+      expect(container.querySelector('[data-testid="timeout-diagnostics"]')).toBeNull();
+      expect(container.querySelector('[data-message-id="response-timeout"]')).toBeTruthy();
+    });
+
+    it('independent failed responses keep both bodies and anchors without a duplicate group', () => {
+      const rows = ['first-r', 'second-r'].map((id) => ({
+        ...failedResponse(`complete failure from ${id}`, 'failed', { cliDiagnostics: classifiedCli }),
+        id,
+      }));
+      const dedup = computeCliDiagnosticsDedup(rows);
+      expect(dedup.size).toBe(0);
+      act(() =>
+        root.render(
+          rows.map((message) => (
+            <ChatMessage key={message.id} message={message} timelineMessages={rows} getCatById={() => opusCat()} />
+          )),
+        ),
+      );
+      for (const message of rows) {
+        expect(container.querySelector(`[data-message-id="${message.id}"]`)?.textContent).toContain(message.content);
       }
-
-      function renderTimeline(rows: ChatMessageType[]): void {
-        const dedup = computeCliDiagnosticsDedup(rows);
-        act(() => {
-          root.render(
-            React.createElement(
-              React.Fragment,
-              null,
-              rows.map((message) =>
-                React.createElement(ChatMessage, {
-                  key: message.id,
-                  message,
-                  timelineMessages: rows,
-                  getCatById: (id: string) => (id === 'opus' ? opusCat() : undefined),
-                  hideDiagnosticsPanel: dedup.get(message.id)?.hideDiagnosticsPanel,
-                  dedupCount: dedup.get(message.id)?.dedupCount,
-                }),
-              ),
-            ),
-          );
-        });
-      }
-
-      const row = (id: string) => container.querySelector(`[data-message-id="${id}"]`);
-      const panelIn = (id: string, kind: 'cli' | 'timeout') =>
-        row(id)?.querySelector(`[data-testid="${kind}-diagnostics"]`) ?? null;
-
-      it('a CLI response after a timeout response keeps its own CLI panel', () => {
-        renderTimeline([
-          responseRow('timeout-r', { cliDiagnostics: unclassifiedCli, timeoutDiagnostics }, 'failed', 120),
-          responseRow('cli-r', { cliDiagnostics: unclassifiedCli }, 'failed', 125),
-        ]);
-
-        expect(panelIn('timeout-r', 'timeout')).toBeTruthy();
-        expect(panelIn('timeout-r', 'cli')).toBeNull();
-        expect(panelIn('cli-r', 'cli')).toBeTruthy();
-        expect(container.textContent).not.toContain('×2');
-      });
-
-      it('a response that shows no panel never heads a group', () => {
-        renderTimeline([
-          responseRow('completed-r', { cliDiagnostics: classifiedCli }, 'completed', 120),
-          responseRow('failed-r', { cliDiagnostics: classifiedCli }, 'failed', 125),
-        ]);
-
-        expect(panelIn('completed-r', 'cli')).toBeNull();
-        expandCliPanel(panelIn('failed-r', 'cli'));
-        expect(panelIn('failed-r', 'cli')?.textContent).toContain('API 认证失败');
-        expect(container.textContent).not.toContain('×2');
-      });
-
-      it('a real duplicate hides only its panel, under a head that counts it', () => {
-        renderTimeline([
-          responseRow('first-r', { cliDiagnostics: classifiedCli }, 'failed', 120),
-          responseRow('second-r', { cliDiagnostics: classifiedCli }, 'failed', 125),
-        ]);
-
-        expandCliPanel(panelIn('first-r', 'cli'));
-        expect(panelIn('first-r', 'cli')?.textContent).toContain('×2');
-        expect(panelIn('second-r', 'cli')).toBeNull();
-        expect(row('second-r')?.textContent).toContain('answer from second-r');
-      });
+      expect(container.querySelector('[data-testid="cli-diagnostics"]')).toBeNull();
+      expect(container.textContent).not.toContain('×2');
     });
   });
 });

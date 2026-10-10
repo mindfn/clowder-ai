@@ -184,7 +184,12 @@ describe('computeCliDiagnosticsDedup groups only the CLI panel each row renders 
     expect(result.size).toBe(0);
   });
 
-  it.each(['completed', 'processing'] as const)('a %s response shows no panel, so it never heads a group', (status) => {
+  it.each([
+    'completed',
+    'processing',
+    'failed',
+    'interrupted',
+  ] as const)('a %s response shows no panel, so it never heads a group', (status) => {
     const result = computeCliDiagnosticsDedup([
       response('no-panel', { cliDiagnostics: classified }, { status }),
       response('failed', { cliDiagnostics: classified }),
@@ -193,28 +198,12 @@ describe('computeCliDiagnosticsDedup groups only the CLI panel each row renders 
     expect(result.size).toBe(0);
   });
 
-  it('failed and interrupted responses showing the same CLI panel still collapse onto the first', () => {
+  it('failed and interrupted responses never collapse independent response bodies', () => {
     const result = computeCliDiagnosticsDedup([
       response('first', { cliDiagnostics: classified }),
       response('second', { cliDiagnostics: classified }, { status: 'interrupted', completedAt: 1600 }),
     ]);
-
-    expect(result.get('first')).toEqual({ dedupCount: 2, hideDiagnosticsPanel: false });
-    expect(result.get('second')).toEqual({ dedupCount: 0, hideDiagnosticsPanel: true });
-  });
-
-  it('measures the window on the presentation clock, where a terminal response sits at completion', () => {
-    const admittedTogetherEndedApart = computeCliDiagnosticsDedup([
-      response('a', { cliDiagnostics: classified }, { admittedAt: 1000, completedAt: 5_000 }),
-      response('b', { cliDiagnostics: classified }, { admittedAt: 2000, completedAt: 65_000 }),
-    ]);
-    const admittedApartEndedTogether = computeCliDiagnosticsDedup([
-      response('a', { cliDiagnostics: classified }, { admittedAt: 1000, completedAt: 70_000 }),
-      response('b', { cliDiagnostics: classified }, { admittedAt: 61_000, completedAt: 71_000 }),
-    ]);
-
-    expect(admittedTogetherEndedApart.size).toBe(0);
-    expect(admittedApartEndedTogether.get('b')?.hideDiagnosticsPanel).toBe(true);
+    expect(result.size).toBe(0);
   });
 
   it('a hidden protocol row carrying diagnostics never heads a group', () => {

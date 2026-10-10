@@ -1,6 +1,5 @@
 import { formatVisibleSystemInfo } from '@/hooks/system-info-visible';
 import type { ChatMessage, EvidenceData, RichBlock } from '@/stores/chat-types';
-import { isAssistantAuthored, projectFailedResponseLabel } from './assistant-message-renderability';
 import { isLinkedDeliveryFailureCarrier } from './MessageDispatchAvatars';
 import { selectTerminalDiagnostics, type TerminalDiagnostics } from './TerminalDiagnosticsPanel';
 
@@ -65,20 +64,7 @@ export function projectSystemRowSurface(
   return selected ? { kind: 'diagnostics', selected } : { kind: 'notice', isError };
 }
 
-/**
- * F118 AC-C3 / F212 / F117: a failed or interrupted response owns its failure, so the diagnostics
- * explaining it render under its bubble with the error row's precedence.
- */
-export function projectFailedResponseDiagnostics(message: ChatMessage): TerminalDiagnostics | null {
-  if (!isAssistantAuthored(message) || !projectFailedResponseLabel(message)) return null;
-  return selectTerminalDiagnostics(message.extra, true);
-}
-
-/**
- * The terminal-diagnostics panel a row shows, if any: an error row explains itself and a failed
- * or interrupted response explains the failure it owns. Completed and processing responses, cards,
- * absorbed carriers and hidden rows show none, whatever diagnostics they carry.
- */
+/** Only standalone system errors render diagnostics. Responses own the full error in their body. */
 export function projectRowTerminalDiagnostics(
   message: ChatMessage,
   timelineMessages: readonly ChatMessage[],
@@ -88,5 +74,5 @@ export function projectRowTerminalDiagnostics(
     const surface = projectSystemRowSurface(message, timelineMessages);
     return surface.kind === 'diagnostics' ? surface.selected : null;
   }
-  return projectFailedResponseDiagnostics(message);
+  return null;
 }

@@ -58,20 +58,13 @@ interface TimeoutDiagnosticsPanelProps {
   errorMessage: string;
   diagnostics: TimeoutDiagnostics;
   description?: string;
-  /** A response already names its terminal state; keep only the folded evidence. */
-  showErrorBanner?: boolean;
 }
 
 /**
  * F118 AC-C3: Enhanced timeout diagnostics panel.
  * Renders error banner + collapsible diagnostics per Pencil Scene 4.
  */
-export function TimeoutDiagnosticsPanel({
-  errorMessage,
-  diagnostics,
-  description,
-  showErrorBanner = true,
-}: TimeoutDiagnosticsPanelProps) {
+export function TimeoutDiagnosticsPanel({ errorMessage, diagnostics, description }: TimeoutDiagnosticsPanelProps) {
   const [expanded, setExpanded] = useState(false);
 
   const rows: { key: string; value: string; purple?: boolean }[] = [
@@ -100,28 +93,26 @@ export function TimeoutDiagnosticsPanel({
   return (
     <div data-testid="timeout-diagnostics" className="flex flex-col gap-2.5">
       {/* Error banner */}
-      {showErrorBanner && (
-        <div
-          className="flex items-center gap-2.5 rounded-[10px]"
-          style={{
-            backgroundColor: 'var(--conn-red-bg)',
-            border: '1px solid var(--console-diag-border)',
-            padding: '10px 14px',
-          }}
-        >
-          <CircleXIcon className="w-4 h-4 flex-shrink-0" style={{ color: 'var(--conn-amber-text)' }} />
-          <div className="flex flex-col gap-0.5 min-w-0">
-            <span className="text-sm font-semibold" style={{ color: 'var(--cafe-text)' }}>
-              {errorMessage}
+      <div
+        className="flex items-center gap-2.5 rounded-[10px]"
+        style={{
+          backgroundColor: 'var(--conn-red-bg)',
+          border: '1px solid var(--console-diag-border)',
+          padding: '10px 14px',
+        }}
+      >
+        <CircleXIcon className="w-4 h-4 flex-shrink-0" style={{ color: 'var(--conn-amber-text)' }} />
+        <div className="flex flex-col gap-0.5 min-w-0">
+          <span className="text-sm font-semibold" style={{ color: 'var(--cafe-text)' }}>
+            {errorMessage}
+          </span>
+          {description && (
+            <span className="text-xs" style={{ color: 'var(--cafe-text-secondary)', lineHeight: 1.4 }}>
+              {description}
             </span>
-            {description && (
-              <span className="text-xs" style={{ color: 'var(--cafe-text-secondary)', lineHeight: 1.4 }}>
-                {description}
-              </span>
-            )}
-          </div>
+          )}
         </div>
-      )}
+      </div>
 
       {/* Diagnostics toggle */}
       <button
@@ -136,7 +127,7 @@ export function TimeoutDiagnosticsPanel({
           style={{ color: 'var(--cafe-text-muted)', transform: expanded ? 'rotate(180deg)' : undefined }}
         />
         <span className="text-xs font-semibold" style={{ color: 'var(--cafe-text-muted)' }}>
-          {showErrorBanner ? 'Diagnostics' : '查看超时诊断'}
+          Diagnostics
         </span>
       </button>
 
