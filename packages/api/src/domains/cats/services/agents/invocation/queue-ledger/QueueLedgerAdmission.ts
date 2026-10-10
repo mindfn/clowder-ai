@@ -13,7 +13,6 @@ export interface QueueLedgerAdmissionInput {
   kind: QueueLedgerEntry['kind'];
   from: MessageFrom;
   targetCatIds: readonly string[];
-  requestedTargetCats?: readonly string[];
   content: string;
   messageId?: string;
   routingWarnings?: readonly CatRoutingError[];
@@ -56,7 +55,6 @@ export function createQueueLedgerAdmission(input: QueueLedgerAdmissionInput): Qu
       targets: [...input.targetCatIds],
       payload: {
         sourceRecordId: input.sourceId,
-        ...(input.requestedTargetCats ? { requestedTargetCats: [...input.requestedTargetCats] } : {}),
         content: input.content,
         ...(input.messageId ? { messageId: input.messageId } : {}),
         ...(input.routingWarnings?.length ? { routingWarnings: structuredClone(input.routingWarnings) } : {}),

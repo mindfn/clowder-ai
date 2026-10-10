@@ -24,11 +24,7 @@ import { createProposalTestContext } from './helpers/proposal-test-harness.js';
 describe('F128 approve dispatch — initialMessage routing', () => {
   test('approve dispatches initialMessage through the queue processor', async () => {
     const { InvocationQueue } = await import('../dist/domains/cats/services/agents/invocation/InvocationQueue.js');
-    const invocationQueue = new InvocationQueue(undefined, {
-      onAdmitted: ({ threadId, entries }) => {
-        void queueProcessor.processNext(threadId, entries[0].owner.userId).catch(() => {});
-      },
-    });
+    const invocationQueue = new InvocationQueue();
     const resolveCalls = [];
     const processCalls = [];
     const router = {
@@ -46,6 +42,7 @@ describe('F128 approve dispatch — initialMessage routing', () => {
     const ctx = await createProposalTestContext({
       routerOverride: router,
       invocationQueueOverride: invocationQueue,
+      queueProcessorOverride: queueProcessor,
     });
     const source = await ctx.threadStore.create('alice', 'Source', '/projects/source-repo');
     const { proposalId } = JSON.parse(
@@ -121,11 +118,7 @@ describe('F128 approve dispatch — initialMessage routing', () => {
     // user's next manual message. With fallback, the proposal's chosen members get woken up
     // immediately as the user intended when picking them on the card.
     const { InvocationQueue } = await import('../dist/domains/cats/services/agents/invocation/InvocationQueue.js');
-    const invocationQueue = new InvocationQueue(undefined, {
-      onAdmitted: ({ threadId, entries }) => {
-        void queueProcessor.processNext(threadId, entries[0].owner.userId).catch(() => {});
-      },
-    });
+    const invocationQueue = new InvocationQueue();
     const router = {
       async resolveTargetsAndIntent() {
         // Simulate the real router behaviour for a no-@-mention message: 0 targets.
@@ -142,6 +135,7 @@ describe('F128 approve dispatch — initialMessage routing', () => {
     const ctx = await createProposalTestContext({
       routerOverride: router,
       invocationQueueOverride: invocationQueue,
+      queueProcessorOverride: queueProcessor,
     });
     const source = await ctx.threadStore.create('alice', 'Source', '/projects/source-repo');
     const { proposalId } = JSON.parse(
@@ -181,11 +175,7 @@ describe('F128 approve dispatch — initialMessage routing', () => {
     // explicitly in initialMessage. Fallback must NOT clobber that intent down
     // to execute — explicit user tags always win.
     const { InvocationQueue } = await import('../dist/domains/cats/services/agents/invocation/InvocationQueue.js');
-    const invocationQueue = new InvocationQueue(undefined, {
-      onAdmitted: ({ threadId, entries }) => {
-        void queueProcessor.processNext(threadId, entries[0].owner.userId).catch(() => {});
-      },
-    });
+    const invocationQueue = new InvocationQueue();
     const router = {
       async resolveTargetsAndIntent() {
         return { targetCats: [], intent: { intent: 'ideate' }, hasMentions: false };
@@ -199,6 +189,7 @@ describe('F128 approve dispatch — initialMessage routing', () => {
     const ctx = await createProposalTestContext({
       routerOverride: router,
       invocationQueueOverride: invocationQueue,
+      queueProcessorOverride: queueProcessor,
     });
     const source = await ctx.threadStore.create('alice', 'Source');
     const { proposalId } = JSON.parse(
@@ -231,11 +222,7 @@ describe('F128 approve dispatch — initialMessage routing', () => {
     // Server defensively injects the header so cats who forget to write it in
     // initialMessage still preserve the fork-and-return loop.
     const { InvocationQueue } = await import('../dist/domains/cats/services/agents/invocation/InvocationQueue.js');
-    const invocationQueue = new InvocationQueue(undefined, {
-      onAdmitted: ({ threadId, entries }) => {
-        void queueProcessor.processNext(threadId, entries[0].owner.userId).catch(() => {});
-      },
-    });
+    const invocationQueue = new InvocationQueue();
     const router = {
       async resolveTargetsAndIntent() {
         return { targetCats: ['opus'], intent: { intent: 'execute' }, hasMentions: false };
@@ -249,6 +236,7 @@ describe('F128 approve dispatch — initialMessage routing', () => {
     const ctx = await createProposalTestContext({
       routerOverride: router,
       invocationQueueOverride: invocationQueue,
+      queueProcessorOverride: queueProcessor,
     });
     const source = await ctx.threadStore.create('alice', 'Strategy Discussion');
     const { proposalId } = JSON.parse(
@@ -313,11 +301,7 @@ describe('F128 approve dispatch — initialMessage routing', () => {
     // "@opus46 把球传过去" inside instructions). They must NOT override the
     // card's first-picked member.
     const { InvocationQueue } = await import('../dist/domains/cats/services/agents/invocation/InvocationQueue.js');
-    const invocationQueue = new InvocationQueue(undefined, {
-      onAdmitted: ({ threadId, entries }) => {
-        void queueProcessor.processNext(threadId, entries[0].owner.userId).catch(() => {});
-      },
-    });
+    const invocationQueue = new InvocationQueue();
     const router = {
       async resolveTargetsAndIntent() {
         return { targetCats: ['codex'], intent: { intent: 'execute' }, hasMentions: true };
@@ -331,6 +315,7 @@ describe('F128 approve dispatch — initialMessage routing', () => {
     const ctx = await createProposalTestContext({
       routerOverride: router,
       invocationQueueOverride: invocationQueue,
+      queueProcessorOverride: queueProcessor,
     });
     const source = await ctx.threadStore.create('alice', 'Source');
     const { proposalId } = JSON.parse(

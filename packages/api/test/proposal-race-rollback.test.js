@@ -26,14 +26,10 @@ const threadReadOptions = {
 describe('F128 proposal seed race — orphan carrier rollback', () => {
   test('race: concurrent terminal transition after enqueue rolls back orphan carrier', async () => {
     const { InvocationQueue } = await import('../dist/domains/cats/services/agents/invocation/InvocationQueue.js');
-    const invocationQueue = new InvocationQueue(undefined, {
-      onAdmitted: ({ threadId, entries }) => {
-        void queueProcessor.processNext(threadId, entries[0].owner.userId).catch(() => {});
-      },
-    });
+    const invocationQueue = new InvocationQueue();
     let proposalEnqueueAttempt = 0;
-    const originalAdmission = invocationQueue.send.bind(invocationQueue);
-    invocationQueue.send = async (messageStore, message, input) => {
+    const originalAdmission = invocationQueue.appendAndEnqueueDurable.bind(invocationQueue);
+    invocationQueue.appendAndEnqueueDurable = async (messageStore, message, input) => {
       if (input.idempotencyKey?.startsWith('proposal-initial:')) {
         proposalEnqueueAttempt += 1;
         if (proposalEnqueueAttempt === 1) {
@@ -54,6 +50,7 @@ describe('F128 proposal seed race — orphan carrier rollback', () => {
     const ctx = await createProposalTestContext({
       routerOverride: router,
       invocationQueueOverride: invocationQueue,
+      queueProcessorOverride: queueProcessor,
     });
 
     const source = await ctx.threadStore.create('alice', 'Source');

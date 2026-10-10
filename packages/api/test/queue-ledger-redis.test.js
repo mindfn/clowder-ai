@@ -291,7 +291,7 @@ describe('RFC #1356 Redis Queue ledger', { skip: redisIsolationSkipReason(REDIS_
 
   it('retires one unread-adopted target while preserving the remaining target on the same row', async () => {
     const queue = new InvocationQueue(store);
-    const admitted = await queue.send(
+    const admitted = await queue.appendAndEnqueueDurable(
       messageStore,
       {
         from: { kind: 'user', userId: 'owner-1' },
@@ -368,7 +368,7 @@ describe('RFC #1356 Redis Queue ledger', { skip: redisIsolationSkipReason(REDIS_
 
     for (let index = 0; index < 5; index += 1) {
       const id = `request-${index}`;
-      const admitted = await queue.send(messageStore, message(id), input(id));
+      const admitted = await queue.appendAndEnqueueDurable(messageStore, message(id), input(id));
       assert.equal(admitted.outcome, 'enqueued');
       assert.equal(admitted.entries.length, 1);
       assert.deepEqual(admitted.entry.targets, ['opus', 'codex']);
@@ -377,11 +377,15 @@ describe('RFC #1356 Redis Queue ledger', { skip: redisIsolationSkipReason(REDIS_
     assert.equal((await store.list('thread-redis')).length, 5);
     assert.deepEqual(await messageStore.getByThreadAfter('thread-redis', undefined, undefined, 'owner-1'), []);
 
-    const replay = await queue.send(messageStore, message('request-0'), input('request-0'));
+    const replay = await queue.appendAndEnqueueDurable(messageStore, message('request-0'), input('request-0'));
     assert.equal(replay.deduped, true);
     assert.equal((await store.list('thread-redis')).length, 5);
 
-    const rejected = await queue.send(messageStore, message('over-capacity'), input('over-capacity'));
+    const rejected = await queue.appendAndEnqueueDurable(
+      messageStore,
+      message('over-capacity'),
+      input('over-capacity'),
+    );
     assert.deepEqual(rejected, { outcome: 'full' });
     assert.equal(await messageStore.getByIdempotencyKey('owner-1', 'thread-redis', 'over-capacity'), null);
 
@@ -492,7 +496,7 @@ describe('RFC #1356 Redis Queue ledger', { skip: redisIsolationSkipReason(REDIS_
 
   it('expands a targetless source on the same row and preserves FIFO metadata', async () => {
     const queue = new InvocationQueue(store);
-    const admitted = await queue.send(
+    const admitted = await queue.appendAndEnqueueDurable(
       messageStore,
       {
         from: { kind: 'user', userId: 'owner-1' },

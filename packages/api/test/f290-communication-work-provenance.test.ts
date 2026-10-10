@@ -202,7 +202,7 @@ test('canonical private Work Queue hydrate keeps immutable owner provenance with
   const queue = new InvocationQueue(ledger);
   const messages = new MessageStore();
   const from = { kind: 'system' as const, service: 'collective-work' };
-  const admitted = await queue.send(
+  const admitted = await queue.appendAndEnqueueDurable(
     messages,
     {
       userId: 'owner',

@@ -66,6 +66,7 @@ export const proposalRoutes: FastifyPluginAsync<ProposalRoutesOptions> = async (
       socketManager,
       router: opts.router,
       invocationQueue: opts.invocationQueue,
+      queueProcessor: opts.queueProcessor,
     });
 
     const proposal = await proposalStore.get(paramsParse.data.proposalId);
@@ -236,6 +237,7 @@ export const proposalRoutes: FastifyPluginAsync<ProposalRoutesOptions> = async (
       socketManager,
       router: opts.router,
       invocationQueue: opts.invocationQueue,
+      queueProcessor: opts.queueProcessor,
     });
 
     const proposal = await proposalStore.get(paramsParse.data.proposalId);

@@ -69,14 +69,10 @@ const threadReadOptions = {
 describe('F128 proposal seed reconcile — exactly-once dispatch', () => {
   test('queue-full seed is reconciled and processed exactly once', async () => {
     const { InvocationQueue } = await import('../dist/domains/cats/services/agents/invocation/InvocationQueue.js');
-    const invocationQueue = new InvocationQueue(undefined, {
-      onAdmitted: ({ threadId, entries }) => {
-        void queueProcessor.processNext(threadId, entries[0].owner.userId).catch(() => {});
-      },
-    });
+    const invocationQueue = new InvocationQueue();
     let proposalEnqueueAttempt = 0;
-    const originalEnqueue = invocationQueue.send.bind(invocationQueue);
-    invocationQueue.send = (...args) => {
+    const originalEnqueue = invocationQueue.appendAndEnqueueDurable.bind(invocationQueue);
+    invocationQueue.appendAndEnqueueDurable = (...args) => {
       const input = args[2];
       if (input.idempotencyKey?.startsWith('proposal-initial:')) {
         proposalEnqueueAttempt += 1;
@@ -98,6 +94,7 @@ describe('F128 proposal seed reconcile — exactly-once dispatch', () => {
     const ctx = await createProposalTestContext({
       routerOverride: router,
       invocationQueueOverride: invocationQueue,
+      queueProcessorOverride: queueProcessor,
     });
 
     const source = await ctx.threadStore.create('alice', 'Source');
@@ -145,11 +142,7 @@ describe('F128 proposal seed reconcile — exactly-once dispatch', () => {
 
   test('processNext throw leaves a reconcilable seed with no duplicate invocation', async () => {
     const { InvocationQueue } = await import('../dist/domains/cats/services/agents/invocation/InvocationQueue.js');
-    const invocationQueue = new InvocationQueue(undefined, {
-      onAdmitted: ({ threadId, entries }) => {
-        void queueProcessor.processNext(threadId, entries[0].owner.userId).catch(() => {});
-      },
-    });
+    const invocationQueue = new InvocationQueue();
     let shouldThrow = true;
     const processCalls = [];
     const queueProcessor = {
@@ -165,6 +158,7 @@ describe('F128 proposal seed reconcile — exactly-once dispatch', () => {
     const ctx = await createProposalTestContext({
       routerOverride: router,
       invocationQueueOverride: invocationQueue,
+      queueProcessorOverride: queueProcessor,
     });
 
     const source = await ctx.threadStore.create('alice', 'Source');
@@ -182,10 +176,7 @@ describe('F128 proposal seed reconcile — exactly-once dispatch', () => {
     const first = await ctx.approve('alice', proposalId);
     assert.equal(first.statusCode, 200);
     const firstBody = JSON.parse(first.body);
-    assert.ok(
-      firstBody.warnings?.every((warning) => warning.includes('projectPath=default')),
-      JSON.stringify(firstBody),
-    );
+    assert.ok(firstBody.warnings?.some((w) => w.includes('auto-start failed')));
     const childId = firstBody.threadId;
 
     // The seed is materialized and queued, but the queue processor failed to wake.
@@ -214,11 +205,7 @@ describe('F128 proposal seed reconcile — exactly-once dispatch', () => {
 
   test('processNext started:false leaves a reconcilable seed with no duplicate invocation', async () => {
     const { InvocationQueue } = await import('../dist/domains/cats/services/agents/invocation/InvocationQueue.js');
-    const invocationQueue = new InvocationQueue(undefined, {
-      onAdmitted: ({ threadId, entries }) => {
-        void queueProcessor.processNext(threadId, entries[0].owner.userId).catch(() => {});
-      },
-    });
+    const invocationQueue = new InvocationQueue();
     let shouldStart = false;
     const processCalls = [];
     const queueProcessor = {
@@ -234,6 +221,7 @@ describe('F128 proposal seed reconcile — exactly-once dispatch', () => {
     const ctx = await createProposalTestContext({
       routerOverride: router,
       invocationQueueOverride: invocationQueue,
+      queueProcessorOverride: queueProcessor,
     });
 
     const source = await ctx.threadStore.create('alice', 'Source');
@@ -251,10 +239,7 @@ describe('F128 proposal seed reconcile — exactly-once dispatch', () => {
     const first = await ctx.approve('alice', proposalId);
     assert.equal(first.statusCode, 200);
     const firstBody = JSON.parse(first.body);
-    assert.ok(
-      firstBody.warnings?.every((warning) => warning.includes('projectPath=default')),
-      JSON.stringify(firstBody),
-    );
+    assert.ok(firstBody.warnings?.some((w) => w.includes('did not start automatically')));
     const childId = firstBody.threadId;
 
     shouldStart = true;
@@ -277,11 +262,7 @@ describe('F128 proposal seed reconcile — exactly-once dispatch', () => {
 
   test('legacy queue-full seed is repaired and processed exactly once', async () => {
     const { InvocationQueue } = await import('../dist/domains/cats/services/agents/invocation/InvocationQueue.js');
-    const invocationQueue = new InvocationQueue(undefined, {
-      onAdmitted: ({ threadId, entries }) => {
-        void queueProcessor.processNext(threadId, entries[0].owner.userId).catch(() => {});
-      },
-    });
+    const invocationQueue = new InvocationQueue();
     const processCalls = [];
     const queueProcessor = {
       async processNext(threadId, userId) {
@@ -293,6 +274,7 @@ describe('F128 proposal seed reconcile — exactly-once dispatch', () => {
     const ctx = await createProposalTestContext({
       routerOverride: router,
       invocationQueueOverride: invocationQueue,
+      queueProcessorOverride: queueProcessor,
     });
 
     const source = await ctx.threadStore.create('alice', 'Source');

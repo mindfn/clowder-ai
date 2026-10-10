@@ -20,7 +20,7 @@ const scope: LiveInboxScope = {
 async function append(store: MessageStore, queue: InvocationQueue, index = 1) {
   const from = { kind: 'agent' as const, catId: createCatId('opus') };
   const content = `private-body-${index}`;
-  const result = await queue.send(
+  const result = await queue.appendAndEnqueueDurable(
     store,
     {
       userId: scope.userId,

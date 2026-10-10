@@ -65,7 +65,7 @@ function harness(t) {
     async admitWake(input) {
       admissions++;
       // Same atomic canonical admission as index; a controlled provider proves actual child exposure.
-      const admitted = await f.queue.send(f.messages, input.message, {
+      const admitted = await f.queue.appendAndEnqueueDurable(f.messages, input.message, {
         threadId: input.threadId,
         userId: input.userId,
         sourceId: input.message.idempotencyKey,

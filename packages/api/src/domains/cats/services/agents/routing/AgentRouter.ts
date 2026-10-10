@@ -61,6 +61,7 @@ import type { AgentRegistrationFailure } from '../registry/AgentServiceUnavailab
 import type { RouteExecutionOptions, RouteOptions, RouteStrategyDeps } from '../routing/route-helpers.js';
 import { routeParallel } from '../routing/route-parallel.js';
 import { routeSerial } from '../routing/route-serial.js';
+import { resolveCatTarget } from './cat-target-resolver.js';
 import { appendContextAttachmentsToPrompt } from './context-attachment-prompt.js';
 
 const log = createModuleLogger('agent-router');
@@ -97,6 +98,7 @@ const BARE_URL_PREFIX_BEFORE_MENTION_RE = /(?:^|[^a-z0-9_-])(?:[a-z0-9-]+\.)+[a-
 function projectAgentRouteIntent(intent: IntentResult): AgentRouteIntent {
   return { intent: intent.intent, explicit: intent.explicit };
 }
+const DOMAIN_LIKE_UNKNOWN_HANDLE_RE = /^[a-z0-9_-]+(?:\.[a-z0-9-]+)+$/i;
 const ASCII_WORD_RE = /[a-z0-9]/i;
 const QUOTE_SPAN_PAIRS: readonly [string, string][] = [
   ['"', '"'],
@@ -385,11 +387,21 @@ function matchMentionPatternEnd(message: string, pos: number, pattern: string): 
   return cursor;
 }
 
+function hasDomainSuffixedMentionPatternAt(message: string, pos: number, patterns: readonly MentionPattern[]): boolean {
+  return patterns.some((entry) => {
+    const suffixStart = matchMentionPatternEnd(message, pos, entry.pattern);
+    if (suffixStart === null) return false;
+    const suffixNext = message[suffixStart + 1];
+    return message[suffixStart] === '.' && suffixNext !== undefined && DOMAIN_SUFFIX_START_RE.test(suffixNext);
+  });
+}
+
 function recordRouteLineMentions(
   message: string,
   patterns: readonly MentionPattern[],
   seenCats: Set<string>,
   mentions: ParsedMention[],
+  routingWarnings: CatRoutingError[],
 ): void {
   const excluded = buildMentionExclusionSpans(message);
   forEachRouteLineMentionCandidate(message, (_line, lineOffset, candidate) => {
@@ -399,12 +411,27 @@ function recordRouteLineMentions(
     const matched = findMentionPatternAt(message, position, patterns, (end) =>
       skipClosingRouteMarkdownMarkers(message, end, openingMarkers),
     );
-    if (matched) recordResolvedMention(matched.catId, position, seenCats, mentions);
+    if (matched) recordResolvedMention(matched.catId, position, seenCats, mentions, routingWarnings);
   });
 }
 
-function recordResolvedMention(catId: CatId, position: number, seenCats: Set<string>, mentions: ParsedMention[]): void {
+function recordResolvedMention(
+  catId: CatId,
+  position: number,
+  seenCats: Set<string>,
+  mentions: ParsedMention[],
+  routingWarnings: CatRoutingError[],
+): void {
   const key = catId as string;
+  const resolved = resolveCatTarget(key);
+  if ('error' in resolved) {
+    if (!seenCats.has(key)) {
+      seenCats.add(key);
+      routingWarnings.push(resolved.error);
+    }
+    return;
+  }
+
   if (!seenCats.has(key)) {
     seenCats.add(key);
     mentions.push({ catId, position });
@@ -414,6 +441,23 @@ function recordResolvedMention(catId: CatId, position: number, seenCats: Set<str
   const existing = mentions.find((mention) => String(mention.catId) === key);
   if (existing && position < existing.position) {
     existing.position = position;
+  }
+}
+
+function recordUnknownMentionWarning(
+  message: string,
+  position: number,
+  seenCats: Set<string>,
+  routingWarnings: CatRoutingError[],
+): void {
+  const handle = message.slice(position + 1).match(/^([a-z0-9_.-]+)/)?.[1];
+  if (!handle) return;
+  if (DOMAIN_LIKE_UNKNOWN_HANDLE_RE.test(handle)) return;
+  const key = `@unknown:${handle}`;
+  const resolved = resolveCatTarget(handle);
+  if ('error' in resolved && !seenCats.has(key)) {
+    seenCats.add(key);
+    routingWarnings.push(resolved.error);
   }
 }
 
@@ -836,24 +880,17 @@ export class AgentRouter {
     return filtered;
   }
 
-  private filterKnownCats(catIds: Iterable<string | null | undefined>): CatId[] {
-    const configs = catRegistry.getAllConfigs();
-    return [...new Set(catIds)].filter(
-      (catId): catId is CatId => typeof catId === 'string' && Object.hasOwn(configs, catId),
-    );
-  }
-
   /**
    * F294: validate an explicit target set without parsing prose or applying fallback routing.
-   * Validate catalog identity, independently of executable services. Unknown explicit IDs
-   * invalidate the set; known members retain normal execution/failure settlement.
+   * An unavailable/disabled/unknown member makes the whole set invalid; callers must fail
+   * closed instead of silently dropping one target or substituting the default cat.
    */
   async resolveExplicitTargets(
     requestedCatIds: readonly string[],
     threadId: string,
     options?: { persist?: boolean },
   ): Promise<CatId[]> {
-    const resolved = this.filterKnownCats(requestedCatIds);
+    const resolved = this.filterRoutableCats(requestedCatIds);
     if (resolved.length !== requestedCatIds.length) return [];
     if (options?.persist && this.threadStore) {
       await this.threadStore.addParticipants(threadId, resolved);
@@ -864,9 +901,10 @@ export class AgentRouter {
   /**
    * Canonical target resolution for public conversation work.
    *
-   * Common send resolves before atomic Message + Queue admission. Drain uses
-   * the same resolver to handle targets that have since become unavailable.
-   * Still-routable explicit
+   * New no-mention user input calls this before the atomic source + Queue
+   * admission so its pending target is never an empty client-side guess.
+   * Queue admission calls the same resolver again to revalidate persisted or
+   * recovered target intent before a client effect. Still-routable explicit
    * members are preserved in their original order. If none remain, the most
    * recent completed lifecycle response is the only history-derived fallback;
    * non-terminal and non-completed bubbles are deliberately ignored. The
@@ -889,24 +927,6 @@ export class AgentRouter {
 
     const fallback = this.pickFallbackCat(new Set());
     return fallback ? [fallback] : [];
-  }
-
-  /** Public send parses prose once, then shares the existing conversation fallback. */
-  async resolveSendTargets(
-    requested: readonly string[],
-    threadId: string,
-    content = '',
-    exact = false,
-  ): Promise<CatId[]> {
-    if (requested.length > 0 && (await this.resolveExplicitTargets(requested, threadId)).length !== requested.length) {
-      throw new Error('Invalid explicit member identity');
-    }
-    if (exact) return this.resolveExplicitTargets(requested, threadId);
-    const targets =
-      requested.length > 0
-        ? requested
-        : (await this.resolveTargetsAndIntent(content, threadId, { persist: false, allowFallback: false })).targetCats;
-    return this.resolveConversationTargetsAtAdmission(targets, threadId);
   }
 
   /**
@@ -1095,21 +1115,28 @@ export class AgentRouter {
     const seenCats = new Set<string>();
     const routing_warnings: CatRoutingError[] = [];
     // Route-line grammar handles markdown/list wrappers before the broader inline scan.
-    recordRouteLineMentions(lowerMessage, allPatterns, seenCats, mentions);
+    recordRouteLineMentions(lowerMessage, allPatterns, seenCats, mentions, routing_warnings);
 
     // Explicit @mentions are user-authored route tokens and may appear anywhere in prose.
     forEachUserMentionCandidate(lowerMessage, (pos) => {
       const matched = findMentionPatternAt(lowerMessage, pos, allPatterns);
       if (matched) {
-        recordResolvedMention(matched.catId, pos, seenCats, mentions);
+        recordResolvedMention(matched.catId, pos, seenCats, mentions, routing_warnings);
         return;
       }
+      // P2 (codex review 6949db49): an explicit @handle that matched NO registered cat is an
+      // unknown handle (e.g. @kimi). Without this, parseAllMentions returns empty mentions + empty
+      // warnings, so the caller silently falls back to the default cat with zero user feedback.
+      if (hasDomainSuffixedMentionPatternAt(lowerMessage, pos, allPatterns)) {
+        return;
+      }
+      recordUnknownMentionWarning(lowerMessage, pos, seenCats, routing_warnings);
     });
 
     // Speech aliases like "at 砚砚" stay limited to route-line syntax; otherwise ordinary
     // prose such as "look at codex docs" would become an implicit route.
     if (speechRouteMessage !== lowerMessage) {
-      recordRouteLineMentions(speechRouteMessage, allPatterns, seenCats, mentions);
+      recordRouteLineMentions(speechRouteMessage, allPatterns, seenCats, mentions, routing_warnings);
     }
 
     mentions.sort((a, b) => a.position - b.position);
@@ -1283,9 +1310,24 @@ export class AgentRouter {
         }
       }
 
+      // Filter out routing_warnings for group mention keywords — they were already
+      // matched by parseGroupMentions and are not individual cat mentions.
+      // Only suppress breed handles with ≥1 routable cat (service + available);
+      // breeds where all cats are unavailable still warn so the user gets feedback.
+      const groupHandles = new Set(['all', 'thread']);
+      for (const [catId, config] of Object.entries(catRegistry.getAllConfigs())) {
+        if (config.breedId && this.isRoutableCat(catId)) {
+          groupHandles.add(`all-${config.breedId}`);
+        }
+      }
+      const filteredWarnings = individual.routing_warnings.filter((w) => {
+        if (w.kind !== 'cat_not_found') return true;
+        return !groupHandles.has(w.mention.toLowerCase());
+      });
+
       return {
         mentions: [...before, ...groupResult.cats, ...after],
-        routing_warnings: [],
+        routing_warnings: filteredWarnings,
       };
     }
     return this.parseMentions(message);
@@ -1533,7 +1575,9 @@ export class AgentRouter {
     routing_warnings: CatRoutingError[];
   }> {
     const resolvedThreadId = threadId ?? DEFAULT_THREAD_ID;
-    // Only registered mention patterns select members. Unmatched @ text is ordinary prose.
+    // Capture both valid mentions AND routing_warnings (for disabled/not-found cats).
+    // routing_warnings lets callers (e.g. messages.ts) surface explicit feedback when
+    // a user's @mention silently fell back to a different cat (Thread 1 bug: @kimi→opus).
     const allMentions = await this.parseAllMentions(message, resolvedThreadId, {
       allowGroupFallback: options?.allowFallback !== false,
     });

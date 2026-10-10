@@ -51,7 +51,7 @@ describe('F292 private-thread artifact handoff', () => {
     const appended = [];
     const enqueued = [];
     const queue = {
-      async send(messageStore, messageInput, queueInput) {
+      async appendAndEnqueueDurable(messageStore, messageInput, queueInput) {
         const message = await messageStore.append(messageInput);
         enqueued.push(queueInput);
         return { outcome: 'enqueued', entry: { id: 'q-1' }, message };
@@ -66,6 +66,7 @@ describe('F292 private-thread artifact handoff', () => {
         },
       },
       invocationQueue: queue,
+      queueProcessor: { processNext: async () => ({ started: true }) },
       socketManager: noopSocketManager,
       supportsPresentationRetry: () => true,
       now: () => 12_000,
@@ -126,7 +127,7 @@ describe('F292 private-thread artifact handoff', () => {
     assert.equal(buildMeetingArtifactPrompt(intake, artifact), appended[0].content);
   });
 
-  it('confirms the durable Host receipt without scheduling in the producer', async () => {
+  it('persists the durable Host receipt before processNext even when execution does not start', async () => {
     const order = [];
     const durableInputs = [];
     const dispatcher = new ThreadMeetingArtifactDispatcher({
@@ -141,10 +142,19 @@ describe('F292 private-thread artifact handoff', () => {
       invocationQueue: {
         // F117: the dispatcher now routes admission through the durable
         // append+enqueue contract instead of enqueue + backfill.
-        async send(messageStore, messageInput) {
+        async appendAndEnqueueDurable(messageStore, messageInput) {
           const message = await messageStore.append(messageInput);
           order.push('durableAppend');
           return { outcome: 'enqueued', entry: { id: 'queue-visible', messageId: message.id }, message };
+        },
+        enqueue: () => ({ outcome: 'enqueued', entry: { id: 'queue-visible', messageId: null } }),
+        backfillMessageId() {},
+        rollbackEnqueue() {},
+      },
+      queueProcessor: {
+        processNext: async () => {
+          order.push('processNext');
+          return { started: false };
         },
       },
       socketManager: {
@@ -181,9 +191,9 @@ describe('F292 private-thread artifact handoff', () => {
 
     assert.equal(receipt, undefined);
     // F117 new contract: the owner-visible admission anchor is the durable message
-    // append (via send); the shared Queue owner controls progress. The old
+    // append (via appendAndEnqueueDurable), ordered before processNext; the old
     // 'messages_queued' socket publication was retired from this dispatcher.
-    assert.deepEqual(order, ['durableAppend']);
+    assert.deepEqual(order, ['durableAppend', 'processNext']);
     assert.equal(durableInputs.length, 1);
     assert.equal(durableInputs[0].threadId, 'thread-1');
     assert.equal(durableInputs[0].userId, 'owner-1');
@@ -199,6 +209,7 @@ describe('F292 private-thread artifact handoff', () => {
 
   it('admits the Alpha canary through the canonical meeting write-opportunity producer', async () => {
     const appended = [];
+    const processed = [];
     const dispatcher = new ThreadMeetingArtifactDispatcher({
       threadStore: { get: async () => thread },
       messageStore: {
@@ -210,9 +221,18 @@ describe('F292 private-thread artifact handoff', () => {
       },
       invocationQueue: {
         // F117: same durable append+enqueue contract as the production InvocationQueue.
-        async send(messageStore, messageInput) {
+        async appendAndEnqueueDurable(messageStore, messageInput) {
           const message = await messageStore.append(messageInput);
           return { outcome: 'enqueued', entry: { id: 'q-alpha', messageId: message.id }, message };
+        },
+        enqueue: () => ({ outcome: 'enqueued', entry: { id: 'q-alpha', messageId: null } }),
+        backfillMessageId() {},
+        rollbackEnqueue() {},
+      },
+      queueProcessor: {
+        processNext: async (...args) => {
+          processed.push(args);
+          return { started: true };
         },
       },
       socketManager: noopSocketManager,
@@ -231,8 +251,9 @@ describe('F292 private-thread artifact handoff', () => {
       sourceMessageId: 'msg-alpha',
       targetCatId: 'codex-sol',
       deduped: false,
-      started: false,
+      started: true,
     });
+    assert.deepEqual(processed, [['thread-1', 'owner-1']]);
     assert.equal(appended.length, 1);
     assert.deepEqual(appended[0].source, {
       connector: 'cat-cafe-alpha',
@@ -318,7 +339,7 @@ describe('F292 private-thread artifact handoff', () => {
     const enqueued = [];
     const published = [];
     const queue = {
-      async send(messageStore, messageInput, queueInput) {
+      async appendAndEnqueueDurable(messageStore, messageInput, queueInput) {
         const message = await messageStore.append(messageInput);
         enqueued.push(queueInput);
         return { outcome: 'enqueued', entry: { id: 'q-retry' }, message };
@@ -341,6 +362,7 @@ describe('F292 private-thread artifact handoff', () => {
         },
       },
       invocationQueue: queue,
+      queueProcessor: { processNext: async () => ({ started: true }) },
       socketManager: {
         emitToUser(...args) {
           published.push(args);
@@ -458,7 +480,7 @@ describe('F292 private-thread artifact handoff', () => {
           appended.length > 0 ? { ...appended[0], id: 'meeting-message-1', threadId: appended[0].threadId } : null,
       },
       invocationQueue: {
-        async send(messageStore, messageInput) {
+        async appendAndEnqueueDurable(messageStore, messageInput) {
           enqueueCalls += 1;
           if (enqueueCalls === 1) {
             const message = await messageStore.append(messageInput);
@@ -472,6 +494,7 @@ describe('F292 private-thread artifact handoff', () => {
           };
         },
       },
+      queueProcessor: { processNext: async () => ({ started: true }) },
       socketManager: noopSocketManager,
       supportsPresentationRetry: () => true,
       now: () => 2,
@@ -562,11 +585,12 @@ describe('F292 private-thread artifact handoff', () => {
         append: async () => assert.fail('must not append'),
       },
       invocationQueue: {
-        send() {
+        appendAndEnqueueDurable() {
           enqueueCount += 1;
           return { outcome: 'enqueued', entry: { id: 'unexpected' } };
         },
       },
+      queueProcessor: { processNext: async () => ({ started: true }) },
       socketManager: noopSocketManager,
       supportsPresentationRetry: () => false,
     });

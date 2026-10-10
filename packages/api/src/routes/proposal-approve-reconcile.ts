@@ -5,7 +5,10 @@ import { appendApprovedInitialMessage } from './proposal-approve-dispatch.js';
 import type { ProposalRoutesOptions } from './proposal-route-options.js';
 
 export interface ReconcileApprovedSeedDeps
-  extends Pick<ProposalRoutesOptions, 'messageStore' | 'threadStore' | 'socketManager' | 'router' | 'invocationQueue'> {
+  extends Pick<
+    ProposalRoutesOptions,
+    'messageStore' | 'threadStore' | 'socketManager' | 'router' | 'invocationQueue' | 'queueProcessor'
+  > {
   proposal: ThreadProposal;
   userId: string;
   ownerAuthProvenance: OwnerAuthProvenance;
@@ -23,7 +26,10 @@ export interface ReconcileApprovedInitialMessageResult {
 }
 
 export interface ReconcileFactoryDeps
-  extends Pick<ProposalRoutesOptions, 'messageStore' | 'threadStore' | 'socketManager' | 'router' | 'invocationQueue'> {
+  extends Pick<
+    ProposalRoutesOptions,
+    'messageStore' | 'threadStore' | 'socketManager' | 'router' | 'invocationQueue' | 'queueProcessor'
+  > {
   userId: string;
   ownerAuthProvenance: OwnerAuthProvenance;
 }
@@ -36,6 +42,7 @@ export function createReconcileApprovedInitialMessage({
   socketManager,
   router,
   invocationQueue,
+  queueProcessor,
 }: ReconcileFactoryDeps) {
   return (proposal: ThreadProposal) =>
     reconcileApprovedInitialMessage({
@@ -47,6 +54,7 @@ export function createReconcileApprovedInitialMessage({
       socketManager,
       router,
       invocationQueue,
+      queueProcessor,
     });
 }
 
@@ -54,8 +62,8 @@ export function createReconcileApprovedInitialMessage({
  * #1387 / #1406 B1: materialization and wake-completion are separate facts.
  * A seed is dispatch-complete only when it has terminal owner-delivery state
  * or every actually dispatched lifecycle target has settled. Merely owning
- * Queue custody does NOT mean the processor woke the target — the shared drain may
- * fail or defer before any dispatchRef exists.
+ * Queue custody does NOT mean the processor woke the target — processNext may
+ * throw or return started:false before any dispatchRef exists.
  */
 function isDispatchComplete(message: StoredMessage): boolean {
   if (message.deliveryStatus === 'delivered' || message.deliveryStatus === 'canceled') return true;
@@ -118,6 +126,7 @@ async function dispatchApprovedInitialMessage(
   socketManager: ReconcileApprovedSeedDeps['socketManager'],
   router: ReconcileApprovedSeedDeps['router'],
   invocationQueue: ReconcileApprovedSeedDeps['invocationQueue'],
+  queueProcessor: ReconcileApprovedSeedDeps['queueProcessor'],
   existingSeed?: StoredMessage,
 ): Promise<{ warnings: string[] }> {
   // Best-effort source-thread title: a transient store failure here must not
@@ -154,6 +163,7 @@ async function dispatchApprovedInitialMessage(
       socketManager,
       router,
       invocationQueue,
+      queueProcessor,
       existingSeed,
     });
     if (result.warning) warnings.push(result.warning);
@@ -177,6 +187,7 @@ export async function reconcileApprovedInitialMessage({
   socketManager,
   router,
   invocationQueue,
+  queueProcessor,
 }: ReconcileApprovedSeedDeps): Promise<ReconcileApprovedInitialMessageResult> {
   const threadId = proposal.createdThreadId!;
 
@@ -190,7 +201,7 @@ export async function reconcileApprovedInitialMessage({
       `proposal-initial:${proposal.proposalId}`,
     );
     if (idempotentSeed) {
-      // The seed is materialized, but queue-full / drain failure can leave
+      // The seed is materialized, but queue-full / processNext failure can leave
       // it without queue custody. In that case the seed is NOT dispatch-complete;
       // retry dispatch exactly once per reconcile call.
       if (isDispatchComplete(idempotentSeed)) {
@@ -205,6 +216,7 @@ export async function reconcileApprovedInitialMessage({
         socketManager,
         router,
         invocationQueue,
+        queueProcessor,
         idempotentSeed,
       );
       return { warnings, wasPresent: true, redispatched: true };
@@ -227,6 +239,7 @@ export async function reconcileApprovedInitialMessage({
         socketManager,
         router,
         invocationQueue,
+        queueProcessor,
         legacySeed,
       );
       return { warnings, wasPresent: true, legacy: true, redispatched: true };
@@ -247,6 +260,7 @@ export async function reconcileApprovedInitialMessage({
     socketManager,
     router,
     invocationQueue,
+    queueProcessor,
   );
   return { warnings, wasPresent: false };
 }

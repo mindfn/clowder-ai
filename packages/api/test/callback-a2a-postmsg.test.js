@@ -318,13 +318,7 @@ describe('post_message A2A mention invocation', () => {
       registerEntryCompleteHook() {},
       unregisterEntryCompleteHook() {},
     };
-    const invocationQueue = adaptInvocationQueue(
-      new InvocationQueue(undefined, {
-        onAdmitted: ({ threadId }) => {
-          void queueProcessor.requestDrain(threadId);
-        },
-      }),
-    );
+    const invocationQueue = adaptInvocationQueue(new InvocationQueue());
     const { invocationId, callbackToken } = await registry.create('user-1', 'opus', 't1');
     const existing = invocationQueue.enqueue(
       canonicalTestQueueInput({
@@ -343,7 +337,6 @@ describe('post_message A2A mention invocation', () => {
         a2aTriggerMessageId: 'earlier-trigger',
       }),
     ).entry;
-    drainCalls.length = 0;
     const app = await createApp({ invocationQueue, queueProcessor });
 
     const response = await app.inject({
@@ -518,10 +511,6 @@ describe('post_message A2A mention invocation', () => {
     // Message should still be stored
     const recent = messageStore.getRecent(10);
     assert.equal(recent.length, 1, 'Message should still be stored');
-    assert.equal(response.json().isError, true, 'The sending agent must receive the target failure');
-    assert.deepEqual(response.json().routed, [], 'An invalid A2A target must not choose a conversation fallback');
-    assert.equal(response.json().messageId, recent[0].id, 'The failure reply must reference the durable source');
-    assert.equal(invocationQueue.list('t1', 'user-1').length, 0);
     // No A2A invocation should be triggered for invalid catId
     assert.equal(invocationRecordStore.getRecords().length, 0, 'Invalid catId must not trigger A2A');
     assert.equal(mockRouter.getExecutions().length, 0, 'routeExecution should not be called');

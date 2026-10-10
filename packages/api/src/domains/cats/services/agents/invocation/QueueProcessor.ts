@@ -73,7 +73,7 @@ import {
 } from '../../stores/ports/MessageStore.js';
 import type { IThreadStore } from '../../stores/ports/ThreadStore.js';
 import type { ITurnExecutionStore } from '../../stores/ports/TurnExecutionStore.js';
-import { canViewMessage, getTimelineOrderTime, resolveDeliveryTimelineScore } from '../../stores/visibility.js';
+import { getTimelineOrderTime, resolveDeliveryTimelineScore } from '../../stores/visibility.js';
 import {
   type AgentClientActiveRunDispatcher,
   type AgentMessage,
@@ -604,8 +604,6 @@ export class QueueProcessor {
   private nextAutoResumeSuppressionEpoch = 0;
   /** RFC #1356: one event-driven drain owner plus a no-lost-wakeup dirty bit per thread. */
   private readonly threadDrains = new Map<string, ThreadDrainState>();
-  /** Native Append ACK holds only its target, after the durable handoff frees the drain. */
-  private readonly automaticAppendSlots = new Set<string>();
   /**
    * RFC #1356 admission handoff. Queue owns only pre-admission work; once the
    * provider is admitted, this process-local registry keeps the immutable
@@ -840,23 +838,19 @@ export class QueueProcessor {
    * The exact run/capability/revision fences remain owned by the shared
    * lifecycle projection and append transaction below.
    */
-  async tryAutoAppendExactEntry(
-    input: {
-      threadId: string;
-      userId: string;
-      entryId: string;
-      targetCatId?: string;
-    },
-    onHandoff?: () => void,
-  ): Promise<AppendExactEntryResult> {
+  async tryAutoAppendExactEntry(input: {
+    threadId: string;
+    userId: string;
+    entryId: string;
+    targetCatId?: string;
+  }): Promise<AppendExactEntryResult> {
     const { queue, invocationTracker } = this.deps;
     const entry = queue.getEntrySnapshot(input.threadId, input.userId, input.entryId);
     if (!entry || entry.execution.liveSessionId) {
       return { outcome: 'rejected', reason: 'append_unavailable' };
     }
     const requestedTargets = input.targetCatId ? [input.targetCatId] : queueEntryTargetCats(entry);
-    {
-      // New send admissions persist intent; legacy rows without it cannot imply immediate guidance.
+    if (requestedTargets.some((targetId) => entry.delivery.authorIntentByTarget?.[targetId])) {
       if (!invocationTracker.getExecutionId) {
         return { outcome: 'rejected', reason: 'append_unavailable' };
       }
@@ -890,47 +884,13 @@ export class QueueProcessor {
       ...(input.targetCatId ? { targetIds: [input.targetCatId] } : {}),
     });
     if (!projection.available) return { outcome: 'rejected', reason: 'append_unavailable' };
-    return this.appendExactEntry(
-      {
-        threadId: input.threadId,
-        userId: input.userId,
-        entryId: input.entryId,
-        expectedQueueRevision: projection.action.expectedQueueRevision,
-        expectedRuns: projection.action.expectedRuns,
-      },
-      onHandoff,
-    );
-  }
-
-  /** Wait for durable admission, keeping a native ACK on its own target rather than the thread owner. */
-  private async appendFromDrain(input: {
-    threadId: string;
-    userId: string;
-    entryId: string;
-    targetCatId: string;
-  }): Promise<AppendExactEntryResult | undefined> {
-    const slotKey = QueueProcessor.slotKey(input.threadId, input.targetCatId);
-    this.automaticAppendSlots.add(slotKey);
-    let handedOff = false;
-    let releaseDrain!: () => void;
-    const handoff = new Promise<undefined>((resolve) => {
-      releaseDrain = () => resolve(undefined);
+    return this.appendExactEntry({
+      threadId: input.threadId,
+      userId: input.userId,
+      entryId: input.entryId,
+      expectedQueueRevision: projection.action.expectedQueueRevision,
+      expectedRuns: projection.action.expectedRuns,
     });
-    const completion = this.tryAutoAppendExactEntry(input, () => {
-      handedOff = true;
-      releaseDrain();
-    }).finally(() => {
-      this.automaticAppendSlots.delete(slotKey);
-      if (handedOff) {
-        void this.requestDrain(input.threadId).catch((err) =>
-          this.deps.log.error(
-            { err, threadId: input.threadId, entryId: input.entryId },
-            '[QueueProcessor] Append completion failed to signal Queue progress',
-          ),
-        );
-      }
-    });
-    return Promise.race([completion, handoff]);
   }
 
   /**
@@ -938,16 +898,13 @@ export class QueueProcessor {
    * is revalidated before the synchronous Queue claim; provider side effects
    * occur only after exposure, lifecycle refs, and History admission are durable.
    */
-  async appendExactEntry(
-    input: {
-      threadId: string;
-      userId: string;
-      entryId: string;
-      expectedQueueRevision: string;
-      expectedRuns: readonly { targetId: string; invocationId: string; responseMessageId: string }[];
-    },
-    onHandoff?: () => void,
-  ): Promise<AppendExactEntryResult> {
+  async appendExactEntry(input: {
+    threadId: string;
+    userId: string;
+    entryId: string;
+    expectedQueueRevision: string;
+    expectedRuns: readonly { targetId: string; invocationId: string; responseMessageId: string }[];
+  }): Promise<AppendExactEntryResult> {
     if (input.expectedRuns.length > 1) {
       if (this.deps.queue.snapshotRevision(input.threadId, input.userId) !== input.expectedQueueRevision) {
         return { outcome: 'rejected', reason: 'state_changed' };
@@ -1045,14 +1002,6 @@ export class QueueProcessor {
       if (sourceMessagesBeforeAdmission.length !== inputMessageIds.length) {
         throw new Error(`lifecycle Append source vanished before admission: ${input.entryId}`);
       }
-      if (
-        sourceMessagesBeforeAdmission.some((source) =>
-          input.expectedRuns.some((run) => !canViewMessage(source, { type: 'cat', catId: run.targetId as CatId })),
-        )
-      ) {
-        await queue.restoreClaimedEntries(input.threadId, [input.entryId]);
-        return { outcome: 'rejected', reason: 'append_unavailable' };
-      }
       sourceMessages = sourceMessagesBeforeAdmission;
       const imagePaths = sourceMessagesBeforeAdmission.flatMap((message) => extractImagePaths(message.contentBlocks));
       // Fence the response receiving this delivery. Model consumption is not a second admission.
@@ -1130,7 +1079,6 @@ export class QueueProcessor {
         );
       }
       providerDispatchStarted = true;
-      onHandoff?.();
       const results = await Promise.all(
         input.expectedRuns.map(async (run, index) => {
           try {
@@ -2855,8 +2803,8 @@ export class QueueProcessor {
   }
 
   /**
-   * Progress a producer-owned durable carrier through existing Append admission
-   * or the ordinary Queue comparator. Recovery is not authority to clear a
+   * Progress a producer-owned durable carrier through the ordinary Queue
+   * comparator. Recovery is not authority to skip older sources, clear a
    * cancellation fence, or start a second invocation for an admitted row.
    */
   async progressOwnedCarrier(entry: QueueEntry, targetCatId: string): Promise<OwnedQueueProgress> {
@@ -2875,6 +2823,11 @@ export class QueueProcessor {
     if (current.status === 'claimed' || current.status === 'processing') return 'already_processing';
     if (current.status === 'terminal') return 'terminal_owned';
     if (this.isAutoResumeSuppressed(entry.threadId, targetCatId)) return 'owned_deferred_suppressed';
+    const slotKey = QueueProcessor.slotKey(entry.threadId, targetCatId);
+    if (this.processingSlots.has(slotKey) || this.deps.invocationTracker.has(entry.threadId, targetCatId)) {
+      return 'owned_deferred_busy';
+    }
+
     await this.requestDrain(entry.threadId);
     if (
       this.deps.queue.findAdmittedEntriesForMessages(entry.threadId, queueEntryMessageIds(entry), userId, targetCatId)
@@ -3100,36 +3053,6 @@ export class QueueProcessor {
         const settled = await this.terminalizeUnavailableConversationHead(candidate, 'explicit');
         return QueueProcessor.terminalizedHeadAttempt(settled);
       }
-      // Every ingress signals this one owner after durable admission. Append
-      // and a fresh turn share Queue progress; the sender kind chooses neither.
-      let appended = false;
-      if (!this.retryDeferrals.isDeferred(candidate.id)) {
-        for (const targetCatId of queueEntryTargetCats(candidate)) {
-          if (
-            heldTargets.has(targetCatId) ||
-            this.automaticAppendSlots.has(QueueProcessor.slotKey(threadId, targetCatId)) ||
-            this.isAutoResumeSuppressed(threadId, targetCatId)
-          )
-            continue;
-          const result = await this.appendFromDrain({
-            threadId,
-            userId: queueEntryOwnerId(candidate),
-            entryId: candidate.id,
-            targetCatId,
-          });
-          if (!result || result.outcome === 'appended') appended = true;
-          else if (candidate.delivery.authorIntentByTarget?.[targetCatId]?.requested === 'continue_current') {
-            await this.deps.queue.fallbackQueuedAuthorIntentDurable(
-              threadId,
-              queueEntryOwnerId(candidate),
-              candidate.id,
-              targetCatId,
-              'parent_terminal_before_exposure',
-            );
-          }
-        }
-      }
-      if (appended) return { started: false, progressed: true };
       const admission = await this.resolveAdmissionTargets(threadId, candidate, index === 0);
       if (admission.kind === 'settled') return admission.attempt;
       if (admission.kind === 'barrier') {
@@ -3168,18 +3091,6 @@ export class QueueProcessor {
     return { started: false };
   }
 
-  /** A public fallback cannot expand the persisted source's recipient visibility. */
-  private async resolveQueuedConversationTargets(entry: QueueEntry): Promise<string[]> {
-    const sources = await Promise.all(queueEntryMessageIds(entry).map((id) => this.deps.messageStore.getById(id)));
-    const targets = await this.deps.router.resolveConversationTargetsAtAdmission(
-      queueEntryTargetCats(entry),
-      entry.threadId,
-    );
-    return targets.filter((catId) =>
-      sources.every((source) => !source || canViewMessage(source, { type: 'cat', catId: catId as CatId })),
-    );
-  }
-
   /**
    * The targets a queued entry would start with now. Only the comparator head settles an entry that
    * resolves no target (it fails in place); a later one waits, holding its requested targets.
@@ -3202,7 +3113,7 @@ export class QueueProcessor {
     if (entry.kind === 'conversation_input') {
       const routingClass = requestedTargets.length === 0 ? 'targetless' : 'explicit';
       if (routingClass === 'targetless' && this.deps.invocationTracker.has(threadId)) return { kind: 'barrier' };
-      const targets = await this.resolveQueuedConversationTargets(entry);
+      const targets = await this.deps.router.resolveConversationTargetsAtAdmission(requestedTargets, threadId);
       if (targets.length > 0) {
         return {
           kind: 'resolved',
@@ -3246,7 +3157,6 @@ export class QueueProcessor {
     return (
       (bypassesExactSuppression || remainingMs === 0) &&
       !this.processingSlots.has(slotKey) &&
-      !this.automaticAppendSlots.has(slotKey) &&
       !this.deps.invocationTracker.has(threadId, catId)
     );
   }
@@ -3385,7 +3295,10 @@ export class QueueProcessor {
         );
         return { started: false };
       }
-      resolvedTargetCats = await this.resolveQueuedConversationTargets(nextEntry);
+      resolvedTargetCats = await this.deps.router.resolveConversationTargetsAtAdmission(
+        queueEntryTargetCats(nextEntry),
+        threadId,
+      );
       if (resolvedTargetCats.length === 0) {
         const terminalized = await this.terminalizeUnavailableConversationHead(nextEntry, routingClass);
         return { started: false, progressed: terminalized !== null, ...(terminalized ? { entry: terminalized } : {}) };
@@ -4152,15 +4065,6 @@ export class QueueProcessor {
           const queueEntry =
             queue.getEntrySnapshot(threadId, userId, queueEntryId) ?? (queueEntryId === entry.id ? entry : null);
           if (queueEntry) {
-            for (const sourceId of queueEntryMessageIds(queueEntry)) {
-              const source = await messageStore.getById(sourceId);
-              if (
-                source &&
-                targetCats.some((catId) => !canViewMessage(source, { type: 'cat', catId: catId as CatId }))
-              ) {
-                throw new Error('Queue execution target cannot view its source');
-              }
-            }
             await this.ensureAttemptMessageCustody(queueEntry);
           }
         }

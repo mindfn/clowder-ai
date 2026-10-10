@@ -68,6 +68,11 @@ export async function fixture(options: { now?: () => number; expiresAt?: string 
     messageStore: messages,
     threadStore: threads,
     invocationQueue: queue,
+    queueProcessor: {
+      async processNext() {
+        return { started: false };
+      },
+    },
   });
   const admission = new CollectiveWorkAdmission({ connector: () => cafe.connector, authority, tasks, dispatcher });
   const persist = async (eventId: string) => {

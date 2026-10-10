@@ -35,9 +35,6 @@ function mockMessageStore(opts = {}) {
   store.admitted = [];
   store.delivery = {
     async deliver(input) {
-      store.requests ??= [];
-      store.requests.push(input);
-      input = { ...input, targetCatId: input.targetCatId ?? this.defaultTarget ?? 'opus' };
       const msg = {
         id: `msg-${messages.length + 1}`,
         ...input,
@@ -253,7 +250,7 @@ describe('ConnectorRouter', () => {
     assert.ok(messageStore.messages[0].threadId);
   });
 
-  it('delegates no-mention targets to common send instead of local participant activity', async () => {
+  it('routes to last-active cat when no @mention is present', async () => {
     const thread = threadStore.create('owner-1', 'existing');
     bindingStore.bind('feishu', 'chat-last-active', thread.id, 'owner-1');
     threadStore.participantActivity.set(thread.id, [
@@ -264,9 +261,8 @@ describe('ConnectorRouter', () => {
     await router.route('feishu', 'chat-last-active', '继续', 'ext-last-active-1');
 
     assert.equal(messageStore.messages.length, 1, 'one admitted envelope, which is the wake');
-    assert.equal(messageStore.requests[0].targetCatId, undefined);
-    assert.equal(messageStore.messages[0].targetCatId, 'opus');
-    assert.deepEqual(messageStore.messages[0].mentions, ['opus']);
+    assert.equal(messageStore.messages[0].targetCatId, 'codex');
+    assert.deepEqual(messageStore.messages[0].mentions, ['codex']);
   });
 
   it('keeps explicit @mention priority over last-active cat', async () => {
@@ -313,7 +309,6 @@ describe('ConnectorRouter', () => {
 
     await dynamicRouter.route('feishu', 'chat-dynamic-default', 'first', 'ext-dynamic-1');
     currentDefault = 'codex';
-    messageStore.delivery.defaultTarget = currentDefault;
     await dynamicRouter.route('feishu', 'chat-dynamic-default', 'second', 'ext-dynamic-2');
 
     assert.equal(messageStore.messages[0].targetCatId, 'opus');

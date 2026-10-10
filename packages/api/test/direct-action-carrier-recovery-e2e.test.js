@@ -210,7 +210,7 @@ describe('direct action carrier restart recovery', () => {
     await appendCarrier(messageStore, invocationQueue, lease, 'interrupted', stores);
     const clientMessageId = 'review-4058-crash-after-append';
     const fence = buildActionSuccessorFence(lease, lease.dispatchId);
-    const replacement = await invocationQueue.send(
+    const replacement = await invocationQueue.appendAndEnqueueDurable(
       messageStore,
       {
         threadId: target.id,
@@ -254,9 +254,9 @@ describe('direct action carrier restart recovery', () => {
 
     test('consecutive atomic failures publish no replacement, and the first healthy retry admits exactly one entry', async () => {
       await appendCarrier(messageStore, invocationQueue, lease, 'interrupted', stores);
-      const healthyAdmission = invocationQueue.send.bind(invocationQueue);
+      const healthyAdmission = invocationQueue.appendAndEnqueueDurable.bind(invocationQueue);
       let failedAdmissions = 0;
-      invocationQueue.send = () => {
+      invocationQueue.appendAndEnqueueDurable = () => {
         failedAdmissions++;
         throw new Error('admission store unavailable');
       };
@@ -270,7 +270,7 @@ describe('direct action carrier restart recovery', () => {
       assert.equal(replacement(), null, 'failed atomic admission must publish neither source nor pending work');
       assert.equal(invocationQueue.list(target.id, 'user-1').length, 0);
 
-      invocationQueue.send = healthyAdmission;
+      invocationQueue.appendAndEnqueueDurable = healthyAdmission;
       const third = await post('review-4058-retry');
       assert.equal(third.statusCode, 200, third.body);
       const queued = invocationQueue.list(target.id, 'user-1');
@@ -285,7 +285,7 @@ describe('direct action carrier restart recovery', () => {
     test('a failure BEFORE durable admission is not promised to startup reconciliation', async () => {
       await appendCarrier(messageStore, invocationQueue, lease, 'interrupted', stores);
       let attempts = 0;
-      invocationQueue.send = () => {
+      invocationQueue.appendAndEnqueueDurable = () => {
         attempts++;
         throw new Error('admission write unavailable');
       };
@@ -300,9 +300,9 @@ describe('direct action carrier restart recovery', () => {
     });
     test('lost atomic commit receipt replays the existing carrier without a second admission', async () => {
       await appendCarrier(messageStore, invocationQueue, lease, 'interrupted', stores);
-      const healthyAdmission = invocationQueue.send.bind(invocationQueue);
+      const healthyAdmission = invocationQueue.appendAndEnqueueDurable.bind(invocationQueue);
       let commits = 0;
-      invocationQueue.send = async (...args) => {
+      invocationQueue.appendAndEnqueueDurable = async (...args) => {
         commits++;
         await healthyAdmission(...args);
         throw new Error('commit receipt lost');

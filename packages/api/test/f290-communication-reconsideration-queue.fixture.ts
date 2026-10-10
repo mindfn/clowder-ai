@@ -175,7 +175,7 @@ export function reconsiderationQueueFixture(useSourceGuard = true) {
       participationRevision: 1,
       actor: { kind: 'human' as const, humanId: 'human_fixture000', displayName: 'Fixture Owner' },
     };
-    const result = await queue.send(
+    const result = await queue.appendAndEnqueueDurable(
       messages,
       {
         userId,
