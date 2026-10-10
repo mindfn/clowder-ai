@@ -445,6 +445,80 @@ describe('QueueProcessor over the source-row pending Queue', () => {
     assert.equal(stored.deliveredAt, claimedAt, 'connector notices share the durable dequeue clock');
   });
 
+  it('native dispatcher readiness wakes guidance queued during provider preparation', async () => {
+    let releasePreparation;
+    let releaseTurn;
+    const preparation = new Promise((resolve) => {
+      releasePreparation = resolve;
+    });
+    const turn = new Promise((resolve) => {
+      releaseTurn = resolve;
+    });
+    let parentStarted = false;
+    const dispatch = mock.fn(async () => ({ accepted: true, handle: {} }));
+    const harness = createHarness({
+      routeExecution: async function* (...args) {
+        const [userId, , threadId, , targets, , options] = args;
+        await options.onLifecycleInvocationStarted({
+          threadId,
+          userId,
+          catId: targets[0],
+          invocationId: 'preparing-child',
+          parentInvocationId: options.parentInvocationId,
+          startedAt: Date.now(),
+        });
+        parentStarted = true;
+        await preparation;
+        const release = options.onAgentClientActiveRunReady({
+          catId: targets[0],
+          dispatcher: {
+            invocationId: 'preparing-child',
+            capabilities: { append: true, steer: true },
+            handle: {
+              provider: 'openai_codex',
+              carrier: 'codex_app_server',
+              threadId: 'native',
+              turnId: 'native-turn',
+            },
+            dispatch,
+          },
+        });
+        try {
+          await turn;
+        } finally {
+          release();
+        }
+        yield { type: 'done', catId: targets[0], isFinal: true, timestamp: Date.now() };
+      },
+    });
+    await admitMessage(harness);
+    await harness.processor.requestDrain('thread-1');
+    try {
+      await waitFor(() => parentStarted);
+      const followup = await admitMessage(harness, {
+        authorIntentByCatId: {
+          opus: {
+            requested: 'continue_current',
+            boundParentInvocationId: harness.invocationTracker.getExecutionId('thread-1', 'opus'),
+          },
+        },
+      });
+      await harness.processor.requestDrain('thread-1');
+      assert.equal(
+        harness.queue.getEntrySnapshot('thread-1', 'user-1', followup.entry.id).delivery.authorIntentByTarget.opus
+          .fallbackAt,
+        undefined,
+      );
+      releasePreparation();
+      await waitFor(() => dispatch.mock.calls.length === 1);
+      assert.equal(harness.queue.getEntrySnapshot('thread-1', 'user-1', followup.entry.id), null);
+      assert.equal(harness.router.routeExecution.mock.calls.length, 1, 'guidance does not start a second turn');
+    } finally {
+      releasePreparation();
+      releaseTurn();
+    }
+  });
+
   it('starts every idle target of one source before either target completes', async () => {
     let releaseInvocations;
     const release = new Promise((resolve) => {

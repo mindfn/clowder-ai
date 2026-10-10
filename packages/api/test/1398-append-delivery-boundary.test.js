@@ -377,6 +377,20 @@ describe('delivery owns Append admission, without model-read state', () => {
     });
   }
 
+  it('keeps guidance bound while the same parent prepares its native dispatcher', async () => {
+    const harness = createHarness();
+    const admitted = await admit(harness);
+    await harness.processor.requestDrain('thread-1');
+    const waiting = harness.queue.getEntrySnapshot('thread-1', 'user-1', admitted.entry.id);
+    assert.equal(waiting.delivery.authorIntentByTarget.opus.fallbackAt, undefined);
+    assert.equal(waiting.delivery.authorIntentByTarget.opus.boundParentInvocationId, 'parent-phase-m');
+    const dispatch = mock.fn(async () => ({ accepted: true, handle: {} }));
+    bindRun(harness, dispatch);
+    await harness.processor.requestDrain('thread-1');
+    assert.equal(dispatch.mock.calls.length, 1);
+    assert.equal(harness.queue.getEntrySnapshot('thread-1', 'user-1', admitted.entry.id), null);
+  });
+
   for (const barrier of ['next_work', 'retry']) {
     it(`automatic Append respects a same-target ${barrier} barrier while another target progresses`, async () => {
       const harness = createHarness();

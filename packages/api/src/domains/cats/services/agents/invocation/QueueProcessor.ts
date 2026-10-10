@@ -553,6 +553,7 @@ export type AppendExactEntryResult =
       outcome: 'rejected';
       reason:
         | 'append_unavailable'
+        | 'active_run_pending'
         | 'state_changed'
         | 'custody_unavailable'
         | 'lifecycle_conflict'
@@ -889,7 +890,17 @@ export class QueueProcessor {
       },
       ...(input.targetCatId ? { targetIds: [input.targetCatId] } : {}),
     });
-    if (!projection.available) return { outcome: 'rejected', reason: 'append_unavailable' };
+    if (!projection.available) {
+      // An exact parent may still be preparing its native turn. Absence of its
+      // dispatcher is not evidence that the parent ended or rejected guidance.
+      const awaitingDispatcher =
+        (projection.reason === 'active_run_missing' || projection.reason === 'client_unsupported') &&
+        requestedTargets.length > 0 &&
+        requestedTargets.every(
+          (targetId) => !invocationTracker.getAgentClientActiveRunDispatcher?.(input.threadId, targetId),
+        );
+      return { outcome: 'rejected', reason: awaitingDispatcher ? 'active_run_pending' : 'append_unavailable' };
+    }
     return this.appendExactEntry(
       {
         threadId: input.threadId,
@@ -3118,7 +3129,10 @@ export class QueueProcessor {
             targetCatId,
           });
           if (!result || result.outcome === 'appended') appended = true;
-          else if (candidate.delivery.authorIntentByTarget?.[targetCatId]?.requested === 'continue_current') {
+          else if (
+            result.reason !== 'active_run_pending' &&
+            candidate.delivery.authorIntentByTarget?.[targetCatId]?.requested === 'continue_current'
+          ) {
             await this.deps.queue.fallbackQueuedAuthorIntentDurable(
               threadId,
               queueEntryOwnerId(candidate),
@@ -4806,6 +4820,14 @@ export class QueueProcessor {
             if (!release) {
               throw new Error(`Agent Client ActiveRun dispatcher owner mismatch: ${dispatcher.invocationId}`);
             }
+            // A queued guidance request can predate provider turn acceptance.
+            // Publish readiness to the same owner that handles every ingress.
+            void this.requestDrain(threadId).catch((err) =>
+              log.error(
+                { err, threadId, catId },
+                '[QueueProcessor] Agent Client readiness failed to signal Queue progress',
+              ),
+            );
             return release;
           },
           onPromptMessagesExposed: (input: PromptMessagesExposedInput) => this.markPromptMessagesSeen(input),

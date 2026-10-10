@@ -1,10 +1,7 @@
+import { ENCODE_QUEUE_ROW_LUA } from './queue-ledger-redis-encoding.js';
+
 export const CLAIM_QUEUE_ROW_LUA = `
-local function encodeRow(value)
-  local encoded = cjson.encode(value)
-  encoded = string.gsub(encoded, '"targets":{}', '"targets":[]')
-  encoded = string.gsub(encoded, '"claimedTargetIds":{}', '"claimedTargetIds":[]')
-  return encoded
-end
+${ENCODE_QUEUE_ROW_LUA}
 local raw = redis.call('HGET', KEYS[1], ARGV[1])
 if not raw then return {-1, ''} end
 local row = cjson.decode(raw)
@@ -34,12 +31,7 @@ return {1, next}
 `;
 
 export const CLAIM_QUEUE_PREFIX_LUA = `
-local function encodeRow(value)
-  local encoded = cjson.encode(value)
-  encoded = string.gsub(encoded, '"targets":{}', '"targets":[]')
-  encoded = string.gsub(encoded, '"claimedTargetIds":{}', '"claimedTargetIds":[]')
-  return encoded
-end
+${ENCODE_QUEUE_ROW_LUA}
 local count = tonumber(ARGV[1])
 if not count or count < 1 then return redis.error_reply('QUEUE_CLAIM_PREFIX_EMPTY') end
 local claimId = ARGV[2]
@@ -84,12 +76,7 @@ return {1, cjson.encode(encoded)}
 `;
 
 export const COMMIT_QUEUE_ROW_LUA = `
-local function encodeRow(value)
-  local encoded = cjson.encode(value)
-  encoded = string.gsub(encoded, '"targets":{}', '"targets":[]')
-  encoded = string.gsub(encoded, '"claimedTargetIds":{}', '"claimedTargetIds":[]')
-  return encoded
-end
+${ENCODE_QUEUE_ROW_LUA}
 local id = ARGV[1]
 local claimId = ARGV[2]
 local mode = ARGV[3]
@@ -232,12 +219,7 @@ return {1, terminal}
 `;
 
 export const RESTORE_QUEUE_ROW_LUA = `
-local function encodeRow(value)
-  local encoded = cjson.encode(value)
-  encoded = string.gsub(encoded, '"targets":{}', '"targets":[]')
-  encoded = string.gsub(encoded, '"claimedTargetIds":{}', '"claimedTargetIds":[]')
-  return encoded
-end
+${ENCODE_QUEUE_ROW_LUA}
 local raw = redis.call('HGET', KEYS[1], ARGV[1])
 if not raw then return {-1, ''} end
 local row = cjson.decode(raw)
