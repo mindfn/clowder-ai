@@ -27,6 +27,8 @@ export interface CiCdCheckSignal {
 export interface CiCdCheckTaskSpecOptions {
   readonly taskStore: ITaskStore;
   readonly cicdRouter: CiCdRouter;
+  /** The configured plugin credential resolver is shared by every CI query. */
+  readonly getGitHubToken?: () => string | undefined;
   readonly fetchPrStatus?: (
     repoFullName: string,
     prNumber: number,
@@ -95,10 +97,13 @@ async function shouldCollectTask(
 export function createCiCdCheckTaskSpec(opts: CiCdCheckTaskSpecOptions): TaskSpec_P1<CiCdCheckSignal> {
   const fetchPrStatuses =
     opts.fetchPrStatuses ??
-    ((targets: readonly PrCiStatusTarget[], signal?: AbortSignal) => fetchPrCiStatuses(targets, opts.log, { signal }));
+    ((targets: readonly PrCiStatusTarget[], signal?: AbortSignal) =>
+      fetchPrCiStatuses(targets, opts.log, { ghToken: opts.getGitHubToken?.(), signal }));
 
   const enrichPrStatus =
-    opts.enrichPrStatus ?? ((poll: CiPollResult, signal?: AbortSignal) => enrichPrCiStatus(poll, opts.log, { signal }));
+    opts.enrichPrStatus ??
+    ((poll: CiPollResult, signal?: AbortSignal) =>
+      enrichPrCiStatus(poll, opts.log, { ghToken: opts.getGitHubToken?.(), signal }));
 
   return {
     id: opts.id ?? 'cicd-check',
@@ -159,7 +164,10 @@ export function createCiCdCheckTaskSpec(opts: CiCdCheckTaskSpecOptions): TaskSpe
           ? await opts.fetchPrStatus(signal.repoFullName, signal.prNumber, ctx.signal)
           : signal.pollResult
             ? await enrichPrStatus(signal.pollResult, ctx.signal)
-            : await fetchPrCiStatus(signal.repoFullName, signal.prNumber, opts.log, { signal: ctx.signal });
+            : await fetchPrCiStatus(signal.repoFullName, signal.prNumber, opts.log, {
+                ghToken: opts.getGitHubToken?.(),
+                signal: ctx.signal,
+              });
         ctx.signal?.throwIfAborted();
         if (!pollResult) return;
 

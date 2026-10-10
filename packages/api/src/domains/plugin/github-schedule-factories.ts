@@ -74,6 +74,7 @@ interface IFactoryProjectorMin {
 export interface GitHubScheduleDeps extends ScheduleFactoryDeps {
   taskStore: ITaskStore;
   cicdRouter: CiCdRouter;
+  getGitHubToken?: () => string | undefined;
   fetchPrStatuses?: (
     targets: readonly PrCiStatusTarget[],
     signal?: AbortSignal,
@@ -198,6 +199,7 @@ const cicdCheckFactory: ScheduleFactory = {
       id: instanceId,
       taskStore: d.taskStore,
       cicdRouter: d.cicdRouter,
+      getGitHubToken: d.getGitHubToken,
       fetchPrStatuses: d.fetchPrStatuses,
       isSelfMerge: d.isSelfMerge,
       log: d.log,
