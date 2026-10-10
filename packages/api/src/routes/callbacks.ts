@@ -1028,7 +1028,6 @@ export interface CallbackRoutesOptions {
   agentRegistry?: { getAllEntries(): Map<string, unknown> };
   /** For post_message @mention → invocation triggering */
   router?: AgentRouter;
-  /** F293: shared per-target decision before callback dispatch admission. */
   invocationRecordStore?: IInvocationRecordStore;
   /** Durable child lifecycle truth. InvocationRegistry remains callback auth only. */
   turnExecutionStore?: Pick<ITurnExecutionStore, 'get'>;

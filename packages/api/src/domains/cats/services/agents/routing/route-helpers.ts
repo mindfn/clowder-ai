@@ -119,7 +119,6 @@ export interface RouteStrategyDeps {
   services: Record<string, AgentService>;
   unavailableServices?: ReadonlyMap<string, AgentRegistrationFailure>;
   invocationDeps: InvocationDeps;
-  /** F293: fresh advisory/rejection decision at each actual child boundary. */
   messageStore: IMessageStore;
   deliveryCursorStore?: DeliveryCursorStore;
   /** #80: Streaming draft persistence store */

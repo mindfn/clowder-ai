@@ -259,7 +259,6 @@ export function requestGenerationMessageSourceRefs(input: {
   readonly injectSystemPrompt: boolean;
   readonly hasContextHint: boolean;
   readonly hasStagingPrepend: boolean;
-  readonly hasRoutingContextProjection?: boolean;
   readonly hasMissionPrefix: boolean;
 }): RequestGenerationSourceRef[] {
   const refs: RequestGenerationSourceRef[] = [
@@ -275,9 +274,6 @@ export function requestGenerationMessageSourceRefs(input: {
       ? [{ owner: 'runtime_context' as const, ref: `context-management-hint:${input.invocationId}` }]
       : []),
     ...(input.hasStagingPrepend ? [{ owner: 'system_prompt' as const, ref: 'staging:adr-038' }] : []),
-    ...(input.hasRoutingContextProjection
-      ? [{ owner: 'runtime_context' as const, ref: `routing-context:${input.invocationId}` }]
-      : []),
     ...(input.hasMissionPrefix ? [{ owner: 'home_state' as const, ref: `thread-mission:${input.threadId}` }] : []),
     { owner: 'runtime_context', ref: `transcript-path-hints:${input.threadId}` },
   ];
@@ -1113,7 +1109,6 @@ export interface InvocationDeps {
   readonly collectiveContext?: () =>
     | import('../../../../plugin/builtin-runtime/collective-current-context.js').CollectiveCurrentContext
     | undefined;
-  /** F293: fresh owner-scoped sparse routing projection resolved for every provider generation. */
   /** F296 B3b-1: single owner of context epoch and cold/hot mode for provider-bound invocations. */
   readonly contextEpochOwner?: Pick<ContextEpochOwner, 'resolve' | 'observeCompaction' | 'confirmColdConsumed'>;
   /** Live project-hook auth readiness required before Claude can own a compaction sequence. */
@@ -3719,7 +3714,6 @@ export async function* invokeSingleCat(deps: InvocationDeps, params: InvocationP
                 injectSystemPrompt,
                 hasContextHint: Boolean(contextHintPrefix),
                 hasStagingPrepend: Boolean(stagingPrepend),
-                hasRoutingContextProjection: false,
                 hasMissionPrefix: Boolean(missionPrefix),
               });
               return {

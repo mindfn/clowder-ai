@@ -19,7 +19,7 @@ const ROOT = join(__dirname, '..');
 // Phase 1 manifest data (inline since the YAML was removed from tree)
 // ---------------------------------------------------------------------------
 
-// Only include the 46 Tier 1 pipeline hooks (not N2, M1, M2, H1-H3)
+// Only include the 45 active Tier 1 pipeline hooks (not N2, M1, M2, H1-H3)
 const TIER1_HOOKS = [
   // Session-init stage: L1-L7, S1-S13, B1, C1 (22 hooks)
   {
@@ -590,20 +590,6 @@ const TIER1_HOOKS = [
     governanceTier: 'immutable',
     inputs: ['constitutionalKnowledge'],
     userExplanation: '核心治理知识和决策框架',
-  },
-  {
-    id: 'D20',
-    name: '信号文章',
-    stage: 'per-turn',
-    order: 2000,
-    template: 'd20-signal-articles.md',
-    resolver: 'D20SignalArticlesResolver',
-    disableable: true,
-    safetyTier: 'readonly',
-    transparencyTier: 'opt-in-view',
-    governanceTier: 'human-gated',
-    inputs: ['signalArticles'],
-    userExplanation: '相关的信号/知识文章摘要',
   },
   {
     id: 'D21',
