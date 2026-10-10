@@ -4,6 +4,12 @@ import {
   getActionTerminalCapabilityForPredicateKind,
 } from './ActionTerminalPredicateCatalog.js';
 import type {
+  ActionCompletionAuthorization,
+  ActionFreshnessContext,
+  ActionFreshnessProviderAuthority,
+  ActionPredicateProvider,
+} from './action-predicate-authority.js';
+import type {
   ApprovedDelegate,
   TaskActionSnapshot,
   TaskActionTruthProvider,
@@ -14,6 +20,7 @@ import {
   type ActionCompletionVerdict,
   bindActionCompletionVerdict,
 } from './action-successor-completion-state-machine.js';
+import type { ActionSuccessorLease } from './action-successor-state-machine.js';
 import { canonicalizeActionSubjectRef } from './action-successor-state-machine.js';
 
 // Re-export for backward compatibility — consumers that imported from this
@@ -48,6 +55,8 @@ export type ActionFreshnessResolution =
        * holderThreadId. Tenant must still match exactly.
        */
       approvedDelegates?: ReadonlyArray<ApprovedDelegate>;
+      /** Host-selected write authority, stripped before persisting a lease. */
+      providerAuthority?: ActionFreshnessProviderAuthority;
     }
   | { status: 'mismatch'; reason: string; evidenceRef: string }
   | { status: 'insufficient'; reason: string };
@@ -79,6 +88,7 @@ export class ActionSubjectTruthResolver {
     >,
     private readonly taskActionTruthProvider?: TaskActionTruthProvider,
     private readonly taskApprovedDelegateProvider?: TaskApprovedDelegateProvider,
+    private readonly predicateProvider?: ActionPredicateProvider,
   ) {}
 
   async resolve(subjectRefInput: string, _now: number): Promise<ActionSubjectTruthResolution> {
@@ -147,7 +157,24 @@ export class ActionSubjectTruthResolver {
     );
   }
 
-  async resolveFreshness(predicate: CanonicalActionTerminalPredicate): Promise<ActionFreshnessResolution> {
+  async authorizeCompletion(
+    lease: ActionSuccessorLease,
+    actor: { catId: string },
+  ): Promise<ActionCompletionAuthorization> {
+    if (!lease.terminalPredicateProviderBinding || lease.terminalPredicate?.kind !== 'review_delivered')
+      return { status: 'insufficient', reason: 'bound review predicate unavailable' };
+    return (
+      this.predicateProvider?.authorizeCompletion(lease, actor) ?? {
+        status: 'insufficient',
+        reason: 'predicate provider authority unavailable',
+      }
+    );
+  }
+
+  async resolveFreshness(
+    predicate: CanonicalActionTerminalPredicate,
+    context?: ActionFreshnessContext,
+  ): Promise<ActionFreshnessResolution> {
     const capability = getActionTerminalCapabilityForPredicateKind(predicate.kind);
     if (capability.freshnessResolver === 'task_active_owner') {
       const taskId = taskIdFromSubject(predicate.subjectRef);
@@ -184,6 +211,8 @@ export class ActionSubjectTruthResolver {
         ...(approvedDelegates.length > 0 ? { approvedDelegates } : {}),
       };
     }
+    if (predicate.kind === 'review_delivered' && context && this.predicateProvider)
+      return this.predicateProvider.resolveFreshness(predicate, context);
     return { status: 'insufficient', reason: 'terminal predicate has no Host freshness resolver' };
   }
 }
