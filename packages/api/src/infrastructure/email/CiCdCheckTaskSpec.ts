@@ -7,12 +7,13 @@
  * Execute: fetch current PR/CI facts → route through F280 typed wait predicates.
  * Collection always advances; only a matched generation creates a connector wake.
  */
-import type { CatId, TaskItem } from '@cat-cafe/shared';
+import type { TaskItem } from '@cat-cafe/shared';
 import { parsePrSubjectKey } from '@cat-cafe/shared';
 import type { ITaskStore } from '../../domains/cats/services/stores/ports/TaskStore.js';
 import type { ExecuteContext, TaskSpec_P1 } from '../scheduler/types.js';
-import type { CiCdRouter, CiPollResult, CiRouteResult } from './CiCdRouter.js';
+import type { CiCdRouter, CiPollResult } from './CiCdRouter.js';
 import { ciStatusTargetKey, fetchPrCiStatuses, type PrCiStatusTarget } from './ci-status-batch-fetcher.js';
+import { enrichPrCiStatus, fetchPrCiStatus } from './ci-status-fetcher.js';
 
 /** Signal carries the TaskItem so execute can access threadId/catId/userId */
 export interface CiCdCheckSignal {
@@ -36,6 +37,8 @@ export interface CiCdCheckTaskSpecOptions {
     targets: readonly PrCiStatusTarget[],
     signal?: AbortSignal,
   ) => Promise<ReadonlyMap<string, CiPollResult | null>>;
+  /** PR-local diagnostic seam; cancellation must not affect the batch snapshot. */
+  readonly enrichPrStatus?: (poll: CiPollResult, signal?: AbortSignal) => Promise<CiPollResult>;
   readonly log: {
     info: (...args: unknown[]) => void;
     error: (...args: unknown[]) => void;
@@ -94,6 +97,9 @@ export function createCiCdCheckTaskSpec(opts: CiCdCheckTaskSpecOptions): TaskSpe
     opts.fetchPrStatuses ??
     ((targets: readonly PrCiStatusTarget[], signal?: AbortSignal) => fetchPrCiStatuses(targets, opts.log, { signal }));
 
+  const enrichPrStatus =
+    opts.enrichPrStatus ?? ((poll: CiPollResult, signal?: AbortSignal) => enrichPrCiStatus(poll, opts.log, { signal }));
+
   return {
     id: opts.id ?? 'cicd-check',
     profile: 'poller',
@@ -151,7 +157,9 @@ export function createCiCdCheckTaskSpec(opts: CiCdCheckTaskSpecOptions): TaskSpe
         ctx.signal?.throwIfAborted();
         const pollResult = opts.fetchPrStatus
           ? await opts.fetchPrStatus(signal.repoFullName, signal.prNumber, ctx.signal)
-          : signal.pollResult;
+          : signal.pollResult
+            ? await enrichPrStatus(signal.pollResult, ctx.signal)
+            : await fetchPrCiStatus(signal.repoFullName, signal.prNumber, opts.log, { signal: ctx.signal });
         ctx.signal?.throwIfAborted();
         if (!pollResult) return;
 

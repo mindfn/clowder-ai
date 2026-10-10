@@ -104,6 +104,26 @@ export async function fetchPrCiStatus(
   };
 }
 
+/** Failure details are PR-local work; never hold the shared CI fact snapshot. */
+export async function enrichPrCiStatus(
+  poll: CiPollResult,
+  log: MinimalLog,
+  options: FetchPrCiStatusOptions = {},
+): Promise<CiPollResult> {
+  options.signal?.throwIfAborted();
+  if (poll.prState !== 'open' || poll.aggregateBucket !== 'fail') return poll;
+  const checks = (await fetchRequiredFailingChecks(poll.repoFullName, poll.prNumber, options)) ?? [...poll.checks];
+  const enriched = await enrichGitHubExecutionFailures({
+    signal: options.signal,
+    repoFullName: poll.repoFullName,
+    headSha: poll.headSha,
+    checks,
+    ghApiJson: (path) => ghApiJson(path, options),
+    warn: (message) => log.warn(message),
+  });
+  return { ...poll, checks: enriched };
+}
+
 async function fetchCheckDetails(
   repoFullName: string,
   prNumber: number,
