@@ -316,7 +316,6 @@ import {
 } from './infrastructure/connectors/connector-gateway-bootstrap.js';
 import { restartConnectorGateway } from './infrastructure/connectors/connector-gateway-lifecycle.js';
 import { createConnectorReloadSubscriber } from './infrastructure/connectors/connector-reload-subscriber.js';
-import { fetchPrCiStatuses, type PrCiStatusTarget } from './infrastructure/email/ci-status-batch-fetcher.js';
 import { IssueCommentRouter } from './infrastructure/email/IssueCommentRouter.js';
 import { CiCdRouter, ConflictRouter, fetchPrCiStatus, ReviewFeedbackRouter } from './infrastructure/email/index.js';
 import type { ReviewFeedbackPrMetadata } from './infrastructure/email/ReviewFeedbackTaskSpec.js';
@@ -8195,8 +8194,7 @@ async function main(): Promise<void> {
         taskStore,
         threadStore,
         cicdRouter,
-        fetchPrStatuses: (targets: readonly PrCiStatusTarget[], signal?: AbortSignal) =>
-          fetchPrCiStatuses(targets, app.log, { ghToken: getGitHubToken(), signal }),
+        getGitHubToken,
         conflictRouter,
         reviewFeedbackRouter,
         checkMergeable,

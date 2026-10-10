@@ -1,14 +1,10 @@
 /** F304: batched GitHub GraphQL reader for one cicd-check tick. */
 import { GitHubRateLimitError } from '../github/request-budget.js';
 import type { CiCheckDetail, CiPollResult } from './ci-cd-contract.js';
-import { enrichGitHubExecutionFailures } from './ci-execution-failure.js';
 import {
   computeAggregateBucket,
   executeGh,
   type FetchPrCiStatusOptions,
-  fetchPrCiStatus,
-  fetchRequiredFailingChecks,
-  ghApiJson,
   normalizeBucket,
   normalizePrState,
 } from './ci-status-fetcher.js';
@@ -161,13 +157,7 @@ function mapGraphQlCheck(context: GraphQlRollupContext): CiCheckDetail {
   };
 }
 
-async function graphQlPrToPollResult(
-  ref: BatchTargetRef,
-  pr: GraphQlPr,
-  log: MinimalLog,
-  options: FetchPrCiStatusOptions,
-): Promise<CiPollResult | null> {
-  options.signal?.throwIfAborted();
+function graphQlPrToPollResult(ref: BatchTargetRef, pr: GraphQlPr, log: MinimalLog): CiPollResult | null {
   const key = ciStatusTargetKey(ref.repoFullName, ref.prNumber);
   const prState = normalizePrState(pr.state, pr.mergedAt);
   if (prState === 'merged' || prState === 'closed') {
@@ -184,8 +174,8 @@ async function graphQlPrToPollResult(
 
   const rollupContext = pr.commits?.nodes?.at(-1)?.commit?.statusCheckRollup?.contexts;
   if (rollupContext?.pageInfo?.hasNextPage) {
-    log.warn(`[ci-status] ${key} has more than 100 rollup contexts; using the exact single-PR fallback`);
-    return fetchPrCiStatus(ref.repoFullName, ref.prNumber, log, options);
+    log.warn(`[ci-status] ${key} has more than 100 rollup contexts; deferring its exact read to its work item`);
+    return null;
   }
   const contexts = graphQlRollup(pr);
   const rollup = contexts.map((context) => ({
@@ -194,18 +184,7 @@ async function graphQlPrToPollResult(
     __typename: context.__typename,
   }));
   const aggregateBucket = computeAggregateBucket(rollup);
-  let checks = contexts.map(mapGraphQlCheck);
-  if (aggregateBucket === 'fail') {
-    checks = (await fetchRequiredFailingChecks(ref.repoFullName, ref.prNumber, options)) ?? checks;
-    checks = await enrichGitHubExecutionFailures({
-      signal: options.signal,
-      repoFullName: ref.repoFullName,
-      headSha: pr.headRefOid,
-      checks,
-      ghApiJson: (path) => ghApiJson(path, options),
-      warn: (message) => log.warn(message),
-    });
-  }
+  const checks = contexts.map(mapGraphQlCheck);
   return {
     repoFullName: ref.repoFullName,
     prNumber: ref.prNumber,
@@ -219,8 +198,8 @@ async function graphQlPrToPollResult(
 
 /**
  * One GraphQL process reads every tracked PR's state and status rollup.
- * Failed checks still use the existing typed REST enrichment; ordinary pass /
- * pending polls no longer spawn one or two `gh` processes per tracked PR.
+ * Admission only reads base facts. Exact pagination and typed failure diagnostics
+ * belong to the individual PR work item, never the shared batch deadline.
  */
 export async function fetchPrCiStatuses(
   targets: readonly PrCiStatusTarget[],
@@ -256,7 +235,7 @@ export async function fetchPrCiStatuses(
     options.signal?.throwIfAborted();
     const pr = parsed.data?.[ref.repoAlias]?.[ref.prAlias];
     if (!pr?.headRefOid) continue;
-    results.set(ciStatusTargetKey(ref.repoFullName, ref.prNumber), await graphQlPrToPollResult(ref, pr, log, options));
+    results.set(ciStatusTargetKey(ref.repoFullName, ref.prNumber), graphQlPrToPollResult(ref, pr, log));
   }
   return results;
 }
