@@ -1,0 +1,17 @@
+[
+  {
+    "file": "f117-routing-human-recovery-red.log.gz",
+    "sha256": "8114c464c535103cc1b8c842461035fcf5dc78eebf14f7356bd7ace3e9d5173d",
+    "uncompressedSha256": "bd5068de54ca338fb2a92634c4b3a9a2617b54c6f3761f06982137910a7b47b8"
+  },
+  {
+    "file": "f117-routing-human-recovery-green.log.gz",
+    "sha256": "605623cccdc9910eaece723b3bc64ad7b3ece4486c1ae3c032c65fd053331e86",
+    "uncompressedSha256": "b45b72008e64e91f211145816192cb6007c71ec6f655ecb2a84c9f1131d65f62"
+  },
+  {
+    "file": "f117-ci-followup-related-green.log.gz",
+    "sha256": "84cad6ba4a9006320aed6c852566b98b0d06d845f9838162c05f78c1c00769f0",
+    "uncompressedSha256": "4b1ab60926ccffa0e524139ce2bfa0f4ffeca2753ce4ace53142b5148ee0d0b0"
+  }
+]

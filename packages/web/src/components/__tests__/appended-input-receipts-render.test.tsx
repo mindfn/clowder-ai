@@ -7,7 +7,9 @@ import { focusLineageMessage } from '@/utils/focusLineageMessage';
 import { AppendedInputReceipts } from '../AppendedInputReceipts';
 import { resetAppTooltipWarmState } from '../AppTooltip';
 
-vi.mock('@/hooks/useCoCreatorConfig', () => ({ useCoCreatorConfig: () => ({ name: 'lang' }) }));
+vi.mock('@/hooks/useCoCreatorConfig', () => ({
+  useCoCreatorConfig: () => ({ name: 'lang', color: { primary: '#B05F45' } }),
+}));
 
 vi.mock('@/utils/focusLineageMessage', () => ({ focusLineageMessage: vi.fn() }));
 
@@ -117,8 +119,12 @@ describe('AppendedInputReceipts: expand in place, jump separately', () => {
         <AppendedInputReceipts
           response={responseFor(sources)}
           timelineMessages={sources}
-          getCatById={() =>
-            ({ id: 'opus', displayName: '布偶猫', color: { primary: '#9B7EBD', secondary: '#E8DFF5' } }) as CatData
+          getCatById={(id) =>
+            ({
+              id,
+              displayName: id === 'opus' ? '布偶猫' : '缅因猫',
+              color: { primary: id === 'opus' ? '#9B7EBD' : '#659D62', secondary: '#E8DFF5' },
+            }) as CatData
           }
         />,
       );
@@ -137,7 +143,7 @@ describe('AppendedInputReceipts: expand in place, jump separately', () => {
     expect(status?.dataset.appendDeliveryState).toBe('unavailable');
     expect(status?.getAttribute('aria-label')).toBe('lang · 已投递 · 补充一条消息');
     expect(status?.querySelector('.animate-pulse')).toBeNull();
-    expect(status?.querySelector('span')?.style.backgroundColor).toBe('var(--color-opus-primary)');
+    expect(status?.querySelector('span')?.style.backgroundColor).toBe('rgb(176, 95, 69)');
     vi.useFakeTimers();
     const enter = new Event('pointerover', { bubbles: true });
     Object.defineProperty(enter, 'pointerType', { value: 'mouse' });
@@ -148,6 +154,24 @@ describe('AppendedInputReceipts: expand in place, jump separately', () => {
     expect(document.querySelector('[role="tooltip"]')?.textContent).toBe('lang · 已投递补充一条消息');
     expect(row('unsupported').getAttribute('title')).toBeNull();
     expect(row('unsupported').querySelectorAll('button')).toHaveLength(2);
+  });
+
+  it('colors each receipt by its source identity rather than the response target', async () => {
+    const member = {
+      ...source('member-source', '来自成员的补充', 5),
+      from: { kind: 'agent', catId: 'codex' } as const,
+    };
+    const external = {
+      ...source('external-source', '来自事件的补充', 6),
+      from: { kind: 'external', connectorId: 'unknown-connector', sender: { id: 'bot' } } as const,
+    };
+    await render([member, external]);
+    expect(row('member-source').querySelector<HTMLElement>('button span')?.style.backgroundColor).toBe(
+      'rgb(101, 157, 98)',
+    );
+    expect(row('external-source').querySelector<HTMLElement>('button span')?.style.backgroundColor).toBe(
+      'rgb(100, 116, 139)',
+    );
   });
 
   it('joins only the exact target and stops animation when its response terminates', async () => {

@@ -6,7 +6,7 @@ import { MessageStore } from '../src/domains/cats/services/stores/ports/MessageS
 import { commitFailedResponseAndEnqueueA2ACaller } from '../src/routes/callback-a2a-trigger.ts';
 
 // Real production failed-response ingress, MessageStore transaction and Queue.
-// The actual-send catalog seam is deterministic. Not Redis/provider/routeSerial.
+// A legacy availability resolver is a spy only; ordinary failure return must not consult it.
 function fixture({ rejected = false } = {}) {
   const ledger = new InMemoryQueueLedgerStore();
   const queue = new InvocationQueue(ledger);
@@ -97,7 +97,7 @@ test('failed response and exact predecessor queue reference commit together, wit
   assert.equal(row.execution.a2aTriggerMessageId, f.source.id);
   assert.deepEqual(f.business, []);
   assert.equal(f.drains.length, 1);
-  assert.deepEqual(f.checks[0].targetCatIds, ['codex']);
+  assert.deepEqual(f.checks, [], 'failure return does not consult global availability');
 });
 
 test('replaying the same failed result is idempotent; altered result cannot mutate the won identity', async () => {
@@ -130,13 +130,17 @@ test('failed ledger commit cannot publish a terminal response, drain or reporter
   assert.deepEqual(f.business, []);
 });
 
-test('fresh routing rejection commits only the failed History result, never inventing another route', async () => {
+test('legacy routing rejection cannot suppress the exact failed History and predecessor wake', async () => {
   const f = fixture({ rejected: true });
   const result = await commitFailedResponseAndEnqueueA2ACaller(f.deps, f.opts);
   assert.equal(result.lifecycle.status, 'failed');
-  assert.deepEqual(await f.queue.listAllDurable(f.source.threadId), []);
-  assert.equal(f.receipts.length, 1);
-  assert.deepEqual(f.drains, []);
+  const [row] = await f.queue.listAllDurable(f.source.threadId);
+  assert.equal(row.sourceCategory, 'a2a_failure');
+  assert.deepEqual(row.targets, ['codex']);
+  assert.equal(row.payload.messageId, f.source.id);
+  assert.equal(f.receipts.length, 0);
+  assert.deepEqual(f.checks, []);
+  assert.deepEqual(f.drains, [f.source.threadId]);
   assert.deepEqual(f.business, []);
 });
 

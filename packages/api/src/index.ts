@@ -385,10 +385,8 @@ import { avatarsRoutes } from './routes/avatars.js';
 import {
   appendA2ASourceWithLedgerAdmission,
   commitRecoveredFailedResponse,
-  emitA2ARoutingPreflightReceipts,
   enqueueA2ATargets,
   planA2AFanoutAdmission,
-  preflightA2ATargets,
 } from './routes/callback-a2a-trigger.js';
 import { CallbackAuthSystemMessageNotifier } from './routes/callback-auth-system-message.js';
 import {
@@ -2719,9 +2717,6 @@ async function main(): Promise<void> {
     hookAuthenticationReady: sessionHookAuthenticationReady,
     claudeCompactionHooks,
     presentationLedger,
-    ...(routingContextRuntime ? { routingContextPromptProjection: routingContextRuntime.promptProjection } : {}),
-    ...(routingContextRuntime ? { routingDispatchPreflight: routingContextRuntime.dispatchPreflight } : {}),
-    ...(routingContextRuntime ? { routingDispatchSignalObserver: routingContextRuntime.dispatchSignalAdapter } : {}),
     runtimeSessionStore,
     transcriptWriter,
     transcriptReader,
@@ -2870,19 +2865,10 @@ async function main(): Promise<void> {
       : [];
     const existingTargets = new Set(existingEntries.flatMap((entry) => entry.targets));
     const freshTargetCatIds = targetCatIds.filter((catId) => !existingTargets.has(catId));
-    const routingPreflight = await preflightA2ATargets(
-      routingContextRuntime ? { routingDispatchPreflight: routingContextRuntime.dispatchPreflight } : {},
-      {
-        targetCats: freshTargetCatIds,
-        content: proposal.content,
-        userId: proposal.ownerUserId,
-      },
-    );
-    const routingPreflightRejected = routingPreflight.acceptedTargetCats.length !== freshTargetCatIds.length;
     const planned = planA2AFanoutAdmission(
       { invocationQueue },
       {
-        targetCats: routingPreflightRejected ? [] : routingPreflight.acceptedTargetCats,
+        targetCats: freshTargetCatIds,
         requestedTargetCats: targetCatIds,
         content: proposal.content,
         userId: proposal.ownerUserId,
@@ -2897,9 +2883,7 @@ async function main(): Promise<void> {
     const acceptedFresh = new Set(planned.acceptedTargetCats);
     const admissionPlan = {
       requestedTargetCats: targetCatIds,
-      acceptedTargetCats: targetCatIds.filter(
-        (catId) => existingTargets.has(catId) || (!routingPreflightRejected && acceptedFresh.has(catId)),
-      ),
+      acceptedTargetCats: targetCatIds.filter((catId) => existingTargets.has(catId) || acceptedFresh.has(catId)),
       streakTargetCats: planned.streakTargetCats,
       ...(planned.stop ? { stop: planned.stop } : {}),
     };
@@ -2917,14 +2901,6 @@ async function main(): Promise<void> {
     const persisted = await classifyPersistedCarrier(storedMsg);
     const persistedState = persisted.state;
     if (persistedState.outcome === 'conflict') {
-      emitA2ARoutingPreflightReceipts(
-        { socketManager: actionSocketManager },
-        {
-          decision: routingPreflight.decision,
-          receiptCatId: senderCatId,
-          threadId: proposal.targetThreadId,
-        },
-      );
       return {
         outcome: 'terminal_failure',
         reason: persistedState.reason,
@@ -2947,7 +2923,6 @@ async function main(): Promise<void> {
           ...(deliveryCursorStore ? { deliveryCursorStore } : {}),
           queueProcessor,
           invocationQueue,
-          ...(routingContextRuntime ? { routingDispatchPreflight: routingContextRuntime.dispatchPreflight } : {}),
           log: app.log,
         },
         {
@@ -2960,7 +2935,6 @@ async function main(): Promise<void> {
           callerCatId: senderCatId,
           actionSuccessorFence: fence,
           preplannedAdmission: admissionPlan,
-          ...(routingPreflight.decision ? { routingPreflightDecision: routingPreflight.decision } : {}),
           ...(atomicAdmission.preAdmittedEntries
             ? {
                 preAdmittedEntries: atomicAdmission.preAdmittedEntries,
@@ -3131,7 +3105,6 @@ async function main(): Promise<void> {
               messageStore,
               invocationQueue,
               log: app.log,
-              ...(routingContextRuntime ? { routingDispatchPreflight: routingContextRuntime.dispatchPreflight } : {}),
             },
             response,
             patch,
@@ -5153,7 +5126,6 @@ async function main(): Promise<void> {
     profileRepository,
     agentRegistry,
     router,
-    ...(routingContextRuntime ? { routingDispatchPreflight: routingContextRuntime.dispatchPreflight } : {}),
     invocationRecordStore,
     turnExecutionStore,
     invocationTracker,
@@ -6318,7 +6290,6 @@ async function main(): Promise<void> {
               ...(deliveryCursorStore ? { deliveryCursorStore } : {}),
               ...(queueProcessor ? { queueProcessor } : {}),
               ...(invocationQueue ? { invocationQueue } : {}),
-              ...(routingContextRuntime ? { routingDispatchPreflight: routingContextRuntime.dispatchPreflight } : {}),
               log: app.log,
             },
             {
@@ -8496,19 +8467,9 @@ async function main(): Promise<void> {
               ...(deliveryCursorStore ? { deliveryCursorStore } : {}),
               queueProcessor,
               invocationQueue,
-              ...(routingContextRuntime ? { routingDispatchPreflight: routingContextRuntime.dispatchPreflight } : {}),
               log: app.log,
             };
-            // Routing and fan-out are decided before anything is written. A carrier exists only to
-            // carry work, so a refused owner must leave no queued Message behind to be re-found.
-            const routingPreflight = await preflightA2ATargets(a2aDeps, {
-              targetCats: [request.targetCatId],
-              content: request.message.content,
-              userId: request.userId,
-            });
-            if (!routingPreflight.acceptedTargetCats.includes(request.targetCatId)) {
-              return { outcome: 'not_admitted' };
-            }
+            // Exact fan-out and action provenance are decided before atomic admission.
             const plan = planA2AFanoutAdmission(
               { invocationQueue },
               {
@@ -8549,7 +8510,6 @@ async function main(): Promise<void> {
                 callerCatId: request.callerCatId,
                 actionSuccessorFence: request.actionSuccessorFence,
                 preplannedAdmission: plan,
-                ...(routingPreflight.decision ? { routingPreflightDecision: routingPreflight.decision } : {}),
                 ...(admission.preAdmittedEntries
                   ? {
                       preAdmittedEntries: admission.preAdmittedEntries,

@@ -16,7 +16,6 @@ import {
   type OutputCommitDecision,
   type QueueTerminalConsumptionWitness,
   type RichBlock,
-  type RoutingPreflightDecisionV1,
   resolveWorkflowSopSkill,
 } from '@cat-cafe/shared';
 import type { Span } from '@opentelemetry/api';
@@ -129,11 +128,6 @@ import { sharedEventStore, sharedNudgeCooldown } from '../../../../memory/entity
 import type { PushRecallPresentation } from '../../../../memory/f200-types.js';
 import type { PreparedProactiveMemoryNudge } from '../../../../memory/ProactiveMemoryNudgeService.js';
 import { mergePushRecallPresentations, triggerRecallCorrelation } from '../../../../memory/recall-correlation-hook.js';
-import {
-  isUserVisibleRoutingPreflightReceipt,
-  preflightRoutingDispatch,
-  routingDispatchPreflightReceipt,
-} from '../../../../routing-context/RoutingDispatchPreflightPort.js';
 import { assembleContext } from '../../context/ContextAssembler.js';
 import {
   buildInvocationContext,
@@ -234,8 +228,6 @@ import {
   toStoredToolEvent,
   upsertMaxBoundary,
 } from './route-helpers.js';
-import { isRoutingOwnerAttempt } from './routing-owner-attempt.js';
-import { routingPreflightNotice } from './routing-preflight-notice.js';
 import { appendThinkingChunk, renderThinkingChunks } from './thinking-chunks.js';
 import { withTimeoutDiagnostics } from './timeout-diagnostics-metadata.js';
 import { detectMatchedVerdictKeyword, shouldWarnVerdictWithoutPass } from './verdict-detect.js';
@@ -812,7 +804,7 @@ export async function* routeSerial(
         preparationTimings.length = 0;
       }
       let stopGateRemedialAttempted = false;
-      let routingDispatchPreflightDecision: RoutingPreflightDecisionV1 | undefined;
+
       // F-parallel-cancel: per-cat signal — canceling one cat skips ONLY that cat, not the
       // whole worklist. force-reset/cancelAll aborts every cat's controller, so all entries
       // skip = equivalent to stopping. Using the shared primaryController.signal made
@@ -822,49 +814,8 @@ export async function* routeSerial(
         index++;
         continue;
       }
-      if (deps.routingDispatchPreflight) {
-        routingDispatchPreflightDecision = await preflightRoutingDispatch(deps.routingDispatchPreflight, {
-          ownerId: userId,
-          targetCatIds: [catId],
-          ...(index < targetCats.length && isRoutingOwnerAttempt(options) ? { ownerRequestedAttempt: true } : {}),
-          ...(options.routingContextIntent ? { intent: options.routingContextIntent } : {}),
-        });
-        const receipt = routingDispatchPreflightReceipt(routingDispatchPreflightDecision, catId);
-        // Only a rejected send changes user-visible behavior. Warned decisions
-        // remain available through routing evidence/telemetry without adding a
-        // synthetic chat message for an unchanged target.
-        if (isUserVisibleRoutingPreflightReceipt(receipt)) {
-          const notice = await routingPreflightNotice(
-            deps,
-            options,
-            routingDispatchPreflightDecision,
-            catId,
-            threadId,
-            index < targetCats.length,
-          );
-          if (notice) yield notice;
-        }
-        if (receipt.target.disposition === 'rejected') {
-          if (index < targetCats.length) {
-            const { automaticRetryAt } = receipt.target;
-            options.onRoutingDispatchRejected?.({
-              catId,
-              ...(automaticRetryAt !== undefined ? { automaticRetryAt } : {}),
-            });
-          }
-          yield {
-            type: 'error',
-            catId,
-            errorCode: 'routing_preflight_rejected',
-            error: '本次未执行：成员当前不可用。恢复后可重试原消息。',
-            timestamp: Date.now(),
-          };
-          index++;
-          continue;
-        }
-      }
+
       // F148 OQ-2: briefing→invocation link + context eval
-      checkpointPreparation('routing_preflight');
       let briefingMessageId: string | undefined;
       let briefingCoverageMap: import('./context-transport.js').CoverageMap | undefined;
       const currentPushRecallPresentations: PushRecallPresentation[] = [];
@@ -1935,8 +1886,6 @@ export async function* routeSerial(
         onRemoteExecutionDispatched: remoteCancellation.onDispatched,
         ...(options.liveCompanion && index === 0 ? { liveCompanion: options.liveCompanion } : {}),
         ...(options.routeIntent ? { routeIntent: options.routeIntent } : {}),
-        ...(options.routingContextIntent ? { routingContextIntent: options.routingContextIntent } : {}),
-        ...(routingDispatchPreflightDecision ? { routingDispatchPreflightDecision } : {}),
         catId,
         service,
         capacitySnapshot,
@@ -2578,38 +2527,6 @@ export async function* routeSerial(
         hasLocalCoCreatorLineStartMention: boolean;
         streamEvents: AgentMessage[];
       }> => {
-        let remedialRoutingPreflightNotice: AgentMessage | undefined;
-        let remedialRoutingDispatchPreflightDecision: RoutingPreflightDecisionV1 | undefined;
-        if (deps.routingDispatchPreflight) {
-          remedialRoutingDispatchPreflightDecision = await preflightRoutingDispatch(deps.routingDispatchPreflight, {
-            ownerId: userId,
-            targetCatIds: [catId],
-            ...(options.routingContextIntent ? { intent: options.routingContextIntent } : {}),
-          });
-          const receipt = routingDispatchPreflightReceipt(remedialRoutingDispatchPreflightDecision, catId);
-          if (isUserVisibleRoutingPreflightReceipt(receipt)) {
-            remedialRoutingPreflightNotice = await routingPreflightNotice(
-              deps,
-              options,
-              remedialRoutingDispatchPreflightDecision,
-              catId,
-              threadId,
-              false,
-            );
-          }
-          if (receipt.target.disposition === 'rejected') {
-            stopGateRemedialAttempted = true;
-            return {
-              storedContent: originalStoredContentBeforeRemedial,
-              routingContent: '',
-              allRichBlocks: originalRichBlocksBeforeRemedial,
-              a2aMentions: [],
-              hasCoCreatorLineStartMention: false,
-              hasLocalCoCreatorLineStartMention: false,
-              streamEvents: remedialRoutingPreflightNotice ? [remedialRoutingPreflightNotice] : [],
-            };
-          }
-        }
         stopGateRemedialAttempted = true;
         const originalVisibleInvocationIdBeforeRemedial = ownInvocationId;
         const originalDeferredVoiceInvocationIdBeforeRemedial = deferredVoiceInvocationId;
@@ -2640,9 +2557,7 @@ export async function* routeSerial(
         callbackPosts.reset();
         ownInvocationId = undefined;
 
-        const remedialStreamEvents: AgentMessage[] = remedialRoutingPreflightNotice
-          ? [remedialRoutingPreflightNotice]
-          : [];
+        const remedialStreamEvents: AgentMessage[] = [];
         const remedialStripper = createLeakedToolCallStreamStripper();
         const remedialService = getService(deps.services, catId, deps.unavailableServices);
         const resolvedRemedialCapacitySnapshot = await resolveInvocationCapacitySnapshot({
@@ -2705,10 +2620,6 @@ export async function* routeSerial(
         for await (const remedialMsg of invokeSingleCat(deps.invocationDeps, {
           onRemoteExecutionDispatched: remoteCancellation.onDispatched,
           ...(options.routeIntent ? { routeIntent: options.routeIntent } : {}),
-          ...(options.routingContextIntent ? { routingContextIntent: options.routingContextIntent } : {}),
-          ...(remedialRoutingDispatchPreflightDecision
-            ? { routingDispatchPreflightDecision: remedialRoutingDispatchPreflightDecision }
-            : {}),
           catId,
           service: remedialService,
           capacitySnapshot: remedialCapacitySnapshot,

@@ -14,6 +14,7 @@ export async function failedResponseFixture(
 ) {
   const queue = new InvocationQueue(ledger);
   const drains = [];
+  const preflightCalls = [];
   const input = await messages.append({
     from: { kind: 'agent', catId: 'codex' },
     userId: 'owner',
@@ -83,18 +84,21 @@ export async function failedResponseFixture(
     socketManager: { emitToUser() {}, broadcastAgentMessage() {} },
     log: { info() {}, warn() {}, error() {} },
     routingDispatchPreflight: {
-      preflight: async (request) => ({
-        v: 1,
-        ownerId: request.ownerId,
-        observedAt: 120,
-        resolverState: 'ready',
-        targets: request.targetCatIds.map((targetCatId) => ({
-          targetCatId,
-          disposition: rejected ? 'rejected' : 'accepted',
-          reasons: [],
-          alternatives: [],
-        })),
-      }),
+      preflight: async (request) => {
+        preflightCalls.push(request);
+        return {
+          v: 1,
+          ownerId: request.ownerId,
+          observedAt: 120,
+          resolverState: 'ready',
+          targets: request.targetCatIds.map((targetCatId) => ({
+            targetCatId,
+            disposition: rejected ? 'rejected' : 'accepted',
+            reasons: [],
+            alternatives: [],
+          })),
+        };
+      },
     },
   };
   function recovery({ messageStore = messages, queueOwner = queue, afterCommit } = {}) {
@@ -124,5 +128,5 @@ export async function failedResponseFixture(
         ),
     });
   }
-  return { messages, turns, ledger, queue, input, response, deps, drains, recovery };
+  return { messages, turns, ledger, queue, input, response, deps, drains, recovery, preflightCalls };
 }

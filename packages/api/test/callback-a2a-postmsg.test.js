@@ -612,7 +612,7 @@ describe('F052: cross-thread A2A mention routing', () => {
     queueProcessor = { async requestDrain() {} };
   });
 
-  async function createAppWithThreadStore() {
+  async function createAppWithThreadStore(opts = {}) {
     const { callbacksRoutes } = await import('../dist/routes/callbacks.js');
     const app = Fastify();
     await app.register(callbacksRoutes, {
@@ -624,6 +624,7 @@ describe('F052: cross-thread A2A mention routing', () => {
       invocationRecordStore,
       invocationQueue,
       queueProcessor,
+      ...opts,
     });
     return app;
   }
@@ -650,6 +651,64 @@ describe('F052: cross-thread A2A mention routing', () => {
     const crossMsg = msgs.find((m) => m.content.includes('跨线程任务'));
     assert.ok(crossMsg, 'cross-thread message should be stored');
     assert.ok(crossMsg.mentions.includes('codex'), 'cross-thread @codex should be in mentions');
+  });
+
+  test('cross-thread same-member source enters durable Queue without consulting availability', async () => {
+    const retryAt = Date.now() + 300_000;
+    let availabilityChecks = 0;
+    const app = await createAppWithThreadStore({
+      routingDispatchPreflight: {
+        async preflight(input) {
+          availabilityChecks++;
+          return {
+            v: 1,
+            ownerId: input.ownerId,
+            observedAt: Date.now(),
+            resolverState: 'fresh',
+            targets: input.targetCatIds.map((targetCatId) => ({
+              targetCatId,
+              disposition: 'rejected',
+              automaticRetryAt: retryAt,
+              reasons: [
+                { code: 'provider_timeout', summary: 'another turn timed out', sourceRefs: ['turn:other-thread'] },
+              ],
+              alternatives: [],
+            })),
+          };
+        },
+      },
+    });
+    const source = await threadStore.create('user-1', 'Source');
+    const target = await threadStore.create('user-1', 'Target');
+    const { invocationId, callbackToken } = await registry.create('user-1', 'codex', source.id);
+    const request = {
+      method: 'POST',
+      url: '/api/callbacks/post-message',
+      headers: { 'x-invocation-id': invocationId, 'x-callback-token': callbackToken },
+      payload: {
+        threadId: target.id,
+        targetCats: ['codex'],
+        effectClass: 'coordinate',
+        content: 'Read the existing provider boundary',
+        clientMessageId: 'cross-thread-temporary-refusal',
+      },
+    };
+    const response = await app.inject(request);
+    assert.equal(response.statusCode, 200);
+    const body = response.json();
+    assert.deepEqual(body.routed, ['codex'], 'requested recipient owns the durable wake');
+    assert.equal(availabilityChecks, 0, 'message sending does not resolve availability');
+    const entries = invocationQueue.list(target.id, 'user-1');
+    assert.equal(entries.length, 1);
+    assert.deepEqual(entries[0].targets, ['codex']);
+    assert.equal(entries[0].payload.messageId, body.messageId);
+    const stored = await messageStore.getById(body.messageId);
+    assert.equal(stored.extra.crossPost.sourceThreadId, source.id);
+    assert.equal(stored.from.catId, 'codex');
+    assert.equal(mockRouter.getExecutions().length, 0, 'admission uses the normal Queue drain');
+    await app.inject(request);
+    assert.equal(invocationQueue.list(target.id, 'user-1').length, 1, 'retry does not duplicate the source');
+    await app.close();
   });
 
   test('same-thread @codex from codex still filtered (self-reference)', async () => {

@@ -512,11 +512,8 @@ export interface AgentRouterOptions {
   /** F296 B3b-2: shared provider-presentation delivery ledger. */
   presentationLedger?: PresentationLedger;
   /** F293: owner-scoped sparse routing projection consumed by provider generation. */
-  routingContextPromptProjection?: import('../../../../routing-context/RoutingContextPromptProjector.js').RoutingContextPromptProjectionPort;
   /** F293: shared actual-send preflight over the same resolver/catalog graph. */
-  routingDispatchPreflight?: import('../../../../routing-context/RoutingDispatchPreflightPort.js').RoutingDispatchPreflightPort;
   /** F293: durable dispatch terminal observer over the same routing signal graph. */
-  routingDispatchSignalObserver?: import('../../../../routing-context/RoutingDispatchSignalContract.js').RoutingDispatchTerminalObserver;
   /** F276: terminal disposition authority for person-memory write opportunities. */
   writeOpportunityTerminalLedger?: import('../invocation/invoke-single-cat.js').InvocationDeps['writeOpportunityTerminalLedger'];
   /** F276: reservation and delivery authority for person-memory write opportunities. */
@@ -623,9 +620,6 @@ export class AgentRouter {
   private claudeProjectHookCarrierReady: boolean | ((projectRoot: string) => boolean);
   private claudeCompactionHooks: ClaudeCompactionHooksFactory | undefined;
   private presentationLedger: PresentationLedger | undefined;
-  private routingContextPromptProjection?: import('../../../../routing-context/RoutingContextPromptProjector.js').RoutingContextPromptProjectionPort;
-  private routingDispatchPreflight?: import('../../../../routing-context/RoutingDispatchPreflightPort.js').RoutingDispatchPreflightPort;
-  private routingDispatchSignalObserver?: import('../../../../routing-context/RoutingDispatchSignalContract.js').RoutingDispatchTerminalObserver;
   private writeOpportunityTerminalLedger?: import('../invocation/invoke-single-cat.js').InvocationDeps['writeOpportunityTerminalLedger'];
   private writeOpportunityDeliveryStore?: import('../invocation/invoke-single-cat.js').InvocationDeps['writeOpportunityDeliveryStore'];
   private runtimeSessionStore: IRuntimeSessionStore | undefined;
@@ -780,9 +774,6 @@ export class AgentRouter {
     this.claudeProjectHookCarrierReady = options.claudeProjectHookCarrierReady ?? false;
     this.claudeCompactionHooks = options.claudeCompactionHooks;
     this.presentationLedger = options.presentationLedger;
-    this.routingContextPromptProjection = options.routingContextPromptProjection;
-    this.routingDispatchPreflight = options.routingDispatchPreflight;
-    this.routingDispatchSignalObserver = options.routingDispatchSignalObserver;
     this.writeOpportunityTerminalLedger = options.writeOpportunityTerminalLedger;
     this.writeOpportunityDeliveryStore = options.writeOpportunityDeliveryStore;
     this.runtimeSessionStore = options.runtimeSessionStore;
@@ -1492,7 +1483,6 @@ export class AgentRouter {
     return {
       services: this.services,
       unavailableServices: this.unavailableServices,
-      ...(this.routingDispatchPreflight ? { routingDispatchPreflight: this.routingDispatchPreflight } : {}),
       invocationDeps: {
         messageStore: this.messageStore,
         ...(this.collectiveContext ? { collectiveContext: this.collectiveContext } : {}),
@@ -1508,12 +1498,6 @@ export class AgentRouter {
         claudeProjectHookCarrierReady: this.claudeProjectHookCarrierReady,
         ...(this.claudeCompactionHooks ? { claudeCompactionHooks: this.claudeCompactionHooks } : {}),
         ...(this.presentationLedger ? { presentationLedger: this.presentationLedger } : {}),
-        ...(this.routingContextPromptProjection
-          ? { routingContextPromptProjection: this.routingContextPromptProjection }
-          : {}),
-        ...(this.routingDispatchSignalObserver
-          ? { routingDispatchSignalObserver: this.routingDispatchSignalObserver }
-          : {}),
         ...(this.writeOpportunityTerminalLedger
           ? { writeOpportunityTerminalLedger: this.writeOpportunityTerminalLedger }
           : {}),
@@ -1719,10 +1703,8 @@ export class AgentRouter {
     }
 
     const strategyDeps = this.getStrategyDeps();
-    const routingContextIntent = inferRoutingContextIntent(cleanMessage);
     const routeOptions = {
       routeIntent: projectAgentRouteIntent(intent),
-      ...(routingContextIntent ? { routingContextIntent } : {}),
       contentBlocks,
       uploadDir,
       signal,
@@ -1856,11 +1838,9 @@ export class AgentRouter {
 
     const strategyDeps = this.getStrategyDeps();
     const { callerTraceContext: _callerTraceContext, ...strategyInputOptions } = options;
-    const routingContextIntent = inferRoutingContextIntent(cleanMessage);
     const routeOptions: RouteOptions = {
       ...strategyInputOptions,
       routeIntent: projectAgentRouteIntent(intent),
-      ...(routingContextIntent ? { routingContextIntent } : {}),
       promptTags: intent.promptTags,
       currentUserMessageId: userMessageId,
       persistedPromptMessages: options?.persistedPromptMessages?.map((persisted) => ({

@@ -1,0 +1,51 @@
+{
+  "invocationId": "1986d0d1-39ba-447a-821c-21ae343af683",
+  "steerCount": 5,
+  "observations": [
+    {
+      "submittedAt": 1791595702533,
+      "threadId": "01a1192e-20de-77d0-a608-ec471b6c1dc1",
+      "turnId": "01a12369-ce70-7063-bf35-35b6d7d307e6",
+      "consumedAt": 1791595708282,
+      "clientId": "7e83dd7d-939d-448d-8554-75dd4cbb8e42",
+      "exactThread": true,
+      "exactTurn": true
+    },
+    {
+      "submittedAt": 1791595815566,
+      "threadId": "01a1192e-20de-77d0-a608-ec471b6c1dc1",
+      "turnId": "01a12369-ce70-7063-bf35-35b6d7d307e6",
+      "consumedAt": 1791595816791,
+      "clientId": "624cc841-9ca8-4871-99c1-9cb8bedba475",
+      "exactThread": true,
+      "exactTurn": true
+    },
+    {
+      "submittedAt": 1791595926484,
+      "threadId": "01a1192e-20de-77d0-a608-ec471b6c1dc1",
+      "turnId": "01a12369-ce70-7063-bf35-35b6d7d307e6",
+      "consumedAt": 1791596009331,
+      "clientId": "14157843-6c39-40a9-b60c-48a96c6b38eb",
+      "exactThread": true,
+      "exactTurn": true
+    },
+    {
+      "submittedAt": 1791596027929,
+      "threadId": "01a1192e-20de-77d0-a608-ec471b6c1dc1",
+      "turnId": "01a12369-ce70-7063-bf35-35b6d7d307e6",
+      "consumedAt": 1791596035314,
+      "clientId": "d5fd9da3-edfd-4de2-8822-f06004ac89f0",
+      "exactThread": true,
+      "exactTurn": true
+    },
+    {
+      "submittedAt": 1791596170945,
+      "threadId": "01a1192e-20de-77d0-a608-ec471b6c1dc1",
+      "turnId": "01a12369-ce70-7063-bf35-35b6d7d307e6",
+      "consumedAt": 1791596185275,
+      "clientId": "e6a48cd9-8e2d-4555-b1b1-84d82c8c86b7",
+      "exactThread": true,
+      "exactTurn": true
+    }
+  ]
+}
