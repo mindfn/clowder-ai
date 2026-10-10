@@ -8,9 +8,18 @@ import {
 import type { FastifyPluginAsync, FastifyReply } from 'fastify';
 import { pluginAccessError, requirePluginOwnerLocalAccess } from '../../../routes/plugin-access-guards.js';
 import type { HostPluginInvocationPort } from '../carrier/host-invocation.js';
+import { withoutPluginCallContext } from '../carrier/plugin-call-context.js';
+import {
+  currentOwnerOperationRequest,
+  type OwnerOperationRequest,
+  PluginOwnerOperationExpiredError,
+  withOwnerOperationInvocation,
+  withOwnerOperationRequest,
+} from '../carrier/plugin-owner-operation-context.js';
 import type { PluginInventoryStore } from '../host-inventory/ports.js';
 import type { PluginInstanceRecord, PluginPackageRecord } from '../host-inventory/types.js';
 import { type OperationState, transitionOperationState } from './operation-state-machine.js';
+import { expiredOperation, type PluginOperationCommitFence } from './plugin-operation-fence.js';
 
 const DEFAULT_TIMEOUT_MS = 30_000;
 type OperationField = Extract<ConfigurationField, { readonly kind: 'operation' }>;
@@ -18,13 +27,19 @@ type OperationField = Extract<ConfigurationField, { readonly kind: 'operation' }
 export interface PluginOperationConfigurationPort {
   readActionInput(pluginId: string): Promise<Readonly<Record<string, unknown>>>;
   readOperationState(pluginId: string, operationKey: string): Promise<OperationState | undefined>;
-  writeOperationState(pluginId: string, operationKey: string, state: OperationState): Promise<void>;
+  writeOperationState(
+    pluginId: string,
+    operationKey: string,
+    state: OperationState,
+    fence?: PluginOperationCommitFence,
+  ): Promise<void>;
   clearOperationState(pluginId: string, operationKey: string): Promise<void>;
   configureOperationTargets(
     pluginId: string,
     pluginInstanceId: string,
     operationKey: string,
     values: Readonly<Record<string, string>>,
+    fence?: PluginOperationCommitFence,
   ): Promise<readonly string[]>;
 }
 
@@ -45,6 +60,7 @@ export interface InstalledPluginOperationResult {
 interface ActivePlugin {
   readonly instance: PluginInstanceRecord;
   readonly packageRecord: PluginPackageRecord;
+  readonly grantRevision: number | undefined;
 }
 
 function response(
@@ -152,13 +168,16 @@ function safeActionErrorMessage(error: unknown): string {
   return printable ? Array.from(printable).slice(0, 200).join('') : 'Plugin operation invocation failed';
 }
 
-async function withTimeout<T>(promise: Promise<T>, timeoutMs: number): Promise<T> {
+async function withTimeout<T>(promise: Promise<T>, timeoutMs: number, abort?: () => void): Promise<T> {
   let timer: NodeJS.Timeout | undefined;
   try {
     return await Promise.race([
       promise,
       new Promise<never>((_resolve, reject) => {
-        timer = setTimeout(() => reject(new PluginInvocationTimeoutError()), timeoutMs);
+        timer = setTimeout(() => {
+          abort?.();
+          reject(new PluginInvocationTimeoutError());
+        }, timeoutMs);
         timer.unref();
       }),
     ]);
@@ -173,6 +192,7 @@ export class InstalledPluginOperations {
 
   constructor(private readonly options: InstalledPluginOperationsOptions) {
     this.timeoutMs = options.timeoutMs ?? DEFAULT_TIMEOUT_MS;
+    if (!Number.isSafeInteger(this.timeoutMs) || this.timeoutMs <= 0) throw new TypeError('timeoutMs must be positive');
     this.now = options.now ?? Date.now;
   }
 
@@ -187,7 +207,12 @@ export class InstalledPluginOperations {
     if (instance.activationState !== 'enabled' || instance.runtimeState !== 'healthy') {
       return response(409, { error: `Plugin '${pluginId}' is not enabled` });
     }
-    return { instance, packageRecord };
+    return {
+      instance,
+      packageRecord,
+      grantRevision: snapshot.grants.find((grant) => grant.pluginInstanceId === instance.pluginInstanceId)
+        ?.grantRevision,
+    };
   }
 
   async runAction(
@@ -196,36 +221,111 @@ export class InstalledPluginOperations {
     actionId: string,
     body: unknown,
   ): Promise<InstalledPluginOperationResult> {
+    const seed = currentOwnerOperationRequest();
+    const lifetime = new AbortController();
+    const signal = AbortSignal.any([lifetime.signal, ...(seed ? [seed.signal] : [])]);
+    const assertRequestCurrent = () => {
+      if (signal.aborted) expiredOperation();
+      seed?.assertCurrent();
+      if (seed && (seed.pluginId !== pluginId || seed.operationKey !== operationKey || seed.actionId !== actionId))
+        expiredOperation();
+    };
+    const request = seed ? { ...seed, signal, assertCurrent: assertRequestCurrent } : undefined;
+    try {
+      assertRequestCurrent();
+      return await withTimeout(
+        this.executeAction(pluginId, operationKey, actionId, body, assertRequestCurrent, request),
+        this.timeoutMs,
+        () => lifetime.abort(),
+      );
+    } catch (error) {
+      if (error instanceof PluginInvocationTimeoutError) return response(504, { error: 'Plugin operation timed out' });
+      if (error instanceof PluginOwnerOperationExpiredError) return response(409, { error: error.message });
+      return response(502, { error: `Action failed: ${safeActionErrorMessage(error)}` });
+    } finally {
+      lifetime.abort();
+    }
+  }
+
+  private async executeAction(
+    pluginId: string,
+    operationKey: string,
+    actionId: string,
+    body: unknown,
+    assertRequestCurrent: () => void,
+    request?: OwnerOperationRequest,
+  ): Promise<InstalledPluginOperationResult> {
     const active = await this.resolve(pluginId);
     if ('status' in active) return active;
+    if (
+      request &&
+      (active.packageRecord.manifest.runtime?.transport !== 'builtin' ||
+        typeof active.packageRecord.manifest.runtime.entrypoint !== 'string')
+    )
+      return response(409, { error: 'Owner operation requires the module carrier' });
     const declaredOperation = operation(active.packageRecord.manifest, operationKey);
     if (!declaredOperation) return response(404, { error: `Operation '${operationKey}' is not declared` });
     const action = declaredOperation.actions.find((candidate) => candidate.id === actionId);
     if (!action) return response(404, { error: `Action '${actionId}' is not declared` });
+    const declaration = JSON.stringify(declaredOperation);
+    const fence: PluginOperationCommitFence = {
+      assertRequestCurrent,
+      assertRecords: (instance, record, grant) => {
+        assertRequestCurrent();
+        if (
+          !instance ||
+          !record ||
+          instance.pluginInstanceId !== active.instance.pluginInstanceId ||
+          instance.packageDigest !== active.instance.packageDigest ||
+          instance.lifecycleRevision !== active.instance.lifecycleRevision ||
+          instance.lifecycleState !== 'installed' ||
+          instance.activationState !== 'enabled' ||
+          instance.runtimeState !== 'healthy' ||
+          grant?.grantRevision !== active.grantRevision ||
+          record.packageDigest !== active.packageRecord.packageDigest ||
+          JSON.stringify(operation(record.manifest, operationKey)) !== declaration
+        )
+          expiredOperation();
+      },
+    };
+    const assertCurrent = async () => {
+      assertRequestCurrent();
+      const snapshot = await this.options.inventory.snapshot();
+      const instance = snapshot.instances.find(
+        (candidate) => candidate.pluginId === pluginId && candidate.lifecycleState === 'installed',
+      );
+      fence.assertRecords(
+        instance,
+        snapshot.packages.find((candidate) => candidate.packageDigest === instance?.packageDigest),
+        snapshot.grants.find((candidate) => candidate.pluginInstanceId === instance?.pluginInstanceId),
+      );
+    };
     const rejected = actionInputRejection(action, body);
     if (rejected) return rejected;
 
     const currentValues = await this.options.configuration.readActionInput(pluginId);
     const input = { ...currentValues, ...((body ?? {}) as Readonly<Record<string, unknown>>) };
-    let rawResult: unknown;
-    try {
-      rawResult = await withTimeout(
-        this.options.invocation.invoke(active.instance.pluginInstanceId, action.action.method, {
-          ...(action.action.params ?? {}),
-          input,
-        }),
-        this.timeoutMs,
-      );
-    } catch (error) {
-      if (error instanceof PluginInvocationTimeoutError) {
-        return response(504, { error: 'Plugin operation timed out' });
-      }
-      return response(502, { error: `Action failed: ${safeActionErrorMessage(error)}` });
-    }
+    await assertCurrent();
+    const invoke = () =>
+      this.options.invocation.invoke(active.instance.pluginInstanceId, action.action.method, {
+        ...(action.action.params ?? {}),
+        input,
+      });
+    const rawResult = await (request
+      ? withOwnerOperationInvocation(
+          request,
+          active.instance.pluginInstanceId,
+          action.action.method,
+          assertCurrent,
+          invoke,
+        )
+      : invoke());
+    await assertCurrent();
     const result = rowsChecked(declaredOperation, operationResult(rawResult));
     if (!result) return response(502, { error: 'Plugin operation returned an invalid response' });
 
     const currentState = await this.options.configuration.readOperationState(pluginId, operationKey);
+    await assertCurrent();
     const transition = transitionOperationState({
       actions: declaredOperation.actions,
       actionId,
@@ -242,8 +342,10 @@ export class InstalledPluginOperations {
             active.instance.pluginInstanceId,
             operationKey,
             transition.targetValues,
+            fence,
           );
-    await this.options.configuration.writeOperationState(pluginId, operationKey, transition.state);
+    await assertCurrent();
+    await this.options.configuration.writeOperationState(pluginId, operationKey, transition.state, fence);
     return response(200, {
       ok: true,
       render: result.render,
@@ -306,12 +408,58 @@ export const pluginOperationRoutes: FastifyPluginAsync<PluginOperationRoutesOpti
     async (request, reply) => {
       const access = requirePluginOwnerLocalAccess(request, 'write');
       if ('error' in access) return pluginAccessError(reply, access);
-      const result = await options.operations.runAction(
-        request.params.pluginId,
-        request.params.operation,
-        request.params.action,
-        request.body,
-      );
+      const cancellation = new AbortController();
+      const abort = () => cancellation.abort();
+      const activationChecks: (() => void)[] = [];
+      const activationSignals: AbortSignal[] = [];
+      request.raw.once('aborted', abort);
+      reply.raw.once('close', abort);
+      if (request.raw.aborted || reply.raw.destroyed) abort();
+      const seed: OwnerOperationRequest = {
+        pluginId: request.params.pluginId,
+        operationKey: request.params.operation,
+        actionId: request.params.action,
+        userId: access.operator,
+        requestId: request.id,
+        signal: cancellation.signal,
+        assertCurrent: () => {
+          if (cancellation.signal.aborted) expiredOperation();
+          for (const check of activationChecks) check();
+          try {
+            request.assertSessionCurrent?.();
+          } catch {
+            expiredOperation();
+          }
+          const latest = requirePluginOwnerLocalAccess(request, 'write');
+          if ('error' in latest || latest.operator !== access.operator) expiredOperation();
+        },
+        bindActivation: (check, signal) => {
+          activationChecks.push(check);
+          if (signal) {
+            activationSignals.push(signal);
+            signal.addEventListener('abort', abort, { once: true });
+            if (signal.aborted) abort();
+          }
+        },
+      };
+      let result: InstalledPluginOperationResult;
+      try {
+        result = await withoutPluginCallContext(() =>
+          withOwnerOperationRequest(seed, () =>
+            options.operations.runAction(
+              request.params.pluginId,
+              request.params.operation,
+              request.params.action,
+              request.body,
+            ),
+          ),
+        );
+      } finally {
+        abort();
+        request.raw.off('aborted', abort);
+        reply.raw.off('close', abort);
+        for (const signal of activationSignals) signal.removeEventListener('abort', abort);
+      }
       if (result.status === 502) {
         request.log.warn(
           { pluginId: request.params.pluginId, operation: request.params.operation, action: request.params.action },

@@ -180,6 +180,7 @@ function moduleConfigValue(field: ResolvedConfigurationField): unknown {
 export class ModulePluginRuntime implements BundledPluginRuntime {
   readonly #loaded = new Map<string, LoadedModule>();
   readonly #neutralActivations = new Map<string, symbol>();
+  readonly #operationActivations = new Map<string, AbortController>();
   /** Teardown steps that failed; the next stop retries exactly these (F202 W2-3 h2 ⑥). */
   readonly #unfinished = new Map<string, readonly ModuleTeardownStep[]>();
 
@@ -224,6 +225,8 @@ export class ModulePluginRuntime implements BundledPluginRuntime {
     const located = await this.#resolvePackage(pluginInstanceId, packageRecord);
     const activationToken = Symbol(pluginInstanceId);
     this.#neutralActivations.set(pluginInstanceId, activationToken);
+    const operationActivation = new AbortController();
+    this.#operationActivations.set(pluginInstanceId, operationActivation);
     const assertActivation = () => {
       if (this.#neutralActivations.get(pluginInstanceId) !== activationToken)
         throw new ExternalPluginRuntimeError('DELIVERY_REJECTED', 'Neutral module activation is no longer current');
@@ -379,6 +382,9 @@ export class ModulePluginRuntime implements BundledPluginRuntime {
         ),
       });
     } catch (error) {
+      operationActivation.abort();
+      if (this.#operationActivations.get(pluginInstanceId) === operationActivation)
+        this.#operationActivations.delete(pluginInstanceId);
       if (this.#neutralActivations.get(pluginInstanceId) === activationToken)
         this.#neutralActivations.delete(pluginInstanceId);
       await rollbackModuleStart(error, activation, subscriptions, located);
@@ -391,6 +397,8 @@ export class ModulePluginRuntime implements BundledPluginRuntime {
    * teardown step that fails is kept, and the next stop retries it (F202 W2-3 h2 ⑥).
    */
   async stop(pluginInstanceId: string, reason: string): Promise<void> {
+    this.#operationActivations.get(pluginInstanceId)?.abort();
+    this.#operationActivations.delete(pluginInstanceId);
     this.#neutralActivations.delete(pluginInstanceId);
     const loaded = this.#loaded.get(pluginInstanceId);
     const steps = loaded ? moduleTeardown(loaded) : this.#unfinished.get(pluginInstanceId);
@@ -456,5 +464,8 @@ export class ModulePluginRuntime implements BundledPluginRuntime {
 
   actions(pluginInstanceId: string): Readonly<Record<string, unknown>> | undefined {
     return this.#loaded.get(pluginInstanceId)?.activation.actions;
+  }
+  operationActivationSignal(pluginInstanceId: string): AbortSignal | undefined {
+    return this.#operationActivations.get(pluginInstanceId)?.signal;
   }
 }

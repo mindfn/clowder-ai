@@ -1,4 +1,5 @@
 import { AsyncLocalStorage } from 'node:async_hooks';
+import { withoutOwnerOperationContext } from './plugin-owner-operation-context.js';
 import { withoutPluginOwnerRequestContext } from './plugin-owner-request-context.js';
 
 export { currentPluginOwnerRequestContext } from './plugin-owner-request-context.js';
@@ -30,10 +31,12 @@ export function withPluginCallContext<T>(
   context: PluginCallContext,
   run: () => Promise<T>,
 ): Promise<T> {
-  return withoutPluginOwnerRequestContext(() => calls.run({ instanceId, context }, run));
+  return withoutOwnerOperationContext(() =>
+    withoutPluginOwnerRequestContext(() => calls.run({ instanceId, context }, run)),
+  );
 }
 
 /** A verifier never inherits native or HTTP business authority. */
 export function withoutPluginCallContext<T>(run: () => Promise<T>): Promise<T> {
-  return withoutPluginOwnerRequestContext(() => calls.exit(run));
+  return withoutOwnerOperationContext(() => withoutPluginOwnerRequestContext(() => calls.exit(run)));
 }

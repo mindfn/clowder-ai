@@ -6,6 +6,7 @@ import {
 import type { PluginInventoryStore, PluginInventoryTransaction } from '../host-inventory/ports.js';
 import type { PluginInstanceRecord, PluginPackageRecord } from '../host-inventory/types.js';
 import type { OperationState } from '../operations/operation-state-machine.js';
+import { assertOperationCommit, type PluginOperationCommitFence } from '../operations/plugin-operation-fence.js';
 import {
   readPluginConfig,
   readPluginOperationState,
@@ -257,7 +258,19 @@ export class HostPluginConfigurationService implements PluginManagerConfiguratio
     return readPluginOperationState(this.options.projectRoot, pluginId, operationKey);
   }
 
-  async writeOperationState(pluginId: string, operationKey: string, state: OperationState): Promise<void> {
+  async writeOperationState(
+    pluginId: string,
+    operationKey: string,
+    state: OperationState,
+    fence?: PluginOperationCommitFence,
+  ): Promise<void> {
+    if (fence) {
+      await this.options.inventory.transaction((transaction) => {
+        assertOperationCommit(fence, transaction, pluginId);
+        writePluginOperationState(this.options.projectRoot, pluginId, operationKey, state);
+      });
+      return;
+    }
     writePluginOperationState(this.options.projectRoot, pluginId, operationKey, state);
   }
 
@@ -270,7 +283,18 @@ export class HostPluginConfigurationService implements PluginManagerConfiguratio
     pluginInstanceId: string,
     operationKey: string,
     values: Readonly<Record<string, string>>,
+    fence?: PluginOperationCommitFence,
   ): Promise<readonly string[]> {
+    if (fence) {
+      return this.options.inventory.transaction((transaction) => {
+        assertOperationCommit(fence, transaction, pluginId);
+        const instance = transaction.instances.getCurrent(pluginId);
+        const record = instance && transaction.packages.get(instance.packageDigest);
+        if (!instance || instance.pluginInstanceId !== pluginInstanceId || !record)
+          throw new PluginManagerServiceError('ACTION_NOT_ALLOWED', 'Plugin instance changed');
+        return this.writeOperationTargets(pluginId, operationKey, values, record);
+      });
+    }
     const snapshot = await this.options.inventory.snapshot();
     const instance = snapshot.instances.find(
       (candidate) =>
@@ -284,6 +308,15 @@ export class HostPluginConfigurationService implements PluginManagerConfiguratio
     if (!instance || !packageRecord) {
       throw new PluginManagerServiceError('ACTION_NOT_ALLOWED', 'Plugin is not the current installed instance');
     }
+    return this.writeOperationTargets(pluginId, operationKey, values, packageRecord);
+  }
+
+  private writeOperationTargets(
+    pluginId: string,
+    operationKey: string,
+    values: Readonly<Record<string, string>>,
+    packageRecord: PluginPackageRecord,
+  ): readonly string[] {
     const operation = manifestOperation(packageRecord, operationKey);
     if (!operation) throw configError(`Operation ${operationKey} is not declared by this plugin`);
     const targetKeys = new Set(operation.target ?? []);

@@ -26,12 +26,19 @@ import {
   type PluginInvocationOutcome,
   settlePluginInvocation,
 } from '../../carrier/host-invocation.js';
-import { currentPluginCallContext } from '../../carrier/plugin-call-context.js';
+import { currentPluginCallContext, withoutPluginCallContext } from '../../carrier/plugin-call-context.js';
+import {
+  consumeOwnerOperationInvocation,
+  withCurrentOwnerOperation,
+} from '../../carrier/plugin-owner-operation-context.js';
 import { ExternalPluginRuntimeError } from '../../external-runtime/types.js';
 
 export interface ModuleHostInvocationDeps {
   /** The carrier holding the action table returned by an active module's start(). */
-  readonly runtime: { actions(pluginInstanceId: string): Readonly<Record<string, unknown>> | undefined };
+  readonly runtime: {
+    actions(pluginInstanceId: string): Readonly<Record<string, unknown>> | undefined;
+    operationActivationSignal?(pluginInstanceId: string): AbortSignal | undefined;
+  };
 }
 
 export interface ModuleHostInvocation extends Pick<HostPluginInvocationPort, 'invoke'> {
@@ -77,7 +84,23 @@ export function createModuleHostInvocation(deps: ModuleHostInvocationDeps): Modu
           assertCurrent: () => caller.assertCurrent(),
         })
       : undefined;
-    return attemptPluginAction(() => candidate.call(actions, params, publicContext));
+    return attemptPluginAction(() =>
+      consumeOwnerOperationInvocation(
+        targetId,
+        method,
+        deps.runtime.operationActivationSignal?.(targetId),
+        () => {
+          if (deps.runtime.actions(targetId) !== actions)
+            throw new ExternalPluginRuntimeError('INSTANCE_NOT_RUNNABLE', 'Owner operation activation changed');
+        },
+        async (owner) =>
+          owner
+            ? withoutPluginCallContext(() =>
+                withCurrentOwnerOperation(owner, async () => candidate.call(actions, params, undefined, owner)),
+              )
+            : candidate.call(actions, params, publicContext),
+      ),
+    );
   };
   return {
     attempt,

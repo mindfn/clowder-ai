@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
 import { afterEach, test } from 'node:test';
 import Fastify from 'fastify';
+import { createModuleHostInvocation } from '../dist/domains/plugin/builtin-runtime/carriers/module-host-invocation.js';
 
 import {
   InstalledPluginOperations,
@@ -120,7 +121,7 @@ async function harness({ enabled = true, installed = true, timeoutMs = 50, gener
       return Object.keys(values);
     },
   };
-  const invocation = {
+  const transport = {
     async invoke(instanceId, method, params) {
       calls.push({ instanceId, method, params: structuredClone(params) });
       if (method === 'qr.generate') {
@@ -141,6 +142,13 @@ async function harness({ enabled = true, installed = true, timeoutMs = 50, gener
       throw new Error(`unexpected method ${method}`);
     },
   };
+  const actions = Object.fromEntries(
+    ['qr.generate', 'qr.status', 'self.test'].map((method) => [
+      method,
+      (params) => transport.invoke(pluginInstanceId, method, params),
+    ]),
+  );
+  const invocation = createModuleHostInvocation({ runtime: { actions: () => actions } });
   const operations = new InstalledPluginOperations({
     inventory: { snapshot: async () => snapshot({ enabled, installed }) },
     configuration,

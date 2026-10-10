@@ -55,6 +55,8 @@ test('declared operation transports a raw import envelope and a no-PII receipt w
   const operations = new InstalledPluginOperations({
     inventory: {
       snapshot: async () => ({
+        schemaVersion: 1,
+        grants: [],
         packages: [{ packageDigest: 'fixture-digest', manifest }],
         instances: [
           {
@@ -64,6 +66,7 @@ test('declared operation transports a raw import envelope and a no-PII receipt w
             lifecycleState: 'installed',
             activationState: 'enabled',
             runtimeState: 'healthy',
+            lifecycleRevision: 1,
           },
         ],
       }),
@@ -87,7 +90,7 @@ test('declared operation transports a raw import envelope and a no-PII receipt w
     },
   });
   const response = await operations.runAction(manifest.pluginId, 'legacy_permissions', 'import', envelope);
-  assert.equal(response.status, 200);
+  assert.equal(response.status, 200, JSON.stringify(response.body));
   assert.deepEqual(response.body.data, receipt.data);
   assert.equal(saved.length, 1);
   assert.equal(JSON.stringify(response).includes('adminOpenIds'), false);
