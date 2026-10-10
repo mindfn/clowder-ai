@@ -33,7 +33,6 @@ import {
 import type { InvocationRegistry } from '../domains/cats/services/agents/invocation/InvocationRegistry.js';
 import type { InvocationTracker } from '../domains/cats/services/agents/invocation/InvocationTracker.js';
 import type { OwnerAuthProvenance } from '../domains/cats/services/agents/invocation/owner-auth-provenance.js';
-import type { QueueProcessor } from '../domains/cats/services/agents/invocation/QueueProcessor.js';
 import { resetStreak } from '../domains/cats/services/agents/routing/WorklistRegistry.js';
 import { parseIntent } from '../domains/cats/services/context/IntentParser.js';
 import {
@@ -48,11 +47,9 @@ import type { AgentRouter } from '../domains/cats/services/index.js';
 import { messageFrom } from '../domains/cats/services/stores/message-from.js';
 import type { IDraftStore } from '../domains/cats/services/stores/ports/DraftStore.js';
 import type { IGameStore } from '../domains/cats/services/stores/ports/GameStore.js';
-import type { IInvocationRecordStore } from '../domains/cats/services/stores/ports/InvocationRecordStore.js';
 import type { IMessageStore, StoredMessage } from '../domains/cats/services/stores/ports/MessageStore.js';
 import { isTimelinePublished } from '../domains/cats/services/stores/ports/MessageStore.js';
 import { deriveAutoThreadTitle, type IThreadStore } from '../domains/cats/services/stores/ports/ThreadStore.js';
-import type { ITurnExecutionStore } from '../domains/cats/services/stores/ports/TurnExecutionStore.js';
 import {
   getTimelineOrderTime,
   isInternalNonQuotableParent,
@@ -83,11 +80,6 @@ import { buildGameSeats, parseGameCommand, sanitizeCatIds } from './game-command
 import type { HoldBallCancelDeps } from './hold-ball-cancel.js';
 import { cancelPendingHoldsForThread } from './hold-ball-cancel.js';
 import { formatHoldOwnerName, persistHoldTerminalVisibility } from './hold-ball-terminal-visibility.js';
-import {
-  resolveFreshnessCarrierCapabilityOrUndeclared,
-  resolveMessageDispositionForAdmission,
-  resolveQueueAuthorIntentByCatId,
-} from './message-disposition-admission.js';
 import { buildMessageContentBlocks, type SendMessageInput, sendMessageSchema } from './messages.schema.js';
 import { parseMultipart } from './parse-multipart.js';
 
@@ -136,8 +128,6 @@ function bundleAdmissionErrorMessage(reason: MessageBundleAdmissionFailureReason
  * socketManager is injected to avoid circular import from index.ts.
  */
 export interface MessagesRoutesOptions {
-  /** Shared owner-preference root. Optional test harnesses retain product-default behavior. */
-  projectRoot?: string;
   registry: InvocationRegistry;
   messageStore: IMessageStore;
   socketManager: SocketManager;
@@ -145,16 +135,11 @@ export interface MessagesRoutesOptions {
   threadStore?: IThreadStore;
   uploadDir?: string;
   invocationTracker?: InvocationTracker;
-  invocationRecordStore?: IInvocationRecordStore;
-  /** Not read by these routes; kept so existing callers still type-check. */
-  turnExecutionStore?: Pick<ITurnExecutionStore, 'get' | 'listByParent'>;
 
   /** #80: Streaming draft store for F5 recovery */
   draftStore?: IDraftStore;
   /** Canonical durable ingress for every normal user message. */
   invocationQueue?: InvocationQueue;
-  /** Single event-driven admission and execution coordinator. */
-  queueProcessor?: QueueProcessor;
   /** F101: Game store for /game command interception */
   gameStore?: IGameStore;
   /** F101: Injectable auto-player for lifecycle-safe teardown in tests/routes */
@@ -424,23 +409,15 @@ export const messagesRoutes: FastifyPluginAsync<MessagesRoutesOptions> = async (
 
     // Default to 'default' thread for lobby (prevents global broadcast)
     const resolvedThreadId = threadId ?? 'default';
-    if (!opts.invocationQueue || !opts.queueProcessor) {
+    if (!opts.invocationQueue) {
       return reply.code(503).send({ error: 'Message delivery is unavailable', code: 'MESSAGE_DELIVERY_UNAVAILABLE' });
     }
-    // A retried no-mention send must retain the target that won the original
-    // atomic admission even if a newer reply has since changed the fallback.
-    // Queue remains the sole owner of this immutable admission fact; History is
-    // consulted only to locate the exact source record named by the idempotency key.
+    // Live owns an exact session receipt; ordinary retries are handled by shared send.
     const receiptOwner = { userId, threadId: resolvedThreadId };
     const replayedSource =
       idempotencyKey && opts.invocationQueue
         ? await opts.messageStore.getByIdempotencyKey(userId, resolvedThreadId, idempotencyKey)
         : null;
-    const replayedQueueEntry = replayedSource
-      ? opts.invocationQueue
-          ?.list(resolvedThreadId, userId)
-          .find((entry) => entry.payload.sourceRecordId === replayedSource.id)
-      : undefined;
 
     let admittedMessageBundle: ResolvedBundleAdmission | undefined;
     let explicitBundleTargetCats: CatId[] | undefined;
@@ -669,7 +646,7 @@ export const messagesRoutes: FastifyPluginAsync<MessagesRoutesOptions> = async (
       : undefined;
     if (explicitMentionTargetCats && explicitRoutingTargetCats?.length !== explicitMentionTargetCats.length) {
       reply.status(400);
-      return { error: 'One or more selected members are unavailable', code: 'INVALID_EXPLICIT_TARGETS' };
+      return { error: 'One or more selected member identities are invalid', code: 'INVALID_EXPLICIT_TARGETS' };
     }
     const structuredTargetCats = admittedMessageBundle ? bundleRoutingTargetCats : explicitRoutingTargetCats;
     const routingResult: Awaited<ReturnType<AgentRouter['resolveTargetsAndIntent']>> = structuredTargetCats
@@ -683,29 +660,17 @@ export const messagesRoutes: FastifyPluginAsync<MessagesRoutesOptions> = async (
           persist: true,
           allowFallback: false,
         });
-    const { targetCats: resolvedTargetCats, intent, routing_warnings } = routingResult;
+    const { targetCats: resolvedTargetCats, intent } = routingResult;
     // F35: When sending a whisper, override routing targets to only whisperTo recipients.
     // This prevents non-recipient cats from being invoked and seeing whisper content.
     const sourceTargetCats =
       whisperVisibility === 'whisper' && whisperRecipients?.length
         ? [...new Set(whisperRecipients)]
         : [...resolvedTargetCats];
-    // A user-visible source remains honest about whether the author wrote an @mention,
-    // while Queue custody must never defer the ordinary no-@ default to a later UI or
-    // execution guess. Resolve the canonical conversation fallback before the atomic
-    // source + Queue admission, then persist that member as the pending delivery target.
-    // Message Bundles and whispers already carry an exact caller-owned target set.
     const targetCats: CatId[] =
-      !admittedMessageBundle &&
-      whisperVisibility !== 'whisper' &&
-      sourceTargetCats.length === 0 &&
-      (routing_warnings?.length ?? 0) === 0
-        ? replayedQueueEntry
-          ? (queueEntryTargetCats(replayedQueueEntry) as CatId[])
-          : await router.resolveConversationTargetsAtAdmission([], resolvedThreadId)
-        : sourceTargetCats;
-    const visibleRoutingWarnings =
-      whisperVisibility !== 'whisper' && routing_warnings?.length ? [...routing_warnings] : [];
+      liveSessionId && sourceTargetCats.length === 0
+        ? (((await opts.invocationQueue.resolveSendTargets([], resolvedThreadId, content)) ?? []) as CatId[])
+        : [...sourceTargetCats];
     if (liveSessionId && targetCats.length !== 1)
       return reply.code(400).send({ error: 'Live requires one exact member', code: 'INVALID_LIVE_ADMISSION' });
     if (replayedSource && (liveSessionId || replayedSource.extra?.liveAdmission)) {
@@ -752,11 +717,11 @@ export const messagesRoutes: FastifyPluginAsync<MessagesRoutesOptions> = async (
         participants: [...participantCats],
       });
     };
-    const publishAdmittedBundleParticipants = async () => {
+    const publishAdmittedParticipants = async () => {
       try {
         await publishSidebarParticipants();
       } catch (err) {
-        log.warn({ err, threadId: resolvedThreadId }, 'Bundle persisted but participant projection failed');
+        log.warn({ err, threadId: resolvedThreadId }, 'Message persisted but participant projection failed');
         opts.socketManager.emitToUser(userId, 'thread_updated', {
           threadId: resolvedThreadId,
           participants: [...targetCats],
@@ -765,14 +730,13 @@ export const messagesRoutes: FastifyPluginAsync<MessagesRoutesOptions> = async (
     };
     // Bundle admission defers this mutation until the canonical carrier write
     // succeeds, so validation/queue-capacity failures leave no false sidebar state.
-    if (!admittedMessageBundle) await publishSidebarParticipants();
+    // Participants follow the winning committed targets, including a conversation fallback.
 
     // Server-generated idempotency key if client didn't provide one
     const resolvedIdempotencyKey = idempotencyKey ?? randomUUID();
     const sourcePayloadExtra: NonNullable<StoredMessage['extra']> = {
       ...(liveSessionId ? { liveAdmission: { sessionId: liveSessionId, targetId: targetCats[0]! } } : {}),
       ...(admittedMessageBundle ? { messageBundle: admittedMessageBundle.carrier } : {}),
-      ...(visibleRoutingWarnings.length > 0 ? { routingWarnings: visibleRoutingWarnings } : {}),
     };
     const sourcePayloadWrite: { extra: NonNullable<StoredMessage['extra']> } | Record<string, never> =
       Object.keys(sourcePayloadExtra).length > 0 ? { extra: sourcePayloadExtra } : {};
@@ -780,11 +744,6 @@ export const messagesRoutes: FastifyPluginAsync<MessagesRoutesOptions> = async (
     log.debug({ threadId: resolvedThreadId, targetCats, intent: intent.intent }, 'Queue ingress accepted');
 
     if (opts.invocationQueue) {
-      const requestedDisposition = resolveMessageDispositionForAdmission({
-        explicit: messageDisposition,
-        projectRoot: opts.projectRoot,
-        threadId: resolvedThreadId,
-      });
       const queueInput = {
         ...(liveSessionId ? { liveSessionId } : {}),
         from: { kind: 'user' as const, userId },
@@ -795,25 +754,17 @@ export const messagesRoutes: FastifyPluginAsync<MessagesRoutesOptions> = async (
         idempotencyKey: resolvedIdempotencyKey,
         content,
         targetCats,
-        ...(replayedQueueEntry?.payload.routingWarnings
-          ? { routingWarnings: [...replayedQueueEntry.payload.routingWarnings] }
-          : visibleRoutingWarnings.length > 0
-            ? { routingWarnings: visibleRoutingWarnings }
-            : {}),
-        authorIntentByCatId:
-          replayedQueueEntry?.delivery.authorIntentByTarget ??
-          resolveQueueAuthorIntentByCatId({
-            targetCats,
-            requested: requestedDisposition,
-            threadId: resolvedThreadId,
-            userId,
-            invocationTracker: opts.invocationTracker,
-            resolveCarrierCapability: (catId) => resolveFreshnessCarrierCapabilityOrUndeclared(opts.router, catId),
-          }),
+        ...(messageDisposition ? { messageDisposition } : {}),
+        onQueueEntriesAdmitted: async (
+          entries: readonly import('../domains/cats/services/agents/invocation/InvocationQueue.js').QueueEntry[],
+        ) => {
+          targetCats.splice(0, targetCats.length, ...(entries.flatMap((entry) => entry.targets) as CatId[]));
+          await publishAdmittedParticipants();
+        },
         intent: intent.intent,
       };
       const enqueueResult = await opts.invocationQueue
-        .appendAndEnqueueDurable(
+        .send(
           opts.messageStore,
           {
             from: queueInput.from,
@@ -894,35 +845,8 @@ export const messagesRoutes: FastifyPluginAsync<MessagesRoutesOptions> = async (
         );
       }
 
-      if (admittedMessageBundle) await publishAdmittedBundleParticipants();
-
       const admittedEntries = enqueueResult.entries ?? (enqueueResult.entry ? [enqueueResult.entry] : []);
-      if (
-        !liveSessionId &&
-        requestedDisposition === 'continue_current' &&
-        opts.queueProcessor?.tryAutoAppendExactEntry
-      ) {
-        for (const admittedEntry of admittedEntries) {
-          if (admittedEntry.targets.length === 0) continue;
-          for (const targetCatId of admittedEntry.targets) {
-            const append = await opts.queueProcessor.tryAutoAppendExactEntry({
-              threadId: resolvedThreadId,
-              userId,
-              entryId: admittedEntry.id,
-              targetCatId,
-            });
-            if (append.outcome === 'rejected') {
-              await opts.invocationQueue.fallbackQueuedAuthorIntentDurable(
-                resolvedThreadId,
-                userId,
-                admittedEntry.id,
-                targetCatId,
-                'parent_terminal_before_exposure',
-              );
-            }
-          }
-        }
-      }
+      // Common send signals Queue progress; HTTP acknowledges durable admission only.
       const admittedInvocationQueue = opts.invocationQueue;
       const admittedEntryStillQueued =
         admittedEntries.length === 0 ||
@@ -945,7 +869,6 @@ export const messagesRoutes: FastifyPluginAsync<MessagesRoutesOptions> = async (
       }
 
       await tryAutoCancelPendingHolds(resolvedThreadId, opts.holdBallCancelDeps);
-      void opts.queueProcessor?.requestDrain(resolvedThreadId);
 
       reply.status(202);
       return {
@@ -973,7 +896,7 @@ export const messagesRoutes: FastifyPluginAsync<MessagesRoutesOptions> = async (
         reply.status(400);
         return { error: 'Retry 请求格式无效', code: 'INVALID_DELIVERY_RETRY_REQUEST' };
       }
-      if (!opts.invocationQueue || !opts.queueProcessor) {
+      if (!opts.invocationQueue) {
         reply.status(503);
         return { error: '消息投递暂不可用', code: 'DELIVERY_RETRY_UNAVAILABLE' };
       }
@@ -1031,17 +954,10 @@ export const messagesRoutes: FastifyPluginAsync<MessagesRoutesOptions> = async (
         idempotencyKey,
         content: source.content,
         targetCats: [target],
-        authorIntentByCatId: resolveQueueAuthorIntentByCatId({
-          targetCats: [target],
-          requested: 'next_work',
-          threadId: source.threadId,
-          userId,
-          invocationTracker: opts.invocationTracker,
-          resolveCarrierCapability: (catId) => resolveFreshnessCarrierCapabilityOrUndeclared(opts.router, catId),
-        }),
+        messageDisposition: 'next_work' as const,
         intent: 'cloud_delivery_retry',
       };
-      const admitted = await opts.invocationQueue.appendAndEnqueueDurable(
+      const admitted = await opts.invocationQueue.send(
         opts.messageStore,
         {
           from: queueInput.from,
@@ -1079,7 +995,7 @@ export const messagesRoutes: FastifyPluginAsync<MessagesRoutesOptions> = async (
         opts.invocationQueue.list(source.threadId, userId),
         admitted.outcome,
       );
-      void opts.queueProcessor.requestDrain(source.threadId);
+
       reply.status(202);
       return {
         status: 'queued',

@@ -947,7 +947,7 @@ export interface CallbackRoutesOptions {
       invocationId: string | undefined,
       completedCatIds: readonly string[],
     ): Promise<void>;
-    requestDrain(threadId: string): Promise<void>;
+    registerCallerDispatchInitialTargets?(source: StoredMessage, targetIds: readonly string[]): void;
     registerEntryCompleteHook(
       entryId: string,
       hook: (
@@ -1850,7 +1850,7 @@ export const callbacksRoutes: FastifyPluginAsync<CallbackRoutesOptions> = async 
           }
         : undefined;
       if (a2aAdmissionOptions) {
-        if (!opts.invocationQueue || !queueProcessor?.requestDrain) {
+        if (!opts.invocationQueue || !queueProcessor) {
           reply.status(503);
           return {
             kind: 'a2a_admission_unavailable',
@@ -3343,7 +3343,7 @@ export const callbacksRoutes: FastifyPluginAsync<CallbackRoutesOptions> = async 
         }
       : undefined;
     if (a2aAdmissionOptions) {
-      if (!opts.invocationQueue || !queueProcessor?.requestDrain) {
+      if (!opts.invocationQueue || !queueProcessor) {
         await reconcileActionSuccessorEnqueue({
           service: opts.actionSuccessorAdmissionService,
           fence: actionFence,
@@ -6107,9 +6107,7 @@ export const callbacksRoutes: FastifyPluginAsync<CallbackRoutesOptions> = async 
     const notificationContent = buildVoteNotification(question, options);
     const mentionCatIds = resolvedVoters;
     const notificationTimestamp = Date.now();
-    const canDispatchVote = Boolean(
-      router && invocationRecordStore && opts.invocationQueue && queueProcessor?.requestDrain,
-    );
+    const canDispatchVote = Boolean(router && invocationRecordStore && opts.invocationQueue && queueProcessor);
     const voteAdmissionPlan = canDispatchVote
       ? planA2AFanoutAdmission(
           { invocationQueue: opts.invocationQueue },

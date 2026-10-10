@@ -78,6 +78,7 @@ import {
   advanceLifecycleInputDispatchMetadata,
   applyStreamMetadataAugment,
   assertPrivateNoticeQueueAdmission,
+  assertQueueMessageReplay,
   assertValidStoredMessageTimestamp,
   assignLifecycleDispatchTargetsMetadata,
   COORDINATION_TERMINAL_SCAN_PAGE_SIZE,
@@ -1240,8 +1241,15 @@ export class RedisMessageStore {
     if (!result.replayed) {
       return { outcome: 'enqueued', message: result.message, entries, deduped: false };
     }
-    const replayEntries = [...buildAdmission(result.message.id)];
-    const persisted = await Promise.all(replayEntries.map((entry) => ledgerStore.get(entry.threadId, entry.id)));
+    assertQueueMessageReplay(result.message, input);
+    const identities = [...buildAdmission(result.message.id)];
+    const persisted = await Promise.all(identities.map((entry) => ledgerStore.get(entry.threadId, entry.id)));
+    const replayEntries = [
+      ...buildAdmission(
+        result.message.id,
+        persisted.filter((entry): entry is QueueLedgerEntry => entry !== null),
+      ),
+    ];
     if (
       persisted.some((entry) => entry === null) ||
       !persisted.every((entry, index) => queueLedgerAdmissionsMatch(entry!, replayEntries[index]!))
