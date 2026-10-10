@@ -4,7 +4,7 @@
  */
 
 import crypto from 'node:crypto';
-import type { CatConfig, CatId, OutputCommitDecision, RoutingPreflightDecisionV1 } from '@cat-cafe/shared';
+import type { CatConfig, CatId, OutputCommitDecision } from '@cat-cafe/shared';
 import { catRegistry, resolveWorkflowSopSkill } from '@cat-cafe/shared';
 import {
   deriveHistoryContextTokenCeiling,
@@ -43,11 +43,6 @@ import { sharedEventStore, sharedNudgeCooldown } from '../../../../memory/entity
 import type { PushRecallPresentation } from '../../../../memory/f200-types.js';
 import type { PreparedProactiveMemoryNudge } from '../../../../memory/ProactiveMemoryNudgeService.js';
 import { mergePushRecallPresentations, triggerRecallCorrelation } from '../../../../memory/recall-correlation-hook.js';
-import {
-  isUserVisibleRoutingPreflightReceipt,
-  preflightRoutingDispatch,
-  routingDispatchPreflightReceipt,
-} from '../../../../routing-context/RoutingDispatchPreflightPort.js';
 import { assembleContext } from '../../context/ContextAssembler.js';
 import {
   buildInvocationContext,
@@ -136,8 +131,6 @@ import {
   toStoredToolEvent,
   upsertMaxBoundary,
 } from './route-helpers.js';
-import { isRoutingOwnerAttempt } from './routing-owner-attempt.js';
-import { routingPreflightNotice } from './routing-preflight-notice.js';
 import { appendThinkingChunk, renderThinkingChunks } from './thinking-chunks.js';
 import { withTimeoutDiagnostics } from './timeout-diagnostics-metadata.js';
 import { buildVoteTally, checkVoteCompletion, extractVoteFromText, VOTE_RESULT_SOURCE } from './vote-intercept.js';
@@ -198,43 +191,7 @@ export async function* routeParallel(
     modeSystemPrompt,
     modeSystemPromptByCat,
   } = options;
-  let routingDispatchPreflightDecision: RoutingPreflightDecisionV1 | undefined;
-  if (deps.routingDispatchPreflight) {
-    const requestedTargetCats = [...targetCats];
-    const routingPreflight = await preflightRoutingDispatch(deps.routingDispatchPreflight, {
-      ownerId: userId,
-      targetCatIds: requestedTargetCats,
-      ...(isRoutingOwnerAttempt(options) ? { ownerRequestedAttempt: true } : {}),
-      ...(options.routingContextIntent ? { intent: options.routingContextIntent } : {}),
-    });
-    routingDispatchPreflightDecision = routingPreflight;
-    for (const targetCatId of requestedTargetCats) {
-      const receipt = routingDispatchPreflightReceipt(routingPreflight, targetCatId);
-      if (!isUserVisibleRoutingPreflightReceipt(receipt)) continue;
-      const notice = await routingPreflightNotice(deps, options, routingPreflight, targetCatId, threadId, true);
-      if (notice) yield notice;
-      if (receipt.target.disposition === 'rejected') {
-        const { automaticRetryAt } = receipt.target;
-        options.onRoutingDispatchRejected?.({
-          catId: targetCatId,
-          ...(automaticRetryAt !== undefined ? { automaticRetryAt } : {}),
-        });
-        yield {
-          type: 'error',
-          catId: targetCatId,
-          errorCode: 'routing_preflight_rejected',
-          error: '本次未执行：成员当前不可用。恢复后可重试原消息。',
-          timestamp: Date.now(),
-        };
-      }
-    }
-    targetCats = requestedTargetCats.filter(
-      (catId) => routingPreflight.targets.find((target) => target.targetCatId === catId)?.disposition !== 'rejected',
-    );
-    if (targetCats.length === 0) {
-      return;
-    }
-  }
+
   const ownerAuthProvenance = options.ownerAuthProvenance ?? 'unknown';
   const thinkingMode = options.thinkingMode ?? 'play';
   const turnExecutionKind = 'ordinary';
@@ -997,8 +954,6 @@ export async function* routeParallel(
       catRemoteCancellation.set(catId, remoteCancellation);
       const invocationStream = invokeSingleCat(deps.invocationDeps, {
         ...(options.routeIntent ? { routeIntent: options.routeIntent } : {}),
-        ...(options.routingContextIntent ? { routingContextIntent: options.routingContextIntent } : {}),
-        ...(routingDispatchPreflightDecision ? { routingDispatchPreflightDecision } : {}),
         catId,
         service,
         capacitySnapshot,

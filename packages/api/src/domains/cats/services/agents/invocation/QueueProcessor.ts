@@ -87,7 +87,6 @@ import {
   type PersistenceContext,
   type RouteExecutionOptions,
   type RouteOptions,
-  type RoutingDispatchRejection,
 } from '../routing/route-helpers.js';
 import {
   accumulateTextAggregate,
@@ -259,11 +258,6 @@ interface QueueExecutionResult {
    * be retried at once: each waits for its retry time while the rest of the thread keeps draining.
    */
   primarySettlementIncomplete?: boolean;
-  /**
-   * The targets actual-send routing refused in this attempt, as the route saw them. The Queue row
-   * forgets a targetless entry's resolved target when it goes back, so the retry wait is read here.
-   */
-  routingRejections: RoutingDispatchRejection[];
 }
 
 type ProcessingSlotReservation = PrestartRetirementReservation;
@@ -2661,17 +2655,11 @@ export class QueueProcessor {
     options: {
       suppressAutomaticDrain?: boolean;
       attemptedQueueEntryIds?: readonly string[];
-      routingRejections?: readonly RoutingDispatchRejection[];
       suppressAutomaticFollowUp?: boolean;
       terminalInvocationIdByCatId?: Readonly<Record<string, string>>;
     } = {},
   ): Promise<void> {
-    const {
-      suppressAutomaticDrain = false,
-      attemptedQueueEntryIds = [],
-      routingRejections = [],
-      suppressAutomaticFollowUp = false,
-    } = options;
+    const { suppressAutomaticDrain = false, attemptedQueueEntryIds = [], suppressAutomaticFollowUp = false } = options;
     const sk = QueueProcessor.slotKey(threadId, catId);
     const isSuperseded = (candidateCatId: string): boolean =>
       invocationId !== undefined && this.hasReplacementExecutionOwner(threadId, candidateCatId, invocationId);
@@ -2686,11 +2674,10 @@ export class QueueProcessor {
       return;
     }
     if (isSuperseded(catId) || suppressAutomaticFollowUp) return;
-    if (suppressAutomaticDrain || routingRejections.length > 0) {
-      // F117 soak: the attempt failed before its handoff, or routing refused some of its targets at
-      // actual send. What went back to the Queue waits for its retry time rather than looping on the
-      // same failure, and the rest of the thread keeps draining.
-      this.deferFailedAttempt(threadId, catId, status, attemptedQueueEntryIds, routingRejections);
+    if (suppressAutomaticDrain) {
+      // A backend attempt that failed before handoff leaves the exact source
+      // queued with bounded backoff; other members continue draining.
+      this.deferFailedAttempt(threadId, catId, status, attemptedQueueEntryIds);
     } else {
       for (const entryId of attemptedQueueEntryIds) this.retryDeferrals.forget(entryId);
     }
@@ -2704,22 +2691,10 @@ export class QueueProcessor {
   }
 
   /**
-   * Each entry the attempt left in the Queue waits for its retry time: the later of its backoff and
-   * the latest retry time routing named for a target it refused in this attempt. The refusal is the
-   * attempt's own, because a targetless entry goes back without the target it resolved to.
+   * Retry only entries left queued by an actual failed handoff, with the
+   * existing bounded backend backoff. Availability advice cannot park them.
    */
-  private deferFailedAttempt(
-    threadId: string,
-    catId: string,
-    status: string,
-    entryIds: readonly string[],
-    routingRejections: readonly RoutingDispatchRejection[],
-  ): void {
-    const retryAts = routingRejections.flatMap((rejection) =>
-      rejection.automaticRetryAt !== undefined ? [rejection.automaticRetryAt] : [],
-    );
-    const targetRetryAt = retryAts.length > 0 ? Math.max(...retryAts) : undefined;
-    const refusedTargets = routingRejections.map((rejection) => rejection.catId);
+  private deferFailedAttempt(threadId: string, catId: string, status: string, entryIds: readonly string[]): void {
     for (const entryId of entryIds) {
       const entry = this.deps.queue.getEntrySnapshotAcrossUsers(threadId, entryId);
       if (!entry) {
@@ -2727,9 +2702,9 @@ export class QueueProcessor {
         this.retryDeferrals.forget(entryId);
         continue;
       }
-      const retryAt = this.retryDeferrals.defer(threadId, entryId, targetRetryAt);
+      const retryAt = this.retryDeferrals.defer(threadId, entryId);
       this.deps.log.warn(
-        { threadId, catId, status, entryId, retryAt, refusedTargets, queued: entry.status === 'queued' },
+        { threadId, catId, status, entryId, retryAt, queued: entry.status === 'queued' },
         '[QueueProcessor] an attempt left its entry in the Queue; the entry waits for its retry time',
       );
     }
@@ -3008,7 +2983,6 @@ export class QueueProcessor {
         void this.onInvocationComplete(entry.threadId, catId, result.status, result.invocationId, [], {
           suppressAutomaticDrain: result.primarySettlementIncomplete,
           attemptedQueueEntryIds: result.attemptedQueueEntryIds,
-          routingRejections: result.routingRejections,
           suppressAutomaticFollowUp,
           terminalInvocationIdByCatId: result.terminalInvocationIdByCatId,
         }).catch(() => {});
@@ -3614,8 +3588,6 @@ export class QueueProcessor {
     // streams names this message, so clients write by id instead of guessing.
     const lifecycleResponseMessageIdByCat = new Map<string, string>();
     const terminalInvocationIdByCatId: Record<string, string> = {};
-    // F117 soak: the exact targets actual-send routing refused, kept for the retry wait.
-    const routingRejections: RoutingDispatchRejection[] = [];
     let returnedExecutionResult: QueueExecutionResult | undefined;
     const executionResult = (status: InvocationFinalStatus): QueueExecutionResult => {
       // Keep finally cleanup and the caller-visible completion status on one
@@ -3633,7 +3605,6 @@ export class QueueProcessor {
         ...(invocationId ? { invocationId } : {}),
         attemptedQueueEntryIds: [entry.id, ...batchedEntryIds],
         terminalInvocationIdByCatId,
-        routingRejections,
       };
       returnedExecutionResult = result;
       return result;
@@ -4391,9 +4362,6 @@ export class QueueProcessor {
             ? { modeSystemPromptByCat: callerDispatchPromptByCat }
             : {}),
           turnCustodyWakeForCat: (catId: string) => retargetTurnCustodyWake(turnCustodyWake, catId),
-          onRoutingDispatchRejected: (rejection: RoutingDispatchRejection) => {
-            routingRejections.push(rejection);
-          },
           ...(contentBlocks.length > 0 ? { contentBlocks } : {}),
           ...(controller.signal ? { signal: controller.signal } : {}),
           // F-parallel-cancel: per-cat signal so canceling one concurrent cat (e.g. @codex)
@@ -5397,6 +5365,13 @@ export class QueueProcessor {
               !(await queue.reconcileClaimedLifecycleTargets(threadId, [entry.id, ...batchedEntryIds], messageStore))
             ) {
               throw new Error('post-receiver Queue target reconciliation did not converge');
+            }
+            // Accepted siblings are retired; only a source still queued without
+            // its receiver needs the existing failed-handoff backoff.
+            if (returnedExecutionResult) {
+              returnedExecutionResult.primarySettlementIncomplete = [entry.id, ...batchedEntryIds].some(
+                (id) => queue.getEntrySnapshotAcrossUsers(threadId, id)?.status === 'queued',
+              );
             }
           } else {
             await this.settleAttemptQueueEntry(entry, finalStatus);

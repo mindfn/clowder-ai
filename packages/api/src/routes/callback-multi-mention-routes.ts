@@ -65,7 +65,6 @@ import {
   type A2ATriggerDeps,
   appendA2ASourceWithLedgerAdmission,
   enqueueA2ATargets,
-  preflightA2ATargets,
 } from './callback-a2a-trigger.js';
 import { requireCallbackAuth } from './callback-auth-prehandler.js';
 import { resolveCallbackActionLeaseRef } from './callback-scope-helpers.js';
@@ -239,7 +238,6 @@ export interface MultiMentionRouteDeps {
     'admit' | 'markUnavailable' | 'markReturnedDelivered'
   >;
   /** F293: fresh routing policy at the actual Queue admission boundary. */
-  routingDispatchPreflight?: A2ATriggerDeps['routingDispatchPreflight'];
   /** F122B B6: InvocationQueue for unified dispatch */
   invocationQueue?: A2ATriggerDeps['invocationQueue'] &
     Pick<InvocationQueue, 'hasQueuedAgentForCat' | 'getQueuedFreshnessMessagesForCat'>;
@@ -412,17 +410,13 @@ async function dispatchViaQueue(
     '\n\n',
   );
 
-  // Resolve routing before publishing the source so Message + pending Queue targets
-  // are committed as one fact. The lifecycle response that invoked this tool remains
+  // Commit the source and its exact Queue targets as one fact.
+  // The lifecycle response that invoked this tool remains
   // the causal parent; it must not impersonate a different synthetic Queue body.
-  const routingPreflight = await preflightA2ATargets(
-    deps.routingDispatchPreflight ? { routingDispatchPreflight: deps.routingDispatchPreflight } : {},
-    { targetCats: targetCatIds, content: messageContent, userId },
-  );
   const preplannedAdmission = planMultiMentionFanout({
     invocationQueue,
-    targetCatIds: routingPreflight.acceptedTargetCats,
-    requestedTargetCatIds: routingPreflight.requestedTargetCats,
+    targetCatIds: targetCatIds,
+    requestedTargetCatIds: targetCatIds,
     threadId,
     actionFence,
   });
@@ -461,7 +455,6 @@ async function dispatchViaQueue(
       queueProcessor,
       messageStore: deps.messageStore,
       invocationQueue,
-      ...(deps.routingDispatchPreflight ? { routingDispatchPreflight: deps.routingDispatchPreflight } : {}),
       log,
     },
     {
@@ -474,7 +467,6 @@ async function dispatchViaQueue(
       callerCatId: initiator,
       parentInvocationId,
       preplannedAdmission,
-      ...(routingPreflight.decision ? { routingPreflightDecision: routingPreflight.decision } : {}),
       ...(atomicAdmission.preAdmittedEntries
         ? {
             preAdmittedEntries: atomicAdmission.preAdmittedEntries,

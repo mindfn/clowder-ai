@@ -120,7 +120,6 @@ export interface RouteStrategyDeps {
   unavailableServices?: ReadonlyMap<string, AgentRegistrationFailure>;
   invocationDeps: InvocationDeps;
   /** F293: fresh advisory/rejection decision at each actual child boundary. */
-  routingDispatchPreflight?: import('../../../../routing-context/RoutingDispatchPreflightPort.js').RoutingDispatchPreflightPort;
   messageStore: IMessageStore;
   deliveryCursorStore?: DeliveryCursorStore;
   /** #80: Streaming draft persistence store */
@@ -253,11 +252,6 @@ export function mergePersistedPromptMessages(
 }
 
 /** Actual-send routing refused one of a route's requested targets. */
-export interface RoutingDispatchRejection {
-  readonly catId: string;
-  /** When routing will next accept an automatic attempt at this target, if routing names a time. */
-  readonly automaticRetryAt?: number;
-}
 
 /** Common options for both strategies */
 export interface RouteOptions {
@@ -268,7 +262,6 @@ export interface RouteOptions {
   /** Route-owned intent plus whether the user explicitly selected it. */
   routeIntent?: AgentRouteIntent;
   /** F293: deterministic scope used to resolve sparse routing cognition. */
-  routingContextIntent?: 'review' | 'architecture';
   /** Authentication-grade owner provenance propagated unchanged to every child invocation. */
   ownerAuthProvenance?: OwnerAuthProvenance;
   /** F281 Phase C: explicit first-party ingress provenance; omitted legacy callers fail closed. */
@@ -382,7 +375,6 @@ export interface RouteOptions {
    * targets are not requested targets). A Queue attempt keeps the exact refusal, so its entry waits
    * for that target's retry time even when the entry named no target.
    */
-  onRoutingDispatchRejected?: ((rejection: RoutingDispatchRejection) => void) | undefined;
   /** F11: Mode-specific system prompt section (appended after identity prompt) */
   modeSystemPrompt?: string | undefined;
   /** F11: Per-cat mode prompt override (takes precedence over modeSystemPrompt) */

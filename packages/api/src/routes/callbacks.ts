@@ -17,7 +17,6 @@ import type {
   LocalReviewVerdict,
   PrAutomationState,
   RichBlock,
-  RoutingPreflightDecisionV1,
   SuggestedCrossPostAction,
 } from '@cat-cafe/shared';
 import {
@@ -178,7 +177,6 @@ import {
   appendA2ASourceWithLedgerAdmission,
   enqueueA2ATargets,
   planA2AFanoutAdmission,
-  preflightA2ATargets,
 } from './callback-a2a-trigger.js';
 import {
   actionCarrierRecoveryKey,
@@ -1031,7 +1029,6 @@ export interface CallbackRoutesOptions {
   /** For post_message @mention → invocation triggering */
   router?: AgentRouter;
   /** F293: shared per-target decision before callback dispatch admission. */
-  routingDispatchPreflight?: import('../domains/routing-context/RoutingDispatchPreflightPort.js').RoutingDispatchPreflightPort;
   invocationRecordStore?: IInvocationRecordStore;
   /** Durable child lifecycle truth. InvocationRegistry remains callback auth only. */
   turnExecutionStore?: Pick<ITurnExecutionStore, 'get'>;
@@ -1982,7 +1979,6 @@ export const callbacksRoutes: FastifyPluginAsync<CallbackRoutesOptions> = async 
                 ...(deliveryCursorStore ? { deliveryCursorStore } : {}),
                 ...(queueProcessor ? { queueProcessor } : {}),
                 ...(opts.invocationQueue ? { invocationQueue: opts.invocationQueue } : {}),
-                ...(opts.routingDispatchPreflight ? { routingDispatchPreflight: opts.routingDispatchPreflight } : {}),
                 log: app.log,
               },
               {
@@ -2045,7 +2041,7 @@ export const callbacksRoutes: FastifyPluginAsync<CallbackRoutesOptions> = async 
       }
 
       let a2aAdmissionPlan: A2AFanoutAdmissionPlan | undefined;
-      let a2aRoutingPreflightDecision: RoutingPreflightDecisionV1 | undefined;
+
       const a2aAdmissionOptions = hasA2AMentions
         ? {
             targetCats: mentions,
@@ -2065,17 +2061,13 @@ export const callbacksRoutes: FastifyPluginAsync<CallbackRoutesOptions> = async 
             message: 'Recipient wake admission is unavailable; no message was published.',
           };
         }
-        const routingPreflight = await preflightA2ATargets(
-          opts.routingDispatchPreflight ? { routingDispatchPreflight: opts.routingDispatchPreflight } : {},
-          { targetCats: mentions, content: storedContent, userId: principal.userId },
-        );
-        a2aRoutingPreflightDecision = routingPreflight.decision;
+
         a2aAdmissionPlan = planA2AFanoutAdmission(
           { invocationQueue: opts.invocationQueue },
           {
             ...a2aAdmissionOptions,
-            targetCats: routingPreflight.requestedTargetCats,
-            requestedTargetCats: routingPreflight.requestedTargetCats,
+            targetCats: mentions,
+            requestedTargetCats: mentions,
           },
         );
       }
@@ -2170,7 +2162,6 @@ export const callbacksRoutes: FastifyPluginAsync<CallbackRoutesOptions> = async 
               ...(deliveryCursorStore ? { deliveryCursorStore } : {}),
               ...(queueProcessor ? { queueProcessor } : {}),
               ...(opts.invocationQueue ? { invocationQueue: opts.invocationQueue } : {}),
-              ...(opts.routingDispatchPreflight ? { routingDispatchPreflight: opts.routingDispatchPreflight } : {}),
               log: app.log,
             },
             {
@@ -2182,7 +2173,6 @@ export const callbacksRoutes: FastifyPluginAsync<CallbackRoutesOptions> = async 
               triggerMessage: storedMsg,
               callerCatId: senderCatId,
               ...(a2aAdmissionPlan ? { preplannedAdmission: a2aAdmissionPlan } : {}),
-              ...(a2aRoutingPreflightDecision ? { routingPreflightDecision: a2aRoutingPreflightDecision } : {}),
               ...(atomicAdmission.preAdmittedEntries
                 ? {
                     preAdmittedEntries: atomicAdmission.preAdmittedEntries,
@@ -3497,7 +3487,6 @@ export const callbacksRoutes: FastifyPluginAsync<CallbackRoutesOptions> = async 
                 ...(deliveryCursorStore ? { deliveryCursorStore } : {}),
                 ...(queueProcessor ? { queueProcessor } : {}),
                 ...(opts.invocationQueue ? { invocationQueue: opts.invocationQueue } : {}),
-                ...(opts.routingDispatchPreflight ? { routingDispatchPreflight: opts.routingDispatchPreflight } : {}),
                 log: app.log,
               },
               {
@@ -3581,7 +3570,7 @@ export const callbacksRoutes: FastifyPluginAsync<CallbackRoutesOptions> = async 
     };
     if (duplicateMsg) return recoverPersistedCallbackMessage(duplicateMsg);
     let a2aAdmissionPlan: A2AFanoutAdmissionPlan | undefined;
-    let a2aRoutingPreflightDecision: RoutingPreflightDecisionV1 | undefined;
+
     const a2aAdmissionOptions = hasA2AMentions
       ? {
           targetCats: mentions,
@@ -3611,17 +3600,13 @@ export const callbacksRoutes: FastifyPluginAsync<CallbackRoutesOptions> = async 
           message: 'Recipient wake admission is unavailable; no message was published.',
         };
       }
-      const routingPreflight = await preflightA2ATargets(
-        opts.routingDispatchPreflight ? { routingDispatchPreflight: opts.routingDispatchPreflight } : {},
-        { targetCats: mentions, content: storedContent, userId: actor.userId },
-      );
-      a2aRoutingPreflightDecision = routingPreflight.decision;
+
       a2aAdmissionPlan = planA2AFanoutAdmission(
         { invocationQueue: opts.invocationQueue },
         {
           ...a2aAdmissionOptions,
-          targetCats: routingPreflight.requestedTargetCats,
-          requestedTargetCats: routingPreflight.requestedTargetCats,
+          targetCats: mentions,
+          requestedTargetCats: mentions,
         },
       );
     }
@@ -3749,7 +3734,6 @@ export const callbacksRoutes: FastifyPluginAsync<CallbackRoutesOptions> = async 
             ...(deliveryCursorStore ? { deliveryCursorStore } : {}),
             ...(queueProcessor ? { queueProcessor } : {}),
             ...(opts.invocationQueue ? { invocationQueue: opts.invocationQueue } : {}),
-            ...(opts.routingDispatchPreflight ? { routingDispatchPreflight: opts.routingDispatchPreflight } : {}),
             log: app.log,
           },
           {
@@ -3764,7 +3748,6 @@ export const callbacksRoutes: FastifyPluginAsync<CallbackRoutesOptions> = async 
             callerTraceContext: record.traceContext,
             ...(actionFence ? { actionSuccessorFence: actionFence } : {}),
             ...(a2aAdmissionPlan ? { preplannedAdmission: a2aAdmissionPlan } : {}),
-            ...(a2aRoutingPreflightDecision ? { routingPreflightDecision: a2aRoutingPreflightDecision } : {}),
             ...(atomicAdmission.preAdmittedEntries
               ? {
                   preAdmittedEntries: atomicAdmission.preAdmittedEntries,
@@ -6397,29 +6380,22 @@ export const callbacksRoutes: FastifyPluginAsync<CallbackRoutesOptions> = async 
     const canDispatchVote = Boolean(
       router && invocationRecordStore && opts.invocationQueue && queueProcessor?.requestDrain,
     );
-    const voteRoutingPreflight = canDispatchVote
-      ? await preflightA2ATargets(
-          opts.routingDispatchPreflight ? { routingDispatchPreflight: opts.routingDispatchPreflight } : {},
-          { targetCats: mentionCatIds, content: notificationContent, userId: record.userId },
+    const voteAdmissionPlan = canDispatchVote
+      ? planA2AFanoutAdmission(
+          { invocationQueue: opts.invocationQueue },
+          {
+            targetCats: mentionCatIds,
+            requestedTargetCats: mentionCatIds,
+            content: notificationContent,
+            userId: record.userId,
+            ownerAuthProvenance: record.ownerAuthProvenance,
+            threadId: record.threadId,
+            createdAt: notificationTimestamp,
+            callerCatId: record.catId as CatId,
+            ...(record.parentInvocationId ? { parentInvocationId: record.parentInvocationId } : {}),
+          },
         )
       : undefined;
-    const voteAdmissionPlan =
-      canDispatchVote && voteRoutingPreflight
-        ? planA2AFanoutAdmission(
-            { invocationQueue: opts.invocationQueue },
-            {
-              targetCats: voteRoutingPreflight.requestedTargetCats,
-              requestedTargetCats: voteRoutingPreflight.requestedTargetCats,
-              content: notificationContent,
-              userId: record.userId,
-              ownerAuthProvenance: record.ownerAuthProvenance,
-              threadId: record.threadId,
-              createdAt: notificationTimestamp,
-              callerCatId: record.catId as CatId,
-              ...(record.parentInvocationId ? { parentInvocationId: record.parentInvocationId } : {}),
-            },
-          )
-        : undefined;
     let notificationMsg: Awaited<ReturnType<typeof messageStore.append>> | undefined;
     let preAdmittedVoteEntries: readonly QueueEntry[] | undefined;
     let preAdmittedVoteReplayed = false;
@@ -6463,7 +6439,6 @@ export const callbacksRoutes: FastifyPluginAsync<CallbackRoutesOptions> = async 
         deliveryCursorStore,
         queueProcessor,
         invocationQueue: opts.invocationQueue,
-        ...(opts.routingDispatchPreflight ? { routingDispatchPreflight: opts.routingDispatchPreflight } : {}),
         log: app.log,
       };
       const a2aOpts = {
@@ -6476,7 +6451,6 @@ export const callbacksRoutes: FastifyPluginAsync<CallbackRoutesOptions> = async 
         ownerAuthProvenance: record.ownerAuthProvenance,
         callerTraceContext: record.traceContext,
         ...(voteAdmissionPlan ? { preplannedAdmission: voteAdmissionPlan } : {}),
-        ...(voteRoutingPreflight?.decision ? { routingPreflightDecision: voteRoutingPreflight.decision } : {}),
         ...(preAdmittedVoteEntries
           ? {
               preAdmittedEntries: preAdmittedVoteEntries,
@@ -6690,7 +6664,6 @@ export const callbacksRoutes: FastifyPluginAsync<CallbackRoutesOptions> = async 
       ...(opts.turnExecutionStore ? { turnExecutionStore: opts.turnExecutionStore } : {}),
       ...(opts.invocationQueue ? { invocationQueue: opts.invocationQueue } : {}),
       ...(queueProcessor ? { queueProcessor } : {}),
-      ...(opts.routingDispatchPreflight ? { routingDispatchPreflight: opts.routingDispatchPreflight } : {}),
       ...(opts.actionSuccessorAdmissionService
         ? { actionSuccessorAdmissionService: opts.actionSuccessorAdmissionService }
         : {}),

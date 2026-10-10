@@ -2118,22 +2118,18 @@ describe('F117 soak: a waiting entry does not stop its thread’s queue', () => 
       .filter((call) => String(call.arguments[1]).includes('waits for its retry time'))
       .map((call) => call.arguments[0]);
 
-  /**
-   * A route whose first attempt has actual-send routing refuse `refusedCatIds` the way the real routes
-   * do: the refusal callback with routing's retry time, then the error, and no response receiver.
-   */
-  const routeRefusingFirstAttempt = (attempts, refusedCatIds, automaticRetryAt) =>
+  // Actual backend failure before a response receiver exists; no availability lookup.
+  const routeFailingBeforeAcceptance = (attempts, refusedCatIds) =>
     async function* (...args) {
       const [userId, content, threadId, , targetCats, , options] = args;
       attempts.push({ at: Date.now(), content, targetCats: [...targetCats] });
       const refused = attempts.length === 1 ? targetCats.filter((catId) => refusedCatIds.includes(catId)) : [];
       for (const catId of refused) {
-        options.onRoutingDispatchRejected?.({ catId, automaticRetryAt: automaticRetryAt() });
         yield {
           type: 'error',
           catId,
-          errorCode: 'routing_preflight_rejected',
-          error: '本次未执行：成员当前不可用。恢复后可重试原消息。',
+          errorCode: 'backend_start_failed',
+          error: 'backend failed before accepting the source',
           timestamp: Date.now(),
         };
       }
@@ -2151,12 +2147,12 @@ describe('F117 soak: a waiting entry does not stop its thread’s queue', () => 
       }
     };
 
-  it('retries a member refused at actual send when routing will accept it again', async () => {
+  it('retries an actual backend failure before input acceptance', async () => {
     const attempts = [];
     let automaticRetryAt;
     const harness = createHarness({
       processorOptions: { retryDeferral: { baseDelayMs: 20 } },
-      routeExecution: routeRefusingFirstAttempt(attempts, ['opus'], () => automaticRetryAt),
+      routeExecution: routeFailingBeforeAcceptance(attempts, ['opus']),
     });
     automaticRetryAt = Date.now() + 400;
     const refused = await admitMessage(harness, { targetCats: ['opus'] });
@@ -2165,20 +2161,21 @@ describe('F117 soak: a waiting entry does not stop its thread’s queue', () => 
     await waitFor(() => deferralLogs(harness).length === 1);
     const [deferral] = deferralLogs(harness);
     assert.equal(deferral.entryId, refused.entry.id);
-    assert.equal(deferral.retryAt, automaticRetryAt, 'the wait ends at routing’s retry time, not the shorter backoff');
+
+    assert.ok(deferral.retryAt < automaticRetryAt, 'availability cannot impose an extra wait');
 
     await waitFor(() => attempts.length === 2);
-    assert.ok(attempts[1].at >= automaticRetryAt - 5, 'not retried before routing accepts the member again');
+
     await waitFor(() => queuedIds(harness).length === 0);
   });
 
-  it('a cross-thread callback rejected at ingress is retained and executes automatically after recovery', async () => {
+  it('a cross-thread callback uses normal admission and recovers an actual failed backend handoff', async () => {
     const { enqueueA2ATargets } = await import('../dist/routes/callback-a2a-trigger.js');
     const attempts = [];
     const retryAt = Date.now() + 200;
     const harness = createHarness({
       processorOptions: { retryDeferral: { baseDelayMs: 20 } },
-      routeExecution: routeRefusingFirstAttempt(attempts, ['opus'], () => retryAt),
+      routeExecution: routeFailingBeforeAcceptance(attempts, ['opus']),
     });
     const trigger = harness.messageStore.append({
       from: { kind: 'agent', catId: 'opus' },
@@ -2240,18 +2237,18 @@ describe('F117 soak: a waiting entry does not stop its thread’s queue', () => 
     );
     assert.equal(queuedIds(harness).length, 1, 'refused source stays queued');
     await waitFor(() => attempts.length === 2);
-    assert.ok(attempts[1].at >= retryAt - 5);
+
     assert.deepEqual(attempts[1].targetCats, ['opus'], 'recovery preserves target, without another message or reroute');
     await waitFor(() => queuedIds(harness).length === 0);
     assert.equal((await harness.messageStore.getById(trigger.id)).lifecycle.dispatchRefs.length, 1);
   });
 
-  it('waits for routing’s retry time when the member a targetless source resolved to is refused', async () => {
+  it('uses backend backoff for a failed targetless source handoff', async () => {
     const attempts = [];
     let automaticRetryAt;
     const harness = createHarness({
       processorOptions: { retryDeferral: { baseDelayMs: 20 } },
-      routeExecution: routeRefusingFirstAttempt(attempts, ['opus'], () => automaticRetryAt),
+      routeExecution: routeFailingBeforeAcceptance(attempts, ['opus']),
     });
     automaticRetryAt = Date.now() + 400;
     const targetless = await admitMessage(harness, { targetCats: [] });
@@ -2266,20 +2263,21 @@ describe('F117 soak: a waiting entry does not stop its thread’s queue', () => 
     );
     const [deferral] = deferralLogs(harness);
     assert.equal(deferral.entryId, targetless.entry.id);
-    assert.deepEqual(deferral.refusedTargets, ['opus']);
-    assert.equal(deferral.retryAt, automaticRetryAt, 'the wait ends at routing’s retry time, not the shorter backoff');
+    assert.equal(deferral.refusedTargets, undefined);
+
+    assert.ok(deferral.retryAt < automaticRetryAt, 'availability cannot impose an extra wait');
 
     await waitFor(() => attempts.length === 2);
-    assert.ok(attempts[1].at >= automaticRetryAt - 5, 'the first retry does not come before routing’s retry time');
+
     await waitFor(() => queuedIds(harness).length === 0);
   });
 
-  it('makes a pair wait for routing’s retry time for the member refused after its sibling was handed off', async () => {
+  it('retries only the sibling whose backend handoff actually failed', async () => {
     const attempts = [];
     let automaticRetryAt;
     const harness = createHarness({
       processorOptions: { retryDeferral: { baseDelayMs: 20 } },
-      routeExecution: routeRefusingFirstAttempt(attempts, ['codex'], () => automaticRetryAt),
+      routeExecution: routeFailingBeforeAcceptance(attempts, ['codex']),
     });
     automaticRetryAt = Date.now() + 400;
     const pair = await admitMessage(harness, { targetCats: ['opus', 'codex'] });
@@ -2292,11 +2290,11 @@ describe('F117 soak: a waiting entry does not stop its thread’s queue', () => 
       ['codex'],
       'only the refused member is left in the Queue',
     );
-    assert.equal(deferralLogs(harness)[0].retryAt, automaticRetryAt);
+    assert.ok(deferralLogs(harness)[0].retryAt < automaticRetryAt);
 
     await waitFor(() => attempts.length === 2);
     assert.deepEqual(attempts[1].targetCats, ['codex']);
-    assert.ok(attempts[1].at >= automaticRetryAt - 5, 'the refused member is not retried before routing’s retry time');
+
     await waitFor(() => queuedIds(harness).length === 0);
   });
 

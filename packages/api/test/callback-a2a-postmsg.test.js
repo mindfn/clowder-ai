@@ -653,11 +653,13 @@ describe('F052: cross-thread A2A mention routing', () => {
     assert.ok(crossMsg.mentions.includes('codex'), 'cross-thread @codex should be in mentions');
   });
 
-  test('cross-thread same-member source survives a temporary routing rejection in durable Queue custody', async () => {
+  test('cross-thread same-member source enters durable Queue without consulting availability', async () => {
     const retryAt = Date.now() + 300_000;
+    let availabilityChecks = 0;
     const app = await createAppWithThreadStore({
       routingDispatchPreflight: {
         async preflight(input) {
+          availabilityChecks++;
           return {
             v: 1,
             ownerId: input.ownerId,
@@ -694,7 +696,8 @@ describe('F052: cross-thread A2A mention routing', () => {
     const response = await app.inject(request);
     assert.equal(response.statusCode, 200);
     const body = response.json();
-    assert.deepEqual(body.routed, ['codex'], 'routing unavailability must not discard durable recipient custody');
+    assert.deepEqual(body.routed, ['codex'], 'requested recipient owns the durable wake');
+    assert.equal(availabilityChecks, 0, 'message sending does not resolve availability');
     const entries = invocationQueue.list(target.id, 'user-1');
     assert.equal(entries.length, 1);
     assert.deepEqual(entries[0].targets, ['codex']);
@@ -702,7 +705,7 @@ describe('F052: cross-thread A2A mention routing', () => {
     const stored = await messageStore.getById(body.messageId);
     assert.equal(stored.extra.crossPost.sourceThreadId, source.id);
     assert.equal(stored.from.catId, 'codex');
-    assert.equal(mockRouter.getExecutions().length, 0, 'ingress does not bypass actual-send routing');
+    assert.equal(mockRouter.getExecutions().length, 0, 'admission uses the normal Queue drain');
     await app.inject(request);
     assert.equal(invocationQueue.list(target.id, 'user-1').length, 1, 'retry does not duplicate the source');
     await app.close();

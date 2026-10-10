@@ -68,5 +68,60 @@
   {
     "file": "preview-check.mjs",
     "sha256": "f85fe8c795bf01d32dc449130e2af532d12082b936e6de2b896247f8cc457851"
+  },
+  {
+    "file": "remove-availability-first-red.log.gz",
+    "originalSha256": "7741c01cff68aa6922e0be0c27a5c70d09691f7220d225e790d25cdda4def260",
+    "sha256": "fa0c93ee02f4c738e35a2098531a5d8e3cfa292f89b200befa8e98754ab31fac"
+  },
+  {
+    "file": "remove-availability-api-partial-red.log.gz",
+    "originalSha256": "9106bdb1aabc491f78d9c358164ad93fe81c5bf4488f6f1d92ce694284e2b202",
+    "sha256": "7bf9e62665c31441a90816b03541935457cfe164f1ce91aa020ecdf245896139"
+  },
+  {
+    "file": "remove-availability-prompt-red.log.gz",
+    "originalSha256": "cb414e0527aaf6e3e333c3b3dd252a478af1761e3dadefa37a0125464c95cc2f",
+    "sha256": "e2bf5cb8c81d56e127f6fa93eb0681f745efe7c410c9563c1c3ac333a8ef278d"
+  },
+  {
+    "file": "remove-availability-api-final.log.gz",
+    "originalSha256": "1687112560dd11e19cb1d04a600c615a6a4e16cd21899f0891dd9b379616cd18",
+    "sha256": "ae245286d220f0b3ee71ea9e5c46ef8e900aebe76573198177fc81ba7b65595f"
+  },
+  {
+    "file": "remove-availability-prompt-green.log.gz",
+    "originalSha256": "a1c3ef539e463c3b239ce5ce556e64c5c7c81b019262b03411d3155361e41bc3",
+    "sha256": "8a3f50fee2a67617af86101d78397753eb3389692ee72700632c4069084ed53e"
+  },
+  {
+    "file": "remove-availability-seam-final.log.gz",
+    "originalSha256": "2dedf2205cba7cc5d5071e602b3878fd3fc67a2669a79bfdc6904c3e84be7803",
+    "sha256": "47d6893449c6111bc8610ecd2f29c4917f17eff4c13ef125cca55634d5e4caf6"
+  },
+  {
+    "file": "opus-6cc7-api-changes-requested.log.gz",
+    "originalSha256": "b75dc4428c6ec7fc5b278e3102751b5b36f4adcd58ce2989c79e723351d22ccf",
+    "sha256": "bcde1a542690e446fef0fbc1bd84cb8678c92262693ff8b2aae7f3c7bd4ae176"
+  },
+  {
+    "file": "opus-6cc7-seam.log.gz",
+    "originalSha256": "6bc753e0f5f1cb8588e8a6fcb43f0eb1740ee9b0f5aa1a2ab262800c7f647586",
+    "sha256": "7b5f597ba4c44f57d5baef580faaceda5b786b71af88f11cd7ffedceedebff1b"
+  },
+  {
+    "file": "opus-6cc7-web.log.gz",
+    "originalSha256": "f594fc07bfb1ff5e2a79222465939b084795656c1099f8582f5d2ba3761981a0",
+    "sha256": "3a8814bb8f5c14d08e0b87660d637049b0d61e6f5e12b3ce662ba66e075a67e9"
+  },
+  {
+    "file": "remove-availability-build-final.log.gz",
+    "originalSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "sha256": "9ceffb7310338057cfe71a4ae1e2c98d2c485d81cdef906532a801f457a38d64"
+  },
+  {
+    "file": "remove-availability-biome-final.log.gz",
+    "originalSha256": "252ecaa316ec4d27d7374d7e2d274db884e9d5150430ab23df9be76d1a46b280",
+    "sha256": "963f5405356dd5e5a22d4ff43bae340654d79c3f688362cd6e573fcfacd6d1c1"
   }
 ]

@@ -162,13 +162,25 @@ for (const options of [
   { status: 'canceled' },
   { status: 'interrupted' },
   { status: 'succeeded' },
-  { rejected: true },
   { isFailureReport: true },
 ]) {
   test('recovery does not manufacture failed-return bounce: ' + JSON.stringify(options), async () => {
     const f = await fixture(options);
     await f.recovery().reconcile({ processStartedAt: 200 });
     assert.equal((await wakeRows(f)).length, 0);
+    assert.equal(f.turns.listResponsePending().length, 0);
+    assert.equal(f.messages.getByThread('thread').length, 2);
+  });
+}
+
+for (const isFailureReport of [false, true]) {
+  test(`availability cannot suppress exact failed-return recovery or cause a bounce: ${isFailureReport}`, async () => {
+    const f = await fixture({ rejected: true, isFailureReport });
+    await f.recovery().reconcile({ processStartedAt: 200 });
+    const rows = await wakeRows(f);
+    assert.equal(rows.length, isFailureReport ? 0 : 1);
+    if (!isFailureReport) assert.deepEqual(rows[0].targets, ['codex']);
+    assert.equal(f.preflightCalls.length, 0, 'failure return does not consult availability');
     assert.equal(f.turns.listResponsePending().length, 0);
     assert.equal(f.messages.getByThread('thread').length, 2);
   });

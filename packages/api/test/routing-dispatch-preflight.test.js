@@ -66,18 +66,18 @@ function routeDeps(services, routingDispatchPreflight, invocationExtras = {}) {
   };
 }
 
-describe('F293 actual-send routing preflight', () => {
-  test('serial and parallel classify human attempts from strict ingress, preserving queued origin', async () => {
+describe('F117 normal dispatch without availability gating', () => {
+  test('serial and parallel do not consult availability for any ingress origin', async () => {
     const { routeSerial } = await import('../dist/domains/cats/services/agents/routing/route-serial.js');
     const { routeParallel } = await import('../dist/domains/cats/services/agents/routing/route-parallel.js');
     for (const route of [routeSerial, routeParallel]) {
-      for (const [origin, queueSource, auth, expected] of [
-        ['direct_owner', undefined, 'strict', true],
-        ['queue_replay', 'user', 'strict', true],
-        ['queue_replay', 'agent', 'strict', false],
-        ['queue_replay', 'connector', 'strict', false],
-        ['callback', 'user', 'strict', false],
-        ['direct_owner', undefined, 'unknown', false],
+      for (const [origin, queueSource, auth] of [
+        ['direct_owner', undefined, 'strict'],
+        ['queue_replay', 'user', 'strict'],
+        ['queue_replay', 'agent', 'strict'],
+        ['queue_replay', 'connector', 'strict'],
+        ['callback', 'user', 'strict'],
+        ['direct_owner', undefined, 'unknown'],
       ]) {
         const seen = [];
         const deps = routeDeps(
@@ -96,16 +96,12 @@ describe('F293 actual-send routing preflight', () => {
         })) {
           /* drain real route */
         }
-        assert.equal(
-          seen[0].ownerRequestedAttempt === true,
-          expected,
-          `${route.name}: ${origin}/${queueSource}/${auth}`,
-        );
+        assert.equal(seen.length, 0, `${route.name}: ${origin}/${queueSource}/${auth}`);
       }
     }
   });
 
-  test('all rejected targets produce truthful failed dispositions without any child invocation', async () => {
+  test('availability cannot suppress explicitly requested child invocations', async () => {
     const { routeSerial } = await import('../dist/domains/cats/services/agents/routing/route-serial.js');
     const { routeParallel } = await import('../dist/domains/cats/services/agents/routing/route-parallel.js');
     const { PerCatTerminalDispositionCollector } = await import(
@@ -120,32 +116,52 @@ describe('F293 actual-send routing preflight', () => {
       );
       for await (const event of route(deps, ['opus', 'codex'], 'request', 'owner-1', 'rejected-thread'))
         collector.observe(event);
-      assert.equal(calls.length, 0, `${route.name} must not start a rejected child invocation: ${calls.join(',')}`);
-      assert.deepEqual(collector.getSuccessfulCatIds(), []);
-      assert.ok(collector.getPrimaryTerminalError(), `${route.name} must expose a retryable failure`);
+      assert.deepEqual([...calls].sort(), ['codex', 'opus'], `${route.name} must attempt both exact targets`);
+      assert.deepEqual([...collector.getSuccessfulCatIds()].sort(), ['codex', 'opus']);
+      assert.equal(collector.getPrimaryTerminalError(), undefined);
     }
   });
 
-  test('a rejected original request persists its exact retry source for refresh and thread switching', async () => {
+  test('provider failure produces its normal failed response without an availability notice', async () => {
     const { routeSerial } = await import('../dist/domains/cats/services/agents/routing/route-serial.js');
-    const stored = [];
-    const deps = routeDeps({}, { preflight: async (input) => decision(input, { opus: 'rejected' }) });
-    deps.messageStore.append = async (input) => {
-      const message = { ...input, id: `notice-${stored.length}` };
-      stored.push(message);
-      return message;
-    };
-    const emitted = [];
-    for await (const event of routeSerial(deps, ['opus'], 'original', 'owner-1', 'thread-1', {
-      parentInvocationId: 'parent-1',
-      currentUserMessageId: 'message-1',
-    }))
-      emitted.push(event);
-    const notice = stored.find((message) => message.extra?.systemInfo?.payload.type === 'routing_preflight');
-    assert.ok(notice, 'the notice must survive hydration');
-    assert.equal(notice.extra.systemInfo.payload.retryInvocationId, 'parent-1');
-    assert.equal(notice.extra.systemInfo.payload.sourceMessageId, 'message-1');
-    assert.equal(emitted.find((event) => event.type === 'system_info')?.messageId, notice.id);
+    const { routeParallel } = await import('../dist/domains/cats/services/agents/routing/route-parallel.js');
+    const { PerCatTerminalDispositionCollector } = await import(
+      '../dist/domains/cats/services/agents/invocation/PerCatTerminalDispositionCollector.js'
+    );
+    for (const route of [routeSerial, routeParallel]) {
+      const calls = [];
+      let preflightCalls = 0;
+      const deps = routeDeps(
+        {
+          opus: {
+            async *invoke() {
+              calls.push('opus');
+              throw new Error('native provider quota exhausted');
+            },
+          },
+        },
+        {
+          preflight: async () => {
+            preflightCalls++;
+            throw new Error('availability must not be consulted');
+          },
+        },
+      );
+      const events = [];
+      const collector = new PerCatTerminalDispositionCollector({ targetCatIds: ['opus'] });
+      for await (const event of route(deps, ['opus'], 'original', 'owner-1', 'thread-failure', {
+        parentInvocationId: 'parent-1',
+        currentUserMessageId: 'message-1',
+      })) {
+        events.push(event);
+        collector.observe(event);
+      }
+      assert.deepEqual(calls, ['opus']);
+      assert.equal(preflightCalls, 0);
+      assert.equal(collector.getTerminalStatus('opus'), 'failed');
+      assert.match(collector.getPrimaryTerminalError(), /native provider quota exhausted/);
+      assert.ok(!events.some((event) => event.type === 'system_info' && event.content?.includes('routing_preflight')));
+    }
   });
 
   test('last-resort degradation deduplicates targets and stays total for an empty target set', async () => {
@@ -217,7 +233,7 @@ describe('F293 actual-send routing preflight', () => {
     assert.deepEqual(catalogInputs, [{ ownerId: 'owner-1' }, { ownerId: 'owner-1' }, { ownerId: 'owner-1' }]);
   });
 
-  test('serial mixed targets reject only the unavailable child and let warned target proceed unchanged', async () => {
+  test('serial starts every requested target without consulting availability', async () => {
     const { routeSerial } = await import('../dist/domains/cats/services/agents/routing/route-serial.js');
     const calls = [];
     const preflightInputs = [];
@@ -237,28 +253,23 @@ describe('F293 actual-send routing preflight', () => {
       events.push(event);
     }
 
-    assert.ok(!calls.includes('opus'), 'rejected target must not create a provider child');
+    assert.ok(calls.includes('opus'), 'requested target must create its provider child');
     assert.ok(calls.includes('codex'), 'warned target must retain the original target');
     assert.deepEqual(
       preflightInputs.slice(0, 2).map((input) => ({ targetCatIds: input.targetCatIds, intent: input.intent })),
-      [
-        { targetCatIds: ['opus'], intent: 'review' },
-        { targetCatIds: ['codex'], intent: 'review' },
-      ],
+      [],
     );
     const receipts = events
       .filter((event) => event.type === 'system_info' && event.content?.includes('routing_preflight'))
       .map((event) => JSON.parse(event.content));
-    assert.ok(
-      receipts.some((receipt) => receipt.target.targetCatId === 'opus' && receipt.target.disposition === 'rejected'),
-    );
+    assert.deepEqual(receipts, []);
     assert.ok(
       !receipts.some((receipt) => receipt.target.targetCatId === 'codex'),
       'fail-open infrastructure degradation stays in routing telemetry instead of becoming chat content',
     );
   });
 
-  test('consumer failure degrades to warned and preserves the exact original target', async () => {
+  test('unused availability consumer cannot prevent the original target from executing', async () => {
     const { routeSerial } = await import('../dist/domains/cats/services/agents/routing/route-serial.js');
     const calls = [];
     const deps = routeDeps(
@@ -278,7 +289,7 @@ describe('F293 actual-send routing preflight', () => {
     );
   });
 
-  test('completed response retains every requested target in atomic ledger admission despite temporary rejection', async () => {
+  test('completed response atomically admits every requested target without availability feedback', async () => {
     const { commitCompletedResponseAndEnqueueA2ATargets } = await import('../dist/routes/callback-a2a-trigger.js');
     const { InvocationQueue } = await import('../dist/domains/cats/services/agents/invocation/InvocationQueue.js');
     const { MessageStore } = await import('../dist/domains/cats/services/stores/ports/MessageStore.js');
@@ -347,14 +358,7 @@ describe('F293 actual-send routing preflight', () => {
       queue.list('thread-deferred', 'owner-1').flatMap((entry) => entry.targets),
       ['codex', 'terra'],
     );
-    assert.ok(
-      broadcasts.some(
-        ({ message }) =>
-          message.type === 'system_info' &&
-          message.content?.includes('routing_preflight') &&
-          JSON.parse(message.content).target.targetCatId === 'codex',
-      ),
-    );
+    assert.equal(broadcasts.filter(({ message }) => message.content?.includes('routing_preflight')).length, 0);
   });
 
   test('failed A2A response atomically admits one idempotent Queue-only wake for the exact caller', async () => {
@@ -443,7 +447,7 @@ describe('F293 actual-send routing preflight', () => {
     );
   });
 
-  test('parallel mixed targets never invoke the rejected child', async () => {
+  test('parallel starts every requested target without availability notices', async () => {
     const { routeParallel } = await import('../dist/domains/cats/services/agents/routing/route-parallel.js');
     const calls = [];
     const deps = routeDeps(
@@ -455,19 +459,19 @@ describe('F293 actual-send routing preflight', () => {
       events.push(event);
     }
 
-    assert.ok(!calls.includes('opus'));
+    assert.ok(calls.includes('opus'));
     assert.ok(calls.includes('codex'));
     const receipts = events
       .filter((event) => event.type === 'system_info' && event.content?.includes('routing_preflight'))
       .map((event) => JSON.parse(event.content));
     assert.deepEqual(
       receipts.map((receipt) => [receipt.target.targetCatId, receipt.target.disposition]),
-      [['opus', 'rejected']],
+      [],
       'parallel fail-open degradation stays in routing telemetry instead of becoming chat content',
     );
   });
 
-  test('serial and parallel report each refused requested target with routing’s retry time', async () => {
+  test('serial and parallel do not defer requested targets using routing retry times', async () => {
     const { routeSerial } = await import('../dist/domains/cats/services/agents/routing/route-serial.js');
     const { routeParallel } = await import('../dist/domains/cats/services/agents/routing/route-parallel.js');
     const automaticRetryAt = Date.now() + 5 * 60_000;
@@ -493,12 +497,12 @@ describe('F293 actual-send routing preflight', () => {
       })) {
         /* drain real route */
       }
-      assert.deepEqual(rejections, [{ catId: 'opus', automaticRetryAt }], `${route.name} reports the exact refusal`);
-      assert.deepEqual(calls, ['codex'], `${route.name} still starts the accepted target`);
+      assert.deepEqual(rejections, [], `${route.name} has no availability refusal path`);
+      assert.deepEqual([...calls].sort(), ['codex', 'opus'], `${route.name} starts all requested targets`);
     }
   });
 
-  test('serial and parallel invocations retain the exact actual-send decision through durable terminal observation', async () => {
+  test('serial and parallel terminals do not publish global availability from local execution', async () => {
     const { routeSerial } = await import('../dist/domains/cats/services/agents/routing/route-serial.js');
     const { routeParallel } = await import('../dist/domains/cats/services/agents/routing/route-parallel.js');
     const { InMemoryTurnExecutionStore } = await import(
@@ -538,28 +542,12 @@ describe('F293 actual-send routing preflight', () => {
       // exhaust the route so both durable terminal observers run
     }
 
-    assert.equal(returnedDecisions.length, 2);
-    assert.equal(observed.length, 3);
-    assert.equal(observed[0].preflightDecision, returnedDecisions[0]);
-    assert.equal(observed[1].preflightDecision, returnedDecisions[1]);
-    assert.equal(observed[2].preflightDecision, returnedDecisions[1]);
-    assert.deepEqual(
-      observed.slice(0, 1).map(({ catId, status }) => [catId, status]),
-      [['opus', 'succeeded']],
-    );
-    assert.deepEqual(
-      observed
-        .slice(1)
-        .map(({ catId, status }) => [catId, status])
-        .sort(([left], [right]) => left.localeCompare(right)),
-      [
-        ['codex', 'succeeded'],
-        ['opus', 'succeeded'],
-      ],
-    );
+    assert.equal(returnedDecisions.length, 0);
+    assert.deepEqual(observed, []);
+    assert.deepEqual([...calls].sort(), ['codex', 'opus', 'opus']);
   });
 
-  test('callback queue preserves every requested target while reporting mixed availability', async () => {
+  test('callback queue and Append never consult or expose availability', async () => {
     const { enqueueA2ATargets } = await import('../dist/routes/callback-a2a-trigger.js');
     const { InvocationQueue } = await import('../dist/domains/cats/services/agents/invocation/InvocationQueue.js');
     const { MessageStore } = await import('../dist/domains/cats/services/stores/ports/MessageStore.js');
@@ -610,14 +598,8 @@ describe('F293 actual-send routing preflight', () => {
     );
 
     assert.deepEqual(result.enqueued, ['opus', 'codex']);
-    assert.deepEqual(appendedTargets, ['codex'], 'a rejected target cannot bypass preflight through Append');
-    assert.deepEqual(
-      result.routingPreflight.targets.map(({ targetCatId, disposition }) => ({ targetCatId, disposition })),
-      [
-        { targetCatId: 'opus', disposition: 'rejected' },
-        { targetCatId: 'codex', disposition: 'warned' },
-      ],
-    );
+    assert.deepEqual(appendedTargets, ['opus', 'codex'], 'every requested target may Append');
+    assert.equal(result.routingPreflight, undefined);
     assert.deepEqual(
       queue.list('thread-callback', 'owner-1').flatMap((entry) => entry.targets),
       ['opus', 'codex'],
@@ -630,7 +612,7 @@ describe('F293 actual-send routing preflight', () => {
           target: JSON.parse(message.content).target.targetCatId,
           disposition: JSON.parse(message.content).target.disposition,
         })),
-      [{ threadId: 'thread-callback', target: 'opus', disposition: 'rejected' }],
+      [],
     );
   });
 });
