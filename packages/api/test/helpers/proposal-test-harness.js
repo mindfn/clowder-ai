@@ -14,7 +14,6 @@ export async function createProposalTestContext({
   taskStoreOverride,
   routerOverride,
   invocationQueueOverride,
-  queueProcessorOverride,
   fetchPrTrackingBoundaryOverride,
   sidebarPresenceSourceOverride,
   projectRoot,
@@ -68,7 +67,6 @@ export async function createProposalTestContext({
     socketManager,
     ...(routerOverride ? { router: routerOverride } : {}),
     ...(invocationQueueOverride ? { invocationQueue: invocationQueueOverride } : {}),
-    ...(queueProcessorOverride ? { queueProcessor: queueProcessorOverride } : {}),
     ...(fetchPrTrackingBoundaryOverride ? { fetchPrTrackingBoundary: fetchPrTrackingBoundaryOverride } : {}),
     ...(projectRoot ? { projectRoot } : {}),
   });
@@ -158,7 +156,6 @@ export async function createProposalTestContext({
     socketEvents,
     router: routerOverride,
     invocationQueue: invocationQueueOverride,
-    queueProcessor: queueProcessorOverride,
     propose,
     approve,
     reject,

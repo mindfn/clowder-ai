@@ -113,7 +113,7 @@ describe('QueueProcessor explicit stale-owner recovery (F118)', () => {
     const messageStore = new MessageStore();
     const deps = stubDeps({ messageStore });
     const processor = new QueueProcessor(deps, { processingSlotTtlMs: SHORT_TTL });
-    const admitted = await deps.queue.appendAndEnqueueDurable(
+    const admitted = await deps.queue.send(
       messageStore,
       {
         from: { kind: 'user', userId: 'u1' },
@@ -162,7 +162,7 @@ describe('QueueProcessor explicit stale-owner recovery (F118)', () => {
     const messageStore = new MessageStore();
     const deps = stubDeps({ messageStore });
     const processor = new QueueProcessor(deps, { processingSlotTtlMs: SHORT_TTL });
-    const admitted = await deps.queue.appendAndEnqueueDurable(
+    const admitted = await deps.queue.send(
       messageStore,
       {
         from: { kind: 'user', userId: 'u1' },

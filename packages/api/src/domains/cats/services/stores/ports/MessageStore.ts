@@ -677,7 +677,10 @@ export function canonicalizeAppendMessageInput(input: AppendMessageInput): Canon
   return canonical;
 }
 
-export type QueueLedgerAdmissionFactory = (messageId: string) => readonly QueueLedgerEntry[];
+export type QueueLedgerAdmissionFactory = (
+  messageId: string,
+  replayEntries?: readonly QueueLedgerEntry[],
+) => readonly QueueLedgerEntry[];
 
 export type QueueLedgerMessageAdmissionResult =
   | {
@@ -746,6 +749,24 @@ export function prepareLifecycleResponseTerminalWithLedgerTargets(
   return isDeepStrictEqual(current, next)
     ? { kind: 'prepared', message: next, entries: pendingEntries, lifecycleReplayed: true }
     : { kind: 'conflict', reason: 'different_terminal', message: structuredClone(current) };
+}
+
+export function assertQueueMessageReplay(existing: StoredMessage, incoming: AppendMessageInput): void {
+  const canonical = canonicalizeAppendMessageInput(incoming);
+  for (const key of [
+    'from',
+    'content',
+    'mentions',
+    'contentBlocks',
+    'visibility',
+    'whisperTo',
+    'replyTo',
+    'source',
+  ] as const) {
+    if (!isDeepStrictEqual(existing[key], canonical[key])) {
+      throw new Error(`Queue admission identity conflict for replayed message ${existing.id}`);
+    }
+  }
 }
 
 export function prepareQueueLedgerMessageAdmission(
@@ -2288,8 +2309,15 @@ export class MessageStore {
     const threadId = msg.threadId ?? DEFAULT_THREAD_ID;
     const existing = msg.idempotencyKey ? this.getByIdempotencyKey(msg.userId, threadId, msg.idempotencyKey) : null;
     if (existing) {
-      const expected = [...buildAdmission(existing.id)];
-      const persisted = expected.map((entry) => ledgerStore.getNow(entry.threadId, entry.id));
+      assertQueueMessageReplay(existing, msg);
+      const identities = [...buildAdmission(existing.id)];
+      const persisted = identities.map((entry) => ledgerStore.getNow(entry.threadId, entry.id));
+      const expected = [
+        ...buildAdmission(
+          existing.id,
+          persisted.filter((entry): entry is QueueLedgerEntry => entry !== null),
+        ),
+      ];
       if (
         persisted.some((entry) => entry === null) ||
         !persisted.every((entry, index) => queueLedgerAdmissionsMatch(entry!, expected[index]!))

@@ -1,5 +1,5 @@
 import { isDeepStrictEqual } from 'node:util';
-import { createCatId, type WaitContinuationCarrierV1 } from '@cat-cafe/shared';
+import { createCatId, type MessageWorkDisposition, type WaitContinuationCarrierV1 } from '@cat-cafe/shared';
 import type { OwnerAuthProvenance } from '../../owner-auth-provenance.js';
 import type { AppendMessageInput, IMessageStore, StoredMessage } from '../../stores/ports/MessageStore.js';
 import type { InvocationQueue, QueueEntry } from './InvocationQueue.js';
@@ -9,9 +9,10 @@ import { queueEntryId } from './queue-ledger/QueueLedger.js';
 export interface PersistedQueueDeliveryInput {
   ownerUserId: string;
   threadId: string;
-  targetCatId: string;
+  targetCatId?: string;
   idempotencyKey: string;
   content: string;
+  messageDisposition?: MessageWorkDisposition;
   source: NonNullable<StoredMessage['source']>;
   /** Producer-owned envelope metadata (e.g. memory cues); never routing or reliability state. */
   extra?: NonNullable<StoredMessage['extra']>;
@@ -87,7 +88,7 @@ export class PersistedQueueDelivery implements PersistedQueueDeliveryPort {
       messages: IMessageStore;
       queue: Pick<
         InvocationQueue,
-        | 'appendAndEnqueueDurable'
+        | 'send'
         | 'enqueueDurable'
         | 'enqueueDurableWithVisibleNotice'
         | 'findAdmittedEntriesForMessages'
@@ -97,40 +98,46 @@ export class PersistedQueueDelivery implements PersistedQueueDeliveryPort {
     },
   ) {}
 
-  async deliver(input: PersistedQueueDeliveryInput) {
-    const targetCat = createCatId(input.targetCatId);
+  async deliver(envelope: PersistedQueueDeliveryInput) {
+    const existing = await this.deps.messages.getByIdempotencyKey(
+      envelope.ownerUserId,
+      envelope.threadId,
+      envelope.idempotencyKey,
+    );
+    const input = envelope;
+    const requestedTargets = input.targetCatId ? [createCatId(input.targetCatId)] : [];
     // `from.sender` is the canonical ACTOR identity: bundle author grouping keys on it, the
     // envelope maps it to `{kind:'user', id}`, and receipts address it. `source.sender` is the
     // person; `source.label` is the room's display name. Defaulting to the label would give every
     // member of a group chat the same fabricated identity named after the room, so a producer that
     // knows no person leaves it absent — consumers already fall back to connectorId/label to show.
     const from =
-      input.from ??
+      envelope.from ??
       ({
         kind: 'external' as const,
-        connectorId: input.source.connector,
-        ...(input.source.sender ? { sender: input.source.sender } : {}),
+        connectorId: envelope.source.connector,
+        ...(envelope.source.sender ? { sender: envelope.source.sender } : {}),
       } as NonNullable<StoredMessage['from']>);
-    const existing = await this.deps.messages.getByIdempotencyKey(
-      input.ownerUserId,
-      input.threadId,
-      input.idempotencyKey,
-    );
-    if (existing) {
+    // Retired rows stay retired. Live-row replay, including its target and policy snapshot,
+    // belongs to common send rather than this producer adapter.
+    if (existing && !(await this.deps.queue.getDurableEntry(input.threadId, queueEntryId(existing.id)))) {
       return this.progressExistingMessage(existing, input);
     }
-    const admitted = await this.deps.queue.appendAndEnqueueDurable(
+    if (existing && !matchesPersistedEnvelope(existing, input)) {
+      return { state: 'conflict' as const, reason: 'Persisted producer envelope does not match', message: existing };
+    }
+    const admitted = await this.deps.queue.send(
       this.deps.messages,
       {
         userId: input.ownerUserId,
         threadId: input.threadId,
         from,
         content: input.content,
-        mentions: [targetCat],
+        mentions: requestedTargets,
         timestamp: input.timestamp ?? Date.now(),
         deliveryStatus: 'queued',
         source: input.source,
-        extra: { ...(input.extra ?? {}), targetCats: [targetCat] },
+        ...(input.extra ? { extra: input.extra } : {}),
         ...(input.contentBlocks ? { contentBlocks: input.contentBlocks } : {}),
         idempotencyKey: input.idempotencyKey,
       },
@@ -146,8 +153,9 @@ export class PersistedQueueDelivery implements PersistedQueueDeliveryPort {
         idempotencyKey: input.idempotencyKey,
         content: input.content,
         from,
-        targetCats: [targetCat],
+        targetCats: requestedTargets,
         intent: 'execute',
+        ...(input.messageDisposition ? { messageDisposition: input.messageDisposition } : {}),
         ...(input.priority ? { priority: input.priority } : {}),
         ...(input.suggestedSkill ? { suggestedSkill: input.suggestedSkill } : {}),
         ...(input.sourceCategory ? { sourceCategory: input.sourceCategory } : {}),
@@ -175,7 +183,10 @@ export class PersistedQueueDelivery implements PersistedQueueDeliveryPort {
     if (entry.status === 'claimed' || entry.status === 'processing') {
       return { state: 'already_processing' as const, entryId: entry.id, message };
     }
-    return { state: await this.deps.progress(entry, input.targetCatId), entryId: entry.id, message };
+    if (entry.status === 'terminal') return { state: 'terminal_owned' as const, entryId: entry.id, message };
+    const targetCatId = entry.targets[0];
+    if (!targetCatId) return { state: 'unavailable' as const, reason: 'No available conversation target', message };
+    return { state: await this.deps.progress(entry, targetCatId), entryId: entry.id, message };
   }
 
   async deliverPrivate(input: PrivateQueueDeliveryInput): Promise<{ admitted: boolean; entryId?: string }> {
@@ -268,7 +279,7 @@ export class PersistedQueueDelivery implements PersistedQueueDeliveryPort {
         return { state: 'already_processing', entryId, message: existing };
       }
       if (entry.status === 'terminal') return { state: 'terminal_owned', entryId, message: existing };
-      return { state: await this.deps.progress(entry, input.targetCatId), entryId, message: existing };
+      return { state: await this.deps.progress(entry, entry.targets[0]!), entryId, message: existing };
     }
     if (
       this.deps.queue.findAdmittedEntriesForMessages(
@@ -294,6 +305,6 @@ function matchesPersistedEnvelope(message: StoredMessage, input: PersistedQueueD
     message.content === input.content &&
     message.source?.connector === input.source.connector &&
     isDeepStrictEqual(message.source.meta, input.source.meta) &&
-    message.mentions.some((cat) => cat === input.targetCatId)
+    (!input.targetCatId || message.mentions.some((cat) => cat === input.targetCatId))
   );
 }

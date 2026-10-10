@@ -53,14 +53,7 @@ interface A2ATriggerLogger {
 }
 
 export interface QueueProcessorLike {
-  requestDrain?(threadId: string): Promise<void>;
   registerCallerDispatchInitialTargets?(source: StoredMessage, targetIds: readonly string[]): void;
-  tryAutoAppendExactEntry?(input: {
-    threadId: string;
-    userId: string;
-    entryId: string;
-    targetCatId?: string;
-  }): Promise<{ outcome: 'appended' | 'rejected' }>;
   /** F216 c3 supersede: releaseSlot force-frees the per-slot processingSlots
    * mutex so the next drain sees a free slot. */
   releaseSlot?(threadId: string, catId: string): void;
@@ -80,7 +73,7 @@ export interface A2ATriggerDeps {
   invocationQueue?: Pick<
     InvocationQueue,
     | 'enqueueExistingMessageDurable'
-    | 'appendAndEnqueueDurable'
+    | 'send'
     | 'terminalizeResponseAndEnqueueDurable'
     | 'countAgentEntriesForThread'
     | 'getEntrySnapshot'
@@ -110,6 +103,7 @@ export async function appendA2ASourceWithLedgerAdmission(
   message: AppendMessageInput,
   options: {
     plan: A2AFanoutAdmissionPlan;
+    onQueueEntriesAdmitted?: (entries: readonly QueueEntry[]) => void;
     ownerAuthProvenance: OwnerAuthProvenance;
     parentInvocationId?: string;
     callerTraceContext?: CallerTraceContext;
@@ -128,11 +122,12 @@ export async function appendA2ASourceWithLedgerAdmission(
   }
   if (!deps.invocationQueue) throw new Error('A2A source admission requires InvocationQueue');
   if (message.from.kind !== 'agent') throw new Error('A2A source admission requires Agent speech');
-  const result = await deps.invocationQueue.appendAndEnqueueDurable(deps.messageStore, message, {
+  const result = await deps.invocationQueue.send(deps.messageStore, message, {
     from: message.from,
     threadId: message.threadId ?? 'default',
     userId: message.userId,
     kind: 'message_wake',
+    ...(options.onQueueEntriesAdmitted ? { onQueueEntriesAdmitted: options.onQueueEntriesAdmitted } : {}),
     ownerAuthProvenance: normalizeOwnerAuthProvenance(options.ownerAuthProvenance),
     content: message.content,
     sourceCategory: 'a2a',
@@ -563,9 +558,7 @@ export async function enqueueA2ATargets(
     preAdmittedReplayed?: boolean;
   },
 ): Promise<{ enqueued: CatId[]; coalesced?: CatId[] }> {
-  if (!deps.invocationQueue || !deps.queueProcessor?.requestDrain) {
-    throw new Error('A2A dispatch requires InvocationQueue and QueueProcessor');
-  }
+  if (!deps.invocationQueue) throw new Error('A2A dispatch requires the shared Queue admission port');
   const { log } = deps;
   const { threadId, callerCatId } = opts;
   const ownerAuthProvenance = normalizeOwnerAuthProvenance(opts.ownerAuthProvenance);
@@ -743,6 +736,14 @@ export async function enqueueA2ATargets(
           targetCats: pendingAcceptedTargetCats,
           intent: 'execute',
           autoExecute: true,
+          onQueueEntriesAdmitted: (entries) => {
+            if (entries[0]?.sourceCategory !== 'a2a_failure')
+              deps.queueProcessor?.registerCallerDispatchInitialTargets?.(
+                persistedQueueTrigger,
+                pendingAcceptedTargetCats,
+              );
+            opts.onQueueEntriesAdmitted?.(entries);
+          },
           a2aParentInvocationId: opts.parentInvocationId,
           callerTraceContext: ensureDispatchTraceContext(),
           a2aTriggerMessageId: triggerMessageId,
@@ -759,8 +760,8 @@ export async function enqueueA2ATargets(
     if (result.outcome === 'enqueued') {
       // A failure carrier is an exact scheduling reference to an existing
       // response, not a new business dispatch authored by the reporter.
-      if (result.entry?.sourceCategory !== 'a2a_failure') {
-        deps.queueProcessor.registerCallerDispatchInitialTargets?.(persistedQueueTrigger, pendingAcceptedTargetCats);
+      if (preAdmittedEntry && result.entry?.sourceCategory !== 'a2a_failure') {
+        deps.queueProcessor?.registerCallerDispatchInitialTargets?.(persistedQueueTrigger, pendingAcceptedTargetCats);
       }
       if (result.deduped) {
         coalesced.push(...pendingAcceptedTargetCats);
@@ -771,19 +772,7 @@ export async function enqueueA2ATargets(
     }
   }
 
-  opts.onQueueEntriesAdmitted?.(acceptedEntries);
-  if (deps.queueProcessor.tryAutoAppendExactEntry) {
-    for (const entry of acceptedEntries) {
-      for (const targetCatId of entry.targets) {
-        await deps.queueProcessor.tryAutoAppendExactEntry({
-          threadId,
-          userId: opts.userId,
-          entryId: entry.id,
-          targetCatId,
-        });
-      }
-    }
-  }
+  if (preAdmittedEntry) opts.onQueueEntriesAdmitted?.(acceptedEntries);
   if (enqueued.length > 0) {
     await emitQueueUpdated(
       deps.socketManager,
@@ -797,7 +786,7 @@ export async function enqueueA2ATargets(
     { threadId, triggerMessageId, callerCatId, targetCats, queueDiagnostics, enqueued },
     '[DIAG/a2a] enqueueA2ATargets single-ledger admission',
   );
-  await deps.queueProcessor.requestDrain(threadId);
+
   return {
     enqueued,
     ...(coalesced.length > 0 ? { coalesced } : {}),

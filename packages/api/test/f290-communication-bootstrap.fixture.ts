@@ -63,7 +63,6 @@ export async function bootstrapFixture({ persistBirth = true } = {}) {
     messageStore: messages,
     threadStore: threads,
     invocationQueue: queue,
-    queueProcessor: { async processNext() {} },
   });
   const admission = new CollectiveWorkAdmission({ connector: () => cafe.connector, authority, tasks, dispatcher });
   const persist = async (eventId: string) => {

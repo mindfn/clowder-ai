@@ -242,7 +242,7 @@ export interface MultiMentionRouteDeps {
     Pick<InvocationQueue, 'hasQueuedAgentForCat' | 'getQueuedFreshnessMessagesForCat'>;
   /** F122B B6: QueueProcessor for execution + response hook */
   queueProcessor?: {
-    requestDrain?(threadId: string): Promise<void>;
+    registerCallerDispatchInitialTargets?(source: StoredMessage, targetIds: readonly string[]): void;
     registerEntryCompleteHook?(
       entryId: string,
       hook: (
@@ -440,6 +440,22 @@ async function dispatchViaQueue(
     sourceInput,
     {
       plan: preplannedAdmission,
+      onQueueEntriesAdmitted: (entries) => {
+        for (const entry of entries) {
+          for (const catId of queueEntryTargetCats(entry)) {
+            registerMultiMentionCompletionHook({
+              deps,
+              queueProcessor,
+              entryId: entry.id,
+              requestId,
+              catId: catId as CatId,
+              threadId,
+              userId,
+              log,
+            });
+          }
+        }
+      },
       ownerAuthProvenance,
       parentInvocationId,
       ...(actionFence ? { actionSuccessorFence: actionFence } : {}),
@@ -475,22 +491,6 @@ async function dispatchViaQueue(
       ...(cloudDispatchProvenance ? { cloudDispatchProvenance } : {}),
       requiresExactCloudDispatchProvenance: true,
       ...(actionFence ? { actionSuccessorFence: actionFence } : {}),
-      onQueueEntriesAdmitted: (entries) => {
-        for (const entry of entries) {
-          for (const catId of queueEntryTargetCats(entry)) {
-            registerMultiMentionCompletionHook({
-              deps,
-              queueProcessor,
-              entryId: entry.id,
-              requestId,
-              catId: catId as CatId,
-              threadId,
-              userId,
-              log,
-            });
-          }
-        }
-      },
     },
   );
   const admitted = [...result.enqueued, ...(result.coalesced ?? [])];
@@ -769,7 +769,7 @@ export function registerMultiMentionRoutes(app: FastifyInstance, deps: MultiMent
       }
     }
 
-    if (!deps.invocationQueue || !deps.queueProcessor?.requestDrain) {
+    if (!deps.invocationQueue || !deps.queueProcessor) {
       return reply.code(503).send({ error: 'Multi-mention dispatch requires InvocationQueue and QueueProcessor' });
     }
 

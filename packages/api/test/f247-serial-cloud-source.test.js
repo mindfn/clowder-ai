@@ -25,7 +25,7 @@ async function dispatch({
   const records = new InvocationRecordStore();
   const turns = new InMemoryTurnExecutionStore();
   const initialTarget = directCloud ? 'gpt-pro' : 'opus';
-  const admitted = await queue.appendAndEnqueueDurable(
+  const admitted = await queue.send(
     messageStore,
     {
       userId: 'alice',
