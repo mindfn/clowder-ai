@@ -3,6 +3,20 @@
 Status: **migration pending; installed Collective package and full journeys have not been verified**.
 Host test-lane cleanup is not a Collective migration acceptance result.
 
+Ownership correction (2026-10-10): this inventory belongs exclusively to Collective W4,
+not GitHub operations/Community W3. The GitHub package's 494 passing tests do not cover it.
+Host handoff `thread_mu8dg6h7l2x4ohsk#0001791601831711-000145-8fd85acf`
+incorrectly asked the GitHub W3 holder to consume these journeys; that instruction is withdrawn.
+
+The old W4 placeholder task `0001791444719401-000215-c2f02070` was canceled before dispatch
+or implementation. Its `done` status means superseded, not migrated, as explicitly recorded in
+`thread_mrkn6povq4zzgh45#0001791444756075-000217-8e12d91a`.
+No active Collective implementation owner was verified in the current F202 task query.
+The package aggregate task `0001789822127811-001843-1c2133b0` remains owned by
+`cat-eqdvbcxw` (Sol); ownership/scheduling belongs to that existing aggregate responsibility.
+This inventory neither assigns new implementation work nor expands GitHub W3. Until an explicit
+Collective handoff is accepted, these 21 files remain pending under the C1 migration chain.
+
 Business migration uses fixed Host main `bb9f9f08ec574ee8888fbde9819ff95da96bb614`.
 The later browser journeys are not present at that commit; their separately verified source is
 `ca5b831b48c165ea10c7389fe3eb4ba03d3e01e7`. The adjacent JSON manifest records every movable
