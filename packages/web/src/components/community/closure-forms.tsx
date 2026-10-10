@@ -6,6 +6,7 @@
  */
 
 import { useCallback, useState } from 'react';
+import { apiFetch } from '@/utils/api-client';
 import { CheckCircleIcon, ShieldIcon } from './community-icons';
 
 // ---------------------------------------------------------------------------
@@ -33,7 +34,7 @@ export function WaiverAuditForm({
     setSubmitting(true);
     setError(null);
     try {
-      const res = await fetch(
+      const res = await apiFetch(
         `/api/plugins/official.github-operations/github/community-issues/${encodeURIComponent(issueId)}/waive-closure`,
         {
           method: 'POST',
@@ -127,7 +128,7 @@ export function ReportAuditForm({
     setSubmitting(true);
     setError(null);
     try {
-      const res = await fetch(
+      const res = await apiFetch(
         `/api/plugins/official.github-operations/github/community-issues/${encodeURIComponent(issueId)}/report`,
         {
           method: 'POST',

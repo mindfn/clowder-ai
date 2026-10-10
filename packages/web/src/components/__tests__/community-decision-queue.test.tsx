@@ -1,3 +1,8 @@
+// Component interaction fixtures; direct transport is covered by community-direct-api.test.tsx.
+vi.mock('@/utils/api-client', () => ({
+  apiFetch: (path: string, init?: RequestInit) => globalThis.fetch(path, init),
+}));
+
 /**
  * F168 Phase E — E-PR2 Decision Queue UX (RED tests)
  *

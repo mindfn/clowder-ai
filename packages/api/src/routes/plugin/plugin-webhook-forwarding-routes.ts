@@ -73,7 +73,8 @@ async function forwardPluginWebhook(
     return reply.status(target.status).send({ error: target.error });
   }
   const principal = authorizeRequest(request, reply, target.declared, target.method);
-  if (principal === false) return undefined;
+  // Await the response already started by authorization, including async onSend hooks.
+  if (principal === false) return reply;
 
   const lifetime = requestLifetime(request, reply);
   let failurePhase: 'invocation' | 'validation' = 'invocation';

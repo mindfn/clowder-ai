@@ -14,6 +14,7 @@ import { PR_ICON, TYPE_ICONS } from '@/components/community-panel-icons';
 import { DirectionCard, type DirectionCardProps } from '@/components/DirectionCard';
 import { pushThreadRouteWithHistory } from '@/components/ThreadSidebar/thread-navigation';
 import { useCatNameResolver } from '@/hooks/useCatNameResolver';
+import { apiFetch } from '@/utils/api-client';
 
 function relativeTime(ts: number): string {
   const diff = Date.now() - ts;
@@ -350,7 +351,7 @@ export function CommunityPanel({ threadId }: { threadId?: string }) {
 
   const fetchFindings = useCallback(async () => {
     try {
-      const res = await fetch(
+      const res = await apiFetch(
         '/api/plugins/official.github-operations/github/community-findings?status=open,acknowledged',
       );
       if (res.ok) {
@@ -373,7 +374,7 @@ export function CommunityPanel({ threadId }: { threadId?: string }) {
     }
     setLoading(true);
     try {
-      const res = await fetch(
+      const res = await apiFetch(
         `/api/plugins/official.github-operations/github/community-board?repo=${encodeURIComponent(activeRepo)}`,
       );
       if (res.ok) {
@@ -407,7 +408,7 @@ export function CommunityPanel({ threadId }: { threadId?: string }) {
     }
     setDecisionQueueLoading(true);
     try {
-      const res = await fetch(
+      const res = await apiFetch(
         `/api/plugins/official.github-operations/github/community-decision-queue?repo=${encodeURIComponent(activeRepo)}`,
       );
       if (res.ok) {
@@ -434,7 +435,7 @@ export function CommunityPanel({ threadId }: { threadId?: string }) {
     setPrSyncing(true);
     setPrSyncError(null);
     try {
-      const res = await fetch(
+      const res = await apiFetch(
         `/api/plugins/official.github-operations/github/community-issues/sync-prs?repo=${encodeURIComponent(activeRepo)}`,
         {
           method: 'POST',
@@ -462,7 +463,7 @@ export function CommunityPanel({ threadId }: { threadId?: string }) {
   const fetchRepos = useCallback(async () => {
     const unavailable = '无法读取 PR 仓库，请检查 GitHub 插件是否已启用。';
     try {
-      const response = await fetch('/api/plugins/official.github-operations/github/community-repos');
+      const response = await apiFetch('/api/plugins/official.github-operations/github/community-repos');
       if (!response.ok) throw new Error('repository discovery unavailable');
       const data = await response.json();
       const candidates: unknown[] = Array.isArray(data.repos) ? data.repos : [];
@@ -495,7 +496,7 @@ export function CommunityPanel({ threadId }: { threadId?: string }) {
     setLoading(true);
     try {
       await Promise.all([
-        fetch(
+        apiFetch(
           `/api/plugins/official.github-operations/github/community-issues/sync?repo=${encodeURIComponent(activeRepo)}`,
           { method: 'POST' },
         ),
@@ -528,7 +529,7 @@ export function CommunityPanel({ threadId }: { threadId?: string }) {
   const dispatchIssue = useCallback(
     async (issueId: string) => {
       try {
-        const res = await fetch(
+        const res = await apiFetch(
           `/api/plugins/official.github-operations/github/community-issues/${encodeURIComponent(issueId)}/dispatch`,
           {
             method: 'POST',
@@ -561,7 +562,7 @@ export function CommunityPanel({ threadId }: { threadId?: string }) {
       },
     ) => {
       try {
-        const res = await fetch(
+        const res = await apiFetch(
           `/api/plugins/official.github-operations/github/community-issues/${encodeURIComponent(issueId)}/resolve`,
           {
             method: 'POST',
