@@ -26,7 +26,11 @@ function deferred() {
 // -> fixed History response. Only provider I/O is controlled. All stores are
 // fresh in-memory instances; no service, Redis, runtime file or user data.
 test('idle delivery timing distinguishes local admission from slow provider startup and context reads', async (t) => {
-  const queue = new InvocationQueue();
+  const queue = new InvocationQueue(undefined, {
+    onAdmitted: ({ threadId }) => {
+      void processor.requestDrain(threadId);
+    },
+  });
   const messages = new MessageStore();
   const readById = messages.getById.bind(messages);
   const readByThread = messages.getByThread.bind(messages);

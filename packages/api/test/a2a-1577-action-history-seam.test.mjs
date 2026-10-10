@@ -104,7 +104,7 @@ async function fixture(status = 'completed', options = {}) {
   const messages = new MessageStore();
   const records = new InvocationRecordStore();
   const turns = new InMemoryTurnExecutionStore();
-  const admitted = await queue.appendAndEnqueueDurable(
+  const admitted = await queue.send(
     messages,
     {
       threadId: current.holderThreadId,
@@ -450,7 +450,7 @@ test('recovery response distinguishes persisted Queue admission from unavailable
 
 test('a proven interrupted source cannot schedule again while its exact replacement remains pending', async () => {
   const f = await fixture('interrupted');
-  await f.queue.appendAndEnqueueDurable(
+  await f.queue.send(
     f.messages,
     {
       threadId: f.current.holderThreadId,

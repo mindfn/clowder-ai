@@ -34,6 +34,9 @@ function mockMessageStore() {
   store.admitted = [];
   store.delivery = {
     async deliver(input) {
+      store.requests ??= [];
+      store.requests.push(input);
+      input = { ...input, targetCatId: input.targetCatId ?? this.defaultTarget ?? 'opus' };
       const msg = {
         id: `msg-${messages.length + 1}`,
         ...input,

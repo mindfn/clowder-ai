@@ -20,7 +20,11 @@ import { CAT } from './f290-communication-validation.host.js';
 export async function fixture() {
   const f = await manualFixture();
   const ledger = new InMemoryQueueLedgerStore();
-  const queue = new InvocationQueue(ledger);
+  const queue = new InvocationQueue(ledger, {
+    onAdmitted: ({ threadId, entries }) => {
+      if (enabled) void processor.requestDrain(threadId, entries[0]!.owner.userId).catch(() => {});
+    },
+  });
   const turns = new InMemoryTurnExecutionStore();
   const registry = new InvocationRegistry();
   const records = new Map<string, Record<string, unknown>>();
@@ -199,9 +203,6 @@ export async function fixture() {
     },
     reconsideration: {
       queue,
-      processor: {
-        processNext: (...args) => (enabled ? processor.processNext(...args) : Promise.resolve({ started: false })),
-      },
     },
   });
   await registerCollectiveParticipationCallbacks(app, { registry, context: f.host.context });

@@ -21,12 +21,16 @@ const userId = writeHeaders['x-test-session-user'];
 const base = '/api/plugins/collective-connector/con_aaaaaaaa';
 async function harness(delayThreadWrites = false, initialExcludedCatIds = []) {
   const messages = adaptMessageStore(new MessageStore());
-  const persisted = createPersistedQueueFixture(messages);
+  const admittedWorkSourceIds = new Set();
+  const persisted = createPersistedQueueFixture(messages, {
+    onAdmitted: (message) => {
+      if (message?.extra?.collectiveWorkInvocationV1) admittedWorkSourceIds.add(message.id);
+    },
+  });
   const tasks = new TaskStore();
   const threads = new ThreadStore();
   let route;
   let published = false;
-  let starts = 0;
   let inbox = [];
   let assignedWork;
   let cats = [
@@ -106,11 +110,6 @@ async function harness(delayThreadWrites = false, initialExcludedCatIds = []) {
     messageStore: messages,
     threadStore: threads,
     invocationQueue: persisted.queue,
-    queueProcessor: {
-      async processNext() {
-        starts++;
-      },
-    },
   });
   const app = Fastify();
   app.addHook('preHandler', async (request) => {
@@ -208,7 +207,7 @@ async function harness(delayThreadWrites = false, initialExcludedCatIds = []) {
     source,
     sourceInput,
     committedSource,
-    starts: () => starts,
+    workSources: () => admittedWorkSourceIds.size,
     route: () => route,
     setCats(next) {
       cats = next;
@@ -488,7 +487,7 @@ test('owner view distinguishes a routed named request, private execution, and a 
       deliveryStatus: 'queued',
       idempotencyKey: 'collective:progress',
     };
-    const admitted = await f.persisted.queue.appendAndEnqueueDurable(f.messages, input, {
+    const admitted = await f.persisted.queue.send(f.messages, input, {
       threadId,
       userId,
       from: input.from,
@@ -743,7 +742,7 @@ test('concurrent owner retries cannot create orphan public or private Threads', 
     );
     assert.equal(f.threads.list(userId).length, 2);
     assert.equal(f.tasks.listByKind('work').length, 1);
-    assert.equal(f.starts(), 1);
+    assert.equal(f.workSources(), 1);
   } finally {
     await f.app.close();
   }
@@ -799,7 +798,7 @@ test('the real owner action admits one canonical Work and resumes its exact sour
     const second = await f.post('/work/admit', { ...payload, requestId: randomUUID() });
     assert.equal(second.statusCode, 200, second.payload);
     assert.equal(first.json().messageId, second.json().messageId);
-    assert.equal(f.starts(), 1);
+    assert.equal(f.workSources(), 1);
     assert.equal(f.tasks.listByKind('work').length, 1);
     const task = f.tasks.listByKind('work')[0];
     assert.deepEqual(task.entrustedWork.admission.sourceRefs, [`message:${source.id}`]);
@@ -813,14 +812,14 @@ test('the real owner action admits one canonical Work and resumes its exact sour
     });
     assert.equal(resumed.statusCode, 200, resumed.payload);
     assert.equal(f.messages.getById(resumed.json().messageId).extra.collectiveWorkInvocationV1.resultRevision, 2);
-    assert.equal(f.starts(), 2);
+    assert.equal(f.workSources(), 2);
     const forged = await f.post('/work/resume', { taskId: task.id, observedRevision: 999, requestId: randomUUID() });
     assert.equal(forged.statusCode, 409);
-    assert.equal(f.starts(), 2);
+    assert.equal(f.workSources(), 2);
     await f.put({ ...join, enabled: false, expectedRevision: 1 });
     const revoked = await f.post('/work/resume', { taskId: task.id, observedRevision: 1, requestId: randomUUID() });
     assert.equal(revoked.statusCode, 409);
-    assert.equal(f.starts(), 2);
+    assert.equal(f.workSources(), 2);
     assert.equal(f.tasks.get(task.id).status, 'todo');
     assert.ok(f.messages.getById(source.id));
   } finally {
@@ -847,7 +846,7 @@ test('manual resume fails closed while Service revision feedback has not reached
 
     assert.equal(resumed.statusCode, 409, resumed.payload);
     assert.equal(resumed.json().code, 'COLLECTIVE_WORK_CONTINUATION_UNAVAILABLE');
-    assert.equal(f.starts(), 1);
+    assert.equal(f.workSources(), 1);
   } finally {
     await f.app.close();
   }
@@ -875,7 +874,7 @@ test('manual resume rejects a retained revision notice after the revised Service
 
     assert.equal(resumed.statusCode, 409, resumed.payload);
     assert.equal(resumed.json().code, 'COLLECTIVE_WORK_CONTINUATION_UNAVAILABLE');
-    assert.equal(f.starts(), 1);
+    assert.equal(f.workSources(), 1);
   } finally {
     await f.app.close();
   }

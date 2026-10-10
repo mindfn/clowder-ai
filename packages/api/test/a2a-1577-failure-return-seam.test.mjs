@@ -9,9 +9,13 @@ import { commitFailedResponseAndEnqueueA2ACaller } from '../src/routes/callback-
 // A legacy availability resolver is a spy only; ordinary failure return must not consult it.
 function fixture({ rejected = false } = {}) {
   const ledger = new InMemoryQueueLedgerStore();
-  const queue = new InvocationQueue(ledger);
-  const messages = new MessageStore();
   const drains = [];
+  const queue = new InvocationQueue(ledger, {
+    onAdmitted: ({ threadId }) => {
+      drains.push(threadId);
+    },
+  });
+  const messages = new MessageStore();
   const business = [];
   const receipts = [];
   const checks = [];
