@@ -19,11 +19,6 @@ describe('F275 proposal approval owner-auth provenance', () => {
         },
       },
       invocationQueueOverride: invocationQueue,
-      queueProcessorOverride: {
-        async processNext() {
-          return { started: true };
-        },
-      },
     });
     const source = await ctx.threadStore.create('default-user', 'Source');
     const { proposalId } = JSON.parse(

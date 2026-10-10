@@ -14,7 +14,7 @@ export interface ConnectorDeliveryDeps {
 export interface ConnectorDeliveryInput {
   readonly threadId: string;
   readonly userId: string;
-  readonly catId: string;
+  readonly catId?: string;
   readonly content: string;
   readonly source: ConnectorSource;
   /** Stable Queue admission identity; replaying the same key is idempotent, never a second input. */
@@ -62,7 +62,7 @@ export async function deliverConnectorMessage(
   const result = await deps.delivery.deliver({
     ownerUserId: input.userId,
     threadId: input.threadId,
-    targetCatId: input.catId as CatId,
+    ...(input.catId ? { targetCatId: input.catId as CatId } : {}),
     idempotencyKey: input.idempotencyKey,
     content: input.content,
     source: input.source,

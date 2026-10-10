@@ -18,7 +18,11 @@ import { createProposalTestContext } from './helpers/proposal-test-harness.js';
 describe('F128 chain protocol injection', () => {
   test('approve injects chain protocol with order + handoff instructions when preferredCats has multiple cats', async () => {
     const { InvocationQueue } = await import('../dist/domains/cats/services/agents/invocation/InvocationQueue.js');
-    const invocationQueue = new InvocationQueue();
+    const invocationQueue = new InvocationQueue(undefined, {
+      onAdmitted: ({ threadId, entries }) => {
+        void queueProcessor.processNext(threadId, entries[0].owner.userId).catch(() => {});
+      },
+    });
     const router = {
       async resolveTargetsAndIntent() {
         return {
@@ -36,7 +40,6 @@ describe('F128 chain protocol injection', () => {
     const ctx = await createProposalTestContext({
       routerOverride: router,
       invocationQueueOverride: invocationQueue,
-      queueProcessorOverride: queueProcessor,
     });
     const source = await ctx.threadStore.create('alice', 'Source');
     const { proposalId } = JSON.parse(
@@ -96,7 +99,11 @@ describe('F128 chain protocol injection', () => {
     // regardless of what the user typed in initialMessage. Pin the contract:
     // user intent comes from the raw user-typed initialMessage only.
     const { InvocationQueue } = await import('../dist/domains/cats/services/agents/invocation/InvocationQueue.js');
-    const invocationQueue = new InvocationQueue();
+    const invocationQueue = new InvocationQueue(undefined, {
+      onAdmitted: ({ threadId, entries }) => {
+        void queueProcessor.processNext(threadId, entries[0].owner.userId).catch(() => {});
+      },
+    });
     const router = {
       async resolveTargetsAndIntent() {
         return {
@@ -114,7 +121,6 @@ describe('F128 chain protocol injection', () => {
     const ctx = await createProposalTestContext({
       routerOverride: router,
       invocationQueueOverride: invocationQueue,
-      queueProcessorOverride: queueProcessor,
     });
     // Parent thread title intentionally contains the literal `#ideate` tag.
     const source = await ctx.threadStore.create('alice', 'Parent #ideate title');
@@ -176,7 +182,11 @@ describe('F128 chain protocol injection', () => {
     // to assert addParticipants was never invoked with `opus`; we rely on
     // the input-boundary assertion as the necessary and sufficient cut.
     const { InvocationQueue } = await import('../dist/domains/cats/services/agents/invocation/InvocationQueue.js');
-    const invocationQueue = new InvocationQueue();
+    const invocationQueue = new InvocationQueue(undefined, {
+      onAdmitted: ({ threadId, entries }) => {
+        void queueProcessor.processNext(threadId, entries[0].owner.userId).catch(() => {});
+      },
+    });
     let routerReceivedMessage = null;
     const router = {
       async resolveTargetsAndIntent(message) {
@@ -200,7 +210,6 @@ describe('F128 chain protocol injection', () => {
     const ctx = await createProposalTestContext({
       routerOverride: router,
       invocationQueueOverride: invocationQueue,
-      queueProcessorOverride: queueProcessor,
     });
     // Parent thread title intentionally contains a `@opus` mention.
     const source = await ctx.threadStore.create('alice', 'Parent @opus thread');
@@ -262,7 +271,11 @@ describe('F128 chain protocol injection', () => {
 
   test('approve omits chain protocol when preferredCats is empty (no chain to orchestrate)', async () => {
     const { InvocationQueue } = await import('../dist/domains/cats/services/agents/invocation/InvocationQueue.js');
-    const invocationQueue = new InvocationQueue();
+    const invocationQueue = new InvocationQueue(undefined, {
+      onAdmitted: ({ threadId, entries }) => {
+        void queueProcessor.processNext(threadId, entries[0].owner.userId).catch(() => {});
+      },
+    });
     const router = {
       async resolveTargetsAndIntent() {
         return {
@@ -280,7 +293,6 @@ describe('F128 chain protocol injection', () => {
     const ctx = await createProposalTestContext({
       routerOverride: router,
       invocationQueueOverride: invocationQueue,
-      queueProcessorOverride: queueProcessor,
     });
     const source = await ctx.threadStore.create('alice', 'Source');
     const { proposalId } = JSON.parse(

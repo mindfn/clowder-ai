@@ -216,12 +216,11 @@ describe('F292 MeetingIntakeActionService', () => {
       },
       messageStore,
       invocationQueue: {
-        async appendAndEnqueueDurable(store, messageInput) {
+        async send(store, messageInput) {
           const message = await store.append(messageInput);
           return { outcome: 'enqueued', entry: { id: `queue-${++queueSequence}` }, message };
         },
       },
-      queueProcessor: { processNext: async () => ({ started: true }) },
       socketManager: { emitToUser() {} },
       supportsPresentationRetry: () => true,
       now: () => 12_000,

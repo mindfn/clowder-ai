@@ -1,4 +1,4 @@
-/** F264: resolve scoped author preference and bind current-work intent to an exact live parent. */
+/** F264: bind an explicit single-message choice to its exact live parent. Defaults are snapshotted by common Queue admission. */
 
 import {
   type CatId,
@@ -43,6 +43,23 @@ export function resolveMessageDispositionForAdmission(input: {
   if (input.explicit) return input.explicit;
   if (!input.projectRoot) return MESSAGE_DISPOSITION_PRODUCT_DEFAULT;
   return resolveMessageDispositionPreference(input.projectRoot, input.threadId).effective;
+}
+
+export interface QueueAdmissionPolicyContext {
+  projectRoot?: string;
+  resolveTargets?: (
+    requested: readonly string[],
+    threadId: string,
+    content?: string,
+    exact?: boolean,
+  ) => Promise<string[]>;
+  onAdmitted?: (admission: {
+    threadId: string;
+    entries: readonly import('../domains/cats/services/agents/invocation/InvocationQueue.js').QueueEntry[];
+    message?: import('../domains/cats/services/stores/ports/MessageStore.js').StoredMessage;
+  }) => void;
+  invocationTracker?: ExactParentTracker;
+  resolveCarrierCapability?: (catId: CatId) => FreshnessCarrierCapability | undefined;
 }
 
 export function resolveQueueAuthorIntentByCatId(input: {

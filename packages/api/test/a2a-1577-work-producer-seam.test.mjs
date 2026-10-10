@@ -8,17 +8,16 @@ import { CollectiveWorkDispatcher } from '../src/domains/plugin/builtin-runtime/
 // deterministic domain port, not a claim about a real Collective grant/provider.
 function fixture() {
   const messages = new MessageStore();
-  const queue = new InvocationQueue();
-  const state = { available: true, starts: 0 };
+  const state = { available: true, notifications: 0 };
+  const queue = new InvocationQueue(undefined, {
+    onAdmitted: () => {
+      state.notifications++;
+    },
+  });
   const dispatcher = new CollectiveWorkDispatcher({
     messageStore: messages,
     invocationQueue: queue,
     threadStore: { get: async () => ({ createdBy: 'isolated-owner', participants: ['codex'] }) },
-    queueProcessor: {
-      processNext: async () => {
-        state.starts++;
-      },
-    },
     context: () => ({ resolvePrivate: async () => (state.available ? { admitted: true } : null) }),
   });
   const task = {
@@ -41,7 +40,7 @@ test('real Work producer writes narrow unknown scope, immutable receipt and one 
   assert.deepEqual(entry.from, { kind: 'system', service: 'collective-work' });
   assert.equal(f.messages.getById(first.messageId).extra.collectiveWorkInvocationV1.taskId, f.task.id);
   assert.deepEqual(f.queue.getQueuedBodyMessagesForCat(f.task.threadId, f.task.userId, 'codex'), []);
-  assert.equal(f.state.starts, 1);
+  assert.equal(f.state.notifications, 1);
 });
 test('idempotent Work retry rechecks domain authority without relabeling or starting again', async () => {
   const f = fixture();
@@ -50,7 +49,7 @@ test('idempotent Work retry rechecks domain authority without relabeling or star
   await assert.rejects(f.dispatcher.dispatch(f.task, f.task.userId, 1, { kind: 'admission' }), {
     code: 'OWNER_ADMISSION_UNAVAILABLE',
   });
-  assert.equal(f.state.starts, 1);
+  assert.equal(f.state.notifications, 1);
   assert.equal(f.queue.list(f.task.threadId, f.task.userId).length, 1);
   assert.equal(f.messages.getById(first.messageId).deliveryStatus, 'queued');
 });
