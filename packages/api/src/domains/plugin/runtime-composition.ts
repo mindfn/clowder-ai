@@ -67,6 +67,7 @@ import type { PackageAdmissionContractRuntime } from './host-inventory/manifest-
 import { PLUGIN_HOST_ENTRIES, pluginHostRoot } from './host-inventory/plugin-host-layout.js';
 import { FilePluginInventoryStore } from './host-inventory/stores.js';
 import type { PluginInstanceRecord, PluginInventorySnapshot } from './host-inventory/types.js';
+import { createPluginCustodyHost, type PluginCustodyServices } from './host-surface/plugin-custody-host.js';
 import { pluginDataDirectoryParent } from './host-surface/plugin-data-directory.js';
 import { PluginMediaReadService } from './host-surface/plugin-media-host.js';
 import { RedisPluginPrivateStorage } from './host-surface/plugin-private-storage.js';
@@ -124,6 +125,7 @@ export interface DormantPluginRuntimeCompositionOptions {
     actor: { kind: 'cat' | 'user' | 'plugin' | 'device' | 'system'; id: string },
   ) => Promise<DeliveryPresentationContext>;
   readonly taskStore?: ITaskStore;
+  readonly custody?: PluginCustodyServices;
   readonly redis?: RedisClient;
   /** The Host-wide messaging stores shared with the one publishing MessageStore wrapper. */
   readonly messagingStores?: MessagingStores;
@@ -427,6 +429,14 @@ export function createDormantPluginRuntimeComposition(
         : { validateManifest: options.contract.validateManifest }),
     });
   const moduleRuntime = new ModulePluginRuntime({
+    custody: (pluginInstanceId) =>
+      createPluginCustodyHost({
+        pluginInstanceId,
+        ownerUserId: options.threadOwnerUserId,
+        inventory: inventoryStore,
+        services: options.custody,
+        provider: () => predicateProvider,
+      }),
     packages,
     materializer: builtinPackages,
     configuration,

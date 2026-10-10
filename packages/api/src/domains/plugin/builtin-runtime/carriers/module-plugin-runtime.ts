@@ -19,6 +19,7 @@ import {
   type VerifiedPluginPackageLocator,
 } from '../../external-runtime/types.js';
 import type { PluginPackageRecord } from '../../host-inventory/types.js';
+import type { PluginCustodyHost } from '../../host-surface/plugin-custody-host.js';
 import { preparePluginDataDirectory } from '../../host-surface/plugin-data-directory.js';
 import {
   createPluginMediaHost,
@@ -83,6 +84,7 @@ export interface ModulePluginHostShape {
   readonly secrets: { get(key: string): Promise<string | undefined> };
   readonly storage: PluginStorageHost;
   readonly tasks: PluginTaskHost;
+  readonly custody?: PluginCustodyHost;
   readonly threads: PluginThreadHost;
   readonly messaging: PluginMessagingHost;
   readonly media: PluginMediaHost;
@@ -113,6 +115,7 @@ export interface ModulePluginRuntimeOptions {
   readonly configuration: PluginRuntimeConfigurationPort;
   readonly storage?: PluginPrivateStoragePort;
   readonly taskStore?: ITaskStore;
+  readonly custody?: (pluginInstanceId: string) => PluginCustodyHost;
   readonly threads?: PluginThreadProjectionDeps & {
     readonly threadDeepLinkUrl: (threadId: string) => string;
     readonly threadStore: IThreadStore;
@@ -306,6 +309,7 @@ export class ModulePluginRuntime implements BundledPluginRuntime {
         config: { get: async (key) => config.get(key) },
         secrets: { get: async (key) => secrets.get(key) },
         storage,
+        ...(this.options.custody ? { custody: this.options.custody(pluginInstanceId) } : {}),
         tasks: createPluginTaskHost({
           pluginInstanceId,
           pluginId: packageRecord.pluginId,

@@ -1095,6 +1095,9 @@ async function main(): Promise<void> {
   let actionSuccessorRecovery:
     | import('./domains/ball-custody/ActionSuccessorRecoverySweep.js').ActionSuccessorRecoverySweep
     | undefined;
+  let pluginPredicateProvider:
+    | import('./domains/ball-custody/action-predicate-authority.js').ActionPredicateProvider
+    | undefined;
   let actionSubjectTruthResolver:
     | import('./domains/ball-custody/ActionSubjectTruthResolver.js').ActionSubjectTruthResolver
     | undefined;
@@ -1150,12 +1153,15 @@ async function main(): Promise<void> {
           return { ...task, developmentScope: task.entrustedWork?.developmentScope };
         },
       },
-      {
-        async observe(input) {
-          return (await observeLivePrFreshness?.(input)) ?? null;
-        },
-      },
       taskApprovedDelegateProvider,
+      {
+        resolveFreshness: (predicate, context) =>
+          pluginPredicateProvider?.resolveFreshness(predicate, context) ??
+          Promise.resolve({ status: 'insufficient', reason: 'plugin predicate runtime unavailable' }),
+        authorizeCompletion: (lease, actor) =>
+          pluginPredicateProvider?.authorizeCompletion(lease, actor) ??
+          Promise.resolve({ status: 'insufficient', reason: 'plugin predicate runtime unavailable' }),
+      },
     );
     actionSuccessorAdmissionService = new actionAdmissionMod.ActionSuccessorAdmissionService(
       actionSuccessorLeaseStore,
@@ -4868,6 +4874,11 @@ async function main(): Promise<void> {
   let dotConnectionService: InstanceType<typeof DotConnectionService> | undefined;
   let dotRoundTripVerified = async () => false;
   const pluginRuntime = cloudConversations.createRuntime({
+    ...(actionSuccessorLeaseStore && actionSuccessorCompletionService
+      ? {
+          custody: { leaseStore: actionSuccessorLeaseStore, completionService: actionSuccessorCompletionService },
+        }
+      : {}),
     limbRegistry,
     taskRunner: { registerPostStart: task => taskRunnerV2.registerPostStart(task), unregister: taskId => taskRunnerV2.unregister(taskId) },
     builtinRuntimes: new Map([
@@ -5037,6 +5048,7 @@ async function main(): Promise<void> {
     getDefaultCatId,
     getMentionPatterns: catRegistryMentionPatterns,
   });
+  pluginPredicateProvider = pluginRuntime.predicateProvider;
   trustedImagePathResolver = (hmrId) => pluginRuntime.mediaLedger.resolveTrustedBlobPath(hmrId);
   await app.register(mediaRoutes, { ledger: pluginRuntime.mediaLedger, ownerUserId: privateUserId });
   subscriptionDrainScheduler.attach(pluginRuntime.subscriptionDelivery);
