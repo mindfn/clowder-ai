@@ -347,3 +347,78 @@ test('provider timeout cancels verifier work without manufacturing authority', a
     clearTimeout(keepAlive);
   }
 });
+
+test('background recovery uses the persisted provider despite a newly installed competitor, without native identity', async (t) => {
+  const f = await fixture(t);
+  const first = await f.install('recovery-original');
+  const fresh = await f.fresh();
+  const frozen = {
+    ...lease(fresh.providerAuthority.binding),
+    predecessorCatId: 'author',
+    predecessorThreadId: 'source',
+  };
+  await f.install('recovery-competitor');
+  assert.equal((await f.fresh()).status, 'insufficient', 'new admission remains ambiguous');
+  const recovery = await f.runtime.predicateProvider.authorizeDispatchRecovery(frozen, admission);
+  assert.equal(recovery.status, 'authorized');
+  const resumed = await recovery.resolveFreshness();
+  assert.equal(resumed.status, 'verified');
+  const last = f.calls.at(-1);
+  assert.equal(last.context.binding.pluginInstanceId, first);
+  assert.deepEqual(last.context.principal, { catId: 'author', threadId: 'source', userId: 'owner' });
+  assert.equal(last.context.principal.invocationId, undefined);
+  let writes = 0;
+  await recovery.withAuthority(async () => {
+    writes++;
+  });
+  await f.revoke(first);
+  await assert.rejects(() =>
+    recovery.withAuthority(async () => {
+      writes++;
+    }),
+  );
+  await assert.rejects(() => recovery.resolveFreshness());
+  assert.equal(writes, 1);
+});
+
+test('bound recovery refuses substituted actor, assignment, tenant or persisted binding', async (t) => {
+  const f = await fixture(t);
+  await f.install('recovery-source');
+  const fresh = await f.fresh();
+  const frozen = {
+    ...lease(fresh.providerAuthority.binding),
+    predecessorCatId: 'author',
+    predecessorThreadId: 'source',
+  };
+  const count = f.calls.length;
+  for (const patch of [
+    { actorCatId: 'reviewer' },
+    { sourceThreadId: 'other' },
+    { tenantScope: 'other' },
+    { targetThreadId: 'other' },
+    { holderCatIds: ['other'] },
+  ])
+    assert.equal(
+      (await f.runtime.predicateProvider.authorizeDispatchRecovery(frozen, { ...admission, ...patch })).status,
+      'insufficient',
+    );
+  assert.equal(
+    (
+      await f.runtime.predicateProvider.authorizeDispatchRecovery(
+        { ...frozen, terminalPredicateProviderBinding: undefined },
+        admission,
+      )
+    ).status,
+    'insufficient',
+  );
+  await assert.rejects(() =>
+    f.runtime.predicateProvider.authorizeDispatchRecovery(
+      {
+        ...frozen,
+        terminalPredicateProviderBinding: { ...fresh.providerAuthority.binding, grantRevision: 999 },
+      },
+      admission,
+    ),
+  );
+  assert.equal(f.calls.length, count);
+});

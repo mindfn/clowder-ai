@@ -1161,6 +1161,9 @@ async function main(): Promise<void> {
         authorizeCompletion: (lease, actor) =>
           pluginPredicateProvider?.authorizeCompletion(lease, actor) ??
           Promise.resolve({ status: 'insufficient', reason: 'plugin predicate runtime unavailable' }),
+        authorizeDispatchRecovery: (lease, context) =>
+          pluginPredicateProvider?.authorizeDispatchRecovery?.(lease, context) ??
+          Promise.resolve({ status: 'insufficient', reason: 'plugin predicate runtime unavailable' }),
       },
     );
     actionSuccessorAdmissionService = new actionAdmissionMod.ActionSuccessorAdmissionService(

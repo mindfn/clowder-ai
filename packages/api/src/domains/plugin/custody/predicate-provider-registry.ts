@@ -5,6 +5,7 @@ import type { ActionFreshnessResolution } from '../../ball-custody/ActionSubject
 import type { CanonicalActionTerminalPredicate } from '../../ball-custody/ActionTerminalPredicateCatalog.js';
 import type {
   ActionCompletionAuthorization,
+  ActionDispatchRecoveryAuthorization,
   ActionFreshnessContext,
   ActionPredicateProvider,
 } from '../../ball-custody/action-predicate-authority.js';
@@ -43,8 +44,6 @@ export class PluginPredicateProviderRegistry implements ActionPredicateProvider 
   ): Promise<ActionFreshnessResolution> {
     if (input.tenantScope !== this.#scope.tenantScope || predicate.kind !== 'review_delivered')
       return { status: 'insufficient', reason: 'predicate installation scope unavailable' };
-    const canonical = this.canonical(predicate);
-    const admitted = structuredClone(input);
     const providers = authorizedPredicateProviders(await this.inventory.snapshot(), this.#scope);
     if (providers.length !== 1 || !providers[0])
       return {
@@ -53,8 +52,49 @@ export class PluginPredicateProviderRegistry implements ActionPredicateProvider 
       };
     const provider = providers[0];
     assertPredicateProviderRunnable(provider);
-    const binding = provider.binding;
+    return this.readFreshness(predicate, input, provider.binding, AbortSignal.timeout(this.timeoutMs));
+  }
+
+  async authorizeDispatchRecovery(
+    leaseInput: ActionSuccessorLease,
+    context: ActionFreshnessContext,
+  ): Promise<ActionDispatchRecoveryAuthorization> {
+    const lease = structuredClone(leaseInput);
+    const admitted = structuredClone(context);
+    const binding = lease.terminalPredicateProviderBinding;
+    const predicate = lease.terminalPredicate;
+    if (
+      !binding ||
+      !predicate ||
+      predicate.kind !== 'review_delivered' ||
+      lease.actionFamily !== 'review' ||
+      lease.tenantScope !== this.#scope.tenantScope ||
+      admitted.tenantScope !== lease.tenantScope ||
+      !lease.predecessorCatId ||
+      admitted.actorCatId !== lease.predecessorCatId ||
+      !lease.predecessorThreadId ||
+      admitted.sourceThreadId !== lease.predecessorThreadId ||
+      admitted.targetThreadId !== lease.holderThreadId ||
+      !isDeepStrictEqual([...admitted.holderCatIds].sort(), [...lease.holderCatIds].sort())
+    )
+      return { status: 'insufficient', reason: 'bound recovery source unavailable' };
     const signal = AbortSignal.timeout(this.timeoutMs);
+    await this.assertCurrent(binding, signal);
+    return {
+      status: 'authorized',
+      withAuthority: (write) => this.withAuthority(binding, signal, write),
+      resolveFreshness: () => this.readFreshness(predicate, admitted, binding, signal),
+    };
+  }
+
+  private async readFreshness(
+    predicate: CanonicalActionTerminalPredicate,
+    input: ActionFreshnessContext,
+    binding: ActionTerminalProviderBinding,
+    signal: AbortSignal,
+  ): Promise<ActionFreshnessResolution> {
+    const canonical = this.canonical(predicate);
+    const admitted = structuredClone(input);
     const assertCurrent = () => this.assertCurrent(binding, signal);
     const context: PredicateVerifierContext = {
       ...this.#scope,

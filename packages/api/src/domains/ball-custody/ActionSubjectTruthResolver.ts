@@ -5,6 +5,7 @@ import {
 } from './ActionTerminalPredicateCatalog.js';
 import type {
   ActionCompletionAuthorization,
+  ActionDispatchRecoveryAuthorization,
   ActionFreshnessContext,
   ActionFreshnessProviderAuthority,
   ActionPredicateProvider,
@@ -167,6 +168,20 @@ export class ActionSubjectTruthResolver {
       this.predicateProvider?.authorizeCompletion(lease, actor) ?? {
         status: 'insufficient',
         reason: 'predicate provider authority unavailable',
+      }
+    );
+  }
+
+  async authorizeDispatchRecovery(
+    lease: ActionSuccessorLease,
+    context: ActionFreshnessContext,
+  ): Promise<ActionDispatchRecoveryAuthorization> {
+    if (!lease.terminalPredicateProviderBinding || lease.terminalPredicate?.kind !== 'review_delivered')
+      return { status: 'insufficient', reason: 'bound review predicate unavailable' };
+    return (
+      this.predicateProvider?.authorizeDispatchRecovery?.(lease, context) ?? {
+        status: 'insufficient',
+        reason: 'predicate recovery authority unavailable',
       }
     );
   }

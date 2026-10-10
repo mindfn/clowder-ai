@@ -37,6 +37,14 @@ export type ActionCompletionAuthorization =
     })
   | { readonly status: 'mismatch' | 'insufficient'; readonly reason: string };
 
+/** Durable approved dispatch recovery is not a native completion invocation. */
+export type ActionDispatchRecoveryAuthorization =
+  | (ActionPredicateWriteAuthority & {
+      readonly status: 'authorized';
+      resolveFreshness(): Promise<ActionFreshnessResolution>;
+    })
+  | { readonly status: 'insufficient'; readonly reason: string };
+
 /** Injected into the neutral resolver; a package cannot select or implement this Host port. */
 export interface ActionPredicateProvider {
   resolveFreshness(
@@ -44,6 +52,10 @@ export interface ActionPredicateProvider {
     context: ActionFreshnessContext,
   ): Promise<ActionFreshnessResolution>;
   authorizeCompletion(lease: ActionSuccessorLease, actor: { catId: string }): Promise<ActionCompletionAuthorization>;
+  authorizeDispatchRecovery?(
+    lease: ActionSuccessorLease,
+    context: ActionFreshnessContext,
+  ): Promise<ActionDispatchRecoveryAuthorization>;
 }
 
 export function withActionPredicateAuthority<T>(
