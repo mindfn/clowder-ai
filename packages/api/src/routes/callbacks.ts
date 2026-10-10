@@ -2074,7 +2074,7 @@ export const callbacksRoutes: FastifyPluginAsync<CallbackRoutesOptions> = async 
           { invocationQueue: opts.invocationQueue },
           {
             ...a2aAdmissionOptions,
-            targetCats: routingPreflight.acceptedTargetCats,
+            targetCats: routingPreflight.requestedTargetCats,
             requestedTargetCats: routingPreflight.requestedTargetCats,
           },
         );
@@ -3620,7 +3620,7 @@ export const callbacksRoutes: FastifyPluginAsync<CallbackRoutesOptions> = async 
         { invocationQueue: opts.invocationQueue },
         {
           ...a2aAdmissionOptions,
-          targetCats: routingPreflight.acceptedTargetCats,
+          targetCats: routingPreflight.requestedTargetCats,
           requestedTargetCats: routingPreflight.requestedTargetCats,
         },
       );
@@ -6408,7 +6408,7 @@ export const callbacksRoutes: FastifyPluginAsync<CallbackRoutesOptions> = async 
         ? planA2AFanoutAdmission(
             { invocationQueue: opts.invocationQueue },
             {
-              targetCats: voteRoutingPreflight.acceptedTargetCats,
+              targetCats: voteRoutingPreflight.requestedTargetCats,
               requestedTargetCats: voteRoutingPreflight.requestedTargetCats,
               content: notificationContent,
               userId: record.userId,

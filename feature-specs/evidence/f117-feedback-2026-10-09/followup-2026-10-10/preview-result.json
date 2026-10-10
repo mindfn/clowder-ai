@@ -1,0 +1,24 @@
+{
+  "kind": "current-components-with-in-memory-API",
+  "url": "http://127.0.0.1:5173/",
+  "runtimeDataUsed": false,
+  "providerUsed": false,
+  "duplicateBanner": false,
+  "themeDot": "rgb(107, 84, 67)",
+  "exactDeliveryAndReadTooltips": true,
+  "messageRowToggle": true,
+  "keyboardToggle": true,
+  "tooltipDelayMs": 1000,
+  "cancelTargets": [
+    {
+      "path": "/api/threads/feedback-preview/executions/live/one/cancel",
+      "body": "{\"catId\":\"opus\"}"
+    },
+    {
+      "path": "/api/threads/feedback-preview/executions/live/two/cancel",
+      "body": "{\"catId\":\"codex\"}"
+    }
+  ],
+  "mobileStopWithinViewport": true,
+  "errors": []
+}

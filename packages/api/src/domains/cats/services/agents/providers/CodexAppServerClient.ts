@@ -236,6 +236,7 @@ export class CodexAppServerClient {
     let activeThreadId: string | null = null;
     let activeTurnId: string | null = null;
     let activeRunDispatchOpen = false;
+    const inputReadCallbacks = new Map<string, { turnId: string; notify: () => Promise<void>; observing: boolean }>();
     let releaseActiveRunDispatch: (() => void) | undefined;
     let transportDisposition: 'release' | 'evict' = 'release';
     const liveEnd = Symbol('live-end');
@@ -466,7 +467,7 @@ export class CodexAppServerClient {
         activeRunDispatchOpen = true;
         const release = input.activeRunDispatch.register({
           invocationId,
-          capabilities: { append: true, steer: true },
+          capabilities: { append: true, steer: true, inputReadReceipt: true },
           handle,
           dispatch: async (dispatchInput, options) => {
             if (options.expectedInvocationId !== invocationId) {
@@ -479,6 +480,13 @@ export class CodexAppServerClient {
             const imagePaths = dispatchInput.imagePaths?.filter((path) => path.length > 0) ?? [];
             if (!text && imagePaths.length === 0) return { accepted: false, reason: 'invalid_input' };
             const clientUserMessageId = randomUUID();
+            if (dispatchInput.onInputRead) {
+              inputReadCallbacks.set(clientUserMessageId, {
+                turnId: handle.turnId,
+                notify: dispatchInput.onInputRead,
+                observing: false,
+              });
+            }
             try {
               const result = asCodexAppServerRecord(
                 await this.request('turn/steer', {
@@ -492,8 +500,10 @@ export class CodexAppServerClient {
                 }),
               );
               if (result?.turnId === handle.turnId) return { accepted: true, handle };
+              inputReadCallbacks.delete(clientUserMessageId);
               return { accepted: false, reason: 'active_run_mismatch' };
             } catch {
+              inputReadCallbacks.delete(clientUserMessageId);
               return { accepted: false, reason: 'provider_rejected' };
             }
           },
@@ -592,6 +602,24 @@ export class CodexAppServerClient {
         const itemObserved = record?.method === 'item/started' || record?.method === 'item/completed';
         const exactCompletedItem =
           record?.method === 'item/completed' && params?.threadId === threadId && params?.turnId === activeTurnId;
+        if (exactCompletedItem) {
+          const item = asCodexAppServerRecord(params?.item);
+          const clientId =
+            item?.type === 'userMessage' && typeof item.clientId === 'string' ? item.clientId : undefined;
+          const receipt = clientId ? inputReadCallbacks.get(clientId) : undefined;
+          if (clientId && receipt && receipt.turnId === params?.turnId && !receipt.observing) {
+            // Native completion means this exact pending input entered prompt
+            // history; turn/steer acknowledgement alone does not prove consumption.
+            receipt.observing = true;
+            void Promise.resolve()
+              .then(receipt.notify)
+              .then(() => inputReadCallbacks.delete(clientId))
+              .catch(() => {
+                // Persistence never blocks provider/Stop; a replay may retry it.
+                receipt.observing = false;
+              });
+          }
+        }
         if (exactCompletedItem && this.deps.freshnessController?.observeProtocolItem) {
           const observation = classifyCodexProtocolItem(envelope);
           if (observation) {
@@ -728,6 +756,7 @@ export class CodexAppServerClient {
       throw failure;
     } finally {
       activeRunDispatchOpen = false;
+      inputReadCallbacks.clear();
       releaseActiveRunDispatch?.();
       runClosed = true;
       clearInterval(idleTimer);

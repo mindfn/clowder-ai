@@ -313,7 +313,9 @@ export async function commitCompletedResponseAndEnqueueA2ATargets(
     userId: opts.userId,
   });
   const admissionOptions: A2AFanoutAdmissionOptions = {
-    targetCats: routingPreflight.acceptedTargetCats,
+    // Queue custody preserves the requested recipient. Actual-send routing may
+    // defer execution, but must not erase its durable wake before retry can run.
+    targetCats: routingPreflight.requestedTargetCats,
     requestedTargetCats: routingPreflight.requestedTargetCats,
     content: opts.message.content,
     userId: opts.userId,
@@ -486,14 +488,6 @@ async function commitFailedResponsePatchAndEnqueueA2ACaller(
     content: opts.terminalPatch.content,
     userId: opts.userId,
   });
-  if (!routingPreflight.acceptedTargetCats.includes(opts.predecessorCatId)) {
-    emitA2ARoutingPreflightReceipts(deps, {
-      decision: routingPreflight.decision,
-      receiptCatId: opts.reporterCatId,
-      threadId: opts.threadId,
-    });
-    return commitLifecycleResponseFromTerminalPatch(deps.messageStore, opts.responseMessageId, opts.terminalPatch);
-  }
   if (!deps.invocationQueue) throw new Error('failed response A2A report requires InvocationQueue');
 
   const admission = await deps.invocationQueue.terminalizeResponseAndEnqueueDurable(
@@ -705,7 +699,9 @@ export async function enqueueA2ATargets(
   const dispatchedTargetCats = new Set(
     persistedQueueTrigger.lifecycle?.dispatchRefs?.map((dispatch) => dispatch.targetId) ?? [],
   );
-  const targetCats = routingPreflight.acceptedTargetCats.filter((catId) => !dispatchedTargetCats.has(catId));
+  // Availability controls execution, not admission of the exact durable source.
+  // QueueProcessor keeps a refused attempt queued until actual-send routing can retry.
+  const targetCats = routingPreflight.requestedTargetCats.filter((catId) => !dispatchedTargetCats.has(catId));
   if (targetCats.length === 0) {
     return {
       enqueued: [],
@@ -882,6 +878,8 @@ export async function enqueueA2ATargets(
   if (deps.queueProcessor.tryAutoAppendExactEntry) {
     for (const entry of acceptedEntries) {
       for (const targetCatId of entry.targets) {
+        // Append is an actual delivery into a running target, unlike Queue admission.
+        if (!routingPreflight.acceptedTargetCats.includes(targetCatId as CatId)) continue;
         await deps.queueProcessor.tryAutoAppendExactEntry({
           threadId,
           userId: opts.userId,

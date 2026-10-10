@@ -2172,6 +2172,80 @@ describe('F117 soak: a waiting entry does not stop its thread’s queue', () => 
     await waitFor(() => queuedIds(harness).length === 0);
   });
 
+  it('a cross-thread callback rejected at ingress is retained and executes automatically after recovery', async () => {
+    const { enqueueA2ATargets } = await import('../dist/routes/callback-a2a-trigger.js');
+    const attempts = [];
+    const retryAt = Date.now() + 200;
+    const harness = createHarness({
+      processorOptions: { retryDeferral: { baseDelayMs: 20 } },
+      routeExecution: routeRefusingFirstAttempt(attempts, ['opus'], () => retryAt),
+    });
+    const trigger = harness.messageStore.append({
+      from: { kind: 'agent', catId: 'opus' },
+      userId: 'user-1',
+      threadId: 'thread-1',
+      content: 'Cross-thread delivery must survive temporary refusal',
+      mentions: ['opus'],
+      origin: 'callback',
+      timestamp: Date.now(),
+      extra: { crossPost: { sourceThreadId: 'other-thread', effectClass: 'coordinate' }, targetCats: ['opus'] },
+    });
+    const receipt = await enqueueA2ATargets(
+      {
+        invocationQueue: harness.queue,
+        messageStore: harness.messageStore,
+        queueProcessor: harness.processor,
+        socketManager: harness.socketManager,
+        log: harness.log,
+        routingDispatchPreflight: {
+          async preflight(input) {
+            return {
+              v: 1,
+              ownerId: input.ownerId,
+              observedAt: Date.now(),
+              resolverState: 'fresh',
+              targets: [
+                {
+                  targetCatId: 'opus',
+                  disposition: 'rejected',
+                  automaticRetryAt: retryAt,
+                  reasons: [
+                    { code: 'provider_timeout', summary: 'temporarily unavailable', sourceRefs: ['turn:other'] },
+                  ],
+                  alternatives: [],
+                },
+              ],
+            };
+          },
+        },
+      },
+      {
+        targetCats: ['opus'],
+        content: trigger.content,
+        threadId: 'thread-1',
+        userId: 'user-1',
+        ownerAuthProvenance: 'unknown',
+        callerCatId: 'opus',
+        triggerMessage: trigger,
+      },
+    );
+    assert.deepEqual(receipt.enqueued, ['opus'], 'the exact source must get durable Queue custody');
+    await waitFor(() => deferralLogs(harness).length === 1);
+    assert.equal(attempts.length, 1);
+    assert.deepEqual(attempts[0].targetCats, ['opus']);
+    assert.equal(
+      (await harness.messageStore.getById(trigger.id)).lifecycle?.dispatchRefs?.length ?? 0,
+      0,
+      'a refused attempt must not forge a dispatch/read receipt',
+    );
+    assert.equal(queuedIds(harness).length, 1, 'refused source stays queued');
+    await waitFor(() => attempts.length === 2);
+    assert.ok(attempts[1].at >= retryAt - 5);
+    assert.deepEqual(attempts[1].targetCats, ['opus'], 'recovery preserves target, without another message or reroute');
+    await waitFor(() => queuedIds(harness).length === 0);
+    assert.equal((await harness.messageStore.getById(trigger.id)).lifecycle.dispatchRefs.length, 1);
+  });
+
   it('waits for routing’s retry time when the member a targetless source resolved to is refused', async () => {
     const attempts = [];
     let automaticRetryAt;

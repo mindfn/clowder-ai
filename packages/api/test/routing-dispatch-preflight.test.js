@@ -278,7 +278,7 @@ describe('F293 actual-send routing preflight', () => {
     );
   });
 
-  test('completed response preflights before atomic ledger admission and leaves no rejected row', async () => {
+  test('completed response retains every requested target in atomic ledger admission despite temporary rejection', async () => {
     const { commitCompletedResponseAndEnqueueA2ATargets } = await import('../dist/routes/callback-a2a-trigger.js');
     const { InvocationQueue } = await import('../dist/domains/cats/services/agents/invocation/InvocationQueue.js');
     const { MessageStore } = await import('../dist/domains/cats/services/stores/ports/MessageStore.js');
@@ -345,7 +345,7 @@ describe('F293 actual-send routing preflight', () => {
     assert.equal(stored.lifecycle.status, 'completed');
     assert.deepEqual(
       queue.list('thread-deferred', 'owner-1').flatMap((entry) => entry.targets),
-      ['terra'],
+      ['codex', 'terra'],
     );
     assert.ok(
       broadcasts.some(
@@ -394,6 +394,9 @@ describe('F293 actual-send routing preflight', () => {
         },
       },
       socketManager: { broadcastAgentMessage() {}, emitToUser() {} },
+      routingDispatchPreflight: {
+        preflight: async (input) => decision(input, { fable: 'rejected' }),
+      },
       log: { error() {}, warn() {}, info() {} },
     };
     const input = {
@@ -556,13 +559,14 @@ describe('F293 actual-send routing preflight', () => {
     );
   });
 
-  test('callback queue partitions mixed targets before creating queue entries and returns the complete receipt', async () => {
+  test('callback queue preserves every requested target while reporting mixed availability', async () => {
     const { enqueueA2ATargets } = await import('../dist/routes/callback-a2a-trigger.js');
     const { InvocationQueue } = await import('../dist/domains/cats/services/agents/invocation/InvocationQueue.js');
     const { MessageStore } = await import('../dist/domains/cats/services/stores/ports/MessageStore.js');
     const queue = new InvocationQueue();
     const messageStore = new MessageStore();
     const broadcasts = [];
+    const appendedTargets = [];
     const triggerMessage = messageStore.append({
       from: { kind: 'agent', catId: 'terra' },
       threadId: 'thread-callback',
@@ -576,7 +580,12 @@ describe('F293 actual-send routing preflight', () => {
       {
         invocationQueue: queue,
         messageStore,
-        queueProcessor: { async requestDrain() {} },
+        queueProcessor: {
+          async requestDrain() {},
+          async tryAutoAppendExactEntry(input) {
+            appendedTargets.push(input.targetCatId);
+          },
+        },
         socketManager: {
           broadcastAgentMessage(message, threadId) {
             broadcasts.push({ message, threadId });
@@ -600,7 +609,8 @@ describe('F293 actual-send routing preflight', () => {
       },
     );
 
-    assert.deepEqual(result.enqueued, ['codex']);
+    assert.deepEqual(result.enqueued, ['opus', 'codex']);
+    assert.deepEqual(appendedTargets, ['codex'], 'a rejected target cannot bypass preflight through Append');
     assert.deepEqual(
       result.routingPreflight.targets.map(({ targetCatId, disposition }) => ({ targetCatId, disposition })),
       [
@@ -610,7 +620,7 @@ describe('F293 actual-send routing preflight', () => {
     );
     assert.deepEqual(
       queue.list('thread-callback', 'owner-1').flatMap((entry) => entry.targets),
-      ['codex'],
+      ['opus', 'codex'],
     );
     assert.deepEqual(
       broadcasts

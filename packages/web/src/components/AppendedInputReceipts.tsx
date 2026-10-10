@@ -6,7 +6,6 @@ import { useMeasuredOverflow } from '@/components/content-overflow/useMeasuredOv
 import { ChevronIcon } from '@/components/hub-icons';
 import type { CatData } from '@/hooks/useCatData';
 import { useCoCreatorConfig } from '@/hooks/useCoCreatorConfig';
-import { catColorVar } from '@/lib/cat-slug';
 import { resolveMessageSender } from '@/lib/resolve-sender';
 import type { ChatMessage } from '@/stores/chat-types';
 import { focusLineageMessage } from '@/utils/focusLineageMessage';
@@ -195,21 +194,20 @@ export function AppendedInputReceipts({ response, timelineMessages, getCatById }
             : undefined
         }
       >
-        {renderedInputs.map((source) => (
-          <AppendedInputRow
-            key={source.id}
-            source={source}
-            response={response}
-            color={
-              response.lifecycle?.kind === 'response' && getCatById(response.lifecycle.targetId)
-                ? catColorVar(response.lifecycle.targetId, 'primary')
-                : 'var(--cafe-accent)'
-            }
-            label={resolveMessageSender(source, getCatById, coCreator).label}
-            expanded={expandedRowIds.has(source.id)}
-            onToggle={() => toggleRow(source.id)}
-          />
-        ))}
+        {renderedInputs.map((source) => {
+          const sender = resolveMessageSender(source, getCatById, coCreator);
+          return (
+            <AppendedInputRow
+              key={source.id}
+              source={source}
+              response={response}
+              color={sender.color}
+              label={sender.label}
+              expanded={expandedRowIds.has(source.id)}
+              onToggle={() => toggleRow(source.id)}
+            />
+          );
+        })}
       </ol>
       {canExpand && (
         <button

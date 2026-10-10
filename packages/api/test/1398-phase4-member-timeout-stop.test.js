@@ -467,8 +467,8 @@ describe('F117 J4: how a stopped member ends', () => {
     });
   });
 
-  it('routing counts a member timeout as a provider timeout', () => {
-    assert.equal(classifyRoutingDispatchFailure({ terminalReason: 'timeout' }), 'provider_timeout');
+  it('routing keeps a member timeout local to its failed response', () => {
+    assert.equal(classifyRoutingDispatchFailure({ terminalReason: 'timeout' }), undefined);
   });
 
   it('keeps the session-resume retry for a CLI that never came up, not for silence after it did', () => {

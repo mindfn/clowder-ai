@@ -198,7 +198,7 @@ test('app-server registers one exact active-run dispatcher and fences it at turn
   );
 
   await waitFor(() => dispatcher !== undefined);
-  assert.deepEqual(dispatcher.capabilities, { append: true, steer: true });
+  assert.deepEqual(dispatcher.capabilities, { append: true, steer: true, inputReadReceipt: true });
   assert.deepEqual(dispatcher.handle, {
     provider: 'openai_codex',
     carrier: 'codex_app_server',
@@ -249,6 +249,126 @@ test('app-server registers one exact active-run dispatcher and fences it at turn
     { force: false, expectedInvocationId: 'turn-invocation-1' },
   );
   assert.deepEqual(terminal, { accepted: false, reason: 'active_run_closed' });
+});
+
+test('steer acceptance stays pending until the exact native user message is consumed', async () => {
+  const wire = new ProtocolWire();
+  let dispatcher;
+  const reads = [];
+  const observed = [];
+  const client = new CodexAppServerClient({ wire });
+  const output = (async () => {
+    for await (const event of client.run({
+      prompt: frozenPrompt('initial work'),
+      thread: { kind: 'start' },
+      activeRunDispatch: {
+        invocationId: 'read-invocation',
+        register: (candidate) => {
+          dispatcher = candidate;
+        },
+      },
+    }))
+      observed.push(event);
+  })();
+  await waitFor(() => dispatcher !== undefined);
+  assert.equal(
+    (
+      await dispatcher.dispatch(
+        {
+          text: 'read this exact supplement',
+          messageIds: ['source-1'],
+          onInputRead: async () => {
+            reads.push('source-1');
+          },
+        },
+        { force: false, expectedInvocationId: 'read-invocation' },
+      )
+    ).accepted,
+    true,
+  );
+  const id = wire.writes.find((message) => message.method === 'turn/steer').params.clientUserMessageId;
+  assert.deepEqual(reads, [], 'turn/steer acknowledgement proves acceptance only');
+  const item = {
+    type: 'userMessage',
+    id: 'native-user-1',
+    clientId: id,
+    content: [{ type: 'text', text: 'read this exact supplement' }],
+  };
+  for (const params of [
+    { threadId: 'foreign-thread', turnId: 'turn-1', item },
+    { threadId: 'thread-1', turnId: 'foreign-turn', item },
+    { threadId: 'thread-1', turnId: 'turn-1', item: { ...item, clientId: 'unknown-input' } },
+    { threadId: 'thread-1', turnId: 'turn-1', item: { ...item, type: 'agentMessage' } },
+  ])
+    wire.inbox.push({ method: 'item/completed', params });
+  wire.inbox.push({ method: 'item/started', params: { threadId: 'thread-1', turnId: 'turn-1', item } });
+  await waitFor(() => observed.some((event) => event.type === 'item.started' && event.item?.id === item.id));
+  assert.deepEqual(reads, []);
+  const consumed = { method: 'item/completed', params: { threadId: 'thread-1', turnId: 'turn-1', item } };
+  wire.inbox.push(consumed);
+  wire.inbox.push(consumed);
+  await waitFor(() => reads.length > 0);
+  wire.inbox.push({
+    method: 'turn/completed',
+    params: { threadId: 'thread-1', turn: { id: 'turn-1', status: 'completed' } },
+  });
+  await output;
+  assert.deepEqual(reads, ['source-1'], 'only the matching source is observed once');
+});
+
+test('read receipt persistence never blocks native turn completion', async () => {
+  const wire = new ProtocolWire();
+  let dispatcher;
+  let observing = false;
+  let releaseRead;
+  const readGate = new Promise((resolve) => {
+    releaseRead = resolve;
+  });
+  const client = new CodexAppServerClient({ wire });
+  const output = collect(
+    client.run({
+      prompt: frozenPrompt('work'),
+      thread: { kind: 'start' },
+      activeRunDispatch: {
+        invocationId: 'nonblocking-read',
+        register: (candidate) => {
+          dispatcher = candidate;
+        },
+      },
+    }),
+  );
+  await waitFor(() => dispatcher !== undefined);
+  await dispatcher.dispatch(
+    {
+      text: 'supplement',
+      messageIds: ['source-1'],
+      onInputRead: async () => {
+        observing = true;
+        await readGate;
+      },
+    },
+    { force: false, expectedInvocationId: 'nonblocking-read' },
+  );
+  const id = wire.writes.find((message) => message.method === 'turn/steer').params.clientUserMessageId;
+  wire.inbox.push({
+    method: 'item/completed',
+    params: {
+      threadId: 'thread-1',
+      turnId: 'turn-1',
+      item: { type: 'userMessage', id: 'native-input', clientId: id },
+    },
+  });
+  await waitFor(() => observing);
+  wire.inbox.push({
+    method: 'turn/completed',
+    params: { threadId: 'thread-1', turn: { id: 'turn-1', status: 'completed' } },
+  });
+  try {
+    assert.equal(await Promise.race([output.then(() => 'completed'), delay(1_000).then(() => 'blocked')]), 'completed');
+  } finally {
+    releaseRead();
+  }
+  await output;
 });
 
 test('a rejected steer cannot bind another turn', async () => {

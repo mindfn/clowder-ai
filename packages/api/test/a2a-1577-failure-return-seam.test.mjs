@@ -130,13 +130,16 @@ test('failed ledger commit cannot publish a terminal response, drain or reporter
   assert.deepEqual(f.business, []);
 });
 
-test('fresh routing rejection commits only the failed History result, never inventing another route', async () => {
+test('fresh routing rejection retains the exact failed History and predecessor wake for recovery', async () => {
   const f = fixture({ rejected: true });
   const result = await commitFailedResponseAndEnqueueA2ACaller(f.deps, f.opts);
   assert.equal(result.lifecycle.status, 'failed');
-  assert.deepEqual(await f.queue.listAllDurable(f.source.threadId), []);
+  const [row] = await f.queue.listAllDurable(f.source.threadId);
+  assert.equal(row.sourceCategory, 'a2a_failure');
+  assert.deepEqual(row.targets, ['codex']);
+  assert.equal(row.payload.messageId, f.source.id);
   assert.equal(f.receipts.length, 1);
-  assert.deepEqual(f.drains, []);
+  assert.deepEqual(f.drains, [f.source.threadId]);
   assert.deepEqual(f.business, []);
 });
 
