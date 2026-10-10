@@ -15,8 +15,13 @@ async function fixture(t) {
   const threadId = 'collective-reconsider-seam';
   const messages = new MessageStore();
   const ledger = new InMemoryQueueLedgerStore();
-  let queue = new InvocationQueue(ledger);
   let wakes = 0;
+  const admission = {
+    onAdmitted: () => {
+      wakes++;
+    },
+  };
+  let queue = new InvocationQueue(ledger, admission);
   let revoked = false;
   const identity = {
     serviceInstanceId: 'svc_fixture000',
@@ -53,11 +58,6 @@ async function fixture(t) {
   const runtime = {
     get queue() {
       return queue;
-    },
-    processor: {
-      processNext: async () => {
-        wakes++;
-      },
     },
   };
   const app = Fastify();
@@ -106,7 +106,7 @@ async function fixture(t) {
       revoked = true;
     },
     restart: async () => {
-      queue = new InvocationQueue(ledger);
+      queue = new InvocationQueue(ledger, admission);
       await queue.hydrateFromLedger(messages);
     },
   };
@@ -182,9 +182,14 @@ for (const state of ['processing', 'completed', 'failed', 'completed-unread']) {
       threadId: f.threadId,
       entryId: entry.id,
       inputMessageIds: [first.json().messageId],
-      ...(state === 'completed-unread' ? { handed: true } : {}),
       runs: [
-        { targetId: 'opus', invocationId: 'isolated-child', responseMessageId: child.id, dispatchedAt: Date.now() },
+        {
+          targetId: 'opus',
+          invocationId: 'isolated-child',
+          responseMessageId: child.id,
+          dispatchedAt: Date.now(),
+          ...(state === 'completed-unread' ? { inputReadSupported: true } : {}),
+        },
       ],
     });
     assert.equal(receipt.kind, 'applied');
@@ -202,7 +207,11 @@ for (const state of ['processing', 'completed', 'failed', 'completed-unread']) {
     }
     await f.restart();
     const replay = await f.post();
-    if (status === 'failed' || state === 'completed-unread') assert.notEqual(replay.statusCode, 200);
+    if (state === 'completed-unread') {
+      // Native read is presentation evidence, not another execution or recovery gate.
+      assert.equal(f.messages.getById(first.json().messageId).lifecycle.dispatchRefs[0].inputRead.status, 'pending');
+    }
+    if (status === 'failed') assert.notEqual(replay.statusCode, 200);
     else {
       assert.equal(replay.statusCode, 200, replay.body);
       assert.equal(replay.json().disposition, status === 'completed' ? 'already_classified' : 'already_queued');

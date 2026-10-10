@@ -6,12 +6,12 @@ import { beforeEach, describe, test } from 'node:test';
 import { adaptInvocationQueue } from './helpers/message-from-fixtures.js';
 
 const { InvocationQueue } = await import('../dist/domains/cats/services/agents/invocation/InvocationQueue.js');
-const { saveMessageDispositionPreference } = await import('../dist/config/user-preferences-store.js');
-const {
-  resolveFreshnessCarrierCapabilityOrUndeclared,
-  resolveMessageDispositionForAdmission,
-  resolveQueueAuthorIntentByCatId,
-} = await import('../dist/routes/message-disposition-admission.js');
+const { saveMessageDispositionPreference, resolveMessageDispositionPreference } = await import(
+  '../dist/config/user-preferences-store.js'
+);
+const { resolveFreshnessCarrierCapabilityOrUndeclared, resolveQueueAuthorIntentByCatId } = await import(
+  '../dist/routes/message-disposition-admission.js'
+);
 const { sendMessageSchema } = await import('../dist/routes/messages.schema.js');
 
 function entry(overrides = {}) {
@@ -70,7 +70,7 @@ describe('F264 author-declared message disposition', () => {
     );
   });
 
-  test('current-parent exposure is source-domain aware and ignores author intent outside user messages', () => {
+  test('current-parent exposure obeys the same saved strategy and parent for every source', () => {
     const cases = [
       {
         name: 'legacy user without intent stays next-work',
@@ -98,24 +98,24 @@ describe('F264 author-declared message disposition', () => {
         readable: true,
       },
       {
-        name: 'agent A2A remains readable without author intent',
+        name: 'agent A2A uses the saved product next-work default',
         entry: entry({ content: 'agent custody', source: 'agent', sourceCategory: 'a2a' }),
-        readable: true,
+        readable: false,
       },
       {
-        name: 'connector event remains readable without author intent',
+        name: 'connector event uses the saved product next-work default',
         entry: entry({ content: 'connector custody', source: 'connector', sourceCategory: 'review' }),
-        readable: true,
+        readable: false,
       },
       {
-        name: 'non-user custody ignores a stray next-work-shaped field',
+        name: 'non-user explicit next-work stays isolated',
         entry: entry({
           content: 'connector with polluted field',
           source: 'connector',
           sourceCategory: 'ci',
           authorIntentByCatId: { opus: { requested: 'next_work' } },
         }),
-        readable: true,
+        readable: false,
       },
     ];
 
@@ -352,26 +352,18 @@ describe('F264 author-declared message disposition', () => {
     });
   });
 
-  test('server admission resolves thread over global while an explicit one-shot wins', async () => {
+  test('scoped preference resolves thread over global without materializing author intent', async () => {
     const projectRoot = await mkdtemp(join(tmpdir(), 'f264-disposition-admission-'));
     try {
       saveMessageDispositionPreference(projectRoot, { scope: 'global', disposition: 'continue_current' });
-      assert.equal(resolveMessageDispositionForAdmission({ projectRoot, threadId: 'thread-a' }), 'continue_current');
+      assert.equal(resolveMessageDispositionPreference(projectRoot, 'thread-a').effective, 'continue_current');
 
       saveMessageDispositionPreference(projectRoot, {
         scope: 'thread',
         threadId: 'thread-a',
         disposition: 'next_work',
       });
-      assert.equal(resolveMessageDispositionForAdmission({ projectRoot, threadId: 'thread-a' }), 'next_work');
-      assert.equal(
-        resolveMessageDispositionForAdmission({
-          explicit: 'continue_current',
-          projectRoot,
-          threadId: 'thread-a',
-        }),
-        'continue_current',
-      );
+      assert.equal(resolveMessageDispositionPreference(projectRoot, 'thread-a').effective, 'next_work');
     } finally {
       await rm(projectRoot, { recursive: true, force: true });
     }

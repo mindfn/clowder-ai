@@ -23,11 +23,22 @@ export function createPersistedQueueFixture(
     ledger?: InMemoryQueueLedgerStore;
     liveCompanionSessions?: QueueProcessorDeps['liveCompanionSessions'];
     onExecution?: (options: RouteExecutionOptions) => Promise<void>;
+    onAdmitted?: (
+      message?: import('../../dist/domains/cats/services/stores/ports/MessageStore.js').StoredMessage,
+    ) => void;
   } = {},
 ) {
   const ledger = settings.ledger ?? new InMemoryQueueLedgerStore();
-  const queue = new InvocationQueue(ledger);
+  let processor: QueueProcessor;
   const tracker = new InvocationTracker();
+  const queue = new InvocationQueue(ledger, {
+    invocationTracker: tracker,
+    resolveTargets: async (requested) => (requested.length ? [...requested] : ['opus']),
+    onAdmitted: ({ threadId, message }) => {
+      settings.onAdmitted?.(message);
+      void processor.requestDrain(threadId);
+    },
+  });
   const records = new InvocationRecordStore();
   const turns = new InMemoryTurnExecutionStore();
   const starts: {
@@ -40,7 +51,7 @@ export function createPersistedQueueFixture(
   }[] = [];
   const completed: Promise<void>[] = [];
   const releases: (() => void)[] = [];
-  const processor = new QueueProcessor({
+  processor = new QueueProcessor({
     queue,
     liveCompanionSessions: settings.liveCompanionSessions,
     invocationTracker: tracker,

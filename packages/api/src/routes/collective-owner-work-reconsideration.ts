@@ -4,7 +4,6 @@ import { collectiveSourceIdentitySchema, createCatId } from '@cat-cafe/shared';
 import type { FastifyInstance } from 'fastify';
 import { z } from 'zod';
 import type { InvocationQueue } from '../domains/cats/services/agents/invocation/InvocationQueue.js';
-import type { QueueProcessor } from '../domains/cats/services/agents/invocation/QueueProcessor.js';
 import { queueEntryId } from '../domains/cats/services/agents/invocation/queue-ledger/QueueLedger.js';
 import type { IMessageStore, StoredMessage } from '../domains/cats/services/stores/ports/MessageStore.js';
 import type { IThreadStore } from '../domains/cats/services/stores/ports/ThreadStore.js';
@@ -13,8 +12,7 @@ import { sendCollectiveOwnerError } from './collective-owner-errors.js';
 import { pluginAccessError, requirePluginOwnerLocalAccess } from './plugin-access-guards.js';
 
 export interface CollectiveWorkReconsiderationRuntime {
-  readonly queue: Pick<InvocationQueue, 'appendAndEnqueueDurable' | 'getDurableEntry'>;
-  readonly processor: Pick<QueueProcessor, 'processNext'>;
+  readonly queue: Pick<InvocationQueue, 'send' | 'getDurableEntry'>;
 }
 interface ReconsiderationOptions {
   readonly connector: () => CollectiveConnector | undefined;
@@ -64,7 +62,7 @@ export function registerCollectiveOwnerWorkReconsiderationRoutes(
           if (existing) return recoverWake(existing, scope, runtime, options.messages, access.operator);
           const source = collectiveSource(scope.event, scope.source);
           const from = { kind: 'external' as const, connectorId: 'collective', sender: collectiveSender(scope.event) };
-          const stored = await runtime.queue.appendAndEnqueueDurable(
+          const stored = await runtime.queue.send(
             options.messages,
             {
               userId: access.operator,
@@ -109,8 +107,6 @@ export function registerCollectiveOwnerWorkReconsiderationRoutes(
           return response(scope, stored.message, 'queued');
         },
       );
-      if (prepared.disposition !== 'already_classified')
-        void runtime.processor.processNext(prepared.threadId, access.operator).catch(() => {});
       return prepared;
     } catch (error) {
       return sendCollectiveOwnerError(
