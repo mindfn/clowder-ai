@@ -52,8 +52,12 @@ export interface IFrustrationIssueStore {
   /** Link a community issue draft to this frustration issue (F235). */
   setCommunityIssueDraftId(issueId: string, draftId: string): Promise<void>;
 
-  /** Atomically check confirmed content/ownership and the expected link before writing. */
-  compareAndSetCommunityIssueDraft(input: LinkFrustrationDraftInput): Promise<LinkFrustrationDraftResult>;
+  /** Atomically check confirmed content/ownership and the expected link before writing.
+   * The optional Host-only guard runs immediately before the atomic operation, after asynchronous reads. */
+  compareAndSetCommunityIssueDraft(
+    input: LinkFrustrationDraftInput,
+    assertCurrent?: () => Promise<void>,
+  ): Promise<LinkFrustrationDraftResult>;
 
   /** List issues in a thread, sorted by createdAt desc. */
   listByThread(threadId: string): Promise<FrustrationIssue[]>;

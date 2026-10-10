@@ -201,7 +201,10 @@ export class RedisFrustrationIssueStore implements IFrustrationIssueStore {
     await this.redis.hset(FrustrationIssueKeys.detail(issueId), 'communityIssueDraftId', draftId);
   }
 
-  async compareAndSetCommunityIssueDraft(input: LinkFrustrationDraftInput): Promise<LinkFrustrationDraftResult> {
+  async compareAndSetCommunityIssueDraft(
+    input: LinkFrustrationDraftInput,
+    assertCurrent?: () => Promise<void>,
+  ): Promise<LinkFrustrationDraftResult> {
     // Capture caller-owned data before the first asynchronous read.
     const captured: LinkFrustrationDraftInput = structuredClone(input);
     if (!captured.draftId || captured.expectedDraftId === '') throw new Error('Draft IDs must be nonempty');
@@ -212,6 +215,7 @@ export class RedisFrustrationIssueStore implements IFrustrationIssueStore {
     if (issue.status !== 'confirmed') return { outcome: 'not_confirmed' };
     if (!sameFrustrationSource(issue, captured.expectedSource)) return { outcome: 'stale_source' };
     const expected = Object.fromEntries(SOURCE_FIELDS.map((field) => [field, fields[field] ?? null]));
+    await assertCurrent?.();
     const outcome = await this.redis.eval(
       LINK_DRAFT_CAS,
       1,

@@ -3,6 +3,7 @@ import { randomUUID } from 'node:crypto';
 import { describe, test } from 'node:test';
 import { createRedisClient } from '@cat-cafe/shared/utils';
 import { RedisFrustrationIssueStore } from '../dist/domains/cats/services/stores/redis/RedisFrustrationIssueStore.js';
+import { neutralFixture } from './helpers/neutral-host-fixture.js';
 import { assertRedisIsolationOrThrow, redisIsolationSkipReason } from './helpers/redis-test-helpers.js';
 
 const url = process.env.REDIS_URL;
@@ -50,6 +51,31 @@ async function fixture(t, confirmed = true) {
 }
 
 describe('frustration source CAS on isolated Redis', { skip: redisIsolationSkipReason(url) }, () => {
+  test('real owner module forwarding persists and replays a source link through Redis CAS', async (t) => {
+    const storage = await fixture(t);
+    const f = await neutralFixture(t, { store: storage.store });
+    const response = await f.http('frustration', 'getSource', f.draft.issueId);
+    assert.equal(response.statusCode, 200, response.body);
+    const source = response.json().result;
+    const input = {
+      issueId: source.issueId,
+      sourceRevision: source.sourceRevision,
+      expectedDraftId: null,
+      draftId: 'owner-D1',
+    };
+    const first = await f.http('frustration', 'linkDraft', input);
+    assert.equal(first.statusCode, 200, first.body);
+    assert.deepEqual(first.json().result, {
+      outcome: 'linked',
+      draftId: 'owner-D1',
+      sourceRevision: source.sourceRevision,
+    });
+    const replay = await f.native('frustration', 'linkDraft', input);
+    assert.equal(replay.result.outcome, 'already_linked');
+    assert.equal((await storage.other.getById(source.issueId)).communityIssueDraftId, 'owner-D1');
+    assert.equal(await storage.peer.ttl('frustration-issue:' + source.issueId), -1);
+  });
+
   test('existing hash links and replays after store reconstruction without changing history or TTL', async (t) => {
     const f = await fixture(t);
     assert.deepEqual(await f.store.compareAndSetCommunityIssueDraft(f.input), { outcome: 'linked' });

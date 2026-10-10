@@ -1711,7 +1711,7 @@ async function main(): Promise<void> {
   const { TaskRunnerV2 } = await import('./infrastructure/scheduler/TaskRunnerV2.js');
   const { RunLedger } = await import('./infrastructure/scheduler/RunLedger.js');
   const { createActorResolver } = await import('./infrastructure/scheduler/ActorResolver.js');
-  const { getRoster } = await import('./config/cat-config-loader.js');
+  const { getRoster, getReviewPolicy } = await import('./config/cat-config-loader.js');
   const { loadDossierProfiles } = await import('@cat-cafe/shared/dossier');
   const schedulerDb = memoryServices.store.getDb();
   const runLedger = new RunLedger(schedulerDb);
@@ -5037,6 +5037,8 @@ async function main(): Promise<void> {
     threadStore,
     threadBindingStore: connectorBindingStore,
     threadOwnerUserId: privateUserId,
+    frustrationIssueStore,
+    deployment: { getRoster, getDefaultCatId, getReviewPolicy },
     threadDeepLinkUrl: createThreadDeepLinkUrl(frontendBaseUrl),
     threadProjections: {
       backlogStore,

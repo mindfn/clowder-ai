@@ -37,6 +37,7 @@ import {
   createUnavailablePluginMessagingSubscriptionHost,
   type PluginMessagingSubscriptionSession,
 } from '../../host-surface/plugin-messaging-subscription-host.js';
+import type { PluginNeutralHost } from '../../host-surface/plugin-neutral-host.js';
 import {
   createPluginStorageHost,
   type PluginPrivateStoragePort,
@@ -85,6 +86,8 @@ export interface ModulePluginHostShape {
   readonly storage: PluginStorageHost;
   readonly tasks: PluginTaskHost;
   readonly custody?: PluginCustodyHost;
+  readonly deployment?: PluginNeutralHost['deployment'];
+  readonly frustration?: PluginNeutralHost['frustration'];
   readonly threads: PluginThreadHost;
   readonly messaging: PluginMessagingHost;
   readonly media: PluginMediaHost;
@@ -116,6 +119,11 @@ export interface ModulePluginRuntimeOptions {
   readonly storage?: PluginPrivateStoragePort;
   readonly taskStore?: ITaskStore;
   readonly custody?: (pluginInstanceId: string) => PluginCustodyHost;
+  readonly neutral?: (
+    pluginInstanceId: string,
+    packageDigest: string,
+    assertActivation: () => void,
+  ) => Promise<PluginNeutralHost>;
   readonly threads?: PluginThreadProjectionDeps & {
     readonly threadDeepLinkUrl: (threadId: string) => string;
     readonly threadStore: IThreadStore;
@@ -171,6 +179,7 @@ function moduleConfigValue(field: ResolvedConfigurationField): unknown {
  */
 export class ModulePluginRuntime implements BundledPluginRuntime {
   readonly #loaded = new Map<string, LoadedModule>();
+  readonly #neutralActivations = new Map<string, symbol>();
   /** Teardown steps that failed; the next stop retries exactly these (F202 W2-3 h2 ⑥). */
   readonly #unfinished = new Map<string, readonly ModuleTeardownStep[]>();
 
@@ -213,6 +222,12 @@ export class ModulePluginRuntime implements BundledPluginRuntime {
       );
     }
     const located = await this.#resolvePackage(pluginInstanceId, packageRecord);
+    const activationToken = Symbol(pluginInstanceId);
+    this.#neutralActivations.set(pluginInstanceId, activationToken);
+    const assertActivation = () => {
+      if (this.#neutralActivations.get(pluginInstanceId) !== activationToken)
+        throw new ExternalPluginRuntimeError('DELIVERY_REJECTED', 'Neutral module activation is no longer current');
+    };
     let plugin: PluginModuleDefinitionShape;
     let activation: PluginModuleActivationShape | undefined;
     let subscriptions: PluginMessagingSubscriptionSession | undefined;
@@ -305,7 +320,10 @@ export class ModulePluginRuntime implements BundledPluginRuntime {
         manifest: packageRecord.manifest,
         effectiveGrants,
       });
+      const neutral = await this.options.neutral?.(pluginInstanceId, packageRecord.packageDigest, assertActivation);
+      assertActivation();
       const candidate = await plugin.start({
+        ...neutral,
         config: { get: async (key) => config.get(key) },
         secrets: { get: async (key) => secrets.get(key) },
         storage,
@@ -341,6 +359,7 @@ export class ModulePluginRuntime implements BundledPluginRuntime {
         );
       }
       activation = candidate;
+      assertActivation();
       const predicateVerifiers = admitModulePredicateVerifiers(
         packageRecord.manifest,
         effectiveGrants,
@@ -360,6 +379,8 @@ export class ModulePluginRuntime implements BundledPluginRuntime {
         ),
       });
     } catch (error) {
+      if (this.#neutralActivations.get(pluginInstanceId) === activationToken)
+        this.#neutralActivations.delete(pluginInstanceId);
       await rollbackModuleStart(error, activation, subscriptions, located);
     }
   }
@@ -370,6 +391,7 @@ export class ModulePluginRuntime implements BundledPluginRuntime {
    * teardown step that fails is kept, and the next stop retries it (F202 W2-3 h2 ⑥).
    */
   async stop(pluginInstanceId: string, reason: string): Promise<void> {
+    this.#neutralActivations.delete(pluginInstanceId);
     const loaded = this.#loaded.get(pluginInstanceId);
     const steps = loaded ? moduleTeardown(loaded) : this.#unfinished.get(pluginInstanceId);
     if (!steps) return;

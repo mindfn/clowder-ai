@@ -77,7 +77,12 @@ export class InMemoryFrustrationIssueStore implements IFrustrationIssueStore {
     }
   }
 
-  async compareAndSetCommunityIssueDraft(input: LinkFrustrationDraftInput): Promise<LinkFrustrationDraftResult> {
+  async compareAndSetCommunityIssueDraft(
+    input: LinkFrustrationDraftInput,
+    assertCurrent?: () => Promise<void>,
+  ): Promise<LinkFrustrationDraftResult> {
+    input = structuredClone(input);
+    await assertCurrent?.();
     if (!input.draftId || input.expectedDraftId === '') throw new Error('Draft IDs must be nonempty');
     const issue = this.issues.get(input.issueId);
     if (!issue) return { outcome: 'missing' };

@@ -8,6 +8,7 @@ import { createThreadDeepLinkUrl, resolveFrontendBaseUrl } from '../../config/fr
 import type { IConnectorThreadBindingStore } from '../../infrastructure/connectors/ConnectorThreadBindingStore.js';
 import { WhisperSttProvider } from '../../infrastructure/connectors/media/WhisperSttProvider.js';
 import { createModuleLogger } from '../../infrastructure/logger.js';
+import type { IFrustrationIssueStore } from '../cats/services/stores/ports/FrustrationIssueStore.js';
 import type { IMessageStore } from '../cats/services/stores/ports/MessageStore.js';
 import type { ITaskStore } from '../cats/services/stores/ports/TaskStore.js';
 import type { IThreadStore } from '../cats/services/stores/ports/ThreadStore.js';
@@ -70,6 +71,7 @@ import type { PluginInstanceRecord, PluginInventorySnapshot } from './host-inven
 import { createPluginCustodyHost, type PluginCustodyServices } from './host-surface/plugin-custody-host.js';
 import { pluginDataDirectoryParent } from './host-surface/plugin-data-directory.js';
 import { PluginMediaReadService } from './host-surface/plugin-media-host.js';
+import { createPluginNeutralHost, type PluginDeploymentServices } from './host-surface/plugin-neutral-host.js';
 import { RedisPluginPrivateStorage } from './host-surface/plugin-private-storage.js';
 import {
   type BuiltinPluginPackageMaterializer,
@@ -126,6 +128,8 @@ export interface DormantPluginRuntimeCompositionOptions {
   ) => Promise<DeliveryPresentationContext>;
   readonly taskStore?: ITaskStore;
   readonly custody?: PluginCustodyServices;
+  readonly deployment?: PluginDeploymentServices;
+  readonly frustrationIssueStore?: IFrustrationIssueStore;
   readonly redis?: RedisClient;
   /** The Host-wide messaging stores shared with the one publishing MessageStore wrapper. */
   readonly messagingStores?: MessagingStores;
@@ -429,6 +433,17 @@ export function createDormantPluginRuntimeComposition(
         : { validateManifest: options.contract.validateManifest }),
     });
   const moduleRuntime = new ModulePluginRuntime({
+    neutral: (pluginInstanceId, packageDigest, assertActivation) =>
+      createPluginNeutralHost({
+        pluginInstanceId,
+        packageDigest,
+        assertActivation,
+        inventory: inventoryStore,
+        ownerUserId: options.threadOwnerUserId,
+        threadStore: options.threadStore,
+        sourceStore: options.frustrationIssueStore,
+        deployment: options.deployment,
+      }),
     custody: (pluginInstanceId) =>
       createPluginCustodyHost({
         pluginInstanceId,
