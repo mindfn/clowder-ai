@@ -426,6 +426,33 @@ describe('Queue Management API', () => {
     assert.equal(bound?.delivery.authorIntentByTarget?.opus?.boundParentInvocationId, 'turn-1');
   });
 
+  for (const from of [
+    { kind: 'agent', catId: 'codex' },
+    { kind: 'system', service: 'github-wait' },
+    { kind: 'external', connectorId: 'github-wait', sender: { id: 'github-wait' } },
+    { kind: 'plugin', instanceId: 'notification-plugin' },
+  ]) {
+    it(`guides an exact active target for ${from.kind} input without changing source identity`, async () => {
+      const queued = await enqueueDurableEntry(deps.invocationQueue, { from });
+      deps.invocationTracker.has.mock.mockImplementation((_threadId, catId) => catId === 'opus');
+      deps.invocationTracker.getUserId.mock.mockImplementation(() => 'user-a');
+      deps.invocationTracker.getExecutionId.mock.mockImplementation(() => 'turn-1');
+      const res = await app.inject({
+        method: 'POST',
+        url: `/api/threads/t1/queue/${queued.entry.id}/continue`,
+        headers: { 'x-cat-cafe-user': 'user-a' },
+        payload: { targetCatId: 'opus' },
+      });
+      assert.equal(res.statusCode, 200);
+      assert.equal(res.json().outcome, 'appended');
+      assert.equal(deps.invocationTracker.cancel.mock.calls.length, 0);
+      const bound = deps.invocationQueue.getEntrySnapshot('t1', 'user-a', queued.entry.id);
+      assert.deepEqual(bound.from, from);
+      assert.equal(bound.delivery.authorIntentByTarget.opus.boundParentInvocationId, 'turn-1');
+      assert.equal(deps.queueProcessor.tryAutoAppendExactEntry.mock.calls[0].arguments[0].entryId, queued.entry.id);
+    });
+  }
+
   it('POST /queue/:entryId/continue falls back to a new invocation when no reply is active', async () => {
     const queued = await enqueueDurableEntry(deps.invocationQueue, { targetCats: [] });
 

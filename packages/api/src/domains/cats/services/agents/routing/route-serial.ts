@@ -744,6 +744,7 @@ export async function* routeSerial(
       log.warn({ err: nudgeErr, threadId }, '[F260] entity nudge hook failed — fail-open, no nudges this invocation');
     }
   }
+  checkpointPreparation('entity_nudge');
   if (deps.proactiveMemoryNudgeService && currentUserMessageId && options.frustrationAutoIssueEligible !== false) {
     preparedProactiveMemoryNudge = await deps.proactiveMemoryNudgeService.prepare({
       ownerUserId: userId,
@@ -751,6 +752,7 @@ export async function* routeSerial(
     });
     routeOwnedNudgePromptContext += preparedProactiveMemoryNudge.context;
   }
+  checkpointPreparation('proactive_memory');
   let humanDispositionFeedbackPromptContext = '';
   if (
     deps.humanDispositionFeedbackContextService &&
@@ -765,6 +767,7 @@ export async function* routeSerial(
       log.warn({ err: feedbackErr, threadId }, '[F281] exact-subject feedback context failed closed for serial route');
     }
   }
+  checkpointPreparation('disposition_feedback');
   if (deps.invocationDeps.memoryCuePromptService) {
     memoryCueOpportunitySeeds.push(
       ...judgmentSurfaceCueSeeds({
@@ -782,7 +785,7 @@ export async function* routeSerial(
     );
   }
   const routeLevelNudgePromptContext = routeOwnedNudgePromptContext + humanDispositionFeedbackPromptContext;
-  checkpointPreparation('memory_and_feedback');
+  checkpointPreparation('memory_cues');
 
   const completedCatInvocationIds: Array<[string, string]> = [];
   const pushRecallPresentationsByInvocation = new Map<string, PushRecallPresentation[]>();
@@ -1115,26 +1118,7 @@ export async function* routeSerial(
             teammates: teammates.map((id) => id as string),
           })
         : '';
-      // F091: Inject linked signal articles into context
-      let activeSignals:
-        | readonly {
-            id: string;
-            title: string;
-            source: string;
-            tier: number;
-            contentSnippet: string;
-            note?: string | undefined;
-            relatedDiscussions?: readonly { sessionId: string; snippet: string; score: number }[] | undefined;
-          }[]
-        | undefined;
-      if (deps.invocationDeps.signalArticleLookup) {
-        try {
-          const signals = await deps.invocationDeps.signalArticleLookup(threadId);
-          if (signals.length > 0) activeSignals = signals;
-        } catch {
-          /* best-effort: signal lookup failure does not block invocation */
-        }
-      }
+      // Signal articles are retrieved through explicit signal tools, not ordinary delivery.
 
       // F163 AC-A3: always_on constitutional docs injection (fail-open, flag-gated)
       // shadow: query but do NOT inject into prompt (record-only for experiment diff)
@@ -1211,7 +1195,6 @@ export async function* routeSerial(
           ...(activeParticipants.length > 0 ? { activeParticipants } : {}),
           ...(routingPolicy ? { routingPolicy } : {}),
           ...(sopStageHint ? { sopStageHint } : {}),
-          ...(activeSignals ? { activeSignals } : {}),
           ...(voiceMode ? { voiceMode } : {}),
           ...(bootcampState ? { bootcampState, bootcampMemberCount } : {}),
           ...(alwaysOnDocs && alwaysOnInjectionMode === 'on' ? { alwaysOnDocs } : {}),

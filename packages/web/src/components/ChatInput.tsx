@@ -21,7 +21,6 @@ import { useMessageDispositionPreference } from '@/hooks/useMessageDispositionPr
 import { usePathCompletion } from '@/hooks/usePathCompletion';
 import type { UploadStatus, WhisperOptions } from '@/hooks/useSendMessage';
 import { useThreadLiveness } from '@/hooks/useThreadScopedSelectors';
-import { useActiveExecutionStore } from '@/stores/activeExecutionStore';
 import { useChatStore } from '@/stores/chatStore';
 import { useInputHistoryStore } from '@/stores/inputHistoryStore';
 import { apiFetch } from '@/utils/api-client';
@@ -78,13 +77,7 @@ function useHydrated(): boolean {
 }
 
 interface ChatInputProps {
-  /**
-   * Which presentation the HOST gives this composer. `'v2'` only where the host also mounts the one execution row above
-   * it (ThreadChatSurface): the row then says who is running / whether the run can be verified / how to stop it, so the
-   * composer drops its "猫猫正在回复中… 取消" bar and the empty-draft stop becomes its last control. Every other host
-   * (the split view mounts a bare ChatInput) keeps the classic composer, whatever shell is chosen — nothing there would
-   * say those things in its place.
-   */
+  /** The v2 host keeps the stop as the last control for an empty draft; classic retains a side stop. */
   presentation?: 'classic' | 'v2';
   /** Thread ID for draft persistence — drafts are saved per-thread */
   threadId?: string;
@@ -172,7 +165,6 @@ export function ChatInput({
     ? projectedCancelState
     : 'hidden';
   const shellV2 = presentation === 'v2';
-  const canonicalProjectionStale = useActiveExecutionStore((state) => state.hydration === 'error');
   const activeCatIds = useMemo(() => {
     const ids = new Set<string>();
     for (const execution of canonicalExecutions) {
@@ -819,39 +811,6 @@ export function ChatInput({
 
   return (
     <div className="relative bg-[var(--console-shell-bg)] safe-area-bottom">
-      {/* F39: Queue status bar — visible when cat is running. New shell (v2): the one execution row above the composer
-          says this and holds the stop; the classic interface keeps the bar unchanged. */}
-      {hasActiveInvocation && !shellV2 && (
-        <div data-testid="active-invocation-banner" className="px-4 pt-2 flex items-center gap-2">
-          <span className="inline-block w-2 h-2 rounded-full bg-[var(--color-cocreator-primary)] animate-pulse" />
-          <span className="text-xs text-[var(--color-cocreator-primary)] font-medium">
-            {canonicalExecutions.length > 0
-              ? canonicalProjectionStale
-                ? '猫猫正在回复中 · 状态暂不可核对'
-                : '猫猫正在回复中...'
-              : canonicalProjectionStale
-                ? '运行状态暂不可核对'
-                : '正在确认运行状态...'}
-          </span>
-          <span className="text-xs text-cafe-muted flex-1">
-            {messageDisposition.effective === 'continue_current'
-              ? '继续输入，消息可投递给当前成员'
-              : '继续输入，消息会成为下一件工作'}
-          </span>
-          {stopState !== 'hidden' && (
-            <button
-              type="button"
-              data-testid="banner-cancel-btn"
-              onClick={() => void handleProjectedStop()}
-              disabled={stopState !== 'available'}
-              className="text-xs text-cafe-muted hover:text-cafe-primary transition-colors px-2 py-0.5 rounded-md hover:bg-cafe-surface-elevated focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-cafe-primary flex-shrink-0 disabled:cursor-wait disabled:opacity-50"
-              aria-label="Stop generation"
-            >
-              {stopState === 'pending' ? '正在停止' : stopState === 'available' ? '取消' : '暂不可取消'}
-            </button>
-          )}
-        </div>
-      )}
       {contextPickerMode && (
         <ChatContextPicker
           mode={contextPickerMode}
@@ -1010,7 +969,9 @@ export function ChatInput({
               whisperMode
                 ? '悄悄话...'
                 : hasActiveInvocation && !whisperTargetsAllIdle
-                  ? '继续输入，发送后进入队列...'
+                  ? messageDisposition.effective === 'continue_current'
+                    ? '继续输入，消息可不中断追加给当前成员...'
+                    : '继续输入，发送后进入队列...'
                   : (placeholder ?? '输入消息... (@ 召唤猫猫 · /thread 引用对话)')
             }
             className={`w-full resize-none rounded-xl border p-3 text-sm focus:outline-none focus:ring-2 placeholder:text-cafe-muted ${
@@ -1037,8 +998,7 @@ export function ChatInput({
           onTranscript={handleTranscript}
           onSend={handleSend}
           onStop={() => void handleProjectedStop()}
-          // The classic composer already has its exact Stop in the execution banner.
-          stopState={shellV2 ? stopState : 'hidden'}
+          stopState={stopState}
           onQueueSend={handleSend}
           disabled={disabled}
           sendDisabled={sendTemporarilyDisabled}

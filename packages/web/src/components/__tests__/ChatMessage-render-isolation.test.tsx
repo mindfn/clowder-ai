@@ -161,8 +161,10 @@ describe('ChatMessage render isolation', () => {
     expect(receipts?.textContent).toContain('跳到原文');
     expect(receipts?.textContent).not.toContain('查看原文');
     expect(receipts?.textContent).not.toContain('09/01 22:14:08');
-    expect(appendedRow?.getAttribute('title')).toContain('09/01 22:14:08');
-    expect(appendedRow?.getAttribute('title')).toContain('@狸花猫 测试下追加消息的');
+    expect(appendedRow?.getAttribute('title')).toBeNull();
+    expect(appendedRow?.querySelector('[data-append-delivery-state]')?.getAttribute('aria-label')).toContain(
+      '@狸花猫 测试下追加消息的',
+    );
     expect(receipts?.textContent).not.toContain('@狸花猫 开始');
   });
 

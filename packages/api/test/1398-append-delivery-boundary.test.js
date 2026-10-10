@@ -40,7 +40,7 @@ function createHarness() {
   return { ...deps, processor: new QueueProcessor(deps, { retryDeferral: { baseDelayMs: 60_000 } }) };
 }
 
-async function admit(harness) {
+async function admit(harness, overrides = {}) {
   sequence += 1;
   const queueInput = canonicalTestQueueInput({
     threadId: 'thread-1',
@@ -51,6 +51,7 @@ async function admit(harness) {
     content: `append body ${sequence}`,
     targetCats: ['opus'],
     intent: 'execute',
+    ...overrides,
   });
   const result = await harness.queue.appendAndEnqueueDurable(
     harness.messageStore,
@@ -63,6 +64,7 @@ async function admit(harness) {
       mentions: ['opus'],
       timestamp: Date.now(),
       deliveryStatus: 'queued',
+      ...(overrides.messageSource ? { source: overrides.messageSource } : {}),
     }),
     queueInput,
   );
@@ -136,6 +138,68 @@ const deliveredEmits = (harness) =>
 const activeInputs = (harness) => harness.invocationTracker.getActiveSlots('thread-1')[0].activeRun.inputMessageIds;
 
 describe('delivery owns Append admission, without model-read state', () => {
+  it('auto Append honors a connector target choice and exact parent, preserving source identity', async () => {
+    const harness = createHarness();
+    const from = { kind: 'external', connectorId: 'github-wait', sender: { id: 'github-wait' } };
+    const carrier = {
+      v: 1,
+      waitId: 'task-pr-216',
+      outcomeId: 'wait:pr:mindfn/clowder-ai:216:g1:matched',
+      ownerFence: { kind: 'containing_task', generation: 1 },
+    };
+    const admitted = await admit(harness, {
+      from,
+      waitContinuationCarrier: carrier,
+      messageSource: { connector: 'github-wait', label: 'GitHub Wait', meta: { waitContinuationCarrier: carrier } },
+    });
+    const dispatch = mock.fn(async () => ({ accepted: true, handle: {} }));
+    const run = bindRun(harness, dispatch);
+    await harness.queue.bindContinueCurrentIntentDurable('thread-1', 'user-1', admitted.entry.id, 'opus', {
+      requested: 'continue_current',
+      boundParentInvocationId: 'different-parent',
+    });
+    assert.equal(
+      (
+        await harness.processor.tryAutoAppendExactEntry({
+          threadId: 'thread-1',
+          userId: 'user-1',
+          entryId: admitted.entry.id,
+          targetCatId: 'opus',
+        })
+      ).outcome,
+      'rejected',
+    );
+    assert.equal(dispatch.mock.calls.length, 0);
+    const bound = await harness.queue.bindContinueCurrentIntentDurable(
+      'thread-1',
+      'user-1',
+      admitted.entry.id,
+      'opus',
+      {
+        requested: 'continue_current',
+        boundParentInvocationId: harness.invocationTracker.getExecutionId('thread-1', 'opus'),
+      },
+    );
+    assert.ok(bound);
+    assert.deepEqual(bound.from, from);
+    assert.deepEqual(bound.execution.waitContinuationCarrier, carrier);
+    const result = await harness.processor.tryAutoAppendExactEntry({
+      threadId: 'thread-1',
+      userId: 'user-1',
+      entryId: admitted.entry.id,
+      targetCatId: 'opus',
+    });
+    assert.equal(result.outcome, 'appended');
+    assert.equal(dispatch.mock.calls.length, 1);
+    assert.equal(harness.invocationTracker.has('thread-1', 'opus'), true);
+    assert.deepEqual((await harness.messageStore.getById(admitted.message.id)).from, from);
+    assert.deepEqual(activeInputs(harness), [admitted.message.id]);
+    assert.deepEqual(
+      (await harness.messageStore.getById(admitted.message.id)).source.meta.waitContinuationCarrier,
+      carrier,
+    );
+  });
+
   it('publishes and binds accepted input immediately even when the carrier never reports consumption', async () => {
     const harness = createHarness();
     const admitted = await admit(harness);

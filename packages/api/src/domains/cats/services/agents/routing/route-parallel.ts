@@ -570,26 +570,7 @@ export async function* routeParallel(
             teammates: teammates.map((id) => id as string),
           })
         : '';
-      // F091: Inject linked signal articles into context
-      let activeSignals:
-        | readonly {
-            id: string;
-            title: string;
-            source: string;
-            tier: number;
-            contentSnippet: string;
-            note?: string | undefined;
-            relatedDiscussions?: readonly { sessionId: string; snippet: string; score: number }[] | undefined;
-          }[]
-        | undefined;
-      if (deps.invocationDeps.signalArticleLookup) {
-        try {
-          const signals = await deps.invocationDeps.signalArticleLookup(threadId);
-          if (signals.length > 0) activeSignals = signals;
-        } catch {
-          /* best-effort: signal lookup failure does not block invocation */
-        }
-      }
+      // Signal articles are retrieved through explicit signal tools, not ordinary delivery.
 
       // F163 AC-A3: always_on constitutional docs injection (fail-open, flag-gated)
       // shadow: query but do NOT inject into prompt (record-only for experiment diff)
@@ -630,7 +611,6 @@ export async function* routeParallel(
           ...(activeParticipants.length > 0 ? { activeParticipants } : {}),
           ...(routingPolicy ? { routingPolicy } : {}),
           ...(sopStageHint ? { sopStageHint } : {}),
-          ...(activeSignals ? { activeSignals } : {}),
           ...(voiceMode ? { voiceMode } : {}),
           ...(bootcampState ? { bootcampState, threadId, bootcampMemberCount } : {}),
           ...(alwaysOnDocs && alwaysOnInjectionMode === 'on' ? { alwaysOnDocs } : {}),

@@ -173,7 +173,9 @@ describe('ChatInput composer layout', () => {
     expect(stopButton).toBeTruthy();
     expect(stopButton?.disabled).toBe(true);
     expect(stopButton?.className).not.toContain('opacity-0');
-    expect(stopButton?.className).toContain('hover:bg-cafe-surface-elevated');
+    expect(stopButton?.className).toContain('hover:bg-conn-red-hover');
+    expect(stopButton?.querySelector('svg rect')).not.toBeNull();
+    expect(stopButton?.title).toBe('正在确认可停止的运行状态');
     expect(stopButton?.className).toContain('focus-visible:ring-2');
   });
 });

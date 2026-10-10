@@ -935,8 +935,8 @@ export class InvocationQueue {
   }
 
   /**
-   * Bind one public human message to the selected member and persist the
-   * author's non-interrupting delivery intent. This is the Queue-panel
+   * Bind one public conversation input to the selected member and persist
+   * the operator's non-interrupting delivery choice. This is the Queue-panel
    * counterpart of composer admission: the same row either appends to the
    * exact current run or remains ordinary next work without canceling it.
    */
@@ -949,13 +949,7 @@ export class InvocationQueue {
     at = Date.now(),
   ): Promise<QueueEntry | null> {
     const entry = this.findEntry(threadId, userId, entryId);
-    if (
-      !entry ||
-      entry.status !== 'queued' ||
-      entry.kind !== 'conversation_input' ||
-      entry.from.kind !== 'user' ||
-      isSystemPinnedQueueEntry(entry)
-    ) {
+    if (!entry || entry.status !== 'queued' || entry.kind !== 'conversation_input' || isSystemPinnedQueueEntry(entry)) {
       return null;
     }
     const assignsTargetlessConversation = entry.targets.length === 0;

@@ -1,9 +1,11 @@
 import React, { act } from 'react';
 import { createRoot, type Root } from 'react-dom/client';
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
+import type { CatData } from '@/hooks/useCatData';
 import type { ChatMessage } from '@/stores/chat-types';
 import { focusLineageMessage } from '@/utils/focusLineageMessage';
 import { AppendedInputReceipts } from '../AppendedInputReceipts';
+import { resetAppTooltipWarmState } from '../AppTooltip';
 
 vi.mock('@/hooks/useCoCreatorConfig', () => ({ useCoCreatorConfig: () => ({ name: 'lang' }) }));
 
@@ -23,7 +25,7 @@ class MockResizeObserver implements ResizeObserver {
   unobserve() {}
 }
 
-const STARTED_AT = new Date('2026-09-01T14:14:00.000Z').getTime();
+const STARTED_AT = new Date(2026, 8, 1, 14, 14, 0).getTime();
 const LONG_TEXT = '@opus 你先暂停一下 你先给我讲讲你们目前的进度到了哪里了？ 之前都让你们干什么然后你们都做成啥样了？';
 
 function source(id: string, content: string, offsetSeconds: number): ChatMessage {
@@ -95,6 +97,7 @@ describe('AppendedInputReceipts: expand in place, jump separately', () => {
   });
 
   beforeEach(() => {
+    resetAppTooltipWarmState();
     container = document.createElement('div');
     document.body.appendChild(container);
     root = createRoot(container);
@@ -104,6 +107,7 @@ describe('AppendedInputReceipts: expand in place, jump separately', () => {
     act(() => root.unmount());
     container.remove();
     resizeCallbacks.clear();
+    vi.useRealTimers();
     vi.mocked(focusLineageMessage).mockReset();
   });
 
@@ -113,7 +117,9 @@ describe('AppendedInputReceipts: expand in place, jump separately', () => {
         <AppendedInputReceipts
           response={responseFor(sources)}
           timelineMessages={sources}
-          getCatById={() => undefined}
+          getCatById={() =>
+            ({ id: 'opus', displayName: '布偶猫', color: { primary: '#9B7EBD', secondary: '#E8DFF5' } }) as CatData
+          }
         />,
       );
     });
@@ -129,10 +135,19 @@ describe('AppendedInputReceipts: expand in place, jump separately', () => {
     await render([source('unsupported', '补充一条消息', 5)]);
     const status = row('unsupported').querySelector<HTMLButtonElement>('[data-append-delivery-state]');
     expect(status?.dataset.appendDeliveryState).toBe('unavailable');
-    expect(status?.getAttribute('aria-label')).toBe('已投递；读取状态不可用');
+    expect(status?.getAttribute('aria-label')).toBe('lang · 已投递 · 补充一条消息');
     expect(status?.querySelector('.animate-pulse')).toBeNull();
-    await act(async () => status?.click());
-    expect(document.querySelector('[role="tooltip"]')?.textContent).toContain('已投递；读取状态不可用');
+    expect(status?.querySelector('span')?.style.backgroundColor).toBe('var(--color-opus-primary)');
+    vi.useFakeTimers();
+    const enter = new Event('pointerover', { bubbles: true });
+    Object.defineProperty(enter, 'pointerType', { value: 'mouse' });
+    act(() => status?.dispatchEvent(enter));
+    act(() => vi.advanceTimersByTime(999));
+    expect(document.querySelector('[role="tooltip"]')).toBeNull();
+    act(() => vi.advanceTimersByTime(1));
+    expect(document.querySelector('[role="tooltip"]')?.textContent).toBe('lang · 已投递补充一条消息');
+    expect(row('unsupported').getAttribute('title')).toBeNull();
+    expect(row('unsupported').querySelectorAll('button')).toHaveLength(2);
   });
 
   it('joins only the exact target and stops animation when its response terminates', async () => {
@@ -162,6 +177,9 @@ describe('AppendedInputReceipts: expand in place, jump separately', () => {
       row('tracked').querySelector('[data-append-delivery-state]')?.getAttribute('data-append-delivery-state'),
     ).toBe('pending');
     expect(row('tracked').querySelector('.animate-pulse')).not.toBeNull();
+    expect(row('tracked').querySelector('[data-append-delivery-state]')?.getAttribute('aria-label')).toBe(
+      'lang · 投递于: 09/01 14:14:08 · 稍后给出结论',
+    );
     const lifecycle = responseFor([input]).lifecycle;
     if (lifecycle?.kind !== 'response') throw new Error('Expected response');
     const terminal: ChatMessage = {
@@ -175,12 +193,12 @@ describe('AppendedInputReceipts: expand in place, jump separately', () => {
     );
     expect(row('tracked').querySelector('.animate-pulse')).toBeNull();
     expect(row('tracked').querySelector('[data-append-delivery-state]')?.getAttribute('aria-label')).toBe(
-      '已投递；读取未确认',
+      'lang · 投递于: 09/01 14:14:08（未确认读取） · 稍后给出结论',
     );
     input.lifecycle = {
       ...input.lifecycle,
       dispatchRefs: input.lifecycle.dispatchRefs?.map((ref) =>
-        ref.targetId === 'opus' ? { ...ref, inputRead: { status: 'read', at: input.timestamp + 3 } } : ref,
+        ref.targetId === 'opus' ? { ...ref, inputRead: { status: 'read', at: input.timestamp + 3_000 } } : ref,
       ),
     };
     await act(async () =>
@@ -188,10 +206,12 @@ describe('AppendedInputReceipts: expand in place, jump separately', () => {
         <AppendedInputReceipts response={terminal} timelineMessages={[input]} getCatById={() => undefined} />,
       ),
     );
-    expect(row('tracked').querySelector('[data-append-delivery-state]')?.getAttribute('aria-label')).toBe('已读取');
+    expect(row('tracked').querySelector('[data-append-delivery-state]')?.getAttribute('aria-label')).toBe(
+      'lang · 读取于: 09/01 14:14:11 · 稍后给出结论',
+    );
   });
 
-  it('offers 展开全文 only when the line is truncated, and expands the full text in place', async () => {
+  it('toggles truncated text through the message itself without 展开全文 wording', async () => {
     await render([source('short', '好的', 5), source('long', LONG_TEXT, 8)]);
 
     await measure(requireElement(row('short').querySelector('[data-overflow-measure="inline"]')), {
@@ -204,20 +224,22 @@ describe('AppendedInputReceipts: expand in place, jump separately', () => {
     });
 
     expect(buttonNamed(row('short'), '展开全文')).toBeUndefined();
-    const expand = buttonNamed(row('long'), '展开全文');
+    expect(row('long').textContent).not.toContain('展开全文');
+    const expand = row('long').querySelector<HTMLButtonElement>('[data-append-delivery-state]');
+    expect(expand?.className).toContain('cursor-pointer');
     expect(expand?.getAttribute('aria-expanded')).toBe('false');
 
     await act(async () => expand?.click());
 
     expect(row('long').dataset.expanded).toBe('true');
     expect(row('long').textContent).toContain(LONG_TEXT);
-    const collapse = buttonNamed(row('long'), '收起');
+    const collapse = row('long').querySelector<HTMLButtonElement>('[data-append-delivery-state]');
     expect(collapse?.getAttribute('aria-expanded')).toBe('true');
     expect(focusLineageMessage).not.toHaveBeenCalled();
 
     await act(async () => collapse?.click());
     expect(row('long').dataset.expanded).toBe('false');
-    expect(buttonNamed(row('long'), '展开全文')).toBeDefined();
+    expect(collapse?.getAttribute('aria-expanded')).toBe('false');
   });
 
   it('jumps back to the original message with its own 跳到原文 action', async () => {
@@ -241,7 +263,7 @@ describe('AppendedInputReceipts: expand in place, jump separately', () => {
       clientWidth: 240,
       scrollWidth: 720,
     });
-    await act(async () => buttonNamed(newest, '展开全文')?.click());
+    await act(async () => newest.querySelector<HTMLButtonElement>('[data-append-delivery-state]')?.click());
 
     expect(list.dataset.collapsed).toBe('false');
     const listToggle = container.querySelector<HTMLButtonElement>('button[aria-label="收起补充消息"]');
