@@ -77,8 +77,19 @@ function createHarness({
   turnExecutionStore,
   actionSuccessorLeaseStore,
   deploymentWaitStartGuard,
+  autoDrain = false,
 } = {}) {
-  const queue = new InvocationQueue();
+  let processor;
+  const queue = new InvocationQueue(
+    undefined,
+    autoDrain
+      ? {
+          onAdmitted: ({ threadId }) => {
+            void processor.requestDrain(threadId);
+          },
+        }
+      : {},
+  );
   const messageStore = new MessageStore();
   const invocationRecordStore = createInvocationRecordStore();
   const routeCalls = [];
@@ -125,7 +136,8 @@ function createHarness({
     ...(actionSuccessorLeaseStore ? { actionSuccessorLeaseStore } : {}),
     ...(deploymentWaitStartGuard ? { deploymentWaitStartGuard } : {}),
   };
-  return { ...deps, processor: new QueueProcessor(deps, processorOptions), routeCalls };
+  processor = new QueueProcessor(deps, processorOptions);
+  return { ...deps, processor, routeCalls };
 }
 
 /** Records and ends the child turn the way invoke-single-cat does, entering the response-pending ledger. */
@@ -213,7 +225,7 @@ async function admitMessage(harness, overrides = {}) {
     timestamp: Date.now(),
     deliveryStatus: 'queued',
   });
-  const result = await harness.queue.appendAndEnqueueDurable(harness.messageStore, messageInput, queueInput);
+  const result = await harness.queue.send(harness.messageStore, messageInput, queueInput);
   assert.equal(result.outcome, 'enqueued');
   assert.ok(result.entry);
   return result;
@@ -400,7 +412,7 @@ describe('QueueProcessor over the source-row pending Queue', () => {
       targetCats: ['opus'],
       intent: 'execute',
     });
-    const admitted = await harness.queue.appendAndEnqueueDurable(
+    const admitted = await harness.queue.send(
       harness.messageStore,
       canonicalTestMessageInput({
         threadId: queueInput.threadId,
@@ -2174,6 +2186,7 @@ describe('F117 soak: a waiting entry does not stop its thread’s queue', () => 
     const attempts = [];
     const retryAt = Date.now() + 200;
     const harness = createHarness({
+      autoDrain: true,
       processorOptions: { retryDeferral: { baseDelayMs: 20 } },
       routeExecution: routeFailingBeforeAcceptance(attempts, ['opus']),
     });

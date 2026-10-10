@@ -105,7 +105,11 @@ export async function createHost(world: World, cafe: Cafe) {
     workAuthority: authority,
     artifactReader: new F232PreparedArtifactReader({ messages }),
   });
-  const queue = new InvocationQueue();
+  const queue = new InvocationQueue(undefined, {
+    onAdmitted: ({ threadId }) => {
+      void queueProcessor.requestDrain(threadId);
+    },
+  });
   const tracker = new InvocationTracker();
   const turnExecutions = new InMemoryTurnExecutionStore();
   const registry = new InvocationRegistry();
@@ -402,7 +406,6 @@ export async function createHost(world: World, cafe: Cafe) {
     threadStore: threads,
     messageStore: messages,
     invocationQueue: queue,
-    queueProcessor,
     socketManager: { broadcastToRoom() {}, emitToUser() {} },
     isCatAvailable: () => true,
     // Mirrors api/src/index.ts admitStandingWork / resumeWorkRevision.

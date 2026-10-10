@@ -101,7 +101,7 @@ export async function canonicalActionFixture({
   const messages = stores.messages ?? new MessageStore();
   const records = stores.records ?? new InvocationRecordStore();
   const turns = stores.turns ?? new InMemoryTurnExecutionStore();
-  const admitted = await queue.appendAndEnqueueDurable(
+  const admitted = await queue.send(
     messages,
     {
       threadId: current.holderThreadId,

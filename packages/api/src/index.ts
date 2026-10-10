@@ -716,6 +716,7 @@ async function main(): Promise<void> {
 
   // Create invocation tracker for cancellation support
   const invocationTracker = new InvocationTracker();
+  let router!: AgentRouter;
 
   // Initialize WebSocket manager BEFORE routes (injected via opts, no circular import).
   // IMPORTANT: Socket.io must attach to the SAME server Fastify listens on.
@@ -1001,6 +1002,23 @@ async function main(): Promise<void> {
 
   const invocationQueue = new InvocationQueue(
     redis ? new RedisQueueLedgerStore(redis) : new InMemoryQueueLedgerStore(),
+    {
+      projectRoot: resolveActiveProjectRoot(),
+      invocationTracker,
+      resolveCarrierCapability: (catId) => router?.freshnessCarrierCapability(catId),
+      resolveTargets: (requested, threadId, content, exact) =>
+        router.resolveSendTargets(requested, threadId, content, exact),
+      onAdmitted: ({ threadId, message, entries }) => {
+        if (message && entries.some((entry) => entry.sourceCategory !== 'a2a_failure'))
+          queueProcessor.registerCallerDispatchInitialTargets(
+            message,
+            entries.flatMap((entry) => entry.targets),
+          );
+        void queueProcessor
+          .requestDrain(threadId)
+          .catch((err) => app.log.error({ err, threadId }, 'send drain failed'));
+      },
+    },
   );
   await invocationQueue.hydrateFromLedger(messageStore);
   const invocationRecordStore = createInvocationRecordStore(redis);
@@ -2170,7 +2188,6 @@ async function main(): Promise<void> {
   // ── F32-b: AgentRegistry (catId → AgentService) — one instance per cat ──
   // Each cat gets its own AgentService instance with its catId + model.
   const agentRegistry = new AgentRegistry();
-  let router!: AgentRouter;
   const syncAgentRegistry = async (configs: Record<string, CatConfig>) => {
     agentRegistry.reset();
     clearL0Cache(); // Invalidate stale L0 compilations from previous sync
@@ -3218,7 +3235,6 @@ async function main(): Promise<void> {
 
   // Register routes (socketManager injected, no circular import)
   const messagesOpts = {
-    projectRoot: resolveActiveProjectRoot(),
     registry,
     messageStore,
     socketManager,
@@ -3227,12 +3243,9 @@ async function main(): Promise<void> {
     ...(sessionStore ? { sessionStore } : {}),
     threadStore,
     invocationTracker,
-    invocationRecordStore,
-    turnExecutionStore,
     summaryStore,
     draftStore,
     invocationQueue,
-    queueProcessor,
     sessionContinuationCoordinator,
     ...(f101GameStore ? { gameStore: f101GameStore } : {}),
     ...(f101SharedDriver ? { autoPlayer: f101SharedDriver } : {}),
@@ -5305,7 +5318,6 @@ async function main(): Promise<void> {
     socketManager,
     router,
     invocationQueue,
-    queueProcessor,
     onProposalReject: (input) => onProposalReject({ ...input, proposalType: 'thread' }),
   });
   // F231 Phase C: profile-update approve/reject (user-auth; locked critical section in service)
@@ -5410,7 +5422,6 @@ async function main(): Promise<void> {
     messageStore,
     threadStore,
     invocationQueue,
-    queueProcessor,
   });
   const { CollectiveWorkAdmission } = await import(
     './domains/plugin/builtin-runtime/collective-work/collective-work-admission.js'
@@ -5507,7 +5518,6 @@ async function main(): Promise<void> {
           threadStore,
           messageStore,
           invocationQueue,
-          queueProcessor,
           socketManager: {
             broadcastToRoom: (room, event, data) => socketManager?.broadcastToRoom(room, event, data),
             emitToUser: (userId, event, data) => socketManager?.emitToUser(userId, event, data),
@@ -5801,7 +5811,7 @@ async function main(): Promise<void> {
     work: collectiveWorkAuthority,
     dispatcher: collectiveWorkDispatcher,
     queue: invocationQueue,
-    reconsideration: { queue: invocationQueue, processor: queueProcessor },
+    reconsideration: { queue: invocationQueue },
   });
   const { registerCollectiveWorkResultRoutes } = await import('./routes/collective-work-result-routes.js');
   registerCollectiveWorkResultRoutes(app, {
@@ -6146,7 +6156,6 @@ async function main(): Promise<void> {
       threadStore,
       messageStore,
       invocationQueue,
-      queueProcessor,
       socketManager,
       supportsPresentationRetry: (catId) =>
         supportsWriteOpportunityPresentationCapability(router.contextCapability(catId)),
@@ -7650,7 +7659,7 @@ async function main(): Promise<void> {
   const admitManagedWake: ManagedCommandWakeRecoveryDeps['admitWake'] = async (input) => {
     // INV-I1: Message and Queue row in one transaction. The lease was already verified against
     // this exact envelope, so nothing admitted here can belong to a generation that has moved on.
-    const admitted = await invocationQueue.appendAndEnqueueDurable(messageStore, input.message, {
+    const admitted = await invocationQueue.send(messageStore, input.message, {
       threadId: input.threadId,
       userId: input.userId,
       sourceId: input.message.idempotencyKey,
