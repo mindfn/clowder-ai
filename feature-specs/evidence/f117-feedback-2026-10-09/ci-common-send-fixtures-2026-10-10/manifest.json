@@ -1,0 +1,25 @@
+{
+  "sourceBase": "fd01f6fe36372a098f2a73df74008b9b6932584d",
+  "failedPublishedHead": "dc59db587f612831608cb7f88028c0e024a2c1ce",
+  "codeHashes": {
+    "packages/api/test/a2a-parallel-fanout-custody.test.js": "e4d769bfa7dc3475caf9d7b618e6a96fcc55dcde83db368428d24703bed76c29",
+    "packages/api/test/approval-hub/dispatch-action-recovery.test.js": "e9446b400617629647a347ad7f35b0d26c6523026c35a7e87b4b84cb1239609d",
+    "packages/api/test/a2a-1577-failure-return-seam.test.mjs": "048102eea6721baf608cd3f3bcc723e779cff4cf48b8696c96032dad671e0b23",
+    "packages/api/test/f088-gateway-integration.test.js": "6c0f131fa765a6b1cb67a7888b16d6fc902ee99a8ee1418f16b0cc81deb42341",
+    "packages/api/test/f295-active-execution-projection.test.js": "1915df60cb9b10c2dc7785e3e57eb5917461521922acce250b5f3f946285cd66"
+  },
+  "evidenceHashes": {
+    "ci-job-114188627675.log.gz": "b9b1a49f0fa9f066e085fbcd58d273076253b84115341e898b2f7ad772a2bb6e",
+    "format-green.log.gz": "42b024dac4908b00601b1d1afbacba0059064146b025c8ef07e8c56a2e73a072",
+    "report.md": "d90b2462f7cb410098c72421290fbf58c80a3bd69416b75db6ebd8918e87e608",
+    "commands.md": "e76ff0f8bef01f0c0ace2f5adc0afa448f96371594b362fb06e964ab3f4825eb",
+    "ci-job-114188627734.log.gz": "e666923828f12665ea75129d4be9c5fea89a0f24e5375ad581cc246ff1ff3404",
+    "ci-job-114188627690.log.gz": "b44dcad2b285fbfc8427f36c82efb9cb1d45f288c279298895355a1351947a44",
+    "failure-return-green.log.gz": "e3b69b8d9227a33c8a59d3bbb4fbc012ce7986a34be5c1e5652457a9216d71c1",
+    "failure-return-red.log.gz": "061d6e6fe7327cdb7ddcc73ff156d84295b90ac0f04fb9c0cdc47fe32d2af481",
+    "fanout-recovery-red.log.gz": "4de2a3e918633f1fda97b347ee1c1b55c0b7472325aabe32ac77f3a0acec34b4",
+    "ci-job-114188627685.log.gz": "95911bc79567d65b465a7880bb7316796f123c2ddfe380f6d4479c5c979dcdcb",
+    "api-final-green.log.gz": "e815a09c3729336ae01cdb2d5bcd0decca80e69e25bc5538e7785ee7130ed0b5",
+    "gateway-control-red.log.gz": "3b4429d0e10deb30feecadf2b8942c314d09487631b8c222604494f0bc9adc30"
+  }
+}
