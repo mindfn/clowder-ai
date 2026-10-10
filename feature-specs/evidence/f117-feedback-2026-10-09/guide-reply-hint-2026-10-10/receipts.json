@@ -1,0 +1,37 @@
+[
+  {
+    "variant": "mixed",
+    "placeholder": "执行发生了偏离？A/C支持引导回复，可继续输入直接发送消息而不中断当前回复",
+    "banner": false,
+    "stop": true,
+    "viewport": "1440,600"
+  },
+  {
+    "variant": "none",
+    "placeholder": "输入消息... (@ 召唤猫猫 · /thread 引用对话)",
+    "banner": false,
+    "stop": true,
+    "viewport": "1440,600"
+  },
+  {
+    "variant": "idle",
+    "placeholder": "输入消息... (@ 召唤猫猫 · /thread 引用对话)",
+    "banner": false,
+    "stop": false,
+    "viewport": "1440,600"
+  },
+  {
+    "variant": "next",
+    "placeholder": "执行发生了偏离？A/C支持引导回复，可继续输入直接发送消息而不中断当前回复",
+    "banner": false,
+    "stop": true,
+    "viewport": "1440,600"
+  },
+  {
+    "variant": "mixed",
+    "placeholder": "执行发生了偏离？A/C支持引导回复，可继续输入直接发送消息而不中断当前回复",
+    "banner": false,
+    "stop": true,
+    "viewport": "390,600"
+  }
+]
