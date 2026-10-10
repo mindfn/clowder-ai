@@ -1,0 +1,10 @@
+{
+  "f117-guide-copy-web.log.gz": "a3c2a56a9a293770f80cfabc07c580828997b38b84ddb99f82ad2fafd919bd51",
+  "f117-producer-append-build.log.gz": "9ceffb7310338057cfe71a4ae1e2c98d2c485d81cdef906532a801f457a38d64",
+  "f117-producer-append-green.log.gz": "84142342260bc480cda3357d1b23e703c23edc033abdbf975f68060925f625a2",
+  "f117-producer-append-prebuild.log.gz": "1cf12b23e06db6837f5f909b7f081ff5fc9341e2de2d22f00e206d8f37eef2f7",
+  "f117-producer-append-red.log.gz": "091fc82323926c85244c3301e3ed34042075c3ff238921a48ef928e51cee67ee",
+  "f117-producer-append-retired-row-assertion.log.gz": "c38f558810b715ec76ad07872d1d64407afdbf015375059466f84b82e10dcfde",
+  "f117-producer-delivery-green.log.gz": "5900d20be979b6a95fee1734013e7c7b7b7de0b6d144efc30d664f0b277e6963",
+  "report.md": "04df8538f3f32afb0e8614951e7e0f9fbfc500c9c2529ce867ce027ce81ccde9"
+}
