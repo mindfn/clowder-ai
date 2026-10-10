@@ -119,4 +119,57 @@ describe('F167 L2: routeParallel mention suppression', () => {
       );
     }
   });
+  test('an earlier routed callback does not create a second carrier from parallel final prose', async () => {
+    const { routeParallel } = await import('../dist/domains/cats/services/agents/routing/route-parallel.js');
+    const appendCalls = [];
+    const deps = createDeps(
+      {
+        opus: {
+          async *invoke() {
+            yield {
+              type: 'tool_use',
+              catId: 'opus',
+              toolName: 'cat_cafe_post_message',
+              toolUseId: 'callback',
+              toolInput: { content: '@codex\nCallback source handoff.', targetCats: ['codex'] },
+              timestamp: Date.now(),
+            };
+            yield {
+              type: 'tool_result',
+              catId: 'opus',
+              toolUseId: 'callback',
+              content: JSON.stringify({
+                status: 'ok',
+                threadId: 'thread1',
+                messageId: 'callback-source',
+                routed: ['codex'],
+              }),
+              timestamp: Date.now(),
+            };
+            yield {
+              type: 'text',
+              catId: 'opus',
+              content: '@codex\nParallel final stays reasoning-only.',
+              timestamp: Date.now(),
+            };
+            yield { type: 'done', catId: 'opus', timestamp: Date.now() };
+          },
+        },
+      },
+      { appendCalls },
+    );
+    const events = [];
+    for await (const event of routeParallel(deps, ['opus'], 'ideate', 'user1', 'thread1')) events.push(event);
+    const response = appendCalls.find((row) => row.from?.catId === 'opus' && row.origin === 'stream');
+    assert.ok(response.content.includes('Parallel final stays reasoning-only.'));
+    assert.deepEqual(response.mentions, [], 'parallel text still has no serial routing semantics');
+    assert.equal(
+      events.some((event) => event.type === 'a2a_handoff'),
+      false,
+    );
+    assert.equal(
+      events.some((event) => event.type === 'system_info' && event.content?.includes('a2a_followup_available')),
+      false,
+    );
+  });
 });

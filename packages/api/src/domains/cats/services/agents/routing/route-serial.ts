@@ -350,7 +350,6 @@ function isCallbackContentRoutingToolName(toolName: string | undefined): boolean
 export type CallbackContentRoutingState = {
   scope: 'local' | 'target';
   guardLineStartMentions: CatId[];
-  localLineStartMentions: CatId[];
   hasGuardCoCreatorLineStartMention: boolean;
   hasLocalCoCreatorLineStartMention: boolean;
   hasTargetCoCreatorLineStartMention: boolean;
@@ -359,8 +358,6 @@ export type CallbackContentRoutingState = {
 type CallbackContentRoutingExit = CallbackContentRoutingState & {
   toolName: string;
   toolUseId?: string;
-  targetCatIds: CatId[];
-  createsCustodyHandoff: boolean;
 };
 
 export function classifyCallbackContentRoutingState(
@@ -374,7 +371,6 @@ export function classifyCallbackContentRoutingState(
     return {
       scope,
       guardLineStartMentions: [],
-      localLineStartMentions: [],
       hasGuardCoCreatorLineStartMention: false,
       hasLocalCoCreatorLineStartMention: false,
       hasTargetCoCreatorLineStartMention: false,
@@ -389,7 +385,6 @@ export function classifyCallbackContentRoutingState(
   return {
     scope,
     guardLineStartMentions,
-    localLineStartMentions: scope === 'local' ? guardLineStartMentions : [],
     hasGuardCoCreatorLineStartMention: hasCoCreatorLineStartMention,
     hasLocalCoCreatorLineStartMention: scope === 'local' && hasCoCreatorLineStartMention,
     hasTargetCoCreatorLineStartMention: scope === 'target' && hasCoCreatorLineStartMention,
@@ -405,15 +400,9 @@ function collectCallbackContentRoutingExit(
   const content = readToolInputContent(toolInput);
   const state = classifyCallbackContentRoutingState(toolName, content, currentCatId);
   if (!state) return null;
-  const targetCatIds = [
-    ...new Set([...collectStructuredTargetCatsFromInput(toolInput), ...state.guardLineStartMentions]),
-  ].map(createCatId);
-  const createsCustodyHandoff = state.scope === 'target' && buildCrossThreadNoObligationWake(toolInput) === undefined;
   return {
     toolName,
     ...(toolUseId ? { toolUseId } : {}),
-    targetCatIds,
-    createsCustodyHandoff,
     ...state,
   };
 }
@@ -1570,8 +1559,6 @@ export async function* routeSerial(
       const verifiedConciergeToolTargets = new VerifiedConciergeToolTargetCollector();
       const pendingCallbackRoutingExits: CallbackContentRoutingExit[] = [];
       const confirmedCallbackRoutingGuardMentions = new Set<CatId>();
-      const confirmedLocalCallbackRoutingMentions = new Set<CatId>();
-      const confirmedLocalCallbackRoutedTargets = new Set<CatId>();
       let confirmedCallbackRoutingGuardHasCoCreatorLineStartMention = false;
       let confirmedLocalCallbackRoutingHasCoCreatorLineStartMention = false;
       const emittedBallHandedCvoMessageIds = new Set<string>();
@@ -1798,14 +1785,6 @@ export async function* routeSerial(
         const [exit] = pendingCallbackRoutingExits.splice(exitIndex, 1);
         if (!confirmed || !exit) return undefined;
         for (const mention of exit.guardLineStartMentions) confirmedCallbackRoutingGuardMentions.add(mention);
-        for (const mention of exit.localLineStartMentions) confirmedLocalCallbackRoutingMentions.add(mention);
-        if (exit.scope === 'local') {
-          // The callback already admitted this source/target through InvocationQueue or the
-          // legacy worklist. Never reinterpret the same persisted callback body as a fresh
-          // serial handoff after that carrier has already completed and disappeared from the
-          // live queue: that callback+text-scan fork caused the exact A→B duplicate dogfood.
-          for (const targetCatId of exit.targetCatIds) confirmedLocalCallbackRoutedTargets.add(targetCatId);
-        }
         if (exit.hasGuardCoCreatorLineStartMention) confirmedCallbackRoutingGuardHasCoCreatorLineStartMention = true;
         if (exit.hasLocalCoCreatorLineStartMention) confirmedLocalCallbackRoutingHasCoCreatorLineStartMention = true;
         return exit;
@@ -1813,10 +1792,6 @@ export async function* routeSerial(
       const getRoutingExitLineStartMentions = (textMentions: readonly CatId[] = []): CatId[] => [
         ...new Set<CatId>([...textMentions, ...confirmedCallbackRoutingGuardMentions]),
       ];
-      const getLocalRoutingLineStartMentions = (textMentions: readonly CatId[] = []): CatId[] =>
-        [...new Set<CatId>([...textMentions, ...confirmedLocalCallbackRoutingMentions])].filter(
-          (targetCatId) => !confirmedLocalCallbackRoutedTargets.has(targetCatId),
-        );
       const hasRoutingExitCoCreatorLineStartMention = (content: string): boolean =>
         Boolean(
           (content ? detectUserMention(content) : false) || confirmedCallbackRoutingGuardHasCoCreatorLineStartMention,
@@ -2551,7 +2526,6 @@ export async function* routeSerial(
         verifiedConciergeToolTargets.reset();
         pendingCallbackRoutingExits.splice(0, pendingCallbackRoutingExits.length);
         confirmedCallbackRoutingGuardMentions.clear();
-        confirmedLocalCallbackRoutingMentions.clear();
         confirmedCallbackRoutingGuardHasCoCreatorLineStartMention = false;
         confirmedLocalCallbackRoutingHasCoCreatorLineStartMention = false;
         callbackPosts.reset();
@@ -3066,7 +3040,9 @@ export async function* routeSerial(
             }),
         );
         await scheduleTurnCustodyStopGate(textLegacyObservedBlock);
-        a2aMentions = getLocalRoutingLineStartMentions(a2aMentions);
+        // This response is its own durable source. Callback exits can satisfy the
+        // turn guard, but their targets belong to their callback message, not this
+        // response. Its explicit mentions must survive earlier posts to the same cat.
         if (
           malformedRelayTarget &&
           !worklist.slice(index + 1).includes(malformedRelayTarget) &&

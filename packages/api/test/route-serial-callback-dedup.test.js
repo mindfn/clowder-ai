@@ -241,7 +241,178 @@ describe('#573/#1332: explicit callback/final persistence semantics', () => {
     getRichBlockBuffer().destroy();
   });
 
-  it('does not re-dispatch a callback-routed source/target through the serial mention worklist', async () => {
+  // A confirmed callback and a final response are independent durable sources, even
+  // when addressed to the same target or carrying identical text. Only callback
+  // confirmations refer to the callback source; they must not replay into the final.
+  for (const scenario of [
+    {
+      name: 'earlier scope notification then a distinct final handoff',
+      final: '@codex\nExact commit is ready for review.',
+    },
+    { name: 'identical text with independent callback and response identities', final: '@codex\nScope notification.' },
+    {
+      name: 'structured callback target then a final handoff',
+      final: '@codex\nReview the completed work.',
+      callback: 'Scope notification.',
+    },
+    {
+      name: 'duplicate callback confirmation then a final handoff',
+      final: '@codex\nNew final handoff.',
+      duplicate: true,
+    },
+    { name: 'failed callback then a final handoff', final: '@codex\nFallback handoff.', failed: true },
+    {
+      name: 'callback-only handoff is not replayed into plain final text',
+      final: 'Final summary without a new handoff.',
+    },
+    {
+      name: 'duplicate callback confirmation is not replayed into plain final text',
+      final: 'Final summary.',
+      duplicate: true,
+    },
+    { name: 'failed callback target is not invented for plain final text', final: 'Final summary.', failed: true },
+    { name: 'callback-only tool output creates no second handoff', final: '' },
+  ]) {
+    it(`source-scoped routing: ${scenario.name}`, async () => {
+      const { routeSerial } = await import('../dist/domains/cats/services/agents/routing/route-serial.js');
+      const { MessageStore } = await import('../dist/domains/cats/services/stores/ports/MessageStore.js');
+      const { InvocationQueue } = await import('../dist/domains/cats/services/agents/invocation/InvocationQueue.js');
+      const { commitCompletedResponseAndEnqueueA2ATargets } = await import('../dist/routes/callback-a2a-trigger.js');
+      const { appendTestLifecycleResponseSource } = await import('./helpers/message-from-fixtures.js');
+      const messages = new MessageStore();
+      const queue = new InvocationQueue();
+      let callbackId;
+      let responseId;
+      const callbackBody = scenario.callback ?? '@codex\nScope notification.';
+      const commits = [];
+      const service = {
+        async *invoke() {
+          yield {
+            type: 'tool_use',
+            catId: 'opus',
+            toolName: 'cat_cafe_post_message',
+            toolUseId: 'scope-post',
+            toolInput: { content: callbackBody, targetCats: ['codex'] },
+            timestamp: Date.now(),
+          };
+          if (!scenario.failed) {
+            const admitted = await queue.appendAndEnqueueDurable(
+              messages,
+              {
+                from: { kind: 'agent', catId: 'opus' },
+                userId: 'user1',
+                threadId: 'thread1',
+                content: callbackBody,
+                mentions: ['codex'],
+                timestamp: Date.now(),
+                origin: 'callback',
+              },
+              {
+                from: { kind: 'agent', catId: 'opus' },
+                kind: 'conversation_input',
+                userId: 'user1',
+                threadId: 'thread1',
+                content: callbackBody,
+                targetCats: ['codex'],
+                intent: 'execute',
+                ownerAuthProvenance: 'unknown',
+              },
+            );
+            assert.equal(admitted.outcome, 'enqueued');
+            callbackId = admitted.message.id;
+          }
+          const result = {
+            type: 'tool_result',
+            catId: 'opus',
+            toolUseId: 'scope-post',
+            timestamp: Date.now(),
+            content: scenario.failed
+              ? 'Error: callback token expired'
+              : JSON.stringify({ status: 'ok', threadId: 'thread1', messageId: callbackId, routed: ['codex'] }),
+          };
+          yield result;
+          if (scenario.duplicate)
+            yield {
+              ...result,
+              content: JSON.stringify({ status: 'duplicate', threadId: 'thread1', messageId: callbackId }),
+            };
+          if (scenario.final) yield { type: 'text', catId: 'opus', content: scenario.final, timestamp: Date.now() };
+          yield { type: 'done', catId: 'opus', timestamp: Date.now() };
+        },
+      };
+      const deps = createMockDeps({ opus: service }, []);
+      deps.messageStore = messages;
+      const persistenceContext = { errors: [], failed: false };
+      for await (const _ of routeSerial(deps, ['opus'], 'work', 'user1', 'thread1', {
+        parentInvocationId: 'source-routing-parent',
+        persistenceContext,
+        onLifecycleInvocationStarted: async (input) => {
+          const response = await appendTestLifecycleResponseSource(messages, {
+            invocationId: input.invocationId,
+            catId: input.catId,
+            threadId: input.threadId,
+            userId: input.userId,
+            timestamp: input.startedAt,
+          });
+          responseId = response.id;
+          return {
+            responseMessageId: response.id,
+            priorFrontierMessageId: null,
+            activeRun: {
+              threadId: 'thread1',
+              targetId: 'opus',
+              invocationId: input.invocationId,
+              responseMessageId: response.id,
+              inputEntryIds: [],
+              inputMessageIds: [],
+              privateInputEntryIds: [],
+              startedAt: input.startedAt,
+            },
+          };
+        },
+        commitCompletedA2AWake: async (input) => {
+          commits.push(input);
+          return commitCompletedResponseAndEnqueueA2ATargets(
+            {
+              messageStore: messages,
+              invocationQueue: queue,
+              queueProcessor: { async requestDrain() {} },
+              socketManager: { emitToUser() {}, broadcastAgentMessage() {} },
+              log: { info() {}, warn() {}, error() {} },
+            },
+            input,
+          );
+        },
+      })) {
+        /* consume */
+      }
+      assert.deepEqual(persistenceContext.errors, [], 'route persistence must succeed');
+      const final = await messages.getById(responseId);
+      const wantsFinalHandoff = scenario.final.startsWith('@codex');
+      assert.deepEqual(final.mentions, wantsFinalHandoff ? ['codex'] : [], 'final owns only its own targets');
+      assert.equal(commits.length, wantsFinalHandoff ? 1 : 0);
+      if (wantsFinalHandoff) {
+        assert.equal(commits[0].responseMessageId, responseId);
+        assert.notEqual(responseId, callbackId);
+        assert.equal(final.lifecycle.status, 'completed');
+        const queued = queue.list('thread1', 'user1').find((entry) => entry.payload.sourceRecordId === responseId);
+        assert.ok(queued, 'final must enter the real queue under its own source id');
+        assert.deepEqual(queued.targets, ['codex']);
+      }
+      const entries = queue.list('thread1', 'user1');
+      assert.equal(entries.length, (scenario.failed ? 0 : 1) + (wantsFinalHandoff ? 1 : 0));
+      if (!scenario.failed) {
+        assert.equal(
+          entries.filter((entry) => entry.payload.sourceRecordId === callbackId).length,
+          1,
+          'callback source is not replayed',
+        );
+        assert.equal(persistenceContext.persistedOutputMessageIds.filter((id) => id === callbackId).length, 1);
+      }
+    });
+  }
+
+  it('does not replay a callback carrier through recursive serial execution', async () => {
     const { routeSerial } = await import('../dist/domains/cats/services/agents/routing/route-serial.js');
     const { loadCatConfig, toAllCatConfigs } = await import('../dist/config/cat-config-loader.js');
     const appendCalls = [];
@@ -249,7 +420,6 @@ describe('#573/#1332: explicit callback/final persistence semantics', () => {
     const callbackBody = '@codex\nCallback already routed this exact source and target.';
     const callbackService = {
       async *invoke() {
-        yield { type: 'text', catId: 'opus', content: callbackBody, timestamp: Date.now() };
         yield {
           type: 'tool_use',
           catId: 'opus',
@@ -263,6 +433,7 @@ describe('#573/#1332: explicit callback/final persistence semantics', () => {
           content: JSON.stringify({ status: 'ok', threadId: 'thread1', messageId: 'callback-source-1' }),
           timestamp: Date.now(),
         };
+        yield { type: 'text', catId: 'opus', content: 'Callback handoff sent; final summary.', timestamp: Date.now() };
         yield { type: 'done', catId: 'opus', timestamp: Date.now() };
       },
     };
