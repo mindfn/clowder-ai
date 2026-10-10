@@ -2803,8 +2803,8 @@ export class QueueProcessor {
   }
 
   /**
-   * Progress a producer-owned durable carrier through the ordinary Queue
-   * comparator. Recovery is not authority to skip older sources, clear a
+   * Progress a producer-owned durable carrier through existing Append admission
+   * or the ordinary Queue comparator. Recovery is not authority to clear a
    * cancellation fence, or start a second invocation for an admitted row.
    */
   async progressOwnedCarrier(entry: QueueEntry, targetCatId: string): Promise<OwnedQueueProgress> {
@@ -2825,6 +2825,16 @@ export class QueueProcessor {
     if (this.isAutoResumeSuppressed(entry.threadId, targetCatId)) return 'owned_deferred_suppressed';
     const slotKey = QueueProcessor.slotKey(entry.threadId, targetCatId);
     if (this.processingSlots.has(slotKey) || this.deps.invocationTracker.has(entry.threadId, targetCatId)) {
+      // Producer admission shares the same target capability/run fences as
+      // user and A2A inputs. A busy target may accept this exact carrier into
+      // its current response; source identity is not a reason to defer it.
+      const appended = await this.tryAutoAppendExactEntry({
+        threadId: entry.threadId,
+        userId,
+        entryId: current.id,
+        targetCatId,
+      });
+      if (appended.outcome === 'appended') return 'already_processing';
       return 'owned_deferred_busy';
     }
 

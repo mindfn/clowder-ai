@@ -5,6 +5,9 @@ import { canonicalTestMessageInput, canonicalTestQueueInput } from './helpers/me
 const { InvocationQueue } = await import('../dist/domains/cats/services/agents/invocation/InvocationQueue.js');
 const { QueueProcessor } = await import('../dist/domains/cats/services/agents/invocation/QueueProcessor.js');
 const { InvocationTracker } = await import('../dist/domains/cats/services/agents/invocation/InvocationTracker.js');
+const { PersistedQueueDelivery } = await import(
+  '../dist/domains/cats/services/agents/invocation/PersistedQueueDelivery.js'
+);
 const { MessageStore, settleLifecycleResponseInputs } = await import(
   '../dist/domains/cats/services/stores/ports/MessageStore.js'
 );
@@ -57,7 +60,7 @@ async function admit(harness, overrides = {}) {
     harness.messageStore,
     canonicalTestMessageInput({
       threadId: 'thread-1',
-      userId: 'user-1',
+      userId: queueInput.userId,
       catId: null,
       from: queueInput.from,
       content: queueInput.content,
@@ -138,6 +141,100 @@ const deliveredEmits = (harness) =>
 const activeInputs = (harness) => harness.invocationTracker.getActiveSlots('thread-1')[0].activeRun.inputMessageIds;
 
 describe('delivery owns Append admission, without model-read state', () => {
+  for (const connector of ['github-wait', 'scheduled', 'other-connector']) {
+    it(`producer ${connector} appends through its actual durable delivery path and does not replay`, async () => {
+      const harness = createHarness();
+      const dispatch = mock.fn(async () => ({ accepted: true, handle: {} }));
+      const run = bindRun(harness, dispatch);
+      const delivery = new PersistedQueueDelivery({
+        messages: harness.messageStore,
+        queue: harness.queue,
+        progress: (entry, target) => harness.processor.progressOwnedCarrier(entry, target),
+      });
+      const carrier = {
+        v: 1,
+        waitId: 'task-pr-221',
+        outcomeId: `wait:${connector}:221:merged`,
+        ownerFence: { kind: 'containing_task', generation: 1 },
+      };
+      const input = {
+        ownerUserId: 'user-1',
+        threadId: 'thread-1',
+        targetCatId: 'opus',
+        ownerAuthProvenance: 'strict',
+        idempotencyKey: `producer-append-${connector}`,
+        content: 'PR state: merged',
+        source: { connector, label: connector, meta: { waitContinuationCarrier: carrier } },
+        ...(connector === 'scheduled' ? { from: { kind: 'system', service: 'scheduler' } } : {}),
+        waitContinuationCarrier: carrier,
+      };
+      const result = await delivery.deliver(input);
+      assert.equal(result.state, 'already_processing');
+      assert.equal(dispatch.mock.calls.length, 1);
+      assert.equal(result.message.lifecycle.kind, 'input');
+      assert.deepEqual(activeInputs(harness), [result.message.id]);
+      const source = harness.messageStore.getById(result.message.id);
+      assert.equal(source.deliveryStatus, 'delivered');
+      assert.equal(source.lifecycle.dispatchRefs[0].statusMessageId, run.response.id);
+      assert.deepEqual(source.source.meta.waitContinuationCarrier, carrier);
+      assert.equal(harness.queue.getEntrySnapshot('thread-1', 'user-1', result.entryId), null);
+      const replay = await delivery.deliver(input);
+      assert.equal(replay.message.id, result.message.id);
+      assert.equal(dispatch.mock.calls.length, 1, 'same persisted producer identity must not append twice');
+      const independent = await delivery.deliver({ ...input, idempotencyKey: `${input.idempotencyKey}:second` });
+      assert.notEqual(independent.message.id, result.message.id, 'same text with another source remains independent');
+      assert.equal(dispatch.mock.calls.length, 2);
+      assert.deepEqual(activeInputs(harness), [result.message.id, independent.message.id]);
+      assert.equal(harness.router.routeExecution.mock.calls.length, 0, 'no second turn is started');
+    });
+  }
+
+  for (const boundary of ['unsupported', 'suppressed', 'private', 'owner_mismatch', 'bound_parent', 'system_pinned']) {
+    it(`producer progress retains its queued carrier at the ${boundary} boundary`, async () => {
+      const harness = createHarness();
+      const dispatch = mock.fn(async () => ({ accepted: true, handle: {} }));
+      const run = bindRun(harness, dispatch);
+      if (boundary === 'unsupported') run.releaseCarrier();
+      if (boundary === 'suppressed') harness.processor.suppressAutoResume('thread-1', 'opus');
+      const queueOverrides = {
+        from: { kind: 'external', connectorId: 'github-wait', sender: { id: 'github-wait' } },
+        ...(boundary === 'owner_mismatch' ? { userId: 'different-owner' } : {}),
+        ...(boundary === 'system_pinned'
+          ? { from: { kind: 'agent', catId: 'opus' }, sourceCategory: 'continuation' }
+          : {}),
+      };
+      const admitted =
+        boundary === 'private'
+          ? await harness.queue.enqueueDurable(
+              canonicalTestQueueInput({
+                threadId: 'thread-1',
+                userId: 'user-1',
+                sourceId: 'private-producer',
+                content: 'private work',
+                targetCats: ['opus'],
+                intent: 'execute',
+                ...queueOverrides,
+                kind: 'private_input',
+              }),
+            )
+          : await admit(harness, queueOverrides);
+      if (boundary === 'bound_parent') {
+        await harness.queue.bindContinueCurrentIntentDurable('thread-1', 'user-1', admitted.entry.id, 'opus', {
+          requested: 'continue_current',
+          boundParentInvocationId: 'different-parent',
+        });
+      }
+      const progress = await harness.processor.progressOwnedCarrier(admitted.entry, 'opus');
+      assert.equal(progress, boundary === 'suppressed' ? 'owned_deferred_suppressed' : 'owned_deferred_busy');
+      assert.equal(dispatch.mock.calls.length, 0);
+      assert.equal(
+        harness.queue.getEntrySnapshot('thread-1', admitted.entry.owner.userId, admitted.entry.id).status,
+        'queued',
+      );
+      assert.deepEqual(activeInputs(harness), []);
+    });
+  }
+
   it('auto Append honors a connector target choice and exact parent, preserving source identity', async () => {
     const harness = createHarness();
     const from = { kind: 'external', connectorId: 'github-wait', sender: { id: 'github-wait' } };
