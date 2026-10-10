@@ -86,10 +86,12 @@ function createDependencies(overrides = {}) {
     projectRoot: dependencies.projectRoot,
     invocationTracker: dependencies.invocationTracker,
     resolveCarrierCapability: (catId) => dependencies.router.freshnessCarrierCapability?.(catId),
+    // HTTP admission updates its target array after commit. Snapshot the mock
+    // argument so these assertions describe resolution-time input.
     resolveTargets: (requested, threadId) =>
       requested.length > 0
         ? dependencies.router.resolveExplicitTargets(requested, threadId)
-        : dependencies.router.resolveConversationTargetsAtAdmission(requested, threadId),
+        : dependencies.router.resolveConversationTargetsAtAdmission([...requested], threadId),
     onAdmitted: ({ threadId }) => {
       void dependencies.queueProcessor.requestDrain(threadId);
     },
@@ -461,7 +463,7 @@ describe('canonical message lifecycle ingress', () => {
     assert.deepEqual(dependencies.messageStore.append.mock.calls[0].arguments[0].mentions, ['codex']);
   });
 
-  it('rejects an unavailable composer-selected member instead of silently falling back', async () => {
+  it('rejects an invalid composer-selected identity before admission', async () => {
     dependencies.router.resolveExplicitTargets.mock.mockImplementation(async () => []);
 
     const response = await app.inject({
@@ -477,17 +479,12 @@ describe('canonical message lifecycle ingress', () => {
     assert.equal(dependencies.messageStore.append.mock.calls.length, 0);
   });
 
-  it('keeps routing warnings on the canonical Queue/source payload instead of broadcasting a detached notice', async () => {
-    const warning = {
-      kind: 'cat_not_found',
-      mention: '@missing-cat',
-      alternatives: [],
-    };
+  it('admits unmatched prose through ordinary fallback without a warning or detached notice', async () => {
     dependencies.router.resolveTargetsAndIntent.mock.mockImplementation(async () => ({
       targetCats: [],
       intent: { intent: 'execute' },
-      hasMentions: true,
-      routing_warnings: [warning],
+      hasMentions: false,
+      routing_warnings: [],
     }));
 
     const response = await app.inject({
@@ -499,10 +496,15 @@ describe('canonical message lifecycle ingress', () => {
 
     assert.equal(response.statusCode, 202, response.body);
     const [entry] = dependencies.invocationQueue.list('thread-1', 'user-1');
-    assert.deepEqual(entry.targets, [], 'an invalid authored mention must not become an ordinary fallback send');
-    assert.equal(dependencies.router.resolveConversationTargetsAtAdmission.mock.calls.length, 0);
-    assert.deepEqual(entry.payload.routingWarnings, [warning]);
-    assert.deepEqual(dependencies.messageStore.append.mock.calls[0].arguments[0].extra.routingWarnings, [warning]);
+    assert.deepEqual(entry.targets, ['opus']);
+    assert.equal(dependencies.router.resolveConversationTargetsAtAdmission.mock.calls.length, 1);
+    assert.equal(entry.payload.content, '@missing-cat please inspect this');
+    assert.equal(entry.payload.routingWarnings, undefined);
+    const source = dependencies.messageStore.append.mock.calls[0].arguments[0];
+    assert.equal(source.content, '@missing-cat please inspect this');
+    assert.deepEqual(source.mentions, []);
+    assert.equal(source.extra?.routingWarnings, undefined);
+    assert.equal(dependencies.queueProcessor.requestDrain.mock.calls.length, 1);
     assert.equal(dependencies.socketManager.broadcastAgentMessage.mock.calls.length, 0);
   });
 
