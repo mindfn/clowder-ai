@@ -176,7 +176,13 @@ describe('B6: multi_mention queue dispatch', () => {
     mockInvocationRecordStore = createMockInvocationRecordStore();
     mockInvocationTracker = createMockInvocationTracker();
     mockRouter = createMockRouter();
-    invocationQueue = adaptInvocationQueue(new InvocationQueue());
+    invocationQueue = adaptInvocationQueue(
+      new InvocationQueue(undefined, {
+        onAdmitted: ({ threadId }) => {
+          void mockQueueProcessor.requestDrain(threadId);
+        },
+      }),
+    );
     mockQueueProcessor = createMockQueueProcessor();
     actionAdmissionCalls = [];
     actionUnavailableCalls = [];
@@ -1389,7 +1395,7 @@ describe('B6: QueueProcessor entryCompleteHook integration', () => {
     // sibling tests below.
     const queue = adaptInvocationQueue(new IQ());
     // F117: message_wake rows must reference a real persisted History message —
-    // production admits message+queue atomically (appendAndEnqueueDurable), and
+    // production admits message+queue atomically (send), and
     // the QueueProcessor fails a wake closed when the referenced message is absent.
     const messageStore = adaptMessageStore(new MessageStore());
     const recordsByIdempotencyKey = new Map();
@@ -1745,7 +1751,13 @@ describe('B6: canceled hook skips recordResponse in dispatchViaQueue', () => {
     mockInvocationRecordStore = createMockInvocationRecordStore();
     mockInvocationTracker = createMockInvocationTracker();
     mockRouter = createMockRouter();
-    invocationQueue = adaptInvocationQueue(new InvocationQueue());
+    invocationQueue = adaptInvocationQueue(
+      new InvocationQueue(undefined, {
+        onAdmitted: ({ threadId }) => {
+          void mockQueueProcessor.requestDrain(threadId);
+        },
+      }),
+    );
     mockQueueProcessor = createMockQueueProcessor();
     creds = mockRegistry.register('opus', 'thread-1', 'user-1');
     appendTestLifecycleResponseSource(mockMessageStore, creds);

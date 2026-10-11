@@ -20,18 +20,15 @@ describe('cloud delivery retry', () => {
     const { messagesRoutes } = await import('../dist/routes/messages.js');
 
     messageStore = new MessageStore();
-    invocationQueue = new InvocationQueue(new InMemoryQueueLedgerStore());
     drainRequests = [];
+    invocationQueue = new InvocationQueue(new InMemoryQueueLedgerStore(), {
+      onAdmitted: ({ threadId }) => drainRequests.push(threadId),
+    });
     app = Fastify();
     await app.register(messagesRoutes, {
       registry: new InvocationRegistry(),
       messageStore,
       invocationQueue,
-      queueProcessor: {
-        requestDrain(threadId) {
-          drainRequests.push(threadId);
-        },
-      },
       socketManager: { emitToUser() {} },
       router: {
         async resolveExplicitTargets(targets) {
@@ -102,6 +99,7 @@ describe('cloud delivery retry', () => {
     const [entry] = invocationQueue.list(source.threadId, 'default-user');
     assert.equal(entry.payload.sourceRecordId, retry.id);
     assert.deepEqual(entry.targets, ['gpt-pro']);
+    assert.equal(entry.delivery.authorIntentByTarget['gpt-pro'].requested, 'next_work');
     assert.deepEqual(drainRequests, [source.threadId]);
   });
 

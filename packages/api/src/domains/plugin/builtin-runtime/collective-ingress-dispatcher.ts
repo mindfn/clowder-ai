@@ -15,7 +15,6 @@ import {
 } from '@cat-cafe/shared';
 
 import type { InvocationQueue } from '../../cats/services/agents/invocation/InvocationQueue.js';
-import type { QueueProcessor } from '../../cats/services/agents/invocation/QueueProcessor.js';
 import type { IMessageStore, StoredMessage } from '../../cats/services/stores/ports/MessageStore.js';
 import { routeCollectiveChannelEvent } from './collective-channel-ingress.js';
 import {
@@ -59,8 +58,7 @@ export interface CollectiveIngressDispatcherOptions {
     get(threadId: string): CollectiveIngressThread | null | Promise<CollectiveIngressThread | null>;
   };
   readonly messageStore: IMessageStore;
-  readonly invocationQueue: Pick<InvocationQueue, 'appendAndEnqueueDurable'>;
-  readonly queueProcessor: Pick<QueueProcessor, 'processNext'>;
+  readonly invocationQueue: Pick<InvocationQueue, 'send'>;
   readonly socketManager: {
     broadcastToRoom(room: string, event: string, data: unknown): void;
     emitToUser?(userId: string, event: string, data: unknown): void;
@@ -252,7 +250,7 @@ export class CollectiveIngressDispatcher {
     }
     const source = collectiveSource(event, sourceIdentity);
     const from = collectiveMessageFrom(event);
-    const stored = await this.options.invocationQueue.appendAndEnqueueDurable(
+    const stored = await this.options.invocationQueue.send(
       this.options.messageStore,
       {
         threadId,
@@ -279,25 +277,22 @@ export class CollectiveIngressDispatcher {
         targetCats: [catId],
         intent: 'execute',
         suggestedSkill: 'collective-participation',
+        onQueueEntriesAdmitted: async (_entries, message) => {
+          if (event.workRequest === 'entrust' && message)
+            await this.options.admitStandingWork?.(message, catId as CatId);
+        },
       },
     );
     if (stored.outcome === 'full') throw ingressError('ROUTE_QUEUE_FULL', 'Configured Cat queue is full');
-    {
-      if (event.workRequest === 'entrust') await this.options.admitStandingWork?.(stored.message, catId as CatId);
-      if (!stored.deduped) {
-        this.options.socketManager.emitToUser?.(route.localOwnerUserId, 'messages_queued', {
-          threadId,
-          messageIds: [stored.message.id],
-          messages: [stored.message],
-        });
-      }
-      try {
-        await this.options.queueProcessor.processNext(threadId, route.localOwnerUserId);
-      } catch {
-        // Durable Queue custody owns execution after admission.
-      }
-      return { kind: 'thread_message', threadId, messageId: stored.message.id, catId };
+    if (!stored.deduped) {
+      this.options.socketManager.emitToUser?.(route.localOwnerUserId, 'messages_queued', {
+        threadId,
+        messageIds: [stored.message.id],
+        messages: [stored.message],
+      });
     }
+
+    return { kind: 'thread_message', threadId, messageId: stored.message.id, catId };
   }
 
   private async requireThread(route: HostRouteConfig, threadId: string): Promise<CollectiveIngressThread> {

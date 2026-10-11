@@ -256,8 +256,8 @@ describe('MessageStore', () => {
       autoExecute: true,
     };
 
-    const first = await queue.appendAndEnqueueDurable(store, message, admission);
-    const replay = await queue.appendAndEnqueueDurable(store, message, admission);
+    const first = await queue.send(store, message, admission);
+    const replay = await queue.send(store, message, admission);
     assert.equal(first.outcome, 'enqueued');
     assert.equal(replay.outcome, 'enqueued');
     assert.equal(replay.deduped, true);

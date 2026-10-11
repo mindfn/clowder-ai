@@ -376,7 +376,17 @@ test('recovery adopts the exact legacy-visible carrier as one queued custody sou
     import('../../dist/domains/cats/services/stores/ports/MessageStore.js'),
     import('../../dist/routes/callback-a2a-trigger.js'),
   ]);
-  const invocationQueue = new InvocationQueue();
+  let autoExecuteCalls = 0;
+  const queueProcessor = {
+    async requestDrain() {
+      autoExecuteCalls += 1;
+    },
+  };
+  const invocationQueue = new InvocationQueue(undefined, {
+    onAdmitted: ({ threadId }) => {
+      void queueProcessor.requestDrain(threadId);
+    },
+  });
   const messageStore = new MessageStore();
   const triggerMessage = messageStore.append(
     canonicalTestMessageInput({
@@ -400,7 +410,6 @@ test('recovery adopts the exact legacy-visible carrier as one queued custody sou
   );
   assert.equal(triggerMessage.deliveryStatus, undefined, 'reproduce the persisted visible half-carrier');
 
-  let autoExecuteCalls = 0;
   const result = await enqueueA2ATargets(
     {
       router: {},
@@ -410,11 +419,7 @@ test('recovery adopts the exact legacy-visible carrier as one queued custody sou
         broadcastToRoom() {},
         emitToUser() {},
       },
-      queueProcessor: {
-        async requestDrain() {
-          autoExecuteCalls += 1;
-        },
-      },
+      queueProcessor,
       invocationQueue,
       messageStore,
       log: { info() {}, warn() {}, error() {} },

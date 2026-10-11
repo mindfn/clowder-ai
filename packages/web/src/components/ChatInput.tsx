@@ -230,9 +230,7 @@ export function ChatInput({
     .filter((cat) => activeCatIds.has(cat.id) && cat.messageDeliveryCapabilities?.guideReply === true)
     .map(formatCatDisplayName);
   const guideReplyHint =
-    guideReplyNames.length > 0
-      ? `执行发生了偏离？${guideReplyNames.join('/')}支持引导回复，可继续输入直接发送消息而不中断当前回复`
-      : undefined;
+    guideReplyNames.length > 0 ? `想调整方向？可直接给${guideReplyNames.join('/')}发消息，引导回复。` : undefined;
 
   const [addMenuOpen, setAddMenuOpen] = useState(false);
   const [contextPickerMode, setContextPickerMode] = useState<ContextPickerMode | null>(null);

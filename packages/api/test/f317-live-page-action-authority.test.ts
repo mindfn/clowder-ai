@@ -33,7 +33,7 @@ test('a newer owner turn or revoked approval cannot commit an old action', async
       const queue = new InvocationQueue();
       const content = 'Wait, do something else first';
       const from = { kind: 'user' as const, userId: scope.userId };
-      await queue.appendAndEnqueueDurable(
+      await queue.send(
         f.store,
         {
           userId: scope.userId,

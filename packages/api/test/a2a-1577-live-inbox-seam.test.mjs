@@ -26,7 +26,7 @@ async function fixture(extra = {}) {
     timestamp: 1,
     deliveryStatus: 'queued',
   };
-  const admitted = await queue.appendAndEnqueueDurable(store, message, {
+  const admitted = await queue.send(store, message, {
     ...message,
     kind: 'conversation_input',
     ownerAuthProvenance: 'unknown',

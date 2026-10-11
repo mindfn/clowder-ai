@@ -20,7 +20,11 @@ import { createProposalTestContext } from './helpers/proposal-test-harness.js';
 describe('F128 Phase AA — seed message source attribution', () => {
   test('AC-AA4: seed message catId = sourceCatId (proposing cat, not approver)', async () => {
     const { InvocationQueue } = await import('../dist/domains/cats/services/agents/invocation/InvocationQueue.js');
-    const invocationQueue = new InvocationQueue();
+    const invocationQueue = new InvocationQueue(undefined, {
+      onAdmitted: ({ threadId, entries }) => {
+        void queueProcessor.processNext(threadId, entries[0].owner.userId).catch(() => {});
+      },
+    });
     const router = {
       async resolveTargetsAndIntent() {
         return {
@@ -38,7 +42,6 @@ describe('F128 Phase AA — seed message source attribution', () => {
     const ctx = await createProposalTestContext({
       routerOverride: router,
       invocationQueueOverride: invocationQueue,
-      queueProcessorOverride: queueProcessor,
     });
     const source = await ctx.threadStore.create('alice', 'Source');
     // Cat 'codex' proposes, user 'alice' approves
@@ -71,7 +74,11 @@ describe('F128 Phase AA — seed message source attribution', () => {
 
   test('AC-AA5: seed message has extra.crossPost with sourceThreadId + sourceInvocationId', async () => {
     const { InvocationQueue } = await import('../dist/domains/cats/services/agents/invocation/InvocationQueue.js');
-    const invocationQueue = new InvocationQueue();
+    const invocationQueue = new InvocationQueue(undefined, {
+      onAdmitted: ({ threadId, entries }) => {
+        void queueProcessor.processNext(threadId, entries[0].owner.userId).catch(() => {});
+      },
+    });
     const router = {
       async resolveTargetsAndIntent() {
         return {
@@ -89,7 +96,6 @@ describe('F128 Phase AA — seed message source attribution', () => {
     const ctx = await createProposalTestContext({
       routerOverride: router,
       invocationQueueOverride: invocationQueue,
-      queueProcessorOverride: queueProcessor,
     });
     const source = await ctx.threadStore.create('alice', 'Source Thread');
     const { proposalId } = JSON.parse(
@@ -124,7 +130,7 @@ describe('F128 Phase AA — seed message source attribution', () => {
   });
 
   test('AC-AA4 fallback: no-router path still attributes to source cat', async () => {
-    // When router/invocationQueue/queueProcessor are unavailable (fallback path),
+    // When router/invocationQueue are unavailable (fallback path),
     // the seed message must still carry sourceCatId attribution.
     const ctx = await createProposalTestContext({
       // No router/queue overrides → hits the fallback path in dispatch

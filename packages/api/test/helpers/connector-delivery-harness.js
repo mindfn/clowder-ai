@@ -24,7 +24,9 @@ const { MessageStore } = await import('../../dist/domains/cats/services/stores/p
  */
 export function connectorDeliveryHarness(options = {}) {
   const messageStore = options.messageStore ?? new MessageStore();
-  const queue = options.ledgerStore ? new InvocationQueue(options.ledgerStore) : new InvocationQueue();
+  const queue = new InvocationQueue(options.ledgerStore, {
+    resolveTargets: async (requested) => (requested.length ? [...requested] : ['opus']),
+  });
   const progressed = [];
   /** Queue drain owes the owner wake, so an admitted entry reaching progress IS the wake. */
   const wakes = [];

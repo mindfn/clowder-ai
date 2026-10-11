@@ -168,7 +168,12 @@ function buildDeps() {
       return { cancelled: true, catIds: [catId], executionIds: [execution.executionId] };
     },
   };
-  const invocationQueue = new InvocationQueue();
+  const requestDrain = mock.fn(async () => {});
+  const invocationQueue = new InvocationQueue(undefined, {
+    onAdmitted: ({ threadId }) => {
+      void requestDrain(threadId);
+    },
+  });
   return {
     threadStore: {
       get: mock.fn(async (threadId) => threads.get(threadId) ?? null),
@@ -202,7 +207,7 @@ function buildDeps() {
       ),
       retirePrestartProcessingGroup: mock.fn(async () => 'retired'),
       processNext: mock.fn(async () => ({ started: false })),
-      requestDrain: mock.fn(async () => {}),
+      requestDrain,
       isPaused: mock.fn(() => false),
       getPauseReason: mock.fn(() => undefined),
       clearPause: mock.fn(),

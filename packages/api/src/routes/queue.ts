@@ -1513,6 +1513,17 @@ export const queueRoutes: FastifyPluginAsync<QueueRoutesOptions> = async (app, o
           targetCatId,
         });
         if (append.outcome === 'appended') return append;
+        if (append.reason === 'active_run_pending') {
+          void queueProcessor.requestDrain(threadId);
+          await emitQueueUpdated(
+            socketManager,
+            guard.userId,
+            threadId,
+            invocationQueue.list(threadId, guard.userId),
+            'continue_current_pending',
+          );
+          return { outcome: 'queued', targetCatId, effective: 'continue_current', reason: 'active_run_pending' };
+        }
         if (append.reason === 'provider_rejected') {
           reply.status(502);
           return { error: '当前 Agent Client 拒绝了 Append；失败回执已保留', code: 'PROVIDER_REJECTED' };

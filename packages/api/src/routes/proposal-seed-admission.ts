@@ -1,7 +1,6 @@
 import type { CatId, MessageContent } from '@cat-cafe/shared';
 import type { InvocationQueue } from '../domains/cats/services/agents/invocation/InvocationQueue.js';
 import type { OwnerAuthProvenance } from '../domains/cats/services/agents/invocation/owner-auth-provenance.js';
-import type { QueueProcessor } from '../domains/cats/services/agents/invocation/QueueProcessor.js';
 import { messageFrom } from '../domains/cats/services/stores/message-from.js';
 import type { IMessageStore, StoredMessage } from '../domains/cats/services/stores/ports/MessageStore.js';
 import type { IThreadStore } from '../domains/cats/services/stores/ports/ThreadStore.js';
@@ -9,8 +8,7 @@ import type { SocketManager } from '../infrastructure/websocket/index.js';
 import type { AppendApprovedInitialMessageResult } from './proposal-approve-dispatch.js';
 import { admitThreadParticipants } from './thread-participant-admission.js';
 
-type ProposalInvocationQueue = Pick<InvocationQueue, 'appendAndEnqueueDurable' | 'enqueueExistingMessageDurable'>;
-type ProposalQueueProcessor = Pick<QueueProcessor, 'processNext'>;
+type ProposalInvocationQueue = Pick<InvocationQueue, 'send' | 'enqueueExistingMessageDurable'>;
 
 /**
  * Lossless source envelope delivered to a child thread when the proposal has no
@@ -113,7 +111,6 @@ export interface ExecuteQueuedDispatchInput {
   threadStore: Pick<IThreadStore, 'addParticipants' | 'get'>;
   socketManager: Pick<SocketManager, 'emitToUser'>;
   invocationQueue: ProposalInvocationQueue;
-  queueProcessor: ProposalQueueProcessor;
   /** A previously materialized seed (legacy or queue-full) to reuse instead of appending a new message. */
   existingSeed?: StoredMessage;
 }
@@ -133,12 +130,25 @@ export async function executeQueuedDispatch({
   threadStore,
   socketManager,
   invocationQueue,
-  queueProcessor,
   existingSeed,
 }: ExecuteQueuedDispatchInput): Promise<AppendApprovedInitialMessageResult> {
+  const prepareParticipants = async () => {
+    // F128 owns the final dispatch plan: preferredCats ordering and explicit
+    // parallel intent can differ from raw-message mentions. Admit only those
+    // final targets, after Queue accepted a durable carrier and before the
+    // processor can start, so Sidebar C2 and C10 cannot contradict each other.
+    await admitThreadParticipants({
+      userId,
+      threadId,
+      targetCats,
+      threadStore,
+      socketManager,
+      emitPolicy: 'membership-changed',
+    });
+  };
   const idempotencyKey = `proposal-initial:${proposalId}`;
   const from = sourceCatId ? ({ kind: 'agent', catId: sourceCatId } as const) : ({ kind: 'user', userId } as const);
-  let enqueueResult: Awaited<ReturnType<ProposalInvocationQueue['appendAndEnqueueDurable']>>;
+  let enqueueResult: Awaited<ReturnType<ProposalInvocationQueue['send']>>;
   if (existingSeed) {
     try {
       enqueueResult = await invocationQueue.enqueueExistingMessageDurable(messageStore, existingSeed.id, {
@@ -152,6 +162,7 @@ export async function executeQueuedDispatch({
         sourceId: existingSeed.id,
         targetCats: targetCats as CatId[],
         intent: intentName,
+        onQueueEntriesAdmitted: prepareParticipants,
       });
     } catch (error) {
       // The ledger admission and Message transition are one CAS. If another
@@ -164,7 +175,7 @@ export async function executeQueuedDispatch({
       throw error;
     }
   } else {
-    enqueueResult = await invocationQueue.appendAndEnqueueDurable(
+    enqueueResult = await invocationQueue.send(
       messageStore,
       {
         from,
@@ -188,6 +199,7 @@ export async function executeQueuedDispatch({
         content,
         targetCats: targetCats as CatId[],
         intent: intentName,
+        onQueueEntriesAdmitted: prepareParticipants,
       },
     );
   }
@@ -221,34 +233,6 @@ export async function executeQueuedDispatch({
   }
 
   const storedMessageId = enqueueResult.message.id;
-
-  // F128 owns the final dispatch plan: preferredCats ordering and explicit
-  // parallel intent can differ from raw-message mentions. Admit only those
-  // final targets, after Queue accepted a durable carrier and before the
-  // processor can start, so Sidebar C2 and C10 cannot contradict each other.
-  await admitThreadParticipants({
-    userId,
-    threadId,
-    targetCats,
-    threadStore,
-    socketManager,
-    emitPolicy: 'membership-changed',
-  });
-
-  try {
-    const started = await queueProcessor.processNext(threadId, userId);
-    if (!started.started) {
-      return {
-        messageId: storedMessageId,
-        warning: 'initialMessage queued but did not start automatically',
-      };
-    }
-  } catch (err) {
-    return {
-      messageId: storedMessageId,
-      warning: `initialMessage queued but auto-start failed: ${err instanceof Error ? err.message : String(err)}`,
-    };
-  }
 
   return { messageId: storedMessageId };
 }

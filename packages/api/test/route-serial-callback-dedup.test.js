@@ -296,7 +296,7 @@ describe('#573/#1332: explicit callback/final persistence semantics', () => {
             timestamp: Date.now(),
           };
           if (!scenario.failed) {
-            const admitted = await queue.appendAndEnqueueDurable(
+            const admitted = await queue.send(
               messages,
               {
                 from: { kind: 'agent', catId: 'opus' },

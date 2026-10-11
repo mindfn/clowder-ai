@@ -1,3 +1,5 @@
+import { ENCODE_QUEUE_ROW_LUA } from './queue-ledger-redis-encoding.js';
+
 /**
  * ADR-043 queue mutations. Every script performs all validation before its
  * first write because Redis does not roll back writes made before a Lua error.
@@ -41,6 +43,7 @@ return cjson.encode(grouped)
 `;
 
 export const EXPAND_QUEUE_TARGET_ROWS_LUA = `
+${ENCODE_QUEUE_ROW_LUA}
 local rowsKey = KEYS[1]
 local anchorId = ARGV[1]
 local bindTargetCatId = ARGV[2]
@@ -97,17 +100,13 @@ for i = 1, count do
   end
 end
 if not changed then return {2, cjson.encode({anchorRaw})} end
-anchorRaw = cjson.encode(anchor)
+anchorRaw = encodeRow(anchor)
 redis.call('HSET', rowsKey, anchorId, anchorRaw)
 return {1, cjson.encode({anchorRaw})}
 `;
 
 export const RECONCILE_QUEUE_TARGETS_LUA = `
-local function encodeRow(value)
-  local encoded = cjson.encode(value)
-  encoded = string.gsub(encoded, '"targets":{}', '"targets":[]')
-  return encoded
-end
+${ENCODE_QUEUE_ROW_LUA}
 local id = ARGV[1]
 local addTargets = cjson.decode(ARGV[2])
 local removeTargets = cjson.decode(ARGV[3])

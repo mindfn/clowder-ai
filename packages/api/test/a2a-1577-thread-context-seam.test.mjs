@@ -117,7 +117,7 @@ async function fixture(t, options = {}) {
       ...extra,
     });
   const enqueue = (content = 'owned queued context body', extra = {}) =>
-    queue.appendAndEnqueueDurable(
+    queue.send(
       messages,
       {
         userId,

@@ -390,7 +390,7 @@ describe('GET /api/messages', () => {
   });
 
   it('publishes a queued user source only at actual delivery without a Queue receipt', async () => {
-    const admission = await invocationQueue.appendAndEnqueueDurable(
+    const admission = await invocationQueue.send(
       messageStore,
       canonicalTestMessageInput({
         userId: 'default-user',

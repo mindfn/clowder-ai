@@ -298,13 +298,13 @@ export class ConnectorRouter {
             icon: connectorSourceIcon(def2),
           };
           const mentionPatterns = this.getMentionPatterns();
-          const { targetCatId } = parseMentions(fwdText, mentionPatterns, this.getDefaultCatId());
+          const mention = parseMentions(fwdText, mentionPatterns, this.getDefaultCatId());
           const fwdStored = await deliverConnectorMessage(
             { delivery: this.opts.persistedQueueDelivery },
             {
               threadId: fwdThreadId,
               userId: this.opts.defaultUserId,
-              catId: targetCatId,
+              ...(mention.matched ? { catId: mention.targetCatId } : {}),
               content: fwdText,
               source: fwdSource,
               idempotencyKey: `im:${connectorId}:${externalChatId}:${externalMessageId}:thread`,
@@ -422,16 +422,6 @@ export class ConnectorRouter {
     // Parse @-mentions to determine target cat
     const mentionPatterns = this.getMentionPatterns();
     const mentionResult = parseMentions(resolvedText, mentionPatterns, this.getDefaultCatId());
-    let targetCatId = mentionResult.targetCatId;
-    if (!mentionResult.matched && this.opts.threadStore.getParticipantsWithActivity) {
-      const participants = await this.opts.threadStore.getParticipantsWithActivity(binding.threadId);
-      const lastActive = participants
-        .filter((p) => p.messageCount > 0)
-        .sort((a, b) => b.lastMessageAt - a.lastMessageAt)[0];
-      if (lastActive) {
-        targetCatId = lastActive.catId as CatId;
-      }
-    }
 
     // 4. RFC §5.1/§5.2: an IM input is the same `conversation_input` envelope a user send builds.
     // One atomic Message + Queue admission makes it durable; Queue drain owes the owner wake.
@@ -440,7 +430,7 @@ export class ConnectorRouter {
       {
         threadId: binding.threadId,
         userId: this.opts.defaultUserId,
-        catId: targetCatId,
+        ...(mentionResult.matched ? { catId: mentionResult.targetCatId } : {}),
         content: resolvedText,
         source,
         idempotencyKey: `im:${connectorId}:${externalChatId}:${externalMessageId}`,

@@ -142,7 +142,7 @@ function harness(events, options = {}) {
       appendIdempotent: async (input) => persistMessage(input),
     },
     invocationQueue: {
-      appendAndEnqueueDurable: async (_messageStore, messageInput, input) => {
+      send: async (_messageStore, messageInput, input) => {
         if (queueFullRemaining > 0) {
           queueFullRemaining -= 1;
           return { outcome: 'full' };
@@ -166,6 +166,8 @@ function harness(events, options = {}) {
           enqueuedAt: Date.now(),
         };
         queue.push(entry);
+        await input.onQueueEntriesAdmitted?.([entry], message);
+        processed.push({ threadId: input.threadId, ownerId: input.userId });
         return { outcome: 'enqueued', message, entry, entries: [entry], deduped: false };
       },
     },

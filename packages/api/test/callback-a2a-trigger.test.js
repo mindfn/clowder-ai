@@ -9,10 +9,14 @@ const { enqueueA2ATargets } = await import('../dist/routes/callback-a2a-trigger.
 
 function setup() {
   const messageStore = new MessageStore();
-  const invocationQueue = new InvocationQueue();
   const events = [];
   const requestDrain = mock.fn(async () => {
     events.push('drain');
+  });
+  const invocationQueue = new InvocationQueue(undefined, {
+    onAdmitted: ({ threadId }) => {
+      void requestDrain(threadId);
+    },
   });
   const tryAutoAppendExactEntry = mock.fn(async () => {
     events.push('append');
@@ -133,7 +137,7 @@ describe('enqueueA2ATargets single durable ledger', () => {
 
     assert.deepEqual(await enqueue(deps, trigger), { enqueued: [] });
     assert.equal(invocationQueue.list('t1', 'u1').length, 0);
-    assert.deepEqual(events, ['observe', 'append', 'drain']);
+    assert.deepEqual(events, ['observe', 'drain']);
   });
 
   it('keeps distinct source bodies as distinct work orders instead of concatenating them', async () => {
@@ -184,7 +188,7 @@ describe('enqueueA2ATargets single durable ledger', () => {
     assert.equal(invocationQueue.list('t1', 'u1').length, 10);
   });
 
-  it('offers the row to Active Append without reintroducing ordinary Ball custody', async () => {
+  it('delegates the admitted row to Queue without ingress-owned Append or Ball custody', async () => {
     const { deps, events, appendTrigger } = setup();
     deps.ballCustody = {
       record: mock.fn(async () => {
@@ -195,7 +199,7 @@ describe('enqueueA2ATargets single durable ledger', () => {
 
     await enqueue(deps, trigger);
 
-    assert.deepEqual(events, ['observe', 'append', 'drain']);
+    assert.deepEqual(events, ['observe', 'drain']);
   });
 
   it('rejects sources that are not persisted public Agent messages', async () => {

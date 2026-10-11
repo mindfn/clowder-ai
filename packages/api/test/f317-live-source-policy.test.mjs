@@ -24,7 +24,7 @@ test('human and agent sources remain distinct ledger entries and attach to one e
   const f = await fixture({ requested: 'continue_current', boundParentInvocationId: 'live-parent' });
   t.after(f.close);
   const from = { kind: 'agent', catId: 'opus' };
-  const second = await f.queue.appendAndEnqueueDurable(
+  const second = await f.queue.send(
     f.store,
     {
       from,

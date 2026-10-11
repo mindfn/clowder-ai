@@ -7,7 +7,6 @@ import {
   writeOpportunityPresentationRetryCarrierV1Schema,
 } from '@cat-cafe/shared';
 import type { InvocationQueue } from '../cats/services/agents/invocation/InvocationQueue.js';
-import type { QueueProcessor } from '../cats/services/agents/invocation/QueueProcessor.js';
 import { messageFrom } from '../cats/services/stores/message-from.js';
 import type { IMessageStore } from '../cats/services/stores/ports/MessageStore.js';
 import { buildAsrPersonMemoryDynamicScenes } from './AsrPersonMemorySceneBuilder.js';
@@ -20,8 +19,7 @@ import { parsePrivateThreadHandle } from './ThreadDestinationAuthority.js';
 export interface ThreadMeetingArtifactDispatcherOptions {
   readonly threadStore: MeetingThreadStore;
   readonly messageStore: IMessageStore;
-  readonly invocationQueue: Pick<InvocationQueue, 'appendAndEnqueueDurable'>;
-  readonly queueProcessor: Pick<QueueProcessor, 'processNext'>;
+  readonly invocationQueue: Pick<InvocationQueue, 'send'>;
   readonly socketManager: {
     emitToUser(userId: string, event: string, data: unknown): void;
   };
@@ -212,7 +210,7 @@ export class ThreadMeetingArtifactDispatcher implements MeetingArtifactDispatche
       targetCats: [catId],
       intent: 'execute',
     };
-    const enqueue = await this.options.invocationQueue.appendAndEnqueueDurable(
+    const enqueue = await this.options.invocationQueue.send(
       this.options.messageStore,
       {
         from,
@@ -248,18 +246,12 @@ export class ThreadMeetingArtifactDispatcher implements MeetingArtifactDispatche
       throw Object.assign(new Error('meeting destination queue is full'), { code: 'ROUTE_UNAVAILABLE' });
     }
     const sourceMessageId = enqueue.message.id;
-    let started = false;
-    try {
-      started = (await this.options.queueProcessor.processNext(input.threadId, input.intake.ownerId)).started;
-    } catch {
-      // Durable queue custody owns later execution; admission is already complete.
-    }
     return {
       queueEntryId: enqueue.entry.id,
       sourceMessageId,
       targetCatId: catId,
       deduped: enqueue.deduped === true,
-      started,
+      started: Boolean(enqueue.message.lifecycle?.dispatchRefs?.some((ref) => ref.targetId === catId)),
     };
   }
 
@@ -390,7 +382,7 @@ export class ThreadMeetingArtifactDispatcher implements MeetingArtifactDispatche
       intent: 'execute',
       sourceCategory: 'scheduled' as const,
     };
-    const enqueue = await this.options.invocationQueue.appendAndEnqueueDurable(
+    const enqueue = await this.options.invocationQueue.send(
       this.options.messageStore,
       {
         from,
@@ -423,11 +415,6 @@ export class ThreadMeetingArtifactDispatcher implements MeetingArtifactDispatche
       throw Object.assign(new Error('meeting presentation retry message was not persisted'), {
         code: 'ROUTE_UNAVAILABLE',
       });
-    }
-    try {
-      await this.options.queueProcessor.processNext(threadId, input.intake.ownerId);
-    } catch {
-      // Durable queue custody owns later execution; retry admission is already complete.
     }
     return {
       sourceMessageId: source.id,

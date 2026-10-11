@@ -5235,7 +5235,7 @@ describe('Callback Routes', () => {
       timestamp: 100,
       threadId,
     });
-    const admission = await invocationQueue.appendAndEnqueueDurable(
+    const admission = await invocationQueue.send(
       messageStore,
       {
         userId: 'user-1',
@@ -5594,7 +5594,7 @@ describe('Callback Routes', () => {
     assert.equal(JSON.parse(history.body).contextScope, 'recent_history');
   });
 
-  test('full thread-context adopts an ordinary review return and removes the delivered target from Queue', async () => {
+  test('full thread-context adopts an explicitly continuing review return and removes the delivered target from Queue', async () => {
     const { InvocationQueue } = await import('../dist/domains/cats/services/agents/invocation/InvocationQueue.js');
     invocationQueue = adaptInvocationQueue(new InvocationQueue());
     const threadId = 'thread-queued-cat-dedup';
@@ -5607,6 +5607,7 @@ describe('Callback Routes', () => {
       threadId,
       deliveryStatus: 'queued',
     });
+    const { invocationId, callbackToken } = await registry.create('user-1', 'opus', threadId);
     const queued = invocationQueue.enqueue({
       kind: 'message_wake',
       ownerAuthProvenance: 'unknown',
@@ -5616,11 +5617,11 @@ describe('Callback Routes', () => {
       messageId: stored.id,
       source: 'agent',
       sourceCategory: 'review',
+      authorIntentByCatId: { opus: { requested: 'continue_current', boundParentInvocationId: invocationId } },
       targetCats: ['opus'],
       intent: 'execute',
       callerCatId: 'codex',
     });
-    const { invocationId, callbackToken } = await registry.create('user-1', 'opus', threadId);
     const { processor, invocationTracker, turnExecutionStore } = await createQueuedReadProcessor({
       threadId,
       invocationId,

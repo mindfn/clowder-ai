@@ -65,6 +65,7 @@ function assertQueuePayload(value: unknown): asserts value is QueueLedgerPayload
   if (!isRecord(value) || typeof value.sourceRecordId !== 'string' || !value.sourceRecordId) {
     throw new Error('queue ledger payload identity is incomplete');
   }
+  if (value.requestedTargetCats !== undefined) assertQueueTargets(value.requestedTargetCats);
   if (typeof value.content !== 'string') throw new Error('queue ledger payload content is invalid');
   if (value.messageId !== undefined && typeof value.messageId !== 'string') {
     throw new Error('queue ledger payload messageId is invalid');

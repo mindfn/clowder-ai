@@ -7,7 +7,7 @@ test('a source appended after delivery keeps its own pending entry until exact r
   t.after(f.close);
   assert.equal((await f.read()).statusCode, 200);
   const from = { kind: 'agent', catId: 'opus' };
-  const second = await f.queue.appendAndEnqueueDurable(
+  const second = await f.queue.send(
     f.store,
     {
       userId: 'owner',

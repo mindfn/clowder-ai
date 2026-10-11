@@ -34,7 +34,7 @@ async function fixture(t, extra = {}) {
     executionKind: 'ordinary',
     startedAt: Date.now(),
   });
-  const admission = await queue.appendAndEnqueueDurable(
+  const admission = await queue.send(
     messages,
     {
       userId,

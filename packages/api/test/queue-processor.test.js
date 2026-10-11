@@ -77,8 +77,19 @@ function createHarness({
   turnExecutionStore,
   actionSuccessorLeaseStore,
   deploymentWaitStartGuard,
+  autoDrain = false,
 } = {}) {
-  const queue = new InvocationQueue();
+  let processor;
+  const queue = new InvocationQueue(
+    undefined,
+    autoDrain
+      ? {
+          onAdmitted: ({ threadId }) => {
+            void processor.requestDrain(threadId);
+          },
+        }
+      : {},
+  );
   const messageStore = new MessageStore();
   const invocationRecordStore = createInvocationRecordStore();
   const routeCalls = [];
@@ -125,7 +136,8 @@ function createHarness({
     ...(actionSuccessorLeaseStore ? { actionSuccessorLeaseStore } : {}),
     ...(deploymentWaitStartGuard ? { deploymentWaitStartGuard } : {}),
   };
-  return { ...deps, processor: new QueueProcessor(deps, processorOptions), routeCalls };
+  processor = new QueueProcessor(deps, processorOptions);
+  return { ...deps, processor, routeCalls };
 }
 
 /** Records and ends the child turn the way invoke-single-cat does, entering the response-pending ledger. */
@@ -213,7 +225,7 @@ async function admitMessage(harness, overrides = {}) {
     timestamp: Date.now(),
     deliveryStatus: 'queued',
   });
-  const result = await harness.queue.appendAndEnqueueDurable(harness.messageStore, messageInput, queueInput);
+  const result = await harness.queue.send(harness.messageStore, messageInput, queueInput);
   assert.equal(result.outcome, 'enqueued');
   assert.ok(result.entry);
   return result;
@@ -400,7 +412,7 @@ describe('QueueProcessor over the source-row pending Queue', () => {
       targetCats: ['opus'],
       intent: 'execute',
     });
-    const admitted = await harness.queue.appendAndEnqueueDurable(
+    const admitted = await harness.queue.send(
       harness.messageStore,
       canonicalTestMessageInput({
         threadId: queueInput.threadId,
@@ -431,6 +443,80 @@ describe('QueueProcessor over the source-row pending Queue', () => {
     assert.equal(projected.source?.meta?.taskId, 'hold-ball-test-1');
     const stored = await harness.messageStore.getById(admitted.message.id);
     assert.equal(stored.deliveredAt, claimedAt, 'connector notices share the durable dequeue clock');
+  });
+
+  it('native dispatcher readiness wakes guidance queued during provider preparation', async () => {
+    let releasePreparation;
+    let releaseTurn;
+    const preparation = new Promise((resolve) => {
+      releasePreparation = resolve;
+    });
+    const turn = new Promise((resolve) => {
+      releaseTurn = resolve;
+    });
+    let parentStarted = false;
+    const dispatch = mock.fn(async () => ({ accepted: true, handle: {} }));
+    const harness = createHarness({
+      routeExecution: async function* (...args) {
+        const [userId, , threadId, , targets, , options] = args;
+        await options.onLifecycleInvocationStarted({
+          threadId,
+          userId,
+          catId: targets[0],
+          invocationId: 'preparing-child',
+          parentInvocationId: options.parentInvocationId,
+          startedAt: Date.now(),
+        });
+        parentStarted = true;
+        await preparation;
+        const release = options.onAgentClientActiveRunReady({
+          catId: targets[0],
+          dispatcher: {
+            invocationId: 'preparing-child',
+            capabilities: { append: true, steer: true },
+            handle: {
+              provider: 'openai_codex',
+              carrier: 'codex_app_server',
+              threadId: 'native',
+              turnId: 'native-turn',
+            },
+            dispatch,
+          },
+        });
+        try {
+          await turn;
+        } finally {
+          release();
+        }
+        yield { type: 'done', catId: targets[0], isFinal: true, timestamp: Date.now() };
+      },
+    });
+    await admitMessage(harness);
+    await harness.processor.requestDrain('thread-1');
+    try {
+      await waitFor(() => parentStarted);
+      const followup = await admitMessage(harness, {
+        authorIntentByCatId: {
+          opus: {
+            requested: 'continue_current',
+            boundParentInvocationId: harness.invocationTracker.getExecutionId('thread-1', 'opus'),
+          },
+        },
+      });
+      await harness.processor.requestDrain('thread-1');
+      assert.equal(
+        harness.queue.getEntrySnapshot('thread-1', 'user-1', followup.entry.id).delivery.authorIntentByTarget.opus
+          .fallbackAt,
+        undefined,
+      );
+      releasePreparation();
+      await waitFor(() => dispatch.mock.calls.length === 1);
+      assert.equal(harness.queue.getEntrySnapshot('thread-1', 'user-1', followup.entry.id), null);
+      assert.equal(harness.router.routeExecution.mock.calls.length, 1, 'guidance does not start a second turn');
+    } finally {
+      releasePreparation();
+      releaseTurn();
+    }
   });
 
   it('starts every idle target of one source before either target completes', async () => {
@@ -2174,6 +2260,7 @@ describe('F117 soak: a waiting entry does not stop its thread’s queue', () => 
     const attempts = [];
     const retryAt = Date.now() + 200;
     const harness = createHarness({
+      autoDrain: true,
       processorOptions: { retryDeferral: { baseDelayMs: 20 } },
       routeExecution: routeFailingBeforeAcceptance(attempts, ['opus']),
     });

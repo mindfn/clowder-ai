@@ -67,7 +67,6 @@ async function fixture(route, overrides = {}) {
     invocationQueue: queue,
     messageStore: messages,
     threadStore: { get: async () => ({ createdBy: task.userId, participants: ['codex'] }) },
-    queueProcessor: { processNext: async () => {} },
     context: () => ({ resolvePrivate: async () => ({ admitted: true }) }),
   });
   const receipt = await dispatcher.dispatch(task, task.userId, 1, { kind: 'admission' });

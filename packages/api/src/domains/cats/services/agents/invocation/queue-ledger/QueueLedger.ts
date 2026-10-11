@@ -26,6 +26,8 @@ export interface QueueLedgerPayload {
   content: string;
   messageId?: string;
   routingWarnings?: readonly CatRoutingError[];
+  /** Caller target selection, distinct from the resolved/pending delivery recipients. */
+  requestedTargetCats?: readonly string[];
 }
 
 export interface QueueLedgerExecution {
