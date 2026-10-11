@@ -1,18 +1,7 @@
 import { execFile } from 'node:child_process';
 import { createHash } from 'node:crypto';
 import { constants as fsConstants } from 'node:fs';
-import {
-  type FileHandle,
-  lstat,
-  mkdir,
-  mkdtemp,
-  open,
-  readdir,
-  readFile,
-  realpath,
-  rm,
-  writeFile,
-} from 'node:fs/promises';
+import { type FileHandle, lstat, mkdir, mkdtemp, open, readFile, realpath, rm, writeFile } from 'node:fs/promises';
 import { isAbsolute, relative, resolve, sep } from 'node:path';
 import { promisify } from 'node:util';
 import type { Capability, PluginManifest, SignalSchemaCatalog } from '@clowder-ai/plugin-contract';
@@ -23,6 +12,7 @@ import type { HostInventoryControlPlane } from '../host-inventory/control-plane.
 import { type PluginDependencyClosure, PluginInventoryError } from '../host-inventory/types.js';
 import { MAX_PLUGIN_PACKAGE_BYTES, publishPluginPackageArchive } from '../official-package-archive.js';
 import { prepareLocalDirectoryDistribution } from './local-directory-distribution.js';
+import type { LocalDirectoryOperation } from './local-directory-operation.js';
 import { inspectLocalDirectorySource } from './local-directory-source.js';
 import {
   type PluginPackageQuarantineFailureCode,
@@ -97,11 +87,18 @@ function sourceError(message: string, cause?: unknown): LocalPluginPackageAdmiss
   return new LocalPluginPackageAdmissionError('INVALID_LOCAL_SOURCE', message, cause === undefined ? {} : { cause });
 }
 
-async function readRegularFile(path: string, budget?: CopyBudget): Promise<{ bytes: Buffer; mode: number }> {
+async function readRegularFile(
+  path: string,
+  budget?: CopyBudget,
+  lifetime?: LocalDirectoryOperation,
+): Promise<{ bytes: Buffer; mode: number }> {
   let handle: FileHandle | undefined;
+  const io = <T>(action: () => Promise<T>): Promise<T> => (lifetime ? lifetime.io(action) : action());
   try {
-    handle = await open(path, fsConstants.O_RDONLY | (fsConstants.O_NOFOLLOW ?? 0));
-    const before = await handle.stat();
+    const flags = fsConstants.O_RDONLY | fsConstants.O_NOFOLLOW | fsConstants.O_NONBLOCK;
+    handle = lifetime ? await lifetime.open(path, flags) : await open(path, flags);
+    const opened = handle;
+    const before = await io(() => opened.stat());
     if (!before.isFile()) throw sourceError(`${path} is not a regular file`);
     if (before.size > MAX_PLUGIN_PACKAGE_BYTES) {
       throw new LocalPluginPackageAdmissionError('PACKAGE_TOO_LARGE', 'local plugin package exceeds Host limit');
@@ -113,9 +110,16 @@ async function readRegularFile(path: string, budget?: CopyBudget): Promise<{ byt
         throw new LocalPluginPackageAdmissionError('PACKAGE_TOO_LARGE', 'local plugin package exceeds Host limit');
       }
     }
-    const bytes = await handle.readFile();
-    const after = await handle.stat();
+    const buffer = Buffer.alloc(before.size + 1);
+    let length = 0;
+    while (length < buffer.length) {
+      const result = await io(() => opened.read(buffer, length, buffer.length - length, length));
+      if (!result.bytesRead) break;
+      length += result.bytesRead;
+    }
+    const after = await io(() => opened.stat());
     if (
+      length !== before.size ||
       before.dev !== after.dev ||
       before.ino !== after.ino ||
       before.size !== after.size ||
@@ -123,7 +127,7 @@ async function readRegularFile(path: string, budget?: CopyBudget): Promise<{ byt
     ) {
       throw sourceError(`${path} changed while it was being admitted`);
     }
-    return { bytes, mode: before.mode & 0o777 };
+    return { bytes: buffer.subarray(0, length), mode: before.mode & 0o777 };
   } catch (error) {
     if (error instanceof LocalPluginPackageAdmissionError) throw error;
     throw sourceError(`${path} is not a stable regular file`, error);
@@ -132,10 +136,12 @@ async function readRegularFile(path: string, budget?: CopyBudget): Promise<{ byt
   }
 }
 
-async function assertReadableDirectory(path: string): Promise<void> {
-  const rootStat = await lstat(path).catch((error) => {
-    throw sourceError('local plugin directory is unreadable', error);
-  });
+async function assertReadableDirectory(path: string, lifetime: LocalDirectoryOperation): Promise<void> {
+  const rootStat = await lifetime
+    .io(() => lstat(path))
+    .catch((error) => {
+      throw sourceError('local plugin directory is unreadable', error);
+    });
   if (!rootStat.isDirectory() || rootStat.isSymbolicLink()) {
     throw sourceError('local plugin directory must be a real directory');
   }
@@ -151,21 +157,28 @@ interface PendingCopyDirectory {
 async function resolvePackageMember(
   source: string,
   packagePath: string,
+  lifetime: LocalDirectoryOperation,
 ): Promise<{ path: string; stat: Awaited<ReturnType<typeof lstat>> }> {
   let path = source;
-  let stat = await lstat(source).catch((error) => {
-    throw sourceError(`local package member ${packagePath} is unreadable`, error);
-  });
+  let stat = await lifetime
+    .io(() => lstat(source))
+    .catch((error) => {
+      throw sourceError(`local package member ${packagePath} is unreadable`, error);
+    });
   if (!stat.isSymbolicLink()) return { path, stat };
   if (packagePath !== 'node_modules' && !packagePath.startsWith('node_modules/')) {
     throw sourceError(`local package contains a symlink at ${packagePath}`);
   }
-  path = await realpath(source).catch((error) => {
-    throw sourceError(`local dependency symlink ${packagePath} is unreadable`, error);
-  });
-  stat = await lstat(path).catch((error) => {
-    throw sourceError(`local dependency symlink ${packagePath} is unreadable`, error);
-  });
+  path = await lifetime
+    .io(() => realpath(source))
+    .catch((error) => {
+      throw sourceError(`local dependency symlink ${packagePath} is unreadable`, error);
+    });
+  stat = await lifetime
+    .io(() => lstat(path))
+    .catch((error) => {
+      throw sourceError(`local dependency symlink ${packagePath} is unreadable`, error);
+    });
   return { path, stat };
 }
 
@@ -174,13 +187,14 @@ async function copyPackageMember(
   entry: string,
   budget: CopyBudget,
   pending: PendingCopyDirectory[],
+  lifetime: LocalDirectoryOperation,
 ): Promise<void> {
   const source = resolve(current.source, entry);
   const destination = resolve(current.destination, entry);
   const packagePath = current.packagePath.length === 0 ? entry : `${current.packagePath}/${entry}`;
-  const member = await resolvePackageMember(source, packagePath);
+  const member = await resolvePackageMember(source, packagePath, lifetime);
   if (member.stat.isDirectory()) {
-    const directory = await realpath(member.path);
+    const directory = await lifetime.io(() => realpath(member.path));
     if (current.ancestors.has(directory)) throw sourceError(`local dependency symlink cycle at ${packagePath}`);
     pending.push({
       source: directory,
@@ -191,14 +205,18 @@ async function copyPackageMember(
     return;
   }
   if (!member.stat.isFile()) throw sourceError(`local package contains a non-regular member at ${packagePath}`);
-  const copied = await readRegularFile(member.path, budget);
-  await writeFile(destination, copied.bytes, { mode: copied.mode, flag: 'wx' });
+  const copied = await readRegularFile(member.path, budget, lifetime);
+  await lifetime.io(() => writeFile(destination, copied.bytes, { mode: copied.mode, flag: 'wx' }));
 }
 
-async function copyLocalDirectory(sourceRoot: string, destinationRoot: string): Promise<void> {
-  await assertReadableDirectory(sourceRoot);
+async function copyLocalDirectory(
+  sourceRoot: string,
+  destinationRoot: string,
+  lifetime: LocalDirectoryOperation,
+): Promise<void> {
+  await assertReadableDirectory(sourceRoot, lifetime);
   const budget: CopyBudget = { files: 0, bytes: 0 };
-  const realSourceRoot = await realpath(sourceRoot);
+  const realSourceRoot = await lifetime.io(() => realpath(sourceRoot));
   const pending: PendingCopyDirectory[] = [
     {
       source: realSourceRoot,
@@ -210,10 +228,12 @@ async function copyLocalDirectory(sourceRoot: string, destinationRoot: string): 
   while (pending.length > 0) {
     const current = pending.pop();
     if (!current) break;
-    await mkdir(current.destination, { mode: 0o700 });
-    const entries = (await readdir(current.source)).sort((left, right) => left.localeCompare(right));
+    await lifetime.io(() => mkdir(current.destination, { mode: 0o700 }));
+    const entries = (await lifetime.entries(current.source))
+      .map((entry) => entry.name)
+      .sort((left, right) => left.localeCompare(right));
     for (const entry of entries) {
-      await copyPackageMember(current, entry, budget, pending);
+      await copyPackageMember(current, entry, budget, pending, lifetime);
     }
   }
 }
@@ -225,20 +245,24 @@ async function archiveLocalDirectory(
   npmBin?: string,
   signal?: AbortSignal,
 ): Promise<Buffer> {
-  const source = await inspectLocalDirectorySource(resolve(sourcePath)).catch((cause) => {
+  const source = await inspectLocalDirectorySource(resolve(sourcePath), { signal }).catch((cause) => {
     throw sourceError('local plugin source coordinates are inconsistent', cause);
   });
   if (source.manifest) {
     try {
-      return await prepareLocalDirectoryDistribution(source, { packagesRoot, tarBin, npmBin, signal });
+      return await prepareLocalDirectoryDistribution(source, { packagesRoot, tarBin, npmBin });
     } catch (cause) {
       throw sourceError('local plugin publication could not be prepared', cause);
     }
   }
-  await mkdir(packagesRoot, { recursive: true, mode: 0o700 });
+  const lifetime = source.operation;
+  await lifetime.io(() => mkdir(packagesRoot, { recursive: true, mode: 0o700 }));
+  lifetime.step();
   const stagingRoot = await mkdtemp(resolve(packagesRoot, '.local-directory-'));
+  let bytes: Buffer;
   try {
-    await copyLocalDirectory(resolve(sourcePath), resolve(stagingRoot, 'package'));
+    lifetime.check();
+    await copyLocalDirectory(resolve(sourcePath), resolve(stagingRoot, 'package'), lifetime);
     await source.assertCurrent();
     const archivePath = resolve(stagingRoot, 'candidate.tgz');
     // Keep the archive operand free of drive colons for GNU tar. Only this
@@ -247,16 +271,18 @@ async function archiveLocalDirectory(
       cwd: stagingRoot,
       env: { PATH: process.env.PATH ?? '/usr/bin:/bin', LC_ALL: 'C' },
       maxBuffer: 8 * 1024 * 1024,
+      signal: lifetime.signal,
     });
-    const bytes = (await readRegularFile(archivePath)).bytes;
+    bytes = (await readRegularFile(archivePath, undefined, lifetime)).bytes;
     await source.assertCurrent();
-    return bytes;
   } catch (error) {
     if (error instanceof LocalPluginPackageAdmissionError) throw error;
     throw sourceError('local plugin directory could not be archived safely', error);
   } finally {
     await rm(stagingRoot, { recursive: true, force: true });
   }
+  lifetime.check();
+  return bytes;
 }
 
 async function readSignalSchemas(rootDir: string, packageManifest: PluginManifest): Promise<SignalSchemaCatalog> {

@@ -1,22 +1,14 @@
 import { createHash } from 'node:crypto';
 import { constants } from 'node:fs';
-import { lstat, open, realpath } from 'node:fs/promises';
+import { lstat, realpath } from 'node:fs/promises';
 import { dirname, isAbsolute, relative, resolve, sep } from 'node:path';
 import { parseDocument } from 'yaml';
+import { LocalDirectoryOperation, LocalDirectorySourceError } from './local-directory-operation.js';
 import { sourceSemver } from './local-directory-semver.js';
 
 type RecordValue = Record<string, unknown>;
 
-export class LocalDirectorySourceError extends Error {
-  constructor(
-    readonly code: string,
-    message: string,
-    options?: ErrorOptions,
-  ) {
-    super(message, options);
-    this.name = 'LocalDirectorySourceError';
-  }
-}
+export { LocalDirectorySourceError } from './local-directory-operation.js';
 
 function invalid(code: string, message: string): never {
   throw new LocalDirectorySourceError(code, message);
@@ -53,6 +45,7 @@ export interface LocalDirectoryDependency {
   readonly peer: boolean;
 }
 export interface LocalDirectorySourceCoordinates {
+  readonly operation: LocalDirectoryOperation;
   readonly root: string;
   readonly manifest: RecordValue | undefined;
   readonly lockRoot?: string;
@@ -66,15 +59,16 @@ export interface LocalDirectorySourceCoordinates {
 }
 
 class SourceReadSet {
+  constructor(readonly operation: LocalDirectoryOperation) {}
   private readonly files = new Map<string, string>();
   private readonly resolutions = new Map<string, string>();
   private readonly absent = new Set<string>();
   private bytes = 0;
 
   async read(path: string): Promise<Buffer> {
-    const handle = await open(path, constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK);
+    const handle = await this.operation.open(path, constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK);
     try {
-      const before = await handle.stat();
+      const before = await this.operation.io(() => handle.stat());
       if (!before.isFile() || before.size > 4 * 1024 * 1024) {
         invalid('DEPENDENCY_SOURCE_INVALID', 'source metadata is not a bounded regular file');
       }
@@ -85,11 +79,11 @@ class SourceReadSet {
       const bytes = Buffer.alloc(before.size + 1);
       let length = 0;
       while (length < bytes.length) {
-        const result = await handle.read(bytes, length, bytes.length - length, length);
+        const result = await this.operation.io(() => handle.read(bytes, length, bytes.length - length, length));
         if (result.bytesRead === 0) break;
         length += result.bytesRead;
       }
-      const after = await handle.stat();
+      const after = await this.operation.io(() => handle.stat());
       if (length !== before.size || before.size !== after.size || before.mtimeMs !== after.mtimeMs) {
         invalid('DEPENDENCY_SOURCE_CHANGED', 'source metadata changed during inspection');
       }
@@ -106,7 +100,7 @@ class SourceReadSet {
   }
 
   async canonical(path: string): Promise<string> {
-    const resolved = await realpath(path);
+    const resolved = await this.operation.io(() => realpath(path));
     const previous = this.resolutions.get(path);
     if (previous !== undefined && previous !== resolved)
       invalid('DEPENDENCY_SOURCE_CHANGED', 'source resolution changed');
@@ -116,7 +110,7 @@ class SourceReadSet {
 
   async exists(path: string): Promise<boolean> {
     try {
-      await lstat(path);
+      await this.operation.io(() => lstat(path));
       if (this.absent.has(path)) invalid('DEPENDENCY_SOURCE_CHANGED', 'source member appeared during inspection');
       return true;
     } catch (error) {
@@ -127,6 +121,7 @@ class SourceReadSet {
   }
 
   async assertCurrent(): Promise<void> {
+    this.operation.check();
     this.bytes = 0;
     for (const path of this.files.keys()) await this.read(path);
     for (const path of this.resolutions.keys()) await this.canonical(path);
@@ -187,9 +182,9 @@ async function resolveDependency(root: string, name: string, reads: SourceReadSe
     if (directory.split(sep).at(-1) !== 'node_modules') {
       const candidate = resolve(directory, 'node_modules', name);
       try {
-        await lstat(candidate);
+        await reads.operation.io(() => lstat(candidate));
         const resolved = await reads.canonical(candidate);
-        if (!(await lstat(resolved)).isDirectory())
+        if (!(await reads.operation.io(() => lstat(resolved))).isDirectory())
           invalid('DEPENDENCY_SOURCE_INVALID', 'dependency is not a directory');
         return resolved;
       } catch (error) {
@@ -227,9 +222,13 @@ function checkVersion(name: string, requested: string, observed: string): void {
 }
 
 /** Cheap first gate, before copying, npm pack, grant policy or inventory writes. */
-export async function inspectLocalDirectorySource(source: string): Promise<LocalDirectorySourceCoordinates> {
-  const reads = new SourceReadSet();
-  const stat = await lstat(source);
+export async function inspectLocalDirectorySource(
+  source: string,
+  options: { readonly signal?: AbortSignal } = {},
+): Promise<LocalDirectorySourceCoordinates> {
+  const operation = new LocalDirectoryOperation(options.signal);
+  const reads = new SourceReadSet(operation);
+  const stat = await operation.io(() => lstat(source));
   if (!stat.isDirectory() || stat.isSymbolicLink())
     invalid('DEPENDENCY_SOURCE_INVALID', 'source must be a real directory');
   const root = await reads.canonical(source);
@@ -241,13 +240,14 @@ export async function inspectLocalDirectorySource(source: string): Promise<Local
     coordinate?: string,
     integrity?: string,
   ): Promise<LocalDirectorySourceCoordinates> {
+    operation.check();
     const previous = built.get(directory);
     if (previous) {
       if (previous.lockCoordinate !== coordinate || previous.registryIntegrity !== integrity)
         invalid('DEPENDENCY_LOCK_MISMATCH', 'one physical node has inconsistent locked identities');
       return previous;
     }
-    if (built.size >= 512) invalid('DEPENDENCY_SOURCE_INVALID', 'source graph node budget exceeded');
+    if (built.size >= 512) invalid('DEPENDENCY_PREPARATION_LIMIT', 'source graph node budget exceeded');
     let manifest: RecordValue | undefined;
     try {
       manifest = record(
@@ -264,6 +264,7 @@ export async function inspectLocalDirectorySource(source: string): Promise<Local
     const peers = record(manifest?.peerDependencies ?? {}, 'peer dependencies');
     const peerMeta = record(manifest?.peerDependenciesMeta ?? {}, 'peer metadata');
     const declarations = { ...peers, ...dependencies, ...optional };
+    operation.addEdges(Object.keys(declarations).length);
     if (Object.keys(declarations).length > 512) invalid('DEPENDENCY_SOURCE_INVALID', 'runtime edge budget exceeded');
     if (Object.keys(declarations).length && !lock) lock = await findLock(root, reads);
     const importer =
@@ -360,6 +361,7 @@ export async function inspectLocalDirectorySource(source: string): Promise<Local
       });
     }
     const result: LocalDirectorySourceCoordinates = {
+      operation,
       root: directory,
       manifest,
       dependencies: edges,

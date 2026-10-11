@@ -1,12 +1,13 @@
 import { execFile } from 'node:child_process';
 import { createHash } from 'node:crypto';
 import { constants } from 'node:fs';
-import { chmod, lstat, mkdir, mkdtemp, open, readdir, readFile, rm, utimes, writeFile } from 'node:fs/promises';
+import { chmod, lstat, mkdir, mkdtemp, readFile, rm, utimes, writeFile } from 'node:fs/promises';
 import { dirname, isAbsolute, relative, resolve, sep } from 'node:path';
 import { promisify } from 'node:util';
 import { PLUGIN_ARCHIVE_BUDGET, preflightPluginArchive } from '../external-runtime/archive-preflight.js';
 import { packageDirectoryName } from '../external-runtime/filesystem-package-locator.js';
 import { stageVerifiedPackageContent } from '../external-runtime/package-staging.js';
+import type { LocalDirectoryOperation } from './local-directory-operation.js';
 import { type LocalDirectorySourceCoordinates, LocalDirectorySourceError } from './local-directory-source.js';
 
 const execFileAsync = promisify(execFile);
@@ -36,7 +37,6 @@ export interface LocalDirectoryDistributionOptions {
   readonly packagesRoot: string;
   readonly npmBin?: string;
   readonly tarBin?: string;
-  readonly signal?: AbortSignal;
 }
 
 function invalid(code: string, message: string): never {
@@ -66,32 +66,32 @@ function count(budget: Budget, size: number): void {
   }
 }
 
-async function memberBytes(root: string, member: string, signal: AbortSignal) {
-  signal.throwIfAborted();
+async function memberBytes(root: string, member: string, lifetime: LocalDirectoryOperation) {
+  lifetime.check();
   const path = pathOf(root, member);
   let directory = root;
   // Check every parent, not just O_NOFOLLOW on the final component.
   for (const part of member.split('/').slice(0, -1)) {
     directory = resolve(directory, part);
-    const stat = await lstat(directory);
+    const stat = await lifetime.io(() => lstat(directory));
     if (!stat.isDirectory() || stat.isSymbolicLink())
       invalid('DEPENDENCY_SOURCE_INVALID', 'publication parent is not a real directory');
   }
-  const handle = await open(path, constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK);
+  const handle = await lifetime.open(path, constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK);
   try {
-    const before = await handle.stat();
+    const before = await lifetime.io(() => handle.stat());
     if (!before.isFile() || before.size > PLUGIN_ARCHIVE_BUDGET.singleFileBytes) {
       invalid('DEPENDENCY_PREPARATION_LIMIT', 'publication member is not a bounded regular file');
     }
     const bytes = Buffer.alloc(before.size + 1);
     let length = 0;
     while (length < bytes.length) {
-      signal.throwIfAborted();
-      const result = await handle.read(bytes, length, bytes.length - length, length);
+      lifetime.check();
+      const result = await lifetime.io(() => handle.read(bytes, length, bytes.length - length, length));
       if (!result.bytesRead) break;
       length += result.bytesRead;
     }
-    const after = await handle.stat();
+    const after = await lifetime.io(() => handle.stat());
     if (
       length !== before.size ||
       before.size !== after.size ||
@@ -108,12 +108,17 @@ async function memberBytes(root: string, member: string, signal: AbortSignal) {
   }
 }
 
-async function writeMember(root: string, member: Member, bytes: Buffer): Promise<void> {
+async function writeMember(
+  root: string,
+  member: Member,
+  bytes: Buffer,
+  lifetime: LocalDirectoryOperation,
+): Promise<void> {
   const destination = pathOf(root, member.path);
-  await mkdir(dirname(destination), { recursive: true, mode: 0o700 });
-  await writeFile(destination, bytes, { flag: 'wx', mode: member.mode });
-  await chmod(destination, member.mode);
-  await utimes(destination, 0, 0);
+  await lifetime.io(() => mkdir(dirname(destination), { recursive: true, mode: 0o700 }));
+  await lifetime.io(() => writeFile(destination, bytes, { flag: 'wx', mode: member.mode }));
+  await lifetime.io(() => chmod(destination, member.mode));
+  await lifetime.io(() => utimes(destination, 0, 0));
 }
 
 function packResult(text: string): { files: { path: string; size: number }[]; filename?: string } {
@@ -141,12 +146,14 @@ function packResult(text: string): { files: { path: string; size: number }[]; fi
 }
 
 /** Resolve the complete locked graph before invoking a packer or writing inventory. */
-async function sourceGraph(root: LocalDirectorySourceCoordinates, signal: AbortSignal): Promise<Map<string, Node>> {
+async function sourceGraph(root: LocalDirectorySourceCoordinates): Promise<Map<string, Node>> {
+  const lifetime = root.operation;
   const nodes = new Map<string, Node>();
   const pending = [root];
-  while (pending.length) {
-    signal.throwIfAborted();
-    const source = pending.shift();
+  const queued = new Set([root.root]);
+  for (let cursor = 0; cursor < pending.length; cursor++) {
+    lifetime.step();
+    const source = pending[cursor];
     if (!source || nodes.has(source.root)) continue;
     if (nodes.size >= MAX_INSTANCES) invalid('DEPENDENCY_PREPARATION_LIMIT', 'source package count exceeded');
     if (!source.manifest) invalid('DEPENDENCY_SOURCE_INVALID', 'runtime package.json is missing');
@@ -154,7 +161,14 @@ async function sourceGraph(root: LocalDirectorySourceCoordinates, signal: AbortS
       invalid('DEPENDENCY_SPEC_UNSUPPORTED', 'bundled dependencies require an explicit attested topology');
     }
     nodes.set(source.root, { id: nodes.size, source, members: [] });
-    for (const edge of source.dependencies) pending.push(await source.dependencySource(edge));
+    for (const edge of source.dependencies) {
+      lifetime.step();
+      const dependency = await source.dependencySource(edge);
+      if (!queued.has(dependency.root)) {
+        queued.add(dependency.root);
+        pending.push(dependency);
+      }
+    }
   }
   return nodes;
 }
@@ -163,17 +177,18 @@ async function attestRegistryNode(
   node: Node,
   operation: string,
   options: LocalDirectoryDistributionOptions,
-  signal: AbortSignal,
+  lifetime: LocalDirectoryOperation,
   budget: Budget,
 ): Promise<void> {
+  const signal = lifetime.signal;
   const integrity = node.source.registryIntegrity!;
   const artifactRoot = resolve(options.packagesRoot, packageDirectoryName(integrity));
   const archive = resolve(artifactRoot, 'package.tgz');
   try {
-    const stat = await lstat(artifactRoot);
+    const stat = await lifetime.io(() => lstat(artifactRoot));
     if (!stat.isDirectory() || stat.isSymbolicLink())
       invalid('DEPENDENCY_CONTENT_MISMATCH', 'canonical cache root is not a real directory');
-    await lstat(archive);
+    await lifetime.io(() => lstat(archive));
   } catch (error) {
     if ((error as NodeJS.ErrnoException).code === 'ENOENT')
       invalid('DEPENDENCY_ARCHIVE_UNAVAILABLE', `canonical archive unavailable for ${node.source.manifest?.name}`);
@@ -189,7 +204,7 @@ async function attestRegistryNode(
       signal,
     });
   } catch (cause) {
-    signal.throwIfAborted();
+    lifetime.check();
     throw new LocalDirectorySourceError(
       'DEPENDENCY_CONTENT_MISMATCH',
       'canonical registry archive failed integrity or bounded staging',
@@ -198,13 +213,11 @@ async function attestRegistryNode(
   }
   try {
     const snapshot = resolve(operation, `node-${node.id}`);
-    await mkdir(snapshot, { mode: 0o700 });
+    await lifetime.io(() => mkdir(snapshot, { mode: 0o700 }));
     const members: Member[] = [];
     async function walk(directory: string, prefix: string): Promise<void> {
-      for (const entry of (await readdir(directory, { withFileTypes: true })).sort((a, b) =>
-        a.name.localeCompare(b.name),
-      )) {
-        signal.throwIfAborted();
+      for (const entry of (await lifetime.entries(directory)).sort((a, b) => a.name.localeCompare(b.name))) {
+        lifetime.check();
         const member = prefix ? `${prefix}/${entry.name}` : entry.name;
         pathOf(staged.rootDir, member);
         if (entry.name === 'node_modules' || member === RECEIPT)
@@ -214,12 +227,12 @@ async function attestRegistryNode(
           continue;
         }
         if (!entry.isFile()) invalid('DEPENDENCY_CONTENT_MISMATCH', 'canonical publication contains a special member');
-        const canonical = await memberBytes(staged.rootDir, member, signal);
+        const canonical = await memberBytes(staged.rootDir, member, lifetime);
         let physical: Awaited<ReturnType<typeof memberBytes>>;
         try {
-          physical = await memberBytes(node.source.root, member, signal);
+          physical = await memberBytes(node.source.root, member, lifetime);
         } catch (cause) {
-          signal.throwIfAborted();
+          lifetime.check();
           throw new LocalDirectorySourceError(
             'DEPENDENCY_CONTENT_MISMATCH',
             'canonical publication member is missing or unreadable',
@@ -235,15 +248,14 @@ async function attestRegistryNode(
         count(budget, physical.metadata.size);
         // Read/write permission differences in a package-manager store are not
         // publisher bytes; preserve the attested physical mode and execution bits.
-        await writeMember(snapshot, physical.metadata, canonical.bytes);
+        await writeMember(snapshot, physical.metadata, canonical.bytes, lifetime);
         members.push(physical.metadata);
       }
     }
     await walk(staged.rootDir, '');
     if (!members.some((member) => member.path === 'package.json'))
       invalid('DEPENDENCY_CONTENT_MISMATCH', 'canonical package.json is missing');
-    await staged.verifyIntegrity();
-    await node.source.assertCurrent();
+    await lifetime.io(() => staged.verifyIntegrity());
     node.members = members.sort((a, b) => a.path.localeCompare(b.path));
     node.snapshot = snapshot;
     node.packDigest = integrity;
@@ -258,19 +270,24 @@ export async function prepareLocalDirectoryDistribution(
   source: LocalDirectorySourceCoordinates,
   options: LocalDirectoryDistributionOptions,
 ): Promise<Buffer> {
-  const deadline = AbortSignal.timeout(PLUGIN_ARCHIVE_BUDGET.deadlineMs);
-  const signal = options.signal ? AbortSignal.any([deadline, options.signal]) : deadline;
+  const lifetime = source.operation;
+  const signal = lifetime.signal;
+  lifetime.check();
   // Entire supported graph must pass the cheap gate before invoking npm.
-  const nodes = await sourceGraph(source, signal);
-  await mkdir(options.packagesRoot, { recursive: true, mode: 0o700 });
+  const nodes = await sourceGraph(source);
+  await source.assertCurrent();
+  await lifetime.io(() => mkdir(options.packagesRoot, { recursive: true, mode: 0o700 }));
+  lifetime.step();
   const operation = await mkdtemp(resolve(options.packagesRoot, '.directory-prepare-'));
+  let candidate: Buffer;
   try {
+    lifetime.check();
     for (const directory of ['home', 'tmp', 'cache', 'packs'])
-      await mkdir(resolve(operation, directory), { mode: 0o700 });
+      await lifetime.io(() => mkdir(resolve(operation, directory), { mode: 0o700 }));
     const npmConfig = resolve(operation, 'npmrc');
     const globalConfig = resolve(operation, 'global-npmrc');
-    await writeFile(npmConfig, '', { flag: 'wx', mode: 0o600 });
-    await writeFile(globalConfig, '', { flag: 'wx', mode: 0o600 });
+    await lifetime.io(() => writeFile(npmConfig, '', { flag: 'wx', mode: 0o600 }));
+    await lifetime.io(() => writeFile(globalConfig, '', { flag: 'wx', mode: 0o600 }));
     const env = {
       PATH: process.env.PATH ?? '/usr/bin:/bin',
       HOME: resolve(operation, 'home'),
@@ -279,13 +296,15 @@ export async function prepareLocalDirectoryDistribution(
       COPYFILE_DISABLE: '1',
     };
     const run = (bin: string, args: string[]) =>
-      execFileAsync(bin, args, {
-        cwd: operation,
-        env,
-        signal,
-        timeout: PLUGIN_ARCHIVE_BUDGET.deadlineMs,
-        maxBuffer: 8 * 1024 * 1024,
-      });
+      lifetime.io(() =>
+        execFileAsync(bin, args, {
+          cwd: operation,
+          env,
+          signal,
+          timeout: PLUGIN_ARCHIVE_BUDGET.deadlineMs,
+          maxBuffer: 8 * 1024 * 1024,
+        }),
+      );
     const npm = options.npmBin?.trim() || 'npm';
     const npmArgs = [
       '--ignore-scripts',
@@ -302,25 +321,25 @@ export async function prepareLocalDirectoryDistribution(
     // All registry attestations precede even npm --version. A failed registry
     // edge cannot execute the packer, grant capabilities or mutate inventory.
     for (const node of nodes.values()) {
-      if (node.source.registryIntegrity) await attestRegistryNode(node, operation, options, signal, selectionBudget);
+      if (node.source.registryIntegrity) await attestRegistryNode(node, operation, options, lifetime, selectionBudget);
     }
+    await source.assertCurrent();
     const npmVersion = (await run(npm, ['--version', ...npmArgs])).stdout.trim();
     for (const node of nodes.values()) {
       if (node.source.registryIntegrity) continue;
-      await node.source.assertCurrent();
       const selected = packResult(
         (await run(npm, ['pack', '--dry-run', '--json', ...npmArgs, node.source.root])).stdout,
       );
       const snapshot = resolve(operation, `node-${node.id}`);
       const packDirectory = resolve(operation, 'packs', String(node.id));
-      await mkdir(snapshot, { mode: 0o700 });
-      await mkdir(packDirectory, { mode: 0o700 });
+      await lifetime.io(() => mkdir(snapshot, { mode: 0o700 }));
+      await lifetime.io(() => mkdir(packDirectory, { mode: 0o700 }));
       const members: Member[] = [];
       for (const file of selected.files) {
-        const sealed = await memberBytes(node.source.root, file.path, signal);
+        const sealed = await memberBytes(node.source.root, file.path, lifetime);
         if (sealed.metadata.size !== file.size) invalid('DEPENDENCY_SOURCE_CHANGED', 'publication selection changed');
         count(selectionBudget, sealed.metadata.size);
-        await writeMember(snapshot, sealed.metadata, sealed.bytes);
+        await writeMember(snapshot, sealed.metadata, sealed.bytes, lifetime);
         members.push(sealed.metadata);
       }
       // Pack only the private snapshot. Replacing or editing the source during
@@ -336,13 +355,13 @@ export async function prepareLocalDirectoryDistribution(
       }
       const archive = resolve(packDirectory, packed.filename);
       await preflightPluginArchive(archive, signal);
-      const stat = await lstat(archive);
+      const stat = await lifetime.io(() => lstat(archive));
       if (!stat.isFile() || stat.isSymbolicLink() || stat.size > PLUGIN_ARCHIVE_BUDGET.compressedBytes) {
         invalid('DEPENDENCY_PACK_FAILED', 'npm archive is not a bounded regular file');
       }
       node.members = members;
       node.snapshot = snapshot;
-      node.packDigest = hash(await readFile(archive));
+      node.packDigest = hash(await lifetime.io(() => readFile(archive)));
       const main = node.source.manifest?.main;
       if (typeof main === 'string' && !members.some((member) => member.path === main.replace(/^\.\//, ''))) {
         invalid('DEPENDENCY_SOURCE_INVALID', 'built package entrypoint is absent from publication members');
@@ -356,6 +375,7 @@ export async function prepareLocalDirectoryDistribution(
     function ancestorTarget(destination: string, name: string): string | undefined {
       let cursor = destination;
       while (cursor === preparedRoot || cursor.startsWith(`${preparedRoot}${sep}`)) {
+        lifetime.step();
         const candidate = resolve(cursor, 'node_modules', name);
         if (mounted.has(candidate)) return candidate;
         cursor = dirname(cursor);
@@ -364,8 +384,9 @@ export async function prepareLocalDirectoryDistribution(
     }
     // Reserve all siblings before descending, so a peer never depends on the
     // enumeration order of root.dependencies. Cycles reuse an identical ancestor.
-    while (pending.length) {
-      const destination = pending.shift()!;
+    for (let cursor = 0; cursor < pending.length; cursor++) {
+      lifetime.step();
+      const destination = pending[cursor]!;
       const node = nodes.get(mounted.get(destination)!)!;
       for (const edge of node.source.dependencies.filter((edge) => !edge.peer)) {
         const ancestor = ancestorTarget(destination, edge.name);
@@ -397,13 +418,13 @@ export async function prepareLocalDirectoryDistribution(
             'relocated optional dependency is present but absent from the attested graph',
           );
       }
-      await mkdir(destination, { recursive: true, mode: 0o700 });
+      await lifetime.io(() => mkdir(destination, { recursive: true, mode: 0o700 }));
       for (const member of node.members) {
         count(outputBudget, member.size);
-        const sealed = await memberBytes(node.snapshot!, member.path, signal);
+        const sealed = await memberBytes(node.snapshot!, member.path, lifetime);
         if (JSON.stringify(sealed.metadata) !== JSON.stringify(member))
           invalid('DEPENDENCY_SOURCE_CHANGED', 'private publication snapshot changed');
-        await writeMember(destination, member, sealed.bytes);
+        await writeMember(destination, member, sealed.bytes, lifetime);
       }
       const main = node.source.manifest?.main;
       if (typeof main === 'string' && !node.members.some((member) => member.path === main.replace(/^\.\//, '')))
@@ -414,13 +435,12 @@ export async function prepareLocalDirectoryDistribution(
     // runtime path refers back to the selected workspace.
     for (const node of nodes.values()) {
       for (const member of node.members) {
-        const current = await memberBytes(node.source.root, member.path, signal);
+        const current = await memberBytes(node.source.root, member.path, lifetime);
         if (JSON.stringify(current.metadata) !== JSON.stringify(member))
           invalid('DEPENDENCY_SOURCE_CHANGED', 'source publication content changed');
       }
-      await node.source.assertCurrent();
       if (node.source.registryIntegrity) {
-        const original = await memberBytes(dirname(node.canonicalArchive!), 'package.tgz', signal);
+        const original = await memberBytes(dirname(node.canonicalArchive!), 'package.tgz', lifetime);
         if (original.metadata.digest !== node.source.registryIntegrity)
           invalid('DEPENDENCY_SOURCE_CHANGED', 'canonical registry archive changed during preparation');
         continue;
@@ -434,6 +454,7 @@ export async function prepareLocalDirectoryDistribution(
         invalid('DEPENDENCY_SOURCE_CHANGED', 'source publication policy changed');
       }
     }
+    await source.assertCurrent();
     const receipt = {
       version: 1,
       provenance: 'owner-local',
@@ -471,19 +492,22 @@ export async function prepareLocalDirectoryDistribution(
       preparedRoot,
       { path: RECEIPT, size: receiptBytes.length, mode: 0o600, digest: hash(receiptBytes) },
       receiptBytes,
+      lifetime,
     );
     async function normalizeDirectories(path: string): Promise<void> {
-      for (const entry of await readdir(path, { withFileTypes: true }))
+      for (const entry of await lifetime.entries(path))
         if (entry.isDirectory()) await normalizeDirectories(resolve(path, entry.name));
-      await utimes(path, 0, 0);
+      await lifetime.io(() => utimes(path, 0, 0));
     }
     await normalizeDirectories(preparedRoot);
     const archive = resolve(operation, 'candidate.tgz');
     await run(options.tarBin?.trim() || 'tar', ['-czf', archive, '-C', operation, 'package']);
     await preflightPluginArchive(archive, signal);
-    signal.throwIfAborted();
-    return await readFile(archive);
+    lifetime.check();
+    candidate = await lifetime.io(() => readFile(archive));
   } finally {
     await rm(operation, { recursive: true, force: true });
   }
+  lifetime.check();
+  return candidate;
 }

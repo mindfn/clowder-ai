@@ -20,6 +20,7 @@ import { stringify } from 'yaml';
 import { FilesystemVerifiedPluginPackageLocator } from '../src/domains/plugin/external-runtime/filesystem-package-locator.ts';
 import { HostInventoryControlPlane } from '../src/domains/plugin/host-inventory/control-plane.ts';
 import { MemoryPluginInventoryStore } from '../src/domains/plugin/host-inventory/stores.ts';
+import { inspectLocalDirectorySource } from '../src/domains/plugin/manager/local-directory-source.ts';
 import { LocalPluginPackageAdmission } from '../src/domains/plugin/manager/local-package-admission.ts';
 import { manifest } from './plugin-official-package-installer.fixture.js';
 
@@ -200,4 +201,113 @@ test('keeps dependency-free ordinary local directories admissible', async (t) =>
   const result = await f.createAdmission('npm').install({ kind: 'local-directory', path: ordinary });
   assert.equal(result.pluginId, 'official.test-source');
   assert.equal((await f.store.snapshot()).instances.length, 1);
+});
+
+test('stops source inspection when the caller aborts during filesystem traversal', async (t) => {
+  const f = await fixture(t);
+  const controller = new AbortController();
+  const reason = new Error('inspection cancelled by caller');
+  const pending = inspectLocalDirectorySource(f.source, { signal: controller.signal });
+  // Inspection already started and yielded for real filesystem IO. Do not
+  // mutate or replace the filesystem implementation to make cancellation pass.
+  const immediate = setImmediate(() => controller.abort(reason));
+  t.after(() => clearImmediate(immediate));
+  await assert.rejects(pending, (error) => error === reason);
+  assert.equal(controller.signal.aborted, true);
+  await assert.rejects(access(f.packMarker), { code: 'ENOENT' });
+});
+
+test('stops the shared source read-set revalidation after caller cancellation', async (t) => {
+  const f = await fixture(t);
+  const controller = new AbortController();
+  const source = await inspectLocalDirectorySource(f.source, { signal: controller.signal });
+  const reason = new Error('source revalidation cancelled by caller');
+  controller.abort(reason);
+  await assert.rejects(source.assertCurrent(), (error) => error === reason);
+});
+
+test('bounds total repeated dependency edges before npm, grants or inventory', { timeout: 120000 }, async (t) => {
+  const f = await fixture(t);
+  const names = Array.from({ length: 65 }, (_, i) => `dense-node-${i}`);
+  const importers = { '.': {}, 'packages/plugin': { dependencies: {} } };
+  const rootMetadata = JSON.parse(await readFile(join(f.source, 'package.json'), 'utf8'));
+  rootMetadata.dependencies = Object.fromEntries(names.map((name) => [name, '1.0.0']));
+  await mkdir(join(f.root, 'node_modules'));
+  for (const name of names) {
+    const nodeRoot = join(f.root, 'packages', name);
+    await mkdir(nodeRoot);
+    const dependencies = Object.fromEntries(names.filter((other) => other !== name).map((other) => [other, '1.0.0']));
+    await json(join(nodeRoot, 'package.json'), { name, version: '1.0.0', dependencies });
+    importers[`packages/${name}`] = {
+      dependencies: Object.fromEntries(
+        Object.keys(dependencies).map((other) => [other, { specifier: '1.0.0', version: `link:../${other}` }]),
+      ),
+    };
+    importers['packages/plugin'].dependencies[name] = { specifier: '1.0.0', version: `link:../${name}` };
+    await symlink(nodeRoot, join(f.root, 'node_modules', name), 'dir');
+  }
+  await json(join(f.source, 'package.json'), rootMetadata);
+  await writeFile(
+    join(f.root, 'pnpm-lock.yaml'),
+    stringify({ lockfileVersion: '9.0', importers, packages: {}, snapshots: {} }),
+  );
+  // Each node has fewer than 512 edges, but the graph has 4,225 declarations.
+  // They are repeated references, not 4,225 unique physical package nodes.
+  await rejectsBeforePreparation(f, 'DEPENDENCY_PREPARATION_LIMIT');
+});
+
+test('cancels and releases staging while copying a directory without package.json', async (t) => {
+  const f = await fixture(t);
+  const source = join(f.root, 'plain');
+  await mkdir(join(source, 'schemas'), { recursive: true });
+  await mkdir(join(source, 'dist'));
+  await json(join(source, 'manifest.json'), manifest());
+  await json(join(source, 'schemas/official.test.v1.schema.json'), {
+    type: 'object',
+    properties: { payload: { type: 'object' }, source: { type: 'object' } },
+    required: ['payload', 'source'],
+  });
+  await writeFile(join(source, 'dist/entrypoint.js'), '// inert\n');
+  for (let i = 0; i < 200; i++) await writeFile(join(source, `file-${i}.txt`), 'x'.repeat(1024));
+  const controller = new AbortController();
+  const reason = new Error('plain directory copy cancelled');
+  let stageSeen = false;
+  let observing = false;
+  let observationError;
+  const timer = setInterval(async () => {
+    if (observing || stageSeen) return;
+    observing = true;
+    try {
+      const entries = await readdir(f.inventoryRoot).catch((error) => {
+        if (error.code === 'ENOENT') return [];
+        throw error;
+      });
+      if (entries.some((entry) => entry.startsWith('.local-directory-'))) {
+        stageSeen = true;
+        controller.abort(reason);
+      }
+    } catch (error) {
+      observationError = error;
+      controller.abort(error);
+    } finally {
+      observing = false;
+    }
+  }, 1);
+  try {
+    await assert.rejects(
+      f.createAdmission().install({ kind: 'local-directory', path: source }, { signal: controller.signal }),
+      (error) => error === reason || error.cause === reason,
+    );
+    assert.equal(observationError, undefined);
+    assert.equal(stageSeen, true, 'cancel only after actual staging starts');
+    assert.equal(f.grants(), 0);
+    for (const key of ['instances', 'packages', 'grants']) assert.deepEqual((await f.store.snapshot())[key], []);
+    assert.equal(
+      (await readdir(f.inventoryRoot)).some((entry) => entry.startsWith('.local-directory-')),
+      false,
+    );
+    await assert.rejects(access(f.packMarker), { code: 'ENOENT' });
+  } finally {
+    clearInterval(timer);
+  }
 });
