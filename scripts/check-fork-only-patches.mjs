@@ -198,6 +198,10 @@ export function checkRebuildSurvival(repoRoot, options = {}) {
   // check's to report. Here it is only the source of the baseline ref, plus the
   // signal that the guard's own input was erased.
   const treeRegistry = readRegistry(repoRoot, []);
+  // Who named the baseline matters. An EXPLICIT baseline is a caller asserting
+  // "this is the pre-reset tree" - CI passes github.event.before. The registry
+  // DEFAULT is only a best guess for a manual run.
+  const explicit = options.baselineRef !== undefined;
   const baselineRef = options.baselineRef ?? treeRegistry?.baselineRef ?? 'origin/develop_base';
 
   if (!resolveRef(repoRoot, baselineRef)) {
@@ -213,19 +217,34 @@ export function checkRebuildSurvival(repoRoot, options = {}) {
   // accused cannot testify - and it fails silently, which is the whole disease.
   // The baseline must be an immutable PRE-reset commit, so refuse to compare a
   // commit with itself.
+  //
+  // PR #185 review round 4 (砚砚 P1): failing closed on the DEFAULT resolving to
+  // HEAD made canonical `pnpm check` red on every clean develop_base checkout -
+  // the guard's first step blocked every check after it, on the branch it
+  // exists to protect. So the rule is scoped to the caller that can actually
+  // mis-wire it:
+  //   - explicit baseline == HEAD -> fail closed (witness is the accused)
+  //   - default  baseline == HEAD -> no older tree exists here, so HEAD itself
+  //     witnesses the WORKING TREE below. An uncommitted registry or patch
+  //     reversion is still caught; only a committed rebuild loss is out of
+  //     reach, and that is what CI's explicit pre-reset baseline is for.
+  let defaultBaselineIsHead = false;
   try {
     const head = gitOut(repoRoot, ['rev-parse', 'HEAD^{commit}']).trim();
     const base = gitOut(repoRoot, ['rev-parse', `${baselineRef}^{commit}`]).trim();
     if (head === base) {
-      violations.push(
-        `baseline "${baselineRef}" resolves to HEAD (${head.slice(0, 9)}), the same tree being checked, ` +
-          `so it cannot witness a loss. Pass the pre-reset commit explicitly: --baseline-ref <sha>`,
-      );
-      return { violations, baselineRef, comparedPatches: 0 };
+      if (explicit) {
+        violations.push(
+          `baseline "${baselineRef}" resolves to HEAD (${head.slice(0, 9)}), the same tree being checked, ` +
+            `so it cannot witness a loss. Pass the pre-reset commit explicitly: --baseline-ref <sha>`,
+        );
+        return { violations, baselineRef, comparedPatches: 0, defaultBaselineIsHead };
+      }
+      defaultBaselineIsHead = true;
     }
   } catch {
     violations.push(`cannot resolve HEAD or "${baselineRef}" to a commit; rebuild loss cannot be detected`);
-    return { violations, baselineRef, comparedPatches: 0 };
+    return { violations, baselineRef, comparedPatches: 0, defaultBaselineIsHead };
   }
 
   let baselineRaw;
@@ -235,7 +254,7 @@ export function checkRebuildSurvival(repoRoot, options = {}) {
     // The previous tree made no claim, so there is nothing it could have lost.
     // This is a real absence of a prior claim, not an unverifiable one - the
     // fail-closed rule applies to the latter.
-    return { violations, baselineRef, comparedPatches: 0 };
+    return { violations, baselineRef, comparedPatches: 0, defaultBaselineIsHead };
   }
 
   let baseline;
@@ -243,11 +262,11 @@ export function checkRebuildSurvival(repoRoot, options = {}) {
     baseline = JSON.parse(baselineRaw);
   } catch (err) {
     violations.push(`baseline registry at ${baselineRef} is not valid JSON: ${err.message}`);
-    return { violations, baselineRef, comparedPatches: 0 };
+    return { violations, baselineRef, comparedPatches: 0, defaultBaselineIsHead };
   }
   if (!baseline || !Array.isArray(baseline.patches)) {
     violations.push(`baseline registry at ${baselineRef} has no "patches" array`);
-    return { violations, baselineRef, comparedPatches: 0 };
+    return { violations, baselineRef, comparedPatches: 0, defaultBaselineIsHead };
   }
 
   // The registry is itself a shared file, so a rebuild can REVERT it instead of
@@ -285,7 +304,7 @@ export function checkRebuildSurvival(repoRoot, options = {}) {
     );
   }
 
-  return { violations, baselineRef, comparedPatches: baseline.patches.length };
+  return { violations, baselineRef, comparedPatches: baseline.patches.length, defaultBaselineIsHead };
 }
 
 /**
@@ -353,9 +372,13 @@ function main() {
 
   const baseline = skipBaseline
     ? '; rebuild-survival SKIPPED (--no-baseline: no prior tree)'
-    : survival.baselineRef
-      ? `; ${survival.comparedPatches} claimed by ${survival.baselineRef} still present`
-      : '';
+    : survival.defaultBaselineIsHead
+      ? `; default baseline ${survival.baselineRef} is HEAD - no older baseline to compare, so uncommitted ` +
+        `changes were checked against the committed HEAD only (a committed rebuild loss needs an explicit ` +
+        `pre-reset --baseline-ref, which CI passes)`
+      : survival.baselineRef
+        ? `; ${survival.comparedPatches} claimed by ${survival.baselineRef} still present`
+        : '';
   console.log(`[check-fork-only-patches] OK - ${patchIds.length} fork-only patch(es) present${baseline}`);
 }
 

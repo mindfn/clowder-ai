@@ -92,8 +92,27 @@ to come from outside it. Two sources qualify, and one that looks like it does
 
 That last row was a real bug in this workflow's first version: CI fetched
 `origin/develop_base` after the push, so the baseline *was* the accused. The
-checker now refuses to compare a commit with itself and says so, instead of
-reporting a cheerful green.
+checker now refuses to compare a commit with itself **when the baseline was
+named explicitly**, instead of reporting a cheerful green.
+
+### Explicit vs default baseline
+
+Who names the baseline decides what "baseline == HEAD" means:
+
+| Caller | baseline == HEAD means | Result |
+|---|---|---|
+| explicit `--baseline-ref` (CI) | the caller mis-wired the witness | **fail closed** |
+| registry default (manual run) | there is no older tree in this checkout | HEAD witnesses the **working tree** |
+
+The default case is the normal state of a clean `develop_base` checkout. Failing
+closed there made the first step of canonical `pnpm check` red on the branch the
+guard protects, so nothing after it ran. Instead, the committed HEAD is compared
+against the working tree: an uncommitted registry or patch reversion is still
+caught. What the default path **cannot** see is a loss that was already
+committed - the output says so explicitly - and that is exactly why CI passes
+the immutable pre-reset commit, and why the registry anchors that wiring in the
+workflow: deleting `--baseline-ref` from CI turns the tree check red rather
+than quietly falling back to the default.
 
 ### The registry is a shared file too
 
