@@ -202,9 +202,9 @@ async function readPackageManifest(rootDir: string): Promise<unknown> {
   throw runtimeError('installed package has no canonical plugin.yaml or legacy manifest.json');
 }
 
-export async function stageVerifiedPackageArchive(
+export async function stageVerifiedPackageContent(
   input: StageVerifiedPackageArchiveInput,
-): Promise<VerifiedPluginPackage> {
+): Promise<Omit<VerifiedPluginPackage, 'manifest'>> {
   const archivePath = resolve(input.artifactRoot, PACKAGE_ARCHIVE_FILENAME);
   let archiveStat: Stats;
   try {
@@ -271,11 +271,6 @@ export async function stageVerifiedPackageArchive(
     const admittedSnapshot = await snapshotPackageTree(partialRoot);
     await rename(partialRoot, readyRoot);
 
-    phase = 'manifest';
-    const value = await readPackageManifest(readyRoot);
-    const validation = (input.validateManifest ?? validateManifest)(value);
-    if (!validation.valid) throw runtimeError('installed package manifest fails the published contract');
-
     const verifyIntegrity = async () => {
       if (released) throw runtimeError('staged package was released');
       const current = await snapshotPackageTree(readyRoot);
@@ -290,7 +285,7 @@ export async function stageVerifiedPackageArchive(
       await verifySeal();
       if (released) throw runtimeError('staged package was released');
     };
-    return { rootDir: readyRoot, manifest: validation.manifest, verifyIntegrity, verifyStaticIntegrity, release };
+    return { rootDir: readyRoot, verifyIntegrity, verifyStaticIntegrity, release };
   } catch (error) {
     await release().catch(() => undefined);
     const failure =
@@ -298,5 +293,24 @@ export async function stageVerifiedPackageArchive(
         ? error
         : runtimeError(`installed package ${input.packageDigest} could not be verified and staged`, error);
     throw recordPackageStagingPhase(failure, phase);
+  }
+}
+
+/** The byte staging boundary is shared by plugin and registry dependency archives.
+ * Only this wrapper grants a validated plugin manifest to runtime callers. */
+export async function stageVerifiedPackageArchive(
+  input: StageVerifiedPackageArchiveInput,
+): Promise<VerifiedPluginPackage> {
+  const staged = await stageVerifiedPackageContent(input);
+  try {
+    const value = await readPackageManifest(staged.rootDir);
+    const validation = (input.validateManifest ?? validateManifest)(value);
+    if (!validation.valid) throw runtimeError('installed package manifest fails the published contract');
+    await staged.verifyIntegrity();
+    return { ...staged, manifest: validation.manifest };
+  } catch (error) {
+    await staged.release();
+    if (error instanceof ExternalPluginRuntimeError) throw error;
+    throw runtimeError('installed package manifest could not be verified', error);
   }
 }

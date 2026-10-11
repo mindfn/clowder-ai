@@ -184,6 +184,7 @@ export type PluginManagerCapabilityKind =
   | 'service'
   | 'ui'
   | 'content-editor-provider'
+  | 'browser-service'
   | 'media-source'
   | 'cloud-conversation-host'
   | 'terminal-predicate-provider'

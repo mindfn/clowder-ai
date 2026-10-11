@@ -22,6 +22,8 @@ import type { VerifiedPluginPackage } from '../external-runtime/types.js';
 import type { HostInventoryControlPlane } from '../host-inventory/control-plane.js';
 import { type PluginDependencyClosure, PluginInventoryError } from '../host-inventory/types.js';
 import { MAX_PLUGIN_PACKAGE_BYTES, publishPluginPackageArchive } from '../official-package-archive.js';
+import { prepareLocalDirectoryDistribution } from './local-directory-distribution.js';
+import { inspectLocalDirectorySource } from './local-directory-source.js';
 import {
   type PluginPackageQuarantineFailureCode,
   type PluginPackageQuarantineRecorder,
@@ -54,12 +56,14 @@ export interface LocalPluginPackageAdmissionOptions {
   /** Host-owned policy. Package declarations are requests, never grants. */
   readonly grantPolicy: (manifest: PluginManifest) => Promise<readonly Capability[]> | readonly Capability[];
   readonly tarBin?: string;
+  readonly npmBin?: string;
   readonly validateManifest?: PluginManifestValidator;
   readonly quarantine?: PluginPackageQuarantineRecorder;
 }
 
 export interface LocalPluginAdmissionFence {
   readonly expectedDigest?: string;
+  readonly signal?: AbortSignal;
 }
 
 export type LocalPluginPackageAdmissionErrorCode =
@@ -214,11 +218,28 @@ async function copyLocalDirectory(sourceRoot: string, destinationRoot: string): 
   }
 }
 
-async function archiveLocalDirectory(sourcePath: string, packagesRoot: string, tarBin: string): Promise<Buffer> {
+async function archiveLocalDirectory(
+  sourcePath: string,
+  packagesRoot: string,
+  tarBin: string,
+  npmBin?: string,
+  signal?: AbortSignal,
+): Promise<Buffer> {
+  const source = await inspectLocalDirectorySource(resolve(sourcePath)).catch((cause) => {
+    throw sourceError('local plugin source coordinates are inconsistent', cause);
+  });
+  if (source.manifest) {
+    try {
+      return await prepareLocalDirectoryDistribution(source, { packagesRoot, tarBin, npmBin, signal });
+    } catch (cause) {
+      throw sourceError('local plugin publication could not be prepared', cause);
+    }
+  }
   await mkdir(packagesRoot, { recursive: true, mode: 0o700 });
   const stagingRoot = await mkdtemp(resolve(packagesRoot, '.local-directory-'));
   try {
     await copyLocalDirectory(resolve(sourcePath), resolve(stagingRoot, 'package'));
+    await source.assertCurrent();
     const archivePath = resolve(stagingRoot, 'candidate.tgz');
     // Keep the archive operand free of drive colons for GNU tar. Only this
     // Host-owned root, never copied package members, is searched as tar's cwd.
@@ -227,7 +248,9 @@ async function archiveLocalDirectory(sourcePath: string, packagesRoot: string, t
       env: { PATH: process.env.PATH ?? '/usr/bin:/bin', LC_ALL: 'C' },
       maxBuffer: 8 * 1024 * 1024,
     });
-    return (await readRegularFile(archivePath)).bytes;
+    const bytes = (await readRegularFile(archivePath)).bytes;
+    await source.assertCurrent();
+    return bytes;
   } catch (error) {
     if (error instanceof LocalPluginPackageAdmissionError) throw error;
     throw sourceError('local plugin directory could not be archived safely', error);
@@ -322,7 +345,7 @@ export class LocalPluginPackageAdmission {
   ) {
     const bytes =
       source.kind === 'local-directory'
-        ? await archiveLocalDirectory(source.path, this.packagesRoot, this.tarBin)
+        ? await archiveLocalDirectory(source.path, this.packagesRoot, this.tarBin, this.options.npmBin, fence.signal)
         : (await readRegularFile(resolve(source.path))).bytes;
     if (bytes.byteLength > MAX_PLUGIN_PACKAGE_BYTES) {
       throw new LocalPluginPackageAdmissionError('PACKAGE_TOO_LARGE', 'local plugin package exceeds Host limit');

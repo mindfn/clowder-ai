@@ -213,7 +213,7 @@ test('rejects local directory symlinks without reading or packaging their target
   assert.equal((await store.snapshot()).instances.length, 0);
 });
 
-test('dereferences pnpm-style symlinks inside node_modules into the admitted archive', async () => {
+test('refuses an unproven pnpm physical dependency tree before admission', async () => {
   const sourceRoot = await tempRoot('cat-cafe-f202-local-directory-pnpm-');
   await writeLocalPackage(sourceRoot);
   const packageStore = join(sourceRoot, 'node_modules', '.pnpm', 'fixture@1.0.0', 'node_modules', 'fixture');
@@ -224,43 +224,35 @@ test('dereferences pnpm-style symlinks inside node_modules into the admitted arc
     '{"name":"@clowder-ai/official-test-source","version":"1.0.0","dependencies":{"fixture":"1.0.0"}}\n',
   );
   await symlink('.pnpm/fixture@1.0.0/node_modules/fixture', join(sourceRoot, 'node_modules', 'fixture'));
-  const { admission, packagesRoot } = await harness();
-
-  const result = await admission.install({ kind: 'local-directory', path: sourceRoot });
-  const locator = new (await import('../dist/domains/plugin/index.js')).FilesystemVerifiedPluginPackageLocator(
-    packagesRoot,
+  const { admission, store } = await harness();
+  await assert.rejects(
+    admission.install({ kind: 'local-directory', path: sourceRoot }),
+    (error) => error?.code === 'INVALID_LOCAL_SOURCE' && error.cause?.code === 'DEPENDENCY_LOCK_MISSING',
   );
-  const located = await locator.resolveInstalledPackage(result.packageDigest);
-  try {
-    const dependency = await readFile(join(located.rootDir, 'node_modules', 'fixture', 'package.json'), 'utf8');
-    assert.equal(JSON.parse(dependency).version, '1.0.0');
-  } finally {
-    await located.release();
-  }
+  assert.equal((await store.snapshot()).instances.length, 0);
 });
 
-test('records whether an owner dependency closure is shipped or materialized', async () => {
-  const shippedRoot = await tempRoot('cat-cafe-f202-local-shipped-');
-  await writeLocalPackage(shippedRoot);
-  await writeFile(
-    join(shippedRoot, 'package.json'),
-    '{"name":"@clowder-ai/official-test-source","version":"1.0.0","dependencies":{"fixture":"1.0.0"}}\n',
-  );
-  await mkdir(join(shippedRoot, 'node_modules', 'fixture'), { recursive: true });
-  await writeFile(join(shippedRoot, 'node_modules', 'fixture', 'package.json'), '{"version":"1.0.0"}\n');
-  const shipped = await harness();
-  await shipped.admission.install({ kind: 'local-directory', path: shippedRoot });
-  assert.equal((await shipped.store.snapshot()).packages[0].provenance.dependencyClosure, 'shipped');
-
-  const materializedRoot = await tempRoot('cat-cafe-f202-local-materialized-');
-  await writeLocalPackage(materializedRoot);
-  await writeFile(
-    join(materializedRoot, 'package.json'),
-    '{"name":"@clowder-ai/official-test-source","version":"1.0.0","dependencies":{"fixture":"1.0.0"}}\n',
-  );
-  const materialized = await harness();
-  await materialized.admission.install({ kind: 'local-directory', path: materializedRoot });
-  assert.equal((await materialized.store.snapshot()).packages[0].provenance.dependencyClosure, 'materialized');
+test('records shipped or materialized closure for immutable owner archives', async () => {
+  const packageJson = JSON.stringify({
+    name: '@clowder-ai/official-test-source',
+    version: '1.0.0',
+    dependencies: { fixture: '1.0.0' },
+  });
+  for (const closure of ['shipped', 'materialized']) {
+    const archive = await packageArchive({
+      extraFiles: {
+        'package.json': packageJson,
+        ...(closure === 'shipped'
+          ? { 'node_modules/fixture/package.json': '{"name":"fixture","version":"1.0.0"}' }
+          : {}),
+      },
+    });
+    const archivePath = join(await tempRoot('cat-cafe-f202-local-closure-'), 'package.tgz');
+    await writeFile(archivePath, archive.bytes);
+    const { admission, store } = await harness();
+    await admission.install({ kind: 'local-archive', path: archivePath });
+    assert.equal((await store.snapshot()).packages[0].provenance.dependencyClosure, closure);
+  }
 });
 
 test('rejects manifest/schema mismatch with zero inventory mutation', async () => {

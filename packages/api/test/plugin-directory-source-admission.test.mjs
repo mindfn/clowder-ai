@@ -1,0 +1,203 @@
+import assert from 'node:assert/strict';
+import {
+  access,
+  chmod,
+  mkdir,
+  mkdtemp,
+  open,
+  readdir,
+  readFile,
+  rename,
+  rm,
+  symlink,
+  writeFile,
+} from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import { test } from 'node:test';
+import { pathToFileURL } from 'node:url';
+import { stringify } from 'yaml';
+import { FilesystemVerifiedPluginPackageLocator } from '../src/domains/plugin/external-runtime/filesystem-package-locator.ts';
+import { HostInventoryControlPlane } from '../src/domains/plugin/host-inventory/control-plane.ts';
+import { MemoryPluginInventoryStore } from '../src/domains/plugin/host-inventory/stores.ts';
+import { LocalPluginPackageAdmission } from '../src/domains/plugin/manager/local-package-admission.ts';
+import { manifest } from './plugin-official-package-installer.fixture.js';
+
+async function json(path, value) {
+  await writeFile(path, `${JSON.stringify(value, null, 2)}\n`);
+}
+
+async function fixture(
+  t,
+  { observed = '1.0.0', lockSpecifier = '1.0.0', lockVersion = '9.0', missingLock = false } = {},
+) {
+  const root = await mkdtemp(join(tmpdir(), 'plugin-directory-source-'));
+  t.after(() => rm(root, { recursive: true, force: true }));
+  const source = join(root, 'packages/plugin');
+  const runtime = join(root, 'packages/runtime');
+  const inventoryRoot = join(root, 'inventory');
+  await mkdir(join(source, 'node_modules'), { recursive: true });
+  await mkdir(join(source, 'dist'));
+  await mkdir(join(source, 'schemas'));
+  await mkdir(join(runtime, 'dist'), { recursive: true });
+  await json(join(root, 'package.json'), { name: 'source-workspace', private: true, packageManager: 'pnpm@9.15.4' });
+  await writeFile(join(root, 'pnpm-workspace.yaml'), "packages:\n  - 'packages/*'\n");
+  await json(join(source, 'package.json'), {
+    name: 'directory-test-plugin',
+    version: '0.1.0-alpha.1',
+    type: 'module',
+    main: './dist/entrypoint.js',
+    files: ['dist', 'manifest.json', 'schemas'],
+    dependencies: { 'runtime-dependency': '1.0.0' },
+    scripts: { prepack: "node -e \"require('node:fs').writeFileSync('script-ran','bad')\"" },
+  });
+  await json(join(runtime, 'package.json'), {
+    name: 'runtime-dependency',
+    version: observed,
+    type: 'module',
+    main: './dist/index.js',
+    files: ['dist'],
+  });
+  await writeFile(join(runtime, 'dist/index.js'), 'export const value = 42;\n');
+  await writeFile(join(source, 'dist/entrypoint.js'), 'export { value } from "runtime-dependency";\n');
+  await json(join(source, 'manifest.json'), manifest());
+  await json(join(source, 'schemas/official.test.v1.schema.json'), {
+    type: 'object',
+    properties: { payload: { type: 'object' }, source: { type: 'object' } },
+    required: ['payload', 'source'],
+  });
+  await symlink(runtime, join(source, 'node_modules/runtime-dependency'), 'dir');
+  if (!missingLock)
+    await writeFile(
+      join(root, 'pnpm-lock.yaml'),
+      stringify({
+        lockfileVersion: lockVersion,
+        importers: {
+          '.': {},
+          'packages/plugin': {
+            dependencies: { 'runtime-dependency': { specifier: lockSpecifier, version: 'link:../runtime' } },
+          },
+          'packages/runtime': {},
+        },
+        packages: {},
+        snapshots: {},
+      }),
+    );
+  const packMarker = join(root, 'pack-called');
+  const packSentinel = join(root, 'npm-sentinel');
+  await writeFile(packSentinel, `#!/bin/sh\nprintf called > '${packMarker}'\nexit 71\n`);
+  await chmod(packSentinel, 0o700);
+  const store = new MemoryPluginInventoryStore();
+  const inventory = new HostInventoryControlPlane(store, { createInstanceId: () => 'pi_source', now: () => 1000 });
+  let grants = 0;
+  const createAdmission = (npmBin = packSentinel) =>
+    new LocalPluginPackageAdmission({
+      inventory,
+      packagesRoot: inventoryRoot,
+      npmBin,
+      grantPolicy: () => {
+        grants++;
+        return ['events.publish'];
+      },
+    });
+  return { root, source, inventoryRoot, store, packMarker, createAdmission, grants: () => grants };
+}
+
+async function rejectsBeforePreparation(f, reason) {
+  let failure;
+  try {
+    await f.createAdmission().install({ kind: 'local-directory', path: f.source });
+  } catch (error) {
+    failure = error;
+  }
+  assert.ok(failure, `${reason}: inconsistent source graph must be rejected before preparation`);
+  // Keep the existing public admission envelope; the machine reason belongs to the internal preparation boundary.
+  assert.equal(failure.code, 'INVALID_LOCAL_SOURCE');
+  assert.equal(failure.cause?.code, reason);
+  assert.equal(f.grants(), 0, 'source refusal must precede grant policy');
+  assert.deepEqual((await f.store.snapshot()).instances, []);
+  assert.deepEqual((await f.store.snapshot()).packages, []);
+  assert.deepEqual((await f.store.snapshot()).grants, []);
+  await assert.rejects(access(f.packMarker), { code: 'ENOENT' }, 'source refusal must precede npm pack');
+}
+
+test('refuses declared exact version versus physical workspace dependency mismatch before pack or inventory', async (t) => {
+  await rejectsBeforePreparation(await fixture(t, { observed: '2.0.0' }), 'DEPENDENCY_VERSION_MISMATCH');
+});
+
+test('refuses a lock importer specifier inconsistent with the selected package before pack or inventory', async (t) => {
+  await rejectsBeforePreparation(await fixture(t, { lockSpecifier: '2.0.0' }), 'DEPENDENCY_LOCK_MISMATCH');
+});
+
+test('refuses a runtime dependency graph without a source-owned lock before pack or inventory', async (t) => {
+  await rejectsBeforePreparation(await fixture(t, { missingLock: true }), 'DEPENDENCY_LOCK_MISSING');
+});
+
+test('refuses an unsupported lock format instead of copying the physical graph as proof', async (t) => {
+  await rejectsBeforePreparation(await fixture(t, { lockVersion: '8.0' }), 'DEPENDENCY_LOCK_UNSUPPORTED');
+});
+
+test('installs publication members and workspace runtime closure without dev files or pack scripts', async (t) => {
+  const f = await fixture(t);
+  await mkdir(join(f.source, 'test'));
+  const large = await open(join(f.source, 'test/unpublished.bin'), 'wx');
+  try {
+    await large.truncate(33 * 1024 * 1024);
+  } finally {
+    await large.close();
+  }
+  const result = await f.createAdmission('npm').install({ kind: 'local-directory', path: f.source });
+  assert.equal(result.pluginInstanceId, 'pi_source');
+  assert.equal((await f.store.snapshot()).packages[0].provenance.dependencyClosure, 'shipped');
+  const locator = new FilesystemVerifiedPluginPackageLocator(f.inventoryRoot);
+  const located = await locator.resolveInstalledPackage(result.packageDigest);
+  try {
+    assert.match(await readFile(join(located.rootDir, 'dist/entrypoint.js'), 'utf8'), /runtime-dependency/);
+    assert.match(await readFile(join(located.rootDir, 'node_modules/runtime-dependency/dist/index.js'), 'utf8'), /42/);
+    await assert.rejects(access(join(located.rootDir, 'test/unpublished.bin')), { code: 'ENOENT' });
+    await assert.rejects(access(join(f.source, 'script-ran')), { code: 'ENOENT' });
+    const receipt = JSON.parse(await readFile(join(located.rootDir, '.clowder-local-source.json'), 'utf8'));
+    assert.equal(receipt.provenance, 'owner-local');
+    assert.equal(receipt.nodes.length, 2);
+    assert.match(receipt.sourceGraphDigest, /^sha512-/);
+    assert.equal(
+      receipt.nodes.some((node) => node.members.some((member) => member.path === 'test/unpublished.bin')),
+      false,
+    );
+    await rename(f.source, `${f.source}-moved`);
+    await rename(join(f.root, 'packages/runtime'), join(f.root, 'packages/runtime-moved'));
+    // This is only the fresh fixture's inert export, never a real plugin entrypoint.
+    assert.equal((await import(pathToFileURL(join(located.rootDir, 'dist/entrypoint.js')).href)).value, 42);
+    assert.equal(
+      (await readdir(f.inventoryRoot)).some((name) => name.startsWith('.directory-prepare-')),
+      false,
+    );
+    await located.verifyIntegrity();
+  } finally {
+    await located.release();
+  }
+});
+
+test('keeps dependency-free ordinary local directories admissible', async (t) => {
+  const f = await fixture(t);
+  // This independent root has no dependencies and needs no workspace resolution.
+  const ordinary = join(f.root, 'ordinary');
+  await mkdir(join(ordinary, 'dist'), { recursive: true });
+  await mkdir(join(ordinary, 'schemas'));
+  await json(join(ordinary, 'package.json'), {
+    name: 'directory-test-plugin',
+    version: '0.1.0-alpha.1',
+    type: 'module',
+    files: ['dist', 'schemas', 'manifest.json'],
+  });
+  await json(join(ordinary, 'manifest.json'), manifest());
+  await writeFile(join(ordinary, 'dist/entrypoint.js'), '// no side effects\n');
+  await json(join(ordinary, 'schemas/official.test.v1.schema.json'), {
+    type: 'object',
+    properties: { payload: { type: 'object' }, source: { type: 'object' } },
+    required: ['payload', 'source'],
+  });
+  const result = await f.createAdmission('npm').install({ kind: 'local-directory', path: ordinary });
+  assert.equal(result.pluginId, 'official.test-source');
+  assert.equal((await f.store.snapshot()).instances.length, 1);
+});
