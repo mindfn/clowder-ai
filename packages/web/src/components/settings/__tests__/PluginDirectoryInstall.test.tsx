@@ -148,3 +148,52 @@ it('ignores an older browse response after the path input changes', async () => 
   expect(button('安装插件').disabled).toBe(true);
   expect(writes()).toHaveLength(0);
 });
+
+it.each([
+  'headers',
+  'body',
+] as const)('ignores a closed browser response arriving at %s after the dialog reopens', async (boundary) => {
+  let releaseOld!: () => void;
+  let releaseCurrent!: () => void;
+  const currentPath = '/workspace/plugins/current-plugin';
+  if (boundary === 'headers') {
+    directoryResponse = () =>
+      new Promise((resolve) => {
+        releaseOld = () => resolve(json(listing(packagePath)));
+      });
+  } else {
+    const response = json(listing(packagePath));
+    vi.spyOn(response, 'json').mockImplementation(
+      () =>
+        new Promise((resolve) => {
+          releaseOld = () => resolve(listing(packagePath));
+        }),
+    );
+    directoryResponse = async () => response;
+  }
+  await open();
+  expect(releaseOld).toBeTypeOf('function');
+  await click('取消');
+  expect(document.querySelector('[role="dialog"]')).toBeNull();
+  directoryResponse = () =>
+    new Promise((resolve) => {
+      releaseCurrent = () => resolve(json(listing(currentPath)));
+    });
+  await click('从本地目录安装');
+  await click('local-example');
+  expect(releaseCurrent).toBeTypeOf('function');
+  expect(button('安装插件').disabled).toBe(true);
+  await act(async () => releaseOld());
+  expect(document.querySelector('[aria-live="polite"]')?.textContent).not.toContain(packagePath);
+  expect(button('安装插件').disabled).toBe(true);
+  await click('安装插件');
+  expect(writes()).toHaveLength(0);
+  await act(async () => releaseCurrent());
+  expect(document.querySelector('[aria-live="polite"]')?.textContent).toContain(currentPath);
+  expect(button('安装插件').disabled).toBe(false);
+  await click('安装插件');
+  expect(writes()).toHaveLength(1);
+  expect(JSON.parse(String(writes()[0]?.[1]?.body))).toEqual({
+    source: { kind: 'local-directory', path: currentPath },
+  });
+});

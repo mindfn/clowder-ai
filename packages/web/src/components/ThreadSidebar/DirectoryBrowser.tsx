@@ -88,6 +88,10 @@ export function DirectoryBrowser({
   // Initial load — try initialPath, fallback to homedir on 403 (with visible info)
   useEffect(() => {
     fetchDirectory(initialPath, !!initialPath);
+    return () => {
+      // Retire this browser's requests before a replacement can select a path.
+      navigationVersionRef.current += 1;
+    };
   }, [fetchDirectory, initialPath]);
 
   const handlePathSubmit = useCallback(() => {
