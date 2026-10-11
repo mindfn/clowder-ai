@@ -492,9 +492,13 @@ test('the CLI honours --baseline-ref instead of the registry default', (t) => {
   assert.equal(withBaseline.code, 1, withBaseline.out);
   assert.match(withBaseline.out, /registry was reverted/);
 
+  // The default ref has advanced to the rebuilt tree, so it cannot see the
+  // committed loss. It must say so instead of claiming a verification - which
+  // is exactly why CI passes the immutable pre-reset ref explicitly.
   const withoutBaseline = runGuard([join(root, 'scripts/check-fork-only-patches.mjs')], root);
-  assert.equal(withoutBaseline.code, 1, 'the advanced default must fail closed too');
-  assert.match(withoutBaseline.out, /resolves to HEAD/);
+  assert.equal(withoutBaseline.code, 0, withoutBaseline.out);
+  assert.match(withoutBaseline.out, /no older baseline/);
+  assert.doesNotMatch(withoutBaseline.out, /claimed by .* still present/);
 });
 
 test('--no-baseline states the skip instead of hiding it', (t) => {
@@ -503,4 +507,79 @@ test('--no-baseline states the skip instead of hiding it', (t) => {
   const { code, out } = runGuard([join(root, 'scripts/check-fork-only-patches.mjs'), '--no-baseline'], root);
   assert.equal(code, 0, out);
   assert.match(out, /rebuild-survival SKIPPED/);
+});
+
+// ---------------------------------------------------------------------------
+// Default vs explicit baseline (PR #185 review round 4, 砚砚 P1).
+//
+// Once merged, a clean develop_base checkout has HEAD == origin/develop_base.
+// Failing closed on that made the FIRST step of canonical `pnpm check` red on
+// the very branch it protects, so nothing after it ever ran.
+//
+// The fail-closed rule exists for the CI case: a caller who explicitly names a
+// baseline that turns out to be the tree under test has mis-wired the witness.
+// The registry default resolving to HEAD means something else - there is no
+// older tree here - so HEAD itself becomes the witness for the WORKING TREE.
+// That keeps catching an uncommitted registry or patch reversion instead of
+// skipping the survival half outright.
+// ---------------------------------------------------------------------------
+
+function tipRepo(t) {
+  // A clean develop_base tip: the remote-tracking default equals HEAD.
+  const { root } = pushedRepo(t, { baselinePatches: [KEPT, DROPPED], afterPatches: [KEPT, DROPPED] });
+  assert.equal(
+    gitCapture(root, 'rev-parse', BASELINE).trim(),
+    gitCapture(root, 'rev-parse', 'HEAD').trim(),
+    'fixture must model HEAD == origin/develop_base',
+  );
+  return root;
+}
+
+test('a clean develop_base tip passes the default invocation', (t) => {
+  const root = tipRepo(t);
+  const { code, out } = runGuard([GUARD, '--repo-root', root], tmpdir());
+  assert.equal(code, 0, `canonical pnpm check would be red on its own target branch:\n${out}`);
+  assert.match(out, /no older baseline/);
+});
+
+test('an explicit --baseline-ref HEAD still fails closed', (t) => {
+  // The CI defence must not loosen: naming the accused as the witness is a
+  // mis-wired caller, whatever the registry default happens to be.
+  const root = tipRepo(t);
+  const { code, out } = runGuard([GUARD, '--repo-root', root, '--baseline-ref', 'HEAD'], tmpdir());
+  assert.equal(code, 1, out);
+  assert.match(out, /resolves to HEAD/);
+});
+
+test('at the tip, HEAD witnesses an uncommitted registry reversion', (t) => {
+  const root = tipRepo(t);
+  // Uncommitted: drop a claim from the registry and delete its file.
+  writeFileSync(
+    join(root, 'scripts/fork-only-patches.json'),
+    JSON.stringify({ baselineRef: BASELINE, patches: [KEPT] }, null, 2),
+  );
+  rmSync(join(root, 'src/dropped.ts'));
+
+  const { code, out } = runGuard([GUARD, '--repo-root', root], tmpdir());
+  assert.equal(code, 1, 'the default path must not skip survival - HEAD is still a witness');
+  assert.match(out, /f192-gate.*registry was reverted/);
+  assert.match(out, /src\/dropped\.ts/);
+});
+
+test('the workflow keeps passing an explicit immutable baseline', () => {
+  // The default path is honest that it cannot see a committed rebuild loss, so
+  // CI must keep naming the pre-reset commit. Pin that wiring as a registered
+  // anchor: deleting it turns the TREE check red even if CI falls back.
+  const registry = JSON.parse(readFileSync(join(REPO_ROOT, 'scripts/fork-only-patches.json'), 'utf8'));
+  const wf = registry.patches
+    .flatMap((p) => p.requiredAnchors ?? [])
+    .find((a) => a.file === '.github/workflows/fork-only-patches.yml');
+  assert.ok(wf, 'workflow must be a registered anchor file');
+  for (const needle of [
+    'check-fork-only-patches.mjs --baseline-ref',
+    'github.event.before',
+    'github.event.pull_request.base.sha',
+  ]) {
+    assert.ok(wf.mustContain.includes(needle), `workflow anchor must pin ${needle}`);
+  }
 });

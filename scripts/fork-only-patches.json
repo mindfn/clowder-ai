@@ -46,8 +46,13 @@
       "requiredAnchors": [
         {
           "file": ".github/workflows/fork-only-patches.yml",
-          "mustContain": ["branches: [develop_base]"],
-          "note": "the trigger that makes the guard automatic; a workflow that survives with a main-only trigger is silently inert"
+          "mustContain": [
+            "branches: [develop_base]",
+            "check-fork-only-patches.mjs --baseline-ref",
+            "github.event.before",
+            "github.event.pull_request.base.sha"
+          ],
+          "note": "the trigger that makes the guard automatic, AND the explicit immutable pre-reset baseline it passes. The default baseline cannot see a committed rebuild loss, so dropping --baseline-ref from CI must turn the tree check red rather than fall back silently."
         },
         {
           "file": "package.json",
