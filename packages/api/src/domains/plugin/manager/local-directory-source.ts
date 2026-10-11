@@ -50,7 +50,8 @@ export interface LocalDirectorySourceCoordinates {
   readonly manifest: RecordValue | undefined;
   readonly lockRoot?: string;
   readonly lockDigest?: string;
-  readonly registryIntegrity?: string;
+  /** Declared lock coordinate metadata, not proof of registry content provenance. */
+  readonly lockIntegrity?: string;
   readonly lockCoordinate?: string;
   readonly dependencies: readonly LocalDirectoryDependency[];
   readonly absentDependencies: readonly { name: string; requested: string; peer: boolean; coordinate?: string }[];
@@ -243,7 +244,7 @@ export async function inspectLocalDirectorySource(
     operation.check();
     const previous = built.get(directory);
     if (previous) {
-      if (previous.lockCoordinate !== coordinate || previous.registryIntegrity !== integrity)
+      if (previous.lockCoordinate !== coordinate || previous.lockIntegrity !== integrity)
         invalid('DEPENDENCY_LOCK_MISMATCH', 'one physical node has inconsistent locked identities');
       return previous;
     }
@@ -367,7 +368,7 @@ export async function inspectLocalDirectorySource(
       dependencies: edges,
       absentDependencies: absent,
       ...(lock ? { lockRoot: lock.root, lockDigest: lock.digest } : {}),
-      ...(integrity ? { registryIntegrity: integrity, lockCoordinate: coordinate! } : {}),
+      ...(integrity ? { lockIntegrity: integrity, lockCoordinate: coordinate! } : {}),
       dependencySource: async (edge) => {
         const target = targets.get(edge.name);
         if (!target || target.root !== edge.root) invalid('DEPENDENCY_LOCK_MISMATCH', 'unknown source edge');

@@ -20,8 +20,8 @@ import { manifest } from './plugin-official-package-installer.fixture.js';
 const integrity = (bytes) => `sha512-${createHash('sha512').update(bytes).digest('base64')}`;
 const json = (path, value) => writeFile(path, `${JSON.stringify(value)}\n`);
 
-// Synthetic original registry bytes. Tests bind the entire compressed archive;
-// no assertion here represents a real publisher or the Collective package.
+// Synthetic lock-declared registry bytes. Owner-provided content is a separate
+// source of authority; these cached bytes must not govern local admission.
 function archive(files) {
   const entries = [];
   for (const [name, text] of Object.entries(files)) {
@@ -54,7 +54,7 @@ async function fixture(
     transitive = false,
     peer = false,
     optional = false,
-    seed = true,
+    seed = false,
     cycle = false,
     multipleVersions = false,
     shadowOptional = false,
@@ -239,7 +239,7 @@ async function reject(f, code) {
   await assert.rejects(access(f.marker), { code: 'ENOENT' });
 }
 
-async function installed(f) {
+async function installed(f, expectedValue = 42) {
   const result = await f.admission().install({ kind: 'local-directory', path: f.source });
   const locator = new FilesystemVerifiedPluginPackageLocator(f.packagesRoot);
   const located = await locator.resolveInstalledPackage(result.packageDigest);
@@ -247,40 +247,54 @@ async function installed(f) {
     await rename(f.source, `${f.source}-moved`);
     await rename(f.physical, `${f.physical}-moved`);
     const loaded = await import(pathToFileURL(join(located.rootDir, 'dist/entrypoint.js')).href);
-    assert.equal(loaded.value, 42);
+    assert.equal(loaded.value, expectedValue);
     if (f.multipleVersions) assert.equal(loaded.older, 13);
     const receipt = JSON.parse(await readFile(join(located.rootDir, '.clowder-local-source.json'), 'utf8'));
-    for (const node of f.nodes.values())
-      assert.ok(
-        receipt.nodes.some((entry) => entry.name === node.metadata.name && entry.registryIntegrity === node.sri),
+    assert.equal(receipt.version, 2);
+    assert.equal(receipt.contentProvenance, 'owner-local');
+    for (const entry of receipt.nodes) {
+      assert.equal(entry.contentProvenance, 'owner-local');
+      assert.equal(Object.hasOwn(entry, 'registryIntegrity'), false);
+      assert.match(entry.packDigest, /^sha512-/);
+    }
+    for (const node of f.nodes.values()) {
+      const entry = receipt.nodes.find(
+        (entry) => entry.name === node.metadata.name && entry.version === node.metadata.version,
       );
+      assert.ok(entry);
+      assert.equal(entry.lockIntegrity, node.sri);
+      assert.notEqual(entry.packDigest, node.sri, 'local pack digest must not impersonate the original registry SRI');
+    }
+    const record = (await f.store.snapshot()).packages[0];
+    assert.equal(record.provenance.kind, 'local-directory');
+    assert.equal(record.provenance.dependencyClosure, 'shipped');
     await located.verifyIntegrity();
   } finally {
     await located.release();
   }
 }
 
-test('admits exact cached registry originals with locked semver transitive closure', async (t) => {
-  await installed(await fixture(t, { requested: '^1.0.0', transitive: true }));
+test('seals owner-local bytes without claiming cached registry provenance', async (t) => {
+  await installed(await fixture(t, { requested: '^1.0.0', transitive: true, seed: true }));
 });
 
-test('refuses unavailable canonical registry archive before npm or inventory', async (t) => {
-  await reject(await fixture(t, { seed: false }), 'DEPENDENCY_ARCHIVE_UNAVAILABLE');
+test('admits an owner-local closure with an empty canonical archive cache', async (t) => {
+  await installed(await fixture(t));
 });
 
-test('refuses cached tarball bytes that disagree with lock SRI before npm or inventory', async (t) => {
-  const f = await fixture(t);
+test('does not consult unrelated canonical cache bytes for owner-local admission', async (t) => {
+  const f = await fixture(t, { seed: true });
   const alpha = f.nodes.get('registry-dependency');
   const corrupted = Buffer.from(alpha.bytes);
   corrupted[corrupted.length - 1] ^= 1;
   await writeFile(join(f.packagesRoot, packageDirectoryName(alpha.sri), 'package.tgz'), corrupted);
-  await reject(f, 'DEPENDENCY_CONTENT_MISMATCH');
+  await installed(f);
 });
 
-test('refuses physical publication bytes that disagree with canonical registry members', async (t) => {
-  const f = await fixture(t);
+test('seals locally modified dependency bytes without claiming registry integrity', async (t) => {
+  const f = await fixture(t, { seed: true });
   await writeFile(join(f.nodes.get('registry-dependency').directory, 'dist/index.js'), 'export const value = 99;\n');
-  await reject(f, 'DEPENDENCY_CONTENT_MISMATCH');
+  await installed(f, 99);
 });
 
 test('refuses a transitive snapshot selecting another physical dependency version', async (t) => {
@@ -311,7 +325,7 @@ test('preserves separate versions in the root and transitive consumer scopes', a
 });
 
 test('refuses relocation that makes an absent optional dependency visible from an ancestor', async (t) => {
-  const f = await fixture(t, { shadowOptional: true });
+  const f = await fixture(t, { shadowOptional: true, seed: true });
   // Alpha's physical tree cannot see the root's leaf; relocation must not turn
   // this attested absence into a present optional dependency.
   await assert.rejects(access(join(f.nodes.get('registry-dependency').directory, 'node_modules/registry-leaf')), {

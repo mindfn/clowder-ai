@@ -5,8 +5,6 @@ import { chmod, lstat, mkdir, mkdtemp, readFile, rm, utimes, writeFile } from 'n
 import { dirname, isAbsolute, relative, resolve, sep } from 'node:path';
 import { promisify } from 'node:util';
 import { PLUGIN_ARCHIVE_BUDGET, preflightPluginArchive } from '../external-runtime/archive-preflight.js';
-import { packageDirectoryName } from '../external-runtime/filesystem-package-locator.js';
-import { stageVerifiedPackageContent } from '../external-runtime/package-staging.js';
 import type { LocalDirectoryOperation } from './local-directory-operation.js';
 import { type LocalDirectorySourceCoordinates, LocalDirectorySourceError } from './local-directory-source.js';
 
@@ -26,7 +24,6 @@ interface Node {
   members: readonly Member[];
   snapshot?: string;
   packDigest?: string;
-  canonicalArchive?: string;
 }
 interface Budget {
   files: number;
@@ -173,98 +170,6 @@ async function sourceGraph(root: LocalDirectorySourceCoordinates): Promise<Map<s
   return nodes;
 }
 
-async function attestRegistryNode(
-  node: Node,
-  operation: string,
-  options: LocalDirectoryDistributionOptions,
-  lifetime: LocalDirectoryOperation,
-  budget: Budget,
-): Promise<void> {
-  const signal = lifetime.signal;
-  const integrity = node.source.registryIntegrity!;
-  const artifactRoot = resolve(options.packagesRoot, packageDirectoryName(integrity));
-  const archive = resolve(artifactRoot, 'package.tgz');
-  try {
-    const stat = await lifetime.io(() => lstat(artifactRoot));
-    if (!stat.isDirectory() || stat.isSymbolicLink())
-      invalid('DEPENDENCY_CONTENT_MISMATCH', 'canonical cache root is not a real directory');
-    await lifetime.io(() => lstat(archive));
-  } catch (error) {
-    if ((error as NodeJS.ErrnoException).code === 'ENOENT')
-      invalid('DEPENDENCY_ARCHIVE_UNAVAILABLE', `canonical archive unavailable for ${node.source.manifest?.name}`);
-    throw error;
-  }
-  let staged: Awaited<ReturnType<typeof stageVerifiedPackageContent>>;
-  try {
-    staged = await stageVerifiedPackageContent({
-      artifactRoot,
-      packagesRoot: operation,
-      packageDigest: integrity,
-      tarBin: options.tarBin?.trim() || 'tar',
-      signal,
-    });
-  } catch (cause) {
-    lifetime.check();
-    throw new LocalDirectorySourceError(
-      'DEPENDENCY_CONTENT_MISMATCH',
-      'canonical registry archive failed integrity or bounded staging',
-      { cause },
-    );
-  }
-  try {
-    const snapshot = resolve(operation, `node-${node.id}`);
-    await lifetime.io(() => mkdir(snapshot, { mode: 0o700 }));
-    const members: Member[] = [];
-    async function walk(directory: string, prefix: string): Promise<void> {
-      for (const entry of (await lifetime.entries(directory)).sort((a, b) => a.name.localeCompare(b.name))) {
-        lifetime.check();
-        const member = prefix ? `${prefix}/${entry.name}` : entry.name;
-        pathOf(staged.rootDir, member);
-        if (entry.name === 'node_modules' || member === RECEIPT)
-          invalid('DEPENDENCY_CONTENT_MISMATCH', 'canonical publication contains an undeclared closure or receipt');
-        if (entry.isDirectory()) {
-          await walk(resolve(directory, entry.name), member);
-          continue;
-        }
-        if (!entry.isFile()) invalid('DEPENDENCY_CONTENT_MISMATCH', 'canonical publication contains a special member');
-        const canonical = await memberBytes(staged.rootDir, member, lifetime);
-        let physical: Awaited<ReturnType<typeof memberBytes>>;
-        try {
-          physical = await memberBytes(node.source.root, member, lifetime);
-        } catch (cause) {
-          lifetime.check();
-          throw new LocalDirectorySourceError(
-            'DEPENDENCY_CONTENT_MISMATCH',
-            'canonical publication member is missing or unreadable',
-            { cause },
-          );
-        }
-        if (
-          physical.metadata.digest !== canonical.metadata.digest ||
-          physical.metadata.size !== canonical.metadata.size ||
-          (physical.metadata.mode & 0o111) !== (canonical.metadata.mode & 0o111)
-        )
-          invalid('DEPENDENCY_CONTENT_MISMATCH', `physical publication differs from canonical archive: ${member}`);
-        count(budget, physical.metadata.size);
-        // Read/write permission differences in a package-manager store are not
-        // publisher bytes; preserve the attested physical mode and execution bits.
-        await writeMember(snapshot, physical.metadata, canonical.bytes, lifetime);
-        members.push(physical.metadata);
-      }
-    }
-    await walk(staged.rootDir, '');
-    if (!members.some((member) => member.path === 'package.json'))
-      invalid('DEPENDENCY_CONTENT_MISMATCH', 'canonical package.json is missing');
-    await lifetime.io(() => staged.verifyIntegrity());
-    node.members = members.sort((a, b) => a.path.localeCompare(b.path));
-    node.snapshot = snapshot;
-    node.packDigest = integrity;
-    node.canonicalArchive = archive;
-  } finally {
-    await staged.release();
-  }
-}
-
 /** Prepare owned bytes; it does not start the plugin, install deps or run build scripts. */
 export async function prepareLocalDirectoryDistribution(
   source: LocalDirectorySourceCoordinates,
@@ -318,15 +223,11 @@ export async function prepareLocalDirectoryDistribution(
       `--cache=${resolve(operation, 'cache')}`,
     ];
     const selectionBudget: Budget = { files: 0, bytes: 0 };
-    // All registry attestations precede even npm --version. A failed registry
-    // edge cannot execute the packer, grant capabilities or mutate inventory.
-    for (const node of nodes.values()) {
-      if (node.source.registryIntegrity) await attestRegistryNode(node, operation, options, lifetime, selectionBudget);
-    }
+    // Admission source defines content provenance. Lock SRI remains coordinate
+    // metadata; every physical package is sealed as owner-local publication bytes.
     await source.assertCurrent();
     const npmVersion = (await run(npm, ['--version', ...npmArgs])).stdout.trim();
     for (const node of nodes.values()) {
-      if (node.source.registryIntegrity) continue;
       const selected = packResult(
         (await run(npm, ['pack', '--dry-run', '--json', ...npmArgs, node.source.root])).stdout,
       );
@@ -439,12 +340,6 @@ export async function prepareLocalDirectoryDistribution(
         if (JSON.stringify(current.metadata) !== JSON.stringify(member))
           invalid('DEPENDENCY_SOURCE_CHANGED', 'source publication content changed');
       }
-      if (node.source.registryIntegrity) {
-        const original = await memberBytes(dirname(node.canonicalArchive!), 'package.tgz', lifetime);
-        if (original.metadata.digest !== node.source.registryIntegrity)
-          invalid('DEPENDENCY_SOURCE_CHANGED', 'canonical registry archive changed during preparation');
-        continue;
-      }
       const finalSelection = packResult(
         (await run(npm, ['pack', '--dry-run', '--json', ...npmArgs, node.source.root])).stdout,
       );
@@ -456,8 +351,9 @@ export async function prepareLocalDirectoryDistribution(
     }
     await source.assertCurrent();
     const receipt = {
-      version: 1,
+      version: 2,
       provenance: 'owner-local',
+      contentProvenance: 'owner-local',
       npmVersion,
       platform: process.platform,
       arch: process.arch,
@@ -467,7 +363,8 @@ export async function prepareLocalDirectoryDistribution(
         version: node.source.manifest?.version,
         lockDigest: node.source.lockDigest,
         lockCoordinate: node.source.lockCoordinate,
-        registryIntegrity: node.source.registryIntegrity,
+        contentProvenance: 'owner-local',
+        lockIntegrity: node.source.lockIntegrity,
         absentDependencies: node.source.absentDependencies,
         packDigest: node.packDigest,
         members: node.members,
