@@ -19,6 +19,8 @@ export function DirectoryBrowser({
   initialPath,
   activeProjectPath,
   onCurrentPathChange,
+  onNavigationStart,
+  allowCreateDirectory = true,
   onVirtualLocationChange,
   onCancel,
   onSelectCurrent,
@@ -47,6 +49,7 @@ export function DirectoryBrowser({
   const fetchDirectory = useCallback(
     async (path?: string, fallbackOnForbidden = false) => {
       const navigationVersion = ++navigationVersionRef.current;
+      onNavigationStart?.();
       setIsLoading(true);
       setError(null);
       showDirectoryView();
@@ -79,7 +82,7 @@ export function DirectoryBrowser({
         if (navigationVersion === navigationVersionRef.current) setIsLoading(false);
       }
     },
-    [onCurrentPathChange, showDirectoryView],
+    [onCurrentPathChange, onNavigationStart, showDirectoryView],
   );
 
   // Initial load — try initialPath, fallback to homedir on 403 (with visible info)
@@ -154,7 +157,7 @@ export function DirectoryBrowser({
         view={view}
         onEnterDrivesView={enterDrivesView}
         onNavigateTo={fetchDirectory}
-        onStartCreateDir={handleStartCreateDir}
+        onStartCreateDir={allowCreateDirectory ? handleStartCreateDir : undefined}
         thisPcLabel={copy.thisPc}
         newFolderTitle={copy.newFolderTitle}
         newFolderLabel={copy.newFolder}
@@ -271,20 +274,25 @@ export function DirectoryBrowser({
           <input
             type="text"
             value={pathInput}
-            onChange={(e) => setPathInput(e.target.value)}
+            onChange={(e) => {
+              navigationVersionRef.current += 1;
+              setIsLoading(false);
+              onNavigationStart?.();
+              setPathInput(e.target.value);
+            }}
             onCompositionStart={ime.onCompositionStart}
             onCompositionEnd={ime.onCompositionEnd}
             onKeyDown={(e) => {
               if (e.key === 'Enter' && !ime.isComposing()) handlePathSubmit();
             }}
             placeholder={copy.pathPlaceholder}
-            className="flex-1 text-xs px-3 py-2 rounded-lg border border-[var(--console-border-soft)] bg-cafe-white focus:outline-none focus:ring-1 focus:ring-cafe-accent"
+            className="min-w-0 flex-1 text-xs px-3 py-2 rounded-lg border border-[var(--console-border-soft)] bg-cafe-white focus:outline-none focus:ring-1 focus:ring-cafe-accent"
           />
           {pathInput.trim() && (
             <button
               type="button"
               onClick={handlePathSubmit}
-              className="px-2.5 py-2 rounded-lg border border-[var(--console-border-soft)] bg-cafe-white text-cafe-secondary hover:bg-cafe-surface transition-colors"
+              className="shrink-0 px-2.5 py-2 rounded-lg border border-[var(--console-border-soft)] bg-cafe-white text-cafe-secondary hover:bg-cafe-surface transition-colors"
               aria-label={copy.goToPath}
             >
               <svg aria-hidden="true" className="w-3.5 h-3.5" viewBox="0 0 20 20" fill="currentColor">

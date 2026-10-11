@@ -221,6 +221,23 @@ export function PluginManagerLiveContent({
     [refresh],
   );
 
+  const installFromDirectory = useCallback(
+    async (path: string) => {
+      setError(null);
+      const response = await apiFetch('/api/plugin-manager/plugins/install', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ source: { kind: 'local-directory', path } }),
+      });
+      if (!response.ok) {
+        const failure = await responseError(response, `本地插件安装失败 (${response.status})`);
+        throw new Error(failure.message);
+      }
+      await refresh();
+    },
+    [refresh],
+  );
+
   const plugins = snapshot?.plugins ?? [];
   // Compatibility still owns operations; presentation comes from the Host's manifest projection.
   const compatibilityPresentation = compatibilityFixtures.map((fixture) => {
@@ -302,6 +319,7 @@ export function PluginManagerLiveContent({
         });
       }}
       onGitInstall={installFromGit}
+      onDirectoryInstall={installFromDirectory}
       onSetEnabled={(pluginId, enabled) => {
         const plugin = plugins.find((candidate) => candidate.pluginId === pluginId);
         if (!plugin || plugin.lifecycleRevision === null) {

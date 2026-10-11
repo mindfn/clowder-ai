@@ -1,8 +1,17 @@
 'use client';
 
-function PluginManagerToolbar({ onGitInstall }: { onGitInstall?: (url: string) => Promise<void> }) {
+import { PluginDirectoryInstallButton } from './PluginDirectoryInstallButton';
+
+function PluginManagerToolbar({
+  onGitInstall,
+  onDirectoryInstall,
+}: {
+  onGitInstall?: ((url: string) => Promise<void>) | undefined;
+  onDirectoryInstall?: ((path: string) => Promise<void>) | undefined;
+}) {
   return (
     <div data-plugin-manager-toolbar className="flex flex-wrap justify-end gap-2">
+      {onDirectoryInstall && <PluginDirectoryInstallButton onInstall={onDirectoryInstall} />}
       {onGitInstall && <PluginGitInstallButton onInstall={onGitInstall} />}
       <PluginArchiveInstallButton />
     </div>
@@ -94,6 +103,8 @@ export function PluginManagerContent({
   onPluginSelect,
   onSearchChange,
   onInstall,
+  onGitInstall,
+  onDirectoryInstall,
   onSetEnabled,
   onRequestEnable,
   onUninstall,
@@ -118,6 +129,8 @@ export function PluginManagerContent({
   onPluginSelect?: (pluginId: string | null) => void;
   onSearchChange?: (query: string) => void;
   onInstall?: (pluginId: string) => void;
+  onGitInstall?: (url: string) => Promise<void>;
+  onDirectoryInstall?: (path: string) => Promise<void>;
   onSetEnabled?: (pluginId: string, enabled: boolean) => void;
   onRequestEnable?: (pluginId: string) => void | Promise<void>;
   onUninstall?: (pluginId: string) => void;
@@ -177,8 +190,8 @@ export function PluginManagerContent({
     ));
 
   return (
-    <section data-testid="plugin-manager" className="flex min-h-0 flex-1 flex-col gap-3.5 overflow-hidden">
-      <PluginManagerToolbar onGitInstall={onGitInstall} />
+    <section data-testid="plugin-manager" className="flex h-full min-h-0 flex-1 flex-col gap-3.5 overflow-hidden">
+      <PluginManagerToolbar onGitInstall={onGitInstall} onDirectoryInstall={onDirectoryInstall} />
 
       {catalogStatus !== 'fresh' && (
         <div className="flex items-start gap-2 rounded-xl bg-conn-amber-bg px-3 py-2.5">

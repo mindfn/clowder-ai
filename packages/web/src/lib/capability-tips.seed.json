@@ -2245,6 +2245,31 @@
     "owner": "codex-sol"
   },
   {
+    "id": "feature-f202-local-directory-install",
+    "kind": "feature",
+    "sourceRef": {
+      "path": "feature-specs/2026-10-11-f202-local-directory-preparation.md",
+      "anchor": "Directory installation UI checkpoint"
+    },
+    "structureSource": {
+      "path": "packages/web/src/components/settings/plugin-manager/PluginDirectoryInstallButton.tsx",
+      "anchor": "PluginDirectoryInstallButton"
+    },
+    "bodySource": {
+      "path": "feature-specs/2026-10-11-f202-local-directory-preparation.md",
+      "anchor": "Settings → 插件集成"
+    },
+    "contexts": ["feature_dev", "concierge_open"],
+    "audience": ["cvo", "developer"],
+    "body": "调试本机插件时，到设置 → 插件集成选择“从本地目录安装”，打开已构建的插件包目录再安装。目录或依赖校验失败会保留错误提示；安装成功后仍需另行启用。",
+    "action": {
+      "type": "open_capability_surface",
+      "label": "打开插件管理",
+      "surfaceId": "settings.plugins"
+    },
+    "owner": "astra"
+  },
+  {
     "id": "capability-concept-demo-design",
     "kind": "capability",
     "sourceRef": {
