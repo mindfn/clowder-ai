@@ -451,6 +451,7 @@ export function createDormantPluginRuntimeComposition(
         ownerUserId: options.threadOwnerUserId,
         threadStore: options.threadStore,
         sourceStore: options.frustrationIssueStore,
+        messageStore: options.messageStore,
         deployment: options.deployment,
         ...(options.participantRoster ? { participantRoster: options.participantRoster } : {}),
         projectPath: options.projectRoot,

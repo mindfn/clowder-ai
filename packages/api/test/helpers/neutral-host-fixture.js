@@ -16,6 +16,7 @@ export async function neutralFixture(t, options = {}) {
   const packageRoot = join(root, 'package');
   await mkdir(packageRoot);
   const owner = process.env.DEFAULT_OWNER_USER_ID?.trim() || 'owner';
+  const messages = options.messageStore ?? new MessageStore();
   const threads = new ThreadStore();
   const thread = await threads.create(owner, 'source');
   const store = options.store ?? new InMemoryFrustrationIssueStore();
@@ -97,7 +98,7 @@ export async function neutralFixture(t, options = {}) {
   const runtime = createDormantPluginRuntimeComposition({
     projectRoot: root,
     threadOwnerUserId: owner,
-    messageStore: new MessageStore(),
+    messageStore: messages,
     threadStore: threads,
     ...(options.threadProjections ? { threadProjections: options.threadProjections } : {}),
     ...(options.participantRoster ? { participantRoster: options.participantRoster } : {}),
@@ -169,6 +170,7 @@ export async function neutralFixture(t, options = {}) {
     owner,
     thread,
     threads,
+    messages,
     store,
     draft,
     roster,

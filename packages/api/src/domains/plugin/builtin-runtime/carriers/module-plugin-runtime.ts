@@ -98,6 +98,8 @@ export interface ModulePluginHostShape {
   readonly frustration?: PluginNeutralHost['frustration'];
   readonly ownerThreads?: PluginNeutralHost['ownerThreads'];
   readonly participantRoster?: PluginNeutralHost['participantRoster'];
+  readonly sourceFacts?: PluginNeutralHost['sourceFacts'];
+  readonly nativeContext?: PluginNeutralHost['nativeContext'];
   readonly threads: PluginThreadHost;
   readonly messaging: PluginMessagingHost;
   readonly media: PluginMediaHost;

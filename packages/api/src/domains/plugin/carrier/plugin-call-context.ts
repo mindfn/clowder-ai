@@ -10,6 +10,8 @@ export interface PluginCallContext {
   readonly threadId: string;
   readonly userId: string;
   readonly invocationId: string;
+  /** Exact authenticated invocation origin; never substituted with a typed-wait source. */
+  readonly originTriggerMessageId?: string;
   readonly source?: {
     readonly kind: 'primary' | 'adopted_hold';
     readonly sourceMessageId: string;

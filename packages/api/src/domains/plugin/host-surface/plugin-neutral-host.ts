@@ -9,6 +9,7 @@ import {
   type FrustrationSource,
 } from '@clowder-ai/plugin-contract';
 import type { IFrustrationIssueStore } from '../../cats/services/stores/ports/FrustrationIssueStore.js';
+import type { IMessageStore } from '../../cats/services/stores/ports/MessageStore.js';
 import type { IThreadStore } from '../../cats/services/stores/ports/ThreadStore.js';
 import { currentPluginCallContext, currentPluginOwnerRequestContext } from '../carrier/plugin-call-context.js';
 import { snapshotPluginProtocolData } from '../carrier/plugin-protocol-data.js';
@@ -21,6 +22,11 @@ import {
   type PluginParticipantRosterHost,
   type PluginParticipantRosterServices,
 } from './plugin-participant-roster-host.js';
+import {
+  createPluginSourceFactsHost,
+  type PluginNativeContextHost,
+  type PluginSourceFactsHost,
+} from './plugin-source-facts-host.js';
 import type { PluginThreadProjectionDeps } from './plugin-thread-projections.js';
 
 export interface PluginDeploymentServices {
@@ -29,6 +35,8 @@ export interface PluginDeploymentServices {
   getReviewPolicy(): DeploymentCatalog['policy'];
 }
 export interface PluginNeutralHost {
+  readonly sourceFacts: PluginSourceFactsHost;
+  readonly nativeContext: PluginNativeContextHost;
   readonly ownerThreads: PluginOwnerThreadHost;
   readonly participantRoster: PluginParticipantRosterHost;
   readonly deployment: { getCatalog(): Promise<DeploymentCatalog> };
@@ -45,6 +53,7 @@ interface Deps {
   readonly ownerUserId: string | undefined;
   readonly threadStore: IThreadStore | undefined;
   readonly sourceStore: IFrustrationIssueStore | undefined;
+  readonly messageStore?: Pick<IMessageStore, 'getById'>;
   readonly deployment: PluginDeploymentServices | undefined;
   readonly participantRoster?: PluginParticipantRosterServices;
   readonly projectPath?: string;
@@ -171,6 +180,13 @@ export async function createPluginNeutralHost(deps: Deps): Promise<PluginNeutral
   const read = ['frustration.read'];
   const write = ['frustration.read', 'frustration.link'];
   return Object.freeze({
+    ...createPluginSourceFactsHost({
+      pluginInstanceId: deps.pluginInstanceId,
+      ownerUserId: deps.ownerUserId,
+      messageStore: deps.messageStore,
+      threadStore: deps.threadStore,
+      assertCurrent: current,
+    }),
     participantRoster: createPluginParticipantRosterHost({
       pluginInstanceId: deps.pluginInstanceId,
       ownerUserId: deps.ownerUserId,
