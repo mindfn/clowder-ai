@@ -124,7 +124,7 @@ async function admit(harness, overrides = {}) {
   return result;
 }
 
-function bindRun(harness, dispatch, targetId = 'opus') {
+function bindRun(harness, dispatch, targetId = 'opus', inputReadReceipt = false) {
   const invocationId = `turn-phase-m-${sequence}-${targetId}`;
   const startedAt = Date.now();
   harness.invocationTracker.start('thread-1', targetId, 'user-1', [targetId], 'parent-phase-m');
@@ -165,7 +165,7 @@ function bindRun(harness, dispatch, targetId = 'opus') {
   );
   const releaseCarrier = harness.invocationTracker.bindAgentClientActiveRunDispatcher('thread-1', targetId, {
     invocationId,
-    capabilities: { append: true, steer: true },
+    capabilities: { append: true, steer: true, inputReadReceipt },
     handle: { provider: 'anthropic', carrier: 'claude_agent_sdk', threadId: 's', turnId: 't' },
     dispatch,
   });
@@ -854,13 +854,94 @@ it('automatic Append delivers a whisper only to its authorized active recipient'
   const harness = createHarness();
   const opusDispatch = mock.fn(async () => ({ accepted: true, handle: {} }));
   const codexDispatch = mock.fn(async () => ({ accepted: true, handle: {} }));
-  bindRun(harness, opusDispatch, 'opus');
+  const run = bindRun(harness, opusDispatch, 'opus');
   bindRun(harness, codexDispatch, 'codex');
   const admitted = await admit(harness, { visibility: 'whisper', whisperTo: ['opus'] });
   await harness.processor.requestDrain('thread-1');
   assert.equal(opusDispatch.mock.calls.length, 1);
   assert.equal(codexDispatch.mock.calls.length, 0);
   assert.equal(harness.queue.getEntrySnapshot('thread-1', 'user-1', admitted.entry.id), null);
+  assert.deepEqual(harness.messageStore.getById(run.response.id).lifecycle.inputMessageIds, []);
+  assert.deepEqual(activeInputs(harness), [admitted.message.id], 'private attribution stays in internal active run');
+});
+
+it('manual private Append preserves independent read receipts without a public source ID', async () => {
+  const harness = createHarness();
+  const admitted = await admit(harness, { visibility: 'whisper', whisperTo: ['opus'] });
+  const dispatch = mock.fn(async (input) => {
+    assert.equal(typeof input.onInputRead, 'function');
+    await input.onInputRead();
+    return { accepted: true, handle: {} };
+  });
+  const run = bindRun(harness, dispatch, 'opus', true);
+  assert.equal((await append(harness, admitted, run)).outcome, 'appended');
+  assert.deepEqual(harness.messageStore.getById(run.response.id).lifecycle.inputMessageIds, []);
+  assert.deepEqual(activeInputs(harness), [admitted.message.id]);
+  const read = harness.messageStore.getById(admitted.message.id).lifecycle.dispatchRefs[0].inputRead;
+  assert.equal(read.status, 'read');
+  await dispatch.mock.calls[0].arguments[0].onInputRead();
+  assert.deepEqual(harness.messageStore.getById(admitted.message.id).lifecycle.dispatchRefs[0].inputRead, read);
+});
+
+it('private provider rejection keeps its failure private and never restores executable queue work', async () => {
+  const harness = createHarness();
+  const admitted = await admit(harness, { visibility: 'whisper', whisperTo: ['opus'] });
+  const run = bindRun(harness, async () => ({ accepted: false, reason: 'active_run_closed' }));
+  assert.equal((await append(harness, admitted, run)).outcome, 'rejected');
+  const source = harness.messageStore.getById(admitted.message.id);
+  const failure = harness.messageStore.getById(source.lifecycle.dispatchRefs[0].statusMessageId);
+  assert.equal(failure.visibility, 'whisper');
+  assert.deepEqual(failure.whisperTo, ['opus']);
+  assert.deepEqual(harness.messageStore.getById(run.response.id).lifecycle.inputMessageIds, []);
+  assert.deepEqual(activeInputs(harness), []);
+  assert.equal(harness.queue.getEntrySnapshot('thread-1', 'user-1', admitted.entry.id), null);
+});
+
+it('private native read evidence survives public projection and a terminal response race', async () => {
+  const harness = createHarness();
+  const admitted = await admit(harness, { visibility: 'whisper', whisperTo: ['opus'] });
+  const run = bindRun(harness, async () => ({ accepted: true, handle: {} }));
+  const dispatchedAt = Date.now();
+  const patch = {
+    orderKey: `${admitted.message.timestamp}:${admitted.message.id}`,
+    targetId: 'opus',
+    phase: 'dispatched',
+    statusMessageId: run.response.id,
+    dispatchedAt,
+    inputRead: { status: 'pending' },
+  };
+  assert.equal(harness.messageStore.advanceLifecycleInputDispatch(admitted.message.id, patch).kind, 'applied');
+  assert.equal(
+    harness.messageStore.commitLifecycleResponseTerminal(run.response.id, {
+      invocationId: run.invocationId,
+      status: 'completed',
+      completedAt: dispatchedAt + 1,
+      content: 'done',
+      mentions: [],
+      origin: 'stream',
+    }).kind,
+    'applied',
+  );
+  const evidence = {
+    threadId: 'thread-1',
+    userId: 'user-1',
+    targetId: 'opus',
+    invocationId: run.invocationId,
+    responseMessageId: run.response.id,
+    messageIds: [admitted.message.id],
+    readAt: dispatchedAt + 2,
+  };
+  await harness.processor.updateInputReadReceipt({ ...evidence, invocationId: 'foreign' });
+  assert.deepEqual(harness.messageStore.getById(admitted.message.id).lifecycle.dispatchRefs[0].inputRead, {
+    status: 'pending',
+  });
+  await harness.processor.updateInputReadReceipt(evidence);
+  assert.deepEqual(harness.messageStore.getById(admitted.message.id).lifecycle.dispatchRefs[0].inputRead, {
+    status: 'read',
+    at: evidence.readAt,
+  });
+  assert.deepEqual(harness.messageStore.getById(run.response.id).lifecycle.inputMessageIds, []);
+  assert.equal(harness.messageStore.getById(run.response.id).lifecycle.status, 'completed');
 });
 for (const automatic of [true, false]) {
   it(`legacy misrouted whisper is rejected before native Append: automatic=${automatic}`, async () => {
@@ -913,3 +994,24 @@ for (const automatic of [true, false]) {
     assert.equal(harness.messageStore.getById(run.response.id).lifecycle.inputMessageIds.length, 0);
   });
 }
+
+it('settles private Append from the exact internal active run without publishing private input IDs', async () => {
+  const harness = createHarness();
+  const admitted = await admit(harness, { visibility: 'whisper', whisperTo: ['opus'] });
+  const run = bindRun(harness, async () => ({ accepted: true, handle: {} }), 'opus', true);
+  assert.equal((await append(harness, admitted, run)).outcome, 'appended');
+  const terminal = await harness.messageStore.commitLifecycleResponseTerminal(run.response.id, {
+    invocationId: run.invocationId,
+    status: 'completed',
+    completedAt: Date.now() + 10,
+    content: 'done',
+    mentions: [],
+    origin: 'stream',
+  });
+  assert.equal(terminal.kind, 'applied');
+  await harness.processor.settleTrackedLifecycleResponseInputs(terminal.message);
+  const source = await harness.messageStore.getById(admitted.message.id);
+  assert.equal(source.lifecycle.dispatchRefs[0].phase, 'settled');
+  assert.deepEqual(source.lifecycle.dispatchRefs[0].inputRead, { status: 'pending' });
+  assert.deepEqual((await harness.messageStore.getById(run.response.id)).lifecycle.inputMessageIds, []);
+});

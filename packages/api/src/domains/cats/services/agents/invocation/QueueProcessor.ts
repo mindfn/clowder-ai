@@ -753,6 +753,20 @@ export class QueueProcessor {
     return current?.invocationId === run.invocationId && current.responseMessageId === run.responseMessageId;
   }
 
+  private async settleTrackedLifecycleResponseInputs(response: StoredMessage): Promise<void> {
+    const lifecycle = response.lifecycle;
+    if (lifecycle?.kind !== 'response' || lifecycle.status === 'processing') return;
+    const active = this.deps.invocationTracker
+      .getActiveSlots?.(response.threadId)
+      .find((slot) => slot.catId === lifecycle.targetId)?.activeRun;
+    const exactInputs =
+      active?.invocationId === lifecycle.invocationId && active.responseMessageId === response.id
+        ? active.inputMessageIds
+        : [];
+    // Private inputs stay in the existing internal execution binding, never in public R metadata.
+    await settleLifecycleResponseInputs(this.deps.messageStore, response, response.id, exactInputs);
+  }
+
   private async compensateLifecycleAppendTargets(input: {
     entry: QueueEntry;
     inputMessageIds: readonly string[];
@@ -774,6 +788,9 @@ export class QueueProcessor {
             userId: sourceMessage.userId,
             threadId: input.entry.threadId,
             content: `${targetId} 的当前 Agent Client 已关闭，消息未追加到该回合。`,
+            ...(sourceMessage.visibility === 'whisper'
+              ? { visibility: 'whisper' as const, whisperTo: sourceMessage.whisperTo }
+              : {}),
             mentions: [],
             timestamp: failedAt,
             idempotencyKey: `lifecycle-append-rejection:${input.entry.id}:${targetId}:${sourceMessage.id}`,
@@ -2044,8 +2061,14 @@ export class QueueProcessor {
     )
       return;
     for (const id of input.messageIds) {
-      if (!response.lifecycle.inputMessageIds.includes(id)) continue;
       const source = await this.deps.messageStore.getById(id);
+      // Private Append IDs are deliberately absent from public response metadata.
+      // The private source's exact dispatchRef below still fences native read proof.
+      if (
+        !response.lifecycle.inputMessageIds.includes(id) &&
+        !(source?.visibility === 'whisper' && canViewMessage(source, { type: 'cat', catId: input.targetId as CatId }))
+      )
+        continue;
       const refs =
         source?.lifecycle?.dispatchRefs?.filter(
           (ref) => ref.targetId === input.targetId && ref.statusMessageId === input.responseMessageId,
@@ -4677,7 +4700,7 @@ export class QueueProcessor {
                     `Lifecycle response interruption conflict: ${input.invocationId}:${terminal.kind}:${'reason' in terminal ? terminal.reason : 'missing'}`,
                   );
                 }
-                await settleLifecycleResponseInputs(messageStore, terminal.message, observed.message.id);
+                await this.settleTrackedLifecycleResponseInputs(terminal.message);
                 lifecycleResponseInterrupted = true;
               };
               await this.admitQueueEntriesForProvider(deliveryTimeByMessageId);
@@ -5105,6 +5128,7 @@ export class QueueProcessor {
           try {
             const committed = await messageStore.getById(doneResponseMessageId);
             if (committed?.lifecycle?.kind === 'response' && committed.lifecycle.status !== 'processing') {
+              await this.settleTrackedLifecycleResponseInputs(committed);
               this.emitLifecycleMessageUpdated(userId, committed);
             }
           } catch (err) {
@@ -5475,7 +5499,10 @@ export class QueueProcessor {
       for (const lifecycleMessageId of [...lifecycleInputMessageIds, ...lifecycleResponseMessageIds]) {
         try {
           const lifecycleMessage = await messageStore.getById(lifecycleMessageId);
-          if (lifecycleMessage?.lifecycle) this.emitLifecycleMessageUpdated(userId, lifecycleMessage);
+          if (lifecycleMessage?.lifecycle) {
+            await this.settleTrackedLifecycleResponseInputs(lifecycleMessage);
+            this.emitLifecycleMessageUpdated(userId, lifecycleMessage);
+          }
           await this.releaseSettledResponseTurn(lifecycleMessage, log);
         } catch (err) {
           log.warn(

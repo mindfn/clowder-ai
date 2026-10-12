@@ -1313,18 +1313,20 @@ export function prepareLifecycleAppendAdmission(
     if (!lifecycle) return { kind: 'conflict', reason: 'input_lifecycle_conflict' };
     lifecycles.push(lifecycle);
   }
+  // Public response metadata follows the same boundary as first-turn admission.
+  // Private sources keep their dispatch/read binding on their own private record.
+  const publicInputs = messages
+    .slice(0, input.inputMessageIds.length)
+    .filter((message) => message.visibility !== 'whisper');
   for (let index = 0; index < input.runs.length; index += 1) {
     const run = input.runs[index]!;
     const message = messages[input.inputMessageIds.length + index]!;
     const transition = appendLifecycleResponseInputsMetadata(message.lifecycle, {
       entryId: input.entryId,
-      inputMessageIds: input.inputMessageIds,
+      inputMessageIds: publicInputs.map((message) => message.id),
       targetId: run.targetId,
       invocationId: run.invocationId,
-      latestInputTimelineOrderAt: Math.max(
-        run.dispatchedAt,
-        ...messages.slice(0, input.inputMessageIds.length).map(getTimelineOrderTime),
-      ),
+      latestInputTimelineOrderAt: Math.max(run.dispatchedAt, ...publicInputs.map(getTimelineOrderTime)),
     });
     if (transition.kind === 'conflict') return { kind: 'conflict', reason: 'response_lifecycle_conflict' };
     if (transition.kind === 'applied') replayed = false;
@@ -1421,7 +1423,11 @@ export function prepareLifecycleAppendRejection(
   ) {
     return { kind: 'conflict', reason: 'lifecycle_conflict' };
   }
-  const removal = removeLifecycleResponseInputs(responseLifecycle, input.entryId, input.inputMessageIds);
+  const publicInputIds = messages
+    .slice(0, input.inputMessageIds.length)
+    .filter((message) => message.visibility !== 'whisper')
+    .map((message) => message.id);
+  const removal = removeLifecycleResponseInputs(responseLifecycle, input.entryId, publicInputIds);
   if (removal.kind === 'conflict') return { kind: 'conflict', reason: 'lifecycle_conflict' };
   if (removal.kind === 'replayed') {
     lifecycles.push(responseLifecycle);
@@ -1489,14 +1495,21 @@ export async function settleLifecycleResponseInputs(
   store: IMessageStore,
   response: StoredMessage,
   responseMessageId: string,
+  internalInputMessageIds: readonly string[] = [],
 ): Promise<void> {
   const lifecycle = response.lifecycle;
-  if (lifecycle?.kind === 'response') {
-    for (const inputMessageId of lifecycle.inputMessageIds) {
+  if (lifecycle?.kind === 'response' && lifecycle.status !== 'processing' && response.id === responseMessageId) {
+    for (const inputMessageId of new Set([...lifecycle.inputMessageIds, ...internalInputMessageIds])) {
       const inputMessage = await store.getById(inputMessageId);
       if (!inputMessage || !isLifecycleDispatchableSource(inputMessage.lifecycle)) continue;
       const targetRef = inputMessage.lifecycle.dispatchRefs?.find((ref) => ref.targetId === lifecycle.targetId);
-      if (!targetRef) continue;
+      if (
+        !targetRef ||
+        targetRef.statusMessageId !== responseMessageId ||
+        inputMessage.userId !== response.userId ||
+        inputMessage.threadId !== response.threadId
+      )
+        continue;
       const settled = await store.advanceLifecycleInputDispatch(inputMessageId, {
         orderKey: inputMessage.lifecycle.orderKey,
         ...(inputMessage.lifecycle.producerInvocationId
