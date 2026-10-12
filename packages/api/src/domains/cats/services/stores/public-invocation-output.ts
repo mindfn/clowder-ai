@@ -14,7 +14,7 @@ export interface PublicInvocationOutputV1 {
 
 /** Presence is irreversible: an invalid public marker must never become ordinary output. */
 export function hasPublicInvocationOutput(extra: StoredMessage['extra']): boolean {
-  return extra !== undefined && extra !== null && 'publicOutputV1' in extra;
+  return extra !== undefined && extra !== null && ('publicOutputV1' in extra || 'publicOutputRecoveryV1' in extra);
 }
 
 function parsePublicBoundary(value: unknown): MessageDeliveryBoundary | undefined {
@@ -49,7 +49,8 @@ export function parsePublicInvocationOutput(value: unknown): PublicInvocationOut
 export function committedPublicInvocationOutput(message: StoredMessage): PublicInvocationOutputV1 | undefined {
   const property = message.extra && Object.getOwnPropertyDescriptor(message.extra, 'publicOutputV1');
   const receipt = property && 'value' in property ? parsePublicInvocationOutput(property.value) : undefined;
-  if (!receipt || receipt.state !== 'committed') return undefined;
+  if (!receipt || receipt.state !== 'committed' || (message.extra && 'publicOutputRecoveryV1' in message.extra))
+    return undefined;
   const installed = message.extra && Object.getOwnPropertyDescriptor(message.extra, 'deliveryBoundary');
   const boundary = installed && 'value' in installed ? parsePublicBoundary(installed.value) : undefined;
   if (

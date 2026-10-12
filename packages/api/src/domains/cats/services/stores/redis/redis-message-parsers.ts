@@ -1,3 +1,4 @@
+import { parsePublicOutputRecovery } from '../public-invocation-output-recovery.js';
 /**
  * Redis message field parsers — 从 RedisMessageStore 拆出的纯函数
  *
@@ -267,6 +268,7 @@ type ExtraCarrierPersistence = ExtraCarrierPersistenceClassification<{
   dotAsk: 'parsed';
   deliveryBoundary: 'parsed';
   publicOutputV1: 'parsed';
+  publicOutputRecoveryV1: 'parsed';
   proactive: 'parsed';
   memoryCue: 'parsed';
   turnExecution: 'parsed';
@@ -690,6 +692,10 @@ export function safeParseExtra(raw: string | undefined): StoredMessage['extra'] 
       hasField = true;
     }
 
+    if (Object.hasOwn(parsed, 'publicOutputRecoveryV1')) {
+      result.publicOutputRecoveryV1 = parsePublicOutputRecovery(parsed.publicOutputRecoveryV1) ?? null;
+      hasField = true;
+    }
     if (Object.hasOwn(parsed, 'publicOutputV1')) {
       result.publicOutputV1 = parsePublicInvocationOutput(parsed.publicOutputV1) ?? null;
       hasField = true;

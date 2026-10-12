@@ -23,12 +23,38 @@ import {
   withUserMentionIndex,
 } from './user-mention-index-lua.js';
 import {
+  capturePublicOutputQuarantine,
+  capturePublicRecoveryCheckpoint,
+  capturePublicRecoveryPage,
+  createPublicOutputRecovery,
+  type PublicOutputQuarantineInput,
+  type PublicOutputQuarantineResult,
+  type PublicOutputRecoveryCheckpoint,
+  type PublicOutputRecoveryCheckpointInput,
+  type PublicOutputRecoveryCheckpointResult,
+  type PublicOutputRecoveryPage,
+  type PublicOutputRecoveryPageInput,
+  type PublicOutputRecoveryRead,
+  parsePublicRecoveryCursor,
+  publicOutputSoftDeleteRecovery,
+  publicRecoveryCursor,
+  readPublicOutputRecoveryRaw,
+  resolvePublicOutputQuarantine,
+  strictPublicOutputRawMessage,
+} from '../public-invocation-output-recovery.js';
+import {
   capturePublicOutputTransition,
   type PublicOutputTransitionInput,
   type PublicOutputTransitionResult,
   publicOutputRawBodyMatchesExpected,
   resolvePublicOutputTransition,
 } from '../public-invocation-output-terminal.js';
+import {
+  PUBLIC_OUTPUT_CHECKPOINT_LUA,
+  PUBLIC_OUTPUT_DELETE_LUA,
+  PUBLIC_OUTPUT_RETIRE_MISSING_LUA,
+  PUBLIC_OUTPUT_THREAD_DELETE_LUA,
+} from './public-output-recovery-lua.js';
 import { TRANSITION_PUBLIC_OUTPUT_LUA } from './public-output-terminal-lua.js';
 /**
  * Redis Message Store
@@ -1809,7 +1835,7 @@ export class RedisMessageStore {
     if (idempotencyIndexKey) {
       const existingId = await this.redis.get(idempotencyIndexKey);
       if (existingId) {
-        const existingMessage = await this.getById(existingId);
+        const existingMessage = await this.readAppendWinner(existingId, msg);
         if (existingMessage) {
           assertPublicOutputReplay(msg, existingMessage);
           return { outcome: 'stored', message: existingMessage, replayed: true };
@@ -1825,14 +1851,12 @@ export class RedisMessageStore {
     const { idempotencyKey, reservedId: mediaReservedId, ...payload } = msg;
     void mediaReservedId;
     void idempotencyKey;
-    const stored: StoredMessage = {
-      ...payload,
-      id,
-      threadId,
-    };
+    const stored: StoredMessage = { ...payload, id, threadId };
+    const publicRecovery = hasPublicInvocationOutput(msg.extra) ? createPublicOutputRecovery(msg) : undefined;
+    if (publicRecovery) stored.extra = { ...stored.extra, publicOutputRecoveryV1: publicRecovery };
     const score = msg.timestamp;
     const hashKey = MessageKeys.detail(id);
-    const { custodyOfferV1, ...appendExtra } = msg.extra ?? {};
+    const { custodyOfferV1, ...appendExtra } = stored.extra ?? {};
 
     // Build hash fields as flat key-value pairs for the Lua HSET
     const hashFields: string[] = [
@@ -1863,17 +1887,18 @@ export class RedisMessageStore {
       'timestamp',
       String(msg.timestamp),
     ];
-    if (msg.thinking) hashFields.push('thinking', msg.thinking);
+    if (msg.thinking || (publicRecovery && msg.thinking !== undefined)) hashFields.push('thinking', msg.thinking);
     if (msg.origin) hashFields.push('origin', msg.origin);
     if (msg.visibility) hashFields.push('visibility', msg.visibility);
     if (msg.whisperTo) hashFields.push('whisperTo', JSON.stringify(msg.whisperTo));
     if (msg.source) hashFields.push('source', JSON.stringify(msg.source));
-    if (msg.mentionsUser) hashFields.push('mentionsUser', '1');
+    if (msg.mentionsUser || (publicRecovery && msg.mentionsUser !== undefined))
+      hashFields.push('mentionsUser', msg.mentionsUser ? '1' : '0');
     if (msg.deliveryStatus) hashFields.push('deliveryStatus', msg.deliveryStatus);
     if (msg.replyTo) hashFields.push('replyTo', msg.replyTo);
     // Mention catIds for ZADD into per-cat mention sets
     const mentionCatIds = msg.mentions as readonly string[];
-    const ttlSec = this.ttlSeconds ?? 0;
+    const ttlSec = publicRecovery ? 0 : (this.ttlSeconds ?? 0);
 
     // Shape (a) atomic append: all data writes + visibility writes + idempotency
     // in one Lua linearization point. Combines #1200 visibility and #1210 atomic
@@ -1952,7 +1977,7 @@ export class RedisMessageStore {
 
     // #1210 idempotency: if Lua returned a string, a concurrent caller won.
     if (typeof result === 'string' && result !== String(0)) {
-      const existingMessage = await this.getById(result);
+      const existingMessage = await this.readAppendWinner(result, msg);
       if (existingMessage) {
           assertPublicOutputReplay(msg, existingMessage);
         return { outcome: 'stored', message: existingMessage, replayed: true };
@@ -1984,6 +2009,20 @@ export class RedisMessageStore {
     // work must not be admitted twice, and the caller needs to know it was not.
     const queueDeduped = queue && Array.isArray(result) && Number(result[0]) === 3;
     return { outcome: 'stored', message: stored, replayed: false, ...(queueDeduped ? { queueDeduped } : {}) };
+  }
+
+  private async readAppendWinner(id: string, input: AppendMessageInput): Promise<StoredMessage | null> {
+    if (!hasPublicInvocationOutput(input.extra)) return this.getById(id);
+    const raw = await this.redis.hgetall(MessageKeys.detail(id));
+    let message: StoredMessage | null;
+    try {
+      message = strictPublicOutputRawMessage(raw);
+    } catch {
+      throw new Error('Public output replay has malformed raw identity');
+    }
+    if (message && readPublicOutputRecoveryRaw(raw).kind === 'malformed')
+      throw new Error('Public output replay has malformed recovery proof');
+    return message;
   }
 
   async getLatestThreadMessageIdIncludingQueued(threadId: string): Promise<string | null> {
@@ -3437,81 +3476,82 @@ export class RedisMessageStore {
    * Delete all messages in a thread. Returns count of deleted messages.
    */
   async deleteByThread(threadId: string): Promise<number> {
-    const key = MessageKeys.thread(threadId);
-
-    // Get all message IDs in this thread
-    const ids = await this.redis.zrange(key, 0, -1);
-
-    const pipeline = this.redis.multi();
-
-    // Delete each authority hash.
-    for (const id of ids) pipeline.del(MessageKeys.detail(id));
-
-    // Delete the thread sorted set (even if empty — may still exist as empty key)
-    pipeline.del(key);
-
-    // #1200: Delete visibility ZSET + metadata hash (these are permanent — no TTL).
-    // Must run even when ids.length === 0: a thread may have migrated metadata
-    // but no messages (e.g. after all messages were individually deleted).
-    pipeline.del(MessageKeys.threadVisibility(threadId));
-    pipeline.del(MessageKeys.threadVisibilityMeta(threadId));
-    pipeline.del(MessageKeys.legacyQueueExposureIndex(threadId));
-
-    // Note: We don't clean up global timeline, user timeline, or mention sets
-    // as those will auto-expire via TTL. Cleaning them would be O(n) expensive.
-
-    await pipeline.exec();
-    return ids.length;
+    const result = await this.redis.eval(
+      PUBLIC_OUTPUT_THREAD_DELETE_LUA,
+      5,
+      MessageKeys.thread(threadId),
+      MessageKeys.PUBLIC_OUTPUT_PENDING,
+      MessageKeys.threadVisibility(threadId),
+      MessageKeys.threadVisibilityMeta(threadId),
+      MessageKeys.legacyQueueExposureIndex(threadId),
+      this.keyPrefix,
+    );
+    if (typeof result !== 'number' || !Number.isSafeInteger(result) || result < 0)
+      throw new Error('Invalid thread deletion receipt');
+    return result;
   }
 
   /**
    * ADR-008 D3: Soft delete — set deletedAt/deletedBy on message hash.
    */
   async softDelete(id: string, deletedBy: string): Promise<StoredMessage | null> {
-    const msg = await this.getById(id);
-    if (!msg) return null;
-    const now = Date.now();
-    await this.redis.hset(MessageKeys.detail(id), {
-      deletedAt: String(now),
-      deletedBy,
-    });
-    msg.deletedAt = now;
-    msg.deletedBy = deletedBy;
-    notifyMessageTimelineChange(this, msg);
-    return msg;
+    return this.deleteWithRecovery(id, deletedBy, 'soft');
   }
 
-  /**
-   * ADR-008 D3: Hard delete — wipe content, keep tombstone skeleton.
-   */
   async hardDelete(id: string, deletedBy: string): Promise<StoredMessage | null> {
-    const msg = await this.getById(id);
-    if (!msg) return null;
+    return this.deleteWithRecovery(id, deletedBy, 'hard');
+  }
+
+  private async deleteWithRecovery(
+    id: string,
+    deletedBy: string,
+    mode: 'soft' | 'hard',
+  ): Promise<StoredMessage | null> {
+    const hash = await this.redis.hgetall(MessageKeys.detail(id));
+    if (Object.keys(hash).length === 0) return null;
     const now = Date.now();
-    const transition = Number(
-      await this.redis.eval(HARD_DELETE_MESSAGE_LUA, 1, MessageKeys.detail(id), String(now), deletedBy),
-    );
-    if (transition !== 1) return null;
-    const pipeline = this.redis.multi();
-    for (const catId of msg.mentions) pipeline.zrem(MessageKeys.mentions(catId), id);
-    const cleanupResults = await pipeline.exec();
-    if (!cleanupResults) throw new Error('message hard delete: pipeline exec aborted');
-    for (const [error] of cleanupResults) {
-      if (error) throw error;
+    let nextExtra = '';
+    if (mode === 'soft' && hash.extra) {
+      const extra = JSON.parse(hash.extra) as Record<string, unknown>;
+      if (Object.hasOwn(extra, 'publicOutputV1')) {
+        const message = strictPublicOutputRawMessage(hash);
+        if (!message) return null;
+        const companion = publicOutputSoftDeleteRecovery(message, now);
+        if (companion) {
+          extra.publicOutputRecoveryV1 = companion;
+          nextExtra = JSON.stringify(extra);
+        }
+      }
     }
-    msg.content = '';
-    msg.mentions = [];
-    delete msg.contentBlocks;
-    delete msg.toolEvents;
-    delete msg.metadata;
-    delete msg.extra;
-    delete msg.lifecycle;
-    delete msg.thinking;
-    msg.deletedAt = now;
-    msg.deletedBy = deletedBy;
-    msg._tombstone = true;
-    notifyMessageTimelineChange(this, msg);
-    return msg;
+    const raw = await this.redis.eval(
+      PUBLIC_OUTPUT_DELETE_LUA,
+      2,
+      MessageKeys.detail(id),
+      MessageKeys.PUBLIC_OUTPUT_PENDING,
+      JSON.stringify(Object.entries(hash)),
+      id,
+      mode,
+      String(now),
+      deletedBy,
+      nextExtra,
+    );
+    if (!Array.isArray(raw) || raw.length === 0) throw new Error('Invalid public deletion receipt');
+    if (raw[0] === -1) return null;
+    if (raw[0] === 0) throw new Error('Message changed during deletion; retry from current state');
+    if (raw[0] !== 1) throw new Error('Invalid public deletion receipt');
+    const message = this.parseLuaHgetall(raw.slice(1));
+    if (mode === 'hard') {
+      const previous = this.parseLuaHgetall(Object.entries(hash).flat());
+      if (previous) {
+        const pipeline = this.redis.multi();
+        for (const catId of previous.mentions) pipeline.zrem(MessageKeys.mentions(catId), id);
+        const results = await pipeline.exec();
+        if (!results) throw new Error('message hard delete: pipeline exec aborted');
+        for (const [error] of results) if (error) throw error;
+      }
+    }
+    if (message) notifyMessageTimelineChange(this, message);
+    return message;
   }
 
   /**
@@ -3564,6 +3604,7 @@ export class RedisMessageStore {
       dotAsk: _stripDotAsk,
       deliveryBoundary: _stripBoundary,
       publicOutputV1: _stripPublicOutput,
+      publicOutputRecoveryV1: _stripPublicRecovery,
       ...hostPatch
     } = extra as Record<string, unknown>;
     const merged = { ...current, ...hostPatch };
@@ -3618,6 +3659,134 @@ export class RedisMessageStore {
     return { kind: 'updated', message };
   }
 
+  async scanPendingPublicInvocationOutputs(input: PublicOutputRecoveryPageInput): Promise<PublicOutputRecoveryPage> {
+    const { afterSeq, limit } = capturePublicRecoveryPage(input);
+    const raw = await this.redis.zrangebyscore(
+      MessageKeys.PUBLIC_OUTPUT_PENDING,
+      `(${afterSeq}`,
+      '+inf',
+      'WITHSCORES',
+      'LIMIT',
+      0,
+      limit + 1,
+    );
+    if (raw.length % 2 !== 0) throw new Error('Invalid recovery index page');
+    const rows: Array<{ id: string; seq: number }> = [];
+    let prior = afterSeq;
+    for (let i = 0; i < raw.length; i += 2) {
+      const seq = Number(raw[i + 1]);
+      if (!raw[i] || !Number.isSafeInteger(seq) || seq <= prior) throw new Error('Invalid recovery index sequence');
+      rows.push({ id: raw[i] as string, seq });
+      prior = seq;
+    }
+    const page = rows.slice(0, limit);
+    return {
+      ids: page.map((row) => row.id),
+      ...(page.length ? { nextCursor: publicRecoveryCursor(page[page.length - 1]!.seq) } : {}),
+      exhausted: rows.length <= limit,
+    };
+  }
+  async retireMissingPublicInvocationOutput(id: string): Promise<boolean> {
+    const result = await this.redis.eval(
+      PUBLIC_OUTPUT_RETIRE_MISSING_LUA,
+      2,
+      MessageKeys.detail(id),
+      MessageKeys.PUBLIC_OUTPUT_PENDING,
+      id,
+    );
+    if (result !== 0 && result !== 1) throw new Error('Invalid missing-output retirement receipt');
+    return result === 1;
+  }
+  async readPublicInvocationOutputRecovery(id: string): Promise<PublicOutputRecoveryRead> {
+    return readPublicOutputRecoveryRaw(await this.redis.hgetall(MessageKeys.detail(id)));
+  }
+  async getPublicInvocationOutputRecoveryCheckpoint(): Promise<PublicOutputRecoveryCheckpoint> {
+    const value = await this.redis.get(MessageKeys.PUBLIC_OUTPUT_RECOVERY_CHECKPOINT);
+    if (value === null) return { revision: 0, cursor: null };
+    const row = JSON.parse(value) as PublicOutputRecoveryCheckpoint;
+    if (
+      !row ||
+      Object.keys(row).length !== 2 ||
+      !Number.isSafeInteger(row.revision) ||
+      row.revision < 0 ||
+      (row.cursor !== null && typeof row.cursor !== 'string')
+    )
+      throw new Error('Invalid public recovery checkpoint');
+    parsePublicRecoveryCursor(row.cursor);
+    return row;
+  }
+  async advancePublicInvocationOutputRecoveryCheckpoint(
+    input: PublicOutputRecoveryCheckpointInput,
+  ): Promise<PublicOutputRecoveryCheckpointResult> {
+    const row = capturePublicRecoveryCheckpoint(input);
+    const expected = await this.redis.get(MessageKeys.PUBLIC_OUTPUT_RECOVERY_CHECKPOINT);
+    const current: PublicOutputRecoveryCheckpoint =
+      expected === null ? { revision: 0, cursor: null } : JSON.parse(expected);
+    if (
+      !current ||
+      Object.keys(current).length !== 2 ||
+      !Number.isSafeInteger(current.revision) ||
+      current.revision < 0 ||
+      (current.cursor !== null && typeof current.cursor !== 'string')
+    )
+      throw new Error('Invalid public recovery checkpoint');
+    parsePublicRecoveryCursor(current.cursor);
+    if (row.expectedRevision !== current.revision) return { kind: 'conflict', checkpoint: current };
+    const next = { revision: row.expectedRevision + 1, cursor: row.cursor };
+    const receipt = await this.redis.eval(
+      PUBLIC_OUTPUT_CHECKPOINT_LUA,
+      1,
+      MessageKeys.PUBLIC_OUTPUT_RECOVERY_CHECKPOINT,
+      expected ?? '',
+      JSON.stringify(next),
+    );
+    if (receipt !== 1)
+      return { kind: 'conflict', checkpoint: await this.getPublicInvocationOutputRecoveryCheckpoint() };
+    return { kind: 'updated', checkpoint: next };
+  }
+  async quarantinePublicInvocationOutput(
+    id: string,
+    input: PublicOutputQuarantineInput,
+  ): Promise<PublicOutputQuarantineResult> {
+    const captured = capturePublicOutputQuarantine(id, input);
+    const hash = await this.redis.hgetall(MessageKeys.detail(id));
+    let current: StoredMessage | null;
+    try {
+      current = strictPublicOutputRawMessage(hash);
+    } catch {
+      return { kind: 'conflict' };
+    }
+    const plan = resolvePublicOutputQuarantine(current, captured, Date.now());
+    if (plan.kind === 'not_found' || plan.kind === 'conflict') return plan;
+    // terminal_won is historical evidence only; do not mutate a recreated pending row.
+    if (plan.kind === 'terminal_won') return plan;
+    const extra = JSON.parse(hash.extra as string) as Record<string, unknown>;
+    extra.publicOutputRecoveryV1 = plan.message.extra?.publicOutputRecoveryV1;
+    const raw = await this.redis.eval(
+      TRANSITION_PUBLIC_OUTPUT_LUA,
+      2,
+      MessageKeys.detail(id),
+      MessageKeys.PUBLIC_OUTPUT_PENDING,
+      JSON.stringify(Object.entries(hash)),
+      plan.kind === 'updated' ? JSON.stringify(extra) : '',
+      id,
+    );
+    if (!Array.isArray(raw) || raw.length === 0) throw new Error('Malformed public quarantine receipt');
+    if (raw[0] === -1) return { kind: 'not_found' };
+    if (raw[0] === 0) return { kind: 'conflict' };
+    if (![1, 2].includes(raw[0]) || raw.length % 2 !== 1 || raw.slice(1).some((v) => typeof v !== 'string'))
+      throw new Error('Malformed public quarantine hash');
+    const canonical: Record<string, string> = Object.create(null);
+    for (let i = 1; i < raw.length; i += 2) {
+      if (Object.hasOwn(canonical, raw[i])) throw new Error('Duplicate quarantine field');
+      canonical[raw[i]] = raw[i + 1];
+    }
+    const message = strictPublicOutputRawMessage(canonical);
+    if (!message || resolvePublicOutputQuarantine(message, captured, Date.now()).kind !== 'existing')
+      throw new Error('Mismatched public quarantine receipt');
+    return { kind: raw[0] === 1 ? 'updated' : 'existing', message };
+  }
+
   async transitionPublicInvocationOutput(
     id: string,
     input: PublicOutputTransitionInput,
@@ -3627,22 +3796,31 @@ export class RedisMessageStore {
     const hash = await this.redis.hgetall(key);
     if (Object.keys(hash).length === 0) return { kind: 'not_found' };
     if (!publicOutputRawBodyMatchesExpected(hash, captured.expected)) return { kind: 'conflict' };
-    const plan = resolvePublicOutputTransition(this.hydrateHash(hash), captured);
+    let strictMessage: StoredMessage | null;
+    try {
+      strictMessage = strictPublicOutputRawMessage(hash);
+    } catch {
+      return { kind: 'conflict' };
+    }
+    const plan = resolvePublicOutputTransition(strictMessage, captured);
     if (plan.kind !== 'updated' && plan.kind !== 'existing') return plan;
     let nextExtra = '';
     if (plan.kind === 'updated') {
       // Preserve raw siblings (including future metadata) instead of reserializing a lossy parsed projection.
       const extra = JSON.parse(hash.extra as string) as Record<string, unknown>;
       extra.publicOutputV1 = plan.message.extra?.publicOutputV1;
+      delete extra.publicOutputRecoveryV1;
       if (captured.nextState === 'committed') extra.deliveryBoundary = plan.message.extra?.deliveryBoundary;
       nextExtra = JSON.stringify(extra);
     }
     const raw: unknown = await this.redis.eval(
       TRANSITION_PUBLIC_OUTPUT_LUA,
-      1,
+      2,
       key,
+      MessageKeys.PUBLIC_OUTPUT_PENDING,
       JSON.stringify(Object.entries(hash)),
       nextExtra,
+      id,
     );
     if (!Array.isArray(raw) || raw.length === 0) throw new Error('Public output CAS returned malformed receipt');
     if (raw[0] === -1) return { kind: 'not_found' };
@@ -3662,7 +3840,7 @@ export class RedisMessageStore {
     }
     if (!publicOutputRawBodyMatchesExpected(canonical, captured.expected))
       throw new Error('Public output CAS returned invalid raw output');
-    const message = this.hydrateHash(canonical);
+    const message = strictPublicOutputRawMessage(canonical);
     if (resolvePublicOutputTransition(message, captured).kind !== 'existing' || !message)
       throw new Error('Public output CAS returned mismatched terminal output');
     return { kind: raw[0] === 1 ? 'updated' : 'existing', message };

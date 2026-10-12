@@ -8,6 +8,26 @@ import {
   publicInvocationOutputMatchesMessage,
 } from './public-invocation-output.js';
 
+export const PUBLIC_OUTPUT_BODY_KEYS = [
+  'userId',
+  'threadId',
+  'catId',
+  'content',
+  'contentBlocks',
+  'thinking',
+  'toolEvents',
+  'metadata',
+  'mentions',
+  'timestamp',
+  'replyTo',
+  'origin',
+  'visibility',
+  'whisperTo',
+  'source',
+  'mentionsUser',
+  'extra',
+] as const;
+
 function reject(): never {
   throw new TypeError('Public invocation output requires an exact pending append or matching idempotent identity');
 }
@@ -16,6 +36,8 @@ function reject(): never {
 export function capturePublicOutputAppend(input: AppendMessageInput, allowPublic = true): AppendMessageInput {
   const extraProperty = Object.getOwnPropertyDescriptor(input, 'extra');
   if ('extra' in input && (!extraProperty || !('value' in extraProperty))) reject();
+  if (extraProperty?.value && 'publicOutputRecoveryV1' in extraProperty.value)
+    throw new TypeError('Public output recovery companion is store-owned');
   if (!hasPublicInvocationOutput(extraProperty?.value)) return input;
   if (!allowPublic) reject();
   let captured: AppendMessageInput;
@@ -24,6 +46,8 @@ export function capturePublicOutputAppend(input: AppendMessageInput, allowPublic
   } catch {
     reject();
   }
+  if (Object.keys(captured).some((key) => ![...PUBLIC_OUTPUT_BODY_KEYS, 'reservedId', 'idempotencyKey'].includes(key)))
+    reject();
   const receipt = parsePublicInvocationOutput(captured.extra?.publicOutputV1);
   if (!receipt || receipt.state !== 'pending_terminal' || !captured.reservedId) reject();
   if (
@@ -54,19 +78,22 @@ export function assertPublicOutputReplay(input: AppendMessageInput, existing: St
   )
     reject();
   if (!isDeepStrictEqual({ ...current, state: 'pending_terminal' }, requested)) reject();
-  for (const key of [
-    'content',
-    'contentBlocks',
-    'thinking',
-    'toolEvents',
-    'metadata',
-    'mentions',
-    'timestamp',
-    'replyTo',
-  ] as const) {
-    if (!isDeepStrictEqual(input[key], existing[key])) reject();
+  for (const key of PUBLIC_OUTPUT_BODY_KEYS) {
+    if (key === 'extra') continue;
+    const requestedValue = key === 'threadId' ? (input.threadId ?? 'default') : input[key];
+    if (!isDeepStrictEqual(requestedValue, existing[key])) reject();
   }
-  const { publicOutputV1: _inputReceipt, deliveryBoundary: _inputBoundary, ...inputExtra } = input.extra ?? {};
-  const { publicOutputV1: _storedReceipt, deliveryBoundary: _storedBoundary, ...storedExtra } = existing.extra ?? {};
+  const {
+    publicOutputV1: _inputReceipt,
+    deliveryBoundary: _inputBoundary,
+    publicOutputRecoveryV1: _inputRecovery,
+    ...inputExtra
+  } = input.extra ?? {};
+  const {
+    publicOutputV1: _storedReceipt,
+    deliveryBoundary: _storedBoundary,
+    publicOutputRecoveryV1: _storedRecovery,
+    ...storedExtra
+  } = existing.extra ?? {};
   if (!isDeepStrictEqual(inputExtra, storedExtra)) reject();
 }

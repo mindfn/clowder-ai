@@ -47,7 +47,9 @@ function tamper(row) {
 }
 function assertUnchanged(store, expected) {
   const row = store.getById(outputId);
-  assert.deepEqual(row.extra, expected.extra, 'public storage must not expose mutable receipt or identity aliases');
+  const { publicOutputRecoveryV1, ...extra } = row.extra;
+  assert.equal(publicOutputRecoveryV1.state, 'pending');
+  assert.deepEqual(extra, expected.extra, 'public storage must not expose mutable receipt or identity aliases');
   assert.equal(row.content, expected.content);
 }
 
@@ -419,6 +421,16 @@ for (const winnerAt of ['early read', 'atomic append']) {
     const store = new RedisMessageStore({
       options: {},
       get: async () => (winnerAt === 'early read' ? sourceId : null),
+      hgetall: async () => ({
+        id: sourceId,
+        userId: scope.userId,
+        threadId: scope.threadId,
+        catId: scope.catId,
+        content: 'ordinary',
+        timestamp: '1',
+        mentions: '[]',
+        extra: '',
+      }),
       eval: async () => sourceId,
     });
     store.ensureVisibilityMigrated = async () => {};

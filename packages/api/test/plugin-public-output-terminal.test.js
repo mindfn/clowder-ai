@@ -3,6 +3,7 @@ import test from 'node:test';
 import { cursorFor } from '../src/domains/cats/services/stores/cursor.ts';
 import { MessageStore } from '../src/domains/cats/services/stores/ports/MessageStore.ts';
 import { committedPublicInvocationOutput } from '../src/domains/cats/services/stores/public-invocation-output.ts';
+import { createPublicOutputRecovery } from '../src/domains/cats/services/stores/public-invocation-output-recovery.ts';
 import { RedisMessageStore } from '../src/domains/cats/services/stores/redis/RedisMessageStore.ts';
 
 const sourceId = '0000000000000001-000001-11111111';
@@ -63,7 +64,7 @@ function hashFixture() {
     toolEvents: '',
     metadata: '',
     mentions: JSON.stringify(mentions),
-    extra: JSON.stringify(extra),
+    extra: JSON.stringify({ ...extra, publicOutputRecoveryV1: createPublicOutputRecovery(input) }),
   };
 }
 function flatten(hash) {
@@ -86,6 +87,7 @@ for (const state of ['committed', 'abandoned']) {
     const current = store.getById(outputId);
     const expected = structuredClone(before);
     expected.extra.publicOutputV1.state = state;
+    delete expected.extra.publicOutputRecoveryV1;
     if (state === 'committed') expected.extra.deliveryBoundary = expected.extra.publicOutputV1.boundary;
     assert.deepEqual(current, expected);
     assert.deepEqual(result.message, current);
@@ -358,6 +360,7 @@ test('Redis public output CAS returns atomic canonical output without a post-wri
       evals++;
       const extra = JSON.parse(hash.extra);
       extra.publicOutputV1.state = 'committed';
+      delete extra.publicOutputRecoveryV1;
       extra.deliveryBoundary = extra.publicOutputV1.boundary;
       return [1, ...flatten({ ...hash, extra: JSON.stringify(extra) })];
     },
@@ -416,15 +419,17 @@ test('Redis terminal CAS fences all raw fields and preserves unknown extra sibli
   const hash = hashFixture();
   const extra = JSON.parse(hash.extra);
   extra.futureSibling = { protected: true };
+  const expectedInput = fixture();
+  expectedInput.extra.futureSibling = extra.futureSibling;
+  extra.publicOutputRecoveryV1 = createPublicOutputRecovery(expectedInput);
   hash.extra = JSON.stringify(extra);
-  hash.futureHashField = 'opaque';
   let evals = 0;
   const store = new RedisMessageStore({
     options: {},
     hgetall: async () => hash,
-    eval: async (_script, keyCount, _key, expectedJson, nextExtra) => {
+    eval: async (_script, keyCount, _key, _index, expectedJson, nextExtra) => {
       evals++;
-      assert.equal(keyCount, 1);
+      assert.equal(keyCount, 2);
       assert.deepEqual(Object.fromEntries(JSON.parse(expectedJson)), hash);
       const written = JSON.parse(nextExtra);
       assert.deepEqual(written.futureSibling, extra.futureSibling);
@@ -433,20 +438,24 @@ test('Redis terminal CAS fences all raw fields and preserves unknown extra sibli
       return [1, ...flatten({ ...hash, extra: nextExtra })];
     },
   });
-  assert.equal((await transition(store)(outputId, request())).kind, 'updated');
+  assert.equal(
+    (await transition(store)(outputId, { expected: expectedInput, nextState: 'committed' })).kind,
+    'updated',
+  );
   assert.equal(evals, 1);
 });
 test('Redis terminal replay still atomically fences its canonical no-op receipt', async () => {
   const hash = hashFixture();
   const extra = JSON.parse(hash.extra);
   extra.publicOutputV1.state = 'committed';
+  delete extra.publicOutputRecoveryV1;
   extra.deliveryBoundary = extra.publicOutputV1.boundary;
   hash.extra = JSON.stringify(extra);
   let evals = 0;
   const store = new RedisMessageStore({
     options: {},
     hgetall: async () => hash,
-    eval: async (_script, _n, _key, expected, next) => {
+    eval: async (_script, _n, _key, _index, expected, next) => {
       evals++;
       assert.deepEqual(Object.fromEntries(JSON.parse(expected)), hash);
       assert.equal(next, '');

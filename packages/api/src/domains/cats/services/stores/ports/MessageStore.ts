@@ -1,5 +1,24 @@
 import { assertPublicOutputReplay, capturePublicOutputAppend } from '../public-invocation-output-append.js';
 import {
+  capturePublicOutputQuarantine,
+  capturePublicRecoveryCheckpoint,
+  capturePublicRecoveryPage,
+  createPublicOutputRecovery,
+  type PublicOutputQuarantineInput,
+  type PublicOutputQuarantineResult,
+  type PublicOutputRecoveryCheckpoint,
+  type PublicOutputRecoveryCheckpointInput,
+  type PublicOutputRecoveryCheckpointResult,
+  type PublicOutputRecoveryPage,
+  type PublicOutputRecoveryPageInput,
+  type PublicOutputRecoveryRead,
+  type PublicOutputRecoveryV1,
+  publicOutputSoftDeleteRecovery,
+  publicRecoveryCursor,
+  readPublicOutputRecoveryMessage,
+  resolvePublicOutputQuarantine,
+} from '../public-invocation-output-recovery.js';
+import {
   capturePublicOutputTransition,
   type PublicOutputTransitionInput,
   type PublicOutputTransitionResult,
@@ -391,6 +410,8 @@ export interface StoredMessage {
     /** Append-owned public identity; null preserves a malformed durable marker fail-closed.
      * Presence cannot be added/removed by patches; terminal transitions need their dedicated CAS. */
     publicOutputV1?: PublicInvocationOutputV1 | null;
+    /** Store-owned recovery control plane; malformed presence remains fail-closed. */
+    publicOutputRecoveryV1?: PublicOutputRecoveryV1 | null;
     /** F272: one canonical home message projected from a durable proactive visit. */
     proactive?: { visitId: string; intentId: string; source: 'private_time' };
     /** F287: server-written connector carrier; QueueProcessor still revalidates source + entry origin. */
@@ -1935,6 +1956,7 @@ export function mergeMessageExtra(
     dotAsk: _stripDotAsk,
     deliveryBoundary: _stripBoundary,
     publicOutputV1: _stripPublicOutput,
+    publicOutputRecoveryV1: _stripPublicRecovery,
     ...incomingHost
   } = incoming ?? {};
   const merged = { ...(existing ?? {}), ...incomingHost };
@@ -2240,6 +2262,21 @@ export interface IMessageStore {
     id: string,
     input: CustodyOfferTransitionInput,
   ): CustodyOfferTransitionResult | Promise<CustodyOfferTransitionResult>;
+  scanPendingPublicInvocationOutputs(
+    input: PublicOutputRecoveryPageInput,
+  ): PublicOutputRecoveryPage | Promise<PublicOutputRecoveryPage>;
+  retireMissingPublicInvocationOutput(id: string): boolean | Promise<boolean>;
+  readPublicInvocationOutputRecovery(id: string): PublicOutputRecoveryRead | Promise<PublicOutputRecoveryRead>;
+  quarantinePublicInvocationOutput(
+    id: string,
+    input: PublicOutputQuarantineInput,
+  ): PublicOutputQuarantineResult | Promise<PublicOutputQuarantineResult>;
+  getPublicInvocationOutputRecoveryCheckpoint():
+    | PublicOutputRecoveryCheckpoint
+    | Promise<PublicOutputRecoveryCheckpoint>;
+  advancePublicInvocationOutputRecoveryCheckpoint(
+    input: PublicOutputRecoveryCheckpointInput,
+  ): PublicOutputRecoveryCheckpointResult | Promise<PublicOutputRecoveryCheckpointResult>;
   /** Exact pending output to a terminal receipt; caller owns child/auth authority verification. */
   transitionPublicInvocationOutput(
     id: string,
@@ -2326,6 +2363,16 @@ export interface IMessageStore {
    * because 'v' > any digit makes v1 permanently lose the lex comparison.
    */
   canonicalizeCursor?(messageId: string, threadId: string): string | Promise<string>;
+}
+
+/** The bounded memory adapter cannot accept more work until a retained pending output settles. */
+export class PublicOutputCapacityError extends Error {
+  readonly code = 'PUBLIC_OUTPUT_CAPACITY';
+
+  constructor() {
+    super('Message store capacity is exhausted by retained public output; retry after recovery or deletion');
+    this.name = 'PublicOutputCapacityError';
+  }
 }
 
 /** Max messages to keep in memory */
@@ -2564,6 +2611,9 @@ export class MessageStore {
       ...(end < upperBound ? { nextCursor: { offset: end, upperBound } } : {}),
     };
   }
+  private publicRecoverySeq = 0;
+  private readonly publicRecoveryIndex = new Map<string, number>();
+  private publicRecoveryCheckpoint: PublicOutputRecoveryCheckpoint = { revision: 0, cursor: null };
   private readonly maxMessages: number;
   private readonly idempotencyIndex = new Map<string, string>();
   /** F102 KD-34: Listener called after every successful append (fire-and-forget) */
@@ -2585,6 +2635,9 @@ export class MessageStore {
     onAppend?: MessageAppendListener;
   }) {
     this.maxMessages = options?.maxMessages ?? MAX_MESSAGES;
+    if (!Number.isSafeInteger(this.maxMessages) || this.maxMessages < 0) {
+      throw new RangeError('maxMessages must be a finite nonnegative safe integer');
+    }
     this.onAppend = options?.onAppend;
   }
 
@@ -2596,6 +2649,7 @@ export class MessageStore {
   private pruneIdempotencyIndexForMessageIds(messageIds: readonly string[]): void {
     if (messageIds.length === 0) return;
     const removedIds = new Set(messageIds);
+    for (const id of removedIds) this.publicRecoveryIndex.delete(id);
     for (const [key, value] of this.idempotencyIndex.entries()) {
       if (removedIds.has(value)) {
         this.idempotencyIndex.delete(key);
@@ -2611,6 +2665,32 @@ export class MessageStore {
     }
     message.visibilitySeq = this.visibilitySeq.get(message.id);
     this.userMentionIndex.observe(message);
+  }
+
+  /** Select evictions without mutation. Unknown public proof remains pinned, never silently lost. */
+  private selectAppendEvictions(): string[] {
+    const needed = this.messages.length + 1 - this.maxMessages;
+    if (needed <= 0) return [];
+    const ids: string[] = [];
+    for (const message of this.messages) {
+      let reclaimable: boolean =
+        !hasPublicInvocationOutput(message.extra) || message.deletedAt !== undefined || message._tombstone === true;
+      if (!reclaimable) {
+        const recovery = readPublicOutputRecoveryMessage(message);
+        reclaimable = recovery.kind === 'terminal' || recovery.kind === 'quarantined';
+      }
+      if (reclaimable) ids.push(message.id);
+      if (ids.length === needed) return ids;
+    }
+    throw new PublicOutputCapacityError();
+  }
+
+  private evictAppendCandidates(ids: readonly string[]): void {
+    if (ids.length === 0) return;
+    const removed = new Set(ids);
+    this.messages = this.messages.filter((message) => !removed.has(message.id));
+    this.pruneIdempotencyIndexForMessageIds(ids);
+    for (const id of ids) this.visibilitySeq.delete(id);
   }
 
   /**
@@ -2817,7 +2897,6 @@ export class MessageStore {
           assertPublicOutputReplay(normalizedMessage, existing);
           return existing;
         }
-        this.idempotencyIndex.delete(idempotencyIndexKey);
       }
     }
 
@@ -2827,11 +2906,22 @@ export class MessageStore {
     reservedId ??= mediaReservedId;
     if (reservedId !== undefined && this.getById(reservedId)) throw new Error('reserved message id collision');
     void idempotencyKey;
+    if (reservedId !== undefined && !/^\d{16}-\d{6,}-[0-9a-f]{8}$/.test(reservedId)) {
+      throw new TypeError('reserved message id has invalid shape');
+    }
+    const evictions = this.selectAppendEvictions();
     const stored: StoredMessage = {
       ...payload,
       id: reservedId ?? generateSortableId(normalizedMessage.timestamp),
       threadId,
     };
+    if (hasPublicInvocationOutput(stored.extra)) {
+      if (this.publicRecoverySeq >= Number.MAX_SAFE_INTEGER) throw new Error('Public recovery sequence exhausted');
+      stored.extra = { ...stored.extra, publicOutputRecoveryV1: createPublicOutputRecovery(normalizedMessage) };
+    }
+    // Preparation above can fail; no message or index changes occur until it completes.
+    this.evictAppendCandidates(evictions);
+    if (hasPublicInvocationOutput(stored.extra)) this.publicRecoveryIndex.set(stored.id, ++this.publicRecoverySeq);
     this.messages.push(stored);
     if (idempotencyIndexKey) {
       this.idempotencyIndex.set(idempotencyIndexKey, stored.id);
@@ -2851,18 +2941,6 @@ export class MessageStore {
       stored.visibilitySeq = this.visibilitySeqCounter;
     }
     this.userMentionIndex.observe(stored);
-
-    // Trim oldest if over capacity
-    if (this.messages.length > this.maxMessages) {
-      const removed = this.messages.slice(0, this.messages.length - this.maxMessages);
-      this.messages = this.messages.slice(-this.maxMessages);
-      const removedIds = removed.map((entry) => entry.id);
-      this.pruneIdempotencyIndexForMessageIds(removedIds);
-      // #1200: Clean visibility entries for trimmed messages
-      for (const id of removedIds) {
-        this.visibilitySeq.delete(id);
-      }
-    }
 
     // F102 KD-34: fire-and-forget append listener for thread index updates
     // P2 fix: try-catch handles sync throws; Promise.resolve handles async rejections
@@ -3579,7 +3657,11 @@ export class MessageStore {
   softDelete(id: string, deletedBy: string): StoredMessage | null {
     const msg = this.messages.find((m) => m.id === id);
     if (!msg) return null;
-    msg.deletedAt = Date.now();
+    const now = Date.now();
+    const recovery = publicOutputSoftDeleteRecovery(msg, now);
+    if (recovery) msg.extra = { ...msg.extra, publicOutputRecoveryV1: recovery };
+    this.publicRecoveryIndex.delete(id);
+    msg.deletedAt = now;
     msg.deletedBy = deletedBy;
     notifyMessageTimelineChange(this, msg);
     return msg;
@@ -3658,6 +3740,7 @@ export class MessageStore {
       dotAsk: _stripDotAsk,
       deliveryBoundary: _stripBoundary,
       publicOutputV1: _stripPublicOutput,
+      publicOutputRecoveryV1: _stripPublicRecovery,
       ...hostOnly
     } = extra as Record<string, unknown>;
     msg.extra = { ...msg.extra, ...hostOnly };
@@ -3689,11 +3772,54 @@ export class MessageStore {
     return { kind: 'updated', message: structuredClone(msg) };
   }
 
+  scanPendingPublicInvocationOutputs(input: PublicOutputRecoveryPageInput): PublicOutputRecoveryPage {
+    const { afterSeq, limit } = capturePublicRecoveryPage(input);
+    const all = [...this.publicRecoveryIndex].filter(([, seq]) => seq > afterSeq).sort((a, b) => a[1] - b[1]);
+    const rows = all.slice(0, limit);
+    return {
+      ids: rows.map(([id]) => id),
+      ...(rows.length ? { nextCursor: publicRecoveryCursor(rows[rows.length - 1]![1]) } : {}),
+      exhausted: all.length <= limit,
+    };
+  }
+  retireMissingPublicInvocationOutput(id: string): boolean {
+    if (this.messages.some((message) => message.id === id)) return false;
+    return this.publicRecoveryIndex.delete(id);
+  }
+  readPublicInvocationOutputRecovery(id: string): PublicOutputRecoveryRead {
+    return readPublicOutputRecoveryMessage(this.getById(id));
+  }
+  getPublicInvocationOutputRecoveryCheckpoint(): PublicOutputRecoveryCheckpoint {
+    return { ...this.publicRecoveryCheckpoint };
+  }
+  advancePublicInvocationOutputRecoveryCheckpoint(
+    input: PublicOutputRecoveryCheckpointInput,
+  ): PublicOutputRecoveryCheckpointResult {
+    const row = capturePublicRecoveryCheckpoint(input);
+    if (this.publicRecoveryCheckpoint.revision !== row.expectedRevision)
+      return { kind: 'conflict', checkpoint: this.getPublicInvocationOutputRecoveryCheckpoint() };
+    this.publicRecoveryCheckpoint = { revision: row.expectedRevision + 1, cursor: row.cursor };
+    return { kind: 'updated', checkpoint: this.getPublicInvocationOutputRecoveryCheckpoint() };
+  }
+  quarantinePublicInvocationOutput(id: string, input: PublicOutputQuarantineInput): PublicOutputQuarantineResult {
+    const captured = capturePublicOutputQuarantine(id, input);
+    const current = this.messages.find((message) => message.id === id) ?? null;
+    const result = resolvePublicOutputQuarantine(current, captured, Date.now());
+    if (result.kind === 'updated' && current) {
+      current.extra = structuredClone(result.message.extra);
+      this.publicRecoveryIndex.delete(id);
+    }
+    return result;
+  }
+
   transitionPublicInvocationOutput(id: string, input: PublicOutputTransitionInput): PublicOutputTransitionResult {
     const captured = capturePublicOutputTransition(id, input);
     const current = this.messages.find((message) => message.id === id) ?? null;
     const result = resolvePublicOutputTransition(current, captured);
-    if (result.kind === 'updated' && current) current.extra = structuredClone(result.message.extra);
+    if (result.kind === 'updated' && current) {
+      current.extra = structuredClone(result.message.extra);
+      this.publicRecoveryIndex.delete(id);
+    }
     return result;
   }
 

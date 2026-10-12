@@ -4,6 +4,9 @@
  */
 
 export const MessageKeys = {
+  PUBLIC_OUTPUT_PENDING: 'msg:public-output:pending',
+  PUBLIC_OUTPUT_RECOVERY_HWM: 'msg:public-output:hwm',
+  PUBLIC_OUTPUT_RECOVERY_CHECKPOINT: 'msg:public-output:checkpoint',
   /** Hash with message details: msg:{id} */
   detail: (id: string) => `msg:${id}`,
 

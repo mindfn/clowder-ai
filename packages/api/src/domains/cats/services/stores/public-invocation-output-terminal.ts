@@ -3,7 +3,12 @@ import { normalizeJsonUnicode } from '../../../../utils/json-unicode.js';
 import { snapshotPluginProtocolData } from '../../../plugin/carrier/plugin-protocol-data.js';
 import type { AppendMessageInput, StoredMessage } from './ports/MessageStore.js';
 import { parsePublicInvocationOutput } from './public-invocation-output.js';
-import { assertPublicOutputReplay, capturePublicOutputAppend } from './public-invocation-output-append.js';
+import { assertPublicOutputReplay } from './public-invocation-output-append.js';
+import {
+  publicOutputAppendDigest,
+  publicOutputPendingProjection,
+  readPublicOutputRecoveryMessage,
+} from './public-invocation-output-recovery.js';
 
 /** Mechanical storage fence only. The caller must verify canonical child/auth terminal authority. */
 export interface PublicOutputTransitionInput {
@@ -27,10 +32,12 @@ export function capturePublicOutputTransition(
     const row = snapshotPluginProtocolData(input) as PublicOutputTransitionInput;
     if (!row || typeof row !== 'object' || Array.isArray(row) || Object.keys(row).length !== 2) reject();
     if (row.nextState !== 'committed' && row.nextState !== 'abandoned') reject();
-    const expected = capturePublicOutputAppend(row.expected);
+    const expected = publicOutputPendingProjection(row.expected);
     if (!parsePublicInvocationOutput(expected.extra?.publicOutputV1) || expected.reservedId !== id) reject();
     // Match the append path's Unicode normalization, then freeze that normalized snapshot too.
-    return snapshotPluginProtocolData(normalizeJsonUnicode(row)) as PublicOutputTransitionInput;
+    return snapshotPluginProtocolData(
+      normalizeJsonUnicode({ expected, nextState: row.nextState }),
+    ) as PublicOutputTransitionInput;
   } catch {
     reject();
   }
@@ -87,10 +94,18 @@ export function resolvePublicOutputTransition(
   }
   const receipt = parsePublicInvocationOutput(current.extra?.publicOutputV1);
   if (!receipt) return { kind: 'conflict' };
-  if (receipt.state === input.nextState) return { kind: 'existing', message: structuredClone(current) };
+  const recovery = readPublicOutputRecoveryMessage(current);
+  if (receipt.state === input.nextState && recovery.kind === 'terminal')
+    return { kind: 'existing', message: structuredClone(current) };
+  if (
+    recovery.kind !== 'pending' ||
+    publicOutputAppendDigest(input.expected) !== publicOutputAppendDigest(recovery.expected)
+  )
+    return { kind: 'conflict' };
   if (receipt.state !== 'pending_terminal') return { kind: 'conflict' };
   const message = structuredClone(current);
   message.extra = { ...message.extra, publicOutputV1: { ...receipt, state: input.nextState } };
+  delete message.extra.publicOutputRecoveryV1;
   if (input.nextState === 'committed') message.extra.deliveryBoundary = structuredClone(receipt.boundary);
   return { kind: 'updated', message };
 }

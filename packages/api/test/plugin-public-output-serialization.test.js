@@ -50,8 +50,8 @@ async function setup() {
     options: {},
     hgetall: async () => structuredClone(hash ?? {}),
     eval: async (script, keyCount, _key, ...argv) => {
-      assert.equal(keyCount, 1);
       if (script === APPEND_WITH_VISIBILITY_LUA) {
+        assert.equal(keyCount, 1);
         const countAt = 9 + Number(argv[8]);
         const pairCount = Number(argv[countAt]);
         const pairs = argv.slice(countAt + 1);
@@ -63,6 +63,8 @@ async function setup() {
         return 7;
       }
       assert.equal(script, TRANSITION_PUBLIC_OUTPUT_LUA);
+      assert.equal(keyCount, 2);
+      argv.shift(); // pending index is the second key
       terminalCalls++;
       assert.deepEqual(Object.fromEntries(JSON.parse(argv[0])), hash);
       if (argv[1] !== '') hash.extra = argv[1];
@@ -83,6 +85,7 @@ async function setup() {
     seedTerminal(state) {
       const extra = JSON.parse(hash.extra);
       extra.publicOutputV1.state = state;
+      delete extra.publicOutputRecoveryV1;
       if (state === 'committed') extra.deliveryBoundary = extra.publicOutputV1.boundary;
       hash.extra = JSON.stringify(extra);
     },
