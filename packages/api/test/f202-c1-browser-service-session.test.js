@@ -5,6 +5,10 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { test } from 'node:test';
 import { validateManifest } from '@clowder-ai/plugin-contract';
+import {
+  admitModuleBrowserServices,
+  captureModuleBrowserServices,
+} from '../dist/domains/plugin/builtin-runtime/carriers/module-browser-services.js';
 import { ModulePluginRuntime } from '../dist/domains/plugin/builtin-runtime/carriers/module-plugin-runtime.js';
 
 const declaration = {
@@ -55,12 +59,15 @@ async function fixture(
     missingHandler = false,
     collision = false,
     stopFailsOnce = false,
+    onCreate = () => {},
+    onResolve = () => {},
   } = {},
 ) {
   const rootDir = await mkdtemp(join(tmpdir(), 'f202-browser-session-'));
   const key = randomUUID(),
     events = [];
-  const declared = manifest(browser, collision);
+  const declared = structuredClone(manifest(browser, collision));
+  const granted = [];
   assert.equal(validateManifest(declared).valid, true);
   let hostSeen,
     sessionInput,
@@ -75,6 +82,7 @@ async function fixture(
     },
   });
   globalThis[key] = {
+    create: onCreate,
     start(host) {
       events.push('module-start');
       hostSeen = host;
@@ -86,7 +94,7 @@ async function fixture(
   };
   await writeFile(
     join(rootDir, 'plugin.mjs'),
-    `export default { create() { return { start(host) {
+    `export default { create(manifest) { globalThis[${JSON.stringify(key)}].create(manifest); return { start(host) {
     globalThis[${JSON.stringify(key)}].start(host);
     return { actions: { public: async () => 'public', ${browser && !missingHandler ? "'service.http': async () => ({status:200,headers:[],bodyBase64:''})," : ''} },
       stop() { globalThis[${JSON.stringify(key)}].stop(); } };
@@ -94,14 +102,18 @@ async function fixture(
   );
   const runtime = new ModulePluginRuntime({
     packages: {
-      resolveInstalledPackage: async () => ({
-        rootDir,
-        manifest: declared,
-        verifyIntegrity: async () => {},
-        release: async () => {
-          events.push('release');
-        },
-      }),
+      resolveInstalledPackage: async () => {
+        const locatedManifest = structuredClone(declared);
+        await onResolve(declared, granted);
+        return {
+          rootDir,
+          manifest: locatedManifest,
+          verifyIntegrity: async () => {},
+          release: async () => {
+            events.push('release');
+          },
+        };
+      },
     },
     configuration: { readConfig: async () => undefined, readSecret: async () => undefined },
     browserServices: async (input) => {
@@ -140,7 +152,7 @@ async function fixture(
       runtime.start(
         'instance',
         { pluginId: declared.pluginId, packageDigest: 'fixture-digest', manifest: declared },
-        [],
+        granted,
       ),
   };
 }
@@ -208,4 +220,84 @@ test('failed browser close is retained for retry without repeating successful mo
     'release',
     'session-stop',
   ]);
+});
+
+test('create cannot redirect a private browser method into an ordinary action', async (t) => {
+  const f = await fixture(t, {
+    missingHandler: true,
+    onCreate(value) {
+      value.contributions[0].action.method = 'public';
+    },
+  });
+  await assert.rejects(f.start, { code: 'PROTOCOL_VIOLATION' });
+  assert.equal(f.runtime.actions('instance'), undefined);
+  assert.equal(f.runtime.exposesAction('instance', 'public'), false);
+  assert.equal((await f.runtime.attemptInvoke('instance', 'public', {})).effect, 'not_started');
+  assert.equal(f.handlers(), undefined);
+  assert.deepEqual(f.events, ['prepare', 'module-start', 'session-stop', 'module-stop', 'release']);
+});
+
+test('plugin manifest mutations cannot change Host routes, features or retained metadata', async (t) => {
+  let pluginManifest;
+  const f = await fixture(t, {
+    onCreate(value) {
+      pluginManifest = value;
+      value.contributions[0].routes[0].path = '/changed';
+      value.features[0].capabilities.push('forged.capability');
+      value.name = 'changed';
+    },
+  });
+  await f.start();
+  assert.deepEqual(f.input().packageRecord.manifest, manifest());
+  assert.notEqual(f.input().packageRecord.manifest, pluginManifest);
+  assert.equal(Object.isFrozen(f.input().packageRecord), true);
+  assert.equal(Object.isFrozen(f.input().packageRecord.manifest.contributions[0].routes[0]), true);
+  assert.equal(Object.isFrozen(f.input().packageRecord.manifest.features[0].capabilities), true);
+  pluginManifest.contributions[0].action.method = 'public';
+  assert.equal(f.input().packageRecord.manifest.contributions[0].action.method, 'service.http');
+  assert.equal(f.runtime.exposesAction('instance', 'service.http'), false);
+  const response = await f.handlers().get('client-api')({}, undefined, {
+    kind: 'http',
+    lane: 'local',
+    contributionId: 'client-api',
+    requestId: 'test',
+    signal: new AbortController().signal,
+    assertCurrent() {},
+  });
+  assert.equal(response.status, 200);
+});
+
+test('admission captures contribution values rather than retaining caller references', async () => {
+  const value = structuredClone(manifest());
+  const admission = admitModuleBrowserServices(value, []);
+  value.contributions[0].action.method = 'public';
+  value.contributions[0].routes[0].path = '/changed';
+  const captured = captureModuleBrowserServices(
+    admission,
+    {
+      'service.http': async () => ({ status: 200 }),
+      public: async () => ({ status: 201 }),
+    },
+    () => {},
+  );
+  assert.equal(admission.active.get('client-api').routes[0].path, '/api/health');
+  const response = await captured.handlers.get('client-api')({}, undefined, {
+    kind: 'http',
+    lane: 'local',
+    contributionId: 'client-api',
+    requestId: 'test',
+    signal: new AbortController().signal,
+    assertCurrent() {},
+  });
+  assert.equal(response.status, 200);
+});
+
+test('activation captures caller grants before asynchronous package resolution', async (t) => {
+  const f = await fixture(t, {
+    onResolve(_value, grants) {
+      grants.push('forged.capability');
+    },
+  });
+  await f.start();
+  assert.deepEqual(f.input().effectiveGrants, []);
 });

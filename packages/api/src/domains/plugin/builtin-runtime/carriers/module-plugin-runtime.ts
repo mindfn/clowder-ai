@@ -62,6 +62,7 @@ import {
   resolveManifestConfiguration,
 } from '../../manifest-configuration-projection.js';
 import type { BundledPluginRuntime } from './bundled-runtime-carrier.js';
+import { snapshotModuleAuthority } from './module-authority-snapshot.js';
 import { admitModuleBrowserServices, captureModuleBrowserServices } from './module-browser-services.js';
 import { createModuleHostInvocation, exposesModuleAction } from './module-host-invocation.js';
 import {
@@ -223,8 +224,8 @@ export class ModulePluginRuntime implements BundledPluginRuntime {
 
   async start(
     pluginInstanceId: string,
-    packageRecord: PluginPackageRecord,
-    effectiveGrants: readonly string[],
+    admittedPackage: PluginPackageRecord,
+    admittedGrants: readonly string[],
   ): Promise<void> {
     if (this.#loaded.has(pluginInstanceId) || this.#unfinished.has(pluginInstanceId)) {
       throw new ExternalPluginRuntimeError(
@@ -232,6 +233,10 @@ export class ModulePluginRuntime implements BundledPluginRuntime {
         `${pluginInstanceId} already has a module loaded in this Host, or one that has not finished stopping`,
       );
     }
+    // These are Host-owned authority values, never the caller's or the module's mutable objects.
+    // Capture before package resolution yields, and retain them through every admission phase.
+    const packageRecord = snapshotModuleAuthority(admittedPackage);
+    const effectiveGrants = snapshotModuleAuthority(admittedGrants);
     const located = await this.#resolvePackage(pluginInstanceId, packageRecord);
     const activationToken = Symbol(pluginInstanceId);
     this.#neutralActivations.set(pluginInstanceId, activationToken);
@@ -260,11 +265,8 @@ export class ModulePluginRuntime implements BundledPluginRuntime {
           `${packageRecord.pluginId} entrypoint must default-export a module with create()`,
         );
       }
-      // The Host hands over the record IT admitted. The authority above
-      // already refused a located tree whose manifest differs from that record, so the
-      // package cannot smuggle a second truth in; what this adds is that whatever the
-      // module reads about itself at runtime is not what the Host acts on.
-      plugin = (entry as PluginModuleEntrypointShape).create(packageRecord.manifest);
+      // The package may mutate its own view, but no mutation can alter Host authority.
+      plugin = (entry as PluginModuleEntrypointShape).create(structuredClone(packageRecord.manifest));
       if ((typeof plugin !== 'object' && typeof plugin !== 'function') || typeof plugin?.start !== 'function') {
         throw new ExternalPluginRuntimeError(
           'INVALID_ENTRYPOINT',

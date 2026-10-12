@@ -2,6 +2,7 @@ import type { BrowserServiceContribution, PluginManifest } from '@clowder-ai/plu
 import { withoutPluginCallContext } from '../../carrier/plugin-call-context.js';
 import { ExternalPluginRuntimeError } from '../../external-runtime/types.js';
 import type { PluginBrowserServiceHandler } from '../../host-surface/plugin-browser-service-host.js';
+import { snapshotModuleAuthority } from './module-authority-snapshot.js';
 
 function violation(message: string): never {
   throw new ExternalPluginRuntimeError('PROTOCOL_VIOLATION', message);
@@ -27,7 +28,7 @@ export function admitModuleBrowserServices(
     );
     if (owners.length !== 1) violation('Browser service requires exactly one feature owner');
     if (owners[0]?.capabilities.every((capability) => grants.includes(capability)))
-      active.set(contribution.id, contribution);
+      active.set(contribution.id, snapshotModuleAuthority(contribution));
   }
   return { privateMethods, active };
 }
