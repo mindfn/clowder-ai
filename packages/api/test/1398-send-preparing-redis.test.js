@@ -57,6 +57,7 @@ for (const useSteer of [false, true]) {
     const invocationTracker = new InvocationTracker();
     const preparation = deferred();
     const running = deferred();
+    const initialRead = deferred();
     const dispatch = mock.fn(async () => ({ accepted: true, handle: {} }));
     const errors = [];
     let started = false;
@@ -86,7 +87,8 @@ for (const useSteer of [false, true]) {
           catId: targets[0],
           dispatcher: {
             invocationId: 'preparing-child',
-            capabilities: { append: true, steer: true },
+            capabilities: { append: true, steer: true, inputReadReceipt: true },
+            initialInputRead: initialRead.promise,
             handle: { provider: 'openai_codex', carrier: 'codex_app_server', threadId: 'native', turnId: 'turn' },
             dispatch,
           },
@@ -141,7 +143,7 @@ for (const useSteer of [false, true]) {
     }
     const app = Fastify();
     try {
-      await send();
+      const first = await send();
       await waitFor(() => started);
       const guidance = await send({
         opus: {
@@ -185,6 +187,32 @@ for (const useSteer of [false, true]) {
       assert.equal(router.routeExecution.mock.calls.length, 1, 'guidance must not start another turn');
       await processor.requestDrain('thread');
       assert.equal(dispatch.mock.calls.length, 1, 'repeated drain must not append again');
+      let storedFirst;
+      const receiptFor = (message) =>
+        message?.lifecycle?.dispatchRefs?.find((ref) => ref.targetId === 'opus')?.inputRead;
+      const deadline = Date.now() + 3000;
+      while (!receiptFor(storedFirst)) {
+        assert.ok(Date.now() < deadline, 'initial input must have a pending receipt once its adapter is ready');
+        storedFirst = await messageStore.getById(first.message.id);
+        await new Promise((resolve) => setTimeout(resolve, 5));
+      }
+      assert.deepEqual(
+        receiptFor(storedFirst),
+        { status: 'pending' },
+        'ready/append/ACK do not prove first input read',
+      );
+      const readAt = Date.now();
+      initialRead.resolve(readAt);
+      while (receiptFor(storedFirst)?.status !== 'read') {
+        assert.ok(Date.now() < deadline, 'native initial receipt must reach the durable source');
+        storedFirst = await messageStore.getById(first.message.id);
+        await new Promise((resolve) => setTimeout(resolve, 5));
+      }
+      const reloaded = new RedisMessageStore(redis, { ttlSeconds: 0 });
+      assert.deepEqual(receiptFor(await reloaded.getById(first.message.id)), { status: 'read', at: readAt });
+      initialRead.resolve(readAt + 1000);
+      await processor.requestDrain('thread');
+      assert.deepEqual(receiptFor(await reloaded.getById(first.message.id)), { status: 'read', at: readAt });
       assert.deepEqual(errors, []);
     } finally {
       preparation.resolve();

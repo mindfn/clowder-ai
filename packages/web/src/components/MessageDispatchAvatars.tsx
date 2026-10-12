@@ -6,6 +6,7 @@ import {
   type LifecycleDispatchRef,
   type LifecycleStoredMessageMetadata,
 } from '@cat-cafe/shared';
+import { dispatchReceiptDisplay, dispatchReceiptLabel } from '@/lib/dispatch-receipt-display';
 import type { ChatMessage } from '@/stores/chat-types';
 import { focusLineageMessage } from '@/utils/focusLineageMessage';
 import { CatAvatar } from './CatAvatar';
@@ -133,12 +134,6 @@ export function isLinkedDeliveryFailureCarrier(
   );
 }
 
-function formatDispatchTime(timestamp: number): string {
-  const date = new Date(timestamp);
-  const pad = (value: number) => String(value).padStart(2, '0');
-  return `${pad(date.getMonth() + 1)}/${pad(date.getDate())} ${pad(date.getHours())}:${pad(date.getMinutes())}:${pad(date.getSeconds())}`;
-}
-
 interface MessageDispatchAvatarsProps {
   message: ChatMessage;
   timelineMessages: readonly ChatMessage[];
@@ -164,8 +159,16 @@ export function MessageDispatchAvatars({
       {projections.map((projection) => {
         const label = getCatLabel(projection.targetId);
         const processing = projection.phase === 'processing';
-        const at = projection.dispatchedAt === undefined ? '' : ` · ${formatDispatchTime(projection.dispatchedAt)}`;
-        const title = `${label} 已投递${at}`;
+        const ref = message.lifecycle?.dispatchRefs?.find((candidate) => candidate.targetId === projection.targetId);
+        const linked = ref ? exactMessageById(timelineMessages, ref.statusMessageId)?.lifecycle : undefined;
+        const running =
+          linked?.kind === 'response' &&
+          linked.targetId === projection.targetId &&
+          linked.inputMessageIds.includes(message.id)
+            ? linked.status === 'processing'
+            : ref?.phase !== 'settled';
+        const receipt = dispatchReceiptDisplay(ref, running);
+        const title = dispatchReceiptLabel(receipt, label, 'recipient');
         return (
           <li
             key={`${projection.targetId}:${projection.evidenceKey}`}

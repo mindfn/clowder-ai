@@ -277,13 +277,44 @@ describe('MessageDispatchAvatars', () => {
     });
 
     const item = container.querySelector('[data-dispatch-target="opus"]');
-    expect(item?.getAttribute('title')).toBe('布偶猫 已投递 · 09/07 13:02:14');
+    expect(item?.getAttribute('title')).toBe('已投递 布偶猫 · 09/07 13:02:14');
     const button = container.querySelector('button');
-    expect(button?.getAttribute('aria-label')).toBe('布偶猫 已投递 · 09/07 13:02:14，跳转到对应回复');
+    expect(button?.getAttribute('aria-label')).toBe('已投递 布偶猫 · 09/07 13:02:14，跳转到对应回复');
     act(() => button?.click());
     expect(statusRow.scrollIntoView).toHaveBeenCalledWith({ behavior: 'smooth', block: 'center' });
     expect(statusRow.dataset.messageJumpFocus).toBe('true');
     statusRow.remove();
+  });
+
+  it('uses a first input receipt when present, without treating a response as read evidence', () => {
+    const initial = source('settled');
+    const render = () =>
+      act(() =>
+        root.render(
+          <MessageDispatchAvatars
+            message={initial}
+            timelineMessages={[response('completed')]}
+            activeRuns={[]}
+            getCatLabel={() => '布偶猫'}
+          />,
+        ),
+      );
+    render();
+    expect(container.querySelector('[data-dispatch-target="opus"]')?.getAttribute('title')).toBe(
+      '已投递 布偶猫 · 09/07 13:02:14',
+    );
+    if (!initial.lifecycle?.dispatchRefs) throw new Error('Expected dispatch');
+    initial.lifecycle = {
+      ...initial.lifecycle,
+      dispatchRefs: initial.lifecycle.dispatchRefs.map((ref) => ({
+        ...ref,
+        inputRead: { status: 'read', at: DISPATCHED_AT + 3_000 },
+      })),
+    };
+    render();
+    expect(container.querySelector('[data-dispatch-target="opus"]')?.getAttribute('title')).toBe(
+      '已读 布偶猫 · 09/07 13:02:17',
+    );
   });
 
   it('renders an unlinked delivered avatar as tooltip-only', () => {
@@ -299,7 +330,7 @@ describe('MessageDispatchAvatars', () => {
     });
     expect(container.querySelector('button')).toBeNull();
     expect(container.querySelector('[data-dispatch-target="opus"]')?.getAttribute('title')).toBe(
-      '布偶猫 已投递 · 09/07 13:02:14',
+      '已投递 布偶猫 · 09/07 13:02:14',
     );
   });
 

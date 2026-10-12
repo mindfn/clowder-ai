@@ -61,3 +61,15 @@ test('read evidence is validated, monotonic and cannot precede admission', () =>
     false,
   );
 });
+
+test('first-input pending initialization is presentation-only even after settlement', () => {
+  const initial = advance(undefined, patch).lifecycle;
+  const settled = advance(initial, { ...patch, phase: 'settled' }).lifecycle;
+  const pending = advance(settled, { ...patch, inputRead: { status: 'pending' } });
+  assert.equal(pending.kind, 'applied');
+  assert.equal(pending.lifecycle.dispatchRefs[0].phase, 'settled');
+  const read = advance(pending.lifecycle, { ...patch, inputRead: { status: 'read', at: 15 } });
+  assert.equal(read.kind, 'applied');
+  assert.equal(read.lifecycle.dispatchRefs[0].phase, 'settled');
+  assert.deepEqual(read.lifecycle.dispatchRefs[0].inputRead, { status: 'read', at: 15 });
+});

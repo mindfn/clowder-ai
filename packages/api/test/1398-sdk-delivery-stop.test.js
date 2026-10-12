@@ -31,16 +31,18 @@ class AsyncInbox {
 }
 
 describe('SDK correlation does not invent optional model-read evidence', () => {
-  for (const scenario of [
+  for (const [initial, kind, consumed] of [
     ['delivery-error', false],
     ['synthetic-api-error', false],
     ['heartbeat', false],
     ['local-command', false],
     ['real-assistant-single', true],
     ['consumed-error-result', true],
-  ]) {
-    it(scenario[0], async () => {
-      const [kind, consumed] = scenario;
+  ].flatMap(([kind, consumed]) => [
+    [false, kind, consumed],
+    [true, kind, consumed],
+  ])) {
+    it(`${initial ? 'first' : 'append'} ${kind}`, async () => {
       const events = new AsyncInbox();
       const controller = new AbortController();
       let input;
@@ -76,14 +78,20 @@ describe('SDK correlation does not invent optional model-read evidence', () => {
         [Symbol.asyncIterator]();
       const initialized = output.next();
       while (!input) await new Promise((resolve) => setImmediate(resolve));
-      await input.next();
+      const first = (await input.next()).value;
       events.push({ type: 'system', subtype: 'init', session_id: 'read-proof-session' });
       await initialized;
-      await dispatcher.dispatch(
-        { text: 'append', messageIds: ['exact-source'], onInputRead: async () => reads.push('exact-source') },
-        { expectedInvocationId: 'read-proof', force: false },
-      );
-      const send = (await input.next()).value;
+      let send;
+      if (initial) {
+        dispatcher.initialInputRead?.then(() => reads.push('exact-source'));
+        send = first;
+      } else {
+        await dispatcher.dispatch(
+          { text: 'append', messageIds: ['exact-source'], onInputRead: async () => reads.push('exact-source') },
+          { expectedInvocationId: 'read-proof', force: false },
+        );
+        send = (await input.next()).value;
+      }
       const pending = output.next();
       const echo = { user_message_uuid: send.uuid, parent_tool_use_id: null, session_id: 'read-proof-session' };
       switch (kind) {

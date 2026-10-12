@@ -920,6 +920,8 @@ export interface AgentClientActiveRunDispatcher {
   readonly invocationId: string;
   readonly capabilities: { readonly append: boolean; readonly steer: boolean; readonly inputReadReceipt?: boolean };
   readonly handle: AgentClientActiveRunHandle;
+  /** Exact native consumption of this run’s first input; never awaited by delivery or Stop. */
+  readonly initialInputRead?: Promise<number>;
   dispatch(input: AgentClientDispatchInput, options: AgentClientDispatchOptions): Promise<AgentClientDispatchResult>;
 }
 

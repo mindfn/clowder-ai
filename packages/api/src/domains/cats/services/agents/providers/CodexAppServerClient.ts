@@ -400,10 +400,16 @@ export class CodexAppServerClient {
       }
       const submittedPrompt = preparedRequest ? requireExactPreparedProviderMessage(preparedRequest) : promptBytes;
 
+      let resolveInitialInputRead!: (at: number) => void;
+      const initialInputRead = new Promise<number>((resolve) => {
+        resolveInitialInputRead = resolve;
+      });
+      const initialClientId = input.activeRunDispatch && !isRecoveryTurn ? randomUUID() : undefined;
       this.lifecycle.patch({ turnStartSent: true });
       const turnResult = asCodexAppServerRecord(
         await this.request('turn/start', {
           threadId,
+          ...(initialClientId ? { clientUserMessageId: initialClientId } : {}),
           input: isRecoveryTurn
             ? []
             : [
@@ -427,6 +433,13 @@ export class CodexAppServerClient {
       const turn = asCodexAppServerRecord(turnResult?.turn);
       if (typeof turn?.id !== 'string') throw new Error('Codex app-server did not return a turn id');
       activeTurnId = turn.id;
+      if (initialClientId) {
+        inputReadCallbacks.set(initialClientId, {
+          turnId: activeTurnId,
+          notify: async () => resolveInitialInputRead(Date.now()),
+          observing: false,
+        });
+      }
       let subexecutionTracker = createCodexSubexecutionTracker({
         binding: { threadId, turnId: activeTurnId },
         readThread: (childThreadId) => this.request('thread/read', { threadId: childThreadId, includeTurns: false }),
@@ -468,6 +481,7 @@ export class CodexAppServerClient {
         const release = input.activeRunDispatch.register({
           invocationId,
           capabilities: { append: true, steer: true, inputReadReceipt: true },
+          ...(initialClientId ? { initialInputRead } : {}),
           handle,
           dispatch: async (dispatchInput, options) => {
             if (options.expectedInvocationId !== invocationId) {

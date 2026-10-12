@@ -251,6 +251,51 @@ test('app-server registers one exact active-run dispatcher and fences it at turn
   assert.deepEqual(terminal, { accepted: false, reason: 'active_run_closed' });
 });
 
+test('first input read requires its exact native completion, not turn acceptance or a duplicate', async () => {
+  const wire = new ProtocolWire();
+  let dispatcher;
+  const reads = [];
+  const client = new CodexAppServerClient({ wire });
+  const output = collect(
+    client.run({
+      prompt: frozenPrompt('first exact input'),
+      thread: { kind: 'start' },
+      activeRunDispatch: {
+        invocationId: 'initial-read',
+        register(value) {
+          dispatcher = value;
+          return () => {};
+        },
+      },
+    }),
+  );
+  await waitFor(() => dispatcher !== undefined);
+  const clientId = wire.writes.find((message) => message.method === 'turn/start').params.clientUserMessageId;
+  dispatcher.initialInputRead?.then((at) => reads.push(at));
+  const item = { type: 'userMessage', id: 'initial-item', clientId };
+  for (const params of [
+    { threadId: 'foreign-thread', turnId: 'turn-1', item },
+    { threadId: 'thread-1', turnId: 'foreign-turn', item },
+    { threadId: 'thread-1', turnId: 'turn-1', item: { ...item, clientId: 'foreign-id' } },
+  ])
+    wire.inbox.push({ method: 'item/completed', params });
+  wire.inbox.push({ method: 'item/started', params: { threadId: 'thread-1', turnId: 'turn-1', item } });
+  await delay(10);
+  assert.deepEqual(reads, [], 'ready and started are not read evidence');
+  const consumed = { method: 'item/completed', params: { threadId: 'thread-1', turnId: 'turn-1', item } };
+  wire.inbox.push(consumed);
+  wire.inbox.push(consumed);
+  await delay(10);
+  wire.inbox.push({
+    method: 'turn/completed',
+    params: { threadId: 'thread-1', turn: { id: 'turn-1', status: 'completed' } },
+  });
+  await output;
+  assert.equal(typeof clientId, 'string', 'turn/start must correlate the first input');
+  assert.equal(reads.length, 1);
+  assert.ok(Number.isFinite(reads[0]));
+});
+
 test('steer acceptance stays pending until the exact native user message is consumed', async () => {
   const wire = new ProtocolWire();
   let dispatcher;

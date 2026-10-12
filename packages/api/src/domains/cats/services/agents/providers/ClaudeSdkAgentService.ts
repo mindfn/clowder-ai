@@ -145,6 +145,13 @@ export class ClaudeSdkAgentService implements AgentService {
     const inputReadCallbacks = new Map<string, () => Promise<void>>();
     const inputReadInFlight = new Set<string>();
     const initialMessageId = randomUUID();
+    let resolveInitialInputRead!: (at: number) => void;
+    const initialInputRead = new Promise<number>((resolve) => {
+      resolveInitialInputRead = resolve;
+    });
+    if (options?.activeRunDispatch) {
+      inputReadCallbacks.set(initialMessageId, async () => resolveInitialInputRead(Date.now()));
+    }
     let noticeId: string | null = null;
     const freshness = new ClaudeSdkFreshness(
       {
@@ -215,6 +222,7 @@ export class ClaudeSdkAgentService implements AgentService {
       const release = options.activeRunDispatch.register({
         invocationId,
         capabilities: { append: true, steer: true, inputReadReceipt: true },
+        initialInputRead,
         handle,
         dispatch: async (dispatchInput, dispatchOptions) => {
           if (dispatchOptions.expectedInvocationId !== invocationId) {

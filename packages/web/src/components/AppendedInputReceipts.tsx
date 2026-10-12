@@ -6,6 +6,7 @@ import { useMeasuredOverflow } from '@/components/content-overflow/useMeasuredOv
 import { ChevronIcon } from '@/components/hub-icons';
 import type { CatData } from '@/hooks/useCatData';
 import { useCoCreatorConfig } from '@/hooks/useCoCreatorConfig';
+import { dispatchReceiptDisplay, dispatchReceiptLabel } from '@/lib/dispatch-receipt-display';
 import { resolveMessageSender } from '@/lib/resolve-sender';
 import type { ChatMessage } from '@/stores/chat-types';
 import { focusLineageMessage } from '@/utils/focusLineageMessage';
@@ -33,12 +34,6 @@ export function projectAppendedInputReceipts(
   });
 }
 
-function formatReceiptTimestamp(timestamp: number): string {
-  const date = new Date(timestamp);
-  const part = (value: number) => String(value).padStart(2, '0');
-  return `${part(date.getMonth() + 1)}/${part(date.getDate())} ${part(date.getHours())}:${part(date.getMinutes())}:${part(date.getSeconds())}`;
-}
-
 interface AppendedInputRowProps {
   source: ChatMessage;
   label: string;
@@ -58,24 +53,7 @@ export function appendedInputReadDisplay(source: ChatMessage, response: ChatMess
         ) ?? [])
       : [];
   const ref = refs.length === 1 ? refs[0] : undefined;
-  const receipt = ref?.inputRead;
-  const label =
-    typeof ref?.dispatchedAt === 'number' && Number.isFinite(ref.dispatchedAt)
-      ? `投递于: ${formatReceiptTimestamp(ref.dispatchedAt)}`
-      : '已投递';
-  if (receipt?.status === 'read')
-    return {
-      state: 'read',
-      label: `读取于: ${formatReceiptTimestamp(receipt.at)}`,
-      pulse: false,
-    };
-  if (!receipt) return { state: 'unavailable', label, pulse: false };
-  const running = lifecycle?.kind === 'response' && lifecycle.status === 'processing';
-  return {
-    state: running ? 'pending' : 'unconfirmed',
-    label: running ? label : `${label}（未确认读取）`,
-    pulse: running,
-  };
+  return dispatchReceiptDisplay(ref, lifecycle?.kind === 'response' && lifecycle.status === 'processing');
 }
 
 /**
@@ -87,6 +65,7 @@ function AppendedInputRow({ source, label, expanded, onToggle, response, color }
   const { ref, overflowing } = useMeasuredOverflow<HTMLSpanElement>({ axis: 'inline', active: !expanded });
   const content = source.content.trim() || '（无文字内容）';
   const read = appendedInputReadDisplay(source, response);
+  const receiptLabel = dispatchReceiptLabel(read, label, 'appended_source');
   const canToggle = overflowing || expanded;
   return (
     <li
@@ -95,7 +74,7 @@ function AppendedInputRow({ source, label, expanded, onToggle, response, color }
       className={expanded ? 'flex min-w-0 items-start gap-1.5 py-1' : 'flex h-7 min-w-0 items-center gap-1.5'}
     >
       <AppTooltip
-        label={`${label} · ${read.label}`}
+        label={receiptLabel}
         detail={<span className="block max-h-[45vh] overflow-y-auto">{content}</span>}
         delayMs={1_000}
         multiline
@@ -103,7 +82,7 @@ function AppendedInputRow({ source, label, expanded, onToggle, response, color }
       >
         <button
           type="button"
-          aria-label={`${label} · ${read.label} · ${content}`}
+          aria-label={`${receiptLabel} · ${content}`}
           aria-expanded={canToggle ? expanded : undefined}
           aria-controls={canToggle ? contentId : undefined}
           data-append-delivery-state={read.state}

@@ -1152,34 +1152,16 @@ export class QueueProcessor {
                 messageIds: inputMessageIds,
                 ...(dispatchers[index]!.capabilities.inputReadReceipt
                   ? {
-                      onInputRead: async () => {
-                        const response = await messageStore.getById(run.responseMessageId);
-                        if (
-                          response?.lifecycle?.kind !== 'response' ||
-                          response.lifecycle.invocationId !== run.invocationId ||
-                          response.lifecycle.targetId !== run.targetId
-                        )
-                          return;
-                        for (const id of inputMessageIds) {
-                          if (!response.lifecycle.inputMessageIds.includes(id)) continue;
-                          const source = await messageStore.getById(id);
-                          const refs =
-                            source?.lifecycle?.dispatchRefs?.filter(
-                              (ref) => ref.targetId === run.targetId && ref.statusMessageId === run.responseMessageId,
-                            ) ?? [];
-                          if (!source || refs.length !== 1 || !refs[0]!.inputRead) continue;
-                          const result = await messageStore.advanceLifecycleInputDispatch(id, {
-                            ...lifecycleInputIdentityForStoredMessage(source),
-                            targetId: run.targetId,
-                            statusMessageId: run.responseMessageId,
-                            ...(refs[0]!.phase === 'dispatched'
-                              ? { phase: 'dispatched' as const, dispatchedAt: refs[0]!.dispatchedAt ?? seenAt }
-                              : { phase: 'settled' as const }),
-                            inputRead: { status: 'read', at: Math.max(Date.now(), refs[0]!.dispatchedAt ?? seenAt) },
-                          });
-                          if (result.kind === 'applied') this.emitLifecycleMessageUpdated(input.userId, result.message);
-                        }
-                      },
+                      onInputRead: () =>
+                        this.updateInputReadReceipt({
+                          threadId: input.threadId,
+                          userId: input.userId,
+                          targetId: run.targetId,
+                          invocationId: run.invocationId,
+                          responseMessageId: run.responseMessageId,
+                          messageIds: inputMessageIds,
+                          readAt: Date.now(),
+                        }),
                     }
                   : {}),
               },
@@ -2038,6 +2020,59 @@ export class QueueProcessor {
           '[QueueProcessor] prompt mention cursor ack failed after durable body exposure',
         );
       }
+    }
+  }
+
+  /** First and appended input receipts share durable source/response identity checks. */
+  private async updateInputReadReceipt(input: {
+    threadId: string;
+    userId: string;
+    targetId: string;
+    invocationId: string;
+    responseMessageId: string;
+    messageIds: readonly string[];
+    readAt?: number;
+  }): Promise<void> {
+    const { readAt } = input;
+    const response = await this.deps.messageStore.getById(input.responseMessageId);
+    if (
+      response?.threadId !== input.threadId ||
+      response.userId !== input.userId ||
+      response.lifecycle?.kind !== 'response' ||
+      response.lifecycle.targetId !== input.targetId ||
+      response.lifecycle.invocationId !== input.invocationId
+    )
+      return;
+    for (const id of input.messageIds) {
+      if (!response.lifecycle.inputMessageIds.includes(id)) continue;
+      const source = await this.deps.messageStore.getById(id);
+      const refs =
+        source?.lifecycle?.dispatchRefs?.filter(
+          (ref) => ref.targetId === input.targetId && ref.statusMessageId === input.responseMessageId,
+        ) ?? [];
+      const ref = refs.length === 1 ? refs[0] : undefined;
+      if (
+        source?.threadId !== input.threadId ||
+        source.userId !== input.userId ||
+        !ref ||
+        (readAt !== undefined && (!ref.inputRead || !Number.isFinite(readAt) || readAt < (ref.dispatchedAt ?? 0)))
+      )
+        continue;
+      const phase =
+        ref.phase === 'dispatched'
+          ? typeof ref.dispatchedAt === 'number'
+            ? { phase: 'dispatched' as const, dispatchedAt: ref.dispatchedAt }
+            : undefined
+          : { phase: 'settled' as const };
+      if (!phase) continue;
+      const transition = await this.deps.messageStore.advanceLifecycleInputDispatch(id, {
+        ...lifecycleInputIdentityForStoredMessage(source),
+        targetId: input.targetId,
+        statusMessageId: input.responseMessageId,
+        ...phase,
+        inputRead: readAt === undefined ? { status: 'pending' } : { status: 'read', at: readAt },
+      });
+      if (transition.kind === 'applied') this.emitLifecycleMessageUpdated(input.userId, transition.message);
     }
   }
 
@@ -4819,6 +4854,24 @@ export class QueueProcessor {
             );
             if (!release) {
               throw new Error(`Agent Client ActiveRun dispatcher owner mismatch: ${dispatcher.invocationId}`);
+            }
+            const responseMessageId = lifecycleResponseMessageIdByCat.get(catId);
+            const evidence = dispatcher.initialInputRead;
+            if (dispatcher.capabilities.inputReadReceipt && evidence && responseMessageId) {
+              const receipt = {
+                threadId,
+                userId,
+                targetId: catId,
+                invocationId: dispatcher.invocationId,
+                responseMessageId,
+                messageIds,
+              };
+              void this.updateInputReadReceipt(receipt)
+                .then(() => evidence)
+                .then((readAt) => this.updateInputReadReceipt({ ...receipt, readAt }))
+                .catch((err) =>
+                  log.warn({ err, threadId, catId }, '[QueueProcessor] optional initial input receipt update failed'),
+                );
             }
             // A queued guidance request can predate provider turn acceptance.
             // Publish readiness to the same owner that handles every ingress.
