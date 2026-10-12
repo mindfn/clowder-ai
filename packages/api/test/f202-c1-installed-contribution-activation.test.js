@@ -195,6 +195,15 @@ test('installed native MCP receives its scoped action token without exposing a p
   );
   const token = capability.mcpServer.env.CLOWDER_PLUGIN_ACTION_TOKEN;
   assert.ok(token);
+  const launch = await runtime.supervisor.resolveNativeMcpLaunch({
+    mode: 'plugin_native',
+    pluginInstanceId: installed.pluginInstanceId,
+    contributionId: 'native',
+    actionMethods: ['native.run'],
+  });
+  assert.equal(launch.env.CLOWDER_PLUGIN_ACTION_TOKEN, token);
+  assert.equal(launch.command, capability.mcpServer.command);
+  assert.deepEqual(launch.args, capability.mcpServer.args);
   assert.equal(capability.mcpServer.env.CLOWDER_PLUGIN_ACTION_PATH, '/api/plugin-runtime/action');
   await assert.rejects(runtime.supervisor.listPluginTools(installed.pluginId), /is not active/);
   await assert.rejects(runtime.supervisor.callPluginTool(installed.pluginId, 'native', 'native.run', {}));

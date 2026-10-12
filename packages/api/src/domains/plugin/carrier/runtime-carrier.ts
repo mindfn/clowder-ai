@@ -4,6 +4,7 @@ import {
   validateMessagingRowInput,
   validateMessagingRowResult,
 } from '@clowder-ai/plugin-contract';
+import type { ToolExecutionPolicy } from '../../cats/services/types.js';
 import {
   type DeclaredPluginTool,
   type DeclaredPluginWebhook,
@@ -15,6 +16,7 @@ import {
   type DeclaredStaticResourceHost,
   removeDeclaredStaticResources,
 } from '../declared/declared-static-resources.js';
+import { NativeMcpLaunches, type NativeMcpServer } from '../declared/native-mcp-launches.js';
 import { NativePluginActions } from '../declared/native-plugin-actions.js';
 import { type PluginRuntimeLifecyclePort, removesPluginOwnedResources } from '../external-plugin-lifecycle-types.js';
 import { ExternalPluginRuntimeError, type VerifiedPluginPackageLocator } from '../external-runtime/types.js';
@@ -43,6 +45,7 @@ export interface PluginRuntimeAdmission {
   readonly instance: PluginInstanceRecord;
   readonly packageRecord: PluginPackageRecord;
   readonly effectiveGrants: readonly string[];
+  readonly grantRevision?: number;
 }
 
 export interface PluginRuntimeCarrier {
@@ -67,6 +70,7 @@ export interface PluginRuntimeCarrier {
 
 export class PluginRuntimeCarrierRouter implements PluginRuntimeLifecyclePort {
   readonly nativeActions = new NativePluginActions((id) => this.#admission(id));
+  readonly #nativeMcpLaunches = new NativeMcpLaunches((id) => this.#admission(id), this.nativeActions);
   readonly #carriers: PluginRuntimeCarrier[] = [];
   readonly #runtimeContributions: DeclaredRuntimeContributions;
 
@@ -109,7 +113,7 @@ export class PluginRuntimeCarrierRouter implements PluginRuntimeLifecyclePort {
       this.nativeActions.activate(admission, generation, (method, input) =>
         this.invoke(pluginInstanceId, method, input),
       );
-      await activateDeclaredStaticResources(
+      const launches = await activateDeclaredStaticResources(
         admission,
         this.resources && {
           ...this.resources,
@@ -124,6 +128,7 @@ export class PluginRuntimeCarrierRouter implements PluginRuntimeLifecyclePort {
           exposes: (instanceId, method) => this.exposesAction(instanceId, method),
         },
       );
+      this.#nativeMcpLaunches.activate(admission, generation, launches);
       return result;
     } catch (error) {
       await this.#rollbackStartedRuntime(error, carrier, admission);
@@ -131,6 +136,7 @@ export class PluginRuntimeCarrierRouter implements PluginRuntimeLifecyclePort {
   }
 
   async stop(pluginInstanceId: string, reason = 'host_stop'): Promise<void> {
+    this.#nativeMcpLaunches.deactivate(pluginInstanceId);
     this.nativeActions.deactivate(pluginInstanceId);
     const admission = await this.#admission(pluginInstanceId);
     const carrier = this.#selectAdmission(admission);
@@ -143,6 +149,7 @@ export class PluginRuntimeCarrierRouter implements PluginRuntimeLifecyclePort {
   }
 
   async stopAll(reason = 'host_shutdown'): Promise<void> {
+    this.#nativeMcpLaunches.deactivateAll();
     this.nativeActions.deactivateAll();
     if (this.beforeStop) {
       const inventory = await this.inventory.snapshot();
@@ -162,6 +169,11 @@ export class PluginRuntimeCarrierRouter implements PluginRuntimeLifecyclePort {
       recovered += (await carrier.recoverAfterRestart?.()) ?? 0;
     }
     return recovered;
+  }
+
+  /** Host-only launch resolution; it does not grant invocation authority or provider support. */
+  resolveNativeMcpLaunch(policy: ToolExecutionPolicy): Promise<NativeMcpServer> {
+    return this.#nativeMcpLaunches.resolve(policy);
   }
 
   async deliver(pluginInstanceId: string, input: M0CDeliverInput): Promise<M0CDeliverResult> {
@@ -281,6 +293,7 @@ export class PluginRuntimeCarrierRouter implements PluginRuntimeLifecyclePort {
     carrier: PluginRuntimeCarrier,
     admission: PluginRuntimeAdmission,
   ): Promise<never> {
+    this.#nativeMcpLaunches.deactivate(admission.instance.pluginInstanceId);
     this.nativeActions.deactivate(admission.instance.pluginInstanceId);
     const rollbackErrors: unknown[] = [];
     try {
@@ -323,7 +336,12 @@ export class PluginRuntimeCarrierRouter implements PluginRuntimeLifecyclePort {
         `${pluginInstanceId} is not a runnable plugin instance`,
       );
     }
-    return { instance, packageRecord, effectiveGrants: grants?.effectiveGrants ?? [] };
+    return {
+      instance,
+      packageRecord,
+      effectiveGrants: grants?.effectiveGrants ?? [],
+      ...(grants?.grantRevision === undefined ? {} : { grantRevision: grants.grantRevision }),
+    };
   }
 }
 

@@ -12,6 +12,7 @@ import type { BuiltinPluginPackageMaterializer } from '../manager/builtin-packag
 import type { PluginRuntimeConfigurationPort } from '../manifest-configuration-projection.js';
 import { activateDeclaredMcp, removeDeclaredMcp } from './declared-mcp-resources.js';
 import { pluginResourceRoot } from './declared-resource-paths.js';
+import type { DeclaredMcpLaunch } from './native-mcp-launches.js';
 
 export interface DeclaredStaticResourceHost {
   readonly projectRoot: string;
@@ -33,10 +34,10 @@ const MARKER = '.clowder-resource.json';
 export async function activateDeclaredStaticResources(
   admission: PluginRuntimeAdmission,
   host: DeclaredStaticResourceHost | undefined,
-): Promise<void> {
+): Promise<readonly DeclaredMcpLaunch[]> {
   await activateDeclaredSkills(admission, host);
   try {
-    await activateDeclaredMcp(admission, host);
+    return await activateDeclaredMcp(admission, host);
   } catch (error) {
     await removeDeclaredSkills(admission.packageRecord.pluginId, host).catch(() => undefined);
     throw error;

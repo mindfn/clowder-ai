@@ -12,6 +12,7 @@ import { hostCapabilityRefusal } from '../host-surface/host-capability-refusal.j
 import { effectivePluginConfigurationValue } from '../manager/plugin-configuration-values.js';
 import { pluginResourceRoot, resolvePackageFile } from './declared-resource-paths.js';
 import type { DeclaredStaticResourceHost } from './declared-static-resources.js';
+import type { DeclaredMcpLaunch } from './native-mcp-launches.js';
 
 const MCP_MARKER = '.clowder-mcp-resource.json';
 const MCP_MATERIALIZATION_VERSION = 3;
@@ -19,11 +20,11 @@ const MCP_MATERIALIZATION_VERSION = 3;
 export async function activateDeclaredMcp(
   admission: PluginRuntimeAdmission,
   host: DeclaredStaticResourceHost | undefined,
-): Promise<void> {
+): Promise<readonly DeclaredMcpLaunch[]> {
   const contributions = (admission.packageRecord.manifest.contributions ?? []).filter(
     (contribution): contribution is McpContribution => contribution.type === 'mcp',
   );
-  if (contributions.length === 0) return;
+  if (contributions.length === 0) return Object.freeze([]);
   if (!host) {
     throw new ExternalPluginRuntimeError('UNSUPPORTED_TRANSPORT', 'Host static-resource activation is unavailable');
   }
@@ -36,9 +37,26 @@ export async function activateDeclaredMcp(
 
   const packageRoot = await stablePackageRoot(admission, host, contributions);
   const installed: string[] = [];
+  const launches: DeclaredMcpLaunch[] = [];
   try {
     for (const contribution of contributions) {
       const entry = await mcpCapability(admission, host, packageRoot, contribution);
+      const server = entry.mcpServer;
+      // Copy before passing the entry to mutable configuration I/O. This is the
+      // exact verified activation descriptor, not a later capabilities lookup.
+      launches.push(
+        Object.freeze({
+          contributionId: contribution.id,
+          server: Object.freeze({
+            name: entry.id.replaceAll(':', '__'),
+            command: server.command,
+            args: Object.freeze([...(server.args ?? [])]),
+            env: Object.freeze({ ...server.env }),
+            workingDirectory: packageRoot,
+            transport: 'stdio' as const,
+          }),
+        }),
+      );
       await installMcpCapability(host.projectRoot, entry, host.mcpConfigIO, {
         userId: `plugin:${admission.packageRecord.pluginId}`,
       });
@@ -48,6 +66,7 @@ export async function activateDeclaredMcp(
     await Promise.allSettled(installed.map((id) => removeMcp(admission.packageRecord.pluginId, id, host)));
     throw error;
   }
+  return Object.freeze(launches);
 }
 
 export async function removeDeclaredMcp(pluginId: string, host: DeclaredStaticResourceHost | undefined): Promise<void> {
@@ -122,7 +141,7 @@ async function mcpCapability(
   host: DeclaredStaticResourceHost,
   packageRoot: string,
   contribution: McpContribution,
-): Promise<CapabilityEntry> {
+): Promise<CapabilityEntry & { mcpServer: NonNullable<CapabilityEntry['mcpServer']> & { command: string } }> {
   const entrypoint = await resolvePackageFile(packageRoot, contribution.runtime.entrypoint, 'MCP entrypoint');
   return {
     id: `plugin:${admission.packageRecord.pluginId}:${contribution.id}`,

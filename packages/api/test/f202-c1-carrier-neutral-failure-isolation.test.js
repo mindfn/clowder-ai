@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import { mkdtemp } from 'node:fs/promises';
+import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { test } from 'node:test';
@@ -7,10 +7,8 @@ import { PluginRuntimeCarrierRouter } from '../dist/domains/plugin/carrier/runti
 import { ExternalPluginRuntimeSupervisor } from '../dist/domains/plugin/external-runtime/index.js';
 import {
   BundledPluginRuntimeCarrier,
-  COLLECTIVE_CONNECTOR_PLUGIN_MANIFEST,
   HostInventoryControlPlane,
   MemoryPluginInventoryStore,
-  OFFICIAL_PLUGIN_CATALOG,
 } from '../dist/domains/plugin/index.js';
 import {
   completeExternalHandshake,
@@ -36,21 +34,29 @@ import {
  */
 const BUNDLED_INSTANCE_ID = 'pi_bundled_broken';
 
-async function twoCarrierHost() {
+const bundledManifest = {
+  pluginId: 'dev.clowder.broken-carrier-fixture',
+  version: '1.0.0',
+  contractVersion: '0.1.0',
+  name: 'Broken carrier fixture',
+  runtime: { transport: 'builtin' },
+  features: [{ id: 'main', name: 'Main', resources: [], capabilities: [] }],
+};
+
+async function twoCarrierHost(t) {
   const rootDir = await mkdtemp(join(tmpdir(), 'cat-cafe-f202-c1-isolation-'));
   const store = new MemoryPluginInventoryStore();
 
-  const catalogEntry = OFFICIAL_PLUGIN_CATALOG.find((candidate) => candidate.catalogId === 'collective-connector');
-  assert.ok(catalogEntry, 'the bundled package must come from the shipped catalog, not a test literal');
+  const digest = `sha512-${Buffer.alloc(64, 11).toString('base64')}`;
   const bundledControl = new HostInventoryControlPlane(store, {
     createInstanceId: () => BUNDLED_INSTANCE_ID,
     now: () => 1_000,
   });
   await bundledControl.installPackage({
-    manifest: COLLECTIVE_CONNECTOR_PLUGIN_MANIFEST,
-    computedPackageDigest: catalogEntry.packageDigest,
-    expectedPackageDigest: catalogEntry.packageDigest,
-    packagePluginId: catalogEntry.pluginId,
+    manifest: bundledManifest,
+    computedPackageDigest: digest,
+    expectedPackageDigest: digest,
+    packagePluginId: bundledManifest.pluginId,
     effectiveGrants: [],
     signalSchemas: {},
   });
@@ -73,7 +79,7 @@ async function twoCarrierHost() {
     broken: true,
     starts: 0,
     stops: [],
-    claims: (packageRecord) => packageRecord.manifest.pluginId === COLLECTIVE_CONNECTOR_PLUGIN_MANIFEST.pluginId,
+    claims: (packageRecord) => packageRecord.manifest.pluginId === bundledManifest.pluginId,
     async start() {
       this.starts += 1;
       if (this.broken) throw new Error('plugin implementation threw while loading');
@@ -104,6 +110,10 @@ async function twoCarrierHost() {
     }),
   );
 
+  t.after(async () => {
+    await router.stopAll('test_cleanup');
+    await rm(rootDir, { recursive: true, force: true });
+  });
   return { store, router, runtime, processes };
 }
 
@@ -120,8 +130,8 @@ async function startExternal(host) {
   return child;
 }
 
-test('a plugin that throws while loading does not stop another carrier from running', async () => {
-  const host = await twoCarrierHost();
+test('a plugin that throws while loading does not stop another carrier from running', async (t) => {
+  const host = await twoCarrierHost(t);
 
   await assert.rejects(host.router.start(BUNDLED_INSTANCE_ID), /threw while loading/);
 
@@ -140,8 +150,8 @@ test('a plugin that throws while loading does not stop another carrier from runn
   assert.equal(child.terminateCalls, 1, 'shutdown must reach the real child through the router');
 });
 
-test('a start failure is recorded as a failure, not as a silent stop', async () => {
-  const host = await twoCarrierHost();
+test('a start failure is recorded as a failure, not as a silent stop', async (t) => {
+  const host = await twoCarrierHost(t);
 
   await assert.rejects(host.router.start(BUNDLED_INSTANCE_ID), /threw while loading/);
 
@@ -152,8 +162,8 @@ test('a start failure is recorded as a failure, not as a silent stop', async () 
   );
 });
 
-test('disabling a broken plugin clears the failure, and a repaired one starts again', async () => {
-  const host = await twoCarrierHost();
+test('disabling a broken plugin clears the failure, and a repaired one starts again', async (t) => {
+  const host = await twoCarrierHost(t);
   await assert.rejects(host.router.start(BUNDLED_INSTANCE_ID), /threw while loading/);
 
   // The owner's recovery path: disable, repair the package, enable, start.
