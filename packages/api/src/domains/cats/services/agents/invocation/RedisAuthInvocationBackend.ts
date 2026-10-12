@@ -15,6 +15,7 @@ import {
   type VerifyResult,
 } from './InvocationRegistry.js';
 import { normalizeOwnerAuthProvenance } from './owner-auth-provenance.js';
+import { capturePublicInvocationAuth } from './public-invocation-auth-binding.js';
 import {
   CLAIM_AUTH_MESSAGE_ID_LUA,
   COMMIT_AUTH_TERMINAL_LUA,
@@ -41,6 +42,7 @@ export class RedisAuthInvocationBackend implements IAuthInvocationBackend {
   }
 
   async create(input: AuthInvocationInput): Promise<void> {
+    input = capturePublicInvocationAuth(input);
     const fields: string[] = [
       'invocationId',
       input.invocationId,
@@ -67,6 +69,8 @@ export class RedisAuthInvocationBackend implements IAuthInvocationBackend {
     if (input.a2aTriggerMessageId) fields.push('a2aTriggerMessageId', input.a2aTriggerMessageId);
     if (input.originTriggerMessageId) fields.push('originTriggerMessageId', input.originTriggerMessageId);
     if (input.toolExecutionPolicy) fields.push('toolExecutionPolicy', JSON.stringify(input.toolExecutionPolicy));
+    if (input.publicInvocationBinding)
+      fields.push('publicInvocationBinding', JSON.stringify(input.publicInvocationBinding));
 
     const latestKey = KEY_LATEST(input.threadId, input.catId as string);
     for (let attempt = 0; attempt < 8; attempt += 1) {

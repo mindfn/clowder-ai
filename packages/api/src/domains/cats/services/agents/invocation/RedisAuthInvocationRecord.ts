@@ -6,6 +6,7 @@ import {
   type InvocationRecord,
 } from './InvocationRegistry.js';
 import { normalizeOwnerAuthProvenance } from './owner-auth-provenance.js';
+import { capturePublicInvocationAuth } from './public-invocation-auth-binding.js';
 import { parseToolExecutionPolicy } from './tool-execution-policy.js';
 
 const TERMINAL_STATES = new Set<string>(AUTH_TERMINAL_DISPOSITIONS);
@@ -70,6 +71,20 @@ export function authRecordFromRedisHash(fields: Record<string, string>, msgs: Se
   };
   try {
     applyOptionalFields(record, fields);
+    if (Object.hasOwn(fields, 'publicInvocationBinding')) {
+      // Do not normalize corrupt owner/partial lane fields into a valid public identity.
+      if (
+        fields.ownerAuthProvenance !== 'unknown' ||
+        Object.hasOwn(fields, 'a2aTriggerMessageId') ||
+        Object.hasOwn(fields, 'managedWorkId') ||
+        Object.hasOwn(fields, 'managedWorkAttemptId')
+      )
+        return null;
+      return capturePublicInvocationAuth({
+        ...record,
+        publicInvocationBinding: JSON.parse(fields.publicInvocationBinding ?? ''),
+      });
+    }
   } catch {
     return null;
   }

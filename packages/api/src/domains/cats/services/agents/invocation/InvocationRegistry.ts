@@ -20,6 +20,7 @@ import { authTerminalFromTurnExecution } from './CallbackAuthTurnExecutionProjec
 import type { AuthInvocationMigrationResult, IAuthInvocationBackend } from './IAuthInvocationBackend.js';
 import { MemoryAuthInvocationBackend } from './MemoryAuthInvocationBackend.js';
 import type { OwnerAuthProvenance } from './owner-auth-provenance.js';
+import { capturePublicInvocationAuth, type PublicInvocationAuthBinding } from './public-invocation-auth-binding.js';
 import { normalizeToolExecutionPolicy } from './tool-execution-policy.js';
 
 export interface InvocationRecord {
@@ -30,6 +31,8 @@ export interface InvocationRecord {
   ownerAuthProvenance: OwnerAuthProvenance;
   /** F275: server-resolved identity; never accepted from callback request payloads. */
   readonly managedWorkBinding?: ManagedWorkBinding;
+  /** Immutable public Queue authority coordinates, persisted with credential creation. */
+  readonly publicInvocationBinding?: PublicInvocationAuthBinding;
   catId: CatId;
   /** Thread this invocation belongs to (for WebSocket room scoping) */
   threadId: string;
@@ -201,7 +204,21 @@ export class InvocationRegistry {
     originTriggerMessageId?: string,
     ownerAuthProvenance: OwnerAuthProvenance = 'unknown',
     managedWorkBinding?: ManagedWorkBinding,
+    publicInvocationBinding?: PublicInvocationAuthBinding,
   ): Promise<{ invocationId: string; callbackToken: string }> {
+    const publicIdentity = capturePublicInvocationAuth({
+      userId,
+      catId,
+      threadId,
+      ownerAuthProvenance,
+      managedWorkBinding,
+      a2aTriggerMessageId,
+      originTriggerMessageId,
+      toolExecutionPolicy,
+      publicInvocationBinding,
+    });
+    publicInvocationBinding = publicIdentity.publicInvocationBinding;
+    toolExecutionPolicy = publicIdentity.toolExecutionPolicy;
     if (managedWorkBinding) {
       if (ownerAuthProvenance !== 'strict') {
         throw new Error('Managed-work invocation binding requires strict owner authentication');
@@ -220,12 +237,19 @@ export class InvocationRegistry {
       userId,
       ownerAuthProvenance,
       ...(managedWorkBinding ? { managedWorkBinding: Object.freeze({ ...managedWorkBinding }) } : {}),
+      ...(publicInvocationBinding !== undefined ? { publicInvocationBinding } : {}),
       catId,
       threadId,
       ...(parentInvocationId ? { parentInvocationId } : {}),
       ...(a2aTriggerMessageId ? { a2aTriggerMessageId } : {}),
       ...(originTriggerMessageId ? { originTriggerMessageId } : {}),
-      ...(toolExecutionPolicy ? { toolExecutionPolicy: normalizeToolExecutionPolicy(toolExecutionPolicy) } : {}),
+      ...(toolExecutionPolicy
+        ? {
+            toolExecutionPolicy: publicInvocationBinding
+              ? toolExecutionPolicy
+              : normalizeToolExecutionPolicy(toolExecutionPolicy),
+          }
+        : {}),
       clientMessageIds: new Set<string>(),
       createdAt: now,
     });
