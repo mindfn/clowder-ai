@@ -287,7 +287,7 @@ import { TasteMemoryLifecycleStore } from './domains/memory/taste/TasteMemoryLif
 import { TasteMemoryProjectionWriter } from './domains/memory/taste/TasteMemoryProjectionWriter.js';
 import { importTasteTakeawayCandidates } from './domains/memory/taste/TasteTakeawayCandidateImporter.js';
 import { tasteDocumentAnchor } from './domains/memory/taste/taste-memory-identity.js';
-import type { GitHubScheduleDeps } from './domains/plugin/github-schedule-factories.js';
+import { publicParticipantAvatar } from './domains/plugin/host-surface/public-participant-avatar.js';
 import { PortDiscoveryService } from './domains/preview/port-discovery.js';
 import { collectRuntimePorts } from './domains/preview/port-validator.js';
 import { PreviewGateway } from './domains/preview/preview-gateway.js';
@@ -5039,6 +5039,24 @@ async function main(): Promise<void> {
     threadOwnerUserId: privateUserId,
     frustrationIssueStore,
     deployment: { getRoster, getDefaultCatId, getReviewPolicy },
+    participantRoster: {
+      listCats: () =>
+        Object.values(catRegistry.getAllConfigs()).map((cat) => ({
+          catId: cat.id,
+          displayName: cat.displayName,
+          defaultModel: cat.defaultModel,
+          ...(cat.nickname === undefined ? {} : { nickname: cat.nickname }),
+          ...(cat.variantLabel === undefined ? {} : { variantLabel: cat.variantLabel }),
+          ...(cat.roleDescription === undefined ? {} : { roleDescription: cat.roleDescription }),
+          ...(cat.avatar === undefined ? {} : { avatar: cat.avatar }),
+        })),
+      publicAvatar: (value) =>
+        publicParticipantAvatar(value, {
+          avatars: join(findMonorepoRoot(), 'packages/web/public/avatars'),
+          uploads: getDefaultUploadDir(process.env.UPLOAD_DIR),
+        }),
+      supportsNativeAction: (catId, policy) => router.supportsToolExecutionPolicy(catId, policy),
+    },
     threadDeepLinkUrl: createThreadDeepLinkUrl(frontendBaseUrl),
     threadProjections: {
       backlogStore,

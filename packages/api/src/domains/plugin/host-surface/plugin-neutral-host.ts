@@ -16,6 +16,11 @@ import { ExternalPluginRuntimeError } from '../external-runtime/types.js';
 import type { PluginInventoryStore, PluginInventoryTransaction } from '../host-inventory/ports.js';
 import type { PluginGrantRecord, PluginInstanceRecord, PluginPackageRecord } from '../host-inventory/types.js';
 import { createPluginOwnerThreadHost, type PluginOwnerThreadHost } from './plugin-owner-thread-host.js';
+import {
+  createPluginParticipantRosterHost,
+  type PluginParticipantRosterHost,
+  type PluginParticipantRosterServices,
+} from './plugin-participant-roster-host.js';
 import type { PluginThreadProjectionDeps } from './plugin-thread-projections.js';
 
 export interface PluginDeploymentServices {
@@ -25,6 +30,7 @@ export interface PluginDeploymentServices {
 }
 export interface PluginNeutralHost {
   readonly ownerThreads: PluginOwnerThreadHost;
+  readonly participantRoster: PluginParticipantRosterHost;
   readonly deployment: { getCatalog(): Promise<DeploymentCatalog> };
   readonly frustration: {
     getSource(issueId: string): Promise<FrustrationSource | null>;
@@ -40,6 +46,7 @@ interface Deps {
   readonly threadStore: IThreadStore | undefined;
   readonly sourceStore: IFrustrationIssueStore | undefined;
   readonly deployment: PluginDeploymentServices | undefined;
+  readonly participantRoster?: PluginParticipantRosterServices;
   readonly projectPath?: string;
   readonly cats?: PluginThreadProjectionDeps['cats'];
 }
@@ -83,6 +90,9 @@ export async function createPluginNeutralHost(deps: Deps): Promise<PluginNeutral
   const instance = initial.instances.find((item) => item.pluginInstanceId === deps.pluginInstanceId);
   const grant = initial.grants.find((item) => item.pluginInstanceId === deps.pluginInstanceId);
   if (!instance || !grant || instance.packageDigest !== deps.packageDigest) refuse('Neutral installation unavailable');
+  const pkg = initial.packages.find((item) => item.packageDigest === deps.packageDigest);
+  if (!pkg) refuse('Neutral package unavailable');
+  const manifest = structuredClone(pkg.manifest);
   const lifecycleRevision = instance.lifecycleRevision;
   const grantRevision = grant.grantRevision;
   function check(
@@ -161,6 +171,14 @@ export async function createPluginNeutralHost(deps: Deps): Promise<PluginNeutral
   const read = ['frustration.read'];
   const write = ['frustration.read', 'frustration.link'];
   return Object.freeze({
+    participantRoster: createPluginParticipantRosterHost({
+      pluginInstanceId: deps.pluginInstanceId,
+      ownerUserId: deps.ownerUserId,
+      manifest,
+      effectiveGrants: Object.freeze([...grant.effectiveGrants]),
+      services: deps.participantRoster,
+      assertCurrent: current,
+    }),
     ownerThreads: createPluginOwnerThreadHost({
       pluginInstanceId: deps.pluginInstanceId,
       ownerUserId: deps.ownerUserId,

@@ -73,6 +73,7 @@ import { createPluginCustodyHost, type PluginCustodyServices } from './host-surf
 import { pluginDataDirectoryParent } from './host-surface/plugin-data-directory.js';
 import { PluginMediaReadService } from './host-surface/plugin-media-host.js';
 import { createPluginNeutralHost, type PluginDeploymentServices } from './host-surface/plugin-neutral-host.js';
+import type { PluginParticipantRosterServices } from './host-surface/plugin-participant-roster-host.js';
 import { RedisPluginPrivateStorage } from './host-surface/plugin-private-storage.js';
 import {
   type BuiltinPluginPackageMaterializer,
@@ -130,6 +131,7 @@ export interface DormantPluginRuntimeCompositionOptions {
   readonly taskStore?: ITaskStore;
   readonly custody?: PluginCustodyServices;
   readonly deployment?: PluginDeploymentServices;
+  readonly participantRoster?: PluginParticipantRosterServices;
   readonly frustrationIssueStore?: IFrustrationIssueStore;
   readonly redis?: RedisClient;
   /** The Host-wide messaging stores shared with the one publishing MessageStore wrapper. */
@@ -450,6 +452,7 @@ export function createDormantPluginRuntimeComposition(
         threadStore: options.threadStore,
         sourceStore: options.frustrationIssueStore,
         deployment: options.deployment,
+        ...(options.participantRoster ? { participantRoster: options.participantRoster } : {}),
         projectPath: options.projectRoot,
         ...(options.threadProjections?.cats ? { cats: options.threadProjections.cats } : {}),
       }),

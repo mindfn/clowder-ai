@@ -100,6 +100,7 @@ export async function neutralFixture(t, options = {}) {
     messageStore: new MessageStore(),
     threadStore: threads,
     ...(options.threadProjections ? { threadProjections: options.threadProjections } : {}),
+    ...(options.participantRoster ? { participantRoster: options.participantRoster } : {}),
     ...(options.unavailable
       ? {}
       : {

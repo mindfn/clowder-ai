@@ -97,6 +97,7 @@ export interface ModulePluginHostShape {
   readonly deployment?: PluginNeutralHost['deployment'];
   readonly frustration?: PluginNeutralHost['frustration'];
   readonly ownerThreads?: PluginNeutralHost['ownerThreads'];
+  readonly participantRoster?: PluginNeutralHost['participantRoster'];
   readonly threads: PluginThreadHost;
   readonly messaging: PluginMessagingHost;
   readonly media: PluginMediaHost;

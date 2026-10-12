@@ -53,8 +53,8 @@ import type { ITaskStore } from '../../stores/ports/TaskStore.js';
 import type { IThreadStore, ThreadRoutingPolicyV1 } from '../../stores/ports/ThreadStore.js';
 import { DEFAULT_THREAD_ID } from '../../stores/ports/ThreadStore.js';
 import type { IWorkflowSopStore } from '../../stores/ports/WorkflowSopStore.js';
-import { getTimelineOrderTime } from '../../stores/visibility.js';
-import type { AgentMessage, AgentRouteIntent, AgentService, ClaudeCompactionHooksFactory } from '../../types.js';
+import { getTimelineOrderTime, SYSTEM_USER_IDS } from '../../stores/visibility.js';
+import type { AgentMessage, AgentRouteIntent, AgentService, ClaudeCompactionHooksFactory, ToolExecutionPolicy } from '../../types.js';
 import type { InvocationRegistry } from '../invocation/InvocationRegistry.js';
 import {
   type InvocationCapacitySnapshot,
@@ -771,6 +771,11 @@ export class AgentRouter {
   contextCapacitySnapshot(catId: CatId): InvocationCapacitySnapshot | undefined {
     const service = this.services[catId];
     return service ? resolveInvocationCapacitySnapshot({ catId, service }) : undefined;
+  }
+
+  /** Capability of the actual routable service; does not admit any particular invocation. */
+  supportsToolExecutionPolicy(catId: string, policy: ToolExecutionPolicy): boolean {
+    return this.isRoutableCat(catId) && this.services[catId]?.supportsToolExecutionPolicy?.(policy) === true;
   }
 
   private isRoutableCat(catId: string | null | undefined): catId is CatId {
