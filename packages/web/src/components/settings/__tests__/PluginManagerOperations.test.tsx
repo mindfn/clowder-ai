@@ -68,6 +68,71 @@ describe('Plugin Manager operation fields', () => {
     container.remove();
   });
 
+  it.each([
+    'v1',
+    'v2',
+  ] as const)('refreshes rows after enable without clearing configuration drafts (%s)', async (presentation) => {
+    let enabled = false;
+    mockApiFetch.mockImplementation(
+      async () =>
+        new Response(
+          JSON.stringify(
+            enabled
+              ? { ok: true, render: 'rows', data: { rows: [], empty: 'No held operations' } }
+              : { error: 'Plugin is not enabled' },
+          ),
+          { status: enabled ? 200 : 409 },
+        ),
+    );
+    const fields = [
+      plugin.configFields[0],
+      {
+        kind: 'operation' as const,
+        key: 'recovery',
+        label: 'Recovery',
+        required: false,
+        currentValue: null,
+        sensitive: false,
+        actions: [{ id: 'list', label: 'Held operations', render: 'button' as const, resultRender: 'rows' as const }],
+      },
+    ];
+    const render = async () => {
+      await act(async () =>
+        root.render(
+          <PluginManagerConfigurationSection
+            plugin={{
+              ...plugin,
+              intent: enabled ? 'enabled' : 'disabled',
+              live: enabled ? 'running' : 'stopped',
+              configFields: fields,
+            }}
+            busy={false}
+            validationRequest={0}
+            saved={false}
+            presentation={presentation}
+            renderBefore={(operations) => <div>{operations}</div>}
+          />,
+        ),
+      );
+      await flushEffects();
+    };
+    await render();
+    expect(container.textContent).toContain('Plugin is not enabled');
+    const input = container.querySelector('input') as HTMLInputElement;
+    await act(async () => {
+      Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')?.set?.call(input, 'unsaved account');
+      input.dispatchEvent(new Event('input', { bubbles: true }));
+    });
+    enabled = true;
+    await render();
+    expect(container.textContent).toContain('No held operations');
+    expect(container.textContent).not.toContain('Plugin is not enabled');
+    expect((container.querySelector('input') as HTMLInputElement).value).toBe('unsaved account');
+    expect(mockApiFetch).toHaveBeenCalledTimes(2);
+    await render();
+    expect(mockApiFetch).toHaveBeenCalledTimes(2);
+  });
+
   it('keeps a persisted disconnect action reachable when operation targets are configured', async () => {
     const operation = {
       kind: 'operation' as const,

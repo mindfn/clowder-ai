@@ -120,6 +120,12 @@ export function PluginManagerConfigurationSection({
   const [showSaved, setShowSaved] = useState(false);
   const handledValidationRequest = useRef(0);
   const fields = plugin.configFields ?? EMPTY_CONFIGURATION_FIELDS;
+  // A list belongs to the current runtime state. Reload it after lifecycle changes,
+  // without remounting configuration inputs or resetting sequenced owner actions.
+  const operationKey = (field: ConfigurationField) =>
+    field.actions?.some((action) => action.resultRender === 'rows')
+      ? `${field.key}:${plugin.intent}:${plugin.live}`
+      : field.key;
   const configurableFields = fields.filter((field) => field.kind !== 'operation' && field.hidden !== true);
   const steps = plugin.steps ?? plugin.setupSteps ?? [];
   const updates = configurationUpdates(fields, fieldValues);
@@ -180,7 +186,7 @@ export function PluginManagerConfigurationSection({
               .filter((field) => field.kind === 'operation')
               .map((field) => (
                 <PluginManagerOperationField
-                  key={field.key}
+                  key={operationKey(field)}
                   pluginId={plugin.id}
                   field={field}
                   pendingConfigValues={fieldValues}
@@ -217,7 +223,7 @@ export function PluginManagerConfigurationSection({
                     const listFormat = presentation === 'v2' ? pluginListFormat(plugin.id, field) : undefined;
                     return field.kind === 'operation' ? (
                       <PluginManagerOperationField
-                        key={field.key}
+                        key={operationKey(field)}
                         pluginId={plugin.id}
                         field={field}
                         pendingConfigValues={fieldValues}
