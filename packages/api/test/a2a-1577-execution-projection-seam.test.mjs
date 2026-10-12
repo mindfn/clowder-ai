@@ -5,7 +5,7 @@ import { readQueueTargetExecution } from '../src/domains/cats/services/agents/in
 import { createPersistedQueueFixture } from './helpers/persisted-queue-fixture.ts';
 
 async function pending() {
-  const f = createPersistedQueueFixture();
+  const f = createPersistedQueueFixture(undefined, { autoDrain: false });
   const delivery = new PersistedQueueDelivery({ messages: f.messages, queue: f.queue, progress: async () => {} });
   const admitted = await delivery.deliver({
     ownerUserId: 'operator',

@@ -68,8 +68,16 @@ for (const owner of [
 ]) {
   test(`ordinary full-body History selection cannot take ${Object.keys(owner)[0]} work`, async () => {
     const queue = new InvocationQueue();
-    const admitted = await queue.enqueueDurable(input(owner));
-    assert.deepEqual(queue.getQueuedBodyMessagesForCat(input().threadId, input().userId, 'codex'), []);
+    const admitted = await queue.enqueueDurable(
+      input({
+        ...owner,
+        authorIntentByCatId: { codex: { requested: 'continue_current', boundParentInvocationId: 'current-parent' } },
+      }),
+    );
+    assert.deepEqual(
+      queue.getQueuedBodyMessagesForCat(input().threadId, input().userId, 'codex', 'current-parent'),
+      [],
+    );
     assert.equal(
       await queue.claimExactExposureDurable(
         input().threadId,
@@ -84,13 +92,51 @@ for (const owner of [
   });
 }
 
-test('explicit producer_return remains an ordinary readable pending source, without fabricated authority', async () => {
-  const queue = new InvocationQueue();
-  await queue.enqueueDurable(input({ sourceCategory: 'producer_return' }));
-  const [body] = queue.getQueuedBodyMessagesForCat(input().threadId, input().userId, 'codex');
-  assert.equal(body.content, input().content);
-  assert.equal(body.readDisposition, 'adopt');
-});
+for (const [name, authorIntent, parent, readable] of [
+  [
+    'matching bound parent',
+    { requested: 'continue_current', boundParentInvocationId: 'current-parent' },
+    'current-parent',
+    true,
+  ],
+  [
+    'foreign parent',
+    { requested: 'continue_current', boundParentInvocationId: 'current-parent' },
+    'foreign-parent',
+    false,
+  ],
+  ['missing parent', { requested: 'continue_current', boundParentInvocationId: 'current-parent' }, undefined, false],
+  ['unbound input', { requested: 'continue_current' }, 'current-parent', false],
+  ['next work', { requested: 'next_work' }, 'current-parent', false],
+  [
+    'expired current intent',
+    { requested: 'continue_current', boundParentInvocationId: 'current-parent', fallbackAt: 2 },
+    'current-parent',
+    false,
+  ],
+]) {
+  test(`producer_return body follows saved policy and exact parent: ${name}`, async () => {
+    const queue = new InvocationQueue();
+    const admitted = await queue.enqueueDurable(
+      input({
+        sourceCategory: 'producer_return',
+        authorIntentByCatId: { codex: authorIntent },
+      }),
+    );
+    const before = await queue.getDurableEntry(input().threadId, admitted.entry.id);
+    const bodies = queue.getQueuedBodyMessagesForCat(input().threadId, input().userId, 'codex', parent);
+    if (readable) {
+      assert.equal(bodies.length, 1);
+      assert.equal(bodies[0].content, input().content);
+      assert.equal(bodies[0].readDisposition, 'adopt');
+    } else {
+      assert.deepEqual(bodies, []);
+    }
+    assert.deepEqual(await queue.getDurableEntry(input().threadId, admitted.entry.id), before);
+    assert.equal(before.execution.waitContinuationCarrier, undefined);
+    assert.equal(before.execution.ownerAuthProvenance, 'unknown');
+  });
+}
 
 test('restart after durable History adoption retires only the exact target, not a pending sibling', async () => {
   const ledger = new InMemoryQueueLedgerStore();

@@ -148,7 +148,8 @@ test('candidate, rejection and applied result append immutable system receipts w
     ['candidate', 'rejected', 'applied'],
   );
   for (const message of stored) {
-    assert.equal(message.userId, 'system');
+    assert.equal(message.userId, 'operator');
+    assert.deepEqual(message.from, { kind: 'system', service: 'content-modification' });
     assert.equal(message.catId, null);
     assert.deepEqual(message.mentions, []);
     assert.equal(message.extra?.targetCats, undefined);
@@ -158,7 +159,7 @@ test('candidate, rejection and applied result append immutable system receipts w
       kind: 'none',
       reason: 'not_applicable',
     });
-    assert.equal(getMessageSpeakerName(message), 'Host 作品修改回执');
+    assert.equal(getMessageSpeakerName(message), 'content-modification');
   }
   const prompt = assembleContext(stored, { maxTotalTokens: 20_000 }).contextText;
   assert.match(prompt, /Host 作品修改回执/);
@@ -184,7 +185,7 @@ test('a receipt inherits the Human source whisper audience instead of widening i
   assert.deepEqual(receipt?.whisperTo, ['codex-astra']);
 });
 
-test('conflict wakes one still-open exact Task owner through one idempotent refs-only carrier', async () => {
+test('repeated conflict supplies one stable follow-up identity to common delivery for the exact Task owner', async () => {
   const messages = new MessageStore();
   const delivered: Parameters<PersistedQueueDeliveryPort['deliver']>[0][] = [];
   const delivery: PersistedQueueDeliveryPort = {
@@ -206,7 +207,12 @@ test('conflict wakes one still-open exact Task owner through one idempotent refs
   await projection.projectWriteback(source, accepted, receipt);
   await projection.projectWriteback(source, accepted, receipt);
 
-  assert.equal(delivered.length, 1);
+  assert.equal(delivered.length, 2);
+  assert.deepEqual(
+    delivered[1],
+    delivered[0],
+    'producer replay preserves the envelope; common send owns deduplication',
+  );
   assert.equal(delivered[0]?.targetCatId, 'codex-astra');
   assert.equal(delivered[0]?.source.meta?.requestId, requestId);
   assert.match(delivered[0]?.content ?? '', /不得自动重试写回/);

@@ -21,6 +21,8 @@ import {
 export function createPersistedQueueFixture(
   messages = new MessageStore(),
   settings: {
+    /** Read-only projection tests may deliberately keep admitted work pending. */
+    autoDrain?: boolean;
     registry?: Pick<
       import('../../src/domains/cats/services/agents/invocation/InvocationRegistry.js').InvocationRegistry,
       'create'
@@ -41,7 +43,7 @@ export function createPersistedQueueFixture(
     resolveTargets: async (requested) => (requested.length ? [...requested] : ['opus']),
     onAdmitted: ({ threadId, message }) => {
       settings.onAdmitted?.(message);
-      void processor.requestDrain(threadId);
+      if (settings.autoDrain !== false) void processor.requestDrain(threadId);
     },
   });
   const records = new InvocationRecordStore();

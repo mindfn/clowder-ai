@@ -193,6 +193,10 @@ export class PersistedQueueDelivery implements PersistedQueueDeliveryPort {
       return { state: 'conflict' as const, reason: 'Persisted producer envelope does not match', message };
     }
     const entry = admitted.entry;
+    // A concurrent winner may retire between the adapter's lookup and common send.
+    // Its durable replay acknowledgement follows the same History path as an early replay;
+    // it must not recreate pending work or report a delivery refusal.
+    if (!entry && admitted.deduped) return this.progressExistingMessage(message, input);
     if (!entry) return { state: 'unavailable' as const, reason: 'Queue admission is unavailable', message };
     if (entry.sourceCategory !== input.sourceCategory) {
       return { state: 'conflict' as const, reason: 'Persisted producer category does not match', message };

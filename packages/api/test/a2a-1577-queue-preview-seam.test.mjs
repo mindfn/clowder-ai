@@ -31,6 +31,7 @@ test('real preview retains public connector identity and blocks without exposing
     connector: 'weixin',
     replyTo: 'owned-reply',
     contentBlocks: message.contentBlocks,
+    source: message.source,
   });
   assert.equal(dto.content, message.content);
   assert.deepEqual(dto.targetCats, ['codex']);
@@ -66,7 +67,7 @@ test('connector-only preview is retained; private work and missing History canno
   assert.deepEqual(
     (await enrichQueueEntries([publicEntry], { getById: async () => ({ source: { connector: 'weixin' } }) }))[0]
       .messagePreview,
-    { connector: 'weixin' },
+    { connector: 'weixin', source: { connector: 'weixin' } },
   );
   assert.equal(
     Object.hasOwn((await enrichQueueEntries([publicEntry], { getById: async () => null }))[0], 'messagePreview'),

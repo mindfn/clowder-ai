@@ -86,12 +86,27 @@ test('idempotent admission-race winner must match producer category before progr
   assert.equal(f.progressed, 0);
   assert.equal(f.entry.sourceCategory, 'review');
 });
-test('matching producer_return continues the existing pending row without a made-up carrier', async () => {
+test('matching producer_return replays through common send with the original identity', async () => {
   const f = fixture({ sourceCategory: 'producer_return' });
-  assert.equal((await f.delivery.deliver(input)).state, 'owned_deferred_busy');
+  const replay = await f.delivery.deliver(input);
+  assert.equal(replay.state, 'owned_deferred_busy');
+  assert.equal(replay.message.id, f.message.id);
+  assert.equal(replay.entryId, f.entry.id);
   assert.equal(f.progressed, 1);
-  assert.equal(f.admitted, 0);
+  assert.equal(f.admitted, 1);
+  assert.equal(f.entry.execution?.waitContinuationCarrier, undefined);
 });
+for (const status of ['claimed', 'processing']) {
+  test(`matching ${status} replay acknowledges the identity without starting again`, async () => {
+    const f = fixture({ sourceCategory: 'producer_return', status });
+    const replay = await f.delivery.deliver(input);
+    assert.equal(replay.state, 'already_processing');
+    assert.equal(replay.message.id, f.message.id);
+    assert.equal(replay.entryId, f.entry.id);
+    assert.equal(f.admitted, 1);
+    assert.equal(f.progressed, 0);
+  });
+}
 test('retired public History remains terminal and does not acquire a tombstone or new work', async () => {
   const f = fixture({ retired: true });
   assert.equal((await f.delivery.deliver(input)).state, 'terminal_owned');

@@ -189,15 +189,20 @@ test('History lookup failure at provider admission restores claim without starti
   });
   const [before] = f.queue.list(f.task.threadId, f.task.userId);
   const get = f.messages.getById.bind(f.messages);
-  let reads = 0;
+  let refused = false;
   f.messages.getById = (id) => {
-    if (id === f.receipt.messageId && ++reads === 2) throw new Error('isolated admission History unavailable');
+    // Fail after the provider reservation exists, rather than counting preliminary reads.
+    if (id === f.receipt.messageId && f.records.has('isolated-parent') && !refused) {
+      refused = true;
+      throw new Error('isolated admission History unavailable');
+    }
     return get(id);
   };
   assert.equal((await f.processor.processNext(f.task.threadId, f.task.userId)).started, true);
   await waitFor(() => f.records.get('isolated-parent')?.status === 'failed', 'History admission refusal');
   await waitFor(() => f.queue.list(f.task.threadId, f.task.userId)[0]?.status === 'queued', 'History claim restore');
   assert.equal(f.calls.length, 0);
+  assert.equal(refused, true);
   const [after] = f.queue.list(f.task.threadId, f.task.userId);
   assert.equal(after.id, before.id);
   assert.equal(after.status, 'queued');

@@ -116,7 +116,10 @@ export class MessageLiveInboxSource implements LiveInboxSource {
         lifecycle.inputMessageIds.includes(message.id) &&
         lifecycle.inputEntryIds.includes(expectedEntryId),
     );
-    const readByInvocationIds = exactResponse && lifecycle?.kind === 'response' ? [lifecycle.invocationId] : [];
+    const readByInvocationIds =
+      exactResponse && lifecycle?.kind === 'response' && ref?.inputRead?.status === 'read'
+        ? [lifecycle.invocationId]
+        : [];
     const exactDeliveryFailure = Boolean(
       response &&
         response.threadId === scope.threadId &&

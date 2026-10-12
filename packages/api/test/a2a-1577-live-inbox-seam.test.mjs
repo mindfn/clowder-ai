@@ -33,6 +33,9 @@ async function fixture(extra = {}) {
     targetCats: ['codex', 'opus'],
     intent: 'execute',
     sourceCategory: 'producer_return',
+    authorIntentByCatId: {
+      codex: { requested: 'continue_current', boundParentInvocationId: scope.parentInvocationId },
+    },
     ...extra,
   });
   const source = new MessageLiveInboxSource({
@@ -67,8 +70,9 @@ test('structured owner is succession-only; cross-owner and unauthorized projecti
   const denied = new MessageLiveInboxSource({ store: f.store, queue: f.queue, authorize: async () => false });
   await assert.rejects(denied.page(scope, undefined, 10), /authority unavailable/);
 });
-for (const unread of [false, true])
-  test(`canonical History ${unread ? 'unread' : 'read'} is projected from exact response lineage`, async () => {
+for (const readState of ['pending', 'read', undefined])
+  test(`canonical History ${readState ?? 'unknown read'} is projected from independent evidence and exact response lineage`, async () => {
+    const unread = readState !== 'read';
     const f = await fixture();
     const id = f.admitted.message.id;
     const original = f.store.getById(id);
@@ -99,10 +103,22 @@ for (const unread of [false, true])
         phase: 'dispatched',
         statusMessageId: response.id,
         dispatchedAt: 2,
-        ...(unread ? { readState: 'awaiting' } : {}),
+        ...(readState ? { inputRead: { status: 'pending' } } : {}),
       }).kind,
       'applied',
     );
+    if (!unread) {
+      assert.equal(
+        f.store.advanceLifecycleInputDispatch(id, {
+          orderKey: original.lifecycle.orderKey,
+          targetId: 'codex',
+          phase: 'dispatched',
+          statusMessageId: response.id,
+          inputRead: { status: 'read', at: 2 },
+        }).kind,
+        'applied',
+      );
+    }
     assert.equal(
       f.store.advanceLifecycleInputDispatch(id, {
         orderKey: original.lifecycle.orderKey,

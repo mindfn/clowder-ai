@@ -42,6 +42,7 @@ test(
     const calls = [];
     let dispatch;
     let appendReceipt;
+    let appendRead = false;
     let launches = 0;
     let prepared = false;
     const service = new ClaudeSdkAgentService({
@@ -60,7 +61,15 @@ test(
           yield { type: 'system', subtype: 'init', session_id: 's' };
           yield { type: 'user', message: { content: [{ type: 'tool_result', tool_use_id: 't', content: 'done' }] } };
           const notice = (await input.next()).value;
-          appendReceipt = await dispatch({ text: 'ordinary Append' }, { expectedInvocationId: 'i', force: false });
+          appendReceipt = await dispatch(
+            {
+              text: 'ordinary Append',
+              onInputRead: async () => {
+                appendRead = true;
+              },
+            },
+            { expectedInvocationId: 'i', force: false },
+          );
           assert.equal(appendReceipt.accepted, true);
           const append = (await input.next()).value;
           yield {
@@ -119,7 +128,8 @@ test(
     }))
       output.push(event);
     assert.equal(launches, 1);
-    assert.equal((await appendReceipt.consumption).consumed, true);
+    assert.equal('consumption' in appendReceipt, false, 'dispatch acceptance is independent of optional read evidence');
+    assert.equal(appendRead, true);
     assert.deepEqual(calls, ['delivered', 'close', 'release', 'completed']);
     assert.equal(output.filter((e) => e.type === 'error').length, 0);
   },
