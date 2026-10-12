@@ -34,7 +34,7 @@ export async function neutralFixture(t, options = {}) {
   globalThis[key] = (value) => {
     host = value;
   };
-  const capabilities = ['deployment.read', 'frustration.read', 'frustration.link'];
+  const capabilities = options.capabilities ?? ['deployment.read', 'frustration.read', 'frustration.link'];
   const manifest = {
     pluginId: 'dev.clowder.neutral-host',
     name: 'Neutral Host fixture',
@@ -99,6 +99,7 @@ export async function neutralFixture(t, options = {}) {
     threadOwnerUserId: owner,
     messageStore: new MessageStore(),
     threadStore: threads,
+    ...(options.threadProjections ? { threadProjections: options.threadProjections } : {}),
     ...(options.unavailable
       ? {}
       : {

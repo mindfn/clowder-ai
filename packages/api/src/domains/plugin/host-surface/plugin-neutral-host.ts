@@ -15,6 +15,8 @@ import { snapshotPluginProtocolData } from '../carrier/plugin-protocol-data.js';
 import { ExternalPluginRuntimeError } from '../external-runtime/types.js';
 import type { PluginInventoryStore, PluginInventoryTransaction } from '../host-inventory/ports.js';
 import type { PluginGrantRecord, PluginInstanceRecord, PluginPackageRecord } from '../host-inventory/types.js';
+import { createPluginOwnerThreadHost, type PluginOwnerThreadHost } from './plugin-owner-thread-host.js';
+import type { PluginThreadProjectionDeps } from './plugin-thread-projections.js';
 
 export interface PluginDeploymentServices {
   getRoster(): DeploymentCatalog['roster'];
@@ -22,6 +24,7 @@ export interface PluginDeploymentServices {
   getReviewPolicy(): DeploymentCatalog['policy'];
 }
 export interface PluginNeutralHost {
+  readonly ownerThreads: PluginOwnerThreadHost;
   readonly deployment: { getCatalog(): Promise<DeploymentCatalog> };
   readonly frustration: {
     getSource(issueId: string): Promise<FrustrationSource | null>;
@@ -37,6 +40,8 @@ interface Deps {
   readonly threadStore: IThreadStore | undefined;
   readonly sourceStore: IFrustrationIssueStore | undefined;
   readonly deployment: PluginDeploymentServices | undefined;
+  readonly projectPath?: string;
+  readonly cats?: PluginThreadProjectionDeps['cats'];
 }
 function refuse(message: string): never {
   throw new ExternalPluginRuntimeError('DELIVERY_REJECTED', message);
@@ -156,6 +161,14 @@ export async function createPluginNeutralHost(deps: Deps): Promise<PluginNeutral
   const read = ['frustration.read'];
   const write = ['frustration.read', 'frustration.link'];
   return Object.freeze({
+    ownerThreads: createPluginOwnerThreadHost({
+      pluginInstanceId: deps.pluginInstanceId,
+      ownerUserId: deps.ownerUserId,
+      threadStore: deps.threadStore,
+      projectPath: deps.projectPath,
+      cats: deps.cats,
+      assertCurrent: current,
+    }),
     deployment: Object.freeze({
       getCatalog: async () => {
         if (!deps.deployment) unavailable('deployment');

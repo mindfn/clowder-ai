@@ -450,6 +450,8 @@ export function createDormantPluginRuntimeComposition(
         threadStore: options.threadStore,
         sourceStore: options.frustrationIssueStore,
         deployment: options.deployment,
+        projectPath: options.projectRoot,
+        ...(options.threadProjections?.cats ? { cats: options.threadProjections.cats } : {}),
       }),
     custody: (pluginInstanceId) =>
       createPluginCustodyHost({
