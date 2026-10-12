@@ -10,7 +10,7 @@ import {
   type IMessageStore,
 } from '../../cats/services/stores/ports/MessageStore.js';
 import type { ITaskStore } from '../../cats/services/stores/ports/TaskStore.js';
-import type { ITurnExecutionStore } from '../../cats/services/stores/ports/TurnExecutionStore.js';
+import type { TurnExecutionSourceReadPort } from '../../cats/services/stores/ports/TurnExecutionStore.js';
 import type { EntrustedWorkLifecycleService } from '../../growing/EntrustedWorkLifecycleService.js';
 import type { MediaReviewPrincipal } from '../../video-studio/content-owner/published-media-access.js';
 import type { ArtifactReviewStore } from '../artifact-review/store.js';
@@ -57,7 +57,7 @@ export class ContentModificationService {
       store: ArtifactReviewStore;
       messages: IMessageStore;
       queue?: QueueTargetExecutionReadPort;
-      turnExecutions?: Pick<ITurnExecutionStore, 'get'>;
+      turnExecutions?: TurnExecutionSourceReadPort;
       tasks: ITaskStore;
       lifecycle: EntrustedWorkLifecycleService;
       content: ModificationContentPort;

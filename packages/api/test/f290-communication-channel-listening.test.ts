@@ -101,8 +101,11 @@ test('mentions-only persists ordinary conversation; all queues exactly the confi
     await f.listen('all');
     const active = await f.message('A new idea in the shared channel');
     assert.deepEqual(active.extra?.targetCats, [f.duty]);
-    assert.equal(active.queueCustody?.executionScope, 'collective-participation');
-    assert.equal(active.queueCustody?.ownerAuthProvenance, 'unknown');
+    const activeEntry = f.queue
+      .list(f.endpoint.id, f.cafe.ownerUserId)
+      .find((entry) => entry.payload.messageId === active.id);
+    assert.equal(activeEntry?.execution?.executionScope, 'collective-participation');
+    assert.equal(activeEntry?.execution?.ownerAuthProvenance, 'unknown');
     assert.equal(
       active.source?.meta?.attentionRequest,
       undefined,
@@ -159,7 +162,11 @@ test('precise A feedback selects its assigned Cat despite a newer B or another d
     const second = await f.message('More A feedback without any mention', f.work.assignmentEventId);
     assert.deepEqual(second.extra?.targetCats, [CAT]);
     assert.equal(second.source?.meta?.attentionRequest, undefined);
-    assert.equal(second.queueCustody?.executionScope, 'collective-participation');
+    assert.equal(
+      f.queue.list(f.endpoint.id, f.cafe.ownerUserId).find((entry) => entry.payload.messageId === second.id)?.execution
+        ?.executionScope,
+      'collective-participation',
+    );
     assert.equal((await f.tasks.listByKind('work')).length, 1);
   } finally {
     await f.world.close();

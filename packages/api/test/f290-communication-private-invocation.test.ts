@@ -1,6 +1,6 @@
 import './helpers/setup-cat-registry.js';
 import assert from 'node:assert/strict';
-import { mkdtemp, realpath, rm } from 'node:fs/promises';
+import { mkdtemp, realpath } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { test } from 'node:test';
@@ -26,7 +26,7 @@ test('real invocation composition replaces ambient private history with exact Ta
   const origin = messages.append({
     userId: 'owner',
     threadId: 'private-A',
-    catId: null,
+    from: { kind: 'system', service: 'collective-work' },
     mentions: [catId],
     content: 'EXACT_TASK_RELAY_CANARY',
     timestamp: 1,
@@ -135,6 +135,6 @@ test('real invocation composition replaces ambient private history with exact Ta
   } finally {
     if (previousData === undefined) delete process.env.CAT_CAFE_DATA_DIR;
     else process.env.CAT_CAFE_DATA_DIR = previousData;
-    await rm(directory, { recursive: true, force: true });
+    console.info('retained private invocation fixture data:', directory);
   }
 });

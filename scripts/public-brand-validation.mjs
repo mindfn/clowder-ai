@@ -36,7 +36,11 @@ try {
   ) {
     throw new Error('home exporter must retain inbound policy; removing it does not select public policy');
   }
-  const scope = readFileSync(0, 'utf8').split('\n').filter(Boolean);
+  const scopeText = readFileSync(0, 'utf8');
+  const scope = scopeText.trimStart().startsWith('[') ? JSON.parse(scopeText) : scopeText.split('\n').filter(Boolean);
+  if (!Array.isArray(scope) || scope.some((path) => typeof path !== 'string' || !path || path.includes('\0'))) {
+    throw new Error('invalid public path scope');
+  }
   console.log(`Public Brand Guard: ${scope.length} scoped file(s), ${fromIndex ? 'index' : 'worktree'}`);
   const required = new Map([
     [

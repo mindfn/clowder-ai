@@ -70,7 +70,11 @@ test('actual Client once command registers, owner adopts and original UNKNOWN wa
       },
     });
     assert.equal(wake.statusCode, 200, wake.body);
-    assert.equal((await f.host.messages.getById(wake.json().messageId))?.queueCustody?.ownerAuthProvenance, 'unknown');
+    assert.equal(
+      f.queue.list(f.host.endpoint.id, f.host.userId).find((entry) => entry.payload.messageId === wake.json().messageId)
+        ?.execution?.ownerAuthProvenance,
+      'unknown',
+    );
     f.enable();
     await f.processor.processNext(f.host.endpoint.id, f.host.userId);
     await until(() => f.runs.length === 1, 'scripted Cat accepts the original proposed Work');

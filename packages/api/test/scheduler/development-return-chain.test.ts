@@ -10,7 +10,7 @@ function execution(f, freshSource = false) {
     const source = f.messages.append({
       userId: f.actor.userId,
       threadId: f.actor.threadId,
-      catId: null,
+      from: { kind: 'user', userId: f.actor.userId },
       content: '继续已接受的 Phase B',
       mentions: [],
       timestamp: f.service.now() + 1,
@@ -87,7 +87,7 @@ test('terminal history requires an explicit predecessor; successor may use new a
   const report = f.messages.append({
     userId: f.actor.userId,
     threadId: next.executionThreadId,
-    catId: f.actor.catId,
+    from: { kind: 'agent', catId: f.actor.catId },
     content: 'New accepted execution result',
     mentions: [],
     timestamp: f.service.now() + 1,
@@ -122,7 +122,7 @@ test('a terminal predecessor cannot fork two concurrent successor registrations'
 });
 
 test('separate processes cannot commit two successors for the same owner/Task', async (t) => {
-  const { mkdtemp, rm } = await import('node:fs/promises');
+  const { mkdtemp } = await import('node:fs/promises');
   const { tmpdir } = await import('node:os');
   const { join } = await import('node:path');
   const { fork } = await import('node:child_process');
@@ -132,7 +132,7 @@ test('separate processes cannot commit two successors for the same owner/Task', 
   f.tick(20000);
   await f.runner.triggerNow(first.registrationId);
   const directory = await mkdtemp(join(tmpdir(), 'f310-return-chain-'));
-  t.after(() => rm(directory, { recursive: true, force: true }));
+  t.after(() => console.info('retained development return race SQLite:', directory));
   const path = join(directory, 'execution.sqlite');
   await f.db.backup(path);
   const workers = [1, 2].map((number) => {

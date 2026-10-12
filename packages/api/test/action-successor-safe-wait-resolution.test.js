@@ -72,7 +72,7 @@ function carrier(current, catId, state) {
       targetId: catId,
       inputMessageIds: [id],
       inputEntryIds: [entry.id],
-      status: 'completed',
+      status: state === 'interrupted' ? 'interrupted' : 'completed',
     },
   };
   source.lifecycle = {
@@ -85,7 +85,7 @@ function carrier(current, catId, state) {
     parentInvocationId: parentId,
     ...scope,
     catId,
-    status: 'succeeded',
+    status: state === 'interrupted' ? 'interrupted' : 'succeeded',
     causal: { triggerMessageId: id },
   };
   const parent = {
@@ -93,7 +93,7 @@ function carrier(current, catId, state) {
     ...scope,
     targetCats: [catId],
     successfulCatIds: [catId],
-    status: 'succeeded',
+    status: state === 'interrupted' ? 'failed' : 'succeeded',
     idempotencyKey: actionSuccessorInvocationKeyForTarget(id, catId),
     actionLeaseCarrier: { kind: 'action_successor', leaseId: current.leaseId, generation: current.generation },
   };
@@ -260,46 +260,22 @@ describe('F167 safe_wait is only answered from the lease that is in the store no
   });
 });
 
-/**
- * A runtime restart interrupts a holder either after its provider already read the action (it may have partly run)
- * or before (it never saw the work). Re-sending the same action replays the same generation only in the second case;
- * in the first the predecessor is told who read it and how to run it again on purpose.
- */
-describe('F167 restart-interrupted carrier is replayed only when no holder had read the action', () => {
-  test('a holder that read the action before the restart is refused with its read, never replayed', async () => {
-    const observed = lease();
-    const leaseStore = scriptedLeaseStore();
-    const interrupted = carrier(observed, HOLDER, 'interrupted');
-    interrupted.queueCustody.bodyExposures = [{ targetCatId: HOLDER, invocationId: `child-${HOLDER}`, seenAt: 115 }];
-
-    const resolution = await resolve({ observed, messages: [interrupted], leaseStore, records: new Map() });
-
-    assert.equal(resolution.kind, 'respond');
-    assert.equal(resolution.statusCode, 409);
-    assert.equal(resolution.body.status, 'action_carrier_unavailable');
-    assert.equal(resolution.body.reason, 'interrupted_after_read');
-    assert.deepEqual(resolution.body.interruptedReads, [
-      { catId: HOLDER, invocationId: `child-${HOLDER}`, seenAt: 115 },
-    ]);
-    assert.match(resolution.body.nextStep, /replace/);
-    assert.equal(resolution.body.actionLease.leaseId, observed.leaseId, 'the caller gets the lease it would replace');
-    assert.equal(leaseStore.calls.length, 0, 'no generation is moved on the caller’s behalf');
-  });
-
-  test('a holder that was only awakened, never shown the action, is still replayed on the same generation', async () => {
-    const observed = lease();
-    const leaseStore = scriptedLeaseStore();
-
-    const resolution = await resolve({
-      observed,
-      messages: [carrier(observed, HOLDER, 'interrupted')],
-      leaseStore,
-      records: new Map(),
+describe('F167 restart resumes the same carrier independently of reading evidence', () => {
+  for (const status of ['pending', 'read']) {
+    test(`an interrupted carrier with ${status} input keeps its original generation`, async () => {
+      const observed = lease();
+      const leaseStore = scriptedLeaseStore();
+      const interrupted = carrier(observed, HOLDER, 'interrupted');
+      interrupted.source.lifecycle.dispatchRefs[0].inputRead = {
+        status,
+        ...(status === 'read' ? { at: 115 } : {}),
+      };
+      const resolution = await resolve({ observed, messages: [interrupted], leaseStore });
+      assert.equal(resolution.kind, 'continue');
+      assert.equal(resolution.admissionOutcome, 'replayed');
+      assert.equal(resolution.fence.generation, observed.generation);
+      assert.equal(leaseStore.calls.length, 0, 'no new generation or replacement proof');
+      assert.equal(interrupted.source.lifecycle.dispatchRefs[0].inputRead.status, status);
     });
-
-    assert.equal(resolution.kind, 'continue');
-    assert.equal(resolution.admissionOutcome, 'replayed');
-    assert.equal(resolution.fence.generation, observed.generation);
-    assert.equal(leaseStore.calls.length, 0);
-  });
+  }
 });

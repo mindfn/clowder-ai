@@ -11,9 +11,11 @@ import {
   createdOutputFence,
   type InterruptRunningTurnExecutionsInput,
   type ITurnExecutionStore,
+  matchesTurnExecutionSource,
   serializeTurnExecutionIdentity,
   type TransitionTurnExecutionResult,
   type TurnExecutionRecord,
+  type TurnExecutionSourceQuery,
   type TurnExecutionTerminalInput,
   type TurnOutputFenceVerdict,
 } from '../ports/TurnExecutionStore.js';
@@ -72,6 +74,14 @@ export class InMemoryTurnExecutionStore implements ITurnExecutionStore {
   get(invocationId: string): TurnExecutionRecord | null {
     const record = this.records.get(invocationId);
     return record ? cloneTurnExecutionRecord(record) : null;
+  }
+
+  listBySource(query: TurnExecutionSourceQuery): TurnExecutionRecord[] {
+    return sortRecords(
+      [...this.records.values()]
+        .filter((record) => matchesTurnExecutionSource(record, query))
+        .map(cloneTurnExecutionRecord),
+    );
   }
 
   listByParent(parentInvocationId: string): TurnExecutionRecord[] {

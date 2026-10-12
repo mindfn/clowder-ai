@@ -1,8 +1,6 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import { createCatId } from '@cat-cafe/shared';
-import { InvocationQueue } from '../src/domains/cats/services/agents/invocation/InvocationQueue.js';
-import { createInitialQueuedMessageCustody } from '../src/domains/cats/services/agents/invocation/QueuedMessageCustodyCoordinator.js';
 import { MessageStore, type StoredMessage } from '../src/domains/cats/services/stores/ports/MessageStore.js';
 import { readLiveHomeRequest } from '../src/domains/concierge/live/host/home/live-home-request.js';
 
@@ -11,7 +9,7 @@ function fixture(extra?: StoredMessage['extra']) {
   const source = messages.append({
     userId: 'owner',
     threadId: 'home',
-    catId: null,
+    from: { kind: 'user', userId: 'owner' },
     content: '打开插件设置',
     mentions: [],
     timestamp: Date.now(),
@@ -56,25 +54,14 @@ test('forwarded context, queued new owner input and a changed invocation generat
   const forwarded = fixture({ crossPost: { sourceThreadId: 'other', sourceMessageId: 'cross-source' } });
   assert.equal(await readLiveHomeRequest(forwarded.input), null);
   const f = fixture();
-  const entry = new InvocationQueue().enqueue({
-    userId: 'owner',
-    threadId: 'home',
-    source: 'user',
-    ownerAuthProvenance: 'strict',
-    content: '等等',
-    targetCats: [f.scope.catId],
-    intent: 'coordinate',
-  }).entry;
-  assert.ok(entry);
   f.messages.append({
     userId: 'owner',
     threadId: 'home',
-    catId: null,
+    from: { kind: 'user', userId: 'owner' },
     content: '等等',
     mentions: [f.scope.catId],
     timestamp: Date.now(),
     deliveryStatus: 'queued',
-    queueCustody: createInitialQueuedMessageCustody(entry),
   });
   assert.equal(await readLiveHomeRequest(f.input), null);
   const g = fixture();

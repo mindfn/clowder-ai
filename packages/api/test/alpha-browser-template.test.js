@@ -1,5 +1,9 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
+import { InvocationQueue } from '../dist/domains/cats/services/agents/invocation/InvocationQueue.js';
+import { PersistedQueueDelivery } from '../dist/domains/cats/services/agents/invocation/PersistedQueueDelivery.js';
+import { MessageStore } from '../dist/domains/cats/services/stores/ports/MessageStore.js';
+import { createDeliverFn } from '../dist/infrastructure/scheduler/delivery.js';
 import { executeTaskPipeline } from '../dist/infrastructure/scheduler/execute-pipeline.js';
 import {
   createAlphaBrowserTemplate,
@@ -20,32 +24,51 @@ for (const restriction of ['scarce', 'unavailable', 'unregistered']) {
     assert.equal(f.tasks.size, 1);
     assert.equal([...f.tasks.values()][0].ownerCatId, 'fixture-cat', 'historical ownership must not be rewritten');
     assert.deepEqual(
-      f.triggered.map((args) => args[1]),
+      f.delivered.map((input) => input.targetCatId),
       ['guardian', 'guardian'],
     );
     assert.match(f.delivered[0].content, /guardian.*fixture-cat/u, 'the routing decision must be visible');
   });
 }
 
-test('owner eligibility is rechecked at dispatch, then replay uses the current guardian without another Task', async () => {
+test('quota changes cannot retarget an admitted incident under the same request identity', async () => {
   const f = fixture();
   f.params.params.guardianCatId = 'guardian';
   f.options.resolveCat = (id) => id;
   let scarce = false;
   f.options.getEngagementPolicy = (id) =>
     scarce && id === 'fixture-cat' ? { quota: 'weekly_subscription_scarce' } : undefined;
-  const deliver = f.context.deliver;
-  f.context.deliver = async (input) => {
-    const source = await deliver(input);
-    scarce = true;
-    return source;
-  };
+  const messages = new MessageStore(),
+    queue = new InvocationQueue();
+  f.context.deliver = createDeliverFn({
+    messageStore: messages,
+    socketManager: { broadcastToRoom() {}, emitToUser() {} },
+    persistedQueueDelivery: new PersistedQueueDelivery({
+      messages,
+      queue,
+      progress: async () => ({ kind: 'queued' }),
+    }),
+  });
   const spec = createAlphaBrowserTemplate(f.options).createSpec('alpha-subscription', f.params);
-  await assert.rejects(spec.run.execute('alpha', 'alpha', f.context), /triage target changed/u);
-  assert.equal(f.triggered.length, 0);
   await spec.run.execute('alpha', 'alpha', f.context);
+  const original = queue.list('gate-owner', 'owner')[0];
+  assert.deepEqual(original.targets, ['fixture-cat']);
+  scarce = true;
+  await assert.rejects(spec.run.execute('alpha', 'alpha', f.context), /identity conflict|admission.*conflict/i);
   assert.equal(f.tasks.size, 1);
-  assert.equal(f.triggered[0][1], 'guardian');
+  assert.equal(queue.list('gate-owner', 'owner').length, 1);
+  assert.deepEqual(queue.list('gate-owner', 'owner')[0], original, 'same incident cannot mutate its winning target');
+  assert.equal(f.triggered.length, 0);
+
+  // A new verification generation is a new incident; select the current guardian at its admission.
+  const draft = (await f.runtime.alphaBrowserFailureTasks())[0];
+  f.runtime.alphaBrowserFailureTasks = async () => [{ ...draft, generation: 2 }];
+  await spec.run.execute('alpha', 'alpha', f.context);
+  assert.equal(f.tasks.size, 1, 'both generations refer to the same investigation Task');
+  assert.deepEqual(
+    queue.list('gate-owner', 'owner').map((row) => row.targets),
+    [['fixture-cat'], ['guardian']],
+  );
 });
 
 test('an explicitly configured scarce guardian is preserved; an unavailable guardian cannot be awakened', async () => {
@@ -53,10 +76,11 @@ test('an explicitly configured scarce guardian is preserved; an unavailable guar
   f.options.getEngagementPolicy = () => ({ quota: 'weekly_subscription_scarce' });
   const spec = createAlphaBrowserTemplate(f.options).createSpec('alpha-subscription', f.params);
   await spec.run.execute('alpha', 'alpha', f.context);
-  assert.equal(f.triggered[0][1], 'fixture-cat', 'explicit schedule selection is not an inferred owner');
+  assert.equal(f.delivered[0].targetCatId, 'fixture-cat', 'explicit schedule selection is not an inferred owner');
   f.options.isAvailable = () => false;
   await assert.rejects(spec.run.execute('alpha', 'alpha', f.context), /guardian unavailable/u);
-  assert.equal(f.triggered.length, 1);
+  assert.equal(f.delivered.length, 1);
+  assert.equal(f.triggered.length, 0);
 });
 
 test('alpha failure replay keeps one Task while allowing at-least-once owner notification', async () => {

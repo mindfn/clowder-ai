@@ -2,8 +2,6 @@ import assert from 'node:assert/strict';
 import { resolve } from 'node:path';
 import { test } from 'node:test';
 import { createCatId } from '@cat-cafe/shared';
-import { InvocationQueue } from '../src/domains/cats/services/agents/invocation/InvocationQueue.js';
-import { createInitialQueuedMessageCustody } from '../src/domains/cats/services/agents/invocation/QueuedMessageCustodyCoordinator.js';
 import { MessageStore, type ThreadMessageReadOptions } from '../src/domains/cats/services/stores/ports/MessageStore.js';
 import { LiveCompanionCall } from '../src/domains/concierge/live/LiveCompanionCall.js';
 import { voiceEnvelope } from './helpers/f317-ns-reg-live.js';
@@ -74,26 +72,14 @@ async function fixture(store = new TimelineMessageStore()) {
   });
   await call.start('offer');
   const textRow = (content: string, timestamp = Date.now(), deliveryStatus?: 'queued') => {
-    const entry = deliveryStatus
-      ? new InvocationQueue().enqueue({
-          userId: 'owner',
-          threadId: 'home',
-          source: 'user',
-          ownerAuthProvenance: 'strict',
-          content,
-          targetCats: [createCatId('codex61-sol')],
-          intent: 'coordinate',
-        }).entry
-      : undefined;
-    if (deliveryStatus) assert.ok(entry);
     return store.append({
       userId: 'owner',
       threadId: 'home',
-      catId: null,
+      from: { kind: 'user', userId: 'owner' },
       content,
       mentions: [],
       timestamp,
-      ...(entry ? { deliveryStatus, queueCustody: createInitialQueuedMessageCustody(entry) } : {}),
+      ...(deliveryStatus ? { deliveryStatus } : {}),
     });
   };
   return {
@@ -222,7 +208,7 @@ test('duplicate starts, foreign completion and another cat reply do not revoke t
     f.store.append({
       userId: 'owner',
       threadId: 'home',
-      catId: createCatId('sonnet'),
+      from: { kind: 'agent', catId: createCatId('sonnet') },
       content: 'unrelated work',
       mentions: [],
       timestamp: Date.now(),
@@ -323,7 +309,7 @@ for (const laterCount of [255, 256])
         f.store.append({
           userId: 'owner',
           threadId: 'home',
-          catId: createCatId('sonnet'),
+          from: { kind: 'agent', catId: createCatId('sonnet') },
           content: 'unrelated work',
           mentions: [],
           timestamp: Date.now(),

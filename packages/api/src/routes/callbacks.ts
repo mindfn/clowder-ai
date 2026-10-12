@@ -224,7 +224,7 @@ import {
 } from './callback-meeting-artifact-routes.js';
 import { type CallbackMemoryCueDeps, registerCallbackMemoryCueRoutes } from './callback-memory-cue-routes.js';
 import { registerCallbackMemoryRoutes } from './callback-memory-routes.js';
-import { projectCallbackMessageBody } from './callback-message-body.js';
+import { projectCallbackMessageBody, projectQueuedCallbackMessageBody } from './callback-message-body.js';
 import { registerCallbackMessageReadRoutes } from './callback-message-read-routes.js';
 import { getMultiMentionOrchestrator, registerMultiMentionRoutes } from './callback-multi-mention-routes.js';
 import { registerCallbackNativeTestGrantRoute } from './callback-native-test-grant.js';
@@ -4390,43 +4390,54 @@ export const callbacksRoutes: FastifyPluginAsync<CallbackRoutesOptions> = async 
         .map((message) => [message.id, message]),
     );
     // Keep unread persisted continuation ahead of execution-owned queued bodies.
-    const queuedFullMessages = (unreadTailContinuationSelection ? [] : queuedFullEntries)
-      .filter(
-        (entry) =>
-          ![entry.messageId].some(
-            (candidateMessageId) => candidateMessageId && publishedMessageIds.has(candidateMessageId),
-          ),
-      )
-      .map((entry) => {
-        const id = entry.messageId ?? `queued:${entry.entryId}`;
-        const sourceMessage = entry.messageId ? queuedSourceMessages.get(entry.messageId) : undefined;
-        const speaker = (() => {
-          switch (entry.from.kind) {
-            case 'user':
-              return getSenderName(null);
-            case 'agent':
-              return getSenderName(entry.from.catId);
-            case 'external':
-              return entry.from.sender?.name ?? entry.from.sender?.id ?? entry.from.connectorId;
-            case 'plugin':
-              return entry.from.instanceId;
-            case 'system':
-              return entry.from.service;
-          }
-        })();
-        return {
-          id,
-          threadId: effectiveThreadId,
-          timestamp: sourceMessage?.timestamp ?? Date.now(),
-          speaker,
-          content: entry.content,
-          contentLength: entry.content.length,
-          truncated: false,
-          deliveryStatus: 'queued' as const,
-          queueEntryId: entry.entryId,
-          alreadyExposedToInvocation: entry.alreadyExposed,
-        };
-      });
+    const queuedFullMessages = await Promise.all(
+      (unreadTailContinuationSelection ? [] : queuedFullEntries)
+        .filter(
+          (entry) =>
+            ![entry.messageId].some(
+              (candidateMessageId) => candidateMessageId && publishedMessageIds.has(candidateMessageId),
+            ),
+        )
+        .map(async (entry) => {
+          const body = await projectQueuedCallbackMessageBody(
+            entry,
+            { getById: async (id) => queuedSourceMessages.get(id) ?? null },
+            {
+              threadId: effectiveThreadId,
+              userId: principalUserId,
+              catId: principalCatId,
+              viewer,
+            },
+          );
+          const id = entry.messageId ?? `queued:${entry.entryId}`;
+          const sourceMessage = entry.messageId ? queuedSourceMessages.get(entry.messageId) : undefined;
+          const speaker = (() => {
+            switch (entry.from.kind) {
+              case 'user':
+                return getSenderName(null);
+              case 'agent':
+                return getSenderName(entry.from.catId);
+              case 'external':
+                return entry.from.sender?.name ?? entry.from.sender?.id ?? entry.from.connectorId;
+              case 'plugin':
+                return entry.from.instanceId;
+              case 'system':
+                return entry.from.service;
+            }
+          })();
+          return {
+            id,
+            threadId: effectiveThreadId,
+            timestamp: sourceMessage?.timestamp ?? Date.now(),
+            speaker,
+            ...body,
+            truncated: false,
+            deliveryStatus: 'queued' as const,
+            queueEntryId: entry.entryId,
+            alreadyExposedToInvocation: entry.alreadyExposed,
+          };
+        }),
+    );
     const hasLocalReviewFact = filtered.some((message) => readDurableLocalReviewFact(message) !== null);
     // R4 is an action-time brake, so a paginated response must not masquerade as
     // complete review history. Read one item beyond the bounded history window;
@@ -4485,6 +4496,7 @@ export const callbacksRoutes: FastifyPluginAsync<CallbackRoutesOptions> = async 
             ),
           }
         : {};
+      const projectedBody = projectCallbackMessageBody(item);
       const anchorProjection: Record<string, unknown> = {
         ...anchored,
         from: messageFrom(item),
@@ -4498,7 +4510,7 @@ export const callbacksRoutes: FastifyPluginAsync<CallbackRoutesOptions> = async 
         threadId: effectiveThreadId,
         timestamp: item.timestamp,
         speaker: getMessageSpeakerName(item),
-        ...projectCallbackMessageBody(item),
+        ...projectedBody,
         truncated: false,
         ...queuedProjection,
         ...localReviewProjection,
@@ -4512,7 +4524,7 @@ export const callbacksRoutes: FastifyPluginAsync<CallbackRoutesOptions> = async 
         threadId: effectiveThreadId,
         timestamp: item.timestamp,
         speaker: getMessageSpeakerName(item),
-        contentLength: item.content.length,
+        contentLength: projectedBody.contentLength,
         truncated: true,
         oversized: true,
         drillDown: anchored.drillDown,
@@ -4524,7 +4536,7 @@ export const callbacksRoutes: FastifyPluginAsync<CallbackRoutesOptions> = async 
         id: item.id,
         projection: isFullMode ? fullProjection : anchorProjection,
         oversizedProjection: isFullMode ? oversizedProjection : anchorProjection,
-        originalChars: item.content.length,
+        originalChars: projectedBody.contentLength,
         source: 'published',
       };
     });
@@ -4560,9 +4572,14 @@ export const callbacksRoutes: FastifyPluginAsync<CallbackRoutesOptions> = async 
                 threadId: effectiveThreadId,
                 timestamp: message.timestamp,
                 speaker: message.speaker,
-                content: message.content,
+                ...(message.sourceUnavailableReason
+                  ? { sourceUnavailableReason: message.sourceUnavailableReason }
+                  : {
+                      content: message.content,
+                      ...(message.contentBlocks ? { contentBlocks: message.contentBlocks } : {}),
+                    }),
                 contentLength: message.contentLength,
-                truncated: false,
+                truncated: Boolean(message.sourceUnavailableReason),
                 deliveryStatus: message.deliveryStatus,
                 queueEntryId: message.queueEntryId,
               },

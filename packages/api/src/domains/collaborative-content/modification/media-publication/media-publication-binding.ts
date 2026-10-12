@@ -4,7 +4,6 @@ import { basename, extname } from 'node:path';
 import { isDeepStrictEqual } from 'node:util';
 import type { ContentModificationRecord, TurnExecutionRecord } from '@cat-cafe/shared';
 import { MAX_IMAGE_FILE_SIZE } from '../../../../utils/image-storage.js';
-import { readQueueTargetExecution } from '../../../cats/services/agents/invocation/queue-ledger/QueueTargetExecutionView.js';
 import type { CodexNativeImageEvidenceReader } from '../../../cats/services/agents/providers/CodexNativeImageEvidenceReader.js';
 import { CODEX_IMAGE_MIME_BY_EXTENSION } from '../../../cats/services/agents/providers/codex-image-scanner.js';
 import { generatedImagePublicationLocation } from '../../../cats/services/agents/providers/generated-image-publication.js';
@@ -15,13 +14,14 @@ import {
   type StoredMessage,
 } from '../../../cats/services/stores/ports/MessageStore.js';
 import type { ITaskStore } from '../../../cats/services/stores/ports/TaskStore.js';
-import type { ITurnExecutionStore } from '../../../cats/services/stores/ports/TurnExecutionStore.js';
+import type { TurnExecutionSourceReadPort } from '../../../cats/services/stores/ports/TurnExecutionStore.js';
 import type { PublishedMediaService } from '../../../video-studio/content-owner/published-media-service.js';
 import { currentReviewModification } from '../../artifact-review/modification-request-reference.js';
 import { reviewAuthorityState } from '../../artifact-review/review-authority.js';
 import type { ArtifactReviewStore } from '../../artifact-review/store.js';
 import { sameAudience, witnessedPublicationCaller } from './media-publication-caller.js';
 import type { MediaPublicationReturnIntent } from './media-publication-return.js';
+import { readModificationSourceExecution } from './source-execution.js';
 
 export { sameAudience } from './media-publication-caller.js';
 
@@ -34,7 +34,7 @@ export class MediaPublicationBinding {
       store: ArtifactReviewStore;
       messages: Pick<IMessageStore, 'getById' | 'getByIdempotencyKey'>;
       tasks: Pick<ITaskStore, 'get'>;
-      turns?: Pick<ITurnExecutionStore, 'get'>;
+      turns?: TurnExecutionSourceReadPort;
       nativeImages: CodexNativeImageEvidenceReader;
       uploadDir: string;
       media: Pick<PublishedMediaService, 'currentRevision'>;
@@ -95,14 +95,12 @@ export class MediaPublicationBinding {
       !carrier.mentions.includes(record.payload.targetCatId as (typeof carrier.mentions)[number])
     )
       return;
-    const execution = await readQueueTargetExecution(
+    const child = await readModificationSourceExecution(
       this.deps.messages,
-      undefined,
+      this.deps.turns,
       carrier,
       record.payload.targetCatId,
     );
-    const childId = execution?.kind === 'response' ? execution.response.invocationId : undefined;
-    const child = childId ? await this.deps.turns.get(childId) : null;
     if (
       !child ||
       child.status === 'running' ||

@@ -32,6 +32,7 @@ function mockMsg(overrides) {
     origin: overrides.origin ?? undefined,
     toolEvents: overrides.toolEvents ?? undefined,
     extra: overrides.extra ?? undefined,
+    ...(overrides.from ? { from: overrides.from } : {}),
   };
 }
 
@@ -1602,12 +1603,12 @@ describe('assembleIncrementalContext — system error exclusion', () => {
   });
 
   test('includes a typed Host modification receipt without presenting it as the Human', async () => {
-    const messageStore = new MessageStore();
+    const messageStore = adaptMessageStore(new MessageStore());
     const cursorStore = new DeliveryCursorStore();
     messageStore.append(
       mockMsg({
-        userId: 'system',
-        catId: null,
+        userId: 'user-1',
+        from: { kind: 'system', service: 'content-modification' },
         content: '[Host 作品修改回执]\n候选修改已返回',
         timestamp: Date.now() - 1000,
         extra: {

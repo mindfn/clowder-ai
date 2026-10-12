@@ -101,8 +101,8 @@ describe('GET /api/messages', () => {
       followUp: { kind: 'none', reason: 'task_closed' },
     };
     messageStore.append({
-      userId: 'system',
-      catId: null,
+      userId: 'default-user',
+      from: { kind: 'system', service: 'content-modification' },
       content: '[Host 作品修改回执]',
       mentions: [],
       timestamp: 2000,

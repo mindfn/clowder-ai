@@ -80,7 +80,7 @@ export async function fixture(options: { now?: () => number; expiresAt?: string 
       await messages.appendIdempotent({
         userId: cafe.ownerUserId,
         threadId: endpoint.id,
-        catId: null,
+        from: { kind: 'external', connectorId: 'collective' },
         mentions: [],
         timestamp: Date.parse(event.acceptedAt),
         content: event.body,

@@ -2,7 +2,7 @@ import { isDeepStrictEqual } from 'node:util';
 import { contentRuntimeControlTargetSchema } from '@cat-cafe/shared';
 import type { InvocationQueue } from '../../../cats/services/agents/invocation/InvocationQueue.js';
 import type { NativeControlCommand } from '../../../cats/services/agents/invocation/NativeControlReceipt.js';
-import type { ITurnExecutionStore } from '../../../cats/services/stores/ports/TurnExecutionStore.js';
+import type { TurnExecutionSourceReadPort } from '../../../cats/services/stores/ports/TurnExecutionStore.js';
 import type { MediaReviewPrincipal } from '../../../video-studio/content-owner/published-media-access.js';
 import type { ContentModificationJournal } from '../journal.js';
 import { ContentModificationJournalError } from '../journal-errors.js';
@@ -14,7 +14,7 @@ export class ModificationRuntimeControlService {
       journal: ContentModificationJournal;
       requests: ContentModificationService;
       queue?: Pick<InvocationQueue, 'getEntrySnapshot'>;
-      turns?: Pick<ITurnExecutionStore, 'get'>;
+      turns?: TurnExecutionSourceReadPort;
     },
   ) {}
   async confirm(requestId: string, raw: unknown, principal: MediaReviewPrincipal) {

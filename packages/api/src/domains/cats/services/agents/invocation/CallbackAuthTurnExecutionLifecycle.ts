@@ -6,6 +6,7 @@ import type {
   ITurnExecutionStore,
   TransitionTurnExecutionResult,
   TurnExecutionRecord,
+  TurnExecutionSourceQuery,
   TurnExecutionTerminalInput,
   TurnOutputFenceVerdict,
 } from '../../stores/ports/TurnExecutionStore.js';
@@ -48,6 +49,10 @@ export class CallbackAuthTurnExecutionLifecycle implements ITurnExecutionStore {
 
   get(invocationId: string): TurnExecutionRecord | null | Promise<TurnExecutionRecord | null> {
     return this.store.get(invocationId);
+  }
+
+  listBySource(query: TurnExecutionSourceQuery): TurnExecutionRecord[] | Promise<TurnExecutionRecord[]> {
+    return this.store.listBySource(query);
   }
 
   listByParent(parentInvocationId: string): TurnExecutionRecord[] | Promise<TurnExecutionRecord[]> {

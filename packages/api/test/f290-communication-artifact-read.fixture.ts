@@ -57,7 +57,7 @@ export async function artifactFixture() {
     const message = f.messages.append({
       userId: f.cafe.ownerUserId,
       threadId: task.threadId,
-      catId: CAT,
+      from: { kind: 'agent', catId: CAT },
       mentions: [],
       timestamp: Date.now(),
       origin: 'callback',

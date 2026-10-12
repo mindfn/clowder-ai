@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import type { TestContext } from 'node:test';
 import Database from 'better-sqlite3';
 import './setup-cat-registry.js';
-import { MessageStore } from '../../src/domains/cats/services/stores/ports/MessageStore.js';
+import { MessageStore } from '../../dist/domains/cats/services/stores/ports/MessageStore.js';
 import { InMemoryProposalStore } from '../../src/domains/cats/services/stores/ports/ProposalStore.js';
 import { TaskStore } from '../../src/domains/cats/services/stores/ports/TaskStore.js';
 import { ThreadStore } from '../../src/domains/cats/services/stores/ports/ThreadStore.js';
@@ -13,7 +13,11 @@ import { RunLedger } from '../../src/infrastructure/scheduler/RunLedger.js';
 import { TaskRunnerV2 } from '../../src/infrastructure/scheduler/TaskRunnerV2.js';
 import { createPersistedQueueFixture } from './persisted-queue-fixture.js';
 
-export async function createDevelopmentReturnFixture(t: TestContext) {
+export async function createDevelopmentReturnFixture(
+  t: TestContext,
+  options: { ownerCatId?: string; proposalDelegateCatId?: string } = {},
+) {
+  const ownerCatId = options.ownerCatId ?? 'codex-sol';
   const db = new Database(':memory:');
   applyMigrations(db);
   t.after(() => db.close());
@@ -22,7 +26,7 @@ export async function createDevelopmentReturnFixture(t: TestContext) {
     messages = new MessageStore(),
     proposals = new InMemoryProposalStore();
   const original = threads.create('human', 'Original', process.cwd());
-  const actor = { userId: 'human', catId: 'codex-sol', threadId: original.id };
+  const actor = { userId: 'human', catId: ownerCatId, threadId: original.id };
   let now = Date.now();
   const source = messages.append({
     userId: 'human',
@@ -32,27 +36,6 @@ export async function createDevelopmentReturnFixture(t: TestContext) {
     mentions: [],
     timestamp: now,
   });
-  const proposal = proposals.create({
-    sourceThreadId: original.id,
-    sourceInvocationId: 'inv',
-    sourceMessageId: source.id,
-    sourceCatId: 'codex-sol',
-    title: 'Execution',
-    reason: 'Authorized sub-work',
-    parentThreadId: original.id,
-    preferredCats: ['codex-sol'],
-    projectPath: process.cwd(),
-    createdBy: 'human',
-    reportingMode: 'final-only',
-  });
-  const child = threads.create('human', 'Execution', process.cwd(), original.id, {
-    createdFromProposalId: proposal.proposalId,
-    sourceThreadId: original.id,
-    approvedBy: 'human',
-    approvedAt: now,
-  });
-  proposals.claimForApproval({ proposalId: proposal.proposalId, approvedBy: 'human' });
-  proposals.finalizeApproval({ proposalId: proposal.proposalId, createdThreadId: child.id });
   const admitted = tasks.transitionDevelopmentWork({
     action: 'admit',
     actor,
@@ -82,6 +65,29 @@ export async function createDevelopmentReturnFixture(t: TestContext) {
     },
   });
   assert.ok('task' in admitted);
+  const proposal = proposals.create({
+    sourceThreadId: original.id,
+    sourceInvocationId: 'inv',
+    sourceMessageId: source.id,
+    sourceCatId: ownerCatId,
+    title: 'Execution',
+    reason: 'Authorized sub-work',
+    parentThreadId: original.id,
+    preferredCats: [options.proposalDelegateCatId ?? ownerCatId],
+    projectPath: process.cwd(),
+    createdBy: 'human',
+    reportingMode: 'final-only',
+    subjectTaskId: admitted.task.id,
+    approvedDevelopmentScope: admitted.task.entrustedWork!.developmentScope,
+  });
+  const child = threads.create('human', 'Execution', process.cwd(), original.id, {
+    createdFromProposalId: proposal.proposalId,
+    sourceThreadId: original.id,
+    approvedBy: 'human',
+    approvedAt: now,
+  });
+  proposals.claimForApproval({ proposalId: proposal.proposalId, approvedBy: 'human' });
+  proposals.finalizeApproval({ proposalId: proposal.proposalId, createdThreadId: child.id });
   const definitions = new DynamicTaskStore(db),
     events = [],
     wakes = [],
@@ -157,7 +163,7 @@ export async function createDevelopmentReturnFixture(t: TestContext) {
     report() {
       return messages.append({
         userId: 'human',
-        from: { kind: 'agent', catId: 'codex-sol' },
+        from: { kind: 'agent', catId: ownerCatId },
         threadId: child.id,
         content: 'Accepted development result and validation',
         mentions: [],

@@ -38,6 +38,31 @@ export function projectTurnExecutionMessage(record: TurnExecutionRecord): TurnEx
   };
 }
 
+export interface TurnExecutionSourceQuery {
+  userId: string;
+  threadId: string;
+  catId: string;
+  messageId: string;
+}
+
+/** Existing execution causality is an internal fact, never a delivery/read receipt or grant. */
+export function matchesTurnExecutionSource(record: TurnExecutionRecord, query: TurnExecutionSourceQuery): boolean {
+  return (
+    record.userId === query.userId &&
+    record.threadId === query.threadId &&
+    record.catId === query.catId &&
+    record.executionKind === 'ordinary' &&
+    typeof record.parentInvocationId === 'string' &&
+    record.parentInvocationId.length > 0 &&
+    record.parentInvocationId !== record.invocationId &&
+    (record.causal?.triggerMessageId === query.messageId ||
+      record.causal?.coveredMessageIds?.includes(query.messageId) === true)
+  );
+}
+
+export type TurnExecutionSourceReadPort = Pick<ITurnExecutionStore, 'get'> &
+  Partial<Pick<ITurnExecutionStore, 'listBySource'>>;
+
 export interface ITurnExecutionStore {
   createRunning(input: CreateTurnExecutionInput): CreateTurnExecutionResult | Promise<CreateTurnExecutionResult>;
   bindCoveredMessageIds(
@@ -45,6 +70,8 @@ export interface ITurnExecutionStore {
     messageIds: readonly string[],
   ): BindCoveredMessageIdsResult | Promise<BindCoveredMessageIdsResult>;
   get(invocationId: string): TurnExecutionRecord | null | Promise<TurnExecutionRecord | null>;
+  /** Scoped historical lookup over existing records, including retired-Queue executions. Ambiguity belongs to the caller. */
+  listBySource(query: TurnExecutionSourceQuery): TurnExecutionRecord[] | Promise<TurnExecutionRecord[]>;
   listByParent(parentInvocationId: string): TurnExecutionRecord[] | Promise<TurnExecutionRecord[]>;
   /**
    * F297 (PR #3748 R3 P1-2): user-scoped running-child enumerator — **owner truth**.

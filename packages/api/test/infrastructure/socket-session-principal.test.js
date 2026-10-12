@@ -46,7 +46,7 @@ describe('SocketManager shares the HTTP session principal', () => {
   it('delivers user Queue events to the same owner as real HTTP bootstrap', { timeout: 5_000 }, async () => {
     const url = await start();
     const response = await fetch(`${url}/api/session`);
-    assert.deepEqual(await response.json(), { userId: 'acceptance-owner' });
+    assert.equal((await response.json()).userId, 'acceptance-owner');
     const client = await connect(url, response.headers.get('set-cookie').split(';')[0], { userId: 'forged-user' });
     assert.deepEqual(await join(client, 'user:acceptance-owner'), { ok: true, room: 'user:acceptance-owner' });
     assert.equal(manager.getIO().sockets.adapter.rooms.get('user:default-user')?.has(client.id) ?? false, false);
@@ -66,7 +66,7 @@ describe('SocketManager shares the HTTP session principal', () => {
   it('does not promote a remote bootstrap session to the instance owner', { timeout: 5_000 }, async () => {
     const url = await start();
     const response = await app.inject({ method: 'GET', url: '/api/session', remoteAddress: '203.0.113.10' });
-    assert.deepEqual(response.json(), { userId: 'default-user' });
+    assert.equal(response.json().userId, 'default-user');
     const client = await connect(url, response.headers['set-cookie'].split(';')[0], { userId: 'acceptance-owner' });
     assert.deepEqual(await join(client, 'user:acceptance-owner'), {
       ok: false,
@@ -90,7 +90,7 @@ describe('SocketManager shares the HTTP session principal', () => {
   it('keeps an unpaired remote session distinct from the default owner', { timeout: 5_000 }, async () => {
     const url = await start('default-user');
     const response = await app.inject({ method: 'GET', url: '/api/session', remoteAddress: '203.0.113.10' });
-    assert.deepEqual(response.json(), { userId: 'unpaired-user' });
+    assert.equal(response.json().userId, 'unpaired-user');
     const client = await connect(url, response.headers['set-cookie'].split(';')[0], { userId: 'default-user' });
     assert.deepEqual(await join(client, 'user:unpaired-user'), { ok: true, room: 'user:unpaired-user' });
     assert.deepEqual(await join(client, 'user:default-user'), {

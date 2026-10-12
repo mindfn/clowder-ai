@@ -27,6 +27,7 @@ import { recordAnchorDrillEvent, recordAnchorPreviewEvent } from './anchor-event
 import { recordAnchorFullDrill } from './anchor-telemetry.js';
 import { truncateHead } from './callback-anchor-helpers.js';
 import { requireCallbackPrincipal } from './callback-auth-prehandler.js';
+import { projectCallbackMessageBody } from './callback-message-body.js';
 import { guardLiveCarrierRead } from './live-carrier-read-guard.js';
 
 export interface CallbackMessageReadDeps {
@@ -166,13 +167,16 @@ export function registerCallbackMessageReadRoutes(app: FastifyInstance, opts: Ca
         const localReviewFact = readDurableLocalReviewFact(m);
         const imagePaths = extractImagePaths(m.contentBlocks, uploadDir);
         const imageUrls = extractImageUrls(m.contentBlocks);
-        const { preview, truncated } = isFullDrill ? { preview: m.content, truncated: false } : truncateHead(m.content);
+        const body = projectCallbackMessageBody(m);
+        const { preview, truncated } = isFullDrill
+          ? { preview: body.content, truncated: false }
+          : truncateHead(body.content);
         return {
           id: m.id,
           userId: m.userId,
           catId: m.catId,
           content: preview,
-          contentLength: m.content.length,
+          contentLength: body.contentLength,
           truncated,
           ...(localReviewFact ? { localReviewFact } : {}),
           // F236 R1 / 云端 Codex P2: preview-mode truncation carries a one-hop drill pointer to the
@@ -269,7 +273,9 @@ export function registerCallbackMessageReadRoutes(app: FastifyInstance, opts: Ca
           tool: 'get-message',
           itemIds: [message.id, ...contextMessages.map((m) => m.id)],
           returnedChars: result.message.content.length + contextMessages.reduce((sum, m) => sum + m.content.length, 0),
-          originalChars: message.content.length + contextMessages.reduce((sum, m) => sum + m.contentLength, 0),
+          originalChars:
+            projectCallbackMessageBody(message).contentLength +
+            contextMessages.reduce((sum, m) => sum + m.contentLength, 0),
           modeResolved: 'full',
           modeSource: 'legacy_equivalent',
           catId: principal.catId,
@@ -279,7 +285,9 @@ export function registerCallbackMessageReadRoutes(app: FastifyInstance, opts: Ca
           tool: 'get-message',
           itemIds: [message.id, ...contextMessages.map((m) => m.id)],
           returnedChars: result.message.content.length + contextMessages.reduce((sum, m) => sum + m.content.length, 0),
-          originalChars: message.content.length + contextMessages.reduce((sum, m) => sum + m.contentLength, 0),
+          originalChars:
+            projectCallbackMessageBody(message).contentLength +
+            contextMessages.reduce((sum, m) => sum + m.contentLength, 0),
           modeResolved: 'anchor',
           modeSource: 'legacy_equivalent',
           catId: principal.catId,

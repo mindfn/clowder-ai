@@ -1,21 +1,21 @@
 import assert from 'node:assert/strict';
 import { randomUUID } from 'node:crypto';
 import { createCatId } from '@cat-cafe/shared';
-import { InvocationQueue } from '../../src/domains/cats/services/agents/invocation/InvocationQueue.js';
-import { InvocationTracker } from '../../src/domains/cats/services/agents/invocation/InvocationTracker.js';
-import type { PersistedQueueDeliveryInput } from '../../src/domains/cats/services/agents/invocation/PersistedQueueDelivery.js';
-import { PersistedQueueDelivery } from '../../src/domains/cats/services/agents/invocation/PersistedQueueDelivery.js';
-import type { QueueProcessorDeps } from '../../src/domains/cats/services/agents/invocation/QueueProcessor.js';
-import { QueueProcessor } from '../../src/domains/cats/services/agents/invocation/QueueProcessor.js';
-import { InMemoryQueueLedgerStore } from '../../src/domains/cats/services/agents/invocation/queue-ledger/InMemoryQueueLedgerStore.js';
-import { queueEntryId } from '../../src/domains/cats/services/agents/invocation/queue-ledger/QueueLedger.js';
-import type { RouteExecutionOptions } from '../../src/domains/cats/services/agents/routing/route-helpers.js';
-import { InMemoryTurnExecutionStore } from '../../src/domains/cats/services/stores/memory/InMemoryTurnExecutionStore.js';
-import { InvocationRecordStore } from '../../src/domains/cats/services/stores/ports/InvocationRecordStore.js';
+import { InvocationQueue } from '../../dist/domains/cats/services/agents/invocation/InvocationQueue.js';
+import { InvocationTracker } from '../../dist/domains/cats/services/agents/invocation/InvocationTracker.js';
+import type { PersistedQueueDeliveryInput } from '../../dist/domains/cats/services/agents/invocation/PersistedQueueDelivery.js';
+import { PersistedQueueDelivery } from '../../dist/domains/cats/services/agents/invocation/PersistedQueueDelivery.js';
+import type { QueueProcessorDeps } from '../../dist/domains/cats/services/agents/invocation/QueueProcessor.js';
+import { QueueProcessor } from '../../dist/domains/cats/services/agents/invocation/QueueProcessor.js';
+import { InMemoryQueueLedgerStore } from '../../dist/domains/cats/services/agents/invocation/queue-ledger/InMemoryQueueLedgerStore.js';
+import { queueEntryId } from '../../dist/domains/cats/services/agents/invocation/queue-ledger/QueueLedger.js';
+import type { RouteExecutionOptions } from '../../dist/domains/cats/services/agents/routing/route-helpers.js';
+import { InMemoryTurnExecutionStore } from '../../dist/domains/cats/services/stores/memory/InMemoryTurnExecutionStore.js';
+import { InvocationRecordStore } from '../../dist/domains/cats/services/stores/ports/InvocationRecordStore.js';
 import {
   MessageStore,
   settleLifecycleResponseInputs,
-} from '../../src/domains/cats/services/stores/ports/MessageStore.js';
+} from '../../dist/domains/cats/services/stores/ports/MessageStore.js';
 
 /** Actual atomic admission/QueueProcessor/child History; controlled provider, not a model or successful Task verdict. */
 export function createPersistedQueueFixture(
@@ -24,14 +24,14 @@ export function createPersistedQueueFixture(
     /** Read-only projection tests may deliberately keep admitted work pending. */
     autoDrain?: boolean;
     registry?: Pick<
-      import('../../src/domains/cats/services/agents/invocation/InvocationRegistry.js').InvocationRegistry,
+      import('../../dist/domains/cats/services/agents/invocation/InvocationRegistry.js').InvocationRegistry,
       'create'
     >;
     ledger?: InMemoryQueueLedgerStore;
     liveCompanionSessions?: QueueProcessorDeps['liveCompanionSessions'];
     onExecution?: (options: RouteExecutionOptions) => Promise<void>;
     onAdmitted?: (
-      message?: import('../../src/domains/cats/services/stores/ports/MessageStore.js').StoredMessage,
+      message?: import('../../dist/domains/cats/services/stores/ports/MessageStore.js').StoredMessage,
     ) => void;
   } = {},
 ) {
@@ -57,7 +57,8 @@ export function createPersistedQueueFixture(
     ownerAuthProvenance: unknown;
   }[] = [];
   const completed: Promise<void>[] = [];
-  const releases: (() => void)[] = [];
+  const releases = new Map<string, (status: 'succeeded' | 'failed' | 'canceled') => void>();
+  const credentials = new Map<string, Awaited<ReturnType<NonNullable<typeof settings.registry>['create']>>>();
   processor = new QueueProcessor({
     queue,
     liveCompanionSessions: settings.liveCompanionSessions,
@@ -87,9 +88,11 @@ export function createPersistedQueueFixture(
         const target = targets[0];
         if (!target) throw new Error('persisted Queue fixture requires one target');
         const catId = createCatId(target);
-        const invocationId = settings.registry
-          ? (await settings.registry.create(userId, catId, threadId)).invocationId
-          : randomUUID();
+        const auth = settings.registry
+          ? await settings.registry.create(userId, catId, threadId, parentInvocationId, undefined, undefined, messageId)
+          : undefined;
+        const invocationId = auth?.invocationId ?? randomUUID();
+        if (auth) credentials.set(invocationId, auth);
         assert.ok(messageId, 'persisted Queue fixture requires a public source');
         const messageIds = options?.persistedPromptMessageIds ?? [];
         const startedAt = Date.now();
@@ -141,15 +144,18 @@ export function createPersistedQueueFixture(
           }),
         );
         try {
-          await new Promise<void>((resolve) => releases.push(resolve));
+          const status = await new Promise<'succeeded' | 'failed' | 'canceled'>((resolve) =>
+            releases.set(invocationId, resolve),
+          );
+          releases.delete(invocationId);
           turns.transitionTerminal(invocationId, {
-            status: 'failed',
+            status,
             terminalReason: 'fixture_provider_released',
             endedAt: Date.now(),
           });
           const terminal = messages.commitLifecycleResponseTerminal(lifecycle.responseMessageId, {
             invocationId,
-            status: 'failed',
+            status: status === 'succeeded' ? 'completed' : status,
             completedAt: Date.now(),
             content: '',
             mentions: [],
@@ -158,7 +164,7 @@ export function createPersistedQueueFixture(
           });
           assert.ok(terminal.kind === 'applied' || terminal.kind === 'replayed');
           await settleLifecycleResponseInputs(messages, terminal.message, lifecycle.responseMessageId);
-          yield { type: 'done', catId, invocationId, timestamp: Date.now(), isError: true };
+          yield { type: 'done', catId, invocationId, timestamp: Date.now(), isError: status !== 'succeeded' };
         } finally {
           finish();
         }
@@ -225,10 +231,25 @@ export function createPersistedQueueFixture(
       await new Promise<void>((resolve) => setTimeout(resolve, 5));
     }
   }
+  async function releaseProvider(invocationId: string, status: 'succeeded' | 'failed' | 'canceled' = 'succeeded') {
+    const release = releases.get(invocationId);
+    assert.ok(release, 'exact controlled provider must be waiting');
+    release(status);
+    // Wait for the exact route to commit its response; other children may stay active.
+    const deadline = Date.now() + 2000;
+    while (
+      messages.getByIdempotencyKey(
+        starts.find((s) => s.invocationId === invocationId)!.userId,
+        starts.find((s) => s.invocationId === invocationId)!.threadId,
+        `message-lifecycle-response:${invocationId}`,
+      )?.lifecycle?.status === 'processing'
+    ) {
+      if (Date.now() >= deadline) assert.fail('provider terminal did not commit');
+      await new Promise((resolve) => setTimeout(resolve, 5));
+    }
+  }
   async function close() {
-    releases.splice(0).forEach((release) => {
-      release();
-    });
+    for (const release of releases.values()) release('failed');
     await Promise.all(completed);
   }
   return {
@@ -242,6 +263,8 @@ export function createPersistedQueueFixture(
     admissions,
     messages,
     starts,
+    credentials,
+    releaseProvider,
     waitForAwakening,
     close,
   };

@@ -11,6 +11,7 @@ function fixture() {
   for (const path of [
     'scripts/intake-from-opensource.sh',
     'scripts/lib/intake-gh-retry.sh',
+    'scripts/lib/intake-brand-paths.mjs',
     'scripts/brand-dictionary-helper.mjs',
     'assets/brand-dictionary.yaml',
   ]) {
@@ -74,6 +75,18 @@ test('invalid public provenance fails closed', () => {
   const r = f.run();
   assert.notEqual(r.status, 0);
   assert.match(r.stdout + r.stderr, /provenance/);
+});
+
+test('public guard rejects malformed JSON path scopes instead of skipping staged validation', () => {
+  const f = fixture();
+  for (const input of ['[', '[17]', '[null]', '["bad\\u0000path"]']) {
+    const result = spawnSync('node', ['scripts/public-brand-validation.mjs', '--from-index'], {
+      cwd: f.dir,
+      encoding: 'utf8',
+      input,
+    });
+    assert.notEqual(result.status, 0, input);
+  }
 });
 
 test('public API fallback is checked even on a safe-cherry-pick path', () => {

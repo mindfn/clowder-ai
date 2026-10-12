@@ -469,37 +469,36 @@ describe('direct action carrier refresh, route to provider', () => {
     assert.equal(starts.length, 1);
 
     const from = { kind: 'agent', catId: PREDECESSOR };
-    await assert.rejects(
-      queue.send(
-        messages,
-        {
-          threadId: target.id,
-          userId: 'user-1',
-          from,
-          content: 'Implement task (original)',
-          mentions: [HOLDER],
-          origin: 'callback',
-          timestamp: original.message.timestamp,
-          deliveryStatus: 'queued',
-          idempotencyKey: actionSuccessorCarrierKey(original.fence, HOLDER),
-        },
-        {
-          kind: 'conversation_input',
-          threadId: target.id,
-          userId: 'user-1',
-          from,
-          ownerAuthProvenance: 'strict',
-          content: 'Implement task (original)',
-          sourceCategory: 'a2a',
-          targetCats: [HOLDER],
-          intent: 'execute',
-          autoExecute: true,
-          actionSuccessorFence: original.fence,
-        },
-      ),
-      /Queue admission identity conflict/,
-      'a retired delivery cannot be submitted as a fresh admission',
+    const replay = await queue.send(
+      messages,
+      {
+        threadId: target.id,
+        userId: 'user-1',
+        from,
+        content: 'Implement task (original)',
+        mentions: [HOLDER],
+        origin: 'callback',
+        timestamp: original.message.timestamp,
+        deliveryStatus: 'queued',
+        idempotencyKey: actionSuccessorCarrierKey(original.fence, HOLDER),
+      },
+      {
+        kind: 'conversation_input',
+        threadId: target.id,
+        userId: 'user-1',
+        from,
+        ownerAuthProvenance: 'strict',
+        content: 'Implement task (original)',
+        sourceCategory: 'a2a',
+        targetCats: [HOLDER],
+        intent: 'execute',
+        autoExecute: true,
+        actionSuccessorFence: original.fence,
+      },
     );
+    assert.equal(replay.deduped, true);
+    assert.equal(replay.message.id, original.message.id);
+    assert.equal(replay.entry, undefined, 'retired work is acknowledged without a new admission');
     assert.equal(queue.list(target.id, 'user-1').length, 0);
     await processor.requestDrain(target.id);
     assert.equal(starts.length, 1, 'the same generation never reaches the provider again');

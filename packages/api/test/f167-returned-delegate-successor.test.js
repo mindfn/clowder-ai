@@ -299,7 +299,7 @@ for (const outcome of ['failed', 'canceled', 'unavailable']) {
   });
 }
 
-test('an interrupted-after-read lineage successor can be replaced only with the exact server proof', async () => {
+test('a retired read-interruption hint cannot replace an active lineage successor', async () => {
   const f = fixture({ currentLease: successorLease() });
   f.request.holderCatIds = ['kimi'];
   f.request.dispatchId = 'dispatch:after-interrupted-read';
@@ -315,29 +315,7 @@ test('an interrupted-after-read lineage successor can be replaced only with the 
     generation: f.current().generation,
     evidenceRef: `carrier-interrupted-after-read:${f.current().leaseId}:g${f.current().generation}:${SUCCESSOR_CAT}@${CHILD_THREAD}`,
   };
-  const result = await f.service.admit(f.request);
-
-  assert.equal(result.admit, true);
-  assert.equal(result.outcome, 'replaced');
-  assert.equal(result.lease.generation, 4);
-  assert.deepEqual(result.lease.holderCatIds, ['kimi']);
-  assert.deepEqual(result.lease.replacementTransitions.at(-1), {
-    fromGeneration: 3,
-    toGeneration: 4,
-    reason: 'interrupted',
-    fromHolderCatIds: [SUCCESSOR_CAT],
-    fromHolderThreadId: CHILD_THREAD,
-    toHolderCatIds: ['kimi'],
-    toHolderThreadId: CHILD_THREAD,
-    issuerCatId: OWNER_CAT,
-    issuerThreadId: OWNER_THREAD,
-    holderOutcomes: {},
-    evidenceRefs: [
-      `carrier-interrupted-after-read:${f.current().leaseId}:g3:${SUCCESSOR_CAT}@${CHILD_THREAD}`,
-      'message:after-interrupted-read',
-      'task:task-f322:active:100',
-      APPROVED_DELEGATE.evidenceRef,
-    ],
-    at: 500,
-  });
+  await assert.rejects(f.service.admit(f.request), /standing|replacement|proof/i);
+  assert.equal(f.current().generation, 3);
+  assert.deepEqual(f.current().holderCatIds, [SUCCESSOR_CAT]);
 });

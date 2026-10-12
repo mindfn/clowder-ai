@@ -6,7 +6,6 @@ import { ThreadStore } from '../../src/domains/cats/services/stores/ports/Thread
 import { ThreadOverviewBackfill } from '../../src/domains/memory/curation/ThreadOverviewBackfill.js';
 import { ThreadOverviewRepository } from '../../src/domains/memory/curation/ThreadOverviewRepository.js';
 import { applyMigrations } from '../../src/domains/memory/schema.js';
-import { makeQueuedMessageCustody } from '../helpers/queued-message-custody.js';
 
 for (const order of ['nonmonotonic', 'delayed_visibility'] as const) {
   test(`historical ${order} preserves every canonical visible source before its frozen frontier`, async () => {
@@ -18,20 +17,19 @@ for (const order of ['nonmonotonic', 'delayed_visibility'] as const) {
     const first = messages.append({
       threadId: thread.id,
       userId: 'owner',
-      catId: null,
+      from: { kind: 'user', userId: 'owner' },
       content: 'first',
       timestamp: 200,
       ...(order === 'delayed_visibility'
         ? {
             deliveryStatus: 'queued' as const,
-            queueCustody: makeQueuedMessageCustody({ status: 'terminal', pendingTargetCats: [] }),
           }
         : {}),
     });
     const second = messages.append({
       threadId: thread.id,
       userId: 'owner',
-      catId: null,
+      from: { kind: 'user', userId: 'owner' },
       content: 'second',
       timestamp: 100,
     });
@@ -83,7 +81,7 @@ for (const order of ['nonmonotonic', 'delayed_visibility'] as const) {
       const later = messages.append({
         threadId: thread.id,
         userId: 'owner',
-        catId: null,
+        from: { kind: 'user', userId: 'owner' },
         content: 'later',
         timestamp: 1,
       });

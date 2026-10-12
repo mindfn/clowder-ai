@@ -1794,7 +1794,7 @@ describe('routeSerial', () => {
 
     const done = messages.find((message) => message.type === 'done' && message.catId === 'opus');
     assert.ok(done, 'parallel route should yield a done event');
-    assert.equal(done.content, undefined, 'ordinary parallel done must not acquire a content contract');
+    assert.equal(done.content, 'parallel response', 'done projects the content of the same canonical response');
   });
 
   it('persists toolEvents when agent yields tool_use and tool_result', async () => {

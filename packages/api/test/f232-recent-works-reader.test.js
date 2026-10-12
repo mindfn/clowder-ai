@@ -11,7 +11,7 @@ test('artifact ceiling bounds a huge gallery and makes an exhausted message scan
   store.append({
     userId: 'owner',
     threadId: 'thread-gallery',
-    catId: 'codex-sol',
+    from: { kind: 'agent', catId: 'codex-sol' },
     content: 'large gallery',
     mentions: [],
     timestamp: Date.now(),

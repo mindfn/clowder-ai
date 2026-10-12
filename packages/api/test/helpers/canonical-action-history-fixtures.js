@@ -11,20 +11,22 @@ import { InvocationRecordStore } from '../../dist/domains/cats/services/stores/p
 import { MessageStore } from '../../dist/domains/cats/services/stores/ports/MessageStore.js';
 import { lease, oldInvocationKey, request } from './direct-action-carrier-fixtures.js';
 
-function recordHolderExecution({ current, admitted, messages, records, turns }, holder, status, legacyKey) {
-  const parentId = records.create({
-    threadId: current.holderThreadId,
-    userId: current.tenantScope,
-    targetCats: [holder],
-    intent: 'execute',
-    idempotencyKey: legacyKey
-      ? oldInvocationKey(current, holder)
-      : actionSuccessorInvocationKeyForTarget(admitted.message.id, holder),
-    actionLeaseCarrier: { kind: 'action_successor', leaseId: current.leaseId, generation: current.generation },
-  }).invocationId;
-  records.update(parentId, { status: 'running' });
+async function recordHolderExecution({ current, admitted, messages, records, turns }, holder, status, legacyKey) {
+  const parentId = (
+    await records.create({
+      threadId: current.holderThreadId,
+      userId: current.tenantScope,
+      targetCats: [holder],
+      intent: 'execute',
+      idempotencyKey: legacyKey
+        ? oldInvocationKey(current, holder)
+        : actionSuccessorInvocationKeyForTarget(admitted.message.id, holder),
+      actionLeaseCarrier: { kind: 'action_successor', leaseId: current.leaseId, generation: current.generation },
+    })
+  ).invocationId;
+  await records.update(parentId, { status: 'running' });
   const childId = `canonical-child-${holder}`;
-  turns.createRunning({
+  await turns.createRunning({
     invocationId: childId,
     parentInvocationId: parentId,
     threadId: current.holderThreadId,
@@ -35,17 +37,17 @@ function recordHolderExecution({ current, admitted, messages, records, turns }, 
     causal: { triggerMessageId: admitted.message.id },
   });
   if (status !== 'processing') {
-    turns.transitionTerminal(childId, {
+    await turns.transitionTerminal(childId, {
       status: status === 'completed' ? 'succeeded' : status,
       endedAt: 102,
       ...(status === 'completed' ? {} : { terminalReason: `fixture-${status}` }),
     });
-    records.update(parentId, {
+    await records.update(parentId, {
       status: status === 'completed' ? 'succeeded' : status === 'interrupted' ? 'failed' : status,
       ...(status === 'completed' ? { successfulCatIds: [holder] } : {}),
     });
   }
-  const response = messages.append({
+  const response = await messages.append({
     threadId: current.holderThreadId,
     userId: current.tenantScope,
     from: { kind: 'agent', catId: holder },
@@ -63,25 +65,29 @@ function recordHolderExecution({ current, admitted, messages, records, turns }, 
       ...(status !== 'processing' ? { completedAt: 102 } : {}),
     },
   });
-  const orderKey = messages.getById(admitted.message.id).lifecycle.orderKey;
+  const orderKey = (await messages.getById(admitted.message.id)).lifecycle.orderKey;
   assert.equal(
-    messages.advanceLifecycleInputDispatch(admitted.message.id, {
-      orderKey,
-      targetId: holder,
-      phase: 'dispatched',
-      statusMessageId: response.id,
-      dispatchedAt: 101,
-    }).kind,
+    (
+      await messages.advanceLifecycleInputDispatch(admitted.message.id, {
+        orderKey,
+        targetId: holder,
+        phase: 'dispatched',
+        statusMessageId: response.id,
+        dispatchedAt: 101,
+      })
+    ).kind,
     'applied',
   );
   if (status !== 'processing')
     assert.equal(
-      messages.advanceLifecycleInputDispatch(admitted.message.id, {
-        orderKey,
-        targetId: holder,
-        phase: 'settled',
-        statusMessageId: response.id,
-      }).kind,
+      (
+        await messages.advanceLifecycleInputDispatch(admitted.message.id, {
+          orderKey,
+          targetId: holder,
+          phase: 'settled',
+          statusMessageId: response.id,
+        })
+      ).kind,
       'applied',
     );
   return { parentId, childId, responseId: response.id };
@@ -130,7 +136,7 @@ export async function canonicalActionFixture({
     for (const holder of current.holderCatIds) {
       executions.set(
         holder,
-        recordHolderExecution({ current, admitted, messages, records, turns }, holder, status, legacyKey),
+        await recordHolderExecution({ current, admitted, messages, records, turns }, holder, status, legacyKey),
       );
     }
   }

@@ -13,10 +13,11 @@ import {
   canQuoteInPublicReply,
   canViewMessage,
   getTimelineOrderTime,
+  isAgentReadableManagedHoldMessage,
+  isEligibleReplyParent,
   isInternalNonQuotableParent,
   isSystemUserMessage,
   passesManagedHoldViewerBoundary,
-  resolveVisibleReplyParent,
   type Viewer,
 } from '../cats/services/stores/visibility.js';
 import type { IEvidenceStore, SearchOptions } from './interfaces.js';
@@ -120,12 +121,22 @@ export class MessageSearchService {
     ref: { threadId: string; messageId: string },
     principal: MessageSearchPrincipal,
   ): Promise<StoredMessage | null> {
-    const message = await resolveVisibleReplyParent(this.deps.messageStore, ref.messageId, {
-      threadId: ref.threadId,
-      viewer: principal.viewer,
-      publicReply: principal.publicReply,
-    });
-    if (!message || message.id !== ref.messageId || message._tombstone) return null;
+    const message = await this.deps.messageStore.getById(ref.messageId);
+    if (
+      !message ||
+      message.id !== ref.messageId ||
+      message.threadId !== ref.threadId ||
+      message._tombstone ||
+      message.deletedAt
+    )
+      return null;
+    // Owner-bound delivered command wakes are readable system notices, as in
+    // callback History/drill. They do not grant access to other system rows.
+    const managedHold = isAgentReadableManagedHoldMessage(message) && message.userId === principal.userId;
+    if (!managedHold && !isEligibleReplyParent(message, { threadId: ref.threadId, viewer: principal.viewer }))
+      return null;
+    if (!canViewMessage(message, principal.viewer)) return null;
+    if (principal.publicReply && !canQuoteInPublicReply(message)) return null;
     if (message.userId !== principal.userId && !isSystemUserMessage(message)) return null;
     if (!passesManagedHoldViewerBoundary(message, principal.userId)) return null;
     return message;

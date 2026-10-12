@@ -1,18 +1,24 @@
 import './setup-cat-registry.js';
 import assert from 'node:assert/strict';
+import { mkdtemp } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import { catRegistry, createCatId } from '@cat-cafe/shared';
 import Fastify from 'fastify';
+import { saveMessageDispositionPreference } from '../../src/config/user-preferences-store.ts';
 import { InvocationQueue } from '../../src/domains/cats/services/agents/invocation/InvocationQueue.ts';
 import { InvocationRegistry } from '../../src/domains/cats/services/agents/invocation/InvocationRegistry.ts';
 import { InvocationTracker } from '../../src/domains/cats/services/agents/invocation/InvocationTracker.ts';
-import { QueuedMessageCustodyCoordinator } from '../../src/domains/cats/services/agents/invocation/QueuedMessageCustodyCoordinator.ts';
 import { QueueProcessor } from '../../src/domains/cats/services/agents/invocation/QueueProcessor.ts';
 import { InMemoryTurnExecutionStore } from '../../src/domains/cats/services/stores/memory/InMemoryTurnExecutionStore.ts';
 import { DeliveryCursorStore } from '../../src/domains/cats/services/stores/ports/DeliveryCursorStore.ts';
 import { InvocationRecordStore } from '../../src/domains/cats/services/stores/ports/InvocationRecordStore.ts';
+import { settleLifecycleResponseInputs } from '../../src/domains/cats/services/stores/ports/MessageStore.ts';
 import { LiveInboxHost } from '../../src/domains/concierge/live/host/live-inbox-host.ts';
 import { MessageLiveInboxSource } from '../../src/domains/concierge/live/inbox/MessageLiveInboxSource.ts';
+import { LiveCarrierOperationGate } from '../../src/domains/concierge/live/LiveCarrierOperationGate.ts';
 import { callbacksRoutes } from '../../src/routes/callbacks.ts';
+import { appendTestLifecycleResponseSource } from './message-from-fixtures.js';
 
 export async function eventually(predicate, message) {
   for (let i = 0; i < 200; i++) {
@@ -31,20 +37,38 @@ export async function automaticReturnFixture(t, f, provider) {
       displayName: '小星星·砚砚',
       defaultModel: 'gpt-6-astra',
     });
-  const queue = new InvocationQueue();
-  const registry = new InvocationRegistry();
+  const projectRoot = await mkdtemp(join(tmpdir(), 'f317-guide-policy-'));
+  saveMessageDispositionPreference(projectRoot, { scope: 'global', disposition: 'continue_current' });
   const tracker = new InvocationTracker();
+  const queue = new InvocationQueue(undefined, {
+    projectRoot,
+    invocationTracker: tracker,
+    resolveCarrierCapability: () => ({
+      provider: 'openai_codex',
+      carrier: 'codex_app_server',
+      deliverySemantics: 'exact_active_turn',
+      activeInvocationGuidance: 'supported',
+    }),
+    onAdmitted: ({ threadId }) => void processor.requestDrain(threadId),
+  });
+  const registry = new InvocationRegistry();
   const records = new InvocationRecordStore();
   const turns = new InMemoryTurnExecutionStore();
   const cursors = new DeliveryCursorStore();
-  const coordinator = new QueuedMessageCustodyCoordinator({ messageStore: f.messages });
   const app = Fastify();
+  const gate = new LiveCarrierOperationGate();
   const starts = [],
     notices = [],
     errors = [];
   let closed = false;
   const socketManager = { broadcastAgentMessage() {}, broadcastToRoom() {}, emitToUser() {} };
   const router = {
+    resolveExplicitTargets(targets) {
+      return targets;
+    },
+    async resolveConversationTargetsAtAdmission(targets) {
+      return targets;
+    },
     async *routeExecution(userId, content, threadId, messageId, targets, _intent, options) {
       const catId = targets[0];
       assert.equal(catId, 'codex-sol', 'the active Live cat must not be launched as an ordinary successor');
@@ -62,7 +86,18 @@ export async function automaticReturnFixture(t, f, provider) {
         executionKind: 'ordinary',
         causal: { triggerMessageId: messageId, coveredMessageIds: options.persistedPromptMessageIds },
       });
+      const lifecycle = await options.onLifecycleInvocationStarted({
+        threadId,
+        userId,
+        catId,
+        invocationId,
+        parentInvocationId,
+        startedAt,
+      });
+      assert.ok(lifecycle);
       yield {
+        lifecycleResponseMessageId: lifecycle.responseMessageId,
+        lifecyclePriorFrontierMessageId: lifecycle.priorFrontierMessageId,
         type: 'system_info',
         catId,
         turnInvocationId: invocationId,
@@ -82,6 +117,16 @@ export async function automaticReturnFixture(t, f, provider) {
       try {
         await provider({ auth, content, post, read });
         turns.transitionTerminal(invocationId, { status: 'succeeded', endedAt: Date.now() });
+        const settled = await f.messages.commitLifecycleResponseTerminal(lifecycle.responseMessageId, {
+          invocationId,
+          status: 'completed',
+          completedAt: Date.now(),
+          content: '',
+          mentions: [],
+          origin: 'stream',
+        });
+        assert.ok(settled.kind === 'applied' || settled.kind === 'replayed');
+        await settleLifecycleResponseInputs(f.messages, settled.message, lifecycle.responseMessageId);
         yield { type: 'done', catId, invocationId, timestamp: Date.now() };
       } catch (error) {
         errors.push(error);
@@ -100,7 +145,6 @@ export async function automaticReturnFixture(t, f, provider) {
     invocationTracker: tracker,
     invocationRecordStore: records,
     turnExecutionStore: turns,
-    queueCustodyCoordinator: coordinator,
     messageStore: f.messages,
     router,
     socketManager,
@@ -121,8 +165,8 @@ export async function automaticReturnFixture(t, f, provider) {
     invocationTracker: tracker,
     invocationRecordStore: records,
     turnExecutionStore: turns,
-    queueCustodyCoordinator: coordinator,
     deliveryCursorStore: cursors,
+    withLiveCarrierOperation: (query, consume) => gate.runForCarrier(query, consume),
     queueProcessor: processor,
     router,
     socketManager,
@@ -160,6 +204,29 @@ export async function automaticReturnFixture(t, f, provider) {
     queueCompletionPolicy: 'explicit_source',
   });
   tracker.start(f.thread.id, 'codex-astra', 'owner', ['codex-astra'], 'live-parent');
+  const liveResponse = appendTestLifecycleResponseSource(f.messages, {
+    userId: 'owner',
+    threadId: f.thread.id,
+    catId: 'codex-astra',
+    invocationId: live.invocationId,
+    timestamp: Date.now(),
+  });
+  assert.equal(
+    tracker.bindLifecycleActiveRun(
+      {
+        threadId: f.thread.id,
+        targetId: 'codex-astra',
+        invocationId: live.invocationId,
+        responseMessageId: liveResponse.id,
+        inputEntryIds: [],
+        inputMessageIds: [],
+        privateInputEntryIds: [],
+        startedAt: Date.now(),
+      },
+      'live-parent',
+    ),
+    true,
+  );
   const scope = {
     userId: 'owner',
     threadId: f.thread.id,
@@ -199,6 +266,8 @@ export async function automaticReturnFixture(t, f, provider) {
     closed = true;
     unsubscribe();
     host.close();
+    gate.close();
+    await gate.drain();
     await boundary;
     await app.close();
   });

@@ -11,7 +11,10 @@ import {
   readQueueTargetExecution,
 } from '../../cats/services/agents/invocation/queue-ledger/QueueTargetExecutionView.js';
 import type { IMessageStore } from '../../cats/services/stores/ports/MessageStore.js';
-import type { ITurnExecutionStore } from '../../cats/services/stores/ports/TurnExecutionStore.js';
+import {
+  matchesTurnExecutionSource,
+  type TurnExecutionSourceReadPort,
+} from '../../cats/services/stores/ports/TurnExecutionStore.js';
 import type { ContentReturnIntent } from '../artifact-review/return-store.js';
 import type { ArtifactReviewStore } from '../artifact-review/store.js';
 import { mediaPublicationProjection } from './media-publication/media-publication-return.js';
@@ -22,7 +25,7 @@ export async function readModificationExecution(
   deps: {
     messages: Pick<IMessageStore, 'getByIdempotencyKey' | 'getById'>;
     queue?: QueueTargetExecutionReadPort;
-    turnExecutions?: Pick<ITurnExecutionStore, 'get'>;
+    turnExecutions?: TurnExecutionSourceReadPort;
     store?: Pick<ArtifactReviewStore, 'returns' | 'reviewReceipt'>;
   },
   record: ContentModificationRecord,
@@ -51,7 +54,47 @@ export async function readModificationExecution(
   )
     return;
   const execution = await readQueueTargetExecution(deps.messages, deps.queue, message, record.payload.targetCatId);
-  const invocationId = execution?.kind === 'response' ? execution.response.invocationId : undefined;
+  // Typed request/outbox validation above may bind the original Human in the
+  // same native turn. Private inputs have no public dispatch reference, so query
+  // only these exact authorized sources and refuse competing executors.
+  const privateCandidates = new Map<string, import('@cat-cafe/shared').TurnExecutionRecord>();
+  if (message.visibility === 'whisper') {
+    for (const id of new Set([message.id, sourceMessageId])) {
+      const input = id === message.id ? message : await deps.messages.getById(id);
+      if (
+        !input ||
+        input.userId !== message.userId ||
+        input.threadId !== message.threadId ||
+        input.visibility !== 'whisper' ||
+        !isDeepStrictEqual([...(input.whisperTo ?? [])].sort(), [...(message.whisperTo ?? [])].sort())
+      )
+        continue;
+      if (
+        (input.lifecycle && input.lifecycle.kind !== 'input') ||
+        (id !== message.id && input.from?.kind !== 'user') ||
+        input.recall ||
+        input.deletedAt ||
+        input._tombstone
+      )
+        continue;
+      const query = {
+        userId: input.userId,
+        threadId: input.threadId,
+        catId: record.payload.targetCatId,
+        messageId: input.id,
+      };
+      for (const child of (await deps.turnExecutions?.listBySource?.(query)) ?? []) {
+        if (matchesTurnExecutionSource(child, query)) privateCandidates.set(child.invocationId, child);
+      }
+    }
+  }
+  const privateExecution = privateCandidates.size === 1 ? [...privateCandidates.values()][0] : undefined;
+  const invocationId =
+    message.visibility === 'whisper'
+      ? privateExecution?.invocationId
+      : execution?.kind === 'response'
+        ? execution.response.invocationId
+        : undefined;
   const queueEntryId = execution?.kind === 'pending' ? execution.entry.id : undefined;
   const evidence = {
     messageId: message.id,

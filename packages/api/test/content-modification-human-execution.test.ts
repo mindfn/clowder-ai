@@ -11,7 +11,7 @@ async function humanExecutionFixture() {
   const human = await f.messages.append({
     userId: 'operator',
     threadId: 'thread',
-    catId: null,
+    from: { kind: 'user', userId: 'operator' },
     mentions: ['codex61-sol'],
     content: '请按引用修改文档，先返回候选。',
     timestamp: Date.now(),
@@ -161,30 +161,15 @@ test('a later carrier execution is selected without falling back to the earlier 
     causal: { triggerMessageId: f.carrier.id },
     status: 'running' as const,
   };
-  const custody = f.carrier.queueCustody;
-  assert.ok(custody);
-  const attempts = custody.targetAttempts;
-  assert.ok(attempts);
-  const prior = attempts.at(-1);
-  assert.ok(prior);
-  const carrier = {
-    ...f.carrier,
-    queueCustody: {
-      ...custody,
-      targetAttempts: [
-        ...attempts,
-        {
-          ...prior,
-          id: randomUUID(),
-          sequence: prior.sequence + 1,
-          state: 'starting' as const,
-          invocationId: later.invocationId,
-          updatedAt: prior.updatedAt + 1,
-        },
-      ],
-    },
-  };
-  const messages = { getByIdempotencyKey: () => carrier };
+  const ref =
+    f.carrier.lifecycle?.kind === 'input'
+      ? f.carrier.lifecycle.dispatchRefs?.find((ref) => ref.targetId === f.child.catId)
+      : undefined;
+  assert.ok(ref);
+  const receiver = f.messages.getById(ref.statusMessageId);
+  assert.ok(receiver?.lifecycle?.kind === 'response');
+  receiver.lifecycle.invocationId = later.invocationId;
+  const messages = f.messages;
   const requested: string[] = [];
   const get = (id: string) => {
     requested.push(id);

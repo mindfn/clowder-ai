@@ -11,9 +11,11 @@ import {
   createdOutputFence,
   type InterruptRunningTurnExecutionsInput,
   type ITurnExecutionStore,
+  matchesTurnExecutionSource,
   serializeTurnExecutionIdentity,
   type TransitionTurnExecutionResult,
   type TurnExecutionRecord,
+  type TurnExecutionSourceQuery,
   type TurnExecutionTerminalInput,
   type TurnOutputFenceVerdict,
 } from '../ports/TurnExecutionStore.js';
@@ -105,6 +107,31 @@ export class RedisTurnExecutionStore implements ITurnExecutionStore {
     const record = hydrateTurnExecution(data);
     if (!record) throw new Error(`corrupt turn execution record: ${invocationId}`);
     return cloneTurnExecutionRecord(record);
+  }
+
+  async listBySource(query: TurnExecutionSourceQuery): Promise<TurnExecutionRecord[]> {
+    // Recovery reads existing persistent records; no delivery ledger or private IDs in public History.
+    const prefix = this.redis.options.keyPrefix ?? '';
+    const pattern = `${prefix.replace(/[\\*?[\]]/g, '\\$&')}${TurnExecutionKeys.record('*')}`;
+    const records = new Map<string, TurnExecutionRecord>();
+    let cursor = '0';
+    do {
+      const [next, keys] = await this.redis.scan(cursor, 'MATCH', pattern, 'COUNT', 200);
+      cursor = next;
+      if (!keys.length) continue;
+      const pipeline = this.redis.pipeline();
+      for (const key of keys) pipeline.hgetall(prefix ? key.slice(prefix.length) : key);
+      const results = await pipeline.exec();
+      for (let i = 0; i < keys.length; i += 1) {
+        const hash = readAuthoritativeHash(results?.[i], `turn execution ${keys[i]}`);
+        if (hash === null) continue;
+        const record = hydrateTurnExecution(hash as RedisTurnExecutionHash);
+        if (!record) throw new Error(`turn execution ${keys[i]}: non-empty hash failed to hydrate`);
+        if (matchesTurnExecutionSource(record, query))
+          records.set(record.invocationId, cloneTurnExecutionRecord(record));
+      }
+    } while (cursor !== '0');
+    return sortTurnExecutions([...records.values()]);
   }
 
   async listByParent(parentInvocationId: string): Promise<TurnExecutionRecord[]> {

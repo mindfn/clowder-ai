@@ -6,7 +6,7 @@
 import assert from 'node:assert/strict';
 import { EventEmitter } from 'node:events';
 import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
-import { dirname, join } from 'node:path';
+import { basename, dirname, join } from 'node:path';
 import { PassThrough } from 'node:stream';
 import { describe, mock, test } from 'node:test';
 import { catRegistry } from '@cat-cafe/shared';
@@ -2698,11 +2698,13 @@ describe('CodexAgentService Tests (CLI mode)', { concurrency: false }, () => {
     assert.ok(args.includes('model_provider="custom"'), 'must set model_provider=custom');
     assert.ok(!args.includes('model_provider="openai_https"'), 'custom provider must not force OpenAI OAuth provider');
     const spawnOptions = spawnFn.mock.calls[0].arguments[2];
-    assert.equal(
-      dirname(spawnOptions.env.HOME),
-      resolveCodexApiKeyIsolationRoot(),
-      'API-key invocation must launch from an owner cache home that Codex accepts',
+    assert.equal(basename(dirname(spawnOptions.env.HOME)), 'codex-api-execution');
+    assert.match(
+      basename(spawnOptions.env.HOME),
+      /^[a-f0-9]{64}$/,
+      'account/base/cwd own one stable private state home',
     );
+    assert.equal(spawnOptions.env.CODEX_HOME, join(spawnOptions.env.HOME, '.codex'));
   });
 
   test('API-key isolation lives under user cache rather than the OS temporary directory', () => {

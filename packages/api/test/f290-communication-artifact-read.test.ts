@@ -238,7 +238,7 @@ test('a new authenticated A publication cannot graft the existing file bytes of 
     f.messages.append({
       userId: f.cafe.ownerUserId,
       threadId: f.task.threadId,
-      catId: CAT,
+      from: { kind: 'agent', catId: CAT },
       mentions: [],
       timestamp: Date.now(),
       origin: 'callback',

@@ -233,7 +233,7 @@ describe('replyTo threading', () => {
     const store = new MessageStore();
     const parent = store.append({
       userId: 'user-1',
-      catId: null,
+      from: { kind: 'user', userId: 'user-1' },
       content: 'This body must disappear from the receipt preview',
       mentions: [],
       timestamp: 1000,

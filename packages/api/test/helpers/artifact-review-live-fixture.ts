@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { catRegistry, createCatId, type NeedsMeProducerId } from '@cat-cafe/shared';
-import { MessageStore } from '../../src/domains/cats/services/stores/ports/MessageStore.js';
+import { MessageStore } from '../../dist/domains/cats/services/stores/ports/MessageStore.js';
 import { TaskStore } from '../../src/domains/cats/services/stores/ports/TaskStore.js';
 import { ThreadStore } from '../../src/domains/cats/services/stores/ports/ThreadStore.js';
 import type { EvolutionMediaReadPort } from '../../src/domains/collaborative-content/workspace-review/evolution-review-source.js';
