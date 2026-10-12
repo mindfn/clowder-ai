@@ -1538,7 +1538,18 @@ export function lifecycleResponseTerminalPatchFromAppendInput(
   },
   message: AppendMessageInput,
 ): LifecycleResponseTerminalPatch {
-  const responseReplyTo = message.replyTo ?? current.replyTo;
+  // Admission owns public source references. Route output may carry the private
+  // execution trigger, whose authoritative identity remains in TurnExecution.
+  const publicInputIds = new Set(current.lifecycle?.kind === 'response' ? current.lifecycle.inputMessageIds : []);
+  const responseReplyTo = [message.replyTo, current.replyTo].find((id) => id && publicInputIds.has(id));
+  const extra = { ...current.extra, ...message.extra };
+  if (extra.causal && !publicInputIds.has(extra.causal.triggerMessageId)) {
+    if (current.extra?.causal && publicInputIds.has(current.extra.causal.triggerMessageId)) {
+      extra.causal = current.extra.causal;
+    } else {
+      delete extra.causal;
+    }
+  }
   return {
     invocationId,
     status: terminal.status,
@@ -1548,7 +1559,7 @@ export function lifecycleResponseTerminalPatchFromAppendInput(
     ...(message.contentBlocks ? { contentBlocks: message.contentBlocks } : {}),
     ...(message.toolEvents ? { toolEvents: message.toolEvents } : {}),
     ...(message.metadata ? { metadata: message.metadata } : {}),
-    extra: { ...current.extra, ...message.extra },
+    extra,
     ...(message.thinking ? { thinking: message.thinking } : {}),
     ...(message.origin ? { origin: message.origin } : {}),
     mentions: message.mentions,

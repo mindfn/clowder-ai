@@ -753,7 +753,10 @@ export class QueueProcessor {
     return current?.invocationId === run.invocationId && current.responseMessageId === run.responseMessageId;
   }
 
-  private async settleTrackedLifecycleResponseInputs(response: StoredMessage): Promise<void> {
+  private async settleTrackedLifecycleResponseInputs(
+    response: StoredMessage,
+    acceptedInputMessageIds: readonly string[] = [],
+  ): Promise<void> {
     const lifecycle = response.lifecycle;
     if (lifecycle?.kind !== 'response' || lifecycle.status === 'processing') return;
     const active = this.deps.invocationTracker
@@ -764,7 +767,10 @@ export class QueueProcessor {
         ? active.inputMessageIds
         : [];
     // Private inputs stay in the existing internal execution binding, never in public R metadata.
-    await settleLifecycleResponseInputs(this.deps.messageStore, response, response.id, exactInputs);
+    await settleLifecycleResponseInputs(this.deps.messageStore, response, response.id, [
+      ...exactInputs,
+      ...acceptedInputMessageIds,
+    ]);
   }
 
   private async compensateLifecycleAppendTargets(input: {
@@ -5011,6 +5017,26 @@ export class QueueProcessor {
         }
         terminalDispositions.observe(msg);
         if (isTerminalDispositionEvent(msg) && msg.catId) {
+          const responseId = lifecycleResponseMessageIdByCat.get(msg.catId);
+          if (responseId) {
+            const response = await messageStore.getById(responseId);
+            const run = invocationTracker
+              .getActiveSlots?.(threadId)
+              .find((slot) => slot.catId === msg.catId)?.activeRun;
+            if (
+              response?.lifecycle?.kind === 'response' &&
+              run?.invocationId === response.lifecycle.invocationId &&
+              run.responseMessageId === responseId
+            ) {
+              // Provider done can precede the response commit. Retain the exact
+              // accepted inputs in this execution's existing internal list before
+              // retiring its tracker projection; finally settles only matching refs.
+              for (const id of run.inputMessageIds) {
+                if (!lifecycleInputMessageIds.includes(id)) lifecycleInputMessageIds.push(id);
+              }
+            }
+            if (response) await this.settleTrackedLifecycleResponseInputs(response, lifecycleInputMessageIds);
+          }
           invocationTracker.completeSlot?.(threadId, msg.catId, controller);
         }
         const errorCode = (msg as { errorCode?: unknown }).errorCode;
@@ -5128,7 +5154,7 @@ export class QueueProcessor {
           try {
             const committed = await messageStore.getById(doneResponseMessageId);
             if (committed?.lifecycle?.kind === 'response' && committed.lifecycle.status !== 'processing') {
-              await this.settleTrackedLifecycleResponseInputs(committed);
+              await this.settleTrackedLifecycleResponseInputs(committed, lifecycleInputMessageIds);
               this.emitLifecycleMessageUpdated(userId, committed);
             }
           } catch (err) {
@@ -5500,7 +5526,7 @@ export class QueueProcessor {
         try {
           const lifecycleMessage = await messageStore.getById(lifecycleMessageId);
           if (lifecycleMessage?.lifecycle) {
-            await this.settleTrackedLifecycleResponseInputs(lifecycleMessage);
+            await this.settleTrackedLifecycleResponseInputs(lifecycleMessage, lifecycleInputMessageIds);
             this.emitLifecycleMessageUpdated(userId, lifecycleMessage);
           }
           await this.releaseSettledResponseTurn(lifecycleMessage, log);

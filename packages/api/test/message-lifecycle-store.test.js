@@ -872,3 +872,48 @@ describe('MessageStore lifecycle pre-admission failure transaction', () => {
     );
   });
 });
+
+test('terminal response preserves admitted public references without reintroducing a private trigger or scrubbing owner execution facts', async () => {
+  const { lifecycleResponseTerminalPatchFromAppendInput } = await import(
+    '../dist/domains/cats/services/stores/ports/MessageStore.js'
+  );
+  const current = {
+    id: 'R',
+    replyTo: 'public',
+    lifecycle: { ...processingLifecycle, inputMessageIds: ['public'] },
+    extra: {
+      causal: { kind: 'invocation_reply', triggerMessageId: 'public' },
+      freshness: { priorFrontierMessageId: 'private' },
+    },
+  };
+  const toolEvents = [{ id: 't', type: 'tool_result', detail: 'authorized private execution fact' }];
+  const patch = lifecycleResponseTerminalPatchFromAppendInput(
+    current,
+    'invocation-1',
+    { status: 'completed', completedAt: 200 },
+    {
+      content: 'answer',
+      mentions: [],
+      replyTo: 'private',
+      toolEvents,
+      extra: { causal: { kind: 'invocation_reply', triggerMessageId: 'private' } },
+    },
+  );
+  assert.equal(patch.replyTo, 'public');
+  assert.equal(patch.extra.causal.triggerMessageId, 'public');
+  assert.deepEqual(patch.toolEvents, toolEvents);
+  assert.equal(patch.extra.freshness.priorFrontierMessageId, 'private');
+  const privateOnly = lifecycleResponseTerminalPatchFromAppendInput(
+    { ...current, replyTo: undefined, extra: {}, lifecycle: { ...processingLifecycle, inputMessageIds: [] } },
+    'invocation-1',
+    { status: 'completed', completedAt: 200 },
+    {
+      content: 'answer',
+      mentions: [],
+      replyTo: 'private',
+      extra: { causal: { kind: 'invocation_reply', triggerMessageId: 'private' } },
+    },
+  );
+  assert.equal(privateOnly.replyTo, undefined);
+  assert.equal(privateOnly.extra.causal, undefined);
+});

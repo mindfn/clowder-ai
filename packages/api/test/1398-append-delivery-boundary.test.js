@@ -1015,3 +1015,47 @@ it('settles private Append from the exact internal active run without publishing
   assert.deepEqual(source.lifecycle.dispatchRefs[0].inputRead, { status: 'pending' });
   assert.deepEqual((await harness.messageStore.getById(run.response.id)).lifecycle.inputMessageIds, []);
 });
+
+it('settles exact accepted private inputs after provider done retired its tracker, preserving native read time on replay', async () => {
+  const harness = createHarness();
+  const admitted = await admit(harness, { visibility: 'whisper', whisperTo: ['opus'] });
+  let nativeRead;
+  const run = bindRun(
+    harness,
+    async (input) => {
+      nativeRead = input.onInputRead;
+      return { accepted: true, handle: {} };
+    },
+    'opus',
+    true,
+  );
+  assert.equal((await append(harness, admitted, run)).outcome, 'appended');
+  await nativeRead();
+  const readAt = harness.messageStore.getById(admitted.message.id).lifecycle.dispatchRefs[0].inputRead.at;
+  assert.equal(typeof readAt, 'number');
+  const accepted = activeInputs(harness);
+  harness.invocationTracker.completeSlot('thread-1', 'opus');
+  assert.equal(
+    harness.invocationTracker.getActiveSlots('thread-1').some((slot) => slot.catId === 'opus'),
+    false,
+  );
+  assert.equal(
+    harness.invocationTracker.getActiveSlots('thread-1').some((slot) => slot.catId === 'codex'),
+    true,
+    'retiring opus must preserve its unrelated sibling',
+  );
+  const terminal = await harness.messageStore.commitLifecycleResponseTerminal(run.response.id, {
+    invocationId: run.invocationId,
+    status: 'completed',
+    completedAt: readAt + 5,
+    content: 'done',
+    mentions: [],
+    origin: 'stream',
+  });
+  await harness.processor.settleTrackedLifecycleResponseInputs(terminal.message, accepted);
+  await harness.processor.settleTrackedLifecycleResponseInputs(terminal.message, accepted);
+  const source = await harness.messageStore.getById(admitted.message.id);
+  assert.equal(source.lifecycle.dispatchRefs[0].phase, 'settled');
+  assert.deepEqual(source.lifecycle.dispatchRefs[0].inputRead, { status: 'read', at: readAt });
+  assert.deepEqual((await harness.messageStore.getById(run.response.id)).lifecycle.inputMessageIds, []);
+});
