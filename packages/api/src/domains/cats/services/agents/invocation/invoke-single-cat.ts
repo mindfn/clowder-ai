@@ -184,6 +184,11 @@ import {
   prepareProviderPresentationAttempt,
   promptGenerationId,
 } from './provider-presentation-delivery.js';
+import type { PublicInvocationAuthBinding } from './public-invocation-auth-binding.js';
+import {
+  capturePublicInvocationRegistration,
+  finalizePublicInvocationRegistration,
+} from './public-invocation-registration.js';
 import { createRequestGenerationRecorder } from './request-generation-recorder.js';
 import { resolveManagedSessionPolicySnapshot } from './session-policy-snapshot.js';
 
@@ -1227,6 +1232,8 @@ export interface InvocationDeps {
  */
 export interface InvocationParams {
   readonly onRemoteExecutionDispatched?: AgentServiceOptions['onRemoteExecutionDispatched'];
+  /** Host-owned durable Queue identity; never derived from prompt or package input. */
+  readonly publicInvocationBinding?: PublicInvocationAuthBinding;
   readonly liveCompanion?: AgentServiceOptions['liveCompanion'];
   /** Route-owned intent projected to provider behavior only when its provenance permits it. */
   readonly routeIntent?: AgentRouteIntent;
@@ -1390,6 +1397,28 @@ export interface InvocationParams {
  * - Storing the final response in messageStore
  */
 export async function* invokeSingleCat(deps: InvocationDeps, params: InvocationParams): AsyncIterable<AgentMessage> {
+  const captured = capturePublicInvocationRegistration(deps, params);
+  if (captured.publicInvocationBinding === undefined) {
+    yield* invokeSingleCatImpl(deps, captured);
+    return;
+  }
+  // Cover the entire credential lifetime, including setup before the inner
+  // provider lifecycle try/finally and return() at invocation_created.
+  let publicChildId: string | undefined;
+  try {
+    yield* invokeSingleCatImpl(deps, captured, (invocationId) => {
+      publicChildId = invocationId;
+    });
+  } finally {
+    if (publicChildId !== undefined) await finalizePublicInvocationRegistration(deps, publicChildId);
+  }
+}
+
+async function* invokeSingleCatImpl(
+  deps: InvocationDeps,
+  params: InvocationParams,
+  onPublicRegistered?: (invocationId: string) => void,
+): AsyncIterable<AgentMessage> {
   const { registry, sessionManager, threadStore, apiUrl } = deps;
   const { catId, service, userId, threadId, isLastCat, signal: callerSignal } = params;
   let prompt = params.prompt;
@@ -1487,7 +1516,9 @@ export async function* invokeSingleCat(deps: InvocationDeps, params: InvocationP
     params.a2aTriggerMessageId ?? params.executionCausal?.triggerMessageId,
     params.ownerAuthProvenance,
     managedWorkBinding,
+    params.publicInvocationBinding,
   );
+  onPublicRegistered?.(invocationId);
   let invocationHasAuthoritativeUsage = false;
   let invocationPolicyRecordId: string | undefined;
   let invocationPolicyPersistenceReady = false;
