@@ -156,6 +156,19 @@ test('reservation serves unavailable until publication, then actual assets and p
   assert.equal(page.status, 200);
   assert.match(page.body, /retained fixture/);
   assert.match(page.headers['content-security-policy'], /frame-ancestors http:\/\/127\.0\.0\.1:58002/);
+  for (const target of ['/?hostOrigin=http%3A%2F%2F127.0.0.1%3A58002', '/index.html?view=setup']) {
+    const launch = await http(binding.origin, { target });
+    assert.equal(launch.status, 200);
+    assert.equal(launch.body, page.body);
+    assert.equal(launch.headers['content-type'], page.headers['content-type']);
+  }
+  assert.equal(seen, undefined, 'asset query must not invoke the package handler');
+  assert.equal((await http(binding.origin, { target: '/missing.html?view=setup' })).status, 400);
+  assert.equal(
+    (await http(binding.origin, { target: '/?view=setup', headers: { origin: 'http://foreign.invalid' } })).status,
+    400,
+  );
+  assert.equal(seen, undefined, 'query must not bypass missing-path or origin checks');
   const api = await http(binding.origin, {
     target: '/health?a=1&a=%32',
     headers: { cookie: 'host-secret=do-not-forward' },

@@ -173,7 +173,8 @@ async function publicResource(
     preflight(req, res, head, options);
     return true;
   }
-  const asset = req.method === 'GET' && !head.rawQuery ? options.assets.read(head.path) : undefined;
+  // Launch parameters belong to the client; sealed asset identity is the pathname.
+  const asset = req.method === 'GET' ? options.assets.read(head.path) : undefined;
   if (!asset) return false;
   const origin = requestOrigin(head);
   if (origin !== undefined && origin !== options.origin() && origin !== options.parentOrigin) invalid();
