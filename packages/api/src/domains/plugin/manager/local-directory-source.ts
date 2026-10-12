@@ -217,7 +217,9 @@ function checkVersion(name: string, requested: string, observed: string): void {
     invalid('DEPENDENCY_SPEC_UNSUPPORTED', `unsupported dependency specification for ${name}`);
   }
   const exact = sourceSemver.valid(spec);
-  if (exact ? exact !== observed : !sourceSemver.satisfies(observed, spec)) {
+  // npm packages may retain a leading v in package.json (for example dingtalk-stream).
+  // Ignore only that spelling prefix; preserve prerelease and build identity.
+  if (exact ? exact !== observed.replace(/^v/, '') : !sourceSemver.satisfies(observed, spec)) {
     invalid('DEPENDENCY_VERSION_MISMATCH', `${name}: expected ${requested}, observed ${observed}`);
   }
 }
@@ -342,7 +344,7 @@ export async function inspectLocalDirectorySource(
         if (requested.startsWith('workspace:') || requested.startsWith('link:'))
           invalid('DEPENDENCY_LOCK_MISMATCH', 'local declaration resolved to registry');
         const version = locked.split('(')[0];
-        if (version !== observed.version)
+        if (version !== observed.version.replace(/^v/, ''))
           invalid('DEPENDENCY_LOCK_MISMATCH', `locked resolution disagrees for ${name}`);
         const childCoordinate = `${name}@${locked}`;
         record(record(lock.lock.snapshots, 'snapshots')[childCoordinate], 'dependency snapshot');

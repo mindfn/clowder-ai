@@ -126,6 +126,59 @@ test('refuses declared exact version versus physical workspace dependency mismat
   await rejectsBeforePreparation(await fixture(t, { observed: '2.0.0' }), 'DEPENDENCY_VERSION_MISMATCH');
 });
 
+test('accepts a prefixed workspace dependency version without rewriting its observed identity', async (t) => {
+  const f = await fixture(t, { observed: 'v1.0.0' });
+  const source = await inspectLocalDirectorySource(f.source);
+  assert.equal(source.dependencies[0].observedVersion, 'v1.0.0');
+  await source.assertCurrent();
+});
+
+async function registryVersionFixture(t, { requested, observed, locked = '2.1.6-beta.1' }) {
+  const f = await fixture(t, { observed });
+  const metadata = JSON.parse(await readFile(join(f.source, 'package.json'), 'utf8'));
+  metadata.dependencies['runtime-dependency'] = requested;
+  await json(join(f.source, 'package.json'), metadata);
+  const coordinate = `runtime-dependency@${locked}`;
+  await writeFile(
+    join(f.root, 'pnpm-lock.yaml'),
+    stringify({
+      lockfileVersion: '9.0',
+      importers: {
+        '.': {},
+        'packages/plugin': { dependencies: { 'runtime-dependency': { specifier: requested, version: locked } } },
+      },
+      packages: { [coordinate]: { resolution: { integrity: `sha512-${Buffer.alloc(64).toString('base64')}` } } },
+      snapshots: { [coordinate]: {} },
+    }),
+  );
+  return f;
+}
+
+test('accepts prefixed registry versions for exact and range declarations while retaining lock coordinates', async (t) => {
+  for (const requested of ['2.1.6-beta.1', '^2.1.6-beta.1']) {
+    const f = await registryVersionFixture(t, { requested, observed: 'v2.1.6-beta.1' });
+    const source = await inspectLocalDirectorySource(f.source);
+    assert.equal(source.dependencies[0].observedVersion, 'v2.1.6-beta.1');
+    assert.equal(source.dependencies[0].lockCoordinate, '2.1.6-beta.1');
+    await source.assertCurrent();
+    assert.equal(
+      JSON.parse(await readFile(join(f.root, 'packages/runtime/package.json'), 'utf8')).version,
+      'v2.1.6-beta.1',
+    );
+  }
+});
+
+test('prefix normalization still refuses version, prerelease, build and locked resolution mismatches', async (t) => {
+  for (const observed of ['v2.1.7-beta.1', 'v2.1.6-beta.2', 'v2.1.6-beta.1+other', 'vv2.1.6-beta.1']) {
+    const f = await registryVersionFixture(t, { requested: '2.1.6-beta.1', observed });
+    await rejectsBeforePreparation(f, 'DEPENDENCY_VERSION_MISMATCH');
+  }
+  for (const observed of ['v2.1.6-beta.2', 'v2.1.6-beta.1+other']) {
+    const f = await registryVersionFixture(t, { requested: '^2.1.6-beta.1', observed });
+    await rejectsBeforePreparation(f, 'DEPENDENCY_LOCK_MISMATCH');
+  }
+});
+
 test('refuses a lock importer specifier inconsistent with the selected package before pack or inventory', async (t) => {
   await rejectsBeforePreparation(await fixture(t, { lockSpecifier: '2.0.0' }), 'DEPENDENCY_LOCK_MISMATCH');
 });
