@@ -1043,6 +1043,13 @@ export interface AgentServiceOptions {
   runtimeInteractionPort?: import('../../runtime-interaction/ports/RuntimeInteractionPort.js').RuntimeInteractionPort;
   /** F310: source-bound Task relation resolved from canonical Task truth for an F306 question. */
   resolveEntrustedWorkTaskRef?: () => Promise<import('@cat-cafe/shared').EntrustedWorkTaskRefV1 | undefined>;
+  /** Host-only exact descriptor plus public source/invocation currentness. Not a plugin or SDK DTO.
+   * Work has no carrier admission yet and must remain unavailable. */
+  pluginNativeLaunch?: {
+    readonly server: import('../../plugin/declared/native-mcp-launches.js').NativeMcpServer;
+    readonly sandbox: { readonly kind: 'public'; readonly workspaceRoot: string };
+    readonly assertCurrent: () => void | Promise<void>;
+  };
   /** F317 Host-only continuous companion port; no model-supplied configuration. */
   liveCompanion?: import('./agents/providers/CodexLiveRunPort.js').CodexLiveRunPort;
   /** Route-owned intent. Providers may project only explicit behavior intent onto native modes. */
