@@ -10,6 +10,7 @@ function withMessagePublicationIndexes(
   return withUserMentionIndex(withUncertaintyIndex(script, hashKey, indexExpression), hashKey, newKeysExpression);
 }
 
+import { PUBLIC_OUTPUT_DISCOVERY_HELPERS_LUA } from './public-output-discovery-lua.js';
 /**
  * Lua scripts for the #1200 visibility index.
  *
@@ -85,6 +86,7 @@ export const MAX_BACKFILL_MEMBERS = 50_000;
  */
 export const APPEND_WITH_VISIBILITY_LUA = withMessagePublicationIndexes(
   `${QUEUE_ADMISSION_VERDICT_LUA}
+${PUBLIC_OUTPUT_DISCOVERY_HELPERS_LUA}
 local hash = KEYS[1]
 local kp = ARGV[1]
 local msgId = ARGV[2]
@@ -246,16 +248,23 @@ end
 
 -- Public recovery is store-authored; validate every touched key before any write.
 local publicRecovery = false
+local publicReceipt = nil
 for i = 1, #hsetArgs, 2 do
   if hsetArgs[i] == 'extra' and hsetArgs[i+1] ~= '' then
     local extra = cjson.decode(hsetArgs[i+1])
     publicRecovery = extra.publicOutputRecoveryV1 ~= nil
+    publicReceipt = extra.publicOutputV1
   end
 end
+local discoveryKey = kp .. 'msg:public-output:discovery:' .. threadId
+local discoverySource, discoveryChild
 local recoverySeq = 0
 local recoveryIndex = kp .. 'msg:public-output:pending'
 local recoveryHwm = kp .. 'msg:public-output:hwm'
 if publicRecovery then
+  if type(publicReceipt) ~= 'table' or type(publicReceipt.sourceMessageId) ~= 'string' or type(publicReceipt.childInvocationId) ~= 'string' then return redis.error_reply('PUBLIC_OUTPUT_DISCOVERY_IDENTITY') end
+  if not outputIndexValid(discoveryKey) then return redis.error_reply('PUBLIC_OUTPUT_DISCOVERY_INDEX_INVALID') end
+  discoverySource, discoveryChild = outputPrefixes(userId, publicReceipt.sourceMessageId, publicReceipt.childInvocationId)
   local function checkType(key, expected)
     local actual = redis.call('TYPE', key).ok
     return actual == 'none' or actual == expected
@@ -279,6 +288,7 @@ redis.call('HSET', hash, unpack(hsetArgs))
 if publicRecovery then
   redis.call('SET', recoveryHwm, string.format('%.0f', recoverySeq))
   redis.call('ZADD', recoveryIndex, recoverySeq, msgId)
+  redis.call('ZADD', discoveryKey, 0, discoverySource .. msgId, 0, discoveryChild .. msgId)
 end
 
 -- 3. ZADDs: timeline, user, thread

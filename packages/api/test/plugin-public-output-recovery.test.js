@@ -462,7 +462,7 @@ function redisBackend() {
         return Number(hash.visibilitySeq);
       }
       if (script === PUBLIC_OUTPUT_THREAD_DELETE_LUA) {
-        assert.equal(keyCount, 5);
+        assert.equal(keyCount, 6);
         const threadId = keys[0].slice('msg:thread:'.length);
         const ids = [...hashes.values()].filter((h) => h.threadId === threadId).map((h) => h.id);
         for (const id of ids) {
@@ -482,7 +482,7 @@ function redisBackend() {
         return 1;
       }
       assert.ok([TRANSITION_PUBLIC_OUTPUT_LUA, PUBLIC_OUTPUT_DELETE_LUA].includes(script));
-      assert.equal(keyCount, 2);
+      assert.equal(keyCount, script === PUBLIC_OUTPUT_DELETE_LUA ? 3 : 2);
       if (beforeCas) {
         const action = beforeCas;
         beforeCas = undefined;

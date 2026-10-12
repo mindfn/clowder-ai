@@ -23,6 +23,12 @@ import {
   withUserMentionIndex,
 } from './user-mention-index-lua.js';
 import {
+  capturePublicOutputLookup,
+  type PublicOutputLookupInput,
+  type PublicOutputLookupResult,
+  resolvePublicOutputLookup,
+} from '../public-invocation-output-discovery.js';
+import {
   capturePublicOutputQuarantine,
   capturePublicRecoveryCheckpoint,
   capturePublicRecoveryPage,
@@ -49,6 +55,7 @@ import {
   publicOutputRawBodyMatchesExpected,
   resolvePublicOutputTransition,
 } from '../public-invocation-output-terminal.js';
+import { LOOKUP_PUBLIC_OUTPUT_LUA } from './public-output-discovery-lua.js';
 import {
   PUBLIC_OUTPUT_CHECKPOINT_LUA,
   PUBLIC_OUTPUT_DELETE_LUA,
@@ -3478,12 +3485,13 @@ export class RedisMessageStore {
   async deleteByThread(threadId: string): Promise<number> {
     const result = await this.redis.eval(
       PUBLIC_OUTPUT_THREAD_DELETE_LUA,
-      5,
+      6,
       MessageKeys.thread(threadId),
       MessageKeys.PUBLIC_OUTPUT_PENDING,
       MessageKeys.threadVisibility(threadId),
       MessageKeys.threadVisibilityMeta(threadId),
       MessageKeys.legacyQueueExposureIndex(threadId),
+      MessageKeys.publicOutputDiscovery(threadId),
       this.keyPrefix,
     );
     if (typeof result !== 'number' || !Number.isSafeInteger(result) || result < 0)
@@ -3525,9 +3533,10 @@ export class RedisMessageStore {
     }
     const raw = await this.redis.eval(
       PUBLIC_OUTPUT_DELETE_LUA,
-      2,
+      3,
       MessageKeys.detail(id),
       MessageKeys.PUBLIC_OUTPUT_PENDING,
+      MessageKeys.publicOutputDiscovery(hash.threadId ?? DEFAULT_THREAD_ID),
       JSON.stringify(Object.entries(hash)),
       id,
       mode,
@@ -3696,6 +3705,18 @@ export class RedisMessageStore {
     );
     if (result !== 0 && result !== 1) throw new Error('Invalid missing-output retirement receipt');
     return result === 1;
+  }
+  async findPublicInvocationOutput(input: PublicOutputLookupInput): Promise<PublicOutputLookupResult> {
+    const captured = capturePublicOutputLookup(input);
+    const raw = await this.redis.eval(
+      LOOKUP_PUBLIC_OUTPUT_LUA,
+      1,
+      MessageKeys.publicOutputDiscovery(captured.threadId),
+      captured.userId,
+      captured.sourceMessageId,
+      captured.childInvocationId,
+    );
+    return resolvePublicOutputLookup(captured, raw);
   }
   async readPublicInvocationOutputRecovery(id: string): Promise<PublicOutputRecoveryRead> {
     return readPublicOutputRecoveryRaw(await this.redis.hgetall(MessageKeys.detail(id)));

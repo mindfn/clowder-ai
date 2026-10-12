@@ -1,3 +1,4 @@
+import { PUBLIC_OUTPUT_DISCOVERY_HELPERS_LUA } from './public-output-discovery-lua.js';
 /** Checkpoint is storage-owned and persistent; exact bytes fence concurrent sweep owners. */
 export const PUBLIC_OUTPUT_CHECKPOINT_LUA = `
 local actual = redis.call('GET', KEYS[1]) or ''
@@ -11,6 +12,7 @@ return 1
  * All validation and key-type checks precede the first write.
  */
 export const PUBLIC_OUTPUT_DELETE_LUA = `
+${PUBLIC_OUTPUT_DISCOVERY_HELPERS_LUA}
 if redis.call('EXISTS', KEYS[1]) == 0 then return {-1} end
 local expected = cjson.decode(ARGV[1])
 if redis.call('HLEN', KEYS[1]) ~= #expected then return {0} end
@@ -19,7 +21,18 @@ for _, pair in ipairs(expected) do
 end
 local indexType = redis.call('TYPE', KEYS[2]).ok
 if indexType ~= 'none' and indexType ~= 'zset' then return redis.error_reply('PUBLIC_OUTPUT_INDEX_TYPE') end
+local discoverySource, discoveryChild
 if ARGV[3] == 'hard' then
+  if not outputIndexValid(KEYS[3]) then return redis.error_reply('PUBLIC_OUTPUT_DISCOVERY_INDEX_INVALID') end
+  local rawExtra = redis.call('HGET', KEYS[1], 'extra')
+  local ok, extra = pcall(cjson.decode, rawExtra or '')
+  local receipt = ok and type(extra) == 'table' and extra.publicOutputV1 or nil
+  if type(receipt) == 'table' and type(receipt.sourceMessageId) == 'string' and type(receipt.childInvocationId) == 'string' then
+    discoverySource, discoveryChild = outputPrefixes(redis.call('HGET', KEYS[1], 'userId') or '', receipt.sourceMessageId, receipt.childInvocationId)
+  end
+end
+if ARGV[3] == 'hard' then
+  if discoverySource then redis.call('ZREM', KEYS[3], discoverySource .. ARGV[2], discoveryChild .. ARGV[2]) end
   redis.call('HSET', KEYS[1], 'content', '', 'contentBlocks', '', 'toolEvents', '', 'metadata', '', 'extra', '',
     'pluginMessage', '', 'custodyOfferV1', '', 'lifecycle', '', 'thinking', '', 'mentions', '[]', '_tombstone', '1')
 elseif ARGV[6] ~= '' then

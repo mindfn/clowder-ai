@@ -1,5 +1,12 @@
 import { assertPublicOutputReplay, capturePublicOutputAppend } from '../public-invocation-output-append.js';
 import {
+  capturePublicOutputLookup,
+  type PublicOutputLookupInput,
+  type PublicOutputLookupResult,
+  publicOutputLookupPrefixes,
+  resolvePublicOutputLookup,
+} from '../public-invocation-output-discovery.js';
+import {
   capturePublicOutputQuarantine,
   capturePublicRecoveryCheckpoint,
   capturePublicRecoveryPage,
@@ -2267,6 +2274,10 @@ export interface IMessageStore {
   ): PublicOutputRecoveryPage | Promise<PublicOutputRecoveryPage>;
   retireMissingPublicInvocationOutput(id: string): boolean | Promise<boolean>;
   readPublicInvocationOutputRecovery(id: string): PublicOutputRecoveryRead | Promise<PublicOutputRecoveryRead>;
+  /** Exact append-owned discovery; terminal/quarantined outputs remain indexed. No history scan. */
+  findPublicInvocationOutput(
+    input: PublicOutputLookupInput,
+  ): PublicOutputLookupResult | Promise<PublicOutputLookupResult>;
   quarantinePublicInvocationOutput(
     id: string,
     input: PublicOutputQuarantineInput,
@@ -2614,6 +2625,8 @@ export class MessageStore {
   private publicRecoverySeq = 0;
   private readonly publicRecoveryIndex = new Map<string, number>();
   private publicRecoveryCheckpoint: PublicOutputRecoveryCheckpoint = { revision: 0, cursor: null };
+  private publicOutputDiscovery = new Map<string, Set<string>>();
+  private publicOutputDiscoveryById = new Map<string, readonly string[]>();
   private readonly maxMessages: number;
   private readonly idempotencyIndex = new Map<string, string>();
   /** F102 KD-34: Listener called after every successful append (fire-and-forget) */
@@ -2649,7 +2662,15 @@ export class MessageStore {
   private pruneIdempotencyIndexForMessageIds(messageIds: readonly string[]): void {
     if (messageIds.length === 0) return;
     const removedIds = new Set(messageIds);
-    for (const id of removedIds) this.publicRecoveryIndex.delete(id);
+    for (const id of removedIds) {
+      this.publicRecoveryIndex.delete(id);
+      for (const key of this.publicOutputDiscoveryById.get(id) ?? []) {
+        const members = this.publicOutputDiscovery.get(key);
+        members?.delete(id);
+        if (members?.size === 0) this.publicOutputDiscovery.delete(key);
+      }
+      this.publicOutputDiscoveryById.delete(id);
+    }
     for (const [key, value] of this.idempotencyIndex.entries()) {
       if (removedIds.has(value)) {
         this.idempotencyIndex.delete(key);
@@ -2919,9 +2940,26 @@ export class MessageStore {
       if (this.publicRecoverySeq >= Number.MAX_SAFE_INTEGER) throw new Error('Public recovery sequence exhausted');
       stored.extra = { ...stored.extra, publicOutputRecoveryV1: createPublicOutputRecovery(normalizedMessage) };
     }
+    const receipt = stored.extra?.publicOutputV1;
+    const discoveryKeys = receipt
+      ? publicOutputLookupPrefixes(
+          capturePublicOutputLookup({
+            userId: stored.userId,
+            threadId,
+            sourceMessageId: receipt.sourceMessageId,
+            childInvocationId: receipt.childInvocationId,
+          }),
+        ).map((prefix) => JSON.stringify([threadId, prefix]))
+      : [];
     // Preparation above can fail; no message or index changes occur until it completes.
     this.evictAppendCandidates(evictions);
     if (hasPublicInvocationOutput(stored.extra)) this.publicRecoveryIndex.set(stored.id, ++this.publicRecoverySeq);
+    for (const key of discoveryKeys) {
+      const ids = this.publicOutputDiscovery.get(key) ?? new Set<string>();
+      ids.add(stored.id);
+      this.publicOutputDiscovery.set(key, ids);
+    }
+    if (discoveryKeys.length) this.publicOutputDiscoveryById.set(stored.id, discoveryKeys);
     this.messages.push(stored);
     if (idempotencyIndexKey) {
       this.idempotencyIndex.set(idempotencyIndexKey, stored.id);
@@ -3785,6 +3823,21 @@ export class MessageStore {
   retireMissingPublicInvocationOutput(id: string): boolean {
     if (this.messages.some((message) => message.id === id)) return false;
     return this.publicRecoveryIndex.delete(id);
+  }
+  findPublicInvocationOutput(input: PublicOutputLookupInput): PublicOutputLookupResult {
+    const captured = capturePublicOutputLookup(input);
+    const members = publicOutputLookupPrefixes(captured).map((prefix) => {
+      const ids = this.publicOutputDiscovery.get(JSON.stringify([captured.threadId, prefix]));
+      // Consume only the first two values even if many duplicate outputs were appended.
+      const found: string[] = [];
+      if (ids)
+        for (const id of ids) {
+          found.push(prefix + id);
+          if (found.length === 2) break;
+        }
+      return found;
+    });
+    return resolvePublicOutputLookup(captured, members);
   }
   readPublicInvocationOutputRecovery(id: string): PublicOutputRecoveryRead {
     return readPublicOutputRecoveryMessage(this.getById(id));

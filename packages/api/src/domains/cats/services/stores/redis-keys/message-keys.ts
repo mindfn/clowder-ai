@@ -4,6 +4,7 @@
  */
 
 export const MessageKeys = {
+  publicOutputDiscovery: (threadId: string) => `msg:public-output:discovery:${threadId}`,
   PUBLIC_OUTPUT_PENDING: 'msg:public-output:pending',
   PUBLIC_OUTPUT_RECOVERY_HWM: 'msg:public-output:hwm',
   PUBLIC_OUTPUT_RECOVERY_CHECKPOINT: 'msg:public-output:checkpoint',
