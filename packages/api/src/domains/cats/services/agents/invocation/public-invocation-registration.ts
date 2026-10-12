@@ -3,10 +3,24 @@ import { authTerminalFromTurnExecution } from './CallbackAuthTurnExecutionProjec
 import type { AuthTerminalCommitInput } from './InvocationRegistry.js';
 import type { InvocationDeps, InvocationParams } from './invoke-single-cat.js';
 import { capturePublicInvocationAuth } from './public-invocation-auth-binding.js';
+import { capturePublicInvocationExecution } from './public-invocation-execution.js';
 
 /** Capture public identity before setup can yield; absence keeps the ordinary path unchanged. */
 export function capturePublicInvocationRegistration(deps: InvocationDeps, params: InvocationParams): InvocationParams {
   if (params.publicInvocationBinding === undefined) return params;
+  if (
+    params.systemPrompt ||
+    params.contextPromptFactory ||
+    params.rebuildPromptAfterSessionSeal ||
+    params.liveCompanion ||
+    params.contentBlocks?.length ||
+    params.agyNativeScope ||
+    params.memoryCueOpportunitySeeds?.length ||
+    params.memoryCueLegacyFallbacks?.length
+  ) {
+    throw new Error('public_registration_owner_context_forbidden');
+  }
+  const execution = capturePublicInvocationExecution(params.publicInvocationExecution);
   const identity = capturePublicInvocationAuth({
     userId: params.userId,
     threadId: params.threadId,
@@ -28,6 +42,7 @@ export function capturePublicInvocationRegistration(deps: InvocationDeps, params
   }
   return {
     ...params,
+    publicInvocationExecution: execution,
     userId: identity.userId,
     threadId: identity.threadId,
     catId: identity.catId,

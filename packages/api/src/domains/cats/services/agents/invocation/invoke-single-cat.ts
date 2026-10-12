@@ -185,6 +185,7 @@ import {
   promptGenerationId,
 } from './provider-presentation-delivery.js';
 import type { PublicInvocationAuthBinding } from './public-invocation-auth-binding.js';
+import { executePublicInvocation, type PublicInvocationExecution } from './public-invocation-execution.js';
 import {
   capturePublicInvocationRegistration,
   finalizePublicInvocationRegistration,
@@ -1234,6 +1235,8 @@ export interface InvocationParams {
   readonly onRemoteExecutionDispatched?: AgentServiceOptions['onRemoteExecutionDispatched'];
   /** Host-owned durable Queue identity; never derived from prompt or package input. */
   readonly publicInvocationBinding?: PublicInvocationAuthBinding;
+  /** Host-only post-CAS public launch owner; absent ports fail closed on resume. */
+  readonly publicInvocationExecution?: PublicInvocationExecution;
   readonly liveCompanion?: AgentServiceOptions['liveCompanion'];
   /** Route-owned intent projected to provider behavior only when its provenance permits it. */
   readonly routeIntent?: AgentRouteIntent;
@@ -1424,6 +1427,9 @@ async function* invokeSingleCatImpl(
   let prompt = params.prompt;
   const invocationPromptAdditions: string[] = [];
   const isAgyNative = usesAgyNativeCarrier(service);
+  if (params.publicInvocationBinding !== undefined && isAgyNative) {
+    throw new Error('public_execution_carrier_unavailable');
+  }
   const nativeCatConfig = catRegistry.tryGet(catId as string)?.config;
   const nativeCodingGrant =
     isAgyNative && params.toolExecutionPolicy?.mode !== 'read_only'
@@ -2185,6 +2191,38 @@ async function* invokeSingleCatImpl(
       }),
       timestamp: Date.now(),
     };
+
+    if (params.publicInvocationBinding !== undefined) {
+      if (
+        !params.onPromptMessagesExposed ||
+        promptMessageIds.length !== 1 ||
+        promptMessageIds[0] !== params.publicInvocationBinding.carrier.sourceMessageId
+      ) {
+        throw new Error('public_execution_exact_exposure_required');
+      }
+      turnExecutionCompletedSuccessfully = yield* executePublicInvocation({
+        port: params.publicInvocationExecution,
+        invocationId,
+        catId,
+        sourceMessageId: params.publicInvocationBinding.carrier.sourceMessageId,
+        service,
+        policy: effectiveToolExecutionPolicy,
+        signal,
+        callbackEnv: {
+          CAT_CAFE_API_URL: apiUrl,
+          CAT_CAFE_INVOCATION_ID: invocationId,
+          CAT_CAFE_CALLBACK_TOKEN: callbackToken,
+          CAT_CAFE_USER_ID: userId,
+          CAT_CAFE_CAT_ID: catId,
+          CAT_CAFE_THREAD_ID: threadId,
+          CAT_CAFE_EXECUTION_ID: executionParentInvocationId,
+        },
+        expose: exposeCurrentPromptMessages,
+        close: closeServiceIterator,
+      });
+      didComplete = true;
+      return;
+    }
 
     // A contextPromptFactory owns the final prompt/exposure projection and runs
     // only after the epoch decision below. Legacy/cloud paths still expose here.
