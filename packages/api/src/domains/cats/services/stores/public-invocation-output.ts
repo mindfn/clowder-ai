@@ -60,6 +60,15 @@ export function committedPublicInvocationOutput(message: StoredMessage): PublicI
     )
   )
     return undefined;
+  return publicInvocationOutputMatchesMessage(message, receipt) ? receipt : undefined;
+}
+
+/** Identity shared by pending creation and committed evidence; this is not terminal authority. */
+export function publicInvocationOutputMatchesMessage(
+  message: StoredMessage,
+  receipt: PublicInvocationOutputV1,
+): boolean {
+  const boundary = receipt.boundary;
   if (
     message.id !== receipt.outputMessageId ||
     message.userId !== boundary.userId ||
@@ -76,6 +85,6 @@ export function committedPublicInvocationOutput(message: StoredMessage): PublicI
     message.recall ||
     message.deliveryStatus === 'canceled'
   )
-    return undefined;
-  return receipt;
+    return false;
+  return true;
 }

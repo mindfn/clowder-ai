@@ -1217,8 +1217,8 @@ describe('MessageStore', () => {
 
     // A legacy ownerless row cannot use the custody transition API, but old
     // persisted data can still carry delivered status and must fail closed.
-    store.getById(ownerless.id).deliveryStatus = 'delivered';
-    store.getById(ownerless.id).deliveredAt = 303;
+    store.markDelivered(ownerless.id, 303);
+    assert.equal(store.getById(ownerless.id).deliveryStatus, 'delivered');
 
     assert.deepEqual(
       store.getByThreadAfter('th-managed', undefined, undefined, 'user-1').map((message) => message.id),

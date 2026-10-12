@@ -1,3 +1,4 @@
+import { assertPublicOutputReplay, capturePublicOutputAppend } from '../public-invocation-output-append.js';
 import { randomUUID } from 'node:crypto';
 import type { UserMentionHandlingRef } from '../ports/MessageStore.js';
 import { messageIdempotencyScope } from '../ports/MessageStore.js';
@@ -1789,7 +1790,7 @@ export class RedisMessageStore {
     reservedId?: string,
     queue?: QueueAppendOptions,
   ): Promise<ReservedAppendResult> {
-    const msg = canonicalizeAppendMessageInput(input);
+    const msg = canonicalizeAppendMessageInput(capturePublicOutputAppend(input));
     const threadId = msg.threadId ?? DEFAULT_THREAD_ID;
     const idempotencyIndexKey = msg.idempotencyKey
       ? MessageKeys.idempotency(msg.userId, messageIdempotencyScope(msg), msg.idempotencyKey)
@@ -1802,6 +1803,7 @@ export class RedisMessageStore {
       if (existingId) {
         const existingMessage = await this.getById(existingId);
         if (existingMessage) {
+          assertPublicOutputReplay(msg, existingMessage);
           return { outcome: 'stored', message: existingMessage, replayed: true };
         }
       }
@@ -1944,6 +1946,7 @@ export class RedisMessageStore {
     if (typeof result === 'string' && result !== String(0)) {
       const existingMessage = await this.getById(result);
       if (existingMessage) {
+          assertPublicOutputReplay(msg, existingMessage);
         return { outcome: 'stored', message: existingMessage, replayed: true };
       }
       // The concurrent winner's hash vanished (deleteByThread / TTL) between the
@@ -1963,7 +1966,7 @@ export class RedisMessageStore {
     // F102 KD-34: fire-and-forget append listener for thread index updates
     if (this.onAppend) {
       try {
-        void Promise.resolve(this.onAppend(stored)).catch(() => {});
+        void Promise.resolve(this.onAppend(structuredClone(stored))).catch(() => {});
       } catch {
         /* best-effort */
       }

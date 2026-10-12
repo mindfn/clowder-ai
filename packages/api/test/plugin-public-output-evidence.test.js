@@ -199,6 +199,7 @@ for (const method of ['updateExtra', 'augmentStreamMetadata']) {
     const pending = { ...marker, state: 'pending_terminal' };
     const store = new MessageStore();
     const { id: _id, visibilitySeq: _visibilitySeq, ...input } = output;
+    delete input.extra.deliveryBoundary;
     const stored = store.append({
       ...input,
       reservedId: outputId,

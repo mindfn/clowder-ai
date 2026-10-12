@@ -1,3 +1,4 @@
+import { assertPublicOutputReplay, capturePublicOutputAppend } from '../public-invocation-output-append.js';
 import type { RedisClient } from '@cat-cafe/shared/utils';
 import type { AppendMessageInput, StoredMessage, ThreadObservedAppendResult } from '../ports/MessageStore.js';
 import { canonicalizeAppendMessageInput, DEFAULT_THREAD_ID, generateSortableId } from '../ports/MessageStore.js';
@@ -116,7 +117,7 @@ export async function appendMessageAndObservePriorFrontier(input: {
   onAppend?: (message: StoredMessage) => void | Promise<void>;
 }): Promise<ThreadObservedAppendResult> {
   const { redis, ttlSeconds, loadById, onAppend } = input;
-  const message = canonicalizeAppendMessageInput(input.message);
+  const message = canonicalizeAppendMessageInput(capturePublicOutputAppend(input.message, false));
   const threadId = message.threadId ?? DEFAULT_THREAD_ID;
   const id = generateSortableId(message.timestamp);
   // F288: split pluginMessage from host extra — stored as independent hash field
@@ -175,9 +176,10 @@ export async function appendMessageAndObservePriorFrontier(input: {
     )) as [string, string, string];
     const stored = await loadById(value);
     if (stored) {
+      assertPublicOutputReplay(message, stored);
       if (kind === 'committed' && onAppend) {
         try {
-          void Promise.resolve(onAppend(stored)).catch(() => {});
+          void Promise.resolve(onAppend(structuredClone(stored))).catch(() => {});
         } catch {
           // best-effort thread-index projection
         }

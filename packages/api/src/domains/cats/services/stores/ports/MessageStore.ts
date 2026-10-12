@@ -1,3 +1,4 @@
+import { assertPublicOutputReplay, capturePublicOutputAppend } from '../public-invocation-output-append.js';
 /**
  * Message Store
  * 内存消息存储，供 MCP 回传工具 get_thread_context / get_pending_mentions 使用
@@ -2790,7 +2791,7 @@ export class MessageStore {
     reservedId?: string,
     options?: { deferVisibility?: boolean },
   ): StoredMessage {
-    const normalizedMessage = canonicalizeAppendMessageInput(msg);
+    const normalizedMessage = canonicalizeAppendMessageInput(capturePublicOutputAppend(msg));
     const threadId = normalizedMessage.threadId ?? DEFAULT_THREAD_ID;
     const idempotencyIndexKey = this.buildIdempotencyIndexKey(
       normalizedMessage.userId,
@@ -2802,6 +2803,7 @@ export class MessageStore {
       if (existingId) {
         const existing = this.getById(existingId);
         if (existing) {
+          assertPublicOutputReplay(normalizedMessage, existing);
           return existing;
         }
         this.idempotencyIndex.delete(idempotencyIndexKey);
@@ -2855,17 +2857,17 @@ export class MessageStore {
     // P2 fix: try-catch handles sync throws; Promise.resolve handles async rejections
     if (this.onAppend) {
       try {
-        void Promise.resolve(this.onAppend(stored)).catch(() => {});
+        void Promise.resolve(this.onAppend(structuredClone(stored))).catch(() => {});
       } catch {
         /* best-effort */
       }
     }
 
-    return stored;
+    return structuredClone(stored);
   }
 
   appendIdempotent(msg: AppendMessageInput): IdempotentAppendResult {
-    const normalizedMessage = normalizeJsonUnicode(msg);
+    const normalizedMessage = structuredClone(normalizeJsonUnicode(capturePublicOutputAppend(msg)));
     assertValidAppendMessageInput(normalizedMessage);
     if (normalizedMessage.idempotencyKey) {
       const existing = this.getByIdempotencyKey(
@@ -2873,7 +2875,7 @@ export class MessageStore {
         messageIdempotencyScope(normalizedMessage),
         normalizedMessage.idempotencyKey,
       );
-      if (existing) return { message: existing, idempotent: true };
+      if (existing) { assertPublicOutputReplay(normalizedMessage, existing); return { message: existing, idempotent: true }; }
     }
     return { message: this.append(normalizedMessage), idempotent: false };
   }
@@ -2895,7 +2897,7 @@ export class MessageStore {
   }
 
   appendAndObservePriorFrontier(msg: AppendMessageInput): ThreadObservedAppendResult {
-    const normalizedMessage = normalizeJsonUnicode(msg);
+    const normalizedMessage = structuredClone(normalizeJsonUnicode(capturePublicOutputAppend(msg, false)));
     assertValidAppendMessageInput(normalizedMessage);
     const threadId = normalizedMessage.threadId ?? DEFAULT_THREAD_ID;
     if (normalizedMessage.idempotencyKey) {
@@ -2905,6 +2907,7 @@ export class MessageStore {
         normalizedMessage.idempotencyKey,
       );
       if (existing) {
+        assertPublicOutputReplay(normalizedMessage, existing);
         const freshness = existing.extra?.freshness;
         return {
           kind: 'committed',
@@ -2933,7 +2936,8 @@ export class MessageStore {
    * Get a single message by its ID. Returns null if not found.
    */
   getById(id: string): StoredMessage | null {
-    return this.messages.find((m) => m.id === id) ?? null;
+    const message = this.messages.find((m) => m.id === id);
+    return message ? structuredClone(message) : null;
   }
 
   getPawFeelSourceProjections(ids: readonly string[]): Map<string, PawFeelSourceProjectionRead> {
@@ -3058,7 +3062,7 @@ export class MessageStore {
       if (userId && msg.userId !== userId) continue;
       matches.push(msg);
     }
-    return matches.reverse();
+    return matches.reverse().map((message) => structuredClone(message));
   }
 
   listOwnerMessagesInWindow(
@@ -3081,7 +3085,8 @@ export class MessageStore {
       .sort((left, right) => {
         const timelineDelta = getTimelineOrderTime(left) - getTimelineOrderTime(right);
         return timelineDelta || left.id.localeCompare(right.id);
-      });
+      })
+      .map((message) => structuredClone(message));
   }
 
   listOwnerMessageWindowSlice(
@@ -3131,9 +3136,9 @@ export class MessageStore {
     visible.sort((a, b) => (a.seq !== b.seq ? a.seq - b.seq : a.msg.id < b.msg.id ? -1 : 1));
 
     // Apply cursor filter using visibility ordering (not raw-ID lex)
-    if (!afterMessageId) return visible.slice(0, n).map((v) => v.msg);
+    if (!afterMessageId) return visible.slice(0, n).map((v) => structuredClone(v.msg));
     const cursor = parseCursor(afterMessageId);
-    if (!cursor) return visible.slice(0, n).map((v) => v.msg);
+    if (!cursor) return visible.slice(0, n).map((v) => structuredClone(v.msg));
 
     let afterSeq: number | null = null;
     if (cursor.version === 2) {
@@ -3142,10 +3147,10 @@ export class MessageStore {
       afterSeq = this.visibilitySeq.get(cursor.id) ?? null;
     }
 
-    if (afterSeq === null) return visible.slice(0, n).map((v) => v.msg); // pruned → full scan
+    if (afterSeq === null) return visible.slice(0, n).map((v) => structuredClone(v.msg)); // pruned → full scan
     const startIdx = visible.findIndex((v) => v.seq > afterSeq! || (v.seq === afterSeq! && v.msg.id > cursor.id));
     if (startIdx === -1) return [];
-    return visible.slice(startIdx, startIdx + n).map((v) => v.msg);
+    return visible.slice(startIdx, startIdx + n).map((v) => structuredClone(v.msg));
   }
 
   /**
@@ -3170,7 +3175,7 @@ export class MessageStore {
       }
     }
 
-    return matches.reverse();
+    return matches.reverse().map((message) => structuredClone(message));
   }
 
   /**
@@ -3205,7 +3210,7 @@ export class MessageStore {
     }
 
     // Reverse so oldest first
-    return matches.reverse();
+    return matches.reverse().map((message) => structuredClone(message));
   }
 
   getOwnerBeforeBounded(
@@ -3270,7 +3275,7 @@ export class MessageStore {
       if (userId && msg.userId !== userId && !isSystemUserMessage(msg)) continue;
       matches.push(msg);
     }
-    return matches.reverse();
+    return matches.reverse().map((message) => structuredClone(message));
   }
 
   getByThreadIncludingQueued(threadId: string, limit?: number, userId?: string): StoredMessage[] {
@@ -3289,7 +3294,7 @@ export class MessageStore {
       if (userId && msg.userId !== userId && !isSystemUserMessage(msg)) continue;
       matches.push(msg);
     }
-    return matches.reverse();
+    return matches.reverse().map((message) => structuredClone(message));
   }
 
   /**
@@ -3336,7 +3341,7 @@ export class MessageStore {
       }
       const projectVisibilitySeq = (message: StoredMessage): StoredMessage => {
         const seq = this.visibilitySeq.get(message.id);
-        return seq === undefined ? message : { ...message, visibilitySeq: seq };
+        return structuredClone(seq === undefined ? message : { ...message, visibilitySeq: seq });
       };
       if (!cursor) return ordered.slice(0, max).map(projectVisibilitySeq);
       const cursorIndex = ordered.findIndex((message) => message.id === cursor.id);
@@ -3378,20 +3383,20 @@ export class MessageStore {
       throw error;
     }
     if (!cursor) {
-      return visible.slice(0, max).map((v) => v.msg);
+      return visible.slice(0, max).map((v) => structuredClone(v.msg));
     }
 
     if (cursor.version === 2) {
       // v2: direct (seq, id) pair comparison — skip linear ID search
       const startIdx = visible.findIndex((v) => v.seq > cursor.seq || (v.seq === cursor.seq && v.msg.id > cursor.id));
       if (startIdx === -1) return [];
-      return visible.slice(startIdx, startIdx + max).map((v) => v.msg);
+      return visible.slice(startIdx, startIdx + max).map((v) => structuredClone(v.msg));
     }
 
     // v1: find cursor position by exact ID match
     const cursorIdx = visible.findIndex((v) => v.msg.id === cursor.id);
     if (cursorIdx >= 0) {
-      return visible.slice(cursorIdx + 1, cursorIdx + 1 + max).map((v) => v.msg);
+      return visible.slice(cursorIdx + 1, cursorIdx + 1 + max).map((v) => structuredClone(v.msg));
     }
 
     if (options?.unresolvedCursorPolicy === 'empty') return [];
@@ -3401,7 +3406,7 @@ export class MessageStore {
     // (lex-ID ordering disease). A far-future message that is later pruned would
     // permanently hide all normally-timestamped messages. Redis rescans from start
     // for pruned cursors; Memory must do the same for FM-4 parity.
-    return visible.slice(0, max).map((v) => v.msg);
+    return visible.slice(0, max).map((v) => structuredClone(v.msg));
   }
 
   /**
@@ -3494,7 +3499,7 @@ export class MessageStore {
       }
       matches.push(msg);
     }
-    return matches.reverse();
+    return matches.reverse().map((message) => structuredClone(message));
   }
 
   getByThreadBeforeBounded(
@@ -3532,7 +3537,7 @@ export class MessageStore {
       : undefined;
 
     return {
-      messages: messages.reverse(),
+      messages: messages.reverse().map((message) => structuredClone(message)),
       scannedCount: rawCandidates.length,
       storageRoundTrips: 0,
       exhausted: rawCandidates.length >= this.messages.length,
@@ -3645,7 +3650,7 @@ export class MessageStore {
       ...hostOnly
     } = extra as Record<string, unknown>;
     msg.extra = { ...msg.extra, ...hostOnly };
-    return msg;
+    return structuredClone(msg);
   }
 
   compareAndTransitionCustodyOffer(id: string, input: CustodyOfferTransitionInput): CustodyOfferTransitionResult {
@@ -3670,7 +3675,7 @@ export class MessageStore {
     }
     const nextOffer = custodyOfferV1Schema.parse(input.nextOffer);
     msg.extra = { ...msg.extra, custodyOfferV1: nextOffer };
-    return { kind: 'updated', message: msg };
+    return { kind: 'updated', message: structuredClone(msg) };
   }
 
   updatePluginMessage(id: string, pluginMessage: StoredPluginMessage, expectedRevision: number): StoredMessage | null {
@@ -3678,7 +3683,7 @@ export class MessageStore {
     if (!msg) return null;
     if (msg.extra?.pluginMessage?.revision !== expectedRevision) return null;
     msg.extra = { ...msg.extra, pluginMessage };
-    return msg;
+    return structuredClone(msg);
   }
 
   augmentStreamMetadata(id: string, patch: StreamMetadataAugmentInput): StoredMessage | null {
@@ -3945,14 +3950,14 @@ export class MessageStore {
     if (msg.deliveryStatus === 'queued') return { kind: 'existing', message: { ...msg } };
     if (msg.deliveryStatus !== undefined) return { kind: 'conflict' };
     msg.deliveryStatus = 'queued';
-    return { kind: 'prepared', message: { ...msg } };
+    return { kind: 'prepared', message: structuredClone(msg) };
   }
 
   /** F117: CAS transition queued → canceled; non-queued messages return an applied=false receipt. */
   markCanceled(id: string): MarkCanceledResult | null {
     const msg = this.messages.find((m) => m.id === id);
     if (!msg) return null;
-    if (msg.deliveryStatus !== 'queued') return { ...msg, deliveryTransitioned: false };
+    if (msg.deliveryStatus !== 'queued') return { ...structuredClone(msg), deliveryTransitioned: false };
     msg.deliveryStatus = 'canceled';
     // A canceled response is the member-owned terminal surface. Queued source
     // work remains hidden, but removing a response from the visibility index
