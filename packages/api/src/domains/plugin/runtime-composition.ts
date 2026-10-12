@@ -37,6 +37,7 @@ import { createMessagingStores } from '../messaging/stores/factory.js';
 import type { MessagingStores } from '../messaging/stores/ports.js';
 import { createSubscriptionDelivery, type SubscriptionDelivery } from '../messaging/subscription-delivery.js';
 import { type BundledPluginRuntime, BundledPluginRuntimeCarrier } from './builtin-runtime/carriers/bundled-runtime-carrier.js';
+import { createInventoryBrowserServices } from './browser-service/composition.js';
 import { ModulePluginRuntime } from './builtin-runtime/carriers/module-plugin-runtime.js';
 import { StaticPluginRuntime } from './builtin-runtime/carriers/static-plugin-runtime.js';
 import { PluginRuntimeCarrierRouter } from './carrier/runtime-carrier.js';
@@ -432,7 +433,13 @@ export function createDormantPluginRuntimeComposition(
         ? {}
         : { validateManifest: options.contract.validateManifest }),
     });
+  const browserServices = createInventoryBrowserServices({
+    inventory: inventoryStore,
+    identityDirectory: resolve(dirname(paths.inventorySnapshotPath), PLUGIN_HOST_ENTRIES.browserEndpoints),
+    parentOrigin: new URL(options.editorParentOrigin ?? resolveFrontendBaseUrl(process.env)).origin,
+  });
   const moduleRuntime = new ModulePluginRuntime({
+    browserServices,
     neutral: (pluginInstanceId, packageDigest, assertActivation) =>
       createPluginNeutralHost({
         pluginInstanceId,

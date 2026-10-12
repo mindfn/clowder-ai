@@ -21,6 +21,7 @@ export const PLUGIN_HOST_ENTRIES = {
   broker: 'broker.json',
   packages: 'packages',
   resources: 'resources',
+  browserEndpoints: 'browser-endpoints',
   media: 'media',
   mediaEntitlements: 'media-entitlements.json',
   outboundMedia: 'outbound-media.json',

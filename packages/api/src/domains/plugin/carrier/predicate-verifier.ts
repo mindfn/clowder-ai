@@ -9,6 +9,7 @@ import {
 import { ExternalPluginRuntimeError } from '../external-runtime/types.js';
 import { withoutPluginCallContext } from './plugin-call-context.js';
 import { snapshotPluginProtocolData as snapshot } from './plugin-protocol-data.js';
+import { withPluginTransportPurpose } from './plugin-transport-context.js';
 
 interface PredicateVerifierContextBase {
   readonly tenantScope: string;
@@ -127,7 +128,7 @@ export async function invokeIsolatedPredicateVerifier(
       withoutPluginCallContext(async () => {
         signal.throwIfAborted();
         assertActivation();
-        return handler(frozenInput, isolated);
+        return withPluginTransportPurpose('verifier', async () => handler(frozenInput, isolated));
       }),
       aborted,
     ]);

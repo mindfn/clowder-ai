@@ -58,7 +58,7 @@ export interface ModuleBrowserServiceActivationInput {
   readonly packageRecord: PluginPackageRecord;
   readonly effectiveGrants: readonly string[];
   readonly signal: AbortSignal;
-  assertCurrent(): void;
+  assertCurrent(): void | Promise<void>;
 }
 /** A prepare that rejects must release its own partially acquired resources. */
 export type PrepareModuleBrowserServices = (
