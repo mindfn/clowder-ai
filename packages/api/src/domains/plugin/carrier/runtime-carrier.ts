@@ -30,6 +30,12 @@ import {
   settlePluginInvocation,
 } from './host-invocation.js';
 import type { PredicateVerifierPort } from './predicate-verifier.js';
+import {
+  assertPublicVerifierAdmission,
+  capturePublicVerification,
+  PUBLIC_INVOCATION_VERIFIER_METHOD,
+  type PublicInvocationVerifierPort,
+} from './public-invocation-verifier.js';
 
 /**
  * F202 Train C1 — the Host's single runtime-carrier boundary.
@@ -50,6 +56,7 @@ export interface PluginRuntimeAdmission {
 
 export interface PluginRuntimeCarrier {
   invokePredicateVerifier?: PredicateVerifierPort['invokePredicateVerifier'];
+  invokePublicInvocationVerifier?: PublicInvocationVerifierPort['invokePublicInvocationVerifier'];
   /** Derived from the admitted package alone. Carrier selection has no other input. */
   claims(admission: PluginRuntimeAdmission): boolean;
   start(pluginInstanceId: string): Promise<unknown>;
@@ -205,6 +212,10 @@ export class PluginRuntimeCarrierRouter implements PluginRuntimeLifecyclePort {
    * on the call: `not_started` only where the Host refused before any package code ran.
    */
   async attemptInvoke(pluginInstanceId: string, method: string, params: unknown): Promise<PluginInvocationOutcome> {
+    if (method === PUBLIC_INVOCATION_VERIFIER_METHOD)
+      return invocationNotStarted(
+        new ExternalPluginRuntimeError('PROTOCOL_VIOLATION', 'Public verifier is not an ordinary action'),
+      );
     let carrier: PluginRuntimeCarrier;
     try {
       carrier = await this.#select(pluginInstanceId);
@@ -224,6 +235,7 @@ export class PluginRuntimeCarrierRouter implements PluginRuntimeLifecyclePort {
 
   /** F202 W2-3 h3b: whether the instance's active package exposes `method`. */
   async exposesAction(pluginInstanceId: string, method: string): Promise<boolean> {
+    if (method === PUBLIC_INVOCATION_VERIFIER_METHOD) return false;
     const carrier = await this.#select(pluginInstanceId);
     return carrier.exposesAction?.(pluginInstanceId, method) ?? false;
   }
@@ -241,6 +253,46 @@ export class PluginRuntimeCarrierRouter implements PluginRuntimeLifecyclePort {
       throw new ExternalPluginRuntimeError('UNSUPPORTED_TRANSPORT', 'Carrier cannot isolate predicate verification');
     }
     return carrier.invokePredicateVerifier(instanceId, method, input, context);
+  };
+
+  readonly invokePublicInvocationVerifier: PublicInvocationVerifierPort['invokePublicInvocationVerifier'] = async (
+    instanceId,
+    input,
+    authority,
+  ) => {
+    const { carrier, context } = capturePublicVerification(instanceId, input, authority);
+    const generation = this.nativeActions.generation(instanceId);
+    const admission = await this.#admission(instanceId);
+    assertPublicVerifierAdmission(admission, carrier);
+    const runtime = this.#selectAdmission(admission);
+    const invoke = runtime.invokePublicInvocationVerifier?.bind(runtime);
+    if (!invoke)
+      throw new ExternalPluginRuntimeError('UNSUPPORTED_TRANSPORT', 'Carrier cannot isolate public verification');
+    const policy = Object.freeze({
+      mode: 'plugin_native' as const,
+      pluginInstanceId: instanceId,
+      contributionId: carrier.contributionId,
+      actionMethods: carrier.actionMethods,
+    });
+    const server = await this.resolveNativeMcpLaunch(policy);
+    if (!server) throw new ExternalPluginRuntimeError('INSTANCE_NOT_RUNNABLE', 'No active public native descriptor');
+    const check = async () => {
+      context.signal.throwIfAborted();
+      await context.assertCurrent();
+      const current = await this.#admission(instanceId);
+      assertPublicVerifierAdmission(current, carrier);
+      if (
+        this.#selectAdmission(current) !== runtime ||
+        (await this.resolveNativeMcpLaunch(policy)) !== server ||
+        this.nativeActions.generation(instanceId) !== generation
+      )
+        throw new ExternalPluginRuntimeError('INSTANCE_NOT_RUNNABLE', 'Public verifier activation changed');
+      context.signal.throwIfAborted();
+    };
+    await check();
+    const result = await invoke(instanceId, carrier, Object.freeze({ signal: context.signal, assertCurrent: check }));
+    await check();
+    return result;
   };
 
   async listPluginTools(pluginId: string): Promise<readonly DeclaredPluginTool[]> {

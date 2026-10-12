@@ -12,6 +12,15 @@ import {
   settlePluginInvocation,
 } from '../../carrier/host-invocation.js';
 import { invokeIsolatedPredicateVerifier, type PredicateVerifierPort } from '../../carrier/predicate-verifier.js';
+import {
+  assertPublicVerifierContribution,
+  capturePublicInvocationVerifier,
+  capturePublicVerification,
+  invokeIsolatedPublicVerifier,
+  PUBLIC_INVOCATION_VERIFIER_METHOD,
+  type PublicInvocationVerifierHandler,
+  type PublicInvocationVerifierPort,
+} from '../../carrier/public-invocation-verifier.js';
 import { verifyPackageEntrypoint } from '../../external-runtime/package-entrypoint-authority.js';
 import {
   ExternalPluginRuntimeError,
@@ -111,6 +120,7 @@ export interface ModulePluginHostShape {
 export interface PluginModuleActivationShape {
   readonly actions: Readonly<Record<string, unknown>>;
   readonly predicateVerifiers?: Readonly<Record<string, unknown>>;
+  readonly publicInvocationVerifier?: PublicInvocationVerifierHandler;
   stop(reason?: string): void | Promise<void>;
 }
 
@@ -159,6 +169,9 @@ export interface ModulePluginRuntimeOptions {
 
 interface LoadedModule {
   readonly packageDigest: string;
+  readonly manifest: PluginManifest;
+  readonly effectiveGrants: readonly string[];
+  readonly publicInvocationVerifier?: PublicInvocationVerifierHandler;
   readonly located: VerifiedPluginPackage;
   readonly activation: PluginModuleActivationShape;
   readonly publicActions: Readonly<Record<string, unknown>>;
@@ -404,6 +417,7 @@ export class ModulePluginRuntime implements BundledPluginRuntime {
         activation,
         actions,
       );
+      const publicInvocationVerifier = capturePublicInvocationVerifier(activation, actions, packageRecord.manifest);
       const browser = captureModuleBrowserServices(browserAdmission, actions, assertActivation);
       await browserServices?.publish(browser.handlers);
       assertActivation();
@@ -415,6 +429,9 @@ export class ModulePluginRuntime implements BundledPluginRuntime {
         subscriptions,
         predicateVerifiers,
         packageDigest: packageRecord.packageDigest,
+        manifest: packageRecord.manifest,
+        effectiveGrants,
+        ...(publicInvocationVerifier ? { publicInvocationVerifier } : {}),
         privatePredicateMethods: new Set(
           (packageRecord.manifest.contributions ?? []).flatMap((item) =>
             item.type === 'terminal-predicate-provider' ? [item.freshnessMethod, item.completionMethod] : [],
@@ -459,10 +476,13 @@ export class ModulePluginRuntime implements BundledPluginRuntime {
 
   /** Invoke, also saying whether the module's action was entered when it fails (F202 W2-3 h3b). */
   attemptInvoke(pluginInstanceId: string, method: string, params: unknown): Promise<PluginInvocationOutcome> {
-    if (this.#loaded.get(pluginInstanceId)?.privatePredicateMethods.has(method)) {
+    if (
+      method === PUBLIC_INVOCATION_VERIFIER_METHOD ||
+      this.#loaded.get(pluginInstanceId)?.privatePredicateMethods.has(method)
+    ) {
       return Promise.resolve(
         invocationNotStarted(
-          new ExternalPluginRuntimeError('PROTOCOL_VIOLATION', 'Predicate verifier is not an ordinary action'),
+          new ExternalPluginRuntimeError('PROTOCOL_VIOLATION', 'Private verifier is not an ordinary action'),
         ),
       );
     }
@@ -471,6 +491,7 @@ export class ModulePluginRuntime implements BundledPluginRuntime {
 
   exposesAction(pluginInstanceId: string, method: string): boolean {
     return (
+      method !== PUBLIC_INVOCATION_VERIFIER_METHOD &&
       !this.#loaded.get(pluginInstanceId)?.privatePredicateMethods.has(method) &&
       exposesModuleAction(this.actions(pluginInstanceId), method)
     );
@@ -501,6 +522,24 @@ export class ModulePluginRuntime implements BundledPluginRuntime {
     return invokeIsolatedPredicateVerifier(instanceId, method, verifier.phase, verifier.handler, input, context, () => {
       if (this.#loaded.get(instanceId) !== loaded)
         throw new ExternalPluginRuntimeError('INSTANCE_NOT_RUNNABLE', 'Predicate activation changed');
+    });
+  };
+
+  readonly invokePublicInvocationVerifier: PublicInvocationVerifierPort['invokePublicInvocationVerifier'] = async (
+    instanceId,
+    input,
+    authority,
+  ) => {
+    const { carrier, context } = capturePublicVerification(instanceId, input, authority);
+    const loaded = this.#loaded.get(instanceId);
+    const handler = loaded?.publicInvocationVerifier;
+    const signal = this.#operationActivations.get(instanceId)?.signal;
+    if (!loaded || !handler || !signal || loaded.packageDigest !== carrier.packageDigest)
+      throw new ExternalPluginRuntimeError('PROTOCOL_VIOLATION', 'No admitted public verifier');
+    assertPublicVerifierContribution(loaded.manifest, loaded.effectiveGrants, carrier);
+    return invokeIsolatedPublicVerifier(carrier, handler, context, signal, () => {
+      if (this.#loaded.get(instanceId) !== loaded)
+        throw new ExternalPluginRuntimeError('INSTANCE_NOT_RUNNABLE', 'Public verifier activation changed');
     });
   };
 

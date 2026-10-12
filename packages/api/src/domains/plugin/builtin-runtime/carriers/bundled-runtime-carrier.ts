@@ -1,3 +1,4 @@
+import { isDeepStrictEqual } from 'node:util';
 import { WIRE_METHOD_REGISTRY } from '@clowder-ai/plugin-contract';
 import {
   attemptPluginAction,
@@ -7,6 +8,12 @@ import {
   settlePluginInvocation,
 } from '../../carrier/host-invocation.js';
 import type { PredicateVerifierPort } from '../../carrier/predicate-verifier.js';
+import {
+  assertPublicVerifierAdmission,
+  capturePublicVerification,
+  PUBLIC_INVOCATION_VERIFIER_METHOD,
+  type PublicInvocationVerifierPort,
+} from '../../carrier/public-invocation-verifier.js';
 import type { PluginRuntimeAdmission, PluginRuntimeCarrier } from '../../carrier/runtime-carrier.js';
 import { startFailureRecord } from '../../diagnostics/plugin-start-failure.js';
 import { ExternalPluginRuntimeError } from '../../external-runtime/types.js';
@@ -21,6 +28,7 @@ import type { PluginInstanceRecord, PluginPackageRecord, RuntimeState } from '..
  */
 export interface BundledPluginRuntime {
   invokePredicateVerifier?: PredicateVerifierPort['invokePredicateVerifier'];
+  invokePublicInvocationVerifier?: PublicInvocationVerifierPort['invokePublicInvocationVerifier'];
   claims(packageRecord: Pick<PluginPackageRecord, 'manifest'>): boolean;
   /**
    * The carrier hands over the package record it fenced, so a runtime that needs the
@@ -58,6 +66,7 @@ interface RuntimeAuthority {
 
 interface ActiveBundled {
   readonly runtime: BundledPluginRuntime;
+  readonly admission: RuntimeAuthority;
   readonly closed: Promise<void>;
   readonly resolveClosed: () => void;
   valid: boolean;
@@ -111,6 +120,7 @@ export class BundledPluginRuntimeCarrier implements PluginRuntimeCarrier {
     });
     const active: ActiveBundled = {
       runtime,
+      admission: structuredClone(authority),
       closed,
       resolveClosed,
       valid: true,
@@ -217,6 +227,10 @@ export class BundledPluginRuntimeCarrier implements PluginRuntimeCarrier {
    * `not_started`; past them, the runtime reports where its call failed.
    */
   async attemptInvoke(pluginInstanceId: string, method: string, params: unknown): Promise<PluginInvocationOutcome> {
+    if (method === PUBLIC_INVOCATION_VERIFIER_METHOD)
+      return invocationNotStarted(
+        new ExternalPluginRuntimeError('PROTOCOL_VIOLATION', 'Public verifier is not an ordinary action'),
+      );
     let authority: RuntimeAuthority;
     try {
       authority = await this.authority(pluginInstanceId);
@@ -280,8 +294,44 @@ export class BundledPluginRuntimeCarrier implements PluginRuntimeCarrier {
     return result;
   };
 
+  readonly invokePublicInvocationVerifier: PublicInvocationVerifierPort['invokePublicInvocationVerifier'] = async (
+    instanceId,
+    input,
+    authority,
+  ) => {
+    const { carrier, context } = capturePublicVerification(instanceId, input, authority);
+    const active = this.#active.get(instanceId);
+    const invoke = active?.runtime.invokePublicInvocationVerifier?.bind(active.runtime);
+    if (!active || !invoke)
+      throw new ExternalPluginRuntimeError('INSTANCE_NOT_RUNNABLE', 'No active public verifier carrier');
+    const checkActive = (current: RuntimeAuthority) => {
+      context.signal.throwIfAborted();
+      if (
+        this.#active.get(instanceId) !== active ||
+        !active.valid ||
+        active.starting ||
+        active.stopping ||
+        !isDeepStrictEqual(current.packageRecord, active.admission.packageRecord) ||
+        !isDeepStrictEqual([...current.effectiveGrants].sort(), [...active.admission.effectiveGrants].sort())
+      )
+        throw new ExternalPluginRuntimeError('INSTANCE_NOT_RUNNABLE', 'Public verifier activation changed');
+      assertPublicVerifierAdmission(current, carrier);
+      assertPublicVerifierAdmission(active.admission, carrier);
+    };
+    const check = async () => {
+      checkActive(await this.authority(instanceId));
+      await context.assertCurrent();
+      checkActive(await this.authority(instanceId));
+    };
+    await check();
+    const result = await invoke(instanceId, carrier, Object.freeze({ signal: context.signal, assertCurrent: check }));
+    await check();
+    return result;
+  };
+
   /** F202 W2-3 h3b: false when no runtime is active for the instance or it cannot tell. */
   exposesAction(pluginInstanceId: string, method: string): boolean {
+    if (method === PUBLIC_INVOCATION_VERIFIER_METHOD) return false;
     return this.#active.get(pluginInstanceId)?.runtime.exposesAction?.(pluginInstanceId, method) ?? false;
   }
 
