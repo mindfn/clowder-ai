@@ -131,6 +131,7 @@ import {
   prepareQueueLedgerSourceLifecycle,
   settleAssignedLifecycleDispatchFailureMetadata,
 } from '../ports/MessageStore.js';
+import { hasPublicInvocationOutput } from '../public-invocation-output.js';
 import { MessageKeys } from '../redis-keys/message-keys.js';
 import {
   isDurableOwnerReadEvidence,
@@ -3539,7 +3540,10 @@ export class RedisMessageStore {
   /** F096: Update message extra data (merge semantics — preserves existing fields). */
   async updateExtra(id: string, extra: HostMessageExtra): Promise<StoredMessage | null> {
     const msg = await this.getById(id);
-    if (!msg) return null;
+    // Public identity is append-owned and cannot be attached to an ordinary message.
+    // Reject before any await/write: a generic stale extra snapshot cannot race the
+    // dedicated terminal CAS of an already-public output.
+    if (!msg || hasPublicInvocationOutput(msg.extra)) return null;
     const { hostExtra: current, pluginMessage } = splitMessageExtra(msg.extra);
     const {
       pluginMessage: _stripPlugin,
@@ -3548,6 +3552,7 @@ export class RedisMessageStore {
       evolutionPreparationSubmissionV1: _stripPreparation,
       dotAsk: _stripDotAsk,
       deliveryBoundary: _stripBoundary,
+      publicOutputV1: _stripPublicOutput,
       ...hostPatch
     } = extra as Record<string, unknown>;
     const merged = { ...current, ...hostPatch };
@@ -3620,7 +3625,10 @@ export class RedisMessageStore {
 
   async augmentStreamMetadata(id: string, patch: StreamMetadataAugmentInput): Promise<StoredMessage | null> {
     const msg = await this.getById(id);
-    if (!msg) return null;
+    // Public identity is append-owned and cannot be attached to an ordinary message.
+    // Reject before any await/write: a generic stale extra snapshot cannot race the
+    // dedicated terminal CAS of an already-public output.
+    if (!msg || hasPublicInvocationOutput(msg.extra)) return null;
     const augmented = applyStreamMetadataAugment(msg, patch);
     const fields: Record<string, string> = {};
     if (patch.thinking && augmented.thinking) fields.thinking = augmented.thinking;

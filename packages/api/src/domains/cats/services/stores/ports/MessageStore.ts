@@ -50,6 +50,7 @@ import type { MessageDeliveryBoundary } from '../message-delivery-boundary.js';
 import { messageFrom } from '../message-from.js';
 import { notifyMessageTimelineChange } from '../notify-message-timeline-change.js';
 import { type UserMentionHandlingMetadata, UserMentionIndex } from '../user-mention-index.js';
+import { hasPublicInvocationOutput, type PublicInvocationOutputV1 } from '../public-invocation-output.js';
 import {
   getTimelineOrderTime,
   isDurableOwnerReadEvidence,
@@ -380,6 +381,9 @@ export interface StoredMessage {
     };
     /** #1371: immutable prompt boundary written with initial formal output; generic patches cannot replace it. */
     deliveryBoundary?: MessageDeliveryBoundary;
+    /** Append-owned public identity; null preserves a malformed durable marker fail-closed.
+     * Presence cannot be added/removed by patches; terminal transitions need their dedicated CAS. */
+    publicOutputV1?: PublicInvocationOutputV1 | null;
     /** F272: one canonical home message projected from a durable proactive visit. */
     proactive?: { visitId: string; intentId: string; source: 'private_time' };
     /** F287: server-written connector carrier; QueueProcessor still revalidates source + entry origin. */
@@ -1923,6 +1927,7 @@ export function mergeMessageExtra(
     evolutionPreparationSubmissionV1: _stripPreparation,
     dotAsk: _stripDotAsk,
     deliveryBoundary: _stripBoundary,
+    publicOutputV1: _stripPublicOutput,
     ...incomingHost
   } = incoming ?? {};
   const merged = { ...(existing ?? {}), ...incomingHost };
@@ -1948,6 +1953,7 @@ export function mergeStoredToolEvents(
 }
 
 export function applyStreamMetadataAugment(msg: StoredMessage, patch: StreamMetadataAugmentInput): StoredMessage {
+  if (hasPublicInvocationOutput(msg.extra)) return msg;
   if (patch.thinking && patch.thinking.trim().length > 0) {
     msg.thinking = patch.thinking;
   }
@@ -3625,7 +3631,9 @@ export class MessageStore {
    */
   updateExtra(id: string, extra: HostMessageExtra): StoredMessage | null {
     const msg = this.messages.find((m) => m.id === id);
-    if (!msg || msg.recall || msg._tombstone) return null;
+    if (!msg || msg.recall || msg._tombstone || hasPublicInvocationOutput(msg.extra)) return null;
+    // Strip pluginMessage to prevent bypassing updatePluginMessage()'s
+    // revision check — matches Redis store behaviour (codex P2 fix).
     const {
       pluginMessage: _stripPlugin,
       custodyOfferV1: _stripCustody,
@@ -3633,6 +3641,7 @@ export class MessageStore {
       evolutionPreparationSubmissionV1: _stripPreparation,
       dotAsk: _stripDotAsk,
       deliveryBoundary: _stripBoundary,
+      publicOutputV1: _stripPublicOutput,
       ...hostOnly
     } = extra as Record<string, unknown>;
     msg.extra = { ...msg.extra, ...hostOnly };
@@ -3674,7 +3683,7 @@ export class MessageStore {
 
   augmentStreamMetadata(id: string, patch: StreamMetadataAugmentInput): StoredMessage | null {
     const msg = this.messages.find((m) => m.id === id);
-    if (!msg) return null;
+    if (!msg || hasPublicInvocationOutput(msg.extra)) return null;
     const updated = applyStreamMetadataAugment(msg, patch);
     this.userMentionIndex.observe(updated);
     if (patch.mentionsUser) notifyMessageTimelineChange(this, updated);

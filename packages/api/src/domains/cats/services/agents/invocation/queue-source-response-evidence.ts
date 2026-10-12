@@ -1,5 +1,6 @@
 import type { QueueSourceResponseConsumptionWitness } from '@cat-cafe/shared';
 import type { IMessageStore, StoredMessage } from '../../stores/ports/MessageStore.js';
+import { committedPublicInvocationOutput, hasPublicInvocationOutput } from '../../stores/public-invocation-output.js';
 
 export interface QueueSourceResponseEvidence {
   sourceMessageId: string;
@@ -25,6 +26,10 @@ export function resolveQueueSourceResponseEvidenceFromMessages(input: {
   const sourceMessageIds = new Set(input.sourceMessageIds);
   const outputIdsBySource = new Map<string, string[]>();
   for (const message of input.messages) {
+    if (hasPublicInvocationOutput(message.extra)) {
+      const receipt = committedPublicInvocationOutput(message);
+      if (!receipt || receipt.childInvocationId !== input.invocationId) continue;
+    }
     if (
       message.catId !== input.catId ||
       message.deliveryStatus === 'canceled' ||
