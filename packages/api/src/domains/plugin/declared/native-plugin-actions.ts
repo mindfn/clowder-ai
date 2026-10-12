@@ -1,5 +1,6 @@
 import { randomBytes } from 'node:crypto';
 import { isDeepStrictEqual } from 'node:util';
+import type { PluginNativeActionTarget } from '../../cats/services/types.js';
 import { type PluginCallContext, withPluginCallContext } from '../carrier/plugin-call-context.js';
 import type { PluginRuntimeAdmission } from '../carrier/runtime-carrier.js';
 
@@ -22,7 +23,14 @@ interface Binding {
 /** A native MCP transport can call only actions belonging to its current local activation. */
 export class NativePluginActions {
   readonly #bindings = new Map<string, Binding>();
-  readonly #tokens = new Map<string, { readonly binding: Binding; readonly methods: ReadonlySet<string> }>();
+  readonly #tokens = new Map<
+    string,
+    {
+      readonly binding: Binding;
+      readonly contributionId: string;
+      readonly methods: ReadonlySet<string>;
+    }
+  >();
   readonly #generations = new Map<string, number>();
 
   constructor(private readonly admission: (instanceId: string) => Promise<PluginRuntimeAdmission>) {}
@@ -60,8 +68,19 @@ export class NativePluginActions {
       invoke,
     };
     this.#bindings.set(instanceId, binding);
-    for (const connection of connections.values())
-      this.#tokens.set(connection.token, { binding, methods: connection.methods });
+    for (const [contributionId, connection] of connections)
+      this.#tokens.set(connection.token, { binding, contributionId, methods: connection.methods });
+  }
+
+  /** Resolve policy coordinates from the active Host-issued token, not package-supplied identity. */
+  target(token: string, method: string): PluginNativeActionTarget | undefined {
+    const connection = this.#tokens.get(token);
+    if (!connection?.methods.has(method)) return undefined;
+    return Object.freeze({
+      instanceId: connection.binding.instanceId,
+      contributionId: connection.contributionId,
+      method,
+    });
   }
 
   environment(instanceId: string, contributionId: string): Readonly<Record<string, string>> {
@@ -115,6 +134,7 @@ export class NativePluginActions {
         !isDeepStrictEqual([...current.effectiveGrants].sort(), [...binding.admission.effectiveGrants].sort())
       )
         throw new NativePluginActionError(409, 'Plugin call is no longer current');
+      await assertInvocationCurrent();
     };
     const context = Object.freeze({ ...caller, assertCurrent, assertInvocationCurrent });
     await assertCurrent();

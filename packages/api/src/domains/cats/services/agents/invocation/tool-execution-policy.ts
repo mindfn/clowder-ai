@@ -1,7 +1,12 @@
-import type { AgentService, ToolExecutionPolicy } from '../../types.js';
+import type { AgentService, PluginNativeActionTarget, ToolExecutionPolicy } from '../../types.js';
 
 const MAX_REPLAY_DENIED_TOOL_NAMES = 32;
 const MAX_ALLOWED_CALLBACK_ROUTES = 32;
+const MAX_NATIVE_ACTION_METHODS = 256;
+
+function nativeCoordinate(value: unknown): value is string {
+  return typeof value === 'string' && value.length > 0 && value.length <= 256 && value.trim() === value;
+}
 
 export class ToolExecutionPolicyUnavailableError extends Error {
   readonly code: string;
@@ -37,6 +42,26 @@ export function normalizeToolExecutionName(rawName: string): string {
 }
 
 export function normalizeToolExecutionPolicy(policy: ToolExecutionPolicy): ToolExecutionPolicy {
+  if (policy.mode === 'plugin_native') {
+    if (
+      Object.keys(policy).some(
+        (key) => !['mode', 'pluginInstanceId', 'contributionId', 'actionMethods'].includes(key),
+      ) ||
+      !nativeCoordinate(policy.pluginInstanceId) ||
+      !nativeCoordinate(policy.contributionId) ||
+      !Array.isArray(policy.actionMethods) ||
+      policy.actionMethods.length === 0 ||
+      policy.actionMethods.length > MAX_NATIVE_ACTION_METHODS ||
+      !policy.actionMethods.every(nativeCoordinate)
+    )
+      throw new Error('invalid plugin native policy');
+    return {
+      mode: 'plugin_native',
+      pluginInstanceId: policy.pluginInstanceId,
+      contributionId: policy.contributionId,
+      actionMethods: [...new Set(policy.actionMethods)].sort(),
+    };
+  }
   if (policy.mode === 'callback_allowlist') {
     if (
       !Array.isArray(policy.allowedCallbackRoutes) ||
@@ -60,7 +85,8 @@ export function normalizeToolExecutionPolicy(policy: ToolExecutionPolicy): ToolE
 
 export function parseToolExecutionPolicy(raw: string): ToolExecutionPolicy {
   const parsed = JSON.parse(raw) as Partial<ToolExecutionPolicy>;
-  if (parsed.mode === 'callback_allowlist') return normalizeToolExecutionPolicy(parsed as ToolExecutionPolicy);
+  if (parsed.mode === 'callback_allowlist' || parsed.mode === 'plugin_native')
+    return normalizeToolExecutionPolicy(parsed as ToolExecutionPolicy);
   if (parsed.mode !== 'read_only' || !Array.isArray(parsed.replayDeniedToolNames)) {
     throw new Error('invalid persisted tool execution policy');
   }
@@ -80,11 +106,26 @@ export function assertToolExecutionPolicySupported(service: AgentService, policy
 export function toolExecutionPolicyDenial(
   policy: ToolExecutionPolicy | undefined,
   rawToolName: string,
+  nativeTarget?: PluginNativeActionTarget,
 ): {
-  reason: 'replay_denied_tool' | 'read_only_tool_policy' | 'callback_allowlist_tool_policy';
+  reason:
+    | 'replay_denied_tool'
+    | 'read_only_tool_policy'
+    | 'callback_allowlist_tool_policy'
+    | 'plugin_native_tool_policy';
   toolName: string;
 } | null {
   if (!policy) return null;
+  if (policy.mode === 'plugin_native') {
+    const normalized = normalizeToolExecutionPolicy(policy);
+    if (normalized.mode !== 'plugin_native') throw new Error('invalid plugin native policy');
+    return rawToolName === 'POST /api/plugin-runtime/action' &&
+      nativeTarget?.instanceId === normalized.pluginInstanceId &&
+      nativeTarget.contributionId === normalized.contributionId &&
+      normalized.actionMethods.includes(nativeTarget.method)
+      ? null
+      : { reason: 'plugin_native_tool_policy', toolName: normalizeToolExecutionName(rawToolName) };
+  }
   if (policy.mode === 'callback_allowlist') {
     const route = rawToolName.split('?')[0] ?? '';
     const normalized = normalizeToolExecutionPolicy(policy);

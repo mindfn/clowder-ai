@@ -10,6 +10,7 @@ import type { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify';
 import type { InvocationRecord, VerifyResult } from '../domains/cats/services/agents/invocation/InvocationRegistry.js';
 import { toolExecutionPolicyDenial } from '../domains/cats/services/agents/invocation/tool-execution-policy.js';
 import { cloudPrincipalStanding } from '../domains/cats/services/cloud-bridge/cloud-conversation-identity.js';
+import type { PluginNativeActionTarget } from '../domains/cats/services/types.js';
 import type { CallbackAuthSystemMessageNotifier } from './callback-auth-system-message.js';
 import { recordCallbackAuthFailure, recordLegacyFallbackHit } from './callback-auth-telemetry.js';
 import { makeCallbackAuthError } from './callback-errors.js';
@@ -27,12 +28,18 @@ function callbackToolFromUrl(url: string): string {
   return match ? match[1] : 'unknown';
 }
 
-function allowToolExecution(request: FastifyRequest, reply: FastifyReply, record: InvocationRecord): boolean {
+function allowToolExecution(
+  request: FastifyRequest,
+  reply: FastifyReply,
+  record: InvocationRecord,
+  options: CallbackAuthHookOptions,
+): boolean {
   const denial = toolExecutionPolicyDenial(
     record.toolExecutionPolicy,
-    record.toolExecutionPolicy?.mode === 'callback_allowlist'
+    record.toolExecutionPolicy?.mode === 'callback_allowlist' || record.toolExecutionPolicy?.mode === 'plugin_native'
       ? `${request.method} ${request.url}`
       : callbackToolFromUrl(request.routeOptions.url ?? ''),
+    record.toolExecutionPolicy?.mode === 'plugin_native' ? options.pluginNativeActionTarget?.(request) : undefined,
   );
   if (!denial) return true;
   reply.status(403).send({
@@ -70,6 +77,8 @@ export interface CallbackAuthHookOptions {
   allowDotSourceBoundReturn?: boolean;
   /** Session hooks reuse invocation auth but own a distinct, scope-bound action policy. */
   enforceToolExecutionPolicy?: boolean;
+  /** Only the native action route supplies this Host token-registry resolver. */
+  pluginNativeActionTarget?: (request: FastifyRequest) => PluginNativeActionTarget | undefined;
 }
 
 export function rejectCallbackAuthDuringStartupRecovery(registry: CallbackAuthRegistry, reply: FastifyReply): boolean {
@@ -111,9 +120,10 @@ export function registerCallbackAuthHook(
     if (request.callbackAuth) {
       if (
         options.enforceToolExecutionPolicy !== false ||
-        request.callbackAuth.toolExecutionPolicy?.mode === 'callback_allowlist'
+        request.callbackAuth.toolExecutionPolicy?.mode === 'callback_allowlist' ||
+        request.callbackAuth.toolExecutionPolicy?.mode === 'plugin_native'
       )
-        allowToolExecution(request, reply, request.callbackAuth);
+        allowToolExecution(request, reply, request.callbackAuth, options);
       return;
     }
 
@@ -219,8 +229,9 @@ export function registerCallbackAuthHook(
     }
     if (
       (options.enforceToolExecutionPolicy !== false ||
-        result.record.toolExecutionPolicy?.mode === 'callback_allowlist') &&
-      !allowToolExecution(request, reply, result.record)
+        result.record.toolExecutionPolicy?.mode === 'callback_allowlist' ||
+        result.record.toolExecutionPolicy?.mode === 'plugin_native') &&
+      !allowToolExecution(request, reply, result.record, options)
     )
       return;
     request.callbackAuth = result.record;

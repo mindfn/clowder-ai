@@ -18,7 +18,15 @@ const bodySchema = z.object({ method: z.string().min(1).max(256), input: z.unkno
 
 /** Native plugin MCP transport; business identity never comes from tool arguments. */
 export const pluginNativeActionRoutes: FastifyPluginAsync<PluginNativeActionRouteOptions> = async (app, options) => {
-  registerCallbackAuthHook(app, options.registry);
+  registerCallbackAuthHook(app, options.registry, {
+    pluginNativeActionTarget: (request) => {
+      const token = request.headers['x-clowder-plugin-action-token'];
+      const parsed = bodySchema.safeParse(request.body);
+      return typeof token === 'string' && parsed.success
+        ? options.actions.target(token, parsed.data.method)
+        : undefined;
+    },
+  });
   app.post('/api/plugin-runtime/action', { bodyLimit: 1024 * 1024 }, async (request, reply) => {
     const invocationId = request.headers['x-invocation-id'];
     const callbackToken = request.headers['x-callback-token'];
@@ -34,6 +42,7 @@ export const pluginNativeActionRoutes: FastifyPluginAsync<PluginNativeActionRout
     const deleted = await getDeletedCallbackThreadGuard(options.threadStore, record.threadId);
     if (deleted) return reply.status(deleted.statusCode).send(deleted.body);
     const source = await captureTypedWaitSource(record, options.sources);
+    const target = options.actions.target(token, parsed.data.method);
     try {
       const result = await options.actions.call(token, parsed.data.method, parsed.data.input, {
         catId: record.catId,
@@ -42,13 +51,15 @@ export const pluginNativeActionRoutes: FastifyPluginAsync<PluginNativeActionRout
         invocationId: record.invocationId,
         ...(source ? { source: Object.freeze(source) } : {}),
         assertCurrent: async () => {
-          const current = await options.registry.verifyLatest(invocationId, callbackToken);
-          if (!current.ok) throw new NativePluginActionError(409, 'Invocation is no longer current');
-          if (toolExecutionPolicyDenial(current.record.toolExecutionPolicy, 'POST /api/plugin-runtime/action')) {
-            throw new NativePluginActionError(403, 'Invocation policy denies plugin action');
-          }
           if (await getDeletedCallbackThreadGuard(options.threadStore, record.threadId)) {
             throw new NativePluginActionError(410, 'Thread is deleted');
+          }
+          const current = await options.registry.verifyLatest(invocationId, callbackToken);
+          if (!current.ok) throw new NativePluginActionError(409, 'Invocation is no longer current');
+          if (
+            toolExecutionPolicyDenial(current.record.toolExecutionPolicy, 'POST /api/plugin-runtime/action', target)
+          ) {
+            throw new NativePluginActionError(403, 'Invocation policy denies plugin action');
           }
         },
       });

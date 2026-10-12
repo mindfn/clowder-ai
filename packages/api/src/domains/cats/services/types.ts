@@ -956,12 +956,25 @@ export interface AgentClientActiveRunDispatchRegistration {
 }
 
 /** ADR-042 automatic supplement execution: provider + callback layers must enforce this, not prompt prose. */
+/** Host-owned native action coordinates; never accepted from package tool input. */
+export interface PluginNativeActionTarget {
+  readonly instanceId: string;
+  readonly contributionId: string;
+  readonly method: string;
+}
+
 export type ToolExecutionPolicy =
   | {
       readonly mode: 'read_only';
       readonly replayDeniedToolNames: readonly string[];
     }
-  | { readonly mode: 'callback_allowlist'; readonly allowedCallbackRoutes: readonly string[] };
+  | { readonly mode: 'callback_allowlist'; readonly allowedCallbackRoutes: readonly string[] }
+  | {
+      readonly mode: 'plugin_native';
+      readonly pluginInstanceId: string;
+      readonly contributionId: string;
+      readonly actionMethods: readonly string[];
+    };
 
 /**
  * Route-owned intent projection for provider behavior controls.
