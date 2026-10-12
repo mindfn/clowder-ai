@@ -37,6 +37,7 @@ import {
   readDurablePublicInvocationCurrent,
 } from './public-invocation-currentness.js';
 import { resolvePublicInvocationLaunchLease } from './public-invocation-launch.js';
+import { preparePublicInvocationExecution } from './public-invocation-preparation.js';
 import {
   assertPublicVerifierAdmission,
   capturePublicVerification,
@@ -283,6 +284,16 @@ export class PluginRuntimeCarrierRouter implements PluginRuntimeLifecyclePort {
           this.invokePublicInvocationVerifier.bind(this),
         ),
     });
+  }
+
+  /** Host-owned source lease and empty workspace. No provider is started here. */
+  preparePublicInvocationExecution(
+    instanceId: string,
+    carrier: Parameters<PublicInvocationVerifierPort['invokePublicInvocationVerifier']>[1],
+    binding: PublicInvocationBinding,
+    context: Parameters<PublicInvocationVerifierPort['invokePublicInvocationVerifier']>[2],
+  ) {
+    return preparePublicInvocationExecution(this.resolvePublicInvocationLaunch(instanceId, carrier, binding, context));
   }
 
   /** Host execution fence; never exposed as an ordinary package action. */

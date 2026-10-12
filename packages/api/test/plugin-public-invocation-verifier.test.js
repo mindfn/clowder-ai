@@ -1,8 +1,20 @@
 import assert from 'node:assert/strict';
 import { randomUUID } from 'node:crypto';
-import { mkdtemp, rm, writeFile } from 'node:fs/promises';
+import {
+  chmod,
+  lstat,
+  mkdir,
+  mkdtemp,
+  readdir,
+  readFile,
+  realpath,
+  rename,
+  rm,
+  symlink,
+  writeFile,
+} from 'node:fs/promises';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { isAbsolute, join } from 'node:path';
 import { test } from 'node:test';
 import { validateManifest } from '@clowder-ai/plugin-contract';
 import { BundledPluginRuntimeCarrier } from '../dist/domains/plugin/builtin-runtime/carriers/bundled-runtime-carrier.js';
@@ -1126,4 +1138,306 @@ test('public launch lease invalidation rejects every concurrent pending check', 
   } finally {
     release.resolve();
   }
+});
+
+function executionPreparer(f) {
+  assert.equal(
+    typeof f.router.preparePublicInvocationExecution,
+    'function',
+    'missing owned public execution preparation',
+  );
+  return (value = carrier(), expected = f.binding, context = f.context) =>
+    f.router.preparePublicInvocationExecution('instance', value, expected, context);
+}
+
+async function publicWorkspaceRoots() {
+  return (await readdir(tmpdir())).filter((name) => name.startsWith('clowder-public-invocation-')).sort();
+}
+
+test('public prepare returns verified source and an empty canonical private workspace', async (t) => {
+  const f = await publicLaunchFixture(t);
+  const prepare = executionPreparer(f);
+  const prepared = await prepare();
+  t.after(() => prepared.dispose());
+  assert.deepEqual(Object.keys(prepared).sort(), ['dispose', 'launch', 'source']);
+  assert.deepEqual(prepared.source, { messageId: 'source', content: 'public source body' });
+  assert.equal(prepared.launch.sandbox.kind, 'public');
+  const root = prepared.launch.sandbox.workspaceRoot;
+  assert.ok(isAbsolute(root));
+  assert.equal(await realpath(root), root);
+  assert.equal((await lstat(root)).mode & 0o777, 0o700);
+  assert.deepEqual(await readdir(root), []);
+  assert.ok(Object.isFrozen(prepared) && Object.isFrozen(prepared.launch) && Object.isFrozen(prepared.launch.sandbox));
+  assert.ok(Object.isFrozen(prepared.source) && Object.isFrozen(prepared.launch.server));
+  await prepared.launch.assertCurrent();
+});
+
+test('public prepare owns separate workspaces and disposal cannot affect another preparation', async (t) => {
+  const f = await publicLaunchFixture(t);
+  const prepare = executionPreparer(f);
+  const first = await prepare(),
+    second = await prepare();
+  t.after(() => second.dispose());
+  assert.notEqual(first.launch.sandbox.workspaceRoot, second.launch.sandbox.workspaceRoot);
+  await writeFile(join(first.launch.sandbox.workspaceRoot, 'owned-output'), 'temporary provider output');
+  await first.dispose();
+  await assert.rejects(() => lstat(first.launch.sandbox.workspaceRoot), { code: 'ENOENT' });
+  await second.launch.assertCurrent();
+  assert.deepEqual(await readdir(second.launch.sandbox.workspaceRoot), []);
+});
+
+test('public prepare refuses revoked authority before allocating any workspace', async (t) => {
+  const f = await publicLaunchFixture(t, { handler: async () => ({ current: false }) });
+  const prepare = executionPreparer(f);
+  const before = await publicWorkspaceRoots();
+  await assert.rejects(() => prepare());
+  assert.deepEqual(await publicWorkspaceRoots(), before);
+});
+
+test('public prepare removes partial allocation when cancellation arrives during its post-allocation fence', async (t) => {
+  const f = await publicLaunchFixture(t);
+  const prepare = executionPreparer(f);
+  const before = await publicWorkspaceRoots();
+  const entered = deferred(),
+    release = deferred();
+  const pending = prepare(carrier(), f.binding, {
+    signal: f.controller.signal,
+    assertCurrent: async () => {
+      if ((await publicWorkspaceRoots()).some((name) => !before.includes(name))) {
+        entered.resolve();
+        await release.promise;
+      }
+    },
+  });
+  pending.catch(() => entered.resolve());
+  const rejected = assert.rejects(pending);
+  await entered.promise;
+  f.controller.abort(new Error('prepare_aborted_after_allocation'));
+  release.resolve();
+  await rejected;
+  assert.deepEqual(await publicWorkspaceRoots(), before);
+});
+
+test('public prepare permanently latches source revocation after allocation', async (t) => {
+  const f = await publicLaunchFixture(t);
+  const prepared = await executionPreparer(f)();
+  t.after(() => prepared.dispose());
+  f.message.content = 'changed public body';
+  await assert.rejects(() => prepared.launch.assertCurrent());
+  f.message.content = 'public source body';
+  await assert.rejects(() => prepared.launch.assertCurrent());
+  assert.equal(prepared.source.content, 'public source body');
+});
+
+test('public prepare disposal is idempotent and permanently invalidates launch authority', async (t) => {
+  const f = await publicLaunchFixture(t);
+  const prepared = await executionPreparer(f)();
+  const root = prepared.launch.sandbox.workspaceRoot;
+  await Promise.all([prepared.dispose(), prepared.dispose()]);
+  await prepared.dispose();
+  await assert.rejects(() => prepared.launch.assertCurrent());
+  await assert.rejects(() => lstat(root), { code: 'ENOENT' });
+});
+
+test('public prepare caller abort revokes the lease and still permits owned cleanup', async (t) => {
+  const f = await publicLaunchFixture(t);
+  const prepared = await executionPreparer(f)();
+  f.controller.abort(new Error('caller_aborted'));
+  await assert.rejects(() => prepared.launch.assertCurrent());
+  await prepared.dispose();
+  await assert.rejects(() => lstat(prepared.launch.sandbox.workspaceRoot), { code: 'ENOENT' });
+});
+
+test('public prepare detects workspace permission drift and does not recover after chmod restoration', async (t) => {
+  const f = await publicLaunchFixture(t);
+  const prepared = await executionPreparer(f)();
+  t.after(() => prepared.dispose());
+  const root = prepared.launch.sandbox.workspaceRoot;
+  await chmod(root, 0o755);
+  await assert.rejects(() => prepared.launch.assertCurrent());
+  await chmod(root, 0o700);
+  await assert.rejects(() => prepared.launch.assertCurrent());
+});
+
+test('public prepare detects inode replacement and refuses to delete the replacement tree', async (t) => {
+  const f = await publicLaunchFixture(t);
+  const prepared = await executionPreparer(f)();
+  const root = prepared.launch.sandbox.workspaceRoot;
+  const moved = `${root}-test-moved`;
+  await rename(root, moved);
+  await mkdir(root, { mode: 0o700 });
+  await writeFile(join(root, 'replacement-sentinel'), 'replacement must survive');
+  try {
+    await assert.rejects(() => prepared.launch.assertCurrent());
+    await assert.rejects(() => prepared.dispose());
+    assert.equal(await readFile(join(root, 'replacement-sentinel'), 'utf8'), 'replacement must survive');
+  } finally {
+    // Both paths were created by this test, not by a user or a running instance.
+    await rm(root, { recursive: true, force: true });
+    await rename(moved, root);
+    await prepared.dispose();
+  }
+});
+
+test('public prepare rejects symlink replacement without deleting the link target', async (t) => {
+  const f = await publicLaunchFixture(t);
+  const prepared = await executionPreparer(f)();
+  const root = prepared.launch.sandbox.workspaceRoot;
+  const moved = `${root}-test-moved`;
+  const target = await mkdtemp(join(tmpdir(), 'public-prepare-symlink-target-'));
+  await writeFile(join(target, 'sentinel'), 'target must survive');
+  await rename(root, moved);
+  await symlink(target, root, 'dir');
+  try {
+    await assert.rejects(() => prepared.launch.assertCurrent());
+    await assert.rejects(() => prepared.dispose());
+    assert.equal(await readFile(join(target, 'sentinel'), 'utf8'), 'target must survive');
+  } finally {
+    await rm(root, { force: true });
+    await rename(moved, root);
+    await prepared.dispose();
+    await rm(target, { recursive: true, force: true });
+  }
+});
+
+test('public prepare disposal settles blocked currentness without waiting for its storage read', async (t) => {
+  const f = await publicLaunchFixture(t);
+  const prepared = await executionPreparer(f)();
+  const entered = deferred(),
+    release = deferred();
+  const get = f.stores.messageStore.getById;
+  f.stores.messageStore.getById = async (id) => {
+    entered.resolve();
+    await release.promise;
+    return get(id);
+  };
+  const rejected = assert.rejects(prepared.launch.assertCurrent());
+  await entered.promise;
+  try {
+    await prepared.dispose();
+    await rejected;
+    await assert.rejects(() => lstat(prepared.launch.sandbox.workspaceRoot), { code: 'ENOENT' });
+  } finally {
+    release.resolve();
+  }
+});
+
+test('public prepare snapshots binding and caller fence before awaiting source authority', async (t) => {
+  const f = await publicLaunchFixture(t);
+  const prepare = executionPreparer(f);
+  const entered = deferred(),
+    release = deferred();
+  const value = carrier(),
+    expected = { ...f.binding };
+  const context = {
+    signal: f.controller.signal,
+    assertCurrent: async () => {
+      entered.resolve();
+      await release.promise;
+    },
+  };
+  const pending = prepare(value, expected, context);
+  await entered.promise;
+  expected.invocationId = 'foreign-child';
+  value.sourceMessageId = 'private-source';
+  context.assertCurrent = async () => {
+    throw new Error('replacement must not run');
+  };
+  release.resolve();
+  const prepared = await pending;
+  t.after(() => prepared.dispose());
+  await prepared.launch.assertCurrent();
+  assert.equal(prepared.source.messageId, 'source');
+});
+
+test('public prepare integrates with child execution using only verified source and disposes after done', async (t) => {
+  const f = await publicLaunchFixture(t);
+  const prepare = executionPreparer(f);
+  const { executePublicInvocation } = await import(
+    '../dist/domains/cats/services/agents/invocation/public-invocation-execution.js'
+  );
+  let root;
+  let exposed = false;
+  let calls = 0;
+  const iterator = executePublicInvocation({
+    port: { prepare: async () => prepare() },
+    invocationId: 'child-1',
+    catId: 'astra',
+    sourceMessageId: 'source',
+    signal: f.controller.signal,
+    policy: {
+      mode: 'plugin_native',
+      pluginInstanceId: 'instance',
+      contributionId: 'native',
+      actionMethods: ['native.reply'],
+    },
+    callbackEnv: {},
+    expose: async () => {
+      exposed = true;
+    },
+    close: async (provider) => {
+      await provider.return();
+      return true;
+    },
+    service: {
+      async *invoke(prompt, options) {
+        calls++;
+        assert.ok(exposed);
+        assert.equal(prompt, 'public source body');
+        root = options.workingDirectory;
+        assert.equal(root, options.pluginNativeLaunch.sandbox.workspaceRoot);
+        await options.pluginNativeLaunch.assertCurrent();
+        assert.deepEqual(await readdir(root), []);
+        yield { type: 'done', catId: 'astra', timestamp: 1003 };
+      },
+    },
+  });
+  const result = [];
+  for await (const event of iterator) result.push(event.type);
+  assert.deepEqual(result, ['done']);
+  assert.equal(calls, 1);
+  await assert.rejects(() => lstat(root), { code: 'ENOENT' });
+});
+
+test('public prepare cleans the real workspace when child execution returns while provider is paused', async (t) => {
+  const f = await publicLaunchFixture(t);
+  const prepare = executionPreparer(f);
+  const { executePublicInvocation } = await import(
+    '../dist/domains/cats/services/agents/invocation/public-invocation-execution.js'
+  );
+  let root;
+  let closed = 0;
+  const iterator = executePublicInvocation({
+    port: { prepare: async () => prepare() },
+    invocationId: 'child-1',
+    catId: 'astra',
+    sourceMessageId: 'source',
+    signal: f.controller.signal,
+    policy: {
+      mode: 'plugin_native',
+      pluginInstanceId: 'instance',
+      contributionId: 'native',
+      actionMethods: ['native.reply'],
+    },
+    callbackEnv: {},
+    expose: async () => {},
+    close: async (provider) => {
+      await provider.return();
+      return true;
+    },
+    service: {
+      async *invoke(_prompt, options) {
+        root = options.workingDirectory;
+        try {
+          yield { type: 'text', content: 'public result', catId: 'astra', timestamp: 1003 };
+        } finally {
+          closed++;
+        }
+      },
+    },
+  });
+  assert.equal((await iterator.next()).value.type, 'text');
+  await iterator.return();
+  assert.equal(closed, 1);
+  await assert.rejects(() => lstat(root), { code: 'ENOENT' });
 });
