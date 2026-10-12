@@ -22,6 +22,14 @@ import {
   RESOLVE_USER_MENTION_LUA,
   withUserMentionIndex,
 } from './user-mention-index-lua.js';
+import {
+  capturePublicOutputTransition,
+  type PublicOutputTransitionInput,
+  type PublicOutputTransitionResult,
+  publicOutputRawBodyMatchesExpected,
+  resolvePublicOutputTransition,
+} from '../public-invocation-output-terminal.js';
+import { TRANSITION_PUBLIC_OUTPUT_LUA } from './public-output-terminal-lua.js';
 /**
  * Redis Message Store
  * Redis-backed message storage with same interface as in-memory MessageStore.
@@ -3608,6 +3616,56 @@ export class RedisMessageStore {
     const message = this.parseLuaHgetall(receipt.fields);
     if (!message) throw new Error('custody offer CAS lost canonical source message');
     return { kind: 'updated', message };
+  }
+
+  async transitionPublicInvocationOutput(
+    id: string,
+    input: PublicOutputTransitionInput,
+  ): Promise<PublicOutputTransitionResult> {
+    const captured = capturePublicOutputTransition(id, input);
+    const key = MessageKeys.detail(id);
+    const hash = await this.redis.hgetall(key);
+    if (Object.keys(hash).length === 0) return { kind: 'not_found' };
+    if (!publicOutputRawBodyMatchesExpected(hash, captured.expected)) return { kind: 'conflict' };
+    const plan = resolvePublicOutputTransition(this.hydrateHash(hash), captured);
+    if (plan.kind !== 'updated' && plan.kind !== 'existing') return plan;
+    let nextExtra = '';
+    if (plan.kind === 'updated') {
+      // Preserve raw siblings (including future metadata) instead of reserializing a lossy parsed projection.
+      const extra = JSON.parse(hash.extra as string) as Record<string, unknown>;
+      extra.publicOutputV1 = plan.message.extra?.publicOutputV1;
+      if (captured.nextState === 'committed') extra.deliveryBoundary = plan.message.extra?.deliveryBoundary;
+      nextExtra = JSON.stringify(extra);
+    }
+    const raw: unknown = await this.redis.eval(
+      TRANSITION_PUBLIC_OUTPUT_LUA,
+      1,
+      key,
+      JSON.stringify(Object.entries(hash)),
+      nextExtra,
+    );
+    if (!Array.isArray(raw) || raw.length === 0) throw new Error('Public output CAS returned malformed receipt');
+    if (raw[0] === -1) return { kind: 'not_found' };
+    if (raw[0] === 0) return { kind: 'conflict' };
+    if (
+      (raw[0] !== 1 && raw[0] !== 2) ||
+      raw.length % 2 !== 1 ||
+      raw.slice(1).some((value) => typeof value !== 'string')
+    )
+      throw new Error('Public output CAS returned malformed canonical output');
+    const fields = raw.slice(1) as string[];
+    const canonical: Record<string, string> = Object.create(null);
+    for (let i = 0; i < fields.length; i += 2) {
+      const key = fields[i] as string;
+      if (Object.hasOwn(canonical, key)) throw new Error('Public output CAS returned duplicate canonical field');
+      canonical[key] = fields[i + 1] as string;
+    }
+    if (!publicOutputRawBodyMatchesExpected(canonical, captured.expected))
+      throw new Error('Public output CAS returned invalid raw output');
+    const message = this.hydrateHash(canonical);
+    if (resolvePublicOutputTransition(message, captured).kind !== 'existing' || !message)
+      throw new Error('Public output CAS returned mismatched terminal output');
+    return { kind: raw[0] === 1 ? 'updated' : 'existing', message };
   }
 
   async updatePluginMessage(

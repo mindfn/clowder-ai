@@ -1,4 +1,10 @@
 import { assertPublicOutputReplay, capturePublicOutputAppend } from '../public-invocation-output-append.js';
+import {
+  capturePublicOutputTransition,
+  type PublicOutputTransitionInput,
+  type PublicOutputTransitionResult,
+  resolvePublicOutputTransition,
+} from '../public-invocation-output-terminal.js';
 /**
  * Message Store
  * 内存消息存储，供 MCP 回传工具 get_thread_context / get_pending_mentions 使用
@@ -2234,6 +2240,11 @@ export interface IMessageStore {
     id: string,
     input: CustodyOfferTransitionInput,
   ): CustodyOfferTransitionResult | Promise<CustodyOfferTransitionResult>;
+  /** Exact pending output to a terminal receipt; caller owns child/auth authority verification. */
+  transitionPublicInvocationOutput(
+    id: string,
+    input: PublicOutputTransitionInput,
+  ): PublicOutputTransitionResult | Promise<PublicOutputTransitionResult>;
   /** F288: replace only the canonical plugin payload, independently of host extra metadata. */
   updatePluginMessage(
     id: string,
@@ -3676,6 +3687,14 @@ export class MessageStore {
     const nextOffer = custodyOfferV1Schema.parse(input.nextOffer);
     msg.extra = { ...msg.extra, custodyOfferV1: nextOffer };
     return { kind: 'updated', message: structuredClone(msg) };
+  }
+
+  transitionPublicInvocationOutput(id: string, input: PublicOutputTransitionInput): PublicOutputTransitionResult {
+    const captured = capturePublicOutputTransition(id, input);
+    const current = this.messages.find((message) => message.id === id) ?? null;
+    const result = resolvePublicOutputTransition(current, captured);
+    if (result.kind === 'updated' && current) current.extra = structuredClone(result.message.extra);
+    return result;
   }
 
   updatePluginMessage(id: string, pluginMessage: StoredPluginMessage, expectedRevision: number): StoredMessage | null {
