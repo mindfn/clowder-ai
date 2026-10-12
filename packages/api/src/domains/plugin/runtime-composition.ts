@@ -634,6 +634,7 @@ export function createDormantPluginRuntimeComposition(
         // Recovery is now closed and drained, so this final stop has a stable set.
         await supervisor.stopAll(reason);
       }
+      await browserServices.shutdown();
     },
   };
 }

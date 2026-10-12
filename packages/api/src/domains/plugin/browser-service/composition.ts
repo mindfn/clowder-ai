@@ -10,9 +10,9 @@ export function createInventoryBrowserServices(options: {
   readonly inventory: PluginInventoryStore;
   readonly identityDirectory: string;
   readonly parentOrigin: string;
-}): PrepareModuleBrowserServices {
+}): PrepareModuleBrowserServices & { shutdown(): Promise<void> } {
   const provider = new PluginBrowserServiceProvider({ ...options, assets: resolveRetainedBrowserAssets });
-  return async (input) => {
+  const prepare: PrepareModuleBrowserServices = async (input) => {
     const initial = await options.inventory.snapshot();
     const instance = initial.instances.find((i) => i.pluginInstanceId === input.pluginInstanceId);
     const grants = initial.grants.find((g) => g.pluginInstanceId === input.pluginInstanceId);
@@ -44,4 +44,5 @@ export function createInventoryBrowserServices(options: {
     await check(initial);
     return provider.prepare({ ...input, assertCurrent: async () => check(await options.inventory.snapshot()) });
   };
+  return Object.assign(prepare, { shutdown: () => provider.shutdown() });
 }

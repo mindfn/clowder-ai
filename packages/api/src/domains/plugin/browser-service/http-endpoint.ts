@@ -1,4 +1,4 @@
-import { createServer, type IncomingMessage, type ServerResponse } from 'node:http';
+import { createServer, type IncomingMessage, type RequestListener, type ServerResponse } from 'node:http';
 import type { BrowserServiceContribution, BrowserServiceDispatchResult } from '@clowder-ai/plugin-contract';
 import { BrowserServiceDispatcher } from './dispatch.js';
 import type { RetainedBrowserAssets } from './retained-assets.js';
@@ -199,7 +199,7 @@ function parentCors(
 }
 
 /** The only browser entry: owns live HTTP objects and never gives a socket to package code. */
-export function createBrowserEndpoint(options: EndpointOptions) {
+export function createBrowserRequestHandler(options: EndpointOptions): RequestListener {
   const serve = async (req: IncomingMessage, res: ServerResponse) => {
     const connection = new AbortController();
     let timedOut = false,
@@ -254,12 +254,33 @@ export function createBrowserEndpoint(options: EndpointOptions) {
       connection.abort();
     }
   };
+  return (req, res) => {
+    void serve(req, res);
+  };
+}
+
+/** The listener belongs to the Host, including the intervals without a plugin activation. */
+export function createBrowserOriginEndpoint(current: () => RequestListener | undefined) {
   const server = createServer(
     { maxHeaderSize: BROWSER_SERVICE_LIMITS.headerBytes, requestTimeout: 10000, headersTimeout: 10000 },
     (req, res) => {
-      void serve(req, res);
+      // Capture one activation: a request must never move to a replacement handler mid-flight.
+      const handler = current();
+      if (handler) {
+        handler(req, res);
+        return;
+      }
+      // No package code, assets, cookies, credential reflection or redirect in the tombstone.
+      res.writeHead(503, {
+        'content-type': 'application/json',
+        'cache-control': 'no-store',
+        connection: 'close',
+        'content-security-policy': "default-src 'none'; frame-ancestors 'none'",
+        'x-content-type-options': 'nosniff',
+      });
+      res.end(JSON.stringify(errorResult('BROWSER_SERVICE_UNAVAILABLE')));
     },
   );
-  server.maxHeadersCount = 0; // Enforce the explicit count ourselves instead of truncating headers.
+  server.maxHeadersCount = 0;
   return server;
 }

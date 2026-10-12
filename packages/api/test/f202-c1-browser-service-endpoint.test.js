@@ -85,7 +85,11 @@ async function fixture(t, { declarations = [declaration], resolveAssets } = {}) 
     return session;
   };
   t.after(async () => {
-    for (const session of sessions) await session.stop('test cleanup');
+    try {
+      for (const session of sessions) await session.stop('test cleanup');
+    } finally {
+      await provider.shutdown();
+    }
   });
   return {
     ...a,
@@ -228,32 +232,31 @@ test('real endpoint denies foreign Host/Origin, undeclared local route, excess i
   assert.equal(calls, 1);
 });
 
-test('ordinary stop revokes old bindings and closes serving while a fresh provider reuses persistent origin', async (t) => {
+test('ordinary stop revokes old bindings but retains origin custody for same-Host reactivation', async (t) => {
   const f = await fixture(t),
     session = await f.prepare(),
     binding = await session.host.getBinding('api');
-  await session.publish(new Map([['api', async () => response()]]));
+  await session.publish(new Map([['api', async () => response('old')]]));
   await session.stop('disable');
   await session.stop('repeated stop');
   await assert.rejects(binding.assertCurrent(), { code: 'BROWSER_SERVICE_REVOKED' });
-  await assert.rejects(http(binding.origin));
+  assert.equal((await http(binding.origin)).status, 503);
   assert.equal((await readdir(f.identityDirectory)).length, 1);
-  const restarted = new PluginBrowserServiceProvider({
-    identityDirectory: f.identityDirectory,
-    parentOrigin,
-    assets: async () => f.bundle,
-  });
-  const next = await restarted.prepare(f.input);
-  t.after(() => next.stop('cleanup'));
+  const next = await f.prepare();
   assert.equal((await next.host.getBinding('api')).origin, binding.origin);
   assert.equal((await http(binding.origin)).status, 503);
+  await next.publish(new Map([['api', async () => response('new')]]));
+  await session.stop('late old stop must not revoke new activation');
+  assert.equal((await http(binding.origin)).body, 'new');
+  assert.equal((await session.host.dispatchLocal('api', localRequest)).code, 'BROWSER_SERVICE_REVOKED');
 });
 
-test('an occupied persisted port is typed unavailable without origin rotation or identity overwrite', async (t) => {
+test('a foreign listener at Host restart fails closed without origin rotation or identity overwrite', async (t) => {
   const f = await fixture(t),
     session = await f.prepare(),
     { origin } = await session.host.getBinding('api');
   await session.stop('disable');
+  await f.provider.shutdown(); // Final Host shutdown, not plugin disable.
   const filename = path.join(f.identityDirectory, (await readdir(f.identityDirectory))[0]);
   const before = await readFile(filename, 'utf8');
   const blocker = createServer((_req, res) => res.end());
@@ -262,14 +265,21 @@ test('an occupied persisted port is typed unavailable without origin rotation or
     blocker.listen(Number(new URL(origin).port), '127.0.0.1', resolve);
   });
   t.after(() => closeBrowserEndpoint(blocker));
-  await assert.rejects(f.prepare(), { code: 'BROWSER_SERVICE_UNAVAILABLE' });
+  const restarted = new PluginBrowserServiceProvider({
+    identityDirectory: f.identityDirectory,
+    parentOrigin,
+    assets: async () => f.bundle,
+  });
+  t.after(() => restarted.shutdown());
+  await assert.rejects(restarted.prepare(f.input), { code: 'BROWSER_SERVICE_UNAVAILABLE' });
   assert.equal(await readFile(filename, 'utf8'), before);
   await closeBrowserEndpoint(blocker);
-  const next = await f.prepare();
+  const next = await restarted.prepare(f.input);
+  t.after(() => next.stop('cleanup'));
   assert.equal((await next.host.getBinding('api')).origin, origin);
 });
 
-test('preparation failure releases earlier owned listeners while retaining only endpoint identity', async (t) => {
+test('preparation failure preserves reserved origins as tombstones until final Host shutdown', async (t) => {
   const second = { ...declaration, id: 'second', action: { method: 'second.http' } };
   const a = await assetsFixture();
   const f = await fixture(t, {
@@ -283,6 +293,8 @@ test('preparation failure releases earlier owned listeners while retaining only 
   const names = await readdir(f.identityDirectory);
   assert.equal(names.length, 1);
   const record = JSON.parse(await readFile(path.join(f.identityDirectory, names[0]), 'utf8'));
+  assert.equal((await http(`http://127.0.0.1:${record.port}`)).status, 503);
+  await f.provider.shutdown();
   await assert.rejects(http(`http://127.0.0.1:${record.port}`));
 });
 
@@ -317,4 +329,81 @@ test('revocation after handler entry suppresses late bytes and keeps unknown eff
   assert.equal(failure.effect, 'unknown');
   assert.equal(failure.automaticRetry, false);
   assert.equal(calls, 1);
+});
+
+test('published origin custody rejects a competing listener after disable', async (t) => {
+  const f = await fixture(t);
+  const session = await f.prepare();
+  const { origin } = await session.host.getBinding('api');
+  await session.publish(new Map([['api', async () => response()]]));
+  await session.stop('disable');
+  const contender = createServer((_req, res) => res.end('impostor'));
+  t.after(() => closeBrowserEndpoint(contender));
+  await assert.rejects(
+    new Promise((resolve, reject) => {
+      contender.once('error', reject);
+      contender.listen({ host: '127.0.0.1', port: Number(new URL(origin).port), exclusive: true }, resolve);
+    }),
+    { code: 'EADDRINUSE' },
+    'a published origin must remain owned while Host is alive, even with the plugin disabled',
+  );
+});
+
+test('published origin custody survives failed reactivation with unavailable responses and no plugin calls', async (t) => {
+  const assets = await assetsFixture();
+  let rejectAssets = false;
+  let calls = 0;
+  const f = await fixture(t, {
+    resolveAssets: async () => {
+      if (rejectAssets) throw new Error('reactivation asset failure');
+      return assets.bundle;
+    },
+  });
+  const session = await f.prepare();
+  const { origin } = await session.host.getBinding('api');
+  await session.publish(
+    new Map([
+      [
+        'api',
+        async () => {
+          calls++;
+          return response('active');
+        },
+      ],
+    ]),
+  );
+  assert.equal((await http(origin)).status, 200);
+  assert.equal(calls, 1);
+  await session.stop('disable');
+  rejectAssets = true;
+  await assert.rejects(f.prepare(), /reactivation asset failure/);
+  for (const target of ['/health', '/']) {
+    const result = await http(origin, { target, headers: { authorization: 'Bearer synthetic-test-canary' } });
+    assert.equal(result.status, 503);
+    assert.equal(JSON.parse(result.body).code, 'BROWSER_SERVICE_UNAVAILABLE');
+    assert.equal(result.body.includes('synthetic-test-canary'), false);
+  }
+  assert.equal(calls, 1, 'disabled origin must not call an old package handler');
+});
+
+test('final Host shutdown fences pending prepare and cannot leak an origin acquired late', async (t) => {
+  const entered = Promise.withResolvers(),
+    release = Promise.withResolvers();
+  const a = await assetsFixture();
+  const f = await fixture(t, {
+    resolveAssets: async () => {
+      entered.resolve();
+      await release.promise;
+      return a.bundle;
+    },
+  });
+  const preparing = f.prepare();
+  const rejected = assert.rejects(preparing, { code: 'BROWSER_SERVICE_REVOKED' });
+  await entered.promise;
+  const closing = f.provider.shutdown();
+  release.resolve();
+  await rejected;
+  await closing;
+  await assert.rejects(f.prepare(), { code: 'BROWSER_SERVICE_UNAVAILABLE' });
+  await assert.rejects(readdir(f.identityDirectory), { code: 'ENOENT' });
 });

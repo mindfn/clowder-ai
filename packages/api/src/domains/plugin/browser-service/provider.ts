@@ -1,3 +1,4 @@
+import type { RequestListener } from 'node:http';
 import type { BrowserServiceContribution } from '@clowder-ai/plugin-contract';
 import { admitModuleBrowserServices } from '../builtin-runtime/carriers/module-browser-services.js';
 import type {
@@ -9,7 +10,7 @@ import type {
 } from '../host-surface/plugin-browser-service-host.js';
 import { BrowserServiceDispatchBudget, BrowserServiceDispatcher } from './dispatch.js';
 import { closeBrowserEndpoint, reserveBrowserEndpoint } from './endpoint-reservation.js';
-import { createBrowserEndpoint } from './http-endpoint.js';
+import { createBrowserOriginEndpoint, createBrowserRequestHandler } from './http-endpoint.js';
 import type { RetainedBrowserAssets } from './retained-assets.js';
 import { BROWSER_SERVICE_LIMITS, BrowserServiceTransportError } from './transport-policy.js';
 
@@ -32,21 +33,59 @@ interface Endpoint {
   close(): Promise<void>;
 }
 
+interface OwnedOrigin {
+  readonly server: ReturnType<typeof createBrowserOriginEndpoint>;
+  readonly origin: string;
+  request: RequestListener | undefined;
+}
+
 /** One provider per Host owns the global budget, endpoint assignments and active reservations. */
 export class PluginBrowserServiceProvider {
   readonly #budget = new BrowserServiceDispatchBudget();
   readonly #reserved = new Set<string>();
+  readonly #origins = new Map<string, OwnedOrigin>();
+  readonly #hostLife = new AbortController();
+  readonly #preparing = new Set<Promise<ModuleBrowserServiceSession>>();
   constructor(private readonly options: Options) {
     const parent = new URL(options.parentOrigin);
     if (!['http:', 'https:'].includes(parent.protocol) || parent.origin !== options.parentOrigin)
       refuse('BROWSER_SERVICE_UNAVAILABLE');
   }
 
-  async prepare(input: ModuleBrowserServiceActivationInput): Promise<ModuleBrowserServiceSession> {
+  prepare(input: ModuleBrowserServiceActivationInput): Promise<ModuleBrowserServiceSession> {
+    if (this.#hostLife.signal.aborted)
+      return Promise.reject(new BrowserServiceTransportError('BROWSER_SERVICE_UNAVAILABLE'));
+    const operation = this.#prepare(input);
+    this.#preparing.add(operation);
+    const done = () => {
+      this.#preparing.delete(operation);
+    };
+    void operation.then(done, done);
+    return operation;
+  }
+
+  /** Only final Host teardown releases origins. Plugin stop and failed activation do not. */
+  async shutdown(): Promise<void> {
+    this.#hostLife.abort();
+    await Promise.allSettled([...this.#preparing]);
+    const errors: unknown[] = [];
+    for (const [key, owned] of this.#origins) {
+      owned.request = undefined;
+      try {
+        await closeBrowserEndpoint(owned.server);
+        this.#origins.delete(key);
+      } catch (error) {
+        errors.push(error);
+      }
+    }
+    if (errors.length) throw new AggregateError(errors, 'Browser origin shutdown failed');
+  }
+
+  async #prepare(input: ModuleBrowserServiceActivationInput): Promise<ModuleBrowserServiceSession> {
     const active = admitModuleBrowserServices(input.packageRecord.manifest, input.effectiveGrants).active;
     const endpoints = new Map<string, Endpoint>();
     const life = new AbortController();
-    const signal = AbortSignal.any([life.signal, input.signal]);
+    const signal = AbortSignal.any([life.signal, input.signal, this.#hostLife.signal]);
     let stopped = false,
       published = false;
     const assertCurrent = async () => {
@@ -136,30 +175,37 @@ export class PluginBrowserServiceProvider {
     const key = JSON.stringify([input.pluginInstanceId, contribution.id]);
     if (this.#reserved.has(key)) refuse('BROWSER_SERVICE_UNAVAILABLE');
     this.#reserved.add(key);
-    let server: ReturnType<typeof createBrowserEndpoint> | undefined;
+    let owned: OwnedOrigin | undefined;
     try {
       const assets = await this.options.assets(input, contribution);
       await assertCurrent();
-      let handler: PluginBrowserServiceHandler | undefined;
-      let origin = '';
-      let dispatcher: BrowserServiceDispatcher;
-      server = createBrowserEndpoint({
-        parentOrigin: this.options.parentOrigin,
-        contribution,
-        assets,
-        signal,
-        origin: () => origin,
-        published: () => handler !== undefined,
-        assertCurrent,
-        dispatcher: () => dispatcher,
-      });
-      origin = await reserveBrowserEndpoint(
-        server,
-        this.options.identityDirectory,
-        input.pluginInstanceId,
-        contribution.id,
-      );
+      owned = this.#origins.get(key);
+      if (!owned) {
+        let request: RequestListener | undefined;
+        const server = createBrowserOriginEndpoint(() => request);
+        const origin = await reserveBrowserEndpoint(
+          server,
+          this.options.identityDirectory,
+          input.pluginInstanceId,
+          contribution.id,
+        );
+        // Once persisted, this identity may already have browser state from an earlier Host lifetime.
+        // Keep it owned even if this activation subsequently fails before publication.
+        owned = {
+          server,
+          origin,
+          get request() {
+            return request;
+          },
+          set request(value) {
+            request = value;
+          },
+        };
+        this.#origins.set(key, owned);
+      }
       await assertCurrent();
+      const origin = owned.origin;
+      let handler: PluginBrowserServiceHandler | undefined;
       const binding = Object.freeze({
         contributionId: contribution.id,
         origin,
@@ -169,7 +215,7 @@ export class PluginBrowserServiceProvider {
         limits: BROWSER_SERVICE_LIMITS,
         assertCurrent,
       });
-      dispatcher = new BrowserServiceDispatcher({
+      const dispatcher = new BrowserServiceDispatcher({
         instanceId: input.pluginInstanceId,
         contribution,
         binding,
@@ -177,7 +223,18 @@ export class PluginBrowserServiceProvider {
         budget: this.#budget,
         handler: () => handler,
       });
-      const ownedServer = server;
+      const ownedOrigin = owned;
+      let detached = false;
+      ownedOrigin.request = createBrowserRequestHandler({
+        parentOrigin: this.options.parentOrigin,
+        contribution,
+        assets,
+        signal,
+        origin: () => origin,
+        published: () => handler !== undefined,
+        assertCurrent,
+        dispatcher: () => dispatcher,
+      });
       return {
         binding,
         dispatch: dispatcher,
@@ -185,13 +242,15 @@ export class PluginBrowserServiceProvider {
           handler = value;
         },
         close: async () => {
+          if (detached) return;
+          detached = true;
           handler = undefined;
-          await closeBrowserEndpoint(ownedServer);
+          ownedOrigin.request = undefined;
           this.#reserved.delete(key);
         },
       };
     } catch (error) {
-      if (server) await closeBrowserEndpoint(server);
+      if (owned) owned.request = undefined;
       this.#reserved.delete(key);
       throw error;
     }
