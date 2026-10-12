@@ -57,6 +57,20 @@ function modalOverlayCandidates(source: string): ModalOverlayCandidate[] {
 }
 
 describe('F190 visual contract — no hard borders in card/panel components', () => {
+  it('composer popovers use the layer-four floating surface', () => {
+    const addMenu = readSrc('ChatInputAddMenu.tsx');
+    const inputMenus = readSrc('ChatInputMenus.tsx');
+    const whisper = readSrc('WhisperCatSelector.tsx');
+    const pathCompletion = readSrc('PathCompletionMenu.tsx');
+    const contextPicker = readSrc('ChatContextPicker.tsx');
+
+    expect(addMenu).toMatch(/bottom-full[^\n]+bg-cafe-surface-canvas/);
+    expect(inputMenus.match(/bottom-full[^\n]+bg-cafe-surface-canvas/g)).toHaveLength(3);
+    expect(whisper).toMatch(/bottom-full[^\n]+bg-cafe-surface-canvas/);
+    expect(pathCompletion).toMatch(/bottom-full[^\n]+bg-cafe-surface-canvas/);
+    expect(contextPicker).toMatch(/bottom-full[^\n]+bg-cafe-surface-canvas/);
+  });
+
   it('SessionChainPanel uses settingsResourceCardClass, not border-[var(--console-border-soft)]', () => {
     const src = readSrc('SessionChainPanel.tsx');
     expect(src).toContain('settingsResourceCardClass');
@@ -573,7 +587,6 @@ describe('F190 divider guard — console-scope dividers use semantic class', () 
     'UnifiedAuthModal.tsx',
     'PushSettingsPanel.tsx',
     'ThreadExecutionBar.tsx',
-    'ParallelStatusBar.tsx',
     'audit/AuditExplorerPanel.tsx',
     'mission-control/WorkflowSopPanel.tsx',
     'mission-control/FeatureRowList.tsx',

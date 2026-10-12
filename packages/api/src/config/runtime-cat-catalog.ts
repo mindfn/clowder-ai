@@ -4,6 +4,7 @@ import type {
   AgyProfileConfig,
   CatBreed,
   CatCafeConfig,
+  CatCarrier,
   CatColor,
   CatVariant,
   CliConfig,
@@ -39,6 +40,7 @@ export interface RuntimeCatInput {
   strengths?: string[];
   sessionChain?: boolean;
   clientId: ClientId;
+  carrier: CatCarrier;
   defaultModel: string;
   mcpSupport: boolean;
   /** F247 KD-17: cloud-only cats (Remote MCP) omit cli to skip local dispatch.
@@ -74,6 +76,7 @@ export interface RuntimeCatUpdate {
   strengths?: string[];
   sessionChain?: boolean;
   clientId?: ClientId;
+  carrier?: CatCarrier;
   defaultModel?: string;
   mcpSupport?: boolean;
   /** F247 KD-17: cli null to remove (cloud-only mode), CliConfig to update, undefined to skip. */
@@ -269,6 +272,7 @@ function createBreedFromInput(input: RuntimeCatInput): CatBreed {
       {
         id: variantId,
         clientId: input.clientId,
+        carrier: input.carrier,
         ...(input.variantLabel != null && input.variantLabel.trim().length > 0
           ? { variantLabel: input.variantLabel.trim() }
           : {}),
@@ -523,6 +527,13 @@ export function updateRuntimeCat(projectRoot: string, catId: string, patch: Runt
     }
   }
   if (patch.clientId !== undefined) variant.clientId = patch.clientId;
+  if (patch.carrier !== undefined) {
+    variant.carrier = patch.carrier;
+    // Access-mode compatibility exists only at read time. Any write converges
+    // the catalog to the canonical top-level field.
+    delete variant.transport;
+    if (variant.cli && typeof variant.cli === 'object') delete variant.cli.carrier;
+  }
   if (patch.defaultModel !== undefined) variant.defaultModel = patch.defaultModel;
   if (patch.mcpSupport !== undefined) variant.mcpSupport = patch.mcpSupport;
   // F247 KD-17: patch.cli === null means remove (cloud-only mode); object means update.

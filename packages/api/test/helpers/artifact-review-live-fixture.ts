@@ -38,7 +38,7 @@ export async function createLiveReviewFixture(
   const thread = threads.create('operator', '一起完成发布', root);
   const catId = createCatId('codex-astra');
   const owner = new ProjectContentOwnerService({ dataDir: root });
-  const dispatch = createPersistedQueueFixture(messages, registry);
+  const dispatch = createPersistedQueueFixture(messages, registry ? { registry } : {});
   const { queue, starts } = dispatch;
   const events: { userId: string; event: string; data: unknown }[] = [];
   const emit = (userId: string, event: string, data: unknown) => {
@@ -52,7 +52,7 @@ export async function createLiveReviewFixture(
   function publish(name = `review-input.${extension}`) {
     return messages.append({
       userId: 'operator',
-      catId,
+      from: { kind: 'agent', catId },
       threadId: thread.id,
       mentions: [],
       timestamp: Date.now(),

@@ -1,44 +1,28 @@
+import { parseFreshnessCarrierCapability, supportsActiveInvocationGuidance } from '@cat-cafe/shared';
 import { expect, it } from 'vitest';
-import { normalizeQueueMessageReceiptProjections } from '../../hooks/queue-message-receipt-normalizer';
-import {
-  classifyFreshnessCarrierSupport,
-  humanCarrierLabel,
-  parseFreshnessCarrierCapability,
-} from '../message-disposition-presentation';
 
 const capability = {
   provider: 'anthropic',
   carrier: 'claude_agent_sdk',
   deliverySemantics: 'queued_internal_turn',
+  activeInvocationGuidance: 'supported',
 } as const;
 
-it('recognizes SDK capability while keeping precise current-turn support unavailable', () => {
-  expect(parseFreshnessCarrierCapability(capability)).toEqual(capability);
-  expect(classifyFreshnessCarrierSupport([capability])).toBe('unsupported');
-  expect(humanCarrierLabel(capability)).toBe('排队内部轮次（非精确读取）');
-  expect(parseFreshnessCarrierCapability({ ...capability, carrier: 'unregistered-carrier' })).toBeUndefined();
+it('SDK guidance capability does not claim exact provider-turn reading', () => {
+  const parsed = parseFreshnessCarrierCapability(capability);
+  expect(parsed).toEqual(capability);
+  expect(supportsActiveInvocationGuidance(parsed)).toBe(true);
+  expect(parsed?.deliverySemantics).toBe('queued_internal_turn');
 });
 
-it('preserves SDK capability and independently observed read evidence during receipt hydration', () => {
-  const normalized = normalizeQueueMessageReceiptProjections([
-    {
-      messageId: 'source-message',
-      queueReceipt: {
-        version: 1,
-        entryId: 'entry',
-        reminderAttempts: [],
-        targets: [
-          {
-            catId: 'opus',
-            state: 'seen',
-            invocationId: 'primary',
-            seenAt: 1000,
-            authorIntent: { requested: 'next_work', effective: 'next_work', carrierCapability: capability },
-          },
-        ],
-      },
-    },
-  ]);
-  expect(normalized[0]?.queueReceipt.targets[0]?.authorIntent?.carrierCapability).toEqual(capability);
-  expect(normalized[0]?.queueReceipt.targets[0]?.seenAt).toBe(1000);
+it('rejects absent guidance declaration and unknown carriers, and respects declared unsupported guidance', () => {
+  const undeclared = {
+    provider: capability.provider,
+    carrier: capability.carrier,
+    deliverySemantics: capability.deliverySemantics,
+  };
+  expect(parseFreshnessCarrierCapability(undeclared)).toBeUndefined();
+  expect(supportsActiveInvocationGuidance(undefined)).toBe(false);
+  expect(supportsActiveInvocationGuidance({ ...capability, activeInvocationGuidance: 'unsupported' })).toBe(false);
+  expect(parseFreshnessCarrierCapability({ ...capability, carrier: 'unregistered-carrier' })).toBeUndefined();
 });

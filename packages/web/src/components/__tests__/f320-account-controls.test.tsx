@@ -32,6 +32,7 @@ const profile = (id: string): ProfileItem => ({
 });
 const accounts = [profile('A'), profile('B'), profile('C')];
 const cat: CatData = {
+  carrier: 'cli',
   id: 'local',
   displayName: 'Local',
   clientId: 'openai',

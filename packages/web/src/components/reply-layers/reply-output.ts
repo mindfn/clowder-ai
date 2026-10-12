@@ -1,5 +1,4 @@
 import { type MessageOutputLayoutV1, type MessageOutputRun, readMessageOutputLayout } from '@cat-cafe/shared';
-import { getBubbleInvocationId } from '@/debug/bubbleIdentity';
 import type { ChatMessage, ToolEvent } from '@/stores/chat-types';
 
 export interface ReplyOutputText {
@@ -29,7 +28,10 @@ function validTools(message: ChatMessage, refs: readonly { toolEventId: string; 
   const tools = message.toolEvents ?? [];
   const byId = new Map<string, ToolEvent>(tools.map((tool) => [tool.id, tool]));
   if (byId.size !== tools.length || refs.length !== tools.length) return false;
-  const visible = getBubbleInvocationId(message);
+  const visible =
+    message.lifecycle?.kind === 'response'
+      ? message.lifecycle.invocationId
+      : (message.extra?.stream?.turnInvocationId ?? message.extra?.stream?.invocationId);
   const executions = new Set([
     visible,
     ...(message.extra?.auxiliaryTurnExecutions ?? []).map((event) => event.invocationId),
@@ -53,7 +55,10 @@ function verifiedLayout(message: ChatMessage, threadId: string, verifiedHash?: s
   if (
     layout.owner.threadId !== threadId ||
     layout.owner.catId !== message.catId ||
-    layout.owner.turnInvocationId !== getBubbleInvocationId(message) ||
+    layout.owner.turnInvocationId !==
+      (message.lifecycle?.kind === 'response'
+        ? message.lifecycle.invocationId
+        : (message.extra?.stream?.turnInvocationId ?? message.extra?.stream?.invocationId)) ||
     layout.contentRevision.length !== message.content.length ||
     layout.contentRevision.sha256 !== verifiedHash
   )

@@ -3,16 +3,13 @@
 import { useMemo } from 'react';
 import { countRecallEvents } from '@/hooks/recall-feed-model';
 import { filterRecallEvents } from '@/hooks/recall-tool-events';
-import type { CatData } from '@/hooks/useCatData';
 import type { ChatMessage, ToolEvent } from '@/stores/chat-types';
 import { usePublishLayoutAfterDisclosure } from '../cli-output/CliOutputBlock';
 import { describeMessageInvocationTrajectory, openMessageTrajectoryInWorkspace } from '../InvocationTrajectoryAnchor';
 import { openReplyRecallInWorkspace } from '../memory/recall-navigation';
 import { useMessageDisclosureState } from '../message-disclosure-state';
-import { ReplyHandoffs } from './ReplyHandoffs';
 import { ReplyLastLine } from './ReplyLastLine';
 import { ReplyRecord } from './ReplyRecord';
-import type { ReplyHandoffProjection } from './reply-handoff';
 import type { ReplyOutputProjection } from './reply-output';
 import type { ReplyRecallProjection } from './reply-recall';
 import { summarizeReplyRecord } from './reply-record';
@@ -46,15 +43,14 @@ export interface ReplyLayersProps {
   defaultExpanded: boolean;
   /** The stream's working text when it has been split from the spoken body (a merged reply); undefined otherwise. */
   workingText?: string;
-  handoffs?: readonly ReplyHandoffProjection[];
-  getCatById: (catId: string) => CatData | undefined;
   recall?: ReplyRecallProjection;
   nativeOutput?: ReplyOutputProjection;
 }
 
 function resolveReplyRecall(message: ChatMessage, recall: ReplyRecallProjection | undefined) {
   if (recall) return recall;
-  const invocationId = message.extra?.stream?.turnInvocationId;
+  const invocationId =
+    message.lifecycle?.kind === 'response' ? message.lifecycle.invocationId : message.extra?.stream?.turnInvocationId;
   if (!message.catId || !invocationId) return undefined;
   const events = filterRecallEvents(message.toolEvents ?? []);
   return events.length > 0
@@ -85,8 +81,6 @@ export function ReplyLayers({
   disclosureKey,
   defaultExpanded,
   workingText,
-  handoffs = [],
-  getCatById,
   recall,
   nativeOutput,
 }: ReplyLayersProps) {
@@ -96,10 +90,10 @@ export function ReplyLayers({
   );
   const effectiveRecall = resolveReplyRecall(message, recall);
   const record = summarizeReplyRecord(message.toolEvents, message.metadata);
-  const phase = message.extra?.invocationReconciliation?.phase;
+  const status = message.lifecycle?.kind === 'response' ? message.lifecycle.status : undefined;
   const executionFacts = {
     streaming: Boolean(message.isStreaming),
-    phase,
+    status,
     errored: message.variant === 'error',
   };
   const execution = deriveReplyExecutionState(executionFacts);
@@ -116,11 +110,12 @@ export function ReplyLayers({
   const quiet = useReplyQuiet({
     threadId,
     catId: message.catId,
-    streamTurnId: message.extra?.stream?.turnInvocationId,
+    streamTurnId:
+      message.lifecycle?.kind === 'response' ? message.lifecycle.invocationId : message.extra?.stream?.turnInvocationId,
     active: execution === 'running',
   });
   const latestTool = latestToolUse(message);
-  const status = deriveReplyStatus({
+  const replyStatus = deriveReplyStatus({
     ...executionFacts,
     failure: {
       reasonCode: message.extra?.cliDiagnostics?.reasonCode,
@@ -154,11 +149,10 @@ export function ReplyLayers({
         width: 'calc(37rem + 1px)',
         maxWidth: '100%',
       }}
-      data-reply-status={status?.kind}
+      data-reply-status={replyStatus?.kind}
     >
-      <ReplyHandoffs handoffs={handoffs} getCatById={getCatById} />
       <ReplyLastLine
-        status={status}
+        status={replyStatus}
         toolCount={record.toolCount}
         processCount={nativeOutput?.processCount}
         errorCount={record.errorCount}

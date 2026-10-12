@@ -36,24 +36,21 @@ export async function installHomeActions(
       const receipt = await deps.messages.appendIdempotent({
         userId: scope.userId,
         threadId: scope.threadId,
-        catId: scope.catId,
+        from: { kind: 'system', service: 'live-home-action' },
         content: `[Host 家内操作回执｜来源 ${scope.threadId}#${result.requestMessageId}]\n${JSON.stringify(result)}`,
         mentions: [],
         timestamp: Date.now(),
         idempotencyKey: `f317-home-${scope.callId}-${result.requestMessageId}-${result.observedAtMs}`,
       });
-      deps.socketManager?.broadcastAgentMessage(
-        {
-          type: 'text',
-          catId: scope.catId,
+      deps.socketManager?.broadcastToRoom(`thread:${scope.threadId}`, 'connector_message', {
+        threadId: scope.threadId,
+        message: {
+          id: receipt.message.id,
+          from: receipt.message.from,
           content: receipt.message.content,
-          messageId: receipt.message.id,
-          invocationId: scope.invocationId,
           timestamp: receipt.message.timestamp,
-          extra: { isExplicitPost: true },
         },
-        scope.threadId,
-      );
+      });
     },
   });
   await app.register(f317HomeOwnerRoutes, {

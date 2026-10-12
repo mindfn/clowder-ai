@@ -1,5 +1,5 @@
 /* F322 B — which lightness the lineage ring is drawn at in a Tuner theme.
- * `[data-lineage-focus]` is the ~3 second ring that lands on the message a receipt or an absorption dock points back to
+ * `[data-message-jump-focus]` is the ~3 second ring that lands on the message a receipt points back to
  * (globals.css). It is a non-text mark, so its criterion is 3:1 against what it sits on. It keeps the human's hue and
  * chroma (the user's config, known only at run time) and only has its lightness floored at display time: the bubble
  * lightness as saved when that already reads, otherwise the nearest lightness that does (lib/readable-name-role, with the 3:1

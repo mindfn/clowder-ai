@@ -1,6 +1,5 @@
 import { type RefObject, useLayoutEffect, useState } from 'react';
 import type { ChatMessage } from '@/stores/chat-types';
-import { foldedSourceInvocationIdInTimeline } from '../turn-absorption-summary';
 import { type PianoGeometry, type PianoRowMeasurement, projectPianoGeometry } from './piano-geometry';
 
 function measureRows(viewport: HTMLElement, ids: ReadonlySet<string>): PianoRowMeasurement[] {
@@ -41,9 +40,7 @@ export function usePianoGeometry(
     ids: string;
     geometry: PianoGeometry | null;
   } | null>(null);
-  const messageIds = JSON.stringify(
-    messages.filter((message) => !foldedSourceInvocationIdInTimeline(message, messages)).map((message) => message.id),
-  );
+  const messageIds = JSON.stringify(messages.map((message) => message.id));
   useLayoutEffect(() => {
     const viewport = viewportRef.current;
     const track = trackRef.current;

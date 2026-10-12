@@ -1,7 +1,7 @@
 /**
  * F141: GitHub Repo Webhook Handler
  *
- * Pipeline: HMAC → event filter → allowlist → validate → dedup → normalize → bind thread → deliver → trigger → confirm
+ * Pipeline: HMAC → event filter → allowlist → validate → dedup → normalize → bind thread → admit → confirm
  */
 import type { CatId, CommunityEvent, CommunityEventKind, ConnectorSource } from '@cat-cafe/shared';
 import type { ICommunityEventLog } from '../../../domains/community/CommunityEventLog.js';
@@ -21,7 +21,6 @@ import { type InboxThreadStore, resolveInboxThread } from './inbox-thread-resolv
 import type { ReconciliationDedup } from './ReconciliationDedup.js';
 import type { RedisDeliveryDedup, RedisLike } from './RedisDeliveryDedup.js';
 import type { ResolveRepoInboxCatId } from './RepoInboxOwnerResolver.js';
-import { REPO_INBOX_WAKE_POLICY, type RepoInboxWakeTrigger } from './repo-inbox-wake-policy.js';
 import type { GitHubRepoInboxConfig, RepoInboxSignal } from './types.js';
 import { verifyGitHubSignature } from './verify-signature.js';
 
@@ -62,9 +61,9 @@ export interface GitHubRepoHandlerDeps {
    *  ThreadKind union per AGENTS.md 禁 any redline. */
   readonly threadStore: InboxThreadStore;
   readonly deliverFn: (deps: ConnectorDeliveryDeps, input: ConnectorDeliveryInput) => Promise<ConnectorDeliveryResult>;
-  readonly invokeTrigger: RepoInboxWakeTrigger;
   readonly dedup: RedisDeliveryDedup;
-  readonly deliveryDeps?: ConnectorDeliveryDeps;
+  /** Required: a missing delivery port must fail at composition, not deep inside delivery. */
+  readonly deliveryDeps: ConnectorDeliveryDeps;
   readonly redis?: RedisLike; // KD-20: per-repo inbox thread creation lock
   readonly reconciliationDedup?: Pick<ReconciliationDedup, 'markNotified'>; // Phase B bridge
   /** Dynamic canonical owner lookup. Called once immediately before each delivery. */
@@ -209,26 +208,17 @@ export class GitHubRepoWebhookHandler {
       };
 
       // 11. Deliver (AC-A7)
-      delivered = await this.deps.deliverFn(this.deps.deliveryDeps ?? ({} as ConnectorDeliveryDeps), {
+      delivered = await this.deps.deliverFn(this.deps.deliveryDeps, {
         threadId,
         userId: this.config.defaultUserId,
         catId: inboxCatId,
         content,
         source,
+        idempotencyKey: `github-repo-event:${deliveryId}`,
+        sourceCategory: 'producer_return',
       });
 
-      // 12. Trigger cat (KD-17)
-      void Promise.resolve(
-        this.deps.invokeTrigger.trigger(
-          threadId,
-          inboxCatId as CatId,
-          this.config.defaultUserId,
-          content,
-          delivered.messageId,
-          undefined,
-          REPO_INBOX_WAKE_POLICY,
-        ),
-      ).catch(() => {});
+      // KD-17 is structural now: admission to the Queue is what starts the inbox cat.
     } catch (err) {
       // Safe rollback: message not delivered — allow GitHub retry
       await this.deps.dedup.rollback(deliveryId);

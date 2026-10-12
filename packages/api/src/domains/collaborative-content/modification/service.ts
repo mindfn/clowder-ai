@@ -4,6 +4,7 @@ import {
   contentModificationRequestContractSchema,
   contentModificationTakeoverSchema,
 } from '@cat-cafe/shared';
+import type { QueueTargetExecutionReadPort } from '../../cats/services/agents/invocation/queue-ledger/QueueTargetExecutionView.js';
 import {
   deriveGrowingSourceMessageRevision,
   type IMessageStore,
@@ -55,6 +56,7 @@ export class ContentModificationService {
     private readonly deps: {
       store: ArtifactReviewStore;
       messages: IMessageStore;
+      queue?: QueueTargetExecutionReadPort;
       turnExecutions?: Pick<ITurnExecutionStore, 'get'>;
       tasks: ITaskStore;
       lifecycle: EntrustedWorkLifecycleService;

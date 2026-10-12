@@ -1,6 +1,6 @@
 'use client';
 
-import type { RefObject } from 'react';
+import { type RefObject, useState } from 'react';
 import type { MessageDispositionPreferenceController } from '@/hooks/useMessageDispositionPreference';
 import { AppTooltip } from './AppTooltip';
 import { ComposerPopover } from './ComposerPopover';
@@ -8,8 +8,7 @@ import { type ComposerPreferredCatControl, ComposerPreferredCatSection } from '.
 import { chatComposerCopy } from './chat-composer.shell-copy';
 import { AttachIcon } from './icons/AttachIcon';
 import { GameIcon } from './icons/GameIcon';
-import { MessageDispositionMenuSection } from './MessageDispositionMenuSection';
-import type { FreshnessCarrierSupport } from './message-disposition-presentation';
+import { MessageDispositionSelector, messageDispositionLabel } from './MessageDispositionSelector';
 import { useShellCopy } from './shell/shell-copy';
 
 interface ChatInputAddMenuProps {
@@ -25,7 +24,6 @@ interface ChatInputAddMenuProps {
   maxImages?: boolean;
   whisperMode?: boolean;
   messageDisposition?: MessageDispositionPreferenceController;
-  dispositionCarrierSupport?: FreshnessCarrierSupport;
   preferredCat?: ComposerPreferredCatControl;
 }
 
@@ -42,9 +40,9 @@ export function ChatInputAddMenu({
   maxImages,
   whisperMode,
   messageDisposition,
-  dispositionCarrierSupport,
   preferredCat,
 }: ChatInputAddMenuProps) {
+  const [view, setView] = useState<'root' | 'disposition'>('root');
   const localized = useShellCopy(chatComposerCopy);
   const t = presentation === 'v2' ? localized : chatComposerCopy.zh;
 
@@ -52,75 +50,79 @@ export function ChatInputAddMenu({
 
   return (
     <ComposerPopover anchor={triggerRef} label={t.addContent} onClose={onClose} preferredWidth={304}>
-      <div
-        id="composer-add-menu"
-        data-testid="composer-add-menu"
-        role="menu"
-        aria-label={t.addContent}
-        className="w-full overflow-hidden rounded-lg"
-      >
-        {presentation === 'v2' && messageDisposition && dispositionCarrierSupport ? (
-          <MessageDispositionMenuSection
-            controller={messageDisposition}
-            carrierSupport={dispositionCarrierSupport}
-            onClose={onClose}
-          />
-        ) : null}
-        {presentation === 'v2' && preferredCat ? <ComposerPreferredCatSection {...preferredCat} /> : null}
-        <div className="border-b border-cafe-subtle px-3 py-2 text-xs font-medium text-cafe-muted">{t.add}</div>
-        <div className="p-1.5">
-          <AddMenuItem
-            tooltip={presentation === 'v2'}
-            testId="composer-add-context"
-            icon={<ContextIcon />}
-            label={presentation === 'v2' ? t.context : '引用 Thread 或文件'}
-            description={t.contextHint}
-            disabled={unavailable}
-            onClick={() => {
-              onClose();
-              onAddContext();
-            }}
-          />
-          <AddMenuItem
-            tooltip={presentation === 'v2'}
-            testId="composer-upload"
-            icon={<AttachIcon className="h-5 w-5" />}
-            label={t.upload}
-            description={t.uploadHint}
-            disabled={unavailable || maxImages}
-            onClick={() => {
-              onClose();
-              onAttach();
-            }}
-          />
-        </div>
-        <div className="border-t border-cafe-subtle p-1.5">
-          <AddMenuItem
-            tooltip={presentation === 'v2'}
-            testId="composer-whisper"
-            icon={<WhisperIcon />}
-            label={t.whisper}
-            description={whisperMode ? t.whisperActiveHint : t.whisperHint}
-            active={whisperMode}
-            disabled={unavailable}
-            onClick={() => {
-              onClose();
-              onWhisperToggle();
-            }}
-          />
-          <AddMenuItem
-            tooltip={presentation === 'v2'}
-            testId="composer-game"
-            icon={<GameIcon />}
-            label={t.game}
-            description={t.gameHint}
-            disabled={unavailable}
-            onClick={() => {
-              onClose();
-              onGameClick();
-            }}
-          />
-        </div>
+      <div id="composer-add-menu" data-testid="composer-add-menu" className="bg-cafe-surface-canvas">
+        {view === 'disposition' && messageDisposition ? (
+          <MessageDispositionSelector controller={messageDisposition} onBack={() => setView('root')} />
+        ) : (
+          <div role="menu" aria-label={t.addContent} className="w-full overflow-hidden rounded-lg">
+            {messageDisposition ? (
+              <AddMenuItem
+                testId="message-disposition-trigger"
+                dispositionSource={messageDisposition.source}
+                label={`发送策略：${messageDispositionLabel(messageDisposition.effective)}`}
+                description="选择本 Thread 或全局默认策略"
+                icon={<span aria-hidden>↪</span>}
+                disabled={messageDisposition.loading}
+                onClick={() => setView('disposition')}
+              />
+            ) : null}
+            {presentation === 'v2' && preferredCat ? <ComposerPreferredCatSection {...preferredCat} /> : null}
+            <div className="border-b border-cafe-subtle px-3 py-2 text-xs font-medium text-cafe-muted">{t.add}</div>
+            <div className="p-1.5">
+              <AddMenuItem
+                tooltip={presentation === 'v2'}
+                testId="composer-add-context"
+                icon={<ContextIcon />}
+                label={presentation === 'v2' ? t.context : '引用 Thread 或文件'}
+                description={t.contextHint}
+                disabled={unavailable}
+                onClick={() => {
+                  onClose();
+                  onAddContext();
+                }}
+              />
+              <AddMenuItem
+                tooltip={presentation === 'v2'}
+                testId="composer-upload"
+                icon={<AttachIcon className="h-5 w-5" />}
+                label={t.upload}
+                description={t.uploadHint}
+                disabled={unavailable || maxImages}
+                onClick={() => {
+                  onClose();
+                  onAttach();
+                }}
+              />
+            </div>
+            <div className="border-t border-cafe-subtle p-1.5">
+              <AddMenuItem
+                tooltip={presentation === 'v2'}
+                testId="composer-whisper"
+                icon={<WhisperIcon />}
+                label={t.whisper}
+                description={whisperMode ? t.whisperActiveHint : t.whisperHint}
+                active={whisperMode}
+                disabled={unavailable}
+                onClick={() => {
+                  onClose();
+                  onWhisperToggle();
+                }}
+              />
+              <AddMenuItem
+                tooltip={presentation === 'v2'}
+                testId="composer-game"
+                icon={<GameIcon />}
+                label={t.game}
+                description={t.gameHint}
+                disabled={unavailable}
+                onClick={() => {
+                  onClose();
+                  onGameClick();
+                }}
+              />
+            </div>
+          </div>
+        )}
       </div>
     </ComposerPopover>
   );
@@ -129,6 +131,7 @@ export function ChatInputAddMenu({
 function AddMenuItem({
   tooltip = false,
   testId,
+  dispositionSource,
   icon,
   label,
   description,
@@ -138,6 +141,7 @@ function AddMenuItem({
 }: {
   tooltip?: boolean;
   testId: string;
+  dispositionSource?: string;
   icon: React.ReactNode;
   label: string;
   description: string;
@@ -151,6 +155,7 @@ function AddMenuItem({
         type="button"
         role="menuitem"
         data-testid={testId}
+        data-disposition-source={dispositionSource}
         disabled={disabled}
         onClick={onClick}
         className={`flex w-full items-center gap-3 rounded-lg px-3 py-2 text-left transition-colors disabled:cursor-not-allowed disabled:opacity-30 ${

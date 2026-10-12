@@ -134,7 +134,7 @@ Claim guard: wrong Program/cycle/case action, unrelated target, non-holder callb
 Architecture cell: `capability-evolution-control`
 Map delta: none — F117/MessageStore retains direct-message lifecycle and body truth; F311 adds one read-only owner-surface resolver and stores only the caller-supplied canonical refs after validation.
 Why: a natural operator correction can be source evidence without being an F281 disposition; validating its existing message identity must not create an F300 substitute or a centralized feedback ledger.
-Canonical source: `packages/api/src/domains/cats/services/stores/ports/MessageStore.ts#IMessageStore.getById` + `docs/features/F117-message-delivery-lifecycle.md#Phase-A-deliveryStatus-字段--后端收口`
+Canonical source: `packages/api/src/domains/cats/services/stores/ports/MessageStore.ts#IMessageStore.getById` + `docs/features/F117-message-delivery-lifecycle.md`
 Consumer evidence: `rg -n "createEvolutionOwnerSurfaceResolvers|sourceResolvers" packages/api/src/index.ts packages/api/src/infrastructure/capability-evolution packages/api/test/capability-evolution-owner-surface-resolvers.test.js`
 Claim guard: “only a live, publicly visible direct owner message in the exact owner thread resolves” → `capability-evolution-owner-surface-resolvers.test.js` → red when owner, thread, source provenance, visibility, deletion, delivery, instrumentation, or read-port truth is absent.
 

@@ -17,8 +17,7 @@ function isSnapshot(value: unknown): value is MessageDispositionPreferenceSnapsh
     isDisposition(candidate.productDefault) &&
     (candidate.global === null || isDisposition(candidate.global)) &&
     (candidate.thread === null || isDisposition(candidate.thread)) &&
-    isDisposition(candidate.effective) &&
-    typeof candidate.onboardingSeen === 'boolean'
+    isDisposition(candidate.effective)
   );
 }
 

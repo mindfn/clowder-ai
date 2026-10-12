@@ -353,14 +353,6 @@ export const postMessageInputSchema = {
   contextAttachments: VersionBoundContextAttachmentsSchema.optional().describe(
     'Optional F063 ContextAttachments to persist on this authenticated cat message. Workspace-file references should carry the exact owner revision; attachment v:1 is only the format version and grants no write authority.',
   ),
-  streamDisposition: z
-    .enum(['independent', 'replace_final'])
-    .optional()
-    .default('independent')
-    .describe(
-      'How this callback relates to the provider final response. "independent" (DEFAULT) preserves a later final as a separate durable message. ' +
-        'Use "replace_final" only when this callback is the canonical replacement for the same logical final response; route persistence then keeps one bubble and merges stream metadata into it.',
-    ),
   threadId: postMessageThreadIdSchema
     .optional()
     .describe(
@@ -444,14 +436,6 @@ export const postMessageInputSchema = {
         ACTION_SUBJECT_REF_DESCRIPTION,
     ),
   agentKeyCatId: agentKeyCatIdSchema,
-  // F254 Phase A: acknowledge held — force send even when there are unseen messages
-  acknowledgeHeld: z
-    .boolean()
-    .optional()
-    .describe(
-      'F254 Freshness Gate escape hatch. Set to true to force-send your message even when the thread has unseen messages. ' +
-        'Use only after you have reviewed the held envelope previews and decided your message is still appropriate.',
-    ),
 };
 
 export type PostMessageRegistrationPrincipal = 'invocation' | 'agent-key' | 'unconfigured';
@@ -562,8 +546,9 @@ export const getThreadContextInputSchema = {
       'Response projection mode. "anchor" (DEFAULT — omit for normal browsing): token-lean previews with drillDown pointers to full content. ' +
         '"full": returns complete message bodies inside a bounded aggregate page; use nextCursor when hasMore=true. A persisted message larger than the page is returned as an honest anchor with a precise drill pointer; a transient queued body without a persisted message anchor remains unseen and says to retry after persistence. ' +
         'An oversized workflow SOP is likewise returned as an honest anchor that points to cat_cafe_get_workflow_sop instead of overflowing the aggregate envelope. ' +
-        'For freshness catch-up, set readIntent="unread" and responseMode="full" with no filters, then follow nextCursor until hasMore=false; only complete bodies advance read evidence. ' +
-        'GOTCHA: anchor previews are not a freshness closure and cannot prove queued messages were handled.',
+        'For a complete catch-up, set readIntent="unread" and responseMode="full" with no filters, then follow nextCursor until hasMore=false; only complete bodies may be delivery evidence. ' +
+        'The response contextScope names that selection: contextScope="unread_delta" contains only currently unread relevant messages; hasMore=false closes that selection, not all thread history. Use history or a messageId window to inspect older messages. ' +
+        'GOTCHA: anchor previews do not consume queued bodies and cannot prove queued messages were handled.',
     ),
   agentKeyCatId: agentKeyCatIdSchema,
 };
@@ -890,11 +875,6 @@ export const crossPostMessageInputSchema = {
         PROPOSED_ACTION_EXECUTABLE_CONTRACT_DESCRIPTION,
     ),
   agentKeyCatId: agentKeyCatIdSchema,
-  // F254 Phase A: acknowledge held — force send even when there are unseen messages
-  acknowledgeHeld: z
-    .boolean()
-    .optional()
-    .describe('F254 Freshness Gate escape hatch. Force-send despite unseen messages in the target thread.'),
 };
 
 export const listTasksInputSchema = {
@@ -957,7 +937,6 @@ async function _executePostMessage(
     replyTo?: string | undefined;
     clientMessageId?: string | undefined;
     targetCats?: string[] | undefined;
-    streamDisposition?: 'independent' | 'replace_final' | undefined;
     agentKeyCatId?: string | undefined;
     effectClass?: 'fyi' | 'coordinate' | 'investigate' | 'assign_work' | undefined;
     coordination?:
@@ -970,7 +949,6 @@ async function _executePostMessage(
     acceptedRevision?: string | undefined;
     action?: ActionSuccessorRequestMetadata | undefined;
     proposedAction?: ActionSuccessorRequestMetadata | undefined;
-    acknowledgeHeld?: boolean | undefined;
   },
   transportOptions?: CallbackTransportOptions,
 ): Promise<ToolResult> {
@@ -1014,7 +992,6 @@ async function _executePostMessage(
         {
           content: input.content,
           ...(input.contextAttachments?.length ? { contextAttachments: input.contextAttachments } : {}),
-          streamDisposition: input.streamDisposition ?? 'independent',
           ...(input.threadId ? { threadId: input.threadId } : {}),
           ...(input.replyTo ? { replyTo: input.replyTo } : {}),
           clientMessageId: input.clientMessageId ?? randomUUID(),
@@ -1028,7 +1005,6 @@ async function _executePostMessage(
           ...(input.acceptedRevision ? { acceptedRevision: input.acceptedRevision } : {}),
           ...(input.action ? { action: input.action } : {}),
           ...(input.proposedAction ? { proposedAction: input.proposedAction } : {}),
-          ...(input.acknowledgeHeld ? { acknowledgeHeld: true } : {}),
         },
         {
           enableOutbox: true,
@@ -1166,7 +1142,6 @@ export async function handlePostMessage(
     clientMessageId?: string | undefined;
     targetCats?: string[] | undefined;
     effectClass?: 'fyi' | 'coordinate' | 'investigate' | undefined;
-    streamDisposition?: 'independent' | 'replace_final' | undefined;
     coordination?:
       | { phase: 'active' | 'terminal'; id?: string | undefined; subjectRef?: string | undefined }
       | undefined;
@@ -1177,16 +1152,10 @@ export async function handlePostMessage(
     acceptedRevision?: string | undefined;
     agentKeyCatId?: string | undefined;
     action?: ActionSuccessorRequestMetadata | undefined;
-    acknowledgeHeld?: boolean | undefined;
   },
   transportOptions?: CallbackTransportOptions,
 ): Promise<ToolResult> {
   const hasInvocationCreds = getInvocationAuthSignal().hasFullCredentials;
-  if (input.streamDisposition === 'replace_final' && !hasInvocationCreds) {
-    return errorResult(
-      'post_message streamDisposition="replace_final" requires invocation-token credentials because there is no provider final stream to replace under agent-key auth.',
-    );
-  }
   if (input.threadId && hasInvocationCreds) {
     return errorResult(
       'post_message rejects threadId from invocation-token callers (F193 KD-1). ' +
@@ -1662,7 +1631,6 @@ export async function handleCrossPostMessage(input: {
   acceptedRevision?: string | undefined;
   action?: ActionSuccessorRequestMetadata | undefined;
   proposedAction?: ActionSuccessorRequestMetadata | undefined;
-  acknowledgeHeld?: boolean | undefined;
 }): Promise<ToolResult> {
   if (containsPawFeelMarker(input.content)) {
     return errorResult(
@@ -1771,7 +1739,6 @@ export async function handleCrossPostMessage(input: {
     ...(input.acceptedRevision ? { acceptedRevision: input.acceptedRevision } : {}),
     ...(input.action ? { action: input.action } : {}),
     ...(input.proposedAction ? { proposedAction: input.proposedAction } : {}),
-    ...(input.acknowledgeHeld ? { acknowledgeHeld: true } : {}),
   });
 }
 
@@ -3587,7 +3554,7 @@ export async function handleHoldBall(input: {
       isError: true,
     };
   }
-  const result = await callbackPost(
+  return callbackPost(
     '/api/callbacks/hold-ball',
     {
       reason: input.reason,
@@ -3598,35 +3565,9 @@ export async function handleHoldBall(input: {
     },
     agentKeyOptions(input),
   );
-
-  // F254 B2: Check for unresolved freshness notices after successful hold_ball.
-  // If the cat has unacknowledged notices, append a reminder to the result.
-  // Fail-open: reminder errors never block hold_ball.
-  if (!result.isError && getCallbackConfig(agentKeyOptions(input))) {
-    try {
-      const reminderResult = await callbackPost(
-        '/api/callbacks/freshness-hold-ball-reminder',
-        {},
-        agentKeyOptions(input),
-      );
-      if (!reminderResult.isError) {
-        const data = JSON.parse((reminderResult.content[0] as { text: string }).text);
-        if (data?.reminder?.text) {
-          result.content = [...result.content, { type: 'text', text: `\n\n${data.reminder.text}` }];
-        }
-      }
-    } catch {
-      // Fail-open: reminder check errors should never block hold_ball
-    }
-  }
-
-  return result;
 }
 
-/**
- * F167 #1449 Slice 1 — Task-ID-independent hold observability.
- * No input required; threadId + catId come from invocation auth.
- */
+/** Read the current invocation-bound hold without requiring its internal task ID. */
 export async function handleGetHoldStatus(): Promise<ToolResult> {
   return callbackGet('/api/callbacks/hold-ball/current');
 }
@@ -3644,29 +3585,6 @@ export async function handleGetCustodyEvents(input: {
   return callbackGet('/api/callbacks/custody-events', {
     sourceMessageId: input.sourceMessageId,
     ...(input.limit !== undefined ? { limit: String(input.limit) } : {}),
-  });
-}
-
-export async function handleCompleteManagedHold(input: { disposition: 'handled' | 'completed' }): Promise<ToolResult> {
-  return callbackPost('/api/callbacks/complete-managed-hold', { disposition: input.disposition });
-}
-
-/**
- * F167: complete the matched event-wait wake (deployment ready, PR wait satisfied, ...) this invocation was woken by.
- * The only input is the disposition: the wake, its carrier and the holder are derived server-side from the
- * invocation credentials, so there is nothing here that can name another wait, outcome, message or thread.
- */
-export async function handleCompleteEventWait(input: { disposition: 'handled' | 'completed' }): Promise<ToolResult> {
-  return callbackPost('/api/callbacks/complete-event-wait', { disposition: input.disposition });
-}
-
-export async function handleCompleteA2ADispatch(input: {
-  disposition: 'handled' | 'completed';
-  adoptSourceMessageId?: string;
-}): Promise<ToolResult> {
-  return callbackPost('/api/callbacks/complete-a2a-dispatch', {
-    disposition: input.disposition,
-    ...(input.adoptSourceMessageId ? { adoptSourceMessageId: input.adoptSourceMessageId } : {}),
   });
 }
 
@@ -3826,12 +3744,13 @@ export const callbackTools = [
       'Scarce dossier engagementPolicy seats receive effectClass=fyi or coordination.phase=terminal unread without waking; deliveredWithoutWake confirms delivery, not reading. Active coordination, actions and localReviewVerdict retain their wake. ' +
       'GOTCHA: action requires explicit clientMessageId + exactly one targetCats entry; ordinary single-cat notifications do not need action. ' +
       'For a direct Claim/Release chain, pass coordination.phase=active on work hops and terminal on the final delivery; terminal recipients may clean-stop without another @. ' +
-      'A terminal id or bound subject that conflicts with the incoming coordination fails with HTTP 409 before message persistence or wake; start genuinely new work with phase=active. ' +
+      'An unaddressed terminal transition whose id or bound subject conflicts with the incoming coordination fails with HTTP 409 before persistence. After an incoming terminal, any authored target is genuinely new active work even if the caller repeats a stale terminal label. ' +
+      'A reply after terminal is a quiet courtesy ACK only when it has no explicit routing credential; line-start @mentions and structured targetCats always start a new active routing generation and remain subject to the normal loop-streak guard. ' +
       'For a local review result, route an ordinary @author message with localReviewVerdict + exact reviewedHeadSha + reviewSubjectRef + acceptedSourceRef + acceptedRevision + clientMessageId. This durable fact needs no action lease, coordination generation, replacement, or issuer route. Public prose is never parsed. ' +
       'Existing standing uses claimOrigin="existing_standing" + groundingEvidenceRef; rejected custody uses returnToPredecessor and targets the persisted predecessor. ' +
       'GOTCHA: structured action metadata currently requires invocation-token auth; agent-key callers fail closed with the non-retryable action_agent_key_unsupported status and never send an unfenced fallback. ' +
       'F247: gpt-pro agent-key returns copy only replyTo=sourceMessageId from the runtime delta; the server admits it only when an exact server-custodied dispatch grant exists. ' +
-      'By default, a later provider final remains a separate durable message. Set streamDisposition="replace_final" only when this callback is the canonical replacement for that same final response. ' +
+      'A post_message is always its own durable message, separate from your final reply. ' +
       'To hand off without structured action identity, write @猫名 on its own line at the START of the line (sentence-internal @mention does NOT route). ' +
       'GOTCHA: This tool uses callback credentials that expire — if it fails with 401, fall back to line-start @mention in your response text. ' +
       'GOTCHA: Do NOT use this for routine replies — only for mid-task proactive messages when you need to share something before your response completes.',
@@ -3890,10 +3809,11 @@ export const callbackTools = [
     name: 'cat_cafe_get_thread_context',
     description:
       'Read messages from one thread, with token-lean anchor previews by default and optional full bodies, ranked keywords, or a bounded window around messageId. ' +
-      'Use when: browsing the current conversation, reading a different known threadId, finding relevant messages inside that thread, opening context around a known messageId, or a freshness notice asks you to catch up. ' +
+      'Use when: browsing the current conversation, reading a different known threadId, finding relevant messages inside that thread, opening context around a known messageId, or explicitly catching up. ' +
       'NOT for: finding features, decisions, plans, lessons, or unknown threads across project knowledge; use search_evidence or list_threads first. ' +
-      'Output: a bounded aggregate envelope with threadId, ordered messages, hasMore, and nextCursor when continuation is required; anchor mode includes drillDown pointers, while responseMode="full" returns complete bodies per ordinary item and includes same-target queued bodies. ' +
-      'GOTCHA: to follow nextCursor, keep the same limit, readIntent and all other read arguments; changing one requires a new read without cursor. Keyword ranking is best-effort over a bounded recent scan; scanCapped=true means older history may contain additional matches. A single item larger than the full-page budget falls back to an honest anchor; drill an oversized workflow SOP with cat_cafe_get_workflow_sop using the returned threadId. Anchor mode does not consume queued bodies or close freshness responsibility; history is the default selection even in full mode; for a freshness catch, set readIntent="unread" and responseMode="full" with no catId/keyword/messageId/before/after filters and follow nextCursor until hasMore=false. Pass threadId only to read a different thread; omit it for the current thread.',
+      'Output: a bounded aggregate envelope with threadId, ordered messages, contextScope, hasMore, and nextCursor when continuation is required; anchor mode includes drillDown pointers, while responseMode="full" returns complete bodies per ordinary item and includes same-target queued bodies. contextScope="unread_delta" contains only currently unread relevant messages; hasMore=false closes that selection, not all thread history. ' +
+      'When available, situation reports exact lifecycle-backed active runs; situation.complete=false means runtime evidence could not be fully joined, so do not infer execution from recent speech. ' +
+      'GOTCHA: keep the same limit, readIntent and other read arguments when following nextCursor; changing one requires a new read without cursor. Keyword ranking is best-effort over a bounded recent scan; scanCapped=true means older history may contain additional matches. A single item larger than the full-page budget returns an honest anchor with a precise drill pointer, not read evidence; drill an oversized workflow SOP with cat_cafe_get_workflow_sop using the returned threadId. History is the default selection even in full mode; for a complete catch-up, set readIntent="unread" and responseMode="full" without catId/keyword/messageId/before/after filters and follow nextCursor until hasMore=false. Pass threadId only for a different thread; omit it for the current thread.',
     inputSchema: getThreadContextInputSchema,
     handler: handleGetThreadContext,
     governance: {
@@ -4069,9 +3989,9 @@ export const callbackTools = [
       'GOTCHA: Requires threadId — use feat_index/list_threads plus thread truth to verify the exact owning thread; never guess a nearby thread. ' +
       'PAW-FEEL: The original [爪感差: ...] message is already collected. Cross-post only a marker-free sourceMessageId reference to a verified owner; if none exists, use cat_cafe_propose_thread (F128). New responsibility uses effectClass=assign_work plus proposedAction for Approval Hub review. ' +
       'GOTCHA: For Claim/Release coordination, pass coordination.phase=active on Claim/work hops and terminal on Release. ' +
-      'A terminal id or bound subject that conflicts with the incoming coordination fails with HTTP 409 before message persistence or wake; start genuinely new work with phase=active. ' +
+      'An unaddressed terminal transition whose id or bound subject conflicts with the incoming coordination fails with HTTP 409 before persistence. Cross-thread routing credentials after an incoming terminal always name genuinely new active work. ' +
       'For a local review result, route one ordinary @author cross-post with localReviewVerdict + exact reviewedHeadSha + reviewSubjectRef + acceptedSourceRef + acceptedRevision + clientMessageId. This durable fact needs no action lease, coordination generation, replacement, or issuer route; prose is never parsed. ' +
-      'The server carries a stable id across active hops; a direct courtesy ACK after terminal is recorded without waking another cat. ' +
+      'The server carries a stable id across active hops. Every cross-thread post supplies an explicit routing credential, so a line-start @mention or structured targetCats after terminal always starts a new active routing generation and remains subject to the normal loop-streak guard. ' +
       'If terminal reveals genuinely new work, start a new coordination with phase=active instead of ACKing the closed chain. ' +
       'GOTCHA: For a direct named external action, pass action + explicit clientMessageId + targetCats. For operator-gated new responsibility, pass proposedAction with effectClass=assign_work instead; action and assign_work remain mutually exclusive. ' +
       'Output: direct action admission posts and queues one fenced carrier; assign_work publishes one pending approval card and posts nothing to the target until approval atomically acquires the fence. ' +
@@ -4928,7 +4848,7 @@ export const callbackTools = [
       'GOTCHA: the counter is durable (SQLite-backed, per-node) — it survives API restarts. Admission is atomic (check+insert in a single transaction). Treat the 429 as a real governance boundary. ' +
       'GOTCHA: hold is an EXCEPTION state, not a default exit. Most turns should end with @ someone, not hold. ' +
       'GOTCHA (F167 Phase M): only hold for harness-INVISIBLE waits — external conditions nothing will call you back about (cloud review verdict, remote CI, external webhook). Background work the harness already tracks (a background Bash command, a spawned task) AUTO-RE-INVOKES you on completion; holding for that just stacks a redundant wake on top. Ask "will something call me back already?" — if yes, do NOT hold. A co-creator or another cat sending a message into this thread IS such a callback (it re-invokes you), so "waiting for co-creator to answer" must be @co-creator, never a hold. ' +
-      'GOTCHA: SINGLE-SLOT per (thread, cat) — calling hold_ball again while a previous hold is pending REPLACES the prior wake (prior taskId cancelled). This is intentional (KD-23): hold = "持一个球" exception, not a queue. If you need to track multiple waiting conditions, merge them into one nextStep (e.g. "等 CI + @co-creator 确认" 合并成一句). Sliding-window counter ticks on each successful hold; rejected 429 calls do not advance the window. ' +
+      'GOTCHA: SINGLE-SLOT per (thread, cat) — calling hold_ball again while a previous hold is pending REPLACES the prior wake (prior taskId cancelled). This is intentional (KD-23): hold = "持一个球" exception, not a queue. If you need to track multiple waiting conditions, merge them into one nextStep (e.g. "等 CI + @co-creator 确认" 合并成一句). Rolling-window counter still ticks per call. ' +
       'NEW (F167 Phase Q): event-backed retirement only works when waitSourceRef.expectedSignal is one of these exact structured keys: assignment, review_posted, ci_complete, comment_posted, managed_command_complete, user_message. Free-text values like "CI pass" remain valid narrative context but will NOT retire a timer by event, by design. ' +
       'NEW (F167 Phase P): wakeWhen — instead of a timed delay, specify a shell command to run. The server spawns it, captures output, and wakes you when it completes (or times out). Use for: pnpm gate, pnpm test, build commands — anything you would run_in_background and poll. wakeWhen is for LOCAL COMMANDS ONLY — it does not turn hold_ball into a universal "smart wait": waiting on a person is still @co-creator / @ that cat, waiting on a cloud event (PR / CI / issue) is still register_pr_tracking / register_issue_tracking. wakeWhen and wakeAfterMs are MUTUALLY EXCLUSIVE — provide exactly one.',
     inputSchema: {
@@ -5057,7 +4977,7 @@ export const callbackTools = [
     name: 'cat_cafe_get_custody_events',
     description:
       "Read your own thread's ball-custody ledger, read-only, starting at the first event that references a source message. " +
-      'Use when: a ball looks stuck or a terminal (complete_a2a_dispatch / complete_managed_hold) was refused and you need to see what the ledger actually recorded ' +
+      'Use when: a ball looks stuck and you need to inspect recorded protocol events without changing delivery or completion authority ' +
       '(handoff, dispatch/hold terminal and who wrote it, wake met, task done) and what the projection says now. ' +
       'Input: sourceMessageId (the message id the dispatch or wake came from) and optional limit (1-50, default 20). ' +
       'The thread is derived from your invocation auth; there is no thread parameter and an agent key is refused. ' +
@@ -5089,107 +5009,6 @@ export const callbackTools = [
       risk: { level: 'read', openWorld: false },
       runtimeProfiles: ['full'],
       targetExposure: 'lazy-discoverable',
-      standaloneReason: {
-        disposition: 'accepted-boundary',
-        kind: 'authority-boundary',
-        admissionRef: 'file:docs/features/F167-a2a-chain-quality.md',
-      },
-    },
-  }),
-  defineCanonicalTool({
-    name: 'cat_cafe_complete_managed_hold',
-    description:
-      'Terminally dispose the exact managed hold wake bound to this invocation. ' +
-      'Use when: the current turn was triggered by a managed hold wake, or a full-body read adopted one into this same invocation, and its work is actually handled/completed. ' +
-      'NOT for: ordinary holds, unfinished work, re-hold, a structured event wait (use cat_cafe_complete_event_wait), transfer, or unrelated task completion. ' +
-      'Output: marks the exact F264 target receipt handled and terminalizes the original F167 hold ball; ' +
-      'the server derives and fences threadId, holderCatId, invocationId, sourceMessageId, and taskId. ' +
-      'GOTCHA: full read, command exit, tests, merge truth, or ACK never substitute for this producer, ' +
-      'and the caller cannot select or close another subject. Full-read managedHoldDisposition guidance reports a unique pending source, ambiguity, or no obligation; never guess through ambiguity.',
-    inputSchema: {
-      disposition: z
-        .enum(['handled', 'completed'])
-        .describe(
-          'handled = wake consumed; completed = wake work completed. Both terminalize the exact original hold.',
-        ),
-    },
-    handler: handleCompleteManagedHold,
-    governance: {
-      implementationExport: 'handleCompleteManagedHold',
-      resourceFamily: 'task-workflow',
-      action: 'complete',
-      authority: 'callback-owner',
-      risk: { level: 'write', openWorld: false },
-      runtimeProfiles: ['full'],
-      standaloneReason: {
-        disposition: 'accepted-boundary',
-        kind: 'authority-boundary',
-        admissionRef: 'file:docs/features/F167-a2a-chain-quality.md',
-      },
-    },
-  }),
-  defineCanonicalTool({
-    name: 'cat_cafe_complete_a2a_dispatch',
-    description:
-      'Terminally dispose the exact ordinary A2A dispatch bound to this invocation. ' +
-      'Use when: this invocation has actually handled/completed its primary A2A request or another exact A2A source it read. ' +
-      'NOT for: user turns with no adopted A2A source, managed holds, unfinished work, re-hold, event wait (use cat_cafe_complete_event_wait), transfer, or unrelated task completion. ' +
-      'Output: terminalizes the exact F167 dispatch ball; the server derives and fences threadId, holderCatId, fromCatId, invocationId, and sourceMessageId. ' +
-      'GOTCHA: command exit, tests, merge truth, another coordination terminal, or ACK never substitute for this producer, ' +
-      'and the caller cannot supply authority for an unrelated source. If replaced, the error names the latest verified same-thread successor ' +
-      'event and any source message or coordination. ' +
-      "Exact read-source completion: pass adoptSourceMessageId from full-read a2aDispatchDisposition guidance to complete a dispatch that was not this invocation's " +
-      'own trigger. Ordinary turns require server-owned current execution and exact durable body exposure; Live keeps its carrier/read-evidence fence. Complete only the selected source after handling its work. Omit to complete the original trigger.',
-    inputSchema: {
-      disposition: z
-        .enum(['handled', 'completed'])
-        .describe('handled = exact A2A request consumed; completed = requested A2A work completed.'),
-      adoptSourceMessageId: z
-        .string()
-        .min(1)
-        .optional()
-        .describe(
-          'Exact already-read A2A source from full-read guidance. Server validates the current invocation and durable source exposure; Live also requires its carrier/read-evidence fence. Omit to complete the original trigger.',
-        ),
-    },
-    handler: handleCompleteA2ADispatch,
-    governance: {
-      implementationExport: 'handleCompleteA2ADispatch',
-      resourceFamily: 'task-workflow',
-      action: 'complete',
-      authority: 'callback-owner',
-      risk: { level: 'write', openWorld: false },
-      runtimeProfiles: ['full', 'desktop:live-companion'],
-      standaloneReason: {
-        disposition: 'accepted-boundary',
-        kind: 'authority-boundary',
-        admissionRef: 'file:docs/features/F167-a2a-chain-quality.md',
-      },
-    },
-  }),
-  defineCanonicalTool({
-    name: 'cat_cafe_complete_event_wait',
-    description:
-      'Terminally dispose the exact matched event-wait wake bound to this invocation (a deployment-ready, PR/issue wait satisfied or similar structured wait outcome that woke you). ' +
-      'Use when: the current turn was triggered by such a wake and the work it asked for is actually handled/completed, so there is nothing left to re-hold, hand off or re-arm. ' +
-      'NOT for: unfinished work (use hold_ball, register another typed wait, or hand off in a structured way), a wake that only reported its wait ended (subject closed or deadline passed: nothing is owed, so there is nothing to complete), managed holds (cat_cafe_complete_managed_hold), ordinary A2A dispatches (cat_cafe_complete_a2a_dispatch), or closing the underlying Task (that stays its own typed action). ' +
-      'Output: records the exact terminal for this wake on the thread ball; the server derives and fences threadId, holderCatId, invocationId, the wake message, waitId and outcomeId from your invocation, so you can only choose handled or completed. ' +
-      "If you no longer held the ball when you finish, the terminal is recorded as retired: it closes only this obligation and leaves the other holder's ball untouched. " +
-      'GOTCHA: replaying it is idempotent; a successor invocation of the same wake gets the already-recorded terminal; inside one invocation a conflicting value is refused. ' +
-      'Closing the Task, a command exit, tests, merge truth or an ACK never substitute for this producer.',
-    inputSchema: {
-      disposition: z
-        .enum(['handled', 'completed'])
-        .describe('handled = the wake was consumed; completed = the work the wake asked for was completed.'),
-    },
-    handler: handleCompleteEventWait,
-    governance: {
-      implementationExport: 'handleCompleteEventWait',
-      resourceFamily: 'task-workflow',
-      action: 'complete',
-      authority: 'callback-owner',
-      risk: { level: 'write', openWorld: false },
-      runtimeProfiles: ['full'],
       standaloneReason: {
         disposition: 'accepted-boundary',
         kind: 'authority-boundary',

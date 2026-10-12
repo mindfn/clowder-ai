@@ -24,7 +24,7 @@ export function appendUser(store: MessageStore, content: string, idempotencyKey:
   return store.appendIdempotent({
     userId: 'owner',
     threadId: 'home',
-    catId: null,
+    from: { kind: 'user', userId: 'owner' },
     content,
     mentions: [],
     timestamp,
@@ -38,7 +38,7 @@ export function fixture(sourceTimestamp = Date.now(), prior = 0) {
     store.append({
       userId: 'owner',
       threadId: 'home',
-      catId: scope.catId,
+      from: { kind: 'agent', catId: scope.catId },
       content: 'earlier conversation',
       mentions: [],
       timestamp: sourceTimestamp - 10_000 + i,

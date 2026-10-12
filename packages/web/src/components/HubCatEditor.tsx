@@ -157,8 +157,6 @@ export function HubCatEditor(props: HubCatEditorProps) {
               modelOptions={modelOptions}
               availableProfiles={availableProfiles}
               loadingProfiles={hasEmptyCreatableAccounts ? true : loadingProfiles}
-              effectiveCodexCarrier={cat?.codexCarrier}
-              codexLocalCapable={cat ? cat.cli != null : true}
               onChange={patchForm}
             />
           )}
@@ -201,7 +199,7 @@ export function HubCatEditor(props: HubCatEditorProps) {
               codexSpeedVisible={
                 form.clientId === 'openai' &&
                 selectedProfile?.authType === 'oauth' &&
-                !form.acpEnabled &&
+                form.carrier !== 'acp' &&
                 (cat ? cat.cli != null : true)
               }
               codexFastSupported={supportsCodexFastModel(form.defaultModel)}

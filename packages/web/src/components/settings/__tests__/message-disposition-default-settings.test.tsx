@@ -15,7 +15,6 @@ const snapshot = (global: MessageDispositionPreferenceSnapshot['global']): Messa
   thread: null,
   effective: global ?? 'next_work',
   source: global ? 'global' : 'product',
-  onboardingSeen: true,
 });
 
 const response = (body: MessageDispositionPreferenceSnapshot, ok = true) => ({

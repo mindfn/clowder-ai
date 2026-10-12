@@ -1,6 +1,6 @@
-import type { CatId, RecallOpportunityV1 } from '@cat-cafe/shared';
+import type { RecallOpportunityV1 } from '@cat-cafe/shared';
 import type { IMessageStore } from '../../../cats/services/stores/ports/MessageStore.js';
-import { isDurablyReadableByCat, isTimelinePublished } from '../../../cats/services/stores/visibility.js';
+import { isTimelinePublished } from '../../../cats/services/stores/visibility.js';
 import { prepareAbstractiveBatch, toAbstractiveMessages } from '../../abstractive-summary-input.js';
 import type { LunaThreadLibrarian } from '../../curation/LunaThreadLibrarian.js';
 import type { ThreadOverviewRepository } from '../../curation/ThreadOverviewRepository.js';
@@ -142,9 +142,7 @@ export class ThreadOverviewMemoryCueSource implements MemoryCueResolver {
       source._tombstone ||
       source.recall ||
       source.visibility === 'whisper' ||
-      !(input.consumerCatId
-        ? isDurablyReadableByCat(source, input.consumerCatId as CatId)
-        : isTimelinePublished(source))
+      !isTimelinePublished(source)
     )
       return null;
     let cursor: string | undefined;

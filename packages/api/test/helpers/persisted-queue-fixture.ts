@@ -1,40 +1,70 @@
 import assert from 'node:assert/strict';
 import { randomUUID } from 'node:crypto';
+import { createCatId } from '@cat-cafe/shared';
 import { InvocationQueue } from '../../src/domains/cats/services/agents/invocation/InvocationQueue.js';
-import type { InvocationRegistry } from '../../src/domains/cats/services/agents/invocation/InvocationRegistry.js';
 import { InvocationTracker } from '../../src/domains/cats/services/agents/invocation/InvocationTracker.js';
+import type { PersistedQueueDeliveryInput } from '../../src/domains/cats/services/agents/invocation/PersistedQueueDelivery.js';
 import { PersistedQueueDelivery } from '../../src/domains/cats/services/agents/invocation/PersistedQueueDelivery.js';
-import { QueuedMessageCustodyCoordinator } from '../../src/domains/cats/services/agents/invocation/QueuedMessageCustodyCoordinator.js';
+import type { QueueProcessorDeps } from '../../src/domains/cats/services/agents/invocation/QueueProcessor.js';
 import { QueueProcessor } from '../../src/domains/cats/services/agents/invocation/QueueProcessor.js';
+import { InMemoryQueueLedgerStore } from '../../src/domains/cats/services/agents/invocation/queue-ledger/InMemoryQueueLedgerStore.js';
+import { queueEntryId } from '../../src/domains/cats/services/agents/invocation/queue-ledger/QueueLedger.js';
+import type { RouteExecutionOptions } from '../../src/domains/cats/services/agents/routing/route-helpers.js';
 import { InMemoryTurnExecutionStore } from '../../src/domains/cats/services/stores/memory/InMemoryTurnExecutionStore.js';
 import { InvocationRecordStore } from '../../src/domains/cats/services/stores/ports/InvocationRecordStore.js';
-import { MessageStore } from '../../src/domains/cats/services/stores/ports/MessageStore.js';
+import {
+  MessageStore,
+  settleLifecycleResponseInputs,
+} from '../../src/domains/cats/services/stores/ports/MessageStore.js';
 
-/** Real admission, QueueProcessor and durable custody, with a deterministic provider boundary that never calls a model. */
+/** Actual atomic admission/QueueProcessor/child History; controlled provider, not a model or successful Task verdict. */
 export function createPersistedQueueFixture(
   messages = new MessageStore(),
-  registry?: Pick<InvocationRegistry, 'create'>,
+  settings: {
+    registry?: Pick<
+      import('../../src/domains/cats/services/agents/invocation/InvocationRegistry.js').InvocationRegistry,
+      'create'
+    >;
+    ledger?: InMemoryQueueLedgerStore;
+    liveCompanionSessions?: QueueProcessorDeps['liveCompanionSessions'];
+    onExecution?: (options: RouteExecutionOptions) => Promise<void>;
+    onAdmitted?: (
+      message?: import('../../src/domains/cats/services/stores/ports/MessageStore.js').StoredMessage,
+    ) => void;
+  } = {},
 ) {
-  const queue = new InvocationQueue();
+  const ledger = settings.ledger ?? new InMemoryQueueLedgerStore();
+  let processor: QueueProcessor;
   const tracker = new InvocationTracker();
+  const queue = new InvocationQueue(ledger, {
+    invocationTracker: tracker,
+    resolveTargets: async (requested) => (requested.length ? [...requested] : ['opus']),
+    onAdmitted: ({ threadId, message }) => {
+      settings.onAdmitted?.(message);
+      void processor.requestDrain(threadId);
+    },
+  });
   const records = new InvocationRecordStore();
   const turns = new InMemoryTurnExecutionStore();
-  const coordinator = new QueuedMessageCustodyCoordinator({ messageStore: messages });
-  const starts: { threadId: string; userId: string; invocationId: string }[] = [];
+  const starts: {
+    threadId: string;
+    userId: string;
+    invocationId: string;
+    parentInvocationId: string;
+    messageIds: readonly string[];
+    ownerAuthProvenance: unknown;
+  }[] = [];
   const completed: Promise<void>[] = [];
   const releases: (() => void)[] = [];
-  const providerControls = new Map<string, { release: () => void; settled: Promise<void> }>();
-  const credentials = new Map<string, { invocationId: string; callbackToken: string }>();
-  let additionalPromptMessageIds: string[] = [];
-  const processor = new QueueProcessor({
+  processor = new QueueProcessor({
     queue,
+    liveCompanionSessions: settings.liveCompanionSessions,
     invocationTracker: tracker,
     messageStore: messages,
-    queueCustodyCoordinator: coordinator,
     turnExecutionStore: turns,
     invocationRecordStore: {
       async create(input) {
-        return records.create(input as Parameters<InvocationRecordStore['create']>[0]);
+        return records.create(input as unknown as Parameters<InvocationRecordStore['create']>[0]);
       },
       get: (id) => records.get(id),
       async update(id, input) {
@@ -44,27 +74,23 @@ export function createPersistedQueueFixture(
     socketManager: { emitToUser() {}, broadcastAgentMessage() {}, broadcastToRoom() {} },
     log: { info() {}, warn() {}, error() {} },
     router: {
-      async *routeExecution(userId, _content, threadId, _messageId, targets, _intent, options) {
+      async resolveExplicitTargets(requestedCatIds) {
+        return [...requestedCatIds];
+      },
+      async resolveConversationTargetsAtAdmission(requestedCatIds) {
+        return [...requestedCatIds];
+      },
+      async *routeExecution(userId, _content, threadId, messageId, targets, _intent, options) {
         const parentInvocationId = String(options?.parentInvocationId);
-        const catId = targets[0]!;
-        const auth = await registry?.create(
-          userId,
-          catId,
-          threadId,
-          parentInvocationId,
-          undefined,
-          undefined,
-          _messageId,
-          'strict',
-        );
-        const invocationId = auth?.invocationId ?? randomUUID();
-        if (auth) credentials.set(invocationId, auth);
-        starts.push({ threadId, userId, invocationId });
+        const target = targets[0];
+        if (!target) throw new Error('persisted Queue fixture requires one target');
+        const catId = createCatId(target);
+        const invocationId = settings.registry
+          ? (await settings.registry.create(userId, catId, threadId)).invocationId
+          : randomUUID();
+        assert.ok(messageId, 'persisted Queue fixture requires a public source');
+        const messageIds = options?.persistedPromptMessageIds ?? [];
         const startedAt = Date.now();
-        const promptMessageIds = [
-          ...new Set([...(options?.persistedPromptMessageIds ?? []), ...additionalPromptMessageIds]),
-        ];
-        additionalPromptMessageIds = [];
         turns.createRunning({
           invocationId,
           parentInvocationId,
@@ -73,47 +99,63 @@ export function createPersistedQueueFixture(
           catId,
           startedAt,
           executionKind: 'ordinary',
-          causal: {
-            triggerMessageId: _messageId,
-            ...(promptMessageIds.length ? { coveredMessageIds: promptMessageIds } : {}),
-          },
+          causal: { triggerMessageId: messageId, ...(messageIds.length ? { coveredMessageIds: [...messageIds] } : {}) },
         });
+        const lifecycle = await options?.onLifecycleInvocationStarted?.({
+          threadId,
+          userId,
+          catId,
+          invocationId,
+          parentInvocationId,
+          startedAt,
+        });
+        assert.ok(lifecycle);
         yield {
           type: 'system_info',
           catId,
           turnInvocationId: invocationId,
           turnExecutionStartedAt: startedAt,
+          lifecycleResponseMessageId: lifecycle.responseMessageId,
+          lifecyclePriorFrontierMessageId: lifecycle.priorFrontierMessageId,
           timestamp: startedAt,
           extra: { turnExecution: { executionKind: 'ordinary', invocationId, parentInvocationId } },
         };
         const exposed = options?.onPromptMessagesExposed;
         assert.equal(typeof exposed, 'function');
-        if (typeof exposed === 'function')
-          await exposed({
-            threadId,
-            userId,
-            catId,
-            invocationId,
-            messageIds: promptMessageIds,
-            seenAt: Date.now(),
-          });
+        await exposed?.({ threadId, userId, catId, invocationId, messageIds, seenAt: Date.now() });
+        await settings.onExecution?.(options);
+        starts.push({
+          threadId,
+          userId,
+          invocationId,
+          parentInvocationId,
+          messageIds,
+          ownerAuthProvenance: options?.ownerAuthProvenance,
+        });
         let finish!: () => void;
-        const settled = new Promise<void>((resolve) => {
-          finish = resolve;
-        });
-        completed.push(settled);
-        await new Promise<void>((resolve) => {
-          releases.push(resolve);
-          providerControls.set(invocationId, { release: resolve, settled });
-        });
-        // Release the fixture's provider without fabricating a successful work/Task verdict.
+        completed.push(
+          new Promise<void>((resolve) => {
+            finish = resolve;
+          }),
+        );
         try {
-          if (turns.get(invocationId)?.status === 'running')
-            turns.transitionTerminal(invocationId, {
-              status: 'failed',
-              terminalReason: 'fixture_provider_released',
-              endedAt: Date.now(),
-            });
+          await new Promise<void>((resolve) => releases.push(resolve));
+          turns.transitionTerminal(invocationId, {
+            status: 'failed',
+            terminalReason: 'fixture_provider_released',
+            endedAt: Date.now(),
+          });
+          const terminal = messages.commitLifecycleResponseTerminal(lifecycle.responseMessageId, {
+            invocationId,
+            status: 'failed',
+            completedAt: Date.now(),
+            content: '',
+            mentions: [],
+            origin: 'stream',
+            reason: 'fixture_provider_released',
+          });
+          assert.ok(terminal.kind === 'applied' || terminal.kind === 'replayed');
+          await settleLifecycleResponseInputs(messages, terminal.message, lifecycle.responseMessageId);
           yield { type: 'done', catId, invocationId, timestamp: Date.now(), isError: true };
         } finally {
           finish();
@@ -125,49 +167,80 @@ export function createPersistedQueueFixture(
   const delivery = new PersistedQueueDelivery({
     messages,
     queue,
-    progress: (entry, targetCatId) => processor.progressOwnedCarrier(entry, targetCatId),
+    progress: (entry, target) => processor.progressOwnedCarrier(entry, target),
   });
+  const admissions: PersistedQueueDeliveryInput[] = [];
+  const deliver = delivery.deliver.bind(delivery);
+  delivery.deliver = async (input) => {
+    const result = await deliver(input);
+    admissions.push(input);
+    return result;
+  };
+  function assertExactChild(messageId: string, started: (typeof starts)[number]) {
+    assert.notEqual(started.invocationId, started.parentInvocationId, 'parent is not an exact child witness');
+    assert.ok(records.get(started.parentInvocationId));
+    const turn = turns.get(started.invocationId);
+    assert.ok(turn);
+    assert.equal(turn.parentInvocationId, started.parentInvocationId);
+    const source = messages.getById(messageId);
+    assert.ok(source && !Object.hasOwn(source, 'queueCustody'));
+    assert.equal(source?.lifecycle?.kind, 'input');
+    if (source?.lifecycle?.kind !== 'input') assert.fail('Source has no canonical input lifecycle');
+    const ref = source.lifecycle.dispatchRefs?.find((candidate) => candidate.targetId === turn.catId);
+    const receiver =
+      source.visibility === 'whisper'
+        ? messages
+            .getByThread(started.threadId, 100, started.userId)
+            .find(
+              (message) =>
+                message.lifecycle?.kind === 'response' && message.lifecycle.invocationId === started.invocationId,
+            )
+        : ref
+          ? messages.getById(ref.statusMessageId)
+          : undefined;
+    assert.equal(receiver?.lifecycle?.kind, 'response');
+    if (receiver?.lifecycle?.kind !== 'response') assert.fail('Exact receiver response is missing');
+    assert.equal(receiver.lifecycle.invocationId, started.invocationId);
+    if (source.visibility === 'whisper') {
+      assert.ok(receiver.lifecycle.inputEntryIds.includes(queueEntryId(source.id)));
+      assert.equal(
+        receiver.lifecycle.inputMessageIds.includes(source.id),
+        false,
+        'public response must not expose private input identity',
+      );
+      assert.ok(turn.causal.coveredMessageIds?.includes(source.id));
+    } else {
+      assert.ok(ref, 'public input has its exact receiver dispatch reference');
+    }
+    return started.invocationId;
+  }
   async function waitForAwakening(messageId: string) {
-    for (let attempt = 0; attempt < 100; attempt += 1) {
-      const message = messages.getById(messageId);
-      const catId = message?.mentions[0];
-      const id = catId && message?.queueCustody?.awakenedInvocationIdByCatId?.[catId];
-      if (id) {
-        const turn = turns.get(id);
-        assert.ok(turn);
-        assert.ok(records.get(turn.parentInvocationId));
-        return id;
-      }
+    const deadline = Date.now() + 2000;
+    for (;;) {
+      const started = starts.find((candidate) => candidate.messageIds.includes(messageId));
+      if (started) return assertExactChild(messageId, started);
+      if (Date.now() >= deadline) assert.fail('QueueProcessor did not persist exact child admission and exposure');
       await new Promise<void>((resolve) => setTimeout(resolve, 5));
     }
-    assert.fail('QueueProcessor did not persist the admitted child awakening');
   }
   async function close() {
-    releases.splice(0).forEach((release) => release());
+    releases.splice(0).forEach((release) => {
+      release();
+    });
     await Promise.all(completed);
   }
   return {
+    ledger,
     queue,
     tracker,
     records,
     turns,
-    coordinator,
     processor,
     delivery,
+    admissions,
     messages,
     starts,
     waitForAwakening,
     close,
-    credentials,
-    // Fixture provider explicitly consumes these queued bodies in its next prompt; the production exposure writer persists them.
-    coverOnNextProviderStart(messageIds: string[]) {
-      additionalPromptMessageIds = [...messageIds];
-    },
-    async releaseProvider(invocationId: string) {
-      const control = providerControls.get(invocationId);
-      assert.ok(control, 'exact provider must have started');
-      control.release();
-      await control.settled;
-    },
   };
 }

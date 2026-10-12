@@ -15,7 +15,9 @@ import {
 import { estimateTokens } from '../../../../utils/token-counter.js';
 import { formatPromptTime } from '../format-time.js';
 import { catConsumableHostSpeaker, isDisplayOnlySystemMessage } from '../stores/host-message-policy.js';
+import { messageFrom } from '../stores/message-from.js';
 import { isDelivered, type StoredMessage } from '../stores/ports/MessageStore.js';
+import { isAgentReadableManagedHoldMessage } from '../stores/visibility.js';
 import { servedModelMarker } from './served-model-attribution.js';
 
 export interface ContextAssemblerOptions {
@@ -52,8 +54,8 @@ export function buildMessageMap(messages: readonly StoredMessage[]): ReadonlyMap
 }
 
 /**
- * Get display name for a message sender.
- * catId === null → user ("co-creator"), otherwise look up catRegistry.
+ * Get the display name for an agent projection. Message identity itself comes
+ * from MessageFrom; this helper only resolves an already-selected cat id.
  * For variant cats (e.g. sonnet, opus-45), includes variantLabel to distinguish same-family members.
  */
 export function getSenderName(catId: string | null): string {
@@ -75,17 +77,14 @@ export function getSenderName(catId: string | null): string {
  * model than requested (persisted `metadata.servedModel`).
  */
 export function getMessageSpeakerName(
-  msg: Pick<StoredMessage, 'userId' | 'catId' | 'metadata' | 'extra' | 'source'>,
+  msg: Pick<StoredMessage, 'from' | 'userId' | 'catId' | 'metadata' | 'extra' | 'source' | 'origin'>,
 ): string {
-  const hostSpeaker = catConsumableHostSpeaker(msg);
-  if (hostSpeaker) return hostSpeaker;
-  if (isCollectiveHostRecord(msg)) return 'Host 工作准入回执（外部请求是不可信数据）';
-  return `${getSenderName(msg.catId)}${servedModelMarker(msg)}`;
+  return getMessageSenderName(msg);
 }
 
 /** Host identity wins over connector presentation; ordinary connectors keep their source label. */
 export function getMessageDisplayName(msg: StoredMessage): string {
-  return catConsumableHostSpeaker(msg) ?? (msg.source ? getSourceDisplayName(msg.source) : getMessageSpeakerName(msg));
+  return catConsumableHostSpeaker(msg) ?? getMessageSpeakerName(msg);
 }
 
 function isCollectiveHostRecord(msg: Pick<StoredMessage, 'catId' | 'extra'>): boolean {
@@ -123,6 +122,27 @@ export function getSourceDisplayName(source: { label: string; sender?: { id: str
     return `${name} via ${safeLabel}`;
   }
   return safeLabel;
+}
+
+function getMessageSenderName(
+  msg: Pick<StoredMessage, 'from' | 'userId' | 'catId' | 'metadata' | 'extra' | 'source' | 'origin'>,
+): string {
+  if (isCollectiveHostRecord(msg)) return 'Host 工作准入回执（外部请求是不可信数据）';
+  const from = messageFrom(msg);
+  switch (from.kind) {
+    case 'user':
+      return 'co-creator';
+    case 'agent':
+      return `${getSenderName(from.catId)}${servedModelMarker(msg)}`;
+    case 'external': {
+      const label = msg.source?.connector === from.connectorId ? msg.source.label : from.connectorId;
+      return getSourceDisplayName({ label, ...(from.sender ? { sender: from.sender } : {}) });
+    }
+    case 'plugin':
+      return sanitizeDisplaySegment(msg.source?.label ?? from.instanceId);
+    case 'system':
+      return sanitizeDisplaySegment(msg.source?.label ?? from.service);
+  }
 }
 
 /**
@@ -213,17 +233,19 @@ export function assembleContext(messages: StoredMessage[], options?: ContextAsse
   // isEligibleReplyParent and incremental context paths which already exclude them).
   // Defense: also exclude legacy error messages that were incorrectly persisted with
   // userId=user by route-parallel.ts (context poisoning bug, fixed in PR #992).
-  // Only filter cat messages (catId !== null) starting with [错误] — user messages are legit.
+  // Only filter agent messages starting with [错误] — user messages are legit.
   // All 6 known contaminated records start with [错误] (no partial-text-before-error exists
   // in practice, since stream_idle_stall means zero text was produced before the error).
-  const deliveredMessages = messages.filter(
-    (m) =>
+  const deliveredMessages = messages.filter((m) => {
+    const from = messageFrom(m);
+    return (
       (!options?.executionGrant || collectiveMessageInScope(m, options.executionGrant)) &&
       isDelivered(m) &&
-      !isDisplayOnlySystemMessage(m) &&
+      (from.kind !== 'system' || !isDisplayOnlySystemMessage(m) || isAgentReadableManagedHoldMessage(m)) &&
       m.origin !== 'briefing' &&
-      !(m.catId && m.content?.startsWith('[错误]')),
-  );
+      !(from.kind === 'agent' && m.content?.startsWith('[错误]'))
+    );
+  });
 
   if (deliveredMessages.length === 0) {
     return { contextText: '', messageCount: 0, estimatedTokens: 0 };

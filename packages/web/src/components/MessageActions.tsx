@@ -16,11 +16,12 @@ import { useToastStore } from '@/stores/toastStore';
 import { apiFetch } from '@/utils/api-client';
 import { getUserId } from '@/utils/userId';
 import { ConfirmDialog } from './ConfirmDialog';
+import { CopyIdButton } from './CopyIdButton';
 import { createQuoteContextAttachment } from './chat-context-reference';
 import { describeMessageInvocationTrajectory, openMessageInvocationTrajectory } from './InvocationTrajectoryAnchor';
 import { LiveSelectionAnnotationAction } from './LiveSelectionAnnotationAction';
 import { MessageActionSlotProvider } from './MessageActionSlot';
-import { MessageActionsDock, MessageOverflowItems } from './message-v2/MessageActionsDock';
+import { MessageActionsDock } from './message-v2/MessageActionsDock';
 import { MessageActionsOverlay } from './message-v2/MessageActionsOverlay';
 import {
   MessageActionOwnershipProvider,
@@ -34,7 +35,6 @@ import { useShellCopy } from './shell/shell-copy';
 import { useShellPresentation } from './shell/shell-presentation';
 import { pushThreadRouteWithHistory } from './ThreadSidebar/thread-navigation';
 import { TransferTargetPicker } from './TransferTargetPicker';
-import { TrueRecallActionButton } from './TrueRecallActionButton';
 import { useMessageAnnotationMarkers } from './useMessageAnnotationMarkers';
 
 function showErrorToast(title: string, body?: Record<string, unknown>) {
@@ -46,13 +46,7 @@ function showErrorToast(title: string, body?: Record<string, unknown>) {
   });
 }
 
-type DialogState =
-  | { type: 'none' }
-  | { type: 'soft-delete' }
-  | { type: 'hard-delete'; threadTitle: string | null }
-  | { type: 'edit'; editedContent: string }
-  | { type: 'branch-confirm'; editedContent: string }
-  | { type: 'branch-direct' };
+type DialogState = { type: 'none' } | { type: 'soft-delete' } | { type: 'branch-edit'; editedContent: string };
 
 interface MessageActionsProps {
   message: ChatMessage;
@@ -241,6 +235,12 @@ export function MessageActions({
   const canAct = (isUser || isAssistant) && !message.isStreaming && !isRecalled;
   // #699: Reply is available on all message types (not just user/assistant)
   const canReply = !message.isStreaming && !isRecalled;
+  // A processing lifecycle can exist before its assistant bubble has any body.
+  // In that state MessageActionSlot has not mounted, so the legacy fallback dock
+  // would float over the author row. Wait for the real bubble-owned slot instead.
+  const waitsForResponseBubble =
+    message.lifecycle?.kind === 'response' && message.lifecycle.status === 'processing' && !actionSlot;
+  const canShowActions = canReply && !waitsForResponseBubble;
   const hasSelectionShortcut = canAct && selectionEligible && Boolean(onEnterSelection);
   /* The author row owns a stable horizontal slot. Painting that slot on message hover cannot
    * move the message, and toolbar-local focus keeps unrelated body controls from summoning it.
@@ -272,7 +272,6 @@ export function MessageActions({
     if (!overflowOpen && !compactOpen) return;
     const closeOnEscape = (event: KeyboardEvent) => {
       if (event.key !== 'Escape') return;
-      setOverflowOpen(false);
       setCompactOpen(false);
     };
     window.addEventListener('keydown', closeOnEscape);
@@ -293,21 +292,9 @@ export function MessageActions({
 
   const handleSoftDelete = useCallback(() => setDialog({ type: 'soft-delete' }), []);
 
-  const handleHardDelete = useCallback(async () => {
-    try {
-      const res = await apiFetch(`/api/threads/${threadId}`, { method: 'GET' });
-      const thread = res.ok ? await res.json() : null;
-      setDialog({ type: 'hard-delete', threadTitle: thread?.title ?? null });
-    } catch {
-      setDialog({ type: 'hard-delete', threadTitle: null });
-    }
-  }, [threadId]);
-
-  const handleEdit = useCallback(() => {
-    setDialog({ type: 'edit', editedContent: message.content });
+  const handleBranch = useCallback(() => {
+    setDialog({ type: 'branch-edit', editedContent: message.content });
   }, [message.content]);
-
-  const handleBranchDirect = useCallback(() => setDialog({ type: 'branch-direct' }), []);
 
   const confirmSoftDelete = useCallback(async () => {
     setDialog({ type: 'none' });
@@ -328,34 +315,10 @@ export function MessageActions({
     }
   }, [message.id, threadId, removeThreadMessage]);
 
-  const confirmHardDelete = useCallback(async () => {
-    if (dialog.type !== 'hard-delete') return;
-    const confirmTitle = dialog.threadTitle ?? '确认删除';
-    setDialog({ type: 'none' });
-    try {
-      const res = await apiFetch(`/api/messages/${message.id}`, {
-        method: 'DELETE',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ userId: getUserId(), mode: 'hard', confirmTitle }),
-      });
-      if (res.ok) {
-        removeThreadMessage(threadId, message.id);
-      } else {
-        const body = await res.json().catch(() => ({}));
-        showErrorToast('删除失败', body);
-      }
-    } catch {
-      showErrorToast('删除失败');
-    }
-  }, [dialog, message.id, threadId, removeThreadMessage]);
-
-  const handleBranchConfirm = useCallback(() => {
-    if (dialog.type !== 'edit') return;
-    setDialog({ type: 'branch-confirm', editedContent: dialog.editedContent });
-  }, [dialog]);
-
+  const branchingRef = useRef(false);
   const confirmBranch = useCallback(async () => {
-    if (dialog.type !== 'branch-confirm') return;
+    if (dialog.type !== 'branch-edit' || branchingRef.current) return;
+    branchingRef.current = true;
     const { editedContent } = dialog;
     setDialog({ type: 'none' });
     try {
@@ -377,33 +340,10 @@ export function MessageActions({
       }
     } catch {
       showErrorToast('分支创建失败');
-    }
-  }, [dialog, message.id, message.content, threadId]);
-
-  const branchingRef = useRef(false);
-  const confirmBranchDirect = useCallback(async () => {
-    if (branchingRef.current) return;
-    branchingRef.current = true;
-    setDialog({ type: 'none' });
-    try {
-      const res = await apiFetch(`/api/threads/${threadId}/branch`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ fromMessageId: message.id, userId: getUserId() }),
-      });
-      if (res.ok) {
-        const { threadId: newThreadId } = await res.json();
-        pushThreadRouteWithHistory(newThreadId, typeof window !== 'undefined' ? window : undefined);
-      } else {
-        const body = await res.json().catch(() => ({}));
-        showErrorToast('分支创建失败', body);
-      }
-    } catch {
-      showErrorToast('分支创建失败');
     } finally {
       branchingRef.current = false;
     }
-  }, [message.id, threadId]);
+  }, [dialog, message.id, message.content, threadId]);
 
   const close = useCallback(() => setDialog({ type: 'none' }), []);
 
@@ -464,17 +404,7 @@ export function MessageActions({
 
   const overflowMenuItems =
     presentation === 'v2' ? (
-      <MessageOverflowItems
-        messageId={message.id}
-        onBranch={() => {
-          setOverflowOpen(false);
-          handleBranchDirect();
-        }}
-        onPermanent={() => {
-          setOverflowOpen(false);
-          handleHardDelete();
-        }}
-      />
+      <CopyIdButton messageId={message.id} />
     ) : (
       <>
         <button
@@ -483,21 +413,10 @@ export function MessageActions({
           className="min-h-11 w-full px-3 py-2 text-left text-sm text-cafe-secondary transition-colors hover:bg-cafe-surface-elevated hover:text-cafe-primary"
           onClick={() => {
             setOverflowOpen(false);
-            handleBranchDirect();
+            handleBranch();
           }}
         >
           从这里分支
-        </button>
-        <button
-          type="button"
-          role="menuitem"
-          className="min-h-11 w-full px-3 py-2 text-left text-sm text-conn-red-text transition-colors hover:bg-cafe-surface-elevated"
-          onClick={() => {
-            setOverflowOpen(false);
-            handleHardDelete();
-          }}
-        >
-          永久删除
         </button>
       </>
     );
@@ -506,7 +425,6 @@ export function MessageActions({
     presentation === 'v2' ? (
       <MessageActionsDock
         message={message}
-        threadId={threadId}
         canAct={canAct}
         isUser={isUser}
         compact={compactPresentation}
@@ -517,12 +435,17 @@ export function MessageActions({
         }
         onSelect={hasSelectionShortcut ? () => onEnterSelection?.(message.id) : undefined}
         onReply={() =>
-          useChatStore
-            .getState()
-            .setReplyTo({ id: message.id, content: message.content, senderCatId: message.catId ?? null, threadId })
+          useChatStore.getState().setReplyTo({
+            id: message.id,
+            content: message.content,
+            from: message.from,
+            source: message.source,
+            senderCatId: message.catId ?? null,
+            threadId,
+          })
         }
         onTrajectory={invocationTrajectory ? () => openMessageInvocationTrajectory(message, threadId) : undefined}
-        onEdit={handleEdit}
+        onBranch={handleBranch}
         onDelete={handleSoftDelete}
         onMore={() => {
           setForceOverflowSheet(false);
@@ -578,6 +501,8 @@ export function MessageActions({
               useChatStore.getState().setReplyTo({
                 id: message.id,
                 content: message.content,
+                from: message.from,
+                source: message.source,
                 senderCatId: message.catId === undefined ? null : message.catId,
                 threadId,
               });
@@ -636,15 +561,14 @@ export function MessageActions({
                   />
                 </svg>
               </button>
-              {isUser && (
+              {canAct && (
                 <>
-                  <TrueRecallActionButton message={message} threadId={threadId} />
                   <button
                     type="button"
-                    onClick={handleEdit}
+                    onClick={handleBranch}
                     className="p-1 rounded hover:bg-cafe-surface-elevated text-cafe-muted hover:text-conn-blue-text transition-colors"
-                    title="编辑 (创建分支)"
-                    aria-label="编辑并创建分支"
+                    title="创建分支"
+                    aria-label="创建分支"
                   >
                     <svg
                       aria-hidden="true"
@@ -776,8 +700,8 @@ export function MessageActions({
             />
           ))}
 
-        {canReply && !selectionMode && !actionSlot && (compactActions ? compactEntry() : actionToolbar(false))}
-        {canReply && !selectionMode && actionSlot && presentation === 'v2' && (
+        {canShowActions && !selectionMode && !actionSlot && (compactActions ? compactEntry() : actionToolbar(false))}
+        {canShowActions && !selectionMode && actionSlot && presentation === 'v2' && (
           <MessageActionsOverlay
             key={`${canAct}/${isUser}/${hasSelectionShortcut}/${Boolean(invocationTrajectory)}/${Boolean(message.catId)}`}
             owner={messageRef}
@@ -880,31 +804,17 @@ export function MessageActions({
           onCancel={close}
         />
 
-        {/* Hard delete confirmation — requires title input */}
-        <ConfirmDialog
-          open={dialog.type === 'hard-delete'}
-          title="永久删除"
-          message="此操作不可恢复。请输入对话标题以确认。"
-          requireInput={dialog.type === 'hard-delete' ? (dialog.threadTitle ?? '确认删除') : undefined}
-          inputPlaceholder={dialog.type === 'hard-delete' && dialog.threadTitle ? '输入对话标题' : '输入 "确认删除"'}
-          confirmLabel="永久删除"
-          variant="danger"
-          onConfirm={confirmHardDelete}
-          onCancel={close}
-        />
-
-        {/* Edit: inline textarea */}
-        {dialog.type === 'edit' && (
-          <div
-            ref={dialogSurfaceRef}
-            className="fixed inset-0 bg-[var(--console-overlay-backdrop)] backdrop-blur-sm flex items-center justify-center z-50"
-            onClick={close}
-          >
-            <div
-              className="bg-cafe-surface rounded-xl shadow-xl p-6 max-w-lg w-full mx-4"
-              onClick={(e) => e.stopPropagation()}
-            >
-              <h3 className="text-base font-semibold mb-2">编辑消息</h3>
+        {/* One branch action: optionally edit the copied message before creating. */}
+        {dialog.type === 'branch-edit' && (
+          <div ref={dialogSurfaceRef} className="fixed inset-0 z-50 flex items-center justify-center">
+            <button
+              type="button"
+              aria-label="关闭创建分支"
+              className="absolute inset-0 bg-[var(--console-overlay-backdrop)] backdrop-blur-sm"
+              onClick={close}
+            />
+            <div className="relative bg-cafe-surface rounded-xl shadow-xl p-6 max-w-lg w-full mx-4">
+              <h3 className="text-base font-semibold mb-2">创建分支</h3>
               <textarea
                 value={dialog.editedContent}
                 onChange={(e) => setDialog({ ...dialog, editedContent: e.target.value })}
@@ -912,42 +822,24 @@ export function MessageActions({
               />
               <div className="flex justify-end gap-2">
                 <button
+                  type="button"
                   onClick={close}
                   className="px-4 py-2 text-sm text-cafe-secondary hover:bg-cafe-surface-elevated rounded-lg"
                 >
                   取消
                 </button>
                 <button
-                  onClick={handleBranchConfirm}
+                  type="button"
+                  onClick={confirmBranch}
                   disabled={!dialog.editedContent.trim()}
                   className="px-4 py-2 text-sm text-[var(--cafe-surface)] bg-conn-blue-text hover:bg-conn-blue-hover rounded-lg disabled:opacity-40"
                 >
-                  保存
+                  创建分支
                 </button>
               </div>
             </div>
           </div>
         )}
-
-        {/* Branch confirmation (from edit) */}
-        <ConfirmDialog
-          open={dialog.type === 'branch-confirm'}
-          title="创建分支"
-          message="编辑将从此消息创建一个新的对话分支。原对话保留不变。是否继续？"
-          confirmLabel="创建分支"
-          onConfirm={confirmBranch}
-          onCancel={close}
-        />
-
-        {/* Direct branch confirmation (no edit) */}
-        <ConfirmDialog
-          open={dialog.type === 'branch-direct'}
-          title="从这里分支"
-          message="将从此消息创建一个新的对话分支，复制到这条消息为止的所有历史。原对话保留不变。"
-          confirmLabel="创建分支"
-          onConfirm={confirmBranchDirect}
-          onCancel={close}
-        />
       </MessageActionOwnershipProvider>
     </div>
   );

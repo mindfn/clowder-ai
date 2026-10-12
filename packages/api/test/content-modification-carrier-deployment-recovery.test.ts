@@ -49,7 +49,9 @@ test('deployment recovery resumes an admitted pre-typed public carrier without r
   const admitted = fixture.messages
     .getByThread(fixture.thread.id, 100, 'operator', { includeQueuedUserMessages: true })
     .find((message) => message.source?.meta?.requestId === submitted.record.requestId);
-  assert.ok(admitted?.queueCustody);
+  assert.equal(admitted?.lifecycle?.kind, 'input');
+  assert.ok(admitted);
+  assert.equal(Object.hasOwn(admitted, 'queueCustody'), false);
   await fixture.dispatch.waitForAwakening(admitted.id);
 
   fixture.dispatch.delivery.deliver = deliver;

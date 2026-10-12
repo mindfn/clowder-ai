@@ -1,9 +1,9 @@
 import { createHash } from 'node:crypto';
 import { describe, expect, it } from 'vitest';
 import { projectReplyOutput } from '@/components/reply-layers/reply-output';
-import { projectCanonicalBubbles } from '@/stores/bubble-projection';
 import type { ChatMessage } from '@/stores/chat-types';
 import { useChatStore } from '@/stores/chatStore';
+import { withoutUnprovenOutputLayout } from '@/stores/message-output-layout';
 import { mergeReplaceHydrationMessages } from '../useChatHistory';
 import { stations } from './f322-real-readback.fixture';
 import {
@@ -28,26 +28,26 @@ function assertNativeView(message: ChatMessage, threadId: string) {
   return output;
 }
 
-describe('real persisted station observations through active Web ingress', () => {
+describe('persisted station output at the canonical named Web ingress', () => {
   const active = installActiveHarness();
   for (const trace of stations) {
-    it(`${trace.route}: live → real store/reducer → F5/raw composition preserves the full body and native view`, () => {
+    it(`${trace.route}: captured output adapted to the named message ingress → store → F5 preserves the full body and native view`, () => {
       cleanStoreState(trace.threadId);
       active.render();
-      for (const event of trace.live) active.send({ ...event, threadId: trace.threadId });
+      for (const event of trace.live) active.send({ ...event, messageId: trace.api.id, threadId: trace.threadId });
       const live = flatCodexStreamBubbles();
       expect(live).toHaveLength(1);
       expect(live[0].content).toBe(trace.api.content);
       expect(live[0].extra?.outputLayout).toEqual(trace.api.extra.outputLayout);
       expect(live[0].toolEvents?.map((tool) => tool.id)).toEqual(trace.api.toolEvents?.map((tool) => tool.id));
       const view = assertNativeView(live[0], trace.threadId);
-      const merged = mergeReplaceHydrationMessages([trace.api], live, {}).messages;
-      const canonical = projectCanonicalBubbles({ records: merged }).messages;
+      const merged = mergeReplaceHydrationMessages([trace.api], live).messages;
+      const canonical = merged.map(withoutUnprovenOutputLayout);
       expect(canonical).toHaveLength(1);
       expect(canonical[0].content).toBe(trace.api.content);
       expect(canonical[0].extra?.outputLayout).toEqual(trace.api.extra.outputLayout);
       expect(assertNativeView(canonical[0], trace.threadId)).toEqual(view);
-      const restoredDraft = projectCanonicalBubbles({ records: [trace.draft.api] }).messages;
+      const restoredDraft = [withoutUnprovenOutputLayout(trace.draft.api)];
       expect(assertNativeView(restoredDraft[0], trace.threadId)).toEqual(view);
       const replaced = { ...trace.api, content: '独立的真实替换正文。' };
       expect(
@@ -61,7 +61,8 @@ describe('same actual observations through background Web ingress', () => {
   const background = installBackgroundHarness();
   for (const trace of stations) {
     it(`${trace.route}: background uses API-born tool instances and the same complete native view`, () => {
-      for (const event of trace.live) background.dispatchBg({ ...event, threadId: trace.threadId });
+      for (const event of trace.live)
+        background.dispatchBg({ ...event, messageId: trace.api.id, threadId: trace.threadId });
       const messages = threadCodexStreamBubbles(trace.threadId);
       expect(messages).toHaveLength(1);
       expect(messages[0].content).toBe(trace.api.content);

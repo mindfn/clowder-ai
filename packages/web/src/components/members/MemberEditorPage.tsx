@@ -167,8 +167,6 @@ export function MemberEditorPage({
                     modelOptions={e.modelOptions}
                     availableProfiles={e.availableProfiles}
                     loadingProfiles={e.loadingProfiles}
-                    effectiveCodexCarrier={cat?.codexCarrier}
-                    codexLocalCapable={cat ? cat.cli != null : true}
                     onChange={e.patchForm}
                   />
                 )}
@@ -215,7 +213,7 @@ export function MemberEditorPage({
                       codexSpeedVisible={
                         e.form.clientId === 'openai' &&
                         e.selectedProfile?.authType === 'oauth' &&
-                        !e.form.acpEnabled &&
+                        e.form.carrier !== 'acp' &&
                         (cat ? cat.cli != null : true)
                       }
                       codexFastSupported={supportsCodexFastModel(e.form.defaultModel)}

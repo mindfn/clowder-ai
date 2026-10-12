@@ -17,8 +17,8 @@ export type TurnCustodyWakeProvenance =
         | 'cron'
         | 'brainstorm'
         | 'protocol_decline'
-        | 'producer_return'
-        | 'repo_inbox';
+        | 'queue_delivery'
+        | 'producer_return';
     }
   | {
       readonly kind: 'non_obligation';
@@ -78,61 +78,17 @@ export interface ActionTransitionBaseline {
   readonly fingerprint: string;
 }
 
-export interface StructuredTransitionBaseline {
-  readonly kind: 'structured';
-  readonly subjectKey: string;
-  readonly holderCatId: string;
-  readonly fromSequence: number;
-  readonly protocol: Extract<TurnCustodyWakeProvenance, { kind: 'structured' }>['protocol'];
-  readonly sourceMessageId?: string;
-  readonly taskId?: string;
-  readonly dispatchSourceMessageId?: string;
-  readonly dispatchFromCatId?: string;
-  /** The exact (wait, outcome) an event-wait wake delivered; only a completion of THIS pair discharges the turn. */
-  readonly waitId?: string;
-  readonly waitOutcomeId?: string;
-}
-
-/**
- * The exact identity of an event-wait wake, kept on its projection whatever state `open` reached.
- *
- * `open` can fail closed (the subject already resolved, the ball is in another cat's hands) and then has no baseline to
- * diff against, yet the holder's only legal move in exactly those states is a `retired` terminal. The locator lets
- * `close` ask the log directly whether THIS wake's terminal has landed since, instead of returning the stale verdict.
- */
-export interface EventWaitLocator {
-  readonly subjectKey: string;
-  readonly catId: string;
-  readonly waitId: string;
-  readonly outcomeId: string;
-}
-
 export interface TurnCustodyProjection {
   readonly state: TurnCustodyProjectionState;
   readonly evidenceRefs: readonly string[];
-  readonly baseline?: ActionTransitionBaseline | StructuredTransitionBaseline;
-  readonly eventWaitLocator?: EventWaitLocator;
+  readonly baseline?: ActionTransitionBaseline;
 }
 
 export interface TurnCustodyStopDecision {
   readonly state: TurnCustodyProjectionState;
   readonly shouldBlock: boolean;
   readonly transitionObserved: boolean;
-  readonly structuredTransitionKind?:
-    | 'hold_dispositioned'
-    | 'dispatch_dispositioned'
-    | 'wait_dispositioned'
-    | 'held'
-    | 'handed';
-  readonly dispatchDisposition?: 'handled' | 'completed';
-  readonly dispatchDispositionEventId?: string;
-  readonly dispatchDispositionAt?: number;
   readonly evidenceRefs: string[];
 }
-
-export type StructuredTransitionObservation = Pick<
-  TurnCustodyStopDecision,
-  'structuredTransitionKind' | 'dispatchDisposition' | 'dispatchDispositionEventId' | 'dispatchDispositionAt'
->;
 
 export type TurnCustodyShadowComparison = 'agree_allow' | 'agree_block' | 'old_only_block' | 'new_only_block';
