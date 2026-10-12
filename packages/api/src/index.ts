@@ -5123,6 +5123,7 @@ async function main(): Promise<void> {
   const { pluginNativeActionRoutes } = await import('./routes/plugin-native-action-routes.js');
   await app.register(pluginNativeActionRoutes, {
     actions: pluginRuntime.supervisor.nativeActions,
+    publicInvocations: pluginRuntime.supervisor,
     registry,
     threadStore,
     sources: { messageStore, ...(managedHoldDispositionService ? { managedHoldDispositionService } : {}) },

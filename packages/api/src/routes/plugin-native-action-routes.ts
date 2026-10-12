@@ -1,14 +1,16 @@
 import type { FastifyPluginAsync } from 'fastify';
 import { z } from 'zod';
 import type { InvocationRegistry } from '../domains/cats/services/agents/invocation/InvocationRegistry.js';
-import { toolExecutionPolicyDenial } from '../domains/cats/services/agents/invocation/tool-execution-policy.js';
+import type { PluginRuntimeCarrierRouter } from '../domains/plugin/carrier/runtime-carrier.js';
 import { NativePluginActionError, type NativePluginActions } from '../domains/plugin/declared/native-plugin-actions.js';
 import { registerCallbackAuthHook } from './callback-auth-prehandler.js';
 import { getDeletedCallbackThreadGuard } from './callback-scope-helpers.js';
 import { captureTypedWaitSource } from './callback-typed-wait-source.js';
+import { captureNativeCallbackCurrentness } from './plugin-native-action-currentness.js';
 
 export interface PluginNativeActionRouteOptions {
   readonly actions: NativePluginActions;
+  readonly publicInvocations?: Pick<PluginRuntimeCarrierRouter, 'assertPublicInvocationCurrent'>;
   readonly registry: Pick<InvocationRegistry, 'verify' | 'verifyLatest' | 'isStartupRecoveryComplete'>;
   readonly sources: Parameters<typeof captureTypedWaitSource>[1];
   readonly threadStore?: Parameters<typeof getDeletedCallbackThreadGuard>[0];
@@ -39,37 +41,29 @@ export const pluginNativeActionRoutes: FastifyPluginAsync<PluginNativeActionRout
     const verified = await options.registry.verifyLatest(invocationId, callbackToken);
     if (!verified.ok) return reply.status(401).send({ error: 'Invocation is not current' });
     const { record } = verified;
-    // Capture canonical identity before any await. Registry implementations may return mutable records.
-    const identity = Object.freeze({
-      catId: record.catId,
-      userId: record.userId,
-      threadId: record.threadId,
-      invocationId: record.invocationId,
-      originTriggerMessageId: record.originTriggerMessageId,
-    });
-    const deleted = await getDeletedCallbackThreadGuard(options.threadStore, record.threadId);
-    if (deleted) return reply.status(deleted.statusCode).send(deleted.body);
-    const source = await captureTypedWaitSource(record, options.sources);
-    const target = options.actions.target(token, parsed.data.method);
+    let fence: ReturnType<typeof captureNativeCallbackCurrentness> | undefined;
+    const onAbort = () => fence?.close();
+    const onClose = () => {
+      if (!reply.raw.writableEnded) onAbort();
+    };
     try {
+      fence = captureNativeCallbackCurrentness(
+        record,
+        callbackToken,
+        options.actions.target(token, parsed.data.method),
+        options,
+      );
+      request.raw.on('aborted', onAbort);
+      reply.raw.on('close', onClose);
+      if (request.raw.aborted) onAbort();
+      const deleted = await getDeletedCallbackThreadGuard(options.threadStore, fence.identity.threadId);
+      if (deleted) return reply.status(deleted.statusCode).send(deleted.body);
+      const source = await captureTypedWaitSource(record, options.sources);
       const result = await options.actions.call(token, parsed.data.method, parsed.data.input, {
-        ...identity,
+        ...fence.identity,
         ...(source ? { source: Object.freeze(source) } : {}),
-        assertCurrent: async () => {
-          if (await getDeletedCallbackThreadGuard(options.threadStore, record.threadId)) {
-            throw new NativePluginActionError(410, 'Thread is deleted');
-          }
-          const current = await options.registry.verifyLatest(invocationId, callbackToken);
-          if (!current.ok) throw new NativePluginActionError(409, 'Invocation is no longer current');
-          const identityKeys = ['userId', 'threadId', 'catId', 'invocationId', 'originTriggerMessageId'] as const;
-          if (identityKeys.some((key) => current.record[key] !== identity[key]))
-            throw new NativePluginActionError(409, 'Invocation identity is no longer current');
-          if (
-            toolExecutionPolicyDenial(current.record.toolExecutionPolicy, 'POST /api/plugin-runtime/action', target)
-          ) {
-            throw new NativePluginActionError(403, 'Invocation policy denies plugin action');
-          }
-        },
+        assertCurrent: fence.assertCurrent,
+        assertInvocationCurrent: fence.assertInvocationCurrent,
       });
       return { result };
     } catch (error) {
@@ -77,6 +71,10 @@ export const pluginNativeActionRoutes: FastifyPluginAsync<PluginNativeActionRout
         return reply.status(error.statusCode).send({ error: error.message });
       // Package failures may contain provider secrets; do not serialize arbitrary exception text.
       return reply.status(502).send({ error: 'Plugin action failed' });
+    } finally {
+      fence?.close();
+      request.raw.off('aborted', onAbort);
+      reply.raw.off('close', onClose);
     }
   });
 };

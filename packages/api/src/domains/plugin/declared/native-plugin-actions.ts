@@ -111,17 +111,19 @@ export class NativePluginActions {
     if (!methods.has(method)) throw new NativePluginActionError(403, 'Action is not declared by this MCP contribution');
     let finished = false;
     const checkCaller = caller.assertCurrent.bind(caller);
+    const checkInvocation = (caller.assertInvocationCurrent ?? caller.assertCurrent).bind(caller);
     const assertActiveInvocation = () => {
       if (finished || this.#bindings.get(binding.instanceId) !== binding)
         throw new NativePluginActionError(409, 'Plugin call is no longer current');
     };
     const assertInvocationCurrent = async () => {
       assertActiveInvocation();
-      await checkCaller();
+      await checkInvocation();
       assertActiveInvocation();
     };
     const assertCurrent = async () => {
       await assertInvocationCurrent();
+      await checkCaller();
       const current = await this.admission(binding.instanceId);
       if (
         finished ||
@@ -134,6 +136,7 @@ export class NativePluginActions {
         !isDeepStrictEqual([...current.effectiveGrants].sort(), [...binding.admission.effectiveGrants].sort())
       )
         throw new NativePluginActionError(409, 'Plugin call is no longer current');
+      await checkCaller();
       await assertInvocationCurrent();
     };
     const context = Object.freeze({ ...caller, assertCurrent, assertInvocationCurrent });
