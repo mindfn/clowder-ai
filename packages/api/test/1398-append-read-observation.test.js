@@ -73,3 +73,18 @@ test('first-input pending initialization is presentation-only even after settlem
   assert.equal(read.lifecycle.dispatchRefs[0].phase, 'settled');
   assert.deepEqual(read.lifecycle.dispatchRefs[0].inputRead, { status: 'read', at: 15 });
 });
+
+test('settlement carrying an existing pending receipt still advances execution phase', () => {
+  const initial = admitted();
+  const settled = advance(initial, {
+    ...initial.dispatchRefs[0],
+    orderKey: initial.orderKey,
+    phase: 'settled',
+  });
+  assert.equal(settled.kind, 'applied');
+  assert.equal(settled.lifecycle.dispatchRefs[0].phase, 'settled');
+  assert.deepEqual(settled.lifecycle.dispatchRefs[0].inputRead, { status: 'pending' });
+  const read = advance(settled.lifecycle, { ...patch, inputRead: { status: 'read', at: 15 } });
+  assert.equal(read.kind, 'applied');
+  assert.equal(read.lifecycle.dispatchRefs[0].phase, 'settled');
+});

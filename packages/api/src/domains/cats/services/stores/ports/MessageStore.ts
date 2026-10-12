@@ -1149,11 +1149,10 @@ export function advanceLifecycleInputDispatchMetadata(
   }
   // Read evidence cannot advance or revert execution phase. A terminal commit
   // may race the observer, so preserve the latest durable phase atomically.
-  if (patch.inputRead) {
+  if (patch.inputRead?.status === 'read' || (patch.inputRead?.status === 'pending' && !existing.inputRead)) {
     if (patch.inputRead.status === 'read' && (!existing.inputRead || patch.inputRead.at < (existing.dispatchedAt ?? 0)))
       return { kind: 'conflict', reason: 'invalid_transition' };
-    if (existing.inputRead?.status === 'read' || (existing.inputRead && patch.inputRead.status === 'pending'))
-      return { kind: 'replayed' };
+    if (existing.inputRead?.status === 'read') return { kind: 'replayed' };
     return {
       kind: 'applied',
       lifecycle: {
