@@ -895,3 +895,235 @@ test('public source fence abort settles blocked storage reads without entering t
     release.resolve();
   }
 });
+
+async function publicLaunchFixture(t, options = {}) {
+  const f = await publicSourceFixture(t, options);
+  Object.assign(f.message.queueCustody, {
+    status: 'processing',
+    processingStartedAt: 1001,
+    awakenedInvocationIdByCatId: { astra: 'child-1' },
+    awakenedAtByCatId: { astra: 1001 },
+  });
+  f.binding.invocationId = 'child-1';
+  return f;
+}
+
+function launchResolver(f) {
+  assert.equal(typeof f.router.resolvePublicInvocationLaunch, 'function', 'missing source-bound public launch lease');
+  return (value = carrier(), expected = f.binding, context = f.context) =>
+    f.router.resolvePublicInvocationLaunch('instance', value, expected, context);
+}
+
+test('public launch fixture has current processing custody and exact child before resolution', async (t) => {
+  const f = await publicLaunchFixture(t);
+  await f.check();
+  assert.equal(f.entered(), 1);
+});
+
+test('public launch lease returns only frozen verified source and exact native descriptor', async (t) => {
+  const f = await publicLaunchFixture(t);
+  const resolve = launchResolver(f);
+  const lease = await resolve();
+  t.after(() => lease.dispose());
+  assert.deepEqual(Object.keys(lease).sort(), ['assertCurrent', 'dispose', 'server', 'source']);
+  assert.deepEqual(lease.source, { messageId: 'source', content: 'public source body' });
+  assert.ok(Object.isFrozen(lease) && Object.isFrozen(lease.source));
+  assert.ok(Object.isFrozen(lease.server) && Object.isFrozen(lease.server.args) && Object.isFrozen(lease.server.env));
+  assert.equal(lease.server.transport, 'stdio');
+  assert.ok(lease.server.env.CLOWDER_PLUGIN_ACTION_TOKEN);
+  assert.equal(JSON.stringify(lease.source).includes('do not project'), false);
+  await lease.assertCurrent();
+  assert.equal(f.message.queueCustody.status, 'processing');
+});
+
+test('public launch lease refuses queue-level and wrong-child authority', async (t) => {
+  const f = await publicLaunchFixture(t);
+  const resolve = launchResolver(f);
+  const { invocationId: _child, ...queued } = f.binding;
+  await assert.rejects(() => resolve(carrier(), queued));
+  await assert.rejects(() => resolve(carrier(), { ...f.binding, invocationId: 'child-2' }));
+  f.message.queueCustody.status = 'queued';
+  delete f.message.queueCustody.awakenedInvocationIdByCatId;
+  delete f.message.queueCustody.awakenedAtByCatId;
+  await assert.rejects(() => resolve(carrier(), queued));
+});
+
+test('public launch lease pins source bytes across separate checks and permanently latches failure', async (t) => {
+  const f = await publicLaunchFixture(t);
+  const lease = await launchResolver(f)();
+  t.after(() => lease.dispose());
+  f.message.content = 'changed without revision';
+  await assert.rejects(() => lease.assertCurrent());
+  f.message.content = 'public source body';
+  await assert.rejects(() => lease.assertCurrent());
+  assert.equal(lease.source.content, 'public source body');
+});
+
+test('public launch lease pins source provenance even when body and plugin revision are unchanged', async (t) => {
+  const f = await publicLaunchFixture(t);
+  const lease = await launchResolver(f)();
+  t.after(() => lease.dispose());
+  f.message.source.meta.channel = 'private';
+  await assert.rejects(() => lease.assertCurrent());
+});
+
+test('public launch lease rejects authority revocation after initial resolution', async (t) => {
+  let authorized = true;
+  const f = await publicLaunchFixture(t, { handler: async () => ({ current: authorized }) });
+  const lease = await launchResolver(f)();
+  t.after(() => lease.dispose());
+  authorized = false;
+  await assert.rejects(() => lease.assertCurrent());
+  authorized = true;
+  await assert.rejects(() => lease.assertCurrent());
+});
+
+test('public launch lease rejects grant drift after initial resolution', async (t) => {
+  const f = await publicLaunchFixture(t);
+  const lease = await launchResolver(f)();
+  t.after(() => lease.dispose());
+  f.grant.grantRevision++;
+  await assert.rejects(() => lease.assertCurrent());
+});
+
+test('public launch lease cannot renew itself across stop and reactivation', async (t) => {
+  const f = await publicLaunchFixture(t);
+  const lease = await launchResolver(f)();
+  t.after(() => lease.dispose());
+  await f.router.stop('instance', 'test_reactivation');
+  await f.router.start('instance');
+  await assert.rejects(() => lease.assertCurrent());
+});
+
+test('public launch lease captures coordinates and caller fence before the first await', async (t) => {
+  const f = await publicLaunchFixture(t);
+  const resolve = launchResolver(f);
+  const entered = deferred(),
+    release = deferred();
+  const value = carrier(),
+    binding = { ...f.binding };
+  let calls = 0;
+  const context = {
+    signal: f.controller.signal,
+    assertCurrent: async () => {
+      calls++;
+      entered.resolve();
+      await release.promise;
+    },
+  };
+  const pending = resolve(value, binding, context);
+  await entered.promise;
+  value.actionMethods.push('native.admin');
+  binding.invocationId = 'child-2';
+  context.assertCurrent = async () => {
+    throw new Error('replacement fence must not run');
+  };
+  release.resolve();
+  const lease = await pending;
+  t.after(() => lease.dispose());
+  await lease.assertCurrent();
+  assert.ok(calls > 1);
+});
+
+test('public launch lease rejects body drift during its initial package verification', async (t) => {
+  let f;
+  f = await publicLaunchFixture(t, {
+    handler: async () => {
+      f.message.content = 'changed during verification';
+      return { current: true };
+    },
+  });
+  await assert.rejects(() => launchResolver(f)());
+});
+
+test('public launch lease dispose invalidates retained and pending checks without waiting for storage', async (t) => {
+  const f = await publicLaunchFixture(t);
+  const lease = await launchResolver(f)();
+  const entered = deferred(),
+    release = deferred();
+  const get = f.stores.messageStore.getById;
+  f.stores.messageStore.getById = async (id) => {
+    entered.resolve();
+    await release.promise;
+    return get(id);
+  };
+  const pending = lease.assertCurrent();
+  const rejected = assert.rejects(pending);
+  await entered.promise;
+  try {
+    await lease.dispose();
+    await lease.dispose();
+    await rejected;
+    await assert.rejects(() => lease.assertCurrent());
+  } finally {
+    release.resolve();
+  }
+});
+
+test('public launch lease abort settles initial blocked source reads without returning authority', async (t) => {
+  const f = await publicLaunchFixture(t);
+  const resolve = launchResolver(f);
+  const entered = deferred(),
+    release = deferred();
+  const get = f.stores.messageStore.getById;
+  f.stores.messageStore.getById = async (id) => {
+    entered.resolve();
+    await release.promise;
+    return get(id);
+  };
+  const pending = resolve();
+  const rejected = assert.rejects(pending);
+  await entered.promise;
+  try {
+    f.controller.abort(new Error('test_launch_abort'));
+    await rejected;
+  } finally {
+    release.resolve();
+  }
+});
+
+test('public launch lease refuses deleted source and never exposes an ordinary fallback', async (t) => {
+  const f = await publicLaunchFixture(t);
+  const resolve = launchResolver(f);
+  f.message.deletedAt = 1002;
+  await assert.rejects(() => resolve());
+});
+
+test('public launch lease keeps a failed caller fence latched after caller authority returns', async (t) => {
+  const f = await publicLaunchFixture(t);
+  let valid = true;
+  const lease = await launchResolver(f)(carrier(), f.binding, {
+    signal: f.controller.signal,
+    assertCurrent: async () => {
+      assert.ok(valid, 'caller revoked');
+    },
+  });
+  t.after(() => lease.dispose());
+  valid = false;
+  await assert.rejects(() => lease.assertCurrent(), /caller revoked/);
+  valid = true;
+  await assert.rejects(() => lease.assertCurrent(), /caller revoked/);
+});
+
+test('public launch lease invalidation rejects every concurrent pending check', async (t) => {
+  const f = await publicLaunchFixture(t);
+  const lease = await launchResolver(f)();
+  const entered = deferred(),
+    release = deferred();
+  const get = f.stores.messageStore.getById;
+  let blocked = 0;
+  f.stores.messageStore.getById = async (id) => {
+    if (++blocked === 2) entered.resolve();
+    await release.promise;
+    return get(id);
+  };
+  const first = assert.rejects(lease.assertCurrent());
+  const second = assert.rejects(lease.assertCurrent());
+  await entered.promise;
+  try {
+    lease.dispose();
+    await Promise.all([first, second]);
+  } finally {
+    release.resolve();
+  }
+});

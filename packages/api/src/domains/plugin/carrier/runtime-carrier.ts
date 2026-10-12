@@ -34,7 +34,9 @@ import {
   assertDurablePublicInvocationCurrent,
   type PublicInvocationBinding,
   type PublicInvocationSourceServices,
+  readDurablePublicInvocationCurrent,
 } from './public-invocation-currentness.js';
+import { resolvePublicInvocationLaunchLease } from './public-invocation-launch.js';
 import {
   assertPublicVerifierAdmission,
   capturePublicVerification,
@@ -260,6 +262,28 @@ export class PluginRuntimeCarrierRouter implements PluginRuntimeLifecyclePort {
     }
     return carrier.invokePredicateVerifier(instanceId, method, input, context);
   };
+
+  /** Host-only, source-bound launch authority; does not allocate a workspace or start a provider. */
+  resolvePublicInvocationLaunch(
+    instanceId: string,
+    carrier: Parameters<PublicInvocationVerifierPort['invokePublicInvocationVerifier']>[1],
+    binding: PublicInvocationBinding,
+    context: Parameters<PublicInvocationVerifierPort['invokePublicInvocationVerifier']>[2],
+  ) {
+    return resolvePublicInvocationLaunchLease(instanceId, carrier, binding, context, {
+      generation: () => this.nativeActions.generation(instanceId),
+      resolve: (policy) => this.resolveNativeMcpLaunch(policy),
+      read: (value, expected, authority) =>
+        readDurablePublicInvocationCurrent(
+          instanceId,
+          value,
+          expected,
+          authority,
+          this.publicInvocationSources,
+          this.invokePublicInvocationVerifier.bind(this),
+        ),
+    });
+  }
 
   /** Host execution fence; never exposed as an ordinary package action. */
   async assertPublicInvocationCurrent(
