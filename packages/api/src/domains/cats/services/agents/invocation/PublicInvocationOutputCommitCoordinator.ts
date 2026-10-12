@@ -3,19 +3,22 @@ import type { AppendMessageInput, IMessageStore, StoredMessage } from '../../sto
 import type { ITurnExecutionStore, TurnExecutionRecord } from '../../stores/ports/TurnExecutionStore.js';
 import { parsePublicInvocationOutput } from '../../stores/public-invocation-output.js';
 import { assertPublicOutputReplay } from '../../stores/public-invocation-output-append.js';
+import type { PublicOutputTransitionResult } from '../../stores/public-invocation-output-terminal.js';
 import { capturePublicOutputTransition } from '../../stores/public-invocation-output-terminal.js';
-import type { InvocationRegistry } from './InvocationRegistry.js';
+import type { InvocationRecord, InvocationRegistry } from './InvocationRegistry.js';
 import {
   capturePublicOutputAuthProof,
   decidePublicOutputTerminal,
   type PublicOutputAuthProof,
   type PublicOutputTerminalDecision,
 } from './public-output-terminal-decision.js';
+import type { TerminalProofRecoveryBarrier } from './TerminalProofRecoveryBarrier.js';
 
 interface Dependencies {
   readonly messageStore: Pick<IMessageStore, 'getById' | 'transitionPublicInvocationOutput'>;
   readonly turnExecutionStore: Pick<ITurnExecutionStore, 'get'>;
-  readonly registry: Pick<InvocationRegistry, 'getRecord' | 'isStartupRecoveryComplete'>;
+  readonly registry: Pick<InvocationRegistry, 'getRecord'>;
+  readonly proofBarrier: Pick<TerminalProofRecoveryBarrier, 'isReady'>;
 }
 export type PublicOutputCommitResult =
   | { kind: 'committed' | 'abandoned'; message: StoredMessage }
@@ -82,8 +85,7 @@ export class PublicInvocationOutputCommitCoordinator {
   ): Promise<
     PublicOutputTerminalDecision | { kind: 'deferred'; reason: 'startup_recovery_pending' | 'read_unavailable' }
   > {
-    if (!this.deps.registry.isStartupRecoveryComplete())
-      return { kind: 'deferred', reason: 'startup_recovery_pending' };
+    if (!this.deps.proofBarrier.isReady()) return { kind: 'deferred', reason: 'startup_recovery_pending' };
     const childId = expected.extra?.publicOutputV1?.childInvocationId as string;
     let child: TurnExecutionRecord | null;
     let auth: PublicOutputAuthProof | null;
@@ -100,7 +102,7 @@ export class PublicInvocationOutputCommitCoordinator {
     } catch {
       return { kind: 'conflict', reason: 'identity_mismatch' };
     }
-    let rawAuth;
+    let rawAuth: InvocationRecord | null;
     try {
       rawAuth = await this.deps.registry.getRecord(childId);
     } catch {
@@ -118,7 +120,7 @@ export class PublicInvocationOutputCommitCoordinator {
     expected: AppendMessageInput,
     nextState: 'committed' | 'abandoned',
   ): Promise<PublicOutputCommitResult> {
-    let result;
+    let result: PublicOutputTransitionResult;
     try {
       result = await this.deps.messageStore.transitionPublicInvocationOutput(expected.reservedId as string, {
         expected,

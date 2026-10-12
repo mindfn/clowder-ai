@@ -107,6 +107,7 @@ async function fixture(status = 'succeeded', project = true) {
   messages.append(expected);
   const calls = { reads: 0, cas: 0, auth: 0, turns: 0 };
   const deps = {
+    proofBarrier: { isReady: () => registry.isStartupRecoveryComplete() },
     messageStore: {
       getById: (id) => {
         assert.equal(id, outputId, 'coordinator must not read source/custody');
@@ -131,7 +132,6 @@ async function fixture(status = 'succeeded', project = true) {
         calls.auth++;
         return registry.getRecord(id);
       },
-      isStartupRecoveryComplete: () => registry.isStartupRecoveryComplete(),
     },
   };
   return { registry, turns, messages, child, expected, deps, calls };
@@ -188,7 +188,7 @@ for (const [label, status, configure, reason] of [
     'startup incomplete',
     'succeeded',
     (f) => {
-      f.deps.registry.isStartupRecoveryComplete = () => false;
+      f.deps.proofBarrier.isReady = () => false;
     },
     'startup_recovery_pending',
   ],
@@ -196,7 +196,7 @@ for (const [label, status, configure, reason] of [
     'missing auth before startup',
     'succeeded',
     (f) => {
-      f.deps.registry.isStartupRecoveryComplete = () => false;
+      f.deps.proofBarrier.isReady = () => false;
       f.deps.registry.getRecord = async () => null;
     },
     'startup_recovery_pending',

@@ -142,7 +142,7 @@ describe('TurnExecutionStartupReconciler', () => {
   test('production Redis callback admission opens only after startup recovery succeeds', () => {
     const source = readFileSync(new URL('../src/index.ts', import.meta.url), 'utf8');
     assert.match(source, /startupRecoveryRequired:\s*true/);
-    const recovery = source.indexOf('await turnExecutionStore.reconcileStartup');
+    const recovery = source.indexOf('reconcileAuth: () => turnExecutionStore.reconcileStartup');
     const queueRecovery = source.indexOf('await reconciler.reconcileOrphans()');
     const admissionOpen = source.indexOf('registry.markStartupRecoveryComplete()');
     const recoveryFailure = source.indexOf('onRecoveryError:');
