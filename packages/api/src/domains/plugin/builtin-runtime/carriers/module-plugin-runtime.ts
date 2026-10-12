@@ -19,6 +19,11 @@ import {
   type VerifiedPluginPackageLocator,
 } from '../../external-runtime/types.js';
 import type { PluginPackageRecord } from '../../host-inventory/types.js';
+import type {
+  ModuleBrowserServiceSession,
+  PluginBrowserServiceHost,
+  PrepareModuleBrowserServices,
+} from '../../host-surface/plugin-browser-service-host.js';
 import type { PluginCustodyHost } from '../../host-surface/plugin-custody-host.js';
 import { preparePluginDataDirectory } from '../../host-surface/plugin-data-directory.js';
 import {
@@ -57,6 +62,7 @@ import {
   resolveManifestConfiguration,
 } from '../../manifest-configuration-projection.js';
 import type { BundledPluginRuntime } from './bundled-runtime-carrier.js';
+import { admitModuleBrowserServices, captureModuleBrowserServices } from './module-browser-services.js';
 import { createModuleHostInvocation, exposesModuleAction } from './module-host-invocation.js';
 import {
   type ModuleTeardownStep,
@@ -86,6 +92,7 @@ export interface ModulePluginHostShape {
   readonly storage: PluginStorageHost;
   readonly tasks: PluginTaskHost;
   readonly custody?: PluginCustodyHost;
+  readonly browserServices?: PluginBrowserServiceHost;
   readonly deployment?: PluginNeutralHost['deployment'];
   readonly frustration?: PluginNeutralHost['frustration'];
   readonly threads: PluginThreadHost;
@@ -117,6 +124,7 @@ export interface ModulePluginRuntimeOptions {
   readonly materializer?: BuiltinPluginPackageMaterializer;
   readonly configuration: PluginRuntimeConfigurationPort;
   readonly storage?: PluginPrivateStoragePort;
+  readonly browserServices?: PrepareModuleBrowserServices;
   readonly taskStore?: ITaskStore;
   readonly custody?: (pluginInstanceId: string) => PluginCustodyHost;
   readonly neutral?: (
@@ -148,6 +156,8 @@ interface LoadedModule {
   readonly packageDigest: string;
   readonly located: VerifiedPluginPackage;
   readonly activation: PluginModuleActivationShape;
+  readonly publicActions: Readonly<Record<string, unknown>>;
+  readonly browserServices?: ModuleBrowserServiceSession;
   readonly predicateVerifiers: ReadonlyMap<string, ModulePredicateVerifier>;
   readonly privatePredicateMethods: ReadonlySet<string>;
   readonly subscriptions: PluginMessagingSubscriptionSession;
@@ -234,7 +244,9 @@ export class ModulePluginRuntime implements BundledPluginRuntime {
     let plugin: PluginModuleDefinitionShape;
     let activation: PluginModuleActivationShape | undefined;
     let subscriptions: PluginMessagingSubscriptionSession | undefined;
+    let browserServices: ModuleBrowserServiceSession | undefined;
     try {
+      const browserAdmission = admitModuleBrowserServices(packageRecord.manifest, effectiveGrants);
       const { entrypoint } = await verifyPackageEntrypoint(packageRecord, located);
       // This carrier's integrity instant: the bytes are re-snapshotted immediately before
       // they become live code in THIS process. There is no projection window to straddle
@@ -325,8 +337,24 @@ export class ModulePluginRuntime implements BundledPluginRuntime {
       });
       const neutral = await this.options.neutral?.(pluginInstanceId, packageRecord.packageDigest, assertActivation);
       assertActivation();
+      if (browserAdmission.active.size > 0) {
+        if (!this.options.browserServices)
+          throw new ExternalPluginRuntimeError(
+            'INSTANCE_NOT_RUNNABLE',
+            'Host browser-service transport is unavailable',
+          );
+        browserServices = await this.options.browserServices({
+          pluginInstanceId,
+          packageRecord,
+          effectiveGrants,
+          signal: operationActivation.signal,
+          assertCurrent: assertActivation,
+        });
+        assertActivation();
+      }
       const candidate = await plugin.start({
         ...neutral,
+        ...(browserServices ? { browserServices: browserServices.host } : {}),
         config: { get: async (key) => config.get(key) },
         secrets: { get: async (key) => secrets.get(key) },
         storage,
@@ -355,7 +383,8 @@ export class ModulePluginRuntime implements BundledPluginRuntime {
         Array.isArray(actions) ||
         typeof stop !== 'function'
       ) {
-        if (typeof stop === 'function') await stop.call(candidate, 'start_failed');
+        // Preserve a returned disposer for the ordered Host-resource rollback.
+        if (typeof stop === 'function') activation = { actions: {}, stop: (reason) => stop.call(candidate, reason) };
         throw new ExternalPluginRuntimeError(
           'INVALID_ENTRYPOINT',
           `${packageRecord.pluginId} start() must return an actions table and stop()`,
@@ -369,9 +398,14 @@ export class ModulePluginRuntime implements BundledPluginRuntime {
         activation,
         actions,
       );
+      const browser = captureModuleBrowserServices(browserAdmission, actions, assertActivation);
+      await browserServices?.publish(browser.handlers);
+      assertActivation();
       this.#loaded.set(pluginInstanceId, {
         located,
         activation,
+        publicActions: browser.publicActions,
+        ...(browserServices ? { browserServices } : {}),
         subscriptions,
         predicateVerifiers,
         packageDigest: packageRecord.packageDigest,
@@ -387,7 +421,9 @@ export class ModulePluginRuntime implements BundledPluginRuntime {
         this.#operationActivations.delete(pluginInstanceId);
       if (this.#neutralActivations.get(pluginInstanceId) === activationToken)
         this.#neutralActivations.delete(pluginInstanceId);
-      await rollbackModuleStart(error, activation, subscriptions, located);
+      await rollbackModuleStart(error, activation, subscriptions, located, browserServices, (failed) => {
+        this.#unfinished.set(pluginInstanceId, failed);
+      });
     }
   }
 
@@ -463,7 +499,7 @@ export class ModulePluginRuntime implements BundledPluginRuntime {
   };
 
   actions(pluginInstanceId: string): Readonly<Record<string, unknown>> | undefined {
-    return this.#loaded.get(pluginInstanceId)?.activation.actions;
+    return this.#loaded.get(pluginInstanceId)?.publicActions;
   }
   operationActivationSignal(pluginInstanceId: string): AbortSignal | undefined {
     return this.#operationActivations.get(pluginInstanceId)?.signal;

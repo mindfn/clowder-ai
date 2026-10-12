@@ -1,4 +1,5 @@
 import type { VerifiedPluginPackage } from '../../external-runtime/types.js';
+import type { ModuleBrowserServiceSession } from '../../host-surface/plugin-browser-service-host.js';
 import type { PluginMessagingSubscriptionSession } from '../../host-surface/plugin-messaging-subscription-host.js';
 import type { PluginModuleActivationShape } from './module-plugin-runtime.js';
 
@@ -8,10 +9,13 @@ export type ModuleTeardownStep = (reason: string) => unknown;
 /** A loaded module's teardown, in order: its Host subscriptions, its own stop, its package bytes. */
 export function moduleTeardown(loaded: {
   readonly subscriptions: PluginMessagingSubscriptionSession;
+  readonly browserServices?: ModuleBrowserServiceSession;
   readonly activation: PluginModuleActivationShape;
   readonly located: VerifiedPluginPackage;
 }): readonly ModuleTeardownStep[] {
+  const browserServices = loaded.browserServices;
   return [
+    ...(browserServices ? [(reason: string) => browserServices.stop(reason)] : []),
     (reason) => loaded.subscriptions.stop(reason),
     (reason) => loaded.activation.stop(reason),
     // Package bytes stay present until package cleanup has finished.
@@ -46,15 +50,19 @@ export async function rollbackModuleStart(
   activation: PluginModuleActivationShape | undefined,
   subscriptions: PluginMessagingSubscriptionSession | undefined,
   located: VerifiedPluginPackage,
+  browserServices?: ModuleBrowserServiceSession,
+  retainFailed?: (steps: readonly ModuleTeardownStep[]) => void,
 ): Promise<never> {
-  const stopResults = await Promise.allSettled([
-    ...(subscriptions ? [subscriptions.stop('start_failed')] : []),
-    ...(activation ? [activation.stop('start_failed')] : []),
-  ]);
-  const releaseResults = await Promise.allSettled([located.release()]);
-  const failures = [...stopResults, ...releaseResults]
-    .filter((result): result is PromiseRejectedResult => result.status === 'rejected')
-    .map((result) => result.reason);
-  if (failures.length > 0) throw new AggregateError([startError, ...failures], 'module startup rollback failed');
+  const steps: ModuleTeardownStep[] = [
+    ...(browserServices ? [(reason: string) => browserServices.stop(reason)] : []),
+    ...(subscriptions ? [(reason: string) => subscriptions.stop(reason)] : []),
+    ...(activation ? [(reason: string) => activation.stop(reason)] : []),
+    () => located.release(),
+  ];
+  const { failed, errors } = await runModuleTeardown(steps, 'start_failed');
+  if (failed.length > 0) {
+    retainFailed?.(failed);
+    throw new AggregateError([startError, ...errors], 'module startup rollback failed');
+  }
   throw startError;
 }
