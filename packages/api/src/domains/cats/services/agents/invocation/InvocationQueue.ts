@@ -1,3 +1,4 @@
+import type { PluginPublicInvocationCarrierV1 } from '../../stores/ports/plugin-public-invocation-carrier.js';
 /**
  * InvocationQueue
  * Per-thread durable work ledger for user/connector/agent/system dispatch.
@@ -74,6 +75,7 @@ type LifecycleTargetRetirementResult =
   | { outcome: 'state_changed' };
 
 export interface QueueEnqueueInput {
+  pluginPublicInvocation?: PluginPublicInvocationCarrierV1;
   /** Consumer observers register after commit and before the shared drain notification. Not persisted. */
   onQueueEntriesAdmitted?: (entries: readonly QueueEntry[], message?: StoredMessage) => void | Promise<void>;
   threadId: string;
@@ -222,14 +224,14 @@ export function isSystemPinnedQueueEntry(entry: Pick<QueueEntry, 'from' | 'sourc
  * attempt is terminal-failed. The entry itself may still carry eligible siblings
  * or remain visible to lifecycle/recovery code.
  */
-export function isOrdinaryQueueTargetEligible(entry: Pick<QueueEntry, 'status' | 'targets'>, catId: string): boolean {
+export function isOrdinaryQueueTargetEligible(entry: Pick<QueueEntry, 'status' | 'targets' | 'execution'>, catId: string): boolean {
   return (
     (entry.status === 'queued' || entry.status === 'claimed') &&
     (entry.targets.length === 0 || entry.targets.includes(catId))
   );
 }
 
-function isQueueTargetPending(entry: Pick<QueueEntry, 'status' | 'targets'>, catId: string): boolean {
+function isQueueTargetPending(entry: Pick<QueueEntry, 'status' | 'targets' | 'execution'>, catId: string): boolean {
   return entry.status !== 'terminal' && entry.targets.includes(catId);
 }
 
@@ -443,6 +445,7 @@ export class InvocationQueue {
       readOnlyToolPolicy: input.readOnlyToolPolicy,
       actionSuccessorFence: input.actionSuccessorFence,
       waitContinuationCarrier: input.waitContinuationCarrier,
+      pluginPublicInvocation: input.pluginPublicInvocation,
       suggestedSkill: input.suggestedSkill,
       callerTraceContext: input.callerTraceContext,
       a2aTriggerMessageId: input.a2aTriggerMessageId ?? (input.kind === 'message_wake' ? messageId : undefined),

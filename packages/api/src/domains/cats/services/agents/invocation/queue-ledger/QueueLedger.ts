@@ -1,3 +1,4 @@
+import type { PluginPublicInvocationCarrierV1 } from '../../../stores/ports/plugin-public-invocation-carrier.js';
 import { createHash } from 'node:crypto';
 import { isDeepStrictEqual } from 'node:util';
 import type { CatRoutingError, MessageFrom, QueueAuthorIntent, WaitContinuationCarrierV1 } from '@cat-cafe/shared';
@@ -31,6 +32,7 @@ export interface QueueLedgerPayload {
 }
 
 export interface QueueLedgerExecution {
+  pluginPublicInvocation?: PluginPublicInvocationCarrierV1;
   intent: string;
   ownerAuthProvenance: OwnerAuthProvenance;
   /** Domain execution restriction; never an owner-authentication grant. */
