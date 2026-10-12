@@ -19,6 +19,7 @@ import {
 } from '../dist/domains/plugin/carrier/plugin-owner-request-context.js';
 import { currentPluginTransportPurpose } from '../dist/domains/plugin/carrier/plugin-transport-context.js';
 import { PluginRuntimeCarrierRouter } from '../dist/domains/plugin/carrier/runtime-carrier.js';
+import { makeQueuedMessageCustody } from './helpers/queued-message-custody.js';
 
 const privateMethod = 'host.public-invocation.assert-current';
 const manifest = {
@@ -238,18 +239,24 @@ async function routedFixture(t, options = {}) {
   // Installed package bytes and Host materialized resources live in separate roots.
   const projectRoot = await mkdtemp(join(tmpdir(), 'plugin-public-verifier-project-'));
   let config = { version: 1, capabilities: [] };
-  const router = new PluginRuntimeCarrierRouter(inventory, {
-    projectRoot,
-    packages: f.packages,
-    configuration: { resolve: async () => ({}) },
-    mcpConfigIO: {
-      readConfig: async () => config,
-      withLock: async (fn) => fn(),
-      writeAndRegenCli: async (value) => {
-        config = structuredClone(value);
+  const router = new PluginRuntimeCarrierRouter(
+    inventory,
+    {
+      projectRoot,
+      packages: f.packages,
+      configuration: { resolve: async () => ({}) },
+      mcpConfigIO: {
+        readConfig: async () => config,
+        withLock: async (fn) => fn(),
+        writeAndRegenCli: async (value) => {
+          config = structuredClone(value);
+        },
       },
     },
-  });
+    undefined,
+    undefined,
+    options.publicInvocationSources,
+  );
   router.register(bundled);
   f.setCleanup(async () => {
     try {
@@ -601,4 +608,290 @@ test('a public verifier cannot approve an MCP contribution whose owning feature 
   assert.equal(typeof f.runtime.invokePublicInvocationVerifier, 'function', 'missing private public verifier carrier');
   await assert.rejects(() => f.invoke());
   assert.equal(calls, 0);
+});
+
+async function publicSourceFixture(t, options = {}) {
+  const message = {
+    id: 'source',
+    userId: 'owner',
+    threadId: 'public-thread',
+    catId: null,
+    content: 'public source body',
+    timestamp: 1000,
+    mentions: [],
+    deliveryStatus: 'queued',
+    source: { connector: 'fixture', meta: { channel: 'public' } },
+    extra: { pluginMessage: { instanceId: 'instance', revision: 1 }, privateSecret: 'do not project' },
+    queueCustody: makeQueuedMessageCustody({
+      ownerUserId: 'owner',
+      ownerAuthProvenance: 'unknown',
+      intent: 'execute',
+      allTargetCats: ['astra'],
+      pendingTargetCats: ['astra'],
+      pluginPublicInvocation: carrier(),
+    }),
+  };
+  const thread = { id: 'public-thread', createdBy: 'owner', participants: ['astra'] };
+  const stores = {
+    ownerUserId: 'owner',
+    messageStore: { getById: async (id) => (id === message.id ? structuredClone(message) : null) },
+    threadStore: { get: async (id) => (id === thread.id ? structuredClone(thread) : null) },
+  };
+  let entered = 0;
+  const f = await routedFixture(t, {
+    publicInvocationSources: stores,
+    handler: async (input, context) => {
+      entered++;
+      return options.handler ? options.handler(input, context) : { current: true };
+    },
+  });
+  const binding = { entryId: 'entry-1', userId: 'owner', threadId: thread.id, targetCatId: 'astra' };
+  assert.equal(typeof f.router.assertPublicInvocationCurrent, 'function', 'missing durable public currentness fence');
+  return {
+    ...f,
+    message,
+    thread,
+    stores,
+    binding,
+    entered: () => entered,
+    check: (value = carrier(), expected = binding, context = f.context) =>
+      f.router.assertPublicInvocationCurrent('instance', value, expected, context),
+  };
+}
+
+test('public source fence verifies durable custody through the real private runtime chain', async (t) => {
+  const f = await publicSourceFixture(t);
+  assert.equal(await f.check(), undefined);
+  assert.equal(f.entered(), 1);
+  assert.equal(f.message.deliveryStatus, 'queued');
+  assert.equal(f.message.queueCustody.status, 'queued');
+});
+
+test('public source fence rejects missing, recalled, deleted, foreign and malformed sources before package entry', async (t) => {
+  const f = await publicSourceFixture(t);
+  const original = structuredClone(f.message);
+  for (const delta of [
+    { id: 'missing' },
+    { userId: 'foreign' },
+    { catId: 'astra' },
+    { threadId: 'foreign' },
+    { recall: { recalledAt: 1 } },
+    { deletedAt: 1 },
+    { _tombstone: true },
+    { sourceParseFailure: {} },
+    { source: undefined },
+    { deliveryStatus: 'canceled' },
+    { extra: { pluginMessage: { instanceId: 'other', revision: 1 } } },
+    { extra: { pluginMessage: { instanceId: 'instance', revision: 2 } } },
+  ]) {
+    for (const key of Object.keys(f.message)) delete f.message[key];
+    Object.assign(f.message, structuredClone(original), delta);
+    await assert.rejects(() => f.check());
+  }
+  assert.equal(f.entered(), 0);
+});
+
+test('public source fence rejects absent or substituted durable authority and owner lanes', async (t) => {
+  const f = await publicSourceFixture(t);
+  const original = structuredClone(f.message.queueCustody);
+  for (const delta of [
+    { pluginPublicInvocation: undefined },
+    { pluginPublicInvocation: { ...carrier(), authorityRevision: 'other' } },
+    { entryId: 'another-entry' },
+    { ownerUserId: 'foreign' },
+    { ownerAuthProvenance: 'owner_authenticated' },
+    { allTargetCats: ['astra', 'codex'], pendingTargetCats: ['astra', 'codex'] },
+  ]) {
+    f.message.queueCustody = { ...structuredClone(original), ...delta };
+    await assert.rejects(() => f.check());
+  }
+  f.message.queueCustody = undefined;
+  await assert.rejects(() => f.check());
+  assert.equal(f.entered(), 0);
+});
+
+test('public source fence rejects terminal, failed and withdrawn targets without requeue', async (t) => {
+  const f = await publicSourceFixture(t);
+  const original = structuredClone(f.message.queueCustody);
+  for (const delta of [
+    { status: 'terminal', pendingTargetCats: [], handledByCatIds: ['astra'] },
+    { failedByCatIds: ['astra'] },
+    { withdrawnByCatIds: ['astra'], withdrawnAtByCatId: { astra: 1001 } },
+    { pendingTargetCats: [] },
+  ]) {
+    f.message.queueCustody = { ...structuredClone(original), ...delta };
+    await assert.rejects(() => f.check());
+    assert.deepEqual(f.message.queueCustody, { ...original, ...delta });
+  }
+  assert.equal(f.entered(), 0);
+});
+
+test('public source fence requires current owner thread and target participation', async (t) => {
+  const f = await publicSourceFixture(t);
+  for (const thread of [
+    null,
+    { ...f.thread, createdBy: 'foreign' },
+    { ...f.thread, deletedAt: 1 },
+    { ...f.thread, participants: [] },
+    { ...f.thread, id: 'other' },
+  ]) {
+    f.stores.threadStore.get = async () => thread;
+    await assert.rejects(() => f.check());
+  }
+  assert.equal(f.entered(), 0);
+});
+
+test('public source fence rejects malformed caller bindings before store reads', async (t) => {
+  const f = await publicSourceFixture(t);
+  let reads = 0;
+  f.stores.messageStore.getById = async () => {
+    reads++;
+    return f.message;
+  };
+  for (const delta of [
+    { userId: 'foreign' },
+    { targetCatId: 'codex' },
+    { entryId: '' },
+    { threadId: '' },
+    { workspace: '/private' },
+    { invocationId: '' },
+  ]) {
+    await assert.rejects(() => f.check(carrier(), { ...f.binding, ...delta }));
+  }
+  assert.equal(reads, 0);
+});
+
+test('public source fence rejects source body drift during thread lookup even without a revision bump', async (t) => {
+  const f = await publicSourceFixture(t);
+  f.stores.threadStore.get = async () => {
+    f.message.content = 'replaced';
+    return f.thread;
+  };
+  await assert.rejects(() => f.check());
+  assert.equal(f.entered(), 0);
+});
+
+test('public source fence rejects source withdrawal while package verification awaits', async (t) => {
+  const entered = deferred(),
+    release = deferred();
+  const f = await publicSourceFixture(t, {
+    handler: async () => {
+      entered.resolve();
+      await release.promise;
+      return { current: true };
+    },
+  });
+  const pending = f.check();
+  await entered.promise;
+  f.message.recall = { recalledAt: 1001 };
+  release.resolve();
+  await assert.rejects(() => pending);
+});
+
+test('public source fence cannot lose a failed source check swallowed by the package', async (t) => {
+  let f;
+  f = await publicSourceFixture(t, {
+    handler: async (_input, context) => {
+      f.thread.participants = [];
+      await assert.rejects(() => context.assertCurrent());
+      f.thread.participants = ['astra'];
+      return { current: true };
+    },
+  });
+  await assert.rejects(() => f.check());
+});
+
+test('public source fence captures carrier and binding before awaited reads', async (t) => {
+  const f = await publicSourceFixture(t);
+  const entered = deferred(),
+    release = deferred();
+  const get = f.stores.messageStore.getById;
+  f.stores.messageStore.getById = async (id) => {
+    entered.resolve();
+    await release.promise;
+    return get(id);
+  };
+  const value = carrier(),
+    binding = { ...f.binding };
+  const pending = f.check(value, binding);
+  await entered.promise;
+  value.authorityRevision = 'mutated';
+  value.actionMethods.push('native.admin');
+  binding.entryId = 'mutated';
+  release.resolve();
+  assert.equal(await pending, undefined);
+});
+
+test('public source fence binds callbacks to the exact durable awakened child', async (t) => {
+  const f = await publicSourceFixture(t);
+  f.message.queueCustody.status = 'processing';
+  f.message.queueCustody.processingStartedAt = 1001;
+  f.message.queueCustody.awakenedInvocationIdByCatId = { astra: 'child-1' };
+  f.message.queueCustody.awakenedAtByCatId = { astra: 1001 };
+  await f.check(carrier(), { ...f.binding, invocationId: 'child-1' });
+  await assert.rejects(() => f.check(carrier(), { ...f.binding, invocationId: 'child-2' }));
+  await assert.rejects(() => f.check(carrier(), f.binding));
+  f.message.queueCustody.status = 'queued';
+  await assert.rejects(() => f.check(carrier(), f.binding));
+  await assert.rejects(() => f.check(carrier(), { ...f.binding, invocationId: 'child-1' }));
+  f.message.queueCustody.status = 'processing';
+  delete f.message.queueCustody.awakenedInvocationIdByCatId;
+  delete f.message.queueCustody.awakenedAtByCatId;
+  await assert.rejects(() => f.check(carrier(), f.binding));
+  await assert.rejects(() => f.check(carrier(), { ...f.binding, invocationId: 'child-1' }));
+});
+
+test('public source fence rejects stopped activation and aborted calls', async (t) => {
+  const f = await publicSourceFixture(t);
+  const abort = new AbortController();
+  abort.abort(new Error('cancelled'));
+  await assert.rejects(() => f.check(carrier(), f.binding, { ...f.context, signal: abort.signal }));
+  await f.router.stop('instance', 'owner_disabled');
+  await assert.rejects(() => f.check());
+  assert.equal(f.entered(), 0);
+});
+
+test('public source fence rechecks activation during source reads after package verification', async (t) => {
+  let verified = false;
+  const f = await publicSourceFixture(t, {
+    handler: async () => {
+      verified = true;
+      return { current: true };
+    },
+  });
+  const get = f.stores.messageStore.getById;
+  let stopped = false;
+  f.stores.messageStore.getById = async (id) => {
+    const message = await get(id);
+    if (verified && !stopped) {
+      stopped = true;
+      await f.router.stop('instance', 'disabled_during_final_source_read');
+    }
+    return message;
+  };
+  await assert.rejects(() => f.check());
+  assert.equal(verified, true);
+  assert.equal(stopped, true);
+});
+
+test('public source fence abort settles blocked storage reads without entering the package', async (t) => {
+  const f = await publicSourceFixture(t);
+  const entered = deferred(),
+    release = deferred();
+  const get = f.stores.messageStore.getById;
+  f.stores.messageStore.getById = async (id) => {
+    entered.resolve();
+    await release.promise;
+    return get(id);
+  };
+  const controller = new AbortController();
+  const pending = f.check(carrier(), f.binding, { ...f.context, signal: controller.signal });
+  await entered.promise;
+  controller.abort(new Error('abort_storage_read'));
+  try {
+    await assert.rejects(() => pending, /abort_storage_read/);
+    assert.equal(f.entered(), 0);
+  } finally {
+    release.resolve();
+  }
 });

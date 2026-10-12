@@ -548,6 +548,11 @@ export function createDormantPluginRuntimeComposition(
         reason === PLUGIN_OWNER_UNINSTALLED_REASON ? 'instance_uninstalled' : 'instance_stopped',
       );
     },
+    {
+      ownerUserId: options.threadOwnerUserId,
+      messageStore: options.messageStore,
+      threadStore: options.threadStore,
+    },
   );
   deliveryTarget.current = supervisor;
   supervisor.register(

@@ -31,6 +31,11 @@ import {
 } from './host-invocation.js';
 import type { PredicateVerifierPort } from './predicate-verifier.js';
 import {
+  assertDurablePublicInvocationCurrent,
+  type PublicInvocationBinding,
+  type PublicInvocationSourceServices,
+} from './public-invocation-currentness.js';
+import {
   assertPublicVerifierAdmission,
   capturePublicVerification,
   PUBLIC_INVOCATION_VERIFIER_METHOD,
@@ -86,6 +91,7 @@ export class PluginRuntimeCarrierRouter implements PluginRuntimeLifecyclePort {
     private readonly resources?: DeclaredStaticResourceHost,
     runtimeContributions?: DeclaredRuntimeContributionHost,
     private readonly beforeStop?: (instanceId: string, reason: string) => Promise<void>,
+    private readonly publicInvocationSources?: PublicInvocationSourceServices,
   ) {
     this.#runtimeContributions = new DeclaredRuntimeContributions(
       runtimeContributions ?? {
@@ -254,6 +260,47 @@ export class PluginRuntimeCarrierRouter implements PluginRuntimeLifecyclePort {
     }
     return carrier.invokePredicateVerifier(instanceId, method, input, context);
   };
+
+  /** Host execution fence; never exposed as an ordinary package action. */
+  async assertPublicInvocationCurrent(
+    instanceId: string,
+    carrier: Parameters<PublicInvocationVerifierPort['invokePublicInvocationVerifier']>[1],
+    binding: PublicInvocationBinding,
+    context: Parameters<PublicInvocationVerifierPort['invokePublicInvocationVerifier']>[2],
+  ): Promise<void> {
+    const captured = capturePublicVerification(instanceId, carrier, context);
+    const generation = this.nativeActions.generation(instanceId);
+    const policy = Object.freeze({
+      mode: 'plugin_native' as const,
+      pluginInstanceId: instanceId,
+      contributionId: captured.carrier.contributionId,
+      actionMethods: captured.carrier.actionMethods,
+    });
+    let server: NativeMcpServer | undefined;
+    const assertCurrent = async () => {
+      captured.context.signal.throwIfAborted();
+      await captured.context.assertCurrent();
+      const admission = await this.#admission(instanceId);
+      assertPublicVerifierAdmission(admission, captured.carrier);
+      const currentServer = await this.resolveNativeMcpLaunch(policy);
+      if (
+        !currentServer ||
+        (server !== undefined && currentServer !== server) ||
+        generation !== this.nativeActions.generation(instanceId)
+      )
+        throw new ExternalPluginRuntimeError('INSTANCE_NOT_RUNNABLE', 'Public source activation changed');
+      server = currentServer;
+      captured.context.signal.throwIfAborted();
+    };
+    return assertDurablePublicInvocationCurrent(
+      instanceId,
+      captured.carrier,
+      binding,
+      Object.freeze({ signal: captured.context.signal, assertCurrent }),
+      this.publicInvocationSources,
+      this.invokePublicInvocationVerifier.bind(this),
+    );
+  }
 
   readonly invokePublicInvocationVerifier: PublicInvocationVerifierPort['invokePublicInvocationVerifier'] = async (
     instanceId,
