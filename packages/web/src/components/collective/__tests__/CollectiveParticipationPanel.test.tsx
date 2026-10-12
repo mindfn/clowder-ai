@@ -371,6 +371,42 @@ describe('Collective owner participation interactions', () => {
     expect(container.textContent).not.toContain('工作已完成');
   });
 
+  it('writes a current-Channel exception without changing another Channel or global policy', async () => {
+    let current: unknown = view;
+    fetchMock.mockImplementation(async (_url, init) => {
+      if (init?.method === 'PUT') {
+        current = {
+          ...view,
+          revision: 3,
+          desiredParticipation: {
+            ...view.desiredParticipation,
+            channelOverrides: { general: { excludedCatIds: ['codex-astra'] } },
+          },
+          channelRoutes: {
+            ...view.channelRoutes,
+            general: { ...view.channelRoutes.general, participants: {} },
+          },
+        };
+        return response({ revision: 3, published: true });
+      }
+      return response(current);
+    });
+    await open();
+    await checkbox('Astra 参与 # general');
+    const put = fetchMock.mock.calls.find(([, init]) => init?.method === 'PUT');
+    expect(put?.[0]).toBe('/api/plugins/official.collective-connector/connections/connection-A/participation/policy');
+    expect(JSON.parse(String(put?.[1]?.body))).toEqual({
+      expectedRevision: 2,
+      channelIds: ['general', 'second'],
+      policy: {
+        defaultMode: 'include',
+        excludedCatIds: [],
+        channelOverrides: { general: { excludedCatIds: ['codex-astra'] } },
+      },
+    });
+    expect(JSON.parse(String(put?.[1]?.body)).policy.channelOverrides.second).toBeUndefined();
+  });
+
   it('shows only requests and Work whose source belongs to the selected channel', async () => {
     const other = {
       ...view.requests[0],
