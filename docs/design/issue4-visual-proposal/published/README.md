@@ -1,6 +1,8 @@
 ---
 title: "Issue 4 conversation visual proposal"
 status: draft
+doc_kind: evidence
+created: 2026-10-12
 ---
 
 # Issue 4: conversation visual comparison
