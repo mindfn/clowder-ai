@@ -17,6 +17,7 @@ import { after, test } from 'node:test';
 import { validateEffectiveGrants, validateManifest } from '@clowder-ai/plugin-contract';
 import { MessageStore } from '../dist/domains/cats/services/stores/ports/MessageStore.js';
 import { ThreadStore } from '../dist/domains/cats/services/stores/ports/ThreadStore.js';
+import { admitModuleBrowserServices } from '../dist/domains/plugin/builtin-runtime/carriers/module-browser-services.js';
 import {
   createDormantPluginRuntimeComposition,
   createPluginManagerRuntimeComposition,
@@ -64,6 +65,85 @@ const EXPECTED = {
 };
 const W2_1_GRANTS = without('media.read', 'plugin.state.get', 'plugin.state.set', 'thread.readContent');
 const sorted = (values) => [...values].sort();
+
+function collectiveManifest(capabilities = ['data.directory']) {
+  const value = manifest('official.collective-connector', capabilities);
+  value.runtime.dataDirectory = 'collective';
+  value.features[0].contributions = [{ type: 'browser-service', id: 'collective-client-api' }];
+  value.contributions = [
+    {
+      type: 'browser-service',
+      id: 'collective-client-api',
+      action: { method: 'collective.http.dispatch' },
+      routes: [{ method: 'GET', path: '/api/meta', browser: 'service', local: 'omit-origin' }],
+      credentials: { bearer: true, cookies: [] },
+    },
+  ];
+  return value;
+}
+
+test('Collective local directory admission receives only its persistent data capability', async () => {
+  const host = await installed(collectiveManifest());
+  try {
+    assert.deepEqual(host.grants.requestedCapabilities, ['data.directory']);
+    assert.deepEqual(host.grants.effectiveGrants, ['data.directory']);
+  } finally {
+    await host.shutdown();
+  }
+});
+
+test('Collective cannot regain removed config or additional capabilities by requesting them', () => {
+  assert.deepEqual(
+    resolveLocalPluginEffectiveGrants(
+      OFFICIAL_PLUGIN_HOST_POLICIES,
+      collectiveManifest(['data.directory', 'plugin.config.read', 'secret.read', 'thread.write']),
+    ),
+    ['data.directory'],
+  );
+  assert.deepEqual(resolveLocalPluginEffectiveGrants(OFFICIAL_PLUGIN_HOST_POLICIES, collectiveManifest([])), []);
+});
+
+test('Collective startup reconciliation grants only data directory to a previously ungranted instance', async () => {
+  const store = new MemoryPluginInventoryStore();
+  const inventory = new HostInventoryControlPlane(store, { createInstanceId: () => 'pi_collective', now: () => 1 });
+  const digest = `sha512-${createHash('sha512').update('collective-policy').digest('base64')}`;
+  const installed = await inventory.installPackage({
+    manifest: collectiveManifest(['data.directory', 'plugin.config.read']),
+    computedPackageDigest: digest,
+    expectedPackageDigest: digest,
+    packagePluginId: 'official.collective-connector',
+    effectiveGrants: [],
+  });
+  const changes = await reconcileOfficialPluginGrants({
+    store,
+    inventory,
+    hostPolicies: OFFICIAL_PLUGIN_HOST_POLICIES,
+  });
+  assert.deepEqual(changes, [
+    {
+      pluginId: 'official.collective-connector',
+      pluginInstanceId: installed.pluginInstanceId,
+      added: ['data.directory'],
+      removed: [],
+    },
+  ]);
+  const grant = (await store.snapshot()).grants[0];
+  assert.deepEqual(grant.effectiveGrants, ['data.directory']);
+  assert.equal(grant.grantRevision, 2);
+  assert.deepEqual(
+    await reconcileOfficialPluginGrants({ store, inventory, hostPolicies: OFFICIAL_PLUGIN_HOST_POLICIES }),
+    [],
+  );
+});
+
+test('Collective browser admission requires the narrowed manifest and its actual grant', () => {
+  const current = collectiveManifest();
+  const grants = resolveLocalPluginEffectiveGrants(OFFICIAL_PLUGIN_HOST_POLICIES, current);
+  assert.equal(admitModuleBrowserServices(current, grants).active.has('collective-client-api'), true);
+  assert.equal(admitModuleBrowserServices(current, []).active.size, 0);
+  const stale = collectiveManifest(['data.directory', 'plugin.config.read']);
+  assert.equal(admitModuleBrowserServices(stale, grants).active.size, 0);
+});
 
 const GITHUB = [
   'schedule.register',

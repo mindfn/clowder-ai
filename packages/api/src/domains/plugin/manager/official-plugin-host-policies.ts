@@ -40,6 +40,11 @@ function connectorGrants(...unused: readonly (typeof CONNECTOR_GRANTS)[number][]
  */
 export const OFFICIAL_PLUGIN_HOST_POLICIES: readonly MachineCatalogHostPolicy[] = [
   {
+    pluginId: 'official.collective-connector',
+    // Service and connector persistence. Origins/limits come from browserServices, not config.
+    effectiveGrants: ['data.directory'],
+  },
+  {
     pluginId: 'official.companion.personal-chrome',
     effectiveGrants: ['data.directory', 'cloud.conversation.host'],
   },
