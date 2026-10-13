@@ -2,7 +2,7 @@
  * F322 小信箱 — what the one rail entry may claim about the owner's unified attention read (F310).
  *
  * The entry speaks only from what the read proved (home-northstar README §状态, F310 delivery record):
- *  - a number appears only when the read itself carries `totalCount`, and it is exactly that number — never a sum of
+ *  - the badge uses only authority-qualified `attentionCount`; the panel uses `totalCount` — never a sum of
  *    the old per-source counts and never the page's `items.length`;
  *  - "empty" needs a proven complete empty set; zero rows from a source that could not prove full coverage is "partial";
  *  - "needs login" needs an explicit authentication signal; forbidden / not enabled / unreachable is not a login prompt;
@@ -32,13 +32,21 @@ export type MailboxState =
   | { kind: 'login-required' };
 
 export function deriveMailboxState(result: MailboxRead): MailboxState {
+  return deriveReadState(result, 'attentionCount');
+}
+
+export function deriveMailboxPanelState(result: MailboxRead): MailboxState {
+  return deriveReadState(result, 'totalCount');
+}
+
+function deriveReadState(result: MailboxRead, field: 'attentionCount' | 'totalCount'): MailboxState {
   if (result.kind === 'loading') return { kind: 'loading' };
   if (result.kind === 'failed') {
     return result.reason === 'unauthenticated' ? { kind: 'login-required' } : { kind: 'unavailable' };
   }
 
   const { read } = result;
-  const sources = [read.sources.approvals, read.sources.needsMe];
+  const sources = Object.values(read.sources);
   const readable = sources.filter((source) => source.status === 'available');
   if (readable.length === 0) {
     return sources.every((source) => source.status === 'unauthenticated')
@@ -55,15 +63,30 @@ export function deriveMailboxState(result: MailboxRead): MailboxState {
   const exactTotal =
     provenComplete && typeof read.totalCount === 'number' && read.totalCount >= rows ? read.totalCount : null;
 
-  if (exactTotal !== null && exactTotal > 0) return { kind: 'has-items', count: exactTotal, partial: false };
-  if (rows > 0) {
+  const qualifiedSource = read.sources.structuredChoices?.coverage === 'pending_f306_structured_choices';
+  // Earlier/handled filters only narrow panel rows; the qualified count remains global.
+  const attention =
+    field === 'totalCount'
+      ? exactTotal
+      : provenComplete && qualifiedSource && exactTotal !== null && read.attentionCount !== undefined
+        ? read.attentionCount
+        : null;
+  if (attention === 0) return { kind: 'empty' };
+  if (attention !== null && attention > 0) return { kind: 'has-items', count: attention, partial: false };
+  const knownRows =
+    field === 'totalCount'
+      ? rows > 0
+      : read.items.some(
+          (item) => item.kind === 'approval' || (item.kind === 'judgment' && item.choiceRequest !== undefined),
+        );
+  if (knownRows) {
     return {
       kind: 'has-items',
       count: null,
       partial: !allReadable || read.status !== 'available' || !everyCoverageComplete,
     };
   }
-  return exactTotal === 0 ? { kind: 'empty' } : { kind: 'partial' };
+  return { kind: 'partial' };
 }
 
 /** Short state phrase used by the tooltip second line and the accessible name — the board's own short words. */
@@ -95,7 +118,7 @@ export function mailboxAccessibleName(state: MailboxState): string {
  * empty result must not be called "暂无". A source that was not read names itself through `sourceStatusText`, so null here.
  */
 export function mailboxPartialNote(read: UnifiedAttentionReadV1): string | null {
-  const sources = [read.sources.approvals, read.sources.needsMe];
+  const sources = Object.values(read.sources);
   if (sources.some((source) => source.status !== 'available')) return null;
   if (read.consistency.state === 'uncertain') return '审批和待处理是分开读的，这次没能确认两边对得上';
   if (sources.some((source) => source.exhaustiveness !== 'complete')) return '这次没能确认两边都读全';

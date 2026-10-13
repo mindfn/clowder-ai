@@ -11,6 +11,11 @@ function originalPresentation(attachment: ContextAttachment): { title: string; d
   switch (attachment.kind) {
     case 'thread':
       return { title: attachment.title, detail: attachment.threadId };
+    case 'project-screening':
+      return {
+        title: attachment.title,
+        detail: `审片 · 输入 v${attachment.input.ownerRevision} · ${attachment.selections.length} 处待讨论`,
+      };
     case 'media':
       return {
         title: attachment.title,
@@ -28,7 +33,7 @@ function originalPresentation(attachment: ContextAttachment): { title: string; d
             ? attachment.source.path
             : attachment.source.kind === 'cli_output'
               ? 'CLI Output'
-              : 'Message quote',
+              : (attachment.source.artifactFile?.fileName ?? 'Message quote'),
         detail: attachment.text,
       };
   }
@@ -39,6 +44,7 @@ const KIND_LABELS: Record<ContextAttachment['kind'], string> = {
   workspace_file: 'FILE',
   quote: 'QUOTE',
   media: 'MEDIA',
+  'project-screening': '审片',
 };
 
 function quoteTitle(
@@ -48,6 +54,7 @@ function quoteTitle(
   humanName: string,
   t: typeof replyBodyCopy.zh,
 ): string {
+  if (source.kind === 'message' && source.artifactFile) return source.artifactFile.fileName;
   // Legacy CLI references do not prove which rendered leaf was quoted.
   if (source.kind === 'cli_output' && source.segmentId !== 'stdout') return t.executionRecord;
   if (loadedSource?.type === 'user') return t.replyBy(humanName);

@@ -3649,6 +3649,7 @@ export async function handleGetThreadMetadata(input: AgentKeySelectable = {}): P
 }
 
 export const setThreadMetadataInputSchema = {
+  // Protected migration schema stays stable; the tool-level contract below governs title writes.
   title: z.string().min(1).optional().describe('Update thread title (replaces existing)'),
   labels: z.array(z.string()).optional().describe('Update thread labels (replaces entire array)'),
   worktrees: z.array(z.string()).optional().describe('Worktree paths to add (append + dedupe)'),
@@ -4105,7 +4106,7 @@ export const callbackTools = [
       action: 'update',
       authority: 'callback-owner',
       risk: { level: 'write', openWorld: false },
-      runtimeProfiles: ['collective-work', 'full'],
+      runtimeProfiles: ['collective-work', 'full', 'desktop:live-companion'],
       standaloneReason: {
         disposition: 'accepted-boundary',
         kind: 'side-effect-boundary',
@@ -4117,8 +4118,11 @@ export const callbackTools = [
     name: 'cat_cafe_admit_entrusted_work',
     description:
       'Ask the canonical Task owner to admit or resume explicitly entrusted work. ' +
+      'Use when: a current user Message explicitly entrusts work, an offer was accepted, or a registered source grants admission. ' +
+      'Not for: casual mentions, a new Task for a follow-up to known work, or replacing its owner. For a known Task, read_entrusted_work and update_entrusted_work continue that Task. ' +
+      'GOTCHA: explicit_entrustment and accepted_offer require sourceRefs=["message:<messageId>"] for exactly one current user-authored Message in this authenticated thread, not thread#message links or supporting-message lists. ' +
       'The same idempotencyKey always returns the same Task coordinates; it never creates a sibling Task. ' +
-      'Accepted offers remain pending until this action returns a typed admitted/resumed/needs_clarification result. ' +
+      'Output: canonical Task coordinates and a typed admitted/resumed/needs_clarification result; accepted offers remain pending until admission succeeds. ' +
       'Authorized-source admission fails closed unless its producer grant is registered and current.',
     inputSchema: admitEntrustedWorkInputSchema,
     handler: handleAdmitEntrustedWork,
@@ -4128,7 +4132,7 @@ export const callbackTools = [
       action: 'create',
       authority: 'callback-owner',
       risk: { level: 'write', openWorld: false },
-      runtimeProfiles: ['full'],
+      runtimeProfiles: ['full', 'desktop:live-companion'],
       standaloneReason: {
         disposition: 'accepted-boundary',
         kind: 'authority-boundary',
@@ -4150,7 +4154,7 @@ export const callbackTools = [
       action: 'complete',
       authority: 'callback-owner',
       risk: { level: 'write', openWorld: false },
-      runtimeProfiles: ['full'],
+      runtimeProfiles: ['full', 'desktop:live-companion'],
       standaloneReason: {
         disposition: 'accepted-boundary',
         kind: 'destructive-boundary',
@@ -4175,7 +4179,7 @@ export const callbackTools = [
       action: 'update',
       authority: 'callback-owner',
       risk: { level: 'write', openWorld: false },
-      runtimeProfiles: ['collective-work', 'full'],
+      runtimeProfiles: ['collective-work', 'full', 'desktop:live-companion'],
       standaloneReason: {
         disposition: 'accepted-boundary',
         kind: 'authority-boundary',
@@ -4264,6 +4268,7 @@ export const callbackTools = [
       'Use this for long structured replies/reports with lists, tables, code blocks, diffs, status fields, or multi-step checklists; F192 rich-messaging wakeup treats plain long Markdown with these signals and no rich block as a miss. ' +
       'NOT for: persistent task tracking across sessions (use create_task for 🧶 毛线球). NOT for: document generation/export (use generate_document). ' +
       'Output: block rendered inline in the current message. ' +
+      'GOTCHA: media_gallery local absolute image paths are resolved only inside registered workspaces (existing readable image, <=10MiB) to /api/workspace/file/raw?worktreeId=...&path=...; unknown/protected/unusable local paths are rejected. This is a file view, not upload publication. Automatic upload publication only covers native image_gen/Antigravity provider results; use publish_image for durable local PNG publication. ' +
       'GOTCHA: The block JSON must use "kind" (NOT "type") and include "v": 1 and a unique "id". ' +
       "GOTCHA: Call get_rich_block_rules first if you haven't loaded the full schema yet in this session. " +
       'GOTCHA: checklist kind is ephemeral inline content — for persistent cross-session work items, use create_task (毛线球) instead. ' +
@@ -5063,10 +5068,12 @@ export const callbackTools = [
     name: 'cat_cafe_set_thread_metadata',
     description:
       'Write low-frequency metadata anchors for the current thread. Merge semantics: ' +
-      'title/labels REPLACE; worktrees/prs/issues/features APPEND with dedupe (use remove* fields to remove); ' +
+      'title names an untitled conversation once; labels REPLACE; worktrees/prs/issues/features APPEND with dedupe (use remove* fields to remove); ' +
       'notes MERGE (string sets, null deletes key). ' +
-      'WHEN: after creating a worktree, PR, or issue association — NOT for dynamic state. ' +
-      'SCOPE: current thread only (no threadId param); cross-thread writes are impossible.',
+      'Use when: naming an untitled conversation or recording a worktree, PR, or issue association. NOT for: renaming an already named conversation or dynamic state. ' +
+      'Output: updated metadata; title requests include titleApplied and titleSource. If titleApplied=false, report that the title was not changed. ' +
+      'SCOPE: current thread only (no threadId param); cross-thread writes are impossible. ' +
+      'GOTCHA: the legacy title parameter hint does not authorize replacement. User and previously cat-named titles are protected; check titleApplied.',
     inputSchema: setThreadMetadataInputSchema,
     handler: handleSetThreadMetadata,
     governance: {

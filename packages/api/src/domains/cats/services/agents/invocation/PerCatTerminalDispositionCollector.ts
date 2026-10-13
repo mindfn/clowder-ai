@@ -48,6 +48,12 @@ export class PerCatTerminalDispositionCollector {
     const { catId } = event;
     if (!catId || !this.targetCatIds.has(catId)) return;
 
+    if (isTerminalDispositionEvent(event) && event.errorCode === 'INVOCATION_CANCELLED') {
+      this.canceledCatIds.add(catId);
+      this.disqualify(catId);
+      return;
+    }
+
     if (event.type === 'error') {
       if (event.errorDisposition === 'transient') return;
       this.primaryTerminalError ??= this.readTerminalError(event.error, event.errorCode, catId);
@@ -87,6 +93,14 @@ export class PerCatTerminalDispositionCollector {
     if (this.failedCatIds.has(catId)) return 'failed';
     if (this.canceledCatIds.has(catId)) return 'canceled';
     return undefined;
+  }
+
+  areAllTargetsCanceled(): boolean {
+    return (
+      !this.primaryTerminalError &&
+      this.targetCatIds.size > 0 &&
+      [...this.targetCatIds].every((catId) => this.canceledCatIds.has(catId) || this.isCanceled(catId))
+    );
   }
 
   private readTerminalError(error: unknown, errorCode: unknown, catId: string): string {

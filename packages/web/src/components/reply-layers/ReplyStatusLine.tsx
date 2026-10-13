@@ -31,7 +31,7 @@ function ActivityCat({ event, newCall }: { event: ReplyActivityEvent | undefined
       data-tone="info"
       data-activity-event={event?.id}
       data-pulse={pulse}
-      className={styles.cat}
+      className={`${styles.cat} animate-cat-bounce`}
     >
       ᓚᘏᗢ
     </span>

@@ -1,6 +1,6 @@
 'use client';
 
-import { type ReactNode, useRef } from 'react';
+import { type ReactNode, useRef, useState } from 'react';
 import type { WorkspaceFileNavigationOrigin } from '@/stores/chat-types';
 import { useWorkspacePreviewIntent } from '../WorkspacePreviewIntent';
 import { ContentLandingHeader } from './ContentLandingHeader';
@@ -12,6 +12,12 @@ import type {
 } from './content-review-contract';
 import { type PublicationDisplayRequest, usePublicationDisplay } from './usePublicationDisplay';
 import { WorkspaceContentReviewProjection } from './WorkspaceContentReviewProjection';
+
+export interface ContentFileReaderControls {
+  readonly onRequestModification: () => void;
+  readonly modificationDisabled: boolean;
+  readonly onQuoteSelected: (quote: string) => void;
+}
 
 export function ContentReviewSurface({
   review,
@@ -28,6 +34,7 @@ export function ContentReviewSurface({
   capabilities,
   workflow,
   publication,
+  fileReader,
 }: {
   readonly review: ContentReviewController;
   readonly path: string;
@@ -43,9 +50,19 @@ export function ContentReviewSurface({
   readonly capabilities?: ContentLandingCapabilities;
   readonly workflow?: ContentReviewWorkflow;
   readonly publication?: PublicationDisplayRequest;
+  readonly fileReader?: (controls: ContentFileReaderControls) => ReactNode;
 }) {
   const draftStarted = useWorkspacePreviewIntent();
   const root = useRef<HTMLElement>(null);
+  const [openRequest, setOpenRequest] = useState(0);
+  const [selection, setSelection] = useState<{ revision: string; quote: string } | null>(null);
+  const currentCapabilities = review.view ? (capabilities ?? contentReviewCapabilities(review.view)) : null;
+  const modificationDisabled =
+    !review.view?.canWrite ||
+    review.busy ||
+    review.view.sourceState !== 'current' ||
+    currentCapabilities?.requestModification.state !== 'available' ||
+    (review.view.currentSource ?? review.view.review.source).revision !== sourceTextRevision;
   usePublicationDisplay(root, publication, review.view, review.error);
   return (
     <section
@@ -54,13 +71,15 @@ export function ContentReviewSurface({
       data-testid="workspace-content-review-surface"
       data-navigation-origin={navigationOrigin?.kind ?? 'unknown'}
     >
-      <ContentLandingHeader
-        title={title ?? (path.split('/').at(-1) || path)}
-        navigationOrigin={navigationOrigin}
-        onBack={onBack}
-        onOpenFileTools={onOpenFileTools}
-        versionControl={versionControl}
-      />
+      {!fileReader && (
+        <ContentLandingHeader
+          title={title ?? (path.split('/').at(-1) || path)}
+          navigationOrigin={navigationOrigin}
+          onBack={onBack}
+          onOpenFileTools={onOpenFileTools}
+          versionControl={versionControl}
+        />
+      )}
       {workflow?.status}
       {review.error ? (
         <p role="alert" className="rounded bg-[var(--semantic-critical-surface)] p-2 text-xs text-cafe-error">
@@ -80,7 +99,16 @@ export function ContentReviewSurface({
           </button>
         </div>
       ) : null}
-      {!review.view && !review.error ? <p className="p-4 text-sm text-cafe-muted">正在打开作品…</p> : null}
+      {fileReader?.({
+        onRequestModification: () => {
+          if (!modificationDisabled) setOpenRequest((request) => request + 1);
+        },
+        modificationDisabled,
+        onQuoteSelected: (quote) => setSelection(quote ? { revision: sourceTextRevision, quote } : null),
+      })}
+      {!fileReader && !review.view && !review.error ? (
+        <p className="p-4 text-sm text-cafe-muted">正在打开作品…</p>
+      ) : null}
       {review.view ? (
         <WorkspaceContentReviewProjection
           capabilities={capabilities ?? contentReviewCapabilities(review.view)}
@@ -90,6 +118,7 @@ export function ContentReviewSurface({
           sourceText={sourceText}
           sourceTextRevision={sourceTextRevision}
           scrollToLine={scrollToLine}
+          fileReader={fileReader ? { selection, openRequest, modificationDisabled } : undefined}
           draft={review.draft}
           target={review.target}
           busy={review.busy}

@@ -9,6 +9,7 @@ import { chromium } from '../../../ppt-forge/node_modules/playwright/index.mjs';
 import { startReviewHost } from './fixtures/f309-artifact-review-host.mjs';
 import { mediaFixture } from './fixtures/f309-artifact-review-media.mjs';
 import {
+  openAnnotationSave,
   openReviewPanel,
   selectMarkupColor,
   selectMarkupTool,
@@ -133,7 +134,7 @@ for (const kind of ['png', 'mp4'])
       await page.reload();
       await page.getByRole('textbox', { name: '评论内容' }).waitFor();
       assert.equal(await page.getByRole('textbox', { name: '评论内容' }).inputValue(), sentinel);
-      await page.getByRole('button', { name: '保存批注', exact: true }).click();
+      await (await openAnnotationSave(page)).click();
       // The shared landing keeps the discussion in its drawer; the saved comment is read there.
       await page.getByRole('button', { name: '打开作品讨论', exact: true }).filter({ hasText: '1' }).waitFor();
       await openReviewPanel(page, 'comments');
@@ -231,7 +232,7 @@ for (const kind of ['png', 'mp4'])
       assert.equal(await input.inputValue(), sentinel);
       await selectReviewMode(page, 'view');
       await page.getByRole('button', { name: kind === 'png' ? '标注整张图片' : '标注整个片段', exact: true }).click();
-      await page.getByRole('button', { name: '保存批注', exact: true }).click();
+      await (await openAnnotationSave(page)).click();
       await page.getByRole('button', { name: '打开作品讨论', exact: true }).filter({ hasText: '1' }).waitFor();
       await openReviewPanel(page, 'comments');
       await page.getByTestId('review-comment').waitFor();

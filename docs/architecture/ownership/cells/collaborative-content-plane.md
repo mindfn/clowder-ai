@@ -13,6 +13,8 @@ doc_kind: architecture
 created: 2026-08-27
 canonical_features: [F309]
 code_anchors:
+  - packages/api/src/domains/cats/services/cloud-bridge/dot/DotImageService.ts
+  - packages/api/src/routes/chatgpt-dot-image-routes.ts
   - packages/api/src/domains/collaborative-content/runtime-composition.ts
   - packages/api/src/domains/collaborative-content/workspace-editor-service.ts
   - packages/api/src/domains/collaborative-content/editor-session-service.ts
@@ -51,6 +53,7 @@ doc_anchors:
   - feature-specs/2026-10-07-f326-phase-a-contract.md
 static_scan_hints: [SelectionAnchor, AuthorizationDecisionRef, AnnotationThread, PatchProposal, Disposition, ContentChangeReceipt, receiptId, causal checkpoint, replay, PresenceProjection, change awareness, proposal state CAS, applyReceipt, coordinate space, timebase, table range, reanchor, orphaned, content adapter]
 cited_by:
+  - {feature: F247, date: 2026-10-10, delta: dot G1 source-bound Events and private original image consumer}
   - {feature: F309, date: 2026-08-27, delta: new cell — extract cross-media collaboration mechanics from F290 and keep F307/content-owner boundaries explicit}
   - {feature: F309, date: 2026-09-06, delta: DOCX owner session and independent authenticated cat operation vertical; materialization stays F202-owned and canonical bytes/receipts stay F138-owned}
   - {feature: F309, date: 2026-09-13, delta: record the missing two-Human canonical Markdown slice for F290 W4 and keep bytes/auth in the content owner, lifecycle in F309, and mount in F307}

@@ -222,7 +222,12 @@ export function reduceArtifactWorkPresentation(
 
 /** Structural on purpose: geometry may classify descriptors without importing an owner implementation. */
 export function isArtifactWorkSurface(surface: { readonly type?: string } | null | undefined): boolean {
-  return surface?.type === 'artifact' || surface?.type === 'review' || surface?.type === 'thread-replay';
+  return (
+    surface?.type === 'artifact' ||
+    surface?.type === 'review' ||
+    surface?.type === 'thread-replay' ||
+    surface?.type === 'video-project'
+  );
 }
 
 type WorkSurfaceCoordinate = { readonly type?: string } & Partial<

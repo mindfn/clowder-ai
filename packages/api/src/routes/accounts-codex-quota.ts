@@ -1,16 +1,32 @@
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
-import type { AccountQuotaObservation } from '@cat-cafe/shared';
+import type { AccountQuotaObservation, CodexManagedAccount } from '@cat-cafe/shared';
 import type { FastifyInstance } from 'fastify';
 import { z } from 'zod';
 import { resolveByAccountRef } from '../config/account-resolver.js';
 import { readAccountStoreSnapshot } from '../config/account-store-snapshot.js';
 import { writeCatalogAccount } from '../config/catalog-accounts.js';
-import { codexIdentityFromAuth, codexManagedStatus, sameCodexIdentity } from '../config/codex-account-identity.js';
+import {
+  codexIdentityFromAuth,
+  codexManagedStatus,
+  readCodexAccountIdentity,
+  sameCodexIdentity,
+} from '../config/codex-account-identity.js';
 import { resolveCodexAccountLaunch } from '../config/codex-account-launch.js';
 import { resolveUserId } from '../utils/request-identity.js';
 import { resolveAccountProjectRoot } from './accounts-project-root.js';
 import { parseCodexWhamUsageResponse } from './quota.js';
+
+function managedQuotaOwnerUnchanged(
+  requested: CodexManagedAccount,
+  current: CodexManagedAccount | undefined,
+  wasReady: boolean,
+): boolean {
+  if (!current || current.credentialHome !== requested.credentialHome) return false;
+  if ((requested.identity || current.identity) && !sameCodexIdentity(requested.identity, current.identity))
+    return false;
+  return !wasReady || sameCodexIdentity(requested.identity, readCodexAccountIdentity(requested.credentialHome));
+}
 
 /** Per-account, explicit and read-only. No global Codex cache, token refresh or credential fallback. */
 export function registerCodexQuotaRoutes(app: FastifyInstance, fetcher: typeof fetch = globalThis.fetch): void {
@@ -27,6 +43,8 @@ export function registerCodexQuotaRoutes(app: FastifyInstance, fetcher: typeof f
     try {
       const profile = resolveByAccountRef(root, profileId);
       if (!profile || profile.client !== 'openai') return reply.code(404).send({ error: 'Codex account not found' });
+      const requestedIdentity = profile.codex?.identity;
+      const wasReady = !!profile.codex && codexManagedStatus(profile.codex) === 'ready';
       let observation: AccountQuotaObservation;
       if (profile.authType === 'api_key')
         observation = {
@@ -78,8 +96,20 @@ export function registerCodexQuotaRoutes(app: FastifyInstance, fetcher: typeof f
         }
       }
       const current = readAccountStoreSnapshot(root).resolve(profileId).account;
-      // Preserve a concurrently changed note/attempt. Deleting an account during the read never recreates it.
-      if (current) writeCatalogAccount(root, profileId, { ...current, quota: observation });
+      // The same ref may now name another principal. Reject late results before synchronous write.
+      if (!current || (profile.codex && !managedQuotaOwnerUnchanged(profile.codex, current.codex, wasReady)))
+        return reply.code(409).send({ error: '账号登录已变化，请刷新账号列表后重新查询' });
+      if (requestedIdentity)
+        observation = {
+          ...observation,
+          owner: {
+            accountRef: profileId,
+            userId: requestedIdentity.userId,
+            workspaceId: requestedIdentity.workspaceId,
+          },
+        };
+      // Preserve a concurrently changed note/attempt, without recreating a deleted account.
+      writeCatalogAccount(root, profileId, { ...current, quota: observation });
       return { accountRef: profileId, quota: observation };
     } catch {
       return reply.code(409).send({ error: '无法读取账号，请核对账号配置' });

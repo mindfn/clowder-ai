@@ -22,7 +22,7 @@ afterEach(() => {
   container.remove();
 });
 
-it('opens a task-free publication through the canonical ledger and pinned owner media, with the full modification entry', async () => {
+it('opens a task-free PNG publication through the canonical ledger and pinned media with Chat as its modification entry', async () => {
   const view = mediaView();
   const old = view.review.source;
   if (old.kind !== 'media') throw new Error('expected image fixture');
@@ -67,9 +67,8 @@ it('opens a task-free publication through the canonical ledger and pinned owner 
     for (let i = 0; i < 8; i += 1) await Promise.resolve();
   });
   expect(container.querySelector('[data-testid="workspace-content-review-surface"]')).not.toBeNull();
-  expect(container.querySelector<HTMLButtonElement>('[data-testid="content-modification-entry"]')?.disabled).toBe(
-    false,
-  );
+  expect(container.querySelector('[data-testid="content-modification-entry"]')).toBeNull();
+  expect(container.querySelector('[data-testid="workspace-media-chat-whole-work"]')).not.toBeNull();
   expect(container.querySelector('img')?.getAttribute('src')).toContain(
     `/api/content-publications/${encodeURIComponent(contentRef)}/media/2`,
   );

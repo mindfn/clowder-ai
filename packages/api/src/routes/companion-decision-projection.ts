@@ -1,4 +1,9 @@
-import type { UnifiedAttentionItemV1, UnifiedAttentionReadV1, UnifiedAttentionVisibleApproval } from '@cat-cafe/shared';
+import type {
+  RuntimeInteractionRecord,
+  UnifiedAttentionItemV1,
+  UnifiedAttentionReadV1,
+  UnifiedAttentionVisibleApproval,
+} from '@cat-cafe/shared';
 import { projectDecisionItems } from './companion-decision-items.js';
 import {
   approvalsSourceSchema,
@@ -6,6 +11,48 @@ import {
   type DecisionSourceRead,
   needsMeSourceSchema,
 } from './companion-decision-sources.js';
+import { mergeStructuredChoices } from './companion-structured-choices.js';
+import type { UserMentionTodoRead } from './user-mention-todo-projection.js';
+
+type ProjectionSourceReads = {
+  approvals: DecisionSourceRead;
+  needsMe: DecisionSourceRead;
+  structuredChoices?: DecisionSourceRead;
+};
+
+function projectionSources(
+  sourceReads: ProjectionSourceReads | undefined,
+  userMentions: UserMentionTodoRead | undefined,
+  observedAt: number,
+  approvalCoverage: 'complete' | 'partial' | 'unknown' | undefined,
+  needsMeCoverage: 'complete' | 'partial' | 'unknown' | undefined,
+) {
+  const base =
+    sourceReads ??
+    ({
+      approvals: sourceRead('all_registered_F246_producers', observedAt, approvalCoverage),
+      needsMe: sourceRead('current_linked_F310_five_producers', observedAt, needsMeCoverage),
+    } satisfies ProjectionSourceReads);
+  return { ...base, ...(userMentions ? { userMentions: userMentions.state } : {}) };
+}
+
+function exactCountFields(input: {
+  complete: boolean;
+  consistent: boolean;
+  totalCount: number;
+  decisionQualifiedCount: number;
+  hasStructuredChoices: boolean;
+}) {
+  if (!input.complete || !input.consistent) return {};
+  return {
+    totalCount: input.totalCount,
+    ...(input.hasStructuredChoices ? { attentionCount: input.decisionQualifiedCount } : {}),
+  };
+}
+
+function decisionQualifiedCount(items: UnifiedAttentionItemV1[]): number {
+  return items.filter((item) => item.approval?.resolution === 'open' || item.choiceRequest !== undefined).length;
+}
 
 function sourceRead(
   coverage: DecisionSourceRead['coverage'],
@@ -21,7 +68,9 @@ export function projectCompanionDecisions(
   userId: string,
   page: { offset: number; limit: number },
   observedAt: number,
-  sourceReads?: { approvals: DecisionSourceRead; needsMe: DecisionSourceRead },
+  sourceReads?: ProjectionSourceReads,
+  userMentions?: UserMentionTodoRead,
+  structuredChoices: RuntimeInteractionRecord[] = [],
 ) {
   const approvalRead = approvalsSourceSchema.parse(approvalsSource);
   const workRead = needsMeSourceSchema.parse(needsMeSource);
@@ -29,13 +78,23 @@ export function projectCompanionDecisions(
   const needsMe = workRead.ownerReads;
   assertDecisionOwner(approvals, needsMe, userId);
   const unified = projectDecisionItems(approvals, needsMe);
-  const sources = sourceReads ?? {
-    approvals: sourceRead('all_registered_F246_producers', observedAt, approvalRead.coverage?.state),
-    needsMe: sourceRead('current_linked_F310_five_producers', observedAt, workRead.coverage?.state),
-  };
+  const reasons = new Set(unified.reasons);
+  mergeStructuredChoices(unified.items, structuredChoices, reasons);
+  unified.reasons = [...reasons];
+  const sources = projectionSources(
+    sourceReads,
+    userMentions,
+    observedAt,
+    approvalRead.coverage?.state,
+    workRead.coverage?.state,
+  );
+  const qualifiedCount = decisionQualifiedCount(unified.items);
+  if (userMentions?.period === 'earlier' || userMentions?.period === 'handled') unified.items = [];
+  unified.items.push(...(userMentions?.items ?? []));
   const availableSources = Object.values(sources).filter((source) => source.status === 'available').length;
+  const sourceStates = Object.values(sources);
   const complete =
-    availableSources === 2 && Object.values(sources).every((source) => source.exhaustiveness === 'complete');
+    availableSources === sourceStates.length && sourceStates.every((source) => source.exhaustiveness === 'complete');
   const consistent = unified.reasons.length === 0;
   const approvalItems = unified.items.filter(
     (item): item is UnifiedAttentionItemV1 & { approval: UnifiedAttentionVisibleApproval } =>
@@ -66,13 +125,20 @@ export function projectCompanionDecisions(
     identity: { ownerUserId: userId },
     sources,
     readWindow: {
-      startedAt: Math.min(sources.approvals.startedAt, sources.needsMe.startedAt),
-      endedAt: Math.max(sources.approvals.observedAt, sources.needsMe.observedAt),
+      startedAt: Math.min(...sourceStates.map((source) => source.startedAt)),
+      endedAt: Math.max(...sourceStates.map((source) => source.observedAt)),
       consistency: 'independent_source_reads' as const,
     },
     consistency: { state: consistent ? ('verified' as const) : ('uncertain' as const), reasons: unified.reasons },
     items: unified.items.slice(page.offset, page.offset + page.limit),
-    ...(complete && consistent ? { totalCount: unified.items.length } : {}),
+    ...exactCountFields({
+      complete,
+      consistent,
+      totalCount: unified.items.length,
+      decisionQualifiedCount: qualifiedCount,
+      hasStructuredChoices: sources.structuredChoices !== undefined,
+    }),
+    ...(userMentions?.counts ? { mentionCounts: userMentions.counts, mentionPeriod: userMentions.period } : {}),
     scope: 'owner_all_projects' as const,
     observedAt,
     approvalCoverage: 'all_registered_F246_producers' as const,

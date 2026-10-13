@@ -1,6 +1,7 @@
 import type { FastifyReply } from 'fastify';
 import { z } from 'zod';
 import { WorkspaceContentReviewError } from '../domains/collaborative-content/workspace-review/errors.js';
+import { VideoProjectAccessError } from '../domains/video-studio/project/access.js';
 import { WorkspaceContentSourceError } from '../domains/workspace/workspace-content-source.js';
 
 const SOURCE_ERROR_STATUS: Record<WorkspaceContentSourceError['code'], number> = {
@@ -24,6 +25,7 @@ const REVIEW_ERROR_STATUS: Record<WorkspaceContentReviewError['code'], number> =
   existing_contexts: 409,
 };
 export function replyWorkspaceContentReviewError(reply: FastifyReply, error: unknown) {
+  if (error instanceof VideoProjectAccessError) return reply.code(403).send({ error: { code: error.code } });
   if (error instanceof WorkspaceContentSourceError) {
     return reply.code(SOURCE_ERROR_STATUS[error.code]).send({ error: { code: error.code } });
   }

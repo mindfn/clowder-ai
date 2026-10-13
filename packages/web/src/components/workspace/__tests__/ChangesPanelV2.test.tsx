@@ -1,3 +1,4 @@
+import type { PullRequestChangesTarget } from '@cat-cafe/shared';
 import React, { act } from 'react';
 import { createRoot, type Root } from 'react-dom/client';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
@@ -81,6 +82,44 @@ describe('ChangesPanel v2', () => {
     expect(container.textContent).toContain('请 Codex 审查改动');
     expect(container.textContent).toContain('2 个文件有改动');
     expect(container.querySelector('button[title="刷新"]')).toBeTruthy();
+  });
+
+  it.each([
+    'v2',
+    'classic',
+  ] as const)('shows the precise PR, partial truth and original Back without offering local review in %s', async (presentation) => {
+    writeShellPresentation(presentation);
+    const target: PullRequestChangesTarget = {
+      kind: 'github-pr',
+      v: 1,
+      repoFullName: 'owner/repo',
+      prNumber: 7,
+      worktreeId: 'wt-1',
+      threadId: 'thread-1',
+    };
+    apiFetchMock.mockResolvedValue(
+      Response.json({
+        ...PAYLOAD,
+        target,
+        comparison: { baseSha: 'a'.repeat(40), headSha: 'b'.repeat(40), mergeBaseSha: 'c'.repeat(40) },
+        totalChangedFiles: 301,
+        completeness: 'partial',
+        omissions: ['file_limit', 'missing_patch'],
+      }),
+    );
+    const back = vi.fn();
+    await act(async () => {
+      root.render(
+        <ChangesPanel worktreeId="wt-1" basisPct={40} threadId="thread-1" pullRequestTarget={target} onBack={back} />,
+      );
+    });
+    expect(container.textContent).toContain('owner/repo#7');
+    expect(container.textContent).toContain('仅显示部分变更');
+    expect(container.querySelector('[data-testid="native-review-workspace-strip"]')).toBeNull();
+    const button = container.querySelector<HTMLButtonElement>('[data-testid="changes-origin-back"]');
+    expect(button).not.toBeNull();
+    act(() => button?.click());
+    expect(back).toHaveBeenCalledOnce();
   });
 
   it('restores the same diff viewport after hidden layout clamps it, while accepting a visible scroll to zero', async () => {

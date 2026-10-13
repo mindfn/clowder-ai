@@ -101,6 +101,12 @@ describe('F322 production group preview and compact virtual navigation', () => {
   it('renders four rows and expands the actual seven remaining conversations without selection or membership writes', async () => {
     await harness.render();
     expect(harness.container.querySelectorAll('[data-attention-cluster-member] [data-thread-id]')).toHaveLength(4);
+    const segments = () =>
+      [...harness.container.querySelectorAll('[data-sidebar-group-segment]')].map((element) =>
+        element.getAttribute('data-sidebar-group-segment'),
+      );
+    expect(segments()).toEqual(['start', 'middle', 'middle', 'middle', 'middle', 'end']);
+    expect(harness.container.querySelector('[data-cluster-rail]')).toBeNull();
     const remaining = [...harness.container.querySelectorAll('button')].find(
       (button) => button.textContent === '其余 7 个对话',
     );
@@ -114,8 +120,60 @@ describe('F322 production group preview and compact virtual navigation', () => {
         (el) => el.dataset.threadId,
       ),
     ).toEqual(Array.from({ length: 11 }, (_, i) => `member-${i}`));
+    expect(segments()).toEqual(['start', ...Array.from({ length: 10 }, () => 'middle'), 'end']);
     expect(document.activeElement?.textContent).toBe('Member 4');
     expect(mockStore.currentThreadId).toBe('member-0');
+    expect(
+      mockApiFetch.mock.calls.filter(([, init]) => (init as RequestInit | undefined)?.method === 'PUT'),
+    ).toHaveLength(0);
+  });
+  it('opens the only unread shortcut without expanding the collapsed Group, then withdraws its read signal', async () => {
+    setup(6);
+    const threads = mockStore.threads as { id: string; unreadCount?: number; hasUserMention?: boolean }[];
+    threads[2].unreadCount = 2;
+    threads[2].hasUserMention = true;
+    const original = mockApiFetch.getMockImplementation();
+    mockApiFetch.mockImplementation((path: string) => {
+      if (path === '/api/config/thread-attention')
+        return jsonOk({
+          aliases: {},
+          open: { 'group:g': false },
+          groups: [{ id: 'g', name: 'Our group', threadIds: threads.map((thread) => thread.id) }],
+        });
+      if (path === '/api/session') return jsonOk({ userId: 'owner' });
+      if (path.startsWith('/api/concierge/work/decisions'))
+        return jsonOk({
+          version: 1,
+          status: 'available',
+          scope: 'owner_all_projects',
+          identity: { ownerUserId: 'owner' },
+          observedAt: 3,
+          sources: {
+            approvals: { status: 'available', exhaustiveness: 'complete' },
+            needsMe: { status: 'available', exhaustiveness: 'complete' },
+          },
+          readWindow: { startedAt: 1, endedAt: 3, consistency: 'independent_source_reads' },
+          consistency: { state: 'verified', reasons: [] },
+          items: [],
+          totalCount: 0,
+          page: { offset: 0, limit: 20, scope: 'known_rows', hasMore: false },
+        });
+      return original?.(path);
+    });
+    await harness.render();
+    const header = () => harness.container.querySelector('[data-testid="group-header-v2"]');
+    const peek = harness.container.querySelector<HTMLButtonElement>(
+      '[data-peek-reason="mention"][data-thread-id="member-2"]',
+    );
+    expect(peek).not.toBeNull();
+    expect(header()?.getAttribute('data-expanded')).toBe('false');
+    expect(header()?.textContent).toContain('1 条要看');
+    await act(async () => peek?.click());
+    expect(harness.container.querySelector('[data-peek-reason]')).toBeNull();
+    expect(header()?.getAttribute('data-expanded')).toBe('false');
+    expect(header()?.querySelector('[data-testid="group-count"]')).toBeNull();
+    expect(mockStore.clearUnread).toHaveBeenCalledWith('member-2');
+    expect(window.location.pathname).toBe('/thread/member-2');
     expect(
       mockApiFetch.mock.calls.filter(([, init]) => (init as RequestInit | undefined)?.method === 'PUT'),
     ).toHaveLength(0);

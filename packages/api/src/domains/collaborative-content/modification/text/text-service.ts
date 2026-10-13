@@ -86,6 +86,8 @@ export class ContentTextModificationService {
   private async authorize(requestId: string, principal: MediaReviewPrincipal, allowClosed: boolean) {
     const record = this.deps.store.requests.get(requestId, principal.userId),
       source = this.deps.store.text.source(requestId);
+    if (record?.payload.source.kind === 'video-project' || record?.progress.prepared?.kind === 'project')
+      throw new ModificationTextError('invalid_patch');
     const taskRef = record?.progress.task;
     if (!record || !source || source.ownerUserId !== principal.userId || !taskRef || !record.progress.review)
       throw new ModificationTextError('not_found');

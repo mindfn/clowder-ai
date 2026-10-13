@@ -46,6 +46,40 @@ afterEach(() => {
 async function flush() {
   for (let i = 0; i < 15; i += 1) await Promise.resolve();
 }
+
+it('shows the retained original draft in record mode while keeping its submission controls hidden', async () => {
+  const body = '保留原来尚未确认的修改意见';
+  const key = 'cat-cafe:content-modification:operator:file-review';
+  localStorage.setItem(
+    key,
+    JSON.stringify({
+      v: 1,
+      sourceVersion: `file-review:${baseRevision}`,
+      body,
+      targetCatId: 'codex-astra',
+      threadId: 'execution',
+      acceptOperations: {},
+    }),
+  );
+  mocks.apiFetch.mockResolvedValue(json(choices));
+  await act(async () => {
+    root.render(
+      <ContentModificationPanel
+        title="原作品"
+        ownerUserId="operator"
+        source={source}
+        allowNewRequest={false}
+        onClose={vi.fn()}
+      />,
+    );
+    await flush();
+  });
+  const retained = container.querySelector<HTMLTextAreaElement>('[aria-label="保留的原修改草稿"]');
+  expect(retained?.value).toBe(body);
+  expect(retained?.readOnly).toBe(true);
+  expect(container.querySelector('[data-testid="content-modification-submit"]')).toBeNull();
+  expect(JSON.parse(localStorage.getItem(key) ?? '{}').body).toBe(body);
+});
 async function click(testId: string) {
   const button = container.querySelector<HTMLButtonElement>(`[data-testid="${testId}"]`);
   expect(button).not.toBeNull();

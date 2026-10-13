@@ -1,5 +1,58 @@
 [
   {
+    "id": "feature-f326-screening-exceptions",
+    "kind": "feature",
+    "sourceRef": {
+      "path": "docs/features/F326-editing-desk.md",
+      "anchor": "### Phase B: 审片（第一刀，在真实产品壳里）"
+    },
+    "structureSource": {
+      "path": "packages/web/src/components/workbench/video-project/VideoProjectReviewSurface.tsx",
+      "anchor": "VideoProjectReviewSurface"
+    },
+    "bodySource": {
+      "path": "docs/features/F326-editing-desk.md",
+      "anchor": "### Phase B: 审片（第一刀，在真实产品壳里）"
+    },
+    "contexts": ["concierge_open", "pet_waiting_for_user"],
+    "audience": ["all"],
+    "body": "从 Workspace 的“片子”打开审片，只标不同意的地方。在成片上按 M 或点“标记问题”，选时段或画面区域，再记到原聊天输入框、写一句意见并发送；没标的无需逐项确认。位置会跟着所看版本保留，点聊天里的“回到原片”可继续看。",
+    "action": {
+      "type": "open_source",
+      "label": "查看审片操作",
+      "sourceRef": {
+        "path": "docs/features/F326-editing-desk.md",
+        "anchor": "### Phase B: 审片（第一刀，在真实产品壳里）"
+      }
+    },
+    "owner": "codex61-sol"
+  },
+  {
+    "id": "capability-import-native-session",
+    "kind": "capability",
+    "sourceRef": {
+      "path": "docs/features/F322-everyday-work-experience.md",
+      "anchor": "### Phase B: 整理日常主屏"
+    },
+    "structureSource": {
+      "path": "packages/web/src/components/new-conversation/NewConversationPage.tsx",
+      "anchor": "SessionImportPanel"
+    },
+    "bodySource": {
+      "path": "DESIGN.md",
+      "anchor": "接上 Claude Code / Codex 里已有的会话"
+    },
+    "contexts": ["concierge_open"],
+    "audience": ["cvo"],
+    "body": "想把 Claude Code 或 Codex 里已有的会话接到猫咖？先在原工具里关掉它，再点新对话输入框下面的「接上已有的会话」，选同工具的猫，再选最近的会话；找不到时可以贴会话 ID。不用先发一句；已经接过的可以直接打开原对话。",
+    "action": {
+      "type": "open_concierge_draft",
+      "label": "了解怎样接上原会话",
+      "draftPrompt": "请带我从新对话页接上一个 Claude Code 或 Codex 里已有的会话，说明怎样选猫、找会话 ID，以及正在运行或已经接过时怎样处理。"
+    },
+    "owner": "codex61-sol"
+  },
+  {
     "id": "capability-find-earlier-message-query",
     "kind": "capability",
     "sourceRef": {
@@ -2417,7 +2470,7 @@
     },
     "contexts": ["thinking", "feature_dev", "concierge_open"],
     "audience": ["cvo", "developer"],
-    "body": "不记得文件在哪？打开 Workspace 后，直接在首页搜文件名或正文；结果会带行号和片段，点一下就能打开原文件。",
+    "body": "不记得文件在哪？在 Workspace 顶部点“+”，搜索文件名或正文，再点结果打开原文件。用文件页的“工具搜索”返回可继续同一查询；经典界面的搜索入口在首页。",
     "action": {
       "type": "open_concierge_draft",
       "label": "帮我找文件",
@@ -2442,7 +2495,7 @@
     },
     "contexts": ["thinking", "feature_dev", "concierge_open"],
     "audience": ["cvo", "developer"],
-    "body": "右侧 Workspace 会保留你打开的文件、Browser、Terminal 和 Agent Run。顶部常驻控制轨可把当前 Tab 临时展开到主区并原样返回，也可回 Home、收起其他未固定页面或退出分屏；这些视图动作不会停止任务或删除对象。",
+    "body": "Workspace 首页的作品可直接打开：PR 查看该 PR 的变更，文件沿原文件阅读器打开；用页面的返回入口回到同一来源。顶部“+”提供工具与最近访问的工作页，“⋯”可展开当前标签到主区或管理标签；固定的标签会保留。",
     "action": {
       "type": "open_concierge_draft",
       "label": "打开工作台",
@@ -2899,16 +2952,16 @@
       "anchor": "HubAccountsTab"
     },
     "bodySource": {
-      "path": "packages/web/src/components/codex-accounts/CodexAccountCard.tsx",
-      "anchor": "修改备注"
+      "path": "packages/web/src/components/accounts/AccountRowMenu.tsx",
+      "anchor": "onClick={onRename}"
     },
     "contexts": ["concierge_open"],
     "audience": ["cvo"],
-    "body": "工作和私人 Codex 账号容易混淆？在设置的「账户与密钥」里给账号写备注，登录后核对官方身份；换绑前先看受影响成员，在途回复仍记录开始时的账号。",
+    "body": "想加公司或私人 Codex 账号？打开「猫猫团队 → 账户与登录」，填备注并亲自完成官方登录。新号只会显示「已登录」；点「换成这个」并确认后才成为「正在用」，本机默认登录仍保留。",
     "action": {
       "type": "open_concierge_draft",
       "label": "找到 Codex 账号设置",
-      "draftPrompt": "请带我到设置里的账户与密钥，找到 Codex 登录账号；先核对当前支持的原生版本和账号类型，再指导我添加备注、官方登录和预览换绑。不要替我授权，也不要自动更换在途调用的账号。"
+      "draftPrompt": "请带我到猫猫团队的账户与登录页，核对哪一行正在用，再指导我添加一个有备注的 Codex 账号。官方授权由我自己完成；登录成功后先保留为备选，由我确认是否换成这个号。"
     },
     "owner": "codex61-sol"
   },
@@ -2934,6 +2987,31 @@
       "type": "open_concierge_draft",
       "label": "打开记忆整理设置",
       "draftPrompt": "请打开 /settings?s=ops&ops=memory，带我查看记忆整理的实际开关状态和运行记录。先说明当前状态，不替我改变开关。"
+    },
+    "owner": "codex61-sol"
+  },
+  {
+    "id": "feature-f247-dot-plugin-entry",
+    "kind": "feature",
+    "sourceRef": {
+      "path": "docs/features/F247-cloud-cat-family.md",
+      "anchor": "### Phase G — dot 独立接入、猫咖内召唤与协作"
+    },
+    "structureSource": {
+      "path": "packages/web/src/components/settings/PluginsContent.tsx",
+      "anchor": "PluginManagerLiveContent"
+    },
+    "bodySource": {
+      "path": "packages/web/src/components/settings/plugin-manager/DotConnectionDetail.tsx",
+      "anchor": "ChatGPT 云端 · dot 会话"
+    },
+    "contexts": ["concierge_open", "feature_dev"],
+    "audience": ["cvo"],
+    "body": "想在原对话召唤同一只 dot？从头像 → 设置与管理 → 连接与扩展 → 插件集成找到 ChatGPT 云端。沿用已连接的猫咖插件，为目标 dot 准备订阅；订阅后先测两处原对话的往返，再启用；图片传输单独显示验证结果。",
+    "action": {
+      "type": "open_capability_surface",
+      "label": "准备 dot 订阅",
+      "surfaceId": "settings.plugins"
     },
     "owner": "codex61-sol"
   },

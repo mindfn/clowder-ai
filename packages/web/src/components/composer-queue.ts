@@ -10,8 +10,8 @@ import { getContextAttachmentDraft } from './thread-drafts';
  */
 
 /** What the composer holds right now: its stored draft with anything already queued for it applied on top. */
-export function composerAttachments(threadId: string): ContextAttachment[] {
-  const draft = [...getContextAttachmentDraft(threadId)];
+export function composerAttachments(threadId: string, local?: readonly ContextAttachment[]): ContextAttachment[] {
+  const draft = [...(local ?? getContextAttachmentDraft(threadId))];
   const queued = useChatStore.getState().pendingChatInsert;
   if (!queued || queued.threadId !== threadId) return draft;
   return applyContextAttachmentDelta(

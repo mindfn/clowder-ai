@@ -13,6 +13,7 @@ export type WorkbenchSurfaceType =
   | 'review'
   | 'terminal'
   | 'thread-replay'
+  | 'video-project'
   | 'workspace';
 
 export type WorkbenchRenderer =
@@ -26,6 +27,7 @@ export type WorkbenchRenderer =
   | 'review-summary'
   | 'terminal-session'
   | 'thread-replay'
+  | 'video-project-review'
   | 'workspace-destination';
 
 export type WorkbenchObjectKind =
@@ -38,6 +40,7 @@ export type WorkbenchObjectKind =
   | 'review'
   | 'terminal-session'
   | 'thread-replay'
+  | 'video-project'
   | 'workspace-destination';
 
 export interface WorkspaceSurfaceDescriptor {
@@ -115,6 +118,8 @@ export interface WorkbenchLayoutState {
   } | null;
   sidecar: WorkspaceSurfaceDescriptor | null;
   recentlyClosed: WorkspaceSurfaceDescriptor[];
+  /** Canonical visit index, newest first per input host thread. Absent in older schema-v2 storage. */
+  recentSurfaceIdsByThread?: Record<string, string[]>;
   activity: WorkbenchActivity[];
 }
 
@@ -137,6 +142,8 @@ export interface FocusEntitlement {
 
 interface EntitledAction {
   entitlement: FocusEntitlement;
+  /** Captured only by an explicit input producer; automatic foreground restoration leaves this absent. */
+  visitThreadId?: string;
 }
 
 export type WorkbenchAction =

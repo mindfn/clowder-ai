@@ -2,6 +2,11 @@
 
 import type { ContextAttachment, MessageWorkDisposition } from '@cat-cafe/shared';
 import { useCallback, useState } from 'react';
+import {
+  acknowledgeSendComposerDraftConsumption,
+  type ComposerDraftConsumption,
+} from '@/components/composer-draft-consumption';
+import { observeComposerDraft } from '@/components/composer-draft-flush-registry';
 import { useChatCommands } from '@/hooks/useChatCommands';
 import { type ChatMessage as ChatMessageData, useChatStore } from '@/stores/chatStore';
 import { apiFetch } from '@/utils/api-client';
@@ -16,12 +21,15 @@ export interface WhisperOptions {
 export interface SendMessageAdmissionOptions {
   /** A recoverable first-message owner supplies the same key on every retry. */
   idempotencyKey?: string;
+  /** Set by the ChatInput admission adapter; domain/interactive sends preserve the mounted draft. */
+  consumeComposerDraft?: boolean;
   messageDisposition?: MessageWorkDisposition;
 }
 
 interface MessageAdmissionResponse {
   status?: string;
   gameThreadId?: string;
+  composerDraftConsumption?: ComposerDraftConsumption;
 }
 
 /**
@@ -76,6 +84,9 @@ export function useSendMessage(activeThreadId?: string) {
       admissionOptions?: SendMessageAdmissionOptions,
     ) => {
       const threadId = overrideThreadId ?? activeThreadId ?? useChatStore.getState().currentThreadId;
+      const composerDraftRevision = admissionOptions?.consumeComposerDraft
+        ? observeComposerDraft(threadId)?.revision
+        : undefined;
       const hasImages = Boolean(images?.length);
       setUploadError(null);
       setUploadStatus(hasImages ? 'uploading' : 'idle');
@@ -96,6 +107,8 @@ export function useSendMessage(activeThreadId?: string) {
             formData.append('messageDisposition', admissionOptions.messageDisposition);
           }
           for (const catId of explicitTargetCats ?? []) formData.append('mentions', catId);
+          if (composerDraftRevision !== undefined)
+            formData.append('composerDraftRevision', String(composerDraftRevision));
           if (whisper) {
             formData.append('visibility', whisper.visibility);
             for (const catId of whisper.whisperTo) formData.append('whisperTo', catId);
@@ -117,6 +130,7 @@ export function useSendMessage(activeThreadId?: string) {
               ...(admissionOptions?.messageDisposition
                 ? { messageDisposition: admissionOptions.messageDisposition }
                 : {}),
+              ...(composerDraftRevision !== undefined ? { composerDraftRevision } : {}),
               ...(whisper ? { visibility: whisper.visibility, whisperTo: whisper.whisperTo } : {}),
               ...(replyToId ? { replyTo: replyToId } : {}),
               ...(explicitTargetCats?.length ? { mentions: explicitTargetCats } : {}),
@@ -134,6 +148,7 @@ export function useSendMessage(activeThreadId?: string) {
         if (admission?.status !== 'game_started' && admission?.status !== 'queued') {
           throw new Error('Server did not return a canonical Queue admission');
         }
+        acknowledgeSendComposerDraftConsumption(threadId, admission);
         setUploadStatus('idle');
         setUploadError(null);
         window.dispatchEvent(new CustomEvent('guide:confirm', { detail: { target: 'chat.input' } }));

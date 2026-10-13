@@ -14,6 +14,7 @@ type Props = Parameters<typeof useContentModification>[0] & {
   mediaType?: string;
   onClose: () => void;
   completionRule?: ContentModificationCompletionRule;
+  allowNewRequest?: boolean;
   onRequestKnown?: (request: ContentModificationRequestView) => void;
   /** A candidate a conversation receipt named: it is marked and brought into view among the request's results. */
   focusCandidateRef?: string;
@@ -43,12 +44,14 @@ function ModificationPanel(props: Props) {
   return (
     <aside
       className="max-h-[70%] shrink-0 overflow-auto border-t border-cafe-subtle bg-cafe-surface p-3 text-cafe"
-      aria-label="请猫修改作品"
+      aria-label={props.allowNewRequest === false ? '作品修改记录' : '请猫修改作品'}
       data-modification-open
       data-testid="content-modification-panel"
     >
       <div className="mb-3 flex items-center justify-between gap-3">
-        <h3 className="min-w-0 truncate font-semibold">修改《{props.title}》</h3>
+        <h3 className="min-w-0 truncate font-semibold">
+          {props.allowNewRequest === false ? '修改记录' : '修改'}《{props.title}》
+        </h3>
         <button
           type="button"
           onClick={props.onClose}
@@ -64,10 +67,25 @@ function ModificationPanel(props: Props) {
         </p>
       ) : null}
       <ModificationStatus model={model} />
+      {props.allowNewRequest === false && !status && model.draft.body.trim() ? (
+        <label className="mb-3 block text-xs text-cafe-muted">
+          保留的原修改草稿
+          <textarea
+            aria-label="保留的原修改草稿"
+            readOnly
+            rows={3}
+            value={model.draft.body}
+            className="mt-1 w-full rounded-md border border-cafe-subtle bg-cafe-surface px-3 py-2 text-sm text-cafe"
+          />
+          原草稿保留在这里；图片修改在 Chat 中发送。
+        </label>
+      ) : null}
       {model.view?.sourceDiscussions?.length ? (
         <ContentSourceDiscussions discussions={model.view.sourceDiscussions} />
       ) : null}
-      {model.ready && (!status ? !model.draft.requestId : !status.record.control && status.record.issue?.retryable) ? (
+      {props.allowNewRequest !== false &&
+      model.ready &&
+      (!status ? !model.draft.requestId : !status.record.control && status.record.issue?.retryable) ? (
         <ContentModificationForm model={model} mediaType={props.mediaType} rule={rule} />
       ) : null}
       {model.view ? (
@@ -96,6 +114,7 @@ function ModificationPanel(props: Props) {
 }
 
 const stageLabels = {
+  accepted: '已接下原审片意见',
   saving_source: '正在保存修改请求',
   preparing_content: '请求已保存，正在准备作品',
   admitting_task: '作品已准备，正在登记委托',

@@ -1,5 +1,6 @@
 'use client';
 
+import type { PullRequestChangesTarget } from '@cat-cafe/shared';
 import { useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { useShellCopy } from '@/components/shell/shell-copy';
 import { ThreadNativeReviewSettingsContent } from '@/components/ThreadSidebar/ThreadNativeReviewSettings';
@@ -7,6 +8,7 @@ import { useWorkspaceSurfaceVisibility } from '@/components/workbench/WorkspaceS
 import { codeToolsCopy } from './code-tools.shell-copy';
 import { DiffViewer, parseUnifiedDiff } from './DiffViewer';
 import { FileIcon } from './FileIcons';
+import { PullRequestChangesEmpty, PullRequestChangesStatus } from './PullRequestChangesStatus';
 import { useChangesDiff } from './useChangesDiff';
 
 const statusLabels: Record<string, { label: string; color: string }> = {
@@ -27,6 +29,8 @@ interface ChangesPanelV2Props {
   basisPct: number;
   threadId?: string | null;
   onOpenFile?: (path: string) => void;
+  pullRequestTarget?: PullRequestChangesTarget;
+  onBack?: () => void;
 }
 
 /**
@@ -35,18 +39,28 @@ interface ChangesPanelV2Props {
  * 「打开文件」走 C 的 onOpenFile 接缝（coord-e6d806a7 冻结合同）：有 callback 才显示，
  * 没有就不放假动作；diff 模式、文件选择/滚动、classic 保持原样。
  */
-export function ChangesPanelV2({ worktreeId, basisPct, threadId, onOpenFile }: ChangesPanelV2Props) {
+export function ChangesPanelV2({
+  worktreeId,
+  basisPct,
+  threadId,
+  onOpenFile,
+  pullRequestTarget,
+  onBack,
+}: ChangesPanelV2Props) {
   const copy = useShellCopy(codeToolsCopy).changes;
-  const { data, loading, error, refresh } = useChangesDiff(worktreeId);
+  const { data, loading, error, refresh, targetKey } = useChangesDiff(worktreeId, pullRequestTarget);
   const [selectedFile, setSelectedFile] = useState<string | null>(null);
   const visible = useWorkspaceSurfaceVisibility();
   const diffViewport = useRef<HTMLDivElement>(null);
-  const reading = useRef({ worktreeId, top: 0 });
+  const reading = useRef({ targetKey, top: 0 });
   useLayoutEffect(() => {
-    if (reading.current.worktreeId !== worktreeId) reading.current = { worktreeId, top: 0 };
+    if (reading.current.targetKey !== targetKey) {
+      reading.current = { targetKey, top: 0 };
+      setSelectedFile(null);
+    }
     // The owner remains mounted, but Chromium can clamp a hidden viewport to zero.
     if (visible && diffViewport.current) diffViewport.current.scrollTop = reading.current.top;
-  }, [visible, worktreeId]);
+  }, [visible, targetKey]);
 
   const lineStats = useMemo(() => {
     const stats = new Map<string, { added: number; deleted: number }>();
@@ -71,7 +85,10 @@ export function ChangesPanelV2({ worktreeId, basisPct, threadId, onOpenFile }: C
 
   return (
     <div className="flex flex-col min-h-0 flex-1">
-      {threadId && (
+      {pullRequestTarget && (
+        <PullRequestChangesStatus target={pullRequestTarget} data={data} error={error} onBack={onBack} />
+      )}
+      {threadId && !pullRequestTarget && (
         <details
           className="flex-shrink-0 border-b border-cafe-subtle/40 bg-cafe-surface/40"
           data-testid="native-review-workspace-strip"
@@ -101,7 +118,7 @@ export function ChangesPanelV2({ worktreeId, basisPct, threadId, onOpenFile }: C
             {loading ? '…' : '↻'}
           </button>
         </div>
-        {error && (
+        {error && !pullRequestTarget && (
           <div className="px-3 py-1.5 text-micro text-conn-red-text">
             {error === 'fetch_failed' ? copy.fetchFailed : copy.networkError}
           </div>
@@ -134,7 +151,9 @@ export function ChangesPanelV2({ worktreeId, basisPct, threadId, onOpenFile }: C
           );
         })}
         {data && data.changedFiles.length === 0 && (
-          <div className="px-3 py-4 text-center text-cafe-muted text-xs">{copy.noChanges}</div>
+          <div className="px-3 py-4 text-center text-cafe-muted text-xs">
+            {pullRequestTarget ? <PullRequestChangesEmpty /> : copy.noChanges}
+          </div>
         )}
       </div>
 
@@ -142,7 +161,7 @@ export function ChangesPanelV2({ worktreeId, basisPct, threadId, onOpenFile }: C
         ref={diffViewport}
         className="flex-1 min-h-0 overflow-auto bg-[var(--ws-editor-deep)]"
         onScroll={(event) => {
-          if (visible) reading.current = { worktreeId, top: event.currentTarget.scrollTop };
+          if (visible) reading.current = { targetKey, top: event.currentTarget.scrollTop };
         }}
       >
         {data?.diff ? (
@@ -155,7 +174,7 @@ export function ChangesPanelV2({ worktreeId, basisPct, threadId, onOpenFile }: C
                 ? (path) => {
                     // Capture at the original action before the host hides this owner,
                     // including a last native scroll whose event has not fired yet.
-                    if (diffViewport.current) reading.current = { worktreeId, top: diffViewport.current.scrollTop };
+                    if (diffViewport.current) reading.current = { targetKey, top: diffViewport.current.scrollTop };
                     onOpenFile(path);
                   }
                 : undefined

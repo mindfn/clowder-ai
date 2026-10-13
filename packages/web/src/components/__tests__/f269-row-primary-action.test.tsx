@@ -65,7 +65,7 @@ const TEMPLATE: TemplateCard = {
   nickname: '砚砚',
   avatar: '/avatars/maine.png',
   color: { primary: '#8b5e3c', secondary: '#f5e8d8' },
-  roleDescription: '复杂系统攻坚',
+  roleDescription: '复杂系统攻坚。'.repeat(60) + 'TEMPLATE-END',
   personality: '热情主动',
 };
 
@@ -76,14 +76,14 @@ const MARKETPLACE_RESULT: MarketplaceSearchResult = {
   ecosystem: 'codex',
   sourceLocator: 'skills/row-action',
   trustLevel: 'verified',
-  componentSummary: 'A summary that should keep the card primary action',
+  componentSummary: 'A full summary. '.repeat(60) + 'ARTIFACT-END',
 };
 
 const BACKLOG_ITEM: BacklogItem = {
   id: 'f269',
   userId: 'user-1',
   title: 'Restore row actions',
-  summary: 'Mission summary body',
+  summary: 'Mission summary body. '.repeat(60) + 'MISSION-END',
   priority: 'p2',
   tags: ['frontend'],
   status: 'open',
@@ -154,6 +154,7 @@ describe('F269 row primary action recovery', () => {
     const expand = Array.from(container.querySelectorAll('button')).find((button) =>
       button.closest(`[data-testid="prose-${TEMPLATE.roleDescription}"]`),
     );
+    expect(expand).toBeTruthy();
     act(() => expand?.click());
     expect(onSelect).not.toHaveBeenCalled();
   });
@@ -162,6 +163,7 @@ describe('F269 row primary action recovery', () => {
     const onSelect = vi.fn();
     act(() => root.render(<ArtifactCard result={MARKETPLACE_RESULT} onSelect={onSelect} />));
 
+    expect(container.querySelector(`[data-testid="prose-${MARKETPLACE_RESULT.componentSummary}"]`)).toBeTruthy();
     const summary = Array.from(container.querySelectorAll('span')).find(
       (element) => element.textContent === MARKETPLACE_RESULT.componentSummary,
     );
@@ -180,6 +182,7 @@ describe('F269 row primary action recovery', () => {
     const onSelect = vi.fn();
     act(() => root.render(<MissionControlCard item={BACKLOG_ITEM} selected={false} onSelect={onSelect} />));
 
+    expect(container.querySelector(`[data-testid="prose-${BACKLOG_ITEM.summary}"]`)).toBeTruthy();
     const tag = Array.from(container.querySelectorAll('span')).find((element) => element.textContent === '#frontend');
     act(() => tag?.click());
     expect(onSelect).toHaveBeenCalledTimes(1);

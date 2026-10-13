@@ -25,6 +25,12 @@ export interface InvalidateRuntimeInteractionInput {
   now: number;
 }
 
+/** One pending-index snapshot. Partial means at least one indexed detail could not be read or verified. */
+export interface RuntimeInteractionPendingIndexRead {
+  records: RuntimeInteractionRecord[];
+  exhaustiveness: 'complete' | 'partial';
+}
+
 export interface RuntimeInteractionStore {
   createStaged(input: CreateRuntimeInteractionInput): Promise<RuntimeInteractionRecord>;
   anchor(
@@ -46,5 +52,10 @@ export interface RuntimeInteractionStore {
     now: number,
   ): Promise<RuntimeInteractionRecord[]>;
   get(interactionId: string): Promise<RuntimeInteractionRecord | null>;
+  readPendingIndexByUser(userId: string): Promise<RuntimeInteractionPendingIndexRead>;
   listPendingByUser(userId: string): Promise<RuntimeInteractionRecord[]>;
 }
+
+/** Legacy list-only sources can expose known rows, but cannot prove that their pending index was read exhaustively. */
+export type RuntimeInteractionPendingReadSource = Pick<RuntimeInteractionStore, 'listPendingByUser'> &
+  Partial<Pick<RuntimeInteractionStore, 'readPendingIndexByUser'>>;

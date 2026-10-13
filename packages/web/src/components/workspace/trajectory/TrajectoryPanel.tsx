@@ -9,12 +9,14 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import { SessionEventsViewer } from '@/components/audit/SessionEventsViewer';
 import { SessionSearchTab } from '@/components/audit/SessionSearchTab';
 import { SessionChainPanel } from '@/components/SessionChainPanel';
+import { useShellLanguage } from '@/components/shell/shell-language';
 import { useShellPresentation } from '@/components/shell/shell-presentation';
 import { useChatStore } from '@/stores/chatStore';
 import { apiFetch } from '@/utils/api-client';
 import { type ResolvedTrajectoryTarget, useCanonicalTrajectoryTarget } from './canonical-trajectory-resolution';
 import type { InvocationDetailResponse } from './InvocationTrajectoryDetail';
 import { InvocationTrajectoryList } from './InvocationTrajectoryList';
+import { trajectoryCopy } from './trajectory.shell-copy';
 import { openInvocationTrajectory, readTrajectoryTarget, type TrajectoryTarget } from './trajectory-navigation';
 import {
   closeTrajectoryDetail,
@@ -25,6 +27,7 @@ import {
   useInvocationDetail,
   useUncontrolledTrajectoryNavigation,
 } from './trajectory-panel-support';
+import { useTrajectoryCopy } from './use-trajectory-copy';
 
 type SessionViewerTarget = { threadId: string; id: string; catId?: string };
 type RequestGenerationsResponse = {
@@ -36,7 +39,7 @@ type RequestGenerationsResponse = {
 
 async function fetchInvocationSummaries(threadId: string): Promise<InvocationTrajectorySummary[]> {
   const response = await apiFetch(`/api/threads/${threadId}/invocations?limit=500`);
-  if (!response.ok) throw new Error(`轨迹载入失败 (${response.status})`);
+  if (!response.ok) throw new Error(`(${response.status})`);
   const body = (await response.json()) as { invocations?: InvocationTrajectorySummary[] };
   return body.invocations ?? [];
 }
@@ -90,6 +93,8 @@ export function TrajectoryPanel({
   targetOverride?: TrajectoryTarget;
 }) {
   const isV2 = useShellPresentation() === 'v2';
+  const t = useTrajectoryCopy(trajectoryCopy);
+  const language = useShellLanguage();
   const currentThreadId = useChatStore((state) => state.currentThreadId);
   const catInvocations = useChatStore((state) => state.catInvocations);
   const activeInvocations = useChatStore((state) => state.activeInvocations);
@@ -136,7 +141,7 @@ export function TrajectoryPanel({
       setInvocationList({ threadId: activeThreadId, items: nextInvocations });
     } catch (cause) {
       if (requestId !== listRequestIdRef.current) return;
-      setError(cause instanceof Error ? cause.message : '轨迹载入失败');
+      setError(cause instanceof Error ? cause.message : '');
     } finally {
       if (requestId === listRequestIdRef.current) setLoadingList(false);
     }
@@ -249,6 +254,7 @@ export function TrajectoryPanel({
 
   const displayedSummary = selectedSummary ?? (scopedTarget ? detail?.summary : undefined);
   const targetState = renderTrajectoryTargetState({
+    language: isV2 ? language : 'zh',
     activeThreadId,
     back,
     detail,
@@ -284,13 +290,13 @@ export function TrajectoryPanel({
             >
               {item === 'trajectory'
                 ? isV2
-                  ? '每一轮'
+                  ? t.eachRun
                   : 'Invocations'
                 : item === 'sessions'
                   ? isV2
-                    ? '会话'
+                    ? t.sessions
                     : 'Sessions'
-                  : '搜索'}
+                  : t.search}
             </button>
           ))}
         </div>
@@ -300,7 +306,7 @@ export function TrajectoryPanel({
             onClick={() => void loadList()}
             className="rounded-lg px-2 py-1 text-micro font-semibold text-cafe-secondary hover:bg-cafe-surface"
           >
-            刷新
+            {t.refresh}
           </button>
         )}
       </div>
@@ -309,7 +315,7 @@ export function TrajectoryPanel({
           <InvocationTrajectoryList
             invocations={invocations}
             loading={loadingList}
-            error={error}
+            error={error === null ? null : `${t.loadFailed} ${error}`.trim()}
             onOpen={openSummary}
             onRetry={() => void loadList()}
             targetInvocationId={scopedTarget?.invocationId}

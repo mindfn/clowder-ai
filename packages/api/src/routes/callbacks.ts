@@ -91,8 +91,14 @@ import { extractImagePaths, extractImageUrls } from '../domains/cats/services/ag
 import { analyzeA2AMentions } from '../domains/cats/services/agents/routing/a2a-mentions.js';
 import { resolveCatTarget } from '../domains/cats/services/agents/routing/cat-target-resolver.js';
 import { extractRichFromText } from '../domains/cats/services/agents/routing/rich-block-extract.js';
+import { resolveRichMediaBlocks } from '../domains/cats/services/agents/routing/rich-media-urls.js';
 import { buildVoteNotification } from '../domains/cats/services/agents/routing/vote-intercept.js';
 import { buildCloudReturnMessageIdempotencyKey } from '../domains/cats/services/cloud-bridge/cloud-return-message.js';
+import {
+  type DotAskAdmission,
+  hasCompleteDotAskFanout,
+} from '../domains/cats/services/cloud-bridge/dot/DotAskService.js';
+import type { DotReplyCandidate } from '../domains/cats/services/cloud-bridge/dot/dot-reply-authority.js';
 import { getMessageSpeakerName, getSenderName } from '../domains/cats/services/context/ContextAssembler.js';
 import { FreshnessAttentionEventLog } from '../domains/cats/services/freshness/FreshnessAttentionEventLog.js';
 import type { AgentRouter } from '../domains/cats/services/index.js';
@@ -216,6 +222,7 @@ import { registerCallbackGameRoutes } from './callback-game-routes.js';
 import { resolveGitHubValidation } from './callback-github-validation.js';
 import { registerCallbackGuideRoutes } from './callback-guide-routes.js';
 import { type HoldBallRouteDeps, registerCallbackHoldBallRoutes } from './callback-hold-ball-routes.js';
+import { registerCallbackImageRoutes } from './callback-image-routes.js';
 import { registerCallbackLarkActionRoutes } from './callback-lark-action-routes.js';
 import { registerCallbackLimbRoutes } from './callback-limb-routes.js';
 import {
@@ -517,6 +524,15 @@ function sameStringArray(left: readonly string[] | undefined, right: readonly st
 
 function richBlocksFingerprintPart(blocks: readonly RichBlock[] | undefined): string {
   return blocks && blocks.length > 0 ? JSON.stringify(blocks) : '';
+}
+
+function richCallbackRequestDigest(blocks: readonly RichBlock[]): string {
+  return createHash('sha256').update(richBlocksFingerprintPart(blocks)).digest('hex');
+}
+
+function sameRichCallbackRequest(message: StoredMessage, blocks: readonly RichBlock[]): boolean {
+  const digest = message.extra?.callbackRichRequestDigest;
+  return digest ? digest === richCallbackRequestDigest(blocks) : sameRichBlocks(message.extra?.rich?.blocks, blocks);
 }
 
 function sameRichBlocks(left: readonly RichBlock[] | undefined, right: readonly RichBlock[] | undefined): boolean {
@@ -830,10 +846,12 @@ async function ensureDuplicateCallbackWake(input: {
 }
 
 export interface CallbackRoutesOptions {
+  liveTaskAuthority?: import('./live-task-authority.js').LiveTaskAuthority;
   /** F293: applied scarcity policy; defaults to the active project dossier. */
   getEngagementPolicy?: EngagementPolicyReader;
   /** Host-selected single project for the Live companion; never a model selector. */
   companionProjectPath?: string;
+  companionRuntimeInteractionStore?: import('../domains/runtime-interaction/ports/RuntimeInteractionStore.js').RuntimeInteractionPendingReadSource;
   withLiveCarrierOperation?: <T>(
     query: { invocationId: string; catId: string; threadId: string },
     operation: () => Promise<T>,
@@ -857,6 +875,25 @@ export interface CallbackRoutesOptions {
     import('../domains/cats/services/cloud-bridge/cloud-return-grant.js').CloudReturnGrantStore,
     'claim' | 'commit' | 'release'
   >;
+  /** Host-only typed admission for a paired dot consultation; never a public callback flag. */
+  admitDotAsk?: (input: {
+    agentKeyId: string;
+    userId: string;
+    threadId: string;
+    content: string;
+    targetCats: readonly string[];
+    clientMessageId?: string;
+  }) => Promise<DotAskAdmission>;
+  dotReplyTarget?: (source: DotReplyCandidate) => Promise<boolean>;
+  /** Event replies still require one current connection and one actually read source. */
+  admitDotReturn?: (input: {
+    agentKeyId: string;
+    userId: string;
+    threadId: string;
+    sourceMessageId: string;
+    eventId: string;
+    content: string;
+  }) => Promise<string>;
   messageStore: IMessageStore;
   /** Exact lifecycle-backed execution state shared by prompts, UI, and thread-context reads. */
   threadExecutionSituationSource?: ThreadExecutionSituationSource;
@@ -1413,8 +1450,11 @@ export const callbacksRoutes: FastifyPluginAsync<CallbackRoutesOptions> = async 
   registerCallbackAuthHook(app, registry, {
     ...(callbackAuthNotifier ? { notifier: callbackAuthNotifier } : {}),
     ...(agentKeyRegistry ? { agentKeyRegistry } : {}),
+    ...(opts.admitDotReturn ? { allowDotSourceBoundReturn: true } : {}),
   });
-  if (opts.companionProjectPath) registerCompanionWorkReadRoutes(app, opts.companionProjectPath);
+  if (opts.companionProjectPath) {
+    registerCompanionWorkReadRoutes(app, opts.companionProjectPath, opts.companionRuntimeInteractionStore);
+  }
   if (taskStore && opts.deploymentObservationProvider && opts.deploymentWaitLifecycleHolder) {
     registerCallbackDeploymentWaitRoutes(app, {
       taskStore,
@@ -1584,8 +1624,43 @@ export const callbacksRoutes: FastifyPluginAsync<CallbackRoutesOptions> = async 
       // path keeps the authorization in server custody. A legacy binding is
       // accepted only for rolling compatibility with already-open conversations.
       const isGptPro = principal.catId === createCatId('gpt-pro');
-      const isCloudReturnAttempt = isGptPro && Boolean(replyTo || cloudReturnBinding);
-      const usesServerGrant = isGptPro && Boolean(replyTo) && !cloudReturnBinding;
+      const isDot = principal.catId === createCatId('gpt-dot');
+      let dotDispatchInvocationId: string | undefined;
+      let dotAskAdmission: DotAskAdmission | undefined;
+      if (isDot && !replyTo && !cloudReturnBinding && opts.admitDotAsk) {
+        try {
+          dotAskAdmission = await opts.admitDotAsk({
+            agentKeyId: principal.agentKeyId,
+            userId: principal.userId,
+            threadId: effectiveThreadId,
+            content,
+            targetCats: explicitTargetCats ?? [],
+            clientMessageId,
+          });
+        } catch {
+          return reply.code(403).send({ kind: 'dot_ask_not_admitted' });
+        }
+      }
+      if (isDot && !dotAskAdmission) {
+        const eventId = request.headers['x-cat-cafe-dot-event-id'];
+        if (!replyTo || cloudReturnBinding || typeof eventId !== 'string' || !opts.admitDotReturn) {
+          return reply.code(403).send({ kind: 'dot_exact_source_required' });
+        }
+        try {
+          dotDispatchInvocationId = await opts.admitDotReturn({
+            agentKeyId: principal.agentKeyId,
+            userId: principal.userId,
+            threadId: effectiveThreadId,
+            sourceMessageId: replyTo,
+            eventId,
+            content,
+          });
+        } catch {
+          return reply.code(403).send({ kind: 'dot_source_not_admitted' });
+        }
+      }
+      const isCloudReturnAttempt = (isDot && !dotAskAdmission) || (isGptPro && Boolean(replyTo || cloudReturnBinding));
+      const usesServerGrant = (isDot || isGptPro) && Boolean(replyTo) && !cloudReturnBinding;
       if (isGptPro && cloudReturnBinding) {
         if (!replyTo) {
           reply.status(400);
@@ -1632,6 +1707,17 @@ export const callbacksRoutes: FastifyPluginAsync<CallbackRoutesOptions> = async 
         localReviewVerdict && clientMessageId
           ? buildLocalReviewFactMessageIdempotencyKey(principal.catId, clientMessageId)
           : undefined;
+      const durableDotAskDuplicate = dotAskAdmission
+        ? await messageStore.getByIdempotencyKey(
+            principal.userId,
+            dotAskAdmission.idempotencyScope,
+            dotAskAdmission.idempotencyKey,
+          )
+        : null;
+      const dotAskMatches = (message: StoredMessage) =>
+        !dotAskAdmission || message.extra?.dotAsk?.requestDigest === dotAskAdmission.metadata.requestDigest;
+      if (durableDotAskDuplicate && !dotAskMatches(durableDotAskDuplicate))
+        return reply.code(409).send({ kind: 'dot_ask_idempotency_conflict' });
       const durableCloudReturnDuplicate = cloudReturnMessageIdempotencyKey
         ? await messageStore.getByIdempotencyKey(principal.userId, effectiveThreadId, cloudReturnMessageIdempotencyKey)
         : null;
@@ -1660,6 +1746,37 @@ export const callbacksRoutes: FastifyPluginAsync<CallbackRoutesOptions> = async 
         reply.status(contentProjection.statusCode);
         return { kind: contentProjection.kind, message: contentProjection.message };
       }
+      if (
+        durableLocalReviewDuplicate?.extra?.callbackRichRequestDigest &&
+        !sameRichCallbackRequest(durableLocalReviewDuplicate, extractedBlocks)
+      ) {
+        return reply
+          .code(409)
+          .send({ kind: 'review_fact_idempotency_conflict', messageId: durableLocalReviewDuplicate.id });
+      }
+      const durableLocalRichRecovery =
+        durableLocalReviewDuplicate && sameRichCallbackRequest(durableLocalReviewDuplicate, extractedBlocks)
+          ? durableLocalReviewDuplicate
+          : null;
+      const durableMediaDuplicate = durableDotAskDuplicate ?? durableCloudReturnDuplicate ?? durableLocalRichRecovery;
+      const mediaResolution = durableMediaDuplicate
+        ? { ok: true as const, blocks: [...(durableMediaDuplicate.extra?.rich?.blocks ?? [])] }
+        : await resolveRichMediaBlocks(extractedBlocks);
+      if (!mediaResolution.ok) {
+        reply.status(400);
+        return mediaResolution;
+      }
+      let richBlocks = mediaResolution.blocks;
+      const synthesizer = getVoiceBlockSynthesizer();
+      if (!durableMediaDuplicate && synthesizer && richBlocks.some((b) => b.kind === 'audio' && 'text' in b)) {
+        try {
+          richBlocks = await synthesizer.resolveVoiceBlocks(richBlocks, principal.catId);
+        } catch (err) {
+          app.log.error({ err }, '[agent-key/post-message] Voice block synthesis failed');
+        }
+      }
+
+      // F182 AC-C1: use analyzeA2AMentions (captures routing_warnings for disabled cats)
       const contentAnalysis = analyzeA2AMentions(storedContent, senderCatId);
       const contentTargets = contentAnalysis.mentions;
       const validExplicitTargets: CatId[] = [];
@@ -1675,16 +1792,6 @@ export const callbacksRoutes: FastifyPluginAsync<CallbackRoutesOptions> = async 
       const mismatch = checkRoutingMismatch(explicitTargetCats, validExplicitTargets, contentTargets);
       if (mismatch.held) {
         return { ...mismatch.response, ...(clientMessageId ? { clientMessageId } : {}) };
-      }
-
-      let richBlocks = extractedBlocks;
-      const synthesizer = getVoiceBlockSynthesizer();
-      if (synthesizer && richBlocks.some((b) => b.kind === 'audio' && 'text' in b)) {
-        try {
-          richBlocks = await synthesizer.resolveVoiceBlocks(richBlocks, principal.catId);
-        } catch (err) {
-          app.log.error({ err }, '[agent-key/post-message] Voice block synthesis failed');
-        }
       }
 
       const mergedTargets = new Set<CatId>([...contentTargets, ...validExplicitTargets]);
@@ -1777,8 +1884,12 @@ export const callbacksRoutes: FastifyPluginAsync<CallbackRoutesOptions> = async 
             }
           : {}),
         ...richExtra,
+        ...(localReviewFactInput && richBlocks.length > 0
+          ? { callbackRichRequestDigest: richCallbackRequestDigest(extractedBlocks) }
+          : {}),
         ...targetCatsExtra,
         ...localReviewVerdictExtra,
+        ...(dotAskAdmission ? { dotAsk: dotAskAdmission.metadata } : {}),
       };
       const extra = Object.keys(extraParts).length > 0 ? extraParts : undefined;
 
@@ -1820,6 +1931,10 @@ export const callbacksRoutes: FastifyPluginAsync<CallbackRoutesOptions> = async 
           };
         }
         cloudReturnGrantClaim = grant;
+        if (isDot && grant.dispatchInvocationId !== dotDispatchInvocationId) {
+          await cloudReturnGrantStore.release(grant);
+          return reply.code(403).send({ kind: 'dot_dispatch_generation_mismatch' });
+        }
       }
       const localReviewDuplicateMatches = (message: StoredMessage) =>
         Boolean(
@@ -1851,14 +1966,23 @@ export const callbacksRoutes: FastifyPluginAsync<CallbackRoutesOptions> = async 
         };
       }
       const callbackMessageIdempotencyKey =
+        dotAskAdmission?.idempotencyKey ??
         notificationMessageIdempotencyKey ??
         (clientMessageId && !usesServerGrant && !localReviewVerdict
           ? buildCallbackMessageIdempotencyKey(principal.catId, clientMessageId)
           : undefined);
       const durableCallbackDuplicate = callbackMessageIdempotencyKey
-        ? await messageStore.getByIdempotencyKey(principal.userId, effectiveThreadId, callbackMessageIdempotencyKey)
+        ? await messageStore.getByIdempotencyKey(
+            principal.userId,
+            dotAskAdmission?.idempotencyScope ?? effectiveThreadId,
+            callbackMessageIdempotencyKey,
+          )
         : null;
-      const duplicateMsg = durableCloudReturnDuplicate ?? durableLocalReviewDuplicate ?? durableCallbackDuplicate;
+      const duplicateMsg =
+        durableDotAskDuplicate ??
+        durableCloudReturnDuplicate ??
+        durableLocalReviewDuplicate ??
+        durableCallbackDuplicate;
       const recoverPersistedCallbackMessage = async (persisted: StoredMessage) => {
         const persistedMentions = persisted.mentions.filter(
           (catId) => !persisted.extra?.notificationDelivery?.withoutWakeCatIds.includes(catId),
@@ -1907,6 +2031,17 @@ export const callbacksRoutes: FastifyPluginAsync<CallbackRoutesOptions> = async 
             ),
           enqueueFailureMessage: '[agent-key/post-message] duplicate wake admission failed',
         });
+        if (
+          dotAskAdmission &&
+          !(await hasCompleteDotAskFanout(await messageStore.getById(persisted.id), opts.invocationQueue))
+        ) {
+          return reply.code(503).send({
+            kind: 'dot_ask_delivery_pending',
+            message: 'The dot question is durable; retry the same clientMessageId to restore its recipient wake.',
+            messageId: persisted.id,
+            clientMessageId,
+          });
+        }
         if (localReviewVerdict && persisted.deliveryStatus === 'queued' && canRecoverWake && !recovered) {
           reply.status(503);
           return {
@@ -2003,6 +2138,15 @@ export const callbacksRoutes: FastifyPluginAsync<CallbackRoutesOptions> = async 
         if (cloudReturnGrantClaim && cloudReturnGrantStore) {
           await cloudReturnGrantStore.release(cloudReturnGrantClaim);
         }
+        if (dotAskAdmission && a2aAdmissionPlan) {
+          reply.status(503);
+          return {
+            kind: 'dot_ask_delivery_pending',
+            message:
+              'Question admission is unavailable; retry the same clientMessageId. No partial fan-out was published.',
+            clientMessageId,
+          };
+        }
         if (localReviewVerdict && a2aAdmissionPlan) {
           app.log.warn(
             { err: error, threadId: effectiveThreadId, clientMessageId },
@@ -2019,6 +2163,7 @@ export const callbacksRoutes: FastifyPluginAsync<CallbackRoutesOptions> = async 
         throw error;
       }
       const storedMsg = atomicAdmission.message;
+      if (!dotAskMatches(storedMsg)) return reply.code(409).send({ kind: 'dot_ask_idempotency_conflict' });
       if (persistedReplay || atomicAdmission.preAdmittedReplayed) {
         return recoverPersistedCallbackMessage(storedMsg);
       }
@@ -2077,6 +2222,18 @@ export const callbacksRoutes: FastifyPluginAsync<CallbackRoutesOptions> = async 
         enqueueFailureMessage: '[agent-key/post-message] wake admission failed',
       });
 
+      if (
+        dotAskAdmission &&
+        (deliveryDecision.enqueueFailed ||
+          !(await hasCompleteDotAskFanout(await messageStore.getById(storedMsg.id), opts.invocationQueue)))
+      ) {
+        return reply.code(503).send({
+          kind: 'dot_ask_delivery_pending',
+          message: 'The dot question is durable; retry the same clientMessageId to restore its recipient wake.',
+          messageId: storedMsg.id,
+          clientMessageId,
+        });
+      }
       socketManager.broadcastAgentMessage(
         {
           type: 'text',
@@ -3004,6 +3161,33 @@ export const callbacksRoutes: FastifyPluginAsync<CallbackRoutesOptions> = async 
       reply.status(contentProjection.statusCode);
       return { kind: contentProjection.kind, message: contentProjection.message };
     }
+    const localReviewFactMessageIdempotencyKey =
+      localReviewVerdict && clientMessageId
+        ? buildLocalReviewFactMessageIdempotencyKey(actor.catId, clientMessageId)
+        : undefined;
+    const durableLocalReviewDuplicate = localReviewFactMessageIdempotencyKey
+      ? await messageStore.getByIdempotencyKey(actor.userId, effectiveThreadId, localReviewFactMessageIdempotencyKey)
+      : null;
+    if (
+      durableLocalReviewDuplicate?.extra?.callbackRichRequestDigest &&
+      !sameRichCallbackRequest(durableLocalReviewDuplicate, extractedBlocks)
+    ) {
+      return reply
+        .code(409)
+        .send({ kind: 'review_fact_idempotency_conflict', messageId: durableLocalReviewDuplicate.id });
+    }
+    const durableLocalRichRecovery =
+      durableLocalReviewDuplicate && sameRichCallbackRequest(durableLocalReviewDuplicate, extractedBlocks)
+        ? durableLocalReviewDuplicate
+        : null;
+    const mediaResolution = durableLocalRichRecovery
+      ? { ok: true as const, blocks: [...(durableLocalRichRecovery.extra?.rich?.blocks ?? [])] }
+      : await resolveRichMediaBlocks(extractedBlocks);
+    if (!mediaResolution.ok) {
+      reply.status(400);
+      return mediaResolution;
+    }
+
     // Attach blocks to this callback message without closing the invocation.
     // The routing final append closes it; later blocks must remain writable until then.
     const bufferedBlocks = getRichBlockBuffer().consume(effectiveThreadId, actor.catId as string, invocationId, {
@@ -3012,8 +3196,8 @@ export const callbacksRoutes: FastifyPluginAsync<CallbackRoutesOptions> = async 
 
     // F34-b: Resolve voice blocks (audio with text, no url) before storing
     const synthesizer = getVoiceBlockSynthesizer();
-    let richBlocks = [...extractedBlocks, ...bufferedBlocks];
-    if (synthesizer && richBlocks.some((b) => b.kind === 'audio' && 'text' in b)) {
+    let richBlocks = [...mediaResolution.blocks, ...bufferedBlocks];
+    if (!durableLocalRichRecovery && synthesizer && richBlocks.some((b) => b.kind === 'audio' && 'text' in b)) {
       try {
         richBlocks = await synthesizer.resolveVoiceBlocks(richBlocks, actor.catId as string);
       } catch (err) {
@@ -3103,6 +3287,10 @@ export const callbacksRoutes: FastifyPluginAsync<CallbackRoutesOptions> = async 
         );
       }
     }
+    const dotReplyTriggerId = record.a2aTriggerMessageId ?? turnExecution?.causal?.triggerMessageId;
+    // Callback posts are independent speech, not the execution's terminal answer.
+    // Explicit @dot remains supported; automatic consultation return is attached
+    // to the canonical completed response in routeSerial.
     const suppressTerminalRouting = coordinationResult.suppressRouting;
     if (suppressTerminalRouting && mergedTargets.size > 0) {
       throw new Error('terminal ACK projection cannot suppress explicit routing targets');
@@ -3200,6 +3388,9 @@ export const callbacksRoutes: FastifyPluginAsync<CallbackRoutesOptions> = async 
           }
         : {}),
       ...richExtra,
+      ...(localReviewFactInput && richBlocks.length > 0
+        ? { callbackRichRequestDigest: richCallbackRequestDigest(extractedBlocks) }
+        : {}),
       ...crossPostExtra,
       ...coordinationExtra,
       ...localReviewVerdictExtra,
@@ -3268,24 +3459,18 @@ export const callbacksRoutes: FastifyPluginAsync<CallbackRoutesOptions> = async 
         invocationId: effectiveInvId,
         turnInvocationId: invocationId ?? effectiveInvId,
       },
-      ...(turnExecution?.causal?.triggerMessageId
+      ...(dotReplyTriggerId
         ? {
             causal: {
               kind: 'invocation_reply' as const,
-              triggerMessageId: turnExecution.causal.triggerMessageId,
+              triggerMessageId: dotReplyTriggerId,
             },
           }
         : {}),
       ...(turnExecution ? { turnExecution: projectTurnExecutionMessage(turnExecution) } : {}),
     };
     const now = Date.now();
-    const localReviewFactMessageIdempotencyKey =
-      localReviewVerdict && clientMessageId
-        ? buildLocalReviewFactMessageIdempotencyKey(actor.catId, clientMessageId)
-        : undefined;
-    const durableLocalReviewDuplicate = localReviewFactMessageIdempotencyKey
-      ? await messageStore.getByIdempotencyKey(actor.userId, effectiveThreadId, localReviewFactMessageIdempotencyKey)
-      : null;
+
     const localReviewDuplicateMatches = (message: StoredMessage) =>
       Boolean(
         localReviewFactInput &&
@@ -5170,8 +5355,14 @@ export const callbacksRoutes: FastifyPluginAsync<CallbackRoutesOptions> = async 
         throw err; // CAS exhaustion / unparseable data → still 500
       }
     }
+    let titleApplied: boolean | undefined;
     if (title !== undefined) {
-      await threadStore.updateTitle(effectiveThreadId, title);
+      titleApplied = await threadStore.setAutomaticTitle(effectiveThreadId, title, 'cat', principal.catId);
+      if (titleApplied)
+        opts.socketManager.broadcastToRoom(`thread:${effectiveThreadId}`, 'thread_updated', {
+          threadId: effectiveThreadId,
+          title,
+        });
       // #872 P2: refresh evidence index after title change (same as PATCH /api/threads/:id)
       try {
         opts.indexBuilder?.markThreadDirty(effectiveThreadId);
@@ -5190,6 +5381,9 @@ export const callbacksRoutes: FastifyPluginAsync<CallbackRoutesOptions> = async 
     return {
       threadId: effectiveThreadId,
       title: updated?.title ?? thread.title,
+      ...(titleApplied !== undefined
+        ? { titleApplied, titleSource: updated?.titleSource ?? (thread.title ? 'user' : 'temporary') }
+        : {}),
       labels: updated?.labels ?? thread.labels ?? [],
       ...(meta?.worktrees ? { worktrees: meta.worktrees } : {}),
       ...(meta?.prs ? { prs: meta.prs } : {}),
@@ -6135,7 +6329,12 @@ export const callbacksRoutes: FastifyPluginAsync<CallbackRoutesOptions> = async 
     }
 
     // F34-b: Resolve voice blocks (audio with text, no url) before buffering
-    let resolvedBlock: RichBlock = block as unknown as RichBlock;
+    const mediaResolution = await resolveRichMediaBlocks([block as unknown as RichBlock]);
+    if (!mediaResolution.ok) {
+      reply.status(400);
+      return mediaResolution;
+    }
+    let resolvedBlock: RichBlock = mediaResolution.blocks[0]!;
     const synthesizer = getVoiceBlockSynthesizer();
     if (synthesizer && block.kind === 'audio' && 'text' in block) {
       const resolved = await synthesizer.resolveVoiceBlocks([block as unknown as RichBlock], record.catId as string);
@@ -6373,6 +6572,7 @@ export const callbacksRoutes: FastifyPluginAsync<CallbackRoutesOptions> = async 
       messageStore: opts.messageStore,
       socketManager,
       ...(threadStore ? { threadStore } : {}),
+      ...(opts.liveTaskAuthority ? { liveTaskAuthority: opts.liveTaskAuthority } : {}),
     });
   }
 
@@ -6573,6 +6773,7 @@ export const callbacksRoutes: FastifyPluginAsync<CallbackRoutesOptions> = async 
     messageStore,
     ...(invocationTracker ? { invocationTracker } : {}),
   });
+  registerCallbackImageRoutes(app, { registry, socketManager, threadStore, messageStore });
 
   // F162: WeChat Work enterprise action callback routes
   registerCallbackWeComActionRoutes(app, { registry });

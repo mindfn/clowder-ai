@@ -35,6 +35,7 @@ describe('F322 v2 row facts and recoverable names', () => {
     participants = cats.map((cat) => cat.id),
     isActive = false,
     rowTitle = `${title}第一段`,
+    lastActiveAt = Date.now() - 60_000,
   ) {
     act(() =>
       root.render(
@@ -42,7 +43,7 @@ describe('F322 v2 row facts and recoverable names', () => {
           id="conversation"
           title={rowTitle}
           participants={participants}
-          lastActiveAt={Date.now() - 60_000}
+          lastActiveAt={lastActiveAt}
           isActive={isActive}
           onSelect={onSelect}
           onTogglePin={onPin}
@@ -75,6 +76,25 @@ describe('F322 v2 row facts and recoverable names', () => {
     delete (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT;
   });
 
+  it.each([
+    [30_000, '刚刚', 'just now'],
+    [60_000, '1分', '1 min'],
+    [240_000, '4分', '4 min'],
+    [3_600_000, '1时', '1 h'],
+    [86_400_000, '1天', '1 d'],
+  ])('uses current v2 language for title time after %i ms, keeping classic Chinese', (elapsed, zh, en) => {
+    vi.spyOn(Date, 'now').mockReturnValue(10 * 86_400_000);
+    renderItem({ status: 'idle' }, [], false, 'A conversation', Date.now() - Number(elapsed));
+    const time = () => host.querySelector('[data-testid="thread-row-time"]')?.textContent;
+    expect(time()).toBe(zh);
+    act(() => writeShellLanguage('en'));
+    expect(time()).toBe(en);
+    act(() => writeShellPresentation('classic'));
+    expect(host.querySelector('[data-testid="thread-row-time"]')).toBeNull();
+    expect(host.querySelector('[title*="A conversation"]')?.getAttribute('title')).toMatch(/刚刚|前/);
+    act(() => writeShellPresentation('v2'));
+    expect(time()).toBe(en);
+  });
   it.each(['error', 'working', 'done'] as const)('%s coexists with mention, unread, and draft', (status) => {
     renderItem({ status, cats: cats.map((cat) => cat.id), activeSince: Date.now() - 120_000 });
     expect(host.querySelector(`[data-testid="thread-row-${status}"]`)).not.toBeNull();

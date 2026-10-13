@@ -66,6 +66,8 @@ export interface CallbackAuthHookOptions {
   notifier?: Pick<CallbackAuthSystemMessageNotifier, 'notify'>;
   /** F178 Phase C: agent-key registry for persistent agent auth. */
   agentKeyRegistry?: AgentKeyAuthRegistry;
+  /** Only the canonical writer with DotReturn admission may accept a dot facade key. */
+  allowDotSourceBoundReturn?: boolean;
   /** Session hooks reuse invocation auth but own a distinct, scope-bound action policy. */
   enforceToolExecutionPolicy?: boolean;
 }
@@ -140,6 +142,20 @@ export function registerCallbackAuthHook(
         if (!akResult.ok) {
           recordCallbackAuthFailure({ reason: akResult.reason, tool });
           reply.status(401).send(makeCallbackAuthError(akResult.reason));
+          return;
+        }
+        // Dot's URL credential belongs to its event-bound MCP facade, not to
+        // the general callback surface. The writer must still admit the exact
+        // event/source/grant; every other hook and route rejects this principal.
+        if (
+          akResult.record.catId === 'gpt-dot' &&
+          !(
+            options.allowDotSourceBoundReturn === true &&
+            request.method === 'POST' &&
+            request.routeOptions.url === '/api/callbacks/post-message'
+          )
+        ) {
+          reply.status(403).send({ error: 'dot_facade_required', reason: 'dot_callback_scope_denied' });
           return;
         }
         request.callbackPrincipal = derivePrincipal(akResult.record);

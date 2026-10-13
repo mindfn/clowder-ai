@@ -1,6 +1,16 @@
+import type { MessageQuoteSource } from '@cat-cafe/shared';
+import type { ReactNode } from 'react';
 import type { FileData, WorktreeEntry } from '@/hooks/useWorkspace';
 import type { WorkspaceFileNavigationOrigin } from '@/stores/chat-types';
 import type { WorkspaceFileSave } from './workspace-file-draft';
+
+/** A published copy has display bytes and its source, but no F063 locator or write/listen authority. */
+export interface PublishedTextViewerProps {
+  file: FileData;
+  publication: { url: string; quoteSource?: MessageQuoteSource };
+  onBack: () => void;
+  reviewAction?: ReactNode;
+}
 
 export interface WorkspaceFileViewerProps {
   file: FileData;
@@ -44,4 +54,8 @@ export interface WorkspaceFileViewerProps {
   onRevealInTree?: () => void;
   annotationCount?: number | null;
   treeVisible?: boolean;
+  onRequestModification?: () => void;
+  modificationDisabled?: boolean;
+  onQuoteSelected?: (quote: string) => void;
+  showFileQuotes?: boolean;
 }

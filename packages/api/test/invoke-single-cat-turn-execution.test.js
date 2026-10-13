@@ -67,6 +67,36 @@ async function collect(iterable) {
 }
 
 describe('invokeSingleCat durable child execution lifecycle', () => {
+  test('a cancellation-only terminal never succeeds or schedules a freshness invocation', async () => {
+    const store = new InMemoryTurnExecutionStore();
+    let reinvokes = 0;
+    await collect(
+      invokeSingleCat(
+        {
+          ...makeDeps(store, 'child-cancelled'),
+          freshnessReinvokeCheck: async () => {
+            reinvokes++;
+            return null;
+          },
+        },
+        {
+          catId: 'codex',
+          service: {
+            async *invoke() {
+              yield { type: 'done', catId: 'codex', errorCode: 'INVOCATION_CANCELLED', timestamp: Date.now() };
+            },
+          },
+          prompt: 'cancelled request',
+          userId: 'user-1',
+          threadId: 'thread-1',
+          isLastCat: true,
+        },
+      ),
+    );
+    assert.equal((await store.get('child-cancelled')).status, 'canceled');
+    assert.equal(reinvokes, 0);
+  });
+
   test('creates running before prompt exposure/provider and terminalizes success', async () => {
     const store = new InMemoryTurnExecutionStore();
     const exposureCalls = [];

@@ -36,6 +36,8 @@ import http from 'node:http';
 import { fileURLToPath } from 'node:url';
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { StreamableHTTPServerTransport } from '@modelcontextprotocol/sdk/server/streamableHttp.js';
+import { handleDotRemoteRequest } from './dot-remote-proxy.js';
+import { adaptModernToolHeaders, registerSharedDotTools, sharedDotRpc } from './remote-shared-dot.js';
 import { registerCollabToolset, registerMemoryToolset } from './server-toolsets.js';
 import { isDirectExecution } from './utils/is-direct-execution.js';
 import { initCatCafeDir } from './utils/path-validator.js';
@@ -320,6 +322,7 @@ function createSpikeServer(): McpServer {
   // 收窄到 11 项白名单. env 已被 validateB1aEnv 保证 mode 正确.
   registerCollabToolset(server);
   registerMemoryToolset(server);
+  registerSharedDotTools(server);
 
   return server;
 }
@@ -340,7 +343,17 @@ async function handleMcpRequest(req: http.IncomingMessage, res: http.ServerRespo
   }
 
   const chunks: Buffer[] = [];
-  for await (const chunk of req) chunks.push(chunk as Buffer);
+  let size = 0;
+  for await (const chunk of req) {
+    const bytes = Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk);
+    size += bytes.length;
+    if (size > 15 * 1024 * 1024) {
+      res.writeHead(413, { 'content-type': 'application/json' });
+      res.end(JSON.stringify({ error: 'request too large' }));
+      return;
+    }
+    chunks.push(bytes);
+  }
   let body: unknown;
   if (chunks.length > 0) {
     try {
@@ -352,8 +365,15 @@ async function handleMcpRequest(req: http.IncomingMessage, res: http.ServerRespo
     }
   }
 
+  const shared = await sharedDotRpc(body);
+  if (shared) {
+    res.writeHead(shared.status, { 'content-type': 'application/json', 'cache-control': 'no-store' });
+    res.end(JSON.stringify(shared.body));
+    return;
+  }
+  const modern = adaptModernToolHeaders(req);
   const server = createSpikeServer();
-  const transport = new StreamableHTTPServerTransport({ sessionIdGenerator: undefined });
+  const transport = new StreamableHTTPServerTransport({ sessionIdGenerator: undefined, enableJsonResponse: modern });
   await server.connect(transport);
 
   try {
@@ -397,6 +417,13 @@ async function main(): Promise<void> {
       return;
     }
 
+    if (urlForLog === '/dot/mcp') {
+      void handleDotRemoteRequest(req, wrappedRes, process.env.CAT_CAFE_API_URL ?? '').catch(() => {
+        if (!wrappedRes.headersSent) wrappedRes.writeHead(503);
+        wrappedRes.end(JSON.stringify({ error: 'dot_host_unavailable' }));
+      });
+      return;
+    }
     if (urlForLog === '/mcp') {
       handleMcpRequest(req, wrappedRes).catch((err) => {
         console.error('[cat-cafe-b1a] uncaught:', err);
@@ -452,4 +479,4 @@ if (isEntryPoint) {
 }
 
 // Export for tests
-export { redactSecrets, validateB1aEnv, wrapResponseWithRedact };
+export { handleMcpRequest, redactSecrets, validateB1aEnv, wrapResponseWithRedact };

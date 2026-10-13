@@ -2,21 +2,10 @@
 
 import type { PawFeelInboxPage, PawFeelInboxSort } from '@cat-cafe/shared';
 import { type ReactNode, useEffect, useId, useRef, useState } from 'react';
+import { usePawFeelCopy } from '../paw-feel/paw-feel.shell-copy';
 import { CheckIcon, ChevronDownIcon, DetailsIcon, FilterIcon, SortIcon } from './PawFeelInboxIcons';
 
 export type PawFeelFilter = 'active' | 'all' | 'overdue' | 'disposed';
-
-const FILTER_LABELS: Record<PawFeelFilter, string> = {
-  active: '待处置',
-  all: '全部',
-  overdue: '72h+',
-  disposed: '已处置',
-};
-
-const SORT_LABELS: Record<PawFeelInboxSort, string> = {
-  newest: '最新上报',
-  oldest: '最久未处理',
-};
 
 export function PawFeelInboxToolbar({
   page,
@@ -37,6 +26,9 @@ export function PawFeelInboxToolbar({
   onSort: (sort: PawFeelInboxSort) => void;
   onNewest: () => void;
 }) {
+  const t = usePawFeelCopy();
+  const FILTER_LABELS = t.filters;
+  const SORT_LABELS = t.sorts;
   const filterCounts: Record<PawFeelFilter, number> = {
     active: page?.issueCounts.open ?? 0,
     all: page?.bundleCounts.total ?? 0,
@@ -63,10 +55,10 @@ export function PawFeelInboxToolbar({
       ) : null}
 
       <fieldset className="mt-2 flex min-w-0 flex-wrap items-center gap-2">
-        <legend className="sr-only">爪感差收件箱视图控制</legend>
+        <legend className="sr-only">{t.controls}</legend>
         <ControlPopover
           icon={<FilterIcon />}
-          label={`状态 · ${FILTER_LABELS[filter]}`}
+          label={`${t.status} · ${FILTER_LABELS[filter]}`}
           popoverKind="menu"
           testId="paw-feel-filter"
         >
@@ -90,7 +82,7 @@ export function PawFeelInboxToolbar({
 
         <ControlPopover
           icon={<SortIcon />}
-          label={`排序 · ${SORT_LABELS[sort]}`}
+          label={`${t.sort} · ${SORT_LABELS[sort]}`}
           popoverKind="menu"
           testId="paw-feel-sort"
         >
@@ -114,31 +106,26 @@ export function PawFeelInboxToolbar({
         <ControlPopover
           align="right"
           icon={<DetailsIcon />}
-          label="收录详情"
+          label={t.details}
           popoverKind="dialog"
           testId="paw-feel-details"
         >
           {() => (
             <div className="w-[min(19rem,calc(100vw-2.5rem))] px-3 py-3 text-xs">
-              <p className="font-semibold text-cafe">采集分母</p>
+              <p className="font-semibold text-cafe">{t.denominator}</p>
               <dl className="mt-2 grid grid-cols-[minmax(0,1fr)_auto] gap-x-4 gap-y-1.5 text-cafe-secondary">
-                <DetailMetric label="报告 occurrences" value={page?.denominator.reportOccurrences ?? 0} />
-                <DetailMetric label="原消息" value={page?.denominator.uniqueSourceMessages ?? 0} />
-                <DetailMetric label="历史回填" value={page?.denominator.historicalBackfill ?? 0} />
-                <DetailMetric label="激活后 intake" value={page?.denominator.postActivationIntake ?? 0} />
-                <DetailMetric label="已确认 typed" value={page?.denominator.typedConfirmed ?? 0} />
-                <DetailMetric label="歧义 / 污染" value={page?.denominator.ambiguousOrContaminated ?? 0} />
+                <DetailMetric label={t.reports} value={page?.denominator.reportOccurrences ?? 0} />
+                <DetailMetric label={t.sourceMessages} value={page?.denominator.uniqueSourceMessages ?? 0} />
+                <DetailMetric label={t.backfill} value={page?.denominator.historicalBackfill ?? 0} />
+                <DetailMetric label={t.afterActivation} value={page?.denominator.postActivationIntake ?? 0} />
+                <DetailMetric label={t.confirmed} value={page?.denominator.typedConfirmed ?? 0} />
+                <DetailMetric label={t.ambiguous} value={page?.denominator.ambiguousOrContaminated ?? 0} />
               </dl>
               <div className="mt-3 border-t border-[var(--console-border-soft)] pt-3 text-cafe-secondary">
-                <p className="font-semibold text-cafe">处置规则</p>
-                <p className="mt-1 leading-relaxed">
-                  重复 · 不修（带理由）· 要修（真实 task、owner 与 active F167 lease；另由 source-selected provider
-                  证明动作授权）。
-                </p>
+                <p className="font-semibold text-cafe">{t.rules}</p>
+                <p className="mt-1 leading-relaxed">{t.actionRules}</p>
                 <p className="mt-1 text-micro leading-relaxed text-cafe-muted">
-                  {dutyConfigured
-                    ? 'Primary 持续负责；Backup 仅在显式交接后接班；值班交账不等于问题解决。报告猫不能签自己的 terminal，routed、Task done 与 merge 也不冒充验证结果。'
-                    : '值班未配置；Workspace 不代猫签，也不会猜 owner。'}
+                  {dutyConfigured ? t.dutyRules : t.noDuty}
                 </p>
               </div>
             </div>
@@ -151,7 +138,7 @@ export function PawFeelInboxToolbar({
             onClick={onNewest}
             className="h-9 whitespace-nowrap rounded-lg border border-conn-green-ring bg-conn-green-bg px-3 text-xs font-semibold text-conn-green-text"
           >
-            新增 {newCount} 条 · 查看最新
+            {t.newReports(newCount)}
           </button>
         ) : null}
       </fieldset>

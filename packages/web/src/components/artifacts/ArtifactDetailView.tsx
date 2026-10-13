@@ -4,8 +4,12 @@ import { useArtifactContent } from '@/hooks/useArtifactContent';
 import { API_URL } from '@/utils/api-client';
 import { CompactLabel } from '../content-overflow/CompactLabel';
 import { MarkdownContent } from '../MarkdownContent';
+import { useShellCopy } from '../shell/shell-copy';
 import { CodeViewer } from '../workspace/CodeViewer';
+import { publishedTextCopy } from '../workspace/published-text.shell-copy';
+import { artifactDetailCopy } from './artifact-detail.shell-copy';
 import { artifactContentSource, classifyArtifactView, prRefToUrl, resolveAssetUrl } from './artifact-view';
+import { PublishedTextReader } from './PublishedTextReader';
 
 const S = {
   fill: 'none',
@@ -57,20 +61,21 @@ function PrBody({ artifact }: { artifact: ThreadArtifactDTO }): JSX.Element {
 }
 
 function DownloadBody({ artifact, url }: { artifact: ThreadArtifactDTO; url: string }): JSX.Element {
+  const t = useShellCopy(artifactDetailCopy);
   return (
     <div className="flex flex-col items-center justify-center gap-3 px-6 py-10 text-center">
       <CompactLabel
-        label="产物名称"
+        label={t.artifactName}
         value={artifact.name}
         className="w-full max-w-md text-sm font-medium text-cafe-secondary"
       />
-      <div className="text-xs text-cafe-muted">此类型无法在面板内预览</div>
+      <div className="text-xs text-cafe-muted">{t.previewUnavailable}</div>
       <div className="mt-1 flex gap-2">
         <a href={url} download className={actionBtnClass}>
-          下载 <IconDownload />
+          {t.download} <IconDownload />
         </a>
         <a href={url} target="_blank" rel="noreferrer" className={linkBtnClass}>
-          新标签打开 <IconExternal />
+          {t.openInNewTab} <IconExternal />
         </a>
       </div>
     </div>
@@ -110,18 +115,60 @@ function ArtifactTextBody({
   artifact,
   worktreeId,
   onJump,
+  onBack,
+  sourceThreadId,
+  reviewAction,
 }: {
   artifact: ThreadArtifactDTO;
   worktreeId: string | null;
   onJump: (sourceMessageId: string) => void;
+  onBack?: () => void;
+  sourceThreadId?: string;
+  reviewAction?: ReactNode;
 }): JSX.Element {
   const { content, path, isMarkdown, loading, error } = useArtifactContent(artifact, worktreeId, true);
+  const t = useShellCopy(publishedTextCopy);
   if (loading) {
-    return <div className="px-4 py-8 text-center text-xs text-cafe-muted">正文加载中…</div>;
+    return (
+      <>
+        {onBack && (
+          <button type="button" onClick={onBack} className="shrink-0 px-3 py-2 text-left text-xs text-cafe-crosspost">
+            {t.back}
+          </button>
+        )}
+        <div className="px-4 py-8 text-center text-xs text-cafe-muted">{t.loading}</div>
+      </>
+    );
   }
   if (error || content === null) {
-    return <FallbackBody artifact={artifact} onJump={onJump} />;
+    return (
+      <>
+        {onBack && (
+          <button type="button" onClick={onBack} className="shrink-0 px-3 py-2 text-left text-xs text-cafe-crosspost">
+            {t.back}
+          </button>
+        )}
+        <FallbackBody artifact={artifact} onJump={onJump} />
+      </>
+    );
   }
+  if (artifact.url && onBack)
+    return (
+      <PublishedTextReader
+        key={JSON.stringify([
+          sourceThreadId,
+          artifact.sourceMessageId,
+          artifact.publicationItem,
+          artifact.url,
+          artifact.createdAt,
+        ])}
+        artifact={artifact}
+        content={content}
+        sourceThreadId={sourceThreadId}
+        onBack={onBack}
+        reviewAction={reviewAction}
+      />
+    );
   if (isMarkdown) {
     // workspace-backed（repo 文件）markdown：传 basePath（path 所在目录）+ worktreeId，让 MarkdownContent
     // 解析相对链接/图片（与 FileContentRenderer 一致）；uploads/外链 markdown 无 workspace 上下文，不传
@@ -156,29 +203,46 @@ export function ArtifactDetailView({
   onBack,
   onJump,
   reviewAction,
+  sourceThreadId,
 }: {
   artifact: ThreadArtifactDTO;
   worktreeId: string | null;
   onBack: () => void;
   onJump: (sourceMessageId: string) => void;
   reviewAction?: ReactNode;
+  sourceThreadId?: string;
 }): JSX.Element {
   const view = classifyArtifactView(artifact);
   const url = resolveAssetUrl(artifact.url, API_URL);
+  const t = useShellCopy(artifactDetailCopy);
+
+  if (view === 'text' && artifact.url)
+    return (
+      <div className="flex h-full min-h-0 flex-col overflow-hidden">
+        <ArtifactTextBody
+          artifact={artifact}
+          worktreeId={worktreeId}
+          onJump={onJump}
+          onBack={onBack}
+          sourceThreadId={sourceThreadId}
+          reviewAction={reviewAction}
+        />
+      </div>
+    );
 
   return (
     <div className="flex h-full flex-col overflow-hidden">
       <div className="flex items-center gap-2 border-b border-cafe px-3 py-2.5">
         <button
           type="button"
-          aria-label="返回"
+          aria-label={t.back}
           onClick={onBack}
           className="flex shrink-0 items-center gap-1 rounded px-1.5 py-1 text-xs text-cafe-crosspost transition-colors hover:text-cafe-accent"
         >
           <IconBack />
         </button>
         <CompactLabel
-          label="产物名称"
+          label={t.artifactName}
           value={artifact.name}
           className="min-w-0 flex-1 text-xs font-semibold text-cafe-secondary"
         />

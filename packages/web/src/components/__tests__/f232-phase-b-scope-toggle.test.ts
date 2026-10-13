@@ -38,7 +38,10 @@ const GLOBAL_ARTIFACTS = [
   },
 ];
 
-vi.mock('@/utils/api-client', () => ({ API_URL: 'http://test.local' }));
+vi.mock('@/utils/api-client', () => ({
+  API_URL: 'http://test.local',
+  apiFetch: vi.fn(async () => Response.json({ artifacts: [] })),
+}));
 vi.mock('@/utils/scrollToMessage', () => ({ scrollToMessage: vi.fn(() => false) }));
 vi.mock('@/hooks/useThreadArtifacts', () => ({
   useThreadArtifacts: () => ({ artifacts: THREAD_ARTIFACTS, loading: false, error: null }),

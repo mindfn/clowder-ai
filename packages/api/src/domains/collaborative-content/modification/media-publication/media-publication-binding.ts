@@ -25,7 +25,7 @@ import { readModificationSourceExecution } from './source-execution.js';
 
 export { sameAudience } from './media-publication-caller.js';
 
-import { hasUniqueMediaProducerRequest, isBoundMediaModificationReturn } from '../media-return-binding.js';
+import { hasUniqueMediaProducerRequest, isBoundMediaModificationReturn } from '../bindings/media-return-binding.js';
 import { assertModificationSourceAuthority } from '../request-authority.js';
 
 export class MediaPublicationBinding {
@@ -151,6 +151,8 @@ export class MediaPublicationBinding {
   }
 
   async validate(intent: MediaPublicationReturnIntent) {
+    const selected = this.deps.store.returns.publicationForRequest(intent.requestId);
+    if (selected && selected.receiptRef !== intent.receiptRef) return;
     const record = this.deps.store.requests.get(intent.requestId, intent.ownerUserId);
     const frame = record ? await this.frame(record) : undefined;
     if (

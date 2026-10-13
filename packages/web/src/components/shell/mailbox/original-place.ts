@@ -39,6 +39,12 @@ function approvalCardPlace(item: UnifiedAttentionItemV1): OriginalPlace {
 }
 
 export function resolveOriginalPlace(item: UnifiedAttentionItemV1): OriginalPlace {
+  if (item.userMention)
+    return { kind: 'exact', actionRef: `message:${item.userMention.threadId}:${item.userMention.messageId}` };
+  if (item.choiceRequest) {
+    const { threadId, messageId, blockId } = item.choiceRequest.cardRef;
+    return { kind: 'exact', actionRef: `message:${threadId}:${messageId}#${blockId}` };
+  }
   if (item.kind === 'approval') return approvalCardPlace(item);
   const actionRef = actionRefOf(item);
   const target = actionRef ? resolveEntrustedWorkActionTarget(actionRef) : null;

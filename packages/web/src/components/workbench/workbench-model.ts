@@ -10,6 +10,7 @@ import type {
   WorkspaceSurfaceDescriptor,
 } from './workbench-contract';
 import { openPreviewSurface, retainPreviewSlot } from './workbench-preview';
+import { retainRecentVisits } from './workbench-recent-visits';
 
 export type {
   FocusEntitlement,
@@ -402,7 +403,7 @@ function reduceWorkbenchAction(state: WorkbenchLayoutState, action: WorkbenchAct
 }
 
 export function reduceWorkbench(state: WorkbenchLayoutState, action: WorkbenchAction): WorkbenchLayoutState {
-  return retainPreviewSlot(reduceWorkbenchAction(state, action));
+  return retainRecentVisits(state, retainPreviewSlot(reduceWorkbenchAction(state, action)), action);
 }
 
 export function projectWorkbench(state: WorkbenchLayoutState, width: number): WorkbenchProjection {

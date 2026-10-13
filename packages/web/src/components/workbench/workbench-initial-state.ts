@@ -11,6 +11,7 @@ export function createInitialWorkbenchState(surfaces: WorkspaceSurfaceDescriptor
     split: null,
     sidecar: null,
     recentlyClosed: [],
+    recentSurfaceIdsByThread: {},
     activity: [],
   };
 }

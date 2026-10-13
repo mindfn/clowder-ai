@@ -3,7 +3,14 @@ import type { ParticipationCat } from './collective-participation-reconciler.js'
 
 type RegisteredCat = Pick<
   CatConfig,
-  'id' | 'displayName' | 'nickname' | 'variantLabel' | 'avatar' | 'roleDescription' | 'defaultModel'
+  | 'id'
+  | 'displayName'
+  | 'nickname'
+  | 'variantLabel'
+  | 'breedDisplayName'
+  | 'avatar'
+  | 'roleDescription'
+  | 'defaultModel'
 >;
 
 /** Owner-local registry projection. Eligibility is a policy check, not proof of a live model session. */
@@ -18,12 +25,20 @@ export function registeredCollectiveCats(
   });
   const counts = new Map<string, number>();
   for (const { displayName } of named) counts.set(displayName, (counts.get(displayName) ?? 0) + 1);
-  return named.map(({ cat, displayName }) => ({
-    id: cat.id,
-    displayName: counts.get(displayName) === 1 ? displayName : `${displayName} · ${cat.id}`,
-    supported: supportsParticipation(cat.id),
-    avatar: cat.avatar,
-    roleDescription: cat.roleDescription,
-    defaultModel: cat.defaultModel,
-  }));
+  return named.map(({ cat, displayName }) => {
+    const nickname = cat.nickname?.trim();
+    const variantLabel = cat.variantLabel?.trim();
+    const breedDisplayName = cat.breedDisplayName?.trim();
+    return {
+      id: cat.id,
+      displayName: counts.get(displayName) === 1 ? displayName : `${displayName} · ${cat.id}`,
+      ...(nickname ? { nickname } : {}),
+      ...(variantLabel ? { variantLabel } : {}),
+      ...(breedDisplayName ? { breedDisplayName } : {}),
+      supported: supportsParticipation(cat.id),
+      avatar: cat.avatar,
+      roleDescription: cat.roleDescription,
+      defaultModel: cat.defaultModel,
+    };
+  });
 }

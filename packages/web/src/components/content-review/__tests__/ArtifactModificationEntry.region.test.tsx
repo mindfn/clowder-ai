@@ -3,7 +3,9 @@ import { act, createElement } from 'react';
 import { createRoot, type Root } from 'react-dom/client';
 import { afterEach, beforeEach, expect, it, vi } from 'vitest';
 
-const landing = vi.hoisted(() => ({ props: null as null | { onRequestKnown?: (request: unknown) => void } }));
+const landing = vi.hoisted(() => ({
+  props: null as null | { allowNewRequest: boolean; onRequestKnown?: (request: unknown) => void },
+}));
 vi.mock('../ContentModificationLanding', () => ({
   ContentModificationLanding: (props: typeof landing.props) => {
     landing.props = props;
@@ -89,5 +91,34 @@ it('keeps the region for other requests or another selection', async () => {
       }),
     );
   });
+  expect(handedOff).not.toHaveBeenCalled();
+});
+
+it('opens image records without a new sender or handing off an unsent region to an old request', async () => {
+  const handedOff = vi.fn();
+  await act(async () =>
+    root.render(
+      createElement(ArtifactModificationEntry, {
+        view,
+        round,
+        draft: { body: '尚未提交的圈选说明', anchor: region },
+        disabled: false,
+        allowNewRequest: false,
+        onRegionHandedOff: handedOff,
+      }),
+    ),
+  );
+  const entry = container.querySelector<HTMLButtonElement>('[data-testid="content-modification-entry"]');
+  expect(entry?.textContent).toBe('修改记录');
+  await act(async () => entry?.click());
+  expect(landing.props?.allowNewRequest).toBe(false);
+  await act(async () =>
+    landing.props?.onRequestKnown?.(
+      known({
+        imageEdit: { kind: 'erase-region', region: { x: 630, y: 150, width: 120, height: 80 } },
+        selection: region,
+      }),
+    ),
+  );
   expect(handedOff).not.toHaveBeenCalled();
 });

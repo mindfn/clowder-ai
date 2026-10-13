@@ -4,6 +4,15 @@ title: Plugin Framework
 summary: Terminal Plugin Manager plus Host-governed package inventory, repository-local and builtin activation, Broker sessions, supervised execution, grants, resource adapters, Console and Agent management surfaces.
 canonical_features: [F202, F247, F285, F290, F292]
 code_anchors:
+  - packages/api/src/domains/plugin/chatgpt-dot-manifest.ts
+  - packages/api/src/domains/cats/services/cloud-bridge/dot/DotConnectionService.ts
+  - packages/api/src/domains/cats/services/cloud-bridge/dot/DotConnectionStore.ts
+  - packages/api/src/domains/cats/services/cloud-bridge/dot/DotConnectionTestService.ts
+  - packages/api/src/domains/cats/services/cloud-bridge/dot/DotConnectionRuntime.ts
+  - packages/api/src/domains/cats/services/cloud-bridge/dot/DotPluginStateProjection.ts
+  - packages/api/src/routes/chatgpt-dot-connection-routes.ts
+  - packages/api/src/routes/chatgpt-dot-test-routes.ts
+  - packages/web/src/components/settings/plugin-manager/DotConnectionDetail.tsx
   - packages/api/src/domains/plugin/PluginRegistry.ts
   - packages/api/src/domains/plugin/PluginResourceActivator.ts
   - packages/api/src/domains/plugin/ScheduleFactoryRegistry.ts
@@ -44,6 +53,7 @@ doc_anchors:
   - docs/features/F247-cloud-cat-family.md
 static_scan_hints: [PluginRegistry, PluginResourceActivator, ScheduleFactoryRegistry, PluginInventoryStore, HostBrokerControlPlane, HostBrokerStore, BrokerMethodHandler, IConversationHostAdapter, append_message, plugin.yaml, pluginId, plugin-owned, factoryId, schedule, PluginConfigPanel]
 cited_by:
+  - {feature: F247, date: 2026-10-10, delta: dot G1 source-bound Events and private original image consumer}
   - {feature: F202, date: 2026-05-31, delta: new cell}
   - {feature: F202, date: 2026-06-08, delta: schedule resources}
   - {feature: F285, date: 2026-08-01, delta: external official-plugin and physical-limb contribution boundary}

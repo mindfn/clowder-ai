@@ -9,6 +9,7 @@ import {
   type SavedImageAsset,
   type SupportedImageMime,
   sanitizeFilenameStem,
+  saveImageBufferToUploadDir,
 } from '../../../../../utils/image-storage.js';
 import { getDefaultUploadDir } from '../../../../../utils/upload-paths.js';
 import type { CodexNativeImageOrigin } from './codex-native-image-origin.js';
@@ -17,7 +18,9 @@ export interface GeneratedImagePublicationInput {
   sourcePath: string;
   mimeType: SupportedImageMime;
   publicationKey: string;
-  provider: 'codex' | 'antigravity' | 'skill';
+  provider: 'codex' | 'antigravity' | 'skill' | 'member';
+  /** Already-authorized member bytes. sourcePath remains client-reported metadata, never opened. */
+  memberBytes?: Buffer;
   toolName: string;
   prompt?: string;
   uploadDir?: string;
@@ -34,6 +37,9 @@ export interface GeneratedImagePublicationProvenance {
   publishedPath: string;
   publicationKey: string;
   nativeOrigin?: CodexNativeImageOrigin;
+  sourceKind?: 'member-local';
+  sourcePathTrust?: 'client-reported';
+  blobDigest?: string;
 }
 
 export interface PublishedGeneratedImage extends SavedImageAsset {
@@ -46,6 +52,7 @@ export interface PublishedGeneratedImage extends SavedImageAsset {
 }
 
 export async function publishGeneratedImage(input: GeneratedImagePublicationInput): Promise<PublishedGeneratedImage> {
+  assertMemberSource(input);
   const resolvedUploadDir = getDefaultUploadDir(input.uploadDir ?? process.env.UPLOAD_DIR);
   const publicationStem = buildPublicationStem(input.publicationKey);
 
@@ -58,13 +65,21 @@ export async function publishGeneratedImage(input: GeneratedImagePublicationInpu
     /* not yet published */
   }
 
-  const stored = await copyImageFileToUploadDir({
-    sourcePath: input.sourcePath,
-    mimeType: input.mimeType,
-    uploadDir: resolvedUploadDir,
-    filenameStem: publicationStem,
-    onExists: 'reuse',
-  });
+  const stored = input.memberBytes
+    ? await saveImageBufferToUploadDir({
+        buffer: input.memberBytes,
+        mimeType: input.mimeType,
+        uploadDir: resolvedUploadDir,
+        filenameStem: publicationStem,
+        onExists: 'verify',
+      })
+    : await copyImageFileToUploadDir({
+        sourcePath: input.sourcePath,
+        mimeType: input.mimeType,
+        uploadDir: resolvedUploadDir,
+        filenameStem: publicationStem,
+        onExists: 'reuse',
+      });
   if (
     input.nativeOrigin &&
     ((await stat(stored.absPath)).size > MAX_IMAGE_FILE_SIZE ||
@@ -82,6 +97,13 @@ export async function publishGeneratedImage(input: GeneratedImagePublicationInpu
     publishedPath: stored.urlPath,
     publicationKey: input.publicationKey,
     ...(input.nativeOrigin ? { nativeOrigin: input.nativeOrigin } : {}),
+    ...(input.memberBytes
+      ? {
+          sourceKind: 'member-local' as const,
+          sourcePathTrust: 'client-reported' as const,
+          blobDigest: `sha256:${createHash('sha256').update(input.memberBytes).digest('hex')}`,
+        }
+      : {}),
   };
 
   return {
@@ -100,6 +122,13 @@ export async function publishGeneratedImage(input: GeneratedImagePublicationInpu
     } as RichMediaGalleryBlock,
     provenance,
   };
+}
+
+function assertMemberSource(input: GeneratedImagePublicationInput): void {
+  if (input.memberBytes && (input.provider !== 'member' || input.nativeOrigin))
+    throw new Error('Member image bytes cannot claim native generation');
+  if (input.provider === 'member' && !input.memberBytes)
+    throw new Error('Member publication requires authorized bytes');
 }
 
 export function generatedImagePublicationLocation(

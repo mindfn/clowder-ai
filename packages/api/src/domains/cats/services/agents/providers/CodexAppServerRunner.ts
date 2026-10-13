@@ -233,6 +233,7 @@ export async function* runCodexAppServerWithRecovery(options: CodexAppServerRunn
       const activeWriterThreadId = currentThread.kind === 'resume' ? currentThread.threadId : undefined;
       if (
         error instanceof CodexAppServerCarrierReplacementRequiredError &&
+        !options.runInput.requireExactResume &&
         capacityAttempt === 0 &&
         activeWriterThreadId === error.replacement.previousNativeThreadId &&
         !capacityTerminalObserved &&
@@ -340,6 +341,7 @@ export async function* runCodexAppServerWithRecovery(options: CodexAppServerRunn
         !capacityTerminalObserved &&
         !isActiveWriterError(error) &&
         !(error instanceof CodexAppServerExactResumeRequiredError) &&
+        !(error instanceof CodexAppServerCarrierReplacementRequiredError) &&
         !(error instanceof CodexRequiredToolsUnavailableError) &&
         transportAttempt < retryBudget &&
         canRetryBeforeTurn(failedAt, options.runInput.signal)

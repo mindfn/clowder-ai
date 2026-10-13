@@ -1,7 +1,9 @@
 'use client';
 import {
   type CollectiveAcceptedWorkResult,
+  type CollectiveClientCafeSection,
   type CollectiveClientContext,
+  collectiveClientCafeSectionSchema,
   collectiveClientContextSchema,
   collectiveClientWorkResultAcceptedSchema,
   collectiveContextReadySchema,
@@ -125,6 +127,23 @@ export function useCollectiveContextBridge(
         );
       }
     };
+    const handleCafeSection = (data: unknown, active?: BridgeGeneration) => {
+      const parsed = collectiveClientCafeSectionSchema.safeParse(data);
+      if (!parsed.success) return false;
+      const value = parsed.data;
+      const context = current.current;
+      if (
+        !active ||
+        !context ||
+        !bridgeConnection ||
+        !clientCafeSectionMatches(value, context, active, bridgeConnection)
+      )
+        return true;
+      const next = { ...context, cafeSection: value.section };
+      current.current = next;
+      setContext(next);
+      return true;
+    };
     const onMessage = (event: MessageEvent<unknown>) => {
       if (
         !bridgeConnection ||
@@ -147,6 +166,7 @@ export function useCollectiveContextBridge(
         })
       )
         return;
+      if (handleCafeSection(event.data, active)) return;
       handleContext(event.data, active);
     };
     window.addEventListener('message', onMessage);
@@ -225,6 +245,26 @@ function clientContextMatches(value: CollectiveClientContext, active: BridgeGene
     (!active.contextId || active.contextId === value.contextId) &&
     value.revision > active.revision &&
     value.channelIds.includes(value.channelId)
+  );
+}
+
+function clientCafeSectionMatches(
+  value: CollectiveClientCafeSection,
+  context: CollectiveClientContext,
+  active: BridgeGeneration,
+  connection: BridgeConnection,
+) {
+  return (
+    value.bridgeId === active.bridgeId &&
+    value.contextId === active.contextId &&
+    value.contextRevision === active.revision &&
+    value.bridgeId === context.bridgeId &&
+    value.contextId === context.contextId &&
+    value.contextRevision === context.revision &&
+    value.serviceInstanceId === connection.serviceInstanceId &&
+    value.collectiveId === connection.collectiveId &&
+    value.humanId === connection.authorizedHumanId &&
+    value.channelId === context.channelId
   );
 }
 

@@ -1,6 +1,8 @@
+import type { ThreadArtifactDTO } from '@cat-cafe/shared';
 import { act } from 'react';
 import { createRoot } from 'react-dom/client';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import type { ArtifactListOrigin } from '@/components/artifacts/artifact-list-state';
 import { MAILBOX_NAVIGATE_EVENT } from '@/components/shell/mailbox/mailbox-navigation';
 import { writeShellPresentation } from '@/components/shell/shell-presentation';
 import { fileReturnLabel } from '@/components/workspace/V2WorkspaceFileChrome';
@@ -11,8 +13,37 @@ import {
   createContentEditorSurface,
   createEvolutionProgramSurface,
   createWorkspaceDestinationSurface,
+  createWorkspaceModeSurface,
   resolveFileTarget,
+  resolvePullRequestChangesTarget,
 } from '../real-surface-adapters';
+
+const listPr = vi.hoisted(() => ({
+  origin: {
+    kind: 'artifact-list',
+    threadId: 'thread-a',
+    view: { scope: 'thread', filter: 'all', query: '', grouping: 'none', catFilter: null, collapsed: [] },
+  } as ArtifactListOrigin,
+  artifact: {
+    type: 'pr',
+    name: 'Exact list PR',
+    ref: 'Owner/Repo#7',
+    catId: null,
+    createdAt: 1,
+    sourceMessageId: null,
+  } as ThreadArtifactDTO,
+}));
+vi.mock('@/components/ArtifactsPanel', () => ({
+  ArtifactsPanel: ({
+    onSelectArtifact,
+  }: {
+    onSelectArtifact: (artifact: ThreadArtifactDTO, origin: ArtifactListOrigin) => void;
+  }) => (
+    <button type="button" data-testid="select-list-pr" onClick={() => onSelectArtifact(listPr.artifact, listPr.origin)}>
+      List PR
+    </button>
+  ),
+}));
 
 vi.mock('@/components/workspace/BrowserPanel', () => ({
   BrowserPanel: ({ previewOnly }: { previewOnly?: boolean }) => (
@@ -141,6 +172,36 @@ vi.mock('@/components/growing/NeedsMePanel', () => ({
 import { F307OwnerSurfaceRenderer } from '../F307OwnerSurfaceRenderer';
 
 describe('F307 owner surface renderer', () => {
+  it('opens the same exact Changes owner from the full Works list without guessing the artifact repository', () => {
+    const surface = createWorkspaceModeSurface('artifacts', 'thread-a');
+    const onOpenSurface = vi.fn();
+    act(() =>
+      root.render(
+        <F307OwnerSurfaceRenderer
+          surface={surface}
+          hostWorktreeId="registered-host-root"
+          hostThreadId="thread-host"
+          onOpenSurface={onOpenSurface}
+          onOpenArtifactWithReturn={() => undefined}
+          onRefreshSurface={() => undefined}
+          onRequestDetach={() => undefined}
+        />,
+      ),
+    );
+    act(() => container.querySelector<HTMLButtonElement>('[data-testid="select-list-pr"]')?.click());
+    expect(onOpenSurface).toHaveBeenCalledOnce();
+    const opened = onOpenSurface.mock.calls[0]?.[0];
+    expect(resolvePullRequestChangesTarget(opened)).toEqual({
+      kind: 'github-pr',
+      v: 1,
+      repoFullName: 'owner/repo',
+      prNumber: 7,
+      worktreeId: 'registered-host-root',
+      threadId: 'thread-host',
+    });
+    expect(opened.navigationOrigin).toEqual(listPr.origin);
+  });
+
   it('opens a Changes file through the ordinary F063 owner with a scoped return origin', () => {
     const surface = createWorkspaceDestinationSurface(
       { kind: 'surface', id: 'changes', label: '变更', description: 'Diff', searchTerms: 'changes' },

@@ -117,13 +117,19 @@ export function ThinkingModeToggle({ threadId, v2 = false }: { threadId: string;
   }, [threadId, isDebug, mode, updateLocal]);
 
   return (
-    <div className="flex items-center justify-between gap-2 min-w-0">
-      <span className="truncate min-w-0">
-        心里话:{' '}
-        <span className="font-medium">
-          {isDebug ? (v2 ? '调试模式（相互可见）' : '调试') : v2 ? '游戏模式' : '游戏'}
+    <div className={v2 ? 'status-v2-visibility-row' : 'flex items-center justify-between gap-2 min-w-0'}>
+      {v2 ? (
+        <>
+          <span>心里话</span>
+          <span className="status-v2-visibility-value" title={isDebug ? '调试模式（相互可见）' : '游戏模式'}>
+            {isDebug ? '调试模式（相互可见）' : '游戏模式'}
+          </span>
+        </>
+      ) : (
+        <span className="truncate min-w-0">
+          心里话: <span className="font-medium">{isDebug ? '调试' : '游戏'}</span>
         </span>
-      </span>
+      )}
       <button
         onClick={toggle}
         className="shrink-0 rounded-full px-3 py-1 text-label transition-colors hover:text-cafe"
@@ -222,10 +228,17 @@ export function RevealWhispersButton({ threadId, v2 = false }: { threadId: strin
   }, [threadId, status, v2]);
 
   return (
-    <div className="flex items-center justify-between gap-2 min-w-0">
-      <span className={v2 ? 'min-w-0 flex-1' : 'shrink-0'}>
-        悄悄话:{v2 && status !== 'done' ? ' 默认仅相关猫可见' : ''}
-      </span>
+    <div className={v2 ? 'status-v2-visibility-row' : 'flex items-center justify-between gap-2 min-w-0'}>
+      {v2 ? (
+        <>
+          <span>悄悄话</span>
+          <span className="status-v2-visibility-value" title="默认仅相关猫可见">
+            默认仅相关猫可见
+          </span>
+        </>
+      ) : (
+        <span className="shrink-0">悄悄话:</span>
+      )}
       {status === 'done' ? (
         <span className="shrink-0 text-label text-conn-emerald-text">
           {v2 ? '已揭晓' : '已揭秘'} {revealedCount} 条
@@ -278,6 +291,11 @@ export function RuntimeLogsButton({ threadId, compact = false }: { threadId: str
           .getState()
           .openWorkspacePath(originThreadId, { kind: 'reveal', worktreeId: wId, path: LOGS_DIR, navigationOrigin });
 
+      if (compact) {
+        revealLogsDir();
+        return;
+      }
+
       const params = new URLSearchParams({ worktreeId: wId, path: LOGS_DIR, depth: '1' });
       const res = await apiFetch(`/api/workspace/tree?${params}`);
       if (!res.ok) {
@@ -305,7 +323,7 @@ export function RuntimeLogsButton({ threadId, compact = false }: { threadId: str
     } catch {
       // Network loss before anything was recorded; the button stays usable for a retry.
     }
-  }, [setOpenFile, originRef]);
+  }, [compact, setOpenFile, originRef]);
 
   return (
     <section
@@ -323,7 +341,7 @@ export function RuntimeLogsButton({ threadId, compact = false }: { threadId: str
         className="text-label font-bold text-cafe transition-colors hover:text-cafe"
         title="在 Workspace 面板中打开运行日志目录"
       >
-        查看日志
+        {compact ? '打开目录' : '查看日志'}
       </button>
     </section>
   );

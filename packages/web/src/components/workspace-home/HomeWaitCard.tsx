@@ -187,9 +187,11 @@ function WaitCardView({
   );
 }
 
-export function HomeWaitCard() {
+export function HomeWaitCard({ hideWhenEmpty = false }: { hideWhenEmpty?: boolean } = {}) {
   const projectPath = useActiveExecutionStore((state) => state.projectPath);
   const deploymentWaits = useDeploymentWaitProjection(projectPath);
+  if (hideWhenEmpty && deploymentWaits.hydration !== 'error' && deploymentWaits.projection?.items.length === 0)
+    return null;
   return (
     <WaitCardView
       projection={deploymentWaits.projection}

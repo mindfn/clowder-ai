@@ -1,5 +1,80 @@
 import { GROUP_ID } from './f322-chat-real-page-data.mjs';
 
+/** Relative tree columns and the actual painted, virtualized Group frame. */
+export function measureSidebarGroupHierarchy(sidebar) {
+  const x = (el) => el.getBoundingClientRect().x;
+  // Favorite/Hub marks are existing title-side facts; the text follows them.
+  const titleX = (row) => {
+    const pin = row.querySelector('[data-sidebar-pin-slot]');
+    const parts = [...pin.parentElement.children]
+      .filter((part) => part !== pin)
+      .flatMap((part) =>
+        part.getBoundingClientRect().width > 0 ? [part] : [...part.querySelectorAll('[role="link"]')],
+      );
+    return Math.min(...parts.map(x));
+  };
+  const headers = [...sidebar.querySelectorAll('[data-testid="group-header-v2"]')];
+  const mark = x(headers[0].querySelector('[data-sidebar-pin-slot]'));
+  const columns = headers.every((header) => {
+    const slot = header.querySelector('[data-sidebar-pin-slot]');
+    const name = header.querySelector('button[aria-controls] > span');
+    const arrow = header.querySelector('[data-testid="group-chevron"]');
+    return (
+      x(slot) === mark &&
+      slot.getBoundingClientRect().width === 16 &&
+      x(name) === mark + 20 &&
+      x(arrow) >= name.getBoundingClientRect().right
+    );
+  });
+  const members = [...sidebar.querySelectorAll('[data-attention-cluster-member]')];
+  const memberColumns = members.every(
+    (member) => x(member.querySelector('[data-sidebar-pin-slot]')) === mark + 20 && titleX(member) === mark + 40,
+  );
+  const outerRows = [...sidebar.querySelectorAll('[data-thread-id]')].filter(
+    (row) => !row.closest('[data-attention-cluster-member]'),
+  );
+  const outerColumns = outerRows.every(
+    (row) => x(row.querySelector('[data-sidebar-pin-slot]')) === mark && titleX(row) === mark + 20,
+  );
+  const frames = [...sidebar.querySelectorAll('[data-sidebar-group-segment]')];
+  const canvas = document.createElement('canvas');
+  canvas.width = canvas.height = 1;
+  const context = canvas.getContext('2d');
+  const luminance = (color) => {
+    context.fillStyle = color;
+    context.fillRect(0, 0, 1, 1);
+    const rgb = [...context.getImageData(0, 0, 1, 1).data].slice(0, 3).map((value) => {
+      const channel = value / 255;
+      return channel <= 0.04045 ? channel / 12.92 : ((channel + 0.055) / 1.055) ** 2.4;
+    });
+    return rgb[0] * 0.2126 + rgb[1] * 0.7152 + rgb[2] * 0.0722;
+  };
+  const frameLuminance = luminance(getComputedStyle(sidebar).backgroundColor);
+  const lifted =
+    frames.length > 0 &&
+    frames.every((frame) => luminance(getComputedStyle(frame.firstElementChild).backgroundColor) > frameLuminance);
+  const framed = frames.every((frame) => {
+    const style = getComputedStyle(frame.firstElementChild);
+    const kind = frame.dataset.sidebarGroupSegment;
+    return (
+      style.borderLeftWidth === '1px' &&
+      style.borderRightWidth === '1px' &&
+      (!['start', 'only'].includes(kind) || style.borderTopLeftRadius === '10px') &&
+      (!['end', 'only'].includes(kind) || style.borderBottomLeftRadius === '10px')
+    );
+  });
+  return {
+    columns,
+    memberColumns,
+    outerColumns,
+    framed,
+    lifted,
+    headers: headers.length,
+    members: members.length,
+    rail: sidebar.querySelectorAll('[data-cluster-rail]').length,
+  };
+}
+
 /** Actual painted atoms/owners, including hidden optional words, from the production DOM. */
 export function measureSidebarSignalLayout(root) {
   const bounds = root.getBoundingClientRect();

@@ -34,7 +34,7 @@ describe('F322 settings secondary navigation contracts', () => {
   });
   it('Right Arrow reaches the next settings tab', () => {
     const current = host.querySelector<HTMLElement>('[data-testid="settings-tab-members"]');
-    const next = host.querySelector<HTMLElement>('[data-testid="settings-tab-profiles"]');
+    const next = host.querySelector<HTMLElement>('[data-testid="settings-tab-accounts"]');
     if (!current || !next) throw new Error('Settings tabs are missing');
     act(() => {
       current.focus();

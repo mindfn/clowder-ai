@@ -117,11 +117,67 @@ export function verifyNamedAlphaRedisIdentity(
   return true;
 }
 
+function sendVerifiedRedisPing(port, run) {
+  let response;
+  try {
+    response = run('redis-cli', ['-h', '127.0.0.1', '-p', String(port), '--raw', 'ping'], {
+      encoding: 'utf8',
+      timeout: 2_000,
+      stdio: ['ignore', 'pipe', 'pipe'],
+    }).trim();
+  } catch (cause) {
+    throw new Error(`Alpha Redis PING failed after identity verification: ${cause.message}`, { cause });
+  }
+  if (response !== 'PONG') throw new Error(`Alpha Redis PING returned ${JSON.stringify(response)}`);
+  return true;
+}
+
+/** Replace the launcher's one-second settling sleep with bounded fresh identity observations.
+ * Only unavailable argv is retryable. Every observation rechecks the full scope/listener/incarnation;
+ * a capture error or a conclusive mismatch stops immediately, and no observation grants future commands.
+ * The original mandatory verification is separate from the one-second budget for extra observations.
+ * Synchronous OS reads can overrun that budget, but a late retry never sends a command.
+ */
+export function pingNamedAlphaRedis(
+  raw,
+  proof,
+  {
+    readListeners = listenerPids,
+    capture = captureProcessIdentity,
+    now = () => performance.now(),
+    sleep = (ms) => Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms),
+    run = execFileSync,
+  } = {},
+) {
+  let deadline = Number.POSITIVE_INFINITY;
+  let refusal;
+  for (let attempt = 0; attempt < 10 && now() < deadline; attempt += 1) {
+    try {
+      verifyNamedAlphaRedisIdentity(raw, proof, { readListeners, capture });
+      refusal = undefined;
+    } catch (error) {
+      if (error.code !== 'ALPHA_IDENTITY_ARGV_UNAVAILABLE' || proof?.process?.argvAvailable !== true) throw error;
+      refusal = error;
+    }
+    if (now() >= deadline) break;
+    if (!refusal) return sendVerifiedRedisPing(proof.port, run);
+    deadline = Math.min(deadline, now() + 1_000);
+    if (attempt < 9) sleep(Math.min(20, Math.max(0, deadline - now())));
+  }
+  throw new Error(
+    `Alpha Redis startup wait budget exhausted: ${refusal?.message ?? 'identity observation finished too late'}`,
+    {
+      cause: refusal,
+    },
+  );
+}
+
 if (process.argv[1] && import.meta.url === pathToFileURL(resolve(process.argv[1])).href) {
   try {
     const [command, raw, proof] = process.argv.slice(2);
     if (command === 'capture') process.stdout.write(`${JSON.stringify(captureNamedAlphaRedisIdentity(raw))}\n`);
     else if (command === 'verify') verifyNamedAlphaRedisIdentity(raw, JSON.parse(proof));
+    else if (command === 'ping-ready') pingNamedAlphaRedis(raw, JSON.parse(proof));
     else throw new Error('Invalid Alpha Redis ownership operation');
   } catch (error) {
     process.stderr.write(`[alpha-redis-process] ${error.message}\n`);

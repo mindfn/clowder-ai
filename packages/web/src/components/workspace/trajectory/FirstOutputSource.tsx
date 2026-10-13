@@ -1,6 +1,8 @@
 import type { InvocationTrajectorySummary } from '@cat-cafe/shared';
 import { useEffect, useRef, useState } from 'react';
 import { apiFetch } from '@/utils/api-client';
+import { trajectoryCopy } from './trajectory.shell-copy';
+import { useTrajectoryCopy } from './use-trajectory-copy';
 
 interface SourcePage {
   eventNo: number;
@@ -87,6 +89,7 @@ export function FirstOutputSource({ summary }: { summary: InvocationTrajectorySu
 
 function SourceReader({ summary }: { summary: InvocationTrajectorySummary }) {
   const source = summary.firstAssistantOutputEvidence?.source;
+  const t = useTrajectoryCopy(trajectoryCopy);
   const [page, setPage] = useState<SourcePage>();
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState(false);
@@ -129,13 +132,13 @@ function SourceReader({ summary }: { summary: InvocationTrajectorySummary }) {
         onClick={() => void load(source.firstEventNo)}
         className="rounded px-1 py-1 underline focus-visible:outline"
       >
-        查看首条输出记录
+        {t.viewFirst}
       </button>
-      {loading && <output className="block">正在读取来源记录…</output>}
-      {error && <p role="alert">来源记录暂时读取失败，可重试</p>}
+      {loading && <output className="block">{t.firstLoading}</output>}
+      {error && <p role="alert">{t.firstFailed}</p>}
       {page && (
         <div>
-          <p>原始记录 #{page.eventNo}</p>
+          <p>{t.sourceRecord(page.eventNo)}</p>
           <pre className="max-h-48 overflow-auto rounded bg-cafe-surface p-2 text-cafe-secondary">{page.text}</pre>
           {page.nextCharOffset !== undefined ? (
             <button
@@ -144,7 +147,7 @@ function SourceReader({ summary }: { summary: InvocationTrajectorySummary }) {
               onClick={() => void load(page.eventNo, page.nextCharOffset)}
               className="mt-1 rounded px-1 py-1 underline focus-visible:outline"
             >
-              继续读取这条记录
+              {t.continueRecord}
             </button>
           ) : (
             page.nextEventNo !== undefined && (
@@ -154,7 +157,7 @@ function SourceReader({ summary }: { summary: InvocationTrajectorySummary }) {
                 onClick={() => void load(page.nextEventNo as number)}
                 className="mt-1 rounded px-1 py-1 underline focus-visible:outline"
               >
-                下一条来源记录
+                {t.nextSource}
               </button>
             )
           )}

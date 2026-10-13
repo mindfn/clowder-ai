@@ -1,5 +1,6 @@
 import type { ArtifactReviewRound, ArtifactReviewView } from '@cat-cafe/shared';
 import { useEffect, useState } from 'react';
+import { useWorkspaceSurfaceVisibility } from '@/components/workbench/WorkspaceSurfaceVisibility';
 import { useChatStore } from '@/stores/chatStore';
 import {
   clearModificationFocus,
@@ -42,16 +43,20 @@ export function useArtifactRoundComparison(
   const [askedAt, setAskedAt] = useState<number | null>(null);
   const openRevision = useChatStore((state) => state.workspaceOpenRevision);
   const currentThreadId = useChatStore((state) => state.currentThreadId);
+  const opening = useChatStore((state) => state.workspaceOpenRequest);
+  const visible = useWorkspaceSurfaceVisibility();
   const pendingFocus = usePendingModificationFocus();
 
   useEffect(() => {
-    if (!pendingFocus) return;
+    // An old round can still be mounted while F307 opens/resolves the new destination.
+    // Leave the accepted click for the visible round after that navigation has been consumed.
+    if (!visible || opening || !pendingFocus) return;
     const standing = modificationFocusStanding(pendingFocus, { threadId: currentThreadId, revision: openRevision });
     if (standing !== 'ours' || !asksForRound(pendingFocus, view, round)) return;
     onEnter();
     setAskedAt(pendingFocus.navigation.revision);
     clearModificationFocus(pendingFocus);
-  }, [pendingFocus, currentThreadId, openRevision, view, round, onEnter]);
+  }, [pendingFocus, currentThreadId, openRevision, view, round, onEnter, opening, visible]);
 
   return {
     comparing: byHand || (askedAt !== null && askedAt === openRevision),

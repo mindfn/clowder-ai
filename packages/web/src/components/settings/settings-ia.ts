@@ -51,6 +51,7 @@ export const SETTINGS_IA: readonly SettingsEntry[] = [
       kind: 'sections',
       items: [
         { kind: 'section', sectionId: 'members' },
+        { kind: 'section', sectionId: 'accounts' },
         { kind: 'section', sectionId: 'profiles' },
         { kind: 'section', sectionId: 'concierge' },
         { kind: 'workspace-team', label: TEAM_WORKSPACE_LABEL, pinId: TEAM_WORKSPACE_PIN_ID },
@@ -65,7 +66,7 @@ export const SETTINGS_IA: readonly SettingsEntry[] = [
     label: '连接与扩展',
     icon: 'plug',
     group: 2,
-    destination: sections('accounts', 'im', 'marketplace', 'skills', 'mcp', 'plugins'),
+    destination: sections('im', 'marketplace', 'skills', 'mcp', 'plugins'),
   },
   {
     id: 'system',

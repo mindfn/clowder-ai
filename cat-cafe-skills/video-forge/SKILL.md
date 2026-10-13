@@ -1,6 +1,6 @@
 ---
 name: video-forge
-tips_exempt: "2026-10-09 truth-rule scope: the documentary fact rule now says a promo's story layer is exempt and points to agent-product-promo-director §7 (dramatization lane). 2026-10-07 review-order change: the voice draft becomes a cat-side timing/pronunciation tool, and the first thing shown to You is a minimal sample of the riskiest beat (shared ref §1); earlier: 2026-10-04 Remotion-first rewrite with cat-run scripts. No new user-facing command or operation."
+tips_exempt: "Renewed 2026-10-13: music auditions, continuous-cut review and cat-run film statistics improve the existing production method. The command is a creator diagnostic, not a new user-facing product entry; dramatization and sample-first review remain unchanged."
 description: >
   用 Remotion 做有品味的视频：从一句话 brief 或一堆素材出发，先在素材里找戏（主张、反转、因果），
   再推出风格、按声音排时间、写 Remotion 合成、用样张自审，交给 operator 看片。
@@ -76,6 +76,9 @@ description: >
 | 参考音配错了文字（《醋醋喵》EP0，10-04） | 旁白开口先念出参考文字，后面全是胡言乱语，16 句全坏 | 用参考音前跑 `tts-check.py --check-ref` |
 | 每个动作都配一个合成音效（EP0） | You："音效还是很奇怪" | 只留一听就懂的几声，正式音效后期做 |
 | 跨镜头的长句压到下一句（EP0） | 两层字幕叠在一起 | 渲染前跑 `timeline-check.py` |
+| 反复复用 `make-score.py` 的同一套预设，没试听就当正式 BGM（变脸记、醋醋喵、《AI-native builder 的一天》） | You：「这个 BGM 是你什么御用 BGM？……它真的好奇怪」（10-12，EP0 之后第二次嫌声音怪） | 这套预设默认只用来排节奏、占位。正式音乐按段落情绪、对白和静默的效果试听后选用；来源和费用沿 You 已给的授权走（10-12 已允许 AI 生成和免费曲库），不为来源重复请示。来源不是质量判据，听起来对才算 |
+| 模拟冷读只给截帧和台词（《AI-native builder 的一天》，10-12） | 截帧能看出谁在画面里（第一次冷读已经说过人何时出现、两个世界关系不清），但看不到连续动作、时长感受和声音；「BGM 怪」是 You 自己看片才发现的 | 交冷读结果时写明它验证不了什么。声明节奏或声音完成之前，用带声的连续成片自己验一遍。模型模拟的冷读不等于真实陌生观众已经看懂（`../.cat-cafe-shared-refs/narrative-clarity.md` §5） |
+| 一句台词一个镜头，在背影、屏幕近景、工作室远景和近景四处来回跳；10 次切换里只有毛线球那 1 次有东西带着过去；两句台词之间是死寂（《AI-native builder 的一天》早饭段第一版，10-12） | You 先问「为什么看起来还是像ppt？」，又问「为什么云端的你做的 不像ppt ？ 他也是合成」。我先归因成画面不动，可他认可的云端那支同样有 75% 的帧不动，却没有一次硬切、几乎没有无声（我们是 84%、10 次、41%）。照「一个舞台、两扇门」重做后（静止 45%，真正的切换 4 处都有东西带着过去，无声 1.6%），You：「现在味道倒是对了」 | 嫌像 PPT 时，先用 `scripts/film-stats.py` 给自己的片子和他认可的参考片量同一组数，再找原因。少换场景，把戏放进一个舞台，镜头在里面走；每次切换都要说得出是什么带观众过去（形状对上、方向对上、这边一个动作引起那边一个动作、下一边的声音先进来）；声音底子不断 |
 
 ## 家里的工具
 
@@ -85,7 +88,8 @@ description: >
 | 新建视频目录 | `pnpm video:new <slug>`（生成 `docs/videos/<slug>/`） |
 | 逐词强制对齐 | `scripts/video-forge/align.py`（Qwen3-ForcedAligner） |
 | 官方 Remotion skill | 工程里 `npx remotion skills add` / `update` |
-| 自己合成配乐和音效（无版权，卡在画面网格上） | `scripts/make-score.py <out> --bars N --sections "0-1:intro,2-9:groove,..." [--mute 起-止帧]` |
+| 自己合成配乐和音效（无版权，卡在画面网格上；预设默认当占位，正式配乐见上面的坑） | `scripts/make-score.py <out> --bars N --sections "0-1:intro,2-9:groove,..." [--mute 起-止帧]` |
+| 量「像不像幻灯片」：静止帧占比、切点候选、无声占比，和参考片一起量 | `scripts/film-stats.py <片子> [参考片...]`（要 ffmpeg 和 numpy；切点候选里混着快速运镜，要逐个打开看是不是真切、有没有载体） |
 | 音乐拍点（没有稳定 BPM 时） | `scripts/music-cues.py <音频> --end-ms <片长>`（要 ffmpeg 和 numpy） |
 | 样张 | `scripts/contact-sheet.sh <video> <out.png> <帧号...>` |
 | 声音稿：逐句合成 + Whisper 回听；核对参考音 | `scripts/tts-check.py lines.json voices.json out/`；`--check-ref 参考音.wav "文字"` |

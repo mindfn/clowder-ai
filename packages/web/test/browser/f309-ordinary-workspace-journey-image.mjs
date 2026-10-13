@@ -4,6 +4,7 @@ import { test } from 'node:test';
 import { ensureWorkspaceOpen } from './f307-workspace-open.mjs';
 import { fulfillFixtureApi } from './f309-ordinary-workspace-journey-actions.mjs';
 import { createReviewState } from './f309-ordinary-workspace-journey-fixture.mjs';
+import { openAnnotationSave } from './fixtures/f309-artwork-controls.mjs';
 
 export function registerOrdinaryImageJourney(suite) {
   test(
@@ -72,7 +73,7 @@ export function registerOrdinaryImageJourney(suite) {
         );
         assert.equal(await page.getByPlaceholder('写下这条批注…').inputValue(), '这处在普通文件里需要保留讨论。');
         await page.getByRole('button', { name: '关闭讨论', exact: true }).click();
-        await page.getByRole('button', { name: '保存批注', exact: true }).click();
+        await (await openAnnotationSave(page)).click();
         await page.getByTestId('review-canvas-annotation-mark').waitFor();
         assert.equal(await page.getByRole('dialog', { name: '评论这处画面' }).count(), 0);
         const annotationMark = page.getByTestId('review-canvas-annotation-mark');

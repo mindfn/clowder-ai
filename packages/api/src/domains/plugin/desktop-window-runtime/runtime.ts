@@ -201,6 +201,25 @@ export class DesktopWindowPluginRuntime implements BuiltinPluginRuntime {
             initiator: 'executor',
           }),
         ...(run.bridge ? { request: (input: unknown) => run.bridge!.request(input) } : {}),
+        ...(run.bridge?.observeVoice
+          ? {
+              onVoiceObservation: async (observation) => {
+                if (this.active !== run || run.closing || controller.signal.aborted) return;
+                await this.features.run(pending.executionLease, async () => undefined);
+                if (this.active === run && !run.closing && !controller.signal.aborted)
+                  await run.bridge?.observeVoice?.(observation);
+              },
+            }
+          : {}),
+        ...(run.bridge?.observeTextSubmission
+          ? {
+              onTextSubmission: async (observation) => {
+                if (this.active !== run || run.closing || controller.signal.aborted) return;
+                // Bridge captures its call/generation synchronously, then authenticates this same execution lease.
+                await run.bridge?.observeTextSubmission?.(observation);
+              },
+            }
+          : {}),
       });
       controller.signal.throwIfAborted();
       run.observer = new DesktopWindowObserver({

@@ -8,13 +8,18 @@
  * wires the row's buttons to the very same commands the old surfaces use (cancelProjectedExecution through
  * ExecutionCancelButton, useQueueCommands, useQueueActionConvergence). The 1s clock ticks only while something runs.
  */
-import { useEffect, useMemo, useState } from 'react';
-import { useCatNameResolver } from '@/hooks/useCatNameResolver';
+import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCatData } from '@/hooks/useCatData';
 import { useExecutionRecoveryVerification } from '@/hooks/useExecutionRecoveryVerification';
 import { useThreadLiveness } from '@/hooks/useThreadScopedSelectors';
+import { resolveCatNameplateName } from '@/lib/cat-display-name';
 import { activeExecutionKey, useActiveExecutionStore } from '@/stores/activeExecutionStore';
+import { useToastStore } from '@/stores/toastStore';
 import { isStreamingTipSuppressed } from '../capability-tip-placement';
+import { useShellCopy } from '../shell/shell-copy';
 import { useQueueActionConvergence } from '../useQueueActionConvergence';
+import { locateExecution } from './execution-location';
+import { executionRowCopy } from './execution-row.shell-copy';
 import { deriveExecutionRow } from './row-model';
 import { useQueueCommands } from './useQueueCommands';
 import { useQueueView } from './useQueueView';
@@ -32,7 +37,9 @@ function useNow(active: boolean): number {
 }
 
 export function useExecutionRow(threadId: string) {
-  const resolveCatName = useCatNameResolver();
+  const words = useShellCopy(executionRowCopy);
+  const { getCatById } = useCatData({ fetch: false });
+  const resolveCatName = useCallback((catId: string) => resolveCatNameplateName(catId, getCatById), [getCatById]);
   const { catInvocations, catStatuses } = useThreadLiveness(threadId);
   const executionsByKey = useActiveExecutionStore((state) => state.executionsByKey);
   const cancelPendingByKey = useActiveExecutionStore((state) => state.cancelPendingByKey);
@@ -85,7 +92,13 @@ export function useExecutionRow(threadId: string) {
   );
 
   const forceReset = useRowForceReset({ threadId, convergence });
-  return { model, executions, now, silent, view, convergence, commands, forceReset, resolveCatName };
+  const locate = (execution: (typeof executions)[number]) => {
+    if (locateExecution(execution) === 'unavailable')
+      useToastStore
+        .getState()
+        .addToast({ type: 'info', title: words.actions.locate, message: words.actions.unavailable, duration: 5000 });
+  };
+  return { model, executions, now, silent, view, convergence, commands, forceReset, resolveCatName, locate };
 }
 
 export type ExecutionRowController = ReturnType<typeof useExecutionRow>;

@@ -10,6 +10,9 @@ export interface ParticipationView {
   cats: {
     id: string;
     displayName: string;
+    nickname?: string;
+    variantLabel?: string;
+    breedDisplayName?: string;
     configured: boolean;
     eligible: boolean;
     supported: boolean;

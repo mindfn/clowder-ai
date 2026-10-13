@@ -190,7 +190,7 @@ export function MailboxSecondLayer({
         className="shell-nav-row shell-focusable rounded-lg px-2 py-1 disabled:opacity-50"
         style={{ color: 'var(--shell-primary-text)' }}
       >
-        筛选与批量处理
+        审批记录
       </button>
     </footer>
   );

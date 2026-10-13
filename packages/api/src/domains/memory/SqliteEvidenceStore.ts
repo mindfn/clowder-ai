@@ -29,7 +29,7 @@ import {
   rankLexicalBackfillRows,
   splitLexicalBackfillWords,
 } from './lexical-backfill.js';
-import { runMemoryRead } from './MemoryProcess.js';
+import { runMemoryRead, runMemoryVectorRepack } from './MemoryProcess.js';
 import type { EmbeddingSnapshot } from './memory-process-protocol.js';
 import { searchMessagePassages } from './message-passage-search.js';
 import type { MessagePassageSearchExecution, MessagePassageSearchOptions } from './message-passage-search-types.js';
@@ -40,8 +40,10 @@ import { type PassageVectorStore, parsePassageVectorKey, passageVectorKey } from
 import { publishEntityMentions, recoverEntityMentionProjections } from './publish-entity-mentions.js';
 import { applyPullOnlyDownrank } from './pull-only-ranking.js';
 import { computeRecencyDecay } from './recency-decay.js';
+import { repackPassageVectors, type VectorRepackResult } from './repack-passage-vectors.js';
 import { applyMigrations } from './schema.js';
 import type { VectorStore } from './VectorStore.js';
+import { createVectorInvalidator } from './vector-invalidation.js';
 import { writeEvidenceItems } from './write-evidence-items.js';
 
 // DF-8: asymmetric RRF weight for CJK queries — BM25/FTS5 has poor recall
@@ -131,6 +133,8 @@ export interface SqliteEvidenceStoreOptions {
   sourceRef?: string;
   /** @internal A child opens an existing schema without migrating or recursively dispatching. */
   workerMode?: 'read';
+  /** Optional API-owned observation. Standalone and worker stores have no implicit logger dependency. */
+  readDiagnostics?: (db: Database.Database) => () => void;
 }
 
 interface SearchFilterContext {
@@ -147,26 +151,11 @@ type PassageVectorDeleteRow = {
   passageId: string;
 };
 
-function hasTable(db: Database.Database, tableName: string): boolean {
-  return Boolean(db.prepare("SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = ?").get(tableName));
-}
-
-function hasSqliteModule(db: Database.Database, moduleName: string): boolean {
-  try {
-    return Boolean(db.prepare('SELECT 1 FROM pragma_module_list WHERE name = ?').get(moduleName));
-  } catch {
-    return false;
-  }
-}
-
 function deletePassageVectors(db: Database.Database, rows: PassageVectorDeleteRow[]): void {
   if (rows.length === 0) return;
-  if (!hasTable(db, 'passage_vectors')) return;
-  if (!hasSqliteModule(db, 'vec0')) return;
-
-  const deleteVector = db.prepare('DELETE FROM passage_vectors WHERE passage_key = ?');
+  const deleteVector = createVectorInvalidator(db, 'passage_vectors');
   for (const row of rows) {
-    deleteVector.run(passageVectorKey(row.docAnchor, row.passageId));
+    deleteVector(passageVectorKey(row.docAnchor, row.passageId));
   }
 }
 
@@ -175,6 +164,9 @@ export class SqliteEvidenceStore implements IEvidenceStore {
   private readonly dbPath: string;
   private embedDeps?: EmbedDeps;
   private readonly workerMode?: 'read';
+  private readonly readDiagnostics?: SqliteEvidenceStoreOptions['readDiagnostics'];
+  private detachReadDiagnostics?: () => void;
+  private initialization?: Promise<void>;
   private sourceRoot?: string;
   private sourceRef?: string;
   private entityRegistry?: EntityRegistryStore;
@@ -184,6 +176,7 @@ export class SqliteEvidenceStore implements IEvidenceStore {
   constructor(dbPath: string, embedDeps?: EmbedDeps, options?: SqliteEvidenceStoreOptions) {
     this.dbPath = dbPath === ':memory:' ? dbPath : resolve(dbPath);
     this.workerMode = options?.workerMode;
+    this.readDiagnostics = options?.readDiagnostics;
     this.embedDeps = embedDeps;
     this.sourceRoot = options?.sourceRoot ? resolve(options.sourceRoot) : undefined;
     this.sourceRef = options?.sourceRoot ? options.sourceRef : undefined;
@@ -200,7 +193,18 @@ export class SqliteEvidenceStore implements IEvidenceStore {
     this.sourceRef = sourceRoot ? sourceRef : undefined;
   }
 
-  async initialize(): Promise<void> {
+  initialize(): Promise<void> {
+    if (!this.initialization) {
+      const attempt = this.initializeDatabase().catch((error: unknown) => {
+        if (this.initialization === attempt) this.initialization = undefined;
+        throw error;
+      });
+      this.initialization = attempt;
+    }
+    return this.initialization;
+  }
+
+  private async initializeDatabase(): Promise<void> {
     this.db = new Database(this.dbPath, {
       readonly: this.workerMode === 'read',
       fileMustExist: Boolean(this.workerMode),
@@ -209,7 +213,14 @@ export class SqliteEvidenceStore implements IEvidenceStore {
     this.db.pragma('foreign_keys = ON');
     this.db.pragma('busy_timeout = 5000');
 
-    if (!this.workerMode) applyMigrations(this.db);
+    if (!this.workerMode) {
+      applyMigrations(this.db);
+      try {
+        this.detachReadDiagnostics = this.readDiagnostics?.(this.db);
+      } catch {
+        /* An optional observer failure cannot prevent memory initialization. */
+      }
+    }
     this.entityRegistry = new EntityRegistryStore(this.db);
     if (!this.workerMode) {
       await recoverEntityMentionProjections(this.db);
@@ -1176,22 +1187,29 @@ export class SqliteEvidenceStore implements IEvidenceStore {
       );
     if (parsed.length === 0) return [];
 
-    const clauses = parsed.map(() => '(doc_anchor = ? AND passage_id = ?)').join(' OR ');
+    // The message pool can contain 2000 hits, exceeding SQLite's OR depth.
+    // Bind exact pairs as rows so hydration still uses the composite index.
+    const coordinates = parsed.map(() => '(?, ?)').join(', ');
     const params: unknown[] = parsed.flatMap((p) => [p.docAnchor, p.passageId]);
-    let sql = `SELECT doc_anchor, passage_id, content, speaker, position, created_at FROM evidence_passages WHERE (${clauses})`;
+    let sql = `WITH passage_hits(doc_anchor, passage_id) AS (VALUES ${coordinates})
+      SELECT p.doc_anchor, p.passage_id, p.content, p.speaker, p.position, p.created_at
+      FROM passage_hits h JOIN evidence_passages p
+      ON p.doc_anchor = h.doc_anchor AND p.passage_id = h.passage_id`;
+    const filters: string[] = [];
 
     if (options?.threadId) {
-      sql += ' AND doc_anchor = ?';
+      filters.push('p.doc_anchor = ?');
       params.push(`thread-${options.threadId}`);
     }
     if (options?.dateFrom) {
-      sql += ' AND created_at >= ?';
+      filters.push('p.created_at >= ?');
       params.push(options.dateFrom);
     }
     if (options?.dateTo) {
-      sql += ' AND created_at <= ?';
+      filters.push('p.created_at <= ?');
       params.push(options.dateTo.length === 10 ? `${options.dateTo}T23:59:59` : options.dateTo);
     }
+    if (filters.length > 0) sql += ` WHERE ${filters.join(' AND ')}`;
 
     const rows = this.db.prepare(sql).all(...params) as Array<{
       doc_anchor: string;
@@ -1662,17 +1680,21 @@ export class SqliteEvidenceStore implements IEvidenceStore {
     return this.writeQueue.enqueue(() => {
       this.ensureOpen();
       const db = this.getDb();
-      if (!anchor.startsWith('thread-')) {
-        const passages = db
-          .prepare('SELECT passage_id AS passageId FROM evidence_passages WHERE doc_anchor = ?')
-          .all(anchor) as Array<{ passageId: string }>;
-        deletePassageVectors(
-          db,
-          passages.map((passage) => ({ docAnchor: anchor, passageId: passage.passageId })),
-        );
-        db.prepare('DELETE FROM evidence_passages WHERE doc_anchor = ?').run(anchor);
-      }
-      db.prepare('DELETE FROM evidence_docs WHERE anchor = ?').run(anchor);
+      const invalidateDocument = createVectorInvalidator(db, 'evidence_vectors');
+      db.transaction(() => {
+        if (!anchor.startsWith('thread-')) {
+          const passages = db
+            .prepare('SELECT passage_id AS passageId FROM evidence_passages WHERE doc_anchor = ?')
+            .all(anchor) as Array<{ passageId: string }>;
+          deletePassageVectors(
+            db,
+            passages.map((passage) => ({ docAnchor: anchor, passageId: passage.passageId })),
+          );
+          db.prepare('DELETE FROM evidence_passages WHERE doc_anchor = ?').run(anchor);
+        }
+        invalidateDocument(anchor);
+        db.prepare('DELETE FROM evidence_docs WHERE anchor = ?').run(anchor);
+      })();
     });
   }
 
@@ -1688,40 +1710,39 @@ export class SqliteEvidenceStore implements IEvidenceStore {
   removeBySourcePrefix(prefix: string): number {
     this.ensureOpen();
     const db = this.getDb();
-    const escaped = prefix.replace(/\\/g, '\\\\').replace(/%/g, '\\%').replace(/_/g, '\\_');
-    const likePattern = escaped + '%';
-    const anchors = (
-      db.prepare("SELECT anchor FROM evidence_docs WHERE source_path LIKE ? ESCAPE '\\'").all(likePattern) as Array<{
-        anchor: string;
-      }>
-    ).map((r) => r.anchor);
-    const result = db.prepare("DELETE FROM evidence_docs WHERE source_path LIKE ? ESCAPE '\\'").run(likePattern);
-    if (anchors.length) {
-      const CHUNK = 400;
-      for (let i = 0; i < anchors.length; i += CHUNK) {
-        const batch = anchors.slice(i, i + CHUNK);
-        const ph = batch.map(() => '?').join(',');
-        db.prepare(`DELETE FROM edges WHERE from_anchor IN (${ph}) OR to_anchor IN (${ph})`).run(...batch, ...batch);
-        const passageRows = db
-          .prepare(
-            `SELECT doc_anchor AS docAnchor, passage_id AS passageId FROM evidence_passages WHERE doc_anchor IN (${ph})`,
-          )
-          .all(...batch) as Array<{ docAnchor: string; passageId: string }>;
-        deletePassageVectors(
-          db,
-          passageRows.filter((row) => !row.docAnchor.startsWith('thread-')),
-        );
-        db.prepare(`DELETE FROM evidence_passages WHERE doc_anchor IN (${ph}) AND doc_anchor NOT LIKE 'thread-%'`).run(
-          ...batch,
-        );
-        try {
-          this.db?.prepare(`DELETE FROM evidence_vectors WHERE anchor IN (${ph})`).run(...batch);
-        } catch {
-          // evidence_vectors (vec0) may not exist when embedding is disabled
+    return db.transaction(() => {
+      const escaped = prefix.replace(/\\/g, '\\\\').replace(/%/g, '\\%').replace(/_/g, '\\_');
+      const likePattern = escaped + '%';
+      const anchors = (
+        db.prepare("SELECT anchor FROM evidence_docs WHERE source_path LIKE ? ESCAPE '\\'").all(likePattern) as Array<{
+          anchor: string;
+        }>
+      ).map((r) => r.anchor);
+      const result = db.prepare("DELETE FROM evidence_docs WHERE source_path LIKE ? ESCAPE '\\'").run(likePattern);
+      if (anchors.length) {
+        const invalidateDocument = createVectorInvalidator(db, 'evidence_vectors');
+        const CHUNK = 400;
+        for (let i = 0; i < anchors.length; i += CHUNK) {
+          const batch = anchors.slice(i, i + CHUNK);
+          const ph = batch.map(() => '?').join(',');
+          db.prepare(`DELETE FROM edges WHERE from_anchor IN (${ph}) OR to_anchor IN (${ph})`).run(...batch, ...batch);
+          const passageRows = db
+            .prepare(
+              `SELECT doc_anchor AS docAnchor, passage_id AS passageId FROM evidence_passages WHERE doc_anchor IN (${ph})`,
+            )
+            .all(...batch) as Array<{ docAnchor: string; passageId: string }>;
+          deletePassageVectors(
+            db,
+            passageRows.filter((row) => !row.docAnchor.startsWith('thread-')),
+          );
+          db.prepare(
+            `DELETE FROM evidence_passages WHERE doc_anchor IN (${ph}) AND doc_anchor NOT LIKE 'thread-%'`,
+          ).run(...batch);
+          for (const anchor of batch) invalidateDocument(anchor);
         }
       }
-    }
-    return result.changes;
+      return result.changes;
+    })();
   }
 
   async getByAnchor(anchor: string): Promise<EvidenceItem | null> {
@@ -1768,6 +1789,17 @@ export class SqliteEvidenceStore implements IEvidenceStore {
   /** Serialize an arbitrary write through the single-writer queue (F163 AC-A5). */
   runExclusive<T>(fn: () => T | Promise<T>): Promise<T> {
     return this.writeQueue.enqueue(fn);
+  }
+
+  /** Retain the canonical writer queue until maintenance commits or its child closes. */
+  repackPassageVectors(options?: { signal?: AbortSignal; deadlineAt?: number }): Promise<VectorRepackResult> {
+    return this.runExclusive(() => {
+      if (this.workerMode === 'read') throw new Error('Read-only memory worker cannot repack vectors');
+      options?.signal?.throwIfAborted();
+      return this.usesIsolatedProcesses()
+        ? runMemoryVectorRepack(this.dbPath, options)
+        : repackPassageVectors(this.getDb());
+    });
   }
 
   /**
@@ -2063,6 +2095,13 @@ export class SqliteEvidenceStore implements IEvidenceStore {
   }
 
   close(): void {
+    try {
+      this.detachReadDiagnostics?.();
+    } catch {
+      /* An optional observer cannot prevent closing the canonical connection. */
+    }
+    this.detachReadDiagnostics = undefined;
+    this.initialization = undefined;
     if (this.db?.open) {
       this.db.close();
     }

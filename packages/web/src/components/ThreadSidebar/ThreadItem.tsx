@@ -21,7 +21,7 @@ import { ThreadPinV2 } from './ThreadPinV2';
 import { ThreadRowSignals } from './ThreadRowSignals';
 import { RowTip, RowTitleTip } from './ThreadRowTips';
 import { ThreadSettingsPanel } from './ThreadSettingsPanel';
-import { threadSignalsCopy } from './thread-signals.shell-copy';
+import { formatSidebarActivityTime, threadSignalsCopy } from './thread-signals.shell-copy';
 import { formatRelativeTime, formatSidebarStatusTime } from './thread-utils';
 
 export interface ThreadItemProps {
@@ -211,7 +211,7 @@ function ThreadItemComponent({
     <div
       data-thread-id={id}
       aria-current={isActive ? 'page' : undefined}
-      className={`group relative mx-2 ${isV2 ? 'rounded-lg py-1.5' : 'rounded-xl py-2.5'} ${indented ? 'pl-5 pr-3' : 'px-3'} transition-colors cursor-pointer ${
+      className={`group relative mx-2 ${isV2 ? 'rounded-lg py-1.5 [[data-attention-cluster-member]_&]:mx-0 [[data-attention-cluster-member]_&]:px-[11px]' : 'rounded-xl py-2.5'} ${indented ? 'pl-5 pr-3' : 'px-3'} transition-colors cursor-pointer ${
         isV2
           ? isActive
             ? 'bg-[var(--shell-selected)]'
@@ -337,7 +337,7 @@ function ThreadItemComponent({
               className="order-last text-label leading-5 tabular-nums"
               style={{ color: 'var(--shell-muted)' }}
             >
-              {formatRelativeTime(lastActiveAt, true)}
+              {formatSidebarActivityTime(lastActiveAt, copy)}
             </span>
           )}
           {hasMoreActions && (

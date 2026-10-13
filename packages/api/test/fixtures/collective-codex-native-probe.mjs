@@ -15,6 +15,7 @@ export async function probeCollectiveCodex({
   policyArgs = COLLECTIVE_CODEX_POLICY_ARGS,
   invokeTools = true,
   codeMode = false,
+  nativeSubtask = false,
 } = {}) {
   const root = await mkdtemp(join(tmpdir(), 'f290-native-policy-'));
   const privateCanary = 'F290_PRIVATE_NATIVE_CANARY';
@@ -32,6 +33,9 @@ export async function probeCollectiveCodex({
   const startedAt = Date.now();
   let firstRequestAt = null;
   let firstCallbackAt = null;
+  let spawnIssued = false;
+  let waitIssued = false;
+  let childRequestCount = 0;
   const server = http.createServer(async (req, res) => {
     let body = '';
     for await (const chunk of req) body += chunk;
@@ -61,7 +65,48 @@ export async function probeCollectiveCodex({
     firstRequestAt ??= Date.now();
     requests.push(parsed);
     let call;
-    if (invokeTools && requests.length === 1 && codeMode) {
+    let finalText;
+    if (nativeSubtask) {
+      const user = [...(parsed.input ?? [])].reverse().find((row) => row.role === 'user');
+      const child = JSON.stringify(user?.content ?? '').includes('F317_CHILD_FIXED_INPUT');
+      if (child) {
+        childRequestCount++;
+        finalText = 'F317_CHILD_SUMMARY';
+      } else if (!spawnIssued) {
+        spawnIssued = true;
+        call = {
+          type: 'function_call',
+          id: 'fc_spawn',
+          call_id: 'call_spawn',
+          namespace: 'multi_agent_v1',
+          name: 'spawn_agent',
+          arguments: JSON.stringify({
+            message:
+              'F317_CHILD_FIXED_INPUT: summarize only this supplied sentence; return F317_CHILD_SUMMARY. No tools or data reads.',
+            fork_context: false,
+          }),
+        };
+      } else if (!waitIssued) {
+        const output = parsed.input?.find((row) => row.type === 'function_call_output' && row.call_id === 'call_spawn');
+        let agent;
+        try {
+          agent = JSON.parse(output?.output ?? '{}').agent_id;
+        } catch {
+          /* recorded below as unavailable */
+        }
+        if (typeof agent === 'string') {
+          waitIssued = true;
+          call = {
+            type: 'function_call',
+            id: 'fc_wait',
+            call_id: 'call_wait',
+            namespace: 'multi_agent_v1',
+            name: 'wait_agent',
+            arguments: JSON.stringify({ targets: [agent], timeout_ms: 10000 }),
+          };
+        } else finalText = 'F317_SPAWN_RESULT_UNAVAILABLE';
+      } else finalText = 'F317_ROOT_ACK';
+    } else if (invokeTools && requests.length === 1 && codeMode) {
       call = {
         type: 'custom_tool_call',
         id: 'fc_current',
@@ -97,7 +142,16 @@ export async function probeCollectiveCodex({
         arguments: JSON.stringify({ cmd: 'touch ' + marker }),
       };
     }
-    const output = call ? [call] : [];
+    const final = finalText
+      ? {
+          type: 'message',
+          id: `msg_probe_${requests.length}`,
+          role: 'assistant',
+          phase: 'final_answer',
+          content: [{ type: 'output_text', text: finalText, annotations: [] }],
+        }
+      : undefined;
+    const output = call ? [call] : final ? [final] : [];
     const events = [
       {
         type: 'response.created',
@@ -124,6 +178,27 @@ export async function probeCollectiveCodex({
               },
             ]),
         { type: 'response.output_item.done', output_index: 0, item: call },
+      );
+    if (final)
+      events.push(
+        { type: 'response.output_item.added', output_index: 0, item: { ...final, content: [] } },
+        {
+          type: 'response.content_part.added',
+          output_index: 0,
+          item_id: final.id,
+          content_index: 0,
+          part: { type: 'output_text', text: '', annotations: [] },
+        },
+        { type: 'response.output_text.delta', output_index: 0, item_id: final.id, content_index: 0, delta: finalText },
+        { type: 'response.output_text.done', output_index: 0, item_id: final.id, content_index: 0, text: finalText },
+        {
+          type: 'response.content_part.done',
+          output_index: 0,
+          item_id: final.id,
+          content_index: 0,
+          part: final.content[0],
+        },
+        { type: 'response.output_item.done', output_index: 0, item: final },
       );
     events.push({
       type: 'response.completed',
@@ -225,6 +300,7 @@ export async function probeCollectiveCodex({
       exitCode: closed.code,
       exitSignal: closed.signal,
       requests,
+      childRequestCount,
       callbacks,
       stdout,
       stderr,

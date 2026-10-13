@@ -24,6 +24,27 @@ export interface TeleportEvent {
   source?: 'companion-decision';
 }
 
+/** A native approval link navigates only; the original card still owns the decision. */
+function readCompanionDecisionLink(location: Pick<Location, 'pathname' | 'search' | 'hash'>): string | null {
+  const thread = /^\/thread\/([A-Za-z0-9_-]{1,200})$/.exec(location.pathname)?.[1];
+  const query = new URLSearchParams(location.search);
+  const coordinate = /^[A-Za-z0-9_-]{1,200}$/;
+  const message = query.get('message');
+  const block = query.get('block');
+  if (
+    !thread ||
+    location.hash ||
+    !message ||
+    !coordinate.test(message) ||
+    query.getAll('message').length !== 1 ||
+    query.getAll('block').length > 1 ||
+    (block !== null && !coordinate.test(block)) ||
+    [...query.keys()].some((key) => key !== 'message' && key !== 'block')
+  )
+    return null;
+  return `message:${thread}:${message}${block === null ? '' : `#${block}`}`;
+}
+
 export function handleTeleportEvent(
   data: TeleportEvent,
   currentThreadId: string | null,
@@ -83,6 +104,13 @@ export function useTeleport(): void {
   const lastEventIdRef = useRef<string | null>(null);
 
   useEffect(() => {
+    const initialSource = readCompanionDecisionLink(window.location);
+    if (initialSource) {
+      // The newly activated browser need not have been connected to the socket.
+      // Reuse the same history recovery and rich-card reveal as the 待办 panel.
+      openExactPlace(initialSource, window.location.pathname);
+      window.history.replaceState(window.history.state, '', window.location.pathname);
+    }
     let cancelled = false;
     let cleanup: (() => void) | null = null;
 

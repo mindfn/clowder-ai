@@ -14,8 +14,9 @@ function hashClientMessageId(clientMessageId: string): string {
   return createHash('sha256').update(clientMessageId).digest('hex');
 }
 
-function ttlCutoff(record: Pick<AgentKeyRecord, 'expiresAt' | 'graceUntil'>): number {
-  return (record.graceUntil ?? record.expiresAt) + REDIS_REAPER_GRACE_MS;
+function ttlCutoff(record: Pick<AgentKeyRecord, 'expiresAt' | 'graceUntil'>): number | null {
+  const cutoff = record.graceUntil ?? record.expiresAt;
+  return cutoff === null ? null : cutoff + REDIS_REAPER_GRACE_MS;
 }
 
 function optionalNumber(value: string | undefined): number | undefined {
@@ -28,8 +29,8 @@ function recordFromHash(fields: Record<string, string>): AgentKeyRecord | null {
   if (!fields.agentKeyId || !fields.catId || !fields.userId || !fields.secretHash || !fields.salt) return null;
   if (fields.scope !== 'user-bound') return null;
   const issuedAt = Number(fields.issuedAt ?? 0);
-  const expiresAt = Number(fields.expiresAt ?? 0);
-  if (!Number.isFinite(issuedAt) || !Number.isFinite(expiresAt)) return null;
+  const expiresAt = fields.expiresAt === 'null' ? null : Number(fields.expiresAt ?? 0);
+  if (!Number.isFinite(issuedAt) || (expiresAt !== null && !Number.isFinite(expiresAt))) return null;
 
   const record: AgentKeyRecord = {
     agentKeyId: fields.agentKeyId,
@@ -89,7 +90,8 @@ export class RedisAgentKeyBackend implements IAgentKeyBackend {
   async create(input: AgentKeyInput): Promise<void> {
     await this.redis.hset(KEY_RECORD(input.agentKeyId), ...fieldsFromRecord(input));
     await this.redis.sadd(KEY_INDEX, input.agentKeyId);
-    await this.redis.pexpireat(KEY_RECORD(input.agentKeyId), ttlCutoff(input));
+    const cutoff = ttlCutoff(input);
+    if (cutoff !== null) await this.redis.pexpireat(KEY_RECORD(input.agentKeyId), cutoff);
   }
 
   async verify(secret: string): Promise<AgentKeyVerifyResult> {
@@ -132,9 +134,13 @@ export class RedisAgentKeyBackend implements IAgentKeyBackend {
   }
 
   async revoke(agentKeyId: string, reason: string): Promise<boolean> {
-    const exists = await this.redis.exists(KEY_RECORD(agentKeyId));
-    if (exists === 0) return false;
-    await this.redis.hset(KEY_RECORD(agentKeyId), 'revokedAt', String(Date.now()), 'revokedReason', reason);
+    const record = await this.get(agentKeyId);
+    if (!record) return false;
+    const revokedAt = Date.now();
+    await this.redis.hset(KEY_RECORD(agentKeyId), 'revokedAt', String(revokedAt), 'revokedReason', reason);
+    if (record.expiresAt === null) {
+      await this.redis.pexpireat(KEY_RECORD(agentKeyId), revokedAt + REDIS_REAPER_GRACE_MS);
+    }
     return true;
   }
 
@@ -156,7 +162,7 @@ export class RedisAgentKeyBackend implements IAgentKeyBackend {
     if (!record || record.revokedAt) return false;
     const now = Date.now();
     if (record.graceUntil && now > record.graceUntil) return false;
-    if (!record.graceUntil && now > record.expiresAt) return false;
+    if (!record.graceUntil && record.expiresAt !== null && now > record.expiresAt) return false;
 
     const result = await this.redis.set(
       KEY_CLIENT_MESSAGE_ID(agentKeyId, clientMessageId),
@@ -172,7 +178,8 @@ export class RedisAgentKeyBackend implements IAgentKeyBackend {
     if (record.revokedAt) return { ok: false, reason: 'agent_key_revoked' };
     const now = Date.now();
     if (record.graceUntil && now > record.graceUntil) return { ok: false, reason: 'agent_key_expired' };
-    if (!record.graceUntil && now > record.expiresAt) return { ok: false, reason: 'agent_key_expired' };
+    if (!record.graceUntil && record.expiresAt !== null && now > record.expiresAt)
+      return { ok: false, reason: 'agent_key_expired' };
     await this.touchLastUsed(record.agentKeyId, now);
     return { ok: true, record: { ...record, lastUsedAt: now } };
   }

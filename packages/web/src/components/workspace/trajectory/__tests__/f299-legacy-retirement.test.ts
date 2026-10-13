@@ -43,7 +43,8 @@ describe('F299 legacy retirement and F252 compatibility', () => {
   it('keeps one invocation trajectory anchor in the message header after any reply reference', () => {
     const actions = source('packages/web/src/components/MessageActions.tsx');
     const message = source('packages/web/src/components/ChatMessage.tsx');
-    expect(actions).not.toContain('message-action-invocation-trajectory');
+    // Assistant trajectory stays in its header; non-assistant notices retain their toolbar entry.
+    expect(actions).toContain('invocationTrajectory && !isAssistant');
     const reply = message.lastIndexOf('<ReplyPill');
     const trajectory = message.lastIndexOf('<InvocationTrajectoryAnchor');
     const actionSlot = message.lastIndexOf('<MessageActionSlot');

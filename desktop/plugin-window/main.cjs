@@ -86,6 +86,12 @@ async function handle(message) {
         return reply;
       },
       validate: validateCompanionCommand,
+      onVoiceObservation: (value) => {
+        if (!ended) stdio.write(`${JSON.stringify({ v: 1, type: 'voice_observation', value })}\n`, () => {});
+      },
+      onTextSubmission: (value) => {
+        if (!ended) stdio.write(`${JSON.stringify({ v: 1, type: 'text_submission', value })}\n`, () => {});
+      },
     });
     if (ended) {
       opened.close();

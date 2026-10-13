@@ -15,32 +15,34 @@ const EXPECTED_DEVELOPMENT_STAGES = [
   'completion',
 ];
 
-const EXPECTED_PORTED_RULE_TEXTS = [
-  'Feature spec 必须有 AC + 需求点 checklist',
-  '没有co-creator确认就直接开始实现',
-  'worktree 开之前必须 main 双向同步 (ahead=0 behind=0)',
-  'Redis 只用 6398，禁碰 6399',
-  '实现前未按行为面 / 数据 / 安全 / 契约 / 不可逆五轴判断风险，就机械套用或机械跳过流程',
-  '用户可感知 Feature 缺 User Journey 段（或 user_journey_exempt）',
-  '共创型 docs-only 可自决直推；进入 worktree / PR / cloud / full gate 前才必须用 classifier 证明风险，且不得越过结果支付代码级流程税',
-  '新增 route/consumer 并触及 canonical helper 时，必须声明 consumer delta 并提供 exact-HEAD review/self-check evidence',
-  '压缩后忘了当前在做什么',
-  '改 MCP tool / skill manifest 等当前已索引约定面前，先用 convention graph 查影响面；stale=true 先 reindex',
-  '自检报告必须包含愿景覆盖度',
-  '声称完成但没有与影响面匹配的验证证据（纯文档走文档校验；高风险加强独立审查，跨包影响无法由 targeted 覆盖才要求 full gate）',
-  'Fresh-context 是 finding generator，不是 approval authority——不产出 verdict，不记入 Review Provenance Matrix',
-  '同一个体不能 review 自己的代码',
-  '涉及用户意图或愿景的 Review 请求必须附原始需求摘录',
-  'P1/P2 修复后的实质内容未被对应 review source 覆盖；SHA-only / 可证明机械变化用 continuityProof，不重开 reviewer',
-  '必须用 gh pr merge --squash（禁止本地 squash）',
-  '云端 review 同一 SHA 不重复触发',
-  'merge 前核对 feature doc 是否说真话（Status/AC/Phase vs 代码现实），merge 后记录已合入状态',
-  '触及 runtime 加载面的 PR 合入后必须分开声明 main 与 live runtime 状态；登记能力已加载时把普通 live=dormant 验收续办登记到原 work Task，能力未加载或登记失败时不得假报成功，且登记不授予停启权限',
-  '本地 squash + push + gh pr close（PR 显示 closed 不是 merged）',
-  '合入后擅自更新 runtime',
-  '用户可见或愿景变化的 feat close 前必须有独立愿景守护',
-  'PR merged + check:features 通过',
-  '用户可见或愿景变化的 feat 没有 @ 独立守护猫就直接 close',
+// Rule IDs bind runtime evidence and must survive copy edits. Text comes from the
+// canonical YAML and is checked by the generated-surface round trip below.
+const EXPECTED_PORTED_RULE_IDS = [
+  'kickoff-ac-checklist',
+  'kickoff-no-unconfirmed-implementation',
+  'impl-main-sync-before-worktree',
+  'impl-redis-6398-only',
+  'impl-risk-route-before-action',
+  'impl-user-journey-missing',
+  'impl-co-creation-docs-lane',
+  'impl-design-gate-evidence',
+  'impl-post-compact-recall-loss',
+  'impl-convention-graph-before-convention-edit',
+  'quality-gate-vision-coverage',
+  'quality-gate-risk-matched-evidence',
+  'fresh-context-not-approval',
+  'review-no-self-review',
+  'review-original-requirements',
+  'review-retrigger-after-p1',
+  'merge-github-squash-only',
+  'merge-cloud-review-sha-dedup',
+  'merge-feature-doc-truth',
+  'merge-runtime-activation-truth',
+  'merge-local-squash-close',
+  'merge-runtime-update-after-merge',
+  'completion-vision-guardian',
+  'completion-pr-merged-feature-check',
+  'completion-missing-guardian-handoff',
 ];
 
 const EXPECTED_PREDICATE_TYPES = new Set([
@@ -86,8 +88,8 @@ describe('SOP definition catalog', () => {
     const rules = development.stages.flatMap((stage) => [...stage.hardRules, ...stage.pitfalls]);
     assert.equal(rules.length, 25);
     assert.deepEqual(
-      rules.map((rule) => rule.text),
-      EXPECTED_PORTED_RULE_TEXTS,
+      rules.map((rule) => rule.id),
+      EXPECTED_PORTED_RULE_IDS,
     );
 
     for (const rule of rules) {
@@ -97,11 +99,11 @@ describe('SOP definition catalog', () => {
       assert.ok(EXPECTED_PREDICATE_TYPES.has(rule.predicate.type), `invalid predicate type: ${rule.text}`);
     }
 
-    const compressionPitfall = rules.find((rule) => rule.text === '压缩后忘了当前在做什么');
+    const compressionPitfall = rules.find((rule) => rule.id === 'impl-post-compact-recall-loss');
     assert.equal(compressionPitfall?.predicate.type, 'manual_only');
     assert.equal(compressionPitfall?.predicate.futureCandidate, 'trace_pattern_post_compact_recall');
 
-    const runtimePitfall = rules.find((rule) => rule.text === '合入后擅自更新 runtime');
+    const runtimePitfall = rules.find((rule) => rule.id === 'merge-runtime-update-after-merge');
     assert.equal(runtimePitfall?.predicate.type, 'command_sequence');
 
     const runtimeActivationRule = rules.find((rule) => rule.id === 'merge-runtime-activation-truth');

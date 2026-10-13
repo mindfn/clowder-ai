@@ -1,5 +1,17 @@
+import { randomUUID } from 'node:crypto';
+import type { UserMentionHandlingRef } from '../ports/MessageStore.js';
+import { messageIdempotencyScope } from '../ports/MessageStore.js';
+import { userMentionEvent } from '../user-mention-index.js';
 import { withOwnerUncertaintyIndex } from './owner-uncertainty-lua.js';
 import { readOwnerUncertainty } from './owner-uncertainty-read.js';
+import {
+  HANDLE_USER_MENTIONS_LUA,
+  MIGRATE_HANDLED_USER_MENTIONS_LUA,
+  READ_LAST_USER_MENTION_HANDLING_LUA,
+  RESTORE_USER_MENTION_LUA,
+  UNDO_USER_MENTIONS_LUA,
+} from './user-mention-handling-lua.js';
+import { READ_USER_MENTIONS_LUA, RESOLVE_USER_MENTION_LUA, withUserMentionIndex } from './user-mention-index-lua.js';
 /**
  * Redis Message Store
  * Redis-backed message storage with same interface as in-memory MessageStore.
@@ -19,6 +31,11 @@ import type { CatId, CustodyOfferV1, LifecycleStoredMessageMetadata } from '@cat
 import { custodyOfferV1Schema, isLifecycleStoredMessageMetadata } from '@cat-cafe/shared';
 import type { RedisClient } from '@cat-cafe/shared/utils';
 import { createModuleLogger } from '../../../../../infrastructure/logger.js';
+import {
+  type MessageReadObserver,
+  type MessageReadSpan,
+  measureMessageReadParser,
+} from '../../../../../infrastructure/message-read-diagnostics.js';
 import {
   assertQueueLedgerEntry,
   type QueueLedgerEntry,
@@ -398,7 +415,7 @@ redis.call('HSET', KEYS[1], 'pluginMessage', ARGV[1])
 return 1
 `;
 
-const COMMIT_LIFECYCLE_RESPONSE_TERMINAL_LUA = `
+const COMMIT_LIFECYCLE_RESPONSE_TERMINAL_LUA = withUserMentionIndex(`
 local messageKey = KEYS[1]
 if redis.call('EXISTS', messageKey) == 0 then return -1 end
 if redis.call('HGET', messageKey, 'recall') or redis.call('HGET', messageKey, '_tombstone') then return -2 end
@@ -484,14 +501,14 @@ if seq then
   redis.call('HSET', messageKey, 'visibilitySeq', tostring(seq))
 end
 return lifecycleNeedsWrite and 1 or 2
-`;
+`);
 
 /**
  * Atomically terminalize an existing response and admit its complete outbound
  * Queue fan-out. The caller supplies an exact pre-read ledger snapshot; a
  * concurrent claim/commit makes the script return -10 before either key moves.
  */
-const COMMIT_LIFECYCLE_RESPONSE_WITH_LEDGER_LUA = `
+const COMMIT_LIFECYCLE_RESPONSE_WITH_LEDGER_LUA = withUserMentionIndex(`
 local messageKey = KEYS[1]
 local rowsKey = KEYS[2]
 local orderKey = KEYS[3]
@@ -640,7 +657,7 @@ if lifecycleNeedsWrite and expectedMode == 'absent' then return 1 end
 if not lifecycleNeedsWrite and expectedMode == 'present' then return 2 end
 if not lifecycleNeedsWrite and expectedMode == 'absent' then return 3 end
 return 4
-`;
+`);
 
 /**
  * Atomically publishes a queued input and its adjacent pre-admission failure.
@@ -1182,8 +1199,185 @@ function parseCustodyOfferCasReceipt(result: unknown): CustodyOfferCasReceipt {
 
 /** Redis-backed canonical message and lifecycle store. */
 export class RedisMessageStore {
+  async getLastUserMentionHandling(userId: string) {
+    const result = (await this.redis.eval(
+      READ_LAST_USER_MENTION_HANDLING_LUA,
+      4,
+      `msg:user-requests:latest:${userId}`,
+      `msg:user-requests:pending:${userId}`,
+      `msg:user-requests:closed:${userId}`,
+      'msg:user-requests:last-handling',
+      userId,
+      this.keyPrefix,
+    )) as [string, number, number] | null;
+    return result ? { undoId: result[0], handled: Number(result[1]), remaining: Number(result[2]) } : null;
+  }
+
+  async getUserMentionStateRevisions(userId: string): Promise<Record<string, number>> {
+    const rows = await this.redis.hgetall(`msg:user-requests:revision:${userId}`);
+    return Object.fromEntries(
+      Object.entries(rows).map(([thread, raw]) => {
+        const revision = Number(raw);
+        if (!/^(0|[1-9]\d*)$/u.test(raw) || !Number.isSafeInteger(revision) || revision < 0)
+          throw new Error('Invalid mention revision');
+        return [thread, revision];
+      }),
+    );
+  }
+
+  async restoreUserMentionRequest(userId: string, threadId: string, messageId: string, expectedRevision: number) {
+    await this.listUserMentionRequests(userId);
+    await this.migrateHandledMentions(userId);
+    return (
+      Number(
+        await this.redis.eval(
+          RESTORE_USER_MENTION_LUA,
+          5,
+          `msg:user-requests:latest:${userId}`,
+          `msg:user-requests:pending:${userId}`,
+          `msg:user-requests:closed:${userId}`,
+          `msg:user-request-signals:${userId}:${threadId}`,
+          `msg:user-requests:handled:${userId}`,
+          this.keyPrefix,
+          userId,
+          threadId,
+          messageId,
+          String(expectedRevision),
+        ),
+      ) === 1
+    );
+  }
+
+  async initializeUserMentionInbox(startedAt: number): Promise<number> {
+    if (!Number.isSafeInteger(startedAt) || startedAt < 0) throw new Error('Invalid mention cutover');
+    await this.redis.set('msg:user-requests:cutover', String(startedAt), 'NX');
+    const saved = await this.redis.get('msg:user-requests:cutover');
+    const value = Number(saved);
+    if (saved === null || !Number.isSafeInteger(value) || value < 0) throw new Error('Invalid saved mention cutover');
+    let cursor = '0';
+    const prefix = `${this.keyPrefix}msg:user-requests:closed:`;
+    do {
+      const [next, keys] = await this.redis.scan(cursor, 'MATCH', `${prefix}*`, 'COUNT', 1000);
+      cursor = next;
+      for (const key of keys) {
+        if ((await this.redis.type(this.stripPrefix(key))) !== 'hash') continue;
+        const userId = key.slice(prefix.length);
+        await this.migrateHandledMentions(userId);
+      }
+    } while (cursor !== '0');
+    return value;
+  }
+
+  private async migrateHandledMentions(userId: string) {
+    await this.redis.eval(
+      MIGRATE_HANDLED_USER_MENTIONS_LUA,
+      3,
+      `msg:user-requests:closed:${userId}`,
+      `msg:user-requests:handled:${userId}`,
+      'msg:user-requests:handled-migrated',
+      this.keyPrefix,
+      userId,
+    );
+  }
+
+  async listHandledUserMentions(userId: string): Promise<StoredMessage[]> {
+    await this.migrateHandledMentions(userId);
+    const history = await this.redis.hgetall(`msg:user-requests:handled:${userId}`);
+    const messages = await Promise.all(Object.keys(history).map((id) => this.getById(id)));
+    return messages
+      .filter(
+        (m): m is StoredMessage =>
+          m !== null && m.userId === userId && m.threadId === history[m.id] && userMentionEvent(m) === 'request',
+      )
+      .sort((a, b) => b.id.localeCompare(a.id));
+  }
+
+  async handleUserMentionRequests(userId: string, refs: UserMentionHandlingRef[]) {
+    const undoId = randomUUID();
+    const handled = await this.redis.eval(
+      HANDLE_USER_MENTIONS_LUA,
+      6,
+      `msg:user-requests:latest:${userId}`,
+      `msg:user-requests:pending:${userId}`,
+      `msg:user-requests:closed:${userId}`,
+      `msg:user-requests:undo:${userId}:${undoId}`,
+      `msg:user-requests:handled:${userId}`,
+      `msg:user-requests:last-handling`,
+      JSON.stringify(refs),
+      this.keyPrefix,
+      userId,
+      undoId,
+    );
+    return handled === null ? null : { handled: Number(handled), undoId };
+  }
+
+  async undoUserMentionHandling(userId: string, undoId: string) {
+    const restored = await this.redis.eval(
+      UNDO_USER_MENTIONS_LUA,
+      6,
+      `msg:user-requests:latest:${userId}`,
+      `msg:user-requests:pending:${userId}`,
+      `msg:user-requests:closed:${userId}`,
+      `msg:user-requests:undo:${userId}:${undoId}`,
+      `msg:user-requests:handled:${userId}`,
+      `msg:user-requests:last-handling`,
+      this.keyPrefix,
+      userId,
+    );
+    return restored === null ? null : { restored: Number(restored) };
+  }
+
+  async listUserMentionRequests(userId: string): Promise<StoredMessage[]> {
+    let result: string[];
+    do {
+      result = (await this.redis.eval(
+        READ_USER_MENTIONS_LUA,
+        5,
+        MessageKeys.user(userId),
+        `msg:user-requests:latest:${userId}`,
+        `msg:user-requests:pending:${userId}`,
+        `msg:user-requests:version:${userId}`,
+        `msg:user-requests:closed:${userId}`,
+        this.keyPrefix,
+        userId,
+      )) as string[];
+    } while (result[0] === 'more');
+    const ids = result.slice(1);
+    const messages = await Promise.all(ids.map((id) => this.getById(id)));
+    return messages
+      .filter((message): message is StoredMessage => message !== null && message.userId === userId)
+      .sort((a, b) => b.id.localeCompare(a.id));
+  }
+
+  async resolveUserMentionRequest(
+    userId: string,
+    threadId: string,
+    expectedMessageId: string,
+    expectedRevision?: number,
+  ): Promise<boolean> {
+    return (
+      Number(
+        await this.redis.eval(
+          RESOLVE_USER_MENTION_LUA,
+          6,
+          `msg:user-requests:latest:${userId}`,
+          `msg:user-requests:pending:${userId}`,
+          `msg:user-requests:closed:${userId}`,
+          `msg:user-request-signals:${userId}:${threadId}`,
+          `msg:user-requests:handled:${userId}`,
+          MessageKeys.detail(expectedMessageId),
+          threadId,
+          expectedMessageId,
+          expectedRevision === undefined ? '' : String(expectedRevision),
+          userId,
+        ),
+      ) === 1
+    );
+  }
+
   onTimelineChanged?: MessageAppendListener;
   private readonly redis: RedisClient;
+  private readonly readDiagnostics?: MessageReadObserver;
   /** null means no expiration/pruning (persistent retention). */
   private readonly ttlSeconds: number | null;
   /** F102 KD-34: Listener called after every successful append (fire-and-forget) */
@@ -1194,9 +1388,11 @@ export class RedisMessageStore {
     options?: {
       ttlSeconds?: number;
       onAppend?: MessageAppendListener;
+      readDiagnostics?: MessageReadObserver;
     },
   ) {
     this.redis = redis;
+    this.readDiagnostics = options?.readDiagnostics;
     this.onAppend = options?.onAppend;
     const raw = options?.ttlSeconds ?? DEFAULT_TTL_SECONDS;
     if (!Number.isFinite(raw) || raw <= 0) {
@@ -1523,7 +1719,7 @@ export class RedisMessageStore {
     const msg = canonicalizeAppendMessageInput(input);
     const threadId = msg.threadId ?? DEFAULT_THREAD_ID;
     const idempotencyIndexKey = msg.idempotencyKey
-      ? MessageKeys.idempotency(msg.userId, threadId, msg.idempotencyKey)
+      ? MessageKeys.idempotency(msg.userId, messageIdempotencyScope(msg), msg.idempotencyKey)
       : null;
 
     // Keep the common replay path ahead of ID generation; the Lua check below
@@ -1915,14 +2111,29 @@ export class RedisMessageStore {
    * Convert a Redis hash (Record<string, string> from HGETALL) into a StoredMessage.
    * Shared by getById (direct HGETALL) and parseLuaHgetall (Lua-returned HGETALL).
    */
-  private hydrateHash(data: Record<string, string>): StoredMessage | null {
+  private hydrateHash(data: Record<string, string>, span?: MessageReadSpan): StoredMessage | null {
     if (!data || !data.id) return null;
 
-    const contentBlocks = safeParseContentBlocks(data.contentBlocks);
+    const contentBlocks = span
+      ? measureMessageReadParser(span, 'contentBlocks', data.contentBlocks?.length ?? 0, () =>
+          safeParseContentBlocks(data.contentBlocks),
+        )
+      : safeParseContentBlocks(data.contentBlocks);
     const lifecycle = safeParseLifecycleMetadata(data.lifecycle);
-    const toolEvents = safeParseToolEvents(data.toolEvents);
+    const toolEvents = span
+      ? measureMessageReadParser(span, 'toolEvents', data.toolEvents?.length ?? 0, () =>
+          safeParseToolEvents(data.toolEvents),
+        )
+      : safeParseToolEvents(data.toolEvents);
     const parsedMetadata = safeParseMetadata(data.metadata);
-    const extraHydration = hydrateExtra(data.extra, data.pluginMessage, data.custodyOfferV1);
+    const extraHydration = span
+      ? measureMessageReadParser(
+          span,
+          'extraHydration',
+          (data.extra?.length ?? 0) + (data.pluginMessage?.length ?? 0) + (data.custodyOfferV1?.length ?? 0),
+          () => hydrateExtra(data.extra, data.pluginMessage, data.custodyOfferV1),
+        )
+      : hydrateExtra(data.extra, data.pluginMessage, data.custodyOfferV1);
     const sourceField = parseConnectorSourceField(data.source);
     const parsedSource = sourceField.kind === 'valid' ? sourceField.source : undefined;
     const parsedRecall = safeParseMessageRecall(data.recall);
@@ -3177,6 +3388,7 @@ export class RedisMessageStore {
     });
     msg.deletedAt = now;
     msg.deletedBy = deletedBy;
+    notifyMessageTimelineChange(this, msg);
     return msg;
   }
 
@@ -3209,6 +3421,7 @@ export class RedisMessageStore {
     msg.deletedAt = now;
     msg.deletedBy = deletedBy;
     msg._tombstone = true;
+    notifyMessageTimelineChange(this, msg);
     return msg;
   }
 
@@ -3219,8 +3432,10 @@ export class RedisMessageStore {
   async restore(id: string): Promise<StoredMessage | null> {
     const msg = await this.getById(id);
     if (!msg || !msg.deletedAt || msg._tombstone) return null;
-    const result = await this.redis.eval(RESTORE_SOFT_DELETED_LUA, 1, MessageKeys.detail(id));
-    return result === 0 ? null : this.parseLuaHgetall(result);
+    const result = await this.redis.eval(withUserMentionIndex(RESTORE_SOFT_DELETED_LUA), 1, MessageKeys.detail(id));
+    const restored = result === 0 ? null : this.parseLuaHgetall(result);
+    if (restored) notifyMessageTimelineChange(this, restored);
+    return restored;
   }
 
   /**
@@ -3252,7 +3467,9 @@ export class RedisMessageStore {
     const {
       pluginMessage: _stripPlugin,
       custodyOfferV1: _stripCustody,
+      entrustedWorkHumanTerminalReceiptV1: _stripEntrustedWorkTerminal,
       evolutionPreparationSubmissionV1: _stripPreparation,
+      dotAsk: _stripDotAsk,
       deliveryBoundary: _stripBoundary,
       collectiveOwnerAdmissionV1: _stripCollectiveAdmission,
       collectiveWorkInvocationV1: _stripCollectiveInvocation,
@@ -3341,14 +3558,22 @@ export class RedisMessageStore {
     const { pluginMessage } = splitMessageExtra(augmented.extra);
     if (patch.extra && augmented.extra) fields.extra = serializeHostExtra(augmented.extra);
     if (Object.keys(fields).length > 0) {
-      const pipeline = this.redis.multi();
-      pipeline.hset(MessageKeys.detail(id), fields);
-      if (pluginMessage) {
-        pipeline.hsetnx(MessageKeys.detail(id), 'pluginMessage', JSON.stringify(pluginMessage));
-      }
-      await pipeline.exec();
+      await this.redis.eval(
+        withUserMentionIndex(`
+        local fields = cjson.decode(ARGV[1])
+        for field, value in pairs(fields) do redis.call('HSET', KEYS[1], field, value) end
+        if ARGV[2] ~= '' then redis.call('HSETNX', KEYS[1], 'pluginMessage', ARGV[2]) end
+        return 1
+      `),
+        1,
+        MessageKeys.detail(id),
+        JSON.stringify(fields),
+        pluginMessage ? JSON.stringify(pluginMessage) : '',
+      );
     }
-    return (await this.getById(id)) ?? augmented;
+    const updated = (await this.getById(id)) ?? augmented;
+    if (patch.mentionsUser) notifyMessageTimelineChange(this, updated);
+    return updated;
   }
 
   async commitLifecycleResponseTerminal(
@@ -3813,29 +4038,53 @@ export class RedisMessageStore {
     for (const id of ids) {
       pipeline.hgetall(MessageKeys.detail(id));
     }
-    const results = await pipeline.exec();
-    if (!results) {
-      if (options?.strict) throw new Error('Owner uncertainty hydration unavailable');
-      return [];
+    let span: MessageReadSpan | undefined;
+    try {
+      span = this.readDiagnostics?.beginBatch(ids.length);
+    } catch {
+      /* optional diagnostics */
     }
-
-    if (options?.strict && results.length !== ids.length) throw new Error('Owner uncertainty hydration incomplete');
-    const messages: StoredMessage[] = [];
-    for (const [err, data] of results) {
-      if (err || !data || typeof data !== 'object' || (options?.strict && Array.isArray(data))) {
-        if (options?.strict) throw new Error('Owner uncertainty hydration failed');
-        continue;
+    let hydratedRows = 0;
+    let readStatus: 'ok' | 'unavailable' | 'failed' = 'failed';
+    try {
+      const results = await pipeline.exec();
+      try {
+        span?.decodeStarted();
+      } catch {
+        /* optional diagnostics */
       }
-      const d = data as Record<string, string>;
-      if (!d.id) continue;
+      if (!results) {
+        if (options?.strict) throw new Error('Owner uncertainty hydration unavailable');
+        readStatus = 'unavailable';
+        return [];
+      }
 
-      const message = this.hydrateHash(d);
-      if (!message) continue;
+      if (options?.strict && results.length !== ids.length) throw new Error('Owner uncertainty hydration incomplete');
+      const messages: StoredMessage[] = [];
+      for (const [err, data] of results) {
+        if (err || !data || typeof data !== 'object' || (options?.strict && Array.isArray(data))) {
+          if (options?.strict) throw new Error('Owner uncertainty hydration failed');
+          continue;
+        }
+        const d = data as Record<string, string>;
+        if (!d.id) continue;
 
-      // ADR-008 D3: skip soft-deleted messages unless includeDeleted
-      if (message.deletedAt && !options?.includeDeleted) continue;
-      messages.push(message);
+        const message = this.hydrateHash(d, span);
+        if (!message) continue;
+
+        // ADR-008 D3: skip soft-deleted messages unless includeDeleted
+        if (message.deletedAt && !options?.includeDeleted) continue;
+        messages.push(message);
+      }
+      hydratedRows = messages.length;
+      readStatus = 'ok';
+      return messages;
+    } finally {
+      try {
+        span?.end(hydratedRows, readStatus);
+      } catch {
+        /* original read result/error wins */
+      }
     }
-    return messages;
   }
 }

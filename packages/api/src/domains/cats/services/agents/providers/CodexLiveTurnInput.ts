@@ -88,9 +88,14 @@ export class CodexLiveTurnInput {
   ): { submission: Submission; receipt: Promise<string> } {
     if (!this.deps.isOpen() || signal.aborted) throw new LiveContextCancelledError();
     if (
-      !['inbox_notice', 'meeting_context', 'recovery_context', 'page_action_result', 'owner_voice_context'].includes(
-        contextKind,
-      ) ||
+      ![
+        'inbox_notice',
+        'meeting_context',
+        'recovery_context',
+        'page_action_result',
+        'owner_voice_context',
+        'late_result_notice',
+      ].includes(contextKind) ||
       sourceRefs.length === 0 ||
       sourceRefs.length > 32
     )

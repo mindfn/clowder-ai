@@ -13,6 +13,11 @@
 
 import type { ActionFreshnessResolution } from './ActionSubjectTruthResolver.js';
 import type { ActionSuccessorAdmissionInput } from './ActionSuccessorAdmissionContract.js';
+import {
+  currentDelegateLineageGenerationHasExactEntry,
+  delegateLineageHasProposalAnchor,
+  delegateLineageHistoryMatchesCanonicalOwner,
+} from './action-successor-delegate-lineage.js';
 import type { ActionSuccessorLease } from './action-successor-state-machine.js';
 
 export type ActionSuccessorStandingMismatchDimension = 'owner' | 'target_thread' | 'tenant';
@@ -117,23 +122,24 @@ export function assertActionSuccessorStanding(
 
 /**
  * A proposal's preferredCats authorize the first writer, not a permanent veto
- * over the Task owner's later same-child recovery. Once the exact approved
- * delegate returned the root generation, later same-child generations may
- * continue after either an explicit return or a server-recorded terminal carrier.
+ * over the Task owner's later same-child recovery. A returned generation may
+ * also move to another child only when the incoming cat/thread pair has its own
+ * independently approved proposal for the same current Task and scope.
  *
  * The old delegate match is deliberately re-resolved from current Task truth:
  * proposal withdrawal/tampering, owner drift, tenant drift, child drift, or any
  * of the five development-scope fields changing removes the match and keeps the
- * successor fail-closed.
+ * successor fail-closed. The returned child (or current active child segment)
+ * must retain a current proposal anchor in both lease evidence and durable
+ * holder/return/replacement lineage; either one alone grants no authority.
  */
 export function assertDelegateLineageSuccessorStanding(
-  current: Pick<ActionSuccessorLease, 'returnTransitions'>,
+  current: ActionSuccessorLease,
   input: ReturnedDelegateSuccessorInput,
   freshness: Extract<ActionFreshnessResolution, { status: 'verified' }>,
 ): MatchedStandingAuthority {
   const transition = current.returnTransitions.at(-1);
-  const originalTransition = current.returnTransitions[0];
-  if (!transition?.rejectingThreadId || !originalTransition?.rejectingThreadId) {
+  if (!transition?.rejectingThreadId) {
     throw new ActionSuccessorStandingError('insufficient', 'approved delegate return lineage is unavailable');
   }
 
@@ -148,42 +154,55 @@ export function assertDelegateLineageSuccessorStanding(
       ['owner', 'target_thread', 'tenant'],
     );
   }
-  if (input.targetThreadId !== transition.rejectingThreadId) {
-    throw new ActionSuccessorStandingError(
-      'mismatch',
-      'returned delegate successor must remain in the approved execution child',
-      ['target_thread'],
-    );
-  }
 
-  const lineageMatches = current.returnTransitions.every(
-    (entry) =>
-      entry.rejectingThreadId === transition.rejectingThreadId &&
-      entry.predecessorCatId === input.actorCatId &&
-      entry.predecessorThreadId === input.sourceThreadId,
-  );
-  if (!lineageMatches) {
+  const ownerRoute = { ownerCatId: input.actorCatId, ownerThreadId: input.sourceThreadId };
+  if (!delegateLineageHistoryMatchesCanonicalOwner(current, ownerRoute)) {
     throw new ActionSuccessorStandingError(
       'mismatch',
-      'returned delegate lineage must remain in one approved child and canonical owner route',
+      'returned delegate lineage must remain on the canonical owner route',
       ['owner', 'target_thread'],
     );
   }
 
-  const originalDelegate = freshness.approvedDelegates?.find(
-    (delegate) =>
-      delegate.catId === originalTransition.rejectingCatId &&
-      delegate.threadId === originalTransition.rejectingThreadId,
-  );
-  if (!originalDelegate) {
+  const isReturnedGeneration =
+    transition.toGeneration === current.generation &&
+    current.holderCatIds.length === 1 &&
+    current.holderCatIds[0] === transition.predecessorCatId &&
+    current.holderThreadId === transition.predecessorThreadId;
+  const currentChildThreadId = isReturnedGeneration ? transition.rejectingThreadId : current.holderThreadId;
+  const currentChildRoute = { ...ownerRoute, childThreadId: currentChildThreadId };
+  if (!isReturnedGeneration && !currentDelegateLineageGenerationHasExactEntry(current, currentChildRoute)) {
     throw new ActionSuccessorStandingError(
       'mismatch',
-      'the returned delegate no longer has current Task, scope, tenant, and child standing',
+      'the active delegate has no exact entry edge in the canonical current-child lineage segment',
+      ['owner', 'target_thread'],
+    );
+  }
+
+  const currentChildDelegate = freshness.approvedDelegates?.find(
+    (delegate) => delegate.threadId === currentChildThreadId && delegateLineageHasProposalAnchor(current, delegate),
+  );
+  if (!currentChildDelegate) {
+    throw new ActionSuccessorStandingError(
+      'mismatch',
+      'the returned execution child no longer has current Task, scope, tenant, and proposal standing',
       ['owner', 'target_thread'],
     );
   }
   if (input.holderCatIds.length !== 1 || !input.holderCatIds[0]?.trim()) {
     throw new ActionSuccessorStandingError('mismatch', 'returned delegate successor must name one holder', ['owner']);
   }
-  return { kind: 'returned_delegate_successor', delegateEvidenceRef: originalDelegate.evidenceRef };
+  if (input.targetThreadId === currentChildThreadId) {
+    return { kind: 'returned_delegate_successor', delegateEvidenceRef: currentChildDelegate.evidenceRef };
+  }
+
+  const targetDelegate = findApprovedDelegate(input, freshness);
+  if (!targetDelegate) {
+    throw new ActionSuccessorStandingError(
+      'mismatch',
+      'moving a returned successor to another child requires an exact independently approved cat and child pair',
+      ['owner', 'target_thread'],
+    );
+  }
+  return { kind: 'returned_delegate_successor', delegateEvidenceRef: targetDelegate.evidenceRef };
 }

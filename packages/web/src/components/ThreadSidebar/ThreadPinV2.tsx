@@ -4,7 +4,7 @@ import { AppTooltip } from '../AppTooltip';
 import { useShellCopy } from '../shell/shell-copy';
 import { threadSignalsCopy } from './thread-signals.shell-copy';
 
-/** The same filled mark on pinned Groups and conversations; an empty mark offers pinning. */
+/** A filled mark identifies a pinned conversation; an empty mark offers pinning. */
 export function SidebarPinIcon({ pinned }: { pinned: boolean }) {
   return (
     <svg
@@ -33,37 +33,41 @@ export function ThreadPinV2({
   onToggle?: (id: string, pinned: boolean) => void | Promise<void>;
 }) {
   const copy = useShellCopy(threadSignalsCopy);
-  if (id === 'default' || (!pinned && !onToggle)) return null;
   const style = { color: pinned ? 'var(--shell-primary)' : 'var(--shell-muted)' };
-  if (!onToggle)
-    return (
-      <span
-        role="img"
-        aria-label={copy.pinned}
-        data-testid="thread-pin-mark"
-        className="inline-flex h-5 w-4 flex-none items-center justify-center"
-        style={style}
-      >
-        <SidebarPinIcon pinned />
-      </span>
-    );
+  const slotClass = 'inline-flex h-5 w-4 flex-none items-center justify-center';
+  if (id === 'default' || (!pinned && !onToggle))
+    return <span data-sidebar-pin-slot aria-hidden="true" className={slotClass} />;
   const label = pinned ? copy.unpin : copy.pin;
   return (
-    <AppTooltip label={label} side="right">
-      <button
-        type="button"
-        aria-label={`${label} ${title}`}
-        aria-pressed={pinned}
-        data-testid="thread-pin-button"
-        className={`shell-focusable inline-flex h-5 w-4 flex-none items-center justify-center rounded-sm ${pinned ? '' : 'opacity-0 group-hover:opacity-100 group-focus-within:opacity-100 [@media(hover:none)]:opacity-100'}`}
-        style={style}
-        onClick={(event) => {
-          event.stopPropagation();
-          void onToggle(id, !pinned);
-        }}
-      >
-        <SidebarPinIcon pinned={pinned} />
-      </button>
-    </AppTooltip>
+    <span data-sidebar-pin-slot className={slotClass}>
+      {!onToggle ? (
+        <span
+          role="img"
+          aria-label={copy.pinned}
+          data-testid="thread-pin-mark"
+          className="inline-flex h-5 w-4 flex-none items-center justify-center"
+          style={style}
+        >
+          <SidebarPinIcon pinned />
+        </span>
+      ) : (
+        <AppTooltip label={label} side="right">
+          <button
+            type="button"
+            aria-label={`${label} ${title}`}
+            aria-pressed={pinned}
+            data-testid="thread-pin-button"
+            className={`shell-focusable inline-flex h-5 w-4 flex-none items-center justify-center rounded-sm ${pinned ? '' : 'opacity-0 group-hover:opacity-100 group-focus-within:opacity-100 [@media(hover:none)]:opacity-100'}`}
+            style={style}
+            onClick={(event) => {
+              event.stopPropagation();
+              void onToggle(id, !pinned);
+            }}
+          >
+            <SidebarPinIcon pinned={pinned} />
+          </button>
+        </AppTooltip>
+      )}
+    </span>
   );
 }

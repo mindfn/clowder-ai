@@ -88,6 +88,7 @@ export type SessionRecordPatch = Partial<
   Pick<
     SessionRecord,
     | 'cliSessionId'
+    | 'externalImport'
     | 'workingDirectory'
     | 'workspaceFingerprint'
     | 'status'
@@ -127,6 +128,8 @@ export type RestoreActiveSessionResult =
   | { status: 'target_missing' }
   | { status: 'target_not_restorable'; targetStatus: SessionRecord['status'] }
   | { status: 'active_changed'; activeSessionId?: string };
+
+export type CliSessionBinding = Pick<SessionRecord, 'id' | 'cliSessionId' | 'threadId' | 'catId' | 'userId'>;
 
 export interface ISessionChainStore {
   /** Create SessionRecord (seq auto-increments, status=active) */
@@ -170,6 +173,10 @@ export interface ISessionChainStore {
   update(id: string, patch: SessionRecordPatch): SessionRecord | null | Promise<SessionRecord | null>;
   /** Look up by CLI session ID */
   getByCliSessionId(cliSessionId: string): SessionRecord | null | Promise<SessionRecord | null>;
+  /** Bounded list admission reads only the CLI index and claim coordinates, never chains. */
+  getCliSessionBindings(
+    cliSessionIds: readonly string[],
+  ): Map<string, CliSessionBinding> | Promise<Map<string, CliSessionBinding>>;
   /**
    * F198 Bug #3: Look up by chainKey (stable bg conversation anchor). Returns
    * the record regardless of status (unlike getActive) so a sealed record is
@@ -567,6 +574,7 @@ export class SessionChainStore implements ISessionChainStore {
       else if (patch.hybridProgress !== undefined) record.hybridProgress = patch.hybridProgress;
     }
     if (patch.continuityCapsule !== undefined) record.continuityCapsule = patch.continuityCapsule;
+    if (patch.externalImport !== undefined) record.externalImport = patch.externalImport;
     if (patch.consecutiveRestoreFailures !== undefined)
       record.consecutiveRestoreFailures = patch.consecutiveRestoreFailures;
     if (patch.latestResumeSessionId !== undefined) record.latestResumeSessionId = patch.latestResumeSessionId;
@@ -580,6 +588,24 @@ export class SessionChainStore implements ISessionChainStore {
     const id = this.cliIndex.get(cliSessionId);
     if (!id) return null;
     return this.records.get(id) ?? null;
+  }
+
+  getCliSessionBindings(cliSessionIds: readonly string[]): Map<string, CliSessionBinding> {
+    const bindings = new Map<string, CliSessionBinding>();
+    for (const cliSessionId of new Set(cliSessionIds)) {
+      const id = this.cliIndex.get(cliSessionId);
+      const record = id ? this.records.get(id) : undefined;
+      if (record?.cliSessionId === cliSessionId) {
+        bindings.set(cliSessionId, {
+          id: record.id,
+          cliSessionId,
+          threadId: record.threadId,
+          catId: record.catId,
+          userId: record.userId,
+        });
+      }
+    }
+    return bindings;
   }
 
   getByChainKey(chainKey: string): SessionRecord | null {

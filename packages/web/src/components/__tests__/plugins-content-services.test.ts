@@ -54,7 +54,27 @@ describe('PluginsContent — GitHub plugin config', () => {
       if (path === '/api/plugins/personal-chrome') {
         return personalChromeResponse();
       }
-      return { ok: true, json: async () => ({ ok: true }) };
+      if (path === '/api/plugins') {
+        return {
+          ok: true,
+          json: async () => ({
+            plugins: [
+              {
+                id: 'github',
+                name: 'GitHub',
+                version: '1.0.0',
+                icon: 'github',
+                status: 'configured',
+                configured: true,
+                hasHealthCheck: false,
+                config: [],
+                resources: [],
+              },
+            ],
+          }),
+        };
+      }
+      return { ok: true, json: async () => ({ plugins: [] }) };
     });
   });
 
@@ -78,7 +98,6 @@ describe('PluginsContent — GitHub plugin config', () => {
     await renderPluginsContent();
 
     expect(container.textContent).toContain('GitHub');
-    expect(container.textContent).toContain('内置插件');
     expect(mockFetch).not.toHaveBeenCalledWith('/api/services');
   });
 

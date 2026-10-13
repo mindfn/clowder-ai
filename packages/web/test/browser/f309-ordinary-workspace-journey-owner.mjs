@@ -4,6 +4,7 @@ import path from 'node:path';
 import { test } from 'node:test';
 import { ensureWorkspaceOpen } from './f307-workspace-open.mjs';
 import { routeThroughRealOwner, startRealWorkspaceOwner } from './f309-ordinary-workspace-real-owner.mjs';
+import { openAnnotationSave } from './fixtures/f309-artwork-controls.mjs';
 
 export function registerOrdinaryOwnerJourney(suite) {
   test(
@@ -57,7 +58,7 @@ export function registerOrdinaryOwnerJourney(suite) {
         await page.mouse.click(image.x + image.width * 0.45, image.y + image.height * 0.4);
         await page.getByPlaceholder('写下这条批注…').fill('普通 PNG：这处评论保留在作品现场。');
         await surface.screenshot({ path: `${evidence}/03-comment.png` });
-        await page.getByRole('button', { name: '保存批注', exact: true }).click();
+        await (await openAnnotationSave(page)).click();
         await page.getByTestId('review-canvas-annotation-mark').waitFor();
         await page.getByTestId('review-canvas-annotation-mark').click();
         await page.getByText('普通 PNG：这处评论保留在作品现场。', { exact: true }).waitFor();

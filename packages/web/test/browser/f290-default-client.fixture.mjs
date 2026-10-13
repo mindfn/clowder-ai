@@ -26,16 +26,16 @@ export async function verifyStandaloneClient({ context, evidence, seeded, servic
       body: await readFile(path.join(root, 'packages/web/public/avatars/owner.jpg')),
     }),
   );
-  await context.addInitScript(
-    ({ origin, token }) => {
-      if (location.origin === origin) sessionStorage.setItem(`collective-session:${origin}`, token);
-    },
-    { origin: serviceUrl, token: seeded.owner.sessionToken },
-  );
   const page = await context.newPage();
   const errors = [];
   page.on('pageerror', (error) => errors.push(error.message));
   await page.goto(serviceUrl, { waitUntil: 'networkidle' });
+  const storageKey = `collective-session:${serviceUrl}`;
+  await page.evaluate(({ key, token }) => sessionStorage.setItem(key, token), {
+    key: storageKey,
+    token: seeded.owner.sessionToken,
+  });
+  await page.reload({ waitUntil: 'networkidle' });
   const home = page.getByTestId('collective-home');
   await home.getByRole('heading', { name: '猫咖共创组', exact: true }).waitFor();
   await home.getByText('这里还没有公共工作动态。', { exact: true }).waitFor();
@@ -45,6 +45,32 @@ export async function verifyStandaloneClient({ context, evidence, seeded, servic
   );
   assert.equal(await page.evaluate(() => document.documentElement.scrollWidth > innerWidth), false);
   await page.screenshot({ path: path.join(evidence, 'default-home-1440.png'), fullPage: true });
+
+  const rejectMeDuringRestart = async (route) =>
+    route.fulfill({
+      status: 503,
+      contentType: 'application/json',
+      body: JSON.stringify({ error: { code: 'INTERNAL', message: 'Collective 正在重新启动' } }),
+    });
+  await page.route(`${serviceUrl}/api/me`, rejectMeDuringRestart);
+  await page.reload({ waitUntil: 'networkidle' });
+  await page.getByRole('heading', { name: '现在还进不去', exact: true }).waitFor();
+  assert.equal(
+    await page.evaluate((key) => sessionStorage.getItem(key), storageKey),
+    seeded.owner.sessionToken,
+    'a temporary Service outage must not erase the still-valid browser session',
+  );
+  await page.screenshot({ path: path.join(evidence, 'default-session-recovery-unavailable.png'), fullPage: true });
+  await page.unroute(`${serviceUrl}/api/me`, rejectMeDuringRestart);
+  await page.reload({ waitUntil: 'networkidle' });
+  await home.getByRole('heading', { name: '猫咖共创组', exact: true }).waitFor();
+  await page.screenshot({ path: path.join(evidence, 'default-session-recovery-restored.png'), fullPage: true });
+  await context.addInitScript(
+    ({ origin, token }) => {
+      if (location.origin === origin) sessionStorage.setItem(`collective-session:${origin}`, token);
+    },
+    { origin: serviceUrl, token: seeded.owner.sessionToken },
+  );
   await page
     .getByRole('navigation', { name: '频道', exact: true })
     .getByRole('button', { name: /产品方向/ })
@@ -56,7 +82,9 @@ export async function verifyStandaloneClient({ context, evidence, seeded, servic
   assert.equal(new URL(page.url()).searchParams.get('channelId'), '产品方向');
   assert.equal(new URL(page.url()).searchParams.has('experienceGate'), false, 'default entry must not require a gate');
   assert.equal(await page.getByText('演示数据', { exact: false }).count(), 0);
+  await page.locator('details.collective-menu > summary').click();
   await page.getByText('1 个 Café · 4 位成员', { exact: true }).waitFor();
+  await page.locator('details.collective-menu > summary').click();
   await page.screenshot({ path: path.join(evidence, 'default-channel-1440.png'), fullPage: true });
   await page.getByRole('button', { name: /1 条回复/ }).click();
   await page.getByRole('complementary', { name: '话题', exact: true }).waitFor();
@@ -87,8 +115,17 @@ export async function verifyStandaloneClient({ context, evidence, seeded, servic
   assert.equal(await page.evaluate(() => document.documentElement.scrollWidth > innerWidth), false);
   await page.screenshot({ path: path.join(evidence, 'default-channel-mobile.png'), fullPage: true });
   await page.emulateMedia({ colorScheme: 'dark' });
-  await page.screenshot({ path: path.join(evidence, 'default-channel-dark.png'), fullPage: true });
+  assert.equal(
+    await page.evaluate(() => document.documentElement.getAttribute('data-theme')),
+    'light',
+    'a standalone Client keeps its honest light default until a trusted Host supplies appearance',
+  );
+  await page.screenshot({
+    path: path.join(evidence, 'default-channel-standalone-os-dark-stays-light.png'),
+    fullPage: true,
+  });
   await page.getByRole('button', { name: '频道导航', exact: true }).click();
+  await page.locator('details.collective-menu > summary').click();
   await page.getByRole('button', { name: '打开猫咖共创组首页', exact: true }).click();
   await page.getByTestId('collective-home').waitFor();
   assert.equal(await page.evaluate(() => document.documentElement.scrollWidth > innerWidth), false);
@@ -118,7 +155,9 @@ export async function openNativeOwnerClient({ context, evidence, nativeOwner, se
   });
   const nativeErrors = [];
   host.on('pageerror', (error) => nativeErrors.push(error.message));
-  await host.goto(`${nativeOwner.hostUrl}/collective`, { waitUntil: 'networkidle' });
+  // The Host keeps live connections open; the exact bridge-ready assertion below is
+  // the product signal, while networkidle can remain false on a healthy page.
+  await host.goto(`${nativeOwner.hostUrl}/collective`, { waitUntil: 'domcontentloaded' });
   await host.waitForFunction(
     ({ serviceInstanceId, collectiveId }) =>
       globalThis.__f290WorldDirectories?.some(
@@ -148,13 +187,13 @@ export async function openNativeOwnerClient({ context, evidence, nativeOwner, se
     .getByRole('navigation', { name: '频道', exact: true })
     .getByRole('button', { name: /产品方向/ })
     .click();
-  await embedded.getByRole('button', { name: '我的 Café', exact: true }).waitFor();
+  await embedded.getByRole('button', { name: '我的猫', exact: true }).waitFor();
   await host.screenshot({ path: path.join(evidence, 'default-embedded-channel-1440.png'), fullPage: true });
-  await embedded.getByRole('button', { name: '我的 Café', exact: true }).click();
-  const cafe = host.getByRole('complementary', { name: '我的 Café', exact: true });
-  await cafe.getByText('正在本频道参与', { exact: true }).first().waitFor();
+  await embedded.getByRole('button', { name: '我的猫', exact: true }).click();
+  const cafe = host.getByRole('complementary', { name: '我的猫', exact: true });
+  await cafe.getByText('已加入', { exact: true }).first().waitFor();
   assert.equal(await cafe.getByText('带它加入', { exact: true }).count(), 0);
-  assert.equal(await cafe.getByText('暂时无法公共参与', { exact: true }).count(), 1);
+  assert.equal(await cafe.getByText('这种接入方式暂时不能参与', { exact: true }).count(), 1);
   const route = await nativeOwner.connector.getHostRoute(nativeOwner.connection.connectionId);
   assert.ok(route);
   assert.deepEqual(Object.keys(route.channelRoutes).sort(), ['general', '产品方向', '插件共建']);
@@ -166,15 +205,47 @@ export async function openNativeOwnerClient({ context, evidence, nativeOwner, se
     false,
     'automatic public participation never grants private execution',
   );
-  const listening = await nativeOwner.connector.setStandingInterest(
+  const interested = await nativeOwner.connector.setStandingInterest(
     nativeOwner.connection.connectionId,
     { catId: nativeOwner.cat.id, channelId: '产品方向', state: 'listen' },
     route.attentionRevision,
   );
+  await cafe.getByRole('button', { name: '关闭我的猫', exact: true }).click();
+  await embedded.locator('details.channel-menu > summary').click();
+  await embedded.getByRole('button', { name: /我家的猫在这个频道/ }).click();
+  await cafe.getByRole('heading', { name: '# 产品方向', exact: true }).waitFor();
+  const enableListening = host.waitForResponse(
+    (response) => response.url().endsWith('/listening') && response.request().method() === 'POST',
+  );
+  await cafe.getByLabel('留意所有消息', { exact: true }).click();
+  assert.equal((await enableListening).status(), 200);
+  const dutyCat = cafe.getByLabel('换一只留意消息的猫', { exact: true });
+  await dutyCat.waitFor();
+  if ((await dutyCat.inputValue()) !== nativeOwner.cat.id) {
+    const changeDutyCat = host.waitForResponse(
+      (response) => response.url().endsWith('/listening') && response.request().method() === 'POST',
+    );
+    await dutyCat.selectOption(nativeOwner.cat.id);
+    assert.equal((await changeDutyCat).status(), 200);
+  }
+  const listening = await poll(async () => {
+    const candidate = await nativeOwner.connector.getHostRoute(nativeOwner.connection.connectionId);
+    return candidate.channelListening.产品方向?.dutyCatId === nativeOwner.cat.id ? candidate : undefined;
+  });
+  const mentionOnly = host.waitForResponse(
+    (response) => response.url().endsWith('/listening') && response.request().method() === 'POST',
+  );
+  await cafe.getByLabel('仅在被 @ 时回应', { exact: true }).click();
+  assert.equal((await mentionOnly).status(), 200);
+  const finalListening = await poll(async () => {
+    const candidate = await nativeOwner.connector.getHostRoute(nativeOwner.connection.connectionId);
+    return candidate.channelListening.产品方向?.mode === 'mentions' ? candidate : undefined;
+  });
   assert.equal(listening.revision, route.revision, 'attention preference must not republish participation');
-  assert.equal(listening.attentionRevision, 1);
-  await cafe.getByText('正在本频道参与 · 值守回应请求', { exact: true }).waitFor({ timeout: 7_000 });
-  await cafe.getByRole('button', { name: '关闭我的 Café', exact: true }).click();
+  assert.equal(listening.channelListening.产品方向.dutyCatId, nativeOwner.cat.id);
+  assert.equal(finalListening.attentionRevision, finalListening.channelListening.产品方向.revision);
+  assert.equal(finalListening.standingInterests.产品方向[nativeOwner.cat.id].revision, interested.attentionRevision);
+  await cafe.getByRole('button', { name: '关闭我的猫', exact: true }).click();
   return { cafe, embedded, host, nativeErrors };
 }
 
@@ -196,17 +267,19 @@ export async function setupResponseRequest({ cafe, embedded, nativeOwner }) {
   const attentionItem = (await nativeOwner.connector.listInbox(nativeOwner.connection.connectionId)).find(
     (item) => item.event.body === responseRequest,
   );
+  const listening = await nativeOwner.connector.getHostRoute(nativeOwner.connection.connectionId);
   assert.deepEqual(attentionItem.routeReceipt.attention, {
     request: 'response_requested',
     state: 'wake_queued',
     catId: nativeOwner.cat.id,
-    interestRevision: 1,
+    interestRevision: listening.standingInterests.产品方向[nativeOwner.cat.id].revision,
   });
-  await embedded.getByRole('button', { name: '我的 Café', exact: true }).click();
+  await embedded.getByRole('button', { name: '我的猫', exact: true }).click();
+  await cafe.getByRole('button', { name: '日程', exact: true }).click();
   const responseArticle = cafe.getByRole('article').filter({ hasText: responseRequest });
-  await responseArticle.getByText('已送达；一位值守伙伴已进入回应队列', { exact: true }).waitFor();
+  await responseArticle.getByText('排着队', { exact: true }).waitFor();
   assert.equal(await responseArticle.getByRole('button', { name: '交给它持续处理', exact: true }).count(), 0);
-  await cafe.getByRole('button', { name: '关闭我的 Café', exact: true }).click();
+  await cafe.getByRole('button', { name: '关闭我的猫', exact: true }).click();
   return { composer, response, responseRequest };
 }
 
@@ -314,7 +387,8 @@ export async function createLinkedPublicWork({
   if (!publicWork?.assignmentEventId) throw new Error(`Missing assigned public Work for ${event.eventId}`);
   assertDispatch(await nativeOwner.dispatchPending(), 'route the Work assignment');
 
-  await embedded.getByRole('button', { name: '我的 Café', exact: true }).click();
+  await embedded.getByRole('button', { name: '我的猫', exact: true }).click();
+  await cafe.getByRole('button', { name: '日程', exact: true }).click();
   const request = cafe.getByRole('article').filter({ hasText: body });
   const admitted = host.waitForResponse(
     (response) => response.url().endsWith('/work/admit') && response.request().method() === 'POST',
@@ -324,12 +398,21 @@ export async function createLinkedPublicWork({
   if (admission.status() !== 200) {
     throw new Error(`Private Work admission failed (${admission.status()}): ${await admission.text()}`);
   }
-  await request.getByRole('link', { name: '查看私人工作', exact: true }).waitFor();
+  await request.getByRole('link', { name: '查看工作', exact: true }).waitFor();
   const task = await nativeOwner.workTaskForEvent(publicWork.assignmentEventId);
-  await cafe.getByRole('button', { name: '关闭我的 Café', exact: true }).click();
+  await cafe.getByRole('button', { name: '关闭我的猫', exact: true }).click();
   return { article, event, publicWork, task };
 }
 
 function assertDispatch(result, action) {
   if (result.failed !== 0) throw new Error(`Failed to ${action}: ${JSON.stringify(result)}`);
+}
+
+async function poll(read) {
+  for (let attempt = 0; attempt < 100; attempt++) {
+    const value = await read();
+    if (value !== undefined) return value;
+    await new Promise((resolve) => setTimeout(resolve, 50));
+  }
+  throw new Error('Actual state did not change');
 }

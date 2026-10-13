@@ -338,6 +338,11 @@ export function registerOrdinaryChatCompareJourney(suite) {
           'the artwork is not in the way of the comparison',
         );
         await page.getByTestId('workspace-return-to-artwork').waitFor({ state: 'visible' });
+        assert.equal(
+          await page.getByTestId('workspace-media-chat-whole-work').count(),
+          0,
+          'a comparison must not offer a whole-image action that still names the original file',
+        );
         // The decision is in front of the person too, not behind a scroll inside a scroll: the topmost thing at both
         // ends of each button is the button itself, so nothing clips it.
         for (const name of ['采用并写回', '不采用']) {

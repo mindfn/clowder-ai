@@ -11,6 +11,7 @@ import { chromium } from '../../../ppt-forge/node_modules/playwright/index.mjs';
 import { trajectoryFixture } from './f295-trajectory-fixture.mjs';
 import { runWorkGroupsJourney } from './f295-work-groups.journey.mjs';
 import { ensureWorkspaceOpen } from './f307-workspace-open.mjs';
+import { runF322BExecutionLocationJourney } from './f322-b-execution-location.journey.mjs';
 
 const WEB_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../..');
 const NEXT_BIN = path.resolve(WEB_ROOT, '../../node_modules/next/dist/bin/next');
@@ -190,6 +191,34 @@ const parallelExecutions = ['codex-astra', 'fable5'].map((catId) => ({
     target: { kind: 'live_invocation', threadId: THREAD_ID, catId, executionId: 'shared-parent' },
   },
 }));
+
+for (const [width, language] of [
+  [1440, 'zh'],
+  [390, 'en'],
+]) {
+  test(`F322 exact live/managed original Thread location (${width}px ${language})`, { timeout: 90_000 }, () =>
+    runF322BExecutionLocationJourney({
+      browser,
+      baseUrl,
+      threadId: THREAD_ID,
+      fixtureForApi,
+      viewport: { width, height: 900 },
+      language,
+    }),
+  );
+}
+
+test('F322 cold Workspace with an existing foreground opens exact managed Home detail', { timeout: 90_000 }, () =>
+  runF322BExecutionLocationJourney({
+    browser,
+    baseUrl,
+    threadId: THREAD_ID,
+    fixtureForApi,
+    viewport: { width: 1440, height: 900 },
+    language: 'zh',
+    coldStart: true,
+  }),
+);
 
 for (const viewport of [
   { width: 1600, height: 1000 },

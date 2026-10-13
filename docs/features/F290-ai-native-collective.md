@@ -4,7 +4,7 @@ related_features: [F044, F077, F128, F168, F195, F202, F232, F246, F254, F276, F
 topics: [ai-native-collaboration, multi-human, multi-agent, collective, cafe, channel, topic, asset, annotation, rich-message, task, vote, team-memory]
 doc_kind: spec
 created: 2026-08-08
-updated: 2026-09-30
+updated: 2026-10-13
 tips_exempt: "首次带猫引导在用户进入 Collective 时直接出现，并在成员和我的 Café 中提供重播；另推 capability tip 会重复这段入场体验。"
 description: "让多个独立 Café 在同一个 Collective 中围绕对话、资产、工作与关系持续协同；私人空间不被吞并，承诺、来源与团队记忆也不会掉线。"
 description_source: human
@@ -60,11 +60,98 @@ mcp_admission_claims:
 
 # F290: AI-native Collective — 多人·多 Agent 共同世界
 
-> **Status**: 2026-09-25 first-cat entry Design Gate approved for real Client implementation; rejected private-room prototype remains stopped; real first reply, two-Mac UAT and full Collective experience remain open
+> **Status**: in-progress / 2026-10-13 对账：通讯模型 #4955、共同体首页 #5205、入口修复 #5304 与临时断线会话恢复 #5473 已合；真实模型接活/修订/回流和有界旅程已有证据；真实 Alpha runtime 重启、双真人双 Café 完整协作、最新 Collective 界面、F309 双 Human 共享内容与整项验收仍开放
 > **Owner**: 小星星·Maine Coon (@codex-astra, GPT-6 Astra；operator 2026-09-06 交接)
 > **Design / implementation provenance**: Sol + Fable 共创原设计；Sol 负责既有 runtime/provider 纵切片
 > **Priority**: P1
 > **operator kickoff**: `[thread-id]` / `private-source-id`
+
+## 指挥与设计入口（2026-10-12）
+
+- **指挥线程**：`[thread-id]`。You 指定“就你们这个吧”，来源
+  `private-source-id`；Astra 接住统筹 Task `private-source-id`。
+  设计决定、实施进度与整体验收在此汇总；原 Task038、Task266 和设计 Task244 保留原 owner 与执行现场。
+- **规范入口**：[DESIGN.md](../../DESIGN.md) 的“对话”“界面上的字”与原稿一起消费；
+  图册是展示入口，不替代规范、领域合同或验收记录。
+  在总图册第十章；已获下述设计方向认可，仍为目标稿，不据此改变实施范围或验收勾选。
+
+**最新设计确认与纠正**（同指挥线程，2026-10-12 PDT）：
+
+- `private-source-id`：13b 共同体设置、参会台分别获“ok”“ok的”；
+  “我的猫”仍需对齐家内体验。认可限所引用的设计方向，不代表整套功能实现通过。
+- `private-source-id`：办事旅程与消息下最近两条具名回复预览“没啥问题”；
+  **9a 单猫详情管理方案被退回**。参与入口按家里现有成员自动发现、开关带入；不把同一成员背后的
+  多个频道/工作上下文当成多只待配置的猫。沿本文件 09-11 默认纳入与显式排除合同，
+  以及[通讯模型](../architecture/f290-communication-model.md)的家内身份、频道接收、按事项续接关系；
+  不以单猫详情集中私人任务与授权作为入场前置。原认可旅程保留；新参与稿随后获 998 确认。
+- `private-source-id`：引用 873 的 9c 稿说“审核ok update吧”“可以了 这些都ok”；
+  该设计包列出的 **9c 我的猫、9b 已允许的工作总览、2b 频道菜单、3c 例外卡、13 共同体菜单**
+  已获设计确认。已否的 9a 不恢复；未画分支、代码实现、共享产物与双真人整体验收不据此勾选。
+
+## 当前进展与下一步（2026-10-13）
+
+**产品目标**：不同家的人和猫，把讨论变成共同工作；各自在自己的 Café 推进，成果回到同一个
+Channel / Work / Artifact，团队能一起查看、修改、判断，并看见它推动了哪一步路线。
+
+本节是当前进展入口；后文带日期的实现、未加载和阻塞描述保留为历史节点，不覆盖本节的新证据。
+本轮核对本地 main 提交、原 Task、源 thread 与既有验收原件，未重新执行真人 UAT，也未在线复核
+新的 GitHub 状态。**代码已合、版本已加载、实际旅程通过分别记录，
+不把任何一层外推为完整交付。** 更新授权：
+`[thread-id]#private-source-id`。
+
+### 已经做到哪里
+
+| 用户能力 | 已核事实与证据 | 仍未得到的结果 |
+|---|---|---|
+| 从 Café 进入真实共同体首页与频道 | #5205（`b7bb55fb82`）首页已合；原 Task704 的父 Alpha 走过首页→general→chat→状态→刷新，后续 #5209/#5225 修复运行链 | 有界首页与模型回复不代表完整 Collective 页面或团队使用已交付；见原现场 `[thread-id]` / Task704 |
+| 日常入口、刷新与会话恢复 | #5304（`92be37e99b`）已合；Task266 于 10-09 核 runtime `3ca4c4af` / boot20 的侧栏进入、reload、settings warm、back/forward。#5473 于 10-13 合入 `42282f9368`：Client 仅在 `/api/me` 明确 401 时清会话，503/网络错误保留凭据；生产组件浏览器旅程以模拟 503 证明 unavailable 后同一会话回到原共同体 | #5473 没有实际重启 Alpha/runtime，也不证明关标签页后持久登录；Task266 仍须在加载该 merge 的 Alpha 复验真实重启。该轮隔离 context 与 fixture Human/猫执行都不代验真人登录后的完整频道协作 |
+| 讨论形成 Work、依赖、历史、投票与结果判断 | 已有 `RoadmapPanel`、Service Roadmap/Work 生命周期、结果验收及普通成员退出实现；退出切片 #4646（`ab9e935f31`）保留公开历史并撤销 endpoint | 真实 Meeting/Issue→跨 Café 执行→验收→版本发布的团队流程未闭环；管理者交接与未结责任处置仍需完成 |
+
+### F322、F309、F307、F310 怎样接到 F290
+
+| 责任面 | F290 消费什么 | 当前接缝与下一验证 |
+|---|---|---|
+| [F322 日常体验](F322-everyday-work-experience.md) | 新版入口、待办、导航与连续工作体验；Collective Client 的领域页面仍由 F290 交付 | F322 已从 v2 修补推进到按旅程组织的 v3，部分已合/Alpha 通过、部分待加载或设计；不能把 F322 整屏进度等同于 F290 页面完成。按同一 Channel→Work→私人进度→成果返回实走 |
+| [F309 内容协作](F309-collaborative-content-plane.md) | 同一内容的版本、选区、批注、修改候选、采用与回执 | **W4 的实际依赖仍是 F309 AC-B6**：两个不同 authenticated Human 围绕同一 canonical Markdown 完成 read/annotate/propose/apply/version/revoke，重启后撤权仍有效。单 owner 文件/Studio 与不可变作品审阅均不能解除该依赖 |
+| [F307 通用宿主](F307-composable-workbench.md) | owner surface 的挂载、布局和返回位置 | typed content surface mount 已有；F290 仍须提供 Artifact lineage、领域权限和精确结果目标，完成自己的 consumer，不能把它记成等待 F307 全项完成 |
+
+**可并行边界**：入场、登录恢复、真实接活/回流、基础 Roadmap 和界面整合不必等 F309 全部媒介完成；
+共享内容修改必须消费内容 owner 的双 Human 授权与版本能力。F290 不另建正文 store 或编辑器。
+
+**10-12 晚的依赖回执**：F309 原 owner 已把 [AC-B6 交付包](F309-collaborative-content-plane.md#ac-b6-bounded-owner-ready-delivery-packet2026-10-12提案尚未准入)
+落在 `e44013ec0ef3a8475d3e60c5d78e4b68d065da3b`；来源为指挥线
+`private-source-id`。复用内容 owner/F309/F307，限定双 Human Markdown 的读取、批注、
+修改建议、采用新版、撤权与重启恢复。该包是**待准入的具体方案，不是可消费实现**：原 F309 Review Gate
+要求完整 AC-A4 后再进入共编 B，本切片先行需 operator 确认顺序例外。建议实施作者 Sol6.1，F309 owner
+仍是 Sol5.6；尚无 AC-B6 实施 Task，W4 保持阻塞，其余首轮路径继续。Task266 的
+
+### 10.9 团队会议带来的产品输入
+
+来源：`[thread-id]#private-source-id` 的原始转写与说话人对应；
+重点核读 19:15–28:22、01:03:49–01:05:54、01:11:36–01:12:50、01:17:54–01:21:18。
+
+- **团队想完成的工作链**：Issue / 会议事项→讨论→认领→各家猫开发与协作审查→共同查看和修改产物→验收→看见进入哪个发布版本。项目/版本管理是多人协作中的能力，接回 J2/J3/W3/W4，不另立第二份工作真相。
+- **产物能力共用**：个人 Café 与 Collective 围绕同一套产物展示、批注和修改能力协作；会议提出通过独立模块/嵌入复用，具体接法继续遵守现有 F307/F309 owner contract，不由会议措辞直接冻结新架构。
+- **部署与现实分工**：会上吴浪暂牵头多人协作及共享服务器准备；徐方瑜接 Issue 初筛；谢泽丰牵头代码合入、验收与内外同步流程，并与伙伴推进 Windows/多平台体验。这是会议中的人类分工，不自动转移现有猫的 Task、代码责任或授权。
+- **范围边界**：会议没有完整列出 10/24 功能清单，发版频率、测试规则也未全部定案。共享部署尚需实际环境与伙伴使用证据；不能因“准备服务器”写成已经部署。上述长期目标不自动成为 10/24 交付承诺。
+
+### 剩余工作与建议推进顺序
+
+下表整理原 W1–W6 / J0–J8 的下一落点，**是推进建议，不是新 Phase、开工派令或范围缩减**。
+10/24“新版界面中的真实双人双 Café 协作与一份共同产物”只作为候选目标，尚未冻结。
+
+| 顺序 | 要交付的结果 | 原责任与验收落点 |
+|---|---|---|
+| 1 | 让总览、原 Task 与实际代码一致，清除已经过时的停工理由 | Astra 汇总；Task038/266 保留原 owner。Task038 仍记录 10-05 首页交接权限阻塞，但 #5205 已于 10-06 合入；该阻塞已被后续事实超过，需原 owner 结算记录，不据此宣称整任务完成 |
+| 2 | 两位真人各带自己的 Café/猫进入同一共同体，完成两件真实工作、反馈修改与回流 | W2/W3/W5、Task038/266；结合会议中的共享部署安排核实实际场地/操作者。#5473 已修复“任意恢复失败都清 session”的明确缺口并完成模拟 503 旅程；Task266 仍须在真实 Alpha runtime 重启中复验，且尚未证明它是用户那次掉登录的唯一根因 |
+| 3 | 新版 Channel、工作卡、例外授权、私人进度和成果返回形成一条可用旅程 | F290 原实现现场与设计 Task244，消费 F322 原壳/待办；先核最新稿与现有行为，再在真实入口整页验收，不能把静态设计或局部修补当整版交付 |
+| 4 | 两位成员对同一份 Markdown 批注、让猫修改、由有权人采用并保留版本/来源；撤权真实生效 | F309/content owner 交 AC-B6，F290 接 W4/J7；复用个人内容能力，单独证明跨 Human 授权和 Collective 回流 |
+| 5 | 一件真实团队 Issue/会议事项贯穿 Roadmap、依赖、执行、验收与发布去向 | W3/W6、J2/J3；将会议中的人类工作分工变成真实使用场景，验收仍沿原 Feature 与 Task，不另造一套项目账本 |
+
+不能被上述近期顺序漏掉的原范围：共同资料库/树/版本与派生、团队记忆与决定可找回、私人想法获准发布
+（J1）、外部贡献唤回及原处回流（J2）、会议到工作（J3）、成员治理和完整部署恢复（J5/J6/W5）。
+Office 实时共编与可编辑视频保持 F309 原开放范围，不挪成 F290 自研；跨频道日报 J8/R23/AC-C4
+保留已有“完成门槛讨论暂缓”的状态，不写成已做、遗忘项或本轮新承诺。既有 AC 本轮不改勾选。
 
 Architecture cell: collective-runtime, plugin
 
@@ -85,13 +172,16 @@ collab server 的 `collective-participation` family；读取与发送仍分别�
 Café×Channel 的未来显式回应请求值守。首猫切片中，Work 提议只保留当前来源与候选结果，负责人、分配须 Human
 明确接受；私人工作另经 Host owner admission，可消费范围匹配的既有 standing grant。工具本身不能扩大
 读取或 owner 权限。**这段首猫实现边界不再定义终态的
-默认人工流程**：2026-09-30 operator 已选择默认猫自决，见下文“默认自决与两轴设置”；新委托消费尚待实现验证。
+默认人工流程**：2026-09-30 operator 已选择默认猫自决，见下文“默认自决与两轴设置”；委托消费已随
+#4955 交付软件与真实模型证据，双真人/双 Café 的完整使用验收仍开放，见开头当前进展。
 首猫切片依据为 operator 授权
 `private-source-id`、Sol 文档批准 `private-source-id`，以及
 这里没有批准新增私人执行权限，也不代替实施 thread `[thread-id]` 的代码 review、
 真实双 Human UAT 或完整 F290 验收。
 
 ## 前端设计阅读入口（2026-09-20）
+
+其中明确区分静态目标、既有通讯能力与尚未实现的共同体设置；前端当前状态以本文开头对账为入口。
 
 operator `private-source-id` 要求当前版本完成家内协作、同 Channel 多任务并行和成果回流；
 原 09-24 两机入场仍是接入过程，不能替代这段验收。原计划统一记录代码缺口、责任与贯穿验收；
@@ -223,35 +313,18 @@ Connector、Artifact/Roadmap/Action Space、F307 tab/split/restore 与全部 F30
 experience gate 只保留为旅程 baseline；PR #3981 只保留为 F307 原型证据，不能恢复为 F290 第二套
 Workbench。
 
-### 当前真正没做好的 F290 能力
+### 当前未完成能力（2026-10-12 对账）
 
-1. **Server provider 真实 UAT**：本轮实现候选已把“部署新 Service / 连接已有 Service”、独立进程托管、
-   GitHub App Manifest provider setup、mode-`0600` 凭据、一次性 bootstrap、状态诚实与原实例恢复接进同一
-   产品入口；PR #4296 已完成 review 与合入。它仍须用真实 GitHub 账号从
-   干净 Alpha 完成首次创建、授权、登录与当前 Café pairing，才能勾选 AC-L1 或打开本机激活门。
-2. **真实 Collective 入口 / world switch**：默认 Service Client 与 Clowder AI `/collective` Host 已接到
-   5102 baseline 的 global rail、Collective destination、Channel/Topic 和「我的 Café」上下文；两条
-   default-entry journey 已受 Design Gate 约束。PR #4830（`fae727c52d`）又把当前 Human 的全部 active
-   memberships、显式 world target 与 back/refresh 所需的安全目录投影接进真实 Client/Host；F322 的 rail
-   视觉消费、生产 runtime 激活、真实账号下的入口切换与返回路径仍未验收。
-3. **Roadmap operating model**：Channel/Topic 已能长出持久 Work，基础 Roadmap 会显示依赖、历史和
-   精确结果回流，并支持同频道多路线切换及完成/重开；informal 与 Roadmap-scoped binding Vote / Decision
-   都已有来源和权限边界，但真实 Meeting 输入、跨 owner 治理委托与真实团队事项仍未形成完整运行面。
-4. **共同产物系统**：Asset / Artifact library、树与派生、版本、lineage、锚定批注、权限和结果
-   回写尚未形成可持续的 Collective truth。
-5. **完整多 Café 生命周期**：首条 runtime 已具备 auth-bound Membership、邀请加入、endpoint
-   pairing/revoke、typed target、离线送达与 ACK；成员退出、Human membership revoke、冲突治理和完整
-   public projection 仍未实现。
-6. **真实团队 dogfood**：还没有用 You + 吴浪 / 社区协作者完成从共同讨论到各 Café 执行再回流
-   的端到端工作。
-7. **Collective 的宿主 adapter 只完成世界目录切片**：Clowder AI Host 已承载 canonical Client、当前 Channel
-   上下文和私人 Café 返回面；#4830 已补齐 membership world-directory/navigation seam，但 F290 仍须把
-   Artifact/Review 等领域 descriptor、权限投影与返回位置接入 F307 通用宿主。不能把剩余缺口登记成
-   “等待 F307”，也不能复制布局状态或把 world-directory landed 外推为整项 adapter 完成。
-8. **首猫真实参与尚待 UAT**：选猫、参与范围、稳定具名身份、正式 Collective MCP / skill、受限
-   公共调用与独立 owner admission 后的私人 Work 回流已随 PR #4396 合入。隔离的浏览器、原生猫
-   工具与持久化测试已通过；runtime 尚未加载，仍须用两个不同的真实 GitHub Human 走通 J0、
-   refresh/restart/revoke 与 AC-A8/AC-C3，不能以“Café 连接在线”或 synthetic fixture 替代。
+当前已交付证据、责任接缝与顺序统一见开头“当前进展与下一步”，这里保留原缺口的验收范围：
+
+1. **入场与部署**：provider #4296 已合，既有登录入口可用不等于干净安装、两位真实 GitHub Human、跨机部署及恢复全部验收；AC-L1/L2/L3 继续开放。
+2. **整页体验与登录恢复**：首页 #5205、入口 #5304 已交有限范围；#5473 已合入临时不可达不清有效会话的修复与浏览器回归。最新 Collective 设计、真人世界切换、真实 Alpha runtime 重启及关闭标签页后的持久登录仍未收口。
+3. **团队工作流程**：Work/Roadmap/Vote 已有基础实现，真实 Meeting/Issue 输入、跨 owner 协作、验收与发布去向仍需完整运行证据。
+4. **共同产物与记忆**：共享 Markdown 依赖 F309 AC-B6；资料库、版本/派生、批注→Topic、修改裁决、团队记忆及原处回流仍未形成完整团队体验。
+5. **成员治理**：普通成员无未结责任时的 self-leave 已随 #4646 实现；管理者交接、未结责任处置、完整权限/公开投影与实际跨 Café 恢复仍开放，不能再写“成员退出全部未实现”。
+6. **真实团队 dogfood**：软件/模型证据不能替代 You 与吴浪或社区协作者的完整 J0–J7 / AC-D1/D2 使用验收。
+7. **领域宿主接入**：F307 typed mount、世界目录和首页已有；Artifact/Review 的领域权限、lineage 和返回位置由 F290 接通，不等待整个 F307，也不复制布局或内容状态。
+8. **首猫及多猫参与**：#4396/#4955 与后续修复已提供实现和运行证据；两个不同真人、真实家内接力/并行、refresh/restart/revoke 与 AC-A8/AC-C3 仍须按原范围验收。
 
 ### 2026-09-06 Takeover — 从连接在线到首猫真实参与
 
@@ -518,7 +591,8 @@ Host / Service / Task / 内容 owner 分工、一个 Work 一个 current assignm
 
 **已落盘的通讯约束**见[通讯模型](../architecture/f290-communication-model.md)：授权与事项定位分开，
 先沿精确来源续接，按权限装配相关上下文；不同 Work 可并行，同 Work 的责任/版本不能被旧执行覆盖。
-主人委托的登记/撤回及 Service 验证接口、物理 Thread 创建策略、听取设置细节、调度/预算与共享写入机制仍待确定。
+下述“待确定”是 09-30 冻结时点的记录：主人委托的登记/撤回及 Service 验证接口、物理 Thread 创建策略、
+听取设置细节、调度/预算与共享写入机制。前几项已有 #4955 的软件交付，具体已实现边界见
 不把“每个 @ 新建 Thread”或“一个固定 Thread 承载所有工作”写为终态。实现与验收接回
 
 ### 2026-09-30 同一套猫身份、频道基数与跨频道汇总
@@ -1091,7 +1165,7 @@ Markdown，而不伪造成当时就在资产页发生的批注 → 后续参与�
 ## Terminal Phases
 
 1. **Phase A — Collective truth + Experience Design Gate**：把个人 Café → world switch → Collective
-   destination → Channel / Roadmap / Artifact 做成可体验、可纠偏的终态切片；当前阶段。
+   destination → Channel / Roadmap / Artifact 做成可体验、可纠偏的终态切片；整体验收仍开放，实现进度见开头对账。
 2. **Phase B — Stable objects + responsibility**：冻结产品对象、持久真相、authority 与 ownership
    cell；不交付临时 schema。
 3. **Phase C — Multi-Café federation + memory**：实现跨信任域同步、注意力、离线、撤权、冲突与
@@ -1244,6 +1318,10 @@ Service 核对负责人和当前结果版本，将反馈关联到原结果，在
 
 | 来源 | 作用 |
 |---|---|
+| `[thread-id]#private-source-id`、`#private-source-id` | operator 要求联合梳理 F290、F322、F309 与 10.9 会议中的多人协同需求，随后授权先更新本 Feature 文档；不自动批准候选排期或责任迁移 |
+| `[thread-id]#private-source-id` | 10.9 团队会议原始转写入口及六位说话人对应；产品/流程输入、人类分工与未定范围见开头当前进展 |
+| `[thread-id]#private-source-id` | 10-09 #5304 在原 runtime 的四条入口路径复验；仅证明入口恢复，不代验完整真人协作 |
+| `[thread-id]#private-source-id`、`#private-source-id` | operator 明确掉登录发生在 runtime 重启后；代码存在恢复请求失败即清 session 的缺口，用户那次故障唯一根因尚未证实 |
 | `[thread-id]` / `private-source-id` | 三个月方向图将方向 5 交给本专属 thread |
 | `[thread-id]` | F290 产品收敛与 Experience Design Gate 主 thread |
 | `[thread-id]` | 家庭联邦 / Channel 的早期脑洞，作为演进证据而非冻结 spec |
@@ -1269,6 +1347,7 @@ Service 核对负责人和当前结果版本，将反馈关联到原结果，在
 
 ### Documents
 
+- [F322 当前路线图与已定事项](F322-everyday-work-experience.md)
 - [通讯模型与执行上下文（2026-09-30 编码约束、差距与验收场景）](../architecture/f290-communication-model.md)
 - [F307 Composable Workbench](F307-composable-workbench.md)
 - [F309 Collaborative Content Plane](F309-collaborative-content-plane.md)
@@ -1279,6 +1358,7 @@ Service 核对负责人和当前结果版本，将反馈关联到原结果，在
 |---|---|---|
 | `/home/user/Downloads/AI团队协作产品规划讨论.txt` | `9af4b48cc5f3b6d84a2d014a10f3fec909b388c030cd96e8a9935ca15e171810` | You × 吴浪，62 分 28 秒 |
 | `/home/user/Downloads/落地认知与工作方法交流讨论.txt` | `daf2213ce9babed2279dbf35fa6498df0f02ccbb09892c754fc9360cebaf6ff6` | 黄挺 / You / 吴浪；开头约两小时缺录 |
+| `/home/user/Downloads/AI产品迭代与团队协作规划.txt` | `5dcb5a9b8f9a204d10e788c5a108b9c20d8177d733f5bfb2ec60a93a99b9588b` | 10.9 团队会议；说话人对应在源 thread；本次采用的产品输入保留转写时间戳，未定事项不写成决议；原文不复制进公共文档 |
 
 ### Experience prototype provenance
 

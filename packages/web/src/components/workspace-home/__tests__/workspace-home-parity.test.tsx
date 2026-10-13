@@ -5,6 +5,7 @@ import { writeShellPresentation } from '@/components/shell/shell-presentation';
 import { subscribeTheaterReplay } from '@/components/ThreadSidebar/theater-navigation';
 import type { WorkspaceSurfaceDescriptor } from '@/components/workbench/workbench-contract';
 import type { LauncherWorkspaceSearch } from '@/components/workspace/WorkspaceLauncherSearch';
+import type { WorkspaceHomeV2 } from '../WorkspaceHomeV2';
 
 const mocks = vi.hoisted(() => ({
   setWorkspaceMode: vi.fn(),
@@ -30,6 +31,28 @@ vi.mock('@/components/CatAvatar', () => ({ CatAvatar: () => null }));
 vi.mock('@/components/ChatVoiceFeatureControls', () => ({ ChatVoiceFeatureControls: () => null }));
 vi.mock('@/components/workspace/RecentTrajectoryRecall', () => ({ RecentTrajectoryRecall: () => null }));
 vi.mock('@/components/workspace/WorkspaceNowSurface', () => ({ WorkspaceNowSurface: () => null }));
+// Exercise the new picker through the original Home admission callbacks. The real + host mount is a browser journey.
+vi.mock('@/components/workspace-home/WorkspaceHomeV2', async () => {
+  const { WorkspaceToolsContent } = await import('../WorkspaceToolsContent');
+  return {
+    WorkspaceHomeV2: (props: React.ComponentProps<typeof WorkspaceHomeV2>) => (
+      <div data-home-presentation="v2">
+        <WorkspaceToolsContent
+          onSelectDevSurface={props.onSelectDevSurface}
+          onSelectDestination={props.onSelectDestination}
+          workspaceSearch={props.workspaceSearch}
+          onOpenSettings={vi.fn()}
+          onClose={vi.fn()}
+          onSelectRecentSurface={vi.fn()}
+          recentSurfaces={[]}
+        />
+        {props.destinationMessage && (
+          <output data-testid="f307-destination-admission-status">{props.destinationMessage}</output>
+        )}
+      </div>
+    ),
+  };
+});
 vi.mock('@/components/workspace/WorkspaceLauncherSearch', () => ({
   WorkspaceLauncherSearch: ({
     workspaceSearch,
@@ -148,7 +171,14 @@ describe('F322 Workspace home: the new shell chooses exactly what the classic ho
   it.each(SHARED_DESTINATIONS)('%s: same store calls, host callbacks, surface and replay as classic', async (ref) => {
     const classic = await choose('classic', ref);
     const v2 = await choose('v2', ref);
-    expect(v2).toEqual(classic);
+    if (ref === 'mode:product-schedule') {
+      expect(classic.surfaces[0]?.title).toBe('Schedule');
+      expect(v2.surfaces[0]?.title).toBe('日程');
+      // The translated heading is presentation; all owner coordinates and callbacks remain exact.
+      expect({ ...v2, surfaces: v2.surfaces.map((surface) => ({ ...surface, title: 'Schedule' })) }).toEqual(classic);
+    } else {
+      expect(v2).toEqual(classic);
+    }
   });
 
   it('keeps classic replay on its single legacy owner without admitting a second F307 player', async () => {

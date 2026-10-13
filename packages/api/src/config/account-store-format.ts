@@ -22,6 +22,7 @@ const accountSchema = z
     codex: codexManagedAccountSchema.optional(),
     quota: z
       .object({
+        owner: z.object({ accountRef: z.string(), userId: z.string(), workspaceId: z.string() }).optional(),
         observedAt: z.number(),
         status: z.enum(['ok', 'unavailable', 'unsupported']),
         source: z.literal('codex_official_readonly'),

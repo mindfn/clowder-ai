@@ -141,3 +141,26 @@ it('classic keeps its original toolbar and collaboration control', () => {
   expect(host.textContent).toContain('Rendered');
   expect(host.textContent).toContain('协作批注');
 });
+
+it.each<{ label: string; origin: WorkspaceFileViewerProps['navigationOrigin'] }>([
+  {
+    label: '‹ Workspace 首页',
+    origin: { kind: 'workspace-home-artifact', threadId: 'origin', artifactId: 'card-key', viewportOffsetPx: -10 },
+  },
+  {
+    label: '‹ 工具搜索',
+    origin: { kind: 'workspace-tools-search', threadId: 'origin', query: 'guide.md', viewportOffsetPx: 10 },
+  },
+  { label: '‹ 工具搜索', origin: { kind: 'workspace-home-search', query: 'guide.md' } },
+  { label: '返回来源', origin: undefined },
+])('keeps $label on the same-page reader with quote controls', ({ label, origin }) => {
+  const p = { ...props(), navigationOrigin: origin, onBack: vi.fn(), showFileQuotes: true };
+  act(() => root.render(<WorkspaceFileViewer {...p} />));
+  const content = host.querySelector('[data-testid="owner-content"]');
+  const back = host.querySelector<HTMLButtonElement>('[data-testid="v2-file-back"]');
+  if (!back) throw new Error('The same-page file reader must expose its original Back action');
+  expect(back.textContent).toBe(label);
+  act(() => back.click());
+  expect(p.onBack).toHaveBeenCalledOnce();
+  expect(host.querySelector('[data-testid="owner-content"]')).toBe(content);
+});

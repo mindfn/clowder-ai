@@ -5,12 +5,13 @@ import Fastify from 'fastify';
 import { MessageStore } from '../src/domains/cats/services/stores/ports/MessageStore.js';
 import { ThreadStore } from '../src/domains/cats/services/stores/ports/ThreadStore.js';
 import {
+  companionDecisionUrl,
   createCompanionDecisionNavigation,
   createCompanionDecisionSocketDelivery,
 } from '../src/domains/concierge/live/host/unified/companion-decision-navigation.js';
 import { sessionAuthPlugin, sessionRoute } from '../src/infrastructure/session-auth.js';
 
-function fixture() {
+function fixture(afterOpen?: () => void) {
   const messages = new MessageStore(),
     threads = new ThreadStore();
   const thread = threads.create('owner', 'project');
@@ -24,8 +25,10 @@ function fixture() {
     extra: { rich: { v: 1, blocks: [{ kind: 'card', v: 1, id: 'card', title: 'source' }] } },
   });
   let recipient = true,
-    current = true;
+    current = true,
+    browserAvailable = true;
   const emitted: object[] = [];
+  const opened: object[] = [];
   const ports = createCompanionDecisionNavigation({
     ownerUserId: 'owner',
     messages,
@@ -34,6 +37,11 @@ function fixture() {
       if (!current) throw new Error('stale lease');
     },
     hasRecipient: () => recipient,
+    openBrowser: async (destination) => {
+      opened.push(destination);
+      afterOpen?.();
+      return browserAvailable;
+    },
     emit: (destination) => {
       emitted.push(destination);
     },
@@ -43,6 +51,7 @@ function fixture() {
     ports,
     destination,
     emitted,
+    opened,
     message,
     thread,
     disconnect: () => {
@@ -51,14 +60,32 @@ function fixture() {
     revoke: () => {
       current = false;
     },
+    failBrowser: () => {
+      browserAvailable = false;
+    },
   };
 }
+
+test('the native link retains the exact approval coordinates at the Host configured origin', () => {
+  assert.equal(
+    companionDecisionUrl(
+      { threadId: 'thread-owner', messageId: 'message-source', blockId: 'approval-card' },
+      'http://localhost:5511',
+    ),
+    'http://localhost:5511/thread/thread-owner?message=message-source&block=approval-card',
+  );
+  assert.equal(
+    companionDecisionUrl({ threadId: 'thread-owner', messageId: 'message-source' }, 'http://localhost:5511'),
+    'http://localhost:5511/thread/thread-owner?message=message-source',
+  );
+});
 
 test('navigation delivers only a persisted owner source and its real block through the owner port', async () => {
   const f = fixture();
   assert.equal(await f.ports.canOpenDecision(f.destination), true);
   assert.equal(await f.ports.openDecision(f.destination), true);
   assert.deepEqual(f.emitted, [f.destination]);
+  assert.deepEqual(f.opened, [f.destination]);
 });
 
 test('foreign messages, foreign threads, missing blocks and deleted or recalled sources cannot navigate', async () => {
@@ -76,14 +103,33 @@ test('foreign messages, foreign threads, missing blocks and deleted or recalled 
   f.message.deliveryStatus = 'canceled';
   assert.equal(await f.ports.openDecision(f.destination), false);
   assert.deepEqual(f.emitted, []);
+  assert.deepEqual(f.opened, []);
 });
 
-test('no connected owner recipient means unconfirmed; a stale lease rejects before emitting', async () => {
+test('a closed Hub still opens the exact source in the foreground browser', async () => {
   const f = fixture();
   f.disconnect();
+  assert.equal(await f.ports.openDecision(f.destination), true);
+  assert.deepEqual(f.opened, [f.destination]);
+  assert.deepEqual(f.emitted, []);
+});
+
+test('browser failure stays unconfirmed and a stale lease cannot open or emit', async () => {
+  const f = fixture();
+  f.failBrowser();
   assert.equal(await f.ports.openDecision(f.destination), false);
+  assert.deepEqual(f.emitted, []);
+  f.opened.length = 0;
   f.revoke();
   await assert.rejects(f.ports.openDecision(f.destination), /stale lease/);
+  assert.deepEqual(f.emitted, []);
+  assert.deepEqual(f.opened, []);
+});
+
+test('revocation while the OS opens the browser prevents a later socket delivery', async () => {
+  const f = fixture(() => f.revoke());
+  await assert.rejects(f.ports.openDecision(f.destination), /stale lease/);
+  assert.deepEqual(f.opened, [f.destination]);
   assert.deepEqual(f.emitted, []);
 });
 

@@ -202,6 +202,10 @@ export interface Thread {
   id: string;
   projectPath: string;
   title: string | null;
+  titleSource?: 'user' | 'temporary' | 'cat';
+  titleCatId?: string;
+  /** Successful import coordinate; the chain record remains the origin authority. */
+  sessionImport?: { sessionId: string; catId: string };
   createdBy: string;
   participants: CatId[];
   lastActiveAt: number;
@@ -730,6 +734,13 @@ export interface IThreadStore {
   /** F032 P1-2 fix: Update participant activity on every message (not just join) */
   updateParticipantActivity(threadId: string, catId: CatId, healthy?: boolean): void | Promise<void>;
   updateTitle(threadId: string, title: string): void | Promise<void>;
+  setSessionImport(threadId: string, value: NonNullable<Thread['sessionImport']>): void | Promise<void>;
+  setAutomaticTitle(
+    threadId: string,
+    title: string,
+    source: 'temporary' | 'cat',
+    catId?: string,
+  ): boolean | Promise<boolean>;
   /** Exact title CAS used to scrub/restore message-derived copies without clobbering user edits. */
   compareAndSetTitle(threadId: string, expectedTitle: string, nextTitle: string): boolean | Promise<boolean>;
   /** ISSUE-16: backfill projectPath for threads created before the fix */
@@ -969,6 +980,7 @@ export class ThreadStore implements IThreadStore {
       id: generateThreadId(),
       projectPath: projectPath ?? 'default',
       title: title ?? null,
+      titleSource: title ? 'user' : 'temporary',
       createdBy: userId,
       participants: [],
       lastActiveAt: Date.now(),
@@ -1158,7 +1170,27 @@ export class ThreadStore implements IThreadStore {
 
   updateTitle(threadId: string, title: string): void {
     const thread = this.get(threadId);
-    if (thread) thread.title = title;
+    if (thread) {
+      thread.title = title;
+      thread.titleSource = 'user';
+      delete thread.titleCatId;
+    }
+  }
+
+  setSessionImport(threadId: string, value: NonNullable<Thread['sessionImport']>): void {
+    const thread = this.get(threadId);
+    if (thread) thread.sessionImport = value;
+  }
+
+  setAutomaticTitle(threadId: string, title: string, source: 'temporary' | 'cat', catId?: string): boolean {
+    const thread = this.get(threadId);
+    if (!thread || thread.deletedAt || (thread.titleSource ?? (thread.title ? 'user' : 'temporary')) !== 'temporary')
+      return false;
+    if (source === 'temporary' && thread.title !== null) return false;
+    thread.title = title;
+    thread.titleSource = source;
+    if (source === 'cat' && catId) thread.titleCatId = catId;
+    return true;
   }
 
   compareAndSetTitle(threadId: string, expectedTitle: string, nextTitle: string): boolean {

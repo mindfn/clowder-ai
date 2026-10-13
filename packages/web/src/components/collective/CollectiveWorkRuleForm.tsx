@@ -1,7 +1,7 @@
 'use client';
 import type { CollectiveWorkGrantScope } from '@cat-cafe/shared';
 import { useState } from 'react';
-import { policyControl } from './CollectiveWorkPolicySettings';
+import { policyControl } from './collective-work-policy-control';
 import type { ParticipationView } from './use-collective-participation';
 
 export function CollectiveWorkRuleForm({
@@ -51,7 +51,7 @@ export function CollectiveWorkRuleForm({
         />
       </label>
       <p className="text-xs leading-5 text-cafe-muted">
-        允许本频道成员提出这类工作。可读当前事项的共同体资料，在家里准备结果并回到原处。留空到期时间表示持续到你撤回。
+        允许这个频道里的成员提出这类工作；猫可以自己决定接不接。到期留空时，一直有效到你撤回。
       </p>
       <button
         type="button"

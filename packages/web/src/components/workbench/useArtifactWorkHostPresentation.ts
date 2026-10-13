@@ -41,12 +41,15 @@ export function useArtifactWorkHostPresentation({
 }: ArtifactWorkHostInput) {
   const layout = useF307ExperienceWorkbenchStore((state) => state.layout);
   const presentation = useF307ExperienceWorkbenchStore((state) => state.artifactWorkPresentation);
+  const attentionSurfaceId = useF307ExperienceWorkbenchStore((state) => state.mainAreaAttentionSurfaceId);
+  const attentionPresentation = useF307ExperienceWorkbenchStore((state) => state.mainAreaAttentionPresentation);
   const dispatch = useF307ExperienceWorkbenchStore((state) => state.dispatchArtifactWorkPresentation);
-  const { activeSurface, surfaceActive, hostEligible, fullWindowActive, splitPreferenceActive } =
+  const { activeSurface, surfaceActive, hostEligible, fullWindowActive, splitPreferenceActive, workspaceWideActive } =
     projectWorkspaceWorkHost(
       { threadId, viewMode, isDesktop, statusPanelOpen, rightPanelMode, shellPresentation: useShellPresentation() },
       layout,
       presentation,
+      { surfaceId: attentionSurfaceId, presentation: attentionPresentation },
     );
 
   const invalidateHost = useCallback(
@@ -125,6 +128,7 @@ export function useArtifactWorkHostPresentation({
     hostEligible,
     splitPreferenceActive,
     fullWindowActive,
+    workspaceWideActive,
     chatBasis: presentation.desktopWorkChatBasis,
     invalidateHost,
     resizeChatBasis,

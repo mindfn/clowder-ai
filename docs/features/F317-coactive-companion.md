@@ -4,12 +4,12 @@ related_features: [F229, F258, F195, F202, F246, F295, F306, F309, F310]
 topics: [coactive, realtime, desktop-companion, gpt-live]
 doc_kind: spec
 created: 2026-09-15
-updated: 2026-10-08
+updated: 2026-10-13
 description: "让具名家猫通过实时感知与交谈、持续深思和行动，陪人跨应用共看、共听、互相指点，并接续共同经历。"
 description_source: model
 description_author: codex-astra
 description_updated_at: 2026-09-15T08:29:30Z
-tips_exempt: "Renewed 2026-10-10: the retired floating shell returns to the existing companion entry; current-page Home action scope, custody and synthetic acceptance clarify the existing permission boundary. Household, non-GPT and shared-perception acceptance remain open, so no general desktop capability is advertised."
+tips_exempt: "Renewed 2026-10-13: front-desk response quality, timing, bounded native subagents and late-result returns refine the existing companion entry. Development/package receipts do not prove natural voice, household or shared-perception acceptance; no new general desktop entry is advertised."
 mcp_admission_status: accepted
 mcp_admission_ref: "file:docs/features/F317-coactive-companion.md"
 mcp_admission_claims:
@@ -30,6 +30,8 @@ mcp_admission_claims:
 > **Status**: in-progress | **Owner**: 小星星·Maine Coon（@codex-astra / gpt-6-astra） | **Priority**: P1
 
 Owner thread：`[thread-id]`；总任务沿用 `private-source-id`（按 `relatedFeatureId=F317` 查询）。正式安装入口与 Host 媒体边界已随 #4611 合入；第一批真实资料、非 GPT 深思及完整组合体验仍未验收，Phase/AC 不因工程合入提前关闭。workflow 沿用原记录；原任务属于源线程，未重复建任务。
+
+**最新交付（2026-10-13 01:29 UTC）**：source1351 的前台岗位、分段计时、受限原生 subagent 及使用记录、本人 Task 操作与迟到回告已随核心 #5439 / #5454 合入；公开 #76 / #78 / #79 已合入并实际发布 contract beta.27、SDK beta.23、companion alpha.24（含状态点呼吸）。日常仍为 boot24 / `8f98aed76a`，仅含先前 #5439，尚未加载最终 #5454 配对；安装的仍是 alpha.21，Host 当前报告其异常退出，原因未定。父 Task33 已登记最终版本的部署回调，按 operator source604 等重启后核版本、再提醒本人体验；开发交付不关闭真人验收或任何完整 Phase。详见下方「前台 harness 优化」的交付记录。
 
 **2026-09-28 六线开工授权**：operator source `[thread-id]#private-source-id`
 A 桌面/通话由原 Sol6 现场续办，B 身体由原 Sol5.6 现场续办；新建 C 收件/长对话（Astra）、
@@ -233,6 +235,48 @@ Sol6.1 在正常安装、构建、启动的命名 Alpha `f317-jev-spoken` / `4f7
 原 Opus55 设计续办 source319 负责首次使用/恢复旅程，Astra 核准备条件与组合交付，
 原 A 保持 Host 单写和 U1 重复 hello 修复。终点仍是从实际入口完成家内操作并回报真实结果，
 
+### 2026-10-12 前台 harness 优化：答准当前这件事
+
+**来源**：You 对 dot 通话与猫猫球的对照反馈（本 thread `private-source-id` 专属工具、`private-source-id` 首个有用回应）；dot 亲历材料（`private-source-id`、`private-source-id`、`private-source-id`）；Astra 源码与耗时核对（`private-source-id` 及前序）；Opus55 失败模型。You `private-source-id` 授权"先把这些优化做了试试看"，并要求打开 subagent 试用、记录使用情况。
+
+**失败模型**（四种，不是一个原因）：
+1. 答错对象：拿另一件真实、甚至很新的完成事项来答被问的那件（dot：问"今天的事故报告"，答成"旧 SOP 交付完成"）。
+2. 承诺空转：反复"我去看看"，没有新事实，也没有记住已经从何时开始查。
+3. 材料上麦：照念协调原文；旧进度不带观察时间。
+4. 换题后迟到结果没人告知：优化前，用户开口后 `LiveResultReturn`（`concierge/live/host/live-result-return.ts`）的 epoch 前进，上一题的深端 final 不再交给语音，只留在历史里；同一通话的自产结果也不进伙伴收件箱。当时缺少稍后告知的保证，未经真人复现，不等于"永远听不到"；修复与实测边界见下方交付记录。
+
+**已定方向**：
+- **首个有用回应**：目标 10 秒内（猫猫球目标 2–3 秒）。说出理解成了哪件事、这次要核什么，或标明是初判的判断；简单问题直接答；"我看看""稍等"不单独成句；不做成每句凑齐的模板；被派活的伙伴不加开场白；不用别的模型冒充猫先回。
+- **答准对象**：找到的和被问的不是同一件时，必须先说"不是这件"；其余只在需要消歧或状态已旧时说对象与观察时间。
+- **尚欠答复**：从原 Message / Task / Queue 投影几个独立事实（被问对象与版本、最后观测、结果引用、交付事实），不是互斥状态，不新建责任 owner。只有要持续交付、跨中断接续的事才成为毛线球；前台可建改自己负责的，伙伴更新各自的。挂断摘要只是带来源与时间的缓存。
+- **结果回告**：迟到结果先留成可读文字，在仍相关的自然停顿简短提一句；已取消、已纠正或被新版本取代的不再念；换题不等于取消。
+- **说与存分开**：说给人听的是短结论，证据留在消息里；真实通话出现照念原文时，再给 final 加可朗读字段。
+- **一次可靠地交出去**：原话、来源、去重由 Host 带上；"已受理"和"已接手"分开说，"交给语音"也不等于"用户听到"。
+
+**实施与使用**（Astra 编排与组合验收，原 A 实现，Opus55 负责岗位说明设计）：
+1. 岗位说明已改（`concierge/live-front-desk.ts` 等）：去掉固定承诺开头，直接答简单问题；对象不符明确指出，先给有内容的短结论，完整证据保留在文字中。实际回应是否有用仍看当次原文。
+2. F153 已分开记录文字发送/持久受理、Host 冷暖与 provider 就绪、对外文字、页面首字幕可见、Host 非零音频、子执行首输出与最终结果。统一跨进程时间基准；缺记录就是 unknown，页面可见不代表人读到，Host 输出不代表物理设备听到。旧 r12 / r14 的派发前 36.867 / 85.221 秒和接手 72.121 秒仍是旧版基线，不是新版测速。
+3. 本人 Task 沿现有 owner/revision/来源契约读改，不把消息送达当成接责。换题保留原工作与正文，迟到结果以来源引用恢复，在仍相关的停顿提醒；取消、纠正和新版取代的旧正文不上麦。Redis 回读与重入去重已验证，恢复扫描限最近 120 条消息。
+4. 原生 `multi_agent` 已按 source1351 打开，无额外试用开关；新 native Host 可让子任务分析根线程提供的材料。子线程没有家内凭据，shell、文件写、浏览器和媒体仍关闭。使用记录进入同一 owner thread 的正常 Chat 历史，可搜「原生子执行」；既有 Message TTL=0，保留可信父子身份、请求来源、起止/耗时、结果引用及工具限制，缺失事实不猜。子执行不结束根任务；记录失败会停止通话并回收未完子任务，避免无记录运行。自然 Live 子执行及其追问体验仍待真人使用。
+
+**交付记录（2026-10-13 UTC）**：
+
+| 项目 | 已核事实与边界 |
+|---|---|
+| 核心开发 | [#5439](https://github.com/zts212653/clowder-ai/pull/5439) 合入 `8b3a46c1984f3d82fb3adb80744000b1840103d8`；[最终包配对 #5454](https://github.com/zts212653/clowder-ai/pull/5454) 于 01:17:56Z 合入 `ee5d6629d38bd20097915e04ddd54eeea0d1f7f3`。Sonnet 独立审查覆盖最终整合 `84d0f90f4e`；合入后 26 路径与批准版本逐字一致，期间 main 改动零交集。 |
+| 公开发行与视觉 | [#76](https://github.com/zts212653/clowder-ai-plugins/pull/76) → [#78](https://github.com/zts212653/clowder-ai-plugins/pull/78) → [#79](https://github.com/zts212653/clowder-ai-plugins/pull/79) 已合入，最终 main `47071ae07ca054b4fb0b8b3f523d890381df4bfd`、CI `38320344854`（含 npm 发布）成功；registry 实际为 contract beta.27 / SDK beta.23 / companion alpha.24。父、A 与 reviewer 核过固定包摘要，不能用中间 alpha.23。呼吸点的独立代码审查与 Studio 效果验收通过（source1997），与整段通话验收分列。 |
+| 实际配对验证 | 从下载的 registry 归档经生产 installer、fresh File 库存、Broker、HostBridge 到真实 Session/Call/F153，并以已安装 SDK beta.23 发出可见回执；定向 API/shared/desktop 与隔离 Redis 检查通过。窗口执行器与 native transport 是确定性 fixture，不是自然 Electron/Live 媒体通话，也不证明正常入口的 next 解析和真实升级已经完成。会议字段尚无已准入的用户侧来源，保持 unconfirmed/false/null，不代表会议整体交付。 |
+| 日常现场 | 01:29:10Z `/health`：boot24、`8f98aed76a0d25b5053f79d4b2db0af1ff898209`，包含 #5439、未含 #5454；`plugin_get(official.companion)`：installed/available alpha.21、lifecycleRevision=96、live=crashed/active=false，诊断 `UNEXPECTED_RUNTIME_FAILURE` 发生于 `1791852028887`。异常发生在 #5454 合入前，原因未知，不能归因于尚未加载的最终配对。 |
+| 下一次体验 | 父 Task33 已登记 runtime 包含 `ee5d6629d3` 的 api/web 部署回调（generation4，baseline boot24）。回调后核新运行版本、实际安装 alpha.24 的固定 SRI 与插件状态；若仍未配齐，先报告具体缺口，不冒称可验。沿 source604「等 runtime 重启我来验收，到时候提醒我」：不自动重启、启用日常、开模型通话或采集媒体。Task33、whole F317、Task892 及原两版作品旅程均不在本开发回执中关闭。 |
+
+**合入流程偏差**：#5454 最后预检断言失败后，作者误在同一 exec 发出了 normal merge；后验检查证明实际合入内容与已批准内容一致，不能把失败预检记成通过。原始偏差与核验存于上述 source499 及 `/tmp/cat-cafe-evidence/f317-front-desk-harness-20261012/published-{final-preflight-deviation,pr5454-merge-audit}.json`，依赖性写操作须先读成功结果、再单独执行。
+
+**不做**：小模型冒充首句、默认再加一层改写、每问一句建毛线球、让主人确认"听到了"、往上下文塞更多历史、新增检查关卡。
+
+**验收场景**：后台同时有一份已完成的旧 SOP 和一份今天的新报告。主人只说一次"那个写完了吗"→ 很快得到有内容、与真实状态对得上的回应 → 说"我是说今天那份"后只改对象、后续不回到旧那份 → 换题后结果回来，在合适的停顿提一句 → 挂断再进来能接上 → 被打断不重复执行。只跑这一条自然旅程，不跑媒体回归。
+
+**未知**：快问交给 Luna / Sol6.1 是否更快尚无端到端数据；"十秒内首个有用回应"和"猫猫球两三秒"目前都是目标，不是保证。
+
 ## Acceptance Criteria
 
 ### Phase A（设计）
@@ -307,6 +351,7 @@ Why: 本 Feature 的新增责任是跨应用持续在场的产品整合与验收
 | KD-5 | Live 自身是thread里的猫；找其他猫直接复用F128跨线程通信 | operator纠正作者将“找我”讲成额外快慢专线的偏差；thread/身份/协作机制沿现有Host，不能让人搬运消息 | 2026-09-16 |
 | KD-6 | 先明确 I1–I8 完整范围；下一段按 S5 验证桌面、完整记忆读取与连续互动 | operator 接续职责讨论要求更新规格；工具接通数不能冒充整体体验；本次范围更新不代表全部设计/生产启用签字 | 2026-09-17 |
 | KD-7 | 本owner thread转指挥/验收，独立执行现场由Sol6主责、Sol5.6独立review，Kimi为允许备选；三部分整合、多commit而非14个PR | operator source `private-source-id`；保持原总任务和完整Feature范围，执行遇实质取舍回Astra，日常SOP自治 | 2026-09-24 |
+| KD-8 | 前台 harness 先按"首个有用回应、答准对象、尚欠答复、结果回告、说与存分开、一次可靠交出去"优化：先改岗位说明，再按真实分段计时补接口；subagent 试开并记录 | You 授权试做 `private-source-id`；dot / Astra / Opus55 讨论收敛，不新增 owner 或检查关卡 | 2026-10-12 |
 
 ## Review Gate
 

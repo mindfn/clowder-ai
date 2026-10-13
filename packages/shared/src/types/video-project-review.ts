@@ -30,6 +30,15 @@ export const videoProjectReviewSourceSchema = z
   .strict();
 export type VideoProjectReviewSource = z.infer<typeof videoProjectReviewSourceSchema>;
 
+const regionBboxSchema = z
+  .object({
+    x: z.number().finite().nonnegative(),
+    y: z.number().finite().nonnegative(),
+    width: z.number().finite().positive(),
+    height: z.number().finite().positive(),
+  })
+  .strict();
+
 /** Coordinates are original display pixels, never CSS or letterbox coordinates. */
 export const videoProjectReviewRegionSchema = z
   .object({
@@ -37,14 +46,7 @@ export const videoProjectReviewRegionSchema = z
     width: positive,
     height: positive,
     rotation: z.union([z.literal(0), z.literal(90), z.literal(180), z.literal(270)]),
-    bbox: z
-      .object({
-        x: z.number().finite().nonnegative(),
-        y: z.number().finite().nonnegative(),
-        width: z.number().finite().positive(),
-        height: z.number().finite().positive(),
-      })
-      .strict(),
+    bbox: regionBboxSchema,
   })
   .strict()
   .refine(
@@ -53,28 +55,55 @@ export const videoProjectReviewRegionSchema = z
   );
 export type VideoProjectReviewRegion = z.infer<typeof videoProjectReviewRegionSchema>;
 
-export const videoProjectReviewTargetSchema = z.discriminatedUnion('kind', [
-  z.object({ kind: z.literal('project') }).strict(),
-  z.object({ kind: z.literal('segment'), segmentId: id }).strict(),
-  z
-    .object({
-      kind: z.literal('moment'),
-      tick,
-      timebase: z.object({ numerator: positive, denominator: positive }).strict(),
-      segmentId: id.optional(),
-      visualUseId: id.optional(),
-      region: videoProjectReviewRegionSchema.optional(),
-    })
-    .strict(),
-  z
-    .object({
-      kind: z.literal('artwork'),
-      assetVersionRef: id,
-      visualUseId: id.optional(),
-      region: videoProjectReviewRegionSchema.optional(),
-    })
-    .strict(),
+/** A mapped project-space region is explicit; it never replaces the original display evidence. */
+export const videoProjectCanvasRegionSchema = z
+  .object({
+    coordinateSpace: z.literal('canvas-pixels'),
+    width: positive,
+    height: positive,
+    rotation: z.literal(0),
+    bbox: regionBboxSchema,
+  })
+  .strict()
+  .refine(
+    ({ bbox, width, height }) => bbox.x + bbox.width <= width && bbox.y + bbox.height <= height,
+    'Region exceeds project canvas pixels',
+  );
+export type VideoProjectCanvasRegion = z.infer<typeof videoProjectCanvasRegionSchema>;
+export const videoProjectReviewMomentRegionSchema = z.union([
+  videoProjectReviewRegionSchema,
+  videoProjectCanvasRegionSchema,
 ]);
+export type VideoProjectReviewMomentRegion = z.infer<typeof videoProjectReviewMomentRegionSchema>;
+
+export const videoProjectReviewTargetSchema = z
+  .discriminatedUnion('kind', [
+    z.object({ kind: z.literal('project') }).strict(),
+    z.object({ kind: z.literal('segment'), segmentId: id }).strict(),
+    z
+      .object({
+        kind: z.literal('moment'),
+        tick,
+        endTick: positive.optional(),
+        timebase: z.object({ numerator: positive, denominator: positive }).strict(),
+        segmentId: id.optional(),
+        visualUseId: id.optional(),
+        region: videoProjectReviewMomentRegionSchema.optional(),
+      })
+      .strict(),
+    z
+      .object({
+        kind: z.literal('artwork'),
+        assetVersionRef: id,
+        visualUseId: id.optional(),
+        region: videoProjectReviewRegionSchema.optional(),
+      })
+      .strict(),
+  ])
+  .superRefine((target, ctx) => {
+    if (target.kind === 'moment' && target.endTick !== undefined && target.endTick <= target.tick)
+      ctx.addIssue({ code: 'custom', path: ['endTick'], message: 'Moment range must be nonempty and half-open' });
+  });
 export type VideoProjectReviewTarget = z.infer<typeof videoProjectReviewTargetSchema>;
 
 export const videoProjectReviewAnchorSchema = z

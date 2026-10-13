@@ -129,8 +129,8 @@ it.each([
   await renderWorkCard(assignedWork(lifecycle, status, 'rejected'));
   expect(container.textContent).not.toContain(misleading);
   expect(container.textContent).not.toContain(`${participant.displayName} 推进`);
-  expect(container.textContent).toContain('未获准执行');
-  expect(container.textContent).toContain('主人委托已失效或撤回');
+  expect(container.textContent).toContain('暂时不能执行');
+  expect(container.textContent).toContain('当前委托已经不可用');
   expect(container.textContent).toContain(`${participant.displayName} 已接下 · You 负责`);
 });
 
@@ -153,7 +153,7 @@ it.each([
   await renderWorkCard(assignedWork(lifecycle, status, 'admitted'));
   expect(container.querySelector('header strong')?.textContent).toBe(label);
   expect(container.textContent).toContain(`${participant.displayName} ${action} · You 负责`);
-  expect(container.textContent).not.toContain('未获准执行');
+  expect(container.textContent).not.toContain('暂时不能执行');
 });
 
 it.each([
@@ -166,7 +166,7 @@ it.each([
   delete initial.executionAuthority;
   await renderWorkCard(initial);
   expect(container.querySelector('header strong')?.textContent).toBe(
-    admission === 'admitted' ? '已准入，待开始' : admission === 'rejected' ? '未获准执行' : '已接下，待家内准入',
+    admission === 'admitted' ? '已准入，待开始' : admission === 'rejected' ? '暂时不能执行' : '已接下，待家内准入',
   );
   expect(container.textContent).not.toContain('推进');
 });
@@ -174,7 +174,7 @@ it.each([
 it('does not expose unrecognized Host errors or private paths as refusal reasons', async () => {
   const reason = 'Error: /home/user/owner/profile.json\n    at internalAuthority()';
   await renderWorkCard(assignedWork('committed', 'blocked', 'rejected', reason));
-  expect(container.textContent).toContain('家内未批准当前执行');
+  expect(container.textContent).toContain('暂时不能执行。回原讨论查看下一步。');
   expect(container.textContent).not.toContain(reason);
   expect(container.textContent).not.toContain('/home/user');
 });
@@ -196,7 +196,7 @@ it.each([
   const currentReceipt = structuredClone(current.executionAuthority?.hostAdmission);
   await renderWorkCard(current);
   expect(container.querySelector('header strong')?.textContent).toBe('当前无法执行');
-  expect(container.textContent).toContain('主人委托已失效或撤回');
+  expect(container.textContent).toContain('当前委托已经不可用');
   expect(container.textContent).toContain(`${participant.displayName} 已接下 · You 负责`);
   expect(container.textContent).not.toContain('等待前置工作');
   expect(container.textContent).not.toContain(`${participant.displayName} 推进`);
@@ -228,7 +228,7 @@ it.each([
   ['CONNECTION_REVOKED', '所属 Café 的连接已撤回'],
   ['MEMBERSHIP_REVOKED', '相关成员已退出或被移除'],
   ['WORK_ADMISSION_NOT_CURRENT', '当前执行的家内准入已失效'],
-  [undefined, '当前执行权限不可用'],
+  [undefined, '暂时不能继续。回原讨论查看下一步。'],
 ] as const)('explains current Service unavailability without reporting it as a dependency (%s)', async (reason, message) => {
   const current = Object.assign(assignedWork('in_progress', 'blocked', 'admitted'), {
     executionStatus: { issuer: 'service' as const, revision: 2, state: 'unavailable' as const, reason },
@@ -268,7 +268,7 @@ it('does not apply a stale unavailable check to a permitted successor execution'
 });
 
 it.each([
-  ['rejected', '未获准执行', '已接下'],
+  ['rejected', '暂时不能执行', '已接下'],
   [undefined, '已接下，待家内准入', '已接下'],
   ['admitted', '推进中', '推进'],
 ] as const)('uses the same current admission facts in Roadmap node and details (%s)', async (admission, label, action) => {
@@ -282,7 +282,7 @@ it.each([
   expect(container.querySelector('.roadmap-work-details dl')?.textContent).toContain(
     `${participant.displayName} ${action}`,
   );
-  if (admission === 'rejected') expect(container.textContent).toContain('主人委托已失效或撤回');
+  if (admission === 'rejected') expect(container.textContent).toContain('当前委托已经不可用');
 });
 
 it('does not claim current Roadmap progress after live Service permission is withdrawn', async () => {
@@ -297,7 +297,7 @@ it('does not claim current Roadmap progress after live Service permission is wit
   await renderRoadmap(current);
   expect(container.querySelector('.roadmap-work-node-status')?.textContent).toBe('当前无法执行');
   expect(container.querySelector('.roadmap-work-details header span')?.textContent).toBe('当前无法执行');
-  expect(container.textContent).toContain('主人委托已失效或撤回');
+  expect(container.textContent).toContain('当前委托已经不可用');
   expect(container.textContent).toContain(`${participant.displayName} 已接下`);
   expect(container.textContent).not.toContain(`${participant.displayName} 推进`);
   expect(container.textContent).not.toContain('等待前置工作');

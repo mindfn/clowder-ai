@@ -29,6 +29,7 @@ export type MemoryProcessJob =
     }
   | ({ kind: 'project-mentions'; dbPath: string; stagingPath: string } & MentionProjectionInput)
   | { kind: 'checkpoint'; dbPath: string }
+  | { kind: 'vector-repack'; dbPath: string }
   | {
       kind: 'scan';
       scanner: 'cat-cafe' | 'generic';

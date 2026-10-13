@@ -7,7 +7,7 @@ import { test } from 'node:test';
 
 // Shell/protocol executable fixtures check ordering and generic compatibility.
 // Real Redis/OS incarnation evidence is in alpha-named-storage.test.mjs.
-function fixture(t) {
+function fixture(t, { dbsize = null } = {}) {
   const directory = mkdtempSync(join(tmpdir(), 'redis-hook-contract-'));
   t.after(() => rmSync(directory, { recursive: true, force: true }));
   const log = join(directory, 'calls');
@@ -21,10 +21,15 @@ function fixture(t) {
   );
   writeFileSync(
     join(bin, 'redis-cli'),
-    '#!/bin/sh\necho "protocol $*" >> "$REDIS_HOOK_TEST_LOG"\ncase "$*" in *" config get appendonly") printf "appendonly\\nyes\\n" ;; *) echo OK ;; esac\n',
+    `#!/bin/sh\necho "protocol $*" >> "$REDIS_HOOK_TEST_LOG"\ncase "$*" in
+      *" dbsize") ${dbsize === 'unknown' ? "echo 'identity unreadable (argv unavailable)' >&2; exit 1" : `echo '${dbsize ?? '1'}'`} ;;
+      *" config get appendonly") printf "appendonly\\nyes\\n" ;;
+      *) echo OK ;;
+    esac\n`,
     { mode: 0o755 },
   );
   return {
+    seedRdb: () => writeFileSync(join(directory, 'dump.rdb'), Buffer.alloc(4096, 1)),
     run(options = '', callback = 'return 0') {
       return spawnSync(
         'bash',
@@ -63,6 +68,25 @@ test('generic caller keeps normal protocol startup and never invokes the named o
     false,
   );
   assert.equal(f.forbiddenExists(), false, 'an environment string does not receive execution authority');
+});
+
+for (const dbsize of ['unknown', 'NOAUTH Authentication required']) {
+  test(`RDB-first ${dbsize} refuses without treating unknown size as empty or issuing a persistence write`, (t) => {
+    const f = fixture(t, { dbsize });
+    f.seedRdb();
+    const result = f.run('--named-alpha-ownership');
+    assert.equal(result.status, 1);
+    assert.match(result.stderr, dbsize === 'unknown' ? /identity unreadable/ : /dbsize.*unreadable/);
+    assert.doesNotMatch(f.calls().join('\n'), /shutdown|config set/);
+  });
+}
+
+test('RDB-first confirmed zero size keeps its protective non-saving stop', (t) => {
+  const f = fixture(t, { dbsize: '0' });
+  f.seedRdb();
+  assert.equal(f.run('--named-alpha-ownership').status, 1);
+  assert.match(f.calls().join('\n'), /shutdown nosave/);
+  assert.doesNotMatch(f.calls().join('\n'), /config set/);
 });
 
 test('named startup executes only its fixed capture before the first protocol command', (t) => {

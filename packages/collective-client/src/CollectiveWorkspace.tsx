@@ -10,7 +10,7 @@ import {
   writeChannelTarget,
 } from './channel-navigation.js';
 import type { CollectiveEventEnvelope, CollectiveWorkProjection } from './client-types.js';
-import { ownDeclaredCatCount, type RoadmapReturn, visibleCollectiveCats } from './collective-workspace-model.js';
+import { type RoadmapReturn, visibleCollectiveCats } from './collective-workspace-model.js';
 import { DemoSpotlight } from './first-entry/DemoSpotlight.js';
 import { EntrySpotlight } from './first-entry/EntrySpotlight.js';
 import { useFirstEntryGuide } from './first-entry/use-first-entry-guide.js';
@@ -94,7 +94,7 @@ export function CollectiveWorkspace({
   const showCafe = () => {
     setSelectedMember(undefined);
     setNavigationOpen(false);
-    host.show();
+    host.show('cats');
   };
   const replayGuide = () => {
     enterFirstEntryChannel();
@@ -160,7 +160,6 @@ export function CollectiveWorkspace({
   };
   const members = snapshot.members;
   const visibleCats = visibleCollectiveCats(participants, members);
-  const ownCatCount = ownDeclaredCatCount(snapshot.participants, host.connectionId);
   const roadmapView = roadmapViews[channelId];
   const updateRoadmapView = (view: RoadmapViewState) =>
     setRoadmapViews((current) => ({ ...current, [channelId]: view }));
@@ -206,11 +205,6 @@ export function CollectiveWorkspace({
         connection={snapshot.connection}
         canSteward={snapshot.collective.role === 'steward'}
         canPair={Boolean(snapshot.me.auth) && !host.paired}
-        cafeConnection={
-          host.paired
-            ? { catCount: firstEntry.phase === 'loading' && firstEntry.pairStarted ? undefined : ownCatCount }
-            : undefined
-        }
         pairNudge={firstEntry.phase === 'browsing'}
         canLeave={snapshot.collective.role === 'member'}
         headerMeta={
@@ -222,6 +216,8 @@ export function CollectiveWorkspace({
         onInvite={() => void client.createInvite()}
         onPair={beginPair}
         onLeave={() => void client.leaveCollective()}
+        onCafe={host.available ? showCafe : undefined}
+        onReplayGuide={firstEntry.narrator ? replayGuide : undefined}
         navigationOpen={navigationOpen || firstEntry.phase === 'entry'}
         onCloseNavigation={() => setNavigationOpen(false)}
         destinations={
@@ -236,8 +232,6 @@ export function CollectiveWorkspace({
               writeChannelTarget(channelId);
             }}
             onSelect={selectChannel}
-            onCafe={host.available ? showCafe : undefined}
-            onReplayGuide={firstEntry.narrator ? replayGuide : undefined}
             guideCatCount={
               firstEntry.phase === 'playing' && firstEntry.beat === 0
                 ? firstEntry.arrivalComplete
@@ -306,7 +300,7 @@ export function CollectiveWorkspace({
       {firstEntry.phase === 'handoff' && firstEntry.handoffCaptionVisible && firstEntry.narrator && (
         <section className="demo-caption demo-handoff-caption" data-handoff-caption aria-label="轮到你">
           <h2>换你来</h2>
-          <p>点名 {firstEntry.narrator.displayName} 试试</p>
+          <p>@ {firstEntry.narrator.displayName} 试试</p>
         </section>
       )}
     </HostWorkPermissionContext.Provider>

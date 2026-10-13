@@ -58,12 +58,12 @@ describe('F167 R3-P1-1 — subjectTaskId production persistence (create→list�
 
     // Wire through ThreadDelegateBindingProvider — the production consumer
     const bindingProvider = new ThreadDelegateBindingProvider({
-      listByThread: async (threadId) => store.listByThread(threadId),
+      listAllByThread: async (threadId) => store.listAllByThread(threadId),
     });
-    const binding = await bindingProvider.getBindingForTask(TASK_ID, OWNER_THREAD, TENANT);
-    assert.ok(binding, 'binding must resolve from persisted proposal with subjectTaskId');
-    assert.equal(binding.proposalId, proposal.proposalId);
-    assert.equal(binding.approvedUnderOwner, OWNER_CAT);
+    const bindings = await bindingProvider.getBindingsForTask(TASK_ID, OWNER_THREAD, TENANT);
+    assert.equal(bindings.length, 1, 'binding must resolve from persisted proposal with subjectTaskId');
+    assert.equal(bindings[0].proposalId, proposal.proposalId);
+    assert.equal(bindings[0].approvedUnderOwner, OWNER_CAT);
   });
 
   test('proposal without subjectTaskId → binding returns null (fail closed)', async () => {
@@ -86,10 +86,52 @@ describe('F167 R3-P1-1 — subjectTaskId production persistence (create→list�
     store.finalizeApproval({ proposalId: proposal.proposalId, createdThreadId: CHILD_THREAD });
 
     const bindingProvider = new ThreadDelegateBindingProvider({
-      listByThread: async (threadId) => store.listByThread(threadId),
+      listAllByThread: async (threadId) => store.listAllByThread(threadId),
     });
-    const binding = await bindingProvider.getBindingForTask(TASK_ID, OWNER_THREAD, TENANT);
-    assert.equal(binding, null, 'legacy proposal without subjectTaskId → fail closed');
+    const bindings = await bindingProvider.getBindingsForTask(TASK_ID, OWNER_THREAD, TENANT);
+    assert.deepEqual(bindings, [], 'legacy proposal without subjectTaskId → fail closed');
+  });
+
+  test('unrelated recent proposals cannot evict older approved Task bindings', async () => {
+    const store = new InMemoryProposalStore();
+    const createInput = (proposalId, overrides = {}) => ({
+      proposalId,
+      sourceThreadId: OWNER_THREAD,
+      sourceInvocationId: 'inv-window',
+      sourceCatId: OWNER_CAT,
+      sourceMessageId: `msg-${proposalId}`,
+      title: proposalId,
+      reason: 'authorization window regression',
+      parentThreadId: OWNER_THREAD,
+      preferredCats: ['codex6-sol'],
+      projectPath: '/test',
+      createdBy: TENANT,
+      subjectTaskId: TASK_ID,
+      ...overrides,
+    });
+    const approve = (proposalId, childThreadId) => {
+      store.create(createInput(proposalId));
+      store.claimForApproval({ proposalId, approvedBy: TENANT });
+      store.finalizeApproval({ proposalId, createdThreadId: childThreadId });
+    };
+
+    approve('prop-old-approved', 'thread-old-approved');
+    approve('prop-new-approved', 'thread-new-approved');
+    await new Promise((resolve) => setTimeout(resolve, 5));
+    for (let index = 0; index < 100; index += 1) {
+      store.create(createInput(`prop-unrelated-${index}`, { subjectTaskId: `task-unrelated-${index}` }));
+    }
+
+    assert.equal(store.listByThread(OWNER_THREAD).length, 100, 'default product listing remains bounded');
+    const bindingProvider = new ThreadDelegateBindingProvider({
+      listAllByThread: async (threadId) => store.listAllByThread(threadId),
+    });
+    const bindings = await bindingProvider.getBindingsForTask(TASK_ID, OWNER_THREAD, TENANT);
+    assert.deepEqual(
+      bindings.map((binding) => binding.proposalId).sort(),
+      ['prop-new-approved', 'prop-old-approved'],
+      'authorization lookup must enumerate beyond the default product list window',
+    );
   });
 });
 

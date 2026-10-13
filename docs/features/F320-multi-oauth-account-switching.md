@@ -5,7 +5,7 @@ related_features: [F062, F136, F171, F291, F318, F319]
 topics: [accounts, oauth, credentials, provider-routing, hub-settings]
 doc_kind: spec
 created: 2026-09-24
-updated: 2026-10-09
+updated: 2026-10-13
 description: "同一家厂商可以登录多个 OAuth 账号（如公司号与私人号），各自隔离；按猫家族一键换绑，或按项目自动选用对应账号。"
 description_source: human
 description_author: opus55
@@ -18,7 +18,61 @@ description_updated_at: 2026-09-24T09:38:50Z
 
 **Codex-first 当前责任**：Astra (@codex-astra, gpt-6-astra) 规划/协调/验收，Sol61 (@codex61-sol, gpt-6.1-sol) 执行；保留原 Feature owner 与 Phase A/B/C。
 
-## 当前返修决定（2026-10-09 UTC）
+## 当前账号页返修（2026-10-13 UTC）
+
+实际枚举失败来自一个凭据与元数据不完整的旧 Kimi ref：catalog 能解析，但 canonical per-ref resolver 拒绝该 ref，旧默认枚举因此中断整份列表。隔离 RED→GREEN 证明修复将该 ref 单独保留为 rejected、正常默认号继续可见，凭据字节不变；真正损坏的 catalog 仍报错，修复后可恢复。默认补全与选用读取现在分别表达各自事实：补全失败不否定可信选择；成员选择读取失败、缺失或过期会撤销旧「正在用」，晚到旧读不能恢复它，换绑提交会作废更早的读。未改账号选择权威或真实绑定。
+
+本轮沿原责任直接返修：人类 `[thread-id]#private-source-id` 要求需改代码的直接 A2A 开工；原设计方在 ROOT `[thread-id]#private-source-id` 逐行裁定账号问题回 F320、英文页面只用一种界面语言。Astra 已全文核两源。Sol61 在原线集中修复，Astra 协调验收；F322 B 保留成员/设置说明文字和布局工作，不另建账号 writer 或镜像 Task。
+
+本轮验收范围：
+
+- 查清默认账号枚举失败的实际原因并用隔离复现验证修复；不能只藏错误。账号选择、成员绑定、登录是否可读分别按各自权威数据表达，未知身份显示「读不到／未确认」，不把查询失败当作解绑或自动换号，也不把无依据的状态标成「正在用」。已有可信选用事实不被另一项查询错误抹掉。保留原绑定与凭据归属，不搬 HOME、复制认证或改真实账号来制造正常。
+- 账号页的标题、表头、状态、提示、错误、菜单和动作，以及添加/换绑/展开等同一账号旅程，使用现有界面语言机制完整提供中英文。服务端已知错误与产品生成的默认号名也须有一致呈现；用户填写的备注、邮箱和工具固有名称保留原值，不伪造翻译或改存量数据。
+- 原作者完成有意义的 RED→GREEN、受影响检查和一次页面主线，覆盖默认查询失败、未知身份、可信选用状态及中英文切换；沿原非作者审查链交一张集中修复 PR。上述作者交付已在 #5458 完成，正式页面回读仍待加载；已接受的短验证与真人登录验收方式保持，不以新建大套 Alpha 前置阻挡交付。真人远端额度与压缩续聊等原开放项不被本轮代签。
+
+## 宿主工具与额度返修（2026-10-12 UTC）
+
+共同根因修复 [#5431](https://github.com/zts212653/clowder-ai/pull/5431) 于 2026-10-12 07:36:08 UTC 正常 squash 合入 `1182b297d7a438683896cf50821acf370341ed9f`：托管 OAuth 不再把普通工具的 HOME 投影成账号私有 runtime-home，而沿用 API parent 宿主 HOME 与显式工具路径；私有 CODEX_HOME、共享 SQLite、强制文件认证、workspace/identity 准入与原调用快照保留，API-key/Collective/F293 隔离未改变。不搬目录、复制凭据或改变真实绑定；原 runtime-home 目录不删除。原 Sol5.6 typed APPROVED1099（`private-source-id`）覆盖 `d8401ff039` 与上述 immutable human source；合流候选 `d3e8a3e9fb`、落地提交均为八个已审文件 blob 全同。作者受影响 65/65、兼容 146/146、合流关键 9/9；独立 runtime-interaction 223/223、F293 24/24、API build 通过。GitHub 没有 CI checks，不称 CI 绿；[合入证据](https://github.com/zts212653/clowder-ai/pull/5431#issuecomment-6119800728)保留。
+
+正式服务当前为 boot24 / revision `8f98aed76a0d25b5053f79d4b2db0af1ff898209`，包含 #5350、#5426 与 #5431；#5426 / #5431 的包含关系已由 Git ancestry 独立核实。下方 boot23 与「尚未加载」保留为上轮交付现场，不再作为当前加载阻塞。You source677 `[thread-id]#private-source-id` 最初因额度一直为 100% 怀疑仍用本机 OAuth，随后 source704 `private-source-id` 明确确认已切过去；**“实际账号没切换”的故障判断已撤回，本轮修复的是额度归属错误。** 原作者 source700 核到本轮 executionAccount 为所选托管号且 session ID 保留，旧回合仍记原账号；这不扩大为真人压缩后全链 AC 已通过。
+
+额度缺陷已在 [#5426](https://github.com/zts212653/clowder-ai/pull/5426) 修复并于 2026-10-12 05:48:18 UTC 合入 `e07eec9c637bc7a5eeb905d80f960b021eb2a043`：原 `hub-quota-pools.ts` 将本机 aggregate `quota.codex` 复用到同厂商 OAuth 行，现托管号只展示属于自己当前有效身份的观测，沿既有按账号 API 查询；未查询或旧无 owner 观测不会冒充 100%，身份失效/变化立即撤掉旧数值和风险，延迟结果不能覆盖另一身份，在途最新成功账号列表仍能撤销过期额度。
+
+原 Sol5.6 typed APPROVED922（`private-source-id`）覆盖 `402427dc9402c5fdc1cbed300a370d158df32e05` / accepted revision `8298f57641cb46db21cb73f0ae538dcaeb74b26f`；Sonnet canonical gh 回执932及[合入证据](https://github.com/zts212653/clowder-ai/pull/5426#issuecomment-6118534477)已核。Astra 独立比对已审、合流候选 `313b2b15` 与落地提交，12 个改动路径的 blob 全同；复用最终 Web 51/51、API 11/11 和 R3 隔离页面证据。R3 实际页面中本机 fake 100% 与托管 fake 70% 各自归属，账号列表在途期间额度先返回、随后 fake 登录失效，列表回包立即清掉托管旧数值且无 pageerror；Astra 已读 `/tmp/f320-quota-account-browser/result-r3.json` 并查看 `managed-quota-invalidated-r3.png`。GitHub 无 CI checks，不声称 CI 或真人额度已通过。
+
+**工具恢复已验，产品真人实测继续。** 原 boot23 的加载等待已被 boot24 事实取代；作者本轮没有操作正式停启。You 可在「设置 → 系统 → 运维监控 → 使用统计」（`/settings?s=ops&ops=usage&shell=v2`）查询所选号，再切号核对额度归属；「账户与登录」行展开的「查询此账号额度」使用同一身份门禁。真实额度及服务端压缩续聊仍未验，Astra 继续原协调/验收责任。原作者工位已实际释放，恢复归档为 `/home/user/projects/relay-station/.worktree-release-archives/cd1dcf72-dd31-417d-ad95-93d6fa34fbce`，branch/原件保留；不重开 done Task3402、不为本次恢复新造 Task 或 review。
+
+### 修复前的定位与发布记录（历史）
+
+以下是 #5431 之前的现场，当前工具恢复以本节顶部 boot24 证据为准。同轮纳入常用工具消费者：平行 Gate 线程 `[thread-id]` 的 Astra 经本线 source686 `private-source-id` 回流，新托管 wake 的 HOME 变为账号私有 runtime-home 后，canonical `gh` 无登录、`git push` 无可用凭据；显式原 GH 配置目录也报 token 无效。发布候选与 Task512 仍属原线程，未转移给 F320。原始发布障碍见该线程 source684 `private-source-id`，没有复制凭据或重新登录。
+
+Astra 已核源码 `account-resolver.ts#accountToRuntimeProfile` 为托管号同时注入私有 HOME 与独立 CODEX_HOME；`CodexAgentService` 合入账号环境，`scripts/guarded-bin/gh` 原样传递 HOME。自己的本次进程亦有同样的路径选择且无 GH_CONFIG_DIR/XDG_CONFIG_HOME/令牌变量。**已确认这是显式 HOME 隔离及其工具查找后果；尚未证明原配置报错原因，也不证明模型 OAuth 选择错误。** 原约定的第三方认证不自动复制保持；不能用共享整个 HOME、复制 hosts.yml/令牌、换回模型账号或改 Keychain 冒充修复。原作者同时核清宿主命令环境应如何使用既有授权；认证确实无效时仍须用户在官方工具恢复，路径改动不能伪装凭据恢复。
+
+原实现线接续 source689 `private-source-id`，经 human704 收窄到上述额度缺陷及独立 CLI 消费问题；额度实现/隔离验证已交付，正式加载后的真人原场景核对继续由 Astra 承接。工具环境只读调查802/803已回 Pro/平行原线，调查完成不等于恢复完成，#5426 不承担该问题已解决的声明。Task512 的发布/合入责任仍属原线程。当前未替用户切号、登录、读写既有凭据或重启服务，真人 AC 继续开放。
+
+发布边界：Astra 的 HTTPS 推送曾以 `Device not configured` 失败；随后核实既有 SSH 认证可用，保留 `027a985fbd` / `d0005cbd38` 两笔记录、普通合流已合入的 Task512 增量后，已将 main 推送为 `6b65c17eba`。没有更改 origin URL、HOME 或复制凭据，Git 拉取/推送可以沿这一既有 SSH 路径继续。**这不证明 `gh` 登录恢复**；其 PR/API 操作仍需有效的 canonical gh 登录环境，原配置也无法认证时由用户通过官方 gh 恢复。不承诺仅加 GH_CONFIG_DIR 能恢复，不把 GitHub 认证失败转嫁成模型换号回退。
+
+## v2 接入与待加载现场（2026-10-10 至 10-11，历史）
+
+新页面一个账号一行，分 OAuth 登录/API 密钥，可按厂商、备注、邮箱或猫名搜索；「本机默认登录」与「正在用」分开，登录成功不自动换号。设置位于猫猫团队、紧跟成员与运行时；成员行显示实际账号名称。全页唯一添加入口，只开放已实现的 Codex 新 OAuth 登录及 API 密钥；其他工具的本机默认行不是新增多账号能力。数量取真实数据，不抄示意稿的 17 个号；账号污染由另线处理，本轮不清真实配置。
+
+隔离事实更正仍有效：作者 source965 `private-source-id` 披露早期测试因继承 Codex home 选择器读取既有默认登录文件，未写入或输出 token；旧 80/80 的“全隔离”用途已撤回。修正入口及自有假登录 fixture 后的严格检查已通过，不能用新绿表抹去原读取事实。正式 runtime、真实登录/换绑/额度/推理/压缩操作未在本轮执行。
+
+## 上轮体验纠正（2026-10-10 上午，历史）
+
+You 在 `[thread-id]#private-source-id` 确认新账号登录成功，但无法分辨当前使用账号，并明确希望继续使用 Codex App 的原登录；source055 `private-source-id` 指出四个同名「Maine Coon」下拉无意义；source060 `private-source-id` 明确正常使用应是**一个 Codex 当前账号，全体本地 Codex 猫跟随**，拒绝逐猫配置及 v2 成员表上的重复换号块。
+
+- 本轮正常路径围绕「当前使用账号」组织；登录成功、已保存的备选账号、当前实际使用分别说明。用户当前想保留原默认登录，不能因新增「主号」而暗示或擅自切换。切换一次对全体本地 Codex 猫的后续调用生效，在途仍沿原账号；存量配置不靠 UI 改版静默迁移。
+- 账号页和 v2 成员页上的逐猫/逐家族下拉堆叠不再是本轮正常入口。当前账号应直接可见，身份、备注、使用范围能读懂；工作区 UUID、目录、内部状态与低频动作不占主要信息层级。视觉与字号沿 DESIGN.md，先由原设计负责人出整屏及关键状态稿，再由原实现线接入，不由后端卡片继续自行拼接。
+- 已核数据错误：账号 API 将持久账号根解析到 workspace 后，members/preview/commit 又用同一根读写成员 catalog；本机 workspace catalog 的四个旧 Codex 变体同名，正式 runtime catalog 的实际成员及绑定不同。持久账号归属与运行成员归属需要各取真实 owner，不能把前者直接当后者；不靠只补下拉标签掩盖接错数据。
+- 截至这次只读核对，正式 runtime 的本地 Codex 成员仍指向内置 `codex`，Astra 当前进程的 `CODEX_HOME` 为原默认目录；新增主号没有成为运行成员绑定。这里只记录账号来源，不以目录推断 Codex App 此刻显示的具体身份。未操作真实换绑、凭据或登录。
+- Astra 承接整体纠正，Sol61 修成员归属与生效信息；原 F320 设计负责人 Opus55 结合其当前 Workspace/v2 设计现场补账号页与成员页的统一表达。原 source442 的短验证、用户直接实测保持，不新开长轮 Alpha；真实账号仍由用户操作。
+
+You 与 Opus55 先在设计现场澄清统一账号概念下 OAuth/API 的组织方式、OAuth 类型以及多厂商快速查找，并与泽丰在 clowder-ai #1466 的成员/工具改造对齐；新稿需由人类定稿后再续页面。Sol61 只继续独立的旧成员 catalog 归属修复与受影响回归，已有 UI 改动保留在工位，不丢弃或发布。原默认登录、真实账号操作边界与排除云端 gpt-pro 的作用范围保持；本次设计讨论不授予 Claude 多账号后端扩展。
+
+独立数据修复已保存为 [Draft PR #5350](https://github.com/zts212653/clowder-ai/pull/5350)，当前 HEAD `2787dc5e0783cad0fa1d8209562d0ffbc55f7881`，产品提交 `403cbfaef98b9316f76791f26fba775b280c779e`。Astra 已核 PR 为 open/draft，范围仅三个 API 文件和成员归属回归测试，Web 无改动；作者回报隔离检查 15/15、API 类型与构建通过，未操作真实账号或正式服务。旧稿实现保留在作者工位，不进入 PR；当前不请审、不 Ready、不合入，页面定稿后由原作者沿同一 PR 接续。
+
+## 上轮返修决定（2026-10-09 UTC，历史）
 
 You `[thread-id]#private-source-id` 要求快速修好前端和整个用户旅程，由他亲自测试；登录只需弹出 CLI 窗口并准备好命令，用户自己按回车也可以。**本轮不再以长轮 Alpha 或全套真人旅程预验作为交到用户手里的前置。** 作者完成受影响检查和一次页面主线核对，保留必要的身份/目录隔离检查；真人登录、额度和续聊由用户从产品发起实测，问题留在原线继续修。
 
@@ -134,7 +188,7 @@ operator 2026-09-24 原话：
   3. 用户在官方页面选择/确认账号并完成授权；回到猫咖可见「公司」已登录，官方身份与自己填写的备注分开显示。
   4. 同样添加「私人」；公司号和默认账号保持原登录，两个账号以后都能直接选择。运行时只选择对应 accountRef/登录目录，不依赖浏览器是否仍打开。
   5. 刷新页面、重启服务后，两条账号、备注和登录仍在；改备注不改变账号或凭据目录。
-  6. 查看两个账号各自额度；选择单猫或本地 Codex 家族换绑到「私人」并确认，正在执行的调用仍用原账号。
+  6. 清楚看到 Codex 当前使用的账号及全体本地成员的跟随关系；需要时一次切换为「私人」，后续调用共同使用它，正在执行的调用仍用原账号。正常路径不要求逐猫选择。
   7. 回到同一聊天继续发消息，下一次调用使用私人号并显示实际执行账号；切回公司号还能续聊，不要求退出或重新登录。另以服务端已压缩的会话验证相同结果。
 - **Success evidence**: 默认 Hub 新建动作确实唤起终端，官方命令消费所建账号目录；用户亲自授权后，两账号状态/备注持久且各自调用与额度归属正确，普通和服务端压缩后可续聊。隔离命令 fixture 只证明接线与隔离，不能代替真人授权；不再把 Chrome 窗口测试列为交付证据。
 - **Non-goals**: 自动轮换（见 KD-1）；绕开厂商限制或组织策略；展示 token 明文；读取、记录、选择或操纵 Chrome profile/窗口/Cookie；代用户授权；通过账号功能安装/更新/发布猫咖或 Codex。
@@ -172,6 +226,7 @@ operator 2026-09-24 原话：
 - [ ] AC-A7（本轮 Codex）: 同一持久账号归属下首次登录后，刷新、正常服务重启及代码 checkout 更新仍认识同一个 accountRef/备注/凭据目录，不因环境切换再次要求授权；不复制 token 或迁移默认 home。厂商主动撤销/登录过期按官方认证生命周期处理，不承诺永久免登录
 - [ ] AC-A8（本轮 Codex）: 新建账号不执行安装依赖、构建、Git 更新、runtime 停启或账号跨环境搬迁；完整账号旅程不依赖 F320 专用发布/维护/回滚控制器
 - [ ] AC-A9（本轮返修）: 账号页只有一套添加入口和账号列表；Codex OAuth 从该入口进入终端登录，失败/超时后原条目有可用恢复操作，未登录状态与额度/换绑动作一致；成功后可沿原入口绑定使用。source442 的用户实测接续不被长轮 Alpha 阻塞
+- [ ] AC-A10（10-10 纠正）: 首屏明确区分当前使用、已登录备选和未登录账号；一次当前账号切换作用于全体本地 Codex 猫，正常路径不出现逐猫选择。成员/绑定读取与正式 runtime 同源，workspace 与 runtime 分离时也不能出现旧成员表。账号页及 v2 成员行按原设计负责人整屏/状态稿接入，字号、控件和信息层级一致
 
 ### Phase B（按家族一键换绑）
 - [ ] AC-B1: 一次操作把某个家族的全部猫换绑到指定账号；下一次调用即走新账号（可从子进程环境 / host 签名 / 回复上的账号标识复核）

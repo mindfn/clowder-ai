@@ -10,11 +10,11 @@ import type {
 } from '../collaborative-content/artifact-review/return-store.js';
 import type { ArtifactReviewService } from '../collaborative-content/artifact-review/service.js';
 import type { ArtifactReviewStore } from '../collaborative-content/artifact-review/store.js';
+import { isBoundMediaModificationReturn } from '../collaborative-content/modification/bindings/media-return-binding.js';
 import {
   type MediaPublicationReturnIntent,
   mediaPublicationProjection,
 } from '../collaborative-content/modification/media-publication/media-publication-return.js';
-import { isBoundMediaModificationReturn } from '../collaborative-content/modification/media-return-binding.js';
 import type { ContentTextModificationService } from '../collaborative-content/modification/text/text-service.js';
 import { ModificationTextError } from '../collaborative-content/modification/text/text-store.js';
 import { MediaOwnerError } from '../video-studio/content-owner/media-errors.js';

@@ -214,9 +214,10 @@ export class EntrustedWorkLifecycleService {
     };
   }
 
-  async close(input: CloseEntrustedWorkCommandV1): Promise<TaskItem> {
+  async close(input: CloseEntrustedWorkCommandV1, beforeWrite?: () => Promise<void>): Promise<TaskItem> {
     const command = closeEntrustedWorkCommandV1Schema.parse(input);
     const artifactSnapshot = await captureCompletionArtifact(this.tasks, this.artifactReader, command);
+    await beforeWrite?.();
     const result = await this.tasks.closeEntrustedWork(command.taskId, {
       expectedRevision: command.expectedRevision,
       closure: command.closure as EntrustedWorkTerminalClosure,

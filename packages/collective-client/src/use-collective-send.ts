@@ -20,12 +20,6 @@ function humanSendPayload(
   };
 }
 
-function acceptedDeliveryLabel(destination: ClientTarget) {
-  return destination.attentionRequest === 'response_requested'
-    ? '回应请求已送达；是否有人接住会显示在原消息上'
-    : '已进入共同现场；这不代表某只猫已经接住';
-}
-
 export function useCollectiveSend(input: {
   readonly snapshot: ClientSnapshot;
   readonly setSnapshot: Dispatch<SetStateAction<ClientSnapshot>>;
@@ -49,7 +43,7 @@ export function useCollectiveSend(input: {
       const send = async () => {
         input.setSnapshot((current) => ({
           ...current,
-          delivery: { kind: 'requesting', label: '正在送往共同现场…' },
+          delivery: { kind: 'requesting', label: '正在发送…' },
         }));
         try {
           await input.request('/api/events/human', { method: 'POST', body: JSON.stringify(operation) });
@@ -57,17 +51,14 @@ export function useCollectiveSend(input: {
           if (namespace !== input.currentNamespace.current) return;
           input.setSnapshot((current) => ({
             ...current,
-            delivery: {
-              kind: 'accepted',
-              label: acceptedDeliveryLabel(destination),
-            },
+            delivery: { kind: 'idle' },
           }));
           await input.refresh();
         } catch (error) {
           if (namespace !== input.currentNamespace.current) throw error;
           input.setSnapshot((current) => ({
             ...current,
-            delivery: { kind: 'failed', label: '尚未确认送达，可以重试' },
+            delivery: { kind: 'failed', label: '没发出去 · 重试' },
             error: collectiveClientErrorMessage(error),
           }));
           throw error;

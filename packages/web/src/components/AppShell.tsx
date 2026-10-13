@@ -150,6 +150,8 @@ function AppShellContent({ children, pathname }: AppShellProps & { pathname: str
   const viewMode = useChatStore((state) => state.viewMode);
   const currentThreadId = useChatStore((state) => state.currentThreadId);
   const workLayout = useF307ExperienceWorkbenchStore((state) => state.layout);
+  const attentionSurfaceId = useF307ExperienceWorkbenchStore((state) => state.mainAreaAttentionSurfaceId);
+  const attentionPresentation = useF307ExperienceWorkbenchStore((state) => state.mainAreaAttentionPresentation);
   const workPresentation = useF307ExperienceWorkbenchStore((state) => state.artifactWorkPresentation);
   const routeThreadId = getThreadIdFromPathname(livePathname);
   const isChatRoute = livePathname === '/' || livePathname.startsWith('/thread/');
@@ -164,6 +166,7 @@ function AppShellContent({ children, pathname }: AppShellProps & { pathname: str
     },
     workLayout,
     workPresentation,
+    { surfaceId: attentionSurfaceId, presentation: attentionPresentation },
   );
   const isChromeless = CHROMELESS_ROUTES.some((route) => pathname.startsWith(route));
   useWorkspaceNavigate(isChatRoute ? routeThreadId : null, {

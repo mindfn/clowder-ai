@@ -30,7 +30,7 @@ export type WorkspaceLauncherDestination =
     }
   | {
       kind: 'host';
-      id: 'status';
+      id: 'status' | 'now' | 'voice' | 'films';
       label: string;
       description: string;
       searchTerms: string;
@@ -112,6 +112,31 @@ const THREAD_DESTINATIONS: WorkspaceLauncherDestination[] = [
   },
 ];
 
+// Canonical v3 destination; classic retains its established card list.
+const V3_DESTINATIONS: WorkspaceLauncherDestination[] = [
+  {
+    kind: 'host',
+    id: 'now',
+    label: '正在发生',
+    description: '查看所有正在进行的工作与详情',
+    searchTerms: 'now running executions commands 正在发生 执行 后台 命令',
+  },
+  {
+    kind: 'host',
+    id: 'voice',
+    label: '语音与会议',
+    description: '语音转写与会议记录',
+    searchTerms: 'voice meeting transcript 语音 会议 录音 转写 陪伴',
+  },
+  {
+    kind: 'host',
+    id: 'films',
+    label: '影视制作',
+    description: '打开已有视频项目',
+    searchTerms: 'film video project 影视 视频 制作',
+  },
+];
+
 const MODE_GROUPS: Array<{ label: string; destinations: Array<Exclude<WorkspaceMode, 'dev'>> }> = [
   { label: '组织工作', destinations: ['team', 'needs-me', 'product-schedule', 'tasks', 'schedule', 'approval'] },
   { label: '回看与理解', destinations: ['recall', 'trajectory', 'artifacts', 'community', 'eval'] },
@@ -140,7 +165,7 @@ export function canonicalLauncherDestination(
   const found =
     kind === 'mode'
       ? modeDestination(id as Exclude<WorkspaceMode, 'dev'>)
-      : [...WORK_DESTINATIONS, ...THREAD_DESTINATIONS].find(
+      : [...WORK_DESTINATIONS, ...THREAD_DESTINATIONS, ...V3_DESTINATIONS].find(
           (destination) => destination.kind === kind && destination.id === id,
         );
   if (!found || found.kind !== kind || found.id !== id) {
@@ -170,7 +195,17 @@ function DestinationCard({
       className="group flex min-h-20 w-full items-center gap-3 rounded-xl border border-cafe-subtle/75 bg-[var(--console-card-bg)] px-3.5 py-3 text-left text-cafe-black transition-[border-color,background-color,transform] hover:-translate-y-px hover:border-cafe-accent/35 hover:bg-cafe-surface"
     >
       <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-cafe-accent/10 text-cafe-accent">
-        <WorkspaceLauncherMark mode={destination.kind === 'surface' ? 'dev' : destination.id} />
+        <WorkspaceLauncherMark
+          mode={
+            destination.kind === 'host'
+              ? destination.id === 'status'
+                ? 'status'
+                : 'dev'
+              : destination.kind === 'surface'
+                ? 'dev'
+                : destination.id
+          }
+        />
       </span>
       <span className="min-w-0 flex-1">
         <span className="block text-sm font-semibold tracking-tight">{destination.label}</span>

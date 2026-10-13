@@ -14,9 +14,36 @@ export interface VideoProjectScopeV1 {
   readonly projectId: string;
 }
 
+export interface VideoProjectMediaScopeV1 {
+  readonly kind: 'video-project-screening';
+  readonly ownerUserId: string;
+  readonly projectContentRef: string;
+  readonly screeningId: string;
+  readonly input: {
+    readonly contentRef: string;
+    readonly ownerRevision: number;
+    readonly blobDigest: `sha256:${string}`;
+  };
+  readonly source: {
+    readonly locator: { readonly worktreeId: string; readonly path: string };
+    readonly expectedSourceRevision: string;
+  };
+  readonly sourceContentRef: string;
+  readonly snapshotOperationId: string;
+  readonly requestDigest: `sha256:${string}`;
+  readonly registeredBy: ContentActorV1;
+  readonly registeredAt: string;
+}
+
 /** Optional domain request provenance lives on the existing owner receipt, not a second operation journal. */
 export interface ContentOperationContextV1 {
-  readonly kind: 'video-project:create' | 'video-project:save' | 'video-project:archive' | 'video-project:decision';
+  readonly kind:
+    | 'video-project:create'
+    | 'video-project:save'
+    | 'video-project:archive'
+    | 'video-project:decision'
+    | 'video-project:screening'
+    | 'video-project:self-review';
   readonly requestDigest: `sha256:${string}`;
 }
 
@@ -97,6 +124,7 @@ export interface ContentSettlementReceiptV1 {
 }
 
 export interface LoadedProjectContentV1 {
+  readonly byteLength: number;
   readonly contentRef: string;
   readonly ownerRevision: number;
   readonly blobDigest: `sha256:${string}`;
@@ -105,6 +133,7 @@ export interface LoadedProjectContentV1 {
   readonly currentOwnerRevision: number;
   readonly publicationScope?: ContentPublicationScopeV1;
   readonly projectScope?: VideoProjectScopeV1;
+  readonly projectMediaScope?: VideoProjectMediaScopeV1;
   readonly sourcePublication?: ContentSourcePublicationV1;
 }
 
@@ -116,6 +145,7 @@ export interface ImportProjectContentInputV1 {
   readonly operationId: string;
   readonly publicationScope?: ContentPublicationScopeV1;
   readonly projectScope?: VideoProjectScopeV1;
+  readonly projectMediaScope?: VideoProjectMediaScopeV1;
   readonly sourcePublication?: ContentSourcePublicationV1;
   readonly operationContext?: ContentOperationContextV1;
 }

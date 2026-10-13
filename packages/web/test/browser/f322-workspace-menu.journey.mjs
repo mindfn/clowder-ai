@@ -4,7 +4,7 @@ import path from 'node:path';
 import { after, before, describe, test as nativeTest } from 'node:test';
 import { fileURLToPath } from 'node:url';
 import { chromium } from '../../../ppt-forge/node_modules/playwright/index.mjs';
-import { buildWorkspaceMenuPage, menuOrigin } from './fixtures/f322-workspace-menu-build.mjs';
+import { buildWorkspaceMenuPage, menuOrigin, routeWorkspaceMenuAssets } from './fixtures/f322-workspace-menu-build.mjs';
 
 const evidence = process.env.F322_MENU_EVIDENCE_DIR ?? '/tmp/cat-cafe-evidence/f322-workspace-menu';
 const menuCases = ['zh', 'en'].flatMap((language) => ['tabs', 'workspace', 'file'].map((menu) => ({ language, menu })));
@@ -25,21 +25,6 @@ export function registerWorkspaceMenuTests(getSharedBrowser) {
         JSON.stringify({ browserClosed: !getSharedBrowser, sharedBrowser: Boolean(getSharedBrowser) }),
       );
     });
-    function routeFixture(route, unexpected) {
-      const url = new URL(route.request().url());
-      const assets = {
-        '/proof.js': { contentType: 'text/javascript', body: built.script },
-        '/proof.css': { contentType: 'text/css', body: built.css },
-        '/': {
-          contentType: 'text/html',
-          body: '<!doctype html><html><head><link rel="stylesheet" href="/proof.css"></head><body><div id="root"></div><script type="module" src="/proof.js"></script></body></html>',
-        },
-      };
-      if (url.origin === menuOrigin && assets[url.pathname]) return route.fulfill(assets[url.pathname]);
-      if (url.pathname === '/favicon.ico') return route.fulfill({ status: 204, body: '' });
-      unexpected.push(route.request().url());
-      return route.abort();
-    }
     for (const { language, menu } of menuCases) {
       test(`${language} ${menu} menu stays visible and Escape returns to its trigger`, async () => {
         const context = await browser.newContext({ viewport: { width: 1000, height: 720 } });
@@ -52,7 +37,7 @@ export function registerWorkspaceMenuTests(getSharedBrowser) {
           localStorage.setItem('cat-cafe:shell-presentation', 'v2');
           localStorage.setItem('cat-cafe:shell-language', lang);
         }, language);
-        await page.route('**/*', (route) => routeFixture(route, unexpected));
+        await page.route('**/*', (route) => routeWorkspaceMenuAssets(route, built, unexpected));
         const name = `${language}-${menu}`;
         try {
           // The production chrome is inside the same overflow-clipped width boundary as Workspace.
@@ -126,7 +111,7 @@ export function registerWorkspaceMenuTests(getSharedBrowser) {
         },
         { language, shell: query.includes('shell=classic') ? 'classic' : 'v2' },
       );
-      await page.route('**/*', (route) => routeFixture(route, unexpected));
+      await page.route('**/*', (route) => routeWorkspaceMenuAssets(route, built, unexpected));
       try {
         await page.goto(`${menuOrigin}/?${query}`, { waitUntil: 'domcontentloaded' });
         await action(page);
@@ -201,9 +186,9 @@ export function registerWorkspaceMenuTests(getSharedBrowser) {
           });
         });
       }
-      test(`${language} overflow actions keep pinned views and use the layout owner`, async () => {
+      test(`${language} named Workspace actions keep pinned views and use the layout owner`, async () => {
         await menuScenario(language, `${language}-bulk-actions`, 'pane=320&left=180&top=470&pinned=1', async (page) => {
-          const trigger = menuTrigger(page, 'tabs');
+          const trigger = menuTrigger(page, 'workspace');
           await trigger.click();
           await page.getByTestId('v2-close-other-tabs').click();
           assert.equal(await page.getByTestId('action-result').getAttribute('data-surface-count'), '2');
@@ -216,19 +201,17 @@ export function registerWorkspaceMenuTests(getSharedBrowser) {
           assert.equal(await page.getByTestId('action-result').getAttribute('data-recently-closed'), '5');
         });
       });
-      test(`${language} nested management stays in the positioned menu and keeps the original action`, async () => {
+      test(`${language} named management stays in the positioned menu and keeps the original action`, async () => {
         await menuScenario(
           language,
-          `${language}-nested-management`,
+          `${language}-named-management`,
           'pane=320&left=180&top=610&pinned=1',
           async (page) => {
             const trigger = menuTrigger(page, 'workspace');
             await trigger.click();
-            await page.getByTestId('f307-manage-surfaces').click();
-            await page.waitForTimeout(50);
             const popup = await assertPopupVisible(trigger);
-            await page.screenshot({ path: path.join(evidence, `${language}-nested-management-open.png`) });
-            const control = page.getByTestId('f307-close-other-surfaces');
+            await page.screenshot({ path: path.join(evidence, `${language}-named-management-open.png`) });
+            const control = page.getByTestId('v2-close-other-tabs');
             const bounds = await control.boundingBox();
             assert.ok(
               bounds &&
@@ -239,22 +222,35 @@ export function registerWorkspaceMenuTests(getSharedBrowser) {
             await control.click();
             assert.equal(await page.getByTestId('action-result').getAttribute('data-surface-count'), '2');
             assert.equal(await page.getByTestId('action-result').getAttribute('data-pinned-count'), '1');
-            await page.keyboard.press('Escape');
             assert.equal(await trigger.evaluate((node) => node.closest('details').open), false);
+            await trigger.click();
+            await assertPopupVisible(trigger);
+            await page.waitForFunction(
+              (id) => document.getElementById(id)?.contains(document.activeElement),
+              await trigger.getAttribute('aria-controls'),
+            );
+            await page.keyboard.press('Escape');
+            assert.equal(
+              await trigger.evaluate((node) => !node.closest('details').open && document.activeElement === node),
+              true,
+            );
           },
         );
       });
     }
 
     for (const language of ['zh', 'en']) {
-      test(`${language} a tall overflow menu scrolls every action into the viewport`, async () => {
+      test(`${language} a tall overflow menu scrolls every tab into the viewport`, async () => {
         await menuScenario(language, `${language}-tall-tabs`, 'pane=320&left=0&top=12&count=36', async (page) => {
           const trigger = menuTrigger(page, 'tabs');
           await trigger.click();
-          const closeAll = page.getByTestId('v2-close-all-tabs');
-          await closeAll.scrollIntoViewIfNeeded();
+          const lastClose = page.locator('[data-v2-workspace-menu]:visible').getByTestId('v2-close-tab').last();
+          await lastClose.scrollIntoViewIfNeeded();
           await assertPopupVisible(trigger);
-          await closeAll.click();
+          await lastClose.click();
+          assert.equal(await page.getByTestId('action-result').getAttribute('data-surface-count'), '35');
+          await menuTrigger(page, 'workspace').click();
+          await page.getByTestId('v2-close-all-tabs').click();
           assert.equal(await page.getByTestId('action-result').getAttribute('data-surface-count'), '0');
         });
       });

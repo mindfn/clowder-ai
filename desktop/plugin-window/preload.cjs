@@ -14,7 +14,8 @@ contextBridge.exposeInMainWorld('clowderCompanion', {
       command.kind === 'answer'
     )
       return { kind: 'error', code: 'invalid_request' };
-    return ipcRenderer.invoke('companion:request', command, navigator.userActivation.isActive === true);
+    const submittedAt = command.kind === 'text' ? Date.now() : undefined;
+    return ipcRenderer.invoke('companion:request', command, navigator.userActivation.isActive === true, submittedAt);
   },
   subscribe: (callback) => {
     listeners.add(callback);

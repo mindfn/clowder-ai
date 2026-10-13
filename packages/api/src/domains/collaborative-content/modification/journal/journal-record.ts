@@ -28,6 +28,14 @@ const sourceVisibilitySchema = z
 const preparedSchema = z.union([
   z
     .object({
+      kind: z.literal('project'),
+      contentRef: contentModificationJournalIdSchema,
+      ownerRevision: revision,
+      ledgerRef: contentModificationJournalIdSchema,
+    })
+    .strict(),
+  z
+    .object({
       kind: z.literal('media'),
       contentRef: contentModificationJournalIdSchema,
       ownerRevision: revision,

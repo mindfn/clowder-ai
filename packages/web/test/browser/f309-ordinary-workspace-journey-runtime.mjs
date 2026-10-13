@@ -13,7 +13,7 @@ import {
   waitForPage,
 } from './f309-ordinary-workspace-journey-fixture.mjs';
 
-export async function startF309OrdinaryWorkspaceJourney() {
+export async function startF309OrdinaryWorkspaceJourney({ apiUrl = '' } = {}) {
   const sync = spawnSync(process.execPath, [path.resolve(WEB_ROOT, 'scripts/sync-vendor-assets.mjs')], {
     cwd: WEB_ROOT,
     encoding: 'utf8',
@@ -42,7 +42,7 @@ export async function startF309OrdinaryWorkspaceJourney() {
     cwd: WEB_ROOT,
     env: {
       ...process.env,
-      NEXT_PUBLIC_API_URL: '',
+      NEXT_PUBLIC_API_URL: apiUrl,
       CAT_CAFE_DEPLOYMENT_ID: 'feature-test',
       CAT_CAFE_WEB_TEST_DIST_DIR: testDistDir,
       CAT_CAFE_WEB_TEST_TSCONFIG: path.basename(testTsconfigPath),

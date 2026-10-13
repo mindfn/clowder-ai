@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
 import { mkdir, readFile, writeFile } from 'node:fs/promises';
 import { test } from 'node:test';
+import { collapseV2Workspace } from './f307-workspace-open.mjs';
 import { createDocumentRequest } from './f309-ordinary-document-request.mjs';
 import { openDocumentSession } from './f309-ordinary-document-session.mjs';
 import { EVIDENCE } from './f309-ordinary-workspace-journey-chat-progress.mjs';
@@ -42,10 +43,7 @@ export function registerDocumentReopenJourney(suite) {
           const openComparison = async (label) => {
             const { page } = session;
             if (width < 768 && (await page.getByTestId('contextual-workspace-host').isVisible())) {
-              await page
-                .getByTestId('v2-workspace-chrome')
-                .getByRole('button', { name: '收起 Workspace', exact: true })
-                .click();
+              await collapseV2Workspace(page);
             }
             await page
               .locator(`[data-message-id="${receipt.id}"]`)
@@ -83,11 +81,16 @@ export function registerDocumentReopenJourney(suite) {
           await session.page.reload({ waitUntil: 'domcontentloaded' });
           await session.page.locator('[data-chat-container]').waitFor();
           await openComparison('reload-cold');
-          await session.page
-            .getByTestId('workspace-content-review-surface')
-            .getByRole('button', { name: '文件工具', exact: true })
-            .click();
-          assert.equal(await session.page.getByTestId('workspace-content-review-surface').count(), 0);
+          // Markdown now keeps its reader and collaboration in the same owner.
+          // Visit the real source view before opening the comparison again.
+          const viewer = session.page.getByTestId('workspace-file-viewer');
+          if (width < 768) await viewer.locator('summary[title="更多文件操作"]').click();
+          // The narrow popup is portalled outside the file owner; roles select its visible control.
+          await session.page.getByRole('button', { name: '渲染', exact: true }).click();
+          await session.page.getByRole('button', { name: '源码', exact: true }).waitFor();
+          assert.equal(await session.page.getByTestId('workspace-content-review-surface').count(), 1);
+          assert.match(await viewer.innerText(), /# Harbour guide/);
+          await session.page.keyboard.press('Escape');
           await openComparison('existing-file');
           await session.context.close();
           session = await openDocumentSession(suite, f.owner, { width, dark, shell: 'v2' });

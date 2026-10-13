@@ -29,6 +29,7 @@ vi.mock('../ActivityBar', () => ({ ActivityBar: () => null }));
 vi.mock('../ThreadSidebar', () => ({ ThreadSidebar: () => null }));
 vi.mock('../shell/WorldRail', () => ({ WorldRail: () => null }));
 vi.mock('@/utils/api-client', () => ({
+  refreshApiSession: () => Promise.resolve(false),
   API_URL: 'http://localhost:3112',
   apiFetch: () => Promise.resolve({ ok: false, json: () => Promise.resolve(null) }),
 }));

@@ -9,6 +9,17 @@ import {
   resolvePencilCommand,
   resolveServersForCat,
 } from '../../../../../config/capabilities/capability-orchestrator.js';
+import {
+  assertMappedCapabilitySource,
+  isSameCapabilityRoot,
+  resolveInvokeCapabilityRoot,
+} from '../../../../../config/capabilities/invoke-capability-root.js';
+import { isManagedCatCafeSplit } from '../../../../../config/capabilities/mcp-constants.js';
+import {
+  resolveMcpArgs,
+  resolveMcpCommand,
+  resolveMcpWorkingDir,
+} from '../../../../../config/capabilities/mcp-launch-paths.js';
 import { isRetiredGithubMcpConfigEntry } from '../../../../../config/capabilities/retired-github-mcp.js';
 
 export type ClaudeMcpServerConfig = Record<string, unknown>;
@@ -41,7 +52,8 @@ export async function resolveClaudeMcpConfig(input: {
   if (!input.callbackEnv || !input.mcpServerPath) return undefined;
 
   const distDir = dirname(input.mcpServerPath);
-  const capabilitiesProjectRoot = resolve(distDir, '../../..');
+  const binaryProjectRoot = resolve(distDir, '../../..');
+  const capabilitiesProjectRoot = await resolveInvokeCapabilityRoot(binaryProjectRoot);
   const catId = input.callbackEnv.CAT_CAFE_CAT_ID;
   const callbackEnv: Record<string, string> = {
     ALLOWED_WORKSPACE_DIRS: resolveWorkspaceRoot(input.workingDirectory),
@@ -56,14 +68,16 @@ export async function resolveClaudeMcpConfig(input: {
   let resolved = false;
   try {
     let capabilityConfig: CapabilitiesConfig | null = null;
+    let configSourceRoot = capabilitiesProjectRoot;
     let accessScope: 'global' | 'project' = 'global';
-    if (input.workingDirectory && input.workingDirectory !== capabilitiesProjectRoot) {
+    if (input.workingDirectory && !isSameCapabilityRoot(input.workingDirectory, capabilitiesProjectRoot)) {
       try {
         const parsed = JSON.parse(
           readFileSync(join(input.workingDirectory, '.cat-cafe', 'capabilities.json'), 'utf8'),
         ) as Partial<CapabilitiesConfig>;
         if ((parsed.version === 1 || parsed.version === 2) && Array.isArray(parsed.capabilities)) {
           capabilityConfig = parsed as CapabilitiesConfig;
+          configSourceRoot = input.workingDirectory;
           accessScope = 'project';
         }
       } catch {
@@ -82,7 +96,7 @@ export async function resolveClaudeMcpConfig(input: {
       for (const server of resolveServersForCat(capabilityConfig, catId, { accessScope })) {
         managedNames.add(server.name);
         if (!server.enabled) continue;
-        if (server.source === 'cat-cafe' && CAT_CAFE_SPLIT_ENTRYPOINTS.has(server.name)) {
+        if (isManagedCatCafeSplit(server)) {
           const entrypoint = CAT_CAFE_SPLIT_ENTRYPOINTS.get(server.name)!;
           const entrypointPath = join(distDir, entrypoint);
           if (existsSync(entrypointPath)) {
@@ -93,21 +107,21 @@ export async function resolveClaudeMcpConfig(input: {
             };
           }
         } else if (server.resolver === 'pencil') {
-          const pencil = await resolvePencilCommand({ projectRoot: capabilitiesProjectRoot });
+          const pencil = await resolvePencilCommand({ projectRoot: configSourceRoot });
           if (pencil) servers[server.name] = { command: pencil.command, args: pencil.args };
         } else if (server.transport === 'streamableHttp' && server.url) {
-          servers[server.name] = {
-            type: 'http',
-            url: server.url,
-            ...(server.headers && Object.keys(server.headers).length > 0 ? { headers: server.headers } : {}),
-          };
+          const entry: Record<string, unknown> = { type: 'http', url: server.url };
+          if (server.headers && Object.keys(server.headers).length > 0) entry.headers = server.headers;
+          servers[server.name] = entry;
         } else if (server.command) {
-          servers[server.name] = {
-            command: server.command,
-            args: server.args,
-            ...(server.env && Object.keys(server.env).length > 0 ? { env: server.env } : {}),
-            ...(server.workingDir ? { cwd: server.workingDir } : {}),
+          const workingDir = resolveMcpWorkingDir(server.workingDir, configSourceRoot);
+          const entry: Record<string, unknown> = {
+            command: resolveMcpCommand(server.command, workingDir, configSourceRoot),
+            args: resolveMcpArgs(server.args, workingDir, configSourceRoot),
           };
+          if (server.env && Object.keys(server.env).length > 0) entry.env = server.env;
+          if (workingDir) entry.cwd = workingDir;
+          servers[server.name] = entry;
         }
       }
       resolved = true;
@@ -115,7 +129,7 @@ export async function resolveClaudeMcpConfig(input: {
   } catch {
     // Fall through to the installation-owned Cat Cafe entrypoints.
   }
-
+  assertMappedCapabilitySource(resolved, binaryProjectRoot, capabilitiesProjectRoot);
   if (!resolved) {
     for (const [name, entrypoint] of CAT_CAFE_SPLIT_ENTRYPOINTS) {
       const entrypointPath = join(distDir, entrypoint);

@@ -71,6 +71,7 @@ test(
       await ownerPage.getByPlaceholder('在 #general 里说点什么……').fill('Owner browser message');
       await ownerPage.getByRole('button', { name: '发送', exact: true }).click();
       await ownerPage.getByText('Owner browser message', { exact: true }).waitFor();
+      await ownerPage.locator('details.collective-menu > summary').click();
       await ownerPage.getByRole('button', { name: '邀请成员' }).click();
       const inviteUrl = await ownerPage.locator('.destination-notice').textContent();
       assert.ok(inviteUrl?.startsWith(`${serviceUrl}/#invite=`));
@@ -87,7 +88,7 @@ test(
       const memberErrors = [];
       memberPage.on('pageerror', (error) => memberErrors.push(error.message));
       await memberPage.goto(inviteUrl, { waitUntil: 'networkidle' });
-      await memberPage.getByRole('heading', { name: '加入同一个共同现场' }).waitFor();
+      await memberPage.getByRole('heading', { name: '加入共同体' }).waitFor();
       const memberPopup = await openAuthPopup(memberPage, '使用 GitHub 验证并加入');
       await memberPopup.getByRole('link', { name: 'Continue as Member' }).click();
       await openChannelFromCollectiveHome(memberPage, 'general');
@@ -160,7 +161,7 @@ test(
       assert.deepEqual(hostApi.pairRequests[0].excludedCatIds, []);
       // Pairing reloads the embedded Client at its canonical Home entry.
       await openChannelFromCollectiveHome(frame, 'general');
-      await frame.getByRole('button', { name: '我的 Café', exact: true }).waitFor();
+      await frame.getByRole('button', { name: '我的猫', exact: true }).waitFor();
       await memberPage.screenshot({ path: path.join(evidenceDirectory, 'host-embedded-member.png'), fullPage: true });
 
       const ownerProjection = await activeStore.getHumanProjection(ownerAuth.sessionToken());

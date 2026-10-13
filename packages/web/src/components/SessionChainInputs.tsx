@@ -1,3 +1,5 @@
+import { sessionChainCopy } from '@/components/session-chain.shell-copy';
+import { useTrajectoryCopy } from '@/components/workspace/trajectory/use-trajectory-copy';
 /**
  * Sub-components for SessionChainPanel: BindSessionInput + SessionIdTag.
  * Extracted to keep SessionChainPanel under 350 lines.
@@ -19,6 +21,7 @@ export function BindSessionInput({
   disabled?: boolean;
 }) {
   const [open, setOpen] = useState(false);
+  const t = useTrajectoryCopy(sessionChainCopy);
   const [value, setValue] = useState('');
   const [status, setStatus] = useState<'idle' | 'saving' | 'ok' | 'error'>('idle');
   const ime = useIMEGuard();
@@ -58,7 +61,7 @@ export function BindSessionInput({
         disabled={disabled}
         className="text-xs text-cafe-muted hover:text-cafe-secondary transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
       >
-        绑定会话 ID…
+        {t.bindId}
       </button>
     );
   }
@@ -78,7 +81,7 @@ export function BindSessionInput({
             setStatus('idle');
           }
         }}
-        placeholder="命令行会话 ID"
+        placeholder={t.cliId}
         maxLength={500}
         className="flex-1 text-xs font-mono px-1.5 py-0.5 rounded-[10px] border-transparent bg-[var(--console-field-bg,var(--console-card-bg))] focus:outline-none focus:ring-1 focus:ring-cafe-accent"
         // biome-ignore lint/a11y/noAutofocus: intentional UX — focus input immediately on open
@@ -90,7 +93,7 @@ export function BindSessionInput({
         disabled={status === 'saving' || !value.trim() || disabled}
         className="text-xs px-1.5 py-0.5 rounded bg-cafe-surface hover:bg-[var(--console-hover-bg)] disabled:opacity-40 transition-colors"
       >
-        {status === 'saving' ? '...' : status === 'ok' ? '已绑定' : status === 'error' ? '失败，重试' : '绑定'}
+        {status === 'saving' ? '...' : status === 'ok' ? t.bound : status === 'error' ? t.bindRetry : t.bind}
       </button>
       <button
         type="button"
@@ -106,7 +109,9 @@ export function BindSessionInput({
   );
 }
 
-export function SessionIdTag({ id, label = '会话 ID' }: { id: string; label?: string }) {
+export function SessionIdTag({ id, label }: { id: string; label?: string }) {
+  const t = useTrajectoryCopy(sessionChainCopy);
+  const displayLabel = label ?? t.sessionId;
   const [copyResult, setCopyResult] = useState<{ id: string; state: 'copied' | 'failed' } | null>(null);
   const copyState = copyResult?.id === id ? copyResult.state : 'idle';
   const handleCopy = async () => {
@@ -121,13 +126,13 @@ export function SessionIdTag({ id, label = '会话 ID' }: { id: string; label?: 
     <button
       type="button"
       className="flex min-w-0 flex-1 items-center gap-1 text-left text-xs font-mono text-cafe-muted hover:text-cafe-secondary cursor-pointer transition-colors whitespace-nowrap focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-cafe-accent"
-      title={`点击复制完整${label}: ${id}`}
-      aria-label={`复制${label}：${id}`}
+      title={t.copyTitle(displayLabel, id)}
+      aria-label={t.copyLabel(displayLabel, id)}
       onClick={() => void handleCopy()}
     >
       <span className="min-w-0 truncate">{id}</span>
       <span role="status" aria-live="polite" className="shrink-0 font-sans">
-        {copyState === 'copied' ? '已复制' : copyState === 'failed' ? '复制失败，重试' : ''}
+        {copyState === 'copied' ? t.copied : copyState === 'failed' ? t.copyFailedRetry : ''}
       </span>
     </button>
   );

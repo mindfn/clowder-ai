@@ -49,6 +49,14 @@ async function initializeVectorBackend(store: SqliteEvidenceStore, dim: number):
     throw new VectorBackendUnavailableError('vector_table_unavailable');
   }
 
+  try {
+    const result = await store.repackPassageVectors();
+    if (result.status !== 'unchanged') console.info('[memory] passage vector layout', result);
+  } catch (error) {
+    // Optional layout maintenance cannot disable an otherwise usable index.
+    console.warn('[memory] vector repack unavailable; using current projection', error);
+  }
+
   return {
     vectorStore: new VectorStore(store.getDb(), dim),
     passageVectorStore: new PassageVectorStore(store.getDb(), dim),

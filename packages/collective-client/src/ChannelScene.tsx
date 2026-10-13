@@ -62,6 +62,7 @@ export function ChannelScene({
   onOpenChannel,
   context,
   onCafe,
+  onChannelCafe,
   members,
   firstEntry,
 }: ChannelSceneProps) {
@@ -206,6 +207,7 @@ export function ChannelScene({
           connection={connection}
           onOpenNavigation={onOpenNavigation}
           onCafe={onCafe}
+          onChannelCafe={onChannelCafe}
           guideCatCount={
             firstEntry?.phase === 'playing' && firstEntry.beat === 0 && firstEntry.arrivalComplete
               ? firstEntry.ownCats.length

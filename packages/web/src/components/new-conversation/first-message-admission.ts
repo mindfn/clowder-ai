@@ -9,6 +9,8 @@ export interface PendingNewConversationIntent {
   preferredCats: string[];
   title?: string;
   pinned?: boolean;
+  sessionImport?: { sessionId: string; catId: string; projectPath: string; firstPrompt: string };
+  importAccepted?: boolean;
   creationStarted: boolean;
   createdThreadId?: string;
   messageAccepted?: boolean;
@@ -37,6 +39,7 @@ export type FirstMessageAdmissionPhase =
   | 'create_failed'
   | 'create_rejected'
   | 'send_failed'
+  | 'import_failed'
   | 'complete';
 
 export interface FirstMessageAdmissionDependencies {
@@ -69,8 +72,8 @@ function optionsMayChangeAfter(error: unknown): boolean {
   );
 }
 
-async function resolveThread(
-  dependencies: FirstMessageAdmissionDependencies,
+export async function resolveNewConversationThread(
+  dependencies: Pick<FirstMessageAdmissionDependencies, 'readIntent' | 'persistIntent' | 'createThread'>,
   setPhase: PhaseReporter,
 ): Promise<ResolvedFirstMessageIntent | null> {
   let intent = dependencies.readIntent();
@@ -153,7 +156,8 @@ export function createFirstMessageAdmissionController(
   const setPhase = (phase: FirstMessageAdmissionPhase) => dependencies.onPhaseChange?.(phase);
 
   const admit = async (payload: FirstMessagePayload): Promise<boolean> => {
-    const resolved = await resolveThread(dependencies, setPhase);
+    if (dependencies.readIntent().sessionImport) return false;
+    const resolved = await resolveNewConversationThread(dependencies, setPhase);
     if (!resolved) return false;
     if (!resolved.intent.messageAccepted) {
       const accepted = await deliverFirstMessage(dependencies, resolved, payload, setPhase);

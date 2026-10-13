@@ -1,33 +1,28 @@
 'use client';
 
 import type { PawFeelInboxItem } from '@cat-cafe/shared';
+import { pawFeelCopy, usePawFeelCopy, usePawFeelLanguage } from '../paw-feel/paw-feel.shell-copy';
 import { pawFeelDutyDetail } from '../paw-feel/paw-feel-duty-presentation';
 import { pawFeelIssueDetail, pawFeelIssueStatus } from '../paw-feel/paw-feel-issue-presentation';
 
-const RESPONSIBILITY_LABELS: Record<PawFeelInboxItem['responsibility']['state'], string> = {
-  unreviewed: 'unreviewed · 尚无业务出口',
-  bound_in_repair: 'bound-in-repair · 修复责任已绑定',
-  signature_waiting: 'signature-waiting · 等待独立签署',
-  blocked: 'blocked · 有结构化阻塞',
-  terminal: 'terminal · 已终结',
-};
-
-function responsibilityLabel(item: PawFeelInboxItem): string {
-  const label = RESPONSIBILITY_LABELS[item.responsibility.state];
-  return item.responsibility.validExit ? label : `${label} · 尚未形成有效出口`;
+function responsibilityLabel(item: PawFeelInboxItem, language: 'zh' | 'en'): string {
+  const t = pawFeelCopy[language];
+  const label = t.responsibility[item.responsibility.state];
+  return item.responsibility.validExit ? label : `${label} · ${t.noExit}`;
 }
 
-function formatAge(ageMs: number): string {
+function formatAge(ageMs: number, language: 'zh' | 'en'): string {
+  const t = pawFeelCopy[language];
   const hours = Math.floor(ageMs / 3_600_000);
-  if (hours < 1) return '不到 1 小时';
-  if (hours < 48) return `${hours} 小时`;
-  return `${Math.floor(hours / 24)} 天`;
+  if (hours < 1) return t.lessHour;
+  if (hours < 48) return `${hours} ${t.hours}`;
+  return `${Math.floor(hours / 24)} ${t.days}`;
 }
 
-function formatTimestamp(value: string): string {
+function formatTimestamp(value: string, language: 'zh' | 'en'): string {
   const timestamp = Date.parse(value);
-  if (!Number.isFinite(timestamp)) return '时间不可读';
-  return new Intl.DateTimeFormat('zh-CN', {
+  if (!Number.isFinite(timestamp)) return pawFeelCopy[language].unreadableTime;
+  return new Intl.DateTimeFormat(language === 'en' ? 'en-US' : 'zh-CN', {
     month: '2-digit',
     day: '2-digit',
     hour: '2-digit',
@@ -44,8 +39,10 @@ function rowTone(item: PawFeelInboxItem, issueOverdue: boolean): string {
 }
 
 export function PawFeelInboxRow({ item }: { item: PawFeelInboxItem }) {
-  const detail = pawFeelDutyDetail(item);
-  const issueDetail = pawFeelIssueDetail(item);
+  const t = usePawFeelCopy();
+  const language = usePawFeelLanguage();
+  const detail = pawFeelDutyDetail(item, language);
+  const issueDetail = pawFeelIssueDetail(item, language);
   const issueOverdue = item.issue.resolution === 'open' && item.issue.ageMs >= 72 * 3_600_000;
   const stateTone = rowTone(item, issueOverdue);
 
@@ -62,28 +59,32 @@ export function PawFeelInboxRow({ item }: { item: PawFeelInboxItem }) {
       <div className="flex flex-wrap items-start justify-between gap-2">
         <div className="min-w-0">
           <div className="flex flex-wrap items-center gap-2 text-micro font-semibold">
-            <span>值班回执 · {responsibilityLabel(item)}</span>
+            <span>
+              {t.receipt} · {responsibilityLabel(item, language)}
+            </span>
             {item.disposition.backfilled ? (
-              <span className="rounded-full border border-current px-1.5 py-0.5">历史回填</span>
+              <span className="rounded-full border border-current px-1.5 py-0.5">{t.backfill}</span>
             ) : null}
             {item.overdue || issueOverdue ? (
               <span className="rounded-full border border-current px-1.5 py-0.5">72h+</span>
             ) : null}
           </div>
-          <div className="mt-1 text-xs font-semibold">{pawFeelIssueStatus(item)}</div>
+          <div className="mt-1 text-xs font-semibold">{pawFeelIssueStatus(item, language)}</div>
           <div className="mt-1 text-xs opacity-75">
-            报告猫 @{item.disposition.sourceCatId}
-            {item.disposition.lastActorCatId ? ` · 审阅猫 @${item.disposition.lastActorCatId}` : ''}
+            {t.reportCat} @{item.disposition.sourceCatId}
+            {item.disposition.lastActorCatId ? ` · ${t.reviewCat} @${item.disposition.lastActorCatId}` : ''}
           </div>
           <div className="mt-1 text-micro opacity-70">
-            原消息时间 {item.sourceOccurredAt ? formatTimestamp(item.sourceOccurredAt) : '暂不可读'} · 入箱 / SLA{' '}
-            {formatTimestamp(item.disposition.discoveredAt)} ·
-            {item.responsibility.validExit ? ` 处置耗时 ${formatAge(item.ageMs)}` : ` 已运行 ${formatAge(item.ageMs)}`}
+            {t.sourceTime} {item.sourceOccurredAt ? formatTimestamp(item.sourceOccurredAt, language) : t.unreadable} ·{' '}
+            {t.intakeTime} {formatTimestamp(item.disposition.discoveredAt, language)} ·
+            {item.responsibility.validExit
+              ? ` ${t.actionDuration} ${formatAge(item.ageMs, language)}`
+              : ` ${t.runningDuration} ${formatAge(item.ageMs, language)}`}
           </div>
           <div className="mt-1 text-micro opacity-70">
             {item.issue.resolution === 'resolved'
-              ? `问题闭环耗时 ${formatAge(item.issue.ageMs)}`
-              : `问题已持续 ${formatAge(item.issue.ageMs)}`}
+              ? `${t.resolutionDuration} ${formatAge(item.issue.ageMs, language)}`
+              : `${t.issueDuration} ${formatAge(item.issue.ageMs, language)}`}
           </div>
         </div>
         <span className="max-w-full truncate font-mono text-micro opacity-70" title={item.disposition.signalId}>
@@ -100,14 +101,14 @@ export function PawFeelInboxRow({ item }: { item: PawFeelInboxItem }) {
         </a>
       ) : (
         <output className="mt-2 block rounded-md border border-current/30 px-2 py-1.5 text-xs">
-          原始证据暂不可读：{item.source.reason}
+          {t.sourceMissing(item.source.reason)}
         </output>
       )}
 
       {detail ? <p className="mt-2 text-xs leading-relaxed opacity-80">{detail}</p> : null}
       {issueDetail ? <p className="mt-2 text-xs leading-relaxed opacity-80">{issueDetail}</p> : null}
       {item.deterministicGroupKey ? (
-        <div className="mt-2 text-micro opacity-60">确定性分组：{item.deterministicGroupKey}</div>
+        <div className="mt-2 text-micro opacity-60">{t.groupKey(item.deterministicGroupKey)}</div>
       ) : null}
     </article>
   );

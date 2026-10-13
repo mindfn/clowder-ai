@@ -6,7 +6,7 @@ import { test } from 'node:test';
 import { chromium } from '../../../ppt-forge/node_modules/playwright/index.mjs';
 import { startReviewHost } from './fixtures/f309-artifact-review-host.mjs';
 import { mediaFixture, offsetRotatedVfrFixture } from './fixtures/f309-artifact-review-media.mjs';
-import { openReviewPanel, selectReviewMode } from './fixtures/f309-artwork-controls.mjs';
+import { openAnnotationSave, openReviewPanel, selectReviewMode } from './fixtures/f309-artwork-controls.mjs';
 import { installMediaDiagnostics, readMediaDiagnostics } from './fixtures/f309-media-diagnostics.mjs';
 
 async function openReview(page, host) {
@@ -141,7 +141,7 @@ for (const kind of ['png', 'mp4'])
     }
     await circle(page, view.review.rounds[0].asset.media);
     await page.getByRole('textbox', { name: '评论内容' }).fill('帧坐标及撤权恢复的陌生意见');
-    await page.getByRole('button', { name: '保存批注', exact: true }).click();
+    await (await openAnnotationSave(page)).click();
     await openReviewPanel(page, 'comments');
     await page.getByTestId('review-comment').waitFor();
     view = await host.reviews.read(reviewId, host.human);

@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict';
+import { randomUUID } from 'node:crypto';
 import { mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { createRequire } from 'node:module';
 import { tmpdir } from 'node:os';
@@ -7,7 +8,12 @@ import { test } from 'node:test';
 import { chromium } from '../../../ppt-forge/node_modules/playwright/index.mjs';
 import { startReviewHost } from './fixtures/f309-artifact-review-host.mjs';
 import { mediaFixture } from './fixtures/f309-artifact-review-media.mjs';
-import { openReviewPanel, selectMarkupTool, selectReviewMode } from './fixtures/f309-artwork-controls.mjs';
+import {
+  openAnnotationSave,
+  openReviewPanel,
+  selectMarkupTool,
+  selectReviewMode,
+} from './fixtures/f309-artwork-controls.mjs';
 
 const sharp = createRequire(new URL('../../../api/package.json', import.meta.url))('sharp');
 async function presentFrame(page, seconds) {
@@ -81,6 +87,46 @@ async function fixture(t, kind = 'png') {
   return { root, host, browser, page, errors, reviewId, read: () => host.reviews.read(reviewId, host.human) };
 }
 
+/** Authenticated owner setup represents a request recorded by the retained legacy writer, not a new UI send. */
+async function recordLegacyImageRequest(host, view, intent) {
+  const round = view.review.rounds.at(-1);
+  const response = await fetch(`${host.apiOrigin}/api/content-modifications`, {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({
+      operationId: randomUUID(),
+      source: round.ledgerRef
+        ? {
+            kind: 'publication',
+            contentRef: round.asset.contentRef,
+            ownerRevision: round.asset.ownerRevision,
+            ledgerRef: round.ledgerRef,
+            expectedLedgerRevision: round.ledgerRevision,
+          }
+        : {
+            kind: 'artifact-review',
+            reviewId: view.review.reviewId,
+            round: round.number,
+            expectedReviewRevision: view.review.revision,
+          },
+      targetCatId: view.authority.ownerCatId,
+      threadId: view.review.task.threadId,
+      taskContext: {
+        kind: 'media',
+        taskId: view.review.task.taskId,
+        expectedTaskRevision: view.authority.taskRevision,
+        reviewId: view.review.reviewId,
+        expectedReviewRevision: view.review.revision,
+        round: round.number,
+      },
+      intent,
+    }),
+  });
+  const result = await response.json();
+  assert.equal(response.status, 200, JSON.stringify(result));
+  return result;
+}
+
 test(
   'F309 artwork authoring: video drawings and point comments retain their presented frame after refresh',
   { timeout: 90000 },
@@ -101,7 +147,7 @@ test(
     await page.mouse.click(point.x, point.y);
     await page.getByLabel('片段终点').fill('1.8');
     await page.getByLabel('评论内容').fill('这一帧的动作 sentinel-video-point');
-    await page.getByRole('button', { name: '保存批注', exact: true }).click();
+    await (await openAnnotationSave(page)).click();
     await openReviewPanel(page, 'comments');
     await page.getByTestId('review-comment').filter({ hasText: 'sentinel-video-point' }).waitFor();
     view = await read();
@@ -124,7 +170,7 @@ test(
 );
 
 test(
-  'F309 artwork authoring: saved marks and point comments survive another browser; region request returns through the same Task',
+  'F309 artwork authoring: saved marks survive another browser; a retained region request returns through the same Task',
   { timeout: 90000 },
   async (t) => {
     const { root, host, browser, page, errors, reviewId, read } = await fixture(t);
@@ -149,7 +195,7 @@ test(
     const point = await at(page, 0.6, 0.4);
     await page.mouse.click(point.x, point.y);
     await page.getByLabel('评论内容').fill('灯光只调整这一处 sentinel-point');
-    await page.getByRole('button', { name: '保存批注', exact: true }).click();
+    await (await openAnnotationSave(page)).click();
     await openReviewPanel(page, 'comments');
     await page.getByTestId('review-comment').filter({ hasText: 'sentinel-point' }).waitFor();
     view = await read();
@@ -165,11 +211,23 @@ test(
     await selectReviewMode(page, 'view');
     await page.getByRole('button', { name: '圈选区域', exact: true }).click();
     await drag(page, [0.7, 0.25], [0.85, 0.45]);
-    await page.getByRole('button', { name: '请猫修改', exact: true }).click();
-    await page.getByRole('button', { name: '移除圈选内容', exact: true }).click();
-    await page.getByText('将移除圈选区域并补全背景').waitFor();
-    await page.getByLabel('修改说明', { exact: true }).fill('保留边缘的叶子 sentinel-erase');
-    await page.getByTestId('content-modification-submit').click();
+    view = await read();
+    const region = {
+      x: Math.round(imageMedia.width * 0.7),
+      y: Math.round(imageMedia.height * 0.25),
+      width: Math.round(imageMedia.width * 0.15),
+      height: Math.round(imageMedia.height * 0.2),
+    };
+    await recordLegacyImageRequest(host, view, {
+      body: '保留边缘的叶子 sentinel-erase',
+      selection: { kind: 'image-region', ...region },
+      imageEdit: { kind: 'erase-region', region },
+    });
+    await page.getByTestId('artifact-review-surface').getByRole('button', { name: '刷新', exact: true }).click();
+    await page.getByRole('button', { name: '修改记录', exact: true }).click();
+    await page.getByTestId('content-modification-panel').waitFor();
+    assert.equal(await page.getByRole('button', { name: '请猫修改', exact: true }).count(), 0);
+    assert.equal(await page.getByTestId('content-modification-submit').count(), 0);
     await page.getByTestId('review-return-state').filter({ hasText: '已交还原任务队列' }).waitFor();
     view = await read();
     assert.equal(view.review.rounds[0].annotations[1].imageEdit.kind, 'erase-region');
@@ -206,19 +264,22 @@ test(
 );
 
 test(
-  'F309 artwork authoring: narrow-screen ratio menu sends the typed target and receives a correctly sized new version',
+  'F309 artwork authoring: narrow-screen records retain a typed ratio request and receive its correctly sized version',
   { timeout: 90000 },
   async (t) => {
     const { root, host, page, errors, reviewId, read } = await fixture(t);
     await page.setViewportSize({ width: 390, height: 844 });
-    await page.getByRole('button', { name: '请猫修改', exact: true }).click();
-    const choice = page.getByLabel('请求图片比例', { exact: true });
-    await choice.waitFor();
-    const box = await choice.boundingBox();
+    const original = await read();
+    const previous = original.review.rounds[0].asset;
+    await recordLegacyImageRequest(host, original, { body: '', imageEdit: { kind: 'aspect-ratio', ratio: '9:16' } });
+    await page.getByTestId('artifact-review-surface').getByRole('button', { name: '刷新', exact: true }).click();
+    await page.getByRole('button', { name: '修改记录', exact: true }).click();
+    const records = page.getByTestId('content-modification-panel');
+    await records.waitFor();
+    const box = await records.boundingBox();
     assert.ok(box && box.x >= 0 && box.x + box.width <= 390);
-    const previous = (await read()).review.rounds[0].asset;
-    await choice.selectOption('9:16');
-    await page.getByTestId('content-modification-submit').click();
+    assert.equal(await page.getByLabel('请求图片比例', { exact: true }).count(), 0);
+    assert.equal(await page.getByTestId('content-modification-submit').count(), 0);
     await page.getByTestId('review-return-state').filter({ hasText: '已交还原任务队列' }).waitFor();
     let view = await read();
     assert.deepEqual(view.review.rounds[0].asset, previous);

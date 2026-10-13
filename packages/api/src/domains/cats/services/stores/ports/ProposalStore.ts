@@ -84,6 +84,8 @@ export interface IProposalStore {
   listByUser(userId: string, limit?: number): ThreadProposal[] | Promise<ThreadProposal[]>;
   listPending(userId: string, limit?: number): ThreadProposal[] | Promise<ThreadProposal[]>;
   listByThread(threadId: string, limit?: number): ThreadProposal[] | Promise<ThreadProposal[]>;
+  /** Complete authority scan; unlike product lists, this must not truncate. */
+  listAllByThread(threadId: string): ThreadProposal[] | Promise<ThreadProposal[]>;
   /**
    * Atomic CAS pending → approving. Returns the claimed proposal snapshot, or null if status
    * was not pending (e.g. already approved/rejected/claimed). Caller MUST call finalizeApproval
@@ -194,6 +196,10 @@ export class InMemoryProposalStore implements IProposalStore {
 
   listByThread(threadId: string, limit: number = DEFAULT_LIST_LIMIT): ThreadProposal[] {
     return this.collect((p) => p.sourceThreadId === threadId, limit);
+  }
+
+  listAllByThread(threadId: string): ThreadProposal[] {
+    return this.collect((p) => p.sourceThreadId === threadId, this.proposals.size);
   }
 
   claimForApproval(input: ClaimForApprovalInput): ThreadProposal | null {

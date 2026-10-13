@@ -87,12 +87,12 @@ describe('F322 v2 group header preserves F277 actions', () => {
     expect(button, text).toBeDefined();
     act(() => button?.click());
   }
-  it('puts deduplicated actual working cats, mentions, unread and group count in one compact header', () => {
+  it('keeps working cats and one attention count without duplicate collapsed badges', () => {
     render();
     expect([...host.querySelectorAll('img')].map((img) => img.alt)).toEqual(['working-a', 'working-b']);
-    expect(host.querySelector('[data-testid="group-mention"]')?.textContent).toBe('@你 2');
-    expect(host.querySelector('[data-testid="group-unread"]')?.getAttribute('aria-label')).toBe('6 条未读');
-    expect(host.querySelector('[data-testid="group-count"]')).toBeNull();
+    expect(host.querySelector('[data-testid="group-mention"]')).toBeNull();
+    expect(host.querySelector('[data-testid="group-unread"]')).toBeNull();
+    expect(host.querySelector('[data-testid="group-count"]')?.textContent).toBe('3 条要看');
     expect(host.querySelector('[title]')).toBeNull();
     expect(host.textContent).not.toContain('个置顶');
     expect(host.querySelector('select')).toBeNull();
@@ -101,6 +101,7 @@ describe('F322 v2 group header preserves F277 actions', () => {
     expect(onToggle).toHaveBeenCalledOnce();
     render(true);
     expect(host.querySelector('[data-testid="group-count"]')?.textContent).toBe('3');
+    expect(host.querySelector('[data-testid="group-count"]')?.getAttribute('aria-label')).toBe('3 个对话');
   });
   it('retains add, rename, reset and sorting behind the more menu without toggling the group', () => {
     render();
@@ -129,15 +130,24 @@ describe('F322 v2 group header preserves F277 actions', () => {
     expect(onResetMemberSort).toHaveBeenCalledOnce();
     expect(onMemberSort).toHaveBeenCalledTimes(1);
   });
-  it('r2 puts the pinned group title above the distinct working-cat summary and attention numbers', () => {
+  it('marks the Group before its name, puts the chevron after it and never derives a Group pin from members', () => {
     render();
     const title = host.querySelector('[data-testid="group-title-line"]');
     const summary = host.querySelector('[data-testid="group-status-line"]');
     expect(title?.textContent).toContain('Our group');
-    expect(title?.querySelector('[data-testid="group-pinned"]')).not.toBeNull();
+    expect(title?.querySelector('[data-testid="group-pinned"]')).toBeNull();
+    const slot = title?.querySelector('[data-sidebar-pin-slot]');
+    expect(slot).not.toBeNull();
+    expect(slot?.getAttribute('aria-hidden')).toBe('true');
+    expect(title?.firstElementChild).toBe(slot);
+    expect(slot?.querySelector('[data-testid="group-folder-icon"]')).not.toBeNull();
+    expect(slot?.querySelector('button, [data-testid="group-pinned"]')).toBeNull();
+    const toggle = title?.querySelector('button[aria-controls]');
+    expect(toggle?.firstElementChild?.textContent).toBe('Our group');
+    expect(toggle?.lastElementChild?.getAttribute('data-testid')).toBe('group-chevron');
     expect(summary?.textContent).toContain('2 只在干活');
-    expect(summary?.querySelector('[data-testid="group-mention"]')?.textContent).toBe('@你 2');
-    expect(summary?.querySelector('[data-testid="group-unread"]')?.getAttribute('aria-label')).toBe('6 条未读');
+    expect(summary?.querySelector('[data-testid="group-mention"]')).toBeNull();
+    expect(summary?.querySelector('[data-testid="group-unread"]')).toBeNull();
     expect(summary?.querySelector('[data-testid="group-working-label"]')?.getAttribute('style')).toContain(
       '--semantic-info',
     );
@@ -168,17 +178,14 @@ describe('F322 v2 group header preserves F277 actions', () => {
     );
     expect(host.querySelector('button[title="修改私人显示名"]')).not.toBeNull();
   });
-  it.each([
-    'zh',
-    'en',
-  ] as const)('labels every unread group count visibly in %s, independently of mentions', (language) => {
+  it.each(['zh', 'en'] as const)('labels conversations needing attention once in %s', (language) => {
     act(() => writeShellLanguage(language));
     render();
-    const badge = host.querySelector('[data-testid="group-unread"]');
-    expect(badge?.textContent).toBe(language === 'zh' ? '6 未读' : '6 unread');
+    const badge = host.querySelector('[data-testid="group-count"]');
+    expect(badge?.textContent).toBe(language === 'zh' ? '3 条要看' : '3 to see');
     expect(badge?.querySelector('.sr-only')).toBeNull();
-    expect(badge?.getAttribute('aria-label')).toBe(language === 'zh' ? '6 条未读' : '6 unread');
-    expect(host.querySelector('[data-testid="group-mention"]')).not.toBeNull();
+    expect(badge?.getAttribute('aria-label')).toBe(language === 'zh' ? '3 条要看' : '3 to see');
+    expect(host.querySelector('[data-testid="group-mention"]')).toBeNull();
   });
   it.each(['zh', 'en'] as const)('summarizes error before replied from member presence in %s', (language) => {
     act(() => writeShellLanguage(language));
@@ -189,6 +196,13 @@ describe('F322 v2 group header preserves F277 actions', () => {
     render(false, rows);
     const summary = host.querySelector<HTMLElement>('[data-testid="group-presence-summary"]');
     expect(summary?.textContent).toBe(language === 'zh' ? '1 个出错' : '1 error');
+    // A collapsed Group must identify the failing conversation; its parent can have a successful reply.
+    expect(summary?.querySelector('[data-testid="thread-status-text"]')?.getAttribute('aria-label')).toContain(
+      'Member 0',
+    );
+    expect(summary?.querySelector('[data-testid="thread-status-text"]')?.getAttribute('aria-label')).not.toContain(
+      'Member 1',
+    );
     expect(summary?.querySelector('[data-testid="group-error-dot"]')?.getAttribute('style')).toContain(
       '--semantic-critical',
     );
@@ -196,8 +210,8 @@ describe('F322 v2 group header preserves F277 actions', () => {
       '--semantic-critical',
     );
     expect(host.querySelector('[data-testid="group-replied-cat"]')).toBeNull();
-    expect(host.querySelector('[data-testid="group-mention"]')).not.toBeNull();
-    expect(host.querySelector('[data-testid="group-unread"]')).not.toBeNull();
+    expect(host.querySelector('[data-testid="group-mention"]')).toBeNull();
+    expect(host.querySelector('[data-testid="group-unread"]')).toBeNull();
     expect(host.querySelector('[data-testid="group-status-line"]')?.className).toContain('whitespace-nowrap');
     render(true, rows);
     expect(host.querySelector('[data-testid="group-status-line"]')).toBeNull();
@@ -228,8 +242,9 @@ describe('F322 v2 group header preserves F277 actions', () => {
     );
     expect(host.querySelector('[data-testid="group-presence-summary"]')).toBeNull();
     expect(host.querySelector('[data-testid="group-working-label"]')).toBeNull();
-    expect(host.querySelector('[data-testid="group-unread"]')).not.toBeNull();
-    expect(host.querySelector('[data-testid="group-mention"]')).not.toBeNull();
+    expect(host.querySelector('[data-testid="group-status-line"] [data-signal-presence]')).toBeNull();
+    expect(host.querySelector('[data-testid="group-unread"]')).toBeNull();
+    expect(host.querySelector('[data-testid="group-mention"]')).toBeNull();
   });
   it('keeps working presence ahead of terminal summaries even without known cat IDs', () => {
     const rows = members.map((member, index) => ({

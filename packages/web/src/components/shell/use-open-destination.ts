@@ -3,19 +3,12 @@
 import { usePathname, useRouter } from 'next/navigation';
 import { useCallback } from 'react';
 import { useChatStore } from '@/stores/chatStore';
+import { defaultSettingsSectionPath } from '../settings/settings-entry-path';
 import type { ResolvedPin, SettingsEntry } from '../settings/settings-ia';
 import { isSettingsRoute } from './settings-reading-bridge';
 import { resolveShellNavTarget } from './shell-navigation';
 import { useOpenInChat } from './use-open-in-chat';
 import { useSettingsReadingEntry } from './useSettingsSourceReturn';
-
-/** Where the first section of a first-level entry lives: the old `/settings?s=` deep link, unchanged. */
-function defaultSectionPath(entry: SettingsEntry): string | null {
-  if (entry.destination.kind === 'theme') return '/settings?s=theme';
-  if (entry.destination.kind !== 'sections') return null;
-  const first = entry.destination.items.find((item) => item.kind === 'section');
-  return first?.kind === 'section' ? `/settings?s=${first.sectionId}` : null;
-}
 
 /**
  * Open a 设置与管理 destination (from the settings page or from a pin on the rail) in the place that already owns it:
@@ -56,7 +49,7 @@ export function useOpenDestination(): {
           openInChat(() => setWorkspaceMode('dev'));
           return;
         default: {
-          const path = defaultSectionPath(entry);
+          const path = defaultSettingsSectionPath(entry);
           if (path) openRoute(path);
         }
       }

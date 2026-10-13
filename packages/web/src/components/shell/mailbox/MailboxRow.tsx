@@ -13,12 +13,14 @@ import { HostedApprovalCard } from './HostedApprovalCard';
 import { type OriginalPlace, resolveOriginalPlace } from './original-place';
 import { PlaceAction } from './PlaceAction';
 import type { ApprovalAddress } from './read-evidence';
+import { UserMentionDetails } from './UserMentionDetails';
 import { readWorkDetail } from './work-detail';
 
 export const KIND_LABEL: Record<UnifiedAttentionItemV1['kind'], string> = {
   approval: '审批',
   judgment: '等你判断',
   repair: '需要修复',
+  user_mention: '@你',
 };
 
 /** An id this build's catalog does not know (a newer producer) must not crash the panel: fall back to the raw id. */
@@ -76,6 +78,16 @@ interface RowText {
 function useRowText(item: UnifiedAttentionItemV1): RowText {
   const resolveCatName = useCatNameResolver();
   const approval = item.approval;
+  if (item.userMention) {
+    const request = item.userMention;
+    return {
+      catId: request.catId,
+      lead: null,
+      title: request.threadTitle || request.threadId,
+      source: resolveCatName(request.catId),
+      time: formatRelativeTime(request.timestamp),
+    };
+  }
   if (approval) {
     const { lead, title } = leadAndTitle(
       resolveCatName(approval.requesterCatId),
@@ -190,7 +202,11 @@ function RowBody({
       className="flex flex-col gap-3 px-3 pb-3 pt-1"
       style={{ color: 'var(--shell-ink)' }}
     >
-      {item.approval ? null : <WorkDetails item={item} />}
+      {item.userMention ? (
+        <UserMentionDetails key={item.userMention.messageId} request={item.userMention} />
+      ) : item.approval ? null : (
+        <WorkDetails item={item} />
+      )}
       {hostable && hosted ? (
         <HostedApprovalCard
           item={item}
@@ -258,37 +274,65 @@ export function MailboxRow({
         onClick={onToggle}
         className="shell-nav-row shell-focusable flex w-full flex-col gap-1.5 rounded-[14px] px-4 py-3 text-left text-sm"
       >
-        <span className="flex w-full items-center gap-2">
-          <span
-            className="flex-none rounded px-1.5 text-micro"
-            style={{ background: 'var(--shell-selected)', color: 'var(--shell-muted)' }}
-          >
-            {KIND_LABEL[item.kind]}
-          </span>
-          <span className="flex-1" />
-          {time ? (
-            <span className="text-xs" style={{ color: 'var(--shell-muted)' }}>
-              {time}
+        {item.userMention ? (
+          <>
+            <span className="flex w-full items-start gap-2">
+              <span className="min-w-0 flex-1 text-sm font-medium">{title}</span>
+              <span className="flex-none text-xs" style={{ color: 'var(--shell-muted)' }}>
+                {time}
+              </span>
+              <Chevron open={open} />
             </span>
-          ) : null}
-          <Chevron open={open} />
-        </span>
-        <span className="flex w-full items-start gap-2">
-          {catId ? (
-            <span className="mt-px flex-none" data-testid="mailbox-item-avatar">
-              <ShellCatAvatar catId={catId} size={24} />
+            <span className="flex w-full items-start gap-2">
+              {catId ? (
+                <span className="mt-px flex-none" data-testid="mailbox-item-avatar">
+                  <ShellCatAvatar catId={catId} size={24} />
+                </span>
+              ) : null}
+              <span
+                data-testid="mailbox-mention-preview"
+                className="line-clamp-2 min-w-0 break-words text-sm"
+                style={{ color: 'var(--shell-body)' }}
+              >
+                {source}：{item.userMention.content}
+              </span>
             </span>
-          ) : null}
-          <span className={`${open ? 'block' : 'line-clamp-2 block'} min-w-0 flex-1`}>
-            {lead ? <span className="font-semibold">{lead} </span> : null}
-            {title}
-          </span>
-        </span>
-        {source ? (
-          <span className="block truncate text-xs" style={{ color: 'var(--shell-muted)' }}>
-            {source}
-          </span>
-        ) : null}
+          </>
+        ) : (
+          <>
+            <span className="flex w-full items-center gap-2">
+              <span
+                className="flex-none rounded px-1.5 text-micro"
+                style={{ background: 'var(--shell-selected)', color: 'var(--shell-muted)' }}
+              >
+                {KIND_LABEL[item.kind]}
+              </span>
+              <span className="flex-1" />
+              {time ? (
+                <span className="text-xs" style={{ color: 'var(--shell-muted)' }}>
+                  {time}
+                </span>
+              ) : null}
+              <Chevron open={open} />
+            </span>
+            <span className="flex w-full items-start gap-2">
+              {catId ? (
+                <span className="mt-px flex-none" data-testid="mailbox-item-avatar">
+                  <ShellCatAvatar catId={catId} size={24} />
+                </span>
+              ) : null}
+              <span className={`${open ? 'block' : 'line-clamp-2 block'} min-w-0 flex-1`}>
+                {lead ? <span className="font-semibold">{lead} </span> : null}
+                {title}
+              </span>
+            </span>
+            {source ? (
+              <span className="block truncate text-xs" style={{ color: 'var(--shell-muted)' }}>
+                {source}
+              </span>
+            ) : null}
+          </>
+        )}
       </button>
       <RowSessionLine open={open} hosted={hosted} approval={item.approval} />
       {open ? <RowBody item={item} id={bodyId} heading={heading} hosted={hosted} onOpen={onOpen} /> : null}

@@ -5,6 +5,7 @@ import {
   ConnectorImage,
   GitHubIcon,
   HoldBallIcon,
+  RefreshCwIcon,
   ReturnArrowIcon,
   RobotIcon,
   SchedulerIcon,
@@ -25,6 +26,7 @@ const SVG_ICON_MAP: Record<string, ComponentType<{ className?: string }>> = {
   search: SearchIcon,
   robot: RobotIcon,
   'return-arrow': ReturnArrowIcon,
+  'refresh-cw': RefreshCwIcon,
 };
 
 /** One registry icon renderer for body, Queue and reference surfaces. */

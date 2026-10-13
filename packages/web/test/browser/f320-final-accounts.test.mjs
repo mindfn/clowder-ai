@@ -1,14 +1,13 @@
 import assert from 'node:assert/strict';
-import { mkdir } from 'node:fs/promises';
+import { mkdir, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { after, before, test } from 'node:test';
 import { chromium } from '../../../ppt-forge/node_modules/playwright/index.mjs';
-import { THREAD_ID } from './f309-ordinary-workspace-journey-fixture.mjs';
 import { startFinalAccountPreview } from './f320-final-runtime.fixture.mjs';
 
 let preview, browser, companyIdentity;
 before(async () => {
-  preview = await startFinalAccountPreview();
+  preview = await startFinalAccountPreview({ withOverrides: true });
   browser = await chromium.launch({ headless: true });
 });
 after(async () => {
@@ -17,43 +16,49 @@ after(async () => {
 });
 async function addCodexAccount(page, note) {
   await page.getByRole('button', { name: '+ 添加账号', exact: true }).click();
-  await page.getByRole('combobox', { name: '厂商' }).selectOption('openai');
+  await page.getByRole('button', { name: 'Codex · 登录另一个账号', exact: true }).click();
   await page.getByRole('textbox', { name: '账号备注' }).fill(note);
   await page.getByRole('button', { name: '创建并开始登录' }).click();
 }
 async function readCodexAccount(page, accountRef) {
-  const response = await page.request.get(`${preview.url}/api/accounts`, {
-    headers: { 'x-cat-cafe-user': 'fixture' },
-  });
+  const response = await page.request.get(`${preview.url}/api/accounts`, { headers: { 'x-cat-cafe-user': 'fixture' } });
   assert.equal(response.status(), 200, await response.text());
   const account = (await response.json()).providers.find((entry) => entry.id === accountRef);
-  assert.ok(account?.codex, 'the canonical account read returns the managed login');
+  assert.ok(account?.codex);
   return account.codex;
 }
 test(
-  'default Hub entry uses real account routes for login, note, quota, atomic binding and reload',
+  'accepted v2 entry keeps native default, adds an independent row, confirms full-local swap, and updates members',
   { timeout: 120000 },
   async () => {
-    const page = await browser.newPage({ viewport: { width: 1440, height: 960 } });
+    const page = await browser.newPage({ viewport: { width: 1440, height: 1050 } });
     const errors = [];
     page.on('pageerror', (e) => errors.push(e.message));
     try {
-      await page.goto(`${preview.url}/settings?s=accounts`, { waitUntil: 'domcontentloaded' });
-      const list = page.getByRole('group', { name: 'Account List', exact: true });
-      await list.getByText('原默认 Codex 账号').waitFor();
+      await page.goto(`${preview.url}/settings?s=accounts&shell=v2`, { waitUntil: 'domcontentloaded' });
+      const list = page.getByRole('group', { name: '账号列表', exact: true });
+      const native = page.locator('[data-account-id="codex"]');
+      await native.getByText('Codex App 登录（本机默认）', { exact: true }).waitFor();
+      await native.getByText('正在用', { exact: true }).waitFor();
       assert.equal(await page.getByRole('button', { name: '+ 添加账号', exact: true }).count(), 1);
       assert.equal(await list.getByRole('button', { name: '查询此账号额度' }).count(), 0);
-      await addCodexAccount(page, '公司');
-      const first = list
+      await page.getByRole('button', { name: '+ 添加账号', exact: true }).click();
+      await page.getByRole('button', { name: 'Codex · 登录另一个账号', exact: true }).click();
+      assert.deepEqual(
+        await page
+          .getByRole('combobox', { name: '厂商', exact: true })
+          .locator('option')
+          .evaluateAll((options) => options.map((o) => o.value)),
+        ['openai'],
+      );
+      await page.getByRole('textbox', { name: '账号备注', exact: true }).fill('主号');
+      await page.getByRole('button', { name: '创建并开始登录', exact: true }).click();
+      const row = list
         .locator('[data-account-id]')
-        .filter({ has: page.getByRole('heading', { name: '公司', exact: true }) });
-      await first.waitFor();
-      const ref = await first.getAttribute('data-account-id');
-      const panel = page.locator(`[data-account-id="${ref}"]`);
-      await panel.getByText('终端已打开，请完成官方登录').waitFor();
-      await page.reload();
-      await panel.getByText('终端已打开，请完成官方登录').waitFor();
-      // A failed background GET must not hide successful native mutation results or lock controls.
+        .filter({ has: page.getByRole('button', { name: '主号', exact: true }) });
+      await row.getByText(/终端已打开/).waitFor();
+      assert.equal(await row.getByText('正在用', { exact: true }).count(), 0);
+      const companyLogin = preview.captureLoginAttempt();
       const failedList = async (route) => {
         const request = route.request();
         if (request.method() === 'GET' && new URL(request.url()).pathname === '/api/accounts')
@@ -65,187 +70,197 @@ test(
         return route.continue();
       };
       await page.route('**/api/accounts**', failedList);
-      await panel.getByRole('button', { name: '取消本次登录' }).click();
-      await panel.getByText('已取消', { exact: true }).waitFor();
-      await panel.getByRole('button', { name: '开始官方登录' }).click();
-      await panel.getByText('终端已打开，请完成官方登录').waitFor();
-      const companyRetry = preview.captureLoginAttempt();
-      assert.equal(await panel.getByRole('button', { name: '开始官方登录' }).count(), 0);
+      await row.getByRole('button', { name: '取消', exact: true }).click();
+      await row.getByText('已取消这次登录', { exact: true }).waitFor();
+      assert.equal(companyLogin.wasAborted(), true);
+      await row.getByRole('button', { name: '重试', exact: true }).click();
+      await row.getByText(/终端已打开/).waitFor();
       await page.unroute('**/api/accounts**', failedList);
-      companyIdentity = await companyRetry.complete();
-      await panel.getByText(companyIdentity.email).waitFor();
-      await panel.getByRole('button', { name: '修改备注' }).click();
-      await panel.getByRole('textbox', { name: '修改账号备注' }).fill('工作');
-      await panel.getByRole('button', { name: '保存', exact: true }).click();
-      await panel.getByRole('heading', { name: '工作' }).waitFor();
-      await panel.getByRole('button', { name: '查询此账号额度' }).click();
-      await panel.getByText(/剩余 70%/).waitFor();
-      await panel.getByText(/溢出额度：剩余 20%/).waitFor();
-      await panel.getByText(/2030.*重置/).waitFor();
-      preview.setQuota('header');
-      await panel.getByRole('button', { name: '查询此账号额度' }).click();
-      await panel.getByText(/剩余 60%/).waitFor();
-      await panel.getByText(/2030.*重置/).waitFor();
-      const oldReply = await preview.reply('换绑前的真实 producer 回复');
-      assert.equal(oldReply.accountRef, 'codex');
-      await panel.getByRole('combobox', { name: '换绑范围' }).selectOption('family');
-      await panel.getByRole('button', { name: '预览换绑' }).click();
-      await panel.getByRole('button', { name: '确认换绑' }).click();
-      await panel
-        .getByText(/正在使用：/)
-        .filter({ hasText: '缅因猫' })
-        .waitFor();
-      const newReply = await preview.reply('换绑后的真实 producer 回复');
-      assert.notEqual(newReply.accountRef, 'codex');
-      assert.equal(newReply.displayName, '工作');
-      await page.goto(`${preview.url}/settings?s=members`, { waitUntil: 'domcontentloaded' });
-      const member = page.getByTestId('member-account-codex61-sol');
-      await member.getByRole('button', { name: /当前绑定：工作/ }).waitFor();
-      await member.getByRole('button', { name: /换账号/ }).click();
-      assert.equal(await member.getByRole('combobox', { name: '缅因猫使用账号' }).inputValue(), newReply.accountRef);
+      companyIdentity = await preview.captureLoginAttempt().complete();
+      await row.getByText('已登录', { exact: true }).waitFor();
+      await row.getByRole('button', { name: '换成这个', exact: true }).waitFor();
+      assert.equal(await row.getByText('正在用', { exact: true }).count(), 0);
+      const ref = await row.getAttribute('data-account-id');
+      await row.getByRole('button', { name: '主号', exact: true }).click();
+      const details = page.locator(`#account-row-${encodeURIComponent(ref)} + .account-expanded`);
+      await details.getByRole('button', { name: '查询此账号额度', exact: true }).click();
+      await details.getByText(/剩余 70%/).waitFor();
+      const before = await preview.reply('fixture original account');
+      assert.equal(before.accountRef, 'codex');
+      await row.getByRole('button', { name: '换成这个', exact: true }).click();
+      const confirm = page.getByRole('region', { name: '换号确认' });
+      await confirm.getByText('会跟着换的 1 只：', { exact: true }).waitFor();
+      await confirm.getByText(/例外公司号/).waitFor();
+      await confirm.getByRole('checkbox', { name: '也一起换' }).check();
+      await confirm.getByText('会跟着换的 2 只：', { exact: true }).waitFor();
+      assert.equal(await confirm.getByText(/现在用别的号的/).count(), 0);
+      await confirm.getByRole('checkbox', { name: '也一起换' }).uncheck();
+      await confirm.getByText('会跟着换的 1 只：', { exact: true }).waitFor();
+      await confirm.getByRole('checkbox', { name: '也一起换' }).check();
+      await confirm.getByText('会跟着换的 2 只：', { exact: true }).waitFor();
+      await confirm.getByRole('button', { name: '确认换号', exact: true }).click();
+      await row.getByText('正在用', { exact: true }).waitFor();
+      const after = await preview.reply('fixture selected account');
+      assert.equal(after.accountRef, ref);
+      assert.equal(await native.getByText('正在用', { exact: true }).count(), 0);
       if (process.env.F320_EVIDENCE_DIR) {
         await mkdir(process.env.F320_EVIDENCE_DIR, { recursive: true });
-        await page.screenshot({
-          path: join(process.env.F320_EVIDENCE_DIR, 'members-after-binding.png'),
-          fullPage: true,
-        });
+        await page.screenshot({ path: join(process.env.F320_EVIDENCE_DIR, 'accounts-v2-desktop.png'), fullPage: true });
       }
-      await page.goto(`${preview.url}/thread/${THREAD_ID}`, { waitUntil: 'domcontentloaded' });
-      await page.locator('[data-execution-account="codex"]').waitFor();
-      await page.locator(`[data-execution-account="${newReply.accountRef}"]`).waitFor();
+      await page.reload();
+      await row.getByText('正在用', { exact: true }).waitFor();
+      await page.getByRole('searchbox', { name: '搜索账户或成员' }).fill('codex61-sol');
+      assert.equal(await list.locator('[data-account-id]').count(), 1);
+      await page.getByRole('searchbox', { name: '搜索账户或成员' }).fill('');
+      await page.goto(`${preview.url}/settings?s=members&shell=v2`, { waitUntil: 'domcontentloaded' });
+      const member = page.getByTestId('member-account-codex61-sol');
+      await member.getByText('号：主号', { exact: true }).waitFor();
+      assert.equal(await member.getByRole('button').count(), 0);
+      await page.goto(`${preview.url}/settings?s=accounts&shell=v2`, { waitUntil: 'domcontentloaded' });
+      // Seed the real theme owner in this fresh fixture context; ThemeApplier renders its palette.
+      await page.evaluate(() => {
+        localStorage.setItem('cat-cafe:themes', JSON.stringify({ activeId: 'dark', custom: [], builtInOverrides: {} }));
+        localStorage.setItem('theme', 'dark');
+      });
+      await page.goto(`${preview.url}/settings?s=accounts&shell=v2`, { waitUntil: 'domcontentloaded' });
+      await page.setViewportSize({ width: 390, height: 844 });
+      await page.waitForFunction(() => document.documentElement.getAttribute('data-theme') === 'dark');
+      await row.scrollIntoViewIfNeeded();
+      await row.getByText('正在用', { exact: true }).waitFor();
+      assert.equal(await page.evaluate(() => document.documentElement.scrollWidth > innerWidth), false);
       if (process.env.F320_EVIDENCE_DIR)
         await page.screenshot({
-          path: join(process.env.F320_EVIDENCE_DIR, 'reply-account-history.png'),
+          path: join(process.env.F320_EVIDENCE_DIR, 'accounts-v2-mobile-dark.png'),
           fullPage: true,
         });
-      await page.goto(`${preview.url}/settings?s=accounts`, { waitUntil: 'domcontentloaded' });
-      await page.reload({ waitUntil: 'domcontentloaded' });
-      await panel.getByRole('heading', { name: '工作' }).waitFor();
-      assert.ok((await panel.innerText()).includes(companyIdentity.email));
-      assert.doesNotMatch(await panel.innerText(), /模拟/);
-      if (process.env.F320_EVIDENCE_DIR) {
-        await mkdir(process.env.F320_EVIDENCE_DIR, { recursive: true });
-        await page.screenshot({
-          path: join(process.env.F320_EVIDENCE_DIR, 'accounts-formal-desktop.png'),
-          fullPage: true,
-        });
-      }
+      if (process.env.F320_EVIDENCE_DIR)
+        await writeFile(
+          join(process.env.F320_EVIDENCE_DIR, 'journey.json'),
+          JSON.stringify(
+            {
+              worktree: new URL('../../../../', import.meta.url).pathname,
+              webUrl: preview.url,
+              apiUrl: preview.apiUrl,
+              route: '/settings?s=accounts&shell=v2',
+              realOAuth: false,
+              selectedAccountRef: ref,
+              theme: await page.evaluate(() => document.documentElement.getAttribute('data-theme')),
+              viewport: page.viewportSize(),
+              actions: [
+                'create',
+                'cancel',
+                'retry',
+                'fixture-login',
+                'quota-fixture',
+                'local-preview',
+                'confirm',
+                'reload',
+                'search-cat',
+                'member-account-name',
+              ],
+              errors,
+            },
+            null,
+            2,
+          ),
+        );
       assert.deepEqual(errors, []);
     } catch (error) {
-      console.error('F320 browser failure', page.url(), errors);
-      await page.screenshot({ path: '/tmp/f320-final-browser-failure.png', fullPage: true });
+      if (process.env.F320_EVIDENCE_DIR) {
+        await mkdir(process.env.F320_EVIDENCE_DIR, { recursive: true });
+        await page.screenshot({ path: join(process.env.F320_EVIDENCE_DIR, 'accounts-v2-failure.png'), fullPage: true });
+      }
+      console.log('fixture visible page:', (await page.locator('body').innerText()).slice(-2200));
       throw error;
     } finally {
       await page.close();
     }
   },
 );
+
 test(
-  'cancel and retry stay on the same account in mobile UI without adopting the late result',
+  'mobile cancel and retry fence the actual late driver result on the same v2 row',
   { timeout: 120000 },
   async () => {
-    const page = await browser.newPage({ viewport: { width: 390, height: 844 }, colorScheme: 'dark' });
+    const page = await browser.newPage({ viewport: { width: 390, height: 844 } });
     try {
-      await page.goto(`${preview.url}/settings?s=accounts`, { waitUntil: 'domcontentloaded' });
-      const panel = page.getByRole('group', { name: 'Account List', exact: true });
+      await page.goto(`${preview.url}/settings?s=accounts&shell=v2`, { waitUntil: 'domcontentloaded' });
       await addCodexAccount(page, '私人');
-      const card = panel.locator('article').filter({ has: page.getByRole('heading', { name: '私人' }) });
-      await card.getByText('终端已打开，请完成官方登录').waitFor();
+      const row = page
+        .locator('[data-account-id]')
+        .filter({ has: page.getByRole('button', { name: '私人', exact: true }) });
+      await row.getByText(/终端已打开/).waitFor();
       const cancelledLogin = preview.captureLoginAttempt();
       cancelledLogin.keepPendingAfterAbort();
-      const accountRef = await card.getAttribute('data-account-id');
-      const original = await readCodexAccount(page, accountRef);
-      await card.getByRole('button', { name: '取消本次登录' }).click();
-      await card.getByText('已取消', { exact: true }).waitFor();
-      assert.equal(cancelledLogin.wasAborted(), true, 'production cancellation reached the old native driver');
-      await card.getByRole('button', { name: '开始官方登录' }).click();
-      await card.getByText('等待前一个登录结束', { exact: true }).waitFor();
-      const queued = await readCodexAccount(page, accountRef);
+      const ref = await row.getAttribute('data-account-id');
+      const original = await readCodexAccount(page, ref);
+      await row.getByRole('button', { name: '取消', exact: true }).click();
+      await row.getByText('已取消这次登录', { exact: true }).waitFor();
+      assert.equal(cancelledLogin.wasAborted(), true);
+      await row.getByRole('button', { name: '重试', exact: true }).click();
+      await row.getByText('正在准备官方终端登录', { exact: true }).waitFor();
+      const queued = await readCodexAccount(page, ref);
       assert.equal(queued.attempt.state, 'queued');
       assert.notEqual(queued.attempt.id, original.attempt.id);
       assert.equal(queued.attempt.identity, undefined);
       const lateIdentity = await cancelledLogin.complete();
-      // Starting the queued retry proves the old result's then/finally chain ran.
-      await card.getByText('终端已打开，请完成官方登录').waitFor();
-      const privateRetry = preview.captureLoginAttempt();
-      const waiting = await readCodexAccount(page, accountRef);
+      await row.getByText(/终端已打开/).waitFor();
+      const retry = preview.captureLoginAttempt();
+      const waiting = await readCodexAccount(page, ref);
       assert.equal(waiting.attempt.id, queued.attempt.id);
       assert.equal(waiting.attempt.state, 'waiting');
-      assert.equal(waiting.attempt.identity, undefined, 'the old callback did not leak identity into the retry');
-      assert.equal(waiting.identity, undefined, 'the canceled attempt did not adopt credentials');
-      assert.ok(!(await card.innerText()).includes(lateIdentity.email));
-      assert.equal(await card.getAttribute('data-account-id'), accountRef);
-      const retryIdentity = await privateRetry.complete();
-      await card.getByText(retryIdentity.email).waitFor();
-      assert.notEqual(retryIdentity.email, lateIdentity.email);
-      assert.ok(!(await card.innerText()).includes(lateIdentity.email));
-      const box = await card.boundingBox();
+      assert.equal(waiting.attempt.identity, undefined);
+      assert.equal(waiting.identity, undefined);
+      assert.ok(!(await row.innerText()).includes(lateIdentity.email));
+      assert.equal(await row.getAttribute('data-account-id'), ref);
+      const identity = await retry.complete();
+      await row.getByText(identity.email, { exact: true }).waitFor();
+      assert.notEqual(identity.email, lateIdentity.email);
+      assert.ok(!(await row.innerText()).includes(lateIdentity.email));
+      const box = await row.boundingBox();
       assert.ok(box && box.width <= 390);
-      if (process.env.F320_EVIDENCE_DIR)
-        await page.screenshot({
-          path: join(process.env.F320_EVIDENCE_DIR, 'accounts-formal-mobile.png'),
-          fullPage: true,
-        });
-      await card.getByRole('button', { name: '删除账号条目' }).click();
-      await page.getByText(/文件和登录仍保留/).waitFor();
+      await row.getByLabel('私人更多操作', { exact: true }).click();
+      await row.getByRole('button', { name: '删除登记', exact: true }).click();
+      await page.getByText(/只删这里的登记，不会注销官方账号/).waitFor();
       await page.getByRole('button', { name: '取消', exact: true }).click();
-      await card.getByRole('heading', { name: '私人' }).waitFor();
-      await card.getByRole('button', { name: '删除账号条目' }).click();
-      await page.getByRole('button', { name: '确认删除', exact: true }).click();
-      await card.waitFor({ state: 'detached' });
+      await row.getByRole('button', { name: '删除登记', exact: true }).click();
+      await page.getByRole('button', { name: '删除登记', exact: true }).last().click();
+      await row.waitFor({ state: 'detached' });
     } finally {
       await page.close();
     }
   },
 );
 test(
-  'duplicate official login uses the existing account after explicit confirmation',
+  'duplicate identity explicitly deletes its surplus row and returns to the existing selected account',
   { timeout: 120000 },
   async () => {
     const page = await browser.newPage();
     try {
-      await page.goto(`${preview.url}/settings?s=accounts`, { waitUntil: 'domcontentloaded' });
-      const panel = page.getByRole('group', { name: 'Account List', exact: true });
-      await addCodexAccount(page, '重复公司');
-      const card = panel.locator('article').filter({ has: page.getByRole('heading', { name: '重复公司' }) });
-      await card.getByText('终端已打开，请完成官方登录').waitFor();
-      const duplicateLogin = preview.captureLoginAttempt();
-      assert.ok(companyIdentity, 'the company account completed official login');
-      await duplicateLogin.complete(companyIdentity);
-      await card.getByText(/已有相同身份的账号「工作」/).waitFor();
-      assert.equal(await card.getByRole('button', { name: '保留为独立账号' }).count(), 0);
-      await card.getByRole('button', { name: '使用已有账号' }).click();
-      await card.getByText('已选择已有账号，未创建重复登录').waitFor();
+      await page.goto(`${preview.url}/settings?s=accounts&shell=v2`, { waitUntil: 'domcontentloaded' });
+      const existing = page
+        .locator('[data-account-id]')
+        .filter({ has: page.getByRole('button', { name: '主号', exact: true }) });
+      await existing.getByText('正在用', { exact: true }).waitFor();
+      const ref = await existing.getAttribute('data-account-id');
+      await addCodexAccount(page, '重复主号');
+      const row = page
+        .locator('[data-account-id]')
+        .filter({ has: page.getByRole('button', { name: '重复主号', exact: true }) });
+      await row.getByText(/终端已打开/).waitFor();
+      assert.ok(companyIdentity);
+      await preview.captureLoginAttempt().complete(companyIdentity);
+      await row.getByRole('button', { name: '去处理', exact: true }).click();
+      const extraRef = await row.getAttribute('data-account-id');
+      const details = page.locator(`#account-row-${encodeURIComponent(extraRef)} + .account-expanded`);
+      await details.getByText(/登录的是列表里已有的「主号」/).waitFor();
+      await details.getByRole('button', { name: '删掉这条，回到主号', exact: true }).click();
+      await row.waitFor({ state: 'detached' });
+      await existing.getByText('正在用', { exact: true }).waitFor();
       await page.reload({ waitUntil: 'domcontentloaded' });
-      await card.getByText('已选择已有账号，未创建重复登录').waitFor();
-      await panel
-        .locator('article')
-        .filter({ has: page.getByRole('heading', { name: '工作' }) })
-        .getByText(/可使用/)
-        .waitFor();
-      // Release the actual family binding through the canonical API before deleting A.
-      const response = await page.request.post(`${preview.url}/api/accounts/codex/codex/binding/preview`, {
-        headers: { 'x-cat-cafe-user': 'fixture' },
-        data: { catId: 'codex61-sol', scope: 'family' },
-      });
-      assert.equal(response.status(), 200, await response.text());
-      const impact = await response.json();
-      const commit = await page.request.post(`${preview.url}/api/accounts/codex/codex/binding/commit`, {
-        headers: { 'x-cat-cafe-user': 'fixture' },
-        data: { catId: 'codex61-sol', scope: 'family', previewToken: impact.previewToken },
-      });
-      assert.equal(commit.status(), 200, await commit.text());
-      await page.reload({ waitUntil: 'domcontentloaded' });
-      const existing = panel.locator('article').filter({ has: page.getByRole('heading', { name: '工作' }) });
-      await existing.getByRole('button', { name: '删除账号条目' }).click();
-      await page.getByRole('button', { name: '确认删除', exact: true }).click();
-      await card.getByText(/此前复用的账号已不可用/).waitFor();
-      await page.reload({ waitUntil: 'domcontentloaded' });
-      await card.getByText(/此前复用的账号已不可用/).waitFor();
-      assert.equal(await card.getByRole('button', { name: '预览换绑', exact: true }).count(), 0);
-      assert.equal(await panel.getByRole('heading', { name: '工作' }).count(), 0);
-      if (process.env.F320_EVIDENCE_DIR)
-        await page.screenshot({ path: join(process.env.F320_EVIDENCE_DIR, 'reuse-after-delete.png'), fullPage: true });
+      assert.equal(await page.getByRole('button', { name: '重复主号', exact: true }).count(), 0);
+      await existing.getByText('已登录', { exact: true }).waitFor();
+      assert.equal((await preview.reply('fixture after explicit duplicate removal')).accountRef, ref);
     } finally {
       await page.close();
     }

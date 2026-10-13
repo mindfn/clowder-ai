@@ -1,9 +1,11 @@
+import { isDeepStrictEqual } from 'node:util';
 import type {
   VideoProjectReviewAnchor,
   VideoProjectReviewTarget,
   WorkspaceContentAnnotationResolution,
 } from '@cat-cafe/shared';
 import type { VideoProjectSnapshot } from '../../video-studio/project/types.js';
+import { momentRangeEvidence } from './result-proof/moment-range.js';
 import { assertProjectReviewTarget } from './video-project-review-anchors.js';
 
 /** Stable entity evidence can remap an ID, never scale an old image box onto replacement pixels. */
@@ -15,6 +17,7 @@ export function resolveProjectAnchor(
   const target = anchor.target;
   try {
     assertProjectReviewTarget(current.document, target);
+    if (target.kind === 'moment' && target.endTick !== undefined) assertProjectReviewTarget(previous.document, target);
   } catch {
     return 'orphaned';
   }
@@ -33,6 +36,14 @@ export function resolveProjectAnchor(
       before.width === after.width &&
       before.height === after.height &&
       before.rotation === after.rotation
+      ? 'moved'
+      : 'orphaned';
+  }
+  if (target.endTick !== undefined) {
+    return isDeepStrictEqual(
+      momentRangeEvidence(previous.document, target).value,
+      momentRangeEvidence(current.document, target).value,
+    )
       ? 'moved'
       : 'orphaned';
   }

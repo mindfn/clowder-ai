@@ -6,9 +6,9 @@ export const WORK_TIME = {
   review_by: '请你审阅',
   execution_trigger: '执行时间',
   planned_start: '计划开始',
-  actual_start: '开始',
+  actual_start: '实际开始',
   estimated_completion: '预计完成',
-  admitted_at: '接下',
+  admitted_at: '接单日期',
   completed_at: '完成',
 } as const;
 
@@ -19,7 +19,10 @@ export function calendarDateKey(value: number): string {
 
 export function workDates(work: EntrustedWorkOwnerReadV1) {
   // Runtime wakeups are not business appointments or promised delivery dates.
-  return work.timeRefs.filter((time) => time.role !== 'execution_trigger');
+  return work.timeRefs.filter(
+    (time): time is typeof time & { role: Exclude<typeof time.role, 'execution_trigger'> } =>
+      time.role !== 'execution_trigger',
+  );
 }
 
 export function workTitle(work: EntrustedWorkOwnerReadV1): string {
@@ -30,12 +33,11 @@ export function workTitle(work: EntrustedWorkOwnerReadV1): string {
 /** Date markers from existing Task facts; never written back as business dates. */
 export function workCalendarDates(
   work: EntrustedWorkOwnerReadV1,
-): Array<{ role: keyof typeof WORK_TIME; value: number }> {
-  const dates: Array<{ role: keyof typeof WORK_TIME; value: number }> = [...workDates(work)];
-  if (work.completion?.recordedAt !== undefined)
-    dates.push({ role: 'completed_at', value: work.completion.recordedAt });
-  if (dates.length === 0 && work.work) dates.push({ role: 'admitted_at', value: work.work.admittedAt });
-  return dates;
+): Array<EntrustedWorkOwnerReadV1['timeRefs'][number] & { role: 'actual_start' | 'business_deadline' }> {
+  return work.timeRefs.filter(
+    (time): time is typeof time & { role: 'actual_start' | 'business_deadline' } =>
+      time.role === 'actual_start' || time.role === 'business_deadline',
+  );
 }
 
 export function calendarWeek(value: number): Date[] {

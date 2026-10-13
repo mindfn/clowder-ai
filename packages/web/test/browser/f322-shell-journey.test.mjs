@@ -6,8 +6,11 @@ import { fileURLToPath } from 'node:url';
 import { build } from 'vite';
 import { chromium } from '../../../ppt-forge/node_modules/playwright/index.mjs';
 import { runChatRealPageJourney } from './f322-chat-real-page.mjs';
+import { runGroupPeekJourney } from './f322-group-peek.journey.mjs';
 import { runPianoJourneys } from './f322-piano.journey.mjs';
 import { runSidebarV2Journey } from './f322-sidebar-v2.journey.mjs';
+import { registerMentionCutoverJourney } from './f322-user-mention-cutover.journey.mjs';
+import { registerUserMentionJourney } from './f322-user-mention-todo.journey.mjs';
 import { registerWorkspaceMenuTests } from './f322-workspace-menu.journey.mjs';
 
 // Real rail, mailbox, tooltip, settings shell, preference/pin stores and navigation hooks.
@@ -94,11 +97,15 @@ const unifiedRead = (overrides = {}) => ({
   sources: {
     approvals: unifiedSource(),
     needsMe: unifiedSource({ coverage: 'current_linked_F310_five_producers' }),
+    structuredChoices: unifiedSource({ coverage: 'pending_f306_structured_choices' }),
   },
   readWindow: { startedAt: 1, endedAt: 3, consistency: 'independent_source_reads' },
   consistency: { state: 'verified', reasons: [] },
   items: [],
   totalCount: 0,
+  attentionCount: (overrides.items ?? []).filter(
+    (item) => item.approval?.resolution === 'open' || item.choiceRequest !== undefined,
+  ).length,
   page: { offset: 0, limit: 20, scope: 'known_rows', hasMore: false },
   ...overrides,
 });
@@ -113,6 +120,7 @@ const approvalRow = (id, summary) => ({
     summary,
     detail: {},
     createdAt: Date.now() - 2 * 3600_000,
+    resolution: 'open',
   },
   linkedNeedsMe: [],
 });
@@ -210,7 +218,10 @@ async function openProof({
     if (url.pathname.startsWith('/api/')) {
       requests.push(`${request.method()} ${url.pathname}${url.search}`);
       if (url.pathname === '/api/concierge/work/decisions') {
-        const reply = await unified(requests.filter((entry) => entry.includes('/api/concierge/work/decisions')).length);
+        const reply = await unified(
+          requests.filter((entry) => entry.includes('/api/concierge/work/decisions')).length,
+          { request, url },
+        );
         // A slow read can be superseded and aborted by the page before it is answered: answering it then is not an error.
         return handler
           .fulfill({
@@ -227,6 +238,14 @@ async function openProof({
           status: custom.status ?? 200,
           contentType: 'application/json',
           body: custom.raw ?? JSON.stringify(custom.body),
+        });
+      }
+      // Non-mention scenarios have no handling receipt. Real-owner journeys override
+      // this exact GET via `api`; every other unknown endpoint still fails closeProof.
+      if (request.method() === 'GET' && url.pathname === '/api/concierge/work/mentions/last-handling') {
+        return handler.fulfill({
+          contentType: 'application/json',
+          body: JSON.stringify({ ownerUserId: 'owner-1', receipt: null }),
         });
       }
       const bodies = {
@@ -289,6 +308,8 @@ async function pointAt(page, locator) {
   assert.ok(box);
   await page.mouse.move(box.x + box.width / 2, box.y + box.height / 2);
 }
+
+registerUserMentionJourney({ test, openProof, closeProof });
 
 test('background approvals cannot open the mailbox during memory or thread navigation', async () => {
   const proof = await openProof({ retainedApproval: true });
@@ -361,7 +382,7 @@ test('mailbox moves focus into its panel and Escape returns to the exact rail bu
   }
 });
 
-test('mailbox shows the proven total and the real rows from one verified read', async () => {
+test('mailbox shows all real rows while the badge counts only qualified decisions', async () => {
   const items = [
     approvalRow('p1', '记一条品味'),
     {
@@ -373,12 +394,16 @@ test('mailbox shows the proven total and the real rows from one verified read', 
   ];
   const proof = await openProof({
     unified: () => ({ body: unifiedRead({ items, totalCount: 2 }) }),
-    ready: '待办，2 件',
+    ready: '待办，1 件',
   });
   const { page } = proof;
   try {
-    assert.equal(await page.getByTestId('rail-badge-count').textContent(), '2');
-    assert.ok(proof.requests.includes('GET /api/concierge/work/decisions?view=unified&offset=0&limit=20'));
+    assert.equal(await page.getByTestId('rail-badge-count').textContent(), '1');
+    assert.ok(
+      proof.requests.includes(
+        'GET /api/concierge/work/decisions?view=unified&includeUserMentions=true&offset=0&limit=20',
+      ),
+    );
     await page.getByTestId('mailbox-button').click();
     await page.getByRole('dialog', { name: '待办' }).waitFor();
     const rows = page.getByTestId('mailbox-item');
@@ -388,11 +413,9 @@ test('mailbox shows the proven total and the real rows from one verified read', 
       '等你判断',
     ]);
     assert.equal(
-      await rows
-        .first()
-        .locator('button')
-        .evaluate((el) => el === document.activeElement),
+      await page.getByTestId('mailbox-panel').evaluate((el) => el.contains(document.activeElement)),
       true,
+      'opening revalidates the rows; focus stays inside the panel while old rows are disabled',
     );
     await page.keyboard.press('Escape');
     assert.equal(await page.getByTestId('mailbox-button').evaluate((el) => el === document.activeElement), true);
@@ -438,7 +461,7 @@ test('待办 is a full-height panel beside the rail: rows open one at a time, it
   ];
   const proof = await openProof({
     unified: () => ({ body: unifiedRead({ items, totalCount: 3 }) }),
-    ready: '待办，3 件',
+    ready: '待办，1 件',
   });
   const { page } = proof;
   try {
@@ -464,8 +487,11 @@ test('待办 is a full-height panel beside the rail: rows open one at a time, it
       true,
       'the panel must not cover the rail button that opened it',
     );
-    // One tab, with the proven total beside it.
-    assert.equal(await page.getByRole('tab').count(), 1);
+    // The entry navigation retains the proven total beside its active destination.
+    assert.equal(await page.getByRole('tab').count(), 0);
+    assert.equal(await page.getByRole('navigation', { name: '待办入口', exact: true }).count(), 1);
+    assert.equal(await page.getByTestId('mailbox-tab-needs-me').getAttribute('aria-current'), 'page');
+    assert.equal(await page.getByTestId('mailbox-tab-count').textContent(), '3');
     assert.equal((await page.getByTestId('mailbox-tab-needs-me').textContent())?.replace(/\s/g, ''), '需要我处理3');
 
     const toggles = page.getByTestId('mailbox-item-toggle');
@@ -525,7 +551,7 @@ test('a row whose action is a source message really goes there; one it cannot lo
   });
   const proof = await openProof({
     unified: () => ({ body: unifiedRead({ items: [reachable, unlocatable], totalCount: 2 }) }),
-    ready: '待办，2 件',
+    ready: '待办，暂无',
   });
   const { page } = proof;
   try {
@@ -568,7 +594,7 @@ async function openExact({ route, threadId }) {
   const proof = await openProof({
     route,
     unified: () => ({ body: unifiedRead({ items: [exactSource(threadId)], totalCount: 1 }) }),
-    ready: '待办，1 件',
+    ready: '待办，暂无',
   });
   const { page } = proof;
   await page.evaluate(() => {
@@ -640,9 +666,10 @@ test('an exact source in another conversation, from a chat, moves there in the s
 });
 
 test('mailbox never claims a number it was not given, and a failed read can be retried', async () => {
+  let unavailable = true;
   const proof = await openProof({
-    unified: (attempt) =>
-      attempt === 1
+    unified: () =>
+      unavailable
         ? { status: 503, raw: 'upstream down' }
         : {
             body: unifiedRead({
@@ -657,6 +684,8 @@ test('mailbox never claims a number it was not given, and a failed read can be r
   try {
     assert.equal(await page.getByTestId('rail-badge-alert').count(), 1);
     await page.getByTestId('mailbox-button').click();
+    await page.getByTestId('mailbox-retry').waitFor();
+    unavailable = false;
     await page.getByTestId('mailbox-retry').click();
     // Rows exist but no totalCount was proven: a dot and "count unconfirmed", never a digit.
     await page.getByRole('button', { name: '待办，数量未确认', exact: true }).waitFor();
@@ -702,7 +731,10 @@ test('a login-required read dims the icon (still reachable) and shows no badge �
       '0.4',
     );
     await button.click();
+    await page.getByTestId('mailbox-state-text').filter({ hasText: '需要登录' }).waitFor();
     assert.equal(await page.getByTestId('mailbox-state-text').textContent(), '需要登录');
+    assert.equal(await button.getAttribute('data-dimmed'), 'true');
+    assert.equal(await page.locator('[data-testid^="rail-badge-"]').count(), 0);
   } finally {
     await closeProof(proof);
   }
@@ -888,17 +920,17 @@ test('settings tabs support keyboard navigation and their selected content is as
     await page.getByTestId('settings-tab-members').focus();
     await page.keyboard.press('ArrowRight');
     assert.equal(
-      await page.getByTestId('settings-tab-profiles').evaluate((el) => el === document.activeElement),
+      await page.getByTestId('settings-tab-accounts').evaluate((el) => el === document.activeElement),
       true,
       'Right Arrow must reach the next tab',
     );
     await page.keyboard.press('Enter');
-    assert.equal(await page.getByTestId('settings-owner').getAttribute('data-section'), 'profiles');
+    assert.equal(await page.getByTestId('settings-owner').getAttribute('data-section'), 'accounts');
     assert.equal(await page.getByRole('tabpanel').count(), 1, 'selected section needs a named tabpanel');
     const panelId = await page.getByRole('tabpanel').getAttribute('id');
-    const tabId = await page.getByTestId('settings-tab-profiles').getAttribute('id');
+    const tabId = await page.getByTestId('settings-tab-accounts').getAttribute('id');
     assert.ok(panelId && tabId);
-    assert.equal(await page.getByTestId('settings-tab-profiles').getAttribute('aria-controls'), panelId);
+    assert.equal(await page.getByTestId('settings-tab-accounts').getAttribute('aria-controls'), panelId);
     assert.equal(await page.getByRole('tabpanel').getAttribute('aria-labelledby'), tabId);
   } finally {
     await closeProof(proof);
@@ -1397,10 +1429,10 @@ test('while the re-read is slow nothing is claimed: no card to press, no result,
   const slow = new Promise((resolve) => {
     release = resolve;
   });
-  // Read 1 is the mount read; read 2 is the one the write starts, and it is slow. (Same-URL reads do not overtake each
-  // other: the transport waits for a read already out before sending the next, so a late older answer cannot arrive.)
-  const unified = async (attempt) => {
-    if (attempt === 2) await slow;
+  // Opening revalidates too. Delay the read after the actual write, rather than
+  // assuming a request ordinal denotes the write's reconciliation read.
+  const unified = async () => {
+    if (server.state.posts.length > 0) await slow;
     return server.listing();
   };
   const proof = await openProof({ unified, api: server.api, ready: '待办，1 件' });
@@ -1532,9 +1564,9 @@ test('v2 decides a complete F128 proposal in its mailbox and retains the canonic
     releaseConfirmation = resolve;
   });
   const proof = await openProof({
-    ready: '待办，3 件',
-    unified: async (round) => {
-      if (round > 1) await confirmation;
+    ready: '待办，1 件',
+    unified: async () => {
+      if (decided) await confirmation;
       return {
         body: unifiedRead({ items: decided ? [before, after] : [before, row, after], totalCount: decided ? 2 : 3 }),
       };
@@ -1606,7 +1638,8 @@ test('v2 decides a complete F128 proposal in its mailbox and retains the canonic
       .evaluateAll((nodes) => nodes.map((node) => node.getAttribute('data-testid')));
     assert.deepEqual(children, ['mailbox-item', 'mailbox-retained-result', 'mailbox-item']);
     assert.equal(await page.getByTestId('mailbox-tab-count').textContent(), '2');
-    await page.getByTestId('mailbox-history').click();
+    await page.getByTestId('mailbox-filter-batch').click();
+    await page.getByTestId('approval-tab-history').click();
     await page.getByTestId('approval-tab-history').waitFor();
     assert.equal(
       await page
@@ -1636,6 +1669,10 @@ test('v2 decides a complete F128 proposal in its mailbox and retains the canonic
 
 test('accepted sidebar v2: groups, cats, attention, labels and measured layout', async (t) => {
   await runSidebarV2Journey(t, browser);
+});
+
+test('collapsed Group attention shortcuts preserve layout and per-Group preferences', async (t) => {
+  await runGroupPeekJourney(t, browser);
 });
 
 // Synthetic F193 source record: expiry changes write eligibility, never the displayed census.
@@ -1767,3 +1804,5 @@ test('piano navigation uses the real reading surface and original owner', async 
 
 // Reuse this unit's browser: the menu regression never starts a concurrent browser.
 registerWorkspaceMenuTests(() => browser);
+
+registerMentionCutoverJourney({ test, openProof, closeProof });

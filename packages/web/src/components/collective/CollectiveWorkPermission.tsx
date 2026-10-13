@@ -1,6 +1,7 @@
 'use client';
 import { useState } from 'react';
-import { kindLabel, policyControl } from './CollectiveWorkPolicySettings';
+import { kindLabel } from './CollectiveWorkPolicyRules';
+import { policyControl } from './collective-work-policy-control';
 import type { ParticipationView } from './use-collective-participation';
 import type { CollectiveWorkPolicyState } from './use-collective-work-policy';
 import type { CollectiveWorkPolicyBridge } from './use-collective-work-policy-bridge';
@@ -54,7 +55,7 @@ export function CollectiveWorkPermission({
         请为这项提议决定授权。允许原请求，或为这只猫在这个频道添加同类规则；仍由猫判断是否接下。
       </p>
       <p className="mt-2 text-xs leading-5 text-cafe-muted">
-        可读当前事项有权查看的共同体资料；在家里准备结果，并回到原处。私人的其他资料不会因此开放。
+        允许后，{catName} 只用这件事能看的共同体资料，结果回到原来的讨论；家里的其他资料不会开放。
       </p>
       <div className="mt-4 flex flex-wrap gap-2">
         <button
@@ -82,9 +83,10 @@ export function CollectiveWorkPermission({
       {future && (
         <div className="mt-3 border-t border-[var(--console-border-soft)] pt-3 text-xs leading-5">
           <p>
-            仅允许 {catName} 在 # {request.channelId} 自动接受“{kindLabel(request.requestKind)}
-            ”。其他类型、猫和频道继续按原规则判断，人工模式保持不变。
+            以后 # {request.channelId} 里任何人请 {catName} 做「{kindLabel(request.requestKind)}」，{catName}
+            可以自己决定接，不再来问你。
           </p>
+          <p className="mt-1 text-cafe-muted">一直有效，直到你在「我的猫」里撤回。其他猫、频道和事项照旧。</p>
           <button
             type="button"
             className={`${policyControl} mt-2`}

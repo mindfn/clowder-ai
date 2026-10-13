@@ -25,7 +25,8 @@ export class MemoryAgentKeyBackend implements IAgentKeyBackend {
     if (record.revokedAt) return { ok: false, reason: 'agent_key_revoked' };
     const now = Date.now();
     if (record.graceUntil && now > record.graceUntil) return { ok: false, reason: 'agent_key_expired' };
-    if (!record.graceUntil && now > record.expiresAt) return { ok: false, reason: 'agent_key_expired' };
+    if (!record.graceUntil && record.expiresAt !== null && now > record.expiresAt)
+      return { ok: false, reason: 'agent_key_expired' };
     record.lastUsedAt = now;
     return { ok: true, record: { ...record } };
   }

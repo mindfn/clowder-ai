@@ -59,6 +59,7 @@ const queuedMedia = () =>
 
 beforeEach(() => {
   (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
+  mocks.apiFetch.mockReset();
   syncContextAttachmentDraftToStorage(THREAD, []);
   useChatStore.setState({ currentThreadId: THREAD, pendingChatInsert: null });
   container = document.createElement('div');
@@ -195,4 +196,20 @@ it('marks the circled place on the picture with the number it has in the compose
   // Sent or removed: the marks go with the chip.
   await act(async () => syncContextAttachmentDraftToStorage(THREAD, []));
   expect(container.querySelectorAll('[data-testid="review-pending-chat-mark"]')).toHaveLength(0);
+});
+
+it('keeps saving an image annotation behind explicit editing actions instead of a second primary send', async () => {
+  await mount();
+  await selectWholeImage();
+  await type('保留我的图片批注');
+  const save = container.querySelector<HTMLButtonElement>('[aria-label="保存批注"]');
+  const editing = save?.closest('details');
+  expect(editing).not.toBeNull();
+  expect(editing?.open).toBe(false);
+  expect(editing?.querySelector('summary')?.textContent).toContain('批注操作');
+  expect(addToChat()?.closest('details')).toBeNull();
+  expect(addToChat()?.disabled).toBe(false);
+  expect(save?.disabled).toBe(false);
+  expect(container.querySelector('textarea')?.value).toBe('保留我的图片批注');
+  expect(mocks.apiFetch).toHaveBeenCalledTimes(1);
 });

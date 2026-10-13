@@ -17,6 +17,7 @@ import { syncDraftToStorage } from '@/components/thread-drafts';
 import { ResizeHandle } from '@/components/workspace/ResizeHandle';
 import { useCatData } from '@/hooks/useCatData';
 import { primeCoCreatorConfigCache } from '@/hooks/useCoCreatorConfig';
+import type { ChatMessage as ChatMessageData } from '@/stores/chat-types';
 import { useChatStore } from '@/stores/chatStore';
 import { useSidebarProjectionStore } from '@/stores/sidebarProjectionStore';
 import { useSidebarStore } from '@/stores/sidebarStore';
@@ -169,6 +170,7 @@ declare global {
       applied: typeof themeApplied;
       selectedThread: () => string;
       currentProject: () => string;
+      incoming: (threadId: string, message: ChatMessageData) => void;
     };
   }
 }
@@ -179,6 +181,7 @@ window.__f322Chat = {
   applied: themeApplied,
   selectedThread: () => useChatStore.getState().currentThreadId,
   currentProject: () => useChatStore.getState().currentProjectPath,
+  incoming: (threadId, message) => useChatStore.getState().addMessageToThread(threadId, message),
 };
 const root = document.getElementById('root');
 if (!root) throw new Error('Missing chat proof root');

@@ -57,8 +57,11 @@ describe('F322 sidebar while a Café destination (记忆) is the current page', 
     expect(row('origin')?.getAttribute('aria-current')).toBe('page');
     row('origin')?.click();
     expect(navigation.push).not.toHaveBeenCalled();
+    const setProject = vi.mocked(mockStore.setCurrentProject as (path: string) => void);
+    setProject.mockClear();
     row('other')?.click();
     expect(navigation.push).toHaveBeenCalledWith('other', expect.anything());
+    expect(setProject).not.toHaveBeenCalled();
   });
 
   it('on the destination, the conversation you came from is not "current" and clicking it takes you back', async () => {

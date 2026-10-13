@@ -6,6 +6,8 @@ import {
   videoProjectTextSchema,
   videoProjectTimestampSchema,
 } from './video-project-primitives.js';
+import { videoProjectScreeningsSchema } from './video-project-screening.js';
+import { videoProjectSelfReviewsSchema } from './video-project-self-review.js';
 import {
   videoProjectCheckPageSchema,
   videoProjectCheckResultSchema,
@@ -26,6 +28,8 @@ export const videoProjectDocumentBaseSchema = z
     checkPages: z.array(videoProjectCheckPageSchema).max(10000),
     checkResults: z.array(videoProjectCheckResultSchema).max(10000),
     decisions: z.array(videoProjectDecisionSchema).max(10000),
+    screenings: videoProjectScreeningsSchema.optional(),
+    selfReviews: videoProjectSelfReviewsSchema.optional(),
     archivedAt: videoProjectTimestampSchema.optional(),
   })
   .strict();

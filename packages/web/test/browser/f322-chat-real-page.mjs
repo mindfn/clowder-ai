@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 import { mkdirSync, writeFileSync } from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
+import { runAnnotationIncomingContinuity } from './annotation-incoming-continuity.journey.mjs';
 import { createChatProofHarness } from './f322-chat-proof-harness.mjs';
 import { runChatReadingColumnJourney } from './f322-chat-reading-column.mjs';
 import { buildChatProof, origin } from './fixtures/f322-chat-real-page-build.mjs';
@@ -14,6 +15,11 @@ import {
   GROUP_TITLE,
   PROJECT_PATH,
 } from './fixtures/f322-chat-real-page-data.mjs';
+import {
+  assertChatSidebarRoster,
+  assertChatSidebarSignals,
+  assertCrowdedChatSidebar,
+} from './fixtures/f322-chat-real-page-metrics.mjs';
 
 // Real ThreadSidebar/ThreadItem/AttentionCluster, header, composer/context, stores,
 // HTTP client and theme. Only Next navigation and HTTP/provider transport are boundaries.
@@ -22,6 +28,9 @@ const evidenceDir = process.env.F322_CHAT_EVIDENCE_DIR ?? path.join(os.tmpdir(),
 export async function runChatRealPageJourney(t, browser) {
   mkdirSync(evidenceDir, { recursive: true });
   const built = await buildChatProof();
+  await t.test('annotation survives incoming messages while typing', () =>
+    runAnnotationIncomingContinuity(browser, built, path.join(evidenceDir, 'annotation-continuity')),
+  );
   const context = await browser.newContext({ deviceScaleFactor: 1 });
   const measurements = [];
   try {
@@ -35,29 +44,6 @@ export async function runChatRealPageJourney(t, browser) {
       api.requests.filter(
         (request) => request.path.endsWith('/thread-attention/groups') || request.path.includes('/members/'),
       );
-    async function assertElapsedRecovery(page, busy, elapsed) {
-      const status = busy.getByTestId('thread-status-text');
-      const words = await busy.getByTestId('thread-status-label-content').evaluate((element) => ({
-        text: element.textContent,
-        visibility: getComputedStyle(element).visibility,
-        width: element.getBoundingClientRect().width,
-        slotWidth: element.parentElement.getBoundingClientRect().width,
-      }));
-      assert.match(words.text, elapsed, 'the canonical elapsed fact remains complete');
-      assert.equal(await status.getAttribute('aria-label'), words.text);
-      if (words.visibility === 'visible') {
-        assert.ok(words.width <= words.slotWidth + 1, 'visible state and elapsed words fit whole');
-      } else {
-        assert.equal(words.visibility, 'hidden', 'optional state and elapsed words hide as one unit');
-        await page.locator('textarea').focus();
-        await status.focus();
-        const recovery = page.getByRole('tooltip').filter({ hasText: words.text });
-        await recovery.waitFor();
-        assert.equal(await recovery.innerText(), words.text, 'keyboard focus restores the entire state and elapsed');
-        await page.locator('textarea').focus();
-        await recovery.waitFor({ state: 'detached' });
-      }
-    }
 
     for (const [width, base, sidebar] of [
       [1440, 'light', true],
@@ -93,25 +79,20 @@ export async function runChatRealPageJourney(t, browser) {
               const busy = page.locator(`[data-thread-id="${BUSY_THREAD}"]`);
               for (const id of ['thread-row-working', 'thread-row-draft', 'thread-row-mention', 'thread-row-unread'])
                 assert.equal(await busy.getByTestId(id).count(), 1);
-              await assertElapsedRecovery(page, busy, /7 (分|min)/);
+              await assertChatSidebarSignals(page, busy, language);
+              await assertChatSidebarRoster(page, busy, ['Astra', 'Sol']);
               assert.deepEqual(
                 m.avatars.map((cat) => cat.name),
                 ['Astra', 'Sol'],
               );
               assert.ok(m.avatars.every((cat, index) => cat.loaded && cat.ring === cats[index].color.primary));
               assert.ok(m.signals.scroll <= m.signals.client + 1, 'all status signals fit');
-              assert.ok(m.working.scroll <= m.working.client + 1, 'working text must not paint into the draft label');
               assert.equal(
                 m.busy.height,
                 m.signals.height + 56,
                 'two-line title, padding and intrinsic status height compose the row',
               );
               assert.equal(m.quiet.height, 32, 'quiet row matches its virtual slot');
-              assert.ok(
-                m.signalParts[0].scroll <= m.signalParts[0].client + 1,
-                'busy cats, duration and draft fit together',
-              );
-              assert.ok(m.signalParts[0].right <= m.signalParts[1].x + 1, 'status and unread do not overlap');
             }
           } finally {
             await closeProof(proof);
@@ -123,25 +104,15 @@ export async function runChatRealPageJourney(t, browser) {
     await t.test(
       'twelve busy cats, elapsed time, draft, mention and capped unread remain distinct in 300px',
       async () => {
-        const proof = await openProof({ width: 700, base: 'dark', language: 'en', crowded: true });
-        try {
-          const m = await capture(proof.page, '700-crowded-en');
-          assert.equal(m.sidebar.width, 300);
-          assert.equal(m.busy.height, m.signals.height + 56);
-          assert.ok(m.working.scroll <= m.working.client + 1, 'all working contents fit their own slot');
-          assert.ok(m.signalParts[0].scroll <= m.signalParts[0].client + 1, 'draft must not overlap working contents');
-          assert.ok(m.signalParts[0].right <= m.signalParts[1].x + 1);
-          const busy = proof.page.locator(`[data-thread-id="${BUSY_THREAD}"]`);
-          await assertElapsedRecovery(proof.page, busy, /7 min/);
-          assert.match(await busy.getByTestId('thread-row-unread').innerText(), /99\+/);
-          assert.equal(await busy.getByTestId('thread-signal-cats').locator('img').count(), 2);
-          assert.equal(await busy.getByTestId('thread-cats-more').textContent(), '+11');
-          await busy.getByTestId('thread-signal-cats').focus();
-          await proof.page.getByRole('tooltip').filter({ hasText: 'Partner 12' }).waitFor();
-          assert.equal(memberMutations(proof.api).length, 0);
-        } finally {
-          await closeProof(proof);
-        }
+        await assertCrowdedChatSidebar(harness, memberRows, groupToggle, memberMutations);
+        const negative = await openProof({ width: 320, sidebar: false });
+        await negative.page.evaluate(() => fetch('/api/f322-unexpected-write-negative', { method: 'POST' }));
+        assert.deepEqual(negative.unexpected, ['POST /api/f322-unexpected-write-negative']);
+        await assert.rejects(
+          () => closeProof(negative),
+          { code: 'ERR_ASSERTION' },
+          'strict closeProof rejects an unexpected write',
+        );
       },
     );
 
@@ -162,8 +133,17 @@ export async function runChatRealPageJourney(t, browser) {
           assert.equal(await page.evaluate(() => window.__f322Chat.currentProject()), '/wrong/global-workspace');
           await page.keyboard.press('Escape');
           assert.equal(await project.evaluate((el) => document.activeElement === el), true);
-          await page.locator('[aria-controls="composer-add-menu"]').click();
+          assert.equal(
+            await page.getByTestId('chat-composer-context').getByTestId('thread-cat-pill').count(),
+            0,
+            'the old preferred-cat pill stays out of the composer row',
+          );
+          assert.equal(await page.getByTestId('composer-routing-preview').count(), 1);
+          await page.locator('button[aria-controls="composer-add-menu"]').click();
           const preferred = page.getByTestId('composer-preferred-cat-section');
+          await preferred.waitFor();
+          assert.match(await preferred.innerText(), /这条对话 · 没 @ 时先找谁/);
+          assert.match(await preferred.innerText(), /只在还没有猫回过话时用上/);
           await preferred.getByTestId('composer-preferred-cat-toggle').click();
           const selected = preferred.getByTestId('composer-preferred-cat-codex61-sol');
           assert.equal(
@@ -182,6 +162,10 @@ export async function runChatRealPageJourney(t, browser) {
                 ?.getAttribute('aria-pressed') === 'true',
           );
           await capture(page, '320-cat-selector');
+          assert.deepEqual(
+            threadMutations(api).map((request) => request.body),
+            [{ preferredCats: ['codex61-sol'] }],
+          );
           await page.keyboard.press('Escape');
           await page.getByTestId('composer-add-menu').waitFor({ state: 'detached' });
           assert.equal(
@@ -190,10 +174,6 @@ export async function runChatRealPageJourney(t, browser) {
             'preferred configuration does not insert a recipient mention',
           );
           assert.equal(api.sent.length, 0);
-          assert.deepEqual(
-            threadMutations(api).map((request) => request.body),
-            [{ preferredCats: ['codex61-sol'] }],
-          );
           assert.equal(
             api.requests.filter((request) => request.method !== 'GET' && request.path.endsWith('/conversation-view'))
               .length,

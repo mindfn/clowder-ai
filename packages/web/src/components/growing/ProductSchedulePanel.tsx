@@ -1,9 +1,12 @@
 'use client';
 
 import type { ArtifactReviewView, EntrustedWorkOwnerReadV1 } from '@cat-cafe/shared';
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
+import { useShellCopy } from '@/components/shell/shell-copy';
 import { useEntrustedWorkProjection } from '@/hooks/useEntrustedWorkProjection';
+import { scheduleCopy } from './product-schedule.shell-copy';
 import { ScheduleWorkCard } from './ScheduleWorkCard';
+import { ScheduleWorkGroups } from './ScheduleWorkGroups';
 import { WorkCalendarView } from './WorkCalendarView';
 import { calendarDateKey, workCalendarDates, workDates } from './work-calendar';
 import styles from './work-schedule.module.css';
@@ -13,25 +16,19 @@ export function scheduleItemRef(work: EntrustedWorkOwnerReadV1): string {
   // This is a Workspace return coordinate, not a new Task identity.
   return `${work.envelope.subjectRef}|${work.envelope.revision}${work.completion ? '|completed' : ''}`;
 }
-const STATE_ORDER = { doing: 0, blocked: 1, todo: 2, done: 3 } as const;
-const primaryTime = (work: EntrustedWorkOwnerReadV1) => Math.min(...workDates(work).map((time) => time.value));
-type WorkFilter = 'all' | 'doing' | 'blocked' | 'untimed';
-
-function matchesWorkView(
-  work: EntrustedWorkOwnerReadV1,
-  filter: WorkFilter,
-  selectedDay: string | null,
-  selectedItemRef?: string | null,
-): boolean {
-  if (scheduleItemRef(work) === selectedItemRef) return true;
-  const dates = workDates(work);
-  const matchesFilter =
-    filter === 'all' || (filter === 'untimed' ? dates.length === 0 : work.brief.current.state === filter);
-  return (
-    matchesFilter &&
-    (!selectedDay ||
-      (!work.completion && dates.length === 0) ||
-      workCalendarDates(work).some((time) => calendarDateKey(time.value) === selectedDay))
+const STATE_ORDER = { blocked: 0, doing: 1, todo: 2, done: 3 } as const;
+type WorkFilter = 'all' | 'doing' | 'blocked' | 'todo';
+function currentWorks(reads: EntrustedWorkOwnerReadV1[]) {
+  const unique = new Map<string, EntrustedWorkOwnerReadV1>();
+  for (const work of reads) {
+    if (work.envelope.freshness.state !== 'current') continue;
+    const previous = unique.get(work.envelope.subjectRef);
+    if (!previous || previous.envelope.revision < work.envelope.revision) unique.set(work.envelope.subjectRef, work);
+  }
+  return [...unique.values()].sort(
+    (a, b) =>
+      STATE_ORDER[a.brief.current.state] - STATE_ORDER[b.brief.current.state] ||
+      Math.min(...workDates(a).map((time) => time.value)) - Math.min(...workDates(b).map((time) => time.value)),
   );
 }
 
@@ -48,64 +45,148 @@ export function ProductSchedulePanel({
   selectedItemRef?: string | null;
   now?: () => number;
 }) {
+  const t = useShellCopy(scheduleCopy);
+  const active = useEntrustedWorkProjection('schedule');
+  const completed = useEntrustedWorkProjection('completed');
   const [scope, setScope] = useState<'active' | 'completed'>(() =>
     selectedItemRef?.endsWith('|completed') ? 'completed' : 'active',
   );
-  const projection = useEntrustedWorkProjection(scope === 'completed' ? 'completed' : 'schedule');
-  const selectedRef = useRef<HTMLElement | null>(null);
+  const [wide, setWide] = useState(false);
+  const [calendarView, setCalendarView] = useState<'week' | 'month'>('week');
   const [month, setMonth] = useState(() => now());
   const [selectedDay, setSelectedDay] = useState<string | null>(null);
   const [filter, setFilter] = useState<WorkFilter>('all');
-  const currentTime = now();
-  const works = useMemo(
-    () =>
-      projection.ownerReads
-        .filter((work) => work.envelope.freshness.state === 'current')
-        .sort(
-          (a, b) =>
-            STATE_ORDER[a.brief.current.state] - STATE_ORDER[b.brief.current.state] ||
-            (a.completion && b.completion
-              ? (b.completion.recordedAt ?? 0) - (a.completion.recordedAt ?? 0)
-              : primaryTime(a) - primaryTime(b)),
-        ),
-    [projection.ownerReads],
-  );
-  const visible = works.filter((work) => matchesWorkView(work, filter, selectedDay, selectedItemRef));
-  const counts = {
-    all: works.length,
-    doing: works.filter((work) => work.brief.current.state === 'doing').length,
-    blocked: works.filter((work) => work.brief.current.state === 'blocked').length,
-    untimed: works.filter((work) => workDates(work).length === 0).length,
+  const selectedRef = useRef<HTMLElement | null>(null);
+  const locatedSelectionRef = useRef<string | null | undefined>(undefined);
+  const workScrollRef = useRef<HTMLDivElement | null>(null);
+  const recentScrollRef = useRef<HTMLElement | null>(null);
+  const localReadingRef = useRef<{
+    itemRef: string;
+    port: HTMLElement;
+    top: number;
+    width: number;
+    movedAside: boolean;
+    requestStarted: boolean;
+  } | null>(null);
+  const rememberLocalOpen = (itemRef: string, fromRecent: boolean) => {
+    const port = fromRecent ? recentScrollRef.current : workScrollRef.current;
+    localReadingRef.current = port
+      ? { itemRef, port, top: port.scrollTop, width: port.clientWidth, movedAside: false, requestStarted: false }
+      : null;
   };
-  const overdue = works.filter(
+  const currentTime = now();
+  const works = useMemo(() => currentWorks(active.ownerReads), [active.ownerReads]);
+  const completedWorks = useMemo(
+    () =>
+      currentWorks(completed.ownerReads).sort(
+        (a, b) => (b.completion?.recordedAt ?? 0) - (a.completion?.recordedAt ?? 0),
+      ),
+    [completed.ownerReads],
+  );
+  const recent = completedWorks.filter(
     (work) =>
-      !work.completion && workDates(work).some((time) => time.role === 'business_deadline' && time.value < currentTime),
-  ).length;
+      work.completion?.recordedAt !== undefined &&
+      work.completion.recordedAt <= currentTime &&
+      work.completion.recordedAt >= currentTime - 7 * 86400000,
+  );
+  const projection = scope === 'completed' ? completed : active;
+  const source = scope === 'completed' ? completedWorks : works;
+  const partial = projection.ownerReads.some((work) => work.envelope.freshness.state !== 'current');
+  const overdue = works.filter((work) =>
+    workDates(work).some((time) => time.role === 'business_deadline' && time.value < currentTime),
+  );
+  const visible = source.filter((work) => {
+    if (scheduleItemRef(work) === selectedItemRef) return true;
+    if (scope === 'completed') return true;
+    if (filter !== 'all' && work.brief.current.state !== filter) return false;
+    if (wide) return true;
+    const dates = workCalendarDates(work);
+    return (
+      dates.length === 0 || (selectedDay !== null && dates.some((time) => calendarDateKey(time.value) === selectedDay))
+    );
+  });
   useEffect(() => {
-    if (selectedItemRef?.endsWith('|completed')) setScope('completed');
-    if (selectedItemRef) selectedRef.current?.scrollIntoView?.({ block: 'nearest' });
+    if (selectedItemRef?.endsWith('|completed') && selectedItemRef !== localReadingRef.current?.itemRef)
+      setScope('completed');
   }, [selectedItemRef]);
-
+  useLayoutEffect(() => {
+    if (localReadingRef.current && artifactsLoading) localReadingRef.current.requestStarted = true;
+    if (projection.loading) return;
+    if (selectedItemRef !== localReadingRef.current?.itemRef && !artifactsLoading) {
+      localReadingRef.current = null;
+      if (selectedItemRef && selectedItemRef !== locatedSelectionRef.current)
+        selectedRef.current?.scrollIntoView?.({ block: 'nearest' });
+    }
+    if (!artifactsLoading && (!selectedItemRef || selectedRef.current)) locatedSelectionRef.current = selectedItemRef;
+    const port = localReadingRef.current?.port ?? workScrollRef.current;
+    if (!port) return;
+    const restoreReading = () => {
+      const reading = localReadingRef.current;
+      if (!reading || reading.itemRef !== selectedItemRef) return;
+      if (port.closest('[role="complementary"]')) reading.movedAside = true;
+      else if (reading.movedAside) {
+        if (port.clientWidth === reading.width) port.scrollTop = reading.top;
+        localReadingRef.current = null;
+      } else if (reading.requestStarted && !artifactsLoading) localReadingRef.current = null;
+    };
+    restoreReading();
+    const observer = new ResizeObserver(restoreReading);
+    observer.observe(port);
+    return () => observer.disconnect();
+  }, [selectedItemRef, projection.loading, artifactsLoading, scope]);
+  const renderWork = (work: EntrustedWorkOwnerReadV1, fromRecent = false) => {
+    const itemRef = scheduleItemRef(work);
+    return (
+      <ScheduleWorkCard
+        key={itemRef}
+        ownerRead={work}
+        currentTime={currentTime}
+        itemRef={itemRef}
+        selected={selectedItemRef === itemRef}
+        dateSelected={
+          selectedDay !== null && workCalendarDates(work).some((time) => calendarDateKey(time.value) === selectedDay)
+        }
+        selectedRef={selectedItemRef === itemRef ? selectedRef : undefined}
+        artifactsLoading={artifactsLoading}
+        onOpenArtifact={
+          onOpenArtifact
+            ? (artifact, itemRef, title) => {
+                rememberLocalOpen(itemRef, fromRecent);
+                onOpenArtifact(artifact, itemRef, title);
+              }
+            : undefined
+        }
+        onOpenReview={
+          onOpenReview
+            ? (review, itemRef) => {
+                rememberLocalOpen(itemRef, fromRecent);
+                onOpenReview(review, itemRef);
+              }
+            : undefined
+        }
+      />
+    );
+  };
   return (
     <section
       className={`${styles.panel} min-w-0 overflow-x-hidden p-4 sm:p-5`}
       data-testid="product-schedule-panel"
-      aria-label="Schedule"
+      aria-label={t.title}
     >
       <header className="mb-4 flex items-center justify-between gap-3">
-        <div>
-          <p className="text-micro font-bold uppercase tracking-[0.18em] text-cafe-accent">Schedule</p>
-          <h2 className="mt-1 text-xl font-semibold tracking-tight text-cafe-black">工作日历</h2>
-        </div>
+        <h2 className="text-xl font-semibold tracking-tight text-cafe-black">{t.title}</h2>
         <button
           type="button"
-          onClick={projection.refetch}
+          onClick={() => {
+            active.refetch();
+            completed.refetch();
+          }}
           className="rounded-lg border border-cafe-subtle px-3 py-1.5 text-xs text-cafe-secondary hover:bg-cafe-surface"
         >
-          刷新
+          {t.refresh}
         </button>
       </header>
-      <fieldset className="mb-4 flex gap-4 border-b border-cafe-subtle text-sm" aria-label="工作范围">
+      <fieldset className="mb-4 flex gap-4 border-b border-cafe-subtle text-sm" aria-label={t.scope}>
         {(['active', 'completed'] as const).map((value) => (
           <button
             type="button"
@@ -122,116 +203,131 @@ export function ProductSchedulePanel({
               setSelectedDay(null);
             }}
           >
-            {value === 'active' ? '当前工作' : '已完成'}
+            {t[value]}
           </button>
         ))}
       </fieldset>
-      {projection.loading ? <p className="py-6 text-sm text-cafe-muted">正在读取工作与安排…</p> : null}
+      {projection.loading ? <p className="py-6 text-sm text-cafe-muted">{t.loading}</p> : null}
       {projection.error ? (
-        <div className="rounded-xl border border-semantic-critical bg-semantic-critical-surface p-4 text-sm text-cafe-secondary">
-          暂时无法读取工作与安排，请重试刷新。
-        </div>
+        <p role="status" className="rounded-xl border border-semantic-critical p-4 text-sm text-cafe-secondary">
+          {t.unavailable}
+        </p>
       ) : null}
       {!projection.loading && !projection.error ? (
         <>
-          {scope === 'active' ? (
-            <fieldset className="mb-4 flex flex-wrap gap-1.5" aria-label="筛选工作">
-              {(
-                [
-                  ['all', '全部'],
-                  ['doing', '进行中'],
-                  ['blocked', '已阻塞'],
-                  ['untimed', '未排期'],
-                ] as const
-              ).map(([key, label]) => (
-                <button
-                  type="button"
-                  key={key}
-                  aria-pressed={filter === key}
-                  onClick={() => setFilter(key)}
-                  className={
-                    'rounded-full px-3 py-1.5 text-xs font-medium ' +
-                    (filter === key
-                      ? 'bg-cafe-black text-cafe-white'
-                      : 'bg-cafe-surface text-cafe-secondary hover:text-cafe-accent')
-                  }
-                >
-                  {label} <span className="ml-1 opacity-65">{counts[key]}</span>
-                </button>
-              ))}
-            </fieldset>
+          {partial ? (
+            <p role="status" className="mb-3 text-sm text-cafe-muted">
+              {t.partial}
+            </p>
+          ) : scope === 'active' ? (
+            <p data-testid="schedule-work-summary" className="mb-3 text-sm text-cafe-secondary">
+              {t.summary(
+                works.filter((w) => w.brief.current.state === 'doing').length,
+                works.filter((w) => w.brief.current.state === 'blocked').length,
+                works.filter((w) => w.brief.current.state === 'todo').length,
+              )}
+              {overdue.length > 0 ? `；${t.overdueSubset(overdue.length)}` : ''}
+            </p>
           ) : null}
-          <div className={styles.layout}>
-            <WorkCalendarView
-              works={works}
-              month={month}
-              today={currentTime}
-              selectedDay={selectedDay}
-              onMonth={setMonth}
-              onDay={setSelectedDay}
-              overdue={overdue}
-            />
-            <div className={styles.worklist}>
-              <div className="mb-3 flex items-center justify-between gap-2 text-xs">
+          {scope === 'active' && overdue.length > 0 ? (
+            <details
+              data-testid="schedule-overdue"
+              className="mb-4 rounded-lg border border-cafe-subtle px-3 py-2 text-sm text-semantic-critical"
+            >
+              <summary className="cursor-pointer">{t.overdue(overdue.length)}</summary>
+              <div className="mt-3 grid gap-3">
+                {overdue.filter((work) => !visible.includes(work)).map((work) => renderWork(work))}
+              </div>
+            </details>
+          ) : null}
+          <div className={wide || scope === 'completed' ? styles.wideLayout : styles.layout}>
+            {!wide && scope === 'active' ? (
+              <WorkCalendarView
+                works={works}
+                month={month}
+                today={currentTime}
+                selectedDay={selectedDay}
+                onMonth={setMonth}
+                onDay={setSelectedDay}
+                overdue={overdue.length}
+                view={calendarView}
+                onView={setCalendarView}
+              />
+            ) : null}
+            <div className={styles.worklist} data-testid="schedule-worklist">
+              <div className="mb-3 flex flex-wrap items-center justify-between gap-2 text-xs">
                 <h3 className="font-semibold text-cafe-secondary">
-                  {selectedDay ? `${selectedDay} 的安排` : scope === 'completed' ? '已完成的工作' : '正在做的事'}{' '}
-                  <span className="font-normal text-cafe-muted">· {visible.length}</span>
+                  {scope === 'completed'
+                    ? t.completed
+                    : wide
+                      ? t.active
+                      : selectedDay
+                        ? t.day(selectedDay)
+                        : t.unscheduled}{' '}
+                  · {visible.length}
                 </h3>
+                {scope === 'active' ? (
+                  <button type="button" className="text-cafe-accent" onClick={() => setWide(!wide)}>
+                    {wide ? t.returnList : t.wide}
+                  </button>
+                ) : null}
                 {selectedDay ? (
                   <button type="button" className="text-cafe-accent" onClick={() => setSelectedDay(null)}>
-                    查看全部工作
+                    {t.allWork}
                   </button>
                 ) : null}
               </div>
-              {scope === 'active' && selectedDay && counts.untimed > 0 ? (
-                <p className="mb-3 text-xs text-cafe-muted">未排期工作仍保留在下方</p>
+              {scope === 'active' && wide ? (
+                <fieldset className="mb-3 flex flex-wrap gap-1.5" aria-label={t.filters}>
+                  {(['all', 'blocked', 'doing', 'todo'] as const).map((value) => (
+                    <button
+                      type="button"
+                      key={value}
+                      aria-pressed={filter === value}
+                      onClick={() => setFilter(value)}
+                      className={`rounded-full px-3 py-1.5 text-xs ${filter === value ? 'bg-cafe-accent/10 text-cafe-accent' : 'bg-cafe-surface text-cafe-secondary'}`}
+                    >
+                      {value === 'all' ? t.all : t.status[value]}
+                    </button>
+                  ))}
+                </fieldset>
               ) : null}
-              <div className="grid min-w-0 gap-3">
-                {visible.map((work) => {
-                  const itemRef = scheduleItemRef(work);
-                  return (
-                    <ScheduleWorkCard
-                      key={work.envelope.subjectRef}
-                      ownerRead={work}
-                      currentTime={currentTime}
-                      itemRef={itemRef}
-                      selected={selectedItemRef === itemRef}
-                      dateSelected={
-                        selectedDay !== null &&
-                        workCalendarDates(work).some((time) => calendarDateKey(time.value) === selectedDay)
-                      }
-                      selectedRef={selectedItemRef === itemRef ? selectedRef : undefined}
-                      artifactsLoading={artifactsLoading}
-                      onOpenArtifact={onOpenArtifact}
-                      onOpenReview={onOpenReview}
-                    />
-                  );
-                })}
-                {visible.length === 0 ? (
-                  <EmptySchedule hasWork={works.length > 0} completed={scope === 'completed'} />
-                ) : null}
-              </div>
+              <ScheduleWorkGroups
+                scrollRef={workScrollRef}
+                works={visible}
+                hasWork={source.length > 0}
+                partial={partial}
+                completed={scope === 'completed'}
+                renderWork={(work) => renderWork(work)}
+              />
+              {scope === 'active' ? (
+                <section ref={recentScrollRef} data-testid="schedule-recent-completed" className={styles.recent}>
+                  <h3 className="mb-3 text-sm font-semibold text-cafe-secondary">{t.recent}</h3>
+                  {completed.loading ? (
+                    <p className="text-xs text-cafe-muted">{t.loading}</p>
+                  ) : completed.error ? (
+                    <p role="status" className="text-xs text-cafe-muted">
+                      {t.unavailable}
+                    </p>
+                  ) : (
+                    <div className="grid gap-3">
+                      {recent.map((work) => renderWork(work, true))}
+                      {completed.ownerReads.some((work) => work.envelope.freshness.state !== 'current') ? (
+                        <p className="text-xs text-cafe-muted">{t.partial}</p>
+                      ) : recent.length === 0 ? (
+                        <p className="text-xs text-cafe-muted">{t.recentEmpty}</p>
+                      ) : null}
+                    </div>
+                  )}
+                  <button type="button" className="mt-3 text-xs text-cafe-accent" onClick={() => setScope('completed')}>
+                    {t.allCompleted}
+                  </button>
+                </section>
+              ) : null}
             </div>
           </div>
         </>
       ) : null}
     </section>
-  );
-}
-
-function EmptySchedule({ hasWork, completed }: { hasWork: boolean; completed: boolean }) {
-  return (
-    <div className="rounded-xl border border-dashed border-cafe-subtle p-6 text-center">
-      <p className="text-sm font-medium text-cafe-black">
-        {hasWork ? '这里暂时没有工作' : completed ? '还没有已完成的工作' : '还没有接下的工作'}
-      </p>
-      <p className="mt-2 text-xs text-cafe-muted">
-        {hasWork
-          ? '换个日期或筛选，查看其他安排。'
-          : completed
-            ? '工作完成后，可以在这里回看交付记录。'
-            : '在原对话把事情交给猫，接下后会出现在这里。'}
-      </p>
-    </div>
   );
 }

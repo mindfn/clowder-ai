@@ -107,7 +107,9 @@ it('renders the common landing using original media, actor, annotation IDs and d
   expect(container.querySelector('img')?.getAttribute('src')).toBe('blob:original-owner-media');
   expect(container.querySelector('[data-annotation-id="original"]')).not.toBeNull();
   expect(container.querySelector('textarea')?.value).toBe('原草稿');
+  await act(async () => container.querySelector<HTMLElement>('[aria-label="批注操作"]')?.click());
   const save = container.querySelector<HTMLButtonElement>('[aria-label="保存批注"]');
+  expect(save?.closest('details')?.open).toBe(true);
   await act(async () => save?.click());
   expect(mocks.act).toHaveBeenCalledWith(
     expect.objectContaining({ kind: 'annotate', body: '原草稿', anchor: { kind: 'image-point', x: 8, y: 9 } }),
@@ -264,6 +266,7 @@ it('a linked Task context resumes the publication draft and its exact unknown op
     for (let n = 0; n < 8; n++) await Promise.resolve();
   });
   expect(container.querySelector('textarea')?.value).toBe('消息入口没写完的评论');
+  await act(async () => container.querySelector<HTMLElement>('[aria-label="批注操作"]')?.click());
   await act(async () => container.querySelector<HTMLButtonElement>('[aria-label="保存批注"]')?.click());
   const first = mocks.apiFetch.mock.calls.find(([url]) => String(url).endsWith('/annotations'));
   expect(first).toBeTruthy();
@@ -279,5 +282,23 @@ it('a linked Task context resumes the publication draft and its exact unknown op
   const writes = mocks.apiFetch.mock.calls.filter(([url]) => String(url).endsWith('/annotations'));
   expect(writes).toHaveLength(2);
   expect(JSON.parse(String(writes[1]?.[1]?.body))).toEqual(JSON.parse(String(first?.[1]?.body)));
+  expect(mocks.act).not.toHaveBeenCalled();
+});
+
+it('uses Chat for a writable PNG round while keeping its modification records accessible', async () => {
+  useChatStore.setState({ currentThreadId: 'thread-one', pendingChatInsert: null });
+  await act(async () => root.render(<ArtifactReviewSurface reviewId={view.review.reviewId} onBack={vi.fn()} />));
+  const entry = container.querySelector<HTMLButtonElement>('[data-testid="content-modification-entry"]');
+  expect(entry?.textContent).toBe('修改记录');
+  const whole = container.querySelector<HTMLButtonElement>('[data-testid="workspace-media-chat-whole-work"]');
+  expect(whole).not.toBeNull();
+  await act(async () => whole?.click());
+  expect(useChatStore.getState().pendingChatInsert?.contextAttachments).toEqual([
+    expect.objectContaining({
+      source: { kind: 'artifact-review', reviewId: view.review.reviewId, round: 1, expectedReviewRevision: 2 },
+      taskContext: expect.objectContaining({ taskId: 'task-one', expectedTaskRevision: 1, round: 1 }),
+      selections: [],
+    }),
+  ]);
   expect(mocks.act).not.toHaveBeenCalled();
 });

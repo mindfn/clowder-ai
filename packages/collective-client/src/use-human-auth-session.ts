@@ -180,7 +180,8 @@ export function useHumanAuthSession(snapshot: ClientSnapshot, setSnapshot: Dispa
     if (!token.current) return undefined;
     try {
       return await loadMe();
-    } catch {
+    } catch (error) {
+      if (!(error instanceof CollectiveClientRequestError) || error.status !== 401) throw error;
       sessionStorage.removeItem(`${SESSION_KEY}:${location.origin}`);
       token.current = null;
       return undefined;

@@ -5,6 +5,7 @@ import {
   artifactReviewCommandSchema,
   type PrepareArtifactReview,
   prepareArtifactReviewSchema,
+  type RespondWithMediaVersion,
   respondWithMediaVersionSchema,
   type TaskItem,
 } from '@cat-cafe/shared';
@@ -37,9 +38,9 @@ export class ArtifactReviewService {
   private readonly now: () => string;
   private committedProjection?: (reviewId: string) => Promise<void>;
   private publicationResponse?: (
-    requestId: string,
-    artifactRef: string,
+    command: RespondWithMediaVersion,
     principal: MediaReviewPrincipal,
+    mode: 'admit' | 'replay',
   ) => Promise<import('@cat-cafe/shared').MessageMediaPublicationSource | undefined>;
   setPublicationResponseGuard(guard: NonNullable<ArtifactReviewService['publicationResponse']>): void {
     this.publicationResponse = guard;
@@ -244,8 +245,8 @@ export class ArtifactReviewService {
     principal = withContentTask(principal, review.task.taskId);
     const task = await this.authorizeReview(review, principal);
     if (!isLineageLinked(task, review)) throw new ArtifactReviewError('task_changed');
-    const committed = await this.versions.respond(command, principal, review, () =>
-      command.requestId ? this.publicationResponse?.(command.requestId, command.artifactRef, principal) : undefined,
+    const committed = await this.versions.respond(command, principal, review, (mode) =>
+      command.requestId ? this.publicationResponse?.(command, principal, mode) : undefined,
     );
     await this.committedProjection?.(review.reviewId);
     return { view: await this.read(review.reviewId, principal), receipt: committed.receipt };

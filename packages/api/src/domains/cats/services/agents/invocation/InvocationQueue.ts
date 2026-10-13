@@ -41,6 +41,7 @@ import {
   assertQueueMessageReplay,
   type IMessageStore,
   type LifecycleResponseTerminalPatch,
+  messageIdempotencyScope,
   type StoredMessage,
 } from '../../stores/ports/MessageStore.js';
 import type { ToolExecutionPolicy } from '../../types.js';
@@ -726,7 +727,7 @@ export class InvocationQueue {
     const reuseResolvedTargets = !exactTargets;
     const requestedTargetCats = [...input.targetCats];
     const committed = message.idempotencyKey
-      ? await messageStore.getByIdempotencyKey(input.userId, input.threadId, message.idempotencyKey)
+      ? await messageStore.getByIdempotencyKey(input.userId, messageIdempotencyScope(message), message.idempotencyKey)
       : null;
     const committedRow = committed ? await this.ledgerStore.get(input.threadId, queueEntryId(committed.id)) : null;
     if (committed && !committedRow) {

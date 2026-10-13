@@ -1,11 +1,15 @@
 'use client';
 
+import type { MessageQuoteSource, QuoteContextSource } from '@cat-cafe/shared';
 import { useCallback, useEffect, useRef, useState } from 'react';
 import type { FileData, WorktreeEntry } from '@/hooks/useWorkspace';
 import { type ListenSentence, maskLeadingMarkdownFrontmatter } from '@/lib/listen-mode/markdown-sentences';
 import { HubIcon } from '../hub-icons';
 import { LiveSelectionAnnotationAction } from '../LiveSelectionAnnotationAction';
 import { MarkdownContent } from '../MarkdownContent';
+import { WorkspaceFileQuoteMarks } from '../workbench/content-review/WorkspaceFileQuoteMarks';
+import { WorkspacePendingFileQuoteMarks } from '../workbench/content-review/WorkspacePendingFileQuoteMarks';
+import { useWorkspaceSurfaceVisibility } from '../workbench/WorkspaceSurfaceVisibility';
 import { CodeViewer } from './CodeViewer';
 import { JsxPreview } from './JsxPreview';
 import type { MarkdownSelectionAction } from './useMarkdownSelectionAction';
@@ -37,16 +41,21 @@ export interface FileContentRendererProps {
   mdContainerRef: React.RefObject<HTMLDivElement>;
   mdSelectionAction: MarkdownSelectionAction | null;
   onMdAddToChat: (action: MarkdownSelectionAction, comment: string) => void | boolean;
-  onSave: WorkspaceFileSave;
+  onSave?: WorkspaceFileSave;
   onDirtyChange?: (dirty: boolean) => void;
   rawUrl: (p: string) => string;
-  revealInFinder: (path: string) => void;
+  revealInFinder?: (path: string) => void;
   restoreScrollTop?: number | null;
   restoreKey?: string;
   onScrollTopChange?: (scrollTop: number) => void;
   listenSentences?: ListenSentence[];
   activeListenAnchor?: string;
   onListenSentenceStart?: (index: number) => void;
+  showFileQuotes?: boolean;
+  onQuoteSelected?: (quote: string) => void;
+  /** Explicit published leaf; false keeps a preview with unverifiable origin from inventing a workspace quote. */
+  quoteSource?: QuoteContextSource | false;
+  publishedQuoteSource?: MessageQuoteSource;
 }
 
 /** Renders file content: binary (image/audio/video), markdown, HTML, JSX, or code. */
@@ -76,7 +85,12 @@ export function FileContentRenderer({
   listenSentences,
   activeListenAnchor,
   onListenSentenceStart,
+  showFileQuotes,
+  onQuoteSelected,
+  quoteSource,
+  publishedQuoteSource,
 }: FileContentRendererProps) {
+  const visible = useWorkspaceSurfaceVisibility();
   const onScrollTopChangeRef = useRef(onScrollTopChange);
   onScrollTopChangeRef.current = onScrollTopChange;
   const restoreScrollTopRef = useRef(restoreScrollTop);
@@ -196,7 +210,7 @@ export function FileContentRenderer({
         </p>
         <button
           type="button"
-          onClick={() => void revealInFinder(file.path)}
+          onClick={() => void revealInFinder?.(file.path)}
           className="mt-2 px-3 py-1 rounded bg-cafe-surface-sunken/20 text-cafe-interactive/60 hover:bg-cafe-surface-sunken/40 transition-colors text-micro"
         >
           在 Finder 中打开
@@ -207,13 +221,47 @@ export function FileContentRenderer({
 
   if (isMarkdown && markdownRendered && !editMode)
     return (
-      <div className="relative flex-1 min-h-0">
-        <div className="h-full overflow-auto bg-cafe-white p-4" ref={mdContainerRef}>
+      <div className="relative flex min-h-0 flex-1 flex-col">
+        {showFileQuotes && worktreeId && openFilePath && (
+          <>
+            <WorkspaceFileQuoteMarks
+              locator={{ worktreeId, path: openFilePath }}
+              revision={`sha256:${file.sha256.replace(/^sha256:/, '')}`}
+              text={file.content}
+              container={mdContainerRef}
+              visible={visible}
+            />
+            <WorkspacePendingFileQuoteMarks
+              locator={{ worktreeId, path: openFilePath }}
+              revision={`sha256:${file.sha256.replace(/^sha256:/, '')}`}
+              text={file.content}
+              container={mdContainerRef}
+              visible={visible}
+            />
+          </>
+        )}
+        {publishedQuoteSource?.artifactFile && (
+          <WorkspacePendingFileQuoteMarks
+            publishedSource={publishedQuoteSource}
+            revision={publishedQuoteSource.artifactFile.displayDigest}
+            text={file.content}
+            container={mdContainerRef}
+            visible={visible}
+          />
+        )}
+        <div
+          className={`min-h-0 flex-1 overflow-auto bg-cafe-white p-4 ${showFileQuotes || publishedQuoteSource ? 'pl-10 pr-16' : ''}`}
+          ref={mdContainerRef}
+          data-testid={showFileQuotes ? 'workspace-content-review-text' : undefined}
+          onMouseUp={() => onQuoteSelected?.(window.getSelection()?.toString().trim() ?? '')}
+        >
           <MarkdownContent
             content={maskLeadingMarkdownFrontmatter(file.content)}
             disableCommandPrefix
-            basePath={openFilePath ? openFilePath.split('/').slice(0, -1).join('/') : undefined}
-            sourcePath={openFilePath ?? undefined}
+            basePath={
+              quoteSource === undefined && openFilePath ? openFilePath.split('/').slice(0, -1).join('/') : undefined
+            }
+            sourcePath={quoteSource === undefined ? (openFilePath ?? undefined) : undefined}
             worktreeId={worktreeId ?? undefined}
             listenSentences={listenSentences}
             activeListenAnchor={activeListenAnchor}
@@ -238,7 +286,9 @@ export function FileContentRenderer({
           action={mdSelectionAction}
           resetKey={openFilePath}
           positionMode="absolute"
-          actionTestId="workspace-markdown-selection-add-to-chat"
+          actionTestId={
+            showFileQuotes ? 'workspace-content-review-text-add-to-chat' : 'workspace-markdown-selection-add-to-chat'
+          }
           onSave={onMdAddToChat}
         />
       </div>
@@ -279,6 +329,7 @@ export function FileContentRenderer({
       restoreScrollTop={restoreScrollTop}
       restoreKey={restoreKey}
       onScrollTopChange={onScrollTopChange}
+      quoteSource={quoteSource}
     />
   );
 }

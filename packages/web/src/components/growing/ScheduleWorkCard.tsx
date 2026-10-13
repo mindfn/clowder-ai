@@ -2,19 +2,16 @@ import type { ArtifactReviewView, EntrustedWorkOwnerReadV1 } from '@cat-cafe/sha
 import Link from 'next/link';
 import type { Ref } from 'react';
 import { CatAvatar } from '@/components/CatAvatar';
+import { useShellCopy } from '@/components/shell/shell-copy';
 import { useCatData } from '@/hooks/useCatData';
 import { resolveCatDisplayName } from '@/lib/cat-display-name';
 import { EntrustedWorkBrief } from './EntrustedWorkBrief';
 import type { PreparedArtifactCoordinate } from './ProductSchedulePanel';
 import { preparedArtifactPresentation, preparedReviewCoordinate } from './prepared-artifact-presentation';
 import { usePreparedReviewTitle } from './prepared-review-presentation';
+import { scheduleCopy } from './product-schedule.shell-copy';
 import { ScheduleArtifactActions } from './ScheduleArtifactActions';
-import { WORK_STATUS, WORK_TIME, workDates, workTitle } from './work-calendar';
-
-const dateLabel = (value: number) =>
-  new Intl.DateTimeFormat('zh-CN', { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' }).format(
-    value,
-  );
+import { workDates, workTitle } from './work-calendar';
 
 export function ScheduleWorkCard({
   ownerRead,
@@ -37,6 +34,11 @@ export function ScheduleWorkCard({
   onOpenArtifact?: (artifact: PreparedArtifactCoordinate, itemRef: string, title?: string) => void;
   onOpenReview?: (review: ArtifactReviewView, itemRef: string) => void;
 }) {
+  const t = useShellCopy(scheduleCopy);
+  const dateLabel = (value: number) =>
+    new Intl.DateTimeFormat(t.locale, { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' }).format(
+      value,
+    );
   const { getCatById } = useCatData({ fetch: false });
   const { work, brief } = ownerRead;
   const preparedReview = preparedReviewCoordinate(ownerRead.preparedArtifact?.previewRef);
@@ -67,18 +69,22 @@ export function ScheduleWorkCard({
               <span className="truncate">{resolveCatDisplayName(catId, getCatById)}</span>
             </>
           ) : (
-            <span>负责人未提供</span>
+            <span>{t.ownerUnknown}</span>
           )}
         </div>
         <span
           className={`shrink-0 rounded-full px-2 py-1 text-micro font-semibold ${completed ? 'bg-semantic-success-surface text-semantic-success' : blocked ? 'bg-semantic-critical-surface text-semantic-critical' : 'bg-cafe-accent/10 text-cafe-accent'}`}
         >
-          {WORK_STATUS[brief.current.state]}
+          {t.status[brief.current.state]}
         </span>
       </div>
       <h3 className="mt-3 break-words text-base font-semibold leading-6 text-cafe-black">{workTitle(ownerRead)}</h3>
       <div className="mt-2 flex flex-wrap gap-x-3 gap-y-1 text-xs text-cafe-secondary">
-        {work ? <span>{dateLabel(work.admittedAt)} 接下</span> : null}
+        {work ? (
+          <span>
+            {t.time.admitted_at} · {dateLabel(work.admittedAt)}
+          </span>
+        ) : null}
         {dates.map((time) => (
           <span
             key={time.role}
@@ -88,18 +94,22 @@ export function ScheduleWorkCard({
                 : ''
             }
           >
-            {WORK_TIME[time.role]} · {dateLabel(time.value)}
-            {!completed && time.role === 'business_deadline' && time.value < currentTime ? ' · 已逾期' : ''}
+            {t.time[time.role]} · {dateLabel(time.value)}
+            {!completed && time.role === 'business_deadline' && time.value < currentTime
+              ? ` · ${t.overdueDays(Math.floor((currentTime - time.value) / 86400000))}`
+              : ''}
           </span>
         ))}
-        {!due && !completed ? <span>截止未定</span> : null}
+        {!due && !completed ? <span>{t.deadlineUnknown}</span> : null}
         {ownerRead.completion?.recordedAt !== undefined ? (
-          <span className="text-semantic-success">{dateLabel(ownerRead.completion.recordedAt)} 完成</span>
+          <span className="text-semantic-success">
+            {t.time.completed_at} · {dateLabel(ownerRead.completion.recordedAt)}
+          </span>
         ) : null}
-        {completed && ownerRead.completion?.recordedAt === undefined ? <span>完成时间未记录</span> : null}
+        {completed && ownerRead.completion?.recordedAt === undefined ? <span>{t.completedTimeUnknown}</span> : null}
       </div>
       <OwnerProgress ownerRead={ownerRead} blocked={blocked} />
-      {needsMe ? <p className="mt-2 text-xs font-semibold text-cafe-accent">需要你判断</p> : null}
+      {needsMe ? <p className="mt-2 text-xs font-semibold text-cafe-accent">{t.needsJudgment}</p> : null}
       <div className="mt-3 flex flex-wrap items-center gap-2">
         <ScheduleArtifactActions
           ownerRead={ownerRead}
@@ -114,16 +124,19 @@ export function ScheduleWorkCard({
             href={`/thread/${encodeURIComponent(work.threadId)}`}
             className="rounded-lg border border-cafe-subtle px-3 py-2 text-xs font-medium text-cafe-secondary hover:border-cafe-accent/40 hover:text-cafe-accent"
           >
-            回原对话 →
+            {t.origin} →
           </Link>
         ) : null}
         {!ownerRead.preparedArtifact ? (
-          <span className="text-xs text-cafe-muted">{completed ? '交付材料未封存或已变更' : '尚无已发布成果'}</span>
+          <span className="text-xs text-cafe-muted">{completed ? t.archivedUnconfirmed : t.artifactUnconfirmed}</span>
         ) : null}
       </div>
       <details className="mt-3 border-t border-cafe-subtle/50 pt-2 text-xs text-cafe-muted">
-        <summary className="cursor-pointer">目标与来源</summary>
+        <summary className="cursor-pointer">{t.goal}</summary>
         {work?.ownerNote ? <p className="mt-2 whitespace-pre-wrap break-words leading-5">{work.ownerNote}</p> : null}
+      </details>
+      <details className="mt-2 text-xs text-cafe-muted">
+        <summary className="cursor-pointer">{t.engineering}</summary>
         <EntrustedWorkBrief
           ownerRead={ownerRead}
           artifactLabel={
@@ -133,7 +146,9 @@ export function ScheduleWorkCard({
           }
         />
         {ownerRead.completion ? (
-          <p className="mt-2 break-all">完成依据 · {ownerRead.completion.evidenceRefs.join(' / ')}</p>
+          <p className="mt-2 break-all">
+            {t.completionEvidence} · {ownerRead.completion.evidenceRefs.join(' / ')}
+          </p>
         ) : null}
       </details>
     </article>
@@ -141,21 +156,24 @@ export function ScheduleWorkCard({
 }
 
 function OwnerProgress({ ownerRead, blocked }: { ownerRead: EntrustedWorkOwnerReadV1; blocked: boolean }) {
+  const t = useShellCopy(scheduleCopy);
   if (ownerRead.completion) return null;
   const progress = ownerRead.work?.progress;
-  const summary = progress?.summary ?? '尚无进展说明';
+  const summary = progress?.summary ?? t.progressMissing;
   return (
     <div data-testid="work-owner-note" className="mt-3 space-y-2 text-xs leading-5 text-cafe-secondary">
-      <p className="line-clamp-2">{summary}</p>
+      <p className="font-semibold text-cafe-secondary">{t.progress}</p>
+      <p className="whitespace-pre-wrap break-words">{summary}</p>
+      {progress ? <p className="text-cafe-muted">{t.progressTimeMissing}</p> : null}
       {progress?.nextStep ? (
         <p>
-          <span className="text-cafe-muted">下一步 · </span>
+          <span className="text-cafe-muted">{t.next} · </span>
           {progress.nextStep}
         </p>
       ) : null}
       {blocked ? (
         <p className="rounded-lg bg-semantic-critical-surface px-3 py-2 text-semantic-critical">
-          {progress?.blockerReason ?? '原记录尚未说明阻塞原因'}
+          {progress?.blockerReason ?? t.blockerMissing}
         </p>
       ) : null}
     </div>

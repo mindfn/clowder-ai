@@ -39,7 +39,7 @@ const dutyText = (householdToolsEnabled: boolean) =>
   }).join('\n');
 
 test('both prompt paths carry the front-desk duty and all current scenes', () => {
-  assert.equal(LIVE_FRONT_DESK_SCENES.length, 6);
+  assert.equal(LIVE_FRONT_DESK_SCENES.length, 7);
   const fast = liveRealtimePrompt({ catId: 'codex', householdToolsEnabled: true, compositionInstructions: 'HOST' });
   const deep = dutyText(true);
   for (const output of [fast, deep]) {
@@ -89,7 +89,7 @@ test('Live can show a web result through the scoped preview receipt without open
   assert.match(show.deep, /回到原来的 thread 交给原来的负责猫/);
   assert.match(show.deep, /原工作来源和改的是哪一版/);
   assert.doesNotMatch(show.deep, /本次没有网页预览工具/);
-  for (const name of ['shell_exec', 'audio_capture_start', 'update_task', 'plugin_enable', 'propose_thread'])
+  for (const name of ['shell_exec', 'audio_capture_start', 'create_task', 'plugin_enable', 'propose_thread'])
     assert.ok(!mounted.has(name), `${name} remains outside the Live surface`);
 });
 

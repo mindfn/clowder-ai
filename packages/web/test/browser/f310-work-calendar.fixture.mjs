@@ -11,6 +11,7 @@ import { F232PreparedArtifactReader } from '../../../api/dist/domains/growing/F2
 import { sessionAuthPlugin, sessionRoute } from '../../../api/dist/infrastructure/session-auth.js';
 import { registerEntrustedWorkReadRoutes } from '../../../api/dist/routes/entrusted-work-read-routes.js';
 import { fixedFixture, realSurfaceApiResponse } from './f307-real-surface-fixtures.mjs';
+import { readJ3Attention } from './f322-j3-attention.fixture.mjs';
 
 export const CALENDAR_THREAD = 'thread-f310-calendar-contract';
 
@@ -34,6 +35,14 @@ export async function createCalendarFixture() {
     async getByThread() {
       const p = publication();
       return [
+        ...Array.from({ length: 36 }, (_, index) => ({
+          id: `j3-controlled-reading-${index}`,
+          threadId: CALENDAR_THREAD,
+          userId: 'default-user',
+          catId: 'codex',
+          timestamp: now - 3600000 + index * 1000,
+          content: `受控阅读样本 ${index + 1}，用于原聊天位置验证。\n\n${'这是可滚动的原聊天样本正文，不代表真实猫执行。保留可见消息位置，再去日程查看成果。\n\n'.repeat(3)}`,
+        })),
         {
           id: p.sourceMessageId,
           threadId: CALENDAR_THREAD,
@@ -104,12 +113,33 @@ export async function createCalendarFixture() {
     progress: { summary: '材料核对尚未结束', blockerReason: '等待已登记的审阅结果', sourceRef: 'message:blocker' },
   });
   const undatedId = await admit('没有截止的开发责任', 'undated');
+  const undatedBlockedId = await admit('未排期受阻的原责任', 'undated-blocked');
+  await lifecycle.update({
+    taskId: undatedBlockedId,
+    expectedRevision: 1,
+    status: 'blocked',
+    artifactRefs: [artifactUrl],
+    progress: {
+      summary: '受控样本：原材料待确认',
+      blockerReason: '等待原审阅结果',
+      sourceRef: 'message:undated-blocker',
+    },
+  });
+  const undatedSampleIds = [];
+  for (let index = 0; index < 20; index++) {
+    const sampleId = await admit(`受控未排期工作 ${index + 1}`, `undated-sample-${index}`);
+    undatedSampleIds.push(sampleId);
+    if (index === 9) {
+      await lifecycle.update({ taskId: sampleId, expectedRevision: 1, status: 'todo', artifactRefs: [artifactUrl] });
+    }
+  }
   const native = Fastify();
   await native.register(cookie);
   await native.register(sessionAuthPlugin);
   await native.register(sessionRoute);
   registerEntrustedWorkReadRoutes(native, { service: reader, callbackRegistry: new InvocationRegistry() });
   let readsUnavailable = false;
+  let catalogForbidden = false;
   const thread = { id: CALENDAR_THREAD, userId: 'default-user', title: '工作日历', createdAt: now, updatedAt: now };
   const server = createServer(async (req, res) => {
     const url = new URL(req.url, 'http://fixture.local');
@@ -135,6 +165,16 @@ export async function createCalendarFixture() {
         });
         res.writeHead(result.statusCode, result.headers);
         res.end(result.body);
+        return;
+      }
+      if (catalogForbidden && url.pathname === `/api/threads/${CALENDAR_THREAD}/artifacts`) {
+        res.writeHead(403, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ error: 'Controlled original publication read denied' }));
+        return;
+      }
+      if (url.pathname === '/api/concierge/work/decisions') {
+        res.setHeader('Content-Type', 'application/json');
+        res.end(JSON.stringify(await readJ3Attention(url, now)));
         return;
       }
       if (url.pathname === artifactUrl) {
@@ -166,11 +206,16 @@ export async function createCalendarFixture() {
   server.listen(0, '127.0.0.1');
   await once(server, 'listening');
   return {
+    threadId: CALENDAR_THREAD,
     title,
     sentinel,
     artifactUrl,
     taskId,
     undatedId,
+    undatedBlockedId,
+    undatedSampleIds,
+    blockedId,
+    now,
     apiPort: server.address().port,
     async complete() {
       return lifecycle.close({
@@ -189,6 +234,9 @@ export async function createCalendarFixture() {
     },
     unavailable(value) {
       readsUnavailable = value;
+    },
+    forbidCatalog(value) {
+      catalogForbidden = value;
     },
     async close() {
       server.close();

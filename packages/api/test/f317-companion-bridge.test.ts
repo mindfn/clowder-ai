@@ -269,6 +269,49 @@ async function fixture() {
   };
 }
 
+test('private text timing binds the Host call and cannot cross a stop during lease verification', async (t) => {
+  const f = await fixture();
+  t.after(f.cleanup);
+  const observations: Array<{ callId: string; clientMessageId: string }> = [];
+  let authPause: Promise<void> | undefined;
+  let entered: (() => void) | undefined;
+  const bridge = new CompanionHostBridge({
+    ...f.options,
+    assertCurrent: async () => {
+      await f.options.assertCurrent();
+      entered?.();
+      if (authPause) await authPause;
+    },
+    observeTextSubmission: async (receipt) => {
+      observations.push(receipt);
+    },
+  });
+  t.after(() => bridge.close());
+  assert.equal((await bridge.request({ kind: 'prepare' })).kind, 'state');
+  await bridge.observeTextSubmission({ stage: 'client_text_sent', clientMessageId: 'first', observedAt: Date.now() });
+  assert.equal(observations.length, 1);
+  assert.ok(observations[0].callId, 'the Host binds the call; no renderer callId is accepted');
+  let release: (() => void) | undefined;
+  authPause = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  const authEntered = new Promise<void>((resolve) => {
+    entered = resolve;
+  });
+  const stale = bridge.observeTextSubmission({
+    stage: 'client_text_sent',
+    clientMessageId: 'stale',
+    observedAt: Date.now(),
+  });
+  void stale.catch(() => {});
+  await authEntered;
+  const closing = bridge.close();
+  release?.();
+  await assert.rejects(stale, /cancelled/);
+  await closing;
+  assert.equal(observations.length, 1, 'a revoked generation records no client observation');
+});
+
 test('native writer conflicts reach the existing busy UI boundary and permit a later prepare without stale handles', async (t) => {
   const f = await fixture();
   t.after(f.cleanup);

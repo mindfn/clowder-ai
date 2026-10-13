@@ -357,7 +357,7 @@ export class TaskRunnerV2 {
 
   /** Phase 3A: hydrate dynamic tasks from persistent store (AC-G3) */
   hydrateDynamic(store: DynamicTaskStore, templateGetter: { get: (id: string) => TaskTemplate | null }): number {
-    const defs = store.getAll().filter((d) => d.enabled);
+    const defs = store.getEnabled();
     let loaded = 0;
     for (const def of defs) {
       const managedCommandState = readManagedCommandWakeState(def);

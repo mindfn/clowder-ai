@@ -1707,7 +1707,7 @@
     {
       "id": "F290",
       "name": "AI-native Collective — 多人·多 Agent 共同世界",
-      "status": "2026-09-25 first-cat entry Design Gate approved for real Client implementation; rejected private-room prototype remains stopped; real first reply, two-Mac UAT and full Collective experience remain open",
+      "status": "in-progress / 2026-10-13 对账：通讯模型 #4955、共同体首页 #5205、入口修复 #5304 与临时断线会话恢复 #5473 已合；真实模型接活/修订/回流和有界旅程已有证据；真实 Alpha runtime 重启、双真人双 Café 完整协作、最新 Collective 界面、F309 双 Human 共享内容与整项验收仍开放",
       "file": "F290-ai-native-collective.md"
     },
     {
@@ -1773,7 +1773,7 @@
     {
       "id": "F301",
       "name": "Scoped Skill Sync — 当前 Worktree 快路径与显式 Fleet Repair",
-      "status": "done | **Owner**: 小团团·Maine Coon (@codex-terra, GPT-5.6 Terra) | **Priority**: P2",
+      "status": "done | **Completed**: 2026-08-21 | **Owner**: 小团团·Maine Coon (@codex-terra, GPT-5.6 Terra) | **Priority**: P2",
       "file": "F301-scoped-skill-sync.md"
     },
     {
@@ -1893,19 +1893,19 @@
     {
       "id": "F322",
       "name": "Everyday Work Experience｜看得懂、找得到、接得上",
-      "status": "in-progress / 线程盘点2026-10-06：成员583完成；语音/工具叶页已合待组合验收；B三层回话S2 #5152已合待Alpha/组合验收，S3/S4 #5174已合且独立Alpha通过，S5持久默认与安装预览双语#5183已合待runtime/Alpha；§1.11群聊视图菜单与TTL=0偏好#5193已合，单猫读取投影待F254、合后Alpha待验；D回放#5141核心独立Alpha已过；C公共返回#5158限定独立Alpha已过、runtime未加载该批；F309前端/F290页面接入沿原域续办，整B/C/D与旧AC仍开放 | **Owner**: 小星星·Maine Coon（@codex-astra, gpt-6-astra），指挥责任由本 thread Astra 与 Opus 5.5 共同承担 | **Priority**: P1",
+      "status": "in-progress / 2026-10-13核账修订：boot24冻结的52项完成声明为15真有、36部分有、1仍v1；另3项未宣称完成的v1残留不混算。部分有区分已证偏差与只读未重验，旧版本Alpha真实证据保留、不能外推当前整旅程。原B/F309/J3、组底色到版和批注#5448/#5450按原线继续；09/45回B，47回F320，43回轨迹，44回原语音，42由原C协调、获批v2 D现场取完整页对稿证据；旧D只保历史。23行Alpha终报已回：19行标有限范围pass、20/52因样本无效未验、非产品偏差，39/40由Luna独立取证仍未验收；原Kimi沿1301补两有效旅程。#5442作者Alpha三场景已过，正式runtime与整页双语未签；图标#5452已合d0248d3bed，作者Alpha浅暗已过；正式加载/整页验收未签。原Task/授权/修复与验收边界不变，整F322开放。",
       "file": "F322-everyday-work-experience.md"
     },
     {
       "id": "F323",
       "name": "Runtime Restart Coordination｜等待登记、优雅重启与自动回访",
-      "status": "in-progress；Phase A #4853 已合入、双 owner 隔离回访已验、日常 runtime 已加载；原 Task 已取得 gen1 真实即时匹配回执，AC-A11 清单/存量核实及用户现场收尾中，Phase B/C 尚未交付 | **Owner**: 本 thread 指挥责任猫 Astra（@codex-astra, gpt-6-astra）与 Opus55（@opus55, claude-opus-5-5） | **Priority**: P1",
+      "status": "in-progress；Phase A 保留，等待回访已加载，原 Task607 继续 A 的用户现场与事故恢复验收；Phase B 已由 #5201 撤回，原 B→C 承接方案失效，尚无获准的新维护执行方案 | **Owner**: 本 thread 指挥责任猫 Astra（@codex-astra, gpt-6-astra）与 Opus55（@opus55, claude-opus-5-5） | **Priority**: P1",
       "file": "F323-runtime-restart-coordination.md"
     },
     {
       "id": "F324",
       "name": "Memory Delivery Reliability｜记忆交付可靠性与上下文成本收口",
-      "status": "in-progress（A/B 原 Task 已 satisfied；C 实收与仓内防复发已合入并完成 Alpha 切片，共享文件恢复待权限裁定，D 未启动） | **Owner**: Astra（@codex-astra, gpt-6-astra）与 Opus55（@opus55, claude-opus-5-5），本指挥 thread 全体猫共同负责驱动与愿景守护 | **Priority**: P1",
+      "status": "in-progress（A/B/C 原 Task 已 satisfied；D 的 AC-D1 PASS、AC-D2 PARTIAL；boot22 已加载 #5358，Codex cold/hot full read PASS、同参 message search 503；AC-D3 指挥愿景守护待完成） | **Owner**: Astra（@codex-astra, gpt-6-astra）与 Opus55（@opus55, claude-opus-5-5），本指挥 thread 全体猫共同负责驱动与愿景守护 | **Priority**: P1",
       "file": "F324-memory-delivery-reliability.md"
     },
     {

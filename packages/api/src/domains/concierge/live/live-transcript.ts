@@ -1,6 +1,10 @@
 import { createHash } from 'node:crypto';
 import type { CatId, CompanionIdentitySnapshotV1 } from '@cat-cafe/shared';
-import type { IMessageStore, StoredMessage } from '../../cats/services/stores/ports/MessageStore.js';
+import type {
+  IMessageStore,
+  LiveReturnProjection,
+  StoredMessage,
+} from '../../cats/services/stores/ports/MessageStore.js';
 
 export interface LiveTranscriptBinding {
   readonly userId: string;
@@ -53,6 +57,7 @@ export async function persistLiveTranscriptItem(
   binding: LiveTranscriptBinding,
   envelope: unknown,
   identity?: CompanionIdentitySnapshotV1,
+  returnProjection?: LiveReturnProjection,
 ): Promise<StoredMessage | null> {
   const event = record(envelope);
   const params = record(event.params);
@@ -100,6 +105,7 @@ export async function persistLiveTranscriptItem(
         modality: voice ? 'voice' : 'result',
         role: voice && item.role === 'user' ? 'user' : 'assistant',
         ...(resultItem ? { nativeTurnId: binding.nativeTurnId } : {}),
+        ...(resultItem && returnProjection ? { returnProjection } : {}),
         ...(identity ? { identity } : {}),
       },
     },
@@ -118,11 +124,22 @@ export async function recordLiveTranscript(input: {
   exposedMessages: Map<string, { kind: 'text' | 'voice'; digest: string }>;
   publish(message: StoredMessage): void;
   onOwnerVoice(messageId: string, message: StoredMessage): void;
+  onCommitted?(message: StoredMessage): void | Promise<void>;
+  onPublished?(message: StoredMessage): void;
+  returnProjection?: LiveReturnProjection;
 }): Promise<void> {
-  const stored = await persistLiveTranscriptItem(input.store, input.binding, input.envelope, input.identity);
+  const stored = await persistLiveTranscriptItem(
+    input.store,
+    input.binding,
+    input.envelope,
+    input.identity,
+    input.returnProjection,
+  );
   if (!stored) return;
   const voice = stored.extra?.liveCompanion?.modality === 'voice';
   input.exposedMessages.set(stored.id, { kind: voice ? 'voice' : 'text', digest: liveMessageDigest(stored) });
   if (voice && stored.catId === null) input.onOwnerVoice(stored.id, stored);
+  await input.onCommitted?.(stored);
   input.publish(stored);
+  input.onPublished?.(stored);
 }

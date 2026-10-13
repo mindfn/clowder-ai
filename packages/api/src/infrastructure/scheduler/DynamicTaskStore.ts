@@ -141,6 +141,31 @@ export class DynamicTaskStore {
     return rows.map(todef);
   }
 
+  /** Select before decoding historical payloads; private return projections remain authoritative. */
+  getEnabled(): DynamicTaskDef[] {
+    const rows = this.db
+      .prepare(`SELECT * FROM dynamic_task_defs
+        WHERE enabled = 1 OR reviewed_development_return_json IS NOT NULL
+          OR successor_development_return_json IS NOT NULL
+        ORDER BY created_at DESC`)
+      .all() as RawRow[];
+    return rows.map(todef).filter((def) => def.enabled);
+  }
+
+  getByTemplateId(templateId: string): DynamicTaskDef[] {
+    const rows = this.db
+      .prepare('SELECT * FROM dynamic_task_defs WHERE template_id = ? ORDER BY created_at DESC')
+      .all(templateId) as RawRow[];
+    return rows.map(todef);
+  }
+
+  findByDeliveryThread(threadId: string): DynamicTaskDef[] {
+    const rows = this.db
+      .prepare('SELECT * FROM dynamic_task_defs WHERE delivery_thread_id = ? ORDER BY created_at DESC')
+      .all(threadId) as RawRow[];
+    return rows.map(todef);
+  }
+
   /** Read recoverable execution candidates without decoding historical definitions.
    * Disabled tombstones can still own a live command or a terminal receipt.
    * Lifecycle parsers remain the authority; this selector only removes settled

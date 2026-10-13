@@ -28,6 +28,7 @@ import type {
 import type { RedisClient } from '@cat-cafe/shared/utils';
 import { isHomeSession } from '../../session/session-scope.js';
 import type {
+  CliSessionBinding,
   CompressionEventResult,
   CreateSessionInput,
   ISessionChainStore,
@@ -786,6 +787,7 @@ export class RedisSessionChainStore implements ISessionChainStore {
     if (patch.lastUsage !== undefined) {
       pairs.push('lastUsage', JSON.stringify(patch.lastUsage));
     }
+    if (patch.externalImport !== undefined) pairs.push('externalImport', JSON.stringify(patch.externalImport));
     if (patch.messageCount !== undefined) {
       pairs.push('messageCount', String(patch.messageCount));
     }
@@ -852,6 +854,36 @@ export class RedisSessionChainStore implements ISessionChainStore {
     const id = await this.redis.get(SessionChainKeys.byCli(cliSessionId));
     if (!id) return null;
     return this.get(id);
+  }
+
+  async getCliSessionBindings(cliSessionIds: readonly string[]): Promise<Map<string, CliSessionBinding>> {
+    const bindings = new Map<string, CliSessionBinding>();
+    const cliIds = [...new Set(cliSessionIds)];
+    if (cliIds.length === 0) return bindings;
+    const ids = await this.redis.mget(...cliIds.map(SessionChainKeys.byCli));
+    const indexed = ids.flatMap((id, index) => (id ? [{ id, cliSessionId: cliIds[index] as string }] : []));
+    if (indexed.length === 0) return bindings;
+    const pipe = this.redis.pipeline();
+    for (const { id } of indexed)
+      pipe.hmget(SessionChainKeys.detail(id), 'id', 'cliSessionId', 'threadId', 'catId', 'userId');
+    const results = await pipe.exec();
+    if (!results) throw new Error('Session claim index read failed');
+    for (const [index, [error, fields]] of results.entries()) {
+      if (error) throw error;
+      const expected = indexed[index];
+      if (!expected || !Array.isArray(fields)) continue;
+      const [id, cliSessionId, threadId, catId, userId] = fields;
+      if (
+        id !== expected.id ||
+        cliSessionId !== expected.cliSessionId ||
+        typeof threadId !== 'string' ||
+        typeof catId !== 'string' ||
+        typeof userId !== 'string'
+      )
+        continue;
+      bindings.set(cliSessionId, { id, cliSessionId, threadId, catId: catId as CatId, userId });
+    }
+    return bindings;
   }
 
   async getByChainKey(chainKey: string): Promise<SessionRecord | null> {
@@ -968,6 +1000,9 @@ export class RedisSessionChainStore implements ISessionChainStore {
       id: data.id!,
       ...(scopedInvocation ? { scopedInvocation: Object.freeze(scopedInvocation) } : {}),
       ...(data.cliSessionId ? { cliSessionId: data.cliSessionId } : {}),
+      ...(data.externalImport
+        ? { externalImport: JSON.parse(data.externalImport) as SessionRecord['externalImport'] }
+        : {}),
       threadId: data.threadId!,
       catId: data.catId as CatId,
       userId: data.userId!,

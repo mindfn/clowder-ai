@@ -16,6 +16,7 @@ export type ParsedMultipart =
       userId?: string;
       threadId?: string;
       idempotencyKey?: string;
+      composerDraftRevision?: number;
       contentBlocks: MessageContent[];
       visibility?: string;
       whisperTo?: string[];
@@ -110,6 +111,9 @@ export async function parseMultipart(
     ...(userId ? { userId } : {}),
     ...(threadId ? { threadId } : {}),
     ...(idempotencyKey ? { idempotencyKey } : {}),
+    ...(parseResult.data.composerDraftRevision !== undefined
+      ? { composerDraftRevision: parseResult.data.composerDraftRevision }
+      : {}),
     ...(parseResult.data.visibility ? { visibility: parseResult.data.visibility } : {}),
     ...(parseResult.data.whisperTo ? { whisperTo: parseResult.data.whisperTo as string[] } : {}),
     ...(parseResult.data.mentions ? { mentions: parseResult.data.mentions as string[] } : {}),

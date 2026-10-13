@@ -72,6 +72,7 @@ export interface HoldBallCancelDeps {
   readonly dynamicTaskStore: {
     getById(id: string): DynamicTaskDef | null;
     getAll(): DynamicTaskDef[];
+    findByDeliveryThread?(threadId: string): DynamicTaskDef[];
     remove(id: string): boolean;
     setEnabled?(id: string, enabled: boolean): boolean;
     updateParams?(id: string, params: Record<string, unknown>): boolean;
@@ -220,10 +221,15 @@ export function cancelHoldTaskById(taskId: string, deps: HoldBallCancelDeps): Dy
   return task;
 }
 
+function readThreadTasks(threadId: string, store: HoldBallCancelDeps['dynamicTaskStore']): DynamicTaskDef[] {
+  // Preserve non-SQL adapters; the canonical SQLite provider selects before materializing payloads.
+  return store.findByDeliveryThread ? store.findByDeliveryThread(threadId) : store.getAll();
+}
+
 export function cancelPendingHoldsForThread(threadId: string, deps: HoldBallCancelDeps): DynamicTaskDef[] {
-  const pending = deps.dynamicTaskStore
-    .getAll()
-    .filter((t) => isPendingHoldBallTask(t) && t.deliveryThreadId === threadId);
+  const pending = readThreadTasks(threadId, deps.dynamicTaskStore).filter(
+    (t) => isPendingHoldBallTask(t) && t.deliveryThreadId === threadId,
+  );
   const cancelled: DynamicTaskDef[] = [];
 
   for (const task of pending) {
@@ -262,9 +268,9 @@ export function retirePendingHoldsForSatisfiedWait(
     return [];
   }
 
-  const pending = deps.dynamicTaskStore
-    .getAll()
-    .filter((t) => isPendingHoldBallTask(t) && matchesSatisfiedWait(t, event));
+  const pending = readThreadTasks(event.threadId, deps.dynamicTaskStore).filter(
+    (t) => isPendingHoldBallTask(t) && matchesSatisfiedWait(t, event),
+  );
 
   for (const task of pending) {
     deps.taskRunner.unregister(task.id);

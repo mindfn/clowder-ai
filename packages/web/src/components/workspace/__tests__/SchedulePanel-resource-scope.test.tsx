@@ -8,7 +8,7 @@ import { SchedulePanel } from '../SchedulePanel';
 
 vi.mock('@/utils/api-client', () => ({ apiFetch: vi.fn() }));
 
-function tasks(label: string): Response {
+function tasks(label: string, description?: string): Response {
   return Response.json({
     tasks: [
       {
@@ -20,7 +20,7 @@ function tasks(label: string): Response {
         lastRun: null,
         subjectPreview: null,
         runStats: { total: 0, delivered: 0, failed: 0, skipped: 0 },
-        display: { label, category: 'system' },
+        display: { label, category: 'system', description },
       },
     ],
   });
@@ -61,6 +61,16 @@ describe('SchedulePanel resource scope', () => {
     expect(target).toBeDefined();
     await act(async () => target?.click());
   }
+
+  it('keeps the description fallback recoverable when subjectPreview is absent', async () => {
+    const description = '定时任务的完整说明。'.repeat(40);
+    fetch.mockImplementation(async (path) =>
+      path.includes('/control') ? Response.json({ global: null }) : tasks('Fallback task', description),
+    );
+    await act(async () => root.render(<SchedulePanel />));
+    const blocks = [...container.querySelectorAll('[data-overflow-measure="block"]')];
+    expect(blocks.map((node) => node.textContent)).toContain(description);
+  });
 
   it('retains All across navigation without refetching while regular polling still updates', async () => {
     await act(async () => root.render(<SchedulePanel />));

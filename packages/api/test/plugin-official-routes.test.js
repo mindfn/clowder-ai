@@ -38,17 +38,19 @@ test('projects exact official catalog and durable installed state only to authen
     const response = await app.inject({ method: 'GET', url: '/api/plugins/official', headers: readHeaders });
     assert.equal(response.statusCode, 200, response.payload);
     const body = response.json();
-    assert.equal(body.plugins[0].catalogId, 'feishu-meeting-intake');
-    assert.equal(body.plugins[0].version, '0.1.0-alpha.9');
-    assert.equal(body.plugins[0].availableVersion, '0.1.0-alpha.9');
-    assert.equal(body.plugins[0].packageDigest, entry.packageDigest);
-    assert.equal(body.plugins[0].updateAvailable, false);
-    assert.equal(body.plugins[0].ownerAuthAvailable, true);
-    assert.equal(body.plugins[0].instance.lifecycleRevision, 1);
-    assert.equal(body.plugins[0].instance.installedVersion, '0.1.0-alpha.9');
-    assert.equal(body.plugins[0].instance.packageDigest, entry.packageDigest);
-    assert.equal(body.plugins[0].instance.runtimeState, 'stopped');
-    assert.deepEqual(body.plugins[0].instance.lastRuntimeError, {
+    const plugin = body.plugins.find((candidate) => candidate.catalogId === 'feishu-meeting-intake');
+    assert.ok(plugin);
+    assert.equal(plugin.catalogId, 'feishu-meeting-intake');
+    assert.equal(plugin.version, '0.1.0-alpha.9');
+    assert.equal(plugin.availableVersion, '0.1.0-alpha.9');
+    assert.equal(plugin.packageDigest, entry.packageDigest);
+    assert.equal(plugin.updateAvailable, false);
+    assert.equal(plugin.ownerAuthAvailable, true);
+    assert.equal(plugin.instance.lifecycleRevision, 1);
+    assert.equal(plugin.instance.installedVersion, '0.1.0-alpha.9');
+    assert.equal(plugin.instance.packageDigest, entry.packageDigest);
+    assert.equal(plugin.instance.runtimeState, 'stopped');
+    assert.deepEqual(plugin.instance.lastRuntimeError, {
       code: 'EVENT_BUS_CONFLICT',
       exitCode: 17,
       signal: null,
@@ -89,7 +91,9 @@ test('projects package-owned observation health and a visible stale recovery act
   try {
     const response = await app.inject({ method: 'GET', url: '/api/plugins/official', headers: readHeaders });
     assert.equal(response.statusCode, 200, response.payload);
-    assert.deepEqual(response.json().plugins[0].intakeHealth, intakeHealth);
+    const plugin = response.json().plugins.find((candidate) => candidate.catalogId === 'feishu-meeting-intake');
+    assert.ok(plugin);
+    assert.deepEqual(plugin.intakeHealth, intakeHealth);
   } finally {
     await app.close();
   }
@@ -575,10 +579,12 @@ test('projects installed versus available truth and keeps a disabled owner inten
   try {
     const before = await app.inject({ method: 'GET', url: '/api/plugins/official', headers: readHeaders });
     assert.equal(before.statusCode, 200, before.payload);
-    assert.equal(before.json().plugins[0].availableVersion, '0.1.0-alpha.9');
-    assert.equal(before.json().plugins[0].updateAvailable, true);
-    assert.equal(before.json().plugins[0].instance.installedVersion, '0.1.0-alpha.2');
-    assert.equal(before.json().plugins[0].instance.packageDigest, oldDigest);
+    const plugin = before.json().plugins.find((candidate) => candidate.catalogId === 'feishu-meeting-intake');
+    assert.ok(plugin);
+    assert.equal(plugin.availableVersion, '0.1.0-alpha.9');
+    assert.equal(plugin.updateAvailable, true);
+    assert.equal(plugin.instance.installedVersion, '0.1.0-alpha.2');
+    assert.equal(plugin.instance.packageDigest, oldDigest);
 
     const updated = await app.inject({
       method: 'POST',

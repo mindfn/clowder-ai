@@ -12,9 +12,14 @@ export function validateContentOperationContext(
     !context ||
     typeof context !== 'object' ||
     Array.isArray(context) ||
-    !['video-project:create', 'video-project:save', 'video-project:archive', 'video-project:decision'].includes(
-      context.kind,
-    ) ||
+    ![
+      'video-project:create',
+      'video-project:save',
+      'video-project:archive',
+      'video-project:decision',
+      'video-project:screening',
+      'video-project:self-review',
+    ].includes(context.kind) ||
     !/^sha256:[a-f0-9]{64}$/.test(context.requestDigest) ||
     Object.keys(context).some((key) => key !== 'kind' && key !== 'requestDigest')
   )

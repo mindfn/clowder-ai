@@ -6,16 +6,22 @@ import { useCatData } from '@/hooks/useCatData';
 import { useDeploymentWaitProjection } from '@/hooks/useDeploymentWaitProjection';
 import { resolveCatDisplayName } from '@/lib/cat-display-name';
 import { useActiveExecutionStore } from '@/stores/activeExecutionStore';
+import { useChatStore } from '@/stores/chatStore';
+import { useShellPresentation } from '../shell/shell-presentation';
+import { HomeLiveCard } from '../workspace-home/HomeLiveCard';
+import { HomeWaitCard } from '../workspace-home/HomeWaitCard';
 import { WorkspaceDeploymentWaits } from './WorkspaceDeploymentWaits';
 import { WorkspaceRunningWork } from './WorkspaceRunningWork';
 import { groupRunningWork } from './workspace-running-work';
+import '../workspace-home/workspace-home-cards.css';
+import '../workspace-home/workspace-v3.css';
 
 interface WorkspaceNowSurfaceProps {
   repository?: { name: string; branch: string };
   onSelectExecution?: (execution: ActiveExecutionProjection) => void;
 }
 
-export function WorkspaceNowSurface({ repository, onSelectExecution }: WorkspaceNowSurfaceProps) {
+function ClassicWorkspaceNowSurface({ repository, onSelectExecution }: WorkspaceNowSurfaceProps) {
   const { getCatById } = useCatData();
   const executionsByKey = useActiveExecutionStore((state) => state.executionsByKey);
   const hydration = useActiveExecutionStore((state) => state.hydration);
@@ -81,5 +87,19 @@ export function WorkspaceNowSurface({ repository, onSelectExecution }: Workspace
         onRetry={() => void deploymentWaits.retry()}
       />
     </>
+  );
+}
+
+export function WorkspaceNowSurface(props: WorkspaceNowSurfaceProps) {
+  const presentation = useShellPresentation();
+  const threadId = useChatStore((state) => state.currentThreadId);
+  if (presentation !== 'v2') return <ClassicWorkspaceNowSurface {...props} />;
+  return (
+    <div className="home-v2 min-h-0 flex-1 overflow-auto" data-testid="workspace-now-v2">
+      <div className="home-column">
+        <HomeLiveCard threadId={threadId} onSelectExecution={props.onSelectExecution} />
+        <HomeWaitCard hideWhenEmpty />
+      </div>
+    </div>
   );
 }

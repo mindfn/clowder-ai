@@ -8,7 +8,6 @@ import { apiFetch } from '@/utils/api-client';
 import { invalidateSidebarProjection } from '@/utils/sidebar-thread-snapshot';
 import type { ChatInputDraftSnapshot } from '../ChatInput';
 import {
-  getContextAttachmentDraft,
   getThreadDraft,
   hasPendingThreadDraft,
   syncContextAttachmentDraftToStorage,
@@ -23,58 +22,21 @@ import {
   type PendingNewConversationIntent,
 } from './first-message-admission';
 import { buildNewConversationCreateBody } from './new-conversation-create-request';
-import {
-  clearNewConversationIntent,
-  loadNewConversationIntent,
-  saveNewConversationIntent,
-} from './new-conversation-intent-store';
+import { freshIntent, type HydratedAdmissionState, hydrateAdmissionState } from './new-conversation-hydration';
+import { clearNewConversationIntent, saveNewConversationIntent } from './new-conversation-intent-store';
+import type { SessionImportIntent } from './session-import-admission';
 import {
   clearAcceptedAdmission,
   clearAcceptedComposerDraft,
   useNewConversationAdmissionSend,
 } from './use-new-conversation-admission-send';
+import { useNewConversationImport } from './useNewConversationImport';
 
 const DRAFT_THREAD_ID = 'default';
 const EMPTY_DRAFT: ChatInputDraftSnapshot = { text: '', files: [], contextAttachments: [] };
 
-function randomUuid(): string {
-  if (globalThis.crypto?.randomUUID) return globalThis.crypto.randomUUID();
-  const hex = (length: number) => Array.from({ length }, () => Math.floor(Math.random() * 16).toString(16)).join('');
-  return `${hex(8)}-${hex(4)}-4${hex(3)}-${['8', '9', 'a', 'b'][Math.floor(Math.random() * 4)]}${hex(3)}-${hex(12)}`;
-}
-
-function freshIntent(projectPath?: string): PendingNewConversationIntent {
-  return {
-    v: 1,
-    createIdempotencyKey: randomUuid(),
-    messageIdempotencyKey: randomUuid(),
-    ...(projectPath ? { projectPath } : {}),
-    preferredCats: [],
-    creationStarted: false,
-  };
-}
-
 function definitivePreCreateRejection(status: number): boolean {
   return status === 400 || status === 403 || status === 422;
-}
-
-async function readOwner(signal: AbortSignal): Promise<string> {
-  const response = await apiFetch('/api/session', { signal });
-  if (!response.ok) throw new Error('session unavailable');
-  const body = (await response.json()) as { userId?: unknown };
-  if (typeof body.userId !== 'string' || !body.userId.trim()) throw new Error('session owner unavailable');
-  return body.userId;
-}
-
-async function readCwd(signal: AbortSignal): Promise<string | undefined> {
-  try {
-    const response = await apiFetch('/api/projects/cwd', { signal });
-    if (!response.ok) return undefined;
-    const body = (await response.json()) as { path?: unknown };
-    return typeof body.path === 'string' && body.path.trim() ? body.path : undefined;
-  } catch {
-    return undefined;
-  }
 }
 
 function restoreAttachments(files: File[], contextAttachments: ContextAttachment[]): void {
@@ -88,24 +50,6 @@ function clearDefaultDraft(): void {
   threadImageDrafts.delete(DRAFT_THREAD_ID);
   syncContextAttachmentDraftToStorage(DRAFT_THREAD_ID, []);
   syncReplyDraftToStorage(DRAFT_THREAD_ID, null);
-}
-
-interface HydratedAdmissionState {
-  ownerUserId: string;
-  intent: PendingNewConversationIntent;
-  files: File[];
-  contextAttachments: ContextAttachment[];
-}
-
-async function hydrateAdmissionState(signal: AbortSignal): Promise<HydratedAdmissionState> {
-  const [ownerUserId, cwd] = await Promise.all([readOwner(signal), readCwd(signal)]);
-  const stored = await loadNewConversationIntent(ownerUserId);
-  return {
-    ownerUserId,
-    intent: stored?.intent ?? freshIntent(cwd),
-    files: stored?.files ?? threadImageDrafts.get(DRAFT_THREAD_ID) ?? [],
-    contextAttachments: stored?.contextAttachments ?? [...getContextAttachmentDraft(DRAFT_THREAD_ID)],
-  };
 }
 
 export interface NewConversationAdmission {
@@ -123,6 +67,8 @@ export interface NewConversationAdmission {
   updatePreferredCats: (catIds: string[]) => void;
   onDraftChange: (snapshot: ChatInputDraftSnapshot) => void;
   send: (payload: FirstMessagePayload) => Promise<boolean>;
+  importSession: (selection: SessionImportIntent) => Promise<void>;
+  cancelImport: () => Promise<void>;
   retryLoad: () => void;
 }
 
@@ -181,6 +127,12 @@ export function useNewConversationAdmission(onNavigate: (threadId: string) => vo
       setIntent(hydrated.intent);
       setThreadHasDraft(DRAFT_THREAD_ID, hasPendingThreadDraft(DRAFT_THREAD_ID));
 
+      if (hydrated.intent.importAccepted && hydrated.intent.createdThreadId) {
+        await clearNewConversationIntent(hydrated.ownerUserId);
+        void invalidateSidebarProjection();
+        onNavigate(hydrated.intent.createdThreadId);
+        return;
+      }
       if (hydrated.intent.messageAccepted && hydrated.intent.createdThreadId) {
         const cleared = await clearAcceptedAdmission(hydrated.ownerUserId, hydrated.intent);
         if (cleared) {
@@ -286,6 +238,23 @@ export function useNewConversationAdmission(onNavigate: (threadId: string) => vo
     [complete, createThread, handleSend, onNavigate, persistIntent],
   );
 
+  const resetImportIntent = useCallback(async () => {
+    const current = intentRef.current;
+    if (!current?.sessionImport) return;
+    await persistIntent({ ...freshIntent(current.projectPath), title: current.title, pinned: current.pinned });
+  }, [persistIntent]);
+
+  const importController = useNewConversationImport({
+    intentRef,
+    ownerRef,
+    persistIntent,
+    createThread,
+    onNavigate,
+    enqueue,
+    setPhase,
+    resetIntent: resetImportIntent,
+  });
+
   const { isAdmissionPending, send } = useNewConversationAdmissionSend({
     intentRef,
     draftRef,
@@ -343,6 +312,8 @@ export function useNewConversationAdmission(onNavigate: (threadId: string) => vo
     updatePreferredCats: (preferredCats) => updateIntent({ preferredCats }),
     onDraftChange,
     send,
+    importSession: importController.importSession,
+    cancelImport: importController.cancel,
     retryLoad: () => setLoadAttempt((value) => value + 1),
   };
 }

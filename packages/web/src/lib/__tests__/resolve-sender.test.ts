@@ -69,7 +69,7 @@ describe('resolveSender with the name role (new shell)', () => {
     const result = resolveSender('opus', mockGetCatById, mockCoCreator, named);
     expect(result.textColor).toBe('var(--color-opus-text)');
     expect(result.color).toBe('#8B5CF6');
-    expect(result.label).toBe('@宪宪');
+    expect(result.label).toBe('宪宪');
     expect(result.isCoCreator).toBe(false);
   });
 

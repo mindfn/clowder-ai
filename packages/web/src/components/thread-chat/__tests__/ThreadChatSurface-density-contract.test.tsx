@@ -9,7 +9,7 @@ const messages = [
   { id: 'a1', type: 'assistant', content: 'recovered', timestamp: 4 },
 ] as const;
 const handleSend = vi.hoisted(() => vi.fn());
-const fixture = vi.hoisted(() => ({ navigator: false }));
+const fixture = vi.hoisted(() => ({ navigator: false, readonly: false, forwardingBlocked: false }));
 
 vi.mock('@/hooks/useThreadScopedSelectors', () => ({
   useThreadMessages: () =>
@@ -28,7 +28,9 @@ vi.mock('@/hooks/useThreadScopedSelectors', () => ({
 
 vi.mock('@/hooks/useChatHistory', () => ({
   useChatHistory: () => ({
-    messages,
+    messages: fixture.navigator
+      ? [...messages, ...messages.slice(0, 2).map((message) => ({ ...message, id: `extra-${message.id}` }))]
+      : messages,
     handleScroll: vi.fn(),
     handleReadingIntent: vi.fn(),
     scrollContainerRef: { current: null },
@@ -48,12 +50,12 @@ vi.mock('@/hooks/useCatData', () => ({
 
 vi.mock('@/hooks/useConnectionStatus', () => ({
   useConnectionStatus: () => ({
-    api: 'connected',
-    socket: 'connected',
-    upstream: 'connected',
-    isReadonly: false,
+    api: 'degraded',
+    socket: 'online',
+    upstream: 'online',
+    isReadonly: fixture.readonly,
     checkedAt: 0,
-    forwardingBlocked: false,
+    forwardingBlocked: fixture.forwardingBlocked,
     updateRequired: false,
   }),
 }));
@@ -67,10 +69,14 @@ vi.mock('../../ChatMessageRow', () => ({
     message,
     sendContext,
     confirmations,
+    onEnterSelection,
+    forwardingDisabled,
   }: {
     message: (typeof messages)[number];
     sendContext?: string;
     confirmations?: unknown[];
+    onEnterSelection?: (id: string) => void;
+    forwardingDisabled?: boolean;
   }) => (
     <article
       data-thread-chat-message-id={message.id}
@@ -80,14 +86,24 @@ vi.mock('../../ChatMessageRow', () => ({
       data-confirmation-count={confirmations?.length ?? 0}
     >
       {message.content}
+      <button type="button" aria-label={`select-${message.id}`} onClick={() => onEnterSelection?.(message.id)} />
+      <button type="button" aria-label={`forward-${message.id}`} disabled={forwardingDisabled} />
     </article>
   ),
 }));
 
 vi.mock('../../ChatInput', () => ({
-  ChatInput: ({ threadId, composerContext }: { threadId: string; composerContext?: ReactNode }) => (
+  ChatInput: ({
+    threadId,
+    composerContext,
+    disabled,
+  }: {
+    threadId: string;
+    composerContext?: ReactNode;
+    disabled?: boolean;
+  }) => (
     <>
-      <textarea aria-label={`composer-${threadId}`} />
+      <textarea aria-label={`composer-${threadId}`} disabled={disabled} />
       {composerContext}
     </>
   ),
@@ -95,6 +111,12 @@ vi.mock('../../ChatInput', () => ({
 vi.mock('../../ThreadComposerContext', () => ({
   ThreadComposerContext: ({ threadId }: { threadId: string }) => (
     <span data-testid="composer-context-thread">{threadId}</span>
+  ),
+}));
+
+vi.mock('../../TransferTargetPicker', () => ({
+  TransferTargetPicker: ({ open, admissionBlocked }: { open: boolean; admissionBlocked: boolean }) => (
+    <output data-testid="forward-picker" data-open={String(open)} data-blocked={String(admissionBlocked)} />
   ),
 }));
 
@@ -106,8 +128,12 @@ let container: HTMLDivElement;
 let root: Root;
 
 beforeEach(() => {
+  vi.stubGlobal('IS_REACT_ACT_ENVIRONMENT', true);
+  writeShellPresentation('classic');
   handleSend.mockClear();
   fixture.navigator = false;
+  fixture.readonly = false;
+  fixture.forwardingBlocked = false;
   container = document.createElement('div');
   document.body.appendChild(container);
   root = createRoot(container);
@@ -116,6 +142,8 @@ beforeEach(() => {
 afterEach(() => {
   act(() => root.unmount());
   container.remove();
+  writeShellPresentation('classic');
+  vi.unstubAllGlobals();
 });
 
 function manifest(scope: Element): string[] {
@@ -130,6 +158,36 @@ function manifest(scope: Element): string[] {
 }
 
 describe('ThreadChatSurface density contract', () => {
+  it('keeps composition writable while blocking the message-row prop, selection toolbar and picker', async () => {
+    fixture.forwardingBlocked = true;
+    await act(async () => root.render(<ThreadChatSurface threadId="thread-guard" density="full" />));
+    expect(container.querySelector<HTMLTextAreaElement>('textarea')?.disabled).toBe(false);
+    expect(container.querySelector('[data-testid="connection-status-bar"]')).not.toBeNull();
+    expect(container.textContent).not.toContain('输入区已切换为只读');
+    expect(container.querySelector<HTMLButtonElement>('button[aria-label="forward-a1"]')?.disabled).toBe(true);
+    act(() => container.querySelector<HTMLButtonElement>('button[aria-label="select-a1"]')?.click());
+    const forward = container.querySelector<HTMLButtonElement>('button[aria-label="转发"]');
+    expect(forward).not.toBeNull();
+    expect(forward?.disabled).toBe(true);
+    fixture.forwardingBlocked = false;
+    await act(async () => root.render(<ThreadChatSurface threadId="thread-guard" density="full" />));
+    expect(container.querySelector<HTMLButtonElement>('button[aria-label="转发"]')?.disabled).toBe(false);
+    act(() => container.querySelector<HTMLButtonElement>('button[aria-label="转发"]')?.click());
+    expect(container.querySelector('[data-testid="forward-picker"]')?.getAttribute('data-open')).toBe('true');
+    fixture.forwardingBlocked = true;
+    await act(async () => root.render(<ThreadChatSurface threadId="thread-guard" density="full" />));
+    expect(container.querySelector('[data-testid="forward-picker"]')?.getAttribute('data-open')).toBe('false');
+    expect(container.querySelector('[data-testid="forward-picker"]')?.getAttribute('data-blocked')).toBe('true');
+  });
+
+  it('passes readonly to the composer when the deployment is known to mismatch', async () => {
+    fixture.readonly = true;
+    fixture.forwardingBlocked = true;
+    await act(async () => root.render(<ThreadChatSurface threadId="thread-guard" density="full" />));
+    expect(container.querySelector<HTMLTextAreaElement>('textarea')?.disabled).toBe(true);
+    expect(container.textContent).toContain('输入区已切换为只读');
+  });
+
   it('owns the v2 reading column while retaining message DOM in classic and compact views', async () => {
     writeShellPresentation('v2');
     await act(async () => root.render(<ThreadChatSurface threadId="thread-parity" density="full" />));

@@ -4,7 +4,11 @@ import { assertThemeApplied } from './f309-ordinary-workspace-journey-chat-progr
 import { createReviewState } from './f309-ordinary-workspace-journey-fixture.mjs';
 
 /** Production history/owner projection; session, provider and unrelated shell configuration remain test boundaries. */
-export async function openDocumentSession(suite, owner, { width = 1440, dark = false, shell = 'classic' } = {}) {
+export async function openDocumentSession(
+  suite,
+  owner,
+  { width = 1440, dark = false, shell = 'classic', beforeNavigate } = {},
+) {
   const context = await suite().browser.newContext({ viewport: { width, height: 900 } });
   await context.addInitScript(
     (theme) => {
@@ -47,6 +51,7 @@ export async function openDocumentSession(suite, owner, { width = 1440, dark = f
     }
     return fulfillFixtureApi(route, createReviewState(), []);
   });
+  await beforeNavigate?.(context, calls);
   const page = await context.newPage();
   page.on('pageerror', (error) => errors.push(error.message));
   const url = new URL(suite().baseUrl);

@@ -16,9 +16,14 @@ import { createCatId } from '@cat-cafe/shared';
 import { clearBudgetCache } from './cat-budgets.js';
 import { bootstrapCatCatalog, readCatCatalog, resolveCatCatalogPath } from './cat-catalog-store.js';
 import type { AcpVariantConfig } from './cat-config-loader.js';
-import { _resetCachedConfig, loadCatConfig, toAllCatConfigs } from './cat-config-loader.js';
+import { _resetCachedConfig, loadCatConfig, parseRawCatConfig, toAllCatConfigs } from './cat-config-loader.js';
 import { clearVoiceCache } from './cat-voices.js';
-import { type CodexBindingSelection, planCodexAccountBinding } from './codex-account-binding.js';
+import {
+  assertCodexMemberMutationReady,
+  type CodexBindingSelection,
+  planCodexAccountBinding,
+} from './codex-account-binding.js';
+import { readLocalAccountSelection } from './local-account-selection.js';
 import { resolveProjectTemplatePath } from './project-template-path.js';
 import { addTemplateVariantTombstone, type TemplateVariantTombstoneInput } from './template-variant-tombstones.js';
 
@@ -69,6 +74,7 @@ export interface RuntimeCatUpdate {
   color?: CatColor;
   mentionPatterns?: string[];
   accountRef?: string | null;
+  accountBindingMode?: 'follow' | 'override';
   roleDescription?: string;
   personality?: string;
   teamStrengths?: string;
@@ -326,23 +332,53 @@ export function readRuntimeCatCatalog(projectRoot: string): CatCafeConfig {
   return readOrBootstrapCatalog(projectRoot);
 }
 
+/** Account previews must not bootstrap or normalize the member owner as a read side effect. */
+export function readRuntimeAccountMembers(projectRoot: string): CatCafeConfig {
+  return parseRawCatConfig(readFileSync(resolveCatCatalogPath(projectRoot), 'utf8'));
+}
+
 /** One synchronous catalog commit for the complete confirmed selection, never a per-member PATCH loop. */
 export function bindRuntimeCodexAccounts(
   projectRoot: string,
   selection: CodexBindingSelection,
   previewToken: string,
+  accountProjectRoot = projectRoot,
 ): CatCafeConfig {
-  const current = readRuntimeCatCatalog(projectRoot);
-  const plan = planCodexAccountBinding(projectRoot, current, selection);
+  const current = readRuntimeAccountMembers(projectRoot);
+  const plan = planCodexAccountBinding(accountProjectRoot, current, selection);
   if (plan.previewToken !== previewToken) throw new Error('Binding preview changed; please review it again');
   const targets = new Set(plan.targets.map((target) => target.catId));
+  const previous = readLocalAccountSelection(current, 'openai');
+  const selectedRef =
+    selection.scope === 'local' ? selection.accountRef : readLocalAccountSelection(current, 'openai').accountRef;
   const next = {
     ...current,
+    ...(selectedRef
+      ? {
+          selectedAccountRefs: { ...current.selectedAccountRefs, openai: selectedRef },
+        }
+      : {}),
     breeds: current.breeds.map((breed) => ({
       ...breed,
-      variants: breed.variants.map((variant) =>
-        targets.has(variant.catId ?? breed.catId ?? '') ? { ...variant, accountRef: selection.accountRef } : variant,
-      ),
+      variants: breed.variants.map((variant) => {
+        const id = variant.catId ?? breed.catId ?? '';
+        if (targets.has(id))
+          return {
+            ...variant,
+            accountRef: selection.accountRef,
+            accountBindingMode: selection.accountRef === selectedRef ? ('follow' as const) : ('override' as const),
+          };
+        if (selection.scope === 'local') {
+          const member = previous.members.find((m) => m.id === id);
+          if (member)
+            return {
+              ...variant,
+              // Inactive members keep their effective ref but retain explicit intent for re-enable.
+              accountBindingMode: member.bindingMode === 'follow' ? ('follow' as const) : ('override' as const),
+            };
+        }
+        return variant;
+      }),
     })),
   };
   return writeAndValidateCatalog(projectRoot, next);
@@ -387,11 +423,16 @@ export function createRuntimeCat(projectRoot: string, input: RuntimeCatInput): C
       [input.catId]: buildDefaultRuntimeRosterEntry(input.catId, targetBreedId || input.catId, input.displayName, true),
     };
   }
+  assertCodexMemberMutationReady(projectRoot, catalog as unknown as CatCafeConfig, input.catId);
   return writeAndValidateCatalog(projectRoot, catalog);
 }
 
 export function updateRuntimeCat(projectRoot: string, catId: string, patch: RuntimeCatUpdate): CatCafeConfig {
   const catalog = cloneCatalog(readOrBootstrapCatalog(projectRoot));
+  const previous = {
+    cat: toAllCatConfigs(catalog as unknown as CatCafeConfig)[catId],
+    available: catalog.version !== 2 || catalog.roster[catId]?.available !== false,
+  };
   const located = findBreedVariant(catalog as unknown as CatCafeConfig, catId);
   if (!located) {
     throw new Error(`Cat "${catId}" not found in runtime catalog`);
@@ -400,6 +441,7 @@ export function updateRuntimeCat(projectRoot: string, catId: string, patch: Runt
   const breed = catalog.breeds[located.breedIndex] as Record<string, any>;
   const variant = breed.variants[located.variantIndex] as Record<string, any>;
   const shouldWriteBreedIdentity = located.isDefaultVariant && breed.variants.length === 1;
+  const selectedAccountRef = readLocalAccountSelection(catalog as unknown as CatCafeConfig, 'openai').accountRef;
 
   if (patch.name !== undefined) {
     if (shouldWriteBreedIdentity) {
@@ -488,13 +530,6 @@ export function updateRuntimeCat(projectRoot: string, catId: string, patch: Runt
     }
   }
 
-  if (patch.accountRef !== undefined) {
-    if (patch.accountRef && patch.accountRef.trim().length > 0) {
-      variant.accountRef = patch.accountRef.trim();
-    } else {
-      delete variant.accountRef;
-    }
-  }
   if (patch.personality !== undefined) {
     if (patch.personality && patch.personality.trim().length > 0) {
       variant.personality = patch.personality;
@@ -526,7 +561,10 @@ export function updateRuntimeCat(projectRoot: string, catId: string, patch: Runt
       variant.sessionChain = patch.sessionChain;
     }
   }
-  if (patch.clientId !== undefined) variant.clientId = patch.clientId;
+  if (patch.clientId !== undefined) {
+    if (patch.clientId !== variant.clientId) delete variant.accountBindingMode;
+    variant.clientId = patch.clientId;
+  }
   if (patch.carrier !== undefined) {
     variant.carrier = patch.carrier;
     // Access-mode compatibility exists only at read time. Any write converges
@@ -544,6 +582,41 @@ export function updateRuntimeCat(projectRoot: string, catId: string, patch: Runt
       variant.cli = patch.cli;
     }
   }
+  if (variant.clientId !== 'openai' || !variant.cli || catId === 'gpt-pro') delete variant.accountBindingMode;
+  if (patch.accountRef !== undefined) {
+    if (patch.accountRef && patch.accountRef.trim().length > 0) {
+      variant.accountRef = patch.accountRef.trim();
+      if (variant.clientId === 'openai' && variant.cli && catId !== 'gpt-pro')
+        variant.accountBindingMode = selectedAccountRef === variant.accountRef ? 'follow' : 'override';
+    } else {
+      delete variant.accountRef;
+      delete variant.accountBindingMode;
+    }
+  }
+  if (patch.accountBindingMode !== undefined) {
+    if (variant.clientId !== 'openai' || !variant.cli || catId === 'gpt-pro')
+      throw new Error('跟随账号仅适用于本地 Codex');
+    const selected = selectedAccountRef;
+    if (patch.accountBindingMode === 'follow') {
+      if (!selected || (patch.accountRef ?? variant.accountRef ?? 'codex') !== selected)
+        throw new Error('请先在账号页选定正在用的账号，再恢复跟随');
+      catalog.selectedAccountRefs = { ...catalog.selectedAccountRefs, openai: selected };
+      variant.accountRef = selected;
+    }
+    variant.accountBindingMode =
+      (patch.accountRef ?? variant.accountRef ?? 'codex') === selected ? 'follow' : patch.accountBindingMode;
+  }
+  if (
+    patch.available === true &&
+    patch.accountRef === undefined &&
+    patch.accountBindingMode === undefined &&
+    variant.accountBindingMode === 'follow' &&
+    variant.clientId === 'openai' &&
+    variant.cli &&
+    catId !== 'gpt-pro' &&
+    selectedAccountRef
+  )
+    variant.accountRef = selectedAccountRef;
   if (patch.contextWindow !== undefined) {
     if (patch.contextWindow != null) {
       variant.contextWindow = patch.contextWindow;
@@ -653,6 +726,13 @@ export function updateRuntimeCat(projectRoot: string, catId: string, patch: Runt
     }
   }
 
+  assertCodexMemberMutationReady(
+    projectRoot,
+    catalog as unknown as CatCafeConfig,
+    catId,
+    previous,
+    patch.available === true || patch.accountBindingMode !== undefined,
+  );
   return writeAndValidateCatalog(projectRoot, catalog);
 }
 

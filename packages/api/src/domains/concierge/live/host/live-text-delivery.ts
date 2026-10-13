@@ -19,6 +19,7 @@ export async function sendLiveText(input: {
   clientMessageId: string;
   /** A new durable owner input supersedes pending speech before native acknowledgement. */
   onNewOwnerText?(): void;
+  onPersisted?(messageId: string): void;
   deliveries: Map<string, Promise<{ messageId: string; delivery: 'accepted' }>>;
   exposedMessages: Map<string, { kind: 'text' | 'voice'; digest: string }>;
 }): Promise<{ messageId: string; delivery: 'accepted' | 'unconfirmed'; newlyPersisted?: boolean }> {
@@ -30,6 +31,7 @@ export async function sendLiveText(input: {
     input.clientMessageId,
   );
   if (!stored.idempotent) input.onNewOwnerText?.();
+  if (!stored.idempotent) input.onPersisted?.(stored.message.id);
   const previous = input.deliveries.get(stored.message.id);
   if (previous) return bounded(previous);
   if (!stored.idempotent) input.options.publish(stored.message);

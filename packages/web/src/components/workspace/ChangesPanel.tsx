@@ -1,11 +1,13 @@
 'use client';
 
-import { useState } from 'react';
+import type { PullRequestChangesTarget } from '@cat-cafe/shared';
+import { useLayoutEffect, useState } from 'react';
 import { useShellPresentation } from '@/components/shell/shell-presentation';
 import { ThreadNativeReviewSettingsContent } from '@/components/ThreadSidebar/ThreadNativeReviewSettings';
 import { ChangesPanelV2 } from './ChangesPanelV2';
 import { DiffViewer } from './DiffViewer';
 import { FileIcon } from './FileIcons';
+import { PullRequestChangesEmpty, PullRequestChangesStatus } from './PullRequestChangesStatus';
 import { useChangesDiff } from './useChangesDiff';
 
 const statusLabels: Record<string, { label: string; color: string }> = {
@@ -26,11 +28,14 @@ interface ChangesPanelProps {
   basisPct: number;
   threadId?: string | null;
   onOpenFile?: (path: string) => void;
+  pullRequestTarget?: PullRequestChangesTarget;
+  onBack?: () => void;
 }
 
-function ChangesPanelClassic({ worktreeId, basisPct, threadId }: ChangesPanelProps) {
-  const { data, loading, error, refresh } = useChangesDiff(worktreeId);
+function ChangesPanelClassic({ worktreeId, basisPct, threadId, pullRequestTarget, onBack }: ChangesPanelProps) {
+  const { data, loading, error, refresh, targetKey } = useChangesDiff(worktreeId, pullRequestTarget);
   const [selectedFile, setSelectedFile] = useState<string | null>(null);
+  useLayoutEffect(() => setSelectedFile(null), [targetKey]);
 
   if (!worktreeId) {
     return <div className="p-4 text-center text-cafe-secondary text-xs">No worktree selected</div>;
@@ -38,7 +43,10 @@ function ChangesPanelClassic({ worktreeId, basisPct, threadId }: ChangesPanelPro
 
   return (
     <div className="flex flex-col min-h-0 flex-1">
-      {threadId && (
+      {pullRequestTarget && (
+        <PullRequestChangesStatus target={pullRequestTarget} data={data} error={error} onBack={onBack} />
+      )}
+      {threadId && !pullRequestTarget && (
         <details
           className="flex-shrink-0 border-b border-cafe-subtle/40 bg-cafe-surface/40"
           data-testid="native-review-workspace-strip"
@@ -68,7 +76,7 @@ function ChangesPanelClassic({ worktreeId, basisPct, threadId }: ChangesPanelPro
             {loading ? '...' : '↻'}
           </button>
         </div>
-        {error && (
+        {error && !pullRequestTarget && (
           <div className="px-3 py-1.5 text-micro text-conn-red-text">
             {error === 'fetch_failed' ? 'Failed to fetch changes' : 'Network error'}
           </div>
@@ -94,7 +102,9 @@ function ChangesPanelClassic({ worktreeId, basisPct, threadId }: ChangesPanelPro
           );
         })}
         {data && data.changedFiles.length === 0 && (
-          <div className="px-3 py-4 text-center text-cafe-muted text-xs">No uncommitted changes</div>
+          <div className="px-3 py-4 text-center text-cafe-muted text-xs">
+            {pullRequestTarget ? <PullRequestChangesEmpty /> : 'No uncommitted changes'}
+          </div>
         )}
       </div>
 

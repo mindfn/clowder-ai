@@ -1,4 +1,5 @@
 import {
+  type CollectiveCafeSection,
   type CollectiveHostContextInit,
   type CollectiveHostParticipationReady,
   type CollectiveHostWorkFocus,
@@ -24,6 +25,7 @@ export function useHostContext(
   const liveBridge = useRef<CollectiveHostContextInit>();
   const [participationReady, setParticipationReady] = useState<CollectiveHostParticipationReady>();
   const [open, setOpen] = useState(false);
+  const [cafeSection, setCafeSection] = useState<CollectiveCafeSection>('cats');
   const [focusWork, setFocusWork] = useState<{ workId: string; channelId: string; eventId: string }>();
   const [contextId] = useState(() => crypto.randomUUID());
   const revision = useRef(0);
@@ -63,6 +65,7 @@ export function useHostContext(
       const parsed = collectiveHostContextInitSchema.safeParse(data);
       if (!parsed.success) return false;
       setOpen(false);
+      setCafeSection('cats');
       setFocusWork(undefined);
       pendingWorkFocus.current = undefined;
       reconciledWorks.current.clear();
@@ -158,7 +161,21 @@ export function useHostContext(
       },
       hostOrigin,
     );
-  }, [bridge, hostOrigin, contextId, channelId, channelKey, open, projectionReady]);
+    window.parent.postMessage(
+      {
+        type: 'collective:client-cafe-section',
+        bridgeId: bridge.bridgeId,
+        contextId,
+        contextRevision: nextRevision,
+        serviceInstanceId: bridge.serviceInstanceId,
+        collectiveId: bridge.collectiveId,
+        humanId: bridge.humanId,
+        channelId,
+        section: cafeSection,
+      },
+      hostOrigin,
+    );
+  }, [bridge, hostOrigin, contextId, channelId, channelKey, open, cafeSection, projectionReady]);
   const completedWorks = useMemo(
     () =>
       (snapshot.collaboration?.works ?? []).filter(
@@ -202,8 +219,9 @@ export function useHostContext(
     const retry = window.setInterval(postPending, 5_000);
     return () => window.clearInterval(retry);
   }, [bridge, completedWorks, hostOrigin]);
-  const show = useCallback(() => {
+  const show = useCallback((section: CollectiveCafeSection = 'cats') => {
     if (document.activeElement instanceof HTMLElement) opener.current = document.activeElement;
+    setCafeSection(section);
     setOpen(true);
   }, []);
   const hide = useCallback(() => setOpen(false), []);
@@ -214,6 +232,7 @@ export function useHostContext(
     connectionId: bridge?.connectionId,
     participationReady: participationReady?.bridgeId === bridge?.bridgeId ? participationReady : undefined,
     open,
+    cafeSection,
     show,
     hide,
     focusWork,

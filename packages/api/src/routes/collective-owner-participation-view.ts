@@ -104,6 +104,9 @@ export async function collectiveOwnerParticipationView(options: ViewOptions, aut
       return {
         id: cat.id,
         displayName: cat.displayName,
+        ...(profile?.nickname ? { nickname: profile.nickname } : {}),
+        ...(profile?.variantLabel ? { variantLabel: profile.variantLabel } : {}),
+        ...(profile?.breedDisplayName ? { breedDisplayName: profile.breedDisplayName } : {}),
         configured: cat.configured,
         eligible: cat.eligible,
         supported: cat.eligible,

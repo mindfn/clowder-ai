@@ -1,4 +1,6 @@
 import { create } from 'zustand';
+import { resolveShellCopy } from '@/components/shell/shell-copy';
+import { readShellLanguage } from '@/components/shell/shell-language';
 import type {
   F284WorkspaceSnapshot,
   WorkbenchAction,
@@ -14,13 +16,20 @@ import {
   DEFAULT_ARTIFACT_WORK_CHAT_BASIS,
   reduceArtifactWorkPresentation,
 } from './artifact-work-presentation';
-import { isRealSurfaceOwnerAvailable } from './real-surface-adapters';
+import {
+  createEntrustedReturnFromRef,
+  isRealSurfaceOwnerAvailable,
+  resolveWorkspaceDestinationTarget,
+} from './real-surface-adapters';
+import { workspaceChromeCopy } from './workspace-chrome.shell-copy';
+import type { MainAreaAttentionPresentation } from './workspace-work-host-projection';
 
 interface ExperienceWorkbenchStore {
   layout: WorkbenchLayoutState;
   hydrated: boolean;
   /** Transient host projection. It is intentionally excluded from persisted layout truth. */
   mainAreaAttentionSurfaceId: string | null;
+  mainAreaAttentionPresentation: MainAreaAttentionPresentation;
   /** Transient chrome projection. The owner surface and persisted working set stay unchanged. */
   focusSurfaceId: string | null;
   /** KD-25 transient geometry/return session; deliberately outside persisted Workbench topology. */
@@ -28,7 +37,8 @@ interface ExperienceWorkbenchStore {
   dispatch: (action: WorkbenchAction) => void;
   dispatchArtifactWorkPresentation: (command: ArtifactWorkPresentationCommand) => ArtifactWorkPresentationEffect;
   hydrate: (f284WorkspaceState?: F284WorkspaceSnapshot) => void;
-  enterMainAreaAttention: (surfaceId: string) => void;
+  enterMainAreaAttention: (surfaceId: string, presentation?: MainAreaAttentionPresentation) => void;
+  setMainAreaAttentionChatBasis: (basis: number) => void;
   exitMainAreaAttention: () => void;
   enterFocusMode: (surfaceId: string) => void;
   exitFocusMode: () => void;
@@ -43,6 +53,38 @@ function retainMainAreaAttention(layout: WorkbenchLayoutState, surfaceId: string
   return layout.surfaces.some((surface) => surface.id === surfaceId) ? surfaceId : null;
 }
 
+function attentionAfterAction(
+  current: ExperienceWorkbenchStore,
+  layout: WorkbenchLayoutState,
+  action: WorkbenchAction,
+): string | null {
+  const sourceId = current.mainAreaAttentionSurfaceId;
+  if (current.mainAreaAttentionPresentation.kind === 'chat-workspace' && sourceId !== null) {
+    if (
+      action.type === 'open-artifact-with-return' &&
+      current.layout.activeSurfaceId === sourceId &&
+      action.returnSurface.id === sourceId &&
+      layout.sidecar?.id === sourceId &&
+      layout.activeSurfaceId === action.artifact.id
+    ) {
+      return retainMainAreaAttention(layout, layout.activeSurfaceId);
+    }
+    if (
+      action.type === 'close-artifact-to-return' &&
+      action.artifactSurfaceId === sourceId &&
+      current.layout.activeSurfaceId === sourceId
+    ) {
+      const source = current.layout.surfaces.find((surface) => surface.id === sourceId);
+      const bound = createEntrustedReturnFromRef(source?.returnTargetRef);
+      if (bound?.id === layout.activeSurfaceId) return retainMainAreaAttention(layout, layout.activeSurfaceId);
+    }
+  }
+  if (action.type === 'resolve-content-surface') {
+    return retainMainAreaAttention(layout, sourceId === action.sourceSurfaceId ? layout.activeSurfaceId : sourceId);
+  }
+  return detachedAnySurface(current.layout, layout) ? null : retainMainAreaAttention(layout, sourceId);
+}
+
 function hostedSurfaceIds(layout: WorkbenchLayoutState): Set<string> {
   return new Set([...layout.surfaces.map((surface) => surface.id), ...(layout.sidecar ? [layout.sidecar.id] : [])]);
 }
@@ -52,13 +94,33 @@ function detachedAnySurface(before: WorkbenchLayoutState, after: WorkbenchLayout
   return [...hostedSurfaceIds(before)].some((surfaceId) => !afterIds.has(surfaceId));
 }
 
-function persistLayout(layout: WorkbenchLayoutState): void {
-  if (typeof window === 'undefined') return;
+function persistLayout(layout: WorkbenchLayoutState): boolean {
+  if (typeof window === 'undefined') return true;
   try {
     writeWorkbenchState(window.localStorage, layout);
+    return true;
   } catch {
-    // The controlled candidate remains usable when browser persistence is unavailable.
+    return false;
   }
+}
+
+function persistAcceptedLayout(layout: WorkbenchLayoutState): WorkbenchLayoutState {
+  const warningId = 'restore-warning:storage';
+  const candidate = layout.activity.some((item) => item.id === warningId)
+    ? { ...layout, activity: layout.activity.filter((item) => item.id !== warningId) }
+    : layout;
+  if (persistLayout(candidate)) return candidate;
+  return {
+    ...candidate,
+    activity: [
+      ...candidate.activity,
+      {
+        id: warningId,
+        kind: 'restore-warning',
+        message: resolveShellCopy(workspaceChromeCopy, readShellLanguage()).saveFailed,
+      },
+    ],
+  };
 }
 
 function persistArtifactWorkChatBasis(basis: number): void {
@@ -86,31 +148,24 @@ export const useF307ExperienceWorkbenchStore = create<ExperienceWorkbenchStore>(
   layout: DEFAULT_LAYOUT,
   hydrated: false,
   mainAreaAttentionSurfaceId: null,
+  mainAreaAttentionPresentation: { kind: 'overlay' },
   focusSurfaceId: null,
   artifactWorkPresentation: DEFAULT_ARTIFACT_WORK_PRESENTATION,
   dispatch: (action) => {
     set((current) => {
-      const layout = reduceWorkbench(current.layout, action);
-      persistLayout(layout);
+      const layout = persistAcceptedLayout(reduceWorkbench(current.layout, action));
       // Transient focus/attention belongs to the active node; canonical resolution may retain
       // an existing identity or reject the request, so the reducer result is authoritative.
       const remappedFocusSurfaceId =
         action.type === 'resolve-content-surface' && current.focusSurfaceId === action.sourceSurfaceId
           ? layout.activeSurfaceId
           : current.focusSurfaceId;
+      const attentionSurfaceId = attentionAfterAction(current, layout, action);
       return {
         layout,
-        mainAreaAttentionSurfaceId:
-          action.type === 'resolve-content-surface'
-            ? retainMainAreaAttention(
-                layout,
-                current.mainAreaAttentionSurfaceId === action.sourceSurfaceId
-                  ? layout.activeSurfaceId
-                  : current.mainAreaAttentionSurfaceId,
-              )
-            : detachedAnySurface(current.layout, layout)
-              ? null
-              : retainMainAreaAttention(layout, current.mainAreaAttentionSurfaceId),
+        mainAreaAttentionSurfaceId: attentionSurfaceId,
+        mainAreaAttentionPresentation:
+          attentionSurfaceId === null ? { kind: 'overlay' } : current.mainAreaAttentionPresentation,
         focusSurfaceId: retainMainAreaAttention(layout, remappedFocusSurfaceId),
       };
     });
@@ -144,20 +199,41 @@ export const useF307ExperienceWorkbenchStore = create<ExperienceWorkbenchStore>(
       layout,
       hydrated: true,
       mainAreaAttentionSurfaceId: null,
+      mainAreaAttentionPresentation: { kind: 'overlay' },
       focusSurfaceId: null,
       artifactWorkPresentation: createArtifactWorkPresentationState(loadArtifactWorkChatBasis()),
     }));
   },
-  enterMainAreaAttention: (surfaceId) => {
-    set((current) => ({
-      mainAreaAttentionSurfaceId:
+  enterMainAreaAttention: (surfaceId, presentation = { kind: 'overlay' }) => {
+    set((current) => {
+      const surface = current.layout.surfaces.find((surface) => surface.id === surfaceId);
+      const target = surface ? resolveWorkspaceDestinationTarget(surface) : null;
+      const admitted =
         current.layout.activeSurfaceId === surfaceId &&
-        current.layout.surfaces.some((surface) => surface.id === surfaceId)
-          ? surfaceId
-          : null,
-    }));
+        surface !== undefined &&
+        (presentation.kind === 'overlay' ||
+          (target?.destinationRef === 'mode:product-schedule' && target.threadId === presentation.threadId));
+      return {
+        mainAreaAttentionSurfaceId: admitted ? surfaceId : null,
+        mainAreaAttentionPresentation: admitted ? presentation : { kind: 'overlay' },
+      };
+    });
   },
-  exitMainAreaAttention: () => set({ mainAreaAttentionSurfaceId: null }),
+  setMainAreaAttentionChatBasis: (basis) => {
+    if (!Number.isFinite(basis)) return;
+    set((current) =>
+      current.mainAreaAttentionPresentation.kind === 'chat-workspace'
+        ? {
+            mainAreaAttentionPresentation: {
+              ...current.mainAreaAttentionPresentation,
+              chatBasis: Math.min(80, Math.max(20, basis)),
+            },
+          }
+        : {},
+    );
+  },
+  exitMainAreaAttention: () =>
+    set({ mainAreaAttentionSurfaceId: null, mainAreaAttentionPresentation: { kind: 'overlay' } }),
   enterFocusMode: (surfaceId) => {
     set((current) => ({
       focusSurfaceId:

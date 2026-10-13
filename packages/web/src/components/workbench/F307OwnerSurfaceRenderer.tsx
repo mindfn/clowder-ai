@@ -36,6 +36,8 @@ import {
   resolveTerminalWorktreeId,
 } from './real-surface-adapters';
 import { resolveThreadReplayThreadId } from './thread-replay-surface';
+import { VideoProjectReviewSurface } from './video-project/VideoProjectReviewSurface';
+import { resolveVideoProjectTarget } from './video-project-surface';
 import { WorkspacePreviewIntentProvider } from './WorkspacePreviewIntent';
 import { WorkspaceSurfaceVisibilityProvider } from './WorkspaceSurfaceVisibility';
 
@@ -57,8 +59,11 @@ function AgentRunOwnerSurface({ surface }: { surface: WorkspaceSurfaceDescriptor
 interface F307OwnerSurfaceRendererProps {
   surface: WorkspaceSurfaceDescriptor;
   surfaceVisible?: boolean;
+  hostWorktreeId?: string | null;
+  hostThreadId?: string | null;
   focusMode?: boolean;
   statusSurface?: ReactNode;
+  defaultCatId?: string;
   onOpenSurface: (surface: WorkspaceSurfaceDescriptor) => void;
   onOpenArtifactWithReturn: (input: {
     artifact: WorkspaceSurfaceDescriptor;
@@ -73,6 +78,9 @@ function F307OwnerSurfaceContent({
   surface,
   focusMode = false,
   statusSurface,
+  defaultCatId,
+  hostWorktreeId,
+  hostThreadId,
   onOpenSurface,
   onOpenArtifactWithReturn,
   onRefreshSurface,
@@ -80,6 +88,10 @@ function F307OwnerSurfaceContent({
   onReturnToFileOrigin,
 }: Omit<F307OwnerSurfaceRendererProps, 'surfaceVisible'>) {
   const browserTarget = resolveBrowserTarget(surface);
+  const returnToOrigin = () =>
+    surface.navigationOrigin && onReturnToFileOrigin
+      ? onReturnToFileOrigin(surface, surface.navigationOrigin)
+      : onRequestDetach();
   const handleBrowserNavigate = useCallback(
     (port: number, path: string) => {
       if (!browserTarget || (browserTarget.port === port && browserTarget.path === path)) return;
@@ -96,6 +108,14 @@ function F307OwnerSurfaceContent({
       </div>
     ) : (
       <OwnerUnavailable message="线程回放没有一致的对话引用。" />
+    );
+  }
+  if (surface.renderer === 'video-project-review') {
+    const target = resolveVideoProjectTarget(surface);
+    return target ? (
+      <VideoProjectReviewSurface target={target} onRefreshSurface={onRefreshSurface} />
+    ) : (
+      <OwnerUnavailable message="审片项目没有一致的成片引用。" />
     );
   }
   if (surface.renderer === 'file-preview' || surface.renderer === 'code-editor') {
@@ -212,7 +232,7 @@ function F307OwnerSurfaceContent({
           key={surface.id}
           source={source}
           surface={surface}
-          onBack={onRequestDetach}
+          onBack={returnToOrigin}
           onResolved={(resolved) =>
             useF307ExperienceWorkbenchStore
               .getState()
@@ -229,7 +249,7 @@ function F307OwnerSurfaceContent({
         <PublicationLandingResolver
           sourceSurface={surface}
           target={target}
-          onBack={onRequestDetach}
+          onBack={returnToOrigin}
           onResolved={(resolved) =>
             useF307ExperienceWorkbenchStore
               .getState()
@@ -288,6 +308,8 @@ function F307OwnerSurfaceContent({
     return (
       <WorkspaceDestinationOwnerSurface
         surface={surface}
+        hostWorktreeId={hostWorktreeId}
+        hostThreadId={hostThreadId}
         onOpenSurface={onOpenSurface}
         onOpenArtifactWithReturn={onOpenArtifactWithReturn}
         onRefreshSurface={onRefreshSurface}
@@ -299,6 +321,7 @@ function F307OwnerSurfaceContent({
             : undefined
         }
         statusSurface={statusSurface}
+        defaultCatId={defaultCatId}
       />
     );
   }

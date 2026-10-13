@@ -4,6 +4,7 @@ title: Identity / Session
 summary: Agent identity、connector session binding、bubble identity、runtime session binding、context continuity、thread access policy 与 user profile 等 subcell 的边界。
 canonical_features: [F032, F088, F136, F171, F183, F211, F231, F262, F291, F296, F299, F320]
 code_anchors:
+  - packages/api/src/domains/cats/services/cloud-bridge/dot/dot-identity.ts
   - cat-config.json
   - packages/api/src/config/cat-config-loader.ts
   - packages/api/src/config/account-resolver.ts
@@ -15,6 +16,8 @@ code_anchors:
   - packages/api/src/config/codex-account-reuse.ts
   - packages/api/src/config/codex-managed-support.ts
   - packages/api/src/config/codex-account-binding.ts
+  - packages/api/src/config/local-account-selection.ts
+  - packages/api/src/routes/accounts-native-view.ts
   - packages/api/src/config/cat-registry-reconciliation.ts
   - packages/api/src/config/codex-account-duplicates.ts
   - packages/shared/src/codex-account.ts
@@ -103,6 +106,7 @@ doc_anchors:
   - feature-discussions/2026-07-10-f231-profile-topology-convergence.md
 static_scan_hints: [catId, relationshipKey, AgentRegistry, cat-config, roster, ConnectorThreadBindingStore, bubbleIdentity, session, SessionChainStore, ContextEpochOwner, PresentationLedger, cliSessionId, cascadeId, runtimeSession, runtimeInteractionPort, interactionId, serviceTier, CodexSpeed, memberSpeed, capsule, CAT_CAFE_DATA_DIR, cat-cafe-profile, "private/profile"]
 cited_by:
+  - {feature: F247, date: 2026-10-10, delta: dot G1 source-bound Events and private original image consumer}
   - {feature: F320, date: 2026-10-06, delta: "P2a provider-account boundary: existing resolver/store supplies a credential-free launch snapshot; final OAuth environment and native capability launch share selected account input; original host/resource owners retain control authority. Managed layout remains disabled pending P2b fixture blockers."}
   - {feature: F325, date: 2026-09-29, delta: "P1 compiles owner-bound native L0 through the existing shared compiler on each turn, keeps dynamic pack prepend out of that slot, and scopes operator coding grants to the exact live entrusted Task"}
   - {feature: F191, date: 2026-05-07, delta: new cell}
@@ -198,6 +202,6 @@ Watch for new or renamed `catId`, `relationshipKey`, `ProfileRepository`, `CAT_C
 
 ### Codex account journey
 
-The existing account store now owns managed account metadata, immutable principal coordinates, notes, login attempt revisions and per-account read-only quota observations. Official Codex owns PKCE, callback validation and credential writing; `CodexLoginManager` only retains live carrier cancellation handles and persists facts through the existing store. Staged results require current attempt identity before adoption, and cannot replace an established principal silently. One confirmed catalog transaction switches a local member/family, excluding cloud Pro; invocation, usage and realtime transcripts retain their accepted execution snapshot.
+The existing account store owns managed account metadata, immutable principal coordinates, notes, login attempt revisions and per-account read-only quota observations. Official Codex owns PKCE, callback validation and credential writing; `CodexLoginManager` only retains live carrier cancellation handles and persists facts through the existing store. Staged results require current attempt identity before adoption, and cannot replace an established principal silently. The running member catalog owns `selectedAccountRefs` and each member's follow/override intent; account metadata stays in its persistent workspace owner. A confirmed preview and one catalog write switch the enabled local Codex followers across families, with explicit inclusion of exceptions and exclusion of disabled/cloud members. Invocation, usage and realtime transcripts retain their accepted execution snapshot. Native default rows are read-only projections of the existing resolver and actual credential home; listing or logging into a backup account does not switch members.
 
 The measured first managed combination is macOS + official native Codex 0.159.0 + private file authentication, without forced MDM or legacy managed/requirements policy and without cloud-eligible enterprise/business/education plans. Native personal and team-like plans remain eligible. Unsupported combinations are rejected before credential-bearing launch; no policy is disabled. Shared session/SQLite/memory/image/config state has explicit roots, while auth, secrets, temporary/control state and plugin/browser authentication stay private. Installed-native layout and source-consumer fixtures cover this implementation; real OAuth and cross-account server compaction require owner authorization and remain unclaimed until exercised.

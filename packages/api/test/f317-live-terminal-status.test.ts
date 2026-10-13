@@ -3,6 +3,7 @@ import { randomUUID } from 'node:crypto';
 import { resolve } from 'node:path';
 import { test } from 'node:test';
 import { createCatId } from '@cat-cafe/shared';
+import { CodexLiveStartupCancelledError } from '../src/domains/cats/services/agents/providers/CodexLiveRunPort.js';
 import { CodexActiveWriterRecoveryError } from '../src/domains/cats/services/runtime-session/CodexSessionReplacementProvenance.js';
 import { MessageStore } from '../src/domains/cats/services/stores/ports/MessageStore.js';
 import { LiveCompanionSessions } from '../src/domains/concierge/live/LiveCompanionSessions.js';
@@ -63,4 +64,30 @@ test('native writer refusal remains readable without a carrier; retry and late o
   } finally {
     await next.stop();
   }
+});
+
+test('late native readiness after Host Stop preserves the original startup cancellation', async () => {
+  const sessions = new LiveCompanionSessions();
+  let verifications = 0;
+  const call = await sessions.prepare({
+    binding: { userId: 'owner', threadId: 'home', catId: createCatId('codex-astra'), callId: randomUUID() },
+    messageStore: new MessageStore(),
+    mcpDistDir: resolve('../mcp-server/dist'),
+    allowedDirectories: [],
+    verifyNativeBinding: async () => {
+      verifications++;
+      return true;
+    },
+    publish() {},
+  });
+  await call.stop();
+  const reason = call.startupSignal.reason;
+  assert.ok(reason instanceof CodexLiveStartupCancelledError);
+  await assert.rejects(
+    call.ready('late-native', { request: async () => ({}), submitText: async () => 'late' }),
+    (error) => error === reason,
+  );
+  assert.equal(verifications, 0, 'a stopped call cannot reverify or acquire another native binding');
+  assert.equal(call.status().state, 'closed');
+  assert.equal(sessions.get(call.id, 'owner'), undefined);
 });

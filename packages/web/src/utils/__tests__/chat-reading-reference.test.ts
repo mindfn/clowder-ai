@@ -19,7 +19,7 @@ const origin = () => ({
   position: {
     top: 1234,
     anchor: 'offset' as const,
-    messageAnchor: { messageId: 'first-message', viewportOffsetPx: -88, bubbleKey: 'one-bubble', timelineOrderAt: 100 },
+    messageAnchor: { messageId: 'first-message', viewportOffsetPx: -88, timelineOrderAt: 100 },
   },
 });
 

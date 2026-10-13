@@ -1,6 +1,6 @@
 ---
 name: rich-messaging
-tips_exempt: "2026-10-04 renewal: local video delivery now points cats at .cat-cafe/evidence + /api/workspace/file/raw because the native guard blocks writes to runtime /uploads; cat-facing path correction inside the existing capability-rich-messaging tip, no new user-facing operation"
+tips_exempt: "2026-10-10 renewal: gives members the governed publish_image call for local PNG delivery and artifact review; users still ask for an image in Chat, with no new Hub operation or manual upload step. Existing rich-messaging discovery remains applicable."
 description: 在当前 Chat 直接交付可看、可听或可操作产物（语音、图片、截图、HTML/demo、卡片、清单、diff、交互选择），无需用户说“富文本”；纯文字与讨论/修改 HTML 源码不使用，复杂 localhost 应用用 browser-preview。
 triggers:
   - "发语音"
@@ -158,21 +158,28 @@ DOMPurify 静默剥掉所有 `on*` 属性——widget 照常渲染，点击不�
 
 如果图片来源是本地文件（例如 Codex CLI / 本地脚本刚生成的 PNG）：
 
-**优先使用 F172 共享发布合约**（自动处理 uploadDir 解析 + 幂等 + 富块生成）：
+**原生生成图由 F172 自动发布**（解析 uploadDir、幂等并生成富块）：
 - Codex `image_gen`：自动扫描 `~/.codex/generated_images/<sessionId>/`，无需手动操作
 - Antigravity 生成：工具结果中的文件路径自动检测并发布
-- 其他来源：调用 `publishGeneratedImage({ sourcePath, mimeType, publicationKey, provider, toolName })` 手动发布
 
-发布后自动获得 `/uploads/...` 稳定 URL + `media_gallery` 富块，无需手动复制或验证。
+**本地 PNG 用 `cat_cafe_publish_image`**：传 `path`（现有可访问文件根内的绝对路径）、稳定 `publicationKey`，可选 `title` / `alt`。例如 `{"path":"/当前工位/output/card.png","publicationKey":"card-v1","title":"清单首版"}`。工具将图片和当前 thread 的消息一并持久化，返回 `url`、`messageId`、真实时间戳 `revision` 与成员文件 provenance；不用再 create_rich_block/post_message 贴同一张图。
 
-**仅当共享合约不可用时**才手动复制到 runtime 的 uploadDir。
+同一请求重试保持同一个 key；图片或展示文字改变就用新的 key。同键异图片会冲突；消息持久化后，展示文字改变、原消息已撤回或软删除也会冲突。只支持 macOS/Linux 上的普通 invocation 成员、单帧 PNG（≤10MiB、≤16MP）；不生成图片、不改 Task。`publishGeneratedImage()` 仍是内部函数，不要 import 服务端模块、手写 runtime uploads，或把本地图放进原生生成目录来冒充 `image_gen` 来源。
+
+本地图片只需在 Chat 展示时，可使用已登记 Workspace 中可读取的媒体文件：`media_gallery.items[].url` 指向 `/api/workspace/file/raw?worktreeId=<实际工位>&path=<编码后的相对路径>`，先确认该定位确实可读。也可直接传已登记 Workspace 内的图片绝对路径：`create_rich_block` 在创建时安全解析为上述 raw URL；文件须存在、可读取且为图片（≤10MiB），未知工作区、受保护文件、越界 symlink 或不可展示文件会明确报错，不会创建坏图块。它仍是文件视图，不能当作已有 `/uploads/...` 发布或不可变版本。
+
+如果下一步要继续调用 `prepare_artifact_review` / `respond_artifact_review`，使用 `publish_image` 的真实发布坐标。现有 Task 媒体导入不接受 Workspace raw URL；旧运行版找不到工具时如实回流版本/能力缺口，不绕过权限。
+
+拿到真实 `/uploads/...` URL 后，若发布方已返回可读 messageId，就复用那条发布，不重复贴同一 URL。尚未发到 Chat、且需在本轮继续读取时，先 `create_rich_block`，再用无 @ 的 `post_message` 将块随消息持久化并取回 messageId。只收到“富块已创建”仍可能是 invocation buffer，不能据此断言已发布。
+
+同一 Task 的审阅只用一个主 Artifact：首版设 `artifactRefs: [发布URL]`，从 `read_entrusted_work` 取真实 revision 后 prepare；取得 contentRef 后替换为 `artifactRefs: ["content:" + contentRef]`。原发布来源保留在消息和 review，不与 content 引用并列；多引用会使主 Artifact 不明确。
 
 如果你要发的是**已有文件或本地成片视频**：
 
 - 用 `kind:"file"`，不是 `media_gallery`
 - `url` 必须是 `/uploads/...`、`/api/...` 或 `https://...`
 - `mimeType` 以 `video/` 开头时，Web UI 会渲染内联 `<video>` 播放器
-- **当前自动发布合约只覆盖图片**；本地视频/通用文件没有 `publishGeneratedVideo()`。runtime 的 `/uploads` 被 native guard 保护（`runtime_sanctuary_mutation`），猫写不进去：把文件放到主仓 `.cat-cafe/evidence/<主题>/`，`url` 填 `/api/workspace/file/raw?worktreeId=cat-cafe&path=.cat-cafe/evidence/<主题>/<文件>`（只收媒体文件，≤10MB），发之前 curl 一遍确认 200
+- **自动发布仅指原生 image_gen/Antigravity 图片结果的 provider 接线**，不表示任意 `create_rich_block` 本机路径会复制进 `/uploads/`。本地 PNG 要持久发布用 `publish_image`；Workspace 图片绝对路径仅转换为文件视图 URL。本地视频/通用文件没有 `publishGeneratedVideo()`。runtime 的 `/uploads` 被 native guard 保护（`runtime_sanctuary_mutation`），猫写不进去：把文件放到主仓 `.cat-cafe/evidence/<主题>/`，`url` 填 `/api/workspace/file/raw?worktreeId=cat-cafe&path=.cat-cafe/evidence/<主题>/<文件>`（只收媒体文件，≤10MB），发之前 curl 一遍确认 200
 
 ## 三条纪律
 
@@ -187,7 +194,7 @@ DOMPurify 静默剥掉所有 `on*` 属性——widget 照常渲染，点击不�
 | 不知道自己能发语音 | operator说"发语音"你说"我是文字猫" | 你可以！用 audio block |
 | "发图"只想到 image-generation | 走 Chrome MCP 现场生成，慢且不稳定 | 先看家里有没有已有图片（`/avatars/`、`/uploads/`），有就 media_gallery 直接发 |
 | 本地成片视频只贴文件路径 | 前端拿不到，线程里也没有内联播放器 | 视频放主仓 `.cat-cafe/evidence/<主题>/`，用 `/api/workspace/file/raw?worktreeId=cat-cafe&path=...` 发 `file` rich block；`mimeType:"video/mp4"` 时会内联播放（runtime `/uploads` 猫写不进） |
-| 本地生成图直接用 `file://` 或源码仓路径 | rich block 发得出去，但前端取不到 | 用 `publishGeneratedImage()` 发布到 `/uploads/...`（F172 共享合约自动解析 uploadDir） |
+| 把 `publishGeneratedImage()` 当 MCP，或把 Workspace 图片 URL 当 Task 版本发布 | 成员找不到调用，或后续媒体导入报 invalid_media | 原生生成图用自动发布；本地文件展示用可读 Workspace URL；Task 审阅须有真实可调用的发布入口及发布坐标 |
 | audio 写长段话 | 合成效果差 | 短句口语化，1-2 句 |
 | 只发 block 不写文字 | 猫猫朋友看不懂上下文 | 先写 1-2 句自然语言摘要，再发 block |
 | `"type"` 而不是 `"kind"` | block 创建失败 | 字段是 `kind` 不是 `type` |

@@ -4,6 +4,7 @@ import { resolveCodexAccountLaunch, resolveCodexApiExecutionHome } from '../../.
 import { codexManagedLaunchArgs } from '../../../../../config/codex-managed-launch.js';
 import { assertCodexManagedPlatformSupport } from '../../../../../config/codex-managed-support.js';
 import { assertCodexSharedStateRoots } from '../../../../../config/codex-shared-state.js';
+import { inspectCodexImportSession, listCodexImportSessions } from './CodexLocalSessionSource.js';
 import { bindCodexAccountConfiguration } from './codex-app-server-account-configuration.js';
 import { CODEX_DESKTOP_ISOLATION_ARGS, CODEX_RESTRICTED_APPS_ARGS } from './codex-desktop-isolation.js';
 import { extractUserEnvTemplates, hasSupportedEnvTemplate, resolveEnvMap } from './env-map.js';
@@ -45,11 +46,22 @@ import {
   resolveServersForCat,
 } from '../../../../../config/capabilities/capability-orchestrator.js';
 import {
+  assertMappedCapabilitySource,
+  isSameCapabilityRoot,
+  resolveInvokeCapabilityRoot,
+} from '../../../../../config/capabilities/invoke-capability-root.js';
+import {
   CAT_CAFE_SPLIT_ENTRYPOINTS,
+  isManagedCatCafeSplit,
   MCP_CALLBACK_ENV_KEYS,
   MCP_SESSION_ENV_KEYS,
   resolveCatCafeNodeCommand,
 } from '../../../../../config/capabilities/mcp-constants.js';
+import {
+  resolveMcpArgs as resolveCodexMcpArgs,
+  resolveMcpCommand as resolveCodexMcpCommand,
+  resolveMcpWorkingDir as resolveCodexMcpWorkingDir,
+} from '../../../../../config/capabilities/mcp-launch-paths.js';
 import { deriveAutoCompactTokenLimit, getCatEffort } from '../../../../../config/cat-config-loader.js';
 import { getCatModel } from '../../../../../config/cat-models.js';
 import {
@@ -89,6 +101,7 @@ import type {
   AgentMessage,
   AgentService,
   AgentServiceOptions,
+  LocalSessionReadInput,
   MessageMetadata,
   PreparedProviderRequestV1,
   ProviderCompactionObservation,
@@ -132,7 +145,7 @@ import type {
 import { requestCodexAppServerGoal } from './CodexAppServerGoalControl.js';
 import type { CodexAppServerHostPool } from './CodexAppServerHostPool.js';
 import { recordCodexAppServerLifecycle } from './CodexAppServerLifecycleRegistry.js';
-import { runCodexAppServerInitializedRpc } from './CodexAppServerNativeRpc.js';
+import { type CodexAppServerNativeRpcClient, runCodexAppServerInitializedRpc } from './CodexAppServerNativeRpc.js';
 import { openCodexAppServerRealtimeCompanion } from './CodexAppServerRealtimeCompanionControl.js';
 import { requestCodexAppServerReview } from './CodexAppServerReviewControl.js';
 import {
@@ -142,6 +155,7 @@ import {
 } from './CodexAppServerRunner.js';
 import { requestCodexAppServerCompaction } from './CodexAppServerSessionControl.js';
 import { requestCodexAppServerFork, requestCodexAppServerStatus } from './CodexAppServerStatusControl.js';
+import { CodexLiveStartupCancelledError } from './CodexLiveRunPort.js';
 import { LIVE_CONTEXT_TRIGGER } from './CodexLiveTurnInput.js';
 import { buildCodexNativeEffectGuardArgs } from './CodexNativeEffectGuard.js';
 import { verifyReviewedNativeShellCli } from './CodexNativeShellArtifact.js';
@@ -167,6 +181,7 @@ import {
   resolveCodexAppServerControlOptions,
 } from './codex-app-server-control-options.js';
 import { buildCodexCapacityRecoveryCardMessage } from './codex-capacity-recovery-card.js';
+import { CodexErrorEvidence } from './codex-error-evidence.js';
 import { CODEX_LIVE_POLICY_ARGS } from './codex-live-policy.js';
 import {
   buildCodexServedModelMismatchEvent,
@@ -727,52 +742,6 @@ function resolveAllowedWorkspaceDirsForMcp(workingDirectory?: string): string {
   return process.cwd();
 }
 
-const WINDOWS_ABSOLUTE_PATH_PATTERN = /^(?:[A-Za-z]:[\\/]|\\\\)/;
-
-function isAbsoluteMcpPath(value: string): boolean {
-  return isAbsolute(value) || WINDOWS_ABSOLUTE_PATH_PATTERN.test(value);
-}
-
-function resolveCodexMcpWorkingDir(workingDir: string | undefined, projectRoot: string): string | undefined {
-  const trimmed = workingDir?.trim();
-  if (!trimmed) return undefined;
-  if (isAbsolute(trimmed)) return resolve(trimmed);
-  if (WINDOWS_ABSOLUTE_PATH_PATTERN.test(trimmed)) return trimmed;
-  return resolve(projectRoot, trimmed);
-}
-
-function resolveCodexMcpArgs(
-  args: readonly string[] | undefined,
-  workingDir: string | undefined,
-  projectRoot: string,
-): string[] {
-  return (args ?? []).map((arg) => {
-    if (isAbsoluteMcpPath(arg) || arg.startsWith('-')) return arg;
-    if (workingDir) {
-      const fromWorkDir = resolve(workingDir, arg);
-      if (existsSync(fromWorkDir)) return fromWorkDir;
-    }
-    const fromRoot = resolve(projectRoot, arg);
-    if (existsSync(fromRoot)) return fromRoot;
-    return arg;
-  });
-}
-
-function isPathLikeMcpCommand(command: string): boolean {
-  return isAbsoluteMcpPath(command) || command.startsWith('.') || command.includes('/') || command.includes('\\');
-}
-
-function resolveCodexMcpCommand(command: string, workingDir: string | undefined, projectRoot: string): string {
-  if (!isPathLikeMcpCommand(command) || isAbsoluteMcpPath(command)) return command;
-  if (workingDir) {
-    const fromWorkDir = resolve(workingDir, command);
-    if (existsSync(fromWorkDir)) return fromWorkDir;
-  }
-  const fromRoot = resolve(projectRoot, command);
-  if (existsSync(fromRoot)) return fromRoot;
-  return command;
-}
-
 function writeCodexMcpEnvWrapper(spec: {
   command: string;
   args: string[];
@@ -900,7 +869,7 @@ async function buildCatCafeMcpArgs(
   }
 
   const binaryProjectRoot = resolve(mcpDistDir, '../../..');
-  const capabilitiesProjectRoot = binaryProjectRoot;
+  const capabilitiesProjectRoot = await resolveInvokeCapabilityRoot(binaryProjectRoot);
   const catId = callbackEnv.CAT_CAFE_CAT_ID;
   const args: string[] = [];
   const allowedWorkspaceDirs = resolveAllowedWorkspaceDirsForMcp(workingDirectory);
@@ -927,7 +896,7 @@ async function buildCatCafeMcpArgs(
     // in external MCP entries resolve against the correct base directory.
     let configSourceRoot = capabilitiesProjectRoot;
     let accessScope: 'global' | 'project' = 'global';
-    if (workingDirectory && workingDirectory !== capabilitiesProjectRoot) {
+    if (workingDirectory && !isSameCapabilityRoot(workingDirectory, capabilitiesProjectRoot)) {
       try {
         const projectRaw = readFileSync(join(workingDirectory, '.cat-cafe', 'capabilities.json'), 'utf-8');
         const parsed = JSON.parse(projectRaw);
@@ -1065,21 +1034,7 @@ async function buildCatCafeMcpArgs(
         let cmd: string | undefined;
         let cmdArgs: string[] | undefined;
         let envEntries: Record<string, string> | undefined;
-        // Managed split: source='cat-cafe' + name in entrypoint map.
-        // Same-repo external migration shapes (F193): source='external' but
-        // binary suffix matches our own split entrypoint — these arise from
-        // ensureCatCafeMainServer when hasAnyId prevents managed entry creation.
-        // Both MUST resolve binary from current mcpDistDir (not the entry's
-        // args[0], which may hold a stale worktree absolute path) and receive
-        // managed env injection (callback env, workspace dirs, approval mode).
-        const isManagedCatCafe = s.source === 'cat-cafe' && CAT_CAFE_SPLIT_ENTRYPOINTS.has(s.name);
-        const isSameRepoSplit =
-          !isManagedCatCafe &&
-          s.source === 'external' &&
-          CAT_CAFE_SPLIT_ENTRYPOINTS.has(s.name) &&
-          typeof s.args?.[0] === 'string' &&
-          s.args[0].replace(/\\/g, '/').endsWith(`packages/mcp-server/dist/${CAT_CAFE_SPLIT_ENTRYPOINTS.get(s.name)}`);
-        const isCatCafe = isManagedCatCafe || isSameRepoSplit;
+        const isCatCafe = isManagedCatCafeSplit(s);
         const workingDir = resolveCodexMcpWorkingDir(s.workingDir, configSourceRoot);
 
         if (isCatCafe) {
@@ -1133,6 +1088,7 @@ async function buildCatCafeMcpArgs(
     // best-effort fallback below
   }
 
+  assertMappedCapabilitySource(resolved, binaryProjectRoot, capabilitiesProjectRoot);
   if (!resolved) {
     for (const [serverName, entrypoint] of CAT_CAFE_SPLIT_ENTRYPOINTS) {
       const serverPath = resolve(mcpDistDir, entrypoint);
@@ -1443,6 +1399,41 @@ export class CodexAgentService implements AgentService {
     });
   }
 
+  async inspectLocalSession(input: LocalSessionReadInput & { sessionId: string }) {
+    return this.readLocalSessionMetadata(input, (client) => inspectCodexImportSession(client, input.sessionId));
+  }
+
+  async listLocalSessions(input: LocalSessionReadInput & { limit: number }) {
+    return this.readLocalSessionMetadata(input, (client) => listCodexImportSessions(client, input.limit));
+  }
+
+  private async readLocalSessionMetadata<T>(
+    input: LocalSessionReadInput,
+    read: (client: CodexAppServerNativeRpcClient) => Promise<T>,
+  ): Promise<T> {
+    const launch = this.prepareCapabilityLaunch(input.cwd, input.account, input.cliConfigArgs, true);
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(new Error('Session check timed out')), input.timeoutMs);
+    const options = { ...launch, invocationId: input.invocationId, signal: controller.signal };
+    const acquisition = createDirectAgentCarrierSession(options);
+    void acquisition
+      .then(async (wire) => {
+        if (controller.signal.aborted) await wire.close().catch(async () => wire.terminate?.());
+      })
+      .catch(() => {});
+    try {
+      const wire = bindCodexAccountConfiguration(await waitForAbort(acquisition, controller.signal), options);
+      return await runCodexAppServerInitializedRpc({
+        wire,
+        signal: controller.signal,
+        timeoutMs: input.timeoutMs,
+        run: read,
+      });
+    } finally {
+      clearTimeout(timer);
+    }
+  }
+
   async requestNativeCapabilitySource(input: {
     readonly invocationId: string;
     readonly timeoutMs: number;
@@ -1503,8 +1494,9 @@ export class CodexAgentService implements AgentService {
     cwd: string,
     account?: RuntimeProviderProfile,
     cliConfigArgs: readonly string[] = [],
+    localInspection = false,
   ): Pick<AgentCarrierSessionOptions, 'command' | 'args' | 'cwd' | 'env'> {
-    if (this.carrierMode !== 'app_server' || !this.appServerHostPool)
+    if (!localInspection && (this.carrierMode !== 'app_server' || !this.appServerHostPool))
       throw new Error('codex_native_capability_source_unsupported');
     const selected = account ?? { id: 'codex', authType: 'oauth' as const, client: 'openai' as const };
     if (selected.authType === 'api_key' && !selected.apiKey)
@@ -1695,7 +1687,7 @@ export class CodexAgentService implements AgentService {
     const requiredTools = normalizeRequiredTools(options?.requiredTools);
     const carrierMode = scopedNative
       ? 'exec_json'
-      : options?.liveCompanion || requiredTools.length > 0
+      : options?.requireExactResume || options?.liveCompanion || requiredTools.length > 0
         ? 'app_server'
         : this.carrierMode;
     if (scopedNative && requiredTools.length > 0) {
@@ -2156,13 +2148,14 @@ export class CodexAgentService implements AgentService {
     };
     const auditContext = options?.auditContext;
     const recentStreamErrors: string[] = [];
+    const errorEvidence = new CodexErrorEvidence();
     let capacityRecoveryBlocked: CodexAppServerRecoveryBlockedEvent | null = null;
     let activeWriterWaitNoticeEmitted = false;
     let providerRecovery: CodexProviderRecoveryTracker | null = null;
 
     try {
-      // HOME isolation: only for API Key mode.
-      // OAuth mode needs real HOME (~/.codex/auth.json for token refresh).
+      // Ordinary OAuth keeps the host HOME for tools; CODEX_HOME owns login.
+      // Managed OAuth additionally forces the private file credential store.
       // API Key mode must AVOID real HOME — stale OAuth token refresh will fail
       // and abort the CLI before it reaches the custom provider config.
       const accountLaunch =
@@ -2541,6 +2534,7 @@ export class CodexAgentService implements AgentService {
               ...(options?.sessionId ? { sessionId: options.sessionId } : {}),
             },
             runInput: {
+              ...(options?.requireExactResume ? { requireExactResume: true } : {}),
               ...(options?.liveCompanion ? { live: options.liveCompanion } : {}),
               prompt: effectivePromptSource,
               thread: options?.sessionId
@@ -2717,6 +2711,7 @@ export class CodexAgentService implements AgentService {
           : {}),
       };
       for await (const event of events) {
+        if (useAppServer) errorEvidence.observe(event);
         if (pooledSessionInUse && pooledCredentialEnv && isCodexThreadStartedEvent(event)) {
           bindSessionCredentialFile(credentialNamespace, event.thread_id, pooledCredentialEnv.path);
         }
@@ -3260,6 +3255,12 @@ export class CodexAgentService implements AgentService {
         };
         providerRecovery = null;
       }
+      const cancellationCode = err instanceof CodexLiveStartupCancelledError ? err.code : undefined;
+      if (cancellationCode) {
+        // An owner Stop is a terminal cancellation, not a retryable provider failure.
+        yield { type: 'done', catId: this.catId, errorCode: cancellationCode, metadata, timestamp: Date.now() };
+        return;
+      }
       const requiredToolsError = err instanceof CodexRequiredToolsUnavailableError ? err : undefined;
       const requiredToolsUnavailable = requiredToolsError?.details;
       const visibleError = requiredToolsError
@@ -3283,16 +3284,11 @@ export class CodexAgentService implements AgentService {
                     },
                   }
                 : {}),
-              cliDiagnostics: buildCliDiagnostics({
-                rawText: rawError,
-                // `structuredErrorText` is reserved for Claude result events. Raw Codex
-                // transport failures must stay on provider-neutral classifier/unknown paths.
-                debugRef: {
-                  command: 'codex app-server',
-                  exitCode: null,
-                  signal: null,
-                  ...(options?.invocationId ? { invocationId: options.invocationId } : {}),
-                },
+              cliDiagnostics: errorEvidence.diagnostics(rawError, {
+                command: 'codex app-server',
+                exitCode: null,
+                signal: null,
+                ...(options?.invocationId ? { invocationId: options.invocationId } : {}),
               }),
             }
           : metadata;

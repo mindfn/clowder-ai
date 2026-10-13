@@ -75,6 +75,7 @@ export function readWorktreeEntry(value: unknown): WorktreeEntry | null {
     // `git worktree list` names no HEAD for a bare repository; the listing says so with an empty string.
     typeof entry.head === 'string' &&
     absentOr(entry.canonicalId, (id) => id === null || nonEmptyString(id)) &&
+    absentOr(entry.rootIdentity, (id) => typeof id === 'string' && /^f063_root_v1_[a-f0-9]{64}$/.test(id)) &&
     absentOr(entry.resolvedRoot, nonEmptyString) &&
     absentOr(entry.rootEpoch, epoch) &&
     absentOr(entry.connectionEpoch, epoch) &&
@@ -84,6 +85,7 @@ export function readWorktreeEntry(value: unknown): WorktreeEntry | null {
 }
 
 export function ownsWorktreeIdentity(entry: WorktreeEntry, worktreeId: string): boolean {
+  if (worktreeId.startsWith('f063_root_v1_')) return entry.rootIdentity === worktreeId;
   return (
     entry.id === worktreeId || entry.canonicalId === worktreeId || Boolean(entry.legacyAliases?.includes(worktreeId))
   );

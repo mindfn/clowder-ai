@@ -99,6 +99,28 @@ describe('F307 Files owner surface: worktree identity through the coordinate tha
     expect(status()).toBeNull();
   });
 
+  it('shows current listing metadata while retaining the durable F063 read and file owner', async () => {
+    const rootId = `f063_root_v1_${'a'.repeat(64)}`;
+    useChatStore.setState({ currentProjectPath: ALPHA_ROOT });
+    listings[alphaListing] = [
+      { ok: true, worktrees: [{ ...alphaEntry, rootIdentity: rootId, resolvedRoot: ALPHA_ROOT, rootEpoch: 0 }] },
+    ];
+    const onOpen = await render(vi.fn(), createFilesSurface(rootId));
+    expect(select()?.value).toBe(ALPHA_ID);
+    expect(header()).toContain('69c41632');
+    expect(status()).toBeNull();
+    expect(mocks.apiFetch.mock.calls.some(([url]) => String(url).includes(`worktreeId=${rootId}`))).toBe(true);
+    await act(async () => container.querySelector<HTMLButtonElement>('[data-testid="select-owner-file"]')?.click());
+    expect(resolveFileTarget(onOpen.mock.calls[0][0])?.worktreeId).toBe(rootId);
+  });
+
+  it('does not accept malformed root identity metadata as a known current root', async () => {
+    useChatStore.setState({ currentProjectPath: ALPHA_ROOT });
+    listings[alphaListing] = [{ ok: true, worktrees: [{ ...alphaEntry, rootIdentity: 'invalid' }] }];
+    await render(vi.fn(), createFilesSurface(ALPHA_ID));
+    expect(status()?.getAttribute('data-identity-state')).toBe('failed');
+  });
+
   it('an id its listing does not name ends as unknown with a reason, never "choose a workspace"', async () => {
     listings[alphaListing] = [
       { ok: true, worktrees: [{ ...alphaEntry, id: 'b603ff_other', canonicalId: 'other' }] },

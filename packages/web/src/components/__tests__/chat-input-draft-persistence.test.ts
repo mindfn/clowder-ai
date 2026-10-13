@@ -172,6 +172,29 @@ async function attachFiles(files: File[]) {
 }
 
 describe('ChatInput draft persistence', () => {
+  it('restores the original draft selection after visiting another thread without moving focus', async () => {
+    await act(async () =>
+      root.render(React.createElement(ChatInput, { threadId: 'thread-SELECTION-A', onSend: vi.fn() })),
+    );
+    act(() => {
+      typeInto(getTextarea(), 'original selected draft');
+      getTextarea().setSelectionRange(3, 8);
+      getTextarea().dispatchEvent(new Event('select'));
+    });
+    await act(async () =>
+      root.render(React.createElement(ChatInput, { key: 'b', threadId: 'thread-SELECTION-B', onSend: vi.fn() })),
+    );
+    act(() => typeInto(getTextarea(), 'another thread draft'));
+    const outside = document.createElement('button');
+    container.appendChild(outside);
+    outside.focus();
+    await act(async () =>
+      root.render(React.createElement(ChatInput, { key: 'a', threadId: 'thread-SELECTION-A', onSend: vi.fn() })),
+    );
+    expect(getTextarea().value).toBe('original selected draft');
+    expect([getTextarea().selectionStart, getTextarea().selectionEnd]).toEqual([3, 8]);
+    expect(document.activeElement).not.toBe(getTextarea());
+  });
   it('shares one live text draft across two composers for the same thread', async () => {
     const onSend = vi.fn();
     act(() => {
@@ -337,6 +360,31 @@ describe('ChatInput draft persistence', () => {
       root.render(React.createElement(ChatInput, { threadId: 'thread-C', onSend }));
     });
     expect(getTextarea().value).toBe('');
+  });
+
+  it.each([true, false])('recall-edit resolves the quoted parent through ChatInput (loaded=%s)', async (loaded) => {
+    const parent = {
+      id: 'quoted-parent',
+      type: 'assistant' as const,
+      catId: 'opus',
+      content: 'Full quoted parent',
+      timestamp: 1,
+    };
+    useChatStore.setState({ messages: loaded ? [parent] : [] });
+    await act(async () => root.render(React.createElement(ChatInput, { threadId: 'thread-RECALL', onSend: vi.fn() })));
+    await act(async () => {
+      useChatStore
+        .getState()
+        .setPendingChatInsert({ threadId: 'thread-RECALL', text: 'Edit this reply', replyToId: parent.id });
+    });
+    expect(getTextarea().value).toBe('Edit this reply');
+    expect(useChatStore.getState().pendingChatInsert).toBeNull();
+    expect(useChatStore.getState().replyToMessage).toEqual({
+      id: parent.id,
+      content: loaded ? parent.content : '(原消息未加载)',
+      senderCatId: loaded ? 'opus' : null,
+      threadId: 'thread-RECALL',
+    });
   });
 
   it('consumes pending chat insert into the matching thread composer', async () => {

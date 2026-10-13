@@ -1,3 +1,4 @@
+import type { QuoteContextSource } from '@cat-cafe/shared';
 import { css } from '@codemirror/lang-css';
 import { html } from '@codemirror/lang-html';
 import { javascript } from '@codemirror/lang-javascript';
@@ -8,12 +9,13 @@ import { basicSetup, EditorView } from 'codemirror';
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { useWorkspaceSurfaceVisibility } from '@/components/workbench/WorkspaceSurfaceVisibility';
 import { useChatStore } from '@/stores/chatStore';
+import { createQuoteContextAttachment } from '../chat-context-reference';
 import { SelectionAnnotationAction } from '../SelectionAnnotationAction';
 import { type CodeSelectionAction, selectionActionForView } from './code-viewer-selection';
 import { useWorkspaceFileDraft } from './useWorkspaceFileDraft';
 import { WorkspaceFileDraftNotice } from './WorkspaceFileDraftNotice';
 import type { WorkspaceFileSave } from './workspace-file-draft';
-import { addWorkspaceFileQuoteToChat } from './workspace-file-quote';
+import { addQuoteToChat, addWorkspaceFileQuoteToChat } from './workspace-file-quote';
 
 const cafeTheme = EditorView.theme(
   {
@@ -60,6 +62,7 @@ export function CodeViewer({
   restoreScrollTop,
   restoreKey,
   onScrollTopChange,
+  quoteSource,
 }: {
   content: string;
   mime: string;
@@ -74,6 +77,7 @@ export function CodeViewer({
   restoreScrollTop?: number | null;
   restoreKey?: string;
   onScrollTopChange?: (scrollTop: number) => void;
+  quoteSource?: QuoteContextSource | false;
 }) {
   const shellRef = useRef<HTMLDivElement>(null);
   const editorContainerRef = useRef<HTMLDivElement>(null);
@@ -217,6 +221,25 @@ export function CodeViewer({
   const handleAddToChat = useCallback(
     (comment: string) => {
       if (!selectionAction) return;
+      if (quoteSource === false) return false;
+      if (quoteSource) {
+        if (
+          quoteSource.kind === 'message' &&
+          quoteSource.artifactFile &&
+          quoteSource.artifactFile.displayDigest !== `sha256:${selectionAction.version}`
+        )
+          return false;
+        return (
+          addQuoteToChat(
+            currentThreadId,
+            createQuoteContextAttachment(selectionAction.text, quoteSource, {
+              comment,
+              selectionStart: selectionAction.selectionStart,
+              selectionEnd: selectionAction.selectionEnd,
+            }),
+          ).kind === 'added'
+        );
+      }
       const result = addWorkspaceFileQuoteToChat(currentThreadId, {
         text: selectionAction.text,
         comment,
@@ -234,7 +257,7 @@ export function CodeViewer({
       });
       return result.kind === 'added';
     },
-    [path, branch, worktreeId, mime, currentThreadId, selectionAction],
+    [path, branch, worktreeId, mime, currentThreadId, selectionAction, quoteSource],
   );
 
   return (
@@ -255,7 +278,7 @@ export function CodeViewer({
         </button>
       )}
       {/* Add to chat button (selection) */}
-      {selectionAction && !editable && (
+      {selectionAction && !editable && quoteSource !== false && (
         <SelectionAnnotationAction
           selectedText={selectionAction.text}
           position={selectionAction.position}

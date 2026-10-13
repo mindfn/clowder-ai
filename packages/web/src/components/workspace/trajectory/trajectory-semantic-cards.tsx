@@ -7,6 +7,8 @@ import { useShellPresentation } from '@/components/shell/shell-presentation';
 import type { InvocationTimelineRow } from './invocation-trajectory-model';
 import { formatTrajectoryDuration } from './invocation-trajectory-ui';
 import { TrajectoryCatIdentity } from './TrajectoryCatIdentity';
+import { trajectoryCopy } from './trajectory.shell-copy';
+import { useTrajectoryCopy } from './use-trajectory-copy';
 
 type SemanticRole = 'user' | 'assistant' | 'system' | 'context' | 'tool' | 'error';
 
@@ -78,10 +80,16 @@ function SemanticIcon({ semanticRole }: { semanticRole: SemanticRole }) {
 
 export function SemanticBadge({ semanticRole, catId }: { semanticRole: SemanticRole; catId?: string }) {
   const isV2 = useShellPresentation() === 'v2';
+  const t = useTrajectoryCopy(trajectoryCopy);
   const visual = ROLE_VISUAL[semanticRole];
-  const label = { user: '你', assistant: '猫', system: '系统', context: '状态', tool: '工具', error: '出错' }[
-    semanticRole
-  ];
+  const label = {
+    user: t.user,
+    assistant: t.assistant,
+    system: t.system,
+    context: t.context,
+    tool: t.tool,
+    error: t.error,
+  }[semanticRole];
   return (
     <span
       className={`inline-flex items-center gap-1 rounded-md border px-1.5 py-0.5 text-micro font-semibold ${visual.badge}`}
@@ -130,11 +138,14 @@ function sourceLabel(source: Extract<InvocationTimelineRow, { kind: 'tool' }>['s
 }
 
 function ToolRow({ row }: { row: Extract<InvocationTimelineRow, { kind: 'tool' }> }) {
+  const t = useTrajectoryCopy(trajectoryCopy);
   const isV2 = useShellPresentation() === 'v2';
   const resultStatus = row.resultStatus ?? (row.result !== undefined ? 'unknown' : 'running');
-  const source = { host_cli: '本机', mcp: 'MCP', plugin_connector: '插件', unknown: '来源未知' }[row.source];
-  const channel = { analysis: '分析', commentary: '过程', final: '最终回复', unknown: '通道未知' }[row.channel];
-  const status = { ok: '完成', error: '出错', unknown: '结果未知', running: '运行中' }[resultStatus];
+  const source = { host_cli: t.host, mcp: 'MCP', plugin_connector: t.plugin, unknown: t.unknownSource }[row.source];
+  const channel = { analysis: t.analysis, commentary: t.commentary, final: t.final, unknown: t.unknownChannelLabel }[
+    row.channel
+  ];
+  const status = { ok: t.done, error: t.error, unknown: t.unknownResult, running: t.running }[resultStatus];
   return (
     <SemanticFrame semanticRole="tool" tone={resultStatus === 'error' ? 'error' : 'tool'}>
       <div className="flex flex-wrap items-center gap-2 text-xs">
@@ -159,7 +170,7 @@ function ToolRow({ row }: { row: Extract<InvocationTimelineRow, { kind: 'tool' }
       </div>
       {(row.input !== undefined || row.result !== undefined) && (
         <details className="mt-2 border-t border-cafe-subtle pt-2">
-          <summary className="cursor-pointer text-micro font-semibold text-conn-amber-text">查看输入与结果</summary>
+          <summary className="cursor-pointer text-micro font-semibold text-conn-amber-text">{t.toolDetails}</summary>
           {row.input !== undefined && (
             <pre className="mt-2 max-h-32 overflow-auto whitespace-pre-wrap text-micro text-cafe-secondary">
               {JSON.stringify(row.input, null, 2)}
@@ -177,6 +188,7 @@ function ToolRow({ row }: { row: Extract<InvocationTimelineRow, { kind: 'tool' }
 }
 
 function StatusGroupRow({ row }: { row: Extract<InvocationTimelineRow, { kind: 'status-group' }> }) {
+  const t = useTrajectoryCopy(trajectoryCopy);
   return (
     <SemanticFrame semanticRole="context">
       <details data-testid="status-event-fold">
@@ -184,7 +196,7 @@ function StatusGroupRow({ row }: { row: Extract<InvocationTimelineRow, { kind: '
           <span className="mr-2 inline-flex">
             <SemanticBadge semanticRole="context" />
           </span>
-          状态流水已折叠 · {row.count} 条
+          {t.statusFold(row.count)}
         </summary>
         <div className="mt-2 flex flex-wrap gap-1 text-micro text-cafe-muted">
           {Object.entries(row.types).map(([type, count]) => (
@@ -199,9 +211,10 @@ function StatusGroupRow({ row }: { row: Extract<InvocationTimelineRow, { kind: '
 }
 
 function OverflowRow({ row }: { row: Extract<InvocationTimelineRow, { kind: 'overflow' }> }) {
+  const t = useTrajectoryCopy(trajectoryCopy);
   return (
     <div className="rounded-lg border border-dashed border-cafe-subtle px-3 py-2 text-xs text-cafe-muted">
-      已收起 {row.count} 条 ·{' '}
+      {t.hidden(row.count)} ·{' '}
       {Object.entries(row.types)
         .map(([type, count]) => `${type} ${count}`)
         .join(' / ')}
@@ -210,7 +223,16 @@ function OverflowRow({ row }: { row: Extract<InvocationTimelineRow, { kind: 'ove
 }
 
 function SubexecutionTimelineRow({ row }: { row: Extract<InvocationTimelineRow, { kind: 'subexecution' }> }) {
+  const t = useTrajectoryCopy(trajectoryCopy);
+  const isV2 = useShellPresentation() === 'v2';
   const event = row.event;
+  const stageLabels = {
+    started: t.childRunning,
+    message: t.childRunning,
+    completed: t.childComplete,
+    failed: t.childFailed,
+    interrupted: t.childInterrupted,
+  };
   return (
     <div
       data-subexecution-event={event.id}
@@ -219,15 +241,26 @@ function SubexecutionTimelineRow({ row }: { row: Extract<InvocationTimelineRow, 
       className="rounded-xl border border-conn-purple-ring bg-conn-purple-bg/40 px-3 py-2.5"
     >
       <div className="flex items-start gap-2">
-        <SubexecutionIdentity agentPath={event.agentPath} nickname={event.nickname} depth={event.depth} />
+        <SubexecutionIdentity
+          agentPath={event.agentPath}
+          nickname={event.nickname}
+          depth={event.depth}
+          label={t.child}
+        />
         <span className="shrink-0 text-micro font-semibold text-conn-purple-text">
-          {subexecutionStatusLabel(event.stage)}
+          {isV2 ? stageLabels[event.stage] : subexecutionStatusLabel(event.stage)}
         </span>
       </div>
       {event.stage === 'message' && event.content && (
         <div className="mt-2 border-t border-conn-purple-ring/50 pt-2">
           <div className="text-micro font-semibold text-conn-purple-text">
-            {subexecutionMessageLabel(event.messagePhase)}
+            {isV2
+              ? event.messagePhase === 'final_answer'
+                ? t.childFinal
+                : event.messagePhase === 'commentary'
+                  ? t.childProgress
+                  : t.childMessage
+              : subexecutionMessageLabel(event.messagePhase)}
           </div>
           <div className="mt-1 whitespace-pre-wrap break-words text-xs text-cafe-secondary">{event.content}</div>
         </div>
@@ -236,13 +269,14 @@ function SubexecutionTimelineRow({ row }: { row: Extract<InvocationTimelineRow, 
   );
 }
 
-function semanticContent(row: InvocationTimelineRow, isV2: boolean): string {
+function semanticContent(row: InvocationTimelineRow, isV2: boolean, doneLabel: string): string {
   if (!('content' in row)) return '';
-  if (isV2 && row.kind === 'terminal' && row.content === 'done') return '完成';
+  if (isV2 && row.kind === 'terminal' && row.content === 'done') return doneLabel;
   return row.content;
 }
 
 export function SemanticTimelineRow({ row, catId }: { row: InvocationTimelineRow; catId?: string }) {
+  const t = useTrajectoryCopy(trajectoryCopy);
   const isV2 = useShellPresentation() === 'v2';
   switch (row.kind) {
     case 'status-group':
@@ -256,7 +290,7 @@ export function SemanticTimelineRow({ row, catId }: { row: InvocationTimelineRow
   }
   const role: SemanticRole =
     row.kind === 'error' ? 'error' : row.kind === 'session' ? 'context' : row.kind === 'message' ? row.role : 'system';
-  const content = semanticContent(row, isV2);
+  const content = semanticContent(row, isV2, t.done);
   return (
     <SemanticFrame semanticRole={role}>
       <div className="flex items-start gap-2 text-xs text-cafe-secondary">
@@ -265,13 +299,13 @@ export function SemanticTimelineRow({ row, catId }: { row: InvocationTimelineRow
       </div>
       {isV2 && row.kind === 'message' && row.channel && (
         <p className="mt-1 text-micro text-cafe-muted">
-          {{ analysis: '分析', commentary: '过程', final: '最终回复' }[row.channel]}
+          {{ analysis: t.analysis, commentary: t.commentary, final: t.final }[row.channel]}
         </p>
       )}
       {row.kind === 'message' && row.role === 'assistant' && (row.fragmentCount ?? 1) > 1 && (
         <p className="mt-2 text-micro text-conn-purple-text">
           {isV2 ? (
-            `由 ${row.fragmentCount} 段流式输出拼成`
+            t.fragments(row.fragmentCount ?? 1)
           ) : (
             <>
               已合并 {row.fragmentCount} 个 stream fragments · append {row.appendCount ?? 0} / replace{' '}

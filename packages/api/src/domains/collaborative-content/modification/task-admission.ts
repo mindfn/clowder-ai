@@ -1,6 +1,9 @@
 import { createHash } from 'node:crypto';
 import { CONTENT_MODIFICATION_CLOSURES, contentModificationOutcome } from '@cat-cafe/shared';
-import type { IMessageStore } from '../../cats/services/stores/ports/MessageStore.js';
+import {
+  deriveGrowingSourceMessageRevision,
+  type IMessageStore,
+} from '../../cats/services/stores/ports/MessageStore.js';
 import type { ITaskStore } from '../../cats/services/stores/ports/TaskStore.js';
 import type { EntrustedWorkLifecycleService } from '../../growing/EntrustedWorkLifecycleService.js';
 import type { ArtifactReviewStore } from '../artifact-review/store.js';
@@ -47,6 +50,11 @@ export async function admitModificationTask(
     { userId: record.ownerUserId, threadId: record.payload.threadId },
     admission,
   );
+  if (
+    record.progress.sourceKind === 'human_message' &&
+    (!source || deriveGrowingSourceMessageRevision(source) !== record.progress.sourceMessageRevision)
+  )
+    throw new ModificationAdmissionError('source_not_ready');
   const context = record.payload.taskContext;
   if (context) {
     const existing = await deps.tasks.get(context.taskId);
@@ -93,7 +101,7 @@ export async function admitModificationTask(
         expectedSignal: `${record.requestId}#${rule === 'published-result-ready' ? 'result-ready' : 'file-writeback-applied'}`,
       },
       artifactRefs: [
-        prepared.kind === 'media' ? `content:${prepared.contentRef}` : `content-modification:${record.requestId}`,
+        prepared.kind !== 'text' ? `content:${prepared.contentRef}` : `content-modification:${record.requestId}`,
       ],
       time: {
         ...(time?.businessDeadline ? { businessDeadline: { value: time.businessDeadline, sourceRef } } : {}),

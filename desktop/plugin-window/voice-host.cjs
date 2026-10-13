@@ -2,7 +2,10 @@ const { randomUUID } = require('node:crypto');
 const denied = (code) => ({ kind: 'error', code });
 
 /** A separate permission principal: only Host-owned bytes can request audio. */
-function createVoiceHost(electron, { resources, isArmed, requestOffer, publish, onFailure, callScoped = false }) {
+function createVoiceHost(
+  electron,
+  { resources, isArmed, requestOffer, publish, onFailure, onObservation, callScoped = false },
+) {
   const { BrowserWindow, session, ipcMain } = electron;
   let window,
     opening,
@@ -18,6 +21,7 @@ function createVoiceHost(electron, { resources, isArmed, requestOffer, publish, 
     admittedMode = null,
     mediaFailed = false;
   const pending = new Map();
+  let observationSequence = 0;
   const currentSender = (event) =>
     window &&
     !window.isDestroyed() &&
@@ -90,10 +94,10 @@ function createVoiceHost(electron, { resources, isArmed, requestOffer, publish, 
     const current = generation;
     const reply = await requestOffer(sdp).catch(() => denied('unavailable'));
     if (current !== generation || !currentSender(event) || !isArmed()) return denied('cancelled');
-    if (callScoped && reply.kind === 'answer') {
-      if (!/^[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$/i.test(reply.callId ?? ''))
-        return denied('unavailable');
-      callId = reply.callId;
+    if (reply.kind === 'answer') {
+      if (!/^[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$/i.test(reply.callId ?? '')) {
+        if (callScoped) return denied('unavailable');
+      } else callId = reply.callId;
     }
     return reply;
   });
@@ -113,10 +117,45 @@ function createVoiceHost(electron, { resources, isArmed, requestOffer, publish, 
         activeMode = null;
       }
       publish(callScoped ? { ...value, callId } : value);
+      if (
+        callId &&
+        onObservation &&
+        value?.type === 'transcript' &&
+        value.role === 'assistant' &&
+        typeof value.text === 'string' &&
+        value.text.trim() &&
+        /^[A-Za-z0-9_-]{1,160}$/.test(value.itemId ?? '')
+      )
+        onObservation({
+          stage: 'first_outward_text',
+          observedAt: Date.now(),
+          nativeItemId: value.itemId,
+          ...(/^[A-Za-z0-9_-]{1,160}$/.test(value.turnId ?? '') ? { turnId: value.turnId } : {}),
+          callId,
+          eventId: `${generation}_${++observationSequence}`,
+        });
     }
   };
   ipcMain.on('companion:voice-reply', onReply);
   ipcMain.on('companion:voice-event', onEvent);
+  const onVoiceObservation = (event, value) => {
+    if (
+      !currentSender(event) ||
+      !isArmed() ||
+      !callId ||
+      mediaFailed ||
+      !onObservation ||
+      !value ||
+      Object.keys(value).sort().join(',') !== 'observedAt,stage,turnId' ||
+      !['first_audio_output', 'owner_voice_completed'].includes(value.stage) ||
+      !/^[A-Za-z0-9_-]{1,160}$/.test(value.turnId ?? '') ||
+      !Number.isSafeInteger(value.observedAt) ||
+      Math.abs(Date.now() - value.observedAt) > 5000
+    )
+      return;
+    onObservation({ ...value, callId, eventId: `${generation}_${++observationSequence}` });
+  };
+  ipcMain.on('companion:voice-observation', onVoiceObservation);
 
   async function open() {
     if (!resources) throw new Error('Host media resources unavailable');
@@ -239,6 +278,7 @@ function createVoiceHost(electron, { resources, isArmed, requestOffer, publish, 
       ipcMain.removeHandler('companion:media-offer');
       ipcMain.off('companion:voice-reply', onReply);
       ipcMain.off('companion:voice-event', onEvent);
+      ipcMain.off('companion:voice-observation', onVoiceObservation);
     },
   };
 }

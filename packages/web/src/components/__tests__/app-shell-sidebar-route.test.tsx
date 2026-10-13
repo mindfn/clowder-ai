@@ -57,7 +57,11 @@ vi.mock('@/components/concierge/ConciergeHost', () => ({
 vi.mock('@/components/thread-chat', () => ({
   ThreadChatRuntimeProvider: ({ children }: { children: React.ReactNode }) => children,
 }));
-vi.mock('@/components/listen-mode/ListenModePlayer', () => ({ ListenModePlayer: () => null }));
+vi.mock('@/components/listen-mode/ListenModePlayer', () => ({
+  ListenModePlayer: ({ variant, workspaceVisible }: { variant?: string; workspaceVisible?: boolean }) => (
+    <output data-testid="listen-placement" data-variant={variant} data-workspace-visible={String(workspaceVisible)} />
+  ),
+}));
 vi.mock('@/components/story-player/TheaterReplayHost', () => ({ TheaterReplayHost: () => null }));
 vi.mock('@/components/DesktopUpdatePrompt', () => ({ DesktopUpdatePrompt: () => null }));
 vi.mock('@/services/playbackRuntime', () => ({ getPlaybackManager: vi.fn(), destroyPlaybackRuntime: vi.fn() }));
@@ -120,6 +124,24 @@ describe('AppShell sidebar route ownership', () => {
       );
     });
   }
+
+  it.each([
+    { route: '/thread/thread-a', panel: 'workspace' as const, visible: true },
+    { route: '/thread/thread-a', panel: 'status' as const, visible: false },
+    { route: '/settings', panel: 'workspace' as const, visible: false },
+  ])('places the mini listen control according to the actual route and workspace ($route / $panel)', ({
+    route,
+    panel,
+    visible,
+  }) => {
+    navState.pathname = route;
+    window.history.replaceState(null, '', route);
+    useChatStore.setState({ rightPanelMode: panel });
+    renderShell('reading');
+    const placement = container.querySelector('[data-testid="listen-placement"]');
+    expect(placement?.getAttribute('data-variant')).toBe('mini');
+    expect(placement?.getAttribute('data-workspace-visible')).toBe(String(visible));
+  });
 
   it.each([
     createBrowserSurface({ ownerKey: 'sidebar-browser', port: 5324, path: '/browser-owner-probe' }),

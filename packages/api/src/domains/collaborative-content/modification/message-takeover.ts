@@ -24,6 +24,8 @@ import type { WorkspaceContentReviewService } from '../workspace-review/service.
 import { workspaceReviewIdentity } from '../workspace-review/workspace-review-anchors.js';
 import type { ContentModificationJournal } from './journal.js';
 import { type MediaMessageTakeoverDeps, resolveMediaMessagePayload } from './media-message/media-message-takeover.js';
+import type { ResolvedMessageTakeover } from './message/types.js';
+import type { ProjectMessageTakeoverPort } from './project/types.js';
 import { ModificationTextError } from './text/text-store.js';
 
 type CatPrincipal = MediaReviewPrincipal & {
@@ -34,13 +36,7 @@ type CatPrincipal = MediaReviewPrincipal & {
 };
 type WorkspaceQuote = QuoteContextAttachment & { source: WorkspaceFileQuoteSource };
 
-export interface ResolvedMessageTakeover {
-  readonly payload: ContentModificationRequest;
-  readonly sourceMessageRevision: `sha256:${string}`;
-  readonly sourceVisibility:
-    | { readonly visibility: 'public' }
-    | { readonly visibility: 'whisper'; readonly whisperTo: readonly string[] };
-}
+export type { ResolvedMessageTakeover } from './message/types.js';
 
 /** The callback contributes only source identity; every authority/content coordinate is read from owner truth. */
 export async function resolveMessageTakeover(
@@ -51,6 +47,7 @@ export async function resolveMessageTakeover(
     requests: Pick<ContentModificationJournal, 'forSource'>;
     tasks: Pick<ITaskStore, 'get'>;
     media?: MediaMessageTakeoverDeps;
+    project?: ProjectMessageTakeoverPort;
   },
   input: ContentModificationTakeover,
   principal: CatPrincipal,
@@ -63,6 +60,10 @@ export async function resolveMessageTakeover(
     message.visibility === 'whisper'
       ? ({ visibility: 'whisper', whisperTo: [...new Set(message.whisperTo ?? [])] } as const)
       : ({ visibility: 'public' } as const);
+  if (existing?.payload.source.kind === 'video-project') {
+    if (!deps.project) throw new ModificationTextError('invalid_patch');
+    return deps.project.resolve(input, principal, existing);
+  }
   if (existing) {
     if (
       existing.progress.sourceKind !== 'human_message' ||
@@ -75,6 +76,11 @@ export async function resolveMessageTakeover(
   const attachments = (message.contentBlocks ?? [])
     .filter((block) => block.type === 'context_attachment')
     .map((block) => ContextAttachmentSchema.parse(block.attachment));
+  if (attachments.some((item) => item.kind === 'project-screening')) {
+    if (!deps.project || attachments.some((item) => item.kind === 'media' || item.kind === 'quote'))
+      throw new ModificationTextError('invalid_patch');
+    return deps.project.resolve(input, principal);
+  }
   const media = attachments.filter((item) => item.kind === 'media');
   if (media.length) {
     if (!deps.media || attachments.some((item) => item.kind === 'quote' && item.source.kind === 'workspace_file'))

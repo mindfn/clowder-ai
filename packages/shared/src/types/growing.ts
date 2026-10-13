@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import { entrustedWorkTaskExecutionV1Schema } from './entrusted-work-human-terminal.js';
 import { preparedArtifactSnapshotV1Schema } from './growing-artifact.js';
 import { developmentScopeV1Schema, developmentTaskRefSchema } from './growing-development.js';
 
@@ -124,8 +125,30 @@ const terminalClosureDisposition = (kind: 'cancelled' | 'abandoned') =>
       authorityRef: boundedRef,
       dispositionRef: boundedRef,
       disposedAt: timestampSchema,
+      reason: z.string().trim().min(1).max(600).optional(),
+      taskExecution: entrustedWorkTaskExecutionV1Schema.optional(),
     })
     .strict();
+
+const humanSatisfiedConfirmationSchema = z
+  .object({
+    kind: z.literal('human'),
+    actorRef: boundedRef,
+    authorityRef: boundedRef,
+    decisionRef: boundedRef,
+    confirmedAt: timestampSchema,
+    taskExecution: entrustedWorkTaskExecutionV1Schema,
+  })
+  .strict()
+  .superRefine((confirmation, context) => {
+    if (confirmation.taskExecution.state !== 'idle') {
+      context.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ['taskExecution'],
+        message: 'Human confirmation requires an idle Task-binding observation',
+      });
+    }
+  });
 
 const entrustedClosureSchema = z.discriminatedUnion('state', [
   z
@@ -140,6 +163,7 @@ const entrustedClosureSchema = z.discriminatedUnion('state', [
       ...closureBase,
       state: z.literal('satisfied'),
       evidenceRefs: z.array(boundedRef).min(1).max(64),
+      confirmation: humanSatisfiedConfirmationSchema.optional(),
     })
     .strict(),
   z

@@ -15,7 +15,7 @@ import {
 } from './manager/plugin-package-quarantine.js';
 import {
   bundledManifestDigest,
-  COLLECTIVE_CONNECTOR_PLUGIN_MANIFEST,
+  OFFICIAL_BUNDLED_MANIFESTS,
   OFFICIAL_PLUGIN_CATALOG,
   type OfficialPluginCatalogEntry,
   officialPluginPresentationMatches,
@@ -391,10 +391,7 @@ export class OfficialPluginPackageInstaller {
     entry: OfficialPluginCatalogEntry,
     accept: (candidate: PackageAdmissionCandidate) => Promise<T>,
   ): Promise<T> {
-    const manifest =
-      entry.pluginId === COLLECTIVE_CONNECTOR_PLUGIN_MANIFEST.pluginId
-        ? COLLECTIVE_CONNECTOR_PLUGIN_MANIFEST
-        : undefined;
+    const manifest = OFFICIAL_BUNDLED_MANIFESTS.find((candidate) => candidate.pluginId === entry.pluginId);
     if (!manifest) {
       throw new OfficialPluginInstallError(
         'INVALID_PACKAGE_SCHEMA',

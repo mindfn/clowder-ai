@@ -10,6 +10,7 @@ import { replyBodyCopy } from './reply-body.shell-copy';
 import { useShellCopy } from './shell/shell-copy';
 import { useShellPresentation } from './shell/shell-presentation';
 import { pushThreadRouteWithHistory } from './ThreadSidebar/thread-navigation';
+import { ProjectScreeningAttachmentView } from './workbench/video-project/ProjectScreeningAttachmentView';
 
 interface ContextAttachmentViewProps {
   attachment: ContextAttachment;
@@ -55,7 +56,15 @@ async function confirmQuotedLine(
   }
 }
 
-export function ContextAttachmentView({
+export function ContextAttachmentView(props: ContextAttachmentViewProps) {
+  return props.attachment.kind === 'project-screening' ? (
+    <ProjectScreeningAttachmentView {...props} attachment={props.attachment} />
+  ) : (
+    <OrdinaryContextAttachmentView {...props} />
+  );
+}
+
+function OrdinaryContextAttachmentView({
   attachment,
   compact = false,
   onRemove,

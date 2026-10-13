@@ -13,7 +13,7 @@ const modern = '0.1.0-beta.23';
 const unified = '0.1.0-beta.24';
 
 test('the trusted launch retains its exact companion contract instead of inferring ABI from a bridge version', () => {
-  for (const contract of [legacy, modern, unified, '0.1.0-beta.25']) {
+  for (const contract of [legacy, modern, unified, '0.1.0-beta.25', '0.1.0-beta.27']) {
     const admitted = validateLaunch({ ...launch, companionContract: contract });
     assert.equal(admitted.companionContract, contract);
     assert.equal(admitted.publicCompanionV2, true);

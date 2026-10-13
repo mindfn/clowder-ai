@@ -65,6 +65,7 @@ import {
   highlightMessage,
   MESSAGE_VIEWPORT_MOUNTED_EVENT,
   type MessageScrollAnchor,
+  matchesMessageScrollAnchor,
   resolveMessageElements,
   restoreMessageScrollAnchor,
   restoreTimelineScrollAnchor,
@@ -215,8 +216,7 @@ function readingSettlementStillMatches(el: HTMLElement, position: SavedScrollSta
   if (el.scrollTop !== position.top) return false;
   if (position.anchor === 'bottom') return el.scrollTop === Math.max(0, el.scrollHeight - el.clientHeight);
   if (!position.messageAnchor) return true;
-  const anchor = captureMessageScrollAnchorForMessage(el, position.messageAnchor.messageId);
-  return anchor?.viewportOffsetPx === position.messageAnchor.viewportOffsetPx;
+  return matchesMessageScrollAnchor(el, position.messageAnchor);
 }
 
 function captureNavigationSettleSample(el: HTMLElement, messageId: string): NavigationSettleSample | undefined {
@@ -721,6 +721,13 @@ export function useChatHistory(threadId: string) {
     (upward: boolean) => {
       readingRestoreRef.current = null;
       cancelPendingRestore();
+      // The gesture revokes the old restore, but subsequent layout changes still
+      // follow what is visible now. Refresh the existing anchor before a late
+      // history response can reuse the canceled position.
+      const el = scrollContainerRef.current;
+      if (el && useChatStore.getState().currentThreadId === threadIdRef.current) {
+        rememberScrollState(threadIdRef.current, el, upward);
+      }
       userScrollIntentRef.current = true;
       if (upward) userScrollUpRef.current = true;
     },
@@ -1984,6 +1991,9 @@ export function useChatHistory(threadId: string) {
     const previousIds = previousTimelineIdsRef.current;
     previousTimelineIdsRef.current = timelineMessageIds;
     if (previousIds.length === 0) return;
+    // Explicit navigation and pending restores retain their own writer. A user
+    // gesture has already replaced the cached anchor with the current view.
+    if (readingRestoreRef.current || restoreFrameKindRef.current) return;
 
     const el = scrollContainerRef.current;
     const saved = readChatScrollState(threadId);
@@ -1995,7 +2005,12 @@ export function useChatHistory(threadId: string) {
         : saved.messageAnchor
           ? { kind: 'message', messageAnchor: saved.messageAnchor }
           : undefined;
-    if (!anchor || !restoreTimelineScrollAnchor(el, anchor)) return;
+    if (!anchor) return;
+    const alreadyAligned =
+      anchor.kind === 'bottom'
+        ? Math.abs(el.scrollTop - Math.max(0, el.scrollHeight - el.clientHeight)) <= 1
+        : matchesMessageScrollAnchor(el, anchor.messageAnchor);
+    if (!alreadyAligned && !restoreTimelineScrollAnchor(el, anchor)) return;
     // Admission, prepend, and reorder all use this one correction. Do not
     // apply the older height-delta prepend correction on top of it.
     scrollSnapshotRef.current = null;

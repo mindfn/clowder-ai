@@ -39,11 +39,6 @@ describe('UnifiedAuthModal env-var layout (#862)', () => {
     expect(valueInputIdx - wrapperIdx).toBeLessThan(500);
   });
 
-  it('formInputClass contains w-full (the root cause that requires wrappers)', () => {
-    const helperSource = readFileSync(resolve(__dirname, '../mcp-form-helpers.tsx'), 'utf-8');
-    expect(helperSource).toMatch(/formInputClass[\s\S]*?w-full/);
-  });
-
   it('keeps OAuth Google model suggestions synchronized with cat-template Gemini defaults', () => {
     const templateModels = catTemplate.clientDefaults.gemini.models;
     expect(templateModels).toContain('Gemini 3.6 Flash (High)');

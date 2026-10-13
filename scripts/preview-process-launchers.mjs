@@ -179,10 +179,12 @@ export function removeLaunchdJob(config) {
   });
 }
 
-async function captureIdentity(pid) {
+export async function captureLaunchdIdentity(pid, launchdLabel, readIdentity = readProcessIdentity) {
   for (let attempt = 0; attempt < 20; attempt += 1) {
-    const identity = readProcessIdentity(pid);
-    if (identity) return identity;
+    const identity = readIdentity(pid);
+    // launchctl can publish a PID before xpcproxy execs the owned lease runner.
+    // Recording that transient argv makes the existing exact identity fence kill a healthy startup.
+    if (identity && identity.processCommand !== `xpcproxy ${launchdLabel}`) return identity;
     await new Promise((resolveWait) => setTimeout(resolveWait, 25));
   }
   return null;
@@ -216,7 +218,12 @@ export async function launchWithLaunchd(config) {
     rmSync(config.plistPath, { force: true });
     throw new Error(`launchd preview exited before publishing a PID; see ${config.logPath}`);
   }
-  const identity = await captureIdentity(pid);
+  const identity = await captureLaunchdIdentity(pid, config.launchdLabel);
+  if (!identity) {
+    removeLaunchdJob(config);
+    rmSync(config.plistPath, { force: true });
+    throw new Error(`launchd preview did not publish its final process identity; see ${config.logPath}`);
+  }
   return {
     origin: 'launchd',
     launchdLabel: config.launchdLabel,

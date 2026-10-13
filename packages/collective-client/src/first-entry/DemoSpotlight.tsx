@@ -76,11 +76,11 @@ export function DemoSpotlight({
     };
   }, [beat, selectedCats, arrivalComplete]);
 
-  const titles = ['你的伙伴到了', '点名，它就在原处回你', '别家的猫也在这儿帮忙', '定下来的事变成工作卡'];
+  const titles = ['你的伙伴到了', '@ 它，它会回你', '别家的猫也在这儿帮忙', '定下来的事变成工作卡'];
   const details = [
-    '这里的成员都可以点名它们',
+    '这里的成员都可以 @ 它们',
     '谁回的、回在哪，一眼看清',
-    selectedCats.length === 1 ? '等别家 Café 加入，就能点名它们的猫' : '各回各家干活，在同一处碰头',
+    selectedCats.length === 1 ? '等别家 Café 加入，就能 @ 它们的猫' : '各回各家干活，在同一处碰头',
     '要你点头才算数',
   ];
   return (

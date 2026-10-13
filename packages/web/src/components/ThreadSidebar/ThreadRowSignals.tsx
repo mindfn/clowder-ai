@@ -31,6 +31,7 @@ function PresenceLabel({
   symbol,
   symbolAfter = false,
   textTestId,
+  description,
 }: {
   label: string;
   tone: 'info' | 'success' | 'critical';
@@ -38,15 +39,22 @@ function PresenceLabel({
   symbol: ReactNode;
   symbolAfter?: boolean;
   textTestId?: string;
+  description?: string;
 }) {
   const slotRef = useRef<HTMLSpanElement>(null);
   const contentRef = useRef<HTMLSpanElement>(null);
   const fits = useWholeSidebarSignalText(slotRef, contentRef, label);
   return (
-    <AppTooltip label={label} side="right" intent="content" disabled={fits}>
+    <AppTooltip
+      label={description ?? label}
+      side="right"
+      intent="content"
+      disabled={fits && !description}
+      multiline={Boolean(description)}
+    >
       <span
         role="img"
-        aria-label={label}
+        aria-label={description ?? label}
         data-testid="thread-status-text"
         // biome-ignore lint/a11y/noNoninteractiveTabindex: The visible symbol recovers the whole hidden status by keyboard.
         tabIndex={0}
@@ -209,7 +217,8 @@ export function CollapsedGroupPresence({ members }: { members: readonly SidebarS
       </span>
     );
   }
-  const errors = members.filter((member) => member.presence.status === 'error').length;
+  const failedMembers = members.filter((member) => member.presence.status === 'error');
+  const errors = failedMembers.length;
   const replies = members.filter((member) => member.presence.status === 'done').length;
   if (errors === 0 && replies === 0) return null;
   // SidebarPresence has no awaiting-human fact: do not infer one from unread or @you.
@@ -217,6 +226,11 @@ export function CollapsedGroupPresence({ members }: { members: readonly SidebarS
     <span className="flex min-w-0 flex-1 items-center" data-testid="group-presence-summary">
       <PresenceLabel
         label={errors > 0 ? copy.groupErrors(errors) : copy.groupReplied(replies)}
+        description={
+          errors > 0
+            ? copy.groupErrorDetails(errors, failedMembers.map((member) => member.title || copy.untitled).join('\n'))
+            : undefined
+        }
         tone={errors > 0 ? 'critical' : 'success'}
         symbol={
           errors > 0 ? (

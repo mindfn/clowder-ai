@@ -43,6 +43,7 @@ beforeEach(() => {
   writeShellLanguage('zh');
   voice.state = 'idle';
   voice.transcript = '';
+  voice.partialTranscript = '';
   useActiveExecutionStore.getState().reset();
   useChatStore.setState({
     hasActiveInvocation: false,
@@ -271,6 +272,14 @@ describe('v2 two-level composer', () => {
     renderComposer();
     expect(button('转写中')?.disabled).toBe(true);
     expect(button('发送消息')?.disabled).toBe(true);
+  });
+
+  it('routes a live partial transcript through the overflow recovery primitive', () => {
+    voice.state = 'recording';
+    voice.partialTranscript = '这是一段很长的实时转写。'.repeat(30);
+    renderComposer();
+    const blocks = [...container.querySelectorAll('[data-overflow-measure="block"]')];
+    expect(blocks.map((node) => node.textContent)).toContain(voice.partialTranscript);
   });
 
   it('retains queue-send and voice as separate controls while work is running', () => {

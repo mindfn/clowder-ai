@@ -54,6 +54,31 @@ describe('parseUnifiedAttentionRead — a body is a read only if it is a version
     expect(parsed?.totalCount).toBeUndefined();
   });
 
+  it('accepts a canonical pending-question coordinate', () => {
+    const parsed = parseUnifiedAttentionRead(
+      body({
+        items: [
+          {
+            decisionRef: 'f306.runtime_interaction:choice-1',
+            kind: 'judgment',
+            summary: '在哪里验收？',
+            linkedNeedsMe: [],
+            choiceRequest: {
+              interactionId: 'choice-1',
+              revision: 20,
+              requesterCatId: 'codex-sol',
+              createdAt: 10,
+              title: '选择环境',
+              questions: [{ id: 'env', header: '环境', question: '在哪里验收？' }],
+              cardRef: { threadId: 'thread-1', messageId: 'message-1', blockId: 'card-1' },
+            },
+          },
+        ],
+      }),
+    );
+    expect(parsed?.items[0]?.choiceRequest?.cardRef.blockId).toBe('card-1');
+  });
+
   it.each([
     ['not an object', 'nope'],
     ['null', null],
@@ -84,6 +109,41 @@ describe('parseUnifiedAttentionRead — a body is a read only if it is a version
       'an approval with no proposalId',
       body({ items: [{ decisionRef: 'x', kind: 'approval', summary: 's', linkedNeedsMe: [], approval: {} }] }),
     ],
+    ['a negative attentionCount', body({ attentionCount: -1 })],
+    [
+      'a malformed choice-card coordinate',
+      body({
+        items: [
+          {
+            decisionRef: 'f306.runtime_interaction:choice-1',
+            kind: 'judgment',
+            summary: 's',
+            linkedNeedsMe: [],
+            choiceRequest: {
+              interactionId: 'choice-1',
+              revision: 20,
+              requesterCatId: 'codex-sol',
+              createdAt: 10,
+              title: '选择环境',
+              questions: [{ id: 'env', header: '环境', question: '在哪里验收？' }],
+              cardRef: { threadId: 'thread-1', messageId: 'message-1', blockId: ' ' },
+            },
+          },
+        ],
+      }),
+    ],
+    [
+      'a malformed structured-choice source',
+      body({
+        sources: {
+          approvals: source(),
+          needsMe: source({ coverage: 'current_linked_F310_five_producers' }),
+          structuredChoices: { status: 'available' },
+        },
+      }),
+    ],
+    ['malformed mention counts', body({ mentionCounts: { today: 0, week: 0, earlier: '558', handled: 0 } })],
+    ['an unknown mention filter', body({ mentionPeriod: 'urgent' })],
     ['a negative totalCount', body({ totalCount: -1 })],
     ['a fractional totalCount', body({ totalCount: 1.5 })],
     ['a missing page', body({ page: undefined })],

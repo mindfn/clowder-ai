@@ -1,9 +1,11 @@
+import { validateVideoProjectMediaScope } from '../project-media-scope.js';
 import { validateContentOperationContext, validateVideoProjectScope } from '../project-scope.js';
 import { validateContentPublication } from '../publication.js';
 import type {
   ContentPublicationScopeV1,
   ContentSettlementReceiptV1,
   ProjectContentRevisionV1,
+  VideoProjectMediaScopeV1,
   VideoProjectScopeV1,
 } from '../types.js';
 
@@ -22,6 +24,7 @@ export interface ProjectContentStateV1 {
   readonly operations: Readonly<Record<string, StoredOperationV1>>;
   readonly publicationScope?: ContentPublicationScopeV1;
   readonly projectScope?: VideoProjectScopeV1;
+  readonly projectMediaScope?: VideoProjectMediaScopeV1;
 }
 
 export function parseProjectContentState(raw: string, expectedContentRef: string): ProjectContentStateV1 {
@@ -40,6 +43,8 @@ export function parseProjectContentState(raw: string, expectedContentRef: string
   }
   const state = parsed as unknown as ProjectContentStateV1;
   validateVideoProjectScope(state.projectScope, state.contentRef, state.mediaType, state.publicationScope);
+  validateVideoProjectMediaScope(state.projectMediaScope, state);
+  if (state.projectMediaScope && state.currentOwnerRevision !== 1) throw corruptState(expectedContentRef);
   validateCompleteRevisionChain(state);
   return state;
 }

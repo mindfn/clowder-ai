@@ -42,6 +42,7 @@ export const newConversationCopy = defineShellCopy(
       draftRecoveryBlocked: '已保存的附件尚未完整找回。本次发送已停止；请重试找回或明确移除后再发送。',
       createFailed: '对话创建结果尚未确认。草稿和选择都已保留；重试会核对同一次创建。',
       createRejected: '这些设置未能建立对话。请调整项目或首选猫后重试；草稿仍会保留。',
+      importFailed: '对话已建立，但原会话还没有接上。请在接入面板再看一次；取消会保留已建立的对话。',
       sendFailed: '对话已建立，但首条消息尚未确认送达。草稿已保留；重试不会另建对话。',
       creating: '正在建立对话…',
       sending: '正在发送第一条消息…',
@@ -117,6 +118,8 @@ export const newConversationCopy = defineShellCopy(
         'Creation is not confirmed yet. Your draft and choices are saved; retrying checks the same request.',
       createRejected:
         'These settings could not create a conversation. Adjust the project or preferred cats and retry; your draft is preserved.',
+      importFailed:
+        'The conversation was created, but its original session is not connected yet. Check again in the panel; cancel keeps the created conversation.',
       sendFailed:
         'The conversation exists, but the first message is not confirmed. Your draft is saved; retrying will not create another conversation.',
       creating: 'Creating the conversation…',

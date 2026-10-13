@@ -270,20 +270,17 @@ test(
       );
       await home.getByTestId('workspace-launcher-search').fill('F307');
       await home.getByTestId('workspace-launcher-file-result').first().click();
-      // F309 AC-U1 (docs/features/F309-collaborative-content-plane.md:701) and the Phase U plan
-      // (docs/plans/2026-09-19-f309-phase-u-step1-packet.md:30): an ordinary file lands in its
-      // collaboration surface; the file viewer stays reachable through the explicit 文件工具 action.
+      // The accepted Markdown owner contains both its reader and collaboration.
       await workbench
         .locator(`[data-surface-id="file-owner:${FILE_OWNER_WORKTREE_ID}"]`)
-        .getByRole('button', { name: '文件工具', exact: true })
-        .click();
-      await page.getByTestId('workspace-file-viewer').waitFor();
+        .getByTestId('workspace-file-viewer')
+        .waitFor({ state: 'visible' });
 
       assert.equal(await workbench.getAttribute('data-surface-count'), '1');
       assert.equal(
         await page.getByTestId('f307-add-surface').count(),
         1,
-        'a concrete surface restores the inline tab-strip add control',
+        'a concrete surface restores the classic inline tab-strip add control',
       );
       await page.getByTestId('f307-add-surface').click();
       await home.getByTestId('workspace-launcher-dev-browser').click();

@@ -5,6 +5,7 @@ import { apiFetch } from '@/utils/api-client';
 import { type OfficialPluginAction, OfficialPluginCard, type OfficialPluginInfo } from './OfficialPluginCard';
 import type { OfficialPluginCatchUpAction } from './OfficialPluginCatchUp';
 import { officialPluginEnableConfirmation } from './official-plugin-presentation';
+import type { PluginManagerDesignFixture } from './plugin-manager/plugin-manager-fixtures';
 import { SettingsText } from './primitives/SettingsText';
 
 const HEALTH_REFRESH_MS = 5_000;
@@ -71,7 +72,13 @@ function mutationRequest(plugin: OfficialPluginInfo, action: OfficialPluginActio
   };
 }
 
-export function OfficialPluginsPanel() {
+export function OfficialPluginsPanel({
+  onlyPluginId,
+  visual,
+}: {
+  onlyPluginId?: string;
+  visual?: Pick<PluginManagerDesignFixture, 'icon' | 'iconBg'>;
+} = {}) {
   const [plugins, setPlugins] = useState<OfficialPluginInfo[]>([]);
   const [loading, setLoading] = useState(true);
   const [busyId, setBusyId] = useState<string | null>(null);
@@ -216,15 +223,18 @@ export function OfficialPluginsPanel() {
           当前显示 Host 内置的可信版本；联网后会自动检查官方更新。
         </div>
       )}
-      {plugins.map((plugin) => (
-        <OfficialPluginCard
-          key={plugin.catalogId}
-          plugin={plugin}
-          busy={busyId === plugin.catalogId}
-          onAction={(action) => void mutate(plugin, action)}
-          onCatchUp={(action, fingerprint) => void catchUp(plugin, action, fingerprint)}
-        />
-      ))}
+      {plugins
+        .filter((plugin) => onlyPluginId === undefined || plugin.pluginId === onlyPluginId)
+        .map((plugin) => (
+          <OfficialPluginCard
+            visual={plugin.pluginId === onlyPluginId ? visual : undefined}
+            key={plugin.catalogId}
+            plugin={plugin}
+            busy={busyId === plugin.catalogId}
+            onAction={(action) => void mutate(plugin, action)}
+            onCatchUp={(action, fingerprint) => void catchUp(plugin, action, fingerprint)}
+          />
+        ))}
     </section>
   );
 }

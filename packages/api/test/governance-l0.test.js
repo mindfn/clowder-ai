@@ -31,6 +31,28 @@ describe('governance-l0 compiler (#747)', () => {
   const root = findProjectRoot();
   const sharedRules = readFileSync(join(root, 'cat-cafe-skills', 'refs', 'shared-rules.md'), 'utf-8');
 
+  it('injects the source-owned end-of-turn human request rule without the disk-compression example', () => {
+    const l0 = compileGovernanceL0FromMarkdown(sharedRules);
+    assert.match(l0, /收尾仍需.+决定或操作/);
+    assert.ok(l0.includes('先按决策漏斗判断能否自决'));
+    assert.ok(l0.includes('今天不答会怎样'));
+    assert.ok(l0.includes('FYI 不进待办'));
+    assert.ok(!l0.includes('分批压缩旧档'));
+  });
+
+  it('keeps the human handoff rule when public branding changes its heading addressee', () => {
+    for (const addressee of ['operator', 'co-creator']) {
+      const branded = sharedRules.replace(/^### 收尾找[^\n]+$/m, `### 收尾找${addressee}`);
+      const l0 = compileGovernanceL0FromMarkdown(branded);
+      assert.ok(l0.includes('先按决策漏斗判断能否自决'));
+      assert.ok(l0.includes('今天不答会怎样'));
+      assert.ok(l0.includes('FYI 不进待办'));
+      assert.ok(!l0.includes('分批压缩旧档'));
+    }
+    const missing = sharedRules.replace(/^### 收尾找[^\n]+$/m, '### REMOVED-HUMAN-HANDOFF');
+    assert.throws(() => compileGovernanceL0FromMarkdown(missing), /missing.*收尾找/);
+  });
+
   it('projects the meta method from its source section once, without copying adjacent detail', () => {
     const heading = '## 元方法（Meta Method）';
     const withoutMethod = sharedRules.replace(/^## 元方法（Meta Method）[^\n]*\n[\s\S]*?(?=^## |$(?![\s\S]))/m, '');

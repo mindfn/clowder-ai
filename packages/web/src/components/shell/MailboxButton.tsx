@@ -11,6 +11,7 @@ import { useApprovalSessions } from './mailbox/use-approval-sessions';
 import { type RailBadge, RailButton } from './RailButton';
 import { ShellGlyph } from './ShellIcons';
 import {
+  deriveMailboxPanelState,
   deriveMailboxState,
   MAILBOX_NAME,
   type MailboxState,
@@ -116,6 +117,7 @@ export function MailboxButton() {
         onClick={() => {
           setSection('pending');
           setSelectedProposalId(null);
+          if (!open) view.setMentionPeriod?.('week');
           setOpen((wasOpen) => !wasOpen);
         }}
         testId="mailbox-button"
@@ -126,13 +128,20 @@ export function MailboxButton() {
       {open && (
         <MailboxPanel
           anchor={buttonRef}
-          state={state}
+          state={deriveMailboxPanelState(view.result)}
           view={view}
           sessions={sessions}
           section={section}
-          onSectionChange={setSection}
+          onSectionChange={(next) => {
+            setSection(next);
+            view.setMentionPeriod?.(next === 'history' ? 'handled' : 'week');
+          }}
           selectedProposalId={selectedProposalId}
           onOpenPlace={openPlace}
+          onOpenSchedule={() => {
+            setOpen(false);
+            openInChat(() => setWorkspaceMode('product-schedule'));
+          }}
           onClose={() => close(true)}
         />
       )}

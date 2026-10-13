@@ -122,3 +122,36 @@ it('dismisses a portal when its Workspace trigger is hidden', () => {
   expect(host.querySelector('details')?.open).toBe(false);
   expect(document.querySelector<HTMLElement>('[data-v2-workspace-menu]')?.hidden).toBe(true);
 });
+
+it('opens one return generation, focuses its input, and never reopens the dismissed generation', () => {
+  const render = (request?: number) =>
+    act(() =>
+      root.render(
+        <V2WorkspaceMenu
+          trigger="+"
+          triggerProps={{}}
+          width={256}
+          {...{ openRequest: request, focusSelector: '[data-return-input]' }}
+        >
+          <button type="button">Other tool</button>
+          <input data-return-input="" />
+        </V2WorkspaceMenu>,
+      ),
+    );
+  render();
+  const trigger = host.querySelector('summary');
+  const input = document.querySelector<HTMLInputElement>('[data-return-input]');
+  if (!trigger || !input) throw new Error('the real menu nodes must be mounted');
+  vi.spyOn(trigger, 'getClientRects').mockReturnValue([new DOMRect(0, 0, 40, 32)] as unknown as DOMRectList);
+  vi.spyOn(input, 'getClientRects').mockReturnValue([new DOMRect(0, 0, 120, 32)] as unknown as DOMRectList);
+  render(1);
+  expect(host.querySelector('details')?.open).toBe(true);
+  expect(document.activeElement).toBe(input);
+  act(() => document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true })));
+  render(1);
+  expect(host.querySelector('details')?.open).toBe(false);
+  expect(document.activeElement).toBe(trigger);
+  render(2);
+  expect(host.querySelector('details')?.open).toBe(true);
+  expect(document.activeElement).toBe(input);
+});

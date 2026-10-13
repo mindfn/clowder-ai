@@ -35,13 +35,24 @@ cat_cafe_redis_wait_for_ping() {
   return 1
 }
 
+cat_cafe_redis_read_dbsize() {
+  local size
+  size="$(redis-cli -h 127.0.0.1 -p "$1" --raw dbsize)" || return 1
+  if ! [[ "$size" =~ ^[0-9]+$ ]]; then
+    echo "[redis-rdb-first] dbsize is unreadable on port $1; refusing to infer an empty database" >&2
+    return 1
+  fi
+  printf '%s\n' "$size"
+}
+
 cat_cafe_redis_enable_aof_after_rdb_boot() {
   local port="$1"
   local dump_path="$2"
   local appendfsync="$3"
 
   local dbsize dump_size
-  dbsize="$(redis-cli -p "$port" dbsize 2>/dev/null || echo "0")"
+  REDIS_STARTUP_DATA_UNVERIFIED=true
+  dbsize="$(cat_cafe_redis_read_dbsize "$port")" || return 1
   dump_size="$(cat_cafe_file_size_bytes "$dump_path")"
 
   if [ "${dump_size:-0}" -ge 1024 ] && [ "${dbsize:-0}" = "0" ]; then
@@ -50,8 +61,9 @@ cat_cafe_redis_enable_aof_after_rdb_boot() {
     return 1
   fi
 
-  redis-cli -p "$port" config set appendfsync "$appendfsync" >/dev/null
-  redis-cli -p "$port" config set appendonly yes >/dev/null
+  REDIS_STARTUP_DATA_UNVERIFIED=false
+  redis-cli -p "$port" config set appendfsync "$appendfsync" >/dev/null || return 1
+  redis-cli -p "$port" config set appendonly yes >/dev/null || return 1
 
   for _ in $(seq 1 50); do
     if [ "$(redis-cli -p "$port" config get appendonly 2>/dev/null | sed -n '2p')" = "yes" ]; then

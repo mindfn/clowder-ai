@@ -1,5 +1,6 @@
 // @vitest-environment jsdom
 
+import { collectiveClientContextSchema } from '@cat-cafe/shared';
 import { act } from 'react';
 import { createRoot, type Root } from 'react-dom/client';
 import { afterEach, beforeEach, expect, it, vi } from 'vitest';
@@ -79,11 +80,17 @@ const snapshot: ClientSnapshot = {
 function Harness({ value = snapshot }: { value?: ClientSnapshot }) {
   const host = useHostContext(true, value, 'general', ['general']);
   return (
-    <output
-      data-testid="focused-work"
-      data-focus={host.focusWork ? JSON.stringify(host.focusWork) : ''}
-      data-open={String(host.open)}
-    />
+    <>
+      <output
+        data-testid="focused-work"
+        data-focus={host.focusWork ? JSON.stringify(host.focusWork) : ''}
+        data-open={String(host.open)}
+        data-cafe-section={host.cafeSection ?? ''}
+      />
+      <button type="button" onClick={() => host.show('channel')}>
+        打开频道设置
+      </button>
+    </>
   );
 }
 
@@ -159,6 +166,48 @@ it('keeps Host management available while a revoked connection is unpaired', asy
   expect(host?.getAttribute('data-paired')).toBe('true');
 });
 
+it('publishes the exact private Café section requested from a channel menu', async () => {
+  const post = vi.spyOn(window.parent, 'postMessage');
+  await act(async () => root.render(<Harness />));
+  await act(async () => {
+    window.dispatchEvent(
+      new MessageEvent('message', {
+        source: window.parent,
+        origin: 'http://localhost:3000',
+        data: {
+          type: 'collective:host-context-init',
+          bridgeId: 'bridge_12345678',
+          serviceInstanceId: completedWork.serviceInstanceId,
+          collectiveId: completedWork.collectiveId,
+          connectionId,
+          humanId: 'human_12345678',
+        },
+      }),
+    );
+    container.querySelector<HTMLButtonElement>('button')?.click();
+  });
+  expect(container.querySelector('[data-testid="focused-work"]')?.getAttribute('data-cafe-section')).toBe('channel');
+  const context = post.mock.calls.filter(([body]) => body.type === 'collective:client-context').at(-1)?.[0];
+  const section = post.mock.calls.filter(([body]) => body.type === 'collective:client-cafe-section').at(-1)?.[0];
+  expect(context).toMatchObject({ openCafe: true });
+  expect(context).not.toHaveProperty('cafeSection');
+  expect(section).toMatchObject({
+    bridgeId: context.bridgeId,
+    contextId: context.contextId,
+    contextRevision: context.revision,
+    serviceInstanceId: context.serviceInstanceId,
+    collectiveId: context.collectiveId,
+    humanId: context.humanId,
+    channelId: context.channelId,
+    section: 'channel',
+  });
+
+  // The original strict Host accepts the unchanged base context and may ignore only the extension.
+  const legacyContextSchema = collectiveClientContextSchema.omit({ cafeSection: true }).strict();
+  expect(legacyContextSchema.safeParse(context).success).toBe(true);
+  expect(legacyContextSchema.safeParse(section).success).toBe(false);
+});
+
 it('offers re-pair from the actual workspace when its sole Host connection was revoked', async () => {
   const client = {
     snapshot: { ...snapshot, collaboration: { ...snapshot.collaboration, works: [] } },
@@ -188,7 +237,7 @@ it('offers re-pair from the actual workspace when its sole Host connection was r
   });
 
   expect(container.textContent).toContain('连接此 Café');
-  expect(container.textContent).toContain('共同家园在线 · 这台 Café 还没连接');
+  expect(container.textContent).not.toContain('共同家园在线');
   expect(container.textContent).not.toContain('这台 Café 已连接');
 });
 

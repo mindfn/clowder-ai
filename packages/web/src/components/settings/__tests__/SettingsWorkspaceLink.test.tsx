@@ -9,6 +9,7 @@ const mocks = vi.hoisted(() => ({ push: vi.fn() }));
 vi.mock('next/navigation', () => ({ useRouter: () => mocks }));
 vi.mock('@/utils/api-client', () => ({ apiFetch: vi.fn() }));
 const initial = useChatStore.getState();
+const settingsRootIdentity = `f063_root_v1_${'a'.repeat(64)}`;
 beforeAll(() => {
   (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 });
@@ -38,7 +39,13 @@ it('discovers the actual settings root rather than opening the same filename in 
       JSON.stringify({
         worktrees: [
           { id: 'wrong', root: '/foreign', branch: 'main', head: 'abc12345' },
-          { id: 'exact-root', root: '/settings-project', branch: 'main', head: 'abc12345' },
+          {
+            id: 'exact-root',
+            rootIdentity: settingsRootIdentity,
+            root: '/settings-project',
+            branch: 'main',
+            head: 'abc12345',
+          },
         ],
       }),
     ),
@@ -63,7 +70,7 @@ it('discovers the actual settings root rather than opening the same filename in 
     threadId: 'default',
     target: {
       kind: 'file',
-      worktreeId: 'exact-root',
+      worktreeId: settingsRootIdentity,
       path: 'AGENTS.md',
       navigationOrigin: {
         kind: 'settings',
@@ -154,11 +161,12 @@ async function clickExactRootLink(
   onTestFinished: (fn: () => Promise<void>) => void,
   kind: 'file' | 'directory' = 'file',
   relPath = 'AGENTS.md',
+  rootIdentity?: string,
 ) {
   vi.mocked(apiFetch).mockResolvedValue(
     new Response(
       JSON.stringify({
-        worktrees: [{ id: 'exact-root', root: '/settings-project', branch: 'main', head: 'abc12345' }],
+        worktrees: [{ id: 'exact-root', rootIdentity, root: '/settings-project', branch: 'main', head: 'abc12345' }],
       }),
     ),
   );
@@ -180,14 +188,14 @@ async function clickExactRootLink(
 it('a settings directory link asks the Hub to show that exact directory in its worktree tree', async ({
   onTestFinished,
 }) => {
-  await clickExactRootLink(onTestFinished, 'directory', 'packages/api/uploads');
+  await clickExactRootLink(onTestFinished, 'directory', 'packages/api/uploads', settingsRootIdentity);
   const state = useChatStore.getState();
   expect(state.rightPanelMode).toBe('workspace');
   expect(state.workspaceOpenRequest).toMatchObject({
     threadId: 'default',
     target: {
       kind: 'reveal',
-      worktreeId: 'exact-root',
+      worktreeId: settingsRootIdentity,
       path: 'packages/api/uploads',
       navigationOrigin: { kind: 'settings', href: '/settings?s=env', anchorId: 'settings-dir:packages/api/uploads' },
       // The id was minted under this root; the tree reads its identity through it (parent Alpha 2026-09-25).

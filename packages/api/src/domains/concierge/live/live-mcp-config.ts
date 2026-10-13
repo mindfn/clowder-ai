@@ -10,6 +10,13 @@ export const LIVE_MEETING_TOOL_NAMES = [
   'cat_cafe_meeting_status',
   'cat_cafe_meeting_stop',
 ] as const;
+export const LIVE_TASK_TOOL_NAMES = [
+  'cat_cafe_admit_entrusted_work',
+  'cat_cafe_read_entrusted_work',
+  'cat_cafe_update_entrusted_work',
+  'cat_cafe_update_task',
+  'cat_cafe_close_entrusted_work',
+] as const;
 
 function collabToolPolicy(household: boolean, meeting: boolean): CodexAppServerJsonObject {
   const tools: CodexAppServerJsonObject = {};
@@ -17,6 +24,7 @@ function collabToolPolicy(household: boolean, meeting: boolean): CodexAppServerJ
     Object.assign(tools, {
       cat_cafe_page_action_inspect: { approval_mode: 'approve' },
       cat_cafe_home_action: { approval_mode: 'approve' },
+      ...Object.fromEntries(LIVE_TASK_TOOL_NAMES.map((name) => [name, { approval_mode: 'approve' }])),
     });
   if (meeting)
     Object.assign(

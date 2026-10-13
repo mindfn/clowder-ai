@@ -10,10 +10,8 @@ import { authorPresentation, defaultPresentation, isLastOfSelfRun } from '../mes
 import { TopicMessage } from '../TopicMessage.js';
 
 /**
- * F322 B segment 1 (human message), shared-room half. DESIGN.md「对话」: in the new presentation your own message is on the
- * right in one block with no signature and one time under the last of a run; another person is on the left with a nameplate
- * in the human colour; the classic presentation is what it always was, and it is what the room draws when the host has said
- * nothing (Opus 5.5's contract 2026-10-01: the room follows the Café that opens it, whose own default is classic).
+ * The current shared-room presentation keeps every person and cat on the left with a visible name and avatar. Authorship
+ * still decides run-level time compression, but never removes identity or changes spatial alignment.
  *
  * Identity contract (F290 owner): the viewer is the same-Service `snapshot.me.human.humanId`. A message is yours only if the
  * actor is a human, the viewer is known, and the two humanIds are equal. The sender's name and avatar are the original
@@ -98,25 +96,26 @@ describe('who a message belongs to', () => {
   });
 });
 
-describe('new presentation: your own message', () => {
+describe('new presentation: your own message stays named on the left', () => {
   const markup = renderMessage(mine, ME);
 
-  it('has no avatar and no signature: right-aligned is you', () => {
+  it('keeps the avatar, name, and origin instead of relying on alignment to imply identity', () => {
     expect(markup).toContain('data-author="self"');
-    expect(markup).not.toContain('avatar-button');
-    expect(markup).not.toContain('<strong>阿宪</strong>');
-    expect(markup).not.toContain('Collective 成员');
+    expect(markup).toContain('avatar-button');
+    expect(markup).toContain('<strong>阿宪</strong>');
+    expect(markup).toContain('Collective 成员');
   });
 
-  it('keeps the body in one block and what you can do with the message', () => {
-    expect(markup).toMatch(/<div class="message-bubble"[^>]*>[\s\S]*三版封面，暖一点。/);
+  it('keeps the body and what you can do with the message without a private-chat bubble', () => {
+    expect(markup).toMatch(/message-body message-markdown[\s\S]*三版封面，暖一点。/);
+    expect(markup).not.toContain('message-bubble');
     expect(markup).toContain('data-event-id="evt_mine"');
     expect(markup).toContain('collective-event-evt_mine');
   });
 
-  it('shows its time under the block, once', () => {
+  it('shows its time beside the name, once', () => {
     expect(markup.match(/<time/g)).toHaveLength(1);
-    expect(markup).toMatch(/message-bubble[\s\S]*<time[^>]*class="message-time"/);
+    expect(markup).toMatch(/message-meta[\s\S]*<time[^>]*class="message-time"/);
   });
 
   it('shows no time when it is not the last of its run', () => {
@@ -127,10 +126,10 @@ describe('new presentation: your own message', () => {
 describe('new presentation: another person', () => {
   const markup = renderMessage(theirs, ME);
 
-  it('is on the left with a nameplate: avatar and name, then the time beside it', () => {
+  it('is on the left with an avatar, name, and time', () => {
     expect(markup).toContain('data-author="other-human"');
-    expect(markup).toContain('class="human-nameplate"');
-    expect(markup).toMatch(/human-nameplate[\s\S]*<strong>阿禾<\/strong>/);
+    expect(markup).toContain('avatar-button');
+    expect(markup).toMatch(/message-meta[\s\S]*<strong>阿禾<\/strong>/);
     expect(markup).toMatch(/<time[^>]*>/);
   });
 
@@ -161,6 +160,41 @@ describe('new presentation: cats are untouched', () => {
     expect(markup).toContain('avatar-button');
     expect(markup).toContain('<strong>缅因猫</strong>');
     expect(markup).not.toContain('data-author="self"');
+  });
+});
+
+describe('reply previews keep the responder visible', () => {
+  it('shows the real Cat avatar and name beside each recent reply', () => {
+    const avatarDataUrl = 'data:image/webp;base64,AAAA';
+    const participant: CollectiveParticipant = {
+      serviceInstanceId: 'svc_12345678',
+      collectiveId: 'col_12345678',
+      connectionId: 'con_1',
+      endpointId: 'end_1',
+      endpointLabel: '某个 Café',
+      humanId: ME,
+      humanDisplayName: '我',
+      catId: 'codex',
+      displayName: '缅因猫',
+      avatarDataUrl,
+      channelIds: ['general'],
+      participationRevision: 1,
+      availability: 'declared',
+    };
+    const markup = renderToStaticMarkup(
+      <ChannelMessage
+        thread={{ root: theirs, replies: [myCat] }}
+        currentHumanId={ME}
+        participants={[participant]}
+        presentation="v2"
+        onOpenTopic={noop}
+        onMention={noop}
+        onOpenMember={noop}
+      />,
+    );
+
+    expect(markup).toMatch(/reply-preview-item[\s\S]*<img src="data:image\/webp;base64,AAAA"/);
+    expect(markup).toMatch(/reply-preview-item[\s\S]*<b>缅因猫<\/b>/);
   });
 });
 
@@ -302,10 +336,12 @@ describe('topic messages', () => {
   const topic = (root: CollectiveEventEnvelope, viewer: string | undefined, presentation: 'v2' | 'classic' = 'v2') =>
     renderToStaticMarkup(<TopicMessage event={root} currentHumanId={viewer} presentation={presentation} />);
 
-  it('draw your own as the right-aligned block and another person with a nameplate', () => {
+  it('draws your own and another person with the same left-side identity grammar', () => {
     expect(topic(mine, ME)).toContain('data-author="self"');
-    expect(topic(mine, ME)).not.toContain('<strong>阿宪</strong>');
-    expect(topic(theirs, ME)).toContain('human-nameplate');
+    expect(topic(mine, ME)).toContain('<strong>阿宪</strong>');
+    expect(topic(mine, ME)).toContain('avatar');
+    expect(topic(theirs, ME)).toContain('<strong>阿禾</strong>');
+    expect(topic(theirs, ME)).not.toContain('human-nameplate');
   });
 
   it('draw an unknown viewer on the left, named', () => {
@@ -438,7 +474,7 @@ describe('the places that draw an event without the channel flow around it', () 
     );
 
     expect(first).toContain('data-author="self"');
-    expect(first).not.toContain('aria-label="查看 阿宪"');
+    expect(first).toContain('aria-label="查看 阿宪"');
     expect(second).toContain('data-author="other-human"');
     expect(second).toContain('阿禾');
   });

@@ -12,7 +12,11 @@ import { mediaMessageFixture } from './media-message-fixture.js';
 export async function mediaPublicationFixture(
   t: Parameters<typeof mediaMessageFixture>[0],
   multiTarget = false,
-  options: { producerStatus?: 'succeeded' | 'running' | 'canceled'; sharedProducer?: boolean } = {},
+  options: {
+    producerStatus?: 'succeeded' | 'running' | 'canceled';
+    sharedProducer?: boolean;
+    publicationLedger?: boolean;
+  } = {},
 ) {
   const nativeRoot = await mkdtemp(join(tmpdir(), 'f309-publication-native-'));
   t.after(async () => {
@@ -29,6 +33,7 @@ export async function mediaPublicationFixture(
     {
       authenticatedQueue: true,
       nativeImageArchiveDirectory: join(nativeRoot, 'raw'),
+      publicationLedger: options.publicationLedger,
     },
   );
   fixtureRef = f;

@@ -180,16 +180,27 @@ export const CLASSIFIER_PATTERNS: Array<{ code: CliErrorReasonCode; regex: RegEx
   {
     code: 'server_overloaded',
     regex:
-      /(temporarily limiting requests|not your usage limit|server is (overloaded|busy)|Selected model is at capacity\.|\b529\b|\bOverloaded\b)/i,
+      /(temporarily limiting requests|not your usage limit|server is (overloaded|busy)|Selected model is at capacity\.|currently experiencing high demand, which may cause temporary errors\.|\b529\b|\bOverloaded\b)/i,
   },
   {
     code: 'quota_exceeded',
     regex: /(\b429\b|quota|rate limit|too many requests|usage limit)/i,
   },
+  // Witness: 2026-10-11 Codex archive 5f771d02..., final request 7ab62694...
+  // A stream wrapper alone says nothing about the cause. Explicit provider wording wins.
+  {
+    code: 'upstream_service_error',
+    regex: /An error occurred while processing your request\./i,
+  },
   {
     code: 'network_error',
     regex:
-      /(ETIMEDOUT|ECONNREFUSED|ENOTFOUND|ECONNRESET|socket hang up|fetch failed|connect ECONN|getaddrinfo|stream disconnected before completion|error sending request for url)/i,
+      /(ETIMEDOUT|ECONNREFUSED|ENOTFOUND|ECONNRESET|socket hang up|fetch failed|connect ECONN|getaddrinfo|error sending request for url)/i,
+  },
+  {
+    code: 'stream_disconnected',
+    // Exact carrier EOF is also an incomplete stream, not evidence of a local network cause.
+    regex: /stream disconnected before completion|Codex app-server stream ended before turn completion/i,
   },
   {
     code: 'invalid_config',

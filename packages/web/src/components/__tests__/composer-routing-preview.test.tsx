@@ -1,3 +1,5 @@
+import { readFileSync } from 'node:fs';
+import { resolve } from 'node:path';
 import type { CatId } from '@cat-cafe/shared';
 import { act } from 'react';
 import { createRoot, type Root } from 'react-dom/client';
@@ -271,6 +273,17 @@ describe('server-backed composer routing preview', () => {
     act(() => choice.click());
     expect(onInsertMention).toHaveBeenCalledWith(expect.objectContaining({ id: 'codex', insert: '@砚砚 ' }));
     expect(document.querySelector('[role="dialog"]')).toBeNull();
+  });
+
+  it('keeps wide routing content-sized while the narrow compact rail alone expands', () => {
+    const css = readFileSync(resolve(process.cwd(), 'src/components/ComposerRoutingPreview.module.css'), 'utf8');
+    expect(css).toMatch(
+      /\.root\s*\{[^}]*flex:\s*0 1 auto;[^}]*inline-size:\s*fit-content;[^}]*max-inline-size:\s*min\(15rem,\s*100%\);/,
+    );
+    expect(css).toMatch(/\.button\s*\{[^}]*justify-content:\s*flex-start;/);
+    expect(css).toMatch(
+      /@media \(max-width: 639px\)[\s\S]*\.compactRoot\s*\{[^}]*flex:\s*1 0 auto;[^}]*inline-size:\s*auto;/,
+    );
   });
 
   it('keeps compact status text in one clipped cell while exposing the full state accessibly', async () => {

@@ -3,6 +3,8 @@ import { z } from 'zod';
 import { NodeExternalPluginProcessAdapter } from '../external-runtime/node-process-adapter.js';
 import {
   type HostCompanionReply as CompanionReply,
+  hostTextSubmission,
+  hostVoiceObservation,
   validateHostCompanionCommand as validateCompanionCommand,
   validateHostCompanionReply as validateCompanionReply,
 } from './companion-private-wire.js';
@@ -189,6 +191,24 @@ export class ElectronDesktopWindowExecutor implements DesktopWindowExecutor {
         buffer = buffer.subarray(newline + 1);
         try {
           const value: unknown = JSON.parse(line.toString('utf8'));
+          const submission = z
+            .object({ v: z.literal(1), type: z.literal('text_submission'), value: hostTextSubmission })
+            .strict()
+            .safeParse(value);
+          if (submission.success) {
+            if (Math.abs(Date.now() - submission.data.value.observedAt) <= 5000)
+              void launch.onTextSubmission?.(submission.data.value).catch(() => {});
+            continue;
+          }
+          const observation = z
+            .object({ v: z.literal(1), type: z.literal('voice_observation'), value: hostVoiceObservation })
+            .strict()
+            .safeParse(value);
+          if (observation.success) {
+            if (Math.abs(Date.now() - observation.data.value.observedAt) <= 5000)
+              void launch.onVoiceObservation?.(observation.data.value).catch(() => {});
+            continue;
+          }
           const requestFrame = bridgeFrame.safeParse(value);
           if (requestFrame.success) {
             handleBridge(requestFrame.data);

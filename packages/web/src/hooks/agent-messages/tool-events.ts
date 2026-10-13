@@ -23,12 +23,14 @@ interface ToolEventBase {
   catId: string;
   timestamp: number;
   executionRef?: string;
+  toolUseId?: string;
 }
 
 export function toolUseEvent(input: ToolEventBase & { toolName?: string; toolInput?: Record<string, unknown> }) {
   const detail = input.toolInput ? safeJsonDetail(input.toolInput) : undefined;
   const event: ToolEvent = {
     id: input.id,
+    ...(input.toolUseId ? { toolUseId: input.toolUseId } : {}),
     ...(input.executionRef ? { executionRef: input.executionRef } : {}),
     type: 'tool_use',
     label: `${input.catId} → ${input.toolName ?? 'unknown'}`,
@@ -44,6 +46,7 @@ export function toolResultEvent(input: ToolEventBase & { content?: string }): To
   const resultMeta = extractRecallMetaDetail(raw);
   return {
     id: input.id,
+    ...(input.toolUseId ? { toolUseId: input.toolUseId } : {}),
     ...(input.executionRef ? { executionRef: input.executionRef } : {}),
     type: 'tool_result',
     label: `${input.catId} ← result`,
@@ -57,6 +60,7 @@ export function toolResultEvent(input: ToolEventBase & { content?: string }): To
 export function webSearchEvent(input: ToolEventBase & { count: number }): ToolEvent {
   return {
     id: input.id,
+    ...(input.toolUseId ? { toolUseId: input.toolUseId } : {}),
     ...(input.executionRef ? { executionRef: input.executionRef } : {}),
     type: 'tool_use',
     label: `${input.catId} → web_search${input.count > 1 ? ` x${input.count}` : ''}`,

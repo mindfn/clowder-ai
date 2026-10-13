@@ -6,6 +6,7 @@ vi.mock('@/utils/api-client', () => ({ apiFetch: vi.fn() }));
 
 import { apiFetch } from '@/utils/api-client';
 import { CollectiveParticipationPanel } from '../CollectiveParticipationPanel';
+import type { ParticipationView } from '../use-collective-participation';
 
 const fetchMock = vi.mocked(apiFetch);
 const view = {
@@ -75,13 +76,6 @@ describe('Collective owner participation interactions', () => {
     expect(button, text).toBeDefined();
     await act(async () => button?.click());
   };
-  const checkbox = async (label: string) => {
-    const field = [...container.querySelectorAll('label')]
-      .find((item) => item.textContent?.includes(label))
-      ?.querySelector('input');
-    expect(field, label).toBeDefined();
-    await act(async () => field?.click());
-  };
   const settle = async () => {
     await act(async () => {
       await new Promise((resolve) => setTimeout(resolve, 0));
@@ -134,9 +128,9 @@ describe('Collective owner participation interactions', () => {
     expect(fetchMock.mock.calls.some(([url]) => String(url).includes('/work/'))).toBe(false);
     expect(container.textContent).not.toContain('带它加入');
     expect(container.textContent).toContain('Opus');
-    expect(container.textContent).toContain('暂时无法公共参与');
-    expect(container.textContent?.indexOf('这段讨论带回的请求与工作')).toBeLessThan(
-      container.textContent?.indexOf('管理参与伙伴') ?? -1,
+    expect(container.textContent).toContain('这种接入方式暂时不能参与');
+    expect(container.textContent?.indexOf('我的猫')).toBeLessThan(
+      container.textContent?.indexOf('这段讨论带回的请求与工作') ?? -1,
     );
   });
 
@@ -174,17 +168,153 @@ describe('Collective owner participation interactions', () => {
       }),
     );
     await open();
-    const roster = container.querySelector('section[aria-label="本频道的伙伴"]');
+    const roster = container.querySelector('section[aria-label="我的猫"]');
     expect(roster).not.toBeNull();
     expect(roster?.querySelector('img[src="/avatars/codex-sol.png"]')).not.toBeNull();
     expect(roster?.textContent).toContain('缅因猫（Sol）');
-    expect(roster?.textContent).toContain('处理复杂实现');
     expect(roster?.textContent).toContain('gpt-6-sol');
-    expect(roster?.textContent).toContain('暂时无法公共参与');
-    expect(container.textContent?.indexOf('本频道的伙伴')).toBeLessThan(
+    expect(roster?.textContent).toContain('这种接入方式暂时不能参与');
+    expect(container.textContent?.indexOf('我的猫')).toBeLessThan(
       container.textContent?.indexOf('这段讨论带回的请求与工作') ?? -1,
     );
-    expect(container.textContent).toContain('管理参与伙伴');
+    expect(container.textContent).not.toContain('管理参与伙伴');
+  });
+
+  it('shows one home-roster row per cat and confirms the consequence before disabling collective participation', async () => {
+    const rosterView = {
+      ...view,
+      cats: [
+        {
+          id: 'codex61-sol',
+          displayName: '小太阳',
+          nickname: '小太阳',
+          breedDisplayName: '缅因猫',
+          variantLabel: 'GPT-6.1 Sol',
+          avatar: '/avatars/codex61-sol.png',
+          defaultModel: 'gpt-6.1-sol',
+          configured: true,
+          eligible: true,
+          supported: true,
+        },
+        {
+          id: 'codex-sol',
+          displayName: '小太阳',
+          nickname: '小太阳',
+          breedDisplayName: '缅因猫',
+          variantLabel: 'GPT-5.6 Sol',
+          avatar: '/avatars/codex-sol.png',
+          defaultModel: 'gpt-5.6-sol',
+          configured: true,
+          eligible: true,
+          supported: true,
+        },
+        {
+          id: 'deepseek',
+          displayName: 'DeepSeek',
+          defaultModel: 'deepseek-v4-pro',
+          configured: true,
+          eligible: false,
+          supported: true,
+        },
+        {
+          id: 'codex-luna',
+          displayName: '小月亮',
+          configured: false,
+          eligible: false,
+          supported: true,
+        },
+        {
+          id: 'channel-excluded',
+          displayName: '守门猫',
+          nickname: '守门猫',
+          configured: true,
+          eligible: true,
+          supported: true,
+        },
+      ],
+      desiredParticipation: {
+        ...view.desiredParticipation,
+        channelOverrides: {
+          general: { excludedCatIds: ['channel-excluded'] },
+          second: { excludedCatIds: ['channel-excluded', 'codex-sol'] },
+        },
+      },
+      channelRoutes: {
+        general: {
+          ...view.channelRoutes.general,
+          participants: {
+            'codex61-sol': { displayName: '小太阳' },
+            'codex-sol': { displayName: '小太阳' },
+          },
+        },
+        second: {
+          ...view.channelRoutes.second,
+          participants: { 'codex61-sol': { displayName: '小太阳' } },
+        },
+      } as ParticipationView['channelRoutes'],
+    };
+    let current = rosterView;
+    fetchMock.mockImplementation(async (_url, init) => {
+      if (init?.method === 'PUT') {
+        const body = JSON.parse(String(init.body));
+        current = {
+          ...rosterView,
+          revision: 3,
+          desiredParticipation: body.policy,
+          channelRoutes: {
+            general: {
+              ...rosterView.channelRoutes.general,
+              participants: { 'codex61-sol': { displayName: '小太阳' } },
+            },
+            second: rosterView.channelRoutes.second,
+          },
+        };
+      }
+      return response(current);
+    });
+
+    await open();
+    const roster = container.querySelector('section[aria-label="我的猫"]');
+    expect(roster).not.toBeNull();
+    expect(roster?.querySelectorAll('[data-testid="collective-cat-row"]')).toHaveLength(5);
+    expect(roster?.textContent).toContain('家里 5 只 · 3 只在这里');
+    expect(roster?.textContent).not.toContain('一只猫一行');
+    expect(roster?.textContent).toContain('@codex61-sol');
+    expect(roster?.textContent).toContain('@codex-sol');
+    expect(roster?.textContent).toContain('缅因猫 · GPT-6.1 Sol');
+    expect(roster?.textContent).toContain('这种接入方式暂时不能参与');
+    expect(roster?.textContent).toContain('家里已停用');
+    expect(roster?.textContent).toContain('已开启 · 目前没有加入任何频道');
+    expect(
+      roster?.querySelector<HTMLButtonElement>(
+        'button[role="switch"][aria-label="DeepSeek（@deepseek）参与这个共同体"]',
+      )?.disabled,
+    ).toBe(true);
+
+    const solSwitch = roster?.querySelector<HTMLButtonElement>(
+      'button[role="switch"][aria-label="小太阳（@codex-sol）参与这个共同体"]',
+    );
+    expect(solSwitch?.getAttribute('aria-checked')).toBe('true');
+    await act(async () => solSwitch?.click());
+    expect(fetchMock.mock.calls.filter(([, init]) => init?.method === 'PUT')).toHaveLength(0);
+    expect(roster?.textContent).toContain(
+      '关掉以后，小太阳不再收到这个共同体的新请求，也不在这里发言；已经接下的工作照实际情况留在「日程」里。',
+    );
+    await click('关掉');
+
+    const put = fetchMock.mock.calls.find(([, init]) => init?.method === 'PUT');
+    expect(JSON.parse(String(put?.[1]?.body))).toEqual({
+      expectedRevision: 2,
+      channelIds: ['general', 'second'],
+      policy: {
+        defaultMode: 'include',
+        excludedCatIds: ['codex-sol'],
+        channelOverrides: {
+          general: { excludedCatIds: ['channel-excluded'] },
+          second: { excludedCatIds: ['channel-excluded', 'codex-sol'] },
+        },
+      },
+    });
   });
 
   it('retains one resume operation through response loss and remount, without double-click execution', async () => {
@@ -241,42 +371,6 @@ describe('Collective owner participation interactions', () => {
     expect(container.textContent).not.toContain('工作已完成');
   });
 
-  it('writes a current-Channel exception without changing another Channel or global policy', async () => {
-    let current: unknown = view;
-    fetchMock.mockImplementation(async (_url, init) => {
-      if (init?.method === 'PUT') {
-        current = {
-          ...view,
-          revision: 3,
-          desiredParticipation: {
-            ...view.desiredParticipation,
-            channelOverrides: { general: { excludedCatIds: ['codex-astra'] } },
-          },
-          channelRoutes: {
-            ...view.channelRoutes,
-            general: { ...view.channelRoutes.general, participants: {} },
-          },
-        };
-        return response({ revision: 3, published: true });
-      }
-      return response(current);
-    });
-    await open();
-    await checkbox('Astra 参与 # general');
-    const put = fetchMock.mock.calls.find(([, init]) => init?.method === 'PUT');
-    expect(put?.[0]).toBe('/api/plugins/collective-connector/connection-A/participation/policy');
-    expect(JSON.parse(String(put?.[1]?.body))).toEqual({
-      expectedRevision: 2,
-      channelIds: ['general', 'second'],
-      policy: {
-        defaultMode: 'include',
-        excludedCatIds: [],
-        channelOverrides: { general: { excludedCatIds: ['codex-astra'] } },
-      },
-    });
-    expect(JSON.parse(String(put?.[1]?.body)).policy.channelOverrides.second).toBeUndefined();
-  });
-
   it('shows only requests and Work whose source belongs to the selected channel', async () => {
     const other = {
       ...view.requests[0],
@@ -323,31 +417,16 @@ describe('Collective owner participation interactions', () => {
       }),
     );
     await open();
-    expect(container.textContent).toContain('执行已结束，尚未回到频道');
-    expect(container.querySelector('a[href="/thread/private"]')?.textContent).toContain('Collective #general 公共参与');
+    expect(container.textContent).toContain('做完了，还没回复');
+    expect(container.querySelector('a[href="/thread/private"]')?.textContent).toContain('在家里查看');
   });
 
-  it('keeps private standing authority behind a separate explicit action', async () => {
+  it('does not mix the retired private-standing grant form into the collective roster', async () => {
     fetchMock.mockImplementation(async (_url, init) => response(init?.method ? {} : view));
     await open();
     expect(fetchMock.mock.calls.filter(([, init]) => init?.method).length).toBe(0);
-    const management = [...container.querySelectorAll('details')].find((item) =>
-      item.querySelector('summary')?.textContent?.includes('管理参与伙伴'),
-    );
-    expect(management).toBeDefined();
-    expect(management?.open).toBe(false);
-    if (management) management.open = true;
-    await click('设置 Astra 的私人持续委托');
-    await checkbox('允许指定成员');
-    await checkbox('Guest');
-    await click('保存私人授权');
-    const put = fetchMock.mock.calls.find(
-      ([url, init]) => String(url).endsWith('/participation') && init?.method === 'PUT',
-    );
-    expect(JSON.parse(String(put?.[1]?.body)).standingWork).toEqual({
-      requestingHumanIds: ['guest'],
-      expiresAt: null,
-    });
+    expect(container.textContent).not.toContain('私人持续委托');
+    expect(container.textContent).not.toContain('管理参与伙伴');
   });
 
   it('shows Host attention custody without offering an unclaimed response request as private Work', async () => {
@@ -368,7 +447,7 @@ describe('Collective owner participation interactions', () => {
       }),
     );
     await open();
-    expect(container.textContent).toContain('家里当前没有伙伴值守这类回应请求');
+    expect(container.textContent).toContain('家里现在没有猫留意这类回应请求');
     expect(container.textContent).not.toContain('交给它持续处理');
   });
 
@@ -396,7 +475,7 @@ describe('Collective owner participation interactions', () => {
       }),
     );
     await open();
-    expect(container.textContent).toContain('已有回应；回应已回到共同现场');
+    expect(container.textContent).toContain('已回复');
     expect(container.textContent).not.toContain('已进入回应队列');
   });
 });

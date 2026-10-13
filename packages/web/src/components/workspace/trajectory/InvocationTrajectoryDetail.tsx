@@ -23,8 +23,10 @@ import {
 import { RequestGenerationSection } from './request-generation-card';
 import { TrajectoryCatIdentity } from './TrajectoryCatIdentity';
 import { TrajectoryId } from './TrajectoryId';
+import { trajectoryCopy } from './trajectory.shell-copy';
 import { PromptInputCard } from './trajectory-prompt-input-card';
 import { SemanticTimelineRow } from './trajectory-semantic-cards';
+import { useTrajectoryCopy } from './use-trajectory-copy';
 
 export interface InvocationDetailResponse {
   invocationId: string;
@@ -103,25 +105,26 @@ function DetailBody({
   onRevealGenerations: () => void;
 }) {
   const isV2 = useShellPresentation() === 'v2';
+  const t = useTrajectoryCopy(trajectoryCopy);
   if (loading)
-    return <div className="text-sm text-cafe-muted">{isV2 ? '读取原始记录…' : '读取 canonical transcript…'}</div>;
+    return <div className="text-sm text-cafe-muted">{isV2 ? t.rawLoading : '读取 canonical transcript…'}</div>;
   if (error) {
     return (
       <div className="rounded-lg bg-conn-red-bg p-3 text-sm text-conn-red-text">
-        <p>这轮轨迹暂时读取失败。</p>
+        <p>{t.detailFailed}</p>
         <button
           type="button"
           onClick={() => copyInvocationRef(summary.invocationId)}
           className="mt-2 block font-mono text-xs underline"
         >
-          复制 inv:{summary.invocationId}
+          {t.copyRef(summary.invocationId)}
         </button>
         <button
           type="button"
           onClick={onRetry}
           className="mt-2 rounded-lg border border-conn-red-ring px-2 py-1 text-xs font-semibold"
         >
-          重试
+          {t.retry}
         </button>
       </div>
     );
@@ -144,7 +147,7 @@ function DetailBody({
             onClick={onMoreRaw}
             className="w-full rounded-lg border border-cafe px-3 py-2 text-xs text-cafe-secondary"
           >
-            再显示 100 条
+            {t.moreRaw}
           </button>
         )}
       </div>
@@ -172,7 +175,7 @@ function DetailBody({
           onClick={onToggleExpanded}
           className="w-full rounded-lg border border-cafe px-3 py-2 text-xs font-semibold text-cafe-secondary"
         >
-          {expanded ? '收起降噪视图' : `展开全部 ${totalEffectiveRows} 行`}
+          {expanded ? t.collapse : t.expandRows(totalEffectiveRows)}
         </button>
       )}
       {isV2 && (
@@ -222,6 +225,7 @@ export function InvocationTrajectoryDetail({
   onRevealGenerations?: () => void;
 }) {
   const isV2 = useShellPresentation() === 'v2';
+  const t = useTrajectoryCopy(trajectoryCopy);
   const [view, setView] = useState<'timeline' | 'raw'>('timeline');
   const [expanded, setExpanded] = useState(false);
   const [rawLimit, setRawLimit] = useState(100);
@@ -240,12 +244,12 @@ export function InvocationTrajectoryDetail({
             onClick={onBack}
             className="rounded-lg px-2 py-1 text-xs font-semibold text-cafe-secondary hover:bg-cafe-surface"
           >
-            {isV2 ? '‹ 轨迹' : '← 返回'}
+            {isV2 ? t.back : '← 返回'}
           </button>
           <span
             className={`rounded-full px-2 py-0.5 text-micro font-semibold ${TRAJECTORY_STATUS_CLASS[displayedSummary.status]}`}
           >
-            {TRAJECTORY_STATUS_LABEL[displayedSummary.status]}
+            {isV2 ? t[displayedSummary.status] : TRAJECTORY_STATUS_LABEL[displayedSummary.status]}
           </span>
           {isV2 ? (
             <div className="min-w-0 flex-1">
@@ -262,12 +266,12 @@ export function InvocationTrajectoryDetail({
           style={isV2 ? { gridTemplateColumns: 'repeat(auto-fit, minmax(min(100%, 130px), 1fr))' } : undefined}
         >
           <Metric
-            label={isV2 ? '猫 / 会话' : '猫 / Session'}
+            label={isV2 ? t.catSession : '猫 / Session'}
             value={
               isV2 ? (
                 <>
                   <TrajectoryCatIdentity catId={displayedSummary.catId} />
-                  <span className="block text-micro">第 {displayedSummary.sessionSeq + 1} 段</span>
+                  <span className="block text-micro">{t.segment(displayedSummary.sessionSeq + 1)}</span>
                   <TrajectoryId kind="会话" value={displayedSummary.sessionId} />
                 </>
               ) : (
@@ -275,20 +279,23 @@ export function InvocationTrajectoryDetail({
               )
             }
           />
-          <Metric label="耗时" value={formatTrajectoryDuration(displayedSummary.durationMs)} />
-          <Metric label="工具 / 消息" value={`${displayedSummary.toolUseCount} / ${displayedSummary.messageCount}`} />
+          <Metric label={t.duration} value={formatTrajectoryDuration(displayedSummary.durationMs)} />
+          <Metric
+            label={t.toolsMessages}
+            value={`${displayedSummary.toolUseCount} / ${displayedSummary.messageCount}`}
+          />
           <Metric
             label={isV2 ? 'Token' : 'Tokens'}
             value={
               isV2 && displayedSummary.tokens
-                ? `输入 ${displayedSummary.tokens.input ?? '—'} · 输出 ${displayedSummary.tokens.output ?? '—'}`
-                : (formatTokens(displayedSummary) ?? '未报告')
+                ? t.tokens(displayedSummary.tokens.input ?? '—', displayedSummary.tokens.output ?? '—')
+                : (formatTokens(displayedSummary) ?? t.unreported)
             }
           />
         </div>
         {(displayedSummary.sealReason || displayedSummary.terminalReason) && (
           <p className="mt-2 text-micro text-cafe-muted">
-            {displayedSummary.sealReason ? `${isV2 ? '封存' : 'seal'}: ${displayedSummary.sealReason}` : ''}
+            {displayedSummary.sealReason ? `${isV2 ? t.sealed : 'seal'}: ${displayedSummary.sealReason}` : ''}
             {displayedSummary.sealReason && displayedSummary.terminalReason ? ' · ' : ''}
             {displayedSummary.terminalReason ?? ''}
           </p>
@@ -303,7 +310,7 @@ export function InvocationTrajectoryDetail({
             onClick={() => setView(mode)}
             className={`px-3 py-2 text-xs font-semibold ${view === mode ? 'border-b-2 border-cafe-accent text-cafe-accent' : 'text-cafe-muted'}`}
           >
-            {mode === 'timeline' ? '轨迹' : isV2 ? '原始记录' : 'Raw'}
+            {mode === 'timeline' ? t.timeline : isV2 ? t.raw : 'Raw'}
           </button>
         ))}
       </div>

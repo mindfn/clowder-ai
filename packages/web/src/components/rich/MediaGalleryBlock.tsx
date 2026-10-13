@@ -4,20 +4,13 @@ import { useCallback, useState } from 'react';
 import { useChatArtworkEntry } from '@/components/content-review/useChatArtworkEntry';
 import type { PublishedMessageCoordinate } from '@/components/content-review/usePublishedContent';
 import { CopyButton, Lightbox } from '@/components/Lightbox';
+import { useShellLanguage } from '@/components/shell/shell-language';
 import type { RichMediaGalleryBlock } from '@/stores/chat-types';
 import { API_URL } from '@/utils/api-client';
+import { isGalleryApiUrl, useGalleryMediaUrls } from './useGalleryMediaUrls';
 
-function resolveMediaUrl(url: string, isV2: boolean): string {
-  const trimmed = url.trim();
-  if (
-    trimmed.startsWith('/uploads/') ||
-    (isV2 && trimmed.startsWith('/api/workspace/file/raw?')) ||
-    trimmed.startsWith('/api/connector-media/') ||
-    trimmed.startsWith('/avatars/')
-  ) {
-    return `${API_URL}${trimmed}`;
-  }
-  return trimmed;
+function resolveMediaUrl(url: string): string {
+  return isGalleryApiUrl(url) ? `${API_URL}${url}` : url;
 }
 
 export function MediaGalleryBlock({
@@ -30,13 +23,18 @@ export function MediaGalleryBlock({
   const items = Array.isArray(block.items) ? block.items : [];
   const [lightboxIndex, setLightboxIndex] = useState<number | null>(null);
   const [previewReason, setPreviewReason] = useState<string | undefined>();
-  const [failedIndices, setFailedIndices] = useState<Set<number>>(new Set());
+  const [failedUrls, setFailedUrls] = useState<Set<string>>(new Set());
+  const mediaUrls = useGalleryMediaUrls(items);
+  const language = useShellLanguage();
   const published = useChatArtworkEntry(publication);
+  const lightboxItem = lightboxIndex === null ? undefined : items[lightboxIndex];
+  const lightboxUrl = lightboxIndex === null ? undefined : mediaUrls[lightboxIndex]?.url;
+  const lightboxSrc = lightboxUrl ? resolveMediaUrl(lightboxUrl) : undefined;
 
-  const handleImgError = useCallback((index: number) => {
-    setFailedIndices((prev) => {
+  const handleImgError = useCallback((url: string) => {
+    setFailedUrls((prev) => {
       const next = new Set(prev);
-      next.add(index);
+      next.add(url);
       return next;
     });
   }, []);
@@ -47,13 +45,23 @@ export function MediaGalleryBlock({
         {block.title && <div className="font-medium text-sm mb-2">{block.title}</div>}
         <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
           {items.map((item, i) => {
-            const src = resolveMediaUrl(item.url, published.isV2);
-            const failed = failedIndices.has(i);
-            const source = published.source(item.url, { kind: 'media-gallery', blockId: block.id, itemIndex: i });
+            const media = mediaUrls[i];
+            if (!media) return null;
+            const src = media.url ? resolveMediaUrl(media.url) : '';
+            const failed = !media.pending && (!src || failedUrls.has(src));
+            const source = published.source(media.url ?? item.url, {
+              kind: 'media-gallery',
+              blockId: block.id,
+              itemIndex: i,
+            });
             return (
               // biome-ignore lint/suspicious/noArrayIndexKey: gallery items have no stable id
               <figure key={i} className="relative group space-y-1">
-                {failed ? (
+                {media.pending ? (
+                  <p role="status" className="px-4 py-6 text-xs text-cafe-secondary">
+                    {language === 'en' ? 'Loading image…' : '正在读取图片…'}
+                  </p>
+                ) : failed ? (
                   <div
                     className="rounded w-full flex flex-col items-center justify-center gap-2 bg-[var(--bg-secondary)] text-cafe-secondary px-4 py-6 min-h-[8rem]"
                     data-testid="media-gallery-error"
@@ -61,8 +69,14 @@ export function MediaGalleryBlock({
                     <span className="text-2xl" aria-hidden="true">
                       🖼️
                     </span>
-                    <span className="text-xs font-medium">Image failed to load</span>
-                    <code className="text-xs break-all max-w-full opacity-70">{item.url}</code>
+                    <span className="text-xs font-medium">
+                      {language === 'en' ? 'Image address could not be opened' : '图片地址无法打开'}
+                    </span>
+                    <span className="text-xs text-center">
+                      {language === 'en'
+                        ? 'Ask the sender to check the image address or send it again.'
+                        : '请让发送者检查图片地址或重新发送。'}
+                    </span>
                   </div>
                 ) : (
                   <button
@@ -89,12 +103,12 @@ export function MediaGalleryBlock({
                     <img
                       src={src}
                       alt={item.alt ?? ''}
-                      onError={() => handleImgError(i)}
+                      onError={() => handleImgError(src)}
                       className="rounded w-full object-cover max-h-48 cursor-pointer hover:opacity-90 transition-opacity"
                     />
                   </button>
                 )}
-                <CopyButton url={src} />
+                {src && <CopyButton url={src} placement={published.isV2 ? 'below' : 'overlay'} />}
                 {item.caption && <figcaption className="text-xs text-cafe-secondary">{item.caption}</figcaption>}
               </figure>
             );
@@ -111,11 +125,11 @@ export function MediaGalleryBlock({
           </p>
         ) : null}
       </div>
-      {lightboxIndex !== null && items[lightboxIndex] && !failedIndices.has(lightboxIndex) && (
+      {lightboxItem && lightboxSrc && !failedUrls.has(lightboxSrc) && (
         <Lightbox
-          url={resolveMediaUrl(items[lightboxIndex].url, published.isV2)}
-          alt={items[lightboxIndex].alt ?? ''}
-          caption={items[lightboxIndex].caption}
+          url={lightboxSrc}
+          alt={lightboxItem.alt ?? ''}
+          caption={lightboxItem.caption}
           annotationUnavailableReason={previewReason}
           onClose={() => setLightboxIndex(null)}
         />

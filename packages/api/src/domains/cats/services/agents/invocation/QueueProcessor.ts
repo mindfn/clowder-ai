@@ -174,6 +174,46 @@ import {
 import { ToolExecutionPolicyUnavailableError } from './tool-execution-policy.js';
 import { stampVisibleTurn } from './visible-turn.js';
 
+interface CapturedParentCancellation {
+  snapshotComplete: boolean;
+  status?: 'canceled' | 'canceled_by_user';
+}
+
+function classifyBatchCancellationReason(reason: unknown): 'canceled' | 'canceled_by_user' {
+  return reason === 'user_cancel' || reason === 'cancel_all' ? 'canceled_by_user' : 'canceled';
+}
+
+/** Classify one parent's immutable admission controllers; current tracker slots may be replacements. */
+function classifyCapturedParentCancellation(
+  batchSignal: AbortSignal,
+  targetCatIds: readonly string[],
+  admittedControllerByCat: ReadonlyMap<string, AbortController>,
+): CapturedParentCancellation {
+  const admittedControllers = targetCatIds.flatMap((catId) => {
+    const controller = admittedControllerByCat.get(catId);
+    return controller ? [controller] : [];
+  });
+  const snapshotComplete = targetCatIds.length > 0 && admittedControllers.length === targetCatIds.length;
+
+  if (batchSignal.aborted) {
+    return {
+      snapshotComplete,
+      status: classifyBatchCancellationReason(batchSignal.reason),
+    };
+  }
+  if (
+    !snapshotComplete ||
+    admittedControllers.some((controller) => !controller.signal.aborted || controller.signal.reason === 'timeout')
+  )
+    return { snapshotComplete };
+  return {
+    snapshotComplete: true,
+    status: admittedControllers.some((controller) => controller.signal.reason === 'preempted')
+      ? 'canceled'
+      : 'canceled_by_user',
+  };
+}
+
 /** Minimal interfaces for deps — avoid importing full types for testability */
 
 interface TrackerLike {
@@ -203,6 +243,7 @@ interface TrackerLike {
   getExecutionId?(threadId: string, catId: string): string | undefined;
   /** F-parallel-cancel: expose a slot's own controller for per-cat cancel isolation. */
   getController?(threadId: string, catId: string): AbortController | undefined;
+  getExecutionId?(threadId: string, catId: string): string | undefined;
   classifyExecutionId?(threadId: string, catId: string, executionId: string): ExecutionOwnerMatch;
   /** F254: exact per-cat cancel tombstone for durable terminal witness derivation. */
   getSlotState?(threadId: string, catId: string): 'active' | 'canceled' | 'absent';
@@ -3738,12 +3779,21 @@ export class QueueProcessor {
     let lifecycleAdmissionUnknown = false;
     let lifecycleQueueTargetsRetired = false;
     let lifecycleClaimRestorePromise: Promise<boolean> | undefined;
+    // Freeze the controllers installed for this parent before the first await after
+    // startAll. Later slot replacements must never lend state or signals to this run.
+    const admittedControllerByCat = new Map<string, AbortController>();
+    const admittedSignalForCat = (catId: string) =>
+      admittedControllerByCat.get(catId)?.signal ?? invocationTracker.getController?.(threadId, catId)?.signal;
+    const isAdmittedTargetCanceled = (catId: string) => {
+      const admitted = admittedControllerByCat.get(catId);
+      return admitted
+        ? admitted.signal.aborted && admitted.signal.reason !== 'timeout'
+        : invocationTracker.getSlotState?.(threadId, catId) === 'canceled' &&
+            !invocationTracker.isTimedOut?.(threadId, catId);
+    };
     const terminalDispositions = new PerCatTerminalDispositionCollector({
       targetCatIds: targetCats,
-      // A member stopped by its output timeout failed (F117 KD-22); its route reports the failure.
-      isCanceled: (catId) =>
-        invocationTracker.getSlotState?.(threadId, catId) === 'canceled' &&
-        !invocationTracker.isTimedOut?.(threadId, catId),
+      isCanceled: isAdmittedTargetCanceled,
     });
     let responseText = '';
     // F122B B6: completion hooks are registered before drain; keep their
@@ -4186,6 +4236,18 @@ export class QueueProcessor {
         }
         controller = invocationTracker.startAll(threadId, targetCats, userId, invocationId) ?? undefined;
       }
+      if (invocationTracker.getController) {
+        for (const catId of targetCats) {
+          const admittedController = invocationTracker.getController(threadId, catId);
+          if (
+            !admittedController ||
+            (invocationTracker.getExecutionId && invocationTracker.getExecutionId(threadId, catId) !== invocationId)
+          ) {
+            throw new Error(`Queue tracker lost admitted execution identity before first await: ${threadId}/${catId}`);
+          }
+          admittedControllerByCat.set(catId, admittedController);
+        }
+      }
       if (processingReservation) processingReservation.trackerStarted = true;
 
       // F216 c3: supersede tombstone guard. If a same-turn follow-up arrived during the
@@ -4535,6 +4597,33 @@ export class QueueProcessor {
       }, HEARTBEAT_INTERVAL_MS);
       heartbeatInterval.unref();
 
+      // Cancellation can win after tracker admission but before the durable parent
+      // record becomes running. Recheck synchronous slot truth immediately before
+      // entering the route so an all-canceled target set never starts work.
+      const preRouteCancellation = classifyCapturedParentCancellation(
+        controller.signal,
+        targetCats,
+        admittedControllerByCat,
+      );
+      const preRouteStatus =
+        preRouteCancellation.status ??
+        (!preRouteCancellation.snapshotComplete && targetCats.every(isAdmittedTargetCanceled)
+          ? 'canceled_by_user'
+          : undefined);
+      if (preRouteStatus) {
+        await requireInvocationRecordUpdate({
+          store: invocationRecordStore,
+          invocationId,
+          update: { status: 'canceled', expectedStatus: 'running' },
+          writer: 'queue pre-route cancellation fence',
+        });
+        log.info(
+          { threadId, entryId: entry.id, invocationId, preRouteStatus },
+          '[QueueProcessor] all target slots canceled before route execution',
+        );
+        return executionResult(preRouteStatus);
+      }
+
       routePreparationStartedAt = performance.now();
       for await (const msg of router.routeExecution(
         userId,
@@ -4560,16 +4649,16 @@ export class QueueProcessor {
           turnCustodyWakeForCat: (catId: string) => retargetTurnCustodyWake(turnCustodyWake, catId),
           ...(contentBlocks.length > 0 ? { contentBlocks } : {}),
           ...(controller.signal ? { signal: controller.signal } : {}),
-          // F-parallel-cancel: per-cat signal so canceling one concurrent cat (e.g. @codex)
-          // does not abort its siblings (e.g. @gpt52). startAll gives each cat its own per-cat
-          // controller; route-parallel resolves them through this getter.
+          // F-parallel-cancel: each original target keeps the controller captured at
+          // startAll. Canceling one cat does not abort siblings, and a later occupant
+          // of the same thread/cat slot cannot authorize this older parent.
           // NOTE (cloud review clarification): `controller` (line 808) is the INDEPENDENT batch
           // gate returned by startAll — NOT a primary cat controller. A single-cat cancel aborts
           // only that cat's per-cat controller, NOT the batch gate, so the consume-loop
           // `if (controller.signal.aborted) break` (993 / 1090) fires ONLY on whole-invocation
           // abort (cancelAll / force / thread-delete), never on single-cat cancel — the sibling
           // keeps streaming. (See InvocationTracker.startAll returning a fresh batchController.)
-          signalForCat: (catId: string) => invocationTracker.getController?.(threadId, catId)?.signal,
+          signalForCat: admittedSignalForCat,
           // F117 KD-22 (J4): a member's own invocation owns its output timeout; when it fires, the
           // Queue stops only that member, and only while its slot still runs this execution.
           ...(invocationTracker.getExecutionId && invocationTracker.cancel
@@ -5074,7 +5163,7 @@ export class QueueProcessor {
             collectedUsage.set(msg.catId, mergeTokenUsage(collectedUsage.get(msg.catId), metadata.usage));
           }
         }
-        if (msg.type === 'done' && typeof errorCode === 'string') {
+        if (msg.type === 'done' && typeof errorCode === 'string' && errorCode !== 'INVOCATION_CANCELLED') {
           governanceErrorCode = errorCode;
         }
 
@@ -5190,31 +5279,37 @@ export class QueueProcessor {
       }
 
       // 8. Check abort before marking succeeded (F122B B6 P1: abort→succeeded bug fix)
-      // F-parallel-cancel: AGGREGATE finalStatus — batch gate abort (whole invocation) OR every
-      // target cat singly cancelled → canceled. A single-cat cancel no longer aborts the batch
-      // gate, so raw controller.signal.aborted only covers the whole-invocation case. (completeAll
-      // runs later, so cancel tombstones are still visible to resolveFinalStatus here.)
+      // F-parallel-cancel: aggregate against this parent's captured controllers.
+      // Current tracker slots may already belong to a replacement and are allocator
+      // state, not terminal evidence for this invocation.
       const batchReason = controller.signal.reason;
-      const aggFinalStatus = invocationTracker.resolveFinalStatus
-        ? invocationTracker.resolveFinalStatus(threadId, targetCats, {
-            aborted: controller.signal.aborted,
-            reason: batchReason as string | undefined,
-          })
-        : controller.signal.aborted
-          ? // Fallback (tracker without resolveFinalStatus) must stay equivalent to the old logic:
-            // whole-invocation abort → reason decides canceled_by_user vs canceled.
-            batchReason === 'user_cancel' || batchReason === 'cancel_all'
-            ? 'canceled_by_user'
-            : 'canceled'
-          : 'succeeded';
-      if (aggFinalStatus !== 'succeeded') {
+      const aggregateCancellation = classifyCapturedParentCancellation(
+        controller.signal,
+        targetCats,
+        admittedControllerByCat,
+      );
+      let aggFinalStatus: 'succeeded' | 'canceled' | 'canceled_by_user';
+      if (aggregateCancellation.status) {
+        aggFinalStatus = aggregateCancellation.status;
+      } else if (aggregateCancellation.snapshotComplete) {
+        aggFinalStatus = 'succeeded';
+      } else if (invocationTracker.resolveFinalStatus) {
+        aggFinalStatus = invocationTracker.resolveFinalStatus(threadId, targetCats, {
+          aborted: false,
+          reason: undefined,
+        });
+      } else {
+        aggFinalStatus = 'succeeded';
+      }
+      const hostCanceled = aggFinalStatus === 'succeeded' && terminalDispositions.areAllTargetsCanceled();
+      if (aggFinalStatus !== 'succeeded' || hostCanceled) {
         log.info({ threadId, entryId: entry.id }, '[QueueProcessor] Entry aborted/cancelled during execution');
         // F148 fix: ack cursors for cats that completed before abort (monotonic CAS, safe to call)
         if (cursorBoundaries.size > 0) {
           await router.ackCollectedCursors(userId, threadId, cursorBoundaries);
         }
         await invocationRecordStore.update(invocationId, { status: 'canceled' });
-        finalStatus = aggFinalStatus;
+        finalStatus = hostCanceled ? 'canceled' : aggFinalStatus;
         // Suppress auto-resume ONLY for cancelAll (stop everything), NOT single-cat cancel.
         // Single-cat cancel should still auto-resume the next queued entry (backward compat).
         // 'cancel_all' = cancelAll button; 'user_cancel' = single-cat — only cancel_all suppresses.
@@ -5704,9 +5799,7 @@ export class QueueProcessor {
         if (actionFenceAggregateSucceeded) {
           const successfulHolderCatIds = new Set(terminalDispositions.getSuccessfulCatIds());
           const nonSuccessfulHolderCatIds = targetCats.filter((catId) => !successfulHolderCatIds.has(catId));
-          const canceledHolderCatIds = nonSuccessfulHolderCatIds.filter(
-            (catId) => invocationTracker.getSlotState?.(threadId, catId) === 'canceled',
-          );
+          const canceledHolderCatIds = nonSuccessfulHolderCatIds.filter(isAdmittedTargetCanceled);
           const canceledHolderCatIdSet = new Set(canceledHolderCatIds);
           const failedHolderCatIds = nonSuccessfulHolderCatIds.filter((catId) => !canceledHolderCatIdSet.has(catId));
           if (canceledHolderCatIds.length > 0) {

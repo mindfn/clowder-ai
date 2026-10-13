@@ -7,7 +7,7 @@ import { test } from 'node:test';
 import { fileURLToPath } from 'node:url';
 import { chromium } from '../../../ppt-forge/node_modules/playwright/index.mjs';
 import { startReviewHost } from './fixtures/f309-artifact-review-host.mjs';
-import { selectReviewMode } from './fixtures/f309-artwork-controls.mjs';
+import { openAnnotationSave, selectReviewMode } from './fixtures/f309-artwork-controls.mjs';
 
 const repository = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../../../..');
 
@@ -79,7 +79,7 @@ for (const width of [1280, 390]) {
         stage.y >= 0 && stage.y + stage.height <= 900,
         `The complete artwork stage must remain in the viewport: ${JSON.stringify(stage)}`,
       );
-      const send = await page.getByRole('button', { name: '保存批注', exact: true }).boundingBox();
+      const send = await (await openAnnotationSave(page)).boundingBox();
       assert.ok(send && send.y + send.height <= 900, 'Sending must not require scrolling below the artwork.');
       await page.screenshot({ path: path.join(evidence, `layout-${width}-comment.png`), fullPage: true });
       await selectReviewMode(page, 'markup');

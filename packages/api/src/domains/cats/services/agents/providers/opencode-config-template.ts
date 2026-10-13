@@ -153,7 +153,7 @@ export interface OpenCodeRuntimeConfigOptions {
   externalDirectories?: readonly string[];
   /** Cat ID for capabilities.json enabled-state filtering. */
   catId?: string;
-  /** Runtime root containing the managed .cat-cafe/capabilities.json. */
+  /** Persistent default capability source, independent of the runtime MCP binary root. */
   capabilitiesProjectRoot?: string;
   /** F249: User's project working directory for per-project MCP overrides. */
   workingDirectory?: string;

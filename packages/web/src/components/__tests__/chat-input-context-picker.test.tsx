@@ -1,8 +1,10 @@
+import type { ProjectScreeningContextAttachment } from '@cat-cafe/shared';
 import React, { act } from 'react';
 import { createRoot, type Root } from 'react-dom/client';
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import { ChatInput } from '@/components/ChatInput';
 import { useChatStore } from '@/stores/chatStore';
+import { useToastStore } from '@/stores/toastStore';
 
 const { apiFetchMock } = vi.hoisted(() => ({ apiFetchMock: vi.fn() }));
 
@@ -21,6 +23,20 @@ let container: HTMLDivElement;
 let root: Root;
 let threadSequence = 0;
 let onSendMock: React.ComponentProps<typeof ChatInput>['onSend'];
+function screening(id: string): ProjectScreeningContextAttachment {
+  const digest = `sha256:${'a'.repeat(64)}`;
+  return {
+    v: 1,
+    kind: 'project-screening',
+    id,
+    title: id,
+    screeningId: id,
+    contentRef: `video-project:${'a'.repeat(64)}`,
+    input: { contentRef: `video-project:${'a'.repeat(64)}`, ownerRevision: 1, blobDigest: digest },
+    media: { contentRef: `movie:${id}`, ownerRevision: 1, blobDigest: digest },
+    selections: [{ id: `selection:${id}`, mediaRange: { startPts: 0, endPts: 1 }, target: { kind: 'project' } }],
+  };
+}
 
 beforeAll(() => {
   (globalThis as { React?: typeof React }).React = React;
@@ -29,6 +45,7 @@ beforeAll(() => {
 
 beforeEach(() => {
   apiFetchMock.mockReset();
+  useToastStore.setState({ toasts: [] });
   apiFetchMock.mockResolvedValue({
     ok: true,
     json: async () => ({ results: [{ path: 'docs/features/F063-hub-workspace-explorer.md' }] }),
@@ -153,6 +170,66 @@ describe('ChatInput context picker', () => {
 
     expect(container.querySelector<HTMLTextAreaElement>('textarea')?.value).toBe('');
     expect(container.querySelector('[data-context-kind="workspace_file"]')?.textContent).toContain('docs/current.md');
+  });
+  it.each([
+    { kind: 'thread', selector: 'context-thread-thread_other' },
+    { kind: 'workspace_file', selector: 'context-file-docs/current.md' },
+  ])('retains compatible $kind context beside the frozen screening mark and original words', async ({
+    kind,
+    selector,
+  }) => {
+    await act(async () =>
+      useChatStore.getState().setPendingChatInsert({
+        threadId: useChatStore.getState().currentThreadId,
+        text: '原来的审片意见',
+        contextAttachments: [screening('v1')],
+      }),
+    );
+    expect(container.querySelectorAll('[data-context-kind="project-screening"]')).toHaveLength(1);
+    openContextPicker();
+    await act(async () => container.querySelector<HTMLButtonElement>(`[data-testid="${selector}"]`)?.click());
+    expect(container.querySelector(`[data-context-kind="${kind}"]`)).not.toBeNull();
+    expect(container.querySelectorAll('[data-context-kind="project-screening"]')).toHaveLength(1);
+    expect(container.querySelector<HTMLTextAreaElement>('textarea')?.value).toBe('原来的审片意见');
+    expect(useToastStore.getState().toasts).toHaveLength(0);
+  });
+  it('preserves a restored mixed draft but blocks its send until the person separates the frozen sources', async () => {
+    await act(async () =>
+      useChatStore.getState().setPendingChatInsert({
+        threadId: useChatStore.getState().currentThreadId,
+        text: '保留旧稿',
+        contextAttachments: [screening('v1'), screening('v2')],
+      }),
+    );
+    expect(container.querySelectorAll('[data-context-kind="project-screening"]')).toHaveLength(2);
+    await act(async () =>
+      container.querySelector('textarea')?.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true })),
+    );
+    expect(onSendMock).not.toHaveBeenCalled();
+    expect(container.querySelectorAll('[data-context-kind="project-screening"]')).toHaveLength(2);
+    expect(container.querySelector<HTMLTextAreaElement>('textarea')?.value).toBe('保留旧稿');
+    expect(useToastStore.getState().toasts.at(-1)?.message).toMatch(/发送|移除/);
+    await act(async () => container.querySelector<HTMLButtonElement>('button[aria-label="移除审片位置 v2"]')?.click());
+    expect(container.querySelectorAll('[data-context-kind="project-screening"]')).toHaveLength(1);
+    await act(async () =>
+      container.querySelector('textarea')?.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true })),
+    );
+    expect(onSendMock).toHaveBeenCalledWith('保留旧稿', undefined, undefined, undefined, [screening('v1')]);
+  });
+  it('sends multiple same-screening marks through the original composer as one frozen source', async () => {
+    const first = screening('v1');
+    const second = { ...structuredClone(first), id: 'second-mark', title: '第二处' };
+    await act(async () =>
+      useChatStore.getState().setPendingChatInsert({
+        threadId: useChatStore.getState().currentThreadId,
+        text: '两处一起修改',
+        contextAttachments: [first, second],
+      }),
+    );
+    await act(async () =>
+      container.querySelector('textarea')?.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true })),
+    );
+    expect(onSendMock).toHaveBeenCalledWith('两处一起修改', undefined, undefined, undefined, [first, second]);
   });
 
   it('searches Workspace filenames and inserts the selected result', async () => {

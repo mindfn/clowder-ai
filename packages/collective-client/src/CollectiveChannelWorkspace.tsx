@@ -55,7 +55,8 @@ export function CollectiveChannelWorkspace({
   if (!snapshot.collective || !snapshot.me) return null;
   const participants = snapshot.participants ?? [];
   const members = snapshot.members;
-  const showCafe = host.available ? host.show : undefined;
+  const showCafe = host.available ? () => host.show('cats') : undefined;
+  const showChannelCafe = host.available ? () => host.show('channel') : undefined;
 
   return (
     <ChannelScene
@@ -111,6 +112,7 @@ export function CollectiveChannelWorkspace({
       onOpenNavigation={onNavigation}
       onOpenMember={onMember}
       onCafe={showCafe}
+      onChannelCafe={showChannelCafe}
       onOpenTopic={() => {
         host.hide();
         setSelectedMember(undefined);

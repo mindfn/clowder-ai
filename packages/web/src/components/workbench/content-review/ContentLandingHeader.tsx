@@ -2,6 +2,7 @@ import type { ReactNode } from 'react';
 import { useShellCopy } from '@/components/shell/shell-copy';
 import { voiceMeetingCopy } from '@/components/workspace/voice-meeting.shell-copy';
 import type { WorkspaceFileNavigationOrigin } from '@/stores/chat-types';
+import { workspaceChromeCopy } from '../workspace-chrome.shell-copy';
 
 export function ContentLandingHeader({
   title,
@@ -17,6 +18,7 @@ export function ContentLandingHeader({
   readonly versionControl?: ReactNode;
 }) {
   const t = useShellCopy(voiceMeetingCopy);
+  const workspace = useShellCopy(workspaceChromeCopy);
   return (
     // In a narrow column (side-by-side panes, 390px) the controls wrap onto a second line so the
     // title keeps at least ~8rem instead of shrinking to a single character.
@@ -45,9 +47,13 @@ export function ContentLandingHeader({
                 since only the v2 meeting journey produces this origin) instead of the generic 返回来源. */}
             {navigationOrigin?.kind === 'meeting-transcript'
               ? `‹ ${t.meeting.title}`
-              : navigationOrigin
-                ? '返回来源'
-                : '返回'}
+              : navigationOrigin?.kind === 'workspace-tools-search'
+                ? `‹ ${workspace.toolsSearch}`
+                : navigationOrigin?.kind === 'workspace-home-artifact'
+                  ? `‹ ${workspace.home}`
+                  : navigationOrigin
+                    ? '返回来源'
+                    : '返回'}
           </button>
         ) : null}
       </div>

@@ -26,6 +26,7 @@ import {
   splitPipelineSegments,
   splitShellExecutionSegmentsWithSeparators,
 } from './native-effect-shell-classifier.mjs';
+import { hasConcurrentShellExecution, pipelineChainStart } from './native-effect-shell-concurrency.mjs';
 import { expandSegmentBindings, isShellBinding } from './native-effect-shell-expansion.mjs';
 import { classifyNativeTarget as classifyTarget, insideMainCheckout } from './native-effect-target-classifier.mjs';
 import { worktreeRemovalDecision } from './native-effect-worktree-removal.mjs';
@@ -62,6 +63,22 @@ export function decideShellHookPayload(view, cwd, source, depth = 0, initialCopy
     units,
     initialCopyNamespaceStable && !hasConcurrentShellExecution(lexical, raw),
   );
+  // A separate pipeline does not run concurrently with its sequential predecessor.
+  const sequentialRead =
+    !hasConcurrentShellExecution(lexical, raw, true) &&
+    parts.every((part, index) => part.text === units[index].segment);
+  const readProgramNamespaceStable = copyNamespaceStability(
+    units,
+    initialCopyNamespaceStable && (!hasConcurrentShellExecution(lexical, raw) || sequentialRead),
+  );
+  for (let index = 0; index < parts.length; index++) {
+    if (!['|', '|&'].includes(parts[index + 1]?.separator)) continue;
+    const start = pipelineChainStart(parts, index);
+    let end = index;
+    while (['|', '|&'].includes(parts[end + 1]?.separator)) end++;
+    readProgramNamespaceStable.fill(false, start, end + 1);
+    index = end;
+  }
   const previewDecisions = units.map(({ segment, contexts }) =>
     segmentPreviewDecision(
       segment,
@@ -96,6 +113,7 @@ export function decideShellHookPayload(view, cwd, source, depth = 0, initialCopy
           !preserved && (execution.inner.length > 0 || unresolvedBindings.length > 0),
           units[index].segment,
           copyNamespaceStable[index],
+          readProgramNamespaceStable[index],
         ),
       ];
     }),
@@ -115,16 +133,6 @@ export function decideShellHookPayload(view, cwd, source, depth = 0, initialCopy
   }
   return decisions.reduce((best, candidate) => (rank(candidate) > rank(best) ? candidate : best));
 }
-
-function hasConcurrentShellExecution(lexical, raw) {
-  const concurrentBoundary = lexical.boundaries.some(
-    (boundary) =>
-      boundary.kind === 'pipeline' ||
-      (boundary.kind === 'execution' && raw.slice(boundary.start, boundary.end) === '&'),
-  );
-  return concurrentBoundary || lexical.substitutions.some((substitution) => /[<>]/.test(raw[substitution.start]));
-}
-
 function deniedDataDrivenPipeline(raw, cwd, source) {
   const consumer = splitPipelineSegments(raw).slice(1).find(isDataDrivenPipelineConsumer);
   if (!consumer) return null;
@@ -168,25 +176,6 @@ function codeInputBoundary(raw, parts, contexts, cwd, source) {
   return null;
 }
 
-function pipelineChainStart(parts, index) {
-  if (!['|', '|&'].includes(parts[index + 1]?.separator)) return index;
-  let depth = 0;
-  for (let cursor = index; cursor >= 0; cursor--) {
-    const text = parts[cursor].text;
-    const boundaries = scanShellText(text).boundaries.filter((boundary) => boundary.kind === 'group');
-    const closes = boundaries.filter((boundary) => text[boundary.start] === ')').length + (/}\s*$/.test(text) ? 1 : 0);
-    const opens =
-      boundaries.filter((boundary) => text[boundary.start] === '(').length + (/^\s*\{(?:\s|$)/.test(text) ? 1 : 0);
-    depth += closes - opens;
-    if (opens > 0 && depth <= 0) {
-      let start = cursor;
-      while (start > 0 && ['|', '|&'].includes(parts[start].separator)) start--;
-      return start;
-    }
-  }
-  return index;
-}
-
 function protectedBranchBoundary(reader, cwd, source) {
   const evidence = [
     ...reader.pipelines.flat().flatMap((call) => shellExecutionEvidence(call, cwd)),
@@ -219,6 +208,7 @@ function segmentCandidate(
   generatedExecution = false,
   roleSource = segment,
   copyNamespaceStable = true,
+  readProgramNamespaceStable = copyNamespaceStable,
 ) {
   // Pure shell structure (`fi`, `done`, `}`) runs nothing of its own.
   if (!segment.trim()) return { effect: 'read', target: { kind: 'ordinary', value: cwd ?? '' }, source };
@@ -228,12 +218,15 @@ function segmentCandidate(
   // Its mutation segment still needs the same checkout/ancestor protection.
   const contextual = argvPreserved ? contextualGitMutationCandidates(segment, cwd) : null;
   if (contextual?.length === 1) return { ...contextual[0], source };
-  const { command, location, targetCwd, targetText, roles } = argvPreserved
-    ? segmentView(segment, cwd, roleSource)
+  const { command, location, targetCwd, targetText, roles, unprovedReadProgram } = argvPreserved
+    ? segmentView(segment, cwd, roleSource, readProgramNamespaceStable)
     : { command: segment, location: cwd, targetCwd: cwd };
-  const effect = bindingViewEffect(command, managedPreview, argvPreserved);
+  const observedEffect = bindingViewEffect(command, managedPreview, argvPreserved);
+  const effect = observedEffect === 'read' && unprovedReadProgram ? 'unknown' : observedEffect;
   const remoteOperation =
-    argvPreserved && (constrainedGhApiOperation(command) ?? constrainedGhPullRequestOperation(command));
+    argvPreserved &&
+    !unprovedReadProgram &&
+    (constrainedGhApiOperation(command) ?? constrainedGhPullRequestOperation(command));
   const copy = argvPreserved ? explicitCopyRoles(command) : null;
   const explicitTarget = argvPreserved ? (explicitTemporaryWorktreeTarget(command) ?? copy?.destination) : undefined;
   const locatedSource = location ? { ...source, cwd: location } : source;
@@ -250,7 +243,7 @@ function segmentCandidate(
   const target = classifyTarget(
     copy?.targetText ??
       explicitTarget ??
-      (roles ? targetText : unresolvedText !== segment ? unresolvedText : (targetText ?? command)),
+      observedSegmentTarget(segment, unresolvedText, targetText ?? command, roles, effect),
     explicitTarget ? undefined : targetCwd,
     effect,
     explicitTarget,
@@ -276,6 +269,12 @@ function bindingViewEffect(command, managedPreview, argvPreserved) {
   // A target-only view cannot prove a read, refresh or remote-only operation.
   // Keep recognised destructive effects so uncertain argv never downgrades a root denial.
   return !argvPreserved && ['read', 'repository_refresh', 'remote_mutation'].includes(observed) ? 'unknown' : observed;
+}
+
+/** Keep unresolved source and add observed write aliases; observation never removes a target. */
+function observedSegmentTarget(original, unresolved, observed, hasRoles, effect) {
+  if (hasRoles || unresolved === original) return observed;
+  return effect === 'write' ? `${unresolved} ${observed}` : unresolved;
 }
 
 function deniedManagedPreviewBoundary(decisions, segments, cwd, source) {

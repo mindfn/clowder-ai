@@ -94,6 +94,7 @@ function handleActiveToolUse(msg: AgentMsg, threadId: string, ctx: ActiveContext
   const event = toolUseEvent({
     id: msg.toolEventId ?? `tool-${Date.now()}-${randomIdSuffix()}`,
     executionRef: msg.toolExecutionRef,
+    toolUseId: msg.toolUseId,
     catId: msg.catId,
     toolName: msg.toolName,
     toolInput: msg.toolInput,
@@ -111,6 +112,7 @@ function handleActiveToolResult(msg: AgentMsg, threadId: string, ctx: ActiveCont
   const event = toolResultEvent({
     id: msg.toolEventId ?? `toolr-${Date.now()}-${randomIdSuffix()}`,
     executionRef: msg.toolExecutionRef,
+    toolUseId: msg.toolUseId,
     catId: msg.catId,
     content: msg.content,
     timestamp: Date.now(),

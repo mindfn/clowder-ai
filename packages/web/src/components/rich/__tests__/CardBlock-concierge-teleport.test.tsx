@@ -68,6 +68,20 @@ describe('CardBlock concierge teleport/go cross-thread navigation (Bug1: query �
     });
   }
 
+  it('a legacy peek action recovers the canonical message through teleport instead of copying a truncated body', () => {
+    const block: RichCardBlock = {
+      id: 'peek',
+      kind: 'card',
+      v: 1,
+      title: 'Peek',
+      actions: [{ action: 'concierge_peek', label: '原地看', payload: { threadId: 'thread_B', messageId: 'target' } }],
+    };
+    renderAndClick(block, '跳过去');
+    expect(pushStateSpy).toHaveBeenCalledWith({}, '', '/thread/thread_B');
+    expect(peekPendingTeleport('thread_B')?.messageId).toBe('target');
+    expect(chatState.updateRichBlock).not.toHaveBeenCalled();
+  });
+
   it('teleport WITHOUT messageId navigates to /thread/<id> pathname, not /?threadId= query (lobby fallback)', () => {
     const block: RichCardBlock = {
       id: 'c-1',

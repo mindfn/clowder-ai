@@ -10,6 +10,7 @@ export async function witnessedPublicationCaller(
   deps: { messages: Pick<IMessageStore, 'getById'>; turns?: TurnExecutionSourceReadPort },
   intent: MediaPublicationReturnIntent,
   invocationId?: string,
+  requiredCarrierStatus?: 'terminal',
 ) {
   if (!deps.turns || intent.state !== 'queued' || !intent.messageId) return;
   const carrier = await deps.messages.getById(intent.messageId);
@@ -33,6 +34,7 @@ export async function witnessedPublicationCaller(
     child?.userId === intent.ownerUserId &&
     child.threadId === intent.threadId &&
     child.catId === intent.targetCatId &&
+    (!requiredCarrierStatus || ['succeeded', 'failed', 'canceled'].includes(child.status)) &&
     (child.causal?.triggerMessageId === carrier.id || child.causal?.coveredMessageIds?.includes(carrier.id))
   )
     return child;

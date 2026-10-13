@@ -1,7 +1,6 @@
 'use client';
 
-import { type ReactNode, useEffect, useId, useMemo, useState } from 'react';
-import { ChatVoiceFeatureControls } from '@/components/ChatVoiceFeatureControls';
+import { type ReactNode, useEffect, useMemo, useState } from 'react';
 import { MemoryBookStarIcon, ShellGlyph } from '@/components/shell/ShellIcons';
 import { useShellCopy } from '@/components/shell/shell-copy';
 import type { WorkspaceLauncherDestination } from '@/components/workspace/WorkspaceLauncher';
@@ -23,7 +22,7 @@ import { homeCopy } from './workspace-home.shell-copy';
  * name + number) is the CSS container query in `workspace-home-tools.css`; nothing here measures the window.
  */
 
-const GROUP_ORDER: readonly HomeGroupId[] = ['code', 'activity', 'other'];
+const GROUP_ORDER: readonly HomeGroupId[] = ['activity', 'code', 'other'];
 
 function RowIcon({ icon }: { icon: HomeRow['icon'] }) {
   return icon === 'memory' ? (
@@ -37,28 +36,25 @@ function ToolRow({
   row,
   meta,
   metaKind,
-  expanded,
   onClick,
 }: {
   row: HomeRow;
   meta?: string;
   /** `count` for a number with its unit ("12 files"): the narrow layout keeps it whole, under the name, when it does not fit. */
   metaKind?: 'count';
-  expanded?: boolean;
   onClick: () => void;
 }) {
   const t = useShellCopy(homeCopy);
   const words = t.rows[row.copyKey];
-  const destination = row.kind === 'destination' ? row.destination : null;
+  const destination = row.destination;
   return (
     <button
       type="button"
       className="home-tool shell-focusable"
       onClick={onClick}
-      data-testid={destination ? destinationTestId(destination) : 'workspace-launcher-voice'}
-      data-workspace-destination={destination ? `${destination.kind}:${destination.id}` : 'voice'}
+      data-testid={destinationTestId(destination)}
+      data-workspace-destination={`${destination.kind}:${destination.id}`}
       data-meta-kind={meta ? metaKind : undefined}
-      aria-expanded={row.kind === 'voice' ? expanded === true : undefined}
     >
       <span className="home-tool-icon">
         <RowIcon icon={row.icon} />
@@ -101,16 +97,16 @@ function TransitionalLink({
 }
 
 export function HomeTools({
-  threadId,
-  defaultCatId,
+  recent,
+  footer,
   repository,
   changedFileCount,
   workspaceSearch,
   initialSearchQuery,
   onSelectDestination,
 }: {
-  threadId?: string;
-  defaultCatId: string;
+  recent?: ReactNode;
+  footer?: ReactNode;
   repository?: { name: string; branch: string };
   /** Known count of modified files, or `null` when it is not known (the row then says nothing). */
   changedFileCount: number | null;
@@ -121,9 +117,7 @@ export function HomeTools({
 }) {
   const t = useShellCopy(homeCopy);
   const [query, setQuery] = useState(initialSearchQuery ?? '');
-  const [voiceOpen, setVoiceOpen] = useState(false);
   useEffect(() => setQuery(initialSearchQuery ?? ''), [initialSearchQuery]);
-  const voicePanelId = useId();
   const normalizedQuery = query.trim().toLocaleLowerCase();
 
   const visibleRows = useMemo(
@@ -132,7 +126,6 @@ export function HomeTools({
   );
 
   const metaFor = (row: HomeRow): string | undefined => {
-    if (row.kind !== 'destination') return undefined;
     const { kind, id } = row.destination;
     if (kind !== 'surface') return undefined;
     if (id === 'files') return repository?.name || undefined;
@@ -142,23 +135,12 @@ export function HomeTools({
   };
 
   const metaKindFor = (row: HomeRow): 'count' | undefined =>
-    row.kind === 'destination' && row.destination.kind === 'surface' && row.destination.id === 'changes'
-      ? 'count'
-      : undefined;
+    row.destination.kind === 'surface' && row.destination.id === 'changes' ? 'count' : undefined;
 
   const groups: Array<{ id: HomeGroupId; rows: HomeRow[] }> = GROUP_ORDER.map((id) => ({
     id,
     rows: visibleRows.filter((row) => row.group === id),
   })).filter((group) => group.rows.length > 0);
-
-  let voicePanel: ReactNode = null;
-  if (voiceOpen) {
-    voicePanel = (
-      <div id={voicePanelId} className="home-voice-panel" data-testid="workspace-launcher-voice-panel">
-        <ChatVoiceFeatureControls threadId={threadId} defaultCatId={defaultCatId} />
-      </div>
-    );
-  }
 
   return (
     <div className="home-tools" data-testid="workspace-launcher-home">
@@ -170,6 +152,7 @@ export function HomeTools({
         labelClassName="home-search"
         copy={t.tools.search}
       />
+      {!normalizedQuery && recent}
       {groups.map((group) => (
         <section key={group.id} className="home-group" aria-label={t.tools.groups[group.id]}>
           <h3 className="home-group-title text-xs">{t.tools.groups[group.id]}</h3>
@@ -180,33 +163,24 @@ export function HomeTools({
                 row={row}
                 meta={metaFor(row)}
                 metaKind={metaKindFor(row)}
-                expanded={row.kind === 'voice' ? voiceOpen : undefined}
-                onClick={() => {
-                  if (row.kind === 'voice') setVoiceOpen((open) => !open);
-                  else onSelectDestination(row.destination);
-                }}
+                onClick={() => onSelectDestination({ ...row.destination, label: t.rows[row.copyKey].label })}
               />
             ))}
           </div>
-          {group.rows.some((row) => row.kind === 'voice') && voicePanel}
         </section>
       ))}
       {groups.length === 0 && <div className="home-empty-search text-xs">{t.tools.noMatch}</div>}
-      {!normalizedQuery && (
-        <div className="home-signpost text-xs">
-          <p>{t.tools.signpost}</p>
-          <TransitionalLink
-            copy={t.tools.transitional.allWork}
-            destination={HOME_TRANSITIONAL_DESTINATIONS.allWork}
-            onSelect={onSelectDestination}
-          />
-          <TransitionalLink
-            copy={t.tools.transitional.capabilityEvolution}
-            destination={HOME_TRANSITIONAL_DESTINATIONS.capabilityEvolution}
-            onSelect={onSelectDestination}
-          />
-        </div>
-      )}
+      {!normalizedQuery &&
+        (footer ?? (
+          <div className="home-signpost text-xs">
+            <p>{t.tools.signpost}</p>
+            <TransitionalLink
+              copy={t.tools.transitional.allWork}
+              destination={{ ...HOME_TRANSITIONAL_DESTINATIONS.allWork, label: t.tools.transitional.allWork.openLabel }}
+              onSelect={onSelectDestination}
+            />
+          </div>
+        ))}
     </div>
   );
 }

@@ -23,6 +23,13 @@ import {
   type CompanionCommand as WorkCompanionCommand,
   type CompanionReply as WorkCompanionReply,
 } from '@clowder-ai/plugin-contract-beta25';
+import {
+  type CompanionMeetingState,
+  type CompanionCommand as PresentationCompanionCommand,
+  type CompanionReply as PresentationCompanionReply,
+  validateCompanionCommand as validatePresentationCompanionCommand,
+  validateCompanionReply as validatePresentationCompanionReply,
+} from '@clowder-ai/plugin-contract-beta27';
 import { z } from 'zod';
 import type { CompanionArchiveContract } from './published-companion-v2.js';
 
@@ -93,6 +100,30 @@ const f221TrialReceipt = z
   .strict();
 export type HostF221TrialReceipt = z.infer<typeof f221TrialReceipt>;
 const nativeId = z.string().regex(/^[A-Za-z0-9_-]{1,160}$/);
+/** Host media principal only; never admitted as a package CompanionCommand/Event. */
+const observationFence = { observedAt: z.number().int().nonnegative(), callId, eventId: nativeId };
+export const hostVoiceObservation = z.discriminatedUnion('stage', [
+  z.object({ ...observationFence, stage: z.literal('first_audio_output'), turnId: nativeId }).strict(),
+  z.object({ ...observationFence, stage: z.literal('owner_voice_completed'), turnId: nativeId }).strict(),
+  z
+    .object({
+      ...observationFence,
+      stage: z.literal('first_outward_text'),
+      nativeItemId: nativeId,
+      turnId: nativeId.optional(),
+    })
+    .strict(),
+]);
+export type HostVoiceObservation = z.infer<typeof hostVoiceObservation>;
+/** The fixed Host preload timestamps request entry; the package never supplies this private field. */
+export const hostTextSubmission = z
+  .object({
+    stage: z.literal('client_text_sent'),
+    observedAt: z.number().int().nonnegative(),
+    clientMessageId: z.string().regex(/^[^\s\u0000-\u001f\u007f]{1,256}$/),
+  })
+  .strict();
+export type HostTextSubmission = z.infer<typeof hostTextSubmission>;
 const workKind = z.enum(['reasoning', 'tool', 'workspace_fetch', 'workspace_dispatch', 'screen_read']);
 const workEntry = z
   .object({
@@ -129,6 +160,8 @@ export const hostNativeWork = z
 export type HostNativeWork = z.infer<typeof hostNativeWork>;
 const liveTransport = z.object({ kind: z.literal('gpt_live_v3'), verifiedModel: z.null() }).strict();
 export type HostCompanionState = CompanionState & {
+  /** beta.27 requires a read-only meeting projection; legacy replies omit it. */
+  readonly meeting?: CompanionMeetingState;
   /** Private native policy; removed before delivering the beta.21 renderer state. */
   readonly behaviorEnabled: boolean;
   readonly nativeWork: HostNativeWork;
@@ -147,6 +180,7 @@ export type HostCompanionCommand =
   | Exclude<ModernCompanionCommand, { kind: `audio.${string}` }>
   | Exclude<UnifiedCompanionCommand, { kind: `audio.${string}` }>
   | Exclude<WorkCompanionCommand, { kind: `audio.${string}` }>
+  | Exclude<PresentationCompanionCommand, { kind: `audio.${string}` }>
   | z.infer<typeof offer>
   | z.infer<typeof f221ConfirmTrial>;
 export type HostCompanionReply =
@@ -154,6 +188,7 @@ export type HostCompanionReply =
   | ModernCompanionReply
   | UnifiedCompanionReply
   | WorkCompanionReply
+  | PresentationCompanionReply
   | HostCompanionState
   | z.infer<typeof answer>
   | HostF221Preview
@@ -162,15 +197,18 @@ export function validateHostCompanionCommand(
   value: unknown,
   contract: CompanionArchiveContract['contract'] = '0.1.0-beta.21',
 ): value is HostCompanionCommand {
-  if (!['0.1.0-beta.21', '0.1.0-beta.23', '0.1.0-beta.24', '0.1.0-beta.25'].includes(contract)) return false;
+  if (!['0.1.0-beta.21', '0.1.0-beta.23', '0.1.0-beta.24', '0.1.0-beta.25', '0.1.0-beta.27'].includes(contract))
+    return false;
   const validatePublic =
-    contract === '0.1.0-beta.25'
-      ? validateWorkCompanionCommand
-      : contract === '0.1.0-beta.24'
-        ? validateUnifiedCompanionCommand
-        : contract === '0.1.0-beta.23'
-          ? validateModernCompanionCommand
-          : validateCompanionCommand;
+    contract === '0.1.0-beta.27'
+      ? validatePresentationCompanionCommand
+      : contract === '0.1.0-beta.25'
+        ? validateWorkCompanionCommand
+        : contract === '0.1.0-beta.24'
+          ? validateUnifiedCompanionCommand
+          : contract === '0.1.0-beta.23'
+            ? validateModernCompanionCommand
+            : validateCompanionCommand;
   return (
     (validatePublic(value) && !value.kind.startsWith('audio.')) ||
     offer.safeParse(value).success ||
@@ -181,15 +219,18 @@ export function validateHostCompanionReply(
   value: unknown,
   contract: CompanionArchiveContract['contract'] = '0.1.0-beta.21',
 ): value is HostCompanionReply {
-  if (!['0.1.0-beta.21', '0.1.0-beta.23', '0.1.0-beta.24', '0.1.0-beta.25'].includes(contract)) return false;
+  if (!['0.1.0-beta.21', '0.1.0-beta.23', '0.1.0-beta.24', '0.1.0-beta.25', '0.1.0-beta.27'].includes(contract))
+    return false;
   const validatePublic =
-    contract === '0.1.0-beta.25'
-      ? validateWorkCompanionReply
-      : contract === '0.1.0-beta.24'
-        ? validateUnifiedCompanionReply
-        : contract === '0.1.0-beta.23'
-          ? validateModernCompanionReply
-          : validateCompanionReply;
+    contract === '0.1.0-beta.27'
+      ? validatePresentationCompanionReply
+      : contract === '0.1.0-beta.25'
+        ? validateWorkCompanionReply
+        : contract === '0.1.0-beta.24'
+          ? validateUnifiedCompanionReply
+          : contract === '0.1.0-beta.23'
+            ? validateModernCompanionReply
+            : validateCompanionReply;
   if (value && typeof value === 'object' && 'kind' in value && value.kind === 'state') {
     const parsed = hostStateExtras.safeParse(value);
     if (!parsed.success) return false;

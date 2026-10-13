@@ -6,6 +6,8 @@ import type { SidebarSnapshotRow } from '@/stores/sidebarProjectionStore';
 import { useShellPresentation } from '../shell/shell-presentation';
 import { AttentionClusterHeaderV2 } from './AttentionClusterHeaderV2';
 import type { AttentionCluster } from './attention-clusters';
+import type { GroupPeekProjection } from './collapsed-group-peek';
+import { SidebarGroupSegmentV2 } from './SidebarGroupSegmentV2';
 import { formatRelativeTime } from './thread-utils';
 
 export interface AttentionClusterHeaderProps {
@@ -20,6 +22,12 @@ export interface AttentionClusterHeaderProps {
   onMemberSort?: (mode: ThreadAttentionMemberSort) => void;
   onResetMemberSort?: () => void;
   sortingDisabled?: boolean;
+  peek?: GroupPeekProjection;
+  peekEnabled?: boolean;
+  decisionsConfirmed?: boolean;
+  currentId?: string | null;
+  onSelectPeek?: (threadId: string) => void;
+  onTogglePeek?: () => void;
 }
 
 interface AttentionClusterMemberProps {
@@ -59,6 +67,12 @@ export function AttentionClusterHeader({
   onMemberSort,
   onResetMemberSort,
   sortingDisabled = false,
+  peek,
+  peekEnabled,
+  decisionsConfirmed,
+  currentId,
+  onSelectPeek,
+  onTogglePeek,
 }: AttentionClusterHeaderProps) {
   const isV2 = useShellPresentation() === 'v2';
   const [editingName, setEditingName] = useState(false);
@@ -90,6 +104,12 @@ export function AttentionClusterHeader({
         onMemberSort={onMemberSort}
         onResetMemberSort={onResetMemberSort}
         sortingDisabled={sortingDisabled}
+        peek={peek}
+        peekEnabled={peekEnabled}
+        decisionsConfirmed={decisionsConfirmed}
+        currentId={currentId}
+        onSelectPeek={onSelectPeek}
+        onTogglePeek={onTogglePeek}
       />
     );
 
@@ -236,20 +256,16 @@ export function AttentionClusterMember({
   const isV2 = useShellPresentation() === 'v2';
   if (isV2)
     return (
-      <div
-        id={isFirst ? `attention-members-${cluster.rootThreadId}` : undefined}
-        data-attention-cluster-member={cluster.anchor}
-        data-cluster-segment={isLast ? 'end' : 'middle'}
-        className="relative pl-4"
-      >
-        <span
-          data-cluster-rail="true"
-          aria-hidden="true"
-          className="absolute left-5 inset-y-0 w-px"
-          style={{ background: 'var(--shell-hairline)' }}
-        />
-        {renderThread(member)}
-      </div>
+      <SidebarGroupSegmentV2 segment={isLast ? 'end' : 'middle'}>
+        <div
+          id={isFirst ? `attention-members-${cluster.rootThreadId}` : undefined}
+          data-attention-cluster-member={cluster.anchor}
+          data-cluster-segment={isLast ? 'end' : 'middle'}
+          className="relative pl-5"
+        >
+          {renderThread(member)}
+        </div>
+      </SidebarGroupSegmentV2>
     );
   return (
     <div

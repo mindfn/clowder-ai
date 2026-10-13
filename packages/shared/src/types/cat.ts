@@ -71,6 +71,7 @@ export interface AgyNativeCodingGrantConfig {
  * Cat configuration (immutable)
  */
 export interface CatConfig {
+  readonly accountBindingMode?: 'follow' | 'override';
   readonly id: CatId;
   readonly name: string;
   readonly displayName: string;

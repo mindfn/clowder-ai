@@ -30,12 +30,9 @@ const Context = createContext<{ bridge: SettingsReadingBridge; pathname: string;
 function ReturnNotice({ bridge }: { bridge: SettingsReadingBridge }) {
   const view = useSyncExternalStore(bridge.subscribe, bridge.getSnapshot, serverSnapshot);
   const copy = useShellCopy(settingsReturnCopy);
-  const lastNotice = useRef<string | null>(null);
   useEffect(() => {
-    const identity = view.notice ? `${view.source?.id ?? 'completed'}:${view.notice}` : null;
-    if (identity === lastNotice.current) return;
-    lastNotice.current = identity;
-    if (!view.notice) return;
+    const notice = bridge.consumeNotice(view);
+    if (!notice) return;
     const messages = {
       'not-saved': copy.notSaved,
       unavailable: copy.unavailable,
@@ -44,12 +41,12 @@ function ReturnNotice({ bridge }: { bridge: SettingsReadingBridge }) {
       'save-failed': copy.saveFailed,
     };
     useToastStore.getState().addToast({
-      type: view.notice === 'not-saved' ? 'info' : 'error',
+      type: notice === 'not-saved' ? 'info' : 'error',
       title: copy.title,
-      message: messages[view.notice],
+      message: messages[notice],
       duration: 0,
     });
-  }, [view.notice, view.source?.id, copy]);
+  }, [bridge, view, copy]);
   return null;
 }
 

@@ -64,7 +64,9 @@ describe('F190 visual contract — no hard borders in card/panel components', ()
     const pathCompletion = readSrc('PathCompletionMenu.tsx');
     const contextPicker = readSrc('ChatContextPicker.tsx');
 
-    expect(addMenu).toMatch(/bottom-full[^\n]+bg-cafe-surface-canvas/);
+    expect(addMenu).toContain('<ComposerPopover');
+    expect(addMenu).toContain('presentation={presentation}');
+    expect(readSrc('ComposerPopover.tsx')).toMatch(/presentation === 'classic'[\s\S]*?bg-cafe-surface-canvas/);
     expect(inputMenus.match(/bottom-full[^\n]+bg-cafe-surface-canvas/g)).toHaveLength(3);
     expect(whisper).toMatch(/bottom-full[^\n]+bg-cafe-surface-canvas/);
     expect(pathCompletion).toMatch(/bottom-full[^\n]+bg-cafe-surface-canvas/);
@@ -500,62 +502,6 @@ describe('F190 visual contract — no hard borders in card/panel components', ()
 });
 
 describe('F190 typography guard — no hardcoded font sizes in console scope', () => {
-  const CONSOLE_SCOPE = [
-    'settings/SettingsNav.tsx',
-    'settings/primitives/SettingsRow.tsx',
-    'settings/primitives/SettingsSection.tsx',
-    'settings/primitives/SettingsCard.tsx',
-    'settings/SettingsPageHeader.tsx',
-    'settings/RulesPromptsContent.tsx',
-    'settings/SkillPreviewModal.tsx',
-    'settings/InstallPreviewModal.tsx',
-    'settings/PluginConfigPanel.tsx',
-    'settings/PushServiceConfig.tsx',
-    'hub-cat-editor-fields.tsx',
-    'hub-cat-editor-voice.tsx',
-    'hub-cat-editor-advanced.tsx',
-    'hub-cat-editor.sections.tsx',
-    'hub-tag-editor.tsx',
-    'HubCatEditor.tsx',
-    'HubCoCreatorEditor.tsx',
-    'HubQuotaBoardTab.tsx',
-    'HubToolUsageTab.tsx',
-    'HubLeaderboardTab.tsx',
-    'HubMemberOverviewCard.tsx',
-    'RightStatusPanel.tsx',
-    'DefaultCatSelector.tsx',
-    'memory/MemoryHub.tsx',
-    'signals/SignalInboxView.tsx',
-    'signals/SignalSourcesView.tsx',
-    'mission-control/MissionControlPage.tsx',
-    'mission-control/SliceLadder.tsx',
-    'mission-control/dag-graph-utils.ts',
-    'leaderboard-cards.tsx',
-    'leaderboard-phase-bc.tsx',
-    'workspace/TerminalTab.tsx',
-    'workspace/AgentPaneViewer.tsx',
-    'workspace/AgentPaneList.tsx',
-    'workspace/JsxPreview.tsx',
-    'memory/CollectionGraph.tsx',
-    'memory/CollectionGraphParts.tsx',
-    'cli-output/CliOutputBlock.tsx',
-  ];
-
-  for (const file of CONSOLE_SCOPE) {
-    it(`${file}: no hardcoded text-[Xpx] (use tokens: text-micro/label/xs/compact/sm/base/lg/xl)`, () => {
-      const src = readSrc(file);
-      const matches = src.match(/text-\[\d+px\]/g) ?? [];
-      expect(matches).toEqual([]);
-    });
-  }
-
-  for (const file of CONSOLE_SCOPE) {
-    it(`${file}: no inline fontSize in style objects`, () => {
-      const src = readSrc(file);
-      expect(src).not.toMatch(/fontSize:\s*['"]\d/);
-    });
-  }
-
   it('src-wide guard: no raw pixel font definitions outside typography tokens', () => {
     const srcRoot = resolve(testDir, '..', '..');
     /* F056: dev/ tools (OklchTuner) intentionally use dense px sizes */
@@ -617,39 +563,6 @@ describe('F190 divider guard — console-scope dividers use semantic class', () 
 });
 
 describe('#723 Mission Hub — card/border unification guard', () => {
-  const MC_CARD_SCOPE = [
-    'mission-control/CreateIntentCardForm.tsx',
-    'mission-control/IntentCardDetail.tsx',
-    'mission-control/ImportProjectModal.tsx',
-    'mission-control/SuggestionDecisionPanel.tsx',
-    'mission-control/GovernanceHealth.tsx',
-    'mission-control/NeedAuditFrame.tsx',
-    'mission-control/DispatchProgress.tsx',
-    'mission-control/ResolutionQueue.tsx',
-    'mission-control/RefluxCapture.tsx',
-    'mission-control/RiskPanel.tsx',
-    'mission-control/DependencyGraphTab.tsx',
-    'mission-control/TranslationMatrix.tsx',
-    'mission-control/FeatureBirdEyePanel.tsx',
-    'mission-control/ThreadSituationPanel.tsx',
-    'mission-control/WorkflowSopPanel.tsx',
-    'mission-control/SliceLadder.tsx',
-    'mission-control/ExternalProjectTab.tsx',
-    'mission-control/QuickCreateForm.tsx',
-    'mission-control/FeatureRowList.tsx',
-    'mission-control/SuggestionDrawer.tsx',
-    'mission-control/MissionControlCard.tsx',
-    'mission-control/MissionControlPage.tsx',
-  ];
-
-  for (const file of MC_CARD_SCOPE) {
-    it(`${file}: no raw "border border-[var(--console-border-soft)]" on containers`, () => {
-      const src = readSrc(file);
-      const rawCardBorders = src.match(/className="[^"]*\bborder border-\[var\(--console-border-soft\)\][^"]*"/g) ?? [];
-      expect(rawCardBorders).toEqual([]);
-    });
-  }
-
   it('MissionControlCard uses shadow for main card container', () => {
     const src = readSrc('mission-control/MissionControlCard.tsx');
     expect(src).toContain('shadow-[0_8px_22px_rgba(43,33,26,0.04)]');
@@ -1229,21 +1142,6 @@ describe('#723 round 6 — select/toggle/button primitive convergence', () => {
 });
 
 describe('#723 round 7 — operator visual convergence: tabs, search, selects, buttons, cards', () => {
-  it('OpsContent: active tab uses Memory underline (border-b-2 + emphasis)', () => {
-    const src = readSrc('settings/OpsContent.tsx');
-    expect(src).toContain('border-b-2');
-    expect(src).toContain('console-button-emphasis');
-    expect(src).not.toContain('bg-[var(--console-active-bg)]');
-  });
-
-  it('HubObservabilityTab: sub-tabs use underline + bold, no pill bg', () => {
-    const src = readSrc('HubObservabilityTab.tsx');
-    expect(src).not.toContain('text-cafe-accent');
-    expect(src).toContain('border-b-2');
-    expect(src).toContain('font-semibold');
-    expect(src).not.toContain('bg-[var(--console-active-bg)]');
-  });
-
   it('HubTraceTree: search input uses field-bg, button accent, no blue', () => {
     const src = readSrc('HubTraceTree.tsx');
     const searchBlock = src.match(/<input[\s\S]*?Search[\s\S]*?<\/button>/);

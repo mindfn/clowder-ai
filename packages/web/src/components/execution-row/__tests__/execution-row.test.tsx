@@ -175,7 +175,7 @@ describe('ExecutionRow (F322 original-B)', () => {
   it('1  ■ stops the single live run through the same cancel endpoint and body, then re-reads executions', async () => {
     seed({ executions: [run('opus')] });
     await render();
-    expect($('execution-row-text')?.textContent).toMatch(/^opus 正在工作 \d+:\d{2}$/);
+    expect($('execution-row-text')?.textContent).toMatch(/^opus 正在回话 \d+:\d{2}$/);
     expect($('execution-row')?.getAttribute('data-tone')).toBe('info');
     expect($('execution-row-surface')?.style.background).toBe('var(--semantic-info-surface)');
     expect($('execution-row-avatars')).not.toBeNull();
@@ -363,7 +363,7 @@ describe('ExecutionRow (F322 original-B)', () => {
     const rows = container.querySelectorAll('[data-testid="execution-row-run"]');
     expect(rows).toHaveLength(2);
     const codexRow = Array.from(rows).find((row) => row.textContent?.includes('codex'));
-    await click(codexRow?.querySelector('button') ?? null);
+    await click(codexRow?.querySelector('[aria-label^="Stop " ]') ?? null);
     const cancels = mocks.apiFetch.mock.calls.filter((c) => String(c[0]).endsWith('/cancel')).map((c) => c[0]);
     expect(cancels).toEqual([`/api/threads/${THREAD}/executions/live/exec-codex/cancel`]);
   });
@@ -385,7 +385,7 @@ describe('ExecutionRow (F322 original-B)', () => {
     const row = $('execution-row');
     act(() => writeShellLanguage('en'));
     expect($('execution-row')).toBe(row);
-    expect($('execution-row-text')?.textContent).toMatch(/^opus working \d+:\d{2}$/);
+    expect($('execution-row-text')?.textContent).toMatch(/^opus replying \d+:\d{2}$/);
     expect($('execution-row-stop')?.textContent).toContain('Stop');
   });
 });

@@ -32,6 +32,7 @@ export const IDENTITY_STATUS: Partial<Record<FilesWorktreeIdentity['state'], str
  * only identify trees restored from descriptors that predate the coordinate.
  */
 export function matchesWorktreeIdentity(entry: WorktreeEntry, worktreeId: string, exact: boolean): boolean {
+  if (worktreeId.startsWith('f063_root_v1_')) return ownsWorktreeIdentity(entry, worktreeId);
   return exact ? entry.id === worktreeId : ownsWorktreeIdentity(entry, worktreeId);
 }
 

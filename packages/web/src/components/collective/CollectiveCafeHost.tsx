@@ -1,23 +1,20 @@
 'use client';
 import type { CollectiveClientContext } from '@cat-cafe/shared';
-import { type ComponentProps, type ReactNode, useEffect, useRef } from 'react';
-import { CatAvatar } from '@/components/CatAvatar';
+import { type ComponentProps, useEffect, useRef } from 'react';
 import { CollectiveCafePanel } from './CollectiveCafePanel';
 import { CollectiveWorkPermission } from './CollectiveWorkPermission';
-import { requestStatus } from './CollectiveWorkRequests';
-import styles from './collective-cafe-host.module.css';
 import { useCollectiveAutoReconcile, useCollectiveParticipation } from './use-collective-participation';
 import { useCollectiveWorkPolicy } from './use-collective-work-policy';
+import type { CollectiveWorkPolicyBridge } from './use-collective-work-policy-bridge';
 
 export function CollectiveCafeHost({
   context,
-  onOpen,
   onParticipationReady,
   policyBridge,
   ...props
 }: Omit<ComponentProps<typeof CollectiveCafePanel>, 'state' | 'channelId' | 'channels'> & {
   readonly context: CollectiveClientContext;
-  readonly onOpen: () => void;
+  readonly policyBridge?: CollectiveWorkPolicyBridge;
   readonly onParticipationReady?: (value: { readonly revision: number; readonly catCount: number }) => void;
 }) {
   const state = useCollectiveParticipation(props.connection.connectionId);
@@ -34,103 +31,19 @@ export function CollectiveCafeHost({
     sentPublication.current = key;
     onParticipationReady({ revision: view.revision, catCount });
   }, [context.bridgeId, onParticipationReady, props.connection.connectionId, state.view]);
-  const requests = state.view?.requests.filter((item) => item.event.location?.channelId === context.channelId) ?? [];
-  const latestNamedRequest = [...requests].reverse().find((item) => item.event.recipient?.kind === 'agent');
-  const latestNamedCatId =
-    latestNamedRequest?.event.recipient?.kind === 'agent' ? latestNamedRequest.event.recipient.agentId : undefined;
-  const work =
-    state.view?.tasks.filter((task) =>
-      requests.some((request) => task.sourceRefs.includes(`message:${request.messageId}`)),
-    ) ?? [];
-  const cats =
-    state.view?.cats.filter((cat) => state.view?.channelRoutes[context.channelId]?.participants[cat.id]) ?? [];
   return (
     <>
       {policyBridge && <CollectiveWorkPermission bridge={policyBridge} state={workPolicy} view={state.view} />}
-      <section className={styles.activity} aria-label="家里近况">
-        <h3>猫猫动态</h3>
-        {latestNamedRequest && latestNamedCatId ? (
-          <ActivityDestination threadId={latestNamedRequest.privateThread?.id} onOpen={onOpen}>
-            <CatAvatar catId={latestNamedCatId} size={30} />
-            <span>
-              <strong>
-                点名 {state.view?.cats.find((cat) => cat.id === latestNamedCatId)?.displayName ?? latestNamedCatId}
-              </strong>
-              <small>
-                {requestStatus(latestNamedRequest)} ·{' '}
-                {latestNamedRequest.privateThread ? '在私人 Thread 查看' : '打开我的 Café'}
-              </small>
-            </span>
-          </ActivityDestination>
-        ) : work.length ? (
-          work.slice(-2).map((task) => {
-            const request = requests.find((item) => task.sourceRefs.includes(`message:${item.messageId}`));
-            const catId = request?.event.recipient?.kind === 'agent' ? request.event.recipient.agentId : undefined;
-            return (
-              <ActivityDestination key={task.id} threadId={task.threadId} onOpen={onOpen}>
-                {catId && <CatAvatar catId={catId} size={30} />}
-                <span>
-                  <strong>{task.title}</strong>
-                  <small>{task.closure === 'open' ? '私人工作有后续' : '私人工作已收口'} · 查看私人工作</small>
-                </span>
-              </ActivityDestination>
-            );
-          })
-        ) : cats.length ? (
-          cats.slice(0, 2).map((cat) => (
-            <button key={cat.id} type="button" onClick={onOpen}>
-              <CatAvatar catId={cat.id} size={30} />
-              <span>
-                <strong>{cat.displayName}</strong>
-                <small>{state.view?.published ? '已加入本频道' : '公开参与尚待确认'}</small>
-              </span>
-            </button>
-          ))
-        ) : (
-          <button type="button" onClick={onOpen}>
-            <span>
-              <strong>伙伴正在自动接入</strong>
-              <small>
-                {state.error ? '家里的近况暂时读不到' : state.view ? '当前没有可参与的伙伴' : '正在读取家里的近况…'}
-              </small>
-            </span>
-          </button>
-        )}
-        {!latestNamedRequest && !work.length && cats.length > 0 && state.view?.published && (
-          <p>
-            本频道共 {cats.length} 只猫可回应 · 此处预览 {Math.min(cats.length, 2)} 只
-          </p>
-        )}
-        <p>家里的对话仍然只属于你</p>
-      </section>
       {context.openCafe && (
         <CollectiveCafePanel
           {...props}
+          initialSection={context.cafeSection ?? 'cats'}
           workPolicy={workPolicy}
-          policyBridge={policyBridge}
           state={state}
           channelId={context.channelId}
           channels={context.channelIds}
         />
       )}
     </>
-  );
-}
-
-function ActivityDestination({
-  threadId,
-  onOpen,
-  children,
-}: {
-  readonly threadId?: string;
-  readonly onOpen: () => void;
-  readonly children: ReactNode;
-}) {
-  return threadId ? (
-    <a href={`/thread/${encodeURIComponent(threadId)}`}>{children}</a>
-  ) : (
-    <button type="button" onClick={onOpen}>
-      {children}
-    </button>
   );
 }

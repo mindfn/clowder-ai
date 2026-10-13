@@ -35,7 +35,7 @@ const HEALTH = {
 };
 const SHOW = { hash: 'abc123def456', files: [{ path: 'packages/web/a.ts', summary: '+2 -1' }] };
 
-describe('GitPanel v2', () => {
+describe('GitPanel shell presentations', () => {
   let container: HTMLDivElement;
   let root: Root;
 
@@ -69,6 +69,14 @@ describe('GitPanel v2', () => {
       for (let i = 0; i < 12; i++) await Promise.resolve();
     });
   }
+
+  it.each(['commit', 'behind-main'] as const)('keeps classic %s subjects in the recovery primitive', async (kind) => {
+    writeShellPresentation('classic');
+    await render();
+    const blocks = [...container.querySelectorAll('[data-overflow-measure="block"]')];
+    const subject = kind === 'commit' ? LOG.commits[0].subject : HEALTH.runtimeDrift.behindCommits[0].subject;
+    expect(blocks.map((node) => node.textContent)).toContain(subject);
+  });
 
   it('renders branch, Chinese collapsible sections and the read-only footer', async () => {
     await render();

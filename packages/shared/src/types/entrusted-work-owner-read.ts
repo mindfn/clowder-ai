@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import { entrustedWorkTaskExecutionV1Schema, entrustedWorkTerminalV1Schema } from './entrusted-work-human-terminal.js';
 import { validateOwnerTimeCoordinates } from './entrusted-work-owner-read-evidence.js';
 import {
   validateBriefAttentionAndMilestone,
@@ -94,6 +95,8 @@ export const entrustedWorkBriefV1Schema = z
       .strict(),
     verifiedMilestone: z.discriminatedUnion('kind', [
       z.object({ kind: z.literal('work_completed'), evidenceRef: boundedRef, revision: revisionSchema }).strict(),
+      z.object({ kind: z.literal('work_cancelled'), evidenceRef: boundedRef, revision: revisionSchema }).strict(),
+      z.object({ kind: z.literal('work_abandoned'), evidenceRef: boundedRef, revision: revisionSchema }).strict(),
       z.object({ kind: z.literal('needs_judgment'), evidenceRef: boundedRef, revision: revisionSchema }).strict(),
       z
         .object({
@@ -167,12 +170,49 @@ export const entrustedWorkOwnerReadV1Schema = z
       .object({ recordedAt: timestampSchema.optional(), evidenceRefs: z.array(boundedRef).min(1).max(64) })
       .strict()
       .optional(),
+    terminal: entrustedWorkTerminalV1Schema.optional(),
+    execution: entrustedWorkTaskExecutionV1Schema.optional(),
     timeRefs: z.array(entrustedWorkTimeRefV1Schema).max(64),
     attentionReceipts: z.array(producerAttentionReceiptV1Schema).max(NEEDS_ME_PRODUCER_IDS.length),
   })
   .strict()
   .superRefine((ownerRead, context) => {
     validateBriefTaskCoordinates(ownerRead, context);
+    if ((ownerRead.terminal || ownerRead.completion) && ownerRead.execution) {
+      context.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ['execution'],
+        message: 'terminal history cannot expose a live Task execution projection',
+      });
+    }
+    if (
+      ownerRead.execution &&
+      (ownerRead.execution.taskRef.subjectRef !== ownerRead.envelope.subjectRef ||
+        ownerRead.execution.taskRef.ownerRef !== ownerRead.envelope.ownerRef ||
+        ownerRead.execution.taskRef.revision !== ownerRead.envelope.revision)
+    ) {
+      context.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ['execution', 'taskRef'],
+        message: 'execution truth must reference the same canonical Task owner coordinate',
+      });
+    }
+    const terminalExecution =
+      ownerRead.terminal?.state === 'satisfied'
+        ? ownerRead.terminal.confirmation?.taskExecution
+        : ownerRead.terminal?.disposition.taskExecution;
+    if (
+      terminalExecution &&
+      (terminalExecution.taskRef.subjectRef !== ownerRead.envelope.subjectRef ||
+        terminalExecution.taskRef.ownerRef !== ownerRead.envelope.ownerRef ||
+        terminalExecution.taskRef.revision + 1 !== ownerRead.envelope.revision)
+    ) {
+      context.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ['terminal', 'taskExecution', 'taskRef'],
+        message: 'terminal execution evidence must bind the immediately preceding Task revision',
+      });
+    }
     if (ownerRead.envelope.freshness.state !== 'current' && ownerRead.attentionReceipts.length > 0) {
       context.addIssue({
         code: z.ZodIssueCode.custom,

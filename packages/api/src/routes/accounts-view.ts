@@ -1,33 +1,40 @@
-import { type AccountConfig, builtinAccountFamilyForRef } from '@cat-cafe/shared';
-import { resolveByAccountRef } from '../config/account-resolver.js';
-import { codexManagedStatus, readCodexAccountIdentity } from '../config/codex-account-identity.js';
-import { resolveCodexAccountLaunch } from '../config/codex-account-launch.js';
+import { type AccountConfig, accountQuotaOwnerMatches, builtinAccountFamilyForRef } from '@cat-cafe/shared';
+import { codexManagedStatus } from '../config/codex-account-identity.js';
+import { nativeCodexAccountView } from './accounts-native-view.js';
 // clowder-ai#340: Derive client identity from well-known account IDs, not stored protocol.
 /** Synthesize a ProviderProfileView-compatible object from AccountConfig. */
 export function accountToView(id: string, account: AccountConfig, apiKeyPresent: boolean, projectRoot?: string) {
   const isBuiltin = account.authType === 'oauth' && !!builtinAccountFamilyForRef(id);
   const builtinClient = builtinAccountFamilyForRef(id);
   const clientId = account.clientId ?? (isBuiltin ? builtinClient : undefined);
-  const defaultCodex =
+  const codexView = account.codex ? { ...account.codex, status: codexManagedStatus(account.codex) } : undefined;
+  const codexStatus = codexView?.status;
+  const quota =
+    account.codex &&
+    account.quota?.status === 'ok' &&
+    (codexStatus !== 'ready' || !accountQuotaOwnerMatches(account.quota, id, account.codex.identity))
+      ? {
+          ...account.quota,
+          status: 'unavailable' as const,
+          items: [],
+          error: codexStatus === 'ready' ? '额度身份未确认，请重新查询此账号' : '请先处理此账号的官方登录',
+        }
+      : account.quota;
+  const nativeView =
     projectRoot && clientId === 'openai' && account.authType === 'oauth' && !account.codex
-      ? resolveByAccountRef(projectRoot, id)
-      : null;
-  const codexLoginStatus =
-    defaultCodex && projectRoot
-      ? readCodexAccountIdentity(resolveCodexAccountLaunch(defaultCodex, { cwd: projectRoot }).credentialHome)
-        ? ('ready' as const)
-        : ('not_logged_in' as const)
-      : undefined;
+      ? nativeCodexAccountView(projectRoot, id)
+      : {};
   return {
     id,
-    ...(codexLoginStatus ? { codexLoginStatus } : {}),
     name: account.displayName ?? id,
     displayName: account.displayName ?? id,
+    ...nativeView,
+    ...(!isBuiltin ? { displayName: account.displayName ?? id } : {}),
     authType: account.authType,
     builtin: isBuiltin,
-    ...(account.quota ? { quota: account.quota } : {}),
+    ...(quota ? { quota } : {}),
     kind: isBuiltin ? 'builtin' : account.authType,
-    ...(account.codex ? { codex: { ...account.codex, status: codexManagedStatus(account.codex) } } : {}),
+    ...(codexView ? { codex: codexView } : {}),
     ...(clientId ? { clientId } : {}),
     ...(account.baseUrl ? { baseUrl: account.baseUrl } : {}),
     models: account.models ? [...account.models] : [],

@@ -13,30 +13,20 @@ import {
   settingsResourceRowClass,
 } from '../SettingsResourceCard';
 import { OfficialPluginsPanel } from './OfficialPluginsPanel';
+import type { OfficialPluginInfo } from './official-plugin-types';
 import { PersonalChromePluginPanel } from './PersonalChromePluginPanel';
 import { PluginConfigPanel } from './PluginConfigPanel';
 import { PluginManagerContent } from './plugin-manager/PluginManagerContent';
 import { PluginManagerLiveContent } from './plugin-manager/PluginManagerLiveContent';
+import {
+  officialCompatibilityEntry,
+  PERSONAL_PRO_COMPATIBILITY_ENTRY,
+  repositoryCompatibilityEntry,
+} from './plugin-manager/plugin-manager-compatibility-fixtures';
 import { resolvePluginManagerDesignGate } from './plugin-manager/plugin-manager-design-gate';
 import { PLUGIN_MANAGER_DESIGN_FIXTURES } from './plugin-manager/plugin-manager-fixtures';
 import { SettingsBadge } from './primitives/SettingsBadge';
 import { SettingsText } from './primitives/SettingsText';
-
-const BUILTIN_GITHUB_PLUGIN: PluginInfo = {
-  id: 'github',
-  name: 'GitHub',
-  version: '1.0.0',
-  description: '内置插件 · PR 追踪、Review 投递、CI/CD 监控与 GitHub CLI 认证',
-  icon: 'github',
-  iconBg: '#24292e',
-  docsUrl: 'https://cli.github.com/manual/gh_auth_login',
-  setupSteps: ['在运行 Clowder AI 的机器上执行 gh auth login', '可选：仅在需要显式覆盖 gh 登录态时配置插件 token'],
-  status: 'configured',
-  configured: true,
-  config: [],
-  resources: [],
-  hasHealthCheck: false,
-};
 
 function pluginToggleFailure(data: { status?: string; error?: string }, actionLabel: string): string | undefined {
   if (data.status === 'partial') return data.error ?? `插件${actionLabel}部分成功`;
@@ -76,10 +66,10 @@ function RepositoryPluginCard({
         >
           <div
             className={settingsResourceAvatarClass}
-            style={{ backgroundColor: plugin.iconBg ?? '#9ca3af', color: 'var(--cafe-surface)' }}
+            style={{ backgroundColor: plugin.iconBg ?? '#9ca3af', color: 'var(--cafe-image-foreground)' }}
           >
             {plugin.icon === 'github' ? (
-              <GitHubIcon className="h-5 w-5" color="var(--cafe-surface)" />
+              <GitHubIcon className="h-5 w-5" color="var(--cafe-image-foreground)" />
             ) : plugin.icon && typeof plugin.icon === 'object' ? (
               // Terminal Manager rewrites package-relative icon paths to a Host-owned URL.
               // eslint-disable-next-line @next/next/no-img-element
@@ -130,20 +120,20 @@ export function PluginsContent() {
     degradedCatalog: false,
   });
   const [plugins, setPlugins] = useState<PluginInfo[]>([]);
-  const [loading, setLoading] = useState(true);
-  const [expandedId, setExpandedId] = useState<string | null>(null);
+  const [officialPlugins, setOfficialPlugins] = useState<OfficialPluginInfo[]>([]);
   const [togglingId, setTogglingId] = useState<string | null>(null);
+  const [readError, setReadError] = useState<string | null>(null);
   const [toggleError, setToggleError] = useState<string | null>(null);
 
   const fetchPlugins = useCallback(async () => {
     try {
       const res = await apiFetch('/api/plugins');
       const payload = res.ok ? ((await res.json()) as { plugins?: PluginInfo[] }) : {};
-      setPlugins(Array.isArray(payload.plugins) ? payload.plugins : [BUILTIN_GITHUB_PLUGIN]);
+      if (!Array.isArray(payload.plugins)) throw new Error('plugin_list_unavailable');
+      setPlugins(payload.plugins);
+      setReadError(null);
     } catch {
-      setPlugins([]);
-    } finally {
-      setLoading(false);
+      setReadError('现有插件状态读取失败，保留最后确认状态。');
     }
   }, []);
 
@@ -180,11 +170,21 @@ export function PluginsContent() {
   useEffect(() => {
     if (!designGate.resolved) return;
     if (designGate.enabled || designGate.live) {
-      setLoading(false);
       return;
     }
     void fetchPlugins();
   }, [designGate.enabled, designGate.live, designGate.resolved, fetchPlugins]);
+
+  useEffect(() => {
+    if (!designGate.resolved || designGate.enabled || designGate.live) return;
+    void apiFetch('/api/plugins/official')
+      .then(async (response) => {
+        if (!response.ok) return;
+        const payload = (await response.json()) as { plugins?: OfficialPluginInfo[] };
+        setOfficialPlugins((payload.plugins ?? []).filter((plugin) => plugin.pluginId !== 'official.chatgpt-dot'));
+      })
+      .catch(() => undefined);
+  }, [designGate.resolved, designGate.enabled, designGate.live]);
 
   if (!designGate.resolved) {
     return (
@@ -207,64 +207,49 @@ export function PluginsContent() {
 
   if (designGate.live) return <PluginManagerLiveContent />;
 
-  if (loading) {
-    return (
-      <div className="flex flex-col gap-3.5" data-testid="plugins-list">
-        <PersonalChromePluginPanel />
-        <OfficialPluginsPanel />
-        <SettingsText as="p" variant="sm" tone="muted">
-          加载本地插件中...
-        </SettingsText>
-      </div>
-    );
-  }
-
-  if (plugins.length === 0) {
-    return (
-      <div className="flex flex-col gap-3.5" data-testid="plugins-list">
-        <PersonalChromePluginPanel />
-        <OfficialPluginsPanel />
-        <div
-          className="flex flex-col items-center justify-center"
-          style={{
-            borderRadius: '1rem',
-            background: 'var(--console-card-bg)',
-            padding: '4rem 2rem',
-            textAlign: 'center',
-          }}
-        >
-          <span className="mb-3 opacity-40" style={{ color: 'var(--cafe-text-muted)' }}>
-            <HubIcon name="blocks" className="h-10 w-10" />
-          </span>
-          <SettingsText as="p" variant="sm" tone="default" className="font-semibold">
-            暂无本地插件
-          </SettingsText>
-          <SettingsText as="p" tone="muted" className="mt-1">
-            本地插件在 plugins/ 目录下管理
-          </SettingsText>
-        </div>
-      </div>
-    );
-  }
-
   return (
-    <div className="flex flex-col gap-3.5" data-testid="plugins-list">
-      <PersonalChromePluginPanel />
-      <OfficialPluginsPanel />
-      {toggleError && (
-        <div className="rounded-md bg-conn-red-bg px-3 py-2 text-sm text-conn-red-text">{toggleError}</div>
+    <div className="flex min-h-0 flex-1 flex-col">
+      {readError && (
+        <p role="alert" className="mb-2 text-sm text-conn-red-text">
+          {readError}{' '}
+          <button type="button" className="underline" onClick={() => void fetchPlugins()}>
+            重试读取
+          </button>
+        </p>
       )}
-      {plugins.map((plugin) => (
-        <RepositoryPluginCard
-          key={plugin.id}
-          plugin={plugin}
-          expanded={expandedId === plugin.id}
-          busy={togglingId === plugin.id}
-          onExpandedChange={(expanded) => setExpandedId(expanded ? plugin.id : null)}
-          onToggle={(candidate) => void handleToggle(candidate)}
-          onUpdated={fetchPlugins}
-        />
-      ))}
+      <PluginManagerLiveContent
+        compatibilityFixtures={[
+          PERSONAL_PRO_COMPATIBILITY_ENTRY,
+          ...officialPlugins.map(officialCompatibilityEntry),
+          ...plugins
+            .filter((plugin) => !officialPlugins.some((official) => official.pluginId === plugin.id))
+            .map(repositoryCompatibilityEntry),
+        ]}
+        renderCompatibilityDetail={(pluginId, presentation) => {
+          if (pluginId === 'personal-chrome-host') return <PersonalChromePluginPanel />;
+          if (officialPlugins.some((plugin) => plugin.pluginId === pluginId))
+            return <OfficialPluginsPanel onlyPluginId={pluginId} visual={presentation} />;
+          const plugin = plugins.find((candidate) => candidate.id === pluginId);
+          if (!plugin) return undefined;
+          return (
+            <>
+              {toggleError && (
+                <p role="alert" className="text-sm text-conn-red-text">
+                  {toggleError}
+                </p>
+              )}
+              <RepositoryPluginCard
+                plugin={plugin}
+                expanded
+                busy={togglingId === pluginId}
+                onExpandedChange={() => {}}
+                onToggle={handleToggle}
+                onUpdated={fetchPlugins}
+              />
+            </>
+          );
+        }}
+      />
     </div>
   );
 }

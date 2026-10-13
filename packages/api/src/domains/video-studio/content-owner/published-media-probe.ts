@@ -3,6 +3,7 @@ import { type ImmutableMedia, immutableMediaSchema } from '@cat-cafe/shared';
 import sharp from 'sharp';
 import { z } from 'zod';
 import { MediaOwnerError } from './media-errors.js';
+import { verifiedVideoFrameRate } from './published-media-frame-rate.js';
 
 const pngSignature = Buffer.from([137, 80, 78, 71, 13, 10, 26, 10]);
 const videoStreamSchema = z.object({
@@ -10,6 +11,8 @@ const videoStreamSchema = z.object({
   id: z.string().min(1),
   codec_type: z.literal('video'),
   codec_name: z.string().min(1),
+  field_order: z.string().optional(),
+  nb_frames: z.string().optional(),
   width: z.number().int().positive(),
   height: z.number().int().positive(),
   // ffprobe legitimately omits this for square-pixel MP4s (or emits N/A).
@@ -27,6 +30,7 @@ const videoStreamSchema = z.object({
 const videoProbeSchema = z.object({
   format: z.object({ format_name: z.string(), start_time: z.string() }),
   streams: z.array(z.unknown()).max(64),
+  packets: z.array(z.unknown()).max(250000).optional(),
 });
 
 export async function probeImmutableMedia(
@@ -53,7 +57,15 @@ export async function probeImmutableMedia(
   }
   if (bytes.length < 12 || bytes.subarray(4, 8).toString('ascii') !== 'ftyp')
     throw new MediaOwnerError('invalid_media');
-  return parseVideoProbe(await runVideoProbe(bytes));
+  const media = parseVideoProbe(await runVideoProbe(bytes));
+  // Frame-clock enrichment is optional: an oversized packet audit must not reject previously supported video.
+  try {
+    // Reuse the codec/field-order fence as well as the complete presentation-clock audit.
+    const enriched = parseVideoProbe(await runVideoProbe(bytes, true));
+    return enriched.frameRate ? { ...media, frameRate: enriched.frameRate } : media;
+  } catch {
+    return media;
+  }
 }
 
 /** Read the container's stream clock and display transform. Frame-rate guesses are deliberately absent. */
@@ -78,6 +90,17 @@ export function parseVideoProbe(raw: unknown): Extract<ImmutableMedia, { kind: '
     const timebase = parseRational(stream.time_base, '/');
     const displayWidth = Math.round((stream.width * pixelAspectRatio.numerator) / pixelAspectRatio.denominator);
     const rotated = rotation === 90 || rotation === 270;
+    const singleFramePackets = ['h264', 'hevc'].includes(stream.codec_name) && stream.field_order === 'progressive';
+    const frameRate = singleFramePackets
+      ? verifiedVideoFrameRate({
+          packets: probe.packets,
+          expectedFrameCount: Number(stream.nb_frames),
+          streamIndex: stream.index,
+          startPts: stream.start_pts,
+          durationPts: stream.duration_ts,
+          timebase,
+        })
+      : undefined;
     const media = immutableMediaSchema.parse({
       kind: 'video',
       width: rotated ? stream.height : displayWidth,
@@ -92,6 +115,7 @@ export function parseVideoProbe(raw: unknown): Extract<ImmutableMedia, { kind: '
       startTick: stream.start_pts,
       durationTicks: stream.duration_ts,
       containerStartSeconds: Number(probe.format.start_time),
+      ...(frameRate ? { frameRate } : {}),
     });
     if (media.kind !== 'video' || !Number.isSafeInteger(media.startTick + media.durationTicks))
       throw new Error('invalid video clock');
@@ -111,7 +135,7 @@ function parseRational(value: string, separator: string) {
   return { numerator, denominator };
 }
 
-function runVideoProbe(bytes: Buffer): Promise<unknown> {
+function runVideoProbe(bytes: Buffer, includePackets = false): Promise<unknown> {
   return new Promise((resolve, reject) => {
     // Pipe-only input and demuxer restriction prevent URLs, playlists and external file references in an upload.
     const child = spawn(
@@ -133,6 +157,7 @@ function runVideoProbe(bytes: Buffer): Promise<unknown> {
         'mov',
         '-select_streams',
         'V',
+        ...(includePackets ? ['-show_packets', '-show_entries', 'stream:format:packet=pts,duration,stream_index'] : []),
         '-show_streams',
         '-show_format',
         '-of',
@@ -159,7 +184,7 @@ function runVideoProbe(bytes: Buffer): Promise<unknown> {
     child.stdout.setEncoding('utf8');
     child.stdout.on('data', (chunk: string) => {
       outputSize += Buffer.byteLength(chunk);
-      if (outputSize > 512 * 1024) {
+      if (outputSize > (includePackets ? 16 * 1024 * 1024 : 512 * 1024)) {
         child.kill('SIGKILL');
         finish(new MediaOwnerError('invalid_media'));
         return;

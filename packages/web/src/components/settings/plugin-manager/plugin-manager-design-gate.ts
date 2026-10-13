@@ -9,6 +9,5 @@ export function resolvePluginManagerDesignGate(search: string, nodeEnv = process
 }
 
 export function usesFixedPluginManagerLayout(search: string, nodeEnv = process.env.NODE_ENV): boolean {
-  const gate = resolvePluginManagerDesignGate(search, nodeEnv);
-  return gate.enabled || gate.live;
+  return resolvePluginManagerDesignGate(search, nodeEnv).resolved;
 }

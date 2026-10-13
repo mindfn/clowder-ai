@@ -1,5 +1,6 @@
 import type { FastifyInstance, FastifyReply } from 'fastify';
 import { z } from 'zod';
+import type { RuntimeInteractionPendingReadSource } from '../domains/runtime-interaction/ports/RuntimeInteractionStore.js';
 import { migrateStoredProjectPath } from '../utils/persistent-project-path.js';
 import { requireCallbackAuth } from './callback-auth-prehandler.js';
 import { companionDecisionWireResponse, readCompanionDecisionProjection } from './companion-decision-read-service.js';
@@ -74,7 +75,11 @@ export function projectCompanionRunningWork(source: unknown, expectedProjectPath
   };
 }
 
-export function registerCompanionWorkReadRoutes(app: FastifyInstance, projectPath: string): void {
+export function registerCompanionWorkReadRoutes(
+  app: FastifyInstance,
+  projectPath: string,
+  runtimeInteractionStore?: RuntimeInteractionPendingReadSource,
+): void {
   app.get('/api/callbacks/companion/running-work', async (request, reply) => {
     const record = requireCallbackAuth(request, reply);
     if (!record) return;
@@ -105,7 +110,14 @@ export function registerCompanionWorkReadRoutes(app: FastifyInstance, projectPat
     const page = pageSchema.safeParse(request.query);
     if (!page.success) return reply.code(400).send({ error: 'Invalid page' });
     const { offset, limit, view } = page.data;
-    const result = await readCompanionDecisionProjection(app, record.userId, { offset, limit });
+    const result = await readCompanionDecisionProjection(
+      app,
+      record.userId,
+      { offset, limit },
+      undefined,
+      undefined,
+      runtimeInteractionStore,
+    );
     const response = companionDecisionWireResponse(result, view);
     return reply.code(response.statusCode).send(response.body);
   });

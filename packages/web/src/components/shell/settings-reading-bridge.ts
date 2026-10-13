@@ -57,6 +57,13 @@ export class SettingsReadingBridge {
       this.listeners.delete(listener);
     };
   };
+  /** A presented notice is consumed by its owner, independent of consumer mounts. */
+  consumeNotice(expectedView: SettingsReadingView): SettingsReturnNotice {
+    const notice = this.view.notice;
+    if (!notice || this.view !== expectedView) return null;
+    this.publish({ notice: null });
+    return notice;
+  }
   private publish(patch: Partial<SettingsReadingView>): void {
     this.view = { ...this.view, ...patch };
     for (const listener of this.listeners) listener();

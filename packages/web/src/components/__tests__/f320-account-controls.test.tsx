@@ -2,42 +2,44 @@ import { act, useState } from 'react';
 import { createRoot } from 'react-dom/client';
 import { afterEach, beforeEach, expect, it, vi } from 'vitest';
 import type { CatData } from '@/hooks/useCatData';
-import { CodexAccountCard } from '../codex-accounts/CodexAccountCard';
+import { AccountDirectoryRow } from '../accounts/AccountDirectoryRow';
 import { CodexQuotaControl } from '../codex-accounts/CodexQuotaControl';
 import { MemberCodexAccount } from '../codex-accounts/MemberCodexAccount';
 import type { ProfileItem } from '../hub-accounts.types';
-import { ConfirmProvider } from '../useConfirm';
 
-const request = vi.hoisted(() =>
-  vi.fn<(path: string, body: Record<string, unknown>, method?: string) => Promise<Record<string, unknown>>>(
-    async () => ({}),
-  ),
-);
-vi.unmock('@/components/useConfirm');
+const request = vi.hoisted(() => vi.fn());
 vi.mock('../codex-accounts/account-request', () => ({ accountRequest: request }));
-vi.mock('../codex-accounts/CodexBindingControl', () => ({ CodexBindingControl: () => <span>binding preview</span> }));
-const profile = (id: string): ProfileItem => ({
-  id,
-  displayName: id,
-  name: id,
+vi.mock('../useConfirm', () => ({ useConfirm: () => async () => true }));
+const managed = (ready = false): ProfileItem => ({
+  id: 'backup',
+  name: '主号',
+  displayName: '主号',
   authType: 'oauth',
   kind: 'oauth',
   builtin: false,
   mode: 'subscription',
   clientId: 'openai',
   hasApiKey: false,
-  codexLoginStatus: 'ready',
   createdAt: '',
   updatedAt: '',
+  codex: {
+    kind: 'managed',
+    layoutVersion: 1,
+    prepared: true,
+    credentialHome: '/fixture/b',
+    stateRoot: '/fixture/shared',
+    sqliteHome: '/fixture/shared',
+    status: ready ? 'ready' : 'not_logged_in',
+    ...(ready ? { identity: { userId: 'u', workspaceId: 'w', email: 'fixture@example.test' } } : {}),
+  },
 });
-const accounts = [profile('A'), profile('B'), profile('C')];
 const cat: CatData = {
   carrier: 'cli',
-  id: 'local',
-  displayName: 'Local',
+  id: 'sol',
+  displayName: '小太阳',
   clientId: 'openai',
   cli: { command: 'codex' },
-  accountRef: 'A',
+  accountRef: 'backup',
   defaultModel: 'fixture',
   color: { primary: '#123456', secondary: '#abcdef' },
   mentionPatterns: [],
@@ -45,303 +47,250 @@ const cat: CatData = {
   roleDescription: 'fixture',
   personality: 'fixture',
 };
-let container: HTMLDivElement;
-let root: ReturnType<typeof createRoot>;
+let host: HTMLDivElement, root: ReturnType<typeof createRoot>;
 beforeEach(() => {
   vi.stubGlobal('IS_REACT_ACT_ENVIRONMENT', true);
   request.mockReset();
   request.mockResolvedValue({});
-  container = document.createElement('div');
-  document.body.append(container);
-  root = createRoot(container);
+  host = document.createElement('div');
+  document.body.append(host);
+  root = createRoot(host);
 });
 afterEach(async () => {
   await act(async () => root.unmount());
-  container.remove();
+  host.remove();
   vi.unstubAllGlobals();
 });
 async function click(label: string) {
-  const button = [...container.querySelectorAll('button')].find((button) => button.textContent?.includes(label));
-  expect(button).toBeTruthy();
-  if (!button) throw new Error(`Missing button ${label}`);
-  await act(async () => button.click());
+  await act(async () => {
+    const b = [...host.querySelectorAll('button')].find((b) => b.textContent === label);
+    expect(b).toBeTruthy();
+    b!.click();
+  });
 }
-it('remaining credits and native body reset keep their original quota meaning', async () => {
-  const reset = '2030-01-02T03:04:05.000Z';
+function Row({ profile, bound = false }: { profile: ProfileItem; bound?: boolean }) {
+  const [account, setAccount] = useState(profile);
+  return (
+    <table>
+      <tbody>
+        <AccountDirectoryRow
+          account={account}
+          accounts={[account]}
+          members={bound ? [{ id: 'sol', name: '小太阳', accountRef: account.id, available: true }] : []}
+          used={false}
+          provider="Codex"
+          refresh={() => new Promise(() => {})}
+          update={(profiles) => {
+            if (profiles[0]) setAccount(profiles[0]);
+          }}
+          onSwitch={() => {}}
+          onEdit={() => {}}
+        />
+      </tbody>
+    </table>
+  );
+}
+it('quota preserves remaining percentage/reset and publishes the response even with a hung list', async () => {
+  request.mockResolvedValue({
+    quota: {
+      observedAt: 1,
+      source: 'codex_official_readonly',
+      status: 'ok',
+      items: [{ label: '额度', usedPercent: 30, percentKind: 'remaining', resetsAt: '2030-01-02T03:04:05Z' }],
+    },
+  });
+  await act(async () => root.render(<CodexQuotaControl accountRef="backup" reload={() => new Promise(() => {})} />));
+  await click('查询此账号额度');
+  expect(host.textContent).toContain('剩余 30%');
+  expect(host.textContent).toContain('2030');
+  expect([...host.querySelectorAll('button')][0].disabled).toBe(false);
+});
+it('quota controls hide prior identity values and reject a late result after same-ref identity changes', async () => {
+  const owner = { accountRef: 'backup', userId: 'user-a', workspaceId: 'workspace-a' };
   const observation = {
+    owner,
     observedAt: 1,
     source: 'codex_official_readonly' as const,
     status: 'ok' as const,
-    items: [
-      { label: '溢出额度', usedPercent: 20, percentKind: 'remaining' as const, poolId: 'codex-overflow' },
-      { label: '5小时', usedPercent: 30, percentKind: 'used' as const, poolId: 'codex-main', resetsAt: reset },
-    ],
+    items: [{ label: 'A额度', usedPercent: 99 }],
   };
-  await act(async () =>
-    root.render(<CodexQuotaControl accountRef="A" observation={observation} reload={async () => {}} />),
+  let finish: (value: { quota: typeof observation }) => void = () => {};
+  request.mockReturnValue(
+    new Promise((resolve) => {
+      finish = resolve;
+    }),
   );
-  expect(container.textContent).toContain('溢出额度：剩余 20%');
-  expect(container.textContent).toContain('5小时：剩余 70%');
-  expect(container.textContent).toContain(new Date(reset).toLocaleString());
-});
-it('managed deletion requires explicit danger confirmation, cancel performs no request', async () => {
-  const account = {
-    ...accounts[0],
-    codex: {
-      kind: 'managed' as const,
-      layoutVersion: 1 as const,
-      prepared: true,
-      credentialHome: '/fixture/private',
-      stateRoot: '/fixture/shared',
-      sqliteHome: '/fixture/shared',
-      status: 'not_logged_in' as const,
-    },
-  };
+  const reload = () => Promise.resolve();
   await act(async () =>
     root.render(
-      <ConfirmProvider>
-        <CodexAccountCard onUpdated={() => {}} account={account} reload={async () => {}} />
-      </ConfirmProvider>,
+      <CodexQuotaControl accountRef="backup" managed identity={owner} observation={observation} reload={reload} />,
     ),
   );
-  await click('删除账号条目');
-  expect(request).not.toHaveBeenCalled();
-  expect(container.textContent).toContain('文件和登录');
-  await click('取消');
-  expect(request).not.toHaveBeenCalled();
-  await click('删除账号条目');
-  await click('确认删除');
-  expect(request).toHaveBeenCalledWith('/api/accounts/A', {}, 'DELETE');
+  expect(host.textContent).toContain('A额度');
+  await click('查询此账号额度');
+  await act(async () =>
+    root.render(
+      <CodexQuotaControl
+        accountRef="backup"
+        managed
+        identity={{ userId: 'user-b', workspaceId: 'workspace-b' }}
+        observation={observation}
+        reload={reload}
+      />,
+    ),
+  );
+  expect(host.textContent).not.toContain('A额度');
+  await act(async () => finish({ quota: observation }));
+  expect(host.textContent).not.toContain('A额度');
+  expect(host.textContent).toContain('账号登录已变化');
 });
-it('closed member selector follows authoritative binding, open user edit survives external changes', async () => {
-  await act(async () => root.render(<MemberCodexAccount cat={cat} accounts={accounts} />));
-  await act(async () => root.render(<MemberCodexAccount cat={{ ...cat, accountRef: 'B' }} accounts={accounts} />));
-  await click('换账号');
-  const select = container.querySelector('select');
-  if (!select) throw new Error('Missing member account selector');
-  expect(select.value).toBe('B');
-  await act(async () => root.render(<MemberCodexAccount cat={cat} accounts={accounts} />));
-  expect(select.value).toBe('A');
-  await act(async () => {
-    select.value = 'C';
-    select.dispatchEvent(new Event('change', { bubbles: true }));
-  });
-  await act(async () => root.render(<MemberCodexAccount cat={{ ...cat, accountRef: 'B' }} accounts={accounts} />));
-  expect(select.value).toBe('C');
-  await click('换账号');
-  await click('换账号');
-  expect(container.querySelector('select')?.value).toBe('B');
-});
-it('different official accounts with the same note remain distinguishable in the member picker', async () => {
-  const sameNotes = ['A', 'B'].map((id) => ({
-    ...profile(id),
-    displayName: 'Codex 账号',
+it('row retry uses immediate mutation state while GET never settles', async () => {
+  const profile = managed();
+  const waiting = {
+    ...profile,
     codex: {
-      kind: 'managed' as const,
-      layoutVersion: 1 as const,
-      prepared: true,
-      credentialHome: `/fixture/${id}`,
-      stateRoot: '/fixture/shared',
-      sqliteHome: '/fixture/shared',
-      status: 'ready' as const,
-      identity: { userId: `user-${id}`, workspaceId: `workspace-${id}`, email: `${id}@example.test` },
-    },
-  }));
-  await act(async () => root.render(<MemberCodexAccount cat={cat} accounts={sameNotes} />));
-  await click('换账号');
-  const labels = [...container.querySelectorAll('option')].map((option) => option.textContent);
-  expect(labels[0]).toContain('A@example.test');
-  expect(labels[1]).toContain('B@example.test');
-  expect(labels[0]).not.toBe(labels[1]);
-});
-
-it('historical reuse has no binding action when its destination disappears or becomes unavailable', async () => {
-  const candidate = {
-    ...profile('candidate'),
-    codex: {
-      kind: 'managed' as const,
-      layoutVersion: 1 as const,
-      prepared: true,
-      credentialHome: '/fixture/candidate',
-      stateRoot: '/fixture/shared',
-      sqliteHome: '/fixture/shared',
-      status: 'not_logged_in' as const,
+      ...profile.codex!,
       attempt: {
-        id: 'attempt',
+        id: 'a',
         revision: 1,
-        ownerBootId: 'boot',
+        ownerBootId: 'b',
         ownerPid: 1,
         ownerStartedAt: 'fixture',
+        credentialHome: '/fixture/attempt',
         createdAt: 1,
-        updatedAt: 2,
-        credentialHome: '/fixture/stage',
-        state: 'reused' as const,
-        duplicateAccountRef: 'A',
+        updatedAt: 1,
+        state: 'waiting' as const,
       },
     },
   };
-  const destination = { ...profile('A'), codex: { ...candidate.codex, attempt: undefined, status: 'ready' as const } };
-  const render = async (items: ProfileItem[]) =>
-    act(async () =>
-      root.render(
-        <ConfirmProvider>
-          <CodexAccountCard onUpdated={() => {}} account={candidate} accounts={items} reload={async () => {}} />
-        </ConfirmProvider>,
-      ),
-    );
-  await render([destination, candidate]);
-  expect(container.textContent).toContain('binding preview');
-  await render([candidate]);
-  expect(container.textContent).not.toContain('binding preview');
-  expect(container.textContent).toContain('不可用');
-  await render([{ ...destination, codex: { ...destination.codex, status: 'identity_changed' } }, candidate]);
-  expect(container.textContent).not.toContain('binding preview');
-  expect(request).not.toHaveBeenCalled();
+  request.mockResolvedValue({ profiles: [waiting] });
+  await act(async () => root.render(<Row profile={profile} />));
+  await click('重试');
+  expect(host.textContent).toContain('终端已打开');
+  expect([...host.querySelectorAll('button')].some((b) => b.textContent === '取消' && !b.disabled)).toBe(true);
+  expect([...host.querySelectorAll('button')].some((b) => b.textContent === '重试')).toBe(false);
 });
-
-const waitingAttempt = {
-  id: 'attempt',
-  revision: 1,
-  ownerBootId: 'boot',
-  ownerPid: 1,
-  ownerStartedAt: 'fixture',
-  state: 'waiting' as const,
-  credentialHome: '/fixture/attempt',
-  createdAt: 1,
-  updatedAt: 1,
-};
-
-const pendingAccount = () => ({
-  ...profile('pending'),
-  codex: {
-    kind: 'managed' as const,
-    layoutVersion: 1 as const,
-    prepared: true,
-    credentialHome: '/fixture/private',
-    stateRoot: '/fixture/shared',
-    sqliteHome: '/fixture/shared',
-    status: 'not_logged_in' as const,
-  },
-});
-it('a failed login request releases controls even when account reload never settles', async () => {
-  const reload = vi.fn(() => new Promise<void>(() => {}));
-  request.mockRejectedValueOnce(new Error('网络请求超时'));
-  await act(async () =>
-    root.render(
-      <ConfirmProvider>
-        <CodexAccountCard onUpdated={() => {}} account={pendingAccount()} reload={reload} />
-      </ConfirmProvider>,
-    ),
-  );
-  await click('开始官方登录');
-  expect(container.textContent).toContain('网络请求超时');
-  const buttons = [...container.querySelectorAll('button')];
-  expect(buttons.find((b) => b.textContent?.includes('开始官方登录'))?.disabled).toBe(false);
-  expect(buttons.find((b) => b.textContent?.includes('删除账号条目'))?.disabled).toBe(false);
-});
-it('an unlogged account has no quota or binding action', async () => {
-  await act(async () =>
-    root.render(
-      <ConfirmProvider>
-        <CodexAccountCard onUpdated={() => {}} account={pendingAccount()} reload={async () => {}} />
-      </ConfirmProvider>,
-    ),
-  );
-  expect(container.textContent).not.toContain('查询此账号额度');
-  expect(container.textContent).not.toContain('binding preview');
-});
-it('active deletion delegates validation and cancellation to the server', async () => {
-  const account = pendingAccount();
-  const attempt = waitingAttempt;
-  await act(async () =>
-    root.render(
-      <ConfirmProvider>
-        <CodexAccountCard
-          onUpdated={() => {}}
-          account={{ ...account, codex: { ...account.codex, attempt } }}
-          reload={async () => {}}
-        />
-      </ConfirmProvider>,
-    ),
-  );
-  await click('删除账号条目');
-  await click('确认删除');
-  expect(request.mock.calls).toEqual([['/api/accounts/pending', {}, 'DELETE']]);
-});
-
-it('successful retry publishes waiting immediately, before a hung list reload', async () => {
-  const initial = pendingAccount();
-  const waiting = {
-    ...initial,
-    codex: {
-      ...initial.codex,
-      attempt: { ...waitingAttempt, id: 'attempt-new', revision: 2, createdAt: 2, updatedAt: 2 },
+it('relogin failure keeps ready identity and offers retry without destroying the used login', async () => {
+  const profile = managed(true);
+  profile.codex = {
+    ...profile.codex!,
+    attempt: {
+      id: 'a',
+      revision: 1,
+      ownerBootId: 'b',
+      ownerPid: 1,
+      ownerStartedAt: 'fixture',
+      credentialHome: '/fixture/attempt',
+      createdAt: 1,
+      updatedAt: 1,
+      state: 'failed',
+      error: '终端没能启动',
     },
   };
-  request.mockResolvedValueOnce({ accountRef: initial.id, codex: waiting.codex, profiles: [waiting] });
-  const reload = vi.fn(() => new Promise<void>(() => {}));
-  const updated = vi.fn();
-  function AccountHarness() {
-    const [account, setAccount] = useState<ProfileItem>(initial);
-    return (
-      <CodexAccountCard
-        account={account}
-        reload={reload}
-        onUpdated={(profiles: ProfileItem[]) => {
-          updated(profiles);
-          setAccount(profiles.find((p) => p.id === initial.id)!);
-        }}
-      />
-    );
-  }
+  await act(async () => root.render(<Row profile={profile} />));
+  expect(host.textContent).toContain('已登录');
+  expect(host.textContent).toContain('上次重新登录没成功');
+  expect([...host.querySelectorAll('button')].some((b) => b.textContent === '重试')).toBe(true);
+});
+it('bound active deletion stays disabled and never cancels the login', async () => {
+  const profile = managed();
+  profile.codex = {
+    ...profile.codex!,
+    attempt: {
+      id: 'a',
+      revision: 1,
+      ownerBootId: 'b',
+      ownerPid: 1,
+      ownerStartedAt: 'fixture',
+      credentialHome: '/fixture/attempt',
+      createdAt: 1,
+      updatedAt: 1,
+      state: 'waiting',
+    },
+  };
+  await act(async () => root.render(<Row profile={profile} bound />));
+  const del = [...host.querySelectorAll('button')].find((b) => b.textContent === '删除登记')!;
+  expect(del.disabled).toBe(true);
+  await act(async () => del.click());
+  expect(request).not.toHaveBeenCalled();
+  expect(host.textContent).toContain('先换走');
+});
+it('duplicate identity deletes only the extra record and offers no binding mutation', async () => {
+  const profile = managed();
+  profile.codex = {
+    ...profile.codex!,
+    attempt: {
+      id: 'a',
+      revision: 1,
+      ownerBootId: 'b',
+      ownerPid: 1,
+      ownerStartedAt: 'fixture',
+      credentialHome: '/fixture/attempt',
+      createdAt: 1,
+      updatedAt: 1,
+      state: 'review',
+      duplicateAccountRef: 'existing',
+      identity: { userId: 'u', workspaceId: 'w' },
+    },
+  };
+  const duplicate = { ...managed(true), id: 'existing', displayName: '已有主号' };
+  const update = vi.fn();
   await act(async () =>
     root.render(
-      <ConfirmProvider>
-        <AccountHarness />
-      </ConfirmProvider>,
+      <table>
+        <tbody>
+          <AccountDirectoryRow
+            account={profile}
+            accounts={[profile, duplicate]}
+            members={[]}
+            used={false}
+            provider="Codex"
+            refresh={async () => {}}
+            update={update}
+            onSwitch={vi.fn()}
+            onEdit={vi.fn()}
+          />
+        </tbody>
+      </table>,
     ),
   );
-  await click('开始官方登录');
-  expect(container.textContent).toContain('终端已打开');
-  expect(container.textContent).not.toContain('开始官方登录');
-  expect(updated).toHaveBeenCalledWith([waiting]);
-  expect(reload).toHaveBeenCalledOnce();
-  expect([...container.querySelectorAll('button')].find((b) => b.textContent?.includes('取消本次登录'))?.disabled).toBe(
-    false,
-  );
+  await click('去处理');
+  await click('删掉这条，回到已有主号');
+  expect(request).toHaveBeenCalledWith('/api/accounts/backup', {}, 'DELETE');
+  expect(update).toHaveBeenCalledWith([], ['backup']);
+  expect(request).toHaveBeenCalledTimes(1);
 });
-it('bound active deletion failure preserves the current login and its cancel control', async () => {
-  const initial = pendingAccount();
-  const attempt = waitingAttempt;
-  request.mockImplementation(async (path) => {
-    if (path === '/api/accounts/pending') throw new Error('Account is still referenced');
-    return {};
-  });
+it('native row has no managed-login or delete actions and unreadable identity cannot open quota', async () => {
+  const profile = {
+    ...managed(),
+    id: 'codex',
+    builtin: true,
+    codex: undefined,
+    codexLoginStatus: 'unreadable' as const,
+  };
+  await act(async () => root.render(<Row profile={profile} />));
+  expect(host.textContent).toContain('读不到');
+  expect(host.textContent).not.toContain('重新登录');
+  expect(host.textContent).not.toContain('删除登记');
+  await click('主号');
+  expect(host.textContent).not.toContain('查询此账号额度');
+});
+it('member table is read-only, follows changed bindings, and disambiguates equal notes', async () => {
+  const a = managed(true),
+    b = {
+      ...managed(true),
+      id: 'B',
+      codex: { ...managed(true).codex!, identity: { userId: 'u2', workspaceId: 'w2', email: 'second@example.test' } },
+    };
+  await act(async () => root.render(<MemberCodexAccount cat={cat} accounts={[a, b]} />));
+  expect(host.textContent).toContain('fixture@example.test');
   await act(async () =>
     root.render(
-      <ConfirmProvider>
-        <CodexAccountCard
-          onUpdated={() => {}}
-          account={{ ...initial, codex: { ...initial.codex, attempt } }}
-          reload={async () => {}}
-        />
-      </ConfirmProvider>,
+      <MemberCodexAccount cat={{ ...cat, accountRef: 'B', accountBindingMode: 'override' }} accounts={[a, b]} />,
     ),
   );
-  await click('删除账号条目');
-  await click('确认删除');
-  expect(request.mock.calls).toEqual([['/api/accounts/pending', {}, 'DELETE']]);
-  expect(container.textContent).toContain('Account is still referenced');
-  expect(container.textContent).toContain('终端已打开');
-});
-
-it('unlogged default OAuth cannot be selected for rebinding, while API Key selection is preserved', async () => {
-  const items: ProfileItem[] = [
-    { ...profile('codex'), builtin: true, codexLoginStatus: 'not_logged_in' },
-    { ...profile('key'), authType: 'api_key', kind: 'api_key', mode: 'api_key' },
-  ];
-  await act(async () => root.render(<MemberCodexAccount cat={{ ...cat, accountRef: 'codex' }} accounts={items} />));
-  await click('换账号');
-  expect([...container.querySelectorAll('option')].map((option) => option.value)).toEqual(['key']);
-  expect(container.textContent).not.toContain('binding preview');
+  expect(host.textContent).toContain('second@example.test');
+  expect(host.textContent).toContain('单独指定');
+  expect(host.querySelector('select')).toBeNull();
+  expect(host.querySelector('button')).toBeNull();
 });

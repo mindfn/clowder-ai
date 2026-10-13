@@ -62,6 +62,12 @@ async function flush() {
   await act(async () => Promise.resolve());
 }
 
+async function selectCafeSection(container: HTMLElement, label: string) {
+  const button = Array.from(container.querySelectorAll('button')).find((candidate) => candidate.textContent === label);
+  if (!button) throw new Error(`Missing Café section: ${label}`);
+  await act(async () => button.click());
+}
+
 function requiredIframe(container: HTMLElement): HTMLIFrameElement {
   const iframe = container.querySelector('iframe');
   if (!iframe) throw new Error('Expected Collective iframe');
@@ -279,7 +285,7 @@ describe('CollectiveLaunchSurface', () => {
       );
       await Promise.resolve();
     });
-    expect(container.textContent).toContain('已连接当前共同家园');
+    expect(container.textContent).toContain('已经在这个共同体里');
     expect(
       Array.from(container.querySelectorAll('button')).find((button) => button.textContent?.includes('确认带入'))
         ?.disabled,
@@ -390,6 +396,7 @@ describe('CollectiveLaunchSurface', () => {
     await flush();
 
     await openCafe(requiredIframe(container));
+    await selectCafeSection(container, '连接');
     expect(container.textContent).toContain('Café 连接已撤销');
     expect(container.textContent).toContain('准备中…');
     expect(container.textContent).not.toContain('重连');
@@ -491,6 +498,7 @@ describe('CollectiveLaunchSurface', () => {
     await flush();
 
     await openCafe(requiredIframe(container));
+    await selectCafeSection(container, '连接');
     expect(container.textContent).toContain('1 条消息还没有进入配置的 Thread');
     expect(container.textContent).toContain('更新消息去向后会自动重试');
     expect(container.textContent).not.toContain('Configured thread is unavailable');

@@ -2,6 +2,7 @@ import type { ArtifactReviewRound, ArtifactReviewView, ContentModificationRecord
 import { act } from 'react';
 import { createRoot, type Root } from 'react-dom/client';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { WorkspaceSurfaceVisibilityProvider } from '@/components/workbench/WorkspaceSurfaceVisibility';
 import { useChatStore } from '@/stores/chatStore';
 import { ArtifactReviewSurface } from '../ArtifactReviewSurface';
 import { clearModificationFocus, focusModification, usePendingModificationFocus } from '../modification-focus';
@@ -113,7 +114,7 @@ const ask = (patch: Partial<Parameters<typeof focusModification>[0]> = {}) =>
   );
 const navigate = (revision: number, threadId = THREAD) =>
   act(async () => useChatStore.setState({ workspaceOpenRevision: revision, currentThreadId: threadId } as never));
-const mount = async (rounds: ArtifactReviewRound[] = [round(1), round(2)], initialRound = 2) => {
+const mount = async (rounds: ArtifactReviewRound[] = [round(1), round(2)], initialRound = 2, visible = true) => {
   mocks.controller.mockReturnValue({
     view: reviewView(rounds),
     error: null,
@@ -129,7 +130,9 @@ const mount = async (rounds: ArtifactReviewRound[] = [round(1), round(2)], initi
     root.render(
       <>
         <Probe />
-        <ArtifactReviewSurface reviewId={REVIEW_ID} onBack={vi.fn()} initialRound={initialRound} />
+        <WorkspaceSurfaceVisibilityProvider visible={visible}>
+          <ArtifactReviewSurface reviewId={REVIEW_ID} onBack={vi.fn()} initialRound={initialRound} />
+        </WorkspaceSurfaceVisibilityProvider>
       </>,
     ),
   );
@@ -141,7 +144,7 @@ beforeEach(() => {
   localStorage.clear();
   clearModificationFocus();
   pending = null;
-  useChatStore.setState({ currentThreadId: THREAD, workspaceOpenRevision: 7 } as never);
+  useChatStore.setState({ currentThreadId: THREAD, workspaceOpenRevision: 7, workspaceOpenRequest: null } as never);
   container = document.createElement('div');
   document.body.append(container);
   root = createRoot(container);
@@ -255,6 +258,40 @@ describe('the round surface and a receipt asking for the returned version', () =
   it('takes an ask that was left before the round surface mounted', async () => {
     await ask();
     await mount();
+    expect(comparing()).toBe(true);
+    expect(pending).toBeNull();
+  });
+
+  it('waits for the new Workspace navigation instead of letting the previously mounted round consume its ask', async () => {
+    await mount();
+    await act(async () =>
+      useChatStore.setState({
+        workspaceOpenRevision: 8,
+        workspaceOpenRequest: {
+          revision: 8,
+          threadId: THREAD,
+          target: { kind: 'publication', contentRef: WORK, ownerRevision: 2, reviewId: REVIEW_ID, title: '作品' },
+          disposition: 'preview',
+        },
+      }),
+    );
+    await ask({ navigation: { threadId: THREAD, revision: 8 } });
+    expect(comparing()).toBe(false);
+    expect(pending?.candidateRef).toBe('candidate-round-2');
+    // The resolver replaces the old owner and only then the newly mounted round can take the accepted click.
+    await act(async () => root.render(<Probe />));
+    await act(async () => useChatStore.getState().consumeWorkspaceOpenRequest(8));
+    await mount();
+    expect(comparing()).toBe(true);
+    expect(pending).toBeNull();
+  });
+
+  it('leaves the accepted comparison ask for the visible round instead of a hidden retained round', async () => {
+    await mount(undefined, 2, false);
+    await ask();
+    expect(comparing()).toBe(false);
+    expect(pending?.candidateRef).toBe('candidate-round-2');
+    await mount(undefined, 2, true);
     expect(comparing()).toBe(true);
     expect(pending).toBeNull();
   });

@@ -1,148 +1,103 @@
 import assert from 'node:assert/strict';
-import { execFileSync, spawnSync } from 'node:child_process';
-import { randomBytes } from 'node:crypto';
-import { existsSync, mkdirSync, readdirSync, readFileSync, writeFileSync } from 'node:fs';
-import { createRequire } from 'node:module';
-import { createServer } from 'node:net';
+import { execFileSync } from 'node:child_process';
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { test } from 'node:test';
-import { deriveNamedAlphaCoordinates, namedAlphaEnvironment } from './lib/alpha-coordinates.mjs';
-import { namedAlphaFixture } from './lib/alpha-named-fixture.mjs';
 import { captureNamedAlphaRedisIdentity, verifyNamedAlphaRedisIdentity } from './lib/alpha-redis-process.mjs';
+import { storageFixture } from './lib/alpha-storage-test-fixture.mjs';
 
-const TSX_LOADER = createRequire(import.meta.url).resolve('tsx');
-
-async function freeTuple() {
-  const servers = [];
-  try {
-    for (let index = 0; index < 5; index += 1) {
-      const server = createServer();
-      await new Promise((resolve, reject) => {
-        server.once('error', reject);
-        server.listen(0, '127.0.0.1', resolve);
-      });
-      servers.push(server);
-    }
-    return servers.map((server) => server.address().port).join(',');
-  } finally {
-    await Promise.all(servers.map((server) => new Promise((resolve) => server.close(resolve))));
-  }
+for (const [point, observation, emptyMemory] of [
+  ['dir', 2],
+  ['appendonly', 3],
+  ['dbsize', 4],
+  ['dbsize with unverified empty memory', 4, true],
+]) {
+  test(`post-PING ${point} identity refusal stays visible and cannot become an empty-database shutdown`, async (t) => {
+    const f = await storageFixture(t, { unreadableAfterBoot: true });
+    f.seedRdb();
+    const originalRdb = readFileSync(join(f.directory, 'dump.rdb'));
+    const trace = join(f.directory, 'readiness-observations.ndjson');
+    const protocol = join(f.directory, 'protocol.log');
+    const bin = join(f.directory, 'protocol-bin');
+    mkdirSync(bin);
+    writeFileSync(
+      join(bin, 'redis-cli'),
+      '#!/bin/sh\nprintf "%s\\n" "$*" >> "$ALPHA_TEST_PROTOCOL_TRACE"\nexec "$ALPHA_TEST_REAL_REDIS_CLI" "$@"\n',
+      { mode: 0o755 },
+    );
+    const result = f.storage(
+      `
+eval "$(declare -f cat_cafe_redis_start_daemon | sed '1s/cat_cafe_redis_start_daemon/original_redis_start_daemon/')"
+cat_cafe_redis_start_daemon() {
+  original_redis_start_daemon "$@" || return 1
+  ${emptyMemory ? 'redis-cli -p "$REDIS_PORT" flushdb >/dev/null' : ''}
+  : > "$ALPHA_TEST_READINESS_TRACE"
+}
+`,
+      {
+        PATH: `${bin}:${process.env.PATH}`,
+        ALPHA_TEST_READINESS_TRACE: trace,
+        ALPHA_TEST_UNREADABLE_AT: String(observation),
+        ALPHA_TEST_PROTOCOL_TRACE: protocol,
+        ALPHA_TEST_REAL_REDIS_CLI: execFileSync('which', ['redis-cli'], { encoding: 'utf8' }).trim(),
+      },
+      { expectRetainedRedis: emptyMemory },
+    );
+    const samples = readFileSync(trace, 'utf8').trim().split('\n').map(JSON.parse);
+    assert.equal(samples[observation - 1].argvAvailable, false, 'reach the exact refused verification');
+    assert.equal(result.status, 1, result.stderr || result.stdout);
+    assert.match(result.stderr, /identity unreadable \(argv unavailable\)/);
+    assert.doesNotMatch(result.stderr, /empty database|empty RDB load/);
+    assert.doesNotMatch(result.stdout, /STORAGE_PROOF=/);
+    assert.doesNotMatch(readFileSync(protocol, 'utf8'), /shutdown nosave/, 'no protocol shutdown from an unknown size');
+    assert.equal(
+      existsSync(f.pidFile),
+      Boolean(emptyMemory),
+      'unverified empty memory must remain owned without saving over the nonempty snapshot',
+    );
+    if (emptyMemory) assert.deepEqual(readFileSync(join(f.directory, 'dump.rdb')), originalRdb);
+  });
 }
 
-async function storageFixture(t) {
-  const fixtureCleanup = [];
-  // Keep all temporary Git/data paths until the actual owned Redis is stopped.
-  const f = namedAlphaFixture({ after: (fn) => fixtureCleanup.push(fn) });
-  // Keep the real executable owner and all storage/cleanup functions; only the
-  // final app-service main call is replaced by this storage consumer fixture.
-  const entry = join(f.mainRoot, 'scripts/start-dev.sh');
-  const source = readFileSync(entry, 'utf8');
-  assert.ok(source.endsWith('main "$@"\n'));
-  writeFileSync(entry, source.replace(/main "\$@"\n$/, 'source "$ALPHA_TEST_STORAGE_DRIVER"\n'));
-  f.git(['add', 'scripts/start-dev.sh']);
-  f.git(['commit', '-m', 'exercise real executable storage owner']);
-  f.git(['push', 'origin', 'main']);
-  f.git(['fetch', 'origin', 'main']);
-  f.git(['merge', '--ff-only', 'origin/main'], f.alphaRoot);
-  const head = f.git(['rev-parse', 'HEAD'], f.alphaRoot);
-  f.preparedBuilds(head);
-  const coordinates = deriveNamedAlphaCoordinates({
-    mainRoot: f.mainRoot,
-    instance: 'f290-communication',
-    ports: await freeTuple(),
-    targetSha: head,
-  });
-  const raw = JSON.stringify(coordinates);
-  const directory = join(f.alphaRoot, '.cat-cafe/redis');
-  const port = coordinates.ports.redis;
-  const pidFile = join(directory, `redis-${port}.pid`);
-  const registryDir = join(f.directory, 'alpha-leases');
-  const env = {
-    ...f.env,
-    PATH: process.env.PATH,
-    ...namedAlphaEnvironment(coordinates),
-    CAT_CAFE_ALPHA_REDIS_REGISTRY_DIR: registryDir,
-  };
-  const redis = (...args) => {
-    const proof = captureNamedAlphaRedisIdentity(raw);
-    verifyNamedAlphaRedisIdentity(raw, proof);
-    return execFileSync('redis-cli', ['-h', '127.0.0.1', '-p', String(port), '--raw', ...args], {
-      env,
-      encoding: 'utf8',
-      timeout: 5_000,
-    }).trim();
-  };
-  t.after(() => {
-    if (existsSync(pidFile)) redis('shutdown', 'nosave');
-    for (const cleanup of fixtureCleanup) cleanup();
-  });
-  function seedRdb() {
-    mkdirSync(directory, { recursive: true });
-    execFileSync(
-      'redis-server',
-      [
-        '--port',
-        String(port),
-        '--bind',
-        '127.0.0.1',
-        '--dir',
-        directory,
-        '--save',
-        '',
-        '--appendonly',
-        'no',
-        '--daemonize',
-        'yes',
-        '--pidfile',
-        pidFile,
-        '--logfile',
-        join(directory, 'fixture-seed.log'),
-      ],
-      { env, timeout: 5_000 },
+for (const unavailable of ['2', '2+6']) {
+  test(`RDB-first unreadable DBSIZE at ${unavailable} preserves an unloaded snapshot through cleanup`, async (t) => {
+    const f = await storageFixture(t, { unreadableAfterBoot: true });
+    f.seedRdb();
+    const snapshot = readFileSync(join(f.directory, 'dump.rdb'));
+    const trace = join(f.directory, 'rdb-first-observations.ndjson');
+    const result = f.storage(
+      `
+timeout() { shift; "$@"; }
+eval "$(declare -f cat_cafe_redis_start_daemon | sed '1s/cat_cafe_redis_start_daemon/original_redis_start_daemon/')"
+eval "$(declare -f cat_cafe_redis_enable_aof_after_rdb_boot | sed '1s/cat_cafe_redis_enable_aof_after_rdb_boot/original_enable_aof/')"
+cat_cafe_redis_start_daemon() {
+  : > "$ALPHA_TEST_READINESS_TRACE"
+  original_redis_start_daemon "$@"
+}
+cat_cafe_redis_enable_aof_after_rdb_boot() {
+  # This private fixture simulates an RDB boot whose memory did not load its keys.
+  command redis-cli -h 127.0.0.1 -p "$1" flushdb >/dev/null
+  original_enable_aof "$@"
+}
+`,
+      { ALPHA_TEST_READINESS_TRACE: trace, ALPHA_TEST_UNREADABLE_AT: unavailable },
+      { expectRetainedRedis: true },
     );
-    const original = captureNamedAlphaRedisIdentity(raw);
-    redis('set', 'fixture-storage-marker', randomBytes(2048).toString('hex'));
-    redis('save');
-    redis('shutdown', 'nosave');
-    assert.ok(existsSync(join(directory, 'dump.rdb')));
-    assert.equal(existsSync(join(directory, 'appendonlydir')), false);
-    return original;
-  }
-  function storage(extra = '', overrides = {}, timeout = 40_000) {
-    const consumer = `const m=await import(process.argv[1]); const {resolveNamedAlphaRuntimeBoundary}=m.default??m; const b=await resolveNamedAlphaRuntimeBoundary(process.env); const {readNamedAlphaRedisLeases}=await import(process.argv[2]); const leases=readNamedAlphaRedisLeases(); console.log('STORAGE_PROOF='+JSON.stringify({current:b.isCurrent(),redisUrl:process.env.REDIS_URL,sidecar:process.env.CAT_CAFE_PROVISION_GLOBAL_SIDECAR,leaseCount:leases.live.length}));`;
-    const driver = join(f.directory, 'storage-driver.sh');
-    writeFileSync(
-      driver,
-      `set -e\n${extra}\nsetup_storage\nredis-cli -p "$REDIS_PORT" --raw get fixture-storage-marker > "$REDIS_DATA_DIR/recovered-marker"\nnode --import "$ALPHA_TEST_TSX" --input-type=module -e "$ALPHA_TEST_CONSUMER" "$ALPHA_TEST_MODULE" "$ALPHA_TEST_LEASE_MODULE"\n`,
+    const samples = readFileSync(trace, 'utf8').trim().split('\n').map(JSON.parse);
+    const refused = samples.flatMap((sample, index) => (sample.argvAvailable === false ? [index + 1] : []));
+    assert.deepEqual(refused, unavailable.split('+').map(Number), 'reach both the startup and requested cleanup reads');
+    assert.equal(result.status, 1, result.stderr || result.stdout);
+    assert.match(result.stderr, /identity unreadable \(argv unavailable\)/);
+    assert.match(result.stderr, /cleanup incomplete; preserving named Alpha lease and data/);
+    assert.doesNotMatch(result.stdout, /STORAGE_PROOF=/);
+    assert.deepEqual(
+      readFileSync(join(f.directory, 'dump.rdb')),
+      snapshot,
+      'never save empty memory over the original RDB',
     );
-    const result = spawnSync('bash', ['./scripts/start-dev.sh', '--quick'], {
-      cwd: f.alphaRoot,
-      env: {
-        ...env,
-        ...overrides,
-        ALPHA_TEST_STORAGE_DRIVER: driver,
-        ALPHA_TEST_TSX: TSX_LOADER,
-        ALPHA_TEST_CONSUMER: consumer,
-        ALPHA_TEST_MODULE: join(f.alphaRoot, 'packages/api/src/config/alpha-coordinates.ts'),
-        ALPHA_TEST_LEASE_MODULE: join(f.alphaRoot, 'scripts/lib/alpha-redis-leases.mjs'),
-      },
-      encoding: 'utf8',
-      timeout,
-    });
-    const diagnostic = JSON.stringify({
-      status: result.status,
-      signal: result.signal,
-      error: result.error ? { code: result.error.code, message: result.error.message } : null,
-      stdout: result.stdout,
-      stderr: result.stderr,
-    });
-    assert.equal(result.error, undefined, `storage launcher execution failed: ${diagnostic}`);
-    assert.notEqual(result.status, null, `storage launcher was terminated: ${diagnostic}`);
-    if (existsSync(registryDir))
-      assert.deepEqual(readdirSync(registryDir), [], `launcher cleanup releases its own registration: ${diagnostic}`);
-    return result;
-  }
-  return { ...f, raw, port, env, directory, pidFile, redis, seedRdb, storage };
+    assert.equal(existsSync(f.pidFile), true, 'retain the registered Redis until test-owned teardown');
+    assert.equal(f.redis('dbsize'), '0', 'the retained instance still has the empty memory used by this regression');
+  });
 }
 
 test('actual storage startup preserves the tuple received by the production API coordinate consumer', async (t) => {
@@ -248,9 +203,51 @@ test('actual replacement PID is preserved when failed startup cleanup holds an o
   assert.equal(f.redis('get', 'fixture-replacement-marker'), 'preserved');
 });
 
+test('real storage startup sends PING only after a timely fresh identity or refuses a late observation', async (t) => {
+  const f = await storageFixture(t, { unreadableAfterBoot: true });
+  const trace = join(f.directory, 'readiness-observations.ndjson');
+  const result = f.storage(
+    `
+eval "$(declare -f cat_cafe_redis_start_daemon | sed '1s/cat_cafe_redis_start_daemon/original_redis_start_daemon/')"
+cat_cafe_redis_start_daemon() {
+  original_redis_start_daemon "$@" || return 1
+  : > "$ALPHA_TEST_READINESS_TRACE"
+}
+`,
+    { ALPHA_TEST_READINESS_TRACE: trace },
+  );
+  const observations = readFileSync(trace, 'utf8')
+    .trim()
+    .split('\n')
+    .map((line) => JSON.parse(line));
+  const budget = readFileSync(`${trace}.budget`, 'utf8').trim().split('\n').map(JSON.parse);
+  t.diagnostic(JSON.stringify({ exit: result.status, observations, budget }));
+  const samples = observations.filter((observation) => observation.invocation === 'ping-ready');
+  const deadline = budget.find((event) => event.kind === 'deadline').value;
+  const lastClock = budget.findLast((event) => event.kind === 'clock').value;
+  const pings = budget.filter((event) => event.kind === 'protocol').length;
+  assert.equal(observations[0].argvAvailable, false);
+  assert.ok(samples.length <= 10);
+  if (result.status === 0) {
+    assert.equal(pings, 1);
+    assert.ok(lastClock < deadline);
+    assert.equal(samples.at(-1).argvAvailable, true);
+    assert.equal(samples.at(-1).pid, samples[0].pid);
+    assert.equal(samples.at(-1).startedAtEpochMs, samples[0].startedAtEpochMs);
+    assert.match(result.stdout, /STORAGE_PROOF=/);
+  } else {
+    assert.equal(result.status, 1, result.stderr || result.stdout);
+    assert.ok(lastClock >= deadline, result.stderr || result.stdout);
+    assert.equal(pings, 0, 'late native identity cannot authorize any startup PING');
+    assert.match(result.stderr, /Alpha Redis startup wait budget exhausted/);
+    assert.doesNotMatch(result.stdout, /STORAGE_PROOF=/);
+  }
+  assert.equal(existsSync(f.pidFile), false, 'normal owned cleanup still stops the actual Redis process');
+});
+
 test('launcher timeouts cannot count as an expected storage refusal', async (t) => {
   const f = await storageFixture(t);
-  assert.throws(() => f.storage('sleep 1', {}, 1), /ETIMEDOUT/);
+  assert.throws(() => f.storage('sleep 1', {}, { timeout: 1 }), /ETIMEDOUT/);
   assert.equal(existsSync(f.pidFile), false, 'an execution timeout before storage cannot claim Redis ownership');
 });
 

@@ -156,7 +156,7 @@ test(
       );
       await workbench.getByText('Prepared Collective result', { exact: true }).waitFor();
       await workbench.getByText('The owner-backed result is ready to review.', { exact: true }).waitFor();
-      await workbench.getByRole('button', { name: '返回', exact: true }).click();
+      await workbench.getByRole('button', { name: '返回来源', exact: true }).click();
       await needsMe.waitFor();
       assert.equal(await needsMeItem.getAttribute('data-item-ref'), needsMeItemRef);
       assert.equal(await needsMeItem.getAttribute('data-selected'), 'true');

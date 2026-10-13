@@ -47,9 +47,9 @@ const render = (replies: CollectiveEventEnvelope[] = []) =>
     />,
   );
 
-it('keeps the exact named Cat visible and does not call a Human reply the Cat response', () => {
-  expect(render()).toContain('点名 <strong>@缅因猫（Sol）</strong>');
-  expect(render()).toContain('尚无公开回复');
+it('keeps the exact named Cat as an inline mention without a duplicate delivery-status sentence', () => {
+  expect(render()).toContain('<span class="message-inline-mention">@缅因猫（Sol）</span>');
+  expect(render()).not.toContain('尚无公开回复');
   const humanReply: CollectiveEventEnvelope = {
     ...request,
     eventId: 'evt_human_reply',
@@ -57,7 +57,7 @@ it('keeps the exact named Cat visible and does not call a Human reply the Cat re
     recipient: { kind: 'channel' },
     replyToEventId: request.eventId,
   };
-  expect(render([humanReply])).toContain('尚无公开回复');
+  expect(render([humanReply])).toContain('<span class="message-inline-mention">@缅因猫（Sol）</span>');
   const catReply: CollectiveEventEnvelope = {
     ...request,
     eventId: 'evt_cat_reply',
@@ -77,5 +77,5 @@ it('keeps the exact named Cat visible and does not call a Human reply the Cat re
     recipient: { kind: 'channel' },
     replyToEventId: request.eventId,
   };
-  expect(render([catReply])).toContain('已在原处回复');
+  expect(render([catReply])).not.toContain('已在原处回复');
 });

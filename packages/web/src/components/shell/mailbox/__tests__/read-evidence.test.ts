@@ -34,6 +34,20 @@ function run(
 }
 
 describe('buildReadEvidence: the approval is still on the page', () => {
+  it.each([
+    'earlier',
+    'handled',
+  ] as const)('%s request selection cannot prove a pending approval disappeared', async (mentionPeriod) => {
+    await expect(run(readOf([], { mentionPeriod })).evidence).resolves.toMatchObject({
+      result: { kind: 'absent', exhaustive: false },
+    });
+  });
+  it('a last page with no approval does not prove an approval on an earlier page disappeared', async () => {
+    const result = readOf([], {
+      page: { offset: 20, limit: 20, scope: 'known_rows', hasMore: false, hasMoreApprovals: false },
+    });
+    await expect(run(result).evidence).resolves.toMatchObject({ result: { kind: 'absent', exhaustive: false } });
+  });
   it('is present and aligned when the store holds the same decision', async () => {
     const item = storeItem();
     const { evidence, lookup } = run(readOf([row(item)]), { storeItems: [item] });

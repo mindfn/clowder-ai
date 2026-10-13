@@ -36,10 +36,12 @@ export const RICH_BLOCK_RULES = `### 富消息块使用规则（B 风格：平�
   - 发送已有文件、导出物、成片视频
   - \`url\` + \`fileName\` 必填，\`mimeType\`/\`fileSize\` 可选
   - \`mimeType\` 以 \`video/\` 开头时，Web UI 渲染内联视频播放器
-  - 本地视频/通用文件需先放到 \`/uploads/...\`；当前自动发布合约只覆盖图片
+  - 本地视频使用已可访问 URL（Workspace raw 可展示媒体）；通用文件使用已发布 URL，不要手写 runtime uploads
 - **media_gallery**（图片展示 — 不一定要现场生成！）
   - 发送已有图片（头像 \`/avatars/\`、照片 \`/uploads/\`、设计稿）
   - \`/uploads/xxx\` 的磁盘真身是 \`cat-cafe-runtime/packages/api/uploads/\`（运行中 API 的 uploadDir）；不要手动 cp 到源码仓 \`uploads/\` 或 \`packages/api/uploads/\`
+  - 图片绝对路径仅在已登记 Workspace 内、文件现存可读且为图片（≤10MiB）时转换为 \`/api/workspace/file/raw?worktreeId=...&path=...\`；其他本机路径明确报错
+  - 自动发布仅指原生 image_gen/Antigravity 结果接线；任意富块本机路径不会自动复制到 uploads。持久发布本地 PNG 用 \`cat_cafe_publish_image\`
   - 截图展示、多图对比
   - 定时任务/主动触发中展示图片
 - **audio**（语音消息 — 你"说出来"的话）

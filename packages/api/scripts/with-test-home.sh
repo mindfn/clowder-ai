@@ -14,8 +14,14 @@ cleanup() {
 trap cleanup EXIT
 
 export HOME="$test_home"
-export CAT_CAFE_TEST_SANDBOX="${CAT_CAFE_TEST_SANDBOX:-1}"
+export CAT_CAFE_TEST_SANDBOX="1"
 export CAT_CAFE_TEST_REAL_HOME="${CAT_CAFE_TEST_REAL_HOME:-$real_home}"
+# Isolation starts here; a live shell's config root or opt-out must not survive.
+# Tests exercising overrides can set them explicitly inside the sandbox.
+unset CAT_CAFE_GLOBAL_CONFIG_ROOT
+unset CAT_CAFE_CONFIG_ROOT
+unset CAT_TEMPLATE_PATH
+unset CAT_CAFE_TEST_SANDBOX_ALLOW_UNSAFE_ROOT
 # Test entrypoints must not inherit a production NODE_ENV from the outer shell.
 # Telemetry redaction tests rely on test-mode defaults instead of production secrets.
 export NODE_ENV="test"
@@ -35,16 +41,16 @@ unset CAT_CAFE_RUNTIME_ROOT
 unset CAT_CAFE_MCP_SERVER_PATH
 unset CAT_CAFE_WORKSPACE_ROOT
 
+# A runtime-selected Codex login/state home overrides HOME. Keep native reads
+# inside the sandbox; individual tests may select their own fixture afterward.
+unset CODEX_HOME
+unset CODEX_SQLITE_HOME
+
 # Runtime shells may select persistent transports for live agent invocations.
 # Tests rely on each provider's default carrier so spawn seams remain the only
 # process boundary; inheriting these overrides could launch a real provider CLI.
 unset CAT_CAFE_CODEX_CARRIER
 unset CAT_CAFE_CLAUDE_CARRIER
-
-# Account fixtures must resolve inside the isolated HOME rather than inheriting
-# the invoking agent's live Codex roots. A child fixture can set its own roots.
-unset CODEX_HOME
-unset CODEX_SQLITE_HOME
 
 # API_SERVER_HOST is a runtime binding choice. LAN/dev invocations commonly set
 # it to 0.0.0.0, but capability write tests expect localhost-only defaults unless

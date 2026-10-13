@@ -24,22 +24,52 @@ export async function runChatReadingColumnJourney(t, { openProof, closeProof, ca
               const r = node.getBoundingClientRect();
               return { x: r.x, right: r.right, width: r.width, scroll: node.scrollWidth, client: node.clientWidth };
             };
+            const hostNode = document.querySelector('[data-chat-container]');
+            const host = rect('[data-chat-container]');
+            const style = getComputedStyle(hostNode);
+            // clientWidth excludes the native scrollbar; the content box also
+            // excludes the asymmetric space reserved for the piano.
+            const left = host.x + hostNode.clientLeft + Number.parseFloat(style.paddingLeft);
+            const right = host.x + hostNode.clientLeft + hostNode.clientWidth - Number.parseFloat(style.paddingRight);
             return {
-              host: rect('[data-chat-container]'),
+              host,
+              available: { x: left, right, width: right - left },
               padding: {
-                left: parseFloat(getComputedStyle(document.querySelector('[data-chat-container]')).paddingLeft),
-                right: parseFloat(getComputedStyle(document.querySelector('[data-chat-container]')).paddingRight),
+                left: Number.parseFloat(style.paddingLeft),
+                right: Number.parseFloat(style.paddingRight),
               },
               column: rect('[data-thread-chat-reading-column]'),
+              track: rect('[data-message-piano]'),
               cat: rect('[data-message-id="reading-cat"]'),
               human: rect('[data-message-id="reading-human"] [data-testid="message-bubble"]'),
               line: rect('[data-testid="reply-last-line"]'),
             };
           });
+        const assertReadingGeometry = (m) => {
+          assert.ok(m.available.width > 0);
+          assert.equal(
+            m.column.width,
+            Math.min(720, m.available.width),
+            'column fills its available content box up to 720px',
+          );
+          assert.ok(
+            Math.abs(m.column.x + m.column.right - (m.available.x + m.available.right)) <= 1,
+            'column is centered inside the content box, including the piano reservation',
+          );
+          assert.ok(m.track?.width > 0, 'the production piano is measurable');
+          assert.ok(m.column.right < m.track.x, 'the piano never covers the reading column');
+          assert.ok(
+            m.track.x >= m.host.x && m.track.right <= m.host.right,
+            'the piano stays inside the reading viewport',
+          );
+          assert.ok(m.host.scroll <= m.host.client + 1);
+          assert.ok(m.column.scroll <= m.column.client + 1, 'long content stays inside the reading column');
+          t.diagnostic(JSON.stringify({ host: m.host, available: m.available, column: m.column, track: m.track }));
+        };
+        await page.locator('[data-message-piano-ready="true"][data-message-piano]').waitFor();
         const m = await measure();
         assert.deepEqual(m.padding, { left: 16, right: 40 }, 'the measured piano owns the reserved right gutter');
-        assert.equal(m.column.width, Math.min(720, m.host.width - 56));
-        assert.ok(Math.abs(m.column.x + m.column.right - (m.host.x * 2 + m.host.width - 24)) <= 1);
+        assertReadingGeometry(m);
         assert.equal(m.cat.width, m.column.width);
         const rail = await cat.locator('[data-reply-color-rail]').evaluate((node) => {
           const s = getComputedStyle(node);
@@ -67,6 +97,7 @@ export async function runChatReadingColumnJourney(t, { openProof, closeProof, ca
         await cat.getByTestId('reply-record-toggle').click();
         await cat.getByTestId('reply-record-tool-command').getByRole('button').click();
         assert.ok((await cat.getByTestId('reply-record').innerText()).includes('long argument '.repeat(25).trim()));
+        assertReadingGeometry(await measure());
         await cat.getByTestId('reply-record-toggle').click();
         await capture(page, `reading-${width}-${base}`);
         if (width === 1920) {
@@ -83,12 +114,15 @@ export async function runChatReadingColumnJourney(t, { openProof, closeProof, ca
           assert.equal(await page.locator('[data-reply-color-rail]').count(), 0);
           await page.evaluate(() => window.__f322Chat.presentation('v2'));
           await page.setViewportSize({ width: 700, height: 900 });
+          await page.locator('[data-message-piano-ready="true"][data-message-piano]').waitFor();
           assert.ok(
             await page.evaluate(
               () => window.__readingNode === document.querySelector('[data-message-id="reading-cat"]'),
             ),
           );
-          assert.equal((await measure()).column.width, 344);
+          const narrow = await measure();
+          assert.deepEqual(narrow.padding, { left: 16, right: 40 });
+          assertReadingGeometry(narrow);
         }
       } catch (error) {
         failure = error;

@@ -13,6 +13,7 @@ import { getProjectPaths } from '../ThreadSidebar/thread-utils';
 import { NewConversationComposerContext } from './NewConversationComposerContext';
 import { newConversationCopy } from './new-conversation.shell-copy';
 import { RecentWorks } from './RecentWorks';
+import { SessionImportPanel } from './SessionImportPanel';
 import { useNewConversationAdmission } from './useNewConversationAdmission';
 
 export type LandingArtwork = 'dusk' | 'night';
@@ -92,6 +93,8 @@ function admissionMessage(
       return copy.createFailed;
     case 'create_rejected':
       return copy.createRejected;
+    case 'import_failed':
+      return copy.importFailed;
     case 'send_failed':
       return copy.sendFailed;
     default:
@@ -276,6 +279,7 @@ export function NewConversationPage(props: NewConversationPageProps) {
             aria-busy={!admission.loadFailed}
           />
         )}
+        <SessionImportPanel admission={admission} onNavigate={props.onNavigate} />
         <AdmissionNotice
           phase={admission.phase}
           loadFailed={admission.loadFailed}

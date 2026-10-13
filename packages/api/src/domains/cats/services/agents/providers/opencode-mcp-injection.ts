@@ -17,9 +17,19 @@ import {
   resolveServersForCat,
 } from '../../../../../config/capabilities/capability-orchestrator.js';
 import {
+  assertMappedCapabilitySource,
+  isSameCapabilityRoot,
+} from '../../../../../config/capabilities/invoke-capability-root.js';
+import {
   toOpenCodeMcpEntry,
   toOpenCodeRemoteMcpEntry,
 } from '../../../../../config/capabilities/mcp-config-adapters.js';
+import { isManagedCatCafeSplit } from '../../../../../config/capabilities/mcp-constants.js';
+import {
+  resolveMcpArgs,
+  resolveMcpCommand,
+  resolveMcpWorkingDir,
+} from '../../../../../config/capabilities/mcp-launch-paths.js';
 
 /** MCP entry type derived from toOpenCodeMcpEntry return type. */
 type OpenCodeMcpEntry = ReturnType<typeof toOpenCodeMcpEntry> | ReturnType<typeof toOpenCodeRemoteMcpEntry>;
@@ -53,13 +63,15 @@ export function buildOpenCodeMcpSync(
     // F249: Project config is the single truth source for MCP resolution.
     // Try project first; fall back to global for uninitialized projects.
     let capConfig = null;
+    let configSourceRoot = capabilityRoot;
     let accessScope: 'global' | 'project' = 'global';
-    if (workingDirectory && workingDirectory !== capabilityRoot) {
+    if (workingDirectory && !isSameCapabilityRoot(workingDirectory, capabilityRoot)) {
       try {
         const projectRaw = readFileSync(join(workingDirectory, '.cat-cafe', 'capabilities.json'), 'utf-8');
         const parsed = JSON.parse(projectRaw);
         if (parsed?.version === 1 || parsed?.version === 2) {
           capConfig = parsed;
+          configSourceRoot = workingDirectory;
           accessScope = 'project';
         }
       } catch {
@@ -83,13 +95,14 @@ export function buildOpenCodeMcpSync(
         headers?: Record<string, string>;
         env?: Record<string, string>;
         source: string;
+        workingDir?: string;
       }>) {
         if (!s.enabled) continue;
         if (s.transport === 'streamableHttp') {
           if (s.url) mcp[s.name] = toOpenCodeRemoteMcpEntry({ url: s.url, headers: s.headers });
           continue;
         }
-        if (s.source === 'cat-cafe' && CAT_CAFE_SPLIT_ENTRYPOINTS.has(s.name)) {
+        if (isManagedCatCafeSplit(s)) {
           const ep = CAT_CAFE_SPLIT_ENTRYPOINTS.get(s.name)!;
           const epPath = join(distDir, ep);
           if (existsSync(epPath)) {
@@ -102,7 +115,12 @@ export function buildOpenCodeMcpSync(
         } else if (s.resolver === 'pencil') {
           // Pencil needs async resolution — handled in writeOpenCodeRuntimeConfig
         } else if (s.command) {
-          mcp[s.name] = toOpenCodeMcpEntry({ command: s.command, args: s.args, env: s.env });
+          const workingDir = resolveMcpWorkingDir(s.workingDir, configSourceRoot);
+          mcp[s.name] = toOpenCodeMcpEntry({
+            command: resolveMcpCommand(s.command, workingDir, configSourceRoot),
+            args: resolveMcpArgs(s.args, workingDir, configSourceRoot),
+            env: s.env,
+          });
         }
       }
       resolved = true;
@@ -111,6 +129,7 @@ export function buildOpenCodeMcpSync(
     // best-effort fallback below
   }
 
+  assertMappedCapabilitySource(resolved, binaryProjectRoot, capabilityRoot);
   if (!resolved) {
     for (const [name, entrypoint] of CAT_CAFE_SPLIT_ENTRYPOINTS) {
       mcp[name] = toOpenCodeMcpEntry({

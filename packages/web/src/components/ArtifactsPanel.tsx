@@ -19,8 +19,10 @@ import type { ArtifactGroup, GroupingMode } from './artifacts/artifact-grouping'
 import { groupArtifacts } from './artifacts/artifact-grouping';
 import type { ArtifactListOrigin, ArtifactListView } from './artifacts/artifact-list-state';
 import { artifactActionLabel, artifactRowMeta, resolveAssetUrl } from './artifacts/artifact-view';
+import { ThreadWorksPanelV2, type WorksPanelProps } from './artifacts/ThreadWorksPanelV2';
 import { CompactLabel } from './content-overflow/CompactLabel';
 import { messagePublicationSource, usePublishedContent } from './content-review/usePublishedContent';
+import { useShellPresentation } from './shell/shell-presentation';
 
 const resolveUrl = (url?: string): string | undefined => resolveAssetUrl(url, API_URL);
 
@@ -239,7 +241,7 @@ function isGlobal(a: ThreadArtifactDTO): a is GlobalArtifactDTO {
   return 'threadId' in a && 'threadTitle' in a;
 }
 
-export function ArtifactsPanel({
+function ClassicArtifactsPanel({
   threadId,
   width,
   onClose,
@@ -434,6 +436,7 @@ export function ArtifactsPanel({
       ) : null}
       {selected ? (
         <ArtifactDetailView
+          sourceThreadId={isGlobal(selected) ? selected.threadId : threadId}
           artifact={selected}
           // P1 fix (gpt52 review): global scope artifact from another thread must NOT use the current
           // thread's worktreeId — that would fetch the wrong file version or 404. Pass null to force
@@ -634,4 +637,9 @@ export function ArtifactsPanel({
       )}
     </aside>
   );
+}
+
+export function ArtifactsPanel(props: WorksPanelProps) {
+  const presentation = useShellPresentation();
+  return presentation === 'v2' ? <ThreadWorksPanelV2 {...props} /> : <ClassicArtifactsPanel {...props} />;
 }

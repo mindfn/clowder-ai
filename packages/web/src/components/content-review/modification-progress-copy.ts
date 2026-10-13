@@ -8,6 +8,7 @@ import type { ContentModificationDetailView } from '@cat-cafe/shared';
  * version, a cancelled request with a run still going, and an unverifiable state each say exactly that.
  */
 export type ModificationProgressKey =
+  | 'accepted'
   | 'submitting'
   | 'delivering'
   | 'queued'
@@ -223,6 +224,8 @@ function describeStage(input: ModificationProgressInput): ModificationProgressCo
     return incomplete('修改说明已保留。');
   }
   switch (view.stage) {
+    case 'accepted':
+      return { key: 'accepted', indicator: 'neutral', title: '已接下原审片意见' };
     case 'saving_source':
     case 'preparing_content':
     case 'admitting_task':

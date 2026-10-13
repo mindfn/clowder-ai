@@ -125,7 +125,10 @@ export async function writeOwnerComposerDraft(
   snapshot: DurableDraftSnapshot,
 ): Promise<DurableDraftWriteResult> {
   try {
-    const response = await apiFetch(`/api/threads/${threadId}/composer-draft`, buildDraftRequest(revision, snapshot));
+    const request = buildDraftRequest(revision, snapshot);
+    // Fetch keepalive bodies share a 64KiB browser budget. Large drafts still use the normal save path.
+    if (typeof request.body === 'string' && new Blob([request.body]).size <= 60_000) request.keepalive = true;
+    const response = await apiFetch(`/api/threads/${threadId}/composer-draft`, request);
     if (response.status === 409) {
       const current = await loadOwnerComposerDraft(threadId);
       return { kind: 'conflict', ...current };

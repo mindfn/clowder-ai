@@ -4,6 +4,8 @@ class HostVoice {
     this.closed = false;
     this.micMuted = false;
     this.speakerMuted = false;
+    this.playbackSamples = new Map();
+    this.reportedOutput = new Set();
   }
   async offer({ microphone = 'capture' } = {}) {
     if (this.closed) throw new Error('已结束');
@@ -47,6 +49,7 @@ class HostVoice {
         }
         if (value.type === 'turn.created' && value.turn?.role === 'user')
           this.onEvent({ type: 'turn-created', role: 'user', turnId: value.turn.id });
+        if (value.type === 'turn.created' && value.turn?.role === 'assistant') this.outputTurnId = value.turn.id;
         if (value.type === 'error') this.onEvent({ type: 'error', code: 'unavailable' });
         if (value.type === 'turn.done')
           this.onEvent({
@@ -54,6 +57,13 @@ class HostVoice {
             role: value.turn?.role,
             transcript: value.turn?.transcript,
             turnId: value.turn?.id,
+          });
+        if (value.type === 'turn.done' && value.turn?.role === 'user')
+          this.onEvent({
+            type: 'response-observation',
+            stage: 'owner_voice_completed',
+            turnId: value.turn.id,
+            observedAt: Date.now(),
           });
       } catch {
         /* provider data channel can contain non-transcript events */
@@ -93,6 +103,48 @@ class HostVoice {
     this.output.autoplay = true;
     this.output.srcObject = stream;
     await this.output.play();
+    if (!this.closed && this.pc.getStats)
+      this.playbackTimer = setInterval(() => {
+        void this.samplePlayback().catch(() => {});
+      }, 250);
+  }
+  /** Local playback and received nonzero energy, not proof of the system output device being audible. */
+  async samplePlayback() {
+    if (this.closed || this.sampling || !this.pc?.getStats || !this.output) return;
+    const turnId = this.outputTurnId;
+    this.sampling = true;
+    try {
+      const reports = await this.pc.getStats();
+      if (this.closed || turnId !== this.outputTurnId) return;
+      const clock = this.output.currentTime;
+      const advanced = Number.isFinite(this.previousClock) && clock > this.previousClock;
+      this.previousClock = clock;
+      let nonzero = false;
+      for (const report of reports.values()) {
+        if (report.type !== 'inbound-rtp' || (report.kind ?? report.mediaType) !== 'audio') continue;
+        const { id, totalAudioEnergy: energy, bytesReceived: bytes } = report;
+        if (typeof id !== 'string' || !Number.isFinite(energy) || !Number.isFinite(bytes)) continue;
+        const prior = this.playbackSamples.get(id);
+        if (prior && energy > prior.energy && bytes > prior.bytes) nonzero = true;
+        if (this.playbackSamples.has(id) || this.playbackSamples.size < 16)
+          this.playbackSamples.set(id, { energy, bytes });
+      }
+      if (
+        advanced &&
+        nonzero &&
+        !this.output.muted &&
+        !this.output.paused &&
+        this.output.volume > 0 &&
+        /^[A-Za-z0-9_-]{1,160}$/.test(turnId ?? '') &&
+        !this.reportedOutput.has(turnId) &&
+        this.reportedOutput.size < 4096
+      ) {
+        this.reportedOutput.add(turnId);
+        this.onEvent({ type: 'response-observation', stage: 'first_audio_output', turnId, observedAt: Date.now() });
+      }
+    } finally {
+      this.sampling = false;
+    }
   }
   muteMic(muted) {
     if (this.receiveOnly && !muted) return false;
@@ -131,6 +183,8 @@ class HostVoice {
   }
   async close() {
     this.closed = true;
+    clearInterval(this.playbackTimer);
+    this.playbackSamples.clear();
     clearTimeout(this.disconnectTimer);
     this.disconnectTimer = undefined;
     this.stream?.getTracks().forEach((track) => {

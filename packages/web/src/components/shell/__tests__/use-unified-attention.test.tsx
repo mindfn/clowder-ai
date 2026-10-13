@@ -87,11 +87,38 @@ describe('useUnifiedAttention — one verified read of the owner’s attention',
     route(() => Promise.resolve(Response.json(readBody())));
     await mount();
 
-    expect(UNIFIED_ATTENTION_PATH).toBe('/api/concierge/work/decisions?view=unified&offset=0&limit=20');
+    expect(UNIFIED_ATTENTION_PATH).toBe(
+      '/api/concierge/work/decisions?view=unified&includeUserMentions=true&offset=0&limit=20',
+    );
     expect(mocks.apiFetch).toHaveBeenCalledWith(UNIFIED_ATTENTION_PATH, expect.anything(), { afterCurrentGet: true });
     expect(mocks.apiFetch).toHaveBeenCalledWith('/api/session', expect.anything());
     expect(latest.result.kind).toBe('ok');
     expect(latest.staleRead).toBeNull();
+  });
+
+  it('reads the next and previous owner-fenced pages, and invalidation brings new requests back to page one', async () => {
+    mocks.apiFetch.mockImplementation((path: string) => {
+      if (path === '/api/session') return Promise.resolve(Response.json({ userId: 'owner-1' }));
+      const offset = Number(new URL(path, 'http://localhost').searchParams.get('offset'));
+      return Promise.resolve(
+        Response.json(
+          readBody({
+            page: { offset, limit: 20, scope: 'known_rows', hasMore: offset === 0 },
+            items: [{ decisionRef: `page:${offset}`, kind: 'judgment', summary: `第 ${offset} 件`, linkedNeedsMe: [] }],
+            totalCount: 26,
+          }),
+        ),
+      );
+    });
+    await mount();
+    expect(latest.nextPage).toBeTypeOf('function');
+    await act(async () => latest.nextPage?.());
+    expect(latest.result.kind === 'ok' && latest.result.read.page.offset).toBe(20);
+    await act(async () => latest.previousPage?.());
+    expect(latest.result.kind === 'ok' && latest.result.read.page.offset).toBe(0);
+    await act(async () => latest.nextPage?.());
+    await fire('cat-cafe:user-mention-updated');
+    expect(latest.result.kind === 'ok' && latest.result.read.page.offset).toBe(0);
   });
 
   it('is loading until the first read settles — never an empty or zero claim', async () => {

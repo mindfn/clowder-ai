@@ -1,6 +1,8 @@
 import type { RequestGenerationGapV1, RequestGenerationProjectionV1 } from '@cat-cafe/shared';
 import { useShellPresentation } from '@/components/shell/shell-presentation';
 import { TrajectoryId } from './TrajectoryId';
+import { trajectoryInputCopy } from './trajectory-input.shell-copy';
+import { useTrajectoryCopy } from './use-trajectory-copy';
 
 const STATE_LABEL = {
   available: '可展开',
@@ -24,6 +26,7 @@ function channelLabel(channel: RequestGenerationProjectionV1['envelope']['channe
 
 function Generation({ generation }: { generation: RequestGenerationProjectionV1 }) {
   const isV2 = useShellPresentation() === 'v2';
+  const t = useTrajectoryCopy(trajectoryInputCopy);
   const { envelope } = generation;
   const runtime = envelope.runtime.requested;
   return (
@@ -38,7 +41,7 @@ function Generation({ generation }: { generation: RequestGenerationProjectionV1 
       <div className="flex flex-wrap items-center justify-between gap-2">
         <div className={isV2 ? 'min-w-0 flex-1' : undefined}>
           <h4 className="text-xs font-semibold text-cafe-primary">
-            {isV2 ? `第 ${envelope.generationOrdinal} 次提交` : `Generation #${envelope.generationOrdinal}`}
+            {isV2 ? t.submission(envelope.generationOrdinal) : `Generation #${envelope.generationOrdinal}`}
           </h4>
           {isV2 ? (
             <TrajectoryId kind="会话" value={envelope.sessionId} />
@@ -47,8 +50,17 @@ function Generation({ generation }: { generation: RequestGenerationProjectionV1 
           )}
         </div>
         <span className="rounded-full border border-cafe px-2 py-0.5 text-micro text-cafe-secondary">
-          {generation.terminal?.outcome ??
-            (generation.observed ? (isV2 ? '已观测' : 'observed') : isV2 ? '已组装' : 'assembled')}
+          {generation.terminal
+            ? isV2
+              ? t.terminal(generation.terminal.outcome)
+              : generation.terminal.outcome
+            : generation.observed
+              ? isV2
+                ? t.observed
+                : 'observed'
+              : isV2
+                ? t.assembled
+                : 'assembled'}
         </span>
       </div>
 
@@ -57,27 +69,44 @@ function Generation({ generation }: { generation: RequestGenerationProjectionV1 
         style={isV2 ? { gridTemplateColumns: 'repeat(auto-fit, minmax(min(100%, 120px), 1fr))' } : undefined}
       >
         <div>
-          <dt className="text-cafe-muted">{isV2 ? '服务方 / 通道' : 'Provider / carrier'}</dt>
+          <dt className="text-cafe-muted">{isV2 ? t.provider : 'Provider / carrier'}</dt>
           <dd className="text-cafe-secondary">
             {runtime.provider} / {runtime.carrier}
           </dd>
         </div>
         <div>
-          <dt className="text-cafe-muted">{isV2 ? '模型' : 'Model'}</dt>
-          <dd className="text-cafe-secondary">{generation.observed?.evidence.model ?? runtime.model ?? '未知'}</dd>
-        </div>
-        <div>
-          <dt className="text-cafe-muted">{isV2 ? '上下文' : 'Continuity'}</dt>
+          <dt className="text-cafe-muted">{isV2 ? t.model : 'Model'}</dt>
           <dd className="text-cafe-secondary">
-            {envelope.continuity.mode ?? envelope.continuity.capability}
-            {envelope.continuity.contextEpoch === undefined
-              ? ''
-              : ` · ${isV2 ? '版本' : 'epoch'} ${envelope.continuity.contextEpoch}`}
+            {generation.observed?.evidence.model ?? runtime.model ?? t.unknownModel}
           </dd>
         </div>
         <div>
-          <dt className="text-cafe-muted">{isV2 ? '边界' : 'Boundary'}</dt>
-          <dd className="text-cafe-secondary">{envelope.retryBoundary.reason ?? (isV2 ? '首次提交' : 'initial')}</dd>
+          <dt className="text-cafe-muted">{isV2 ? t.continuity : 'Continuity'}</dt>
+          <dd className="text-cafe-secondary">
+            {isV2 ? (
+              t.contextValue(
+                envelope.continuity.mode ?? envelope.continuity.capability,
+                envelope.continuity.contextEpoch,
+              )
+            ) : (
+              <>
+                {envelope.continuity.mode ?? envelope.continuity.capability}
+                {envelope.continuity.contextEpoch === undefined ? '' : ` · epoch ${envelope.continuity.contextEpoch}`}
+              </>
+            )}
+          </dd>
+        </div>
+        <div>
+          <dt className="text-cafe-muted">{isV2 ? t.boundary : 'Boundary'}</dt>
+          <dd className="text-cafe-secondary">
+            {envelope.retryBoundary.reason
+              ? isV2
+                ? t.retryReasons[envelope.retryBoundary.reason]
+                : envelope.retryBoundary.reason
+              : isV2
+                ? t.initial
+                : 'initial'}
+          </dd>
         </div>
       </dl>
 
@@ -89,26 +118,41 @@ function Generation({ generation }: { generation: RequestGenerationProjectionV1 
           >
             <div className="flex flex-wrap items-center justify-between gap-2 text-micro">
               <span className="font-semibold text-cafe-secondary">
-                {isV2 && channel.channel === 'provider_native_hidden'
-                  ? '服务方内部视野'
+                {isV2
+                  ? { message: t.message, native_instruction: t.instruction, provider_native_hidden: t.hidden }[
+                      channel.channel
+                    ]
                   : channelLabel(channel.channel)}
               </span>
-              <span className="text-cafe-muted">
-                {isV2 && channel.state === 'unsupported' ? '服务方不支持' : STATE_LABEL[channel.state]}
-              </span>
+              <span className="text-cafe-muted">{isV2 ? t[channel.state] : STATE_LABEL[channel.state]}</span>
             </div>
             <p className="mt-1 text-micro text-cafe-muted">
-              {channel.byteLength === undefined
-                ? isV2
-                  ? '字节数未报告'
-                  : 'bytes 未报告'
-                : `${channel.byteLength} ${isV2 ? '字节' : 'bytes'}`}{' '}
-              · {isV2 ? '摘要' : 'digest'} <span className="font-mono">{shortDigest(channel.keyedContentDigest)}</span>
-              {channel.injectionDecision ? ` · ${channel.injectionDecision}` : ''}
+              {isV2 ? (
+                t.channelSummary(
+                  channel.byteLength,
+                  channel.keyedContentDigest ? shortDigest(channel.keyedContentDigest) : t.unreported,
+                  channel.injectionDecision,
+                )
+              ) : (
+                <>
+                  {channel.byteLength === undefined
+                    ? isV2
+                      ? t.byteUnknown
+                      : 'bytes 未报告'
+                    : isV2
+                      ? t.bytes(channel.byteLength)
+                      : `${channel.byteLength} bytes`}{' '}
+                  · {isV2 ? t.digest : 'digest'}{' '}
+                  <span className="font-mono">
+                    {channel.keyedContentDigest ? shortDigest(channel.keyedContentDigest) : t.unreported}
+                  </span>
+                  {channel.injectionDecision ? ` · ${channel.injectionDecision}` : ''}
+                </>
+              )}
             </p>
             {channel.state === 'available' && channel.body !== undefined && (
               <details className="mt-2">
-                <summary className="cursor-pointer text-xs font-semibold text-cafe-accent">展开实际提交内容</summary>
+                <summary className="cursor-pointer text-xs font-semibold text-cafe-accent">{t.expand}</summary>
                 <pre className="mt-2 max-h-80 overflow-auto whitespace-pre-wrap rounded-lg bg-cafe-surface p-2 text-micro text-cafe-secondary">
                   {channel.body}
                 </pre>
@@ -116,9 +160,7 @@ function Generation({ generation }: { generation: RequestGenerationProjectionV1 
             )}
             {channel.state === 'unknown' && (
               <p className="mt-2 text-micro text-cafe-muted">
-                {isV2
-                  ? '来源或版本当前无法核验。'
-                  : 'Source owner 或版本当前无法核验；没有猜成可见、已删除或 Provider 未支持。'}
+                {isV2 ? t.sourceUnknown : 'Source owner 或版本当前无法核验；没有猜成可见、已删除或 Provider 未支持。'}
               </p>
             )}
           </div>
@@ -126,18 +168,48 @@ function Generation({ generation }: { generation: RequestGenerationProjectionV1 
       </div>
 
       <p className="mt-2 text-micro text-cafe-muted">
-        {isV2 ? '工具' : 'Tools'}: {envelope.tools.finalSurface} · {isV2 ? 'Clowder AI 接口' : 'Clowder AI schemas'}:{' '}
-        <span className="font-mono">{shortDigest(envelope.tools.catCafeSchemaSetHash)}</span> ·{' '}
-        {isV2 ? '声明服务' : 'Declared servers'}:{' '}
-        <span className="font-mono">{shortDigest(envelope.tools.declaredServerSetHash)}</span> ·{' '}
-        {isV2 ? '服务方观测' : 'Provider observed'}:{' '}
-        <span className="font-mono">{shortDigest(envelope.tools.providerObservedSchemaSetHash)}</span>
+        {isV2 ? (
+          t.toolsSummary(
+            t.toolStates[envelope.tools.finalSurface],
+            envelope.tools.catCafeSchemaSetHash ? shortDigest(envelope.tools.catCafeSchemaSetHash) : t.unreported,
+            envelope.tools.declaredServerSetHash ? shortDigest(envelope.tools.declaredServerSetHash) : t.unreported,
+            envelope.tools.providerObservedSchemaSetHash
+              ? shortDigest(envelope.tools.providerObservedSchemaSetHash)
+              : t.unreported,
+          )
+        ) : (
+          <>
+            {'Tools'}: {envelope.tools.finalSurface} · {'Clowder AI schemas'}:{' '}
+            <span className="font-mono">
+              {envelope.tools.catCafeSchemaSetHash ? shortDigest(envelope.tools.catCafeSchemaSetHash) : t.unreported}
+            </span>{' '}
+            · Declared servers:{' '}
+            <span className="font-mono">
+              {envelope.tools.declaredServerSetHash ? shortDigest(envelope.tools.declaredServerSetHash) : t.unreported}
+            </span>{' '}
+            · Provider observed:{' '}
+            <span className="font-mono">
+              {envelope.tools.providerObservedSchemaSetHash
+                ? shortDigest(envelope.tools.providerObservedSchemaSetHash)
+                : t.unreported}
+            </span>
+          </>
+        )}
       </p>
       <p className="mt-1 text-micro text-cafe-muted">
-        {isV2 ? '压缩' : 'Compactions'}: {envelope.continuity.compactionRefs.length} ·{' '}
-        {isV2 ? '输入材料' : 'Presentations'}:{' '}
-        {envelope.presentations.filter((item) => item.decision === 'admitted').length} {isV2 ? '已纳入' : 'admitted'} /{' '}
-        {envelope.presentations.filter((item) => item.decision === 'omitted').length} {isV2 ? '已省略' : 'omitted'}
+        {isV2 ? (
+          t.materialCounts(
+            envelope.continuity.compactionRefs.length,
+            envelope.presentations.filter((item) => item.decision === 'admitted').length,
+            envelope.presentations.filter((item) => item.decision === 'omitted').length,
+          )
+        ) : (
+          <>
+            {'Compactions'}: {envelope.continuity.compactionRefs.length} · Presentations:{' '}
+            {envelope.presentations.filter((item) => item.decision === 'admitted').length} admitted /{' '}
+            {envelope.presentations.filter((item) => item.decision === 'omitted').length} {'omitted'}
+          </>
+        )}
       </p>
     </article>
   );
@@ -159,6 +231,7 @@ export function RequestGenerationSection({
   onReveal: () => void;
 }) {
   const isV2 = useShellPresentation() === 'v2';
+  const t = useTrajectoryCopy(trajectoryInputCopy);
   const hasRevealable = generations?.some(({ envelope }) =>
     envelope.channels.some((channel) => channel.state === 'redacted' || channel.state === 'unknown'),
   );
@@ -170,11 +243,9 @@ export function RequestGenerationSection({
         }
       >
         <div>
-          <h3 className="text-sm font-semibold text-cafe-primary">
-            {isV2 ? '这一轮实际发给模型的输入' : 'Input generations'}
-          </h3>
+          <h3 className="text-sm font-semibold text-cafe-primary">{isV2 ? t.title : 'Input generations'}</h3>
           <p className="mt-0.5 text-micro text-cafe-muted">
-            {isV2 ? '每次实际提交的输入；默认只显示摘要。' : 'Clowder AI 实际组装并提交的每一代输入；默认只显示摘要。'}
+            {isV2 ? t.description : 'Clowder AI 实际组装并提交的每一代输入；默认只显示摘要。'}
           </p>
         </div>
         {hasRevealable && (
@@ -184,19 +255,17 @@ export function RequestGenerationSection({
             disabled={revealing}
             className="shrink-0 rounded-lg border border-cafe px-2.5 py-1.5 text-xs font-semibold text-cafe-secondary disabled:opacity-60"
           >
-            {revealing ? '核验来源…' : '按来源权限展开'}
+            {revealing ? t.revealing : t.reveal}
           </button>
         )}
       </div>
       {loading ? (
-        <p className="mt-3 text-xs text-cafe-muted">{isV2 ? '读取模型输入…' : '读取 request envelope…'}</p>
+        <p className="mt-3 text-xs text-cafe-muted">{isV2 ? t.loading : '读取 request envelope…'}</p>
       ) : error ? (
-        <p className="mt-3 text-xs text-cafe-muted">
-          {isV2 ? '模型输入当前不可用。' : 'Request envelope 当前不可用。'}
-        </p>
+        <p className="mt-3 text-xs text-cafe-muted">{isV2 ? t.error : 'Request envelope 当前不可用。'}</p>
       ) : (!generations || generations.length === 0) && gaps.length === 0 ? (
         <p className="mt-3 text-xs text-cafe-muted">
-          {isV2 ? '这轮没有实际提交输入的记录。' : '这轮没有 canonical request-generation 证据。'}
+          {isV2 ? t.empty : '这轮没有 canonical request-generation 证据。'}
         </p>
       ) : (
         <div className="mt-3 space-y-3">
@@ -207,13 +276,19 @@ export function RequestGenerationSection({
               data-testid="request-generation-gap"
             >
               <h4 className="text-xs font-semibold text-cafe-primary">
-                {isV2 ? '提交记录缺口：第 ' : 'Generation evidence gap #'}
-                {gap.fromOrdinal}
-                {gap.toOrdinal === gap.fromOrdinal ? '' : `–${gap.toOrdinal}`}
+                {isV2 ? (
+                  t.gap(gap.fromOrdinal, gap.toOrdinal)
+                ) : (
+                  <>
+                    {'Generation evidence gap #'}
+                    {gap.fromOrdinal}
+                    {gap.toOrdinal === gap.fromOrdinal ? '' : `–${gap.toOrdinal}`}
+                  </>
+                )}
               </h4>
               <p className="mt-1 text-micro text-cafe-muted">
                 {isV2 ? (
-                  '可见会话中缺少这段提交记录；其余提交仍按各自记录展示。'
+                  t.gapHint
                 ) : (
                   <>
                     可见 Session chain 中缺少这段 generation 证据；其余 generations

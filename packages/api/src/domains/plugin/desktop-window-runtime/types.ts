@@ -5,13 +5,19 @@ import type { BuiltinBrokerConnection } from '../host-broker/builtin-loopback.js
 import type { HostBrokerControlPlane } from '../host-broker/control-plane.js';
 import type { HostBrokerStore } from '../host-broker/ports.js';
 import type { PluginInventoryStore } from '../host-inventory/ports.js';
-import type { HostCompanionReply as CompanionReply } from './companion-private-wire.js';
+import type {
+  HostCompanionReply as CompanionReply,
+  HostTextSubmission,
+  HostVoiceObservation,
+} from './companion-private-wire.js';
 import type { DesktopWindowObserver } from './observer.js';
 import type { CompanionArchiveContract } from './published-companion-v2.js';
 
 export interface DesktopCompanionBridge {
   request(input: unknown): Promise<CompanionReply>;
   close(): Promise<void>;
+  observeVoice?(observation: HostVoiceObservation): Promise<void>;
+  observeTextSubmission?(observation: HostTextSubmission): Promise<void>;
 }
 
 export type DesktopWindowVisibility = 'visible' | 'hidden';
@@ -55,6 +61,8 @@ export interface DesktopWindowLaunch {
   readonly signal: AbortSignal;
   readonly onClosed: (failure?: DesktopWindowFailure) => void;
   readonly request?: (input: unknown) => Promise<CompanionReply>;
+  readonly onVoiceObservation?: (observation: HostVoiceObservation) => Promise<void>;
+  readonly onTextSubmission?: (observation: HostTextSubmission) => Promise<void>;
 }
 /** A trusted Host-owned executable, never a package-supplied main/preload script. */
 export interface DesktopWindowExecutor {

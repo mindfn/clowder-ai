@@ -6,8 +6,16 @@ import { resolveEvolutionMediaTarget } from './evolution-media-surface';
 import { parseFileNavigationOrigin } from './file-navigation-origin';
 import { resolveMessagePublicationSource } from './message-publication-surface';
 import { resolvePublicationTarget } from './publication-surface';
-import { createEntrustedReturnFromRef, resolveFilesTarget, resolveFileTarget } from './real-surface-adapters';
+import { isPullRequestChangesSurfaceCandidate } from './pull-request-changes-surface';
+import {
+  createEntrustedReturnFromRef,
+  resolveChangesTarget,
+  resolveFilesTarget,
+  resolveFileTarget,
+  resolvePullRequestChangesTarget,
+} from './real-surface-adapters';
 import { resolveThreadReplayThreadId } from './thread-replay-surface';
+import { resolveVideoProjectTarget } from './video-project-surface';
 import type {
   RestoreWorkbenchOptions,
   WorkbenchLayoutState,
@@ -17,6 +25,7 @@ import type {
 } from './workbench-contract';
 import { createInitialWorkbenchState } from './workbench-initial-state';
 import { retainPreviewSlot } from './workbench-preview';
+import { restoreRecentSurfaceIds } from './workbench-recent-visits';
 import { workspaceRootSelectionSchema } from './workspace-root-selection';
 
 export { migrateF284WorkspaceState } from './workbench-migrate-f284';
@@ -41,12 +50,14 @@ const RENDERER_BY_TYPE: Record<WorkbenchSurfaceType, WorkbenchRenderer> = {
   review: 'review-summary',
   terminal: 'terminal-session',
   'thread-replay': 'thread-replay',
+  'video-project': 'video-project-review',
   workspace: 'workspace-destination',
 };
 
 const OBJECT_KIND_BY_TYPE: Record<WorkbenchSurfaceType, WorkspaceSurfaceDescriptor['objectRef']['kind']> = {
   'agent-run': 'agent-run',
   'thread-replay': 'thread-replay',
+  'video-project': 'video-project',
   artifact: 'artifact',
   browser: 'preview-session',
   code: 'file',
@@ -181,15 +192,26 @@ function parseSurface(value: unknown, legacySchema: boolean): WorkspaceSurfaceDe
     navigationOrigin &&
     type !== 'file' &&
     type !== 'code' &&
-    !(ownerStateRef.owner === 'f232-thread-artifacts' && navigationOrigin.kind === 'artifact-list') &&
+    !(
+      ownerStateRef.owner === 'f232-thread-artifacts' &&
+      (navigationOrigin.kind === 'artifact-list' || navigationOrigin.kind === 'workspace-home-artifact')
+    ) &&
     resolveFilesTarget(parsed) === null &&
+    resolvePullRequestChangesTarget(parsed) === null &&
     resolveArtifactReviewTarget(parsed) === null &&
     resolvePublicationTarget(parsed) === null &&
     resolveMessagePublicationSource(parsed) === null &&
     resolveEvolutionMediaTarget(parsed) === null
   )
     return null;
+  if (
+    (isPullRequestChangesSurfaceCandidate(parsed) || ownerStateRef.owner === 'f063-workspace-diff') &&
+    resolvePullRequestChangesTarget(parsed) === null &&
+    resolveChangesTarget(parsed) === null
+  )
+    return null;
   if (type === 'thread-replay' && resolveThreadReplayThreadId(parsed) === null) return null;
+  if (type === 'video-project' && resolveVideoProjectTarget(parsed) === null) return null;
   if (
     ownerStateRef.owner === 'f063-workspace-file' &&
     (type === 'file' || type === 'code') &&
@@ -361,7 +383,7 @@ export function restoreWorkbenchState(value: unknown, options: RestoreWorkbenchO
     pinnedSurfaceIds,
   });
 
-  return retainPreviewSlot({
+  const restored = retainPreviewSlot({
     schemaVersion: 2,
     previewSurfaceId: isNonEmptyString(raw.previewSurfaceId) ? raw.previewSurfaceId : null,
     layoutOwner: 'f307',
@@ -375,4 +397,5 @@ export function restoreWorkbenchState(value: unknown, options: RestoreWorkbenchO
       ? [warning('restore-warning:filtered', '部分布局引用已失效，已跳过并保留其余工作。')]
       : [],
   });
+  return { ...restored, recentSurfaceIdsByThread: restoreRecentSurfaceIds(raw.recentSurfaceIdsByThread, restored) };
 }

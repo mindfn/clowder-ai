@@ -1,5 +1,7 @@
 import { z } from 'zod';
 import { MediaContextAttachmentSchema } from '../types/media-context-attachment.js';
+import { messageMediaItemSelectorSchema } from '../types/media-publication-source.js';
+import { projectScreeningContextAttachmentSchema } from '../types/video-project-message.js';
 
 export { MediaContextAttachmentSchema } from '../types/media-context-attachment.js';
 
@@ -60,6 +62,16 @@ export const MessageQuoteSourceSchema = z
     threadId: boundedId,
     messageId: boundedId,
     senderCatId: boundedId.optional(),
+    artifactFile: z
+      .object({
+        item: messageMediaItemSelectorSchema,
+        url: z.string().min(1).max(2048),
+        fileName: boundedMetadata,
+        messageRevision: z.string().max(64).regex(/^\d+$/),
+        displayDigest: ownerRevision,
+      })
+      .strict()
+      .optional(),
   })
   .strict();
 
@@ -146,6 +158,7 @@ export const ContextAttachmentSchema = z.union([
   WorkspaceFileContextAttachmentSchema,
   QuoteContextAttachmentSchema,
   MediaContextAttachmentSchema,
+  projectScreeningContextAttachmentSchema,
 ]);
 
 export const ContextAttachmentsSchema = z

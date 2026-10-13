@@ -44,51 +44,47 @@ export function MemberPanel({
       </header>
       <div className="member-content">
         {member === 'members' ? (
-          <>
-            {!members ? (
-              <p className="empty-copy">正在读取成员…</p>
-            ) : (
-              members.humans.map((human) => (
-                <section key={human.humanId} className="member-family">
-                  <button
-                    type="button"
-                    className="member-row"
-                    onClick={() => onSelect({ kind: 'human', humanId: human.humanId })}
-                  >
-                    <MemberAvatar name={human.displayName} kind="human" avatarUrl={human.avatarUrl} />
-                    <span>
-                      <strong>{human.displayName}</strong>
-                      <small>{human.role === 'steward' ? '维护者' : '成员'} · 人</small>
-                    </span>
-                  </button>
-                  {agents
-                    .filter((agent) => agent.humanId === human.humanId)
-                    .map((agent) => (
-                      <button
-                        key={`${agent.connectionId}:${agent.catId}`}
-                        type="button"
-                        className="member-row member-row-agent"
-                        onClick={() =>
-                          onSelect({ kind: 'agent', connectionId: agent.connectionId, catId: agent.catId })
-                        }
-                      >
-                        <MemberAvatar name={agent.displayName} kind="agent" avatarUrl={agent.avatarDataUrl} />
-                        <span>
-                          <strong>{agent.displayName}</strong>
-                          <small>{agent.endpointLabel} · 猫</small>
-                        </span>
-                      </button>
-                    ))}
-                </section>
-              ))
-            )}
-          </>
+          !members ? (
+            <p className="empty-copy">正在读取成员…</p>
+          ) : (
+            members.humans.map((human) => (
+              <section key={human.humanId} className="member-family">
+                <button
+                  type="button"
+                  className="member-row"
+                  onClick={() => onSelect({ kind: 'human', humanId: human.humanId })}
+                >
+                  <MemberAvatar name={human.displayName} kind="human" avatarUrl={human.avatarUrl} />
+                  <span>
+                    <strong>{human.displayName}</strong>
+                    <small>{human.role === 'steward' ? '维护者' : '成员'} · 人</small>
+                  </span>
+                </button>
+                {agents
+                  .filter((agent) => agent.humanId === human.humanId)
+                  .map((agent) => (
+                    <button
+                      key={`${agent.connectionId}:${agent.catId}`}
+                      type="button"
+                      className="member-row member-row-agent"
+                      onClick={() => onSelect({ kind: 'agent', connectionId: agent.connectionId, catId: agent.catId })}
+                    >
+                      <MemberAvatar name={agent.displayName} kind="agent" avatarUrl={agent.avatarDataUrl} />
+                      <span>
+                        <strong>{agent.displayName}</strong>
+                        <small>{agent.endpointLabel} · 猫</small>
+                      </span>
+                    </button>
+                  ))}
+              </section>
+            ))
+          )
         ) : (
           <MemberProfile member={member} members={members} participants={participants} events={events} />
         )}
         {onCafe && (
           <button type="button" className="cafe-window-button" onClick={onCafe}>
-            管理参与…
+            管理…
           </button>
         )}
         {member === 'members' && onReplayGuide && (

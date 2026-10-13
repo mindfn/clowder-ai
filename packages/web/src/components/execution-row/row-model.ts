@@ -209,7 +209,11 @@ export function rowStatusText(
 
   switch (model.status) {
     case 'working':
-      return model.single ? copy.status.working(who, clock, tail) : copy.status.running(model.runningCount, tail);
+      return model.single?.kind === 'managed_command'
+        ? copy.status.managed(who, copy.activity[model.single.activity ?? 'command'], clock, tail)
+        : model.single
+          ? copy.status.working(who, clock, tail)
+          : copy.status.running(model.runningCount, tail);
     case 'stopping':
       return copy.status.stopping(clock);
     case 'blocked':
@@ -228,7 +232,9 @@ export function rowCompactStatusText(model: ExecutionRowModel, copy: ExecutionRo
   switch (model.status) {
     case 'working':
     case 'blocked':
-      return copy.compact.working;
+      return model.single?.kind === 'managed_command'
+        ? copy.status.managed('', copy.activity[model.single.activity ?? 'command'], '', '').trim()
+        : copy.compact.working;
     case 'stopping':
       return copy.compact.stopping;
     case 'silent':

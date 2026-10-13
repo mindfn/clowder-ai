@@ -7,11 +7,14 @@ Architecture cell: hub-action-surface
 Real-shell host for the shared F307 Workbench kernel.
 */
 
-import { type ReactNode, useEffect, useRef, useState } from 'react';
+import { type ReactNode, useCallback, useEffect, useRef, useState } from 'react';
 import { ListenModePlayer } from '@/components/listen-mode/ListenModePlayer';
+import { defaultSettingsSectionPath } from '@/components/settings/settings-entry-path';
 import { resolveShellCopy, useShellCopy } from '@/components/shell/shell-copy';
 import { readShellLanguage } from '@/components/shell/shell-language';
+import { resolveShellNavTarget } from '@/components/shell/shell-navigation';
 import { useShellPresentation } from '@/components/shell/shell-presentation';
+import { useSettingsReadingEntry } from '@/components/shell/useSettingsSourceReturn';
 import type {
   F284WorkspaceSnapshot,
   WorkbenchAction,
@@ -23,20 +26,21 @@ import { voiceMeetingCopy } from '@/components/workspace/voice-meeting.shell-cop
 import type { WorkspaceDevSurface } from '@/components/workspace/WorkspaceLauncher';
 import { canonicalLauncherDestination } from '@/components/workspace/WorkspaceLauncher';
 import type { LauncherWorkspaceSearch } from '@/components/workspace/WorkspaceLauncherSearch';
+import { useWorkspaceExecutionRequest } from '@/components/workspace-home/execution-detail-request';
+import type { OpenHomeArtifact } from '@/components/workspace-home/HomeWorksSummary';
 import { useCatData } from '@/hooks/useCatData';
 import { useIsDesktop } from '@/hooks/useIsDesktop';
 import { resolveCatDisplayName } from '@/lib/cat-display-name';
-import type { WorkspaceOpenRequest } from '@/stores/chat-types';
+import type { WorkspaceFileNavigationOrigin, WorkspaceOpenRequest } from '@/stores/chat-types';
 import { useChatStore } from '@/stores/chatStore';
 import { useToastStore } from '@/stores/toastStore';
 import { captureChatReadingBeforeLayoutChange } from '@/utils/chat-layout-change';
-import { isWorkspaceFullWindowSurface } from './artifact-work-presentation';
+import { DEFAULT_ARTIFACT_WORK_CHAT_BASIS, isWorkspaceFullWindowSurface } from './artifact-work-presentation';
 import { toggleArtifactWorkFullWindow } from './artifact-work-presentation-actions';
 import { restoreEvolutionMediaOrigin } from './evolution-media-navigation';
 import { useF307ExperienceWorkbenchStore } from './experience-workbench-store';
 import { F307OwnerSurfaceRenderer } from './F307OwnerSurfaceRenderer';
-import { F307SurfacePane } from './F307SurfacePane';
-import { F307WorkbenchSidecar } from './F307WorkbenchSidecar';
+import { F307MountedSurface } from './F307WorkbenchSidecar';
 import { F307WorkbenchTabs } from './F307WorkbenchTabs';
 import { F307WorkspaceHomePage } from './F307WorkspaceHomePage';
 import { createPublicationSurface } from './publication-surface';
@@ -46,12 +50,17 @@ import {
   createFilePreviewSurface,
   createFileSurface,
   createFilesSurface,
+  createPullRequestChangesSurface,
   createTeamWorkspaceSurface,
   createWorkspaceDestinationSurface,
   createWorkspaceModeSurface,
   resolveFileTarget,
 } from './real-surface-adapters';
 import { returnFileCard } from './return-file-card';
+import type { ToolsReturnRequest } from './use-tools-viewport-return';
+import { useWorkspaceDestinationAdmission } from './use-workspace-destination-admission';
+import { WorkbenchToolsContent } from './WorkbenchToolsContent';
+import { selectRecentSurfaces } from './workbench-recent-visits';
 import { workspaceChromeCopy } from './workspace-chrome.shell-copy';
 import { workspaceEntryTitle } from './workspace-entry-title';
 import { workspaceFileReturnAction } from './workspace-file-return';
@@ -60,9 +69,11 @@ import { rememberWorkspaceForeground } from './workspace-presentation-lock';
 function WorkbenchActivity({
   layout,
   dispatch,
+  copy,
 }: {
   layout: WorkbenchLayoutState;
   dispatch: (action: WorkbenchAction) => void;
+  copy: typeof workspaceChromeCopy.zh;
 }) {
   return layout.activity.map((item) => (
     <div
@@ -86,14 +97,14 @@ function WorkbenchActivity({
           }}
           className="text-xs font-semibold text-[var(--semantic-info)] hover:underline"
         >
-          查看
+          {copy.activity.view}
         </button>
       )}
       <button
         type="button"
         onClick={() => dispatch({ type: 'dismiss-activity', activityId: item.id })}
         className="flex h-6 w-6 items-center justify-center rounded-md text-cafe-muted hover:bg-cafe-surface"
-        aria-label="关闭提醒"
+        aria-label={copy.activity.dismiss}
       >
         <span className="h-3.5 w-3.5">
           <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5" aria-hidden="true">
@@ -109,10 +120,12 @@ function RecentlyClosedSurfaces({
   layout,
   dispatch,
   onRestore,
+  copy,
 }: {
   layout: WorkbenchLayoutState;
   dispatch: (action: WorkbenchAction) => void;
   onRestore: () => void;
+  copy: typeof workspaceChromeCopy.zh;
 }) {
   const [expanded, setExpanded] = useState(false);
   if (layout.recentlyClosed.length === 0) return null;
@@ -127,10 +140,10 @@ function RecentlyClosedSurfaces({
           onClick={() => setExpanded((current) => !current)}
           className="rounded-lg px-2 py-1 text-micro font-semibold text-cafe-muted hover:bg-cafe-surface-sunken hover:text-cafe"
           aria-expanded={expanded}
-          aria-label={`${expanded ? '收起' : '展开'}最近关闭的工作区页面`}
+          aria-label={expanded ? copy.recentlyClosed.collapse : copy.recentlyClosed.expand}
           data-testid="f307-recently-closed-toggle"
         >
-          最近关闭 {layout.recentlyClosed.length}
+          {copy.recentlyClosed.label(layout.recentlyClosed.length)}
         </button>
         {expanded &&
           layout.recentlyClosed.map((surface) => (
@@ -149,7 +162,7 @@ function RecentlyClosedSurfaces({
               className="rounded-lg bg-cafe-surface-sunken px-2 py-1 text-micro font-semibold text-cafe-secondary hover:text-cafe"
               data-testid={`f307-restore-${surface.type}`}
             >
-              恢复 {surface.title}
+              {copy.recentlyClosed.restore(surface.title)}
             </button>
           ))}
       </div>
@@ -166,6 +179,7 @@ function zeroTopologyContract(hydrated: boolean, zeroTopology: boolean, homeFocu
 function useExplicitWorkspaceNavigation({
   dispatch,
   hydrated,
+  isDesktop,
   layout,
   request,
   onConsumed,
@@ -174,6 +188,7 @@ function useExplicitWorkspaceNavigation({
 }: {
   dispatch: (action: WorkbenchAction) => void;
   hydrated: boolean;
+  isDesktop: boolean;
   layout: WorkbenchLayoutState;
   request?: WorkspaceOpenRequest | null;
   onConsumed?: (revision: number) => void;
@@ -242,6 +257,8 @@ function useExplicitWorkspaceNavigation({
       entryCopy.image,
     );
     if (entryTitle) surface.title = entryTitle;
+    if (isDesktop && request.target.kind === 'mode' && request.target.mode === 'product-schedule')
+      captureChatReadingBeforeLayoutChange();
     consumedRevision.current = request.revision;
     const fileTarget = previewEnabled && request.target.kind === 'file' ? resolveFileTarget(surface) : null;
     const existing = layout.surfaces.find((candidate) => {
@@ -277,17 +294,32 @@ function useExplicitWorkspaceNavigation({
             : 'open-surface',
         surface,
         entitlement: { kind: 'user', reason: 'open-from-chat' },
+        visitThreadId: request.threadId,
+      });
+    } else {
+      dispatch({
+        type: 'activate-surface',
+        surfaceId: surface.id,
+        entitlement: { kind: 'user', reason: 'open-from-chat' },
+        visitThreadId: request.threadId,
       });
     }
     rememberWorkspaceForeground();
     setHomeOpen(false);
     if (request.target.kind === 'evolution-program') {
       useF307ExperienceWorkbenchStore.getState().enterMainAreaAttention(surface.id);
+    } else if (isDesktop && threadId && request.target.kind === 'mode' && request.target.mode === 'product-schedule') {
+      useF307ExperienceWorkbenchStore.getState().enterMainAreaAttention(surface.id, {
+        kind: 'chat-workspace',
+        threadId,
+        chatBasis: DEFAULT_ARTIFACT_WORK_CHAT_BASIS,
+      });
     }
     onConsumed?.(request.revision);
   }, [
     dispatch,
     hydrated,
+    isDesktop,
     layout.activeSurfaceId,
     layout.surfaces,
     onConsumed,
@@ -375,10 +407,43 @@ export function F307ExperienceWorkbench({
   const t = useShellCopy(workspaceChromeCopy);
   const [homeOpen, setHomeOpen] = useState(false);
   const [homeSearchQuery, setHomeSearchQuery] = useState('');
+  const [toolsReturnRequest, setToolsReturnRequest] = useState<ToolsReturnRequest>();
+  const toolsReturnSequence = useRef(0);
+  const captureSettingsOrigin = useSettingsReadingEntry();
+  const toolsScopeKey = JSON.stringify([threadId, worktreeId]);
+  const previousToolsScope = useRef(toolsScopeKey);
+  useEffect(() => {
+    if (previousToolsScope.current === toolsScopeKey) return;
+    previousToolsScope.current = toolsScopeKey;
+    setToolsReturnRequest(undefined);
+    setHomeSearchQuery('');
+    setHomeSearchReturnOrigin(undefined);
+  }, [toolsScopeKey]);
+  const scopedToolsReturn =
+    toolsReturnRequest?.threadId === threadId && toolsReturnRequest?.worktreeId === worktreeId
+      ? toolsReturnRequest
+      : undefined;
+
+  const [homeSearchReturnOrigin, setHomeSearchReturnOrigin] = useState<
+    Extract<WorkspaceFileNavigationOrigin, { kind: 'workspace-home-search' }> | undefined
+  >();
+  const [homeArtifactReturnOrigin, setHomeArtifactReturnOrigin] = useState<
+    Extract<WorkspaceFileNavigationOrigin, { kind: 'workspace-home-artifact' }> | undefined
+  >();
+  useEffect(
+    () => setHomeArtifactReturnOrigin((origin) => (origin?.threadId === threadId ? origin : undefined)),
+    [threadId],
+  );
   const layout = useF307ExperienceWorkbenchStore((state) => state.layout);
   const hydrated = useF307ExperienceWorkbenchStore((state) => state.hydrated);
   const dispatch = useF307ExperienceWorkbenchStore((state) => state.dispatch);
+  // This callback is supplied only to explicit controls, never to automatic foreground/lock binding.
+  const dispatchInput = useCallback(
+    (action: WorkbenchAction) => dispatch({ ...action, visitThreadId: threadId } as WorkbenchAction),
+    [dispatch, threadId],
+  );
   const hydrate = useF307ExperienceWorkbenchStore((state) => state.hydrate);
+  const attentionPresentation = useF307ExperienceWorkbenchStore((state) => state.mainAreaAttentionPresentation);
   const mainAreaAttentionSurfaceId = useF307ExperienceWorkbenchStore((state) => state.mainAreaAttentionSurfaceId);
   const enterMainAreaAttention = useF307ExperienceWorkbenchStore((state) => state.enterMainAreaAttention);
   const exitMainAreaAttention = useF307ExperienceWorkbenchStore((state) => state.exitMainAreaAttention);
@@ -402,6 +467,7 @@ export function F307ExperienceWorkbench({
   useExplicitWorkspaceNavigation({
     dispatch,
     hydrated,
+    isDesktop,
     layout,
     request: workspaceOpenRequest,
     onConsumed: onWorkspaceOpenRequestConsumed,
@@ -410,14 +476,20 @@ export function F307ExperienceWorkbench({
   });
 
   const isV2 = useShellPresentation() === 'v2';
+  const controlCopy = isV2 ? t : workspaceChromeCopy.zh;
   const projection = projectWorkbench(layout, isDesktop ? 1024 : 390);
   const zeroTopology = projection.visibleSurfaceIds.length === 0;
   const foregroundUnavailable =
     foregroundSurfaceId != null && !layout.surfaces.some((surface) => surface.id === foregroundSurfaceId);
   const homeFocused = homeOpen || zeroTopology || foregroundSurfaceId === null || foregroundUnavailable;
+  const activeWorkspaceSurface = homeFocused
+    ? undefined
+    : layout.surfaces.find((surface) => surface.id === layout.activeSurfaceId);
   useEffect(() => {
     if (foregroundSurfaceId != null) setHomeOpen(false);
   }, [foregroundSurfaceId]);
+  // A queued explicit request wins initial foreground restoration; a later foreground input still closes Home.
+  useWorkspaceExecutionRequest(threadId, setHomeOpen);
   const topologyContract = zeroTopologyContract(hydrated, zeroTopology, homeFocused);
   const visibleSurfaceIds = new Set(
     focusSurfaceId !== null
@@ -430,9 +502,15 @@ export function F307ExperienceWorkbench({
   useEffect(() => {
     if (focusSurfaceId !== null && (!visible || homeFocused)) exitFocusMode();
   }, [exitFocusMode, focusSurfaceId, homeFocused, visible]);
-  const openSurfaceIds = new Set(layout.surfaces.map((surface) => surface.id));
+  const openSurfaceIds = new Set([
+    ...layout.surfaces.map((surface) => surface.id),
+    ...(layout.sidecar ? [layout.sidecar.id] : []),
+  ]);
   const hostedSurfaces = [
     ...layout.surfaces,
+    ...(layout.sidecar && !layout.surfaces.some((surface) => surface.id === layout.sidecar?.id)
+      ? [layout.sidecar]
+      : []),
     ...layout.recentlyClosed.filter((surface) => surface.type !== 'thread-replay' && !openSurfaceIds.has(surface.id)),
   ];
   const openSurfaceFromOwner = (
@@ -452,7 +530,7 @@ export function F307ExperienceWorkbench({
           }),
         }
       : nextSurface;
-    dispatch({
+    dispatchInput({
       type: fileTarget ? 'open-preview-surface' : 'open-surface',
       surface: opened,
       entitlement: { kind: 'user', reason },
@@ -461,17 +539,88 @@ export function F307ExperienceWorkbench({
     const activeSurfaceId = useF307ExperienceWorkbenchStore.getState().layout.activeSurfaceId;
     if (keepFocus && activeSurfaceId !== null) enterFocusMode(activeSurfaceId);
   };
+  const openHomeSurface = useCallback(
+    (surface: WorkspaceSurfaceDescriptor) => {
+      const before = useF307ExperienceWorkbenchStore.getState().layout;
+      if (surface.type === 'thread-replay' && !before.surfaces.some((item) => item.id === surface.id))
+        captureChatReadingBeforeLayoutChange();
+      dispatchInput({
+        type: 'open-surface',
+        surface,
+        entitlement: { kind: 'user', reason: 'workspace-home-selection' },
+      });
+      const accepted = useF307ExperienceWorkbenchStore.getState().layout;
+      if (accepted.activeSurfaceId !== surface.id) return;
+      rememberWorkspaceForeground();
+      setHomeOpen(false);
+    },
+    [dispatchInput],
+  );
+  const threadTitle = useChatStore((state) => state.threads.find((thread) => thread.id === threadId)?.title);
+  const destinationAdmission = useWorkspaceDestinationAdmission({
+    context: { threadId, threadTitle, worktreeId, canonicalWorktreeId, openFilePath, preview },
+    worktreeLoading,
+    worktreeError,
+    onSelectSurface: openHomeSurface,
+  });
+  useEffect(() => {
+    if (destinationAdmission.message) setHomeOpen(true);
+  }, [destinationAdmission.message]);
+  const selectRecentSurface = (requested: WorkspaceSurfaceDescriptor) => {
+    const current = useF307ExperienceWorkbenchStore.getState().layout;
+    const surface = selectRecentSurfaces(current, threadId).find((candidate) => candidate.id === requested.id);
+    if (!surface) return;
+    const entitlement = { kind: 'user' as const, reason: 'workspace-home-selection' as const };
+    if (current.surfaces.some((candidate) => candidate.id === surface.id))
+      dispatchInput({ type: 'activate-surface', surfaceId: surface.id, entitlement });
+    else if (current.sidecar?.id === surface.id)
+      dispatchInput({ type: 'promote-sidecar', destination: 'tab', entitlement });
+    else dispatchInput({ type: 'restore-surface', surfaceId: surface.id, entitlement });
+    if (useF307ExperienceWorkbenchStore.getState().layout.activeSurfaceId !== surface.id) return;
+    rememberWorkspaceForeground();
+    setHomeOpen(false);
+  };
+  const openHomeArtifact = useCallback<OpenHomeArtifact>(
+    (artifact, origin) => {
+      const chat = useChatStore.getState();
+      if (!threadId || origin.threadId !== threadId || chat.currentThreadId !== threadId) {
+        useToastStore
+          .getState()
+          .addToast({ type: 'info', title: t.homeTab, message: t.homeOriginUnavailable, duration: 6000 });
+        return;
+      }
+      if (artifact.type === 'pr') {
+        const surface = createPullRequestChangesSurface({
+          artifact,
+          worktreeId: canonicalWorktreeId ?? worktreeId,
+          threadId,
+          navigationOrigin: origin,
+        });
+        if (surface) openHomeSurface(surface);
+        else
+          useToastStore
+            .getState()
+            .addToast({ type: 'info', title: 'PR', message: t.pullRequestSourceUnavailable, duration: 6000 });
+        return;
+      }
+      chat.openPublishedArtifact(threadId, artifact, origin);
+    },
+    [threadId, t, canonicalWorktreeId, worktreeId, openHomeSurface],
+  );
   const renderOwnerSurface = (surface: (typeof hostedSurfaces)[number], surfaceVisible: boolean) => (
     <F307OwnerSurfaceRenderer
       surface={surface}
       surfaceVisible={surfaceVisible}
+      hostWorktreeId={canonicalWorktreeId ?? worktreeId}
+      hostThreadId={threadId}
       focusMode={focusSurfaceId === surface.id}
       statusSurface={statusSurface}
+      defaultCatId={defaultCatId}
       onOpenSurface={(nextSurface) => {
         openSurfaceFromOwner(nextSurface, surface.id, 'workspace-home-selection');
       }}
       onOpenArtifactWithReturn={({ artifact, returnSurface }) => {
-        dispatch({
+        dispatchInput({
           type: 'open-artifact-with-return',
           artifact,
           returnSurface,
@@ -481,6 +630,61 @@ export function F307ExperienceWorkbench({
       }}
       onRefreshSurface={(nextSurface) => dispatch({ type: 'refresh-surface', surface: nextSurface })}
       onReturnToFileOrigin={(fileSurface, origin) => {
+        if (origin.kind === 'workspace-tools-search' || origin.kind === 'workspace-home-search') {
+          if (origin.kind === 'workspace-tools-search' && origin.threadId !== threadId) {
+            useToastStore
+              .getState()
+              .addToast({ type: 'info', title: t.openTools, message: t.searchOriginUnavailable, duration: 6000 });
+            return;
+          }
+          exitMainAreaAttention();
+          exitFocusMode();
+          const session = useF307ExperienceWorkbenchStore.getState().artifactWorkPresentation.session;
+          if (
+            threadId &&
+            session?.threadId === threadId &&
+            session.surfaceId === fileSurface.id &&
+            session.mode === 'full-window'
+          )
+            toggleArtifactWorkFullWindow(threadId, fileSurface);
+          setHomeArtifactReturnOrigin(undefined);
+          setHomeSearchQuery(origin.query);
+          if (isV2) {
+            setHomeSearchReturnOrigin(undefined);
+            setToolsReturnRequest({
+              generation: ++toolsReturnSequence.current,
+              threadId,
+              worktreeId,
+              query: origin.query,
+              ...(origin.kind === 'workspace-tools-search' ? { viewportOffsetPx: origin.viewportOffsetPx } : {}),
+            });
+          } else {
+            setToolsReturnRequest(undefined);
+            setHomeSearchReturnOrigin({
+              kind: 'workspace-home-search',
+              query: origin.query,
+              ...(origin.kind === 'workspace-home-search' && origin.viewportOffsetPx !== undefined
+                ? { viewportOffsetPx: origin.viewportOffsetPx }
+                : {}),
+            });
+            onRestoreWorkspaceSearch?.(origin.query);
+            setHomeOpen(true);
+          }
+          return;
+        }
+        if (origin.kind === 'workspace-home-artifact') {
+          if (origin.threadId !== threadId) {
+            useToastStore
+              .getState()
+              .addToast({ type: 'info', title: t.homeTab, message: t.homeOriginUnavailable, duration: 6000 });
+            return;
+          }
+          exitMainAreaAttention();
+          setHomeSearchReturnOrigin(undefined);
+          setHomeArtifactReturnOrigin(origin);
+          setHomeOpen(true);
+          return;
+        }
         if (origin.kind === 'workspace-changes') {
           const changes = createWorkspaceDestinationSurface(
             canonicalLauncherDestination('surface', 'changes'),
@@ -493,7 +697,7 @@ export function F307ExperienceWorkbench({
         }
         if (origin.kind === 'artifact-list') {
           const list = createWorkspaceModeSurface('artifacts', origin.threadId);
-          dispatch({
+          dispatchInput({
             type: 'open-surface',
             surface: { ...list, artifactListView: origin.view },
             entitlement: { kind: 'user', reason: 'return-origin' },
@@ -504,7 +708,11 @@ export function F307ExperienceWorkbench({
         if (origin.kind === 'evolution-media') {
           const program = restoreEvolutionMediaOrigin(origin);
           if (!program) return;
-          dispatch({ type: 'open-surface', surface: program, entitlement: { kind: 'user', reason: 'return-origin' } });
+          dispatchInput({
+            type: 'open-surface',
+            surface: program,
+            entitlement: { kind: 'user', reason: 'return-origin' },
+          });
           if (origin.expanded && isDesktop) enterMainAreaAttention(program.id);
           else exitMainAreaAttention();
           return;
@@ -538,7 +746,7 @@ export function F307ExperienceWorkbench({
         // surface opened from such an entry (a revealed directory) returns the same way.
         if (origin.kind === 'settings' || origin.kind === 'workspace-card') {
           exitMainAreaAttention();
-          returnFileCard(origin, onOpenAppRoute, dispatch);
+          returnFileCard(origin, onOpenAppRoute, dispatchInput);
           return;
         }
         const target = resolveFileTarget(fileSurface);
@@ -563,7 +771,9 @@ export function F307ExperienceWorkbench({
           return;
         }
         if (action.kind === 'workspace-home-search') {
+          setHomeArtifactReturnOrigin(undefined);
           setHomeSearchQuery(action.query);
+          setHomeSearchReturnOrigin(action);
           onRestoreWorkspaceSearch?.(action.query);
           setHomeOpen(true);
           return;
@@ -616,12 +826,42 @@ export function F307ExperienceWorkbench({
       <ListenModePlayer />
       {(!zeroTopology || isV2) && focusSurfaceId === null && (
         <F307WorkbenchTabs
+          hostThreadId={threadId}
           layout={layout}
-          dispatch={dispatch}
+          dispatch={dispatchInput}
+          toolsOpenRequest={scopedToolsReturn?.generation}
+          toolsScopeKey={toolsScopeKey}
+          onToolsClose={() => setToolsReturnRequest(undefined)}
+          toolsContent={(close, menu) => (
+            <WorkbenchToolsContent
+              key={`${toolsScopeKey}:${scopedToolsReturn?.generation ?? 0}`}
+              menu={menu}
+              returnRequest={scopedToolsReturn}
+              threadId={threadId}
+              onSelectDestination={destinationAdmission.onSelectDestination}
+              onSelectDevSurface={onSelectDevSurface}
+              workspaceSearch={workspaceSearch}
+              onClose={close}
+              onOpenSettings={(entry) => {
+                const href =
+                  entry.destination.kind === 'route' ? entry.destination.path : defaultSettingsSectionPath(entry);
+                if (!href) return;
+                captureSettingsOrigin();
+                onOpenAppRoute(resolveShellNavTarget(href, threadId ? `/thread/${encodeURIComponent(threadId)}` : '/'));
+              }}
+              recentSurfaces={selectRecentSurfaces(layout, threadId)}
+              onSelectRecentSurface={selectRecentSurface}
+              repository={repository}
+              worktreeId={worktreeId}
+              initialSearchQuery={scopedToolsReturn?.query ?? ''}
+            />
+          )}
           onAddSurface={() => {
             onOpenHome?.();
             exitMainAreaAttention();
             setHomeSearchQuery('');
+            setHomeSearchReturnOrigin(undefined);
+            setHomeArtifactReturnOrigin(undefined);
             setHomeOpen(true);
           }}
           onActivateSurface={() => {
@@ -631,13 +871,34 @@ export function F307ExperienceWorkbench({
           homeFocused={homeFocused}
           isDesktop={isDesktop}
           artifactWorkHostAvailable={artifactWorkHostAvailable}
+          fullWindowAction={
+            artifactWorkHostAvailable &&
+            isDesktop &&
+            threadId &&
+            activeWorkspaceSurface &&
+            isWorkspaceFullWindowSurface(activeWorkspaceSurface, 'v2')
+              ? {
+                  active:
+                    artifactWorkPresentation.session?.threadId === threadId &&
+                    artifactWorkPresentation.session?.surfaceId === activeWorkspaceSurface.id &&
+                    artifactWorkPresentation.session?.mode === 'full-window',
+                  onToggle: () => toggleArtifactWorkFullWindow(threadId, activeWorkspaceSurface),
+                }
+              : undefined
+          }
           mainAreaAttentionSurfaceId={mainAreaAttentionSurfaceId}
           onEnterMainAreaAttention={enterMainAreaAttention}
-          onExitMainAreaAttention={exitMainAreaAttention}
+          onExitMainAreaAttention={() => {
+            captureChatReadingBeforeLayoutChange();
+            exitMainAreaAttention();
+          }}
+          mainAreaAttentionIsWide={attentionPresentation.kind === 'chat-workspace'}
         />
       )}
 
-      {!homeFocused && focusSurfaceId === null && <WorkbenchActivity layout={layout} dispatch={dispatch} />}
+      {!homeFocused && focusSurfaceId === null && (
+        <WorkbenchActivity layout={layout} dispatch={dispatchInput} copy={controlCopy} />
+      )}
 
       {homeFocused && foregroundUnavailable && (
         <output className="shrink-0 px-4 py-3 text-xs text-cafe-muted">{t.unavailable}</output>
@@ -657,17 +918,11 @@ export function F307ExperienceWorkbench({
           rootSelection={rootSelection}
           workspaceSearch={workspaceSearch}
           workspaceSearchQuery={homeSearchQuery}
-          onSelectSurface={(surface) => {
-            if (surface.type === 'thread-replay' && !layout.surfaces.some((item) => item.id === surface.id))
-              captureChatReadingBeforeLayoutChange();
-            dispatch({
-              type: 'open-surface',
-              surface,
-              entitlement: { kind: 'user', reason: 'workspace-home-selection' },
-            });
-            rememberWorkspaceForeground();
-            setHomeOpen(false);
-          }}
+          workspaceSearchReturnOrigin={homeSearchReturnOrigin}
+          workspaceArtifactReturnOrigin={homeArtifactReturnOrigin}
+          onSelectSurface={openHomeSurface}
+          destinationAdmission={destinationAdmission}
+          onOpenArtifact={openHomeArtifact}
         />
       )}
       <div
@@ -675,60 +930,70 @@ export function F307ExperienceWorkbench({
         aria-hidden={homeFocused}
         data-testid="f307-mounted-surface-host"
       >
-        <div
-          className={`flex min-h-0 min-w-0 flex-1 ${projection.kind === 'split' ? 'divide-x divide-cafe-subtle' : ''}`}
-        >
-          {hostedSurfaces.map((surface) => (
-            <F307SurfacePane
+        {hostedSurfaces.map((surface) => {
+          const sidecar = layout.sidecar?.id === surface.id;
+          return (
+            <F307MountedSurface
               key={surface.id}
               surface={surface}
-              visible={visibleSurfaceIds.has(surface.id)}
-              focusMode={focusSurfaceId === surface.id}
-              artifactWorkFullWindow={
-                artifactWorkPresentation.session?.threadId === threadId &&
-                artifactWorkPresentation.session?.surfaceId === surface.id &&
-                artifactWorkPresentation.session?.mode === 'full-window'
+              dispatch={dispatchInput}
+              sidecar={sidecar}
+              divider={!sidecar && projection.kind === 'split' && layout.split?.secondarySurfaceId === surface.id}
+              visible={
+                sidecar
+                  ? ownerSidecarVisible(
+                      visible,
+                      homeFocused,
+                      attentionPresentation.kind === 'overlay' ? mainAreaAttentionSurfaceId : null,
+                      focusSurfaceId,
+                    )
+                  : visibleSurfaceIds.has(surface.id)
               }
-              onToggleArtifactWorkFullWindow={
-                artifactWorkHostAvailable &&
-                isDesktop &&
-                threadId &&
-                layout.activeSurfaceId === surface.id &&
-                isWorkspaceFullWindowSurface(surface, isV2 ? 'v2' : 'classic')
-                  ? () => {
-                      toggleArtifactWorkFullWindow(threadId, surface);
+              ownerVisible={sidecar || ownerSurfaceVisible(visible, homeFocused, visibleSurfaceIds, surface.id)}
+              renderSurface={renderOwnerSurface}
+              paneProps={
+                sidecar
+                  ? undefined
+                  : {
+                      focusMode: focusSurfaceId === surface.id,
+                      artifactWorkFullWindow:
+                        artifactWorkPresentation.session?.threadId === threadId &&
+                        artifactWorkPresentation.session?.surfaceId === surface.id &&
+                        artifactWorkPresentation.session?.mode === 'full-window',
+                      onToggleArtifactWorkFullWindow:
+                        artifactWorkHostAvailable &&
+                        isDesktop &&
+                        threadId &&
+                        layout.activeSurfaceId === surface.id &&
+                        isWorkspaceFullWindowSurface(surface, isV2 ? 'v2' : 'classic')
+                          ? () => toggleArtifactWorkFullWindow(threadId, surface)
+                          : undefined,
+                      onEnterFocusMode: () => {
+                        if (layout.activeSurfaceId !== surface.id) {
+                          dispatchInput({
+                            type: 'activate-surface',
+                            surfaceId: surface.id,
+                            entitlement: { kind: 'user', reason: 'surface-tab' },
+                          });
+                        }
+                        setHomeOpen(false);
+                        enterFocusMode(surface.id);
+                      },
+                      onExitFocusMode: exitFocusMode,
                     }
-                  : undefined
               }
-              onEnterFocusMode={() => {
-                if (layout.activeSurfaceId !== surface.id) {
-                  dispatch({
-                    type: 'activate-surface',
-                    surfaceId: surface.id,
-                    entitlement: { kind: 'user', reason: 'surface-tab' },
-                  });
-                }
-                setHomeOpen(false);
-                enterFocusMode(surface.id);
-              }}
-              onExitFocusMode={exitFocusMode}
-            >
-              {renderOwnerSurface(surface, ownerSurfaceVisible(visible, homeFocused, visibleSurfaceIds, surface.id))}
-            </F307SurfacePane>
-          ))}
-        </div>
-        {layout.sidecar !== null && (
-          <F307WorkbenchSidecar
-            surface={layout.sidecar}
-            dispatch={dispatch}
-            renderSurface={renderOwnerSurface}
-            visible={ownerSidecarVisible(visible, homeFocused, mainAreaAttentionSurfaceId, focusSurfaceId)}
-          />
-        )}
+            />
+          );
+        })}
       </div>
 
       {focusSurfaceId === null && (
-        <RecentlyClosedSurfaces layout={layout} dispatch={dispatch} onRestore={() => setHomeOpen(false)} />
+        <RecentlyClosedSurfaces
+          layout={layout}
+          dispatch={dispatchInput}
+          onRestore={() => setHomeOpen(false)}
+          copy={controlCopy}
+        />
       )}
     </section>
   );

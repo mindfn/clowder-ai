@@ -17,9 +17,10 @@ function InertLink({ children }: { readonly children: ReactNode }) {
   return <span className="message-markdown-inert-link">{children}</span>;
 }
 
-export function MessageMarkdown({ source }: { readonly source: string }) {
+export function MessageMarkdown({ source, prefix }: { readonly source: string; readonly prefix?: ReactNode }) {
   return (
     <div className="message-body message-markdown">
+      {prefix}
       <ReactMarkdown
         remarkPlugins={[remarkGfm, remarkBreaks]}
         urlTransform={defaultUrlTransform}

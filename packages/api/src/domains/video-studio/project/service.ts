@@ -7,7 +7,12 @@ import {
   type ProjectContentOwnerService,
 } from '../content-owner/service.js';
 import type { ContentOperationContextV1, ContentSettlementReceiptV1 } from '../content-owner/types.js';
-import { type AuthorizeVideoProjectCat, VideoProjectAccess, type VideoProjectPrincipal } from './access.js';
+import {
+  type AuthorizeVideoProjectCat,
+  VideoProjectAccess,
+  VideoProjectAccessError,
+  type VideoProjectPrincipal,
+} from './access.js';
 import type { VideoProjectAssetIndex } from './asset-index.js';
 import { assertCheckResultsBoundToInput } from './check-results.js';
 import {
@@ -23,6 +28,10 @@ import {
   projectValueDigest,
   sameProjectValue,
 } from './document-mutations.js';
+import { prepareScreeningCommand, prepareSelfReviewCommand } from './registration-command.js';
+import { assertProjectRegistrationFacts } from './registration-facts.js';
+import type { AppendVideoProjectScreening } from './screening-types.js';
+import type { AppendVideoProjectSelfReview } from './self-review.js';
 import type { VideoProjectReadPort, VideoProjectSnapshot } from './types.js';
 
 export type { VideoProjectPrincipal } from './access.js';
@@ -57,6 +66,7 @@ export class VideoProjectService implements VideoProjectReadPort {
     const contentRef = `video-project:${projectId}`;
     await this.access.assert(input.principal, contentRef, 'write');
     const document = parseDocument(input.document);
+    assertProjectRegistrationFacts(undefined, document);
     if (document.archivedAt) throw new Error('A new project starts active');
     assertCheckResultsBoundToInput(document, document.checkResults, 1);
     assertProjectDecisions(undefined, document, input.principal.actor, this.options.ownerUserId, input.operationId);
@@ -84,7 +94,9 @@ export class VideoProjectService implements VideoProjectReadPort {
     await this.access.assert(input.principal, input.contentRef, input.permission);
     const metadata = await this.options.owner.describe(input.contentRef);
     if (metadata.projectScope?.ownerUserId !== input.principal.userId || metadata.mediaType !== videoProjectMediaType)
-      throw new Error('Video project access denied: project scope mismatch');
+      throw new VideoProjectAccessError('Video project access denied: project scope mismatch');
+    // Scope metadata is another owner await; do not carry an earlier accepted Task across it into a write.
+    if (input.permission === 'write') await this.access.assert(input.principal, input.contentRef, input.permission);
   }
 
   async load(input: {
@@ -114,6 +126,24 @@ export class VideoProjectService implements VideoProjectReadPort {
 
   async save(input: SaveVideoProjectInput): Promise<ContentSettlementReceiptV1> {
     return this.persist(input);
+  }
+
+  async appendScreening(input: Parameters<AppendVideoProjectScreening>[0]): Promise<ContentSettlementReceiptV1> {
+    await this.authorize({ ...input, permission: 'write' });
+    const prepared = await prepareScreeningCommand(this.options.owner, this, input);
+    return (
+      prepared.receipt ??
+      this.persist({ ...input, document: prepared.document }, undefined, false, prepared.context, 'screening')
+    );
+  }
+
+  async appendSelfReview(input: Parameters<AppendVideoProjectSelfReview>[0]): Promise<ContentSettlementReceiptV1> {
+    await this.authorize({ ...input, permission: 'write' });
+    const prepared = await prepareSelfReviewCommand(this, input);
+    return (
+      prepared.receipt ??
+      this.persist({ ...input, document: prepared.document }, undefined, false, prepared.context, 'self-review')
+    );
   }
 
   async operationReceipt(input: { principal: VideoProjectPrincipal; contentRef: string; operationId: string }) {
@@ -195,6 +225,7 @@ export class VideoProjectService implements VideoProjectReadPort {
     transitionDecisionId?: string,
     archiveCommand = false,
     context?: ContentOperationContextV1,
+    registrationCommand?: 'screening' | 'self-review',
   ) {
     await this.authorize({ ...input, permission: 'write' });
     const document = parseDocument(input.document);
@@ -206,6 +237,7 @@ export class VideoProjectService implements VideoProjectReadPort {
     }
     if (!archiveCommand && document.archivedAt !== previous.document.archivedAt)
       throw new Error('Use archive/restore to change project availability');
+    assertProjectRegistrationFacts(previous.document, document, registrationCommand);
     assertProjectHistoryPreserved(previous.document, document);
     assertOpaqueExtensionsPreserved(previous.document, document);
     assertProjectDecisions(

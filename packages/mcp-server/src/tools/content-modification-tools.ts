@@ -2,6 +2,7 @@ import {
   contentModificationTakeoverSchema,
   inspectContentModificationSchema,
   respondContentTextSchema,
+  videoProjectCommandSchema,
 } from '@cat-cafe/shared';
 import { z } from 'zod';
 import { defineMcpCanonicalFactory } from '../tool-governance-migration.js';
@@ -70,7 +71,7 @@ export const takeOverContentModificationInputSchema = {
   ...contentModificationTakeoverSchema.shape,
   ...common,
   sourceMessageId: contentModificationTakeoverSchema.shape.sourceMessageId.describe(
-    'Exact id of the delivered Human message addressed to this authenticated cat, carrying version-bound workspace-file quotes or a canonical PNG/MP4 media attachment.',
+    'Exact id of the delivered Human message addressed to this authenticated cat, carrying version-bound workspace-file quotes, a canonical PNG/MP4 media attachment, or an immutable project-screening selection.',
   ),
   operationId: contentModificationTakeoverSchema.shape.operationId.describe(
     'UUID for this takeover attempt. Source-message identity owns the request, so retries or competing addressed cats reuse one request.',
@@ -98,11 +99,40 @@ const admission = {
   kind: 'resource-entry',
   admissionRef: 'file:docs/architecture/f309-text-modification-contract.md',
 } as const;
+export const videoProjectCommandInputSchema = {
+  requestId: videoProjectCommandSchema.shape.requestId.describe(
+    'Exact accepted project requestId returned by take_over_content_modification, never a project URL or invented Task.',
+  ),
+  command: videoProjectCommandSchema.shape.command.describe(
+    'read/review-read: copy nextCursor and snapshot until nextCursor is null, concatenate json chunks then parse. read ownerRevision is optional (current head) or an exact retained input revision. save: inline full JSON document (16 MiB limit), expectedOwnerRevision and stable operationId. review-act: exact ledger expectedRevision, operationId and an original annotationId. self-review: exact input, real segmentIds, conclusion and named evidence refs. No local file paths.',
+  ),
+};
+export function handleVideoProjectCommand(input: z.infer<z.ZodObject<typeof videoProjectCommandInputSchema>>) {
+  return callbackPost('/api/callbacks/video-project/command', input);
+}
 export const contentModificationTools = [
+  defineTool({
+    name: 'cat_cafe_video_project_command',
+    description:
+      'Read or modify the exact video project accepted from an original Human screening message. Use when: the named Cat has taken over a 审片意见 and needs the retained/current input, canonical意见/定位/经过, a CAS edit, or its own self-review attestation. Not for: creating a project or Task, Human decisions, media registration/rendering, unrelated opinions, arbitrary files, or agent-key impersonation. Output: read/review-read return bounded snapshot-fenced JSON pages; save/review-act/self-review persist to the existing F138 owner or F309 ledger and return actual receipts. Every command rechecks the real running child, original source audience/current rights, current bound Task and accepted journal receipt. GOTCHA: markers/drafts alone grant no write authority; read every JSON page before constructing a full-document save, and a self-review never implies Human approval.',
+    inputSchema: videoProjectCommandInputSchema,
+    handler: handleVideoProjectCommand,
+    governance: {
+      implementationExport: 'handleVideoProjectCommand',
+      action: 'update',
+      risk: { level: 'write', openWorld: false },
+      runtimeProfiles: ['full'],
+      standaloneReason: {
+        disposition: 'accepted-boundary',
+        kind: 'resource-entry',
+        admissionRef: 'file:docs/architecture/f326-project-command-contract.md',
+      },
+    },
+  }),
   defineTool({
     name: 'cat_cafe_take_over_content_modification',
     description:
-      'Take over one delivered Human message addressed to this authenticated cat as one durable text or media modification request. Use when: the Human asks the named cat to modify exact-revision workspace quotes from the same file/base, or one canonical PNG/MP4 work with named media ranges or a whole-work attachment. Not for: caller-supplied identities/body/anchors, screenshots as source identity, unversioned or mixed sources, recalled messages, DOCX changes, human acceptance, or writing the original file. Input supplies only source message id and attempt UUID (plus permitted thread selection for agent-key auth); the server rereads owner identity, targets, version, ranges and withdrawal, reuses original media Task custody, and atomically gives competing addressed cats one request. Output: actual request/Task/execution state and server media selection-to-annotation ids. For media content and candidates use read_artifact_review/respond_artifact_review. Reusing a Human source never creates another request.',
+      'Take over one delivered Human message addressed to this authenticated cat as one durable text or media modification request. Use when: the Human asks the named cat to modify exact-revision workspace quotes from the same file/base, one canonical PNG/MP4 work with named media ranges or a whole-work attachment, or delivered project-screening marks from the same input/media version. Not for: caller-supplied identities/body/anchors, screenshots as source identity, unversioned or mixed sources, recalled messages, DOCX changes, human acceptance, or writing the original file. Input supplies only source message id and attempt UUID (plus permitted thread selection for agent-key auth); the server rereads owner identity, targets, version, ranges and withdrawal, reuses original media Task custody, and atomically gives competing addressed cats one request. Output: actual request/Task/execution state and server media selection-to-annotation ids. For media content and candidates use read_artifact_review/respond_artifact_review; for accepted project marks use video_project_command. Project takeover requires a real invocation that consumed the original Human message and creates one bound Task without resending the message. Reusing a Human source never creates another request.',
     inputSchema: takeOverContentModificationInputSchema,
     handler: handleTakeOverContentModification,
     governance: {

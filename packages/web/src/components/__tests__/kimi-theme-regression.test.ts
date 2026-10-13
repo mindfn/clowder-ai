@@ -1,35 +1,44 @@
-// @vitest-environment node
-import { readFileSync } from 'node:fs';
-import { dirname, resolve } from 'node:path';
-import { fileURLToPath } from 'node:url';
-import { describe, expect, it } from 'vitest';
+import React, { act } from 'react';
+import { createRoot } from 'react-dom/client';
+import { afterEach, describe, expect, it, vi } from 'vitest';
+import { CatHueInjector } from '../CatHueInjector';
 
-const testDir = dirname(fileURLToPath(import.meta.url));
-const webRoot = resolve(testDir, '..', '..', '..');
-const catHueInjectorPath = resolve(webRoot, 'src', 'components', 'CatHueInjector.tsx');
-const tailwindConfigPath = resolve(webRoot, 'tailwind.config.js');
+const catalogue = vi.hoisted(() => ({
+  cats: [
+    { id: 'kimi', color: { primary: '#ff0000' } },
+    { id: 'new-member', color: { primary: '#00ff00' } },
+  ],
+}));
+vi.mock('@/hooks/useCatData', () => ({ useCatData: () => catalogue }));
 
-describe('kimi theme regression', () => {
-  it('CatHueInjector generates tokens dynamically for ALL cats (no hardcoded slug map)', () => {
-    // The injector walks lib/theme-colour-sources, the one list the name role, the plate and the lineage ring are checked
-    // against too (F322 B, Opus 5.5 3619): the cat-id / hexToOklch guards below apply to the pair.
-    const injector = readFileSync(catHueInjectorPath, 'utf8');
-    const sources = readFileSync(resolve(webRoot, 'src/lib/theme-colour-sources.ts'), 'utf8');
-    const src = `${injector}\n${sources}`;
-    expect(injector).toContain('themeColourSources');
-    // Post-Option B: no hardcoded CAT_ID_TO_SLUG mapping — all cats get tokens via cat.id
-    expect(src).not.toMatch(/CAT_ID_TO_SLUG/);
-    // Dynamic injection uses cat.id directly as CSS key
-    expect(src).toContain('cat.id');
-    expect(src).toContain('hexToOklch');
-    // No legacy compat layer needed — runtime catId is already the short name
-    expect(src).not.toMatch(/legacyAlias/);
-    // No hardcoded old purple hex
-    expect(src).not.toContain('#7c3aed');
+afterEach(() => {
+  vi.unstubAllGlobals();
+});
+
+describe('dynamic cat theme', () => {
+  it('injects configured colours for both Kimi and a newly registered cat', () => {
+    vi.stubGlobal('IS_REACT_ACT_ENVIRONMENT', true);
+    const host = document.createElement('div');
+    const root = createRoot(host);
+    const style = document.documentElement.getAttribute('style');
+    try {
+      act(() => root.render(React.createElement(CatHueInjector)));
+      expect(document.documentElement.style.getPropertyValue('--kimi-hue')).toBe('29.2');
+      expect(document.documentElement.style.getPropertyValue('--kimi-chroma')).toBe('0.258');
+      expect(document.documentElement.style.getPropertyValue('--new-member-hue')).toBe('142.5');
+      const rules = document.getElementById('f056-dynamic-cat-tokens')?.textContent;
+      expect(rules).toContain('--color-kimi-primary:var(--color-kimi-bubble)');
+      expect(rules).toContain('--color-new-member-primary:var(--color-new-member-bubble)');
+    } finally {
+      act(() => root.unmount());
+      document.getElementById('f056-dynamic-cat-tokens')?.remove();
+      if (style === null) document.documentElement.removeAttribute('style');
+      else document.documentElement.setAttribute('style', style);
+    }
   });
 
   it('exports a kimi color family in tailwind so sidebar/session-chain classes compile', async () => {
-    const configModule = await import(tailwindConfigPath);
+    const configModule = await import('../../../tailwind.config.js');
     const config = configModule.default ?? configModule;
     expect(config.theme.extend.colors.kimi).toEqual({
       primary: 'var(--color-kimi-primary)',

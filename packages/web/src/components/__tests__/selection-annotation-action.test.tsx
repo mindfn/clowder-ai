@@ -130,6 +130,37 @@ describe('SelectionAnnotationAction', () => {
     expect(document.body.querySelector('[data-testid="context-annotation-editor"]')).not.toBeNull();
   });
 
+  it.each(['comment', 'Cancel'])('Escape on %s cancels the annotation without closing its Workspace host', (focus) => {
+    const onSave = renderAction();
+    const comment = document.body.querySelector<HTMLTextAreaElement>('[data-testid="context-annotation-comment"]');
+    if (!comment) throw new Error('annotation comment editor missing');
+    act(() => setTextareaValue(comment, 'an unsaved change'));
+    const closeWorkspace = vi.fn();
+    const hostEscape = (event: KeyboardEvent) => {
+      if (event.key === 'Escape' && !event.defaultPrevented) closeWorkspace();
+    };
+    window.addEventListener('keydown', hostEscape);
+    try {
+      const target =
+        focus === 'comment'
+          ? comment
+          : [...document.body.querySelectorAll<HTMLButtonElement>('button')].find(
+              (button) => button.textContent === 'Cancel',
+            );
+      if (!target) throw new Error('annotation focus target missing');
+      target.focus();
+      const escapeKey = new KeyboardEvent('keydown', { key: 'Escape', bubbles: true, cancelable: true });
+      act(() => target.dispatchEvent(escapeKey));
+
+      expect(document.body.querySelector('[data-testid="context-annotation-editor"]')).toBeNull();
+      expect(onSave).not.toHaveBeenCalled();
+      expect(closeWorkspace).not.toHaveBeenCalled();
+      expect(escapeKey.defaultPrevented).toBe(true);
+    } finally {
+      window.removeEventListener('keydown', hostEscape);
+    }
+  });
+
   it('does not save when Enter confirms an IME composition', () => {
     const onSave = renderAction();
     const comment = document.body.querySelector<HTMLTextAreaElement>('[data-testid="context-annotation-comment"]');

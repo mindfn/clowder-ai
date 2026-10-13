@@ -6,6 +6,7 @@ import path from 'node:path';
 import { test } from 'node:test';
 import { chromium } from '../../../ppt-forge/node_modules/playwright/index.mjs';
 import { startReviewHost } from './fixtures/f309-artifact-review-host.mjs';
+import { openAnnotationSave } from './fixtures/f309-artwork-controls.mjs';
 
 const sharp = createRequire(new URL('../../../api/package.json', import.meta.url))('sharp');
 const evidenceRoot = process.env.F309_BROWSER_EVIDENCE_DIR ? path.resolve(process.env.F309_BROWSER_EVIDENCE_DIR) : null;
@@ -46,7 +47,9 @@ for (const { width, height } of [
       const errors = [];
       page.on('pageerror', (error) => errors.push(error.message));
       t.after(async () => {
-        await page.screenshot({ path: path.join(root, 'last.png'), fullPage: true }).catch(() => {});
+        if (!t.passed) {
+          await page.screenshot({ path: path.join(root, 'last.png'), fullPage: true }).catch(() => {});
+        }
         await browser.close();
         await host.close();
         if (t.passed) await rm(root, { recursive: true, force: true });
@@ -143,7 +146,7 @@ for (const { width, height } of [
       assert.ok(expected.x > 0 && expected.x < width && expected.y > 0 && expected.y < height);
       await page.mouse.click(point.x, point.y);
       await page.getByRole('textbox', { name: '评论内容' }).fill(`缩放后锚点 ${width}×${height}`);
-      await page.getByRole('button', { name: '保存批注', exact: true }).click();
+      await (await openAnnotationSave(page)).click();
       await page.getByTestId('review-canvas-annotation-mark').waitFor();
       const latest = await host.reviews.read(reviewId, host.human);
       const anchor = latest.review.rounds[0].annotations.at(-1).anchor;

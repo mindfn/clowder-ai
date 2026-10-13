@@ -78,25 +78,43 @@ function point(type: string) {
 it.each([
   'zh',
   'en',
-] as const)('production collapsed summary follows canonical member facts with visible unread meaning in %s', async (language) => {
+] as const)('production collapsed summary preserves presence and keeps attention meaning on its conversation in %s', async (language) => {
   writeShellLanguage(language);
   preferences(false);
   await harness.render();
   const summary = () => harness.container.querySelector('[data-testid="group-presence-summary"]');
   expect(summary()?.textContent).toBe(language === 'zh' ? '1 个出错' : '1 error');
-  expect(harness.container.querySelector('[data-testid="group-unread"]')?.textContent).toBe(
-    language === 'zh' ? '12 未读' : '12 unread',
+  expect(harness.container.querySelector('[data-testid="group-unread"]')).toBeNull();
+  expect(harness.container.querySelector('[data-testid="group-mention"]')).toBeNull();
+  // This harness does not confirm unified decisions; never report a falsely complete count.
+  expect(harness.container.querySelector('[data-testid="group-count"]')?.textContent).toBe('…');
+  const shortcut = () => harness.container.querySelector('[data-peek-reason]');
+  expect(shortcut()?.getAttribute('data-thread-id')).toBe('latest');
+  expect(shortcut()?.querySelector('[data-testid="group-peek-title"]')?.textContent).toBe('latest');
+  expect(shortcut()?.querySelector('[data-testid="group-peek-label"]')?.textContent).toBe(
+    language === 'zh' ? '@你' : '@you',
   );
-  expect(harness.container.querySelector('[data-testid="group-mention"]')).not.toBeNull();
   act(() => {
     const store = useSidebarProjectionStore.getState();
     store.applySidebarSnapshot(
-      store.rows.map((row) => ({ ...row, presence: { status: 'done' } })),
+      store.rows.map((row) => ({ ...row, hasUserMention: false, presence: { status: 'done' } })),
       store.appliedGeneration + 1,
     );
   });
   expect(summary()?.textContent).toContain(language === 'zh' ? '6 个已回复' : '6 replied');
   expect(summary()?.querySelector('[data-testid="group-replied-cat"]')).not.toBeNull();
+  expect(shortcut()?.getAttribute('data-peek-reason')).toBe('unread');
+  expect(shortcut()?.querySelector('[data-testid="group-peek-label"]')?.textContent).toBe(
+    language === 'zh' ? '12 未读' : '12 unread',
+  );
+  preferences(true);
+  harness.cleanup();
+  harness = createThreadSidebarHarness();
+  await harness.render();
+  const unreadRow = harness.container.querySelector('[data-thread-id="latest"]');
+  expect(unreadRow?.querySelector('[data-testid="thread-row-unread"]')?.textContent).toBe(
+    language === 'zh' ? '12 未读' : '12 unread',
+  );
   act(() => writeShellPresentation('classic'));
   expect(harness.container.querySelector('[data-testid="group-presence-summary"]')).toBeNull();
   expect(harness.container.querySelector('[data-testid="group-unread"]')).toBeNull();

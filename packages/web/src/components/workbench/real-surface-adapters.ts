@@ -11,20 +11,28 @@ import type { TrajectoryTarget } from '@/components/workspace/trajectory/traject
 import type { WorkspaceLauncherDestination } from '@/components/workspace/WorkspaceLauncher';
 import { WORKSPACE_MODE_META, type WorkspaceMode } from '@/lib/workspace-modes';
 import type { TeamWorkspaceSubject } from '@/stores/chat-types';
+import { artifactObjectId } from './artifact-object-key';
+
+export { artifactObjectId, legacyArtifactObjectId, parseArtifactObjectId } from './artifact-object-key';
+
 import { resolveArtifactReviewTarget } from './artifact-review-surface';
 import { resolveEvolutionMediaTarget } from './evolution-media-surface';
 import { fileObjectIdentity, matchesFileObjectIdentity } from './file-object-identity';
 import { resolveMessagePublicationSource } from './message-publication-surface';
 import { resolvePublicationTarget } from './publication-surface';
+import { PULL_REQUEST_CHANGES_OWNER } from './pull-request-changes-surface';
+
+export { createPullRequestChangesSurface, resolvePullRequestChangesTarget } from './pull-request-changes-surface';
 
 import { resolveThreadReplayThreadId, THREAD_REPLAY_OWNER } from './thread-replay-surface';
+import { resolveVideoProjectTarget } from './video-project-surface';
 
 export const REAL_SURFACE_OWNERS = {
   agentRun: 'f299-invocation-trajectory',
   approval: 'f246-approval-navigation',
   artifact: 'f232-thread-artifacts',
   browser: 'f120-browser-preview',
-  changes: 'f063-workspace-diff',
+  changes: PULL_REQUEST_CHANGES_OWNER,
   contentEditor: 'f309-collaborative-content',
   evolutionProgram: 'f311-capability-evolution-control',
   file: 'f063-workspace-file',
@@ -63,6 +71,7 @@ function isCodePath(path: string): boolean {
 }
 
 export function isRealSurfaceOwnerAvailable(surface: WorkspaceSurfaceDescriptor): boolean {
+  if (surface.type === 'video-project') return resolveVideoProjectTarget(surface) !== null;
   if (surface.type === 'thread-replay') return resolveThreadReplayThreadId(surface) !== null;
   if (
     resolvePublicationTarget(surface) ||
@@ -234,23 +243,6 @@ export function resolveEvolutionProgramId(surface: WorkspaceSurfaceDescriptor): 
   return surface.objectRef.id;
 }
 
-export function artifactObjectId(artifact: ThreadArtifactDTO): string {
-  if (artifact.publicationItem) return encodedId([legacyArtifactObjectId(artifact), artifact.publicationItem]);
-  return legacyArtifactObjectId(artifact);
-}
-
-/** Old persisted F232 targets did not include the selector. Resolve only when uniquely matched. */
-export function legacyArtifactObjectId(artifact: ThreadArtifactDTO): string {
-  return encodedId([
-    artifact.type,
-    artifact.ref ?? null,
-    artifact.url ?? null,
-    artifact.sourceMessageId,
-    artifact.createdAt,
-    artifact.name,
-  ]);
-}
-
 export function createArtifactSurface(input: {
   threadId: string;
   artifact: ThreadArtifactDTO | GlobalArtifactDTO;
@@ -269,13 +261,27 @@ export function createArtifactSurface(input: {
     type: review ? 'review' : 'artifact',
     renderer: review ? 'review-summary' : 'artifact-view',
     title: input.artifact.name,
-    context: review ? (input.artifact.ref ?? 'PR Review') : `Thread 产物 · ${input.artifact.type}`,
+    context: review ? (input.artifact.ref ?? 'PR Review') : artifactTypeLabel(input.artifact),
     ...(input.navigationOrigin ? { navigationOrigin: input.navigationOrigin } : {}),
     objectRef: { kind: review ? 'review' : 'artifact', id: objectId },
     ownerStateRef: { owner: REAL_SURFACE_OWNERS.artifact, key: ownerThreadId },
     resultTargetRef,
     capabilities: SURFACE_CAPABILITIES,
   };
+}
+
+function artifactTypeLabel(artifact: ThreadArtifactDTO | GlobalArtifactDTO): string {
+  if (artifact.type === 'file' && /\.(?:md|markdown)$/i.test(artifact.name)) return 'Markdown';
+  const labels = {
+    image: '图片',
+    file: '文件',
+    code: '代码',
+    audio: '音频',
+    video: '视频',
+    widget: '小组件',
+    pr: 'PR',
+  };
+  return labels[artifact.type];
 }
 
 type AgentRunAdapterInput =
@@ -693,6 +699,11 @@ export function resolveWorkspaceDestinationTarget(
   const target = splitOwnerKey(surface.resultTargetRef.key);
   if (!target || target[1] !== surface.objectRef.id) return null;
   return { destinationRef: target[1], threadId: target[0] === 'global' ? null : target[0] };
+}
+
+/** The voice destination surface (host:voice), keyed on the shared Home destination identity (audit row44). */
+export function isVoiceDestinationSurface(surface: WorkspaceSurfaceDescriptor): boolean {
+  return resolveWorkspaceDestinationTarget(surface)?.destinationRef === 'host:voice';
 }
 
 function decodeStringPair(key: string): [string, string] | null {

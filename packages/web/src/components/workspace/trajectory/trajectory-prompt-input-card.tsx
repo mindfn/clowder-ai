@@ -1,7 +1,9 @@
 import type { InvocationPromptInputProjection } from '@cat-cafe/shared';
 import { useShellPresentation } from '@/components/shell/shell-presentation';
 import { HubIcon } from '../../hub-icons';
+import { trajectoryCopy } from './trajectory.shell-copy';
 import { SemanticBadge, SemanticFrame } from './trajectory-semantic-cards';
+import { useTrajectoryCopy } from './use-trajectory-copy';
 
 function absentPromptLabel(status: 'deleted' | 'invisible' | 'missing'): string {
   if (status === 'deleted') return '原消息已删除';
@@ -17,6 +19,7 @@ export function PromptInputCard({
   onOpenMessage: (messageId: string) => void;
 }) {
   const isV2 = useShellPresentation() === 'v2';
+  const t = useTrajectoryCopy(trajectoryCopy);
   const semanticRole =
     promptInput?.status === 'available'
       ? (promptInput.messages.find((message) => message.status === 'available')?.author ?? 'user')
@@ -24,12 +27,12 @@ export function PromptInputCard({
   return (
     <SemanticFrame semanticRole={semanticRole}>
       <div className="flex items-center gap-2">
-        <span className="text-xs font-semibold text-cafe">触发输入</span>
+        <span className="text-xs font-semibold text-cafe">{t.triggerInput}</span>
         <SemanticBadge semanticRole={semanticRole} />
       </div>
       {!promptInput || promptInput.status === 'unavailable' ? (
         <p className="mt-2 text-xs text-cafe-muted">
-          {isV2 ? '触发消息记录不可用' : 'canonical promptMessageIds 不可用'}
+          {isV2 ? t.triggerUnavailable : 'canonical promptMessageIds 不可用'}
         </p>
       ) : (
         <div className="mt-2 space-y-2">
@@ -43,7 +46,7 @@ export function PromptInputCard({
                   onClick={() => onOpenMessage(message.messageId)}
                   className="mt-1 inline-flex items-center gap-1 text-micro font-semibold text-conn-blue-text hover:underline"
                 >
-                  回到原消息
+                  {t.returnMessage}
                   <span aria-hidden="true">
                     <HubIcon name="external-link" className="h-3 w-3" />
                   </span>
@@ -51,7 +54,11 @@ export function PromptInputCard({
               </div>
             ) : (
               <p key={message.messageId} className="text-xs text-cafe-muted">
-                {absentPromptLabel(message.status)}
+                {isV2
+                  ? { deleted: t.deletedMessage, invisible: t.invisibleMessage, missing: t.missingMessage }[
+                      message.status
+                    ]
+                  : absentPromptLabel(message.status)}
               </p>
             ),
           )}

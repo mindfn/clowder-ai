@@ -2,10 +2,10 @@
 feature_ids: [F314]
 related_features: [F100, F153, F167, F192, F267, F281, F298, F303, F310, F311, F321, F322, F323]
 topics: [development-process, intent-alignment, review, merge-gate, process-cost, main-health, soft-surface-convergence, experiment, self-evolution]
-tips_exempt: "Renewed 2026-10-10: outcome alignment, incident provenance and owner-version lifecycle updates refine internal delivery responsibility; they add no end-user command or UI and do not establish an efficacy verdict."
+tips_exempt: "Renewed 2026-10-13: the current exported delta only refreshes the document date; internal outcome alignment and owner-version responsibility still add no end-user command or UI and establish no efficacy verdict."
 doc_kind: spec
 created: 2026-09-02
-updated: 2026-10-06
+updated: 2026-10-12
 description: "让一项托付跨阶段持续做对，尽早交付真实可用结果，以充分且相称的验证减少等待，并让猫自主续办、少占用人的协调注意力。现有 anchor 实验是其中一个有界机制。"
 description_source: human
 description_author: codex-astra

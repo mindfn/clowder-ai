@@ -74,6 +74,7 @@ export interface ChannelSceneProps {
   readonly onOpenChannel?: (channelId: string, eventId?: string) => void;
   readonly context?: ReactNode;
   readonly onCafe?: () => void;
+  readonly onChannelCafe?: () => void;
   readonly members?: CollectiveMemberDirectory;
   readonly firstEntry?: FirstEntryGuide;
 }

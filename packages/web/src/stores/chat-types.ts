@@ -464,6 +464,7 @@ export interface Thread {
   id: string;
   projectPath: string;
   title: string | null;
+  sessionImport?: { sessionId: string; catId: string };
   createdBy: string;
   participants: string[];
   lastActiveAt: number;
@@ -923,7 +924,9 @@ export type WorkspaceFileNavigationOrigin =
     }
   | { kind: 'workspace-document'; worktreeId: string; path: string; line: number }
   | { kind: 'evolution-media'; programId: string; readingState: string; expanded: boolean }
-  | { kind: 'workspace-home-search'; query: string }
+  | { kind: 'workspace-home-search'; query: string; viewportOffsetPx?: number }
+  | { kind: 'workspace-tools-search'; threadId: string; query: string; viewportOffsetPx: number }
+  | { kind: 'workspace-home-artifact'; threadId: string; artifactId: string; viewportOffsetPx: number }
   | { kind: 'chat-file-link'; threadId: string; messageId: string }
   /**
    * C Release 3480 (F322 voice-meeting): the file came from the stopped result of this same thread's F195 docked

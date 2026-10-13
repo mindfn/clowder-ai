@@ -46,6 +46,55 @@
   letter-spacing: -0.025em;
   overflow-wrap: anywhere;
 }
+.channel-menu {
+  position: relative;
+}
+.channel-menu > summary {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  width: fit-content;
+  cursor: pointer;
+  list-style: none;
+}
+.channel-menu > summary::-webkit-details-marker {
+  display: none;
+}
+.channel-menu-popover {
+  position: absolute;
+  z-index: 20;
+  top: 42px;
+  left: -10px;
+  display: grid;
+  width: min(330px, calc(100vw - 36px));
+  padding: 8px;
+  border: 1px solid var(--console-border-soft);
+  border-radius: 12px;
+  background: var(--console-card-bg);
+  box-shadow: var(--shadow-elevation-3);
+}
+.channel-menu-popover > span,
+.channel-menu-popover button {
+  min-height: 36px;
+  padding: 8px 10px;
+  border: 0;
+  border-radius: 8px;
+  background: transparent;
+  color: var(--cafe-text);
+  font-size: 13px;
+  text-align: left;
+}
+.channel-menu-popover button {
+  display: flex;
+  justify-content: space-between;
+}
+.channel-menu-popover button:hover {
+  background: var(--console-hover-bg);
+}
+.channel-menu-popover small {
+  color: var(--cafe-text-muted);
+  font-size: 11px;
+}
 .scene-header > div > p:last-child:not(.scene-eyebrow) {
   margin: 0;
   color: var(--cafe-text-muted);
@@ -223,21 +272,6 @@
   grid-template-columns: 28px minmax(0, 1fr);
   gap: 10px;
   padding: 10px 0;
-}
-/* F322 B segment 1 (human message): the topic's own message is the same right-aligned block, another person a nameplate. */
-.topic-message-self {
-  display: flex;
-  flex-direction: column;
-  align-items: flex-end;
-}
-.topic-message-self .message-bubble {
-  max-width: 80%;
-}
-.topic-message-other {
-  grid-template-columns: minmax(0, 1fr);
-}
-.topic-message-other .message-body {
-  padding-left: 8px;
 }
 .topic-divider {
   display: flex;

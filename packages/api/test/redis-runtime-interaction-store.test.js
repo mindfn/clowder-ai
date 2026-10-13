@@ -60,6 +60,12 @@ describe('RedisRuntimeInteractionStore', { skip }, () => {
 
     assert.equal(await redis.pttl(RuntimeInteractionKeys.detail(request.interactionId)), -1);
     assert.equal((await store.get(request.interactionId)).status, 'pending');
+    const snapshot = await store.readPendingIndexByUser('user-1');
+    assert.equal(snapshot.exhaustiveness, 'complete');
+    assert.deepEqual(
+      snapshot.records.map((record) => record.request.interactionId),
+      ['redis-interaction'],
+    );
     assert.deepEqual(
       (await store.listPendingByUser('user-1')).map((record) => record.request.interactionId),
       ['redis-interaction'],

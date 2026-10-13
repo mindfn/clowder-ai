@@ -70,13 +70,14 @@ export function SubexecutionIdentity({
   agentPath,
   nickname,
   depth,
-}: Pick<ProviderSubexecutionSemanticEvent, 'agentPath' | 'nickname' | 'depth'>) {
+  label = '子 agent',
+}: Pick<ProviderSubexecutionSemanticEvent, 'agentPath' | 'nickname' | 'depth'> & { label?: string }) {
   const displayName = childDisplayName({ agentPath, nickname });
   return (
     <span className="min-w-0 flex-1">
       <span className="flex min-w-0 flex-wrap items-center gap-1.5">
         <span className="rounded-md border border-conn-purple-ring bg-conn-purple-bg px-1.5 py-0.5 text-micro font-semibold text-conn-purple-text">
-          子 agent
+          {label}
         </span>
         <strong className="truncate text-xs text-cafe-secondary">{displayName}</strong>
         <span className="text-micro text-cafe-muted">depth {depth}</span>

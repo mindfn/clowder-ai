@@ -107,12 +107,13 @@ async function createManagedWindow(
     if (!win.isDestroyed()) win.webContents.send('companion:event', event);
   };
   const voice = createVoiceHost(electron, {
-    callScoped: ['0.1.0-beta.23', '0.1.0-beta.24', '0.1.0-beta.25'].includes(companionContract),
+    callScoped: ['0.1.0-beta.23', '0.1.0-beta.24', '0.1.0-beta.25', '0.1.0-beta.27'].includes(companionContract),
     resources: options.voiceResources,
     isArmed: () => controller.armed,
     requestOffer: (sdp) => controller.request({ kind: 'offer', sdp }, false),
     publish,
     onFailure: () => controller.suspend('closed'),
+    onObservation: (value) => options.onVoiceObservation?.(value),
   });
   const controller = createCompanionController({
     request: options.request,
@@ -189,10 +190,22 @@ async function createManagedWindow(
     begin: () => preferences.begin({ kind: 'companion.disable' }, true),
     settle: (ticket, result) => preferences.accept(ticket, result),
   });
-  ipcMain.handle('companion:request', async (event, command, activated) => {
+  ipcMain.handle('companion:request', async (event, command, activated, submittedAt) => {
     if (!isSurface(event)) return { kind: 'error', code: 'permission_required' };
     if (command?.kind === 'f221.confirm-trial') return { kind: 'error', code: 'invalid_request' };
     if (!options.validate(command)) return { kind: 'error', code: 'invalid_request' };
+    if (
+      command.kind === 'text' &&
+      typeof command.clientMessageId === 'string' &&
+      /^[^\s\u0000-\u001f\u007f]{1,256}$/.test(command.clientMessageId) &&
+      Number.isSafeInteger(submittedAt) &&
+      Math.abs(Date.now() - submittedAt) <= 5000
+    )
+      options.onTextSubmission?.({
+        stage: 'client_text_sent',
+        observedAt: submittedAt,
+        clientMessageId: command.clientMessageId,
+      });
     if (command.kind === 'companion.disable') return confirmDisable(activated);
     if (command.kind === 'audio.connect' && command.mode === 'receive_only' && !receiveOnlyAdmitted)
       return { kind: 'error', code: 'invalid_request' };
@@ -329,17 +342,25 @@ async function createManagedWindow(
     async navigate(params) {
       if (!params || Object.keys(params).join(',') !== 'url') throw new Error('Invalid conversation navigation');
       const target = new URL(params.url);
+      const coordinate = /^[A-Za-z0-9_-]{1,200}$/;
+      const validSource =
+        !target.search ||
+        (target.searchParams.getAll('message').length === 1 &&
+          coordinate.test(target.searchParams.get('message')) &&
+          target.searchParams.getAll('block').length <= 1 &&
+          (!target.searchParams.has('block') || coordinate.test(target.searchParams.get('block'))) &&
+          [...target.searchParams.keys()].every((key) => key === 'message' || key === 'block'));
       if (
         !['http:', 'https:'].includes(target.protocol) ||
         !['localhost', '127.0.0.1', '[::1]'].includes(target.hostname) ||
         !/^\/thread\/[^/?#]+$/.test(target.pathname) ||
         target.username ||
         target.password ||
-        target.search ||
+        !validSource ||
         target.hash
       )
         throw new Error('Invalid conversation navigation');
-      await shell.openExternal(target.href);
+      await shell.openExternal(target.href, { activate: true });
     },
     close() {
       if (!win.isDestroyed()) win.destroy();

@@ -2,7 +2,8 @@ import { eventDayLabel } from './channel-navigation.js';
 import type { ChannelThread, CollectiveEventEnvelope } from './client-types.js';
 
 /**
- * F322 B segment 1 (human message), shared-room half — whose message is this, as the viewer sees it?
+ * Shared-room author identity. Messages remain left-aligned and fully named; this distinction only controls viewer-relative
+ * metadata such as the once-per-run timestamp.
  *
  * Identity contract (F290 owner): the viewer is the same-Service `snapshot.me.human.humanId`. A message is the viewer's
  * own only when the actor is a human, the viewer is known, and the two humanIds are equal. Never the display name (two
@@ -27,7 +28,7 @@ function continuesSelfRun(a: CollectiveEventEnvelope, b: CollectiveEventEnvelope
 }
 
 /**
- * A run of the viewer's own messages shows its time once, under the last one (DESIGN.md「对话」). In the channel flow the
+ * A run of the viewer's own messages shows its time once on the last one. In the channel flow the
  * next thread decides: another message of the viewer's on the same day extends the run; anything else ends it.
  */
 export function isLastOfSelfRun(threads: readonly ChannelThread[], index: number, viewerHumanId?: string): boolean {

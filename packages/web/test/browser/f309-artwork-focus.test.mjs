@@ -6,6 +6,7 @@ import { test } from 'node:test';
 import { chromium } from '../../../ppt-forge/node_modules/playwright/index.mjs';
 import { startReviewHost } from './fixtures/f309-artifact-review-host.mjs';
 import { mediaFixture } from './fixtures/f309-artifact-review-media.mjs';
+import { openAnnotationSave } from './fixtures/f309-artwork-controls.mjs';
 
 const evidenceRoot = process.env.F309_BROWSER_EVIDENCE_DIR ? path.resolve(process.env.F309_BROWSER_EVIDENCE_DIR) : null;
 async function capture(page, name) {
@@ -62,11 +63,12 @@ test(
     const quickPoint = await mediaPoint(page, 0.3, 0.45);
     await page.mouse.click(quickPoint.x, quickPoint.y);
     await page.getByRole('textbox', { name: '评论内容' }).fill('右栏的点位短评 sentinel-sidecar');
-    await page.getByRole('button', { name: '保存批注', exact: true }).click();
+    await (await openAnnotationSave(page)).click();
     await page.getByRole('button', { name: '退出评论', exact: true }).click();
-    await page.getByTestId('content-modification-entry').click();
+    await page.getByRole('button', { name: '修改记录', exact: true }).click();
     await page.getByTestId('content-modification-panel').waitFor();
-    assert.match(await page.getByTestId('workspace-content-review-surface').textContent(), /修改想法 · 整图/);
+    assert.equal(await page.getByTestId('content-modification-submit').count(), 0);
+    assert.equal(await page.getByLabel('修改说明', { exact: true }).count(), 0);
     await page.getByRole('button', { name: '收起修改面板' }).click();
     await page.getByRole('button', { name: '放大圈选', exact: true }).click();
     assert.notEqual(await workbench.getAttribute('data-main-area-attention'), '');

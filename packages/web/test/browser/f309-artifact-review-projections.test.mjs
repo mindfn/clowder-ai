@@ -239,7 +239,7 @@ test(
     const needs = await open('needs-me');
     const work = schedule.getByTestId('product-schedule-item');
     await work.waitFor();
-    await work.getByText('需要你判断', { exact: true }).waitFor();
+    await work.getByText('等你判断', { exact: true }).waitFor();
     await work.getByTestId('product-schedule-open-artifact').waitFor();
     await needs.getByTestId('needs-me-item').waitFor();
     const taskBefore = host.tasks.get(host.taskId);
@@ -260,8 +260,8 @@ test(
     assert.equal(await needs.getByTestId('needs-me-item').count(), 1);
     await host.recoverySpec.run.execute({});
     await needs.getByTestId('needs-me-item').waitFor({ state: 'hidden' });
-    await work.getByText('需要你判断', { exact: true }).waitFor({ state: 'hidden' });
-    await work.getByText('待开始', { exact: true }).waitFor();
+    await work.getByText('等你判断', { exact: true }).waitFor({ state: 'hidden' });
+    await work.getByText('未开始', { exact: true }).waitFor();
     await work.getByTestId('product-schedule-open-artifact').waitFor({ state: 'hidden' });
     assert.equal(await work.getByTestId('open-artifact-review').count(), 0);
     assert.equal(await work.getAttribute('data-subject-ref'), `task:work:${host.taskId}`);

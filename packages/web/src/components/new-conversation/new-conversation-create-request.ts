@@ -5,6 +5,7 @@ export interface NewConversationCreateBody {
   projectPath?: string;
   preferredCats?: string[];
   title?: string;
+  temporaryTitle?: string;
   pinned?: true;
 }
 
@@ -14,7 +15,11 @@ export function buildNewConversationCreateBody(intent: PendingNewConversationInt
     idempotencyKey: intent.createIdempotencyKey,
     ...(intent.projectPath ? { projectPath: intent.projectPath } : {}),
     ...(intent.preferredCats.length > 0 ? { preferredCats: [...intent.preferredCats] } : {}),
-    ...(title ? { title } : {}),
+    ...(title
+      ? { title }
+      : intent.sessionImport?.firstPrompt
+        ? { temporaryTitle: intent.sessionImport.firstPrompt.slice(0, 30) }
+        : {}),
     ...(intent.pinned ? { pinned: true as const } : {}),
   };
 }

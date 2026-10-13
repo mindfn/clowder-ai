@@ -38,6 +38,7 @@ export class PublishedMediaSource {
       artifacts: PreparedArtifactReader;
       messages: Pick<IMessageStore, 'getById'>;
       uploadDir: string;
+      readPrivateMessageImage?: (id: string, principal: MediaReviewPrincipal) => Promise<Buffer>;
       workspace?: WorkspaceMediaSourcePort;
       evolution?: EvolutionMediaReadPort;
       access: Pick<PublishedMediaAccess, 'authorizeSourceThread' | 'authorizeScope'>;
@@ -67,10 +68,14 @@ export class PublishedMediaSource {
       scope,
       publication: resolved.publication,
       load: async () => {
-        const bytes = await readBoundedFile(
-          join(this.uploadDir, resolved.fileName),
-          resolved.mediaType === 'image/png' ? 10 * 1024 * 1024 : 256 * 1024 * 1024,
-        );
+        if (resolved.privateImageId && !this.deps.readPrivateMessageImage)
+          throw new MediaOwnerError('media_unavailable');
+        const bytes = resolved.privateImageId
+          ? await this.deps.readPrivateMessageImage!(resolved.privateImageId, principal)
+          : await readBoundedFile(
+              join(this.uploadDir, resolved.fileName),
+              resolved.mediaType === 'image/png' ? 10 * 1024 * 1024 : 256 * 1024 * 1024,
+            );
         await this.assertVisible(scope, resolved.publication, principal);
         return { bytes, mediaType: resolved.mediaType };
       },

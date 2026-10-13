@@ -39,8 +39,8 @@ function logsOwner(listing: Response) {
   });
 }
 
-async function click() {
-  await act(async () => root.render(<RuntimeLogsButton threadId="thread-a" />));
+async function click(compact = false) {
+  await act(async () => root.render(<RuntimeLogsButton threadId="thread-a" compact={compact} />));
   await act(async () => container.querySelector<HTMLButtonElement>('button')?.click());
   for (let i = 0; i < 4; i += 1) await act(async () => Promise.resolve());
 }
@@ -72,4 +72,15 @@ it.each([
     target: { kind: 'reveal', worktreeId: 'wt-1', path: LOGS_DIR, navigationOrigin: { kind: 'workspace-card' } },
   });
   expect(useChatStore.getState().workspaceOpenFilePath).toBeNull();
+});
+
+it('v2 opens the promised logs directory even when a latest log file exists', async () => {
+  logsOwner(new Response(JSON.stringify({ tree: [{ name: 'api.2026-10-13.1.log', type: 'file' }] })));
+  await click(true);
+  expect(useChatStore.getState().workspaceOpenRequest).toMatchObject({
+    threadId: 'thread-a',
+    target: { kind: 'reveal', worktreeId: 'wt-1', path: LOGS_DIR, navigationOrigin: { kind: 'workspace-card' } },
+  });
+  expect(useChatStore.getState().workspaceOpenFilePath).toBeNull();
+  expect(container.querySelector('button')?.textContent).toBe('打开目录');
 });

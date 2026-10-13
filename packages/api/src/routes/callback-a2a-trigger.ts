@@ -113,6 +113,13 @@ export async function appendA2ASourceWithLedgerAdmission(
   },
 ): Promise<AtomicA2ASourceAdmission> {
   if (!deps.messageStore) throw new Error('A2A source admission requires MessageStore');
+  const dotRecipients = message.extra?.dotAsk?.recipientCatIds;
+  if (
+    dotRecipients &&
+    (dotRecipients.length !== options.plan.acceptedTargetCats.length ||
+      dotRecipients.some((target) => !options.plan.acceptedTargetCats.includes(target as CatId)))
+  )
+    throw new Error('dot_ask_delivery_pending');
   if (options.plan.acceptedTargetCats.length === 0) {
     if (message.idempotencyKey) {
       const result = await deps.messageStore.appendIdempotent(message);

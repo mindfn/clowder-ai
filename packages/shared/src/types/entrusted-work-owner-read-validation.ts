@@ -12,10 +12,28 @@ function addBriefIssue(context: z.RefinementCtx, path: string, message: string):
   context.addIssue({ code: z.ZodIssueCode.custom, path: ['brief', path], message });
 }
 
-export function validateBriefTaskCoordinates(ownerRead: OwnerReadRefinementInput, context: z.RefinementCtx): void {
-  if ((ownerRead.brief.current.state === 'done') !== Boolean(ownerRead.completion)) {
-    addBriefIssue(context, 'current', 'completed reads require the canonical completion evidence');
+function validateTerminalCoordinates(ownerRead: OwnerReadRefinementInput, context: z.RefinementCtx): void {
+  const hasTerminalTruth = Boolean(ownerRead.terminal || ownerRead.completion);
+  if ((ownerRead.brief.current.state === 'done') !== hasTerminalTruth) {
+    addBriefIssue(context, 'current', 'terminal reads require canonical Task terminal truth');
   }
+  if (ownerRead.terminal?.state === 'satisfied' && !ownerRead.completion) {
+    addBriefIssue(context, 'current', 'satisfied terminal truth requires canonical completion evidence');
+  }
+  if (ownerRead.terminal && ownerRead.terminal.state !== 'satisfied' && ownerRead.completion) {
+    addBriefIssue(context, 'current', 'cancelled or abandoned work must not be represented as completed');
+  }
+  if (
+    ownerRead.terminal?.state === 'satisfied' &&
+    ownerRead.completion &&
+    JSON.stringify(ownerRead.terminal.evidenceRefs) !== JSON.stringify(ownerRead.completion.evidenceRefs)
+  ) {
+    addBriefIssue(context, 'current', 'satisfied terminal and completion evidence must be identical');
+  }
+}
+
+export function validateBriefTaskCoordinates(ownerRead: OwnerReadRefinementInput, context: z.RefinementCtx): void {
+  validateTerminalCoordinates(ownerRead, context);
   if (
     ownerRead.brief.current.ownerRef !== ownerRead.envelope.ownerRef ||
     ownerRead.brief.current.revision !== ownerRead.envelope.revision
@@ -39,6 +57,21 @@ export function validateBriefTaskCoordinates(ownerRead: OwnerReadRefinementInput
   }
 }
 
+function validateTerminalDispositionMilestone(ownerRead: OwnerReadRefinementInput, context: z.RefinementCtx): boolean {
+  const terminal = ownerRead.terminal;
+  if (terminal?.state !== 'cancelled' && terminal?.state !== 'abandoned') return false;
+  const milestone = ownerRead.brief.verifiedMilestone;
+  const expectedKind = terminal.state === 'cancelled' ? 'work_cancelled' : 'work_abandoned';
+  if (
+    milestone.kind !== expectedKind ||
+    milestone.evidenceRef !== terminal.disposition.dispositionRef ||
+    milestone.revision !== ownerRead.envelope.revision
+  ) {
+    addBriefIssue(context, 'verifiedMilestone', 'terminal disposition milestone must match Task terminal truth');
+  }
+  return true;
+}
+
 export function validateBriefAttentionAndMilestone(
   ownerRead: OwnerReadRefinementInput,
   context: z.RefinementCtx,
@@ -59,7 +92,7 @@ export function validateBriefAttentionAndMilestone(
   }
   validateBriefAttention(ownerRead, eligibleReceipts, context);
   if (
-    ownerRead.completion &&
+    (ownerRead.completion || ownerRead.terminal) &&
     (ownerRead.attentionReceipts.length > 0 || ownerRead.brief.nextOwner.kind !== 'unknown')
   ) {
     addBriefIssue(context, 'nextOwner', 'completed history is inert and cannot expose attention or a next owner');
@@ -141,6 +174,7 @@ function validateAttentionMilestone(
 
 function validateOwnerMilestone(ownerRead: OwnerReadRefinementInput, context: z.RefinementCtx): void {
   const milestone = ownerRead.brief.verifiedMilestone;
+  if (validateTerminalDispositionMilestone(ownerRead, context)) return;
   if (ownerRead.completion) {
     if (
       milestone.kind !== 'work_completed' ||

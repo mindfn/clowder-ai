@@ -33,6 +33,12 @@ async function fixture(t: TestContext) {
   });
   const request = () =>
     app.inject({ method: 'GET', url: '/api/artifacts', headers: { 'x-cat-cafe-user': 'operator' } });
+  const threadRequest = () =>
+    app.inject({
+      method: 'GET',
+      url: `/api/threads/${f.thread.id}/artifacts`,
+      headers: { 'x-cat-cafe-user': 'operator' },
+    });
   const originalSource: MessageMediaPublicationSource = {
     kind: 'message',
     threadId: f.thread.id,
@@ -41,7 +47,7 @@ async function fixture(t: TestContext) {
     expectedUrl: '/uploads/review-input.png',
     item: { kind: 'media-gallery', blockId: 'review-input.png', itemIndex: 0 },
   };
-  return { ...f, root, png, request, originalSource };
+  return { ...f, root, png, request, threadRequest, originalSource };
 }
 
 function statePath(root: string, contentRef: string): string {
@@ -78,6 +84,50 @@ test('owner GET /api/artifacts walks the real F309 publication path and returns 
     ownerRevision: retained.ownerRevision,
     currentOwnerRevision: retained.ownerRevision,
   });
+});
+
+test('thread GET reads the existing F309 owner version without importing or modifying its manifest', async (t) => {
+  const f = await fixture(t);
+  const retained = await f.media.prepare({ ...f.prepare, principal: f.human });
+  const path = statePath(f.root, retained.contentRef);
+  const before = await readFile(path);
+  let prepareCalls = 0;
+  f.media.prepare = async () => {
+    prepareCalls += 1;
+    throw new Error('Card reads cannot prepare or import a publication');
+  };
+
+  const response = await f.threadRequest();
+  assert.equal(response.statusCode, 200, response.body);
+  const body = response.json();
+  assert.equal(body.threadId, f.thread.id);
+  assert.equal(body.workLineage, 'resolved');
+  const projected = body.artifacts.find(
+    (candidate: { sourceMessageId?: string }) => candidate.sourceMessageId === f.publication.id,
+  );
+  assert.deepEqual(projected?.work, {
+    contentRef: retained.contentRef,
+    ownerRevision: retained.ownerRevision,
+    currentOwnerRevision: retained.ownerRevision,
+  });
+  assert.equal(prepareCalls, 0);
+  assert.deepEqual(await readFile(path), before);
+});
+
+test('thread GET leaves an unprepared publication version absent and never calls prepare', async (t) => {
+  const f = await fixture(t);
+  let prepareCalls = 0;
+  f.media.prepare = async () => {
+    prepareCalls += 1;
+    throw new Error('Card reads cannot create a missing landing');
+  };
+  const response = await f.threadRequest();
+  assert.equal(response.statusCode, 200, response.body);
+  const body = response.json();
+  assert.equal(body.workLineage, 'resolved');
+  assert.ok(body.artifacts.length > 0);
+  assert.ok(body.artifacts.every((artifact: { work?: unknown }) => artifact.work === undefined));
+  assert.equal(prepareCalls, 0);
 });
 
 test('a revoked current source prevents an older readable revision from exposing the canonical current coordinate', async (t) => {

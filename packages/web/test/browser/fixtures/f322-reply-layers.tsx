@@ -8,10 +8,12 @@ import { MessageViewportBoundary } from '@/components/MessageViewportBoundary';
 import { writeShellLanguage } from '@/components/shell/shell-language';
 import { ThemeApplier } from '@/components/ThemeApplier';
 import { ThemeProvider } from '@/components/ThemeProvider';
+import { AttentionClusterHeader } from '@/components/ThreadSidebar/AttentionCluster';
 import { useCatData } from '@/hooks/useCatData';
 import { primeCoCreatorConfigCache } from '@/hooks/useCoCreatorConfig';
 import type { ChatMessage as ChatMessageData, ToolEvent } from '@/stores/chat-types';
 import { useChatStore } from '@/stores/chatStore';
+import type { SidebarSnapshotRow } from '@/stores/sidebarProjectionStore';
 import { useThemeStore } from '@/stores/themeStore';
 import { ReadingActions } from './f322-reading-actions';
 import { subexecutionSceneMessages } from './f322-subexecution-scenes';
@@ -224,6 +226,41 @@ if (activityProof) {
   );
 }
 const probeReplyCopy = new URLSearchParams(window.location.search).has('replyCopy');
+const failureVisibility = new URLSearchParams(window.location.search).has('failureVisibility');
+const failedMembers = [
+  {
+    id: 'failed-child',
+    title: 'F317 C · 前台收件与长对话续接',
+    projectPath: '/fixture',
+    participants: ['codex'],
+    lastActiveAt: T0,
+    pinned: false,
+    favorited: false,
+    preferredCats: [],
+    labels: [],
+    systemKind: null,
+    isHubThread: false,
+    unreadCount: 12,
+    hasUserMention: false,
+    presence: { status: 'error' },
+  },
+] satisfies SidebarSnapshotRow[];
+if (failureVisibility) {
+  messages.push({
+    id: 'r-network-error',
+    type: 'system',
+    content: 'Error: stream disconnected before completion',
+    timestamp: T0,
+    extra: {
+      cliDiagnostics: {
+        reasonCode: 'network_error',
+        publicSummary: '网络连接失败',
+        publicHint: '模型服务连接已中断。',
+        debugRef: { command: 'codex app-server', exitCode: null, signal: null, invocationId: 'failed-primary' },
+      },
+    },
+  });
+}
 if (new URLSearchParams(window.location.search).has('subagents')) {
   messages.splice(0, messages.length, ...subexecutionSceneMessages());
 }
@@ -352,6 +389,27 @@ function Thread() {
         </div>
       )}
       {probeReplyCopy && <textarea aria-label="Copy probe draft" defaultValue="Unsent draft 未发送" />}
+      {failureVisibility && (
+        <div data-testid="failed-group" style={{ width: 240 }}>
+          <AttentionClusterHeader
+            cluster={{
+              anchor: 'group:failed',
+              groupId: 'failed',
+              rootThreadId: 'failed-child',
+              title: 'F317',
+              memberIds: ['failed-child'],
+              searchText: '',
+            }}
+            members={failedMembers}
+            displayTitle="F317"
+            expanded={false}
+            onToggle={() => undefined}
+            onRename={() => undefined}
+            onAdd={() => undefined}
+            onMemberSort={() => undefined}
+          />
+        </div>
+      )}
       <ReadingActions />
     </div>
   );

@@ -25,6 +25,19 @@ import { createInitialWorkbenchState } from '../workbench-model';
 import { restoreWorkbenchState } from '../workbench-restore';
 
 describe('F307 real surface adapters', () => {
+  it.each([
+    { name: 'guide.md', type: 'file' as const, context: 'Markdown' },
+    { name: 'guide.MARKDOWN', type: 'file' as const, context: 'Markdown' },
+    { name: 'report.pdf', type: 'file' as const, context: '文件' },
+    { name: 'photo.png', type: 'image' as const, context: '图片' },
+    { name: 'example.ts', type: 'code' as const, context: '代码' },
+  ])('names $name with a human-readable artifact type', ({ name, type, context }) => {
+    const artifact: ThreadArtifactDTO = { name, type, catId: null, sourceMessageId: null, createdAt: 1 };
+    const surface = createArtifactSurface({ threadId: 'thread-artifact-copy', artifact });
+    expect(surface.context).toBe(context);
+    expect(resolveArtifactTarget(surface)?.artifactId).toBe(surface.objectRef.id);
+  });
+
   it('persists only F309 content/session refs for a DOCX editor surface', () => {
     const contentRef = 'project:alpha/assets/proposal.docx';
     const sessionRef = `editor-session:${'a'.repeat(64)}`;

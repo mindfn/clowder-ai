@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { addMediaSelectionToChat } from '@/components/content-review/media-chat-composer';
+import { addMediaSelectionToChat, addMediaWorkToChat } from '@/components/content-review/media-chat-composer';
 import {
   MEDIA_SELECTION_REFUSAL_COPY,
   mediaChatTarget,
@@ -37,7 +37,7 @@ export function useWorkspaceMediaChat({
 }) {
   const threadId = useChatStore((state) => state.currentThreadId);
   const composerDraft = useComposerContextAttachments(threadId ?? '');
-  const [notice, setNotice] = useState<string | null>(null);
+  const [notice, setNotice] = useState<{ kind: 'selection' | 'whole'; message: string } | null>(null);
   const source = view.currentSource ?? view.review.source;
   const mime = source.kind === 'text' || source.kind === 'video-project' ? null : source.mime;
   const chatMedia =
@@ -58,17 +58,35 @@ export function useWorkspaceMediaChat({
   const add = () => {
     if (target?.kind !== 'media_anchor') return;
     if (!chatMedia) {
-      setNotice(MEDIA_SELECTION_REFUSAL_COPY[mime && mime !== 'image/png' ? 'not_image' : 'invalid']);
+      setNotice({
+        kind: 'selection',
+        message: MEDIA_SELECTION_REFUSAL_COPY[mime && mime !== 'image/png' ? 'not_image' : 'invalid'],
+      });
       return;
     }
     const result = addMediaSelectionToChat(threadId ?? null, chatMedia, target.anchor, draft);
     if (result.kind === 'refused') {
-      setNotice(MEDIA_SELECTION_REFUSAL_COPY[result.reason]);
+      setNotice({ kind: 'selection', message: MEDIA_SELECTION_REFUSAL_COPY[result.reason] });
       return;
     }
     setNotice(null);
     setDraft('');
     setTarget(null);
   };
-  return { offered: target?.kind === 'media_anchor', add, notice, clearNotice: () => setNotice(null), marks };
+  const addWork = () => {
+    if (!chatMedia) return;
+    const result = addMediaWorkToChat(threadId ?? null, chatMedia);
+    setNotice(
+      result.kind === 'refused' ? { kind: 'whole', message: MEDIA_SELECTION_REFUSAL_COPY[result.reason] } : null,
+    );
+  };
+  return {
+    offered: target?.kind === 'media_anchor',
+    wholeWorkOffered: mime === 'image/png' && !!chatMedia && view.canWrite && view.sourceState === 'current',
+    add,
+    addWork,
+    notice: notice && (notice.kind === 'whole' || target?.kind === 'media_anchor') ? notice.message : null,
+    clearNotice: () => setNotice(null),
+    marks,
+  };
 }

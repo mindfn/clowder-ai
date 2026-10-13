@@ -1,7 +1,7 @@
 import { dirname, resolve } from 'node:path';
 import type { PluginIconSpec, PluginManagerDetail } from '@cat-cafe/shared';
 import type { RedisClient } from '@cat-cafe/shared/utils';
-import { type Capability, type PluginManifest, validateManifest } from '@clowder-ai/plugin-contract';
+import { type Capability, type PluginManifest } from '@clowder-ai/plugin-contract';
 import type { IMessageStore } from '../cats/services/stores/ports/MessageStore.js';
 import { createMessagingDomain, type MessagingService } from '../messaging/messaging-service.js';
 import type { MeetingIntakeStore } from '../signal-intake/MeetingIntakeStore.js';
@@ -10,12 +10,13 @@ import {
   CollectiveConnectorBuiltinRuntime,
   type CollectiveConnectorBuiltinRuntimeOptions,
 } from './builtin-runtime/collective-connector-runtime.js';
-import { HybridPluginRuntimeSupervisor } from './builtin-runtime/hybrid-supervisor.js';
+import { type BuiltinPluginRuntime, HybridPluginRuntimeSupervisor } from './builtin-runtime/hybrid-supervisor.js';
 import { staticEditorContributions } from './content-editor-runtime/admission.js';
 import { ContentEditorPluginRuntime } from './content-editor-runtime/runtime.js';
 import { ContentMaterializerPluginRuntime } from './content-materializer-runtime/runtime.js';
 import { desktopWindowContribution } from './desktop-window-runtime/admission.js';
 import { OwnerDesktop } from './desktop-window-runtime/owner-desktop.js';
+import { validateHostPluginManifest as validateManifest } from './desktop-window-runtime/presentation-manifest.js';
 import type { CompanionArchiveContract } from './desktop-window-runtime/published-companion-v2.js';
 import { DesktopWindowPluginRuntime } from './desktop-window-runtime/runtime.js';
 import type {
@@ -74,6 +75,7 @@ export interface PluginRuntimePersistencePaths {
 }
 
 export interface DormantPluginRuntimeCompositionOptions {
+  readonly builtinRuntimes?: ReadonlyMap<string, BuiltinPluginRuntime>;
   readonly projectRoot: string;
   readonly paths?: PluginRuntimePersistencePaths;
   readonly routes: SignalRouteStore;
@@ -319,9 +321,10 @@ export function createDormantPluginRuntimeComposition(
   const supervisor = new HybridPluginRuntimeSupervisor({
     inventory: inventoryStore,
     external: externalSupervisor,
-    builtinRuntimes: new Map(
-      collectiveConnectorRuntime ? [['official.collective-connector', collectiveConnectorRuntime] as const] : [],
-    ),
+    builtinRuntimes: new Map([
+      ...(collectiveConnectorRuntime ? [['official.collective-connector', collectiveConnectorRuntime] as const] : []),
+      ...(options.builtinRuntimes ?? []),
+    ]),
     resolveBuiltinRuntime: (pkg) =>
       desktopWindowContribution(pkg.manifest)
         ? desktopWindows
@@ -333,7 +336,10 @@ export function createDormantPluginRuntimeComposition(
   const runtimeSupervisor = new PluginRuntimeSupervisorRouter(
     inventoryStore,
     supervisor,
-    new Set(collectiveConnectorRuntime ? ['official.collective-connector'] : []),
+    new Set([
+      ...(collectiveConnectorRuntime ? ['official.collective-connector'] : []),
+      ...(options.builtinRuntimes?.keys() ?? []),
+    ]),
   );
   const lifecycle = new ExternalPluginLifecycleService({
     store: inventoryStore,
@@ -642,9 +648,12 @@ class RuntimePluginManagerStateProjection implements PluginManagerStateProjectio
     private readonly auth: OfficialPluginAuthPort | undefined,
     private readonly now: () => number,
     private readonly builtinSupervisor?: BuiltinPluginContributionSupervisor,
+    private readonly additionalStateProjection?: PluginManagerStateProjectionPort,
   ) {}
 
   async read(candidate: PluginManagerCatalogCandidate, inventory: PluginInventorySnapshot) {
+    const additional = await this.additionalStateProjection?.read(candidate, inventory);
+    if (additional && Object.keys(additional).length) return additional;
     const instance = inventory.instances.find(
       (item) => item.pluginId === candidate.pluginId && item.lifecycleState === 'installed',
     );
@@ -670,6 +679,7 @@ class RuntimePluginManagerStateProjection implements PluginManagerStateProjectio
 }
 
 export interface PluginManagerRuntimeCompositionOptions {
+  readonly additionalStateProjection?: PluginManagerStateProjectionPort;
   readonly runtime: DormantPluginRuntimeComposition;
   readonly catalogProvider: OfficialPluginCatalogProvider;
   /** Catalog authority used by the pre-Manager official routes during Train B compatibility. */
@@ -775,6 +785,7 @@ export function createPluginManagerRuntimeComposition(
     options.auth,
     now,
     builtinSupervisor,
+    options.additionalStateProjection,
   );
   const configuration = new HostPluginConfigurationService({
     projectRoot: options.runtime.projectRoot,
