@@ -49,6 +49,11 @@ export const OFFICIAL_PLUGIN_HOST_POLICIES: readonly MachineCatalogHostPolicy[] 
     pluginId: 'official.companion.personal-chrome',
     effectiveGrants: ['data.directory', 'cloud.conversation.host'],
   },
+  {
+    pluginId: 'official.feishu-meeting-intake',
+    // Account configuration, retained records and notifications to an owner-selected thread.
+    effectiveGrants: ['data.directory', 'plugin.config.read', 'secret.read', 'thread.readContent', 'messaging.send'],
+  },
   { pluginId: 'official.connector.dingtalk', effectiveGrants: connectorGrants() },
   { pluginId: 'official.connector.feishu', effectiveGrants: connectorGrants() },
   // Telegram takes its settings from its credentials alone; it reads no plain configuration.

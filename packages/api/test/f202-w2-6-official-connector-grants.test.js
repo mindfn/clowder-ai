@@ -234,6 +234,57 @@ test('installed GitHub operations cannot widen its Host grants through its manif
   }
 });
 
+test('meeting intake reads the selected thread with five grants, never unrelated capabilities', async () => {
+  const capabilities = ['data.directory', 'plugin.config.read', 'secret.read', 'thread.readContent', 'messaging.send'];
+  const current = manifest('official.feishu-meeting-intake', [
+    ...capabilities,
+    'task.read',
+    'thread.write',
+    'thread.listMetadata',
+  ]);
+  current.runtime.dataDirectory = 'feishu-meeting-intake';
+  const host = await installed(
+    current,
+    `
+export default {
+  create() {
+    return {
+      async start(host) {
+        return {
+          actions: {
+            'probe.read-thread': async () => host.threads.get('selected-thread'),
+            'probe.list-threads': async () => host.threads.listBindings(),
+            'probe.read-task': async () => host.tasks.get('task-1'),
+          },
+          async stop() {},
+        };
+      },
+    };
+  },
+};
+`,
+  );
+  try {
+    assert.deepEqual(sorted(host.grants.effectiveGrants), sorted(capabilities));
+    await host.enable();
+    assert.equal(await host.runtime.supervisor.invoke(host.pluginInstanceId, 'probe.read-thread', {}), null);
+    await assert.rejects(
+      host.runtime.supervisor.invoke(host.pluginInstanceId, 'probe.list-threads', {}),
+      (error) => error?.code === 'DELIVERY_REJECTED' && /lacks thread\.listMetadata/.test(error.message),
+    );
+    await assert.rejects(
+      host.runtime.supervisor.invoke(host.pluginInstanceId, 'probe.read-task', {}),
+      (error) => error?.code === 'DELIVERY_REJECTED' && /lacks task\.read/.test(error.message),
+    );
+    assert.deepEqual(
+      resolveLocalPluginEffectiveGrants(OFFICIAL_PLUGIN_HOST_POLICIES, manifest(current.pluginId, [])),
+      [],
+    );
+  } finally {
+    await host.shutdown();
+  }
+});
+
 test('each official connector is granted exactly what its shipped features use', () => {
   for (const [pluginId, expected] of Object.entries(EXPECTED)) {
     const policy = OFFICIAL_PLUGIN_HOST_POLICIES.find((entry) => entry.pluginId === pluginId);
@@ -274,12 +325,12 @@ export default {
 `;
 
 /** A production composition with the Host's real grant table, and one package installed from disk. */
-async function installed(packageManifest) {
+async function installed(packageManifest, source = moduleSource) {
   const projectRoot = await tempRoot('f202-w2-6-project-');
   const packageRoot = await tempRoot('f202-w2-6-package-');
   await mkdir(join(packageRoot, 'dist'), { recursive: true });
   await writeFile(join(packageRoot, 'manifest.json'), `${JSON.stringify(packageManifest)}\n`);
-  await writeFile(join(packageRoot, 'dist/plugin.js'), moduleSource);
+  await writeFile(join(packageRoot, 'dist/plugin.js'), source);
   const runtime = createDormantPluginRuntimeComposition({
     projectRoot,
     messageStore: new MessageStore(),
