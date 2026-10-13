@@ -1310,7 +1310,7 @@ export const callbacksRoutes: FastifyPluginAsync<CallbackRoutesOptions> = async 
       ...(opts.invocationTracker ? { invocationTracker: opts.invocationTracker } : {}),
     });
   }
-  registerNativeTurnAdmissionRoute(app);
+  registerNativeTurnAdmissionRoute(app, registry);
   if (opts.namedCatContentHolder) {
     registerCallbackContentEditorRoutes(app, {
       holder: opts.namedCatContentHolder,
