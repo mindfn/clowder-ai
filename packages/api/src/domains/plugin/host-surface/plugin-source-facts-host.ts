@@ -1,4 +1,9 @@
 import { isDeepStrictEqual } from 'node:util';
+import type { CatId } from '@cat-cafe/shared';
+import {
+  capturePluginTaskInvocationAuth,
+  type PluginTaskInvocationBinding,
+} from '../../cats/services/agents/invocation/plugin-task-invocation-binding.js';
 import { type IMessageStore, isDelivered, type StoredMessage } from '../../cats/services/stores/ports/MessageStore.js';
 import { assertQueueCustodyMessageBinding } from '../../cats/services/stores/ports/queued-message-custody.js';
 import type { IThreadStore } from '../../cats/services/stores/ports/ThreadStore.js';
@@ -32,7 +37,17 @@ export interface PluginNativeContext {
   readonly originTriggerMessageId: string;
   readonly source: PluginSourceFact;
 }
+export interface PluginNativeTaskContext extends PluginNativeContext {
+  readonly task: {
+    readonly taskRef: `task:work:${string}`;
+    readonly taskRevision: number;
+    readonly admissionRef: string;
+    readonly executionRef: string;
+    readonly sourceRevision: number;
+  };
+}
 export interface PluginNativeContextHost {
+  current(input: { readonly includeTask: true }): Promise<PluginNativeTaskContext>;
   current(): Promise<PluginNativeContext>;
 }
 interface Deps {
@@ -72,7 +87,7 @@ export function createPluginSourceFactsHost(deps: Deps): {
   readonly sourceFacts: PluginSourceFactsHost;
   readonly nativeContext: PluginNativeContextHost;
 } {
-  function principal(nativeOnly = false) {
+  function principal(nativeOnly = false, taskBinding?: PluginTaskInvocationBinding) {
     const messages = deps.messageStore,
       threads = deps.threadStore;
     if (!deps.ownerUserId || !messages || !threads)
@@ -80,7 +95,14 @@ export function createPluginSourceFactsHost(deps: Deps): {
     const owner = currentPluginOwnerRequestContext(deps.pluginInstanceId);
     const native = currentPluginCallContext(deps.pluginInstanceId);
     if (owner && !nativeOnly && owner.userId === deps.ownerUserId) {
-      return { messages, threads, userId: owner.userId, native: undefined, checkCaller: () => owner.assertCurrent() };
+      return {
+        messages,
+        threads,
+        userId: owner.userId,
+        native: undefined,
+        taskBinding: undefined,
+        checkCaller: () => owner.assertCurrent(),
+      };
     }
     if (
       !native?.assertInvocationCurrent ||
@@ -91,6 +113,16 @@ export function createPluginSourceFactsHost(deps: Deps): {
       !native.threadId
     )
       refuse();
+    if (taskBinding) {
+      if (native.ownerAuthProvenance !== 'unknown') refuse();
+      taskBinding = capturePluginTaskInvocationAuth({
+        ...native,
+        pluginTaskBinding: taskBinding,
+        catId: native.catId as CatId,
+        ownerAuthProvenance: native.ownerAuthProvenance,
+      }).pluginTaskBinding;
+      if (!taskBinding || taskBinding.pluginInstanceId !== deps.pluginInstanceId) refuse();
+    }
     const identity = Object.freeze({
       userId: native.userId,
       threadId: native.threadId,
@@ -99,12 +131,12 @@ export function createPluginSourceFactsHost(deps: Deps): {
       originTriggerMessageId: native.originTriggerMessageId,
     });
     const check = native.assertInvocationCurrent;
-    return { messages, threads, userId: identity.userId, native: identity, checkCaller: () => check() };
+    return { messages, threads, userId: identity.userId, native: identity, taskBinding, checkCaller: () => check() };
   }
   type Caller = ReturnType<typeof principal>;
   async function current(caller: Caller) {
     await caller.checkCaller();
-    await deps.assertCurrent(['thread.readContent']);
+    await deps.assertCurrent(caller.taskBinding ? ['thread.readContent', 'task.read'] : ['thread.readContent']);
     await caller.checkCaller();
   }
   function assertReadableDelivery(message: StoredMessage, caller: Caller): void {
@@ -143,7 +175,11 @@ export function createPluginSourceFactsHost(deps: Deps): {
       message.id !== id ||
       message.userId !== caller.userId ||
       (caller.native &&
-        (message.id !== caller.native.originTriggerMessageId || message.threadId !== caller.native.threadId)) ||
+        (message.id !== (caller.taskBinding?.sourceMessageId ?? caller.native.originTriggerMessageId) ||
+          (!caller.taskBinding && message.threadId !== caller.native.threadId))) ||
+      (caller.taskBinding &&
+        (message.extra?.pluginMessage?.revision !== caller.taskBinding.sourceRevision ||
+          message.deliveryStatus === 'canceled')) ||
       message.deletedAt ||
       message.recall ||
       message._tombstone ||
@@ -158,7 +194,7 @@ export function createPluginSourceFactsHost(deps: Deps): {
     const { message, source, pluginMessage } = checkedSource(value, id, caller);
     // A running child must read its exact queued origin to call the plugin's
     // native methods. This does not expose queued sources to owner or unrelated calls.
-    if (!progress) assertReadableDelivery(message, caller);
+    if (!progress && !caller.taskBinding) assertReadableDelivery(message, caller);
     const queueProgress = progress ? projectPluginQueueProgress(message, caller.userId) : undefined;
     const projected = {
       id: message.id,
@@ -192,6 +228,17 @@ export function createPluginSourceFactsHost(deps: Deps): {
     await current(caller);
     if (!thread || thread.id !== source.fact.threadId || thread.createdBy !== caller.userId || thread.deletedAt)
       refuse();
+    if (caller.taskBinding) {
+      const taskThread = await caller.threads.get(caller.taskBinding.threadId);
+      await current(caller);
+      if (
+        !taskThread ||
+        taskThread.id !== caller.taskBinding.threadId ||
+        taskThread.createdBy !== caller.userId ||
+        taskThread.deletedAt
+      )
+        refuse();
+    }
     return source;
   }
   async function read(id: string, caller: Caller): Promise<PluginSourceFact>;
@@ -202,11 +249,52 @@ export function createPluginSourceFactsHost(deps: Deps): {
     progress = false,
   ): Promise<PluginSourceFact | PluginSourceProgressFact> {
     // Reject an out-of-scope native pointer before even asking the message store.
-    if (caller.native && caller.native.originTriggerMessageId !== id) refuse();
+    if (caller.native && (caller.taskBinding?.sourceMessageId ?? caller.native.originTriggerMessageId) !== id) refuse();
     const before = await readOnce(id, caller, progress);
     const after = await readOnce(id, caller, progress);
     if (!isDeepStrictEqual(before, after)) refuse();
     return after.fact;
+  }
+  async function currentNative(input: { readonly includeTask: true }): Promise<PluginNativeTaskContext>;
+  async function currentNative(): Promise<PluginNativeContext>;
+  async function currentNative(input?: unknown): Promise<PluginNativeContext | PluginNativeTaskContext> {
+    const request = input === undefined ? undefined : snapshotPluginProtocolData(input);
+    if (
+      request !== undefined &&
+      (!request ||
+        typeof request !== 'object' ||
+        Array.isArray(request) ||
+        Object.keys(request).length !== 1 ||
+        !('includeTask' in request) ||
+        request.includeTask !== true)
+    )
+      refuse();
+    let taskBinding: PluginTaskInvocationBinding | undefined;
+    if (request !== undefined) {
+      const native = currentPluginCallContext(deps.pluginInstanceId);
+      if (!native?.readTaskBinding) refuse();
+      taskBinding = await native.readTaskBinding();
+      if (!taskBinding) refuse();
+    }
+    const caller = principal(true, taskBinding);
+    if (!caller.native) refuse();
+    const binding = caller.taskBinding;
+    const source = await read(binding?.sourceMessageId ?? caller.native.originTriggerMessageId, caller);
+    return snapshotPluginProtocolData({
+      ...caller.native,
+      source,
+      ...(binding
+        ? {
+            task: {
+              taskRef: `task:work:${binding.taskId}`,
+              taskRevision: binding.taskRevision,
+              admissionRef: binding.admissionRef,
+              executionRef: binding.executionRef,
+              sourceRevision: binding.sourceRevision,
+            },
+          }
+        : {}),
+    }) as PluginNativeContext | PluginNativeTaskContext;
   }
   return Object.freeze({
     sourceFacts: Object.freeze({
@@ -219,14 +307,6 @@ export function createPluginSourceFactsHost(deps: Deps): {
         return read(messageId(input), caller, true);
       },
     }),
-    nativeContext: Object.freeze({
-      async current(input?: unknown) {
-        if (input !== undefined) refuse();
-        const caller = principal(true);
-        if (!caller.native) refuse();
-        const source = await read(caller.native.originTriggerMessageId, caller);
-        return Object.freeze({ ...caller.native, source });
-      },
-    }),
+    nativeContext: Object.freeze({ current: currentNative }),
   });
 }

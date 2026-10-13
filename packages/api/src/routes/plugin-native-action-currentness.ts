@@ -102,5 +102,11 @@ export function captureNativeCallbackCurrentness(
       throw expired();
     }
   };
-  return { identity, assertCurrent, assertInvocationCurrent: assertRegistryCurrent, close };
+  const readTaskBinding = taskBinding
+    ? async () => {
+        await assertRegistryCurrent();
+        return taskBinding;
+      }
+    : undefined;
+  return { identity, assertCurrent, assertInvocationCurrent: assertRegistryCurrent, readTaskBinding, close };
 }
