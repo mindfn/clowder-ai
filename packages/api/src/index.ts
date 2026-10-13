@@ -5485,12 +5485,14 @@ async function main(): Promise<void> {
   });
   taskRunnerV2.register(modifications.recoverySpec);
   app.addHook('onClose', async () => modifications.writer.close());
-  const needsMeProducerCatalog = new NeedsMeProducerCatalog([
-    new F246NeedsMeProducerAdapter(approvalProducerRegistry),
-
-    new F306NeedsMeProducerAdapter(runtimeInteractionRuntime.store),
-    artifactReview.producer,
-  ]);
+  const needsMeProducerCatalog = new NeedsMeProducerCatalog(
+    [
+      new F246NeedsMeProducerAdapter(approvalProducerRegistry),
+      new F306NeedsMeProducerAdapter(runtimeInteractionRuntime.store),
+      artifactReview.producer,
+    ],
+    ['f246.approval', 'f306.runtime_interaction', 'f309.content_review'],
+  );
   const { DevelopmentReturnService } = await import(
     './infrastructure/scheduler/development-return/DevelopmentReturnService.js'
   );
