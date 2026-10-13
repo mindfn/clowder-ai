@@ -60,6 +60,27 @@ test('owner source read projects exact same-instance source without requiring me
   assert.notEqual((await f.httpGet('nativeContext', 'current')).statusCode, 200);
 });
 
+test('installed owner action reaches progress projection while queued body remains inaccessible', async (t) => {
+  const f = await fixture(t);
+  const m = await source(f, { deliveryStatus: 'queued' });
+  const value = await result(f.httpGet('sourceFacts', 'readProgress', { messageRef: `message:${m.id}` }));
+  assert.equal(value.id, m.id);
+  assert.equal(value.userId, f.owner);
+  assert.equal(value.content, undefined);
+  assert.equal(value.queueCustody, undefined, 'no Queue admission must not become invented progress');
+  assert.notEqual((await f.httpGet('sourceFacts', 'read', { messageRef: `message:${m.id}` })).statusCode, 200);
+  await assert.rejects(() =>
+    f.native(
+      'sourceFacts',
+      'readProgress',
+      { messageRef: `message:${m.id}` },
+      {
+        originTriggerMessageId: m.id,
+      },
+    ),
+  );
+});
+
 test('source read rejects foreign ownership, forged instance, missing provenance, invalid source and uncommitted content', async (t) => {
   const f = await fixture(t);
   ports(f);

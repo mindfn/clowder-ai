@@ -141,6 +141,8 @@ export interface ModulePluginRuntimeOptions {
   readonly storage?: PluginPrivateStoragePort;
   readonly browserServices?: PrepareModuleBrowserServices;
   readonly taskStore?: ITaskStore;
+  readonly taskOwnerUserId?: string;
+  readonly taskThreadStore?: Pick<IThreadStore, 'get'>;
   readonly custody?: (pluginInstanceId: string) => PluginCustodyHost;
   readonly neutral?: (
     pluginInstanceId: string,
@@ -383,7 +385,10 @@ export class ModulePluginRuntime implements BundledPluginRuntime {
           pluginId: packageRecord.pluginId,
           effectiveGrants,
           taskStore: this.options.taskStore,
+          ownerUserId: this.options.taskOwnerUserId,
           threadStore: this.options.messaging?.threadStore,
+          readThreadStore: this.options.taskThreadStore,
+          assertCurrent: assertActivation,
         }),
         threads,
         messaging,

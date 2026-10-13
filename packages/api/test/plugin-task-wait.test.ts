@@ -25,6 +25,7 @@ function fixture() {
   const host = createPluginTaskHost({
     pluginId: 'example',
     pluginInstanceId: 'instance',
+    ownerUserId: 'owner',
     effectiveGrants: ['task.read', 'task.write'],
     taskStore: store,
   });

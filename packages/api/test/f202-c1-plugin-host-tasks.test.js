@@ -7,6 +7,7 @@ import { validateEffectiveGrants, validateManifest } from '@clowder-ai/plugin-co
 
 import { MessageStore } from '../dist/domains/cats/services/stores/ports/MessageStore.js';
 import { TaskStore } from '../dist/domains/cats/services/stores/ports/TaskStore.js';
+import { ThreadStore } from '../dist/domains/cats/services/stores/ports/ThreadStore.js';
 import { createPluginTaskHost } from '../dist/domains/plugin/host-surface/plugin-task-host.js';
 import {
   createDormantPluginRuntimeComposition,
@@ -124,10 +125,14 @@ test('task grants are checked before Host task-store availability', async () => 
 test('module plugins create, read, and update ordinary tasks through the Host task store', async () => {
   const projectRoot = await tempRoot('cat-cafe-f202-task-project-');
   const taskStore = new TaskStore();
+  const threadStore = new ThreadStore();
+  const thread = threadStore.create('owner', 'Plugin task fixture');
   const runtime = createDormantPluginRuntimeComposition({
     projectRoot,
     messageStore: new MessageStore(),
     taskStore,
+    threadStore,
+    threadOwnerUserId: 'owner',
     contract: { manifestContractVersions: ['0.1.0'], validateEffectiveGrants, validateManifest },
   });
   const composition = createPluginManagerRuntimeComposition({
@@ -148,23 +153,58 @@ test('module plugins create, read, and update ordinary tasks through the Host ta
 
   const created = await invoke({
     operation: 'create',
-    threadId: 'thread-plugin-task',
+    threadId: thread.id,
     title: 'Inspect a migrated notification',
     why: 'Created by an installed plugin through the ordinary task store',
     kind: 'work',
   });
-  assert.equal(created.threadId, 'thread-plugin-task');
+  assert.equal(created.threadId, thread.id);
   assert.equal(created.createdBy, 'system', 'the Host, not package code, owns the persisted task principal');
-  assert.deepEqual(await invoke({ operation: 'get', taskId: created.id }), created);
-  assert.deepEqual(await invoke({ operation: 'list', threadId: 'thread-plugin-task' }), [created]);
+  const readTask = {
+    id: created.id,
+    kind: 'work',
+    threadId: thread.id,
+    subjectKey: null,
+    title: 'Inspect a migrated notification',
+    ownerCatId: null,
+    status: 'todo',
+    why: 'Created by an installed plugin through the ordinary task store',
+    createdBy: 'system',
+    createdAt: created.createdAt,
+    updatedAt: created.updatedAt,
+    userId: null,
+  };
+  assert.deepEqual(await invoke({ operation: 'get', taskId: created.id }), readTask);
+  assert.deepEqual(await invoke({ operation: 'list', threadId: thread.id }), [readTask]);
+
+  const otherThread = threadStore.create('other-owner', 'Private');
+  const foreign = taskStore.create({
+    threadId: thread.id,
+    title: 'Private task',
+    why: 'not for this plugin',
+    userId: 'other-owner',
+    createdBy: 'user',
+    subjectKey: 'foreign:subject',
+  });
+  const foreignLegacy = taskStore.create({
+    threadId: otherThread.id,
+    title: 'Private legacy',
+    why: 'legacy',
+    createdBy: 'user',
+  });
+  assert.equal(await invoke({ operation: 'get', taskId: foreign.id }), null);
+  assert.equal(await invoke({ operation: 'get', taskId: foreignLegacy.id }), null);
+  assert.equal(await invoke({ operation: 'getBySubject', subjectKey: 'foreign:subject' }), null);
+  assert.deepEqual(await invoke({ operation: 'list', threadId: thread.id }), [readTask]);
+  assert.deepEqual(await invoke({ operation: 'listByKind', kind: 'work' }), [readTask]);
 
   const updated = await invoke({ operation: 'update', taskId: created.id, patch: { status: 'doing' } });
   assert.equal(updated.status, 'doing');
-  assert.equal((await taskStore.listByThread('thread-plugin-task'))[0]?.status, 'doing');
+  assert.equal((await taskStore.listByThread(thread.id))[0]?.status, 'doing');
 
   const tracking = await invoke({
     operation: 'upsertBySubject',
-    threadId: 'thread-plugin-task',
+    threadId: thread.id,
     title: 'Track pull request',
     why: 'Fixture tracking task',
     kind: 'pr_tracking',

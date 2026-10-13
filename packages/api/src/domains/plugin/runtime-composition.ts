@@ -483,6 +483,8 @@ export function createDormantPluginRuntimeComposition(
     dataDirectoryParent: pluginDataDirectoryParent(resolve(options.projectRoot)),
     ...(options.redis === undefined ? {} : { storage: new RedisPluginPrivateStorage(options.redis) }),
     ...(options.taskStore === undefined ? {} : { taskStore: options.taskStore }),
+    ...(options.threadOwnerUserId === undefined ? {} : { taskOwnerUserId: options.threadOwnerUserId }),
+    ...(options.threadStore === undefined ? {} : { taskThreadStore: options.threadStore }),
     ...(options.threadStore === undefined ||
     options.threadBindingStore === undefined ||
     options.threadOwnerUserId === undefined

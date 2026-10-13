@@ -5,6 +5,7 @@ import type { IThreadStore } from '../../cats/services/stores/ports/ThreadStore.
 import { currentPluginCallContext, currentPluginOwnerRequestContext } from '../carrier/plugin-call-context.js';
 import { snapshotPluginProtocolData } from '../carrier/plugin-protocol-data.js';
 import { ExternalPluginRuntimeError } from '../external-runtime/types.js';
+import { type PluginSourceProgressFact, projectPluginQueueProgress } from './plugin-source-progress.js';
 
 /** Source facts are readable data, never a grant to invoke an agent or access owner context. */
 export interface PluginSourceFact {
@@ -21,6 +22,7 @@ export interface PluginSourceFact {
 }
 export interface PluginSourceFactsHost {
   read(input: { readonly messageRef: `message:${string}` }): Promise<PluginSourceFact>;
+  readProgress(input: { readonly messageRef: `message:${string}` }): Promise<PluginSourceProgressFact>;
 }
 export interface PluginNativeContext {
   readonly userId: string;
@@ -55,6 +57,14 @@ function messageId(input: { readonly messageRef: `message:${string}` }): string 
   )
     refuse();
   return record.messageRef.slice('message:'.length);
+}
+
+function queueBinding(message: StoredMessage): unknown {
+  if (!message.queueCustody) return null;
+  return snapshotPluginProtocolData({
+    entryId: message.queueCustody.entryId,
+    pluginPublicInvocation: message.queueCustody.pluginPublicInvocation ?? null,
+  });
 }
 
 /** Exact origin only for native calls; Work/receipt/ancestor scopes require their own admission. */
@@ -127,7 +137,7 @@ export function createPluginSourceFactsHost(deps: Deps): {
     )
       refuse();
   }
-  function sourceOf(message: StoredMessage | null, id: string, caller: Caller) {
+  function checkedSource(message: StoredMessage | null, id: string, caller: Caller) {
     if (
       !message ||
       message.id !== id ||
@@ -142,37 +152,41 @@ export function createPluginSourceFactsHost(deps: Deps): {
       !message.source?.connector
     )
       refuse();
+    return { message, source: message.source, pluginMessage: message.extra.pluginMessage };
+  }
+  function sourceOf(value: StoredMessage | null, id: string, caller: Caller, progress: boolean) {
+    const { message, source, pluginMessage } = checkedSource(value, id, caller);
     // A running child must read its exact queued origin to call the plugin's
     // native methods. This does not expose queued sources to owner or unrelated calls.
-    assertReadableDelivery(message, caller);
-    const projected: PluginSourceFact = {
+    if (!progress) assertReadableDelivery(message, caller);
+    const queueProgress = progress ? projectPluginQueueProgress(message, caller.userId) : undefined;
+    const projected = {
       id: message.id,
       userId: message.userId,
       threadId: message.threadId,
       catId: message.catId,
-      content: message.content,
+      ...(progress ? {} : { content: message.content }),
+      ...(queueProgress === undefined ? {} : { queueCustody: queueProgress }),
       source: {
-        connector: message.source.connector,
-        ...(message.source.meta === undefined ? {} : { meta: message.source.meta }),
+        connector: source.connector,
+        ...(source.meta === undefined ? {} : { meta: source.meta }),
       },
       extra: { pluginMessage: { instanceId: deps.pluginInstanceId } },
     };
     return {
-      fact: snapshotPluginProtocolData(projected) as PluginSourceFact,
-      revision: message.extra.pluginMessage.revision,
+      fact: snapshotPluginProtocolData(projected) as PluginSourceFact | PluginSourceProgressFact,
+      revision: pluginMessage.revision,
+      ...(progress
+        ? { queueRevision: message.queueCustody?.revision ?? null, deliveryStatus: message.deliveryStatus ?? null }
+        : {}),
       // Keep the same Queue admission across both reads, including any public
       // carrier. Ordinary send(wake) uses the existing generic Queue admission.
-      queueBinding: message.queueCustody
-        ? snapshotPluginProtocolData({
-            entryId: message.queueCustody.entryId,
-            pluginPublicInvocation: message.queueCustody.pluginPublicInvocation ?? null,
-          })
-        : null,
+      queueBinding: queueBinding(message),
     };
   }
-  async function readOnce(id: string, caller: Caller) {
+  async function readOnce(id: string, caller: Caller, progress: boolean) {
     await current(caller);
-    const source = sourceOf(await caller.messages.getById(id), id, caller);
+    const source = sourceOf(await caller.messages.getById(id), id, caller, progress);
     await current(caller);
     const thread = await caller.threads.get(source.fact.threadId);
     await current(caller);
@@ -180,11 +194,17 @@ export function createPluginSourceFactsHost(deps: Deps): {
       refuse();
     return source;
   }
-  async function read(id: string, caller: Caller): Promise<PluginSourceFact> {
+  async function read(id: string, caller: Caller): Promise<PluginSourceFact>;
+  async function read(id: string, caller: Caller, progress: true): Promise<PluginSourceProgressFact>;
+  async function read(
+    id: string,
+    caller: Caller,
+    progress = false,
+  ): Promise<PluginSourceFact | PluginSourceProgressFact> {
     // Reject an out-of-scope native pointer before even asking the message store.
     if (caller.native && caller.native.originTriggerMessageId !== id) refuse();
-    const before = await readOnce(id, caller);
-    const after = await readOnce(id, caller);
+    const before = await readOnce(id, caller, progress);
+    const after = await readOnce(id, caller, progress);
     if (!isDeepStrictEqual(before, after)) refuse();
     return after.fact;
   }
@@ -192,6 +212,11 @@ export function createPluginSourceFactsHost(deps: Deps): {
     sourceFacts: Object.freeze({
       async read(input: { readonly messageRef: `message:${string}` }) {
         return read(messageId(input), principal());
+      },
+      async readProgress(input: { readonly messageRef: `message:${string}` }) {
+        const caller = principal();
+        if (caller.native) refuse();
+        return read(messageId(input), caller, true);
       },
     }),
     nativeContext: Object.freeze({
