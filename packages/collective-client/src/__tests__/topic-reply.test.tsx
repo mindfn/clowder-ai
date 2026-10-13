@@ -178,7 +178,7 @@ it('a new Channel reply action resets the nested reply source without erasing th
 it('explicitly cancelling the implicit mention permits a Channel reply at the selected message', async () => {
   await render();
   await clickReply();
-  await act(async () => host.querySelector<HTMLButtonElement>('[aria-label="取消点名"]')?.click());
+  await act(async () => host.querySelector<HTMLButtonElement>('[aria-label="移除 @"]')?.click());
   await type('Discuss with everyone');
   expect(host.querySelector('[aria-label="回复来源"]')?.textContent).toContain('Guide A v1');
   await act(async () => root.render(null));

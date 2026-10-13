@@ -94,7 +94,12 @@ export function ContentModificationLanding(props: Props) {
         setNewRequest(restored.newRequest === true && freshAllowed);
         setComposing(restored.composing && mayCompose);
         if (restored.error) setError(restored.error);
-        else if (restored.composing && !mayCompose) setError('原委托当前不可继续修改，未提交的草稿仍已保留。');
+        else if (restored.composing && !mayCompose)
+          setError(
+            selectedContext?.state === 'active' && props.allowNewRequest === false && props.mediaType === 'image/png'
+              ? '图片修改请在 Chat 中发送，未提交的草稿仍已保留。'
+              : '原委托当前不可继续修改，未提交的草稿仍已保留。',
+          );
         else localStorage.setItem(selectionKey, JSON.stringify(restored));
       })
       .catch((failure: unknown) => {
@@ -127,7 +132,7 @@ export function ContentModificationLanding(props: Props) {
   const context = catalogue.contexts.find((item) => item.requestIds.includes(selection ?? ''));
   const canStartNew = canStartNewFileRequest(props, chosen, context);
   const ambiguous = selection !== 'draft' && !chosen && (catalogue.requests.length > 0 || error !== null);
-  const showForm = !ambiguous && (chosen || props.allowNewRequest !== false);
+  const showPanel = !ambiguous && (chosen || props.allowNewRequest !== false || props.mediaType === 'image/png');
   return (
     <div className="min-h-0 shrink-0 overflow-auto">
       {error ? (
@@ -158,7 +163,7 @@ export function ContentModificationLanding(props: Props) {
           </select>
         </label>
       ) : null}
-      {showForm ? (
+      {showPanel ? (
         <ContentModificationPanel
           {...props}
           completionRule={context?.completionRule}

@@ -26,10 +26,12 @@ function parseUnifiedDiff(diff: string): FileDiff[] {
 
   const files: FileDiff[] = [];
   const lines = diff.split('\n');
+  if (lines.at(-1) === '') lines.pop();
   let current: FileDiff | null = null;
   let hunk: DiffHunk | null = null;
   let oldLine = 0;
   let newLine = 0;
+  let oldPath: string | null = null;
 
   for (const line of lines) {
     // Primary path source: diff --git a/... b/...
@@ -38,16 +40,26 @@ function parseUnifiedDiff(diff: string): FileDiff[] {
       current = { path: gitHeaderMatch[2], hunks: [] };
       files.push(current);
       hunk = null;
+      oldPath = null;
       continue;
     }
 
-    if (line.startsWith('+++ b/') && current) {
+    if (line.startsWith('--- a/') && current && !hunk) {
+      oldPath = line.slice(6);
+      continue;
+    }
+    if (line === '+++ /dev/null' && current && !hunk && oldPath !== null) {
+      // Deletion's old-file header is unambiguous even when a path contains " b/".
+      current.path = oldPath;
+      continue;
+    }
+    if (line.startsWith('+++ b/') && current && !hunk) {
       // Override with +++ path (handles renames: diff --git has old, +++ has new)
       current.path = line.slice(6);
       continue;
     }
     // Skip --- and +++ lines (including +++ /dev/null for deleted files)
-    if (line.startsWith('--- ') || line.startsWith('+++ ')) continue;
+    if (!hunk && (line.startsWith('--- ') || line.startsWith('+++ '))) continue;
     if (line.startsWith('index ') || line.startsWith('new file') || line.startsWith('deleted file')) continue;
 
     const hunkMatch = line.match(/^@@ -(\d+)(?:,\d+)? \+(\d+)(?:,\d+)? @@(.*)/);

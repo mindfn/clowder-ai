@@ -53,7 +53,7 @@ describe('useCatData applies catOrder', () => {
 
   it('one binding change refreshes the shared registry once for all mounted labels', async () => {
     wireApiFetch({
-      '/api/cats': { cats: [{ id: 'codex61-sol', accountRef: 'codex' }] },
+      '/api/cats': { cats: [{ id: 'codex61-sol', carrier: 'cli', accountRef: 'codex' }] },
       '/api/config/cat-order': { catOrder: [] },
     });
     await act(async () => {
@@ -68,7 +68,7 @@ describe('useCatData applies catOrder', () => {
     });
     (apiFetch as ReturnType<typeof vi.fn>).mockClear();
     wireApiFetch({
-      '/api/cats': { cats: [{ id: 'codex61-sol', accountRef: 'managed-b' }] },
+      '/api/cats': { cats: [{ id: 'codex61-sol', carrier: 'cli', accountRef: 'managed-b' }] },
       '/api/config/cat-order': { catOrder: [] },
     });
     await act(async () => {

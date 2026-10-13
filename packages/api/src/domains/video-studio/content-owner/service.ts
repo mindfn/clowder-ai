@@ -1,4 +1,5 @@
-import { createHash } from 'node:crypto';
+import { createReceiptId, operationFingerprint } from './operation-identity.js';
+import { validateVideoProjectMediaScope } from './project-media-scope.js';
 import { validateContentOperationContext, validateVideoProjectScope } from './project-scope.js';
 import { validateContentPublication } from './publication.js';
 import { digestBytes, ProjectContentOwnerStore, type ProjectContentStateV1 } from './store.js';
@@ -12,6 +13,7 @@ import type {
   LoadedProjectContentV1,
   ProjectContentRevisionV1,
   SettleProjectContentInputV1,
+  VideoProjectMediaScopeV1,
   VideoProjectScopeV1,
 } from './types.js';
 
@@ -73,6 +75,7 @@ export class ProjectContentOwnerService {
     validateContentPublication(input.publicationScope, input.sourcePublication);
     validateVideoProjectScope(input.projectScope, input.contentRef, input.mediaType, input.publicationScope);
     validateContentOperationContext(input.operationContext, input.projectScope);
+    validateVideoProjectMediaScope(input.projectMediaScope, input);
     const bytes = Buffer.from(input.bytes);
     const blobDigest = digestBytes(bytes);
     const fingerprint = operationFingerprint({
@@ -83,6 +86,7 @@ export class ProjectContentOwnerService {
       actor: input.actor,
       publicationScope: input.publicationScope,
       projectScope: input.projectScope,
+      projectMediaScope: input.projectMediaScope,
       operationContext: input.operationContext,
       sourcePublication: input.sourcePublication,
     });
@@ -103,6 +107,7 @@ export class ProjectContentOwnerService {
         actor: input.actor,
         publicationScope: input.publicationScope,
         projectScope: input.projectScope,
+        projectMediaScope: input.projectMediaScope,
         operationContext: input.operationContext,
         sourcePublication: input.sourcePublication,
       });
@@ -114,6 +119,7 @@ export class ProjectContentOwnerService {
     validateIdentity(input.operationId, 'operationId');
     validateRevision(input.expectedOwnerRevision);
     validateActor(input.actor);
+    if ('projectMediaScope' in input) throw new TypeError('Project media scope cannot change');
     if ('projectScope' in input) throw new TypeError('Project scope cannot change during settlement');
     const bytes = Buffer.from(input.bytes);
     const blobDigest = digestBytes(bytes);
@@ -121,6 +127,7 @@ export class ProjectContentOwnerService {
     return this.store.withContentLock(input.contentRef, async () => {
       const state = await this.store.readState(input.contentRef);
       if (!state) throw new ContentOwnerNotFoundError(input.contentRef);
+      if (state.projectMediaScope) throw new TypeError('Project screening media is immutable');
       validateContentPublication(state.publicationScope, input.sourcePublication);
       validateContentOperationContext(input.operationContext, state.projectScope);
       const fingerprint = operationFingerprint({
@@ -182,10 +189,12 @@ export class ProjectContentOwnerService {
       contentRef,
       ownerRevision: current.ownerRevision,
       blobDigest: current.blobDigest,
+      byteLength: current.byteLength,
       mediaType: current.mediaType,
       currentOwnerRevision: state.currentOwnerRevision,
       ...(state.publicationScope ? { publicationScope: { ...state.publicationScope } } : {}),
       ...(state.projectScope ? { projectScope: { ...state.projectScope } } : {}),
+      ...(state.projectMediaScope ? { projectMediaScope: structuredClone(state.projectMediaScope) } : {}),
       ...(current.sourcePublication ? { sourcePublication: { ...current.sourcePublication } } : {}),
     };
   }
@@ -224,6 +233,7 @@ export class ProjectContentOwnerService {
     readonly actor: ContentActorV1;
     readonly publicationScope: ContentPublicationScopeV1 | undefined;
     readonly projectScope: VideoProjectScopeV1 | undefined;
+    readonly projectMediaScope?: VideoProjectMediaScopeV1;
     readonly operationContext: ContentOperationContextV1 | undefined;
     readonly sourcePublication: ContentSourcePublicationV1 | undefined;
   }): Promise<ContentSettlementReceiptV1> {
@@ -266,6 +276,7 @@ export class ProjectContentOwnerService {
       },
       ...(input.publicationScope ? { publicationScope: { ...input.publicationScope } } : {}),
       ...(input.projectScope ? { projectScope: { ...input.projectScope } } : {}),
+      ...(input.projectMediaScope ? { projectMediaScope: structuredClone(input.projectMediaScope) } : {}),
     };
 
     await this.store.writeBlob(input.contentRef, input.blobDigest, input.bytes);
@@ -288,46 +299,6 @@ function resolveReplay(
   const receipt = state.receipts.find((candidate) => candidate.receiptId === existing.receiptId);
   if (!receipt) throw new Error(`Receipt ${existing.receiptId} is missing for operation ${operationId}`);
   return receipt;
-}
-
-function operationFingerprint(input: {
-  readonly contentRef: string;
-  readonly expectedOwnerRevision: number;
-  readonly blobDigest: `sha256:${string}`;
-  readonly mediaType: string;
-  readonly actor: ContentActorV1;
-  readonly publicationScope: ContentPublicationScopeV1 | undefined;
-  readonly projectScope: VideoProjectScopeV1 | undefined;
-  readonly operationContext: ContentOperationContextV1 | undefined;
-  readonly sourcePublication: ContentSourcePublicationV1 | undefined;
-}): `sha256:${string}` {
-  return `sha256:${createHash('sha256')
-    .update(
-      JSON.stringify({
-        contentRef: input.contentRef,
-        expectedOwnerRevision: input.expectedOwnerRevision,
-        blobDigest: input.blobDigest,
-        mediaType: input.mediaType,
-        actorKind: input.actor.kind,
-        actorId: input.actor.actorId,
-        publicationScope: input.publicationScope,
-        projectScope: input.projectScope,
-        operationContext: input.operationContext,
-        sourcePublication: input.sourcePublication,
-      }),
-    )
-    .digest('hex')}`;
-}
-
-function createReceiptId(
-  contentRef: string,
-  operationId: string,
-  ownerRevision: number,
-  blobDigest: `sha256:${string}`,
-): string {
-  return `content-receipt-${createHash('sha256')
-    .update(`${contentRef}\0${operationId}\0${ownerRevision}\0${blobDigest}`)
-    .digest('hex')}`;
 }
 
 function validateIdentity(value: string, field: string): void {

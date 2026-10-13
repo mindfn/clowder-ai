@@ -2,7 +2,9 @@ import type { WorkspaceContentReviewView } from '@cat-cafe/shared';
 import { act } from 'react';
 import { createRoot, type Root } from 'react-dom/client';
 import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
+import { composerAttachments } from '@/components/composer-queue';
 import { useChatStore } from '@/stores/chatStore';
+import { WorkspaceSurfaceVisibilityProvider } from '../../WorkspaceSurfaceVisibility';
 import { WorkspaceContentReviewSurface } from '../WorkspaceContentReviewSurface';
 import { view } from './WorkspaceContentReviewSurface.fixture';
 
@@ -12,7 +14,11 @@ vi.mock('@/utils/api-client', () => ({
   apiFetch: (...args: unknown[]) => mocks.apiFetch(...args),
 }));
 vi.mock('@/components/MarkdownContent', () => ({
-  MarkdownContent: ({ content }: { content: string }) => <div data-testid="rendered-markdown">{content}</div>,
+  MarkdownContent: ({ content }: { content: string }) => (
+    <div data-testid="rendered-markdown" data-source-line="1">
+      {content}
+    </div>
+  ),
 }));
 
 /** A text landing view for any path; the owner read is otherwise the shared fixture. */
@@ -79,7 +85,7 @@ describe('F309 text landing: a selection goes through the one existing chat quot
     vi.restoreAllMocks();
   });
 
-  async function render(current: WorkspaceContentReviewView, sourceText: string) {
+  async function render(current: WorkspaceContentReviewView, sourceText: string, visible = true) {
     if (current.review.source.kind !== 'text') throw new Error('text only');
     mocks.apiFetch.mockImplementation(async (url: string) => {
       if (url === '/api/workspace/content-reviews/prepare' || url.endsWith(current.review.reviewId))
@@ -88,13 +94,15 @@ describe('F309 text landing: a selection goes through the one existing chat quot
     });
     await act(async () => {
       root.render(
-        <WorkspaceContentReviewSurface
-          worktreeId="worktree-a"
-          path={current.review.source.kind === 'text' ? current.review.source.locator.path : ''}
-          sourceText={sourceText}
-          sourceTextRevision={current.review.source.revision}
-          onBack={vi.fn()}
-        />,
+        <WorkspaceSurfaceVisibilityProvider visible={visible}>
+          <WorkspaceContentReviewSurface
+            worktreeId="worktree-a"
+            path={current.review.source.kind === 'text' ? current.review.source.locator.path : ''}
+            sourceText={sourceText}
+            sourceTextRevision={current.review.source.revision}
+            onBack={vi.fn()}
+          />
+        </WorkspaceSurfaceVisibilityProvider>,
       );
     });
     for (let i = 0; i < 4; i += 1) await act(async () => Promise.resolve());
@@ -145,6 +153,98 @@ describe('F309 text landing: a selection goes through the one existing chat quot
     expect(container.textContent).not.toContain('已选文本');
     expect(container.querySelector('textarea[placeholder="写下这条批注…"]')).toBeNull();
     expect(container.querySelector('button[aria-label="保存批注"]')).toBeNull();
+  });
+
+  it('opens a pending file number to edit and remove the same quote without losing the queued draft', async () => {
+    vi.spyOn(HTMLElement.prototype, 'getBoundingClientRect').mockReturnValue(new DOMRect(0, 0, 800, 600));
+    const sourceText = 'A unique source quote.';
+    await render(textView('notes.md'), sourceText);
+    const node = textNodeContaining(container.querySelector('[data-testid="rendered-markdown"]')!, sourceText);
+    await annotate(node, 0, sourceText.length, '原说明');
+    const original = composerAttachments('thread-a')[0]!;
+    await act(async () => {
+      const queued = useChatStore.getState().pendingChatInsert!;
+      useChatStore.getState().setPendingChatInsert({ ...queued, text: '原有草稿\nsecond line' });
+    });
+    const mark = container.querySelector<HTMLButtonElement>('[data-pending-file-quote]');
+    expect(mark?.tagName, 'the visible file number must offer the same editable annotation card').toBe('BUTTON');
+    await act(async () => mark?.click());
+    const editor = document.querySelector<HTMLTextAreaElement>('[data-testid="context-annotation-comment"]');
+    expect(editor?.value).toBe('原说明');
+    await act(async () => editor && typeComment(editor, '改后的说明 · mixed\nnext line'));
+    await act(async () =>
+      editor?.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true, cancelable: true })),
+    );
+    expect(composerAttachments('thread-a')).toEqual([{ ...original, comment: '改后的说明 · mixed\nnext line' }]);
+    expect(useChatStore.getState().pendingChatInsert?.text).toBe('原有草稿\nsecond line');
+    await act(async () => container.querySelector<HTMLButtonElement>('[data-pending-file-quote]')?.click());
+    const remove = document.querySelector<HTMLButtonElement>('button[aria-label="删除批注"]');
+    expect(remove).not.toBeNull();
+    await act(async () => remove?.click());
+    expect(composerAttachments('thread-a')).toEqual([]);
+    expect(useChatStore.getState().pendingChatInsert?.text).toBe('原有草稿\nsecond line');
+    const posts = mocks.apiFetch.mock.calls.filter(([, init]) => (init as RequestInit | undefined)?.method === 'POST');
+    expect(posts.map(([url]) => url)).toEqual(['/api/workspace/content-reviews/prepare']);
+  });
+
+  it('lets the person choose the second pending quote in one paragraph and leaves the first unchanged', async () => {
+    vi.spyOn(HTMLElement.prototype, 'getBoundingClientRect').mockReturnValue(new DOMRect(0, 0, 800, 600));
+    const sourceText = 'Alpha is one quote. Beta is another quote.';
+    await render(textView('notes.md'), sourceText);
+    const node = textNodeContaining(container.querySelector('[data-testid="rendered-markdown"]')!, 'Alpha');
+    await annotate(node, 0, 'Alpha is one quote.'.length, 'first comment');
+    const start = sourceText.indexOf('Beta');
+    await annotate(node, start, sourceText.length, 'second comment');
+    const before = composerAttachments('thread-a');
+    expect(before).toHaveLength(2);
+    const mark = container.querySelector<HTMLButtonElement>('[data-pending-file-quote]');
+    expect(mark?.tagName).toBe('BUTTON');
+    await act(async () => mark?.click());
+    expect(document.querySelector('[data-testid="context-annotation-comment"]')).toBeNull();
+    let second = document.querySelector<HTMLButtonElement>('button[aria-label="编辑第 2 处批注"]');
+    expect(second).not.toBeNull();
+    const closeWorkspace = vi.fn();
+    const hostEscape = (event: KeyboardEvent) => {
+      if (event.key === 'Escape' && !event.defaultPrevented) closeWorkspace();
+    };
+    window.addEventListener('keydown', hostEscape);
+    try {
+      await act(async () =>
+        second?.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true, cancelable: true })),
+      );
+      expect(document.querySelector('[role="dialog"]')).toBeNull();
+      expect(document.activeElement).toBe(mark);
+      expect(composerAttachments('thread-a')).toEqual(before);
+      expect(closeWorkspace).not.toHaveBeenCalled();
+    } finally {
+      window.removeEventListener('keydown', hostEscape);
+    }
+    await act(async () => mark?.click());
+    second = document.querySelector<HTMLButtonElement>('button[aria-label="编辑第 2 处批注"]');
+    await act(async () => second?.click());
+    const editor = document.querySelector<HTMLTextAreaElement>('[data-testid="context-annotation-comment"]');
+    expect(editor?.value).toBe('second comment');
+    await act(async () => editor && typeComment(editor, 'only the second changed'));
+    await act(async () =>
+      editor?.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true, cancelable: true })),
+    );
+    expect(composerAttachments('thread-a')).toEqual([before[0], { ...before[1], comment: 'only the second changed' }]);
+  });
+
+  it('closes an editor when the file is hidden and does not reopen it on return', async () => {
+    vi.spyOn(HTMLElement.prototype, 'getBoundingClientRect').mockReturnValue(new DOMRect(0, 0, 800, 600));
+    const current = textView('notes.md');
+    const text = 'A unique source quote.';
+    await render(current, text);
+    const node = textNodeContaining(container.querySelector('[data-testid="rendered-markdown"]')!, text);
+    await annotate(node, 0, text.length, 'kept comment');
+    await act(async () => container.querySelector<HTMLButtonElement>('[data-pending-file-quote]')?.click());
+    expect(document.querySelector('[data-testid="context-annotation-comment"]')).not.toBeNull();
+    await render(current, text, false);
+    expect(document.querySelector('[data-testid="context-annotation-comment"]')).toBeNull();
+    await render(current, text);
+    expect(document.querySelector('[data-testid="context-annotation-comment"]')).toBeNull();
+    expect(composerAttachments('thread-a')[0]).toMatchObject({ text, comment: 'kept comment' });
   });
 
   it('a code selection carries the real line range of the file', async () => {

@@ -6,7 +6,9 @@
 
 import type { GlobalArtifactDTO, GlobalArtifactsResponse } from '@cat-cafe/shared';
 import { useCallback, useEffect, useRef, useState } from 'react';
+import { useChatStore } from '@/stores/chatStore';
 import { apiFetch } from '../utils/api-client';
+import { useWorksSourceRefresh } from './useThreadArtifacts';
 
 type WorkLineage = GlobalArtifactsResponse['workLineage'];
 
@@ -32,10 +34,14 @@ async function fetchGlobalArtifacts(
   path: string,
   signal: AbortSignal,
   requireComplete: boolean,
+  worksView: boolean,
 ): Promise<GlobalArtifactsPayload> {
   const res = await apiFetch(path, { signal });
   if (!res.ok) throw new Error(`global artifacts fetch failed: ${res.status}`);
-  return parseGlobalArtifactsResponse(await res.json(), requireComplete);
+  const body = await res.json();
+  if (worksView && (body === null || typeof body !== 'object' || body.view !== 'works'))
+    throw new Error('Works view unavailable');
+  return parseGlobalArtifactsResponse(body, requireComplete);
 }
 
 interface UseGlobalArtifactsResult {
@@ -47,10 +53,7 @@ interface UseGlobalArtifactsResult {
   refetch: () => void;
 }
 
-export interface GlobalArtifactsQuery {
-  view: 'recent-works';
-  limit: number;
-}
+export type GlobalArtifactsQuery = { view: 'recent-works'; limit: number } | { view: 'works' };
 
 export function useGlobalArtifacts(enabled: boolean, query?: GlobalArtifactsQuery): UseGlobalArtifactsResult {
   const [artifacts, setArtifacts] = useState<GlobalArtifactDTO[]>([]);
@@ -60,10 +63,12 @@ export function useGlobalArtifacts(enabled: boolean, query?: GlobalArtifactsQuer
   const [error, setError] = useState(false);
   const abortRef = useRef<AbortController | null>(null);
   const enabledRef = useRef(enabled);
+  const hostThreadId = useChatStore((state) => state.currentThreadId);
 
   const requireComplete = query !== undefined;
+  const worksView = query?.view === 'works';
   const requestPath = query
-    ? `/api/artifacts?view=${encodeURIComponent(query.view)}&limit=${encodeURIComponent(String(query.limit))}`
+    ? `/api/artifacts?view=${encodeURIComponent(query.view)}${'limit' in query ? `&limit=${encodeURIComponent(String(query.limit))}` : ''}`
     : '/api/artifacts';
 
   const refetch = useCallback(async () => {
@@ -75,7 +80,7 @@ export function useGlobalArtifacts(enabled: boolean, query?: GlobalArtifactsQuer
     setError(false);
     setWorkLineage('unavailable');
     try {
-      const result = await fetchGlobalArtifacts(requestPath, ac.signal, requireComplete);
+      const result = await fetchGlobalArtifacts(requestPath, ac.signal, requireComplete, worksView);
       if (!ac.signal.aborted) {
         setArtifacts(result.artifacts);
         setWorkLineage(result.workLineage);
@@ -90,7 +95,7 @@ export function useGlobalArtifacts(enabled: boolean, query?: GlobalArtifactsQuer
     } finally {
       if (!ac.signal.aborted) setLoading(false);
     }
-  }, [requestPath, requireComplete]);
+  }, [requestPath, requireComplete, worksView]);
 
   useEffect(() => {
     enabledRef.current = enabled;
@@ -105,6 +110,8 @@ export function useGlobalArtifacts(enabled: boolean, query?: GlobalArtifactsQuer
     }
     return () => abortRef.current?.abort();
   }, [enabled, refetch]);
+
+  useWorksSourceRefresh(hostThreadId, enabled && worksView, refetch);
 
   return { artifacts, workLineage, complete, loading: enabled && (loading || !enabledRef.current), error, refetch };
 }

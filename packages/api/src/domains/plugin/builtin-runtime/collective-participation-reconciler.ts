@@ -15,6 +15,9 @@ import { collectiveAvatarRoots, publicCollectiveAvatar } from './collective-publ
 export interface ParticipationCat {
   readonly id: string;
   readonly displayName: string;
+  readonly nickname?: string;
+  readonly variantLabel?: string;
+  readonly breedDisplayName?: string;
   readonly supported: boolean;
   readonly avatar?: string;
   readonly roleDescription?: string;
@@ -145,7 +148,17 @@ function observeEligibility(
 
 function profileFingerprint(cat: ParticipationCat) {
   return createHash('sha256')
-    .update(JSON.stringify([cat.displayName, cat.avatar, cat.roleDescription]))
+    .update(
+      JSON.stringify([
+        cat.displayName,
+        cat.nickname,
+        cat.variantLabel,
+        cat.breedDisplayName,
+        cat.defaultModel,
+        cat.avatar,
+        cat.roleDescription,
+      ]),
+    )
     .digest('hex');
 }
 

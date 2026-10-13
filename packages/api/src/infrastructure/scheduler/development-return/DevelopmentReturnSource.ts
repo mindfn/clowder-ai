@@ -3,8 +3,9 @@ import type { DevelopmentReturnRegistrationV1, TaskItem, ThreadProposal } from '
 import { sameDevelopmentScopeSnapshot } from '../../../domains/ball-custody/action-subject-delegate-contract.js';
 import {
   delegateLineageGenerationWasSuperseded,
+  delegateLineageHasProposalAnchor,
+  delegateLineageHistoryMatchesCanonicalOwner,
   isCurrentDelegateLineageGeneration,
-  replacementTransitionMatchesDelegateLineage,
 } from '../../../domains/ball-custody/action-successor-delegate-lineage.js';
 import { readDurableLocalReviewFact } from '../../../domains/cats/services/local-review-artifact.js';
 import type { DevelopmentWorkActor } from '../../../domains/cats/services/stores/ports/DevelopmentWorkTransition.js';
@@ -119,8 +120,9 @@ export async function resolveDevelopmentReturnSource(
 /**
  * Resolve a returned ActionSuccessor generation as the reporter authority for
  * a sequential final-only return. The action lease does not replace the Task or
- * proposal: it proves that the original approved delegate returned this exact
- * child to the canonical owner, who then attached one successor in that child.
+ * proposal: it proves that an approved child entered the canonical owner's
+ * durable lineage and that this exact generation is current in that child-local
+ * segment. Earlier child segments remain history, not a lifetime route veto.
  */
 export async function resolveReturnedActionSuccessorReturnSource(
   deps: Deps & Pick<DevelopmentReturnDeps, 'actionSuccessors'>,
@@ -180,26 +182,31 @@ export async function resolveReturnedActionSuccessorReturnStatus(
     resolveDevelopmentReturnSource(deps, actor, task, proposal, originalTrigger),
   ]);
   if (!lease || !originalSource) return null;
-  const originalTransition = lease.returnTransitions[0];
   const replacementTransitions = lease.replacementTransitions ?? [];
   const reporterCatIds = [...new Set(lease.holderCatIds)];
-  const expectedDelegateEvidence = originalTransition
-    ? `proposal:${proposal.proposalId}:approved:thread:${executionThreadId}:cat:${originalTransition.rejectingCatId}`
-    : null;
   const lineageRoute = {
     ownerCatId: actor.catId,
     ownerThreadId: actor.threadId,
     childThreadId: executionThreadId,
   };
-  const returnedLineageMatches = lease.returnTransitions.every(
-    (entry) =>
-      entry.rejectingThreadId === executionThreadId &&
-      entry.predecessorCatId === actor.catId &&
-      entry.predecessorThreadId === actor.threadId,
-  );
-  const replacementLineageMatches = replacementTransitions.every((entry) =>
-    replacementTransitionMatchesDelegateLineage(entry, lineageRoute),
-  );
+  const delegateAnchor = proposal.preferredCats
+    .map((catId) => ({
+      catId,
+      threadId: executionThreadId,
+      evidenceRef: `proposal:${proposal.proposalId}:approved:thread:${executionThreadId}:cat:${catId}`,
+    }))
+    .find((anchor) => delegateLineageHasProposalAnchor(lease, anchor));
+  const expectedDelegateEvidence = delegateAnchor?.evidenceRef;
+  const canonicalHistory = delegateLineageHistoryMatchesCanonicalOwner(lease, lineageRoute);
+  if (
+    (lease.returnTransitions ?? []).length === 0 ||
+    !canonicalHistory ||
+    !expectedDelegateEvidence ||
+    !lease.evidenceRefs.includes(expectedDelegateEvidence)
+  ) {
+    return null;
+  }
+  const terminalPredicate = lease.terminalPredicate;
   if (
     lease.tenantScope !== actor.userId ||
     lease.subjectRef !== `subject:task:${task.id}` ||
@@ -207,18 +214,13 @@ export async function resolveReturnedActionSuccessorReturnStatus(
     lease.successorSlot !== 'implementer' ||
     lease.mode !== 'single' ||
     lease.claimOrigin !== 'structured_transfer' ||
-    lease.terminalPredicate?.kind !== 'task_done' ||
-    lease.terminalPredicate.subjectRef !== `subject:task:${task.id}` ||
-    !originalTransition?.rejectingThreadId ||
-    !returnedLineageMatches ||
-    !replacementLineageMatches ||
-    !proposal.preferredCats.some((catId) => catId === originalTransition.rejectingCatId) ||
-    !expectedDelegateEvidence ||
-    !lease.evidenceRefs.includes(expectedDelegateEvidence) ||
+    terminalPredicate?.kind !== 'task_done' ||
+    terminalPredicate.subjectRef !== `subject:task:${task.id}` ||
     !lease.issuerStandingEvidenceRef.trim() ||
     !lease.evidenceRefs.includes(lease.issuerStandingEvidenceRef)
-  )
+  ) {
     return null;
+  }
 
   if (
     !isCurrentDelegateLineageGeneration({
@@ -257,7 +259,7 @@ export async function resolveReturnedActionSuccessorReturnStatus(
           issuerStandingEvidenceRef: lease.issuerStandingEvidenceRef,
           returnTransitions: lease.returnTransitions,
           replacementTransitions,
-          terminalPredicateDigest: lease.terminalPredicate.digest,
+          terminalPredicateDigest: terminalPredicate.digest,
           delegateEvidenceRef: expectedDelegateEvidence,
         }),
       )

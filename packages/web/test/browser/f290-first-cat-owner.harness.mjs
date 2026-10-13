@@ -133,6 +133,12 @@ export async function verifyFirstCatOwnerControls({
       } else if (url.pathname.endsWith('/participation')) {
         status = 200;
         body = view;
+      } else if (url.pathname.endsWith('/work-policy')) {
+        status = 200;
+        body = { policy: null, localAdoption: null };
+      } else if (url.pathname.endsWith('/listening')) {
+        status = 200;
+        body = { attentionRevision: 0, channelListening: {} };
       }
       await route.fulfill({ status, contentType: 'application/json', body: JSON.stringify(body) });
     });
@@ -144,17 +150,20 @@ export async function verifyFirstCatOwnerControls({
       .click();
     const frame = page.frameLocator('iframe[title="Collective"]');
     await openChannelFromCollectiveHome(frame, 'general');
-    await frame.getByRole('button', { name: '我的 Café', exact: true }).click();
-    const cafe = page.getByRole('complementary', { name: '我的 Café', exact: true });
+    await frame.getByRole('button', { name: '我的猫', exact: true }).click();
+    const cafe = page.getByRole('complementary', { name: '我的猫', exact: true });
     await page.getByText('家里的可参与伙伴已自动接入。', { exact: true }).waitFor();
-    await cafe.getByText('管理参与伙伴', { exact: true }).click();
-    const astra = cafe.getByRole('checkbox', { name: 'Astra 参与 # general', exact: true });
-    const unsupported = cafe.getByRole('checkbox', {
-      name: 'Other provider 参与 # general',
+    const astra = cafe.getByRole('switch', { name: 'Astra（@codex-astra）参与这个共同体', exact: true });
+    const unsupported = cafe.getByRole('switch', {
+      name: 'Other provider（@unsupported）参与这个共同体',
       exact: true,
     });
-    assert.equal(await astra.isChecked(), true, await astra.evaluate((option) => option.outerHTML));
-    assert.equal(await unsupported.isChecked(), false, await unsupported.evaluate((option) => option.outerHTML));
+    assert.equal(await astra.getAttribute('aria-checked'), 'true', await astra.evaluate((option) => option.outerHTML));
+    assert.equal(
+      await unsupported.getAttribute('aria-checked'),
+      'false',
+      await unsupported.evaluate((option) => option.outerHTML),
+    );
     assert.equal(await unsupported.isDisabled(), true, await unsupported.evaluate((option) => option.outerHTML));
     assert.equal(mutations.length, 1);
     assert.equal(
@@ -168,16 +177,17 @@ export async function verifyFirstCatOwnerControls({
     await page.screenshot({ path: path.join(evidence, 'owner-desktop.png'), fullPage: true });
     await page.setViewportSize({ width: 390, height: 844 });
     await page.screenshot({ path: path.join(evidence, 'owner-mobile.png'), fullPage: true });
-    await cafe.getByText('连接设置 · 在线', { exact: true }).click();
-    for (const control of [
-      page.getByLabel('选择 Café 连接'),
-      astra,
-      unsupported,
-      cafe.getByRole('button', { name: '设置 Astra 的私人持续委托', exact: true }),
-    ]) {
+    for (const control of [astra, unsupported]) {
       const box = await control.boundingBox();
       assert.ok(box && box.x >= 0 && box.x + box.width <= 390, `owner control clipped: ${JSON.stringify(box)}`);
     }
+    await cafe.getByRole('button', { name: '连接', exact: true }).click();
+    const connectionPicker = page.getByLabel('选择 Café 连接');
+    const connectionBox = await connectionPicker.boundingBox();
+    assert.ok(
+      connectionBox && connectionBox.x >= 0 && connectionBox.x + connectionBox.width <= 390,
+      `owner connection control clipped: ${JSON.stringify(connectionBox)}`,
+    );
 
     entryMode = true;
     await page.setViewportSize({ width: 1440, height: 960 });

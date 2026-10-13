@@ -3,7 +3,7 @@ feature_ids: [F042, F083, F303]
 topics: [sop]
 doc_kind: note
 created: 2026-02-26
-updated: 2026-10-06
+updated: 2026-10-12
 ---
 
 # Clowder AI 开发 SOP
@@ -145,6 +145,11 @@ work、custody、completion 或 acceptance 的 canonical truth。
 测试的价值、UT/集成/浏览器层级，以及合并、降层、退役的判断见
 `测试规范`。新增昂贵 journey 和删除覆盖在现有 PR 中说明失败故事与
 承接证据；不新增审批，不因采用规范自动跑全量。
+
+作者与已选 reviewer 同样审新增、改写和删除：真实失败是什么、最低足够层级、已有覆盖缺口及新增成本。
+清理先收齐候选、成批修改，再集中运行受影响验证；只因新失败或实质变化补跑相关项。
+行数用于职责与耦合审查（200 行提醒，350 行默认拆分或说明结构理由），不单独构成产品 P1，
+也不为每个文件生成数行 UT。静态源码政策归统一 lint，产品测试观察生产行为；具体例外和证据见同一规范。
 
 默认选择**一个合适的独立验证源**，且必须是非作者：
 
@@ -370,6 +375,13 @@ PR-3 是 interim 方案 —— 仍开 per-run PR，只是 label + 猫自决 merg
 > 详见 Hotfix Lane 设计 (internal)
 
 ### Full Sync Gate（Source-Owned）
+
+**每日草稿同步（2026-10-12 operator 已授权）**先走
+固定分支入口：`node scripts/daily-public-sync.mjs`。
+该路径只追加 `clowder-ai sync/daily`，维护唯一开放草稿 PR；隐私、intake、F251、导出闭包和迁移说明仍须通过。
+本机 `source_full` 与临时公开仓完整长验证不再是这条路径的前置条件，实际候选的公开 CI 承担完整行为验证；
+`--status` 读取当前 PR head 的 CI / Windows Smoke 结论，不授权合 main 或发布版本。
+以下 source-owned 默认适用于其他同步路径，不能重新叠加到已授权的每日草稿路径。
 
 全量同步到 `clowder-ai` 时，**不能只看家里的 `pnpm gate` 绿不绿**。  
 `source gate green != target/public gate green`。

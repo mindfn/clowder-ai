@@ -51,6 +51,13 @@ export function commandName(raw) {
   return raw?.replace(/\\/g, '/').split('/').at(-1)?.toLowerCase();
 }
 
+/** Data words with a fixed non-option prefix cannot expand into an option. Not program identity proof. */
+export function stableArgumentWord(word) {
+  return (
+    word.literal || (word.literalPrefix.length > 0 && !word.literalPrefix.startsWith('-')) || word.value.startsWith('~')
+  );
+}
+
 /** Blank real comments without changing offsets; quoted/escaped # remains word data. */
 export function stripShellComments(raw) {
   return scanShellText(raw).text;

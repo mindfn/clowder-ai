@@ -2,8 +2,19 @@ import type { RedisClient } from '@cat-cafe/shared/utils';
 import type { AppendMessageInput, MessageAppendListener, StoredMessage } from '../ports/MessageStore.js';
 import { canonicalizeAppendMessageInput, DEFAULT_THREAD_ID, generateSortableId } from '../ports/MessageStore.js';
 import { MessageKeys } from '../redis-keys/message-keys.js';
-import { withOwnerUncertaintyIndex } from './owner-uncertainty-lua.js';
+import { withOwnerUncertaintyIndex as withUncertaintyIndex } from './owner-uncertainty-lua.js';
 import { serializeExtra } from './redis-message-parsers.js';
+import { withUserMentionIndex } from './user-mention-index-lua.js';
+
+function withOwnerUncertaintyIndex(script: string, hashKey: number, indexExpression: string): string {
+  const fields = 'cjson.decode(ARGV[2])';
+  const prefix = `string.sub(KEYS[1], 1, #KEYS[1] - #${fields}.id - 4)`;
+  return withUserMentionIndex(
+    withUncertaintyIndex(script, hashKey, indexExpression),
+    hashKey,
+    `{${prefix} .. 'msg:user-requests:latest:' .. ${fields}.userId, ${prefix} .. 'msg:user-requests:pending:' .. ${fields}.userId, ${prefix} .. 'msg:user-requests:closed:' .. ${fields}.userId, ${prefix} .. 'msg:user-request-signals:' .. ${fields}.userId .. ':' .. ${fields}.threadId}`,
+  );
+}
 
 const APPEND_MESSAGE_LUA = withOwnerUncertaintyIndex(
   `

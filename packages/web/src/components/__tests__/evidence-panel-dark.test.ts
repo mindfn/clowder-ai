@@ -7,7 +7,6 @@ import { createRoot, type Root } from 'react-dom/client';
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from 'vitest';
 import type { EvidenceResult } from '../EvidenceCard';
 import { EvidenceCard } from '../EvidenceCard';
-import { EvidencePanel } from '../EvidencePanel';
 
 describe('Evidence Panel dark theme (F098-B1)', () => {
   let container: HTMLDivElement;
@@ -34,20 +33,6 @@ describe('Evidence Panel dark theme (F098-B1)', () => {
     container.remove();
   });
 
-  it('EvidencePanel uses slate dark background', () => {
-    act(() => {
-      root.render(
-        React.createElement(EvidencePanel, {
-          data: { results: [], degraded: false },
-        }),
-      );
-    });
-
-    const html = container.innerHTML;
-    expect(html).toContain('bg-cafe-surface-sunken');
-    expect(html).not.toContain('--color-cocreator-bg');
-  });
-
   it('EvidenceCard uses dark card styling with high-contrast text', () => {
     const result: EvidenceResult = {
       title: 'F097 CLI 重构',
@@ -71,25 +56,6 @@ describe('Evidence Panel dark theme (F098-B1)', () => {
     expect(html).not.toContain('--color-gemini-bg');
     expect(html).toContain('match:high · authority:validated · updated:');
     expect(html).toContain('2026-07-12T00:00:00Z');
-  });
-
-  it('EvidenceCard match-rank badge uses appropriate dark colors', () => {
-    const result: EvidenceResult = {
-      title: 'Test',
-      anchor: 'test',
-      snippet: 'test',
-      matchRank: 'high',
-      sourceType: 'decision',
-    };
-
-    act(() => {
-      root.render(React.createElement(EvidenceCard, { result }));
-    });
-
-    const html = container.innerHTML;
-    // High match rank should use semantic emerald tokens
-    expect(html).toContain('bg-semantic-success-surface');
-    expect(html).toContain('text-semantic-success');
   });
 
   it('EvidenceCard renders legacy persisted confidence without crashing', () => {

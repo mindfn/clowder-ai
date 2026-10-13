@@ -1,6 +1,6 @@
 ---
 name: console-dev
-tips_exempt: "Renewed 2026-10-03: author-owned frontend delivery now reuses established design evidence and selects sufficient targeted verification. This is internal implementation guidance, with no new end-user operation to advertise."
+tips_exempt: "Renewed 2026-10-13: relevant state coverage, risk-matched verification and the existing mistakes ledger refine frontend implementation/review practice. File-size guidance adds no product gate or new end-user operation."
 description: >
   Console 前端交付范式：4 道门禁驱动的前端开发流程。Use when:
   新增前端能力、settings section 迁移、新增页面、重构布局、或 F190/Console 级前端流程需要 Product/Design/Implementation/Verification gate。
@@ -25,7 +25,8 @@ Console 前端开发先定入口和状态，再写组件。这个 skill 不替�
 | L3 settings 子 tab | 只读、分析、运维子视图 | 自助选择合适分区 |
 | L4 独立 route | 需要专属布局/流程的体验 | 先讨论入口理由 |
 
-涉及状态的 UI 必须列状态矩阵：loading / empty / partial / full / error，owner / member / guest / unauthenticated，desktop / mobile。
+涉及状态的 UI 需考虑 loading / empty / partial / full / error、身份权限和 desktop / mobile 中实际相关的状态。
+矩阵用于发现独有风险，不要求全组合各跑完整旅程；测试层级与成本按测试规范选择。
 
 ## Gate 2: Design-System Gate
 
@@ -45,6 +46,7 @@ Console 前端开发先定入口和状态，再写组件。这个 skill 不替�
 | settings migration | 写清 Source Behavior / Must Preserve Home Behavior / Decision / Proof |
 
 拆分方向优先是视觉独立 sub-component，不是把小工具函数切碎。
+行数本身不构成产品 P1，不为这些阈值另写数行 UT。
 
 ## Gate 4: Verification Gate
 
@@ -56,6 +58,7 @@ Console 前端开发先定入口和状态，再写组件。这个 skill 不替�
 - 改共享 primitive 时抽样兄弟页面
 - modal 检查 footer、滚动容器、sticky action、ESC/关闭行为
 - 暗色/移动端如果会被影响，必须抽样
+- 对照界面错题本，只看本次改动碰到的条目（家里真犯过的反例和自查法；规则正文仍以 DESIGN.md 和在地设计检查单为准）
 
 ## Common Mistakes
 

@@ -27,6 +27,9 @@ code_anchors:
   - packages/web/src/components/ArtifactsPanel.tsx
   - packages/web/src/components/rich/RuntimeInteractionCard.tsx
   - packages/api/src/routes/runtime-interaction-routes.ts
+  - packages/api/src/routes/user-mention-todo-projection.ts
+  - packages/shared/src/types/unified-attention.ts
+  - packages/web/src/components/shell/review-notes/UserMentionDetails.tsx
 doc_anchors:
   - docs/features/F022-rich-blocks.md
   - docs/features/F063-hub-workspace-explorer.md
@@ -58,6 +61,8 @@ cited_by:
 ---
 
 # Hub Action Surface
+
+F322 的显式 `@你` 请求通过现有小信箱的统一读取进入「需要我处理」。请求、回复关闭和已处理的事实属于 MessageStore；小信箱只读其最新消息引用并原样展示，不推断类别或紧急程度，不创建第二份 Task/待办。每个 owner/thread 一件，用户回复或精确版本的「已处理」关闭；后来的 @ 更新或重开。旧 Live 插件契约保留，只有小信箱显式采用这项来源。
 
 ## Canonical Owner
 

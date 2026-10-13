@@ -3,7 +3,11 @@ import type { ImmutableMedia } from '@cat-cafe/shared';
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { tickToBrowserTime } from '../review-geometry';
 
-export function useComparePlayback(media: readonly ImmutableMedia[]) {
+export interface ComparePlaybackAlignment {
+  driver: 0 | 1;
+  position(elapsed: number, index: number): { seconds: number; rateScale: number } | null;
+}
+export function useComparePlayback(media: readonly ImmutableMedia[], alignment?: ComparePlaybackAlignment) {
   const videos = useRef<(HTMLVideoElement | null)[]>([null, null]);
   const refs = useMemo(
     () =>
@@ -17,6 +21,7 @@ export function useComparePlayback(media: readonly ImmutableMedia[]) {
     [playing, setPlaying] = useState(false);
   const [seconds, setSeconds] = useState(0),
     [error, setError] = useState<string | null>(null);
+  const [rate, setPlaybackRate] = useState(1);
   const generation = useRef(0);
   const clocks = media.map((item) =>
     item.kind === 'video'
@@ -26,17 +31,39 @@ export function useComparePlayback(media: readonly ImmutableMedia[]) {
         }
       : { start: 0, duration: 0 },
   );
-  const duration = Math.max(...clocks.map((item) => item.duration));
-  const driver = clocks[1].duration >= clocks[0].duration ? 1 : 0;
+  const driver = alignment?.driver ?? (clocks[1].duration >= clocks[0].duration ? 1 : 0);
+  const duration = alignment ? clocks[driver].duration : Math.max(...clocks.map((item) => item.duration));
+  const position = (elapsed: number, index: number) =>
+    alignment
+      ? alignment.position(elapsed, index)
+      : { seconds: clocks[index].start + Math.min(elapsed, clocks[index].duration), rateScale: 1 };
+  const applyRate = (video: HTMLVideoElement, index: number, elapsed: number, selectedRate = rate) => {
+    const target = position(elapsed, index);
+    if (!target) {
+      video.pause();
+      return null;
+    }
+    try {
+      video.playbackRate = selectedRate * target.rateScale;
+    } catch {
+      video.pause();
+      setError('此版本无法按对应速度播放，请调整速度或重新打开对比。');
+      return null;
+    }
+    return target;
+  };
   const pause = () => {
     generation.current += 1;
-    videos.current.forEach((video) => video?.pause());
+    videos.current.forEach((video) => {
+      video?.pause();
+    });
     setPlaying(false);
   };
   const resumeWithinRange = (video: HTMLVideoElement, index: number, elapsed: number) => {
     if (video.ended) return;
     if (!playing) return;
-    if (elapsed >= clocks[index].duration) {
+    const target = applyRate(video, index, elapsed);
+    if (!target || target.seconds >= clocks[index].start + clocks[index].duration) {
       video.pause();
       return;
     }
@@ -58,14 +85,17 @@ export function useComparePlayback(media: readonly ImmutableMedia[]) {
     const next = Math.max(0, Math.min(duration, elapsed));
     videos.current.forEach((video, index) => {
       if (!video?.readyState) return;
-      video.currentTime = clocks[index].start + Math.min(next, clocks[index].duration);
+      const target = applyRate(video, index, next);
+      if (!target) return;
+      video.currentTime = target.seconds;
       resumeWithinRange(video, index, next);
     });
     setSeconds(next);
   };
   const loaded = (index: number) => {
     const video = videos.current[index];
-    if (video) video.currentTime = clocks[index].start + Math.min(seconds, clocks[index].duration);
+    const target = video ? applyRate(video, index, seconds) : null;
+    if (video && target) video.currentTime = target.seconds;
     setReady(videos.current.every((item) => item !== null && item.readyState >= 1));
   };
   const play = async () => {
@@ -81,7 +111,8 @@ export function useComparePlayback(media: readonly ImmutableMedia[]) {
     try {
       await Promise.all(
         videos.current.map((video, index) => {
-          if (elapsed >= clocks[index].duration) {
+          const target = video ? applyRate(video, index, elapsed) : null;
+          if (!target || target.seconds >= clocks[index].start + clocks[index].duration) {
             video?.pause();
             return Promise.resolve();
           }
@@ -89,7 +120,10 @@ export function useComparePlayback(media: readonly ImmutableMedia[]) {
         }),
       );
       if (attempt === generation.current) setPlaying(true);
-      else videos.current.forEach((video) => video?.pause());
+      else
+        videos.current.forEach((video) => {
+          video?.pause();
+        });
     } catch {
       if (attempt === generation.current) {
         pause();
@@ -104,8 +138,9 @@ export function useComparePlayback(media: readonly ImmutableMedia[]) {
     setSeconds(Math.min(duration, elapsed));
     videos.current.forEach((video, other) => {
       if (!video || other === index || !video.readyState || video.seeking) return;
-      const target = clocks[other].start + Math.min(elapsed, clocks[other].duration);
-      if (Math.abs(video.currentTime - target) > 0.08) video.currentTime = target;
+      const target = applyRate(video, other, elapsed);
+      if (!target) return;
+      if (Math.abs(video.currentTime - target.seconds) > 0.08) video.currentTime = target.seconds;
       resumeWithinRange(video, other, elapsed);
     });
     if (elapsed >= duration) pause();
@@ -113,7 +148,9 @@ export function useComparePlayback(media: readonly ImmutableMedia[]) {
   useEffect(
     () => () => {
       generation.current += 1;
-      videos.current.forEach((video) => video?.pause());
+      videos.current.forEach((video) => {
+        video?.pause();
+      });
     },
     [],
   );
@@ -124,6 +161,14 @@ export function useComparePlayback(media: readonly ImmutableMedia[]) {
     playing,
     seconds,
     duration,
+    rate,
+    setRate: (next: number) => {
+      if (!Number.isFinite(next) || next <= 0) return;
+      setPlaybackRate(next);
+      videos.current.forEach((video, index) => {
+        if (video) applyRate(video, index, seconds, next);
+      });
+    },
     error,
     play,
     seek,

@@ -69,9 +69,11 @@ export async function collectThreadMessageArtifacts(
   store: ThreadMessageScanStore,
   threadId: string,
   userId?: string,
+  observePage?: (page: readonly StoredMessage[]) => void,
 ): Promise<ThreadArtifactDTO[]> {
   const artifacts: ThreadArtifactDTO[] = [];
   for await (const page of readThreadMessagePages(store, threadId, userId)) {
+    observePage?.(page);
     // Preserve traversal order: equal-time ref replacement and no-ref ties depend on it.
     for (const artifact of projectMessageArtifacts(page)) artifacts.push(artifact);
   }

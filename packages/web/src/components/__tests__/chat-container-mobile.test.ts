@@ -10,7 +10,11 @@ import {
   reduceArtifactWorkPresentation,
 } from '@/components/workbench/artifact-work-presentation';
 import { useF307ExperienceWorkbenchStore } from '@/components/workbench/experience-workbench-store';
-import { createBrowserSurface, createEvolutionProgramSurface } from '@/components/workbench/real-surface-adapters';
+import {
+  createBrowserSurface,
+  createEvolutionProgramSurface,
+  createWorkspaceModeSurface,
+} from '@/components/workbench/real-surface-adapters';
 import { createInitialWorkbenchState } from '@/components/workbench/workbench-model';
 import type { ChatMessage as ChatMessageData, QueueEntry } from '@/stores/chat-types';
 import { useSidebarStore } from '@/stores/sidebarStore';
@@ -346,6 +350,7 @@ describe('ChatContainer mobile interactions', () => {
       layout: createInitialWorkbenchState(),
       hydrated: true,
       mainAreaAttentionSurfaceId: null,
+      mainAreaAttentionPresentation: { kind: 'overlay' },
       focusSurfaceId: null,
       artifactWorkPresentation: createArtifactWorkPresentationState(),
     });
@@ -752,6 +757,49 @@ describe('ChatContainer mobile interactions', () => {
     expect(container.querySelector('[data-testid="workspace-panel"]')).toBe(workspaceBefore);
     expect(programScrollAfter?.dataset.programFace).toBe('history');
     expect(programScrollAfter?.scrollTop).toBe(96);
+  });
+
+  it('keeps Chat beside the same wide Schedule owner and restores its saved split after transient resize', async () => {
+    mockMatchMedia(true);
+    mockRightPanelOpen = true;
+    mockRightPanelMode = 'workspace';
+    localStorage.setItem('cat-cafe:chatBasis', '62');
+    const schedule = createWorkspaceModeSurface('product-schedule', 'test-thread');
+    useF307ExperienceWorkbenchStore.setState({ layout: createInitialWorkbenchState([schedule]) });
+    const widthDescriptor = Object.getOwnPropertyDescriptor(HTMLElement.prototype, 'offsetWidth');
+    Object.defineProperty(HTMLElement.prototype, 'offsetWidth', { configurable: true, get: () => 1000 });
+    try {
+      await act(async () => root.render(renderChatContainer('test-thread')));
+      const chat = container.querySelector<HTMLElement>('[data-testid="thread-chat-host"]');
+      const owner = container.querySelector('[data-testid="workspace-panel"]');
+      expect(chat?.style.flexBasis).toBe('62%');
+      await act(async () =>
+        useF307ExperienceWorkbenchStore.getState().enterMainAreaAttention(schedule.id, {
+          kind: 'chat-workspace',
+          threadId: 'test-thread',
+          chatBasis: 30,
+        }),
+      );
+      const host = container.querySelector<HTMLElement>('[data-testid="contextual-workspace-host"]');
+      expect(host?.dataset.presentation).toBe('wide-workspace');
+      expect(host?.className).not.toContain('absolute');
+      expect(chat?.getAttribute('aria-hidden')).toBeNull();
+      expect(chat?.className).not.toContain('invisible');
+      expect(chat?.style.flexBasis).toBe('30%');
+      expect(container.querySelector('[data-testid="workspace-panel"]')).toBe(owner);
+      const handle = container.querySelector<HTMLElement>('[role="separator"][aria-label="右侧面板分隔条"]');
+      if (!handle) throw new Error('wide Schedule retains the original accessible resize handle');
+      await act(async () => handle.dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowRight', bubbles: true })));
+      expect(chat?.style.flexBasis).not.toBe('30%');
+      expect(localStorage.getItem('cat-cafe:chatBasis')).toBe('62');
+      await act(async () => useF307ExperienceWorkbenchStore.getState().exitMainAreaAttention());
+      expect(host?.dataset.presentation).toBe('right-rail');
+      expect(chat?.style.flexBasis).toBe('62%');
+      expect(container.querySelector('[data-testid="workspace-panel"]')).toBe(owner);
+    } finally {
+      if (widthDescriptor) Object.defineProperty(HTMLElement.prototype, 'offsetWidth', widthDescriptor);
+      else delete (HTMLElement.prototype as unknown as Record<string, unknown>).offsetWidth;
+    }
   });
 
   it('keeps the same Chat and owner DOM while an Artifact explicitly enters and exits full-window', async () => {

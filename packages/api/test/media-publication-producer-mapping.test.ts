@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
+import { hasUniqueMediaProducerRequest } from '../src/domains/collaborative-content/modification/bindings/media-return-binding.js';
 import { modificationMessageRequestId } from '../src/domains/collaborative-content/modification/journal.js';
-import { hasUniqueMediaProducerRequest } from '../src/domains/collaborative-content/modification/media-return-binding.js';
 import { mediaPublicationFixture } from './helpers/media-publication-fixture.js';
 
 test('resolver port: one canonical producer request is distinct from unrelated historical causes', async (t) => {

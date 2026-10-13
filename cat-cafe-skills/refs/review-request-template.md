@@ -99,6 +99,8 @@ pnpm --filter @cat-cafe/api run build   # 仅当 targeted API test import dist/ 
 ### 测试结果
 
 **写入前置依赖链 + 实际跑过的命令，reviewer 在沙盒裸跑必须能复现。**
+测试增量按 `docs/ops/testing-standard.md` 说明真实失败、最低足够层级、已有覆盖缺口与成本；
+测试名/注释和已有证据可直接引用。reviewer 审断言观察的生产结果，不能以 pass 数替代价值判断。
 
 ```bash
 # Bootstrap（与 Review Sandbox 段落同步，sandbox 已跑则只写 author 跑的）
@@ -106,13 +108,10 @@ unset NODE_ENV
 pnpm install --frozen-lockfile
 pnpm --filter @cat-cafe/shared build   # 如 targeted test 依赖 dist/
 
-# Targeted vitest / node:test（最高风险 validation 链）
-pnpm --filter @cat-cafe/api test       # X passed, 0 failed
-pnpm --filter @cat-cafe/web test       # X passed, 0 failed
-pnpm -r --if-present run build         # 成功
-
-# Canonical gate entry（机器按 diff/base/receipt 选择 targeted/full；语义风险只能用 --risk 加严）
-pnpm gate                              # 记录实际 route 与补充的 targeted/full evidence
+# 只填写本次真实执行的受影响命令与明确文件列表；无需照抄全包/全仓命令
+<affected-test-or-check-command>      # 结果、准备/执行/清理与失败补跑总账
+git diff --check                      # 结果
+# targeted 无法覆盖具体风险时，才填写 full gate 及理由；批量清理集中验证
 ```
 
 ### 相关文档

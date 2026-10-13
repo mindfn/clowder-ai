@@ -6,6 +6,7 @@ import { HubIcon } from '../../hub-icons';
 import { MarkdownContent } from '../../MarkdownContent';
 import { settingsResourceCardClass, settingsResourceRowClass } from '../../SettingsResourceCard';
 import { SettingsText } from '../primitives/SettingsText';
+import { DotConnectionDetail } from './DotConnectionDetail';
 import { PluginManagerConfigurationSection } from './PluginManagerConfigurationSection';
 import { PluginVisual } from './PluginVisual';
 import type { PluginManagerDesignFixture } from './plugin-manager-fixtures';
@@ -155,6 +156,7 @@ export function PluginManagerDetailCard({
   onSaveConfig,
   configurationValidationRequest = 0,
   configurationSaved = false,
+  onStateChanged,
 }: {
   plugin: PluginManagerDesignFixture;
   locale: string;
@@ -162,6 +164,7 @@ export function PluginManagerDetailCard({
   onSaveConfig?: (updates: readonly { key: string; value: string | null }[]) => void;
   configurationValidationRequest?: number;
   configurationSaved?: boolean;
+  onStateChanged?: () => void | Promise<void>;
 }) {
   const installed = plugin.artifact === 'installed';
   const description = resolvePluginDescription(plugin.description, locale);
@@ -202,15 +205,25 @@ export function PluginManagerDetailCard({
           </div>
         )}
 
-        <PluginManagerConfigurationSection
-          plugin={plugin}
-          busy={busy}
-          onSaveConfig={onSaveConfig}
-          validationRequest={configurationValidationRequest}
-          saved={configurationSaved}
-        />
+        {plugin.id === 'official.chatgpt-dot' ? (
+          <DotConnectionDetail
+            installed={installed}
+            activationRequest={configurationValidationRequest}
+            onStateChanged={onStateChanged}
+          />
+        ) : (
+          <>
+            <PluginManagerConfigurationSection
+              plugin={plugin}
+              busy={busy}
+              onSaveConfig={onSaveConfig}
+              validationRequest={configurationValidationRequest}
+              saved={configurationSaved}
+            />
 
-        <CapabilityDocumentation plugin={plugin} installed={installed} groups={capabilityGroups} />
+            <CapabilityDocumentation plugin={plugin} installed={installed} groups={capabilityGroups} />
+          </>
+        )}
       </div>
     </article>
   );

@@ -1,5 +1,14 @@
 const labels = { markup: '标注', comment: '评论' };
 
+/** PNG saves live in the editing menu; the original video save remains directly reachable. */
+export async function openAnnotationSave(page) {
+  const save = page.getByRole('button', { name: '保存批注', exact: true });
+  const actions = page.getByLabel('批注操作', { exact: true });
+  if ((await actions.count()) > 0 && !(await save.isVisible())) await actions.click();
+  await save.waitFor();
+  return save;
+}
+
 export async function selectReviewMode(page, mode) {
   const toolbar = page.getByRole('region', { name: '作品画布工具' });
   const current = await toolbar.getAttribute('data-review-mode');

@@ -210,6 +210,51 @@ function bindAppendRun(h, catId) {
   return { invocationId, responseId: response.id };
 }
 
+for (const strategy of ['guide_reply', 'interrupt_reply']) {
+  test(`old Console follow-up after ${strategy} cannot deliver or interrupt twice`, async (t) => {
+    const h = await harness({ guide: strategy === 'guide_reply' });
+    t.after(() => h.app.close());
+    h.releaseCreate();
+    let nativeCalls = 0;
+    if (strategy === 'guide_reply') {
+      const run = bindAppendRun(h, 'opus');
+      h.tracker.bindAgentClientActiveRunDispatcher('thread-1', 'opus', {
+        invocationId: run.invocationId,
+        capabilities: { append: true, steer: true },
+        handle: { provider: 'openai_codex', carrier: 'codex_app_server' },
+        dispatch: async () => {
+          nativeCalls++;
+          return { accepted: true, handle: {} };
+        },
+      });
+    }
+    const first = await h.app.inject({
+      method: 'POST',
+      url: `/api/threads/thread-1/queue/${h.entry.id}/targets`,
+      headers: { 'x-cat-cafe-user': 'user-1' },
+      payload: {
+        sourceRecordId: h.source.id,
+        observedPendingTargetIds: ['opus', 'codex'],
+        targets: [{ targetCatId: 'opus', strategy, membershipAtOpen: 'member' }],
+      },
+    });
+    assert.equal(first.statusCode, 200, first.body);
+    assert.equal(h.queue.list('thread-1', 'user-1').length, 0);
+    const after = JSON.stringify(h.store.getById(h.source.id).lifecycle);
+    const duplicate = await h.app.inject({
+      method: 'POST',
+      url: `/api/threads/thread-1/queue/${h.entry.id}/${strategy === 'guide_reply' ? 'continue' : 'steer'}`,
+      headers: { 'x-cat-cafe-user': 'user-1' },
+      payload: { targetCatId: 'opus' },
+    });
+    assert.equal(duplicate.statusCode, 404, duplicate.body);
+    assert.equal(duplicate.json().code, 'ENTRY_NOT_FOUND');
+    assert.equal(JSON.stringify(h.store.getById(h.source.id).lifecycle), after);
+    assert.equal(nativeCalls, strategy === 'guide_reply' ? 1 : 0);
+    assert.equal(h.queue.list('thread-1', 'user-1').length, 0);
+  });
+}
+
 for (const firstResult of ['accepted', 'rejected', 'throws']) {
   test(`one guide request releases the sibling at handoff while preserving a delayed ${firstResult} ACK`, async (t) => {
     const h = await harness({ guide: true });

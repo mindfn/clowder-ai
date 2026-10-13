@@ -15,6 +15,7 @@ import {
   type ProcessError,
   type WalCheckpointResult,
 } from './memory-process-protocol.js';
+import type { VectorRepackResult } from './repack-passage-vectors.js';
 
 function decodeError(error: ProcessError): Error {
   const details = error.details;
@@ -47,6 +48,7 @@ class MemoryProcess {
   ): Promise<T> {
     if (this.pending >= 64) return Promise.reject(new Error('Memory process queue is full'));
     this.pending++;
+    const ownsNativeWrite = job.kind === 'checkpoint' || job.kind === 'vector-repack';
     return new Promise<T>((resolve, reject) => {
       const controller = new AbortController();
       let settled = false;
@@ -67,9 +69,9 @@ class MemoryProcess {
           // SIGKILL also interrupts native SQLite. Its open transaction rolls back.
           active.kill('SIGKILL');
           if (this.child === active) this.child = undefined;
-          // A checkpoint owns native I/O resources. Do not release its scope
+          // Native maintenance owns I/O resources. Do not release its scope
           // until the killed process has actually closed its SQLite handles.
-          if (job.kind === 'checkpoint') return;
+          if (ownsNativeWrite) return;
         }
         complete(reason);
       };
@@ -90,7 +92,7 @@ class MemoryProcess {
             const diagnostics = this.diagnostics.get(child)!;
             diagnostics.begin(id);
             const onError = (error: Error) => {
-              if (job.kind !== 'checkpoint') return complete(error);
+              if (!ownsNativeWrite) return complete(error);
               controller.abort(error);
               child.kill('SIGKILL');
               if (this.child === child) this.child = undefined;
@@ -104,7 +106,7 @@ class MemoryProcess {
                     }),
               );
             const onMessage = (message: ChildMessage) => {
-              if (job.kind === 'checkpoint' && controller.signal.aborted) return;
+              if (ownsNativeWrite && controller.signal.aborted) return;
               if (message.type === 'started') {
                 channel('cat-cafe.memory-process').publish({ kind: job.kind, pid: message.pid, id });
               } else if (message.type === 'embedding') {
@@ -220,6 +222,15 @@ export function runMemoryCheckpoint(
   return projections.run<WalCheckpointResult>(
     { kind: 'checkpoint', dbPath },
     { ...options, deadlineAt: options.deadlineAt ?? Date.now() + 15_000 },
+  );
+}
+export function runMemoryVectorRepack(
+  dbPath: string,
+  options: { signal?: AbortSignal; deadlineAt?: number } = {},
+): Promise<VectorRepackResult> {
+  return projections.run<VectorRepackResult>(
+    { kind: 'vector-repack', dbPath },
+    { ...options, deadlineAt: options.deadlineAt ?? Date.now() + 120_000 },
   );
 }
 export function runMemoryScan<T>(job: Extract<MemoryProcessJob, { kind: 'scan' }>): Promise<T> {

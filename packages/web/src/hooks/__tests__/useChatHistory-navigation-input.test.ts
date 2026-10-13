@@ -596,7 +596,7 @@ describe('useChatHistory navigation input owner', () => {
     expect(await capturedHook!.navigateToMessage('first')).toEqual({ status: 'unavailable' });
   });
 
-  it('restores a finalized streaming origin through the unique bubble identity instead of a stale DOM id', async () => {
+  it('restores the same canonical response id after streaming finalization', async () => {
     const threadId = 'search-return-finalized';
     const { el, top } = await openThread(threadId);
     const original = [
@@ -610,12 +610,12 @@ describe('useChatHistory navigation input owner', () => {
       gesture.end();
     });
     const snapshot = capturedHook!.captureReadingPosition()!;
-    expect(snapshot.position).toMatchObject({ messageAnchor: { messageId: 'first', bubbleKey: expect.any(String) } });
-    const finalized = [{ ...original[0], id: 'stored-first' }, original[1]];
+    expect(snapshot.position).toMatchObject({ messageAnchor: { messageId: 'first' } });
+    const finalized = [{ ...original[0], isStreaming: false, content: 'finalized response' }, original[1]];
     act(() => useChatStore.setState({ messages: finalized, threadStates: { [threadId]: makeThreadState(finalized) } }));
     const boundary = el.querySelector<HTMLElement>('[data-message-viewport-id="first"]')!;
-    boundary.dataset.messageViewportId = 'stored-first';
-    boundary.querySelector<HTMLElement>('[data-message-id="first"]')!.dataset.messageId = 'stored-first';
+    expect(boundary.dataset.messageViewportId).toBe('first');
+    expect(boundary.querySelector<HTMLElement>('[data-message-id="first"]')).not.toBeNull();
     act(() => beginGesture().scrollTo(500));
     let receipt!: ReturnType<ReturnType<typeof useChatHistory>['restoreReadingPosition']>;
     act(() => {
@@ -628,7 +628,7 @@ describe('useChatHistory navigation input owner', () => {
     expect(await receipt).toMatchObject({ status: 'settled', exact: true });
     expect(top.get()).toBe(200);
     expect(readChatScrollState(threadId)).toMatchObject({
-      messageAnchor: { messageId: 'stored-first', viewportOffsetPx: -200 },
+      messageAnchor: { messageId: 'first', viewportOffsetPx: -200 },
     });
   });
 
@@ -1024,6 +1024,98 @@ describe('useChatHistory navigation input owner', () => {
     }
   });
 
+  it.each([0.5, -0.5])('keeps the original anchor contract after browser scroll quantization (%spx)', async (shift) => {
+    const threadId = `widget-receipt-quantized-${shift}`;
+    const { el, top } = await openThread(threadId);
+    const boundary = el.querySelector<HTMLElement>('[data-message-viewport-id="first"]')!;
+    boundary.getBoundingClientRect = () =>
+      ({ top: 100 + shift - top.get(), bottom: 500 + shift - top.get() }) as DOMRect;
+    Object.defineProperty(el, 'scrollTop', {
+      configurable: true,
+      get: () => top.get(),
+      set: (value: number) => top.set(Math.round(value)),
+    });
+    const fixture = await mountReceiptWidget(el);
+    try {
+      let receipt!: ReturnType<ReturnType<typeof useChatHistory>['restoreReadingPosition']>;
+      const completed = vi.fn();
+      act(() => {
+        receipt = capturedHook!.restoreReadingPosition({
+          threadId,
+          position: { top: 200, anchor: 'offset', messageAnchor: { messageId: 'first', viewportOffsetPx: -200 } },
+        });
+        void receipt.then(completed);
+      });
+      await act(async () => flushAnimationFrames());
+      expect(top.get()).toBe(Math.round(200 + shift));
+      expect(completed).not.toHaveBeenCalled();
+      expect(fixture.requests()[0]).toBeDefined();
+      await act(async () => fixture.acknowledge(fixture.requests()[0]!));
+      expect(await receipt).toMatchObject({
+        status: 'settled',
+        exact: true,
+        position: { messageAnchor: { messageId: 'first', viewportOffsetPx: -200 } },
+      });
+    } finally {
+      fixture.dispose();
+    }
+  });
+
+  it.each([2, -2])('rejects a real anchor displacement while its acknowledgement is pending (%spx)', async (reflow) => {
+    const threadId = `widget-receipt-displaced-${reflow}`;
+    const { el, top } = await openThread(threadId);
+    let shift = 0;
+    const boundary = el.querySelector<HTMLElement>('[data-message-viewport-id="first"]')!;
+    boundary.getBoundingClientRect = () =>
+      ({ top: 100 + shift - top.get(), bottom: 500 + shift - top.get() }) as DOMRect;
+    const fixture = await mountReceiptWidget(el);
+    try {
+      let receipt!: ReturnType<ReturnType<typeof useChatHistory>['restoreReadingPosition']>;
+      act(() => {
+        receipt = capturedHook!.restoreReadingPosition({
+          threadId,
+          position: { top: 200, anchor: 'offset', messageAnchor: { messageId: 'first', viewportOffsetPx: -200 } },
+        });
+      });
+      await act(async () => flushAnimationFrames());
+      shift = reflow;
+      await act(async () => fixture.acknowledge(fixture.requests()[0]!));
+      expect(await receipt).toEqual({ status: 'unavailable' });
+    } finally {
+      fixture.dispose();
+    }
+  });
+
+  it('preserves interruption even when the acknowledged input leaves the quantized position unchanged', async () => {
+    const threadId = 'widget-receipt-quantized-input';
+    const { el, top } = await openThread(threadId);
+    const boundary = el.querySelector<HTMLElement>('[data-message-viewport-id="first"]')!;
+    boundary.getBoundingClientRect = () => ({ top: 100.5 - top.get(), bottom: 500.5 - top.get() }) as DOMRect;
+    Object.defineProperty(el, 'scrollTop', {
+      configurable: true,
+      get: () => top.get(),
+      set: (value: number) => top.set(Math.round(value)),
+    });
+    const fixture = await mountReceiptWidget(el);
+    try {
+      let receipt!: ReturnType<ReturnType<typeof useChatHistory>['restoreReadingPosition']>;
+      act(() => {
+        receipt = capturedHook!.restoreReadingPosition({
+          threadId,
+          position: { top: 200, anchor: 'offset', messageAnchor: { messageId: 'first', viewportOffsetPx: -200 } },
+        });
+      });
+      await act(async () => flushAnimationFrames());
+      await act(async () =>
+        fixture.acknowledge(fixture.requests()[0]!, { inputOccurredAt: performance.timeOrigin + performance.now() }),
+      );
+      expect(top.get()).toBe(201);
+      expect(await receipt).toEqual({ status: 'interrupted' });
+    } finally {
+      fixture.dispose();
+    }
+  });
+
   it('cannot let a stale child acknowledgement settle or interrupt a newer restore receipt', async () => {
     const threadId = 'widget-receipt-new-generation';
     const { el, top } = await openThread(threadId);
@@ -1361,11 +1453,11 @@ describe('useChatHistory navigation input owner', () => {
         anchor: 'offset',
         messageAnchor: { messageId: 'second' },
       });
-      expect(target.classList.contains('ring-blue-400')).toBe(true);
-      act(() => vi.advanceTimersByTime(1499));
-      expect(target.classList.contains('ring-blue-400')).toBe(true);
+      expect(target.dataset.messageJumpFocus === 'true').toBe(true);
+      act(() => vi.advanceTimersByTime(3199));
+      expect(target.dataset.messageJumpFocus === 'true').toBe(true);
       act(() => vi.advanceTimersByTime(1));
-      expect(target.classList.contains('ring-blue-400')).toBe(false);
+      expect(target.dataset.messageJumpFocus === 'true').toBe(false);
     } finally {
       vi.useRealTimers();
       writeShellPresentation('classic');
@@ -1403,7 +1495,7 @@ describe('useChatHistory navigation input owner', () => {
         jump('second');
         for (let frame = 0; frame < 5; frame++) flushAnimationFrames();
       });
-      expect(target.classList.contains('ring-blue-400')).toBe(true);
+      expect(target.dataset.messageJumpFocus === 'true').toBe(true);
       const saved = readChatScrollState(threadId);
       if (!saved || saved.anchor !== 'offset') throw new Error('Missing settled source reading state');
       shift = 150;
@@ -1419,11 +1511,11 @@ describe('useChatHistory navigation input owner', () => {
       expect(top.get()).toBe(500);
       expect(second.getBoundingClientRect().top - el.getBoundingClientRect().top).toBe(50);
       expect(readChatScrollState(threadId)).toEqual({ ...saved, top: 500 });
-      expect(target.classList.contains('ring-blue-400')).toBe(true);
-      act(() => vi.advanceTimersByTime(1249));
-      expect(target.classList.contains('ring-blue-400')).toBe(true);
+      expect(target.dataset.messageJumpFocus === 'true').toBe(true);
+      act(() => vi.advanceTimersByTime(2949));
+      expect(target.dataset.messageJumpFocus === 'true').toBe(true);
       act(() => vi.advanceTimersByTime(1));
-      expect(target.classList.contains('ring-blue-400')).toBe(false);
+      expect(target.dataset.messageJumpFocus === 'true').toBe(false);
     } finally {
       Object.assign(window, { ResizeObserver: originalObserver });
       vi.useRealTimers();
@@ -1447,7 +1539,7 @@ describe('useChatHistory navigation input owner', () => {
         window.dispatchEvent(new Event(CHAT_LAYOUT_CHANGED_EVENT));
         flushAnimationFrames();
       });
-      expect(target.classList.contains('ring-blue-400')).toBe(true);
+      expect(target.dataset.messageJumpFocus === 'true').toBe(true);
       if (reason === 'thread') {
         await act(async () => root.render(React.createElement(HookHost, { threadId: 'next-thread' })));
       } else {
@@ -1462,7 +1554,7 @@ describe('useChatHistory navigation input owner', () => {
           }
         });
       }
-      expect(target.classList.contains('ring-blue-400')).toBe(false);
+      expect(target.dataset.messageJumpFocus === 'true').toBe(false);
     } finally {
       writeShellPresentation('classic');
     }
@@ -1501,13 +1593,13 @@ describe('useChatHistory navigation input owner', () => {
         jump('second');
         for (let frame = 0; frame < 5; frame++) flushAnimationFrames();
       });
-      expect(target.classList.contains('ring-blue-400')).toBe(true);
+      expect(target.dataset.messageJumpFocus === 'true').toBe(true);
       act(() => {
         const gesture = beginGesture();
         gesture.scrollTo(200);
         gesture.end();
       });
-      expect(target.classList.contains('ring-blue-400')).toBe(false);
+      expect(target.dataset.messageJumpFocus === 'true').toBe(false);
       expect(top.get()).toBe(200);
     } finally {
       writeShellPresentation('classic');
@@ -1530,7 +1622,7 @@ describe('useChatHistory navigation input owner', () => {
         gesture.end();
         for (let frame = 0; frame < 5; frame++) flushAnimationFrames();
       });
-      expect(target.classList.contains('ring-blue-400')).toBe(false);
+      expect(target.dataset.messageJumpFocus === 'true').toBe(false);
     } finally {
       writeShellPresentation('classic');
     }

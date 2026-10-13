@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
-import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { resolve } from 'node:path';
 import { describe, it } from 'node:test';
@@ -69,4 +69,45 @@ describe('public API build projection', { skip: !existsSync(syncScript) }, () =>
       assert.equal(result.after, result.before, 'invalid source must not produce a partial package');
     });
   }
+
+  it('projects all prepared TypeScript packages to native public builds while retaining test consumers', (t) => {
+    const directory = mkdtempSync(resolve(tmpdir(), 'public-prepared-packages-'));
+    t.after(() => rmSync(directory, { recursive: true, force: true }));
+    const packages = new Map(
+      ['shared', 'finance', 'mcp-server'].map((name) => [
+        name,
+        JSON.parse(readFileSync(resolve(root, 'packages', name, 'package.json'), 'utf8')),
+      ]),
+    );
+    for (const [name, pkg] of packages) {
+      const target = resolve(directory, 'packages', name);
+      mkdirSync(target, { recursive: true });
+      writeFileSync(resolve(target, 'package.json'), JSON.stringify(pkg));
+    }
+    const source = readFileSync(syncScript, 'utf8');
+    // Execute the real shell loops too: a correct heredoc with a missing
+    // package invocation would leave that package's private wrapper exported.
+    const sharedBlock = source.slice(source.indexOf('# 3k-3a0:'), source.indexOf('# 3k-3a1a:'));
+    const mcpBlock = source.slice(source.indexOf('# 3k-3a1c:'), source.indexOf('# 3k-3a2:'));
+    assert.ok(sharedBlock && mcpBlock);
+    const result = spawnSync('bash', ['-e'], {
+      input: `TRANSFORM_COUNT=0\n${sharedBlock}\n${mcpBlock}`,
+      env: { ...process.env, FILTERED_DIR: directory },
+      encoding: 'utf8',
+    });
+    assert.equal(result.status, 0, result.stderr);
+    for (const [name, pkg] of packages) {
+      const expected = structuredClone(pkg);
+      expected.scripts.build = 'tsc';
+      if (name === 'mcp-server') {
+        expected.scripts = Object.fromEntries(
+          Object.entries(expected.scripts).filter(([key]) => !key.startsWith('governance:')),
+        );
+      }
+      assert.deepEqual(
+        JSON.parse(readFileSync(resolve(directory, 'packages', name, 'package.json'), 'utf8')),
+        expected,
+      );
+    }
+  });
 });

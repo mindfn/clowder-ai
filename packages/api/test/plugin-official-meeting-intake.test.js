@@ -12,7 +12,8 @@ import {
 import { OFFICIAL_PLUGIN_CATALOG } from '../dist/domains/plugin/official-catalog.js';
 import { OfficialPluginMeetingIntakeService } from '../dist/domains/plugin/official-plugin-meeting-intake.js';
 
-const entry = OFFICIAL_PLUGIN_CATALOG[0];
+const entry = OFFICIAL_PLUGIN_CATALOG.find((candidate) => candidate.catalogId === 'feishu-meeting-intake');
+assert.ok(entry);
 const instance = {
   pluginInstanceId: 'pi_feishu_health',
   pluginId: entry.pluginId,

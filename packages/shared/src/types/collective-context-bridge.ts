@@ -11,6 +11,7 @@ import {
 import { collectiveAcceptedWorkResultSchema, collectiveWorkIdSchema } from './collective-collaboration.js';
 
 const sessionId = z.string().min(8).max(120);
+export const collectiveCafeSectionSchema = z.enum(['cats', 'channel', 'calendar', 'permissions', 'connection']);
 export const collectiveClientContextSchema = collectiveCoordinatesSchema
   .extend({
     type: z.literal('collective:client-context'),
@@ -21,6 +22,18 @@ export const collectiveClientContextSchema = collectiveCoordinatesSchema
     channelId: collectiveLocationSchema.shape.channelId,
     channelIds: z.array(collectiveLocationSchema.shape.channelId).min(1).max(100),
     openCafe: z.boolean(),
+    cafeSection: collectiveCafeSectionSchema.optional(),
+  })
+  .strict();
+export const collectiveClientCafeSectionSchema = collectiveCoordinatesSchema
+  .extend({
+    type: z.literal('collective:client-cafe-section'),
+    bridgeId: sessionId,
+    contextId: sessionId,
+    contextRevision: z.number().int().positive(),
+    humanId: collectiveHumanIdSchema,
+    channelId: collectiveLocationSchema.shape.channelId,
+    section: collectiveCafeSectionSchema,
   })
   .strict();
 export const collectiveContextReadySchema = z.object({ type: z.literal('collective:context-ready') }).strict();
@@ -141,6 +154,8 @@ export const collectiveHostWorldSelectionSchema = z
   })
   .strict();
 export type CollectiveClientContext = z.infer<typeof collectiveClientContextSchema>;
+export type CollectiveClientCafeSection = z.infer<typeof collectiveClientCafeSectionSchema>;
+export type CollectiveCafeSection = z.infer<typeof collectiveCafeSectionSchema>;
 export type CollectiveHostContextInit = z.infer<typeof collectiveHostContextInitSchema>;
 export type CollectiveHostParticipationReady = z.infer<typeof collectiveHostParticipationReadySchema>;
 export type CollectiveClientWorkResultAccepted = z.infer<typeof collectiveClientWorkResultAcceptedSchema>;

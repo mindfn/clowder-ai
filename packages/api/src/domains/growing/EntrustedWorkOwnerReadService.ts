@@ -1,5 +1,6 @@
 import {
   type EntrustedWorkOwnerReadV1,
+  type EntrustedWorkTaskExecutionV1,
   entrustedWorkOwnerReadV1Schema,
   type ProducerAttentionReceiptV1,
   type TaskItem,
@@ -7,6 +8,13 @@ import {
 import { z } from 'zod';
 import type { ITaskStore } from '../cats/services/stores/ports/TaskStore.js';
 import { composeEntrustedWorkBrief } from './EntrustedWorkBriefComposer.js';
+import {
+  projectEntrustedWorkTimeRefs,
+  projectTaskTerminal,
+  readOwnerTaskExecution,
+  sameCompletionArtifact,
+  taskIdFromEntrustedWorkSubjectRef,
+} from './EntrustedWorkOwnerReadProjection.js';
 import type { NeedsMeProducerCatalog } from './NeedsMeProducerCatalog.js';
 import type { PreparedArtifactReader } from './ports/PreparedArtifactReader.js';
 
@@ -19,6 +27,7 @@ const ownerReadInputSchema = z
     taskId: boundedRef,
     observedRevision: z.number().int().positive().optional(),
     includeCompleted: z.boolean().optional(),
+    includeCancelled: z.boolean().optional(),
     viewer: z.discriminatedUnion('surface', [
       z.object({ surface: z.literal('human'), userId: boundedRef }).strict(),
       z
@@ -51,10 +60,47 @@ export class EntrustedWorkOwnerReadError extends Error {
   }
 }
 
+type EntrustedWorkContract = NonNullable<TaskItem['entrustedWork']>;
+
+function assertTerminalReadAllowed(
+  task: TaskItem,
+  entrusted: EntrustedWorkContract,
+  input: z.output<typeof ownerReadInputSchema>,
+): boolean {
+  const taskTerminal = task.status === 'done';
+  const contractTerminal = entrusted.closure.state !== 'open';
+  if (taskTerminal !== contractTerminal) {
+    throw new EntrustedWorkOwnerReadError(
+      'OWNER_READ_CONTRACT_INVALID',
+      'Task status and entrusted-work terminal state disagree',
+    );
+  }
+  if (!taskTerminal) return false;
+  if (entrusted.closure.state === 'satisfied' && input.includeCompleted) return true;
+  if ((entrusted.closure.state === 'cancelled' || entrusted.closure.state === 'abandoned') && input.includeCancelled) {
+    return false;
+  }
+  throw new EntrustedWorkOwnerReadError('OWNER_READ_TERMINAL', 'Entrusted work is terminal');
+}
+
+function currentAttentionReceipts(input: {
+  readonly isCurrent: boolean;
+  readonly entrusted: EntrustedWorkContract;
+  readonly subjectRef: string;
+  readonly producerReceipts: readonly ProducerAttentionReceiptV1[];
+}): ProducerAttentionReceiptV1[] {
+  if (!input.isCurrent || input.entrusted.closure.state !== 'open') return [];
+  return input.producerReceipts.filter(
+    (receipt) =>
+      receipt.taskRef.subjectRef === input.subjectRef && receipt.taskRef.observedRevision === input.entrusted.revision,
+  );
+}
+
 export interface EntrustedWorkOwnerReadServiceDeps {
   readonly tasks: Pick<ITaskStore, 'get' | 'listByKind'>;
   readonly producerCatalog: NeedsMeProducerCatalog;
   readonly artifactReader?: PreparedArtifactReader;
+  readonly taskExecution?: { read(task: TaskItem): Promise<EntrustedWorkTaskExecutionV1> };
 }
 
 export type EntrustedWorkOwnerReadInput = z.input<typeof ownerReadInputSchema>;
@@ -68,23 +114,28 @@ export class EntrustedWorkOwnerReadService {
     if (!task) throw new EntrustedWorkOwnerReadError('OWNER_READ_NOT_FOUND', 'Entrusted-work Task not found');
     this.assertViewer(task, input.viewer);
     const receipts =
-      input.includeCompleted && task.entrustedWork?.closure.state === 'satisfied'
+      task.entrustedWork?.closure.state !== 'open'
         ? []
         : await this.deps.producerCatalog.listCurrentReceipts(input.viewer.userId);
     return this.compose(task, input, receipts);
   }
 
-  /** Product Schedule is a discardable global read over current Task owners, never a second work store. */
-  async listForOwner(userId: string, view: 'active' | 'completed' = 'active'): Promise<EntrustedWorkOwnerReadV1[]> {
+  async listForOwner(
+    userId: string,
+    view: 'active' | 'completed' | 'cancelled' = 'active',
+  ): Promise<EntrustedWorkOwnerReadV1[]> {
     const ownerUserId = boundedRef.parse(userId);
-    const receipts = view === 'completed' ? [] : await this.deps.producerCatalog.listCurrentReceipts(ownerUserId);
+    const receipts = view === 'active' ? await this.deps.producerCatalog.listCurrentReceipts(ownerUserId) : [];
     const tasks = await this.deps.tasks.listByKind('work');
     const currentTasks = tasks.filter(
       (task) =>
         task.userId === ownerUserId &&
         (view === 'completed'
           ? task.status === 'done' && task.entrustedWork?.closure.state === 'satisfied'
-          : task.status !== 'done' && task.entrustedWork?.closure.state === 'open'),
+          : view === 'cancelled'
+            ? task.status === 'done' &&
+              (task.entrustedWork?.closure.state === 'cancelled' || task.entrustedWork?.closure.state === 'abandoned')
+            : task.status !== 'done' && task.entrustedWork?.closure.state === 'open'),
     );
     const artifactReader = this.deps.artifactReader?.createReadScope?.() ?? this.deps.artifactReader;
     const ownerReads: EntrustedWorkOwnerReadV1[] = [];
@@ -96,6 +147,7 @@ export class EntrustedWorkOwnerReadService {
           {
             taskId: task.id,
             includeCompleted: view === 'completed',
+            includeCancelled: view === 'cancelled',
             viewer: { surface: 'human', userId: ownerUserId },
           },
           receipts,
@@ -106,7 +158,6 @@ export class EntrustedWorkOwnerReadService {
     return ownerReads;
   }
 
-  /** Global Needs Me is derived from producer-owned Task links and current Task/Artifact truth. */
   async listNeedsMeForOwner(userId: string): Promise<EntrustedWorkOwnerReadV1[]> {
     const ownerUserId = boundedRef.parse(userId);
     const receipts = (await this.deps.producerCatalog.listCurrentReceipts(ownerUserId)).filter(
@@ -114,7 +165,7 @@ export class EntrustedWorkOwnerReadService {
     );
     const byTask = new Map<string, ProducerAttentionReceiptV1[]>();
     for (const receipt of receipts) {
-      const taskId = taskIdFromSubjectRef(receipt.taskRef.subjectRef);
+      const taskId = taskIdFromEntrustedWorkSubjectRef(receipt.taskRef.subjectRef);
       if (!taskId) continue;
       const current = byTask.get(taskId) ?? [];
       current.push(receipt);
@@ -171,10 +222,7 @@ export class EntrustedWorkOwnerReadService {
     if (!entrusted) {
       throw new EntrustedWorkOwnerReadError('OWNER_READ_CONTRACT_MISSING', 'Task has no entrusted-work contract');
     }
-    const completed = task.status === 'done' && entrusted.closure.state === 'satisfied';
-    if ((task.status === 'done' || entrusted.closure.state !== 'open') && !(input.includeCompleted && completed)) {
-      throw new EntrustedWorkOwnerReadError('OWNER_READ_TERMINAL', 'Entrusted work is terminal');
-    }
+    const completed = assertTerminalReadAllowed(task, entrusted, input);
     const observedRevision = input.observedRevision ?? entrusted.revision;
     if (observedRevision > entrusted.revision) {
       throw new EntrustedWorkOwnerReadError(
@@ -185,34 +233,26 @@ export class EntrustedWorkOwnerReadService {
     const subjectRef = `task:work:${task.id}`;
     const ownerRef = `task:item:${task.id}`;
     const isCurrent = observedRevision === entrusted.revision;
-    const currentArtifact =
-      completed && !entrusted.completion?.artifactSnapshot
-        ? undefined
-        : await this.readPreparedArtifact(
-            {
-              artifactRefs: entrusted.artifactRefs,
-              ownerRef,
-              ownerUserId: input.viewer.userId,
-              revision: entrusted.revision,
-              subjectRef,
-              threadId: task.threadId,
-              viewer: input.viewer,
-            },
-            artifactReader,
-          );
-    const preparedArtifact = completed
-      ? sameCompletionArtifact(currentArtifact, entrusted.completion?.artifactSnapshot)
-        ? currentArtifact
-        : undefined
-      : currentArtifact;
-    const attentionReceipts =
-      isCurrent && !completed
-        ? producerReceipts.filter(
-            (receipt) =>
-              receipt.taskRef.subjectRef === subjectRef && receipt.taskRef.observedRevision === entrusted.revision,
-          )
-        : [];
-    const timeRefs = this.projectTaskTimeRefs(entrusted.time, subjectRef, ownerRef, entrusted.revision);
+    const terminal = projectTaskTerminal(task);
+    const preparedArtifact = await this.resolvePreparedArtifact(
+      task,
+      entrusted,
+      input,
+      subjectRef,
+      ownerRef,
+      artifactReader,
+    );
+    const attentionReceipts = currentAttentionReceipts({
+      isCurrent,
+      entrusted,
+      subjectRef,
+      producerReceipts,
+    });
+    const timeRefs = projectEntrustedWorkTimeRefs(entrusted.time, subjectRef, ownerRef, entrusted.revision);
+    const execution =
+      entrusted.closure.state === 'open'
+        ? await readOwnerTaskExecution({ task, isCurrent, reader: this.deps.taskExecution })
+        : undefined;
     const candidate = {
       ...(completed
         ? {
@@ -222,6 +262,8 @@ export class EntrustedWorkOwnerReadService {
             },
           }
         : {}),
+      ...(terminal ? { terminal } : {}),
+      ...(execution ? { execution } : {}),
       work: {
         title: task.title,
         ownerCatId: task.ownerCatId,
@@ -254,6 +296,7 @@ export class EntrustedWorkOwnerReadService {
         preparedArtifact,
         timeRefs,
         attentionReceipts,
+        ...(terminal ? { terminal } : {}),
       }),
       ...(preparedArtifact ? { preparedArtifact } : {}),
       timeRefs,
@@ -264,6 +307,33 @@ export class EntrustedWorkOwnerReadService {
       throw new EntrustedWorkOwnerReadError('OWNER_READ_CONTRACT_INVALID', parsed.error.message);
     }
     return parsed.data;
+  }
+
+  private async resolvePreparedArtifact(
+    task: TaskItem,
+    entrusted: EntrustedWorkContract,
+    input: z.output<typeof ownerReadInputSchema>,
+    subjectRef: string,
+    ownerRef: string,
+    artifactReader: PreparedArtifactReader | undefined,
+  ): Promise<EntrustedWorkOwnerReadV1['preparedArtifact']> {
+    const terminal = entrusted.closure.state !== 'open';
+    const sealedArtifact = terminal ? entrusted.completion?.artifactSnapshot : undefined;
+    if (terminal && !sealedArtifact) return undefined;
+    const currentArtifact = await this.readPreparedArtifact(
+      {
+        artifactRefs: entrusted.artifactRefs,
+        ownerRef,
+        ownerUserId: input.viewer.userId,
+        revision: entrusted.revision,
+        subjectRef,
+        threadId: task.threadId,
+        viewer: input.viewer,
+      },
+      artifactReader,
+    );
+    if (!terminal) return currentArtifact;
+    return sameCompletionArtifact(currentArtifact, sealedArtifact) ? currentArtifact : undefined;
   }
 
   private async readPreparedArtifact(
@@ -309,40 +379,4 @@ export class EntrustedWorkOwnerReadService {
       throw new EntrustedWorkOwnerReadError('OWNER_READ_FORBIDDEN', 'Entrusted-work Task belongs to another thread');
     }
   }
-
-  private projectTaskTimeRefs(
-    time: NonNullable<TaskItem['entrustedWork']>['time'],
-    subjectRef: string,
-    ownerRef: string,
-    revision: number,
-  ) {
-    const roles = [
-      ['businessDeadline', 'business_deadline'],
-      ['reviewBy', 'review_by'],
-      ['plannedStart', 'planned_start'],
-      ['actualStart', 'actual_start'],
-      ['estimatedCompletion', 'estimated_completion'],
-    ] as const;
-    return roles.flatMap(([key, role]) => {
-      const fact = time[key];
-      return fact ? [{ role, subjectRef, ownerRef, revision, value: fact.value }] : [];
-    });
-  }
-}
-
-function taskIdFromSubjectRef(subjectRef: string): string | null {
-  const prefix = 'task:work:';
-  if (!subjectRef.startsWith(prefix)) return null;
-  const taskId = subjectRef.slice(prefix.length).trim();
-  return taskId.length > 0 ? taskId : null;
-}
-
-function sameCompletionArtifact(
-  current: EntrustedWorkOwnerReadV1['preparedArtifact'],
-  sealed: EntrustedWorkOwnerReadV1['preparedArtifact'],
-): boolean {
-  if (!current || !sealed) return false;
-  return (['artifactRef', 'artifactRevision', 'completenessRef', 'previewRef', 'openInWorkspaceRef'] as const).every(
-    (key) => current[key] === sealed[key],
-  );
 }

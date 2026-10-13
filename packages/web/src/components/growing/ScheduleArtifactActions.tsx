@@ -1,6 +1,8 @@
 import type { ArtifactReviewView, EntrustedWorkOwnerReadV1 } from '@cat-cafe/shared';
 import { ReviewArtifactButton } from '@/components/content-review/ReviewArtifactButton';
+import { useShellCopy } from '@/components/shell/shell-copy';
 import { reviewSurfaceFromPreparedRef } from '@/components/workbench/artifact-review-surface';
+import { scheduleCopy } from './product-schedule.shell-copy';
 
 type Artifact = NonNullable<EntrustedWorkOwnerReadV1['preparedArtifact']>;
 
@@ -20,6 +22,7 @@ export function ScheduleArtifactActions({
   onOpenArtifact?: (artifact: Artifact, itemRef: string, title?: string) => void;
   onOpenReview?: (review: ArtifactReviewView, itemRef: string) => void;
 }) {
+  const t = useShellCopy(scheduleCopy);
   const artifact = ownerRead.preparedArtifact;
   if (!artifact) return null;
   const loading = artifactsLoading && !reviewSurfaceFromPreparedRef(artifact.openInWorkspaceRef);
@@ -37,7 +40,7 @@ export function ScheduleArtifactActions({
         className="shrink-0 rounded-lg bg-cafe-accent px-3 py-2 text-xs font-semibold text-[var(--cafe-accent-foreground)] hover:bg-cafe-accent-hover disabled:cursor-wait disabled:opacity-60"
         onClick={() => onOpenArtifact?.(artifact, itemRef, displayTitle)}
       >
-        {loading ? '正在加载成果…' : '打开成果'}
+        {loading ? t.artifactLoading : t.artifact}
       </button>
     </div>
   );

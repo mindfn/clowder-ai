@@ -36,7 +36,7 @@ export function useCollectiveCollaboration(input: {
       const run = async () => {
         input.setSnapshot((current) => ({
           ...current,
-          delivery: { kind: 'requesting', label: '正在更新共同现场…' },
+          delivery: { kind: 'requesting', label: '正在更新…' },
         }));
         try {
           await input.request(path, {

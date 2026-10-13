@@ -37,7 +37,13 @@ function assertMomentTarget(
 ): void {
   const timeline = document.timeline;
   if (
+    !Number.isSafeInteger(target.tick) ||
+    target.tick < 0 ||
     target.tick >= timeline.durationTicks ||
+    (target.endTick !== undefined &&
+      (!Number.isSafeInteger(target.endTick) ||
+        target.endTick <= target.tick ||
+        target.endTick > timeline.durationTicks)) ||
     target.timebase.numerator !== timeline.timebase.numerator ||
     target.timebase.denominator !== timeline.timebase.denominator
   )

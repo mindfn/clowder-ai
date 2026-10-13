@@ -244,6 +244,95 @@ describe('F202 live Plugin Manager Console wiring', () => {
     expect(mockApiFetch.mock.calls.some(([url]) => url === '/api/plugins/personal-chrome')).toBe(false);
   });
 
+  it('preserves manifest colors in repository compatibility rows and their detail cards', async () => {
+    window.history.replaceState({}, '', '/settings?s=plugins');
+    const repository = {
+      id: 'weixin-mp',
+      name: '微信公众号',
+      version: '1.0.0',
+      status: 'enabled',
+      description: 'Manifest description',
+      icon: 'megaphone',
+      iconBg: '#07c160',
+      configured: true,
+      config: [],
+      resources: [],
+    };
+    mockApiFetch.mockImplementation(async (url) => {
+      if (url === '/api/plugins') return json({ plugins: [repository] });
+      if (url === '/api/plugins/official') return json({ plugins: [] });
+      if (url === '/api/plugin-manager/plugins')
+        return json(
+          response({
+            ...managerPlugin({ installed: true, pluginId: repository.id, displayName: repository.name }),
+            icon: repository.icon,
+            iconBg: repository.iconBg,
+          }),
+        );
+      return json({}, 404);
+    });
+    await act(async () => root.render(<PluginsContent />));
+    await flushEffects();
+    const row = container.querySelector('[data-plugin-id="weixin-mp"]');
+    const listIcon = row?.querySelector('[data-plugin-icon="megaphone"]') as HTMLElement | null;
+    expect(listIcon?.style.backgroundColor).toBe('rgb(7, 193, 96)');
+    expect(listIcon?.style.color).toBe('var(--cafe-image-foreground)');
+    await act(async () => row?.querySelector('button')?.click());
+    await flushEffects();
+    const detailIcon = container.querySelector(
+      '[data-mobile-panel="detail"] .settings-resource-avatar',
+    ) as HTMLElement | null;
+    expect(detailIcon?.style.backgroundColor).toBe(listIcon?.style.backgroundColor);
+    expect(detailIcon?.style.color).toBe(listIcon?.style.color);
+    expect(row?.querySelector('button[aria-pressed]')).toBeNull();
+    expect(mockApiFetch.mock.calls.every(([, options]) => !options?.method || options.method === 'GET')).toBe(true);
+  });
+
+  it('uses Host manifest presentation for official compatibility list and detail without a frontend palette', async () => {
+    window.history.replaceState({}, '', '/settings?s=plugins');
+    const official = {
+      catalogId: 'new-supplier',
+      pluginId: 'vendor.new-supplier',
+      packageName: '@vendor/new-supplier',
+      version: '1.0.0',
+      availableVersion: '1.0.0',
+      packageDigest: digest,
+      effectiveGrants: [],
+      ownerAuthAvailable: false,
+      updateAvailable: false,
+      instance: null,
+    };
+    const icon = { type: 'svg', src: '/api/plugin-manager/plugins/vendor.new-supplier/icon' } as const;
+    mockApiFetch.mockImplementation(async (url) => {
+      if (url === '/api/plugins') return json({ plugins: [] });
+      if (url === '/api/plugins/official') return json({ plugins: [official] });
+      if (url === '/api/plugin-manager/plugins')
+        return json(
+          response({
+            ...managerPlugin({ pluginId: official.pluginId, displayName: 'Supplier manifest name' }),
+            icon,
+            iconBg: '#123abc',
+          }),
+        );
+      return json({}, 404);
+    });
+    await act(async () => root.render(<PluginsContent />));
+    await flushEffects();
+    const listIcon = container.querySelector(
+      '[data-plugin-id="vendor.new-supplier"] [data-plugin-icon]',
+    ) as HTMLElement | null;
+    expect(listIcon?.querySelector('img')?.getAttribute('src')).toBe(icon.src);
+    expect(listIcon?.style.backgroundColor).toBe('rgb(18, 58, 188)');
+    await act(async () =>
+      container.querySelector<HTMLButtonElement>('[data-plugin-id="vendor.new-supplier"] button')?.click(),
+    );
+    await flushEffects();
+    const detailIcon = container.querySelector('[data-mobile-panel="detail"] [data-plugin-icon]') as HTMLElement | null;
+    expect(detailIcon?.querySelector('img')?.getAttribute('src')).toBe(icon.src);
+    expect(detailIcon?.style.backgroundColor).toBe(listIcon?.style.backgroundColor);
+    expect(mockApiFetch.mock.calls.every(([, options]) => !options?.method || options.method === 'GET')).toBe(true);
+  });
+
   it('loads detail for the installed plugin selected by visible section ordering', async () => {
     const audio = managerPlugin({
       pluginId: 'dev.clowder.audio-notes',

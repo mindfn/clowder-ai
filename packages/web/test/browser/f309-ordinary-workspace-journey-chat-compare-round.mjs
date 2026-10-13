@@ -20,6 +20,7 @@ const CANDIDATE_REF = 'candidate-round-2';
 const CONTENT = `prepared-media:${'6'.repeat(64)}`;
 const SENT_ID = 'human-round-request';
 const RECEIPT_ID = 'host-receipt-round-candidate';
+const NATIVE_ID = 'native-returned-round-image';
 const STAMP = '2026-10-04T04:00:00Z';
 const TASK_ID = 'task-round';
 
@@ -100,6 +101,14 @@ const receiptMessage = {
       followUp: { kind: 'none', reason: 'not_applicable' },
     },
   },
+};
+const nativeMessage = {
+  id: NATIVE_ID,
+  type: 'assistant',
+  catId: 'codex-terra',
+  content: '返回的原生图片',
+  timestamp: 3,
+  contentBlocks: [{ type: 'image', url: '/uploads/2.png' }],
 };
 
 const requestView = () => ({
@@ -225,6 +234,12 @@ function ownerApi({ reviews = 'own' } = {}) {
   return async (request, url, calls) => {
     const { pathname } = url;
     const method = request.method();
+    if (pathname === '/api/content-publications/resolve')
+      return { body: { status: 'resolved', ownerUserId: 'operator', asset: roundAsset(2, CANDIDATE_BYTES) } };
+    if (pathname === `/api/content-publications/${CONTENT}`)
+      return { body: { asset: roundAsset(2, CANDIDATE_BYTES), currentOwnerRevision: 2 } };
+    if (pathname === `/api/content-publications/${CONTENT}/media/2` || pathname === '/uploads/2.png')
+      return { raw: CANDIDATE_BYTES, contentType: 'image/png' };
     if (pathname === `/api/content-modifications/${REQUEST_ID}` && method === 'GET') {
       calls.push('GET request');
       return { body: requestView() };
@@ -282,12 +297,27 @@ function ownerApi({ reviews = 'own' } = {}) {
 
 export function registerOrdinaryChatCompareRoundJourney(suite) {
   /** `later` is how much the person said after the receipt: the chat then opens with the receipt above the fold. */
-  const open = ({ later = 0, reviews, ...options } = {}) =>
-    openChatPage(suite, {
+  const open = async ({ later = 0, reviews, native = false, ...options } = {}) => {
+    const opened = await openChatPage(native ? () => ({ ...suite(), baseUrl: `${suite().baseUrl}?shell=v2` }) : suite, {
       ...options,
-      messages: [...conversation(6, 0), sentMessage, receiptMessage, ...conversation(later, 4)],
+      messages: [
+        ...conversation(6, 0),
+        sentMessage,
+        receiptMessage,
+        ...(native ? [nativeMessage] : []),
+        ...conversation(later, 4),
+      ],
       handleApi: ownerApi({ reviews }),
     });
+    if (native) {
+      await opened.page.route('**/uploads/2.png', (route) =>
+        route.fulfill({ contentType: 'image/png', body: CANDIDATE_BYTES }),
+      );
+      await opened.page.reload({ waitUntil: 'domcontentloaded' });
+      await opened.page.locator('[data-chat-container]').waitFor();
+    }
+    return opened;
+  };
   /** The work's generic entry remembers a review the person chose earlier; a receipt must not be taken there. */
   const rememberReview = (page, reviewId) =>
     page.evaluate(
@@ -323,6 +353,82 @@ export function registerOrdinaryChatCompareRoundJourney(suite) {
     compare
       .locator('img')
       .evaluateAll((images) => images.map((image) => ({ alt: image.alt, width: image.naturalWidth })));
+
+  for (const [width, closeNative] of [
+    [1440, false],
+    [390, false],
+    [1440, true],
+  ])
+    test(
+      `task round: candidate comparison reenters after ${closeNative ? 'closing the native image tab' : 'the native image'} at ${width}px`,
+      { timeout: 120_000 },
+      async () => {
+        const { context, page, calls, errors } = await open({ native: true, width, dark: width === 390 });
+        try {
+          const compare = await openComparison(page, calls);
+          await compare.getByRole('button', { name: '返回来源', exact: true }).click();
+          // Direct receipt reentry remains the working control.
+          await openComparison(page, calls);
+          await compare.getByRole('button', { name: '返回来源', exact: true }).click();
+          await page
+            .locator(`[data-message-id="${NATIVE_ID}"]`)
+            .getByRole('button', { name: '打开作品 图片', exact: true })
+            .click();
+          const round = page.locator('[data-testid="artifact-review-surface"]:visible');
+          await round.getByRole('button', { name: '对比版本', exact: true }).waitFor({ timeout: 20_000 });
+          assert.equal(
+            await page.locator('[data-testid="artifact-media-compare"]:visible').count(),
+            0,
+            'plain native entry shows the round',
+          );
+          if (closeNative) {
+            await page.getByRole('button', { name: /^关闭 图片/ }).click();
+          } else await round.getByRole('button', { name: '返回', exact: true }).click();
+          await receiptLine(page).getByRole('button', { name: '打开对照', exact: true }).click();
+          await page.getByTestId('artifact-media-compare').waitFor({ state: 'visible', timeout: 10_000 });
+          assert.equal(
+            await page.locator('[data-testid="artifact-media-compare"]:visible').count(),
+            1,
+            'one visible comparison without an extra click',
+          );
+          assert.equal(
+            await page.evaluate(() => window.__chatBeforeOpen === document.querySelector('[data-chat-container]')),
+            true,
+          );
+          await page.screenshot({ path: `${EVIDENCE}/round-reentry-${width}${closeNative ? '-closed' : ''}.png` });
+          assert.deepEqual(errors, []);
+          assert.deepEqual(
+            calls.filter((call) => call.startsWith('POST') && !['POST resolve', 'POST context'].includes(call)),
+            [],
+          );
+        } catch (error) {
+          await page.screenshot({
+            path: `${EVIDENCE}/round-reentry-${width}${closeNative ? '-closed' : ''}-failed.png`,
+          });
+          await writeFile(
+            `${EVIDENCE}/round-reentry-${width}${closeNative ? '-closed' : ''}-failed.json`,
+            JSON.stringify(
+              {
+                error: String(error),
+                calls,
+                errors,
+                rounds: await page.locator('[data-testid="artifact-review-surface"]').evaluateAll((items) =>
+                  items.map((el) => ({
+                    visible: el.getBoundingClientRect().width > 0,
+                    comparison: Boolean(el.querySelector('[data-testid="artifact-media-compare"]')),
+                  })),
+                ),
+              },
+              null,
+              2,
+            ),
+          );
+          throw error;
+        } finally {
+          await context.close();
+        }
+      },
+    );
 
   test(
     'task round: the receipt opens the work at the returned round and goes straight to the comparison, the chat untouched',

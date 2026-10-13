@@ -1,12 +1,7 @@
 import type { EntrustedWorkOwnerReadV1 } from '@cat-cafe/shared';
-import {
-  calendarDateKey,
-  calendarDays,
-  changeCalendarMonth,
-  WORK_TIME,
-  workCalendarDates,
-  workTitle,
-} from './work-calendar';
+import { useShellCopy } from '@/components/shell/shell-copy';
+import { scheduleCopy } from './product-schedule.shell-copy';
+import { calendarDateKey, calendarDays, changeCalendarMonth, workCalendarDates, workTitle } from './work-calendar';
 
 export function WorkCalendarMonth({
   works,
@@ -23,6 +18,7 @@ export function WorkCalendarMonth({
   onMonth: (month: number) => void;
   onDay: (day: string | null) => void;
 }) {
+  const t = useShellCopy(scheduleCopy);
   const todayKey = calendarDateKey(today);
   const currentMonth = new Date(month).getMonth();
   const events = works.flatMap((work) => workCalendarDates(work).map((time) => ({ work, time })));
@@ -30,18 +26,18 @@ export function WorkCalendarMonth({
     'rounded-md border border-cafe-subtle px-2.5 py-1.5 text-xs text-cafe-secondary hover:bg-cafe-surface';
   return (
     <section
-      aria-label="月份安排"
+      aria-label={t.monthLabel}
       className="mt-5 min-w-0 rounded-xl border border-cafe-subtle bg-[var(--console-card-bg)]"
     >
       <header className="flex flex-wrap items-center justify-between gap-2 px-3 py-3">
         <h3 className="text-sm font-semibold text-cafe-black">
-          {new Intl.DateTimeFormat('zh-CN', { year: 'numeric', month: 'long' }).format(month)}
+          {new Intl.DateTimeFormat(t.locale, { year: 'numeric', month: 'long' }).format(month)}
         </h3>
         <div className="flex items-center gap-1">
           <button
             type="button"
             className={control}
-            aria-label="上个月"
+            aria-label={t.previousMonth}
             onClick={() => {
               onMonth(changeCalendarMonth(month, -1));
               onDay(null);
@@ -57,12 +53,12 @@ export function WorkCalendarMonth({
               onDay(todayKey);
             }}
           >
-            今天
+            {t.today}
           </button>
           <button
             type="button"
             className={control}
-            aria-label="下个月"
+            aria-label={t.nextMonth}
             onClick={() => {
               onMonth(changeCalendarMonth(month, 1));
               onDay(null);
@@ -76,11 +72,13 @@ export function WorkCalendarMonth({
         className="grid grid-cols-7 border-t border-cafe-subtle text-center text-micro text-cafe-muted"
         aria-hidden="true"
       >
-        {['一', '二', '三', '四', '五', '六', '日'].map((day) => (
-          <div key={day} className="py-2">
-            {day}
-          </div>
-        ))}
+        {[t.weekday.mon, t.weekday.tue, t.weekday.wed, t.weekday.thu, t.weekday.fri, t.weekday.sat, t.weekday.sun].map(
+          (day) => (
+            <div key={day} className="py-2">
+              {day}
+            </div>
+          ),
+        )}
       </div>
       <div className="grid grid-cols-7 overflow-hidden rounded-b-xl">
         {calendarDays(month).map((date) => {
@@ -92,7 +90,7 @@ export function WorkCalendarMonth({
             <button
               key={key}
               type="button"
-              aria-label={`${key}，${entries.length} 项安排`}
+              aria-label={t.dayCount(key, entries.length)}
               aria-pressed={selected}
               data-calendar-date={key}
               onClick={() => onDay(selected ? null : key)}
@@ -107,14 +105,14 @@ export function WorkCalendarMonth({
                 {entries.slice(0, 2).map(({ work, time }) => (
                   <span
                     key={`${work.envelope.subjectRef}:${time.role}`}
-                    title={`${WORK_TIME[time.role]} · ${workTitle(work)}`}
+                    title={`${t.time[time.role]} · ${workTitle(work)}`}
                     className={`block truncate rounded px-1 py-0.5 text-micro ${time.role === 'business_deadline' && time.value < today && !work.completion ? 'bg-semantic-critical-surface text-semantic-critical' : 'bg-cafe-accent/10 text-cafe-accent'}`}
                   >
-                    {WORK_TIME[time.role]}
+                    {t.time[time.role]} · {workTitle(work)}
                   </span>
                 ))}
                 {entries.length > 2 ? (
-                  <span className="block text-micro text-cafe-muted">+{entries.length - 2} 项</span>
+                  <span className="block text-micro text-cafe-muted">{t.more(entries.length - 2)}</span>
                 ) : null}
               </span>
             </button>

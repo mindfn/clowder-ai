@@ -26,6 +26,7 @@ import { useThreadLiveness } from '@/hooks/useThreadScopedSelectors';
 import { formatCatDisplayName } from '@/lib/cat-display-name';
 import { useChatStore } from '@/stores/chatStore';
 import { useInputHistoryStore } from '@/stores/inputHistoryStore';
+import { useToastStore } from '@/stores/toastStore';
 import { apiFetch } from '@/utils/api-client';
 import { compressImage } from '@/utils/compressImage';
 import { AppTooltip } from './AppTooltip';
@@ -43,9 +44,11 @@ import {
   type ImageLifecycleStatus,
   isImageLifecycleBlockingSend,
 } from './chat-input-upload-state';
+import { composerAttachments } from './composer-queue';
 import { GameLobby, type GameStartPayload } from './game/GameLobby';
 import { HistorySearchModal } from './HistorySearchModal';
 import { PathCompletionMenu } from './PathCompletionMenu';
+import { projectScreeningComposerConflict } from './project-screening-composer-group';
 import { useShellCopy } from './shell/shell-copy';
 import { pushThreadRouteWithHistory } from './ThreadSidebar/thread-navigation';
 import {
@@ -59,6 +62,7 @@ import {
   threadImageDrafts,
   threadReplyDrafts,
 } from './thread-drafts';
+import { useComposerKeyboardFocus } from './use-composer-keyboard-focus';
 import { useDurableComposerDraft } from './useDurableComposerDraft';
 import { useTextareaAutosize } from './useTextareaAutosize';
 import { WhisperCatSelector } from './WhisperCatSelector';
@@ -328,6 +332,7 @@ export function ChatInput({
   const [showHistorySearch, setShowHistorySearch] = useState(false);
   const [lobbyMode, setLobbyMode] = useState<'player' | 'god-view' | 'detective' | null>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
+  useComposerKeyboardFocus(shellV2, textareaRef);
   const menuRef = useRef<HTMLDivElement>(null);
   const addButtonRef = useRef<HTMLButtonElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
@@ -412,6 +417,13 @@ export function ChatInput({
   const doSend = useCallback(() => {
     if (sendTemporarilyDisabled) return;
     if (whisperMode && whisperTargets.size === 0) return;
+    const conflict = projectScreeningComposerConflict(composerAttachments(effectiveThreadId, contextAttachments));
+    if (conflict) {
+      useToastStore
+        .getState()
+        .addToast({ type: 'error', title: '请先整理审片位置', message: conflict, duration: 6000 });
+      return;
+    }
     const trimmed = input.trim();
     if ((trimmed || contextAttachments.length > 0) && !disabled) {
       const draftSnapshot = {
@@ -466,6 +478,7 @@ export function ChatInput({
     beginComposerDraftAdmission,
     markComposerDraftOptimisticallyCleared,
     setInput,
+    effectiveThreadId,
   ]);
 
   const handleSend = useCallback(() => doSend(), [doSend]);
@@ -495,6 +508,16 @@ export function ChatInput({
     (attachment: ContextAttachment) => {
       const parsed = ContextAttachmentSchema.safeParse(attachment);
       if (!parsed.success) return;
+      const conflict = projectScreeningComposerConflict([
+        ...composerAttachments(effectiveThreadId, contextAttachments),
+        parsed.data,
+      ]);
+      if (conflict) {
+        useToastStore
+          .getState()
+          .addToast({ type: 'error', title: '没能放进输入框', message: conflict, duration: 6000 });
+        return;
+      }
       setContextAttachments((previous) =>
         [...previous, parsed.data as ContextAttachment].slice(0, CONTEXT_ATTACHMENT_MAX_COUNT),
       );
@@ -505,7 +528,7 @@ export function ChatInput({
       }
       closeContextPicker();
     },
-    [closeContextPicker, contextShortcutRange, setInput],
+    [closeContextPicker, contextShortcutRange, setInput, contextAttachments, effectiveThreadId],
   );
 
   const [gameStarting, setGameStarting] = useState(false);

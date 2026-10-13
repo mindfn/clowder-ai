@@ -141,7 +141,6 @@ export function CollectiveLaunchSurface({
           connection={connection}
           context={contextBridge.context}
           policyBridge={policyBridge}
-          onOpen={contextBridge.open}
           onParticipationReady={({ revision, catCount }) => {
             const activeContext = contextBridge.context;
             if (!activeContext) return;

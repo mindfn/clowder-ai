@@ -4,8 +4,8 @@
  *
  * Architecture:
  *   - `proposalStore.get(proposalId)` verifies proposal status + lifecycle
- *   - `bindingProvider` maps a specific task → the proposalId that
- *     grants delegation for it (task-level scoping, not thread-pooled)
+ *   - `bindingProvider` maps a specific task → every independently approved
+ *     proposal that grants delegation for it (task-level scoping, not thread-pooled)
  *   - Authorized delegate catIds come from `proposal.preferredCats` —
  *     the explicit execution target set at proposal creation / operator approval,
  *     not the current thread roster (which may include reviewers, coordinators,
@@ -24,7 +24,7 @@ import type {
 import { sameDevelopmentScopeSnapshot } from './action-subject-delegate-contract.js';
 
 /**
- * Maps a task to the proposal that grants delegation for it, along with
+ * Maps a task to a proposal that grants delegation for it, along with
  * the ownerCatId that was current when the delegation was approved.
  *
  * This binding is the bridge between the task layer (which knows task IDs)
@@ -41,7 +41,7 @@ export interface DelegateProposalBinding {
 }
 
 /**
- * Resolves the delegation binding for a specific task. Implementations
+ * Resolves the delegation bindings for a specific task. Implementations
  * typically query a task metadata index or workflow state.
  *
  * `taskThreadId` is the thread where the task lives (the parent/source
@@ -50,7 +50,11 @@ export interface DelegateProposalBinding {
  * lookups.
  */
 export interface DelegateBindingProvider {
-  getBindingForTask(taskId: string, taskThreadId: string, tenantScope: string): Promise<DelegateProposalBinding | null>;
+  getBindingsForTask(
+    taskId: string,
+    taskThreadId: string,
+    tenantScope: string,
+  ): Promise<ReadonlyArray<DelegateProposalBinding>>;
 }
 
 /**
@@ -91,62 +95,41 @@ export class ProposalStoreDelegateProvider implements TaskApprovedDelegateProvid
     tenantScope: string,
     currentDevelopmentScope?: DevelopmentScopeSnapshot,
   ): Promise<ReadonlyArray<ApprovedDelegate>> {
-    // Step 1: Find the delegation binding for this specific task.
-    // Fail-closed: no binding → no delegation proof → empty.
-    const binding = await this.bindingProvider.getBindingForTask(taskId, taskThreadId, tenantScope);
-    if (!binding) return [];
+    // Step 1: Find every independently approved delegation binding for this
+    // specific task. Thread proposals are durable approvals and the current
+    // proposal lifecycle has no approved→revoked transition, so sequential
+    // child approvals may legitimately coexist.
+    const bindings = await this.bindingProvider.getBindingsForTask(taskId, taskThreadId, tenantScope);
 
-    // Step 2 (P1-2): Verify the task's current owner matches the owner
-    // under which the delegation was approved. Owner change invalidates
-    // the delegation — the new owner hasn't authorized this delegate.
-    if (binding.approvedUnderOwner !== currentOwnerCatId) return [];
+    const delegateGroups = await Promise.all(
+      bindings.map(async (binding): Promise<ReadonlyArray<ApprovedDelegate>> => {
+        // Step 2 (P1-2): Owner changes invalidate each approval independently.
+        if (binding.approvedUnderOwner !== currentOwnerCatId) return [];
 
-    // Step 3: Verify proposal in authoritative store.
-    // Missing or tampered proposal → fail closed.
-    const proposal = await this.proposalStore.get(binding.proposalId);
-    if (!proposal) return [];
+        // Steps 3-6: Re-read and verify each proposal from authoritative truth.
+        const proposal = await this.proposalStore.get(binding.proposalId);
+        if (!proposal || proposal.status !== 'approved') return [];
+        const createdThreadId = proposal.createdThreadId;
+        if (!createdThreadId) return [];
+        if (proposal.sourceThreadId !== taskThreadId) return [];
+        if (proposal.createdBy !== tenantScope) return [];
 
-    // Step 4: Verify proposal is approved with a created child thread.
-    // Non-approved (rejected/withdrawn) or no child thread → fail closed.
-    if (proposal.status !== 'approved') return [];
-    const createdThreadId = proposal.createdThreadId;
-    if (!createdThreadId) return [];
+        // Step 7 (R5): Scope drift invalidates only the affected approval.
+        if (!sameDevelopmentScopeSnapshot(proposal.approvedDevelopmentScope, currentDevelopmentScope)) return [];
 
-    // Step 5: Verify proposal originated from the task's thread.
-    // A proposal from a different thread cannot grant delegation for
-    // tasks in this thread.
-    if (proposal.sourceThreadId !== taskThreadId) return [];
+        // Step 8: preferredCats are the exact approved execution targets.
+        const authorizedCats = proposal.preferredCats;
+        if (!authorizedCats || authorizedCats.length === 0) return [];
 
-    // Step 6: Verify tenant — the proposal creator must be the tenant
-    // owner of the task.
-    if (proposal.createdBy !== tenantScope) return [];
+        return authorizedCats.map((catId) => ({
+          catId,
+          threadId: createdThreadId,
+          evidenceRef: `proposal:${binding.proposalId}:approved:thread:${createdThreadId}:cat:${catId}`,
+        }));
+      }),
+    );
 
-    // Step 7 (R5): Development scope drift detection.
-    // The proposal's approvedDevelopmentScope is the immutable snapshot from
-    // creation time. If the task's current scope differs from the approved
-    // snapshot, the delegation is stale — the accepted work unit, source, or
-    // revision has changed since approval.
-    //
-    // Fail-closed cases:
-    //   a) Proposal has no scope → no delegate authority (tasks without
-    //      entrustedWork.developmentScope at proposal time cannot delegate).
-    //   b) Task has no current scope → scope was removed after approval → stale.
-    //   c) Any of the 5 fields differ → scope drift → stale.
-    if (!sameDevelopmentScopeSnapshot(proposal.approvedDevelopmentScope, currentDevelopmentScope)) return [];
-
-    // Step 8: Use proposal's preferredCats — the explicit execution target
-    // set at proposal creation / operator approval. This is NOT the current
-    // thread roster. A cat that joined the child thread later (reviewer,
-    // coordinator, observer) does NOT gain delegation standing.
-    // Empty or absent preferredCats → fail closed.
-    const authorizedCats = proposal.preferredCats;
-    if (!authorizedCats || authorizedCats.length === 0) return [];
-
-    return authorizedCats.map((catId) => ({
-      catId,
-      threadId: createdThreadId,
-      evidenceRef: `proposal:${binding.proposalId}:approved:thread:${createdThreadId}:cat:${catId}`,
-    }));
+    return delegateGroups.flat();
   }
 }
 
@@ -169,40 +152,42 @@ export interface ProposalListItem {
  * proposal chain in the authoritative proposal store.
  *
  * Resolution path:
- *   1. `proposalLister.listByThread(taskThreadId)` returns all proposals
- *      raised from the task's parent thread.
+ *   1. `proposalLister.listAllByThread(taskThreadId)` returns the complete
+ *      authority set raised from the task's parent thread. Product-list
+ *      windows must never silently revoke an older approval.
  *   2. Filter to proposals that are `approved` with a `createdThreadId`
  *      AND whose `subjectTaskId` matches the requested `taskId`.
  *      This ensures task-level isolation: proposals for task A cannot
  *      authorize delegation for task B in the same thread.
- *   3. If exactly one match → unambiguous binding. If zero or multiple
- *      matches → fail closed.
- *   4. Verify tenant: `proposal.createdBy` must match the task's tenant
- *      scope. Different tenant → no delegation authority.
+ *   3. Verify tenant independently for every match. A different-tenant
+ *      proposal grants no authority and cannot suppress valid approvals.
+ *   4. Return every independently valid binding. The eventual request is
+ *      authorized only when its exact (catId, childThreadId) pair matches a
+ *      fully revalidated proposal-backed delegate.
  *   5. `approvedUnderOwner` is set to `proposal.sourceCatId` — the cat
  *      that proposed the delegation. ProposalStoreDelegateProvider.getForTask
  *      Step 2 compares this against the task's current ownerCatId — if the
  *      owner changed from the proposer, the delegation is invalidated (P1-2).
  *
- * Fail-closed at every step: no proposals, no task-matching proposals,
- * ambiguous matches, tenant mismatch, or proposals without child threads
- * all yield null. Legacy proposals without `subjectTaskId` are excluded —
+ * Fail-closed per candidate: no proposals or no valid task-matching proposals
+ * yield an empty list; tenant mismatch and missing child threads exclude only
+ * those candidates. Legacy proposals without `subjectTaskId` are excluded —
  * they cannot prove task-level delegation.
  */
 export class ThreadDelegateBindingProvider implements DelegateBindingProvider {
   constructor(
     private readonly proposalLister: {
-      listByThread(threadId: string, limit?: number): Promise<ReadonlyArray<ProposalListItem>>;
+      listAllByThread(threadId: string): Promise<ReadonlyArray<ProposalListItem>>;
     },
   ) {}
 
-  async getBindingForTask(
+  async getBindingsForTask(
     taskId: string,
     taskThreadId: string,
     tenantScope: string,
-  ): Promise<DelegateProposalBinding | null> {
+  ): Promise<ReadonlyArray<DelegateProposalBinding>> {
     // Step 1: List all proposals from the task's parent thread.
-    const proposals = await this.proposalLister.listByThread(taskThreadId);
+    const proposals = await this.proposalLister.listAllByThread(taskThreadId);
 
     // Step 2: Filter to approved proposals that:
     //   a) Created a child thread (createdThreadId is set)
@@ -210,25 +195,15 @@ export class ThreadDelegateBindingProvider implements DelegateBindingProvider {
     // Proposals without subjectTaskId are legacy — they cannot prove
     // task-level delegation and are excluded (fail closed).
     const taskBound = proposals.filter(
-      (p) => p.status === 'approved' && p.createdThreadId && p.subjectTaskId === taskId,
+      (p) => p.status === 'approved' && p.createdThreadId && p.subjectTaskId === taskId && p.createdBy === tenantScope,
     );
 
-    // Step 3: Require exactly one match. Zero = no task-bound delegation.
-    // Multiple = ambiguous (shouldn't happen with unique task binding,
-    // but fail closed if it does).
-    if (taskBound.length !== 1) return null;
-
-    const proposal = taskBound[0];
-
-    // Step 4: Verify tenant. The proposal creator must be the same
-    // tenant that owns the task. Different tenant → no delegation.
-    if (proposal.createdBy !== tenantScope) return null;
-
-    // Step 5: Return binding with the proposing cat as the "approved
-    // under" owner.
-    return {
+    // Steps 3-5: Every surviving proposal is an independent binding. The
+    // downstream provider re-reads each full proposal and the standing check
+    // still requires an exact delegate cat/thread pair.
+    return taskBound.map((proposal) => ({
       proposalId: proposal.proposalId,
       approvedUnderOwner: proposal.sourceCatId,
-    };
+    }));
   }
 }

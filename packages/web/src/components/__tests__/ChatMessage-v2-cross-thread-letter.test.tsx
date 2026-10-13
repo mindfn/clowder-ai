@@ -46,7 +46,14 @@ describe('v2 cross-thread letter through ChatMessage', () => {
     api.mockResolvedValue(new Response('{}', { status: 503 }));
     primeCoCreatorConfigCache({ name: 'You', aliases: [], mentionPatterns: ['@co-creator'] });
     refreshCoCreatorMentionData(['@co-creator']);
-    refreshMentionData([{ id: 'codex-astra', mentionPatterns: ['@codex-astra'], color: { primary: '#555' } } as never]);
+    refreshMentionData([
+      {
+        id: 'codex-astra',
+        displayName: 'Astra',
+        mentionPatterns: ['@codex-astra'],
+        color: { primary: '#555' },
+      } as never,
+    ]);
     useChatStore.setState({ threads: [source] });
   });
   afterEach(() => {

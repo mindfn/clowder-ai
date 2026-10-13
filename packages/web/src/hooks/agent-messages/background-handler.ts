@@ -263,6 +263,7 @@ function handleTool(msg: BackgroundAgentMessage, options: Options): void {
       ? toolUseEvent({
           id,
           executionRef: msg.toolExecutionRef,
+          toolUseId: msg.toolUseId,
           catId: msg.catId,
           toolName: msg.toolName,
           toolInput: msg.toolInput,
@@ -271,6 +272,7 @@ function handleTool(msg: BackgroundAgentMessage, options: Options): void {
       : toolResultEvent({
           id,
           executionRef: msg.toolExecutionRef,
+          toolUseId: msg.toolUseId,
           catId: msg.catId,
           content: msg.content,
           timestamp: msg.timestamp,

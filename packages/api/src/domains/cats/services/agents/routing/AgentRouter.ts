@@ -454,6 +454,9 @@ export interface AgentRouterOptions {
   collectiveContext?: import('../invocation/invoke-single-cat.js').InvocationDeps['collectiveContext'];
   agentRegistry: AgentRegistry;
   registry: InvocationRegistry;
+  dotReplyTarget?: (
+    source: import('../../cloud-bridge/dot/dot-reply-authority.js').DotReplyCandidate,
+  ) => Promise<boolean>;
   messageStore: IMessageStore;
   /** F045 Gap #4: Redis-backed task progress snapshots */
   taskProgressStore?: TaskProgressStore;
@@ -623,6 +626,7 @@ export class AgentRouter {
   /** F229 Phase B */
   private conciergeTriagePlanStore?: import('../../../../concierge/ConciergeTriagePlanStore.js').IConciergeTriagePlanStore;
   /** F247 AC-B1c-3 PR-C */
+  private dotReplyTarget?: AgentRouterOptions['dotReplyTarget'];
   private cloudInvokeBridge?: import('../../cloud-bridge/types.js').ICloudInvokeBridge;
   private cloudReturnGrantStore?: import('../../cloud-bridge/cloud-return-grant.js').CloudReturnGrantStore;
   private turnExecutionStore?: import('../../stores/ports/TurnExecutionStore.js').ITurnExecutionStore;
@@ -647,60 +651,6 @@ export class AgentRouter {
   private eventCueOpportunitySource?: import('../../../../memory/cue/sources/EventMemoryCueSource.js').EventMemoryCueSource;
   private profileRepository?: import('../../profile/ProfileRepository.js').FileProfileRepository;
   private speechMentionRe: RegExp;
-
-  /**
-   * F222 Phase B: Collect the most recent TEXT_FRUSTRATION_WINDOW user messages
-   * from a thread using Z5-style reverse-iterate paging, then run keyword detection.
-   * Shared by both route() and routeExecution() (cloud P1 fix).
-   *
-   * Uses MessageFrom to exclude scheduler/connector noise (cloud P2 fix).
-   */
-  private async collectAndDetectTextFrustration(
-    threadId: string,
-    detectTextFrustration: (msgs: string[]) => { matched: boolean; matchedKeywords: string[]; matchCount: number },
-  ): Promise<{ matched: boolean; matchedKeywords: string[]; matchCount: number; recentUserMessages: string[] }> {
-    const { TEXT_FRUSTRATION_WINDOW } = await import('../../frustration/text-frustration-keywords.js');
-    const PAGE_SIZE = 50;
-    const MAX_PAGES = 10;
-    const userMsgs: string[] = [];
-    type MsgLike = {
-      from?: MessageFrom;
-      catId?: string | null;
-      userId?: string;
-      content?: string;
-      id?: string;
-      timestamp?: number;
-      deliveredAt?: number;
-      timelineOrderAt?: number;
-    };
-    let cursorScore = Infinity;
-    let cursorId: string | undefined;
-    let isFirstPage = true;
-    for (let page = 0; page < MAX_PAGES && userMsgs.length < TEXT_FRUSTRATION_WINDOW; page++) {
-      const batch: MsgLike[] = isFirstPage
-        ? ((await this.messageStore.getByThread(threadId, PAGE_SIZE)) as MsgLike[])
-        : ((await this.messageStore.getByThreadBefore(threadId, cursorScore, PAGE_SIZE, cursorId)) as MsgLike[]);
-      isFirstPage = false;
-      if (batch.length === 0) break;
-      const first = batch[0]!;
-      const firstScore = getTimelineOrderTime(first as StoredMessage);
-      if (firstScore > 0 && firstScore < cursorScore) {
-        cursorScore = firstScore;
-        cursorId = first.id;
-      }
-      for (let i = batch.length - 1; i >= 0 && userMsgs.length < TEXT_FRUSTRATION_WINDOW; i--) {
-        const m = batch[i]!;
-        if (messageFrom(m as StoredMessage).kind === 'user') {
-          userMsgs.push(typeof m.content === 'string' ? m.content : '');
-        }
-      }
-    }
-    const detection = detectTextFrustration(userMsgs);
-    return {
-      ...detection,
-      recentUserMessages: userMsgs.slice(0, 3).map((m) => m.slice(0, 200)),
-    };
-  }
 
   private rebuildRuntimeCaches(agentRegistry: AgentRegistry): void {
     this.unavailableServices = agentRegistry.getAllUnavailableEntries();
@@ -766,6 +716,7 @@ export class AgentRouter {
     this.frustrationIssueStore = options.frustrationIssueStore;
     this.conciergeConfigStore = options.conciergeConfigStore;
     this.conciergeTriagePlanStore = options.conciergeTriagePlanStore;
+    this.dotReplyTarget = options.dotReplyTarget;
     this.cloudInvokeBridge = options.cloudInvokeBridge;
     this.cloudReturnGrantStore = options.cloudReturnGrantStore;
     this.turnExecutionStore = options.turnExecutionStore;
@@ -1464,6 +1415,7 @@ export class AgentRouter {
         ...(this.dismissTracker ? { dismissTracker: this.dismissTracker } : {}),
         ...(this.conciergeConfigStore ? { conciergeConfigStore: this.conciergeConfigStore } : {}),
         ...(this.conciergeTriagePlanStore ? { conciergeTriagePlanStore: this.conciergeTriagePlanStore } : {}),
+        ...(this.dotReplyTarget ? { dotReplyTarget: this.dotReplyTarget } : {}),
         ...(this.cloudInvokeBridge ? { cloudInvokeBridge: this.cloudInvokeBridge } : {}),
         ...(this.cloudReturnGrantStore ? { cloudReturnGrantStore: this.cloudReturnGrantStore } : {}),
         ...(this.freshnessStateStore ? { freshnessStateStore: this.freshnessStateStore } : {}),
@@ -1598,58 +1550,6 @@ export class AgentRouter {
       ...(contentBlocks ? { contentBlocks } : {}),
     });
 
-    // F222 Phase B+C: Text frustration + retry burst detection
-    if (this.frustrationIssueStore) {
-      try {
-        const { detectTextFrustration } = await import('../../frustration/text-frustration-keywords.js');
-        const detection = await this.collectAndDetectTextFrustration(resolvedThreadId, detectTextFrustration);
-        const { evaluate } = await import('../../frustration/FrustrationDetector.js');
-        const frustDeps = {
-          frustrationIssueStore: this.frustrationIssueStore,
-          messageStore: this.messageStore,
-          socketManager: this.socketManager as
-            | import('../../../../../infrastructure/websocket/index.js').SocketManager
-            | undefined,
-        };
-        const baseSigCtx = { threadId: resolvedThreadId, userId, catId: (targetCats[0] ?? 'unknown') as string };
-
-        // Signal: text_frustration (Phase B)
-        if (detection.matched) {
-          await evaluate(
-            {
-              signal: {
-                type: 'text_frustration' as const,
-                matchedKeywords: detection.matchedKeywords,
-                matchCount: detection.matchCount,
-                recentUserMessages: detection.recentUserMessages,
-              },
-              ...baseSigCtx,
-            },
-            frustDeps,
-          );
-        }
-
-        // Signal: retry_burst (Phase C AC-C2) — same message sent ≥3 times
-        const { detectRetryBurst } = await import('../../frustration/retry-burst-detector.js');
-        const retryResult = detectRetryBurst(message, detection.recentUserMessages);
-        if (retryResult.matched) {
-          await evaluate(
-            {
-              signal: {
-                type: 'retry_burst' as const,
-                matchCount: retryResult.matchCount,
-                repeatedPrefix: retryResult.repeatedPrefix,
-              },
-              ...baseSigCtx,
-            },
-            frustDeps,
-          );
-        }
-      } catch {
-        // Non-blocking
-      }
-    }
-
     const strategyDeps = this.getStrategyDeps();
     const routeOptions = {
       routeIntent: projectAgentRouteIntent(intent),
@@ -1730,58 +1630,6 @@ export class AgentRouter {
         thinkingMode = thread.thinkingMode ?? 'play';
       }
       await this.threadStore.updateLastActive(threadId);
-    }
-
-    // F222 Phase B+C: Text frustration + retry burst detection (production path)
-    // F222 P1: Skip for A2A/connector origins — only detect frustration on user-driven routes
-    if (this.frustrationIssueStore && options?.frustrationAutoIssueEligible !== false) {
-      try {
-        const { detectTextFrustration } = await import('../../frustration/text-frustration-keywords.js');
-        const detection = await this.collectAndDetectTextFrustration(threadId, detectTextFrustration);
-        const { evaluate } = await import('../../frustration/FrustrationDetector.js');
-        const frustDeps = {
-          frustrationIssueStore: this.frustrationIssueStore,
-          messageStore: this.messageStore,
-          socketManager: this.socketManager as
-            | import('../../../../../infrastructure/websocket/index.js').SocketManager
-            | undefined,
-        };
-        const baseSigCtx = { threadId, userId, catId: (targetCats[0] ?? 'unknown') as string };
-
-        if (detection.matched) {
-          await evaluate(
-            {
-              signal: {
-                type: 'text_frustration' as const,
-                matchedKeywords: detection.matchedKeywords,
-                matchCount: detection.matchCount,
-                recentUserMessages: detection.recentUserMessages,
-              },
-              ...baseSigCtx,
-            },
-            frustDeps,
-          );
-        }
-
-        // Signal: retry_burst (Phase C AC-C2)
-        const { detectRetryBurst } = await import('../../frustration/retry-burst-detector.js');
-        const retryResult = detectRetryBurst(message, detection.recentUserMessages);
-        if (retryResult.matched) {
-          await evaluate(
-            {
-              signal: {
-                type: 'retry_burst' as const,
-                matchCount: retryResult.matchCount,
-                repeatedPrefix: retryResult.repeatedPrefix,
-              },
-              ...baseSigCtx,
-            },
-            frustDeps,
-          );
-        }
-      } catch {
-        // Non-blocking
-      }
     }
 
     const strategyDeps = this.getStrategyDeps();

@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import { mkdir, readFile, writeFile } from 'node:fs/promises';
 import { test } from 'node:test';
-import { ensureWorkspaceOpen } from './f307-workspace-open.mjs';
+import { collapseV2Workspace, openWorkspaceTools } from './f307-workspace-open.mjs';
 import { createFirstFileFixture, observeFirstFileQuote } from './f309-first-file-fixture.mjs';
 import { openDocumentSession } from './f309-ordinary-document-session.mjs';
 import { EVIDENCE } from './f309-ordinary-workspace-journey-chat-progress.mjs';
@@ -63,14 +63,33 @@ async function runFirstFileJourney(suite, scenario) {
     session = await openDocumentSession(suite, f.owner, scenario);
     await f.captureNativeSend(session.context, () => openedReview);
     const { page, calls } = session;
-    await ensureWorkspaceOpen(page);
-    await page.locator('[data-workspace-destination="surface:files"]').click();
+    const tools = await openWorkspaceTools(page);
+    await tools.locator('[data-workspace-destination="surface:files"]').click();
     await page.getByTestId('f307-files-owner-surface').waitFor();
     const search = page.getByPlaceholder('搜索当前工作区…', { exact: true });
     await search.fill(f.filename);
     await search.press('Enter');
     await page.locator(`[data-search-result-path=${JSON.stringify(f.filePath)}][data-search-result-line="0"]`).click();
     await page.getByTestId(entry === 'artwork' ? 'workspace-content-review-text' : 'workspace-file-viewer').waitFor();
+    if (extension === 'md') {
+      const reader = page.getByTestId('workspace-file-viewer');
+      assert.equal(await reader.count(), 1, 'the original file reader shares the annotation page');
+      assert.equal(await page.getByRole('button', { name: '文件工具', exact: true }).count(), 0);
+      assert.equal(await reader.getByRole('button', { name: '请猫修改', exact: true }).count(), 1);
+      if ((await page.getByRole('button', { name: '朗读', exact: true }).count()) === 0) {
+        await reader.locator('summary[title="更多文件操作"]').click();
+        await page.getByRole('button', { name: '朗读', exact: true }).waitFor();
+        await page.keyboard.press('Escape');
+      }
+      for (const label of ['渲染', '源码']) {
+        if (!(await page.getByRole('button', { name: label, exact: true }).isVisible()))
+          await reader.locator('summary[title="更多文件操作"]').click();
+        await page.getByRole('button', { name: label, exact: true }).click();
+        await page.keyboard.press('Escape');
+        if (label === '渲染') await reader.locator('.cm-editor').waitFor();
+        else await page.getByTestId('workspace-content-review-text').waitFor();
+      }
+    }
     await observeFirstFileQuote(page);
     openedReview = await assertNativeEntryReview(page, f, entry);
     await quoteNative(page, extension, entry, f.phrases[0], '第一处改具体些。');
@@ -83,7 +102,7 @@ async function runFirstFileJourney(suite, scenario) {
     assert.deepEqual(f.owner.fileReviewStore.get(f.reviewId), openedReview);
     assert.equal(f.owner.tasks.listByThread(f.owner.thread.id).length, f.tasksBefore);
     await page.screenshot({ path: `${EVIDENCE}/first-file-${slug}-quoted.png` });
-    await page.getByTestId('v2-workspace-chrome').getByRole('button', { name: '收起 Workspace', exact: true }).click();
+    await collapseV2Workspace(page);
     await page
       .getByRole('textbox', { name: '消息输入框', exact: true })
       .fill(`@${f.owner.catId} 请修改这两处引用，先给候选。`);
@@ -116,11 +135,7 @@ async function runFirstFileJourney(suite, scenario) {
     await page.reload({ waitUntil: 'domcontentloaded' });
     const drawer = page.getByTestId('contextual-workspace-host');
     if (width < 768 && (await drawer.isVisible())) {
-      await page
-        .getByTestId('v2-workspace-chrome')
-        .getByRole('button', { name: '收起 Workspace', exact: true })
-        .click();
-      await drawer.waitFor({ state: 'hidden' });
+      await collapseV2Workspace(page);
     }
     await page
       .locator(`[data-message-id="${candidate.receipt.id}"]`)
@@ -208,9 +223,86 @@ async function runFirstFileJourney(suite, scenario) {
   }
 }
 
+async function assertLongMarkdownTail(suite, scenario) {
+  const f = await createFirstFileFixture('md', { longMarkdown: true });
+  let session;
+  await mkdir(EVIDENCE, { recursive: true });
+  try {
+    session = await openDocumentSession(suite, f.owner, scenario);
+    const { page } = session;
+    const tools = await openWorkspaceTools(page);
+    await tools.locator('[data-workspace-destination="surface:files"]').click();
+    await page.getByTestId('f307-files-owner-surface').waitFor();
+    const search = page.getByPlaceholder('搜索当前工作区…', { exact: true });
+    await search.fill(f.filename);
+    await search.press('Enter');
+    await page.locator(`[data-search-result-path=${JSON.stringify(f.filePath)}][data-search-result-line="0"]`).click();
+    const paper = page.getByTestId('workspace-content-review-text');
+    await paper.waitFor();
+    const geometry = await paper.evaluate(async (element, tailText) => {
+      element.scrollTop = element.scrollHeight - element.clientHeight;
+      await new Promise(requestAnimationFrame);
+      await new Promise(requestAnimationFrame);
+      const tail = [...element.querySelectorAll('p')].find((node) => node.textContent === tailText);
+      const surface = element.closest('[data-testid="workspace-content-review-surface"]');
+      const summary = element.parentElement.querySelector('section');
+      if (!tail || !surface || !summary) throw new Error('Original reader, summary and final line must be mounted');
+      const tailBox = tail.getBoundingClientRect();
+      return {
+        summaryHeight: summary.getBoundingClientRect().height,
+        paperBottom: element.getBoundingClientRect().bottom,
+        surfaceBottom: surface.getBoundingClientRect().bottom,
+        visibleTop: Math.max(element.getBoundingClientRect().top, surface.getBoundingClientRect().top),
+        visibleBottom: Math.min(element.getBoundingClientRect().bottom, surface.getBoundingClientRect().bottom),
+        tailTop: tailBox.top,
+        tailBottom: tailBox.bottom,
+        scrollTop: element.scrollTop,
+        maxScrollTop: element.scrollHeight - element.clientHeight,
+      };
+    }, f.tailText);
+    await writeFile(
+      `${EVIDENCE}/markdown-tail-${scenario.width}.json`,
+      JSON.stringify({ testedHead: process.env.F309_TESTED_HEAD, scenario, geometry }, null, 2),
+    );
+    await page.screenshot({ path: `${EVIDENCE}/markdown-tail-${scenario.width}.png` });
+    assert.ok(geometry.summaryHeight > 0, 'the original quote summary occupies its normal-flow space');
+    assert.ok(geometry.maxScrollTop > 0, 'the document requires scrolling');
+    assert.ok(Math.abs(geometry.scrollTop - geometry.maxScrollTop) <= 1, 'the paper has reached its scroll end');
+    assert.ok(geometry.tailTop >= geometry.visibleTop - 1, 'the final line starts inside the visible reader');
+    assert.ok(geometry.tailBottom <= geometry.visibleBottom + 1, 'the final line remains visible at the scroll end');
+    const rangeBox = await paper.getByText(f.tailText, { exact: true }).evaluate((element) => {
+      const range = document.createRange();
+      range.selectNodeContents(element);
+      const box = range.getBoundingClientRect();
+      return { left: box.left, right: box.right, y: box.top + box.height / 2 };
+    });
+    await page.mouse.move(rangeBox.left + 0.1, rangeBox.y);
+    await page.mouse.down();
+    await page.mouse.move(rangeBox.right + 0.1, rangeBox.y, { steps: 8 });
+    await page.mouse.up();
+    assert.equal(await page.evaluate(() => window.getSelection()?.toString()), f.tailText);
+    assert.equal(f.sent.length, 0, 'reading and selecting the tail does not send a message');
+    assert.equal(f.owner.tasks.listByThread(f.owner.thread.id).length, f.tasksBefore);
+    assert.deepEqual(session.errors, []);
+  } finally {
+    await session?.context.unrouteAll({ behavior: 'ignoreErrors' });
+    await session?.context.close();
+    await f.close();
+  }
+}
+
 export function registerFirstFileJourney(suite) {
   for (const scenario of [
+    { width: 1440, dark: false, shell: 'v2' },
+    { width: 390, dark: true, shell: 'v2' },
+  ]) {
+    test(`first file: long Markdown tail stays visible ${scenario.width}`, { timeout: 120_000 }, () =>
+      assertLongMarkdownTail(suite, scenario),
+    );
+  }
+  for (const scenario of [
     { extension: 'md', width: 1440, dark: false, shell: 'v2', entry: 'artwork' },
+    { extension: 'md', width: 390, dark: true, shell: 'v2', entry: 'artwork' },
     { extension: 'ts', width: 390, dark: true, shell: 'v2', entry: 'file' },
   ]) {
     const { extension, width, shell, entry } = scenario;

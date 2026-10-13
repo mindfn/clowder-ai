@@ -1,14 +1,14 @@
 .root {
-  flex: 0 1 15rem;
-  inline-size: 15rem;
-  max-inline-size: 100%;
+  flex: 0 1 auto;
+  inline-size: fit-content;
+  max-inline-size: min(15rem, 100%);
   min-inline-size: 3.5rem;
   margin-inline-start: auto;
 }
 
 .button {
   inline-size: 100%;
-  justify-content: flex-end;
+  justify-content: flex-start;
 }
 
 .readyName {

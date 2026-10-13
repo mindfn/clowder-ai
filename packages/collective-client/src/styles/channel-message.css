@@ -100,6 +100,14 @@
 .message-markdown > :first-child {
   margin-top: 0;
 }
+.message-inline-mention {
+  margin-right: 5px;
+  color: var(--cafe-accent-ink);
+  font-weight: 600;
+}
+.message-inline-mention + p {
+  display: inline;
+}
 .message-markdown > :last-child {
   margin-bottom: 0;
 }
@@ -289,12 +297,26 @@
   font-size: 11px;
   line-height: 1.45;
 }
+.reply-preview > .reply-preview-item {
+  display: grid;
+  grid-template-columns: 20px minmax(0, 1fr);
+  align-items: start;
+  gap: 7px;
+}
+.reply-preview-item .avatar {
+  width: 20px;
+  height: 20px;
+}
+.reply-preview-item > span {
+  display: grid;
+  min-width: 0;
+}
 .reply-preview b {
   flex: 0 0 auto;
   color: var(--cafe-text-secondary);
   font-weight: 500;
 }
-.reply-preview span > span {
+.reply-preview-item > span > span {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -338,18 +360,8 @@
   }
 }
 
-/* F322 B segment 1 (human message), shared-room half — DESIGN.md「对话」.
- * Your own message (data-author="self"): one right-aligned 12px block, no avatar, no signature, at most about 80% of the
- * reading column, the text left-aligned inside it; the time (caption, muted) under it, once per run. Another person
- * (data-author="other-human"): on the left under a nameplate. Both use the human colour, the one colour every person shares
- * (cocoa when the host has not said otherwise). The Client runs in its own frame, so it does not see the Café's theme or
- * config: the host bridge is meant to carry the colour, the interface version and the theme in (field and format are the
- * bridge owner's; nothing here invents them). Until it does, the room uses the Café's defaults: the F056 default light steps
- * (surface L .85 / Cmul .45, name role L .15 / C .025 H 5) on the cocoa hue and chroma (58 / 0.04), the values the Café
- * computes for an unconfigured human colour. The Client keeps its light tokens in both OS colour schemes (`:root.dark`
- * only flips `color-scheme`; web's dark tokens are keyed `[data-theme="dark"]`, which the frame never sets), so there is one
- * definition here, not an invented dark one, and dark is not claimed. These classes only exist in the new presentation
- * (`?presentation=v2`, or the host when the bridge carries it), so the classic layout above is untouched. */
+/* F322 B segment 1 (human message), shared-room half — every person stays left-aligned and fully named. The Host-provided
+ * human palette marks identity on the avatar and name without turning the message into a Café-style right-hand bubble. */
 :root {
   --human-surface: oklch(0.85 0.018 58);
   --human-primary: oklch(0.62 0.04 58);
@@ -359,92 +371,23 @@
    * white, whichever reads better); this is the one for the default primary above (L .62: black 5.7:1, white 3.7:1). */
   --human-ink: #000000;
 }
-.message-self {
-  justify-content: flex-end;
+.message[data-author="self"] .avatar,
+.message[data-author="other-human"] .avatar,
+.topic-message[data-author="self"] .avatar,
+.topic-message[data-author="other-human"] .avatar {
+  background: var(--human-primary);
+  color: var(--human-ink);
+  box-shadow: inset 0 0 0 2px var(--human-surface);
 }
-.message-self .message-content {
-  display: flex;
-  flex: 0 1 auto;
-  flex-direction: column;
-  align-items: flex-end;
-  max-width: 80%;
-}
-.message-self .message-content > :not(.message-bubble):not(.message-time) {
-  align-self: stretch;
-}
-.message-bubble {
-  box-sizing: border-box;
-  max-width: 100%;
-  min-width: 0;
-  padding: 8px 14px;
-  overflow: hidden;
-  border-radius: 12px;
-  background: var(--human-surface);
-  color: var(--cafe-text);
-  text-align: left;
-}
-.message-bubble .message-body {
-  margin: 0;
-  color: inherit;
+.message[data-author="self"] .message-meta strong,
+.message[data-author="other-human"] .message-meta strong,
+.topic-message[data-author="self"] .message-meta strong,
+.topic-message[data-author="other-human"] .message-meta strong {
+  color: var(--human-name);
 }
 .message-time {
   margin-top: 4px;
   color: var(--cafe-text-muted);
   font-size: 12px;
   line-height: 1.3;
-}
-.message-plate-row {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  min-width: 0;
-}
-.message-plate-row > time {
-  flex: 0 0 auto;
-  color: var(--cafe-text-muted);
-  font-size: 12px;
-}
-.human-nameplate {
-  display: inline-flex;
-  align-items: center;
-  gap: 6px;
-  height: 26px;
-  min-width: 0;
-  max-width: 100%;
-  padding: 0 10px 0 8px;
-  border: 0;
-  border-radius: 8px 8px 0 0;
-  background-color: transparent;
-  background-image: linear-gradient(to bottom, var(--human-surface), transparent);
-  color: var(--human-name);
-  cursor: pointer;
-  font: inherit;
-}
-span.human-nameplate {
-  cursor: default;
-}
-.human-nameplate strong {
-  overflow: hidden;
-  color: inherit;
-  font-size: 13px;
-  font-weight: 600;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-.human-nameplate .avatar {
-  width: 16px;
-  height: 16px;
-  border-radius: 50%;
-  background: var(--human-primary);
-  color: var(--human-ink);
-  font-size: 9px;
-}
-.human-nameplate:focus-visible {
-  outline: 2px solid var(--cafe-accent);
-  outline-offset: 1px;
-}
-.message-other .message-content > .message-body,
-.message-other .message-content > .named-recipient,
-.message-other .message-content > .request-kind {
-  padding-left: 8px;
 }

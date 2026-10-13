@@ -28,7 +28,7 @@ test('F326 persists project discussions in the canonical artifact ledger through
     saved = await reviews.act({
       principal: cat,
       reviewId: opened.review.reviewId,
-      expectedRevision: saved.review.revision,
+      expectedRevision: (await reviews.read({ principal: cat, reviewId: opened.review.reviewId })).review.revision,
       operationId: 'locate',
       action: { kind: 'located', annotationId: annotation.id, targets, reason: 'Both shots show this.' },
     });
@@ -59,7 +59,7 @@ test('F326 persists project discussions in the canonical artifact ledger through
     saved = await reviews.act({
       principal: cat,
       reviewId: opened.review.reviewId,
-      expectedRevision: saved.review.revision,
+      expectedRevision: (await reviews.read({ principal: cat, reviewId: opened.review.reviewId })).review.revision,
       operationId: 'address',
       action: { kind: 'addressed', annotationId: annotation.id, result },
     });
@@ -67,21 +67,23 @@ test('F326 persists project discussions in the canonical artifact ledger through
     saved = await reviews.act({
       principal,
       reviewId: opened.review.reviewId,
-      expectedRevision: saved.review.revision,
+      expectedRevision: (await reviews.read({ principal: principal, reviewId: opened.review.reviewId })).review
+        .revision,
       operationId: 'resolve',
       action: { kind: 'resolved', annotationId: annotation.id },
     });
     saved = await reviews.act({
       principal,
       reviewId: opened.review.reviewId,
-      expectedRevision: saved.review.revision,
+      expectedRevision: (await reviews.read({ principal: principal, reviewId: opened.review.reviewId })).review
+        .revision,
       operationId: 'reopen',
       action: { kind: 'reopened', annotationId: annotation.id, reason: 'Still wrong.' },
     });
     saved = await reviews.act({
       principal: cat,
       reviewId: opened.review.reviewId,
-      expectedRevision: saved.review.revision,
+      expectedRevision: (await reviews.read({ principal: cat, reviewId: opened.review.reviewId })).review.revision,
       operationId: 'reply',
       action: { kind: 'replied', annotationId: annotation.id, replyId: 'reply-1', body: 'I will recheck.' },
     });
@@ -99,8 +101,10 @@ test('F326 persists project discussions in the canonical artifact ledger through
       reviewId: opened.review.reviewId,
       operationId: 'reply',
     });
+    const canonical = (await reviews.read({ principal, reviewId: opened.review.reviewId })).review;
     const restarted = f.reopen();
-    assert.deepEqual((await restarted.read({ principal, reviewId: opened.review.reviewId })).review, saved.review);
+    assert.deepEqual((await restarted.read({ principal, reviewId: opened.review.reviewId })).review, canonical);
+    assert.deepEqual((await restarted.read({ principal: cat, reviewId: opened.review.reviewId })).review, saved.review);
     assert.deepEqual(
       await restarted.operationReceipt({ principal, reviewId: opened.review.reviewId, operationId: 'reply' }),
       receipt,

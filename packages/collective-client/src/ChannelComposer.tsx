@@ -80,7 +80,7 @@ export function ChannelComposer({
           这台 Café 还没有可参与的伙伴。
           {onCafe && (
             <button type="button" onClick={onCafe}>
-              去我的 Café 登记
+              去「我的猫」登记
             </button>
           )}
         </output>
@@ -90,7 +90,7 @@ export function ChannelComposer({
       )}
       {firstEntry?.hintVisible && (
         <output className="first-entry-hint">
-          成员 · 看看谁在这里 / 我的 Café · 随时增减伙伴
+          成员 · 看看谁在这里 / 我的猫 · 随时增减伙伴
           <button type="button" onClick={firstEntry.dismissHint}>
             知道了
           </button>

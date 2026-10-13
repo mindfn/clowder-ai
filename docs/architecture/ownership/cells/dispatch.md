@@ -4,6 +4,8 @@ title: Dispatch / Queue
 summary: 按 thread 持久化的 source Queue Entry、未投递 targets 集合、有序 active index、短时 claim、原子 admission/target 更新、逐成员 Steer、外部 wake 执行，以及 durable child/execution 投影。
 canonical_features: [F047, F117, F167, F175, F177, F185, F247, F254, F264, F280, F295]
 code_anchors:
+  - packages/api/src/domains/cats/services/cloud-bridge/dot/DotEventsBridge.ts
+  - packages/api/src/domains/cats/services/cloud-bridge/dot/DotDispatchStore.ts
   - packages/shared/src/types/active-execution.ts
   - packages/shared/src/types/turn-execution.ts
   - packages/api/src/domains/cats/services/stores/ports/TurnExecutionStore.ts
@@ -86,6 +88,9 @@ cited_by:
   - {feature: F220-KD9-stop-ladder, date: 2026-09-03, delta: Stop is the only user-facing termination; an exact live cancel escalates server-side to per-target reconciliation of durable running truth instead of 409, an incomplete process-owner snapshot terminalizes the execution as failed instead of prompting, and force-reset is demoted to an internal thread-scoped reconciler}
   - {feature: F254-ADR-043-read-adoption, date: 2026-09-03, delta: an exact full same-thread read adopts only that target from the one source Queue Entry into the current lifecycle response, records its History dispatchRef, and leaves sibling targets pending on the same entry}
   - {feature: F117-ADR-043, date: 2026-09-20, delta: QueueLedger is the only durable pending-delivery truth; one source row owns pending targets and a bounded claim, actual dispatch writes MessageStore dispatchRefs, and Queue retains neither per-target rows nor processing/terminal receipt tombstones}
+  - {feature: F247, date: 2026-10-10, delta: dot G1 source-bound Events and private original image consumer}
+  - {feature: Gate-S3-sleep-recovery, date: 2026-09-24, delta: the existing managed gate runner consumes a ball-custody-owned frozen identity and pause fence; append-only unit attempts preserve raw outcomes, commit-time settlement jointly fences terminal intent, hard wall, owner generation and pause epoch, one stable logical resource request survives a proven-dead claimant replacement, and cleanup proof gates physical successors; a storage trigger rejects pre-v2 claim mutations before an opt-in job leaves queued}
+  - {feature: issue-1371-direct-witness, date: 2026-09-06, delta: direct route consumers forward exact child and adopted wake witnesses through the shared terminal collector to existing Queue custody CAS; source projection reuses canonical managed-hold owner visibility}
   - {feature: F295-post-close-thread-admission, date: 2026-08-22, delta: active-execution read and exact-cancel reuse canonical owner/default/user-index/external-anchor thread admission before liveness lookup while retaining masked shared occupancy and execution-principal control fences}
   - {feature: F295, date: 2026-08-13, delta: one project-scoped read projection joins canonical live invocation truth with existing managed-command receipts; every displayed execution carries thread, kind, exact identity and an identity-fenced cancel target or an explicit non-cancelable reason}
   - {feature: issue-1291-gate6-batch-steer, date: 2026-08-13, delta: Batch Steer accepts only an exact allowlist of compatible ordinary-user entries for one cat; Queue reserves the complete set before one preempt and QueueProcessor creates one replacement invocation without F175 absorbing unselected neighbors}

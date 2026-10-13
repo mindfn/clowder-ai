@@ -13,6 +13,7 @@ import {
 } from './memory-process-protocol.js';
 import { PassageVectorStore } from './PassageVectorStore.js';
 import { projectEntityMentions } from './project-entity-mentions.js';
+import { repackPassageVectorDatabase } from './repack-passage-vectors.js';
 import { lookupShadowRanking, SqliteEvidenceStore } from './SqliteEvidenceStore.js';
 import { VectorStore } from './VectorStore.js';
 
@@ -58,6 +59,10 @@ async function execute(job: MemoryProcessJob, started: () => void): Promise<unkn
   if (job.kind === 'checkpoint') {
     started();
     return checkpointMemoryDatabase(job.dbPath);
+  }
+  if (job.kind === 'vector-repack') {
+    started();
+    return repackPassageVectorDatabase(job.dbPath);
   }
   const store = new SqliteEvidenceStore(job.dbPath, undefined, {
     workerMode: 'read',

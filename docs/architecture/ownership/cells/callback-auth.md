@@ -4,6 +4,9 @@ title: Callback Auth
 summary: Invocation credential、persistent agent-key、callback principal 验证、refresh、telemetry 与现场 auth failure 可见性。
 canonical_features: [F174, F178]
 code_anchors:
+  - packages/api/src/domains/cats/services/cloud-bridge/dot/DotReturnService.ts
+  - packages/api/src/routes/chatgpt-dot-mcp-routes.ts
+  - packages/mcp-server/src/dot-remote-proxy.ts
   - packages/api/src/domains/cats/services/agents/invocation/InvocationRegistry.ts
   - packages/api/src/domains/cats/services/agents/invocation/RedisAuthInvocationBackend.ts
   - packages/api/src/domains/cats/services/agents/invocation/MemoryAuthInvocationBackend.ts
@@ -22,6 +25,7 @@ doc_anchors:
   - docs/features/F178-persistent-mcp-agent-key-auth.md
 static_scan_hints: [InvocationRegistry, AgentKeyRegistry, AgentKeySidecarProvisioner, callbackToken, agent-key, callback-auth, AuthFailureReason, refresh-token, callback auth]
 cited_by:
+  - {feature: F247, date: 2026-10-10, delta: dot G1 source-bound Events and private original image consumer}
   - {feature: F325, date: 2026-09-29, delta: "P1 adds per-invocation callback route allowlisting and one task test grant route; native MCP receives a disposable scoped credential file, not ambient agent-key or API process tokens"}
   - {feature: F191, date: 2026-05-07, delta: new cell}
   - {feature: F193, date: 2026-05-07, delta: KD-1 principal-conditioned threadId enforcement (post_message vs cross_post_message contract reconcile)}

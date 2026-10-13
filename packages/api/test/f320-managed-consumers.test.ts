@@ -5,6 +5,7 @@ import { mkdirSync, mkdtempSync, realpathSync, renameSync, rmSync, writeFileSync
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { test } from 'node:test';
+import { accountToRuntimeProfile } from '../src/config/account-resolver.js';
 import { writeCatalogAccount } from '../src/config/catalog-accounts.js';
 import { finalizeCodexAccountEnvironment } from '../src/config/codex-account-environment.js';
 import { resolveCodexAccountLaunch } from '../src/config/codex-account-launch.js';
@@ -12,6 +13,7 @@ import { codexExecutionAccountSnapshot } from '../src/config/codex-execution-acc
 import { codexManagedLaunchArgs } from '../src/config/codex-managed-launch.js';
 import { prepareCodexManagedLayout, validateCodexManagedLayout } from '../src/config/codex-managed-layout.js';
 import { CodexAgentService } from '../src/domains/cats/services/agents/providers/CodexAgentService.js';
+import { buildChildEnv } from '../src/utils/cli-spawn.js';
 import { F320AccountWire } from './helpers/f320-account-wire.js';
 import { fakeL0Compiler } from './helpers/fake-l0-compiler.js';
 
@@ -61,11 +63,11 @@ function fixture(planType = 'pro') {
     displayName: '公司',
     authType: 'oauth' as const,
     codex: layout,
-    envVars: {
-      HOME: join(root, 'managed', 'runtime-home'),
-      CODEX_HOME: layout.credentialHome,
-      CODEX_SQLITE_HOME: state,
-    },
+    envVars: accountToRuntimeProfile('managed-b', {
+      authType: 'oauth',
+      clientId: 'openai',
+      codex: layout,
+    }).envVars,
   };
   const launch = resolveCodexAccountLaunch(account, { cwd: root });
   return {
@@ -164,6 +166,7 @@ test(
         agentCarrierSessionFactory: async (options) => {
           launches++;
           assert.equal(options.env?.CODEX_HOME, f.account.codex.credentialHome);
+          assert.equal(buildChildEnv(options.env).HOME, f.root);
           assert.equal(options.env?.CODEX_SQLITE_HOME, f.state);
           assert.equal(options.env?.CODEX_CAT_EXPECTED_USER_ID, f.identity.userId);
           assert.ok(options.args.includes('cli_auth_credentials_store="file"'));
@@ -211,6 +214,7 @@ test(
           launches++;
           assert.ok(options.args.indexOf('cli_auth_credentials_store="file"') < options.args.indexOf('--'));
           assert.equal(options.env?.CODEX_HOME, f.account.codex.credentialHome);
+          assert.equal(buildChildEnv(options.env).HOME, f.root);
           assert.equal(options.env?.CODEX_SQLITE_HOME, f.state);
           yield { type: 'thread.started', thread_id: 'fixture-thread' };
           yield { type: 'item.completed', item: { type: 'agent_message', text: 'fixture reply' } };

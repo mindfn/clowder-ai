@@ -872,11 +872,12 @@ export function registerCallbackHoldBallRoutes(app: FastifyInstance, deps: HoldB
     // route; `/api/schedule/tasks` mints `dyn-*`. Combine with templateId +
     // createdBy + deliveryThreadId for defense in depth.
     const pendingHoldCreatedBy = `hold-ball:${catIdStr}`;
-    const pendingHolds = dynamicTaskStore
-      .getAll()
-      .filter(
-        (t) => isPendingHoldBallTask(t) && t.createdBy === pendingHoldCreatedBy && t.deliveryThreadId === threadId,
-      );
+    // Native stores select before decoding history; legacy adapters retain their read port.
+    const holdCandidates =
+      dynamicTaskStore.findByDeliveryThreadAndCreatedBy?.(threadId, pendingHoldCreatedBy) ?? dynamicTaskStore.getAll();
+    const pendingHolds = holdCandidates.filter(
+      (t) => isPendingHoldBallTask(t) && t.createdBy === pendingHoldCreatedBy && t.deliveryThreadId === threadId,
+    );
 
     const createdAt = Date.now();
     const taskId = `hold-ball-${createdAt}-${Math.random().toString(36).slice(2, 8)}`;

@@ -59,6 +59,8 @@ import { createModuleLogger } from '../infrastructure/logger.js';
 import type { SocketManager } from '../infrastructure/websocket/index.js';
 import { normalizeJsonUnicode } from '../utils/json-unicode.js';
 import { getDefaultUploadDir } from '../utils/upload-paths.js';
+import { importStoredProjectMessage } from './messages-project-review.js';
+import { captureSentComposerDraftConsumption } from './sent-composer-draft-consumption.js';
 import { admitThreadParticipants } from './thread-participant-admission.js';
 import { readUserMessageReceipt } from './user-message-receipt.js';
 
@@ -128,6 +130,7 @@ function bundleAdmissionErrorMessage(reason: MessageBundleAdmissionFailureReason
  * socketManager is injected to avoid circular import from index.ts.
  */
 export interface MessagesRoutesOptions {
+  onStoredProjectMessage?: (message: StoredMessage) => Promise<void>;
   registry: InvocationRegistry;
   messageStore: IMessageStore;
   socketManager: SocketManager;
@@ -326,6 +329,7 @@ export const messagesRoutes: FastifyPluginAsync<MessagesRoutesOptions> = async (
     let threadId: string | undefined;
     let contentBlocks: MessageContent[] | undefined;
     let idempotencyKey: string | undefined;
+    let composerDraftRevision: number | undefined;
     // F35: Whisper fields
     let whisperVisibility: 'whisper' | undefined;
     let whisperRecipients: readonly CatId[] | undefined;
@@ -345,6 +349,7 @@ export const messagesRoutes: FastifyPluginAsync<MessagesRoutesOptions> = async (
         return { error: parsed.error };
       }
       ({ content, userId: legacyUserId, threadId, contentBlocks } = parsed);
+      composerDraftRevision = parsed.composerDraftRevision;
       if ('idempotencyKey' in parsed && parsed.idempotencyKey) {
         idempotencyKey = parsed.idempotencyKey;
       }
@@ -367,6 +372,7 @@ export const messagesRoutes: FastifyPluginAsync<MessagesRoutesOptions> = async (
         return { error: 'Invalid request body', details: parseResult.error.issues };
       }
       ({ content, userId: legacyUserId, threadId, idempotencyKey } = parseResult.data);
+      composerDraftRevision = parseResult.data.composerDraftRevision;
       if (parseResult.data.contextAttachments?.length) {
         contentBlocks = buildMessageContentBlocks(content, parseResult.data.contextAttachments);
       }
@@ -418,6 +424,12 @@ export const messagesRoutes: FastifyPluginAsync<MessagesRoutesOptions> = async (
       idempotencyKey && opts.invocationQueue
         ? await opts.messageStore.getByIdempotencyKey(userId, resolvedThreadId, idempotencyKey)
         : null;
+    const consumeSentDraft = await captureSentComposerDraftConsumption(
+      opts.messageStore,
+      userId,
+      resolvedThreadId,
+      ownerAuthProvenance === 'strict' ? composerDraftRevision : undefined,
+    );
 
     let admittedMessageBundle: ResolvedBundleAdmission | undefined;
     let explicitBundleTargetCats: CatId[] | undefined;
@@ -491,11 +503,12 @@ export const messagesRoutes: FastifyPluginAsync<MessagesRoutesOptions> = async (
       } else if (thread.title === null) {
         // Auto-title existing untitled thread
         const autoTitle = deriveAutoThreadTitle(content || '上下文附件') ?? '上下文附件';
-        await opts.threadStore.updateTitle(resolvedThreadId, autoTitle);
-        opts.socketManager.broadcastToRoom(`thread:${resolvedThreadId}`, 'thread_updated', {
-          threadId: resolvedThreadId,
-          title: autoTitle,
-        });
+        const titleApplied = await opts.threadStore.setAutomaticTitle(resolvedThreadId, autoTitle, 'temporary');
+        if (titleApplied)
+          opts.socketManager.broadcastToRoom(`thread:${resolvedThreadId}`, 'thread_updated', {
+            threadId: resolvedThreadId,
+            title: autoTitle,
+          });
       }
     }
 
@@ -832,6 +845,11 @@ export const messagesRoutes: FastifyPluginAsync<MessagesRoutesOptions> = async (
         };
       }
 
+      if (enqueueResult.message) {
+        await importStoredProjectMessage(enqueueResult.message, opts.onStoredProjectMessage, (error) =>
+          request.log.warn({ err: error }, 'Saved project opinion awaits ledger synchronization'),
+        );
+      }
       const storedUserMessageId = enqueueResult.message?.id ?? null;
       if (!enqueueResult.deduped && storedUserMessageId) {
         // F192 Phase G AC-G12 / F227: detect magic words after the atomic admission commits.
@@ -881,6 +899,7 @@ export const messagesRoutes: FastifyPluginAsync<MessagesRoutesOptions> = async (
         merged: false,
         ...(storedUserMessageId ? { userMessageId: storedUserMessageId } : {}),
         ...(await readUserMessageReceipt(opts.messageStore, storedUserMessageId, receiptOwner, enqueueResult.message)),
+        ...(await consumeSentDraft(enqueueResult.deduped ? null : (enqueueResult.message ?? null))),
         ...(admittedMessageBundle && storedUserMessageId ? { messageBundleId: storedUserMessageId } : {}),
       };
     }

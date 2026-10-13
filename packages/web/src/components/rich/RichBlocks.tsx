@@ -3,6 +3,7 @@
 import { type ConnectorSource, isPersonMemoryProposalCardBlock } from '@cat-cafe/shared';
 import { useState } from 'react';
 import type { PublishedMessageCoordinate } from '@/components/content-review/usePublishedContent';
+import { useShellCopy } from '@/components/shell/shell-copy';
 import { TransferTargetPicker } from '@/components/TransferTargetPicker';
 import type { RichBlock, RichInteractiveBlock } from '@/stores/chat-types';
 import { AudioBlock } from './AudioBlock';
@@ -14,6 +15,8 @@ import { CommunityIssuePreviewCard, isCommunityIssuePreviewBlock } from './Commu
 import { DiffBlock } from './DiffBlock';
 import { FileBlock } from './FileBlock';
 import { FrustrationIssueCard, isFrustrationIssueCardBlock } from './FrustrationIssueCard';
+import { frustrationHistoryCopy } from './frustration-history.shell-copy';
+import { trustedFrustrationMeta, useFrustrationVisibility, visibleFrustrationBlocks } from './frustration-visibility';
 import { HandoffProposalCard, isHandoffProposalCardBlock } from './HandoffProposalCard';
 import { HtmlWidgetBlock } from './HtmlWidgetBlock';
 import { InteractiveBlock } from './InteractiveBlock';
@@ -94,6 +97,7 @@ function RichCardRenderer({
     return <ScheduleMutationProposalCard block={block} messageId={messageId} />;
   }
   if (isFrustrationIssueCardBlock(block, messageSource)) {
+    if (!trustedFrustrationMeta(block, messageSource?.connector)?.signal) return <UnknownFrustrationCard />;
     return <FrustrationIssueCard block={block} messageId={messageId} />;
   }
   if (isCommunityIssuePreviewBlock(block, messageSource)) {
@@ -106,6 +110,11 @@ function RichCardRenderer({
   const isTrustedCallbackAuth = metaKind === 'callback_auth_failure' && messageSource?.connector === 'callback-auth';
   if (isTrustedCallbackAuth) return <CallbackAuthFailureBlock block={block} />;
   return <CardBlock block={block} messageId={messageId} confirmations={confirmations} />;
+}
+
+function UnknownFrustrationCard() {
+  const t = useShellCopy(frustrationHistoryCopy);
+  return <p className="text-xs text-cafe-muted">{t.unknown}</p>;
 }
 
 function RichBlockRenderer({
@@ -325,9 +334,11 @@ export function RichBlocks({
   forwardingEnabled?: boolean;
 }) {
   const [forwardBlockId, setForwardBlockId] = useState<string | null>(null);
-  if (blocks.length === 0) return null;
-  const items = readOnly ? blocks : groupBlocks(blocks);
-  const forwardBlock = forwardBlockId ? blocks.find((block) => block.id === forwardBlockId) : undefined;
+  const visibility = useFrustrationVisibility(blocks, readOnly ? undefined : messageSource?.connector);
+  const shownBlocks = readOnly ? blocks : visibleFrustrationBlocks(visibility);
+  if (shownBlocks.length === 0) return null;
+  const items = readOnly ? shownBlocks : groupBlocks(shownBlocks);
+  const forwardBlock = forwardBlockId ? shownBlocks.find((block) => block.id === forwardBlockId) : undefined;
   return (
     <>
       <div className="mt-2 space-y-2">

@@ -243,12 +243,9 @@ export function workExecutionPresentation(work: CollectiveWorkProjection): {
   }
   if (admission?.state === 'rejected') {
     return {
-      statusLabel: '未获准执行',
+      statusLabel: '暂时不能执行',
       assignmentAction,
-      admissionMessage:
-        admission.reason === 'WORK_DELEGATION_UNAVAILABLE'
-          ? '主人委托已失效或撤回，当前未获准执行。'
-          : '家内未批准当前执行。',
+      admissionMessage: rejectedAdmissionMessage(admission.reason),
     };
   }
   if (!admission) return { statusLabel: '已接下，待家内准入', assignmentAction };
@@ -262,7 +259,7 @@ export function workExecutionPresentation(work: CollectiveWorkProjection): {
 function executionUnavailableMessage(reason?: string): string {
   switch (reason) {
     case 'WORK_DELEGATION_UNAVAILABLE':
-      return '主人委托已失效或撤回，当前无法继续执行。';
+      return '当前委托已经不可用，暂时不能继续。';
     case 'PARTICIPATION_REVOKED':
       return '猫的公共参与已撤回，当前无法继续执行。';
     case 'WORK_SOURCE_UNAVAILABLE':
@@ -274,6 +271,25 @@ function executionUnavailableMessage(reason?: string): string {
     case 'CONNECTION_REVOKED':
       return '所属 Café 的连接已撤回，当前无法继续执行。';
     default:
-      return '当前执行权限不可用。';
+      return '暂时不能继续。回原讨论查看下一步。';
+  }
+}
+
+function rejectedAdmissionMessage(reason?: string): string {
+  switch (reason) {
+    case 'PARTICIPATION_REVOKED':
+      return '这只猫已不再参与，暂时不能执行。';
+    case 'CONNECTION_REVOKED':
+      return '所属 Café 的连接已撤回，暂时不能执行。';
+    case 'MEMBERSHIP_REVOKED':
+      return '相关成员已退出或被移除，暂时不能执行。';
+    case 'WORK_SOURCE_UNAVAILABLE':
+      return '原讨论已不可用，暂时不能执行。';
+    case 'WORK_ADMISSION_NOT_CURRENT':
+      return '这次允许已经失效，暂时不能执行。';
+    case 'WORK_DELEGATION_UNAVAILABLE':
+      return '当前委托已经不可用，暂时不能执行。';
+    default:
+      return '暂时不能执行。回原讨论查看下一步。';
   }
 }

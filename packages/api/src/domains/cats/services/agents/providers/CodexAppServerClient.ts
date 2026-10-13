@@ -37,7 +37,7 @@ import {
 } from './CodexAppServerLifecycle.js';
 import { CodexAppServerNotificationQueue } from './CodexAppServerNotificationQueue.js';
 import { type CodexAppServerThreadVerdict, resolveCodexAppServerThread } from './CodexAppServerThreadResolver.js';
-import { type CodexLiveRunPort, isLiveDraftEvent } from './CodexLiveRunPort.js';
+import { type CodexLiveRunPort, CodexLiveStartupCancelledError, isLiveDraftEvent } from './CodexLiveRunPort.js';
 import { CodexLiveTurnInput, type LiveProviderInput } from './CodexLiveTurnInput.js';
 import { assertCodexRequiredToolsAvailable } from './CodexRequiredToolsPreflight.js';
 import type { CodexRuntimeInteractionContext } from './CodexRuntimeInteractionAdapter.js';
@@ -92,6 +92,7 @@ export interface CodexAppServerContextCompactionEvent {
 }
 
 export interface CodexAppServerRunInput {
+  requireExactResume?: boolean;
   /** F317: explicit Host-owned continuous call. Ordinary invocations remain single-turn. */
   live?: CodexLiveRunPort;
   prompt: CodexAppServerPromptSource;
@@ -231,6 +232,7 @@ export class CodexAppServerClient {
   }
 
   async *run(input: CodexAppServerRunInput): AsyncGenerator<unknown> {
+    if (this.deps.wire.hostAcquisitionMode) input.live?.observeHostAcquisition?.(this.deps.wire.hostAcquisitionMode);
     const runtimeInteraction = createCodexRuntimeInteractionRunState(input.runtimeInteraction, input.approvalsReviewer);
     this.pumpPromise = this.pump(runtimeInteraction);
     // Pending requests / notifications propagate the same failure; attach immediately
@@ -244,12 +246,20 @@ export class CodexAppServerClient {
     const inputReadCallbacks = new Map<string, { turnId: string; notify: () => Promise<void>; observing: boolean }>();
     let releaseActiveRunDispatch: (() => void) | undefined;
     let transportDisposition: 'release' | 'evict' = 'release';
+    let liveHasPendingChildren = false;
     const liveEnd = Symbol('live-end');
     const liveFailure = Symbol('live-failure');
     let liveFinished = false;
-    let liveError: unknown;
+    let liveError: Error | undefined;
     let runClosed = false;
     let boundaryOpen = false;
+    const assertLiveStartupActive = (): void => {
+      if (!input.live) return;
+      input.live.startupSignal?.throwIfAborted();
+      input.signal?.throwIfAborted();
+      if (liveError) throw liveError;
+      if (liveFinished) throw new CodexLiveStartupCancelledError();
+    };
     const canSubmitLiveInput = () =>
       Boolean(input.live) &&
       !runClosed &&
@@ -272,7 +282,7 @@ export class CodexAppServerClient {
         if (!runClosed) this.notifications.push(liveEnd);
       },
       (error: unknown) => {
-        liveError = error;
+        liveError = error instanceof Error ? error : new Error(String(error));
         if (!runClosed) this.notifications.push(liveFailure);
       },
     );
@@ -350,7 +360,7 @@ export class CodexAppServerClient {
           input.thread.kind === 'resume' ? { threadId: input.thread.threadId } : undefined,
         ),
         startParams: buildCodexAppServerThreadParams(input),
-        requireExactResume: Boolean(recoveryInstruction),
+        requireExactResume: input.requireExactResume || Boolean(recoveryInstruction),
         ...(input.resumeReplacement ? { resumeReplacement: input.resumeReplacement } : {}),
         // A reused affinity host reaches this point only after its local lease
         // was released. A writer conflict here is therefore provider-side stale
@@ -375,6 +385,7 @@ export class CodexAppServerClient {
         requiredTools: input.requiredTools ?? [],
         request: (method, params) => this.request(method, params),
       });
+      assertLiveStartupActive();
 
       // F296 B4a preflight fence. The provider verdict exists; buffered
       // compaction for the bound runtime has been drained; only now may the
@@ -418,6 +429,9 @@ export class CodexAppServerClient {
                 ...(compactions.length > 0 ? { compactions } : {}),
               })
             ).prompt;
+      // Stop/failure may arrive while deferred Host context is being built.
+      // A closed call must not reserve a new request or start a native turn.
+      assertLiveStartupActive();
       const preparedRequest = isRecoveryTurn
         ? input.prepareRecoveryRequest?.(recoveryInstruction as string)
         : input.prepareRequest?.(promptBytes, (input.recoveryAttempt ?? 0) > 0 ? 'transient_cli_exit' : undefined);
@@ -425,6 +439,7 @@ export class CodexAppServerClient {
         if (!preparedRequest) throw new Error('codex_app_server_request_evidence_unavailable');
         await input.beforeProviderLaunch(preparedRequest);
       }
+      assertLiveStartupActive();
       const submittedPrompt = preparedRequest ? requireExactPreparedProviderMessage(preparedRequest) : promptBytes;
 
       let resolveInitialInputRead!: (at: number) => void;
@@ -467,8 +482,10 @@ export class CodexAppServerClient {
           observing: false,
         });
       }
-      let subexecutionTracker = createCodexSubexecutionTracker({
+      assertLiveStartupActive();
+      const subexecutionTracker = createCodexSubexecutionTracker({
         binding: { threadId, turnId: activeTurnId },
+        emitChildTurnStarts: Boolean(input.live),
         readThread: (childThreadId) => this.request('thread/read', { threadId: childThreadId, includeTurns: false }),
         ...(this.deps.now ? { now: this.deps.now } : {}),
       });
@@ -476,11 +493,15 @@ export class CodexAppServerClient {
         if (accepted === activeTurnId || !input.live) return;
         activeTurnId = accepted;
         latestUsage = null;
-        subexecutionTracker = createCodexSubexecutionTracker({
-          binding: { threadId, turnId: accepted },
-          readThread: (childThreadId) => this.request('thread/read', { threadId: childThreadId, includeTurns: false }),
-          ...(this.deps.now ? { now: this.deps.now } : {}),
+        // The RPC receipt is authoritative even when retries arrive before turn/started.
+        this.lifecycle.transition('turn_accepted', {
+          threadId,
+          turnId: accepted,
+          turnAccepted: true,
+          itemObserved: false,
+          toolSurfaceObserved: false,
         });
+        subexecutionTracker.advanceRootTurn(accepted);
         await input.live.observe({ method: 'turn/started', params: { threadId, turn: { id: accepted } } });
       };
       const deliverAtBoundary = async (kind: 'idle' | 'tool_complete' | 'turn_complete'): Promise<void> => {
@@ -632,19 +653,20 @@ export class CodexAppServerClient {
           if (record?.method === 'turn/started' && typeof started?.id === 'string' && started.id !== activeTurnId) {
             latestUsage = null;
             activeTurnId = started.id;
-            subexecutionTracker = createCodexSubexecutionTracker({
-              binding: { threadId, turnId: activeTurnId },
-              readThread: (childThreadId) =>
-                this.request('thread/read', { threadId: childThreadId, includeTurns: false }),
-              ...(this.deps.now ? { now: this.deps.now } : {}),
-            });
+            subexecutionTracker.advanceRootTurn(activeTurnId);
           }
           if (record) await input.live.observe(record);
         }
         const subexecution = await subexecutionTracker.observe(envelope);
+        if (input.live) liveHasPendingChildren = subexecutionTracker.hasPendingChildren();
         if (subexecution.scope === 'foreign') continue;
         this.lifecycle.touch(timeoutMs, timeoutHandler);
-        if (subexecution.event) yield subexecution.event;
+        if (subexecution.event) {
+          await input.live?.observeSubexecution?.(subexecution.event);
+          // Live already commits these facts through its Host-owned Message projection.
+          // Ordinary invocations retain F306's streaming/collector path.
+          if (!input.live?.observeSubexecution) yield subexecution.event;
+        }
         if (subexecution.scope === 'child') continue;
         const itemObserved = record?.method === 'item/started' || record?.method === 'item/completed';
         const exactCompletedItem =
@@ -809,6 +831,7 @@ export class CodexAppServerClient {
       clearInterval(idleTimer);
       liveInputs.close();
       runtimeInteraction?.close('provider_cancelled');
+      if (input.live && liveHasPendingChildren) transportDisposition = 'evict';
       const { closing, closed } = await closeCodexAppServerTransport(
         this.deps.wire,
         this.lifecycle,

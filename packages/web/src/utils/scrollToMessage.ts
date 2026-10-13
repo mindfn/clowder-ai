@@ -143,6 +143,12 @@ export function resolveMessageElements(messageIds: Iterable<string>, root: Paren
   });
 }
 
+/** The existing scroll writer accepts the browser's one-pixel quantization; confirmation uses the same contract. */
+export function matchesMessageScrollAnchor(container: HTMLElement, anchor: MessageScrollAnchor): boolean {
+  const current = captureMessageScrollAnchorForMessage(container, anchor.messageId);
+  return current !== undefined && Math.abs(current.viewportOffsetPx - anchor.viewportOffsetPx) <= 1;
+}
+
 /** Reapply a saved message anchor after placeholder or content geometry changes. */
 export function restoreMessageScrollAnchor(container: HTMLElement, anchor: MessageScrollAnchor): boolean {
   const target = resolveMessageElements([anchor.messageId], container)[0];

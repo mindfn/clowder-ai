@@ -1,3 +1,4 @@
+import assert from 'node:assert/strict';
 import Fastify from 'fastify';
 
 import {
@@ -8,7 +9,8 @@ import {
 } from '../dist/domains/plugin/index.js';
 import { registerOfficialPluginRoutes } from '../dist/routes/plugin-official-routes.js';
 
-export const entry = OFFICIAL_PLUGIN_CATALOG[0];
+export const entry = OFFICIAL_PLUGIN_CATALOG.find((candidate) => candidate.catalogId === 'feishu-meeting-intake');
+assert.ok(entry);
 
 function manifest(overrides = {}) {
   return {

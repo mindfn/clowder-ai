@@ -30,6 +30,8 @@ export interface ThreadArtifactDTO {
   ref?: string;
   /** File-ledger owner key, independent of display name/update time. Not execution-root proof. */
   fileLedgerRef?: string;
+  /** Exact, currently authorized F309 publication landing. Absent means its version is unknown. */
+  work?: GlobalArtifactWork;
 }
 
 /** GET /api/threads/:threadId/artifacts 响应 */
@@ -37,6 +39,13 @@ export interface ThreadArtifactsResponse {
   threadId: string;
   /** 时间倒序 */
   artifacts: ThreadArtifactDTO[];
+  /** Owner reads can be unavailable while the original artifacts remain readable. */
+  workLineage?: 'resolved' | 'unavailable';
+  /** Explicit delivery view; the default remains the original full file/PR/publication catalogue. */
+  view?: 'works';
+  /** Count of distinct proven sources; exact historical DTOs remain in artifacts for existing return coordinates. */
+  total?: number;
+  complete?: boolean;
 }
 
 /**
@@ -48,11 +57,6 @@ export interface GlobalArtifactDTO extends ThreadArtifactDTO {
   threadId: string;
   /** thread 标题（用于分组标签 / 上下文显示） */
   threadTitle: string;
-  /**
-   * F309 owner-backed work coordinate. Absent means this artifact has no unique,
-   * currently authorized exact publication landing; callers must not infer one.
-   */
-  work?: GlobalArtifactWork;
 }
 
 export interface GlobalArtifactWork {
@@ -63,6 +67,7 @@ export interface GlobalArtifactWork {
 
 /** GET /api/artifacts 响应 */
 export interface GlobalArtifactsResponse {
+  view?: 'works' | 'recent-works';
   /** 时间倒序 */
   artifacts: GlobalArtifactDTO[];
   total: number;

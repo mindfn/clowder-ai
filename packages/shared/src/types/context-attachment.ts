@@ -1,4 +1,6 @@
 import type { MediaContextAttachment } from './media-context-attachment.js';
+import type { MessageMediaItemSelector } from './media-publication-source.js';
+import type { ProjectScreeningContextAttachment } from './video-project-message.js';
 
 export type { MediaContextAttachment } from './media-context-attachment.js';
 
@@ -35,6 +37,14 @@ export interface MessageQuoteSource {
   readonly threadId: string;
   readonly messageId: string;
   readonly senderCatId?: string;
+  /** A quoted file leaf of this message. Metadata describes the displayed copy, never write authority. */
+  readonly artifactFile?: {
+    readonly item: MessageMediaItemSelector;
+    readonly url: string;
+    readonly fileName: string;
+    readonly messageRevision: string;
+    readonly displayDigest: `sha256:${string}`;
+  };
 }
 
 export interface CliOutputQuoteSource {
@@ -74,7 +84,8 @@ export type ContextAttachment =
   | ThreadContextAttachment
   | WorkspaceFileContextAttachment
   | QuoteContextAttachment
-  | MediaContextAttachment;
+  | MediaContextAttachment
+  | ProjectScreeningContextAttachment;
 
 /**
  * Canonical model-facing projection. Keeping the escaping and wrapper here lets

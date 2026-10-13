@@ -36,3 +36,19 @@ export async function buildWorkspaceMenuPage() {
     process.chdir(prior);
   }
 }
+
+export function routeWorkspaceMenuAssets(route, built, unexpected) {
+  const url = new URL(route.request().url());
+  const assets = {
+    '/proof.js': { contentType: 'text/javascript', body: built.script },
+    '/proof.css': { contentType: 'text/css', body: built.css },
+    '/': {
+      contentType: 'text/html',
+      body: '<!doctype html><html><head><link rel="stylesheet" href="/proof.css"></head><body><div id="root"></div><script type="module" src="/proof.js"></script></body></html>',
+    },
+  };
+  if (url.origin === menuOrigin && assets[url.pathname]) return route.fulfill(assets[url.pathname]);
+  if (url.pathname === '/favicon.ico') return route.fulfill({ status: 204, body: '' });
+  unexpected.push(route.request().url());
+  return route.abort();
+}

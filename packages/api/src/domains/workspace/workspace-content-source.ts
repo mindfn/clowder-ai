@@ -1,5 +1,6 @@
 import { constants } from 'node:fs';
 import { type FileHandle, open, realpath } from 'node:fs/promises';
+import { join } from 'node:path';
 import { Readable } from 'node:stream';
 import { probeImmutableMedia } from '../video-studio/content-owner/published-media-probe.js';
 import { type RenderedQuoteBatchInput, resolveAuthorizedRenderedQuotes } from './workspace-content-rendered-quote.js';
@@ -76,6 +77,15 @@ export class WorkspaceContentSourceService {
       readonly maxBytes?: number;
     },
   ) {}
+
+  /** Owner-issued current file identity for a read projection; no registration or write authority. */
+  async describeFileReference(input: {
+    readonly principal: WorkspaceContentPrincipalV1;
+    readonly locator: WorkspaceContentLocatorV1;
+  }) {
+    const read = await this.readStable(input, false);
+    return { ...this.describeRead(read), absolutePath: join(read.root, read.locator.path) };
+  }
 
   async describe(input: {
     readonly principal: WorkspaceContentPrincipalV1;

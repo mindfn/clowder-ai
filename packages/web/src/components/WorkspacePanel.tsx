@@ -4,10 +4,12 @@ import { useRouter } from 'next/navigation';
 import { type ReactNode, useCallback, useEffect, useMemo, useRef } from 'react';
 import { useShellPresentation } from '@/components/shell/shell-presentation';
 import { useWorkspace } from '@/hooks/useWorkspace';
+import type { WorkspaceFileNavigationOrigin } from '@/stores/chat-types';
 import { useChatStore } from '@/stores/chatStore';
 import { hasPendingWorkspaceFileLink } from '@/utils/pending-workspace-file-link';
 import { scrollToMessage } from '@/utils/scrollToMessage';
 import { kickTeleportResolve, planTeleport } from '@/utils/teleport';
+import { resolveListedWorktreeId } from '@/utils/worktree-id-alias';
 import { worktreeBasename } from '@/utils/worktree-label';
 import { pushThreadRouteWithHistory } from './ThreadSidebar/thread-navigation';
 import { useF307ExperienceWorkbenchStore } from './workbench/experience-workbench-store';
@@ -46,7 +48,8 @@ export function WorkspacePanel({
   const router = useRouter();
   const isV2 = useShellPresentation() === 'v2';
   const foregroundSurfaceId = useChatStore((state) => state.workspaceForegroundSurfaceId);
-  const currentWorktree = worktrees.find((worktree) => worktree.id === worktreeId);
+  const listedWorktreeId = resolveListedWorktreeId(worktrees, worktreeId);
+  const currentWorktree = worktrees.find((worktree) => worktree.id === listedWorktreeId);
   const setOpenFile = useChatStore((state) => state.setWorkspaceOpenFile);
   const openFilePath = useChatStore((state) => state.workspaceOpenFilePath);
   const openFileLine = useChatStore((state) => state.workspaceOpenFileLine);
@@ -114,6 +117,7 @@ export function WorkspacePanel({
       },
       isV2,
       workspaceFileSetAt.disposition,
+      workspaceFileSetAt.threadId ?? undefined,
     );
     lastWorkspaceFileSetAtRef.current = workspaceFileSetAt.ts;
     if (pendingFileLink) consumeWorkspaceFileSetAt(workspaceFileSetAt);
@@ -131,9 +135,15 @@ export function WorkspacePanel({
   ]);
 
   const handleSearchResultClick = useCallback(
-    (path: string, line: number) => {
+    (path: string, line: number, origin?: WorkspaceFileNavigationOrigin) => {
       const query = lastWorkspaceSearchQueryRef.current.trim();
-      setOpenFile(path, line, undefined, undefined, query ? { kind: 'workspace-home-search', query } : undefined);
+      setOpenFile(
+        path,
+        line,
+        undefined,
+        undefined,
+        origin ?? (query ? { kind: 'workspace-home-search', query } : undefined),
+      );
       setViewMode('files');
       resetSearch();
     },
@@ -147,13 +157,10 @@ export function WorkspacePanel({
     [search],
   );
   // Architecture cell: hub-action-surface. F307 returns origin intent; this host executes it.
-  const restoreWorkspaceSearch = useCallback(
-    (query: string) => {
-      lastWorkspaceSearchQueryRef.current = query;
-      void search(query, 'all');
-    },
-    [search],
-  );
+  const restoreWorkspaceSearch = useCallback((query: string) => {
+    lastWorkspaceSearchQueryRef.current = query;
+    // The restored real Launcher reissues this query through its one debounce; do not race it with a direct search.
+  }, []);
   const returnToChatMessage = useCallback(
     ({ threadId: originThreadId, messageId }: { threadId: string; messageId: string }) => {
       const plan = planTeleport({ threadId: originThreadId, messageId, currentThreadId });
@@ -183,7 +190,8 @@ export function WorkspacePanel({
     }),
     [handleLauncherSearch, handleSearchResultClick, resetSearch, searchError, searchLoading, searchResults, worktreeId],
   );
-  const activeWorktreeId = currentWorktree?.id ?? null;
+  // The list supplies display/epoch metadata; a content-owner id must keep F063's current authorization path.
+  const activeWorktreeId = currentWorktree ? worktreeId : null;
 
   return (
     <F307ExperienceWorkbench
@@ -205,7 +213,7 @@ export function WorkspacePanel({
       artifactWorkHostAvailable={artifactWorkHostAvailable}
       onSelectDevSurface={setViewMode}
       worktreeId={activeWorktreeId}
-      canonicalWorktreeId={currentWorktree?.canonicalId ?? activeWorktreeId}
+      canonicalWorktreeId={currentWorktree?.canonicalId ?? currentWorktree?.id ?? activeWorktreeId}
       rootSelection={
         currentWorktree?.resolvedRoot && currentWorktree.rootEpoch !== undefined
           ? {

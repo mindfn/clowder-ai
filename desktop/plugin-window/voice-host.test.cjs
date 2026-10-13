@@ -13,7 +13,8 @@ function fixture({
   const handlers = new Map(),
     windows = [],
     partitions = [],
-    events = [];
+    events = [],
+    observations = [];
   let armed = false,
     offers = 0,
     failed = 0;
@@ -91,6 +92,7 @@ function fixture({
         return { kind: 'answer', sdp: 'trusted', callId: answerCallId };
       },
       onFailure: () => failed++,
+      onObservation: (value) => observations.push(value),
     },
   );
   return {
@@ -100,6 +102,7 @@ function fixture({
     windows,
     partitions,
     events,
+    observations,
     setArmed() {
       armed = true;
     },
@@ -134,6 +137,37 @@ test('modern audio events bind the Host-issued call, ignore a forged event scope
   await f.host.request({ kind: 'audio.connect' }, true);
   f.ipcMain.emit('companion:voice-event', win.event(), { kind: 'audio', type: 'error' });
   assert.equal(f.events.length, 3, 'a retired sender cannot poison the new call');
+});
+
+test('assistant publication exposes only a Host-fenced native reference; stop revokes the old media sender', async (t) => {
+  const f = fixture({ callScoped: true });
+  t.after(() => f.host.close());
+  f.arm();
+  await f.host.request({ kind: 'audio.connect' }, true);
+  const win = f.windows[0];
+  await f.handlers.get('companion:media-offer')(win.event(), 'v=0\r\nm=audio 9 UDP/TLS/RTP/SAVPF 111\r\n');
+  f.ipcMain.emit('companion:voice-event', win.event(), {
+    kind: 'audio',
+    type: 'transcript',
+    role: 'assistant',
+    text: 'Actual text',
+    itemId: 'item',
+    callId: 'forged',
+  });
+  assert.equal(f.observations.length, 1);
+  assert.equal(f.observations[0].stage, 'first_outward_text');
+  assert.equal(f.observations[0].nativeItemId, 'item');
+  assert.equal(f.observations[0].callId, 'ec6f640a-6dd7-46fc-9c09-3f3c47ecbd97');
+  assert.equal(f.observations[0].text, undefined);
+  f.host.stop();
+  f.ipcMain.emit('companion:voice-event', win.event(), {
+    kind: 'audio',
+    type: 'transcript',
+    role: 'assistant',
+    text: 'stale',
+    itemId: 'stale',
+  });
+  assert.equal(f.observations.length, 1);
 });
 
 test('a late answer from an old preparation cannot bind events in the new document', async (t) => {

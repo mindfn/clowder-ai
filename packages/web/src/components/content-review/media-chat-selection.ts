@@ -8,6 +8,7 @@ import {
   MediaContextAttachmentSchema,
 } from '@cat-cafe/shared';
 import { COMPOSER_RECALL_PENDING_COPY, COMPOSER_TOO_LARGE_COPY } from '../composer-refusal-copy';
+import { projectScreeningComposerConflict } from '../project-screening-composer-group';
 
 /**
  * The places a person circles on an image, held as ONE media attachment of the chat composer until the one send.
@@ -43,6 +44,7 @@ export type MediaSelectionRefusal =
    * narrow it to that one place, and one message may not mix the whole work with chosen places.
    */
   | 'whole_work_pending'
+  | 'selected_places_pending'
   /** One place's words, or all places' words together, exceed what a request carries. */
   | 'too_long'
   /**
@@ -62,11 +64,12 @@ export type AddMediaSelection =
 
 /** Words for a refusal, in the person's terms. One place so every surface says the same thing. */
 export const MEDIA_SELECTION_REFUSAL_COPY = {
-  other_source: '输入框里已有另一幅作品的选区。请先发送或移除它们，再选这幅。',
+  other_source: '输入框里已有另一幅作品的选区或另一版成片的位置。请先发送或移除它们，再添加这处。',
   full: `一条消息最多 ${MEDIA_SELECTION_LIMIT} 处选区。`,
   composer_full: '输入框里的引用已满，请先发送或移除几个。',
   not_image: '目前只能把 PNG 图片上的圈选或点选放进对话。',
   whole_work_pending: '输入框里已经引用了整件作品。请先移除它，再选区域。',
+  selected_places_pending: '输入框里已有这幅作品的选区。请先发送或移除它们，再引用整图。',
   too_long: '这处说明太长了，请精简后再放进对话。',
   too_large: COMPOSER_TOO_LARGE_COPY,
   invalid: '这处选区暂时无法放进对话。',
@@ -201,15 +204,43 @@ function refusalBefore(
  * a collection one message can carry by the canonical rule: the attachment alone being valid says nothing about the
  * whole message.
  */
-function collectionAllows(
+function collectionRefusal(
   current: readonly ContextAttachment[],
   pending: MediaContextAttachment | undefined,
   attachment: MediaContextAttachment,
-): boolean {
+): MediaSelectionRefusal | null {
   const effective = pending
     ? current.map((item) => (item.id === pending.id ? attachment : item))
     : [...current, attachment];
-  return ContextAttachmentsSchema.safeParse(effective).success;
+  if (projectScreeningComposerConflict(effective)) return 'other_source';
+  return ContextAttachmentsSchema.safeParse(effective).success ? null : 'too_large';
+}
+
+export type AddMediaWork =
+  | { readonly kind: 'added'; readonly attachment: MediaContextAttachment }
+  | { readonly kind: 'refused'; readonly reason: MediaSelectionRefusal };
+
+/** An empty selection list is the canonical whole-work reference, never a synthetic full-canvas selection. */
+export function addMediaWork(current: readonly ContextAttachment[], target: MediaChatTarget): AddMediaWork {
+  const pending = pendingMediaAttachment(current);
+  if (pending && !sameMediaSource(pending, target)) return { kind: 'refused', reason: 'other_source' };
+  if (pending?.selections.length) return { kind: 'refused', reason: 'selected_places_pending' };
+  if (pending) return { kind: 'added', attachment: pending };
+  if (current.length >= CONTEXT_ATTACHMENT_MAX_COUNT) return { kind: 'refused', reason: 'composer_full' };
+  const parsed = MediaContextAttachmentSchema.safeParse({
+    v: 1,
+    id: freshAttachmentId(current, target.source),
+    kind: 'media',
+    title: target.title,
+    mediaType: target.mediaType,
+    source: target.source,
+    ...(target.taskContext ? { taskContext: target.taskContext } : {}),
+    selections: [],
+  });
+  if (!parsed.success) return { kind: 'refused', reason: 'invalid' };
+  const refusal = collectionRefusal(current, undefined, parsed.data);
+  if (refusal) return { kind: 'refused', reason: refusal };
+  return { kind: 'added', attachment: parsed.data };
 }
 
 export function addMediaSelection(
@@ -239,7 +270,8 @@ export function addMediaSelection(
     selections,
   });
   if (!parsed.success) return { kind: 'refused', reason: 'invalid' };
-  if (!collectionAllows(current, pending, parsed.data)) return { kind: 'refused', reason: 'too_large' };
+  const collectionError = collectionRefusal(current, pending, parsed.data);
+  if (collectionError) return { kind: 'refused', reason: collectionError };
   return { kind: 'added', attachment: parsed.data, selectionId };
 }
 

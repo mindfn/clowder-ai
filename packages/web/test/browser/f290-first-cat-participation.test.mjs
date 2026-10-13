@@ -146,7 +146,7 @@ test(
         evidence,
       });
 
-      assert.equal(await page.getByRole('button', { name: '取消点名' }).count(), 0);
+      assert.equal(await page.getByRole('button', { name: '移除 @' }).count(), 0);
       const operationIds = [];
       await page.route('**/api/events/human', async (route) => {
         if (route.request().method() !== 'POST') return route.continue();
@@ -158,12 +158,12 @@ test(
       });
       await page.getByPlaceholder('在 #general 里说点什么……').fill('accepted 丢响应后重试同一条');
       await page.getByRole('button', { name: '发送', exact: true }).click();
-      await page.getByText('尚未确认送达，可以重试', { exact: true }).waitFor();
+      await page.getByText('没发出去 · 重试', { exact: true }).waitFor();
       await page.reload({ waitUntil: 'networkidle' });
       await page.getByRole('heading', { name: '# general' }).waitFor();
       await page.getByPlaceholder('在 #general 里说点什么……').fill('accepted 丢响应后重试同一条');
       await page.getByRole('button', { name: '发送', exact: true }).click();
-      await page.getByText('已进入共同现场；这不代表某只猫已经接住', { exact: true }).waitFor();
+      await page.locator('.delivery-state').waitFor({ state: 'detached' });
       assert.equal(operationIds.length, 2);
       assert.equal(operationIds[0], operationIds[1]);
       await page.unroute('**/api/events/human');
@@ -201,7 +201,7 @@ test(
         .click();
       await page.getByText('WORKSHOP_CANARY', { exact: true }).waitFor();
       assert.equal(
-        await page.getByRole('button', { name: '取消点名' }).count(),
+        await page.getByRole('button', { name: '移除 @' }).count(),
         0,
         'another channel never inherits the stale target',
       );

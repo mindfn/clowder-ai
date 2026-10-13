@@ -171,6 +171,7 @@ export function SettingsShellV2({
               onOpenTeam={openTeam}
               isPinned={isPinned}
               onTogglePin={togglePin}
+              fixedLayout={fixedLayout}
             >
               {selection === 'theme' ? (
                 <ThemeSettingsPanel />

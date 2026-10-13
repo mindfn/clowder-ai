@@ -24,6 +24,7 @@ import {
   findTrajectoryOriginScrollContainer,
   openInvocationTrajectory,
 } from '../workspace/trajectory/trajectory-navigation';
+import { evalWorkspaceCopy, useEvalCopy, useEvalLanguage } from './eval-workspace.shell-copy';
 import type { EvalWorkspaceEvent, EvalWorkspaceEventKind } from './evalWorkspaceEvents';
 
 const SETTINGS_EVAL_HUB_HREF = '/settings?ops=observability&obs=eval';
@@ -32,11 +33,16 @@ export function EvalWorkspaceEventCard({
   event,
   projectPath,
   worktreeId,
+  onOpenLedger,
 }: {
   event: EvalWorkspaceEvent;
   projectPath?: string;
   worktreeId?: string;
+  /** Workspace opens its original ledger in place; classic standalone consumers retain the established Settings entry. */
+  onOpenLedger?: () => void;
 }) {
+  const t = useEvalCopy();
+  const language = useEvalLanguage();
   const setCurrentProject = useChatStore((state) => state.setCurrentProject);
   const setWorkspaceOpenFile = useChatStore((state) => state.setWorkspaceOpenFile);
   const setWorkspaceMode = useChatStore((state) => state.setWorkspaceMode);
@@ -100,58 +106,72 @@ export function EvalWorkspaceEventCard({
           <h3 className="mt-1 break-words text-sm font-semibold text-cafe">{event.title}</h3>
         </div>
         <span className={`inline-flex shrink-0 rounded-md px-2.5 py-1 text-xs font-semibold ${badgeClass(event.kind)}`}>
-          {kindLabel(event)}
+          {kindLabel(event, language)}
         </span>
       </div>
       <p className="mt-3 text-sm leading-relaxed text-cafe-secondary">{event.summary}</p>
       <dl className="mt-3 grid gap-2 text-xs sm:grid-cols-2">
-        <InfoTerm label="现在要做" value={event.action} />
-        <InfoTerm label="下次看什么" value={formatNextCheck(event)} />
+        <InfoTerm label={t.nowAction} value={event.action} />
+        <InfoTerm label={t.nextCheck} value={formatNextCheck(event, language)} />
         {event.lifecycle.diagnosisTarget ? (
-          <InfoTerm label="问题指向" value={formatDiagnosisTarget(event.lifecycle.diagnosisTarget)} />
+          <InfoTerm label={t.diagnosisTarget} value={formatDiagnosisTarget(event.lifecycle.diagnosisTarget)} />
         ) : null}
         {event.lifecycle.targetOwnerCatId ? (
-          <InfoTerm label="负责处理" value={formatLifecycleOwner(event.lifecycle.targetOwnerCatId)} />
+          <InfoTerm label={t.owner} value={formatLifecycleOwner(event.lifecycle.targetOwnerCatId)} />
         ) : null}
-        {event.lifecycle.taskId ? <InfoTerm label="责任任务" value={event.lifecycle.taskId} /> : null}
+        {event.lifecycle.taskId ? <InfoTerm label={t.task} value={event.lifecycle.taskId} /> : null}
         {event.lifecycle.leaseId ? (
           <InfoTerm
-            label="责任租约"
+            label={t.lease}
             value={`${event.lifecycle.leaseId}${event.lifecycle.leaseGeneration ? ` · generation ${event.lifecycle.leaseGeneration}` : ''}`}
           />
         ) : null}
         {event.lifecycle.mainCommitSha ? (
-          <InfoTerm label="主干状态" value={`main · ${event.lifecycle.mainCommitSha}`} />
+          <InfoTerm label={t.mainStatus} value={`main · ${event.lifecycle.mainCommitSha}`} />
         ) : null}
         {event.lifecycle.liveCommitSha ? (
-          <InfoTerm label="运行状态" value={`live · ${event.lifecycle.liveCommitSha}`} />
+          <InfoTerm label={t.liveStatus} value={`live · ${event.lifecycle.liveCommitSha}`} />
         ) : null}
-        <InfoTerm label="跟进状态" value={ownerResponseLabel(event.lifecycle.ownerResponseStatus)} />
+        <InfoTerm label={t.followup} value={ownerResponseLabel(event.lifecycle.ownerResponseStatus, language)} />
         {event.lifecycle.repairDebtStatus ? (
-          <InfoTerm label="修复债务" value={repairDebtLabel(event.lifecycle.repairDebtStatus)} />
+          <InfoTerm label={t.repairDebt} value={repairDebtLabel(event.lifecycle.repairDebtStatus, language)} />
         ) : null}
         {event.lifecycle.reevalDebtStatus ? (
-          <InfoTerm label="节奏 / 复评债务" value={reevalDebtLabel(event.lifecycle.reevalDebtStatus)} />
+          <InfoTerm label={t.reevalDebt} value={reevalDebtLabel(event.lifecycle.reevalDebtStatus, language)} />
         ) : null}
-        {event.lifecycle.reevalTaskId ? <InfoTerm label="复评任务" value={event.lifecycle.reevalTaskId} /> : null}
-        <InfoTerm label="闭环进度" value={lifecycleStatusLabel(event.lifecycle.closureStatus)} />
+        {event.lifecycle.reevalTaskId ? <InfoTerm label={t.reevalTask} value={event.lifecycle.reevalTaskId} /> : null}
+        <InfoTerm label={t.closure} value={lifecycleStatusLabel(event.lifecycle.closureStatus, language)} />
         {event.lifecycle.reevalStatus ? (
-          <InfoTerm label="复评状态" value={reevalStatusLabel(event.lifecycle.reevalStatus)} />
+          <InfoTerm label={t.reevalStatus} value={reevalStatusLabel(event.lifecycle.reevalStatus, language)} />
         ) : null}
       </dl>
       <LifecycleNotices event={event} />
-      <LifecycleRefs label="修复证据" refs={event.lifecycle.actionRefs} onOpenInvocation={openTrajectoryEvidence} />
-      <LifecycleRefs label="复评证据" refs={event.lifecycle.reevalRefs} onOpenInvocation={openTrajectoryEvidence} />
+      <LifecycleRefs
+        label={t.repairEvidence}
+        refs={event.lifecycle.actionRefs}
+        onOpenInvocation={openTrajectoryEvidence}
+      />
+      <LifecycleRefs
+        label={t.reevalEvidence}
+        refs={event.lifecycle.reevalRefs}
+        onOpenInvocation={openTrajectoryEvidence}
+      />
       <HubEvalMetricGlossary glossary={event.metricGlossary} />
       <div className="mt-3 flex flex-wrap gap-2">
-        <a href={SETTINGS_EVAL_HUB_HREF} className={navClassName}>
-          查看台账
-        </a>
-        <NavButton onClick={() => openWorkspaceFile(event.source.verdictPath)}>结论文件</NavButton>
-        <NavButton onClick={() => openWorkspaceFile(`${event.source.bundleDir}/snapshot.json`)}>快照包</NavButton>
-        <NavButton onClick={() => openWorkspaceFile(`${event.source.bundleDir}/attribution.json`)}>归因包</NavButton>
+        {onOpenLedger ? (
+          <NavButton onClick={onOpenLedger}>{t.openLedger}</NavButton>
+        ) : (
+          <a href={SETTINGS_EVAL_HUB_HREF} className={navClassName}>
+            {t.viewLedger}
+          </a>
+        )}
+        <NavButton onClick={() => openWorkspaceFile(event.source.verdictPath)}>{t.verdictFile}</NavButton>
+        <NavButton onClick={() => openWorkspaceFile(`${event.source.bundleDir}/snapshot.json`)}>{t.snapshot}</NavButton>
+        <NavButton onClick={() => openWorkspaceFile(`${event.source.bundleDir}/attribution.json`)}>
+          {t.attribution}
+        </NavButton>
         <a href={`/thread/${encodeURIComponent(event.systemThreadId)}`} className={navClassName}>
-          工作线程
+          {t.workThread}
         </a>
       </div>
     </article>
@@ -159,11 +179,13 @@ export function EvalWorkspaceEventCard({
 }
 
 function LifecycleNotices({ event }: { event: EvalWorkspaceEvent }) {
+  const t = useEvalCopy();
+  const language = useEvalLanguage();
   const { lifecycle } = event;
   if (lifecycle.availability === 'unavailable') {
     return (
       <div className="mt-3 rounded-md border border-conn-amber-ring bg-conn-amber-bg px-3 py-2 text-xs text-conn-amber-text">
-        处置记录暂不可用；结论和证据仍可查看。
+        {t.missingLifecycle}
       </div>
     );
   }
@@ -171,14 +193,19 @@ function LifecycleNotices({ event }: { event: EvalWorkspaceEvent }) {
     <>
       {lifecycle.escalation ? (
         <div className="mt-3 rounded-md border border-conn-red-ring bg-conn-red-bg px-3 py-2 text-xs text-conn-red-text">
-          {escalationLabel(lifecycle.escalation)} · 原截止 {formatLifecycleDate(lifecycle.escalation.dueAt)}
+          {escalationLabel(lifecycle.escalation, language)} · {t.originalDeadline}{' '}
+          {formatLifecycleDate(lifecycle.escalation.dueAt, language)}
         </div>
       ) : null}
       {lifecycle.closureReason ? (
-        <p className="mt-3 text-xs leading-relaxed text-cafe-secondary">闭环说明：{lifecycle.closureReason}</p>
+        <p className="mt-3 text-xs leading-relaxed text-cafe-secondary">
+          {t.closureReason}: {lifecycle.closureReason}
+        </p>
       ) : null}
       {(lifecycle.unavailableRefs?.length ?? 0) > 0 ? (
-        <p className="mt-2 text-xs text-conn-amber-text">历史证据缺失 {lifecycle.unavailableRefs?.length} 段</p>
+        <p className="mt-2 text-xs text-conn-amber-text">
+          {t.missingHistoryCount(lifecycle.unavailableRefs?.length ?? 0)}
+        </p>
       ) : null}
     </>
   );
@@ -198,6 +225,8 @@ function LifecycleRefs({
   refs?: EvalLifecycleRef[];
   onOpenInvocation?: (invocationId: string) => void;
 }) {
+  const t = useEvalCopy();
+  const language = useEvalLanguage();
   if (refs.length === 0) return null;
   return (
     <div className="mt-3 text-xs">
@@ -226,7 +255,7 @@ function LifecycleRefs({
                 <circle cx="12" cy="12" r="1.5" />
                 <path d="M4 5.5v3A3.5 3.5 0 0 0 7.5 12h3" />
               </svg>
-              Invocation 轨迹
+              {t.invocationTrace}
             </button>
           ) : ref.availability === 'available' && /^https?:\/\//.test(ref.value) ? (
             <a
@@ -240,7 +269,7 @@ function LifecycleRefs({
             </a>
           ) : (
             <code key={`${ref.kind}-${index}`} className="break-all rounded bg-cafe-surface px-1.5 py-0.5">
-              {lifecycleRefText(ref)}
+              {lifecycleRefText(ref, language)}
             </code>
           );
         })}
@@ -266,14 +295,15 @@ function NavButton({ children, onClick }: { children: string; onClick: () => voi
   );
 }
 
-function kindLabel(event: EvalWorkspaceEvent): string {
+function kindLabel(event: EvalWorkspaceEvent, language: 'zh' | 'en'): string {
+  const t = evalWorkspaceCopy[language];
   if (event.kind === 'escalated' || event.kind === 'resolved') {
-    return lifecycleStatusLabel(event.lifecycle.closureStatus);
+    return lifecycleStatusLabel(event.lifecycle.closureStatus, language);
   }
-  if (event.kind === 'needs_decision') return '需要拍板';
-  if (event.kind === 'needs_action') return '需要处理';
-  if (event.kind === 'awaiting_reeval') return '待复评';
-  return '观察中';
+  if (event.kind === 'needs_decision') return t.kindDecision;
+  if (event.kind === 'needs_action') return t.kindAction;
+  if (event.kind === 'awaiting_reeval') return t.kindReeval;
+  return t.kindWatching;
 }
 
 function badgeClass(kind: EvalWorkspaceEventKind): string {
@@ -283,8 +313,11 @@ function badgeClass(kind: EvalWorkspaceEventKind): string {
   return 'bg-cafe-surface text-cafe-secondary';
 }
 
-function formatNextCheck(event: EvalWorkspaceEvent): string {
-  return event.nextEvalAt ? `${event.nextCheck} 原计划：${formatLifecycleDate(event.nextEvalAt)}。` : event.nextCheck;
+function formatNextCheck(event: EvalWorkspaceEvent, language: 'zh' | 'en'): string {
+  const t = evalWorkspaceCopy[language];
+  return event.nextEvalAt
+    ? `${event.nextCheck} ${t.originalSchedule}: ${formatLifecycleDate(event.nextEvalAt, language)}`
+    : event.nextCheck;
 }
 
 const navClassName =

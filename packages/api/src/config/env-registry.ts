@@ -115,6 +115,17 @@ export const ENV_CATEGORIES: Record<EnvCategory, string> = {
 export const ENV_VARS: EnvDefinition[] = [
   // --- server ---
   {
+    name: 'CAT_CAFE_REMOTE_PUBLIC_BASE_URL',
+    defaultValue: '(未配置)',
+    description: '当前部署受管 Remote MCP 的 HTTPS 地址；dot 协作据此准备订阅说明，必须指向本部署',
+    category: 'server',
+    sensitive: false,
+    maskMode: 'url',
+    runtimeEditable: false,
+    restartRequired: true,
+    exampleRecommended: true,
+  },
+  {
     name: 'CAT_CAFE_DEPLOYMENT_ID',
     defaultValue: '(未设置)',
     description: '部署实例身份（例如 alpha）；由启动入口注入，只用于隔离部署专属能力',
@@ -1457,6 +1468,14 @@ export const ENV_VARS: EnvDefinition[] = [
     description: '缅因猫审批策略',
     category: 'codex',
     sensitive: false,
+  },
+  {
+    name: 'CLAUDE_CONFIG_DIR',
+    defaultValue: '',
+    description: 'Claude Code 本机会话与进程索引目录；未设置时使用用户目录下的 .claude',
+    category: 'cli',
+    sensitive: false,
+    runtimeEditable: false,
   },
   {
     name: 'CAT_CAFE_CLAUDE_CARRIER',

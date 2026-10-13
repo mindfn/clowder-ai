@@ -1,6 +1,6 @@
 ---
 feature_ids: [F324]
-related_features: [F038, F148, F167, F188, F203, F209, F227, F231, F236, F237, F254, F260, F263, F276, F286, F287, F296, F316, F321, F323]
+related_features: [F038, F148, F167, F188, F203, F209, F227, F231, F236, F237, F254, F260, F263, F276, F286, F287, F296, F316, F321, F323, F325]
 topics: [memory, context, retrieval, delivery, reliability, command]
 doc_kind: spec
 created: 2026-09-27
@@ -8,12 +8,12 @@ description: "让猫以可控的上下文成本取得可信、完整可续读的
 description_source: human
 description_author: codex-astra
 description_updated_at: 2026-09-27T12:29:12Z
-tips_exempt: "Remediates existing memory delivery and startup behavior; introduces no new user action or discoverable capability."
+tips_exempt: "Renewed 2026-10-13: source cleanup and runtime acceptance status record progress and remaining evidence gaps for existing memory/startup behavior; related-feature metadata adds no new user action or discoverable entry."
 ---
 
 # F324: Memory Delivery Reliability｜记忆交付可靠性与上下文成本收口
 
-> **Status**: in-progress（A/B 原 Task 已 satisfied；C 实收与仓内防复发已合入并完成 Alpha 切片，共享文件恢复待权限裁定，D 未启动） | **Owner**: Astra（@codex-astra, gpt-6-astra）与 Opus55（@opus55, claude-opus-5-5），本指挥 thread 全体猫共同负责驱动与愿景守护 | **Priority**: P1
+> **Status**: in-progress（A/B/C 原 Task 已 satisfied；D 的 AC-D1 PASS、AC-D2 PARTIAL；boot22 已加载 #5358，Codex cold/hot full read PASS、同参 message search 503；AC-D3 指挥愿景守护待完成） | **Owner**: Astra（@codex-astra, gpt-6-astra）与 Opus55（@opus55, claude-opus-5-5），本指挥 thread 全体猫共同负责驱动与愿景守护 | **Priority**: P1
 
 ## Why
 
@@ -150,20 +150,26 @@ Alpha `alpha/main-sync` 精确加载 `17561ae8ad94fa74bef2c551528692b1e6302ccc`�
 
 ### Phase C（启动证据）
 - [x] AC-C1: 三载体分别记录实际实收来源、版本、大小与已加载能力，明确可发现/已加载及 unknown。
-- [ ] AC-C2: 已授权清理完成并证明身份/关键能力/其他项目无回归；需要 operator 的变更提供精确 diff，未授权项不假称已完成。
+- [x] AC-C2: 已授权清理完成并证明身份/关键能力/其他项目无回归；需要 operator 的变更提供精确 diff，未授权项不假称已完成。
 
 C1 与 hook 清理引用 启动证据 (internal)、PR #4943 / `fa57426575b2135484b17e8fe66af61969383d83` 及 Sol5.6 exact-HEAD typed approval。
-Alpha 曾重生成共享 Gemini/AGY 配置；startup+GET 防复发随 #4946 / `68acf34b57a22103ad5318ff28686936ae676212` 合入，经 Sol5.6 审查及同版 scoped hash/300项回归验证。既有共享文件恢复仍待 operator，C2 暂不打勾，D 未启动；health running-revision attestation=null/unknown 如实保留。
+Alpha 曾重生成共享 Gemini/AGY 配置；startup+GET 防复发随 #4946 / `68acf34b57a22103ad5318ff28686936ae676212` 合入，经 Sol5.6 审查及同版 scoped hash/300项回归验证。
+10-10 续办实查十处路径已指向现有 runtime，旧 Alpha→main 恢复补丁失效且退役；本执行未写共享配置、外部恢复作者/授权 unknown。
+#5358 / `1602892667ef4f311e07d6d392f51d52f306107b` 默认配置来源修复有 Sonnet 独立审查、43/43 与306/306回归，以及合入态四provider配置验证。
+父规则/四fixture清理按原合同交刷新后的未执行决定包，未授权不改。10-10 原 owner 已全文核终态、三份独立批准、14 个合入源码 hash、11 个 Alpha 产物 hash及当前三源 hash/十个入口；原 C Task `private-source-id` revision=16、closure=satisfied。
+完成来源 `[thread-id]#private-source-id` 经 `development-return-c519aeaee8d8381e9efcecd8bf31cf62` 以 terminal_report 送达；这结算 C 原交付边界，不把未授权清理或 D 的真实运行旅程标绿。
+原09-30 health revision attestation=null/unknown、10-10配置验证mock-spawn边界和ACP既有残余均保留，不冒充runtime loaded或真实模型/MCP调用。
 
 ### Phase D（真实交付）
-- [ ] AC-D1: A/B/C 的合入 revision、Alpha 证据、日常 runtime 加载证明分开记录，重启授权可回查。
+
+- [x] AC-D1: A/B/C 的合入 revision、Alpha 证据、日常 runtime 加载证明分开记录，重启授权可回查。
 - [ ] AC-D2: 非作者完成冷/热/恢复/长回合的组合旅程，预算与重复降低且证据可达性、正确性不退化；#4836 在目标版本复验。
 - [ ] AC-D3: 本 thread 两指挥猫完成愿景守护，全部原诉求有交付或明确 operator 签字 disposition；close 仍按既有权限门。
 
 ## Dependencies
 
 - **Related**: 原合同表；F316/F321 保留独立目标与 authority。
-- **Blocked by**: D 的 live 结论等待目标版本经授权激活；不把 F323 尚未实现的新能力设为所有修复的前置。
+- **Blocked by**: 目标版本激活条件已在 boot22 满足；AC-D2 仍有同参 search 503、Gemini 完整迁移、真实 compaction 与自然 cue 缺口。不把这些诚实 FAIL/unknown 改造成重复模型矩阵或 F323 新前置。
 - 按 operator 最新指示严格 A → B → C → D 串行；前一 Phase 完成并回流后才提下一张执行 thread 卡，D 的 live 验收另需版本就绪。
 
 ## Review Gate

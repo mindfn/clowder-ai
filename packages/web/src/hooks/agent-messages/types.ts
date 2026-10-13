@@ -55,6 +55,7 @@ export interface AgentEventFields {
   isFinal?: boolean;
   metadata?: AgentEventMetadata;
   toolEventId?: string;
+  toolUseId?: string;
   toolExecutionRef?: string;
   toolName?: string;
   toolInput?: Record<string, unknown>;

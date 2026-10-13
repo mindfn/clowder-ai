@@ -51,11 +51,18 @@ function RunningSection({ controller, words }: { controller: ExecutionRowControl
               data-testid="execution-row-run"
               className="flex items-center gap-2 px-3 py-1.5 text-xs"
             >
-              <CatAvatar catId={execution.catId} size={18} />
-              <span className="font-medium text-cafe-secondary">{resolveCatName(execution.catId)}</span>
-              <span className="text-cafe-muted">{what}</span>
-              {quiet ? <span className="text-conn-amber-text">{words.panel.quiet}</span> : null}
-              <span className="ml-auto tabular-nums text-cafe-muted">{formatClock(now - execution.startedAt)}</span>
+              <button
+                type="button"
+                onClick={() => controller.locate(execution)}
+                aria-label={`${words.actions.locate}: ${resolveCatName(execution.catId)} ${what}`}
+                className="shell-focusable flex min-w-0 flex-1 items-center gap-2 text-left"
+              >
+                <CatAvatar catId={execution.catId} size={18} />
+                <span className="truncate font-medium text-cafe-secondary">{resolveCatName(execution.catId)}</span>
+                <span className="text-cafe-muted">{what}</span>
+                {quiet ? <span className="text-conn-amber-text">{words.panel.quiet}</span> : null}
+                <span className="ml-auto tabular-nums text-cafe-muted">{formatClock(now - execution.startedAt)}</span>
+              </button>
               <ExecutionCancelButton
                 execution={execution}
                 label={words.actions.stop}

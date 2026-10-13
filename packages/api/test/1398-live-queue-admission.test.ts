@@ -4,11 +4,11 @@ import { resolve } from 'node:path';
 import { test } from 'node:test';
 import { createCatId } from '@cat-cafe/shared';
 import Fastify from 'fastify';
-import { InMemoryQueueLedgerStore } from '../src/domains/cats/services/agents/invocation/queue-ledger/InMemoryQueueLedgerStore.js';
-import { MessageStore } from '../src/domains/cats/services/stores/ports/MessageStore.js';
-import { safeParseExtra } from '../src/domains/cats/services/stores/redis/redis-message-parsers.js';
-import { LiveCompanionSessions } from '../src/domains/concierge/live/LiveCompanionSessions.js';
-import { messagesRoutes } from '../src/routes/messages.js';
+import { InMemoryQueueLedgerStore } from '../dist/domains/cats/services/agents/invocation/queue-ledger/InMemoryQueueLedgerStore.js';
+import { MessageStore } from '../dist/domains/cats/services/stores/ports/MessageStore.js';
+import { safeParseExtra } from '../dist/domains/cats/services/stores/redis/redis-message-parsers.js';
+import { LiveCompanionSessions } from '../dist/domains/concierge/live/LiveCompanionSessions.js';
+import { messagesRoutes } from '../dist/routes/messages.js';
 import { createPersistedQueueFixture } from './helpers/persisted-queue-fixture.js';
 
 async function until(predicate) {

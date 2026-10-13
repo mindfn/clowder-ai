@@ -102,6 +102,31 @@ export class WorkspaceWritebackService {
     return this.read(receiptRef, principal);
   }
 
+  /** Artifact reads consume an already-applied effect and never settle a prepared receipt. */
+  async findApplied(
+    receiptRef: string,
+    principal: Pick<WorkspaceWritebackPrincipal, 'userId'>,
+  ): Promise<WorkspaceWritebackView | null> {
+    const record = this.journal.get(receiptRef);
+    if (
+      !record ||
+      record.ownerUserId !== principal.userId ||
+      record.state !== 'applied' ||
+      !record.writtenRevision ||
+      record.writtenRevision !== record.candidateRevision ||
+      !Number.isFinite(record.appliedAt)
+    )
+      return null;
+    const current = await this.options.source.describeFileReference({ principal, locator: record.locator });
+    if (
+      current.absolutePath !== record.targetPath ||
+      current.locator.worktreeId !== record.locator.worktreeId ||
+      current.locator.path !== record.locator.path
+    )
+      return null;
+    return { ...record, currentRevision: current.revision };
+  }
+
   private async writePrepared(record: WritebackRecord, principal: WorkspaceWritebackPrincipal) {
     // Recheck registered root, resolved path, authority and byte revision immediately before mutation.
     // Node's rename uses path strings, not a pinned directory fd. An external process can swap a parent

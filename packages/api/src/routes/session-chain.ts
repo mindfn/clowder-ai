@@ -1,3 +1,9 @@
+import {
+  type LocalSessionImportOptions,
+  localSessionConflict,
+  localSessionFailure,
+  registerLocalSessionImportRoutes,
+} from './local-session-import-routes.js';
 /**
  * Session Chain Routes
  * F24: API endpoints for session chain + context health data.
@@ -32,10 +38,12 @@ import type {
 } from '../domains/cats/services/stores/ports/SessionChainStore.js';
 import type { IThreadStore } from '../domains/cats/services/stores/ports/ThreadStore.js';
 import { canAccessThread, isSharedDefaultThread } from '../domains/guides/guide-state-access.js';
+import { resolveOwnerGate } from '../utils/owner-gate.js';
 import { resolveUserId } from '../utils/request-identity.js';
 
 const bindSessionSchema = z.object({
   cliSessionId: z.string().min(1).max(500),
+  externalImport: z.literal(true).optional(),
 });
 
 const restoreSessionSchema = z
@@ -44,6 +52,7 @@ const restoreSessionSchema = z
   })
   .strict();
 const listSessionPageSchema = z.object({
+  view: z.literal('import').optional(),
   catId: z.string().optional(),
   limit: z.coerce.number().int().min(1).max(100).optional(),
   offset: z.coerce.number().int().min(0).optional(),
@@ -56,7 +65,7 @@ interface RestoreRouteResponse {
   body: Record<string, unknown>;
 }
 
-interface SessionChainRouteOptions extends FastifyPluginOptions {
+interface SessionChainRouteOptions extends FastifyPluginOptions, LocalSessionImportOptions {
   sessionChainStore: ISessionChainStore;
   threadStore: IThreadStore;
   messageStore?: IMessageStore;
@@ -299,6 +308,7 @@ async function loadRestoreTarget(
 }
 
 export async function sessionChainRoutes(app: FastifyInstance, opts: SessionChainRouteOptions): Promise<void> {
+  registerLocalSessionImportRoutes(app, opts);
   const {
     sessionChainStore,
     threadStore,
@@ -311,7 +321,7 @@ export async function sessionChainRoutes(app: FastifyInstance, opts: SessionChai
 
   app.get<{
     Params: { threadId: string };
-    Querystring: { catId?: string; limit?: string; offset?: string };
+    Querystring: { catId?: string; limit?: string; offset?: string; view?: 'import' };
   }>('/api/threads/:threadId/sessions', async (request, reply) => {
     const userId = resolveUserId(request, { defaultUserId: 'default-user' });
     if (!userId) {
@@ -339,6 +349,26 @@ export async function sessionChainRoutes(app: FastifyInstance, opts: SessionChai
     // When caller identifies as a specific cat (MCP tool), restrict to own sessions only.
     // Query param `catId` is ignored when it differs from caller — prevents cross-cat enumeration.
     const effectiveCatId = callerCatId ?? catId;
+    if (callerCatId && catId && catId !== callerCatId) {
+      return reply.status(403).send({ error: `Cannot query sessions for cat '${catId}' — you are '${callerCatId}'` });
+    }
+    if (parsedPage.data.view === 'import') {
+      const coordinate = thread?.sessionImport;
+      const session =
+        coordinate && (!effectiveCatId || coordinate.catId === effectiveCatId)
+          ? await sessionChainStore.get(coordinate.sessionId)
+          : null;
+      const imported =
+        session &&
+        session.threadId === threadId &&
+        session.catId === coordinate?.catId &&
+        canReadThreadRecord(access, session) &&
+        session.cliSessionId &&
+        session.externalImport?.cliSessionId === session.cliSessionId
+          ? session
+          : null;
+      return reply.send({ importedSession: imported ? { catId: imported.catId, ...imported.externalImport } : null });
+    }
     const sendSessions = async (visibleSessions: SessionRecord[]) => {
       if (limit === undefined && offset === undefined) {
         return reply.send({ sessions: await attachRuntimeSessionSummaries(visibleSessions, runtimeSessionStore) });
@@ -355,10 +385,6 @@ export async function sessionChainRoutes(app: FastifyInstance, opts: SessionChai
     };
 
     if (effectiveCatId) {
-      if (callerCatId && catId && catId !== callerCatId) {
-        reply.status(403);
-        return { error: `Cannot query sessions for cat '${catId}' — you are '${callerCatId}'` };
-      }
       const sessions = await sessionChainStore.getChain(
         effectiveCatId as CatId,
         threadId,
@@ -606,6 +632,11 @@ export async function sessionChainRoutes(app: FastifyInstance, opts: SessionChai
     }
 
     const { cliSessionId } = parseResult.data;
+    if (parseResult.data.externalImport) {
+      const ownerError = resolveOwnerGate(userId);
+      if (ownerError)
+        return reply.status(ownerError.status).send({ code: 'SESSION_OWNER_REQUIRED', error: ownerError.error });
+    }
 
     // Verify thread exists + ownership
     const thread = await threadStore.get(threadId);
@@ -625,12 +656,54 @@ export async function sessionChainRoutes(app: FastifyInstance, opts: SessionChai
       return { error: 'Access denied' };
     }
 
+    let importMetadata: Awaited<ReturnType<NonNullable<LocalSessionImportOptions['inspectLocalSession']>>> | undefined;
+    if (parseResult.data.externalImport) {
+      if (!z.string().uuid().safeParse(cliSessionId).success)
+        return reply.status(400).send({ error: 'Invalid session ID' });
+      const conflict = await localSessionConflict(opts, cliSessionId, userId, threadId);
+      if (conflict) return reply.status(409).send(conflict);
+      if (isSessionSwitchBusy?.(threadId, catId, userId)) {
+        return reply.status(409).send({ code: 'SESSION_ACTIVE_WRITER', error: 'Wait for the running cat to finish' });
+      }
+      if (active?.cliSessionId && active.cliSessionId !== cliSessionId) {
+        return reply
+          .status(409)
+          .send({ code: 'SESSION_ALREADY_SELECTED', error: 'This cat already has another session' });
+      }
+      if (!opts.inspectLocalSession) return reply.status(503).send({ error: 'Session inspection is unavailable' });
+      try {
+        importMetadata = await opts.inspectLocalSession(catId, cliSessionId);
+      } catch (error) {
+        return reply.status(409).send(localSessionFailure(error));
+      }
+      if (importMetadata.projectPath !== thread.projectPath || importMetadata.sessionId !== cliSessionId) {
+        return reply
+          .status(409)
+          .send({ code: 'SESSION_PROJECT_MISMATCH', error: 'The project must follow the original session' });
+      }
+    }
+    const persistImport = async (sessionId: string) => {
+      if (!importMetadata) return;
+      await sessionChainStore.update(sessionId, {
+        externalImport: {
+          cliSessionId,
+          clientId: importMetadata.clientId,
+          firstPrompt: importMetadata.firstPrompt,
+          projectPath: importMetadata.projectPath,
+          lastActivityAt: importMetadata.lastActivityAt,
+          importedAt: Date.now(),
+        },
+        workingDirectory: importMetadata.projectPath,
+      });
+    };
+
     let session;
     let mode: 'updated' | 'created';
 
     if (active) {
       // Late-bind through the store's atomic CLI-ID claim path. A generic
       // update can race another logical node and steal its runtime identity.
+      await persistImport(active.id);
       const updated = await sessionChainStore.bindCliSessionId(active.id, cliSessionId);
       if (!updated) {
         reply.status(409);
@@ -652,6 +725,7 @@ export async function sessionChainRoutes(app: FastifyInstance, opts: SessionChai
         catId: catId as CatId,
         userId,
       });
+      await persistImport(logical.id);
       const bound = await sessionChainStore.bindCliSessionId(logical.id, cliSessionId);
       if (!bound) {
         reply.status(409);
@@ -660,6 +734,8 @@ export async function sessionChainRoutes(app: FastifyInstance, opts: SessionChai
       session = bound;
       mode = 'created';
     }
+
+    if (importMetadata) await threadStore.setSessionImport(threadId, { sessionId: session.id, catId });
 
     // Audit trail (best-effort, fire-and-forget)
     getEventAuditLog()

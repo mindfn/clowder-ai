@@ -1,6 +1,6 @@
 import { randomUUID } from 'node:crypto';
 import { test } from 'node:test';
-import { verify } from './f290-collective-thread-system.test.js';
+import { verifyCollectiveThreadSystem } from './helpers/f290-collective-thread-contract.js';
 
 test('Redis preserves collective system classification and refuses foreign, deleted and conflicting claims', async () => {
   const { assertRedisIsolationOrThrow, cleanupPrefixedRedisKeys } = await import('./helpers/redis-test-helpers.js');
@@ -9,7 +9,7 @@ test('Redis preserves collective system classification and refuses foreign, dele
   const { RedisThreadStore } = await import('../src/domains/cats/services/stores/redis/RedisThreadStore.js');
   const redis = createRedisClient({ url: process.env.REDIS_URL, keyPrefix: `f290-system:${randomUUID()}:` });
   try {
-    await verify(new RedisThreadStore(redis));
+    await verifyCollectiveThreadSystem(new RedisThreadStore(redis));
   } finally {
     await cleanupPrefixedRedisKeys(redis, ['thread:*', 'threads:*']);
     await redis.quit();

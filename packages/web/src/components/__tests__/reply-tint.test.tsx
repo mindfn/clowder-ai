@@ -8,6 +8,8 @@ import { ReplyPreviewBar } from '../ReplyPreviewBar';
 
 Object.assign(globalThis as Record<string, unknown>, { React });
 
+vi.mock('@/components/shell/shell-presentation', () => ({ useShellPresentation: () => 'v2' }));
+
 const config = vi.hoisted(() => ({ primary: '#D4A76A' as string | null }));
 
 vi.mock('@/hooks/useCoCreatorConfig', () => ({
@@ -110,7 +112,7 @@ describe('DirectionPill', () => {
           <DirectionPill direction={{ ...direction, targets: ['ghost'] }} getCatById={getCatById} />,
         ),
       ),
-    ).toBe('#9B7EBD20');
+    ).toBe('var(--shell-selected)');
   });
 
   it('a cat configured with an opaque eight-digit colour tints like its six-digit form', () => {

@@ -298,7 +298,13 @@ describe('F310 entrusted-work owner-read backbone', () => {
       payload: { taskId },
     });
     assert.equal(cat.statusCode, 200);
-    assert.deepEqual(cat.json(), web.json());
+    const catBody = cat.json();
+    const webBody = web.json();
+    assert.equal(typeof catBody.ownerRead.execution.observedAt, 'number');
+    assert.equal(typeof webBody.ownerRead.execution.observedAt, 'number');
+    catBody.ownerRead.execution.observedAt = 0;
+    webBody.ownerRead.execution.observedAt = 0;
+    assert.deepEqual(catBody, webBody);
     assert.deepEqual(
       web.json().ownerRead.timeRefs.map(({ role }) => role),
       ['business_deadline', 'review_by'],

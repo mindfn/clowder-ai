@@ -4,6 +4,8 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import { apiFetch } from '@/utils/api-client';
 import { parseChatGptConversationUrl } from '@/utils/chatgpt-chat-url';
 import { personalChromeSettingsHref } from '@/utils/personal-chrome-settings';
+import { cloudConversationCopy } from './cloud-conversation.shell-copy';
+import { useTrajectoryCopy } from './workspace/trajectory/use-trajectory-copy';
 
 interface CloudBindingsResponse {
   bindings?: Record<string, string>;
@@ -39,16 +41,17 @@ async function readCloudConversationBinding(threadId: string, signal: AbortSigna
   return parsed ? { kind: 'bound', ...parsed } : { kind: 'invalid' };
 }
 
-function bindingStatus(binding: BindingState) {
-  if (binding.kind === 'loading') return '读取中…';
-  if (binding.kind === 'empty') return '未绑定';
-  if (binding.kind === 'unauthorized') return '仅 thread owner 可见';
-  if (binding.kind === 'invalid') return '绑定记录无效';
-  if (binding.kind === 'error') return '暂时无法读取';
+function bindingStatus(binding: BindingState, t = cloudConversationCopy.zh) {
+  if (binding.kind === 'loading') return t.loading;
+  if (binding.kind === 'empty') return t.empty;
+  if (binding.kind === 'unauthorized') return t.unauthorized;
+  if (binding.kind === 'invalid') return t.invalid;
+  if (binding.kind === 'error') return t.error;
   return null;
 }
 
 export function CloudConversationLink({ threadId, compact = false }: { threadId: string; compact?: boolean }) {
+  const t = useTrajectoryCopy(cloudConversationCopy);
   const [threadBinding, setThreadBinding] = useState<ThreadBindingState>(() => ({
     threadId,
     value: LOADING_BINDING,
@@ -119,7 +122,7 @@ export function CloudConversationLink({ threadId, compact = false }: { threadId:
     }, 1500);
   }, [binding, threadId]);
 
-  const status = bindingStatus(binding);
+  const status = bindingStatus(binding, t);
   const settingsHref = personalChromeSettingsHref(threadId);
 
   if (compact) {
@@ -131,27 +134,29 @@ export function CloudConversationLink({ threadId, compact = false }: { threadId:
             {binding.conversationId}
           </code>
         ) : (
-          <span>{status}</span>
+          <span className="status-v2-cloud-id">{status}</span>
         )}
-        {(binding.kind === 'bound' || binding.kind === 'empty') && (
-          <a
-            href={binding.kind === 'bound' ? binding.chatUrl : 'https://chatgpt.com/'}
-            target="_blank"
-            rel="noopener noreferrer"
-          >
-            打开 ChatGPT
-          </a>
-        )}
-        {binding.kind === 'bound' && (
-          <button type="button" aria-label="复制 ChatGPT 会话链接" onClick={() => void copyLink()} aria-live="polite">
-            {copyState === 'copied' ? '已复制' : copyState === 'failed' ? '复制失败' : '复制链接'}
-          </button>
-        )}
-        {binding.kind !== 'loading' && binding.kind !== 'unauthorized' && (
-          <a href={settingsHref} title="先在目标会话点击扩展的「授权此会话」，再为当前对话选择它。">
-            {binding.kind === 'bound' ? '更换绑定' : binding.kind === 'empty' ? '选会话' : '检查绑定'}
-          </a>
-        )}
+        <span className="status-v2-info-actions">
+          {(binding.kind === 'bound' || binding.kind === 'empty') && (
+            <a
+              href={binding.kind === 'bound' ? binding.chatUrl : 'https://chatgpt.com/'}
+              target="_blank"
+              rel="noopener noreferrer"
+            >
+              {t.openChatGPT}
+            </a>
+          )}
+          {binding.kind === 'bound' && (
+            <button type="button" aria-label={t.copyLabel} onClick={() => void copyLink()} aria-live="polite">
+              {copyState === 'copied' ? t.copied : copyState === 'failed' ? t.copyFailed : t.copyLink}
+            </button>
+          )}
+          {binding.kind !== 'loading' && binding.kind !== 'unauthorized' && (
+            <a href={settingsHref} title={t.instructions}>
+              {binding.kind === 'bound' ? t.change : binding.kind === 'empty' ? t.select : t.check}
+            </a>
+          )}
+        </span>
       </div>
     );
   }
@@ -159,9 +164,9 @@ export function CloudConversationLink({ threadId, compact = false }: { threadId:
   return (
     <div className="console-list-card mt-2 min-w-0 rounded-xl p-2.5" data-testid="cloud-conversation-link">
       <div className="flex min-w-0 items-center justify-between gap-2">
-        <span className="text-xs font-semibold text-cafe">ChatGPT 对话</span>
+        <span className="text-xs font-semibold text-cafe">{t.title}</span>
         <span className="shrink-0 rounded-full bg-[var(--console-hover-bg)] px-1.5 py-0.5 text-micro font-medium text-cafe-secondary">
-          云端砚砚
+          {t.cloudCat}
         </span>
       </div>
       <div className="mt-1 min-w-0 text-micro text-cafe-secondary">
@@ -178,27 +183,27 @@ export function CloudConversationLink({ threadId, compact = false }: { threadId:
           <button
             type="button"
             className="font-medium text-cafe-secondary transition-colors hover:text-cafe"
-            aria-label="复制 ChatGPT 会话链接"
+            aria-label={t.copyLabel}
             onClick={() => void copyLink()}
           >
-            {copyState === 'copied' ? '已复制' : copyState === 'failed' ? '复制失败' : '复制链接'}
+            {copyState === 'copied' ? t.copied : copyState === 'failed' ? t.copyFailed : t.copyLink}
           </button>
           <a
             className="font-medium text-cafe-secondary transition-colors hover:text-cafe"
             href={binding.chatUrl}
             target="_blank"
             rel="noopener noreferrer"
-            aria-label="在 ChatGPT 中打开当前会话"
+            aria-label={t.openLabel}
           >
-            打开会话
+            {t.open}
           </a>
           <a className="font-medium text-cafe-muted transition-colors hover:text-cafe" href={settingsHref}>
-            更换绑定
+            {t.change}
           </a>
         </div>
       ) : binding.kind === 'empty' ? (
         <div className="mt-1.5 text-micro text-cafe-muted">
-          <p>先在目标会话点击扩展的「授权此会话」，再为当前对话选择它。</p>
+          <p>{t.instructions}</p>
           <div className="mt-1.5 flex flex-wrap items-center gap-2">
             <a
               className="font-medium text-cafe-secondary transition-colors hover:text-cafe"
@@ -206,10 +211,10 @@ export function CloudConversationLink({ threadId, compact = false }: { threadId:
               target="_blank"
               rel="noopener noreferrer"
             >
-              打开 ChatGPT
+              {t.openChatGPT}
             </a>
             <a className="font-medium text-cafe-secondary transition-colors hover:text-cafe" href={settingsHref}>
-              去插件设置选会话
+              {t.settings}
             </a>
           </div>
         </div>
@@ -218,7 +223,7 @@ export function CloudConversationLink({ threadId, compact = false }: { threadId:
           className="mt-1.5 inline-block text-micro font-medium text-cafe-secondary transition-colors hover:text-cafe"
           href={settingsHref}
         >
-          检查绑定
+          {t.check}
         </a>
       ) : null}
     </div>

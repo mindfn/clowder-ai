@@ -18,7 +18,7 @@
 
 import { execFile } from 'node:child_process';
 import { createHash } from 'node:crypto';
-import { readdir, readFile, realpath, stat } from 'node:fs/promises';
+import { readdir, readFile, stat } from 'node:fs/promises';
 import { dirname, extname, isAbsolute, join, relative, resolve, sep } from 'node:path';
 import { promisify } from 'node:util';
 import type { CallbackPrincipal } from '@cat-cafe/shared';
@@ -32,6 +32,7 @@ import {
   type SkillConsumptionVerificationFailure,
   WORKSPACE_NAVIGATOR_CONSUMER_ID,
 } from '../domains/cats/services/tool-usage/SkillConsumptionReceiptService.js';
+import type { PullRequestChangesDependencies } from '../domains/workspace/pull-request-changes.js';
 import { canonicalLinkedRootId, readLinkedRootState } from '../domains/workspace/roots/workspace-linked-root-store.js';
 import { guessMime, readWorkspaceFilePreview } from '../domains/workspace/workspace-file-read.js';
 import type { WorkspaceNavigationEmitter } from '../domains/workspace/workspace-navigation-delivery.js';
@@ -51,6 +52,10 @@ import {
   resolveWorkspaceFilesystemPath,
   WorkspaceSecurityError,
 } from '../domains/workspace/workspace-security.js';
+import {
+  canonicalWorkspaceIdentityRoot,
+  durableIdForCanonicalRoot,
+} from '../domains/workspace/workspace-worktree-identity.js';
 import { resolveDirectLocalAuthorizationUserId, resolveSessionUserId } from '../utils/request-identity.js';
 import {
   type AgentKeyAuthRegistry,
@@ -68,6 +73,7 @@ import {
   type ResolveWorktreeIdByPathForNavigate,
   type WorkspaceNavigateBody,
 } from './workspace-navigate-handler.js';
+import { registerWorkspacePullRequestChangesRoutes } from './workspace-pull-request-changes.js';
 import { registerWorkspaceRootConnectionRoutes } from './workspace-root-connection-routes.js';
 
 const execFileAsync = promisify(execFile);
@@ -297,6 +303,7 @@ async function buildTree(root: string, dirPath: string, depth: number, maxDepth:
 }
 
 interface WorkspaceRouteOpts extends WorkspaceNavigationEmitter {
+  pullRequestChangesDependencies?: PullRequestChangesDependencies;
   auditLog?: EventAuditLog;
   resolveWorktreeIdByPathForNavigate?: ResolveWorktreeIdByPathForNavigate;
   callbackRegistry?: CallbackAuthRegistry;
@@ -416,6 +423,11 @@ export const workspaceRoutes: FastifyPluginAsync<WorkspaceRouteOpts> = async (ap
     registerCallbackAuthHook(app, opts.callbackRegistry, { agentKeyRegistry: opts.agentKeyRegistry });
   }
   registerWorkspaceFileSourceRoutes(app, resolveWorkspaceInteractiveUserId);
+  registerWorkspacePullRequestChangesRoutes(
+    app,
+    resolveWorkspaceInteractiveUserId,
+    opts.pullRequestChangesDependencies,
+  );
   registerWorkspaceRootConnectionRoutes(app, resolveWorkspaceInteractiveUserId);
   // GET /api/workspace/worktrees (includes linked roots)
   app.get<{ Querystring: { repoRoot?: string } }>('/api/workspace/worktrees', async (request, reply) => {
@@ -447,9 +459,11 @@ export const workspaceRoutes: FastifyPluginAsync<WorkspaceRouteOpts> = async (ap
     const rootState = readLinkedRootState();
     const all = await Promise.all(
       [...entries, ...linked].map(async (entry) => {
-        const resolvedRoot = await realpath(entry.root).catch(() => undefined);
+        const resolvedRoot = await canonicalWorkspaceIdentityRoot(entry);
         return {
           ...entry,
+          // Discovery relates a display alias to the existing F063 owner; it grants no filesystem access.
+          rootIdentity: resolvedRoot ? durableIdForCanonicalRoot(resolvedRoot) : undefined,
           ...(resolvedRoot
             ? { resolvedRoot, rootEpoch: rootState.rootEpochs[canonicalLinkedRootId(resolvedRoot)] ?? 0 }
             : {}),

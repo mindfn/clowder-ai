@@ -2,6 +2,7 @@ import { createHash } from 'node:crypto';
 import { isDeepStrictEqual } from 'node:util';
 import type { MeetingIntakeJudgmentField, PluginDescription, PluginIconSpec } from '@cat-cafe/shared';
 import type { Capability, PluginManifest } from '@clowder-ai/plugin-contract';
+import { CHATGPT_DOT_PLUGIN_MANIFEST } from './chatgpt-dot-manifest.js';
 import { PUBLISHED_COMPANION_V2 } from './desktop-window-runtime/published-companion-v2.js';
 
 export interface OfficialPluginOwnerAuth {
@@ -121,7 +122,26 @@ export function bundledManifestDigest(manifest: PluginManifest): string {
   return `sha512-${createHash('sha512').update(JSON.stringify(manifest)).digest('base64')}`;
 }
 
+export const OFFICIAL_BUNDLED_MANIFESTS: readonly PluginManifest[] = [
+  COLLECTIVE_CONNECTOR_PLUGIN_MANIFEST,
+  CHATGPT_DOT_PLUGIN_MANIFEST,
+];
+
 export const OFFICIAL_PLUGIN_POLICIES = [
+  {
+    catalogId: 'chatgpt-dot',
+    packageName: '@cat-cafe/chatgpt-dot',
+    pluginId: CHATGPT_DOT_PLUGIN_MANIFEST.pluginId,
+    distribution: 'bundled',
+    releaseTag: 'next',
+    bootstrapRelease: {
+      version: CHATGPT_DOT_PLUGIN_MANIFEST.version,
+      archiveUrl: 'builtin://chatgpt-dot/0.1.0',
+      packageDigest: bundledManifestDigest(CHATGPT_DOT_PLUGIN_MANIFEST),
+    },
+    effectiveGrants: [],
+    hostSignalRoutes: [],
+  },
   {
     catalogId: 'feishu-meeting-intake',
     packageName: '@clowder-ai/feishu-meeting-intake',

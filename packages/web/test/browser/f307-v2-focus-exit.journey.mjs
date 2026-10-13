@@ -13,6 +13,7 @@ const copies = {
     theme: 'light',
     frameTitle: '页面预览',
     focusCurrent: '专注当前工具',
+    fullWindow: '整窗',
     exitFullWindow: '退出整窗',
     focusText: /退出专注.*Esc.*整窗/,
   },
@@ -20,6 +21,7 @@ const copies = {
     theme: 'dark',
     frameTitle: 'Page preview',
     focusCurrent: 'Focus current tool',
+    fullWindow: 'Full window',
     exitFullWindow: 'Exit full window',
     focusText: /Exit focus.*Esc.*Full window/,
   },
@@ -48,6 +50,7 @@ export function registerV2FocusExitJourneys(getSuite) {
         try {
           await page.goto(`${baseUrl}?shell=v2`, { waitUntil: 'domcontentloaded' });
           await ensureWorkspaceOpen(page);
+          await page.getByTestId('v2-workspace-tools').click();
           await page.getByTestId('workspace-launcher-dev-browser').click();
           const address = page.getByPlaceholder('localhost:3000');
           const previewUrl = 'http://localhost:5334/browser-owner-probe';
@@ -72,16 +75,47 @@ export function registerV2FocusExitJourneys(getSuite) {
           await iframe.evaluate((node) => {
             window.__focusExitFrame = node;
           });
-          const enter = () => page.getByRole('button', { name: copy.focusCurrent, exact: true }).click();
+          const enter = async () => {
+            await page
+              .getByTestId('v2-workspace-chrome')
+              .locator('[data-testid="v2-workspace-actions"] summary')
+              .last()
+              .click();
+            await page.getByRole('menuitem', { name: copy.focusCurrent, exact: true }).click();
+          };
           const assertFocused = async () => assert.equal(await workbench.getAttribute('data-focus-surface'), surfaceId);
-          const assertReturned = async () => {
+          const assertReturned = async (moves = '2') => {
             assert.equal(await workbench.getAttribute('data-focus-surface'), '');
             assert.equal(await workbench.getAttribute('data-active-surface'), surfaceId);
             assert(await iframe.evaluate((node) => node === window.__focusExitFrame && node.isConnected));
             assert.equal(await ownerInput.inputValue(), 'iframe draft survives focus');
-            assert.equal(await frame.locator('#moves').textContent(), '2');
+            assert.equal(await frame.locator('#moves').textContent(), moves);
             assert.equal(await composer.inputValue(), chatDraft);
           };
+          // The topbar is deliberately absent in focus mode. Exercise its new full-window
+          // entry in normal Workspace, then keep the original focus-control round trips.
+          const host = page.getByTestId('thread-chat-host');
+          const workspaceActions = page
+            .getByTestId('v2-workspace-chrome')
+            .locator('[data-testid="v2-workspace-actions"] summary')
+            .last();
+          await workspaceActions.click();
+          await page.getByRole('menuitemcheckbox', { name: copy.fullWindow, exact: true }).click();
+          await page.waitForFunction(
+            () =>
+              document.querySelector('[data-testid="thread-chat-host"]')?.getAttribute('data-presentation') ===
+              'artifact-full-window',
+          );
+          assert(await iframe.evaluate((node) => node === window.__focusExitFrame && node.isConnected));
+          assert.equal(await ownerInput.inputValue(), 'iframe draft survives focus');
+          assert.equal(await composer.inputValue(), chatDraft);
+          await page.screenshot({ path: path.join(evidence, `${language}-menu-full-window.png`) });
+          await workspaceActions.click();
+          const fullWindow = page.getByRole('menuitemcheckbox', { name: copy.fullWindow, exact: true });
+          assert.equal(await fullWindow.getAttribute('aria-checked'), 'true');
+          await fullWindow.click();
+          assert.equal(await host.getAttribute('data-presentation'), 'conversation');
+          await assertReturned('1');
           await enter();
           await page.mouse.move(5, 100);
           await page.waitForTimeout(3100);
@@ -113,7 +147,6 @@ export function registerV2FocusExitJourneys(getSuite) {
           for (const exitMethod of ['click', 'Escape']) {
             await enter();
             await page.getByTestId('workspace-focus-full-window').click();
-            const host = page.getByTestId('thread-chat-host');
             await page.waitForFunction(
               () =>
                 document.querySelector('[data-testid="thread-chat-host"]')?.getAttribute('data-presentation') ===

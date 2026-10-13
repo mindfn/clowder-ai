@@ -250,6 +250,26 @@ describe('worktree id aliases', () => {
     expect(resolveListedWorktreeId(worktrees, 'missing', aliases)).toBeNull();
   });
 
+  it('resolves a durable root only through one exact advertised current root identity', () => {
+    const rootIdentity = `f063_root_v1_${'a'.repeat(64)}`;
+    const worktrees = [
+      { id: 'scoped_original', canonicalId: 'original', rootIdentity },
+      { id: 'scoped_other', canonicalId: 'other', rootIdentity: `f063_root_v1_${'b'.repeat(64)}` },
+    ];
+    expect(resolveListedWorktreeId(worktrees, rootIdentity)).toBe('scoped_original');
+    expect(resolveListedWorktreeId(worktrees.slice(1), rootIdentity)).toBeNull();
+    expect(resolveListedWorktreeId([...worktrees, { ...worktrees[0], id: 'duplicate' }], rootIdentity)).toBeNull();
+    expect(resolveListedWorktreeId([{ id: rootIdentity, rootIdentity: 'another-root' }], rootIdentity)).toBeNull();
+    expect(
+      resolveListedWorktreeId([{ id: 'selected', rootIdentity: 'f063_root_v1_bad' }], 'f063_root_v1_bad'),
+    ).toBeNull();
+    expect(buildWorktreeAliasMap(worktrees)).toEqual({ scoped_original: 'original', scoped_other: 'other' });
+    expect(getNavigateWorktreeRoomIds('scoped_original', buildWorktreeAliasMap(worktrees))).toEqual([
+      'scoped_original',
+      'original',
+    ]);
+  });
+
   it('scopes worktree aliases to the active project path', () => {
     expect(scopeWorktreeAliases(repoRootAliases, '/tmp/project-a', '/tmp/project-a')).toBe(repoRootAliases);
     expect(scopeWorktreeAliases(repoRootAliases, '/tmp/project-a', '/tmp/project-b')).toEqual({});

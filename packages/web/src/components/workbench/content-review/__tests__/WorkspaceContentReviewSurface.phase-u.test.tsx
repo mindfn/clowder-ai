@@ -1,6 +1,7 @@
 import { act } from 'react';
 import { createRoot, type Root } from 'react-dom/client';
 import { afterEach, beforeEach, expect, it, vi } from 'vitest';
+import { useChatStore } from '@/stores/chatStore';
 import { WorkspaceContentReviewSurface } from '../WorkspaceContentReviewSurface';
 import { mediaView, videoDiscussionView, view } from './WorkspaceContentReviewSurface.fixture';
 
@@ -18,6 +19,7 @@ let root: Root;
 beforeEach(() => {
   (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
   mocks.apiFetch.mockReset();
+  useChatStore.setState({ currentThreadId: 'phase-u-chat' });
   container = document.createElement('div');
   document.body.appendChild(container);
   root = createRoot(container);
@@ -33,7 +35,7 @@ it.each([
   ['PNG', mediaView],
   ['MP4', videoDiscussionView],
   ['text', view],
-] as const)('Phase U: a writable ordinary %s can begin an explicit modification request', async (_kind, makeView) => {
+] as const)('Phase U: a writable ordinary %s exposes its accepted modification entry', async (kind, makeView) => {
   const initial = makeView();
   if (initial.review.source.kind !== 'text' && initial.review.source.kind !== 'media')
     throw new Error('This check requires an ordinary file fixture');
@@ -58,6 +60,14 @@ it.each([
   });
   expect(container.textContent).not.toContain('正在打开作品');
   const request = container.querySelector<HTMLButtonElement>('[data-testid="content-modification-entry"]');
+  if (kind === 'PNG') {
+    expect(request, 'PNG uses the original Chat instead of a second sender').toBeNull();
+    const chat = container.querySelector<HTMLButtonElement>('[data-testid="workspace-media-chat-whole-work"]');
+    expect(chat).not.toBeNull();
+    expect(chat?.disabled).toBe(false);
+    expect(container.querySelector('[data-testid="content-modification-submit"]')).toBeNull();
+    return;
+  }
   expect(request, 'writable content must expose the accepted modification journey').not.toBeNull();
   expect(request?.disabled).toBe(false);
 });

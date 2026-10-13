@@ -488,6 +488,8 @@ export interface AgentCarrierSession {
   write(message: Record<string, unknown>): Promise<void>;
   /** True only when a resume lease was acquired from its still-healthy affinity host. */
   reusedSessionHost?: boolean;
+  /** Host-pool fact, independent of whether the same native session was resumed. */
+  hostAcquisitionMode?: 'cold' | 'warm';
   /** Bind a provider session id to this reusable carrier host after start/resume. */
   rememberSession?(sessionId: string): void;
   /**
@@ -1003,7 +1005,31 @@ export type ClaudeCompactionHooksFactory = (identity: {
   readonly threadId: string;
 }) => ClaudeCompactionHooks;
 
+export interface LocalSessionMetadata {
+  sessionId: string;
+  clientId: 'openai' | 'anthropic';
+  firstPrompt: string;
+  projectPath: string;
+  lastActivityAt: number;
+  turnCount: number | null;
+}
+
+export interface LocalSessionList {
+  sessions: (LocalSessionMetadata & { recentPrompt?: string })[];
+  limited: boolean;
+}
+
+export interface LocalSessionReadInput {
+  invocationId: string;
+  timeoutMs: number;
+  cwd: string;
+  account?: RuntimeProviderProfile;
+  cliConfigArgs?: readonly string[];
+}
+
 export interface AgentServiceOptions {
+  /** Imported histories must never be silently replaced by a fresh native session. */
+  requireExactResume?: boolean;
   executionAccount?: import('@cat-cafe/shared').ExecutionAccountSnapshot;
   /** Synchronous pre-send fact: survives abort racing the provider iterator. */
   onRemoteExecutionDispatched?: (execution: RemoteExecutionRef) => void;
@@ -1237,6 +1263,9 @@ export interface AgentService {
     readonly timeoutMs: number;
     readonly cwd?: string;
   }): Promise<ProviderNativeStatus>;
+
+  inspectLocalSession?(input: LocalSessionReadInput & { sessionId: string }): Promise<LocalSessionMetadata>;
+  listLocalSessions?(input: LocalSessionReadInput & { limit: number }): Promise<LocalSessionList>;
 
   /** F306 Phase D: read provider inventory without joining or mutating a runtime thread. */
   requestNativeCapabilitySource?(input: {

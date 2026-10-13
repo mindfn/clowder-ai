@@ -81,7 +81,7 @@ export function useCollectiveWorkPolicy(connectionId: string, bridge?: Collectiv
   };
   const change = (action: CollectiveHostWorkPolicyAction) =>
     run(async () => {
-      if (!bridge) throw new Error('请从已连接的共同体登录会话打开设置。');
+      if (!bridge) throw new Error('请从共同体里打开「我的猫」。');
       const receipt = await bridge.command(action);
       if (action.kind === 'decline_request') {
         setPhase('已拒绝这项提议');
@@ -89,7 +89,7 @@ export function useCollectiveWorkPolicy(connectionId: string, bridge?: Collectiv
         return;
       }
       if (!receipt.policyRevision) throw new Error('登记结果尚未确认。');
-      setPhase('Service 已登记，等待本机采用');
+      setPhase('正在同步到这台 Café…');
       await hostRequest(`${base}/work-policy/adopt`, { expectedPolicyRevision: receipt.policyRevision });
       const request = bridge.permissionRequest;
       if (action.kind === 'allow_request') {

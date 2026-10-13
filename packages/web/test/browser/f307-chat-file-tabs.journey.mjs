@@ -36,7 +36,8 @@ export function registerChatFileTabJourneys(getSuite) {
                           type: 'assistant',
                           catId: 'codex-sol',
                           timestamp: 100,
-                          content: '[Document A](docs/A.md)\n\n[Document B](docs/B.md:7)\n\n[B line 12](docs/B.md:12)',
+                          content:
+                            '[Document A](README.md)\n\n[Document B](docs/README.md:7)\n\n[B line 12](docs/README.md:12)',
                         },
                       ],
                       hasMore: false,
@@ -57,10 +58,15 @@ export function registerChatFileTabJourneys(getSuite) {
           const workbench = page.getByTestId('f307-experience-workbench');
           const clickLink = async (label, count) => {
             if (width === 390 && (await workbench.isVisible())) {
-              await page
-                .getByTestId('contextual-workspace-host')
-                .getByRole('button', { name: '收起 Workspace', exact: true })
-                .click();
+              if (presentation === 'v2') {
+                await workbench.locator('[data-testid="v2-workspace-actions"] summary').last().click();
+                await page.getByRole('menuitem', { name: '收起 Workspace', exact: true }).click();
+              } else {
+                await page
+                  .getByTestId('contextual-workspace-host')
+                  .getByRole('button', { name: '收起 Workspace', exact: true })
+                  .click();
+              }
               await workbench.waitFor({ state: 'hidden' });
             }
             await page
@@ -80,7 +86,7 @@ export function registerChatFileTabJourneys(getSuite) {
             const a = (await layout()).surfaces[0];
             await clickLink('Document B', 2);
             const both = await layout();
-            assert.deepEqual(paths(both), ['docs/A.md', 'docs/B.md']);
+            assert.deepEqual(paths(both), ['README.md', 'docs/README.md']);
             assert.deepEqual(both.surfaces[0], a);
             assert.equal(both.previewSurfaceId, null);
             const b = both.surfaces[1];
@@ -91,8 +97,38 @@ export function registerChatFileTabJourneys(getSuite) {
                 oldTarget,
               b.resultTargetRef.key,
             );
-            assert.deepEqual(paths(await layout()), ['docs/A.md', 'docs/B.md']);
+            assert.deepEqual(paths(await layout()), ['README.md', 'docs/README.md']);
             assert.equal((await layout()).activeSurfaceId, b.id);
+            const more = workbench.getByTestId('v2-more-tabs');
+            const overflowVisible = presentation === 'v2' && (await more.isVisible());
+            if (overflowVisible) {
+              await more.click();
+              const popupId = await more.getAttribute('aria-controls');
+              assert.ok(popupId, 'Wait for this original disclosure, not another portal');
+              await page
+                .locator(`[id="${popupId}"] [data-workbench-tab-control="activate"]`)
+                .first()
+                .waitFor({ state: 'visible' });
+            }
+            const controls = page.locator('[data-tab-surface-id] [data-workbench-tab-control="activate"]:visible');
+            assert.deepEqual((await controls.allTextContents()).map((text) => text.trim()).sort(), [
+              'README.md',
+              'docs/README.md',
+            ]);
+            for (const [id, name] of [
+              [a.id, 'README.md'],
+              [b.id, 'docs/README.md'],
+            ]) {
+              const block = page.locator(`[data-tab-surface-id="${id}"]:visible`);
+              assert.equal(await block.locator('[data-workbench-tab-control="activate"]').innerText(), name);
+              assert.ok(
+                (await block.locator('[data-workbench-tab-control="close"]').getAttribute('aria-label')).includes(name),
+              );
+            }
+            await page.screenshot({
+              path: path.join(evidenceDir, `chat-file-tab-labels-${presentation}-${width}.png`),
+            });
+            if (overflowVisible) await page.keyboard.press('Escape');
             await page.screenshot({ path: path.join(evidenceDir, `chat-file-tabs-${presentation}-${width}.png`) });
             await page.reload({ waitUntil: 'domcontentloaded' });
             await workbench.waitFor();
@@ -102,7 +138,7 @@ export function registerChatFileTabJourneys(getSuite) {
                   .querySelector('[data-testid="f307-experience-workbench"]')
                   ?.getAttribute('data-surface-count') === '2',
             );
-            assert.deepEqual(paths(await layout()), ['docs/A.md', 'docs/B.md']);
+            assert.deepEqual(paths(await layout()), ['README.md', 'docs/README.md']);
             assert.deepEqual(errors, []);
           } catch (error) {
             const diagnostic = {

@@ -1,10 +1,13 @@
 import type { InvocationTrajectorySummary } from '@cat-cafe/shared';
-import { formatTrajectoryDuration, TRAJECTORY_STATUS_CLASS, TRAJECTORY_STATUS_LABEL } from './invocation-trajectory-ui';
+import { formatTrajectoryDuration, TRAJECTORY_STATUS_CLASS } from './invocation-trajectory-ui';
 import { TrajectoryCatIdentity } from './TrajectoryCatIdentity';
 import { TrajectoryId } from './TrajectoryId';
+import { trajectoryCopy } from './trajectory.shell-copy';
 import { type FirstAssistantPreview, firstAssistantPreview } from './trajectory-first-output';
+import { useTrajectoryCopy } from './use-trajectory-copy';
 
 function FirstOutputPreview({ preview }: { preview: FirstAssistantPreview }) {
+  const t = useTrajectoryCopy(trajectoryCopy);
   return (
     <span
       className="mt-1 block whitespace-pre-wrap break-words text-xs text-cafe-muted"
@@ -13,7 +16,7 @@ function FirstOutputPreview({ preview }: { preview: FirstAssistantPreview }) {
     >
       {preview.kind !== 'sentence' && (
         <span className="block" data-testid="first-assistant-preview-label">
-          {preview.label}
+          {previewLabel(preview.label, t)}
         </span>
       )}
       {preview.kind !== 'unavailable' && (
@@ -32,6 +35,7 @@ export function InvocationTrajectoryListV2({
   invocations: InvocationTrajectorySummary[];
   onOpen: (summary: InvocationTrajectorySummary) => void;
 }) {
+  const t = useTrajectoryCopy(trajectoryCopy);
   return (
     <div className="space-y-2 p-3" data-testid="invocation-trajectory-list">
       {invocations.map((summary) => (
@@ -48,16 +52,16 @@ export function InvocationTrajectoryListV2({
             <span
               className={`mt-0.5 shrink-0 rounded-full px-2 py-0.5 text-micro font-semibold ${TRAJECTORY_STATUS_CLASS[summary.status]}`}
             >
-              {TRAJECTORY_STATUS_LABEL[summary.status]}
+              {t[summary.status]}
             </span>
             <span className="min-w-0 flex-1">
               <span className="flex flex-wrap items-center gap-x-2 gap-y-1">
                 <TrajectoryCatIdentity catId={summary.catId} />
-                <span className="text-micro text-cafe-muted">第 {summary.sessionSeq + 1} 段</span>
+                <span className="text-micro text-cafe-muted">{t.segment(summary.sessionSeq + 1)}</span>
                 <span className="text-micro text-cafe-muted">{formatTrajectoryDuration(summary.durationMs)}</span>
               </span>
               <span className="mt-1 block text-xs text-cafe-secondary">
-                {summary.toolUseCount} 个工具 · {summary.messageCount} 条消息 · {summary.statusEventCount} 条状态
+                {t.counts(summary.toolUseCount, summary.messageCount, summary.statusEventCount)}
               </span>
               <FirstOutputPreview preview={firstAssistantPreview(summary)} />
             </span>
@@ -73,4 +77,20 @@ export function InvocationTrajectoryListV2({
       ))}
     </div>
   );
+}
+
+function previewLabel(label: string, t: typeof trajectoryCopy.zh): string {
+  const labels: Record<string, string> = {
+    首句边界未确认: t.boundaryUnconfirmed,
+    尚无可核验的首条输出: t.noFirstOutput,
+    首条输出归属无法核验: t.wrongOwner,
+    首条输出身份无法核验: t.unknownIdentity,
+    首条输出通道无法核验: t.unknownChannel,
+    首条输出尚未完整: t.incomplete,
+    首条输出记录有冲突: t.conflict,
+    '首条输出超出预览上限，请查看原始记录': t.oversized,
+    首条输出证据不完整: t.incompleteEvidence,
+    首条输出尚无可展示的候选: t.noCandidate,
+  };
+  return labels[label] ?? label;
 }

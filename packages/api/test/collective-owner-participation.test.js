@@ -333,6 +333,9 @@ test('owner entry reads registered Cat cards without leaking private routing set
     {
       id: 'codex-sol',
       displayName: '缅因猫（Sol）',
+      nickname: '砚砚',
+      variantLabel: 'GPT-6 Sol',
+      breedDisplayName: '缅因猫',
       supported: true,
       avatar: '/avatars/codex-sol.png',
       roleDescription: '处理复杂实现',
@@ -351,6 +354,9 @@ test('owner entry reads registered Cat cards without leaking private routing set
     {
       id: 'codex-sol',
       displayName: '缅因猫（Sol）',
+      nickname: '砚砚',
+      variantLabel: 'GPT-6 Sol',
+      breedDisplayName: '缅因猫',
       configured: true,
       eligible: true,
       supported: true,

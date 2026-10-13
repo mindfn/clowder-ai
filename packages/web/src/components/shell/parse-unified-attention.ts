@@ -1,4 +1,4 @@
-import type { UnifiedAttentionReadV1 } from '@cat-cafe/shared';
+import { type UnifiedAttentionReadV1, unifiedAttentionChoiceRequestSchema } from '@cat-cafe/shared';
 
 /**
  * Structural guard for `GET /api/concierge/work/decisions?view=unified` (F310 delivery record).
@@ -16,7 +16,7 @@ import type { UnifiedAttentionReadV1 } from '@cat-cafe/shared';
 const OVERALL_STATUS = new Set(['available', 'partial', 'unavailable']);
 const SOURCE_STATUS = new Set(['available', 'unavailable', 'unauthenticated', 'forbidden', 'invalid']);
 const EXHAUSTIVENESS = new Set(['complete', 'partial', 'unknown']);
-const ITEM_KIND = new Set(['approval', 'judgment', 'repair']);
+const ITEM_KIND = new Set(['approval', 'judgment', 'repair', 'user_mention']);
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value);
@@ -36,12 +36,36 @@ function isSourceRead(value: unknown): boolean {
   );
 }
 
+function isChoiceRequest(value: unknown): boolean {
+  return unifiedAttentionChoiceRequestSchema.safeParse(value).success;
+}
+
+function isUserMention(value: unknown): boolean {
+  return (
+    isRecord(value) &&
+    isNonBlankString(value.threadId) &&
+    isNonBlankString(value.messageId) &&
+    isNonBlankString(value.catId) &&
+    typeof value.content === 'string' &&
+    (value.threadTitle === undefined || typeof value.threadTitle === 'string') &&
+    (value.expectedRevision === undefined ||
+      (typeof value.expectedRevision === 'number' &&
+        Number.isSafeInteger(value.expectedRevision) &&
+        value.expectedRevision >= 0)) &&
+    (value.handled === undefined || typeof value.handled === 'boolean') &&
+    typeof value.timestamp === 'number' &&
+    Number.isFinite(value.timestamp)
+  );
+}
+
 function isItem(value: unknown): boolean {
   if (!isRecord(value)) return false;
   if (!isNonBlankString(value.decisionRef)) return false;
   if (typeof value.kind !== 'string' || !ITEM_KIND.has(value.kind)) return false;
   if (typeof value.summary !== 'string') return false;
   if (!Array.isArray(value.linkedNeedsMe)) return false;
+  if (value.choiceRequest !== undefined && !isChoiceRequest(value.choiceRequest)) return false;
+  if (value.kind === 'user_mention') return isUserMention(value.userMention);
   if (value.approval === undefined) return true;
   return isRecord(value.approval) && isNonBlankString(value.approval.proposalId);
 }
@@ -51,7 +75,13 @@ function hasOwnerIdentity(body: Record<string, unknown>): boolean {
 }
 
 function hasSources(body: Record<string, unknown>): boolean {
-  return isRecord(body.sources) && isSourceRead(body.sources.approvals) && isSourceRead(body.sources.needsMe);
+  return (
+    isRecord(body.sources) &&
+    isSourceRead(body.sources.approvals) &&
+    isSourceRead(body.sources.needsMe) &&
+    (body.sources.structuredChoices === undefined || isSourceRead(body.sources.structuredChoices)) &&
+    (body.sources.userMentions === undefined || isSourceRead(body.sources.userMentions))
+  );
 }
 
 function hasConsistency(body: Record<string, unknown>): boolean {
@@ -60,8 +90,24 @@ function hasConsistency(body: Record<string, unknown>): boolean {
   );
 }
 
+function validMentionCounts(body: Record<string, unknown>): boolean {
+  if (body.mentionCounts === undefined) return true;
+  if (!isRecord(body.mentionCounts)) return false;
+  const counts = body.mentionCounts;
+  return ['today', 'week', 'earlier', 'handled'].every(
+    (key) => Number.isInteger(counts[key]) && (counts[key] as number) >= 0,
+  );
+}
+
 function hasValidTotal(body: Record<string, unknown>): boolean {
-  return body.totalCount === undefined || (Number.isInteger(body.totalCount) && (body.totalCount as number) >= 0);
+  return (
+    validMentionCounts(body) &&
+    (body.mentionPeriod === undefined ||
+      ['recent', 'today', 'week', 'earlier', 'handled'].includes(body.mentionPeriod as string)) &&
+    (body.totalCount === undefined || (Number.isInteger(body.totalCount) && (body.totalCount as number) >= 0)) &&
+    (body.attentionCount === undefined ||
+      (Number.isInteger(body.attentionCount) && (body.attentionCount as number) >= 0))
+  );
 }
 
 function hasPage(body: Record<string, unknown>): boolean {

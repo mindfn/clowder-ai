@@ -4,8 +4,10 @@ export const executionRowCopy = defineShellCopy(
   {
     zh: {
       status: {
-        working: (who: string, clock: string, tail: string): string => `${who} 正在工作${clock}${tail}`,
+        working: (who: string, clock: string, tail: string): string => `${who} 正在回话${clock}${tail}`,
         running: (count: number, tail: string): string => `${count} 项运行中${tail}`,
+        managed: (who: string, activity: string, clock: string, tail: string): string =>
+          `${who} 在跑${activity}${clock}${tail}`,
         stopping: (clock: string): string => `正在停止${clock}`,
         blocked: (lead: string, reason: string, clock: string): string => `${lead} · ${reason}${clock}`,
         silentOne: (quiet: string, clock: string, tail: string): string => `${quiet}${clock}${tail}`,
@@ -21,7 +23,8 @@ export const executionRowCopy = defineShellCopy(
         quietUnknown: '没有动静',
       },
       compact: {
-        working: '在工作',
+        working: '正在回话',
+        managed: (activity: string): string => `在跑${activity}`,
         stopping: '正在停止',
         silent: '没动静',
         confirming: '正在确认',
@@ -53,6 +56,8 @@ export const executionRowCopy = defineShellCopy(
       stale: '状态暂不可核对',
       staleDetail: '同步暂时失败，显示最近一次已验证状态。',
       actions: {
+        locate: '定位执行',
+        unavailable: '读不到这次执行的位置',
         stop: '停止',
         stopping: '停止中…',
         forceReset: '强制重置',
@@ -74,8 +79,10 @@ export const executionRowCopy = defineShellCopy(
     },
     en: {
       status: {
-        working: (who: string, clock: string, tail: string): string => `${who} working${clock}${tail}`,
+        working: (who: string, clock: string, tail: string): string => `${who} replying${clock}${tail}`,
         running: (count: number, tail: string): string => `${count} running${tail}`,
+        managed: (who: string, activity: string, clock: string, tail: string): string =>
+          `${who} running ${activity.toLowerCase()}${clock}${tail}`,
         stopping: (clock: string): string => `Stopping${clock}`,
         blocked: (lead: string, reason: string, clock: string): string => `${lead} · ${reason}${clock}`,
         silentOne: (quiet: string, clock: string, tail: string): string => `${quiet}${clock}${tail}`,
@@ -91,7 +98,8 @@ export const executionRowCopy = defineShellCopy(
         quietUnknown: 'No activity',
       },
       compact: {
-        working: 'Working',
+        working: 'Replying',
+        managed: (activity: string): string => `Running ${activity.toLowerCase()}`,
         stopping: 'Stopping',
         silent: 'Quiet',
         confirming: 'Checking',
@@ -123,6 +131,8 @@ export const executionRowCopy = defineShellCopy(
       stale: 'State cannot be verified',
       staleDetail: 'Sync failed temporarily; showing the latest verified state.',
       actions: {
+        locate: 'Locate execution',
+        unavailable: 'Cannot read the location of this execution',
         stop: 'Stop',
         stopping: 'Stopping…',
         forceReset: 'Force reset',
@@ -153,6 +163,10 @@ export const executionRowCopy = defineShellCopy(
         [2, ''],
         [4, ' · queue paused'],
       ],
+      'status.managed': [
+        ['Sol', 'Tests', ' 2:05', ''],
+        ['Kimi', 'Build', ' 0:04', ' · 2 queued'],
+      ],
       'status.stopping': [[' 2:05'], [' 0:04']],
       'status.blocked': [
         ['Full gate', 'Cannot stop', ' 2:05'],
@@ -167,6 +181,7 @@ export const executionRowCopy = defineShellCopy(
         [4, ' · queue paused'],
       ],
       'compact.waiting': [[1], [12]],
+      'compact.managed': [['Tests'], ['Build']],
       'status.stuck': [
         [1, ''],
         [3, ' · 2 queued'],

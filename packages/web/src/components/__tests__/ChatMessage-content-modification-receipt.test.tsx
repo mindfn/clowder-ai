@@ -105,7 +105,7 @@ describe('ChatMessage: Host receipt of a content modification', () => {
 
   it('does not swallow another system message that merely carries a schema-valid receipt payload', () => {
     // Host identity needs the systemKind as well as a valid payload; otherwise any system line could hide its text.
-    for (const systemKind of [undefined, 'a2a_routing', 'context_briefing'] as const) {
+    for (const systemKind of [undefined, 'context_briefing'] as const) {
       render(
         hostMessage({
           ...(systemKind ? { systemKind } : {}),
@@ -115,6 +115,12 @@ describe('ChatMessage: Host receipt of a content modification', () => {
       expect(container.textContent).toContain('[Host 作品修改回执]');
       expect(container.querySelector('[data-testid="modification-progress"]')).toBeNull();
     }
+  });
+
+  it('keeps retired A2A routing rows hidden even if they carry a receipt-shaped payload', () => {
+    render(hostMessage({ systemKind: 'a2a_routing', contentModificationReceiptV1: receipt }));
+    expect(container.textContent).toBe('');
+    expect(container.querySelector('[data-testid="modification-progress"]')).toBeNull();
   });
 
   it('leaves every other system message alone', () => {

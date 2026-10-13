@@ -5,9 +5,11 @@ import { usePathname, useRouter } from 'next/navigation';
 import { useCallback } from 'react';
 import { useChatStore } from '@/stores/chatStore';
 import { currentEvalDueAt } from './eval-lifecycle-display';
+import { useEvalDetailCopy } from './eval-workspace/eval-detail.shell-copy';
+import { evalWorkspaceCopy, useEvalCopy, useEvalLanguage } from './eval-workspace/eval-workspace.shell-copy';
 import { HubEvalFrictionSections } from './HubEvalFrictionSections';
 import { HubEvalLifecycleSummary } from './HubEvalLifecycleSummary';
-import { type EvalHubItem, type EvalMetricGlossary, VERDICT_LABELS } from './HubEvalTypes';
+import { type EvalHubItem, type EvalMetricGlossary } from './HubEvalTypes';
 import { captureFileCardOrigin } from './workbench/file-card-origin';
 import { useFileCardReturn } from './workbench/useFileCardReturn';
 import { invocationIdFromEvidenceRef } from './workspace/trajectory/invocation-evidence-ref';
@@ -30,6 +32,9 @@ export function HubEvalVerdictCard({
   /** Repo worktreeId from the eval-hub summary (F248 Phase C fix). */
   worktreeId?: string;
 }) {
+  const detail = useEvalDetailCopy();
+  const t = useEvalCopy();
+  const language = useEvalLanguage();
   const currentThreadId = useChatStore((state) => state.currentThreadId);
   const currentThreadProjectPath = useChatStore(
     (state) => state.threads.find((thread) => thread.id === state.currentThreadId)?.projectPath ?? 'default',
@@ -122,32 +127,32 @@ export function HubEvalVerdictCard({
       </div>
 
       <div className="mt-4 grid gap-3 md:grid-cols-2">
-        <InfoBlock label="现在要做" value={item.operatorNarrative.action} />
-        <InfoBlock label="下次看什么" value={formatOperatorNextCheck(item)} />
+        <InfoBlock label={t.nowAction} value={item.operatorNarrative.action} />
+        <InfoBlock label={t.nextCheck} value={formatOperatorNextCheck(item, language)} />
       </div>
 
       <HubEvalLifecycleSummary lifecycle={item.lifecycle} openWorkspaceFile={openWorkspaceFile} />
 
       <details className="mt-4 rounded-md border border-cafe px-3 py-2">
-        <summary className="cursor-pointer text-xs font-medium text-cafe-secondary">机器原文与证据</summary>
+        <summary className="cursor-pointer text-xs font-medium text-cafe-secondary">{detail.machineEvidence}</summary>
         <div className="mt-3 space-y-3">
-          <InfoBlock label="结论记录" value={item.id} />
-          <InfoBlock label="现象原文" value={item.phenomenon} />
-          <InfoBlock label="动作原文" value={item.ownerAsk} />
+          <InfoBlock label={t.verdict} value={item.id} />
+          <InfoBlock label={detail.phenomenon} value={item.phenomenon} />
+          <InfoBlock label={detail.ownerAsk} value={item.ownerAsk} />
           <div className="grid gap-3 md:grid-cols-2">
             <InfoBlock
-              label="评估目标"
+              label={detail.target}
               value={`${item.harnessUnderEval.featureId}/${item.harnessUnderEval.componentId}`}
             />
-            <InfoBlock label="组件名称" value={item.harnessUnderEval.name} />
-            <InfoBlock label="原始复评字段" value={formatRawReeval(item)} />
+            <InfoBlock label={detail.component} value={item.harnessUnderEval.name} />
+            <InfoBlock label={detail.rawReeval} value={formatRawReeval(item, language)} />
             <InfoBlock
-              label="趋势窗口"
-              value={`${item.trend.window.durationHours.toFixed(2)} 小时 · ${item.trend.components.length} 个组件`}
+              label={detail.window}
+              value={t.trendWindow(item.trend.window.durationHours.toFixed(2), item.trend.components.length)}
             />
           </div>
           <div className="space-y-2">
-            <div className="text-xs font-medium text-cafe-muted">证据引用</div>
+            <div className="text-xs font-medium text-cafe-muted">{detail.evidence}</div>
             <EvidenceList
               refs={[
                 ...item.evidence.snapshotRefs,
@@ -167,29 +172,33 @@ export function HubEvalVerdictCard({
       )}
 
       <div className="mt-4 space-y-2">
-        <div className="text-xs font-medium text-cafe-muted">快捷导航</div>
+        <div className="text-xs font-medium text-cafe-muted">{detail.navigation}</div>
         <div className="flex flex-wrap gap-2">
-          <JumpButton onClick={() => openWorkspaceFile(item.source.verdictPath)}>结论文件</JumpButton>
-          <JumpButton onClick={() => openWorkspaceFile(`${item.source.bundleDir}/snapshot.json`)}>快照包</JumpButton>
-          <JumpButton onClick={() => openWorkspaceFile(`${item.source.bundleDir}/attribution.json`)}>归因包</JumpButton>
+          <JumpButton onClick={() => openWorkspaceFile(item.source.verdictPath)}>{t.verdictFile}</JumpButton>
+          <JumpButton onClick={() => openWorkspaceFile(`${item.source.bundleDir}/snapshot.json`)}>
+            {t.snapshot}
+          </JumpButton>
+          <JumpButton onClick={() => openWorkspaceFile(`${item.source.bundleDir}/attribution.json`)}>
+            {t.attribution}
+          </JumpButton>
           <a
             href={`/thread/${encodeURIComponent(item.systemWorkspace.threadId)}`}
             className="rounded-md border border-cafe px-3 py-1.5 text-xs font-medium text-cafe-secondary hover:text-cafe"
           >
-            {item.systemWorkspace.label} 工作线程
+            {item.systemWorkspace.label} · {t.workThread}
           </a>
           <a
             href="/settings?ops=observability&obs=traces"
             className="rounded-md border border-cafe px-3 py-1.5 text-xs font-medium text-cafe-secondary hover:text-cafe"
           >
-            相关 Traces
+            {detail.relatedTraces}
           </a>
           {item.domainId === 'eval:memory' && (
             <a
               href="/memory/health"
               className="rounded-md border border-cafe px-3 py-1.5 text-xs font-medium text-cafe-secondary hover:text-cafe"
             >
-              记忆健康
+              {t.memoryHealth}
             </a>
           )}
         </div>
@@ -199,10 +208,11 @@ export function HubEvalVerdictCard({
 }
 
 function StatusBadge({ verdict, stale }: { verdict: EvalHubItem['verdict']; stale: boolean }) {
+  const t = useEvalCopy();
   const key = stale ? 'stale' : verdict;
   return (
     <span className="inline-flex shrink-0 rounded-md bg-cafe-surface px-2.5 py-1 text-xs font-semibold text-[var(--console-button-emphasis)]">
-      {VERDICT_LABELS[key]}
+      {t.verdicts[key]}
     </span>
   );
 }
@@ -225,6 +235,7 @@ function EvidenceList({
   metricGlossary?: EvalMetricGlossary;
   onOpenInvocation: (invocationId: string) => void;
 }) {
+  const t = useEvalCopy();
   return (
     <ul className="space-y-1">
       {refs.map((ref) => {
@@ -240,7 +251,7 @@ function EvidenceList({
                 data-testid="hub-trajectory-evidence"
                 data-invocation-id={invocationId}
               >
-                Invocation 轨迹 · {ref}
+                {t.invocationTrace} · {ref}
               </button>
             ) : metric ? (
               <div className="space-y-0.5">
@@ -281,20 +292,23 @@ function JumpButton({ children, onClick }: { children: string; onClick: () => vo
   );
 }
 
-function formatRawReeval(item: EvalHubItem): string {
+function formatRawReeval(item: EvalHubItem, language: 'zh' | 'en'): string {
   if (item.reeval.nextEvalAt) {
-    return `${item.reeval.status} · ${formatEvalDate(item.reeval.nextEvalAt)}`;
+    return `${item.reeval.status} · ${formatEvalDate(item.reeval.nextEvalAt, language)}`;
   }
   return `${item.reeval.status} · ${item.reeval.summary}`;
 }
 
-function formatOperatorNextCheck(item: EvalHubItem): string {
+function formatOperatorNextCheck(item: EvalHubItem, language: 'zh' | 'en'): string {
   const nextEvalAt = currentEvalDueAt(item);
   if (!nextEvalAt) return item.operatorNarrative.nextCheck;
-  const date = formatEvalDate(nextEvalAt);
-  return `${item.operatorNarrative.nextCheck} 原计划：${date}。`;
+  const date = formatEvalDate(nextEvalAt, language);
+  return `${item.operatorNarrative.nextCheck} ${evalWorkspaceCopy[language].originalSchedule}: ${date}`;
 }
 
-function formatEvalDate(value: string): string {
-  return new Intl.DateTimeFormat('zh-CN', { dateStyle: 'medium', timeStyle: 'short' }).format(new Date(value));
+function formatEvalDate(value: string, language: 'zh' | 'en'): string {
+  return new Intl.DateTimeFormat(language === 'en' ? 'en-US' : 'zh-CN', {
+    dateStyle: 'medium',
+    timeStyle: 'short',
+  }).format(new Date(value));
 }

@@ -21,12 +21,17 @@ export const readEntrustedWorkInputSchema = {
     .boolean()
     .optional()
     .describe('Read satisfied completed work as inert history; does not revive it or expose judgment actions'),
+  includeCancelled: z
+    .boolean()
+    .optional()
+    .describe('Read cancelled/abandoned work as inert history with its reason and original Thread; never reopens it'),
 };
 
 export async function handleReadEntrustedWork(input: {
   taskId: string;
   observedRevision?: number | undefined;
   includeCompleted?: boolean | undefined;
+  includeCancelled?: boolean | undefined;
   agentKeyCatId?: string | undefined;
 }): Promise<ToolResult> {
   return callbackPost(
@@ -34,6 +39,7 @@ export async function handleReadEntrustedWork(input: {
     {
       taskId: input.taskId,
       ...(input.includeCompleted !== undefined ? { includeCompleted: input.includeCompleted } : {}),
+      ...(input.includeCancelled !== undefined ? { includeCancelled: input.includeCancelled } : {}),
       ...(input.observedRevision !== undefined ? { observedRevision: input.observedRevision } : {}),
     },
     { agentKeyCatId: input.agentKeyCatId },
@@ -44,9 +50,9 @@ export const entrustedWorkReadTools = [
   defineTool({
     name: 'cat_cafe_read_entrusted_work',
     description:
-      'Read canonical entrusted-work owner truth without mutation. Use when: inspecting the current Task, its progress, time or delivered material; set includeCompleted for satisfied history. ' +
+      'Read canonical entrusted-work owner truth without mutation. Use when: inspecting the current Task, its Task-bound execution eligibility, progress, time or delivered material; set includeCompleted for satisfied history or includeCancelled for cancelled/abandoned history. ' +
       'NOT for: resuming or changing terminal work, cross-thread access, or nominating producer receipts. ' +
-      'Output: the same owner refs/revisions, typed dates/progress and prepared Artifact as Web; completed work carries closure evidence without attention actions. ' +
+      'Output: the same owner refs/revisions, Task-binding execution state, typed dates/progress and prepared Artifact as Web; terminal history carries its distinct closure evidence without attention actions. ' +
       'GOTCHA: history opens only the sealed, still-current owner-issued material; unsealed legacy results remain unavailable. Stale reads expose no executable actions; authorization stays user/thread-scoped.',
     inputSchema: readEntrustedWorkInputSchema,
     handler: handleReadEntrustedWork,
@@ -54,7 +60,7 @@ export const entrustedWorkReadTools = [
       implementationExport: 'handleReadEntrustedWork',
       action: 'read',
       risk: { level: 'read', openWorld: false },
-      runtimeProfiles: ['collective-work', 'full', 'readonly', 'agent-key'],
+      runtimeProfiles: ['collective-work', 'full', 'readonly', 'agent-key', 'desktop:live-companion'],
       standaloneReason: {
         disposition: 'accepted-boundary',
         kind: 'progressive-disclosure',

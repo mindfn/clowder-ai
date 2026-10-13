@@ -78,11 +78,11 @@ export function CollectiveEntryReview({
       </header>
       <div className="min-h-0 flex-1 overflow-y-auto px-5 py-4">
         <p className="text-sm leading-6 text-cafe-secondary">
-          勾选的伙伴会出现在获准频道的成员栏，其他成员可以点名请求回应。连接本身不会向频道发消息；不想带来的猫可先取消勾选。
+          勾选的猫会出现在频道成员里，大家可以 @ 它们。不想带来的猫不勾。
         </p>
         {existing && (
           <output className="mt-4 block rounded-lg bg-conn-amber-bg p-3 text-sm text-conn-amber-text">
-            这台 Café 已连接当前共同家园。打开「我的 Café」即可管理参与伙伴，不必再建一条连接。
+            你的 Café 已经在这个共同体里。在「我的猫」里管理。
           </output>
         )}
         {error && (

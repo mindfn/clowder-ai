@@ -106,21 +106,22 @@ export function makeProposal(overrides = {}) {
   };
 }
 
-export function makeProposalStore(proposal) {
+export function makeProposalStore(proposalOrProposals) {
+  const proposals = (Array.isArray(proposalOrProposals) ? proposalOrProposals : [proposalOrProposals]).filter(Boolean);
   return {
     async get(id) {
-      return id === proposal?.proposalId ? proposal : null;
+      return proposals.find((proposal) => id === proposal.proposalId) ?? null;
     },
   };
 }
 
 export function makeBindingProvider({ taskId = TASK_ID, tenantScope = TENANT, binding = null } = {}) {
   return {
-    async getBindingForTask(reqTaskId, _taskThreadId, reqTenant) {
+    async getBindingsForTask(reqTaskId, _taskThreadId, reqTenant) {
       if (reqTaskId === taskId && reqTenant === tenantScope) {
-        return binding;
+        return binding ? [binding] : [];
       }
-      return null;
+      return [];
     },
   };
 }
@@ -139,7 +140,7 @@ export function makeProposalListItem(overrides = {}) {
 
 export function makeProposalLister(proposals = []) {
   return {
-    async listByThread(_threadId, _limit) {
+    async listAllByThread(_threadId) {
       return proposals;
     },
   };

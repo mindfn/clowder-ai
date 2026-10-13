@@ -1319,6 +1319,8 @@ excluded:
           'package.json': 'PACKAGE_JSON_TRANSFORM_EOF',
           'packages/api/package.json': 'API_PACKAGE_JSON_TRANSFORM_EOF',
           'packages/shared/package.json': 'SHARED_PACKAGE_JSON_TRANSFORM_EOF',
+          'packages/finance/package.json': 'SHARED_PACKAGE_JSON_TRANSFORM_EOF',
+          'packages/mcp-server/package.json': 'MCP_PACKAGE_JSON_TRANSFORM_EOF',
         }[packageJsonPath];
         const scripts = transformMarker
           ? executePackageScriptsTransform(pkg.scripts ?? {}, transformMarker)

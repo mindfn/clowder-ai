@@ -1,8 +1,13 @@
 import type { FreshnessReadableMessage } from '../../cats/services/freshness/freshness-unseen-source.js';
+import type {
+  HostTextSubmission,
+  HostVoiceObservation,
+} from '../../plugin/desktop-window-runtime/companion-private-wire.js';
 import type { F317LiveCallObservation, F317MeetingGrant } from '../meeting/f317-meeting-admission.js';
 import type { LiveMeetingDependencies } from './host/live-meeting-host.js';
 import { type LiveCarrierOperationLease, LiveCarrierUnavailableError } from './LiveCarrierOperationGate.js';
 import type { LiveCompanionCall, LiveCompanionCallOptions } from './LiveCompanionCall.js';
+import type { LivePresentationObservation, LivePresentationReply } from './live-presentation-observations.js';
 
 export class LiveCallAlreadyActiveError extends Error {
   constructor() {
@@ -156,12 +161,49 @@ export class LiveCompanionSessions {
     // stop sets its closing fence synchronously; an in-flight claim must then revalidate.
     await entry.call.stop();
   }
+  async observeVoice(userId: string, observation: HostVoiceObservation): Promise<void> {
+    const entry = this.calls.get(observation.callId);
+    if (entry?.claimed && entry.userId === userId) await entry.call.observeVoice(observation);
+  }
+  async observePresentation(
+    userId: string,
+    observation: LivePresentationObservation,
+    verifyHost?: () => Promise<boolean>,
+  ): Promise<LivePresentationReply> {
+    const entry = this.calls.get(observation.callId);
+    return entry?.claimed && entry.userId === userId
+      ? entry.call.observePresentation(observation, verifyHost)
+      : { kind: 'error', code: 'invalid_request' };
+  }
+  async observeTextSubmission(userId: string, observation: HostTextSubmission & { callId: string }): Promise<void> {
+    const entry = this.calls.get(observation.callId);
+    if (entry?.claimed && entry.userId === userId) await entry.call.observeTextSubmission(observation);
+  }
   signalInbox(userId: string, threadId: string): void {
     for (const entry of this.calls.values())
       if (entry.userId === userId && entry.call.status().threadId === threadId) entry.call.signalInbox();
   }
   async isActiveCarrier(query: { invocationId: string; catId: string; threadId: string }): Promise<boolean> {
     return [...this.calls.values()].some((entry) => entry.claimed && entry.call.isActiveCarrier(query));
+  }
+  async assertTaskAuthority(query: {
+    invocationId: string;
+    catId: string;
+    threadId: string;
+    userId: string;
+  }): Promise<void> {
+    const entry = [...this.calls.values()].find(
+      (item) => item.claimed && item.userId === query.userId && item.call.isActiveCarrier(query),
+    );
+    if (
+      !entry ||
+      !entry.call.householdToolsEnabled ||
+      !entry.call.acceptsInput() ||
+      !(await entry.call.hasCurrentCompanion()) ||
+      !entry.call.isActiveCarrier(query) ||
+      !entry.call.acceptsInput()
+    )
+      throw new LiveCarrierUnavailableError();
   }
   async withCarrierOperation<T>(
     query: { invocationId: string; catId: string; threadId: string },

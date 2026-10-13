@@ -34,6 +34,7 @@ import {
   flattenAttentionRows,
 } from './attention-clusters';
 import { orderAttentionList } from './attention-list-order';
+import { collapsedGroupPeek } from './collapsed-group-peek';
 import { DirectoryPickerModal, type NewThreadOptions } from './DirectoryPickerModal';
 import { LabelFilterBar } from './LabelFilterBar';
 import {
@@ -45,6 +46,7 @@ import {
 } from './SearchGroupFeedback';
 import { SearchGroupOrganizer } from './SearchGroupOrganizer';
 import { SectionGroup } from './SectionGroup';
+import { SidebarGroupSegmentV2 } from './SidebarGroupSegmentV2';
 import { SidebarTabIcon } from './SidebarTabIcon';
 import { SidebarViewBarV2 } from './SidebarViewBarV2';
 import type { SearchGroupRequest } from './search-group-types';
@@ -76,6 +78,7 @@ import { useAttentionClusters } from './use-attention-clusters';
 import { useAttentionListOrder } from './use-attention-list-order';
 import { useAttentionPreview } from './use-attention-preview';
 import { useCollapseState } from './use-collapse-state';
+import { useGroupDecisions } from './use-group-decisions';
 import { useProjectPins } from './use-project-pins';
 import { useScrollAnchor } from './use-scroll-anchor';
 import { VirtualAttentionList } from './VirtualAttentionList';
@@ -596,10 +599,14 @@ export function ThreadSidebar({ onClose, className, routeThreadId, activeDestina
     groupLoadError: attentionLoadError,
     reloadGroups: reloadAttentionGroups,
     openGroup: openAttentionGroup,
+    keepGroupCollapsed: keepAttentionGroupCollapsed,
     memberSort: attentionMemberSort,
     changeMemberSort: changeAttentionMemberSort,
     pendingSort: attentionPendingSort,
+    collapsedPeek: attentionCollapsedPeek,
+    toggleCollapsedPeek: toggleAttentionCollapsedPeek,
   } = useAttentionClusters(liveThreads, currentThreadId, normalizedQuery);
+  const groupDecisions = useGroupDecisions(isV2 && attentionClusters.length > 0);
   const [attentionArrangeMode, setAttentionArrangeMode] = useState(false);
   const [searchGroupRequest, setSearchGroupRequest] = useState<SearchGroupRequest | null>(null);
   const searchGroupOperation = useRef(0);
@@ -1046,6 +1053,14 @@ export function ThreadSidebar({ onClose, className, routeThreadId, activeDestina
     attentionArrangeMode,
     scrollContainerRef,
   );
+  const peekByAnchor = useMemo(() => {
+    const peeks = new Map<string, ReturnType<typeof collapsedGroupPeek>>();
+    for (const row of Object.values(orderedAttentionRows).flat()) {
+      if (row.kind === 'cluster-header')
+        peeks.set(row.cluster.anchor, collapsedGroupPeek(row.members, groupDecisions.threadIds));
+    }
+    return peeks;
+  }, [orderedAttentionRows, groupDecisions.threadIds]);
   const {
     lists: attentionListRows,
     reveal: revealAttentionPreview,
@@ -1082,11 +1097,23 @@ export function ThreadSidebar({ onClose, className, routeThreadId, activeDestina
   const attentionRowHeight = useCallback(
     (row: AttentionListRow) => {
       if (!isV2) return 80;
-      if (row.kind === 'cluster-header') return row.expanded ? 32 : 56;
-      if (row.kind === 'cluster-remainder') return 32;
-      return threadRowHeight(row.kind === 'thread' ? row.thread : row.member);
+      // Include the Group's 4px outer spacing and 1px top/bottom border in initial virtual slots.
+      if (row.kind === 'cluster-header') {
+        const peek = peekByAnchor.get(row.cluster.anchor);
+        const extra =
+          attentionCollapsedPeek[row.cluster.anchor] !== false && peek && peek.total > 0
+            ? 4 + peek.entries.length * 28 + (peek.total > peek.entries.length ? 28 : 0)
+            : 0;
+        const hasPresence = row.members.some((member) => member.presence.status !== 'idle');
+        return row.expanded ? 37 : (hasPresence ? 66 : 42) + extra;
+      }
+      if (row.kind === 'cluster-remainder') return 37;
+      return (
+        threadRowHeight(row.kind === 'thread' ? row.thread : row.member) +
+        (row.kind === 'cluster-member' && row.isLast ? 5 : 0)
+      );
     },
-    [isV2, threadRowHeight],
+    [isV2, threadRowHeight, peekByAnchor, attentionCollapsedPeek],
   );
 
   const filterKey =
@@ -1462,11 +1489,15 @@ export function ThreadSidebar({ onClose, className, routeThreadId, activeDestina
         );
       }
       if (row.kind === 'cluster-remainder') {
-        return (
+        const remainder = (
           <button
             key={row.key}
             type="button"
-            className="shell-focusable ml-12 h-8 rounded px-1 text-xs"
+            className={
+              isV2
+                ? 'shell-focusable block h-8 w-full min-w-0 rounded-b-[9px] pl-[51px] pr-[11px] text-left text-xs'
+                : 'shell-focusable ml-12 h-8 rounded px-1 text-xs'
+            }
             style={{ color: 'var(--shell-muted)' }}
             onClick={() => {
               previewFocusRef.current = row.nextThreadId;
@@ -1475,6 +1506,13 @@ export function ThreadSidebar({ onClose, className, routeThreadId, activeDestina
           >
             {rowCopy.remaining(row.remainingCount)}
           </button>
+        );
+        return isV2 ? (
+          <SidebarGroupSegmentV2 key={row.key} segment="end">
+            {remainder}
+          </SidebarGroupSegmentV2>
+        ) : (
+          remainder
         );
       }
       if (row.kind === 'cluster-member') {
@@ -1532,6 +1570,17 @@ export function ThreadSidebar({ onClose, className, routeThreadId, activeDestina
             sortingDisabled={
               attentionArrangeMode || attentionLoadState !== 'ready' || attentionPendingSort.has(row.cluster.anchor)
             }
+            peek={peekByAnchor.get(row.cluster.anchor)}
+            peekEnabled={attentionCollapsedPeek[row.cluster.anchor] !== false}
+            decisionsConfirmed={groupDecisions.status === 'ready'}
+            currentId={currentConversationId}
+            onSelectPeek={(threadId) => {
+              void keepAttentionGroupCollapsed(row.cluster);
+              handleSelect(threadId);
+            }}
+            onTogglePeek={() => {
+              void toggleAttentionCollapsedPeek(row.cluster);
+            }}
           />
         </div>
       );
@@ -1553,6 +1602,13 @@ export function ThreadSidebar({ onClose, className, routeThreadId, activeDestina
       renameAttentionCluster,
       renderThreadItem,
       toggleAttentionCluster,
+      peekByAnchor,
+      attentionCollapsedPeek,
+      groupDecisions.status,
+      currentConversationId,
+      handleSelect,
+      toggleAttentionCollapsedPeek,
+      keepAttentionGroupCollapsed,
     ],
   );
 

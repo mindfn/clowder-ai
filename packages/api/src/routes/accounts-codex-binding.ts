@@ -4,15 +4,18 @@ import { toAllCatConfigs } from '../config/cat-config-loader.js';
 import { reconcileCatRegistry } from '../config/cat-registry-reconciliation.js';
 import { planCodexAccountBinding } from '../config/codex-account-binding.js';
 import { configEventBus, createChangeSetId } from '../config/config-event-bus.js';
-import { bindRuntimeCodexAccounts, readRuntimeCatCatalog } from '../config/runtime-cat-catalog.js';
+import { readLocalAccountSelection } from '../config/local-account-selection.js';
+import { bindRuntimeCodexAccounts, readRuntimeAccountMembers } from '../config/runtime-cat-catalog.js';
+import { resolveActiveProjectRoot } from '../utils/active-project-root.js';
 import { resolveUserId } from '../utils/request-identity.js';
 import { resolveAccountProjectRoot } from './accounts-project-root.js';
 
 const schema = z
   .object({
     projectPath: z.string().optional(),
-    catId: z.string().min(1),
-    scope: z.enum(['cat', 'family']),
+    catId: z.string().min(1).optional(),
+    scope: z.enum(['cat', 'family', 'local']),
+    includeOverrides: z.boolean().optional(),
     previewToken: z
       .string()
       .regex(/^[a-f0-9]{64}$/)
@@ -26,16 +29,10 @@ export function registerCodexBindingRoutes(app: FastifyInstance): void {
     if (!query.success) return reply.code(400).send({ error: 'Invalid query' });
     const root = await resolveAccountProjectRoot(query.data.projectPath);
     if (!root) return reply.code(400).send({ error: 'Invalid project path' });
-    const cats = toAllCatConfigs(readRuntimeCatCatalog(root));
+    const selection = readLocalAccountSelection(readRuntimeAccountMembers(resolveActiveProjectRoot()), 'openai');
     return {
-      members: Object.values(cats)
-        .filter((cat) => cat.clientId === 'openai' && cat.id !== 'gpt-pro' && cat.cli)
-        .map((cat) => ({
-          id: cat.id,
-          name: cat.nickname || cat.displayName,
-          accountRef: cat.accountRef ?? 'codex',
-          breedId: cat.breedId,
-        })),
+      members: selection.members,
+      selection,
     };
   });
   for (const action of ['preview', 'commit'] as const) {
@@ -46,14 +43,21 @@ export function registerCodexBindingRoutes(app: FastifyInstance): void {
       const root = await resolveAccountProjectRoot(parsed.data.projectPath);
       if (!root) return reply.code(400).send({ error: 'Invalid project path' });
       const { profileId } = request.params as { profileId: string };
-      const selection = { accountRef: profileId, catId: parsed.data.catId, scope: parsed.data.scope };
+      const selection = {
+        accountRef: profileId,
+        catId: parsed.data.catId,
+        scope: parsed.data.scope,
+        includeOverrides: parsed.data.includeOverrides,
+      };
       try {
-        const catalog = readRuntimeCatCatalog(root);
+        // Account persistence follows the workspace; member mutations follow /api/cats.
+        const memberRoot = resolveActiveProjectRoot();
+        const catalog = readRuntimeAccountMembers(memberRoot);
         const preview = planCodexAccountBinding(root, catalog, selection);
         if (action === 'commit') {
           if (!parsed.data.previewToken) return reply.code(400).send({ error: 'Binding preview required' });
-          bindRuntimeCodexAccounts(root, selection, parsed.data.previewToken);
-          reconcileCatRegistry(root, new Set(Object.keys(toAllCatConfigs(catalog))));
+          bindRuntimeCodexAccounts(memberRoot, selection, parsed.data.previewToken, root);
+          reconcileCatRegistry(memberRoot, new Set(Object.keys(toAllCatConfigs(catalog))));
           await configEventBus.emitChangeAsync({
             source: 'cat-config',
             scope: 'file',
@@ -62,7 +66,14 @@ export function registerCodexBindingRoutes(app: FastifyInstance): void {
             timestamp: Date.now(),
           });
         }
-        return preview;
+        return {
+          ...preview,
+          ...(action === 'commit'
+            ? {
+                selection: readLocalAccountSelection(readRuntimeAccountMembers(memberRoot), 'openai'),
+              }
+            : {}),
+        };
       } catch (error) {
         return reply.code(409).send({ error: error instanceof Error ? error.message : 'Binding unavailable' });
       }

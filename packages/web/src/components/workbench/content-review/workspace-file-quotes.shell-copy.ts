@@ -18,6 +18,9 @@ export const workspaceFileQuotesCopy = defineShellCopy(
       group: (count: number) => `查看这一处的 ${count} 条引用`,
       pending: (count: number) => `输入框引用 ${count} 处 · 尚未发送`,
       pendingPlaces: (numbers: string) => `输入框第 ${numbers} 处 · 尚未发送`,
+      edit: (number: number) => `编辑第 ${number} 处批注`,
+      choosePending: (count: number) => `选择这一处的 ${count} 条批注`,
+      closePending: '关闭批注选择',
     },
     en: {
       count: (count: number) => `Quoted messages ${count}`,
@@ -35,6 +38,9 @@ export const workspaceFileQuotesCopy = defineShellCopy(
       group: (count: number) => `View ${count} references to this passage`,
       pending: (count: number) => `${count} composer references · Not sent`,
       pendingPlaces: (numbers: string) => `Composer references ${numbers} · Not sent`,
+      edit: (number: number) => `Edit annotation ${number}`,
+      choosePending: (count: number) => `Choose from ${count} annotations to this passage`,
+      closePending: 'Close annotation selection',
     },
   },
   {
@@ -48,6 +54,8 @@ export const workspaceFileQuotesCopy = defineShellCopy(
       group: [[2], [12]],
       pending: [[0], [12]],
       pendingPlaces: [['1, 2'], ['3, 12']],
+      edit: [[1], [12]],
+      choosePending: [[2], [12]],
     },
   },
 );

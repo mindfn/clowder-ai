@@ -3,6 +3,7 @@ import { beforeEach, expect, it } from 'vitest';
 import { composerAttachments } from '@/components/content-review/media-chat-composer';
 import { getContextAttachmentDraft, syncContextAttachmentDraftToStorage } from '@/components/thread-drafts';
 import { useChatStore } from '@/stores/chatStore';
+import { useToastStore } from '@/stores/toastStore';
 import { addWorkspaceFileQuoteToChat } from '../workspace-file-quote';
 
 const threadId = 'review-pr5134';
@@ -63,4 +64,21 @@ it('preserves the saved collection when prompt escaping puts the next quote past
   ).toBe(true);
   syncContextAttachmentDraftToStorage(threadId, next);
   expect(getContextAttachmentDraft(threadId)).toEqual(saved);
+});
+it('refuses a file quote after a frozen screening mark before it can create an ambiguous source', () => {
+  const saved: ContextAttachment = {
+    v: 1,
+    kind: 'project-screening',
+    id: 'film',
+    title: '原成片',
+    contentRef: 'project-1',
+    screeningId: 'screening-1',
+    input: { contentRef: 'project-1', ownerRevision: 1, blobDigest: revision },
+    media: { contentRef: 'media-1', ownerRevision: 1, blobDigest: revision },
+    selections: [{ id: 'place', mediaRange: { startPts: 0, endPts: 1 }, target: { kind: 'project' } }],
+  };
+  syncContextAttachmentDraftToStorage(threadId, [saved]);
+  expect(addWorkspaceFileQuoteToChat(threadId, quote)).toMatchObject({ kind: 'refused', reason: 'other_source' });
+  expect(composerAttachments(threadId)).toEqual([saved]);
+  expect(useToastStore.getState().toasts.at(-1)?.message).toMatch(/发送|移除/);
 });

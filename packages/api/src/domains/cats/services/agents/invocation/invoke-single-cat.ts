@@ -590,6 +590,7 @@ import type { ISessionSealer } from '../../session/SessionSealer.js';
 import type { TranscriptSessionInfo, TranscriptWriter } from '../../session/TranscriptWriter.js';
 import type { CreateSessionInput, ISessionChainStore } from '../../stores/ports/SessionChainStore.js';
 import type { IThreadStore } from '../../stores/ports/ThreadStore.js';
+import { DEFAULT_THREAD_ID } from '../../stores/ports/ThreadStore.js';
 import type {
   ITurnExecutionStore,
   TurnExecutionCausalRefs,
@@ -1791,6 +1792,9 @@ export async function* invokeSingleCat(deps: InvocationDeps, params: InvocationP
     }
     if (
       deps.threadOverviewOpportunitySource &&
+      // Live admission stores a Host bootstrap message, not the owner's first
+      // spoken request. Do not run the opening librarian before RTC is ready.
+      !params.liveCompanion &&
       params.invocationOrigin === 'interactive' &&
       params.ownerAuthProvenance === 'strict'
     ) {
@@ -1918,6 +1922,7 @@ export async function* invokeSingleCat(deps: InvocationDeps, params: InvocationP
 
   // F118 AC-C5: Flags for finally block fallback audit (must be before any early return)
   let hadError = false;
+  let hadProviderCancellation = false;
   let didWriteAudit = false;
   let didComplete = false;
   let didResetRestoreFailures = false;
@@ -2361,7 +2366,10 @@ export async function* invokeSingleCat(deps: InvocationDeps, params: InvocationP
           outcome = {
             kind: 'fallback',
             reason: 'incomplete-dispatch-provenance',
-            detail: 'Cloud return grant could not be persisted before Host delivery',
+            detail:
+              grant?.ok === false && grant.reason === 'in_flight'
+                ? '当前来源的回复正在落盘，本次重试尚未投递；请等待原回复或稍后重试。'
+                : 'Cloud return grant could not be persisted before Host delivery',
           };
         } else {
           outcome = await deps.cloudInvokeBridge.dispatch({
@@ -2376,6 +2384,7 @@ export async function* invokeSingleCat(deps: InvocationDeps, params: InvocationP
             calledBy: cloudCalledBy,
             intent: cloudIntent,
             sourceMessageId,
+            dispatchInvocationId: invocationId,
           });
         }
       } else {
@@ -2711,6 +2720,7 @@ export async function* invokeSingleCat(deps: InvocationDeps, params: InvocationP
     const requiresThreadWorkspace = providerRequiresThreadWorkspace(provider) || isAgyNative;
     const workspaceRequiredBy = isAgyNative ? 'AGY native' : 'OpenCode';
 
+    let firstReplyNamingInstruction = '';
     // Resolve workingDirectory from thread's projectPath
     let workingDirectory: string | undefined;
     let threadProjectPath: string | undefined;
@@ -2729,6 +2739,10 @@ export async function* invokeSingleCat(deps: InvocationDeps, params: InvocationP
         );
       }
       if (thread) {
+        if (threadId !== DEFAULT_THREAD_ID && !thread.systemKind && thread.titleSource === 'temporary') {
+          firstReplyNamingInstruction =
+            '这条对话尚未起名。首次回话时，请调用 cat_cafe_set_thread_metadata 的 title，起一个概括这次任务的短名（不照抄用户原话）。用户自己填过或改过的名字会受保护；猫只起一次名。';
+        }
         if (thread.createdAt) threadCreatedAt = thread.createdAt;
         if (thread.projectPath) threadProjectPath = thread.projectPath;
         // #836: Reborn session strategy — force new session every invocation.
@@ -2752,7 +2766,9 @@ export async function* invokeSingleCat(deps: InvocationDeps, params: InvocationP
             '#836: isRebornSession lookup failed pre-invoke, defaulting to non-reborn',
           );
         }
-        if (isReborn) {
+        const hasExplicitImportedHistory =
+          activeSessionRecordForResume?.externalImport?.cliSessionId === sessionId && Boolean(sessionId);
+        if (isReborn && !hasExplicitImportedHistory) {
           sessionId = undefined;
           log.info({ catId, threadId }, '#836: reborn session strategy — forcing new session');
         }
@@ -3604,7 +3620,14 @@ export async function* invokeSingleCat(deps: InvocationDeps, params: InvocationP
     ): { readonly promptWithInvocationAdditions: string; readonly effectivePrompt: string } => {
       // Prepend staticIdentity to prompt when injection is needed.
       // F070-P2: missionPrefix (dispatch context) is prepended for external projects.
-      const composedPrompt = [prompt, ...invocationPromptAdditions, ...presentationSegments].filter(Boolean).join('\n');
+      const composedPrompt = [
+        prompt,
+        firstReplyNamingInstruction,
+        ...invocationPromptAdditions,
+        ...presentationSegments,
+      ]
+        .filter(Boolean)
+        .join('\n');
       const promptWithMission = missionPrefix ? `${missionPrefix}\n\n${composedPrompt}` : composedPrompt;
       let composedEffectivePrompt =
         includeSystemPrompt && params.systemPrompt
@@ -3932,10 +3955,13 @@ export async function* invokeSingleCat(deps: InvocationDeps, params: InvocationP
       resolvedAccount && codexAccountLaunch
         ? codexExecutionAccountSnapshot(resolvedAccount, codexAccountLaunch)
         : undefined;
+    const requiresImportedHistory =
+      activeSessionRecordForResume?.externalImport?.cliSessionId === sessionId && Boolean(sessionId);
     const baseOptions: AgentServiceOptions = {
       ...(params.onRemoteExecutionDispatched
         ? { onRemoteExecutionDispatched: params.onRemoteExecutionDispatched }
         : {}),
+      ...(requiresImportedHistory ? { requireExactResume: true } : {}),
       ...(params.routeIntent ? { routeIntent: params.routeIntent } : {}),
       callbackEnv,
       ...(compactionLaunchPlan ? { compactionLaunchPlan } : {}),
@@ -4449,6 +4475,9 @@ export async function* invokeSingleCat(deps: InvocationDeps, params: InvocationP
       }
 
       if (msg.type === 'session_init' && msg.sessionId) {
+        if (requiresImportedHistory && msg.sessionId !== activeSessionRecordForResume?.externalImport?.cliSessionId) {
+          throw new Error('The imported native session was not resumed; refusing to replace its history');
+        }
         log.info(
           { cliSessionId: msg.sessionId, threadId, catId, userId, invocationId },
           'Session init: binding session',
@@ -5266,12 +5295,18 @@ export async function* invokeSingleCat(deps: InvocationDeps, params: InvocationP
       for (const out of await processMessage(sourceMsg)) {
         if (out.type === 'error') {
           hadError = true;
-          turnExecutionFailureReason ??= 'provider_execution_failed';
+          const cancelled = out.errorCode === 'INVOCATION_CANCELLED';
+          hadProviderCancellation ||= cancelled;
+          if (!cancelled) turnExecutionFailureReason ??= 'provider_execution_failed';
           terminalTaskProgressStatus = 'interrupted';
-          terminalInterruptReason = 'error';
+          terminalInterruptReason = cancelled ? 'aborted' : 'error';
         }
         if (out.type === 'done' && out.errorCode !== undefined) {
-          turnExecutionFailureReason ??= 'provider_execution_failed';
+          if (out.errorCode === 'INVOCATION_CANCELLED') {
+            hadProviderCancellation = true;
+            terminalTaskProgressStatus = 'interrupted';
+            terminalInterruptReason = 'aborted';
+          } else turnExecutionFailureReason ??= 'provider_execution_failed';
         }
         await maybePersistTaskProgress(out);
         if (out.type === 'done' && terminalTaskProgressStatus === null) {
@@ -5356,7 +5391,7 @@ export async function* invokeSingleCat(deps: InvocationDeps, params: InvocationP
       );
     }
 
-    let allowSessionRetry = Boolean(sessionId);
+    let allowSessionRetry = Boolean(sessionId) && !requiresImportedHistory;
     let allowTransientRetry = true;
     let nextRequestGenerationReason: RequestGenerationRetryReason | undefined;
     let consumedClaudeCompactionObservation: string | undefined;
@@ -5740,6 +5775,14 @@ export async function* invokeSingleCat(deps: InvocationDeps, params: InvocationP
         // Other self-heal paths (prompt limit, context overflow) all guard on !attemptHasContentOutput.
         // Without this guard, a multi-step run that used a tool then ended with a malformed turn
         // would re-run the original prompt from scratch — duplicating tool actions.
+        if (requiresImportedHistory && msg.type === 'error' && isMalformedToolCallError(msg.error)) {
+          for await (const out of streamProcessedOutputs({
+            ...msg,
+            error: 'malformed_toolcall: 原会话本轮工具调用未完成，原会话仍保留；请重试。',
+          }))
+            yield out;
+          continue;
+        }
         if (msg.type === 'error' && isMalformedToolCallError(msg.error) && !attemptHasContentOutput) {
           suppressedMalformedError = msg;
           continue;
@@ -5879,10 +5922,21 @@ export async function* invokeSingleCat(deps: InvocationDeps, params: InvocationP
           msg.type === 'provider_signal' || msg.type === 'liveness_signal'
             ? { ...msg, type: 'system_info' as const }
             : msg;
-        if (msg.type === 'error') await terminateCurrentRequestGeneration('error', 'provider_error');
+        const providerCancelled = msg.errorCode === 'INVOCATION_CANCELLED';
+        if (msg.type === 'error')
+          await terminateCurrentRequestGeneration(
+            providerCancelled ? 'cancelled' : 'error',
+            msg.errorCode ?? 'provider_error',
+          );
         if (msg.type === 'done') {
           await terminateCurrentRequestGeneration(
-            hadError || msg.errorCode !== undefined ? 'error' : signal?.aborted ? 'cancelled' : 'accepted',
+            providerCancelled
+              ? 'cancelled'
+              : hadError || msg.errorCode !== undefined
+                ? 'error'
+                : signal?.aborted
+                  ? 'cancelled'
+                  : 'accepted',
             msg.errorCode,
           );
         }
@@ -5930,7 +5984,7 @@ export async function* invokeSingleCat(deps: InvocationDeps, params: InvocationP
       }
       if (activeServiceIterator === serviceIter) await closeActiveServiceIterator();
 
-      if (shouldRetryWithoutSession && attempt + 1 < maxAttempts) {
+      if (shouldRetryWithoutSession && !requiresImportedHistory && attempt + 1 < maxAttempts) {
         await presentationDelivery?.release('provider_generation_replaced');
         const retryReason = suppressedPromptLimitError
           ? 'prompt_token_limit'
@@ -6237,7 +6291,7 @@ export async function* invokeSingleCat(deps: InvocationDeps, params: InvocationP
     await terminateCurrentRequestGeneration(
       turnExecutionCompletedSuccessfully
         ? 'accepted'
-        : callerSignal?.aborted && !timedOut
+        : (callerSignal?.aborted || hadProviderCancellation) && !timedOut
           ? 'cancelled'
           : timedOut || hadError || turnExecutionFailureReason !== undefined
             ? 'error'
@@ -6251,7 +6305,7 @@ export async function* invokeSingleCat(deps: InvocationDeps, params: InvocationP
         terminal = { status: 'succeeded', endedAt: Date.now() };
       } else if (timedOut) {
         terminal = { status: 'failed', endedAt: Date.now(), terminalReason: MEMBER_TIMEOUT_REASON };
-      } else if (callerSignal?.aborted) {
+      } else if (callerSignal?.aborted || hadProviderCancellation) {
         terminal = { status: 'canceled', endedAt: Date.now(), terminalReason: 'user_cancel' };
       } else if (turnExecutionFailureReason !== undefined || hadError) {
         terminal = {

@@ -141,6 +141,11 @@ describe('F310 entrusted-work Redis Task owner actions', { skip: redisIsolationS
     assert.equal(stored.status, 'done');
     assert.equal(stored.entrustedWork.revision, 2);
     assert.ok(['satisfied', 'cancelled'].includes(stored.entrustedWork.closure.state));
+    if (stored.entrustedWork.closure.state === 'cancelled') {
+      assert.equal(stored.entrustedWork.completion, undefined, 'cancelled truth must not masquerade as completion');
+    } else {
+      assert.ok(stored.entrustedWork.completion?.recordedAt);
+    }
     await assert.rejects(
       store.update(taskId, { status: 'done' }),
       (error) => error?.code === 'ENTRUSTED_WORK_TERMINAL_ACTION_REQUIRED',

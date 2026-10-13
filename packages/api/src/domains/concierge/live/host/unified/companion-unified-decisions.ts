@@ -122,7 +122,8 @@ export class CompanionUnifiedDecisions {
           linkedNeedsMe: item.linkedNeedsMe.length > 0,
         },
       };
-    if (item.kind !== 'approval') return { ...common, kind: item.kind };
+    if (item.kind === 'judgment' || item.kind === 'repair') return { ...common, kind: item.kind };
+    // The packaged Live contract has not adopted the mailbox's explicit-mention opt-in.
     throw new CompanionBridgeError('unavailable');
   }
   private publicRead(source: UnifiedAttentionReadV1, items: PublicUnifiedDecisions['items']): PublicUnifiedDecisions {

@@ -1,6 +1,7 @@
 import { CONCIERGE_CONFIG_DEFAULTS, clampBallSize } from '@cat-cafe/shared';
 import { type CompanionCommand, type CompanionReply, validateCompanionReply } from '@clowder-ai/plugin-contract-beta23';
 import { validateCompanionReply as validateWorkReply } from '@clowder-ai/plugin-contract-beta25';
+import { validateCompanionReply as validatePresentationReply } from '@clowder-ai/plugin-contract-beta27';
 import { z } from 'zod';
 import type { HostCompanionReply } from '../../../plugin/desktop-window-runtime/companion-private-wire.js';
 import type { CompanionArchiveContract } from '../../../plugin/desktop-window-runtime/published-companion-v2.js';
@@ -15,7 +16,9 @@ const publishedModernBallSizeMin = 48;
 
 function publishedBallSize(size: number | null | undefined, contract: CompanionArchiveContract['contract']) {
   const clamped = clampBallSize(size);
-  return contract === '0.1.0-beta.25' ? clamped : Math.max(publishedModernBallSizeMin, clamped);
+  return contract === '0.1.0-beta.25' || contract === '0.1.0-beta.27'
+    ? clamped
+    : Math.max(publishedModernBallSizeMin, clamped);
 }
 
 /** Read the same owner record, applying only its canonical legacy defaults. */
@@ -52,6 +55,7 @@ export async function readModernCompanionSettings(
     selectedCompanionStatus: response.body.selectedCompanionStatus,
   };
   if (contract === '0.1.0-beta.25') return validateWorkReply(candidate) ? candidate : unavailable();
+  if (contract === '0.1.0-beta.27') return validatePresentationReply(candidate) ? candidate : unavailable();
   return validateCompanionReply(candidate) ? candidate : unavailable();
 }
 

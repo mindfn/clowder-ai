@@ -1,6 +1,7 @@
 import type { UnifiedAttentionReadV1, UnifiedAttentionSourceRead } from '@cat-cafe/shared';
 import { describe, expect, it } from 'vitest';
 import {
+  deriveMailboxPanelState,
   deriveMailboxState,
   type MailboxRead,
   type MailboxState,
@@ -34,12 +35,14 @@ function read(overrides: Partial<UnifiedAttentionReadV1> = {}): UnifiedAttention
     identity: { ownerUserId: 'owner-1' },
     observedAt: 3,
     sources: {
+      structuredChoices: source({ coverage: 'pending_f306_structured_choices' }),
       approvals: source(),
       needsMe: source({ coverage: 'current_linked_F310_five_producers' }),
     },
     readWindow: { startedAt: 1, endedAt: 3, consistency: 'independent_source_reads' },
     consistency: { state: 'verified', reasons: [] },
     items: [],
+    attentionCount: overrides.totalCount,
     page: { offset: 0, limit: 20, scope: 'known_rows', hasMore: false },
     ...overrides,
   };
@@ -49,6 +52,55 @@ const ok = (overrides: Partial<UnifiedAttentionReadV1> = {}): MailboxRead => ({ 
 const derive = (r: MailboxRead): MailboxState => deriveMailboxState(r);
 
 describe('deriveMailboxState — what the one rail entry may claim', () => {
+  it('uses the authority-qualified count for the badge and keeps every panel row counted separately', () => {
+    const result = ok({
+      items: [{ decisionRef: 'mention:one', kind: 'user_mention', summary: '@you', linkedNeedsMe: [] }],
+      totalCount: 1,
+      attentionCount: 0,
+    });
+    expect(derive(result)).toEqual({ kind: 'empty' });
+    expect(deriveMailboxPanelState(result)).toEqual({ kind: 'has-items', count: 1, partial: false });
+    const legacy = ok({ items: [item(1)], totalCount: 1, attentionCount: undefined });
+    expect(derive(legacy)).toEqual({ kind: 'has-items', count: null, partial: false });
+    expect(deriveMailboxPanelState(legacy)).toEqual({ kind: 'has-items', count: 1, partial: false });
+  });
+
+  it('never reinterprets an older attention number without the qualified source, and withdraws counts for a failed source', () => {
+    const legacy = ok({
+      totalCount: 1,
+      attentionCount: 1,
+      items: [{ decisionRef: 'mention:one', kind: 'user_mention', summary: '@you', linkedNeedsMe: [] }],
+      sources: { approvals: source(), needsMe: source() },
+    });
+    expect(derive(legacy)).toEqual({ kind: 'partial' });
+    const failed = ok({
+      totalCount: 0,
+      attentionCount: 0,
+      status: 'partial',
+      sources: {
+        approvals: source(),
+        needsMe: source(),
+        structuredChoices: source({
+          coverage: 'pending_f306_structured_choices',
+          status: 'invalid',
+          exhaustiveness: 'unknown',
+        }),
+      },
+    });
+    expect(derive(failed)).toEqual({ kind: 'partial' });
+    expect(deriveMailboxPanelState(failed)).toEqual({ kind: 'partial' });
+  });
+
+  it('keeps the before-paging decision count even when the visible page contains only mention rows', () => {
+    const result = ok({
+      items: [{ decisionRef: 'mention:page', kind: 'user_mention', summary: '@you', linkedNeedsMe: [] }],
+      totalCount: 14,
+      attentionCount: 2,
+      page: { offset: 12, limit: 1, scope: 'known_rows', hasMore: true },
+    });
+    expect(derive(result)).toEqual({ kind: 'has-items', count: 2, partial: false });
+    expect(deriveMailboxPanelState(result)).toEqual({ kind: 'has-items', count: 14, partial: false });
+  });
   it('first read is loading, never a zero or an empty claim', () => {
     expect(derive({ kind: 'loading' })).toEqual({ kind: 'loading' });
   });

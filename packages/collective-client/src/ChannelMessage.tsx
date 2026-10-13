@@ -11,7 +11,7 @@ import type {
 } from './client-types.js';
 import { MessageInteraction } from './MessageInteraction.js';
 import { authorPresentation } from './message-presentation.js';
-import { HumanNameplate, MessageAvatar, MessageBody } from './TopicMessage.js';
+import { MessageAvatar, MessageBody } from './TopicMessage.js';
 import { useRoomPresentation } from './use-room-presentation.js';
 import type { InformalVoteDraft } from './VoteCard.js';
 
@@ -46,23 +46,8 @@ export function ChannelMessage({
   const v2 = useRoomPresentation(presentation) === 'v2';
   const author = authorPresentation(thread.root, currentHumanId);
   const { root, replies } = thread;
-  const namedRecipient = root.recipient?.kind === 'agent' ? root.recipient : undefined;
-  const namedResponded = namedRecipient
-    ? replies.some(
-        (reply) =>
-          reply.replyToEventId === root.eventId &&
-          reply.actor.kind === 'agent' &&
-          reply.actor.provenance.connectionId === namedRecipient.connectionId &&
-          reply.actor.provenance.catId === namedRecipient.agentId,
-      )
-    : false;
   const body = (
-    <MessageBody
-      event={root}
-      participants={participants}
-      responseState={replies.length ? 'responded' : 'waiting'}
-      namedResponseState={namedRecipient ? (namedResponded ? 'responded' : 'waiting') : undefined}
-    />
+    <MessageBody event={root} participants={participants} responseState={replies.length ? 'responded' : 'waiting'} />
   );
   const interaction = (
     <MessageInteraction
@@ -99,9 +84,12 @@ export function ChannelMessage({
         </span>
         <span className="reply-preview">
           {replies.slice(-2).map((reply) => (
-            <span key={reply.eventId}>
-              <b>{actorDisplayName(reply)}</b>
-              <span>{reply.body}</span>
+            <span key={reply.eventId} className="reply-preview-item">
+              <MessageAvatar event={reply} participants={participants} compact />
+              <span>
+                <b>{actorDisplayName(reply)}</b>
+                <span>{reply.body}</span>
+              </span>
             </span>
           ))}
         </span>
@@ -115,41 +103,8 @@ export function ChannelMessage({
     tabIndex: -1,
   } as const;
 
-  // F322 B segment 1 (human message): in the new presentation your own message is one block on the right with no
-  // avatar and no signature, and another person is on the left with a nameplate. Cats and the classic layout are below.
-  if (v2 && author === 'self') {
-    return (
-      <article {...frame} className="message message-self" data-author="self">
-        <div className="message-content">
-          <div className="message-bubble">{body}</div>
-          {showTime && (
-            <time className="message-time" dateTime={root.acceptedAt}>
-              {formatEventTime(root.acceptedAt)}
-            </time>
-          )}
-          {interaction}
-          {replyVitals}
-        </div>
-      </article>
-    );
-  }
-  if (v2 && author === 'other-human') {
-    return (
-      <article {...frame} className="message message-other" data-author="other-human">
-        <div className="message-content">
-          <header className="message-plate-row">
-            <HumanNameplate event={root} participants={participants} onOpenMember={() => onOpenMember(root)} />
-            <time dateTime={root.acceptedAt}>{formatEventTime(root.acceptedAt)}</time>
-          </header>
-          {body}
-          {interaction}
-          {replyVitals}
-        </div>
-      </article>
-    );
-  }
   return (
-    <article {...frame} className="message">
+    <article {...frame} className="message" data-author={v2 ? author : undefined}>
       <button
         type="button"
         className="avatar-button"
@@ -162,7 +117,11 @@ export function ChannelMessage({
         <header className="message-meta">
           <strong>{actorDisplayName(root)}</strong>
           <span>{actorOrigin(root)}</span>
-          <time dateTime={root.acceptedAt}>{formatEventTime(root.acceptedAt)}</time>
+          {(!v2 || showTime) && (
+            <time className={v2 ? 'message-time' : undefined} dateTime={root.acceptedAt}>
+              {formatEventTime(root.acceptedAt)}
+            </time>
+          )}
         </header>
         {body}
         {interaction}
@@ -199,6 +158,6 @@ interface ChannelMessageProps {
   readonly highlighted?: boolean;
   /** Overrides the frame default (tests, previews). */
   readonly presentation?: 'v2' | 'classic';
-  /** Self messages only: the time under the block, once per run of your own messages. */
+  /** Time visibility supplied by the surrounding flow; consecutive own messages show it once. */
   readonly showTime?: boolean;
 }

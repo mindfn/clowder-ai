@@ -39,7 +39,7 @@ export async function observeFirstFileQuote(page) {
 }
 
 /** No review, request, Task or Human source is seeded before the native file selection/send. */
-export async function createFirstFileFixture(extension) {
+export async function createFirstFileFixture(extension, { longMarkdown = false } = {}) {
   const evidence = await mkdtemp('/tmp/f309-first-file-native-');
   const owner = await startRealDocumentOwner(path.join(evidence, 'data'), { executionSource: 'human' });
   const filename = `f309-first-file-${randomUUID()}.${extension}`;
@@ -49,9 +49,13 @@ export async function createFirstFileFixture(extension) {
     extension === 'md'
       ? ['First unique paragraph.', 'Second unique paragraph.']
       : ['// First code phrase.', '// Second code phrase.'];
+  const tailText = 'Final Markdown line.';
+  const tail = longMarkdown
+    ? `\n${Array.from({ length: 80 }, (_, index) => `Long document paragraph ${index + 1}.`).join('\n\n')}\n\n${tailText}\n`
+    : '';
   const text =
     extension === 'md'
-      ? `# First file\n\n${phrases[0]}\n\n${phrases[1]}\n`
+      ? `# First file\n\n${phrases[0]}\n\n${phrases[1]}\n${tail}`
       : `${phrases.join('\n')}\nexport const answer = 1;\n`;
   await writeFile(absolute, text, { flag: 'wx' });
   const listed = await (await fetch(`${owner.api}/api/workspace/worktrees`)).json();
@@ -146,6 +150,7 @@ export async function createFirstFileFixture(extension) {
     filePath,
     absolute,
     phrases,
+    tailText,
     text,
     source,
     reviewId,

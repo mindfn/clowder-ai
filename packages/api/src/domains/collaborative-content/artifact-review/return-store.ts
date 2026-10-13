@@ -1,6 +1,7 @@
 import type { ArtifactReview, ArtifactReviewReceipt } from '@cat-cafe/shared';
 import type Database from 'better-sqlite3';
 import type { MediaPublicationReturnIntent } from '../modification/media-publication/media-publication-return.js';
+import { PublicationGenerationStore } from './publication-generation-store.js';
 import type { ReviewMutation } from './store.js';
 
 export interface ReviewReturnTarget {
@@ -47,10 +48,12 @@ export interface TextModificationReturnIntent extends ReviewReturnTarget {
 export type ContentReturnIntent = ReviewReturnIntent | TextModificationReturnIntent | MediaPublicationReturnIntent;
 
 export class ArtifactReviewReturnStore {
+  readonly publications: PublicationGenerationStore;
   constructor(private readonly database: Database.Database) {
     database.exec(`CREATE TABLE IF NOT EXISTS artifact_review_returns (
       receipt_ref TEXT PRIMARY KEY, state TEXT NOT NULL, created_at TEXT NOT NULL, body TEXT NOT NULL
     ); CREATE INDEX IF NOT EXISTS artifact_review_returns_pending ON artifact_review_returns(state, created_at);`);
+    this.publications = new PublicationGenerationStore(database);
   }
 
   /** Called inside the review mutation transaction, never independently of the human decision receipt. */
@@ -98,6 +101,7 @@ export class ArtifactReviewReturnStore {
   /** Native publication registration, not a forged human review receipt. Shares the original owner outbox. */
   recordPublication(intent: MediaPublicationReturnIntent): void {
     if (!this.database.inTransaction) throw new Error('Publication return must share request validation transaction');
+    if (intent.recovery) throw new Error('Recovery must share its generation CAS transaction');
     const existing = this.get(intent.receiptRef);
     if (existing) {
       const { state: _state, messageId: _message, retirementReason: _reason, ...prior } = existing;
@@ -108,15 +112,21 @@ export class ArtifactReviewReturnStore {
     this.database
       .prepare('INSERT INTO artifact_review_returns(receipt_ref,state,created_at,body) VALUES(?,?,?,?)')
       .run(intent.receiptRef, intent.state, intent.createdAt, JSON.stringify(intent));
+    this.publications.initial(intent);
+  }
+
+  recordPublicationRecovery(intent: MediaPublicationReturnIntent, fingerprint: string): void {
+    if (!this.database.inTransaction) throw new Error('Recovery must share request validation transaction');
+    this.database
+      .prepare('INSERT INTO artifact_review_returns(receipt_ref,state,created_at,body) VALUES(?,?,?,?)')
+      .run(intent.receiptRef, intent.state, intent.createdAt, JSON.stringify(intent));
+    this.publications.advance(intent, fingerprint);
   }
 
   publicationForRequest(requestId: string): MediaPublicationReturnIntent | null {
-    const row = this.database
-      .prepare(
-        "SELECT body FROM artifact_review_returns WHERE json_extract(body,'$.kind')='resume_media_publication' AND json_extract(body,'$.requestId')=? ORDER BY created_at DESC,receipt_ref DESC LIMIT 1",
-      )
-      .get(requestId) as { body: string } | undefined;
-    return row ? (JSON.parse(row.body) as MediaPublicationReturnIntent) : null;
+    const current = this.publications.current(requestId);
+    const intent = current ? this.get(current.receipt_ref) : null;
+    return intent?.kind === 'resume_media_publication' ? intent : null;
   }
 
   pending(limit = 100): ContentReturnIntent[] {

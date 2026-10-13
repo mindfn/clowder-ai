@@ -1398,39 +1398,17 @@ describe('B6: QueueProcessor entryCompleteHook integration', () => {
     // production admits message+queue atomically (send), and
     // the QueueProcessor fails a wake closed when the referenced message is absent.
     const messageStore = adaptMessageStore(new MessageStore());
-    const recordsByIdempotencyKey = new Map();
-    const recordsById = new Map();
-    let invocationCounter = 0;
+    const { InvocationTracker } = await import('../dist/domains/cats/services/agents/invocation/InvocationTracker.js');
+    const { InvocationRecordStore } = await import(
+      '../dist/domains/cats/services/stores/ports/InvocationRecordStore.js'
+    );
+    const records = new InvocationRecordStore();
     const routeCalls = [];
     const hookResults = [];
     const stubDeps = {
       queue,
-      invocationTracker: {
-        start: () => new AbortController(),
-        startAll: () => new AbortController(),
-        tryStartThreadAll: () => new AbortController(),
-        complete: () => {},
-        completeAll: () => {},
-        has: () => false,
-        getController: () => undefined,
-      },
-      invocationRecordStore: {
-        create(input) {
-          const prior = recordsByIdempotencyKey.get(input.idempotencyKey);
-          if (prior) return { outcome: 'duplicate', invocationId: prior.invocationId };
-          const invocationId = `inv-cloud-${invocationCounter++}`;
-          const record = { ...input, invocationId, status: 'queued' };
-          recordsByIdempotencyKey.set(input.idempotencyKey, record);
-          recordsById.set(invocationId, record);
-          return { outcome: 'created', invocationId };
-        },
-        update(invocationId, patch) {
-          Object.assign(recordsById.get(invocationId), patch);
-        },
-        get(invocationId) {
-          return recordsById.get(invocationId) ?? null;
-        },
-      },
+      invocationTracker: new InvocationTracker(),
+      invocationRecordStore: records,
       router: {
         resolveExplicitTargets: async (requestedCatIds) => [...requestedCatIds],
         resolveConversationTargetsAtAdmission: async (requestedCatIds) => [...requestedCatIds],
@@ -1507,25 +1485,29 @@ describe('B6: QueueProcessor entryCompleteHook integration', () => {
         cloudDispatchProvenance: carrier,
         requiresExactCloudDispatchProvenance: true,
       });
-
     const first = await enqueue();
-    qp.registerEntryCompleteHook(first.entry.id, (_entryId, status, responseText) => {
-      hookResults.push({ status, responseText });
+    const firstDone = new Promise((resolve) => {
+      qp.registerEntryCompleteHook(first.entry.id, (_entryId, status, responseText) => {
+        hookResults.push({ status, responseText });
+        resolve();
+      });
     });
     await qp.requestDrain('thread-1');
-    await new Promise((resolve) => setTimeout(resolve, 200));
-
+    await firstDone;
     assert.equal(routeCalls.length, 1);
-    assert.equal(routeCalls[0].sourceMessageId, carrier.sourceMessageId);
+    assert.deepEqual(routeCalls[0].targetCats, ['gpt-pro']);
+    assert.equal(routeCalls[0].sourceMessageId, sourceMessage.id);
     assert.deepEqual(routeCalls[0].options.cloudDispatchProvenance, carrier);
-    assert.equal(routeCalls[0].options.requiresExactCloudDispatchProvenance, true);
-    assert.deepEqual(hookResults, [
-      {
-        status: 'succeeded',
-        responseText: '未发送给 @gpt-pro：投递来源或回程绑定不完整。',
-      },
-    ]);
-
+    assert.equal(hookResults.length, 1);
+    assert.match(hookResults[0].responseText, /incomplete-dispatch-provenance|未发送给/);
+    await assert.rejects(
+      enqueue(),
+      /cannot replay an already dispatched source target/,
+      'direct adoption cannot manufacture another wake for a handed-off source',
+    );
+    await qp.requestDrain('thread-1');
+    assert.equal(routeCalls.length, 1, 'a retired-row replay must not start another cloud child');
+    assert.equal(hookResults.length, 1);
     assert.deepEqual(queue.list('thread-1', 'user-1'), [], 'delivered work must leave no Queue tombstone');
   });
 

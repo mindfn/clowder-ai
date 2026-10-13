@@ -2,6 +2,9 @@
 
 import type { SessionRecord } from '@cat-cafe/shared';
 import React, { useEffect, useState } from 'react';
+import { sessionChainCopy } from '@/components/session-chain.shell-copy';
+import { useShellPresentation } from '@/components/shell/shell-presentation';
+import { useTrajectoryCopy } from '@/components/workspace/trajectory/use-trajectory-copy';
 import { formatCatName, useCatData } from '@/hooks/useCatData';
 import type { CatInvocationInfo, ContextHealthData } from '@/stores/chat-types';
 import { apiFetch } from '@/utils/api-client';
@@ -11,6 +14,12 @@ import { ContextHealthBar } from './ContextHealthBar';
 import { BindSessionInput, SessionIdTag } from './SessionChainInputs';
 import { settingsResourceCardClass } from './SettingsResourceCard';
 import { deriveSessionColors, type SessionColors } from './session-chain-colors';
+import {
+  readSessionActionFailure,
+  type SessionActionFailure,
+  sessionActionErrorCopy,
+  translateSessionMessage,
+} from './session-chain-copy';
 import { useSessionChainCompletionRevision } from './useSessionChainCompletionRevision';
 
 /** Minimal session record from API GET /api/threads/:id/sessions */
@@ -122,56 +131,48 @@ export interface SessionChainProjection {
   onRefresh: () => void;
 }
 
-function timeAgo(ts: number): string {
+function timeAgo(ts: number, t = sessionChainCopy.zh): string {
   const sec = Math.floor((Date.now() - ts) / 1000);
-  if (sec < 60) return `${sec} 秒前`;
+  if (sec < 60) return t.agoSeconds(sec);
   const min = Math.floor(sec / 60);
-  if (min < 60) return `${min} 分钟前`;
+  if (min < 60) return t.agoMinutes(min);
   const hr = Math.floor(min / 60);
-  return `${hr} 小时前`;
+  return t.agoHours(hr);
 }
 
-export function sealReasonLabel(reason?: string): string {
+export function sealReasonLabel(reason?: string, t = sessionChainCopy.zh): string {
   if (!reason) return '';
-  if (reason.includes('compact')) return '压缩后封存';
-  if (reason === 'threshold') return '达到阈值';
-  if (reason === 'budget_exhausted') return '预算耗尽';
-  if (reason === 'max_compressions') return '达到压缩上限';
-  if (reason === 'manual') return '手动封存';
-  if (reason === 'cli_session_replaced') return '命令行会话已替换';
-  if (reason === 'unexpected_runtime_session_switch') return '运行会话意外切换';
-  if (reason === 'overflow_circuit_breaker') return '上下文溢出保护';
-  if (reason === 'unseal_displacement') return '恢复其他会话时封存';
-  if (reason === 'manual_session_switch') return '手动切换会话';
-  if (reason === 'reconcile_stuck') return '封存协调超时';
-  if (reason === 'global_reaper') return '全局回收';
-  if (reason === 'turn_budget_exceeded') return '回合预算耗尽';
-  if (reason === 'lease_timeout') return '租约超时'; // legacy
+  if (reason.includes('compact')) return t.compactionSeal;
+  if (reason === 'threshold') return t.threshold;
+  if (reason === 'budget_exhausted') return t.budget;
+  if (reason === 'max_compressions') return t.compressionLimit;
+  if (reason === 'manual') return t.manualSeal;
+  if (reason === 'cli_session_replaced') return t.replaced;
+  if (reason === 'unexpected_runtime_session_switch') return t.unexpectedSwitch;
+  if (reason === 'overflow_circuit_breaker') return t.overflow;
+  if (reason === 'unseal_displacement') return t.displacement;
+  if (reason === 'manual_session_switch') return t.manualSwitch;
+  if (reason === 'reconcile_stuck') return t.reconcileTimeout;
+  if (reason === 'global_reaper') return t.reaper;
+  if (reason === 'turn_budget_exceeded') return t.turnBudget;
+  if (reason === 'lease_timeout') return t.leaseTimeout; // legacy
   return reason;
 }
 
-async function restoreFailureMessage(response: Response): Promise<string | null> {
-  if (response.ok) return null;
-  const fallback = `恢复失败 (${response.status})`;
-  try {
-    const data = (await response.json()) as { error?: string };
-    return data.error || fallback;
-  } catch {
-    return fallback;
-  }
-}
-
-const RUNTIME_LIFECYCLE_LABELS: Record<string, string> = {
-  active: '运行中',
-  runtime_active: '运行中',
-  runtime_seal_pending: '封存中',
-  runtime_conflict_pending: '冲突待处理',
-  runtime_disconnected: '已断开',
-  runtime_error_reset: '错误后已重置',
-  runtime_sealed: '已封存',
-};
-export function runtimeLifecycleLabel(state: string): string {
-  return RUNTIME_LIFECYCLE_LABELS[state] ?? state;
+export function runtimeLifecycleLabel(state: string, t = sessionChainCopy.zh): string {
+  return (
+    (
+      {
+        active: t.running,
+        runtime_active: t.running,
+        runtime_seal_pending: t.sealing,
+        runtime_conflict_pending: t.conflict,
+        runtime_disconnected: t.disconnected,
+        runtime_error_reset: t.reset,
+        runtime_sealed: t.sealed,
+      } as Record<string, string>
+    )[state] ?? state
+  );
 }
 
 function cachePercent(cacheRead?: number, input?: number): number {
@@ -179,19 +180,19 @@ function cachePercent(cacheRead?: number, input?: number): number {
   return Math.round((cacheRead / input) * 100);
 }
 
-function sealedSessionSummary(session: SessionSummary): string {
-  return `${session.sealedAt ? `${timeAgo(session.sealedAt)}封存` : '封存中'} · ${session.messageCount} 条消息`;
+function sealedSessionSummary(session: SessionSummary, t = sessionChainCopy.zh): string {
+  return `${session.sealedAt ? t.archivedAgo(timeAgo(session.sealedAt, t)) : t.sealing} · ${t.messages(session.messageCount)}`;
 }
 
-function sealedSessionDetails(session: SessionSummary): string | undefined {
+function sealedSessionDetails(session: SessionSummary, t = sessionChainCopy.zh): string | undefined {
   const details = [
     session.contextHealth ? `${Math.round(session.contextHealth.fillRatio * 100)}%` : null,
     session.compressionCount == null
-      ? '压缩次数未报告'
+      ? t.compressionUnknown
       : session.compressionCount > 0
-        ? `压缩 ${session.compressionCount} 次`
-        : '未观察到压缩',
-    session.sealReason ? sealReasonLabel(session.sealReason) : null,
+        ? t.compressions(session.compressionCount)
+        : t.noCompression,
+    session.sealReason ? sealReasonLabel(session.sealReason, t) : null,
   ].filter(Boolean);
   return details.length > 0 ? details.join(' · ') : undefined;
 }
@@ -202,11 +203,11 @@ function fmtTokens(n: number): string {
   return String(n);
 }
 
-function unsealedSessionLifecycle(isRunning: boolean, ambiguous: boolean) {
+function unsealedSessionLifecycle(isRunning: boolean, ambiguous: boolean, t = sessionChainCopy.zh) {
   if (ambiguous) {
     return {
       kind: 'unverified',
-      label: '当前会话待核对',
+      label: t.unverified,
       dotClass: 'bg-conn-amber-text',
       labelClass: 'text-conn-amber-text',
     } as const;
@@ -214,22 +215,22 @@ function unsealedSessionLifecycle(isRunning: boolean, ambiguous: boolean) {
   if (isRunning) {
     return {
       kind: 'running',
-      label: '正在工作',
+      label: t.working,
       dotClass: 'animate-pulse bg-[var(--color-conn-emerald-text)]',
       labelClass: 'text-conn-emerald-text',
     } as const;
   }
   return {
     kind: 'resumable',
-    label: '未封存 · 可续接',
+    label: t.resumable,
     dotClass: 'bg-cafe-muted',
     labelClass: 'text-cafe-muted',
   } as const;
 }
 
-function terminalSessionLifecycle(status: SessionSummary['status']) {
-  if (status === 'sealed') return { kind: 'sealed', label: '已封存' } as const;
-  return { kind: 'sealing', label: '封存中' } as const;
+function terminalSessionLifecycle(status: SessionSummary['status'], t = sessionChainCopy.zh) {
+  if (status === 'sealed') return { kind: 'sealed', label: t.sealed } as const;
+  return { kind: 'sealing', label: t.sealing } as const;
 }
 
 export function SessionChainPanel({
@@ -240,6 +241,8 @@ export function SessionChainPanel({
   renderProjection,
   refreshOnRunEnd = false,
 }: SessionChainPanelProps) {
+  const t = useTrajectoryCopy(sessionChainCopy);
+  const isV2 = useShellPresentation() === 'v2';
   const { getCatById } = useCatData();
   const [sessions, setSessions] = useState<SessionSummary[]>([]);
   const [loading, setLoading] = useState(false);
@@ -249,7 +252,8 @@ export function SessionChainPanel({
   const [restoringSessionId, setRestoringSessionId] = useState<string | null>(null);
   const [sealingSessionId, setSealingSessionId] = useState<string | null>(null);
   const [compactingSessionId, setCompactingSessionId] = useState<string | null>(null);
-  const [actionError, setActionError] = useState<string | null>(null);
+  const [actionFailure, setActionFailure] = useState<SessionActionFailure | null>(null);
+  const actionError = actionFailure?.message ?? null;
   const [chainCollapsed, setChainCollapsed] = useState(false);
   const [sealedCollapsed, setSealedCollapsed] = useState(true);
 
@@ -377,8 +381,8 @@ export function SessionChainPanel({
     : sealedSessions;
   const hasRuntimeTaggedRetryFragments = runtimeTaggedRetryFragments.length > 0;
   const retryCollapseLabel = hasRuntimeTaggedRetryFragments
-    ? `${retryCorpses.length} 次重试片段（已折叠 · 各 0 条消息）`
-    : `${retryCorpses.length} 次工具冲突重试片段（已折叠 · 各 0 条消息）`;
+    ? t.retryFragments(retryCorpses.length)
+    : t.conflictFragments(retryCorpses.length);
 
   // Check if any cat recently had a compact (from hooks)
   const hasRecentCompact = Object.values(catInvocations).some((inv) => inv.sessionSealed);
@@ -386,15 +390,10 @@ export function SessionChainPanel({
   const handleRestoreAsCurrent = async (session: SessionSummary) => {
     if (restoringSessionId || runningCatIds.has(session.catId) || hasMultipleUnsealedRecords(session.catId)) return;
     const current = unsealedSessions.find((candidate) => candidate.catId === session.catId);
-    if (
-      current &&
-      !window.confirm(
-        `恢复第 ${session.seq + 1} 段会话为当前会话？当前第 ${current.seq + 1} 段会话会被安全封存，消息不会删除。`,
-      )
-    ) {
+    if (current && !window.confirm(t.restoreConfirm(session.seq + 1, current.seq + 1))) {
       return;
     }
-    setActionError(null);
+    setActionFailure(null);
     setRestoringSessionId(session.id);
     try {
       const res = await apiFetch(`/api/sessions/${session.id}/unseal`, {
@@ -402,14 +401,14 @@ export function SessionChainPanel({
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ expectedActiveSessionId: current?.id ?? null }),
       });
-      const message = await restoreFailureMessage(res);
-      if (message) {
-        setActionError(message);
+      const failure = await readSessionActionFailure(res, 'restore');
+      if (failure) {
+        setActionFailure(failure);
         return;
       }
       setRefreshKey((k) => k + 1);
     } catch {
-      setActionError('恢复请求失败');
+      setActionFailure({ operation: 'restore', message: '恢复请求失败' });
     } finally {
       setRestoringSessionId(null);
     }
@@ -417,19 +416,12 @@ export function SessionChainPanel({
 
   const handleSeal = async (sessionId: string) => {
     if (sealingSessionId) return;
-    setActionError(null);
+    setActionFailure(null);
     setSealingSessionId(sessionId);
     try {
       const res = await apiFetch(`/api/sessions/${sessionId}/seal`, { method: 'POST' });
       if (!res.ok) {
-        let message = `封存失败 (${res.status})`;
-        try {
-          const data = (await res.json()) as { error?: string };
-          if (data?.error) message = data.error;
-        } catch {
-          /* best-effort */
-        }
-        setActionError(message);
+        setActionFailure(await readSessionActionFailure(res, 'seal'));
         // A non-2xx seal response can still report a completed state transition
         // (for example SESSION_SEAL_PARTIAL), so reconcile with the authoritative chain.
         setRefreshKey((key) => key + 1);
@@ -437,7 +429,7 @@ export function SessionChainPanel({
       }
       setRefreshKey((key) => key + 1);
     } catch {
-      setActionError('封存请求失败');
+      setActionFailure({ operation: 'seal', message: '封存请求失败' });
       // A transport failure is ambiguous: the server may have claimed and sealed
       // the session before the connection dropped. Reconcile with the
       // authoritative chain rather than leaving an actionable stale card.
@@ -455,20 +447,19 @@ export function SessionChainPanel({
       hasMultipleUnsealedRecords(session.catId)
     )
       return;
-    setActionError(null);
+    setActionFailure(null);
     setCompactingSessionId(session.id);
     try {
       const response = await apiFetch(`/api/threads/${threadId}/sessions/${session.catId}/compact-native`, {
         method: 'POST',
       });
       if (!response.ok) {
-        const body = (await response.json().catch(() => ({}))) as { error?: string };
-        setActionError(body.error ?? `原生压缩失败 (${response.status})`);
+        setActionFailure(await readSessionActionFailure(response, 'compact'));
         return;
       }
       setRefreshKey((key) => key + 1);
     } catch {
-      setActionError('原生压缩请求失败');
+      setActionFailure({ operation: 'compact', message: '原生压缩请求失败' });
     } finally {
       setCompactingSessionId(null);
     }
@@ -509,12 +500,12 @@ export function SessionChainPanel({
           >
             ▾
           </span>
-          <h3 className="text-xs font-bold text-cafe">会话记录</h3>
+          <h3 className="text-xs font-bold text-cafe">{t.title}</h3>
         </div>
         <span className="text-micro font-bold text-cafe-muted">
           {loadError?.kind === 'access_denied' && visibleSessions.length === 0
-            ? '不可用'
-            : `${unsealedSessions.length} 未封存 · ${visibleSessions.length} 总计`}
+            ? t.unavailable
+            : t.counts(unsealedSessions.length, visibleSessions.length)}
         </span>
       </button>
       {loadError && (
@@ -522,12 +513,15 @@ export function SessionChainPanel({
           data-testid={loadError.kind === 'access_denied' ? 'session-chain-access-denied' : 'session-chain-load-failed'}
           className="mb-2 rounded border border-conn-red-ring bg-conn-red-bg px-2 py-1 text-micro text-conn-red-text"
         >
-          {loadError.message}
+          {translateSessionMessage(loadError.message, t)}
         </div>
       )}
-      {actionError && (
-        <div className="mb-2 rounded border border-conn-red-ring bg-conn-red-bg px-2 py-1 text-micro text-conn-red-text">
-          {actionError}
+      {actionFailure && (isV2 || actionError) && (
+        <div
+          data-testid="session-action-error"
+          className="mb-2 rounded border border-conn-red-ring bg-conn-red-bg px-2 py-1 text-micro text-conn-red-text"
+        >
+          {isV2 ? sessionActionErrorCopy(actionFailure, t) : actionError}
         </div>
       )}
 
@@ -536,9 +530,9 @@ export function SessionChainPanel({
         <div className="mb-2 px-2 py-1.5 rounded bg-conn-amber-bg border border-conn-amber-ring">
           <div className="flex items-center gap-1.5">
             <span className="text-conn-amber-text text-xs">&#9888;</span>
-            <span className="text-micro font-medium text-conn-amber-text">压缩后安全保护中</span>
+            <span className="text-micro font-medium text-conn-amber-text">{t.safety}</span>
           </div>
-          <p className="text-micro text-conn-amber-text mt-0.5 ml-4">上下文压缩后，高风险操作可能被拦截</p>
+          <p className="text-micro text-conn-amber-text mt-0.5 ml-4">{t.safetyHint}</p>
         </div>
       )}
 
@@ -547,7 +541,7 @@ export function SessionChainPanel({
         unsealedSessions.map((session) => {
           const inv = catInvocations[session.catId];
           const multipleUnsealedRecords = hasMultipleUnsealedRecords(session.catId);
-          const lifecycle = unsealedSessionLifecycle(isObservedRunningSession(session), multipleUnsealedRecords);
+          const lifecycle = unsealedSessionLifecycle(isObservedRunningSession(session), multipleUnsealedRecords, t);
           const health: ContextHealthData | undefined =
             (isObservedRunningSession(session) ? inv?.contextHealth : undefined) ??
             (session.contextHealth
@@ -578,7 +572,7 @@ export function SessionChainPanel({
               >
                 <div className="flex items-center justify-between gap-1 mb-1 min-w-0">
                   <div className="flex items-center gap-1.5 min-w-0 overflow-hidden">
-                    <span className="shrink-0 text-xs font-semibold text-cafe">第 {session.seq + 1} 段会话</span>
+                    <span className="shrink-0 text-xs font-semibold text-cafe">{t.segment(session.seq + 1)}</span>
                     <SessionIdTag id={session.cliSessionId ?? session.id} />
                   </div>
                   <span
@@ -592,25 +586,27 @@ export function SessionChainPanel({
                   </span>
                 </div>
                 <div className="text-micro text-cafe-muted mb-1.5">
-                  {timeAgo(session.createdAt)}开始
-                  {session.messageCount > 0 ? ` · ${session.messageCount} 条消息` : ''}
+                  {t.started(timeAgo(session.createdAt, t))}
+                  {session.messageCount > 0 ? ` · ${t.messages(session.messageCount)}` : ''}
                   {session.compressionCount != null && session.compressionCount > 0 && (
-                    <span className="text-conn-amber-text"> · 压缩 {session.compressionCount} 次</span>
+                    <span className="text-conn-amber-text"> · {t.compressions(session.compressionCount ?? 0)}</span>
                   )}
-                  {session.compressionCount == null && <span className="text-cafe-muted"> · 压缩次数未报告</span>}
-                  {session.compressionCount === 0 && <span className="text-cafe-muted"> · 未观察到压缩</span>}
+                  {session.compressionCount == null && (
+                    <span className="text-cafe-muted"> · {t.compressionUnknown}</span>
+                  )}
+                  {session.compressionCount === 0 && <span className="text-cafe-muted"> · {t.noCompression}</span>}
                 </div>
                 {session.runtimeSession && (
                   <div
                     data-testid="runtime-session-summary"
                     className="mb-1 flex flex-wrap items-center gap-x-1.5 gap-y-0.5 text-micro text-cafe-muted"
                   >
-                    <span>运行会话</span>
+                    <span>{t.runtime}</span>
                     <SessionIdTag id={session.runtimeSession.runtimeSessionId} />
                     <span>{session.runtimeSession.runtime}</span>
-                    <span>{runtimeLifecycleLabel(session.runtimeSession.lifecycleState)}</span>
+                    <span>{runtimeLifecycleLabel(session.runtimeSession.lifecycleState, t)}</span>
                     {session.runtimeSession.runtimeConversationId && (
-                      <SessionIdTag id={session.runtimeSession.runtimeConversationId} label="运行对话 ID" />
+                      <SessionIdTag id={session.runtimeSession.runtimeConversationId} label={t.runtimeConversationId} />
                     )}
                   </div>
                 )}
@@ -620,7 +616,7 @@ export function SessionChainPanel({
                     className="mb-1 rounded border border-conn-amber-ring bg-conn-amber-bg px-2 py-1 text-micro text-conn-amber-text"
                   >
                     <div className="flex flex-wrap items-center gap-x-1.5 gap-y-0.5">
-                      <span className="font-medium">运行会话意外切换</span>
+                      <span className="font-medium">{t.unexpectedSwitch}</span>
                       <SessionIdTag
                         id={session.runtimeSession.unexpectedRuntimeSessionSwitch.previousRuntimeSessionId}
                       />
@@ -649,7 +645,7 @@ export function SessionChainPanel({
                         <span className="text-cafe-muted ml-0.5">↑</span>
                       </span>
                     )}
-                    {cachePct > 0 && <span className="text-conn-emerald-text">缓存命中 {cachePct}%</span>}
+                    {cachePct > 0 && <span className="text-conn-emerald-text">{t.cache(cachePct)}</span>}
                   </div>
                 )}
                 {/* Context health bar (already shows % internally, no duplicate text) */}
@@ -665,14 +661,14 @@ export function SessionChainPanel({
                       }
                       title={
                         invocationIsActive
-                          ? '请先停止该 Agent，再压缩原生上下文'
+                          ? t.stopBeforeCompact
                           : multipleUnsealedRecords
-                            ? '有多条未封存记录，请先核对目标会话'
-                            : '请求 provider 原生压缩并保留 Clowder AI continuity'
+                            ? t.verifyTarget
+                            : t.compactHint
                       }
                       className="rounded border border-cafe-subtle px-2 py-0.5 text-micro text-cafe-secondary hover:bg-cafe-surface-elevated disabled:cursor-not-allowed disabled:opacity-50"
                     >
-                      {compactingSessionId === session.id ? '压缩中…' : '原生压缩'}
+                      {compactingSessionId === session.id ? t.compacting : t.compact}
                     </button>
                   )}
                   <button
@@ -687,16 +683,14 @@ export function SessionChainPanel({
                     }
                     onClick={() => void handleSeal(session.id)}
                     disabled={sealingSessionId !== null || isStale || invocationIsActive}
-                    title={invocationIsActive ? '请先停止该 Agent，再封存会话' : '封存当前会话；下次激活将使用新会话'}
+                    title={invocationIsActive ? t.stopBeforeSeal : t.sealHint}
                   >
-                    {sealingSessionId === session.id ? '封存中…' : '封存当前会话'}
+                    {sealingSessionId === session.id ? t.sealingEllipsis : t.sealCurrent}
                   </button>
                 </div>
                 {(invocationIsActive || multipleUnsealedRecords) && (
                   <p className="mt-1 text-micro text-conn-amber-text">
-                    {invocationIsActive
-                      ? '正在工作，停止后才能压缩、绑定或封存。'
-                      : '多条未封存记录，核对目标后才能压缩或绑定。'}
+                    {invocationIsActive ? t.runningGuard : t.ambiguousGuard}
                   </p>
                 )}
                 {/* Bind CLI session ID (skip default thread — system-owned, bind returns 403) */}
@@ -728,21 +722,21 @@ export function SessionChainPanel({
             >
               ▾
             </span>
-            <span className="text-micro font-bold text-cafe-muted tracking-wider">已封存</span>
+            <span className="text-micro font-bold text-cafe-muted tracking-wider">{t.sealed}</span>
             <span className="text-micro text-cafe-muted">{sealedSessions.length}</span>
           </button>
           {!sealedCollapsed && (
             <div className="space-y-1">
               {visibleSealedSessions.map((session) => {
                 const sealedColors = colorsForCat(session.catId);
-                const lifecycle = terminalSessionLifecycle(session.status);
+                const lifecycle = terminalSessionLifecycle(session.status, t);
                 return (
                   <div
                     key={session.id}
                     data-testid="session-card-sealed"
                     data-cat-id={session.catId}
                     data-session-lifecycle={lifecycle.kind}
-                    className="console-list-card session-corner-arcs flex items-center gap-2 rounded-xl px-2.5 py-1.5"
+                    className={`console-list-card session-corner-arcs flex items-center gap-2 rounded-xl px-2.5 py-1.5 ${isV2 ? 'flex-wrap' : ''}`}
                     style={{ boxShadow: sealedColors.cardShadow }}
                   >
                     <div
@@ -758,11 +752,11 @@ export function SessionChainPanel({
                         &#128274;
                       </span>
                     </div>
-                    <div className="flex-1 min-w-0">
+                    <div className={`flex-1 min-w-0 ${isV2 ? 'basis-48' : ''}`}>
                       <div className="flex flex-wrap items-center gap-1.5 min-w-0 overflow-hidden">
                         <div className="flex max-w-full min-w-0 items-center gap-1.5">
                           <span className="shrink-0 text-xs font-medium text-cafe-secondary">
-                            第 {session.seq + 1} 段会话
+                            {t.segment(session.seq + 1)}
                           </span>
                           <span
                             data-testid="session-badge-sealed"
@@ -780,32 +774,32 @@ export function SessionChainPanel({
                       </div>
                       <div data-testid="sealed-session-summary" className="min-w-0">
                         <div className="text-micro font-medium text-cafe-muted">{lifecycle.label}</div>
-                        <p className="text-micro text-cafe-muted">{sealedSessionSummary(session)}</p>
-                        <p className="text-micro text-cafe-muted">{sealedSessionDetails(session)}</p>
+                        <p className="text-micro text-cafe-muted">{sealedSessionSummary(session, t)}</p>
+                        <p className="text-micro text-cafe-muted">{sealedSessionDetails(session, t)}</p>
                       </div>
                       {(runningCatIds.has(session.catId) || hasMultipleUnsealedRecords(session.catId)) && (
                         <p className="text-micro text-conn-amber-text">
-                          {runningCatIds.has(session.catId)
-                            ? '正在工作，停止后才能恢复。'
-                            : '多条未封存记录，核对目标后才能恢复。'}
+                          {runningCatIds.has(session.catId) ? t.runningRestore : t.ambiguousRestore}
                         </p>
                       )}
                     </div>
                     {(session.status === 'sealed' || session.status === 'sealing') && (
-                      <div className="flex shrink-0 items-center gap-1 whitespace-nowrap">
+                      <div
+                        className={`flex shrink-0 items-center gap-1 whitespace-nowrap ${isV2 ? 'ml-auto max-w-full flex-wrap' : ''}`}
+                      >
                         {onViewSession && (
                           <button
                             type="button"
                             className="text-micro px-2 py-0.5 rounded border border-[var(--console-border-soft)] text-cafe-secondary hover:bg-cafe-surface-elevated"
                             onClick={() => onViewSession(session.id, session.catId)}
                           >
-                            查看
+                            {t.view}
                           </button>
                         )}
                         {/* Session replay entry removed — Phase E AC-E1 sunset.
                             Canonical replay is now Theater Overlay via ThreadItem "回放剧场" (PR E-1). */}
                         {session.scopedInvocation ? (
-                          <span className="text-micro text-cafe-muted">独立执行 · 不恢复为主页会话</span>
+                          <span className="text-micro text-cafe-muted">{t.independent}</span>
                         ) : session.status === 'sealed' ? (
                           <button
                             type="button"
@@ -822,9 +816,9 @@ export function SessionChainPanel({
                             data-testid={`restore-session-${session.id}`}
                             title={
                               runningCatIds.has(session.catId)
-                                ? '停止工作后才能恢复为当前'
+                                ? t.stopBeforeRestore
                                 : hasMultipleUnsealedRecords(session.catId)
-                                  ? '有多条未封存记录，请先核对当前会话'
+                                  ? t.verifyCurrent
                                   : undefined
                             }
                             disabled={
@@ -834,10 +828,10 @@ export function SessionChainPanel({
                               hasMultipleUnsealedRecords(session.catId)
                             }
                           >
-                            {restoringSessionId === session.id ? '恢复中…' : '恢复为当前'}
+                            {restoringSessionId === session.id ? t.restoring : t.restoreCurrent}
                           </button>
                         ) : (
-                          <span className="text-micro text-cafe-muted">封存中…</span>
+                          <span className="text-micro text-cafe-muted">{t.sealingEllipsis}</span>
                         )}
                       </div>
                     )}
@@ -872,7 +866,7 @@ export function SessionChainPanel({
       )}
 
       {loading && visibleSessions.length === 0 && (
-        <div className="text-micro text-cafe-muted text-center py-2">正在读取会话…</div>
+        <div className="text-micro text-cafe-muted text-center py-2">{t.loading}</div>
       )}
     </section>
   );

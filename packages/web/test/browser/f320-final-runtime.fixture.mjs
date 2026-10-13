@@ -22,26 +22,46 @@ import {
   WEB_ROOT,
   waitForPage,
 } from './f309-ordinary-workspace-journey-fixture.mjs';
+import { createFixtureLoginDriver } from './f320-native-login.fixture.mjs';
 import { createNextDevTestEnvironment } from './next-dev-test-environment.mjs';
 
-export async function startFinalAccountPreview() {
+export async function startFinalAccountPreview({ withOverrides = false } = {}) {
   const saved = { ...process.env };
   const root = mkdtempSync(join(tmpdir(), 'f320-browser-api-'));
   Object.assign(process.env, {
     HOME: root,
     CAT_CAFE_CONFIG_ROOT: root,
+    CAT_CAFE_WORKSPACE_ROOT: root,
+    CAT_CAFE_RUNTIME_ROOT: root,
     CAT_CAFE_GLOBAL_CONFIG_ROOT: root,
+    CAT_TEMPLATE_PATH: join(root, 'cat-template.json'),
+    CAT_CAFE_PROJECT_ALLOWED_ROOTS: root,
     CAT_CAFE_DATA_DIR: join(root, 'data'),
     CAT_CAFE_DISABLE_SHARED_STATE_PREFLIGHT: '1',
     AUDIT_LOG_DIR: join(root, 'audit'),
   });
   delete process.env.CODEX_HOME;
-  delete process.env.CAT_CAFE_RUNTIME_ROOT;
+  delete process.env.CODEX_SQLITE_HOME;
   mkdirSync(join(root, '.cat-cafe'));
   writeFileSync(
     join(root, '.cat-cafe', 'accounts.json'),
-    JSON.stringify({ codex: { authType: 'oauth', clientId: 'openai', displayName: '默认 Codex' } }),
+    JSON.stringify({
+      codex: { authType: 'oauth', clientId: 'openai', displayName: '默认 Codex' },
+      ...(withOverrides
+        ? {
+            exception: {
+              authType: 'api_key',
+              clientId: 'openai',
+              displayName: '例外公司号',
+              baseUrl: 'https://fixture.test/v1',
+              models: ['fixture'],
+            },
+          }
+        : {}),
+    }),
   );
+  if (withOverrides)
+    writeFileSync(join(root, '.cat-cafe/credentials.json'), JSON.stringify({ exception: { apiKey: 'fixture-only' } }));
   const variant = (id) => ({
     id: `${id}-default`,
     catId: id,
@@ -56,6 +76,7 @@ export async function startFinalAccountPreview() {
     join(root, '.cat-cafe', 'cat-catalog.json'),
     JSON.stringify({
       version: 2,
+      ...(withOverrides ? { selectedAccountRefs: { openai: 'codex' } } : {}),
       breeds: [
         {
           id: 'maine',
@@ -67,7 +88,13 @@ export async function startFinalAccountPreview() {
           mentionPatterns: ['@codex61-sol'],
           roleDescription: 'fixture',
           defaultVariantId: 'codex61-sol-default',
-          variants: [variant('codex61-sol'), variant('codex-sol')],
+          variants: [
+            variant('codex61-sol'),
+            {
+              ...variant('codex-sol'),
+              ...(withOverrides ? { accountRef: 'exception', accountBindingMode: 'override' } : {}),
+            },
+          ],
         },
       ],
       roster: {
@@ -91,7 +118,7 @@ export async function startFinalAccountPreview() {
   const messages = [];
   let invocationNumber = 0;
   let quotaMode = 'body';
-  const pending = [];
+  const nativeLogin = createFixtureLoginDriver();
   const app = Fastify();
   const fallback = createReviewState();
   app.addHook('onRequest', async (request, reply) => {
@@ -109,22 +136,7 @@ export async function startFinalAccountPreview() {
   app.post('/api/session', async () => ({ userId: 'fixture', csrfToken: 'fixture' }));
   app.post('/api/auth/session', async () => ({ userId: 'fixture', csrfToken: 'fixture' }));
   await app.register(accountsRoutes, {
-    loginDriver: {
-      run(input) {
-        input.onReady();
-        return new Promise((resolve, reject) => {
-          const item = { input, resolve, reject, keepPendingAfterAbort: false };
-          input.signal.addEventListener(
-            'abort',
-            () => {
-              if (!item.keepPendingAfterAbort) reject(new Error('fixture_canceled'));
-            },
-            { once: true },
-          );
-          pending.push(item);
-        });
-      },
-    },
+    loginDriver: nativeLogin.driver,
     quotaFetcher: async () =>
       quotaMode === 'body'
         ? Response.json({
@@ -220,7 +232,7 @@ export async function startFinalAccountPreview() {
   const close = async () => {
     await stopServer(server);
     unsubscribe();
-    for (const item of pending) item.reject(new Error('fixture_closed'));
+    nativeLogin.close();
     await app.close();
     sockets.close();
     await environment.cleanup();
@@ -237,6 +249,7 @@ export async function startFinalAccountPreview() {
   }
   return {
     url,
+    apiUrl,
     root,
     output,
     close,
@@ -297,35 +310,6 @@ export async function startFinalAccountPreview() {
       });
       return metadata.executionAccount;
     },
-    captureLoginAttempt() {
-      const index = pending.length - 1;
-      const item = pending[index];
-      if (!item) throw new Error('No official login attempt has started');
-      return {
-        keepPendingAfterAbort() {
-          item.keepPendingAfterAbort = true;
-        },
-        wasAborted() {
-          return item.input.signal.aborted;
-        },
-        async complete(override) {
-          const identity = override ?? {
-            userId: `user-${index}`,
-            workspaceId: `workspace-${index}`,
-            email: `account${index}@example.test`,
-          };
-          mkdirSync(item.input.home, { recursive: true });
-          const jwt = `x.${Buffer.from(JSON.stringify({ email: identity.email, 'https://api.openai.com/auth': { chatgpt_user_id: identity.userId, chatgpt_account_id: identity.workspaceId } })).toString('base64url')}.x`;
-          writeFileSync(
-            join(item.input.home, 'auth.json'),
-            JSON.stringify({
-              tokens: { id_token: jwt, account_id: identity.workspaceId, access_token: 'fixture-access' },
-            }),
-          );
-          item.resolve(identity);
-          return identity;
-        },
-      };
-    },
+    captureLoginAttempt: nativeLogin.captureLoginAttempt,
   };
 }

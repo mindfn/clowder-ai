@@ -45,9 +45,11 @@
 
 ## Test Evidence
 
-pnpm --filter @cat-cafe/api test       # X passed, 0 failed
-pnpm --filter @cat-cafe/web test       # X passed, 0 failed
-pnpm -r --if-present run build         # 成功
+{测试增量遵循 docs/ops/testing-standard.md：真实失败、最低足够层级、已有覆盖缺口与新增成本；可引用测试名/注释/既有证据，不另填表。}
+{前置构建：仅受影响检查确实依赖时列出}
+{实际受影响检查命令}                 # 结果、总耗时及失败/补跑
+git diff --check                       # 结果
+{targeted 无法覆盖的具体风险存在时，才列真实 full gate 与理由}
 
 ## Open Questions
 
@@ -55,15 +57,14 @@ pnpm -r --if-present run build         # 成功
 
 ---
 
-**本地 Review**: [x] {reviewer 的 catId，纯文本不带 @} 已 review 并放行
-**云端 Review**: [ ] PR 创建后在 **comment** 中触发（见下方模板）
+**独立验证来源**: {按风险选择 not-required / local / cloud；选中时记录非作者证据，不默认叠加}
 
 <!-- 猫猫签名（纯文本，禁止 @）: 例如 Maine Coon/Maine Coon (codex) -->
 ```
 
 ## 云端 Review 触发 Comment 模板
 
-PR 创建后，**立刻发一条 comment**（不是在 PR body 里写）。
+仅在风险路由选择 cloud 时，PR 创建后发一条 comment（不是在 PR body 里写）；local 或 not-required 不触发本节。
 
 ### 触发格式（极简，唯一正确格式）
 

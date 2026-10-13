@@ -1,6 +1,7 @@
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import type { CodexAccountIdentity, CodexManagedAccount } from '@cat-cafe/shared';
+import { readCodexLaunchConfig } from './codex-launch-config.js';
 
 function record(value: unknown): Record<string, unknown> {
   return value && typeof value === 'object' && !Array.isArray(value) ? (value as Record<string, unknown>) : {};
@@ -14,6 +15,21 @@ export function readCodexAccountIdentity(home: string): CodexAccountIdentity | u
     return codexIdentityFromAuth(readFileSync(join(home, 'auth.json'), 'utf8'));
   } catch {
     return undefined;
+  }
+}
+/** Missing file is distinct from a file that cannot be read or parsed. Never refresh auth. */
+export function inspectCodexLogin(home: string, cwd?: string) {
+  try {
+    if (cwd) {
+      const store = readCodexLaunchConfig(home, cwd, [], { nativeHome: process.env.HOME }).cli_auth_credentials_store;
+      if (store !== undefined && store !== 'file') return { status: 'unreadable' as const };
+    }
+    const identity = codexIdentityFromAuth(readFileSync(join(home, 'auth.json'), 'utf8'));
+    return identity ? { status: 'ready' as const, identity } : { status: 'unreadable' as const };
+  } catch (error) {
+    return {
+      status: (error as NodeJS.ErrnoException).code === 'ENOENT' ? ('not_logged_in' as const) : ('unreadable' as const),
+    };
   }
 }
 export function codexIdentityFromAuth(raw: string): CodexAccountIdentity | undefined {

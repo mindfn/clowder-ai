@@ -78,6 +78,7 @@ export function createChatProofApi(now = Date.now(), crowded = false, surface = 
     aliases: {},
     open: { [`group:${GROUP_ID}`]: true },
     memberSort: {},
+    collapsedPeek: {},
     groups: [{ id: GROUP_ID, name: GROUP_TITLE, threadIds: threads.map((thread) => thread.id) }],
   };
   let draft = {
@@ -91,12 +92,34 @@ export function createChatProofApi(now = Date.now(), crowded = false, surface = 
   let revision = 1;
   const requests = [];
   const sent = [];
+  const decisions = [];
   const reply = (body, status = 200) => ({ status, contentType: 'application/json', body: JSON.stringify(body) });
   function respond(request, url) {
     const method = request.method();
     const body = method === 'GET' ? null : request.postDataJSON();
     requests.push({ method, path: url.pathname, search: url.search, body });
     if (url.pathname === '/api/session') return reply({ userId: 'owner-proof', csrfToken: 'fixture-only' });
+    if (url.pathname === '/api/concierge/work/decisions' && method === 'GET') {
+      assert.equal(url.searchParams.get('view'), 'unified');
+      const offset = Number(url.searchParams.get('offset'));
+      const limit = Number(url.searchParams.get('limit'));
+      assert.equal(limit, 20);
+      assert.ok(Number.isInteger(offset) && offset >= 0);
+      const source = { status: 'available', exhaustiveness: 'complete' };
+      return reply({
+        version: 1,
+        status: 'available',
+        scope: 'owner_all_projects',
+        identity: { ownerUserId: 'owner-proof' },
+        observedAt: now,
+        sources: { approvals: source, needsMe: source, structuredChoices: source },
+        readWindow: { startedAt: now, endedAt: now, consistency: 'independent_source_reads' },
+        consistency: { state: 'verified', reasons: [] },
+        items: decisions.slice(offset, offset + limit),
+        totalCount: decisions.length,
+        page: { offset, limit, scope: 'known_rows', hasMore: offset + limit < decisions.length },
+      });
+    }
     if (url.pathname === '/api/cats') return reply({ cats: roster });
     if (url.pathname === '/api/config/cat-order') return reply({ catOrder: roster.map((cat) => cat.id) });
     if (url.pathname === '/api/routing/preview' && method === 'POST') {
@@ -113,7 +136,18 @@ export function createChatProofApi(now = Date.now(), crowded = false, surface = 
     if (url.pathname === '/api/backlog/items' && method === 'GET') return reply({ items: [] });
     if (url.pathname === '/api/threads' && method === 'GET') return reply({ threads });
     if (url.pathname === '/api/config/thread-attention') {
-      if (method === 'PUT') preferences.open[body.anchor] = body.open;
+      if (method === 'PUT') {
+        assert.ok(Object.keys(body).every((key) => ['anchor', 'open', 'collapsedPeek'].includes(key)));
+        assert.equal(typeof body.anchor, 'string');
+        if (body.open !== undefined) {
+          assert.equal(typeof body.open, 'boolean');
+          preferences.open[body.anchor] = body.open;
+        }
+        if (body.collapsedPeek !== undefined) {
+          assert.equal(typeof body.collapsedPeek, 'boolean');
+          preferences.collapsedPeek[body.anchor] = body.collapsedPeek;
+        }
+      }
       return reply(preferences);
     }
     if (url.pathname === '/api/config/conversation-view')
@@ -204,5 +238,5 @@ export function createChatProofApi(now = Date.now(), crowded = false, surface = 
     };
     return Object.hasOwn(bodies, url.pathname) ? reply(bodies[url.pathname]) : null;
   }
-  return { respond, requests, threads, preferences, sent };
+  return { respond, requests, threads, preferences, sent, decisions };
 }

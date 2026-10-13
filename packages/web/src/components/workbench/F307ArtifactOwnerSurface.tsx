@@ -106,6 +106,7 @@ export function F307ArtifactOwnerSurface({
     );
   return (
     <ArtifactDetailView
+      sourceThreadId={target.threadId}
       artifact={artifact}
       worktreeId={null}
       onBack={onRequestDetach}

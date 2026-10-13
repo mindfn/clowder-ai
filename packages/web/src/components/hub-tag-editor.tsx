@@ -23,12 +23,14 @@ export function TagPillList({
   tone = 'purple',
   lockedTags = [],
   onRemove,
+  removeLabel = (tag: string) => `移除 ${tag}`,
 }: {
   tags: string[];
   emptyLabel: string;
   tone?: 'purple' | 'green' | 'orange';
   lockedTags?: string[];
   onRemove?: (tag: string) => void;
+  removeLabel?: (tag: string) => string;
 }) {
   const locked = useMemo(() => new Set(lockedTags), [lockedTags]);
 
@@ -47,7 +49,7 @@ export function TagPillList({
           {onRemove && !locked.has(tag) ? (
             <button
               type="button"
-              aria-label={`移除 ${tag}`}
+              aria-label={removeLabel(tag)}
               onClick={() => onRemove(tag)}
               className="rounded-full px-1 text-micro leading-none opacity-70 transition hover:opacity-100"
             >
@@ -71,6 +73,8 @@ export function TagEditor({
   normalize = normalizeTag,
   validate,
   minCount = 0,
+  commitLabel = '添加',
+  removeLabel,
 }: {
   tags: string[];
   onChange: (nextTags: string[]) => void;
@@ -83,6 +87,8 @@ export function TagEditor({
   /** Return error message if tag is invalid, null if OK. */
   validate?: (tag: string) => string | null;
   minCount?: number;
+  commitLabel?: string;
+  removeLabel?: (tag: string) => string;
 }) {
   const [adding, setAdding] = useState(false);
   const [draft, setDraft] = useState('');
@@ -116,6 +122,7 @@ export function TagEditor({
           emptyLabel={emptyLabel}
           tone={tone}
           lockedTags={lockedTags}
+          removeLabel={removeLabel}
           onRemove={
             // Only count removable (non-locked) tags against minCount
             tags.filter((t) => !lockedTags.includes(t)).length > minCount
@@ -157,7 +164,7 @@ export function TagEditor({
             onClick={commit}
             className="rounded-full bg-[var(--console-field-bg)] px-3 py-1.5 text-xs font-medium text-[var(--cafe-accent)]"
           >
-            添加
+            {commitLabel}
           </button>
           {error && <span className="w-full text-xs text-conn-red-text">{error}</span>}
         </div>

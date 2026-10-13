@@ -7,6 +7,10 @@ import cookie from '@fastify/cookie';
 import Fastify from 'fastify';
 import { MessageStore } from '../../src/domains/cats/services/stores/ports/MessageStore.js';
 import { CompanionHostBridge } from '../../src/domains/concierge/live/CompanionHostBridge.js';
+import type {
+  LivePresentationObservation,
+  LivePresentationReply,
+} from '../../src/domains/concierge/live/live-presentation-observations.js';
 import { companionCommandValidator } from '../../src/domains/plugin/desktop-window-runtime/admission.js';
 import type { DesktopWindowLaunch } from '../../src/domains/plugin/desktop-window-runtime/types.js';
 import { OFFICIAL_PLUGIN_CATALOG } from '../../src/domains/plugin/official-catalog.js';
@@ -25,29 +29,43 @@ import { staticEditorFixture } from '../plugin-static-editor.fixture.js';
 
 export async function modernCompanionInstallFixture(
   t: TestContext,
-  version: '0.1.0-alpha.13' | '0.1.0-alpha.14' | '0.1.0-alpha.15' | '0.1.0-alpha.19' | '0.1.0-alpha.20',
+  version:
+    | '0.1.0-alpha.13'
+    | '0.1.0-alpha.14'
+    | '0.1.0-alpha.15'
+    | '0.1.0-alpha.19'
+    | '0.1.0-alpha.20'
+    | '0.1.0-alpha.24',
   alterArchive?: (bytes: Buffer) => Buffer,
+  observePresentation?: (
+    receipt: LivePresentationObservation,
+    verifyHost: () => Promise<boolean>,
+  ) => Promise<LivePresentationReply>,
 ) {
   const contract =
-    version === '0.1.0-alpha.15' || version === '0.1.0-alpha.19' || version === '0.1.0-alpha.20'
-      ? '0.1.0-beta.24'
-      : version === '0.1.0-alpha.14'
-        ? '0.1.0-beta.23'
-        : '0.1.0-beta.21';
+    version === '0.1.0-alpha.24'
+      ? '0.1.0-beta.27'
+      : version === '0.1.0-alpha.15' || version === '0.1.0-alpha.19' || version === '0.1.0-alpha.20'
+        ? '0.1.0-beta.24'
+        : version === '0.1.0-alpha.14'
+          ? '0.1.0-beta.23'
+          : '0.1.0-beta.21';
   const f = await staticEditorFixture(
     { ...desktopWindowManifest(windowHtml, '1.3.0'), pluginId: 'official.companion', version },
     windowHtml,
   );
   const actualArchive =
-    version === '0.1.0-alpha.20'
-      ? process.env.F317_VERIFIED_LIVE_TAIL_ARCHIVE
-      : version === '0.1.0-alpha.19'
-        ? process.env.F317_VERIFIED_SUBTITLE_RETURN_ARCHIVE
-        : version === '0.1.0-alpha.15'
-          ? process.env.F317_VERIFIED_UNIFIED_ARCHIVE
-          : version === '0.1.0-alpha.14'
-            ? process.env.F317_VERIFIED_MODERN_ARCHIVE
-            : undefined;
+    version === '0.1.0-alpha.24'
+      ? process.env.F317_VERIFIED_PRESENTATION_ARCHIVE
+      : version === '0.1.0-alpha.20'
+        ? process.env.F317_VERIFIED_LIVE_TAIL_ARCHIVE
+        : version === '0.1.0-alpha.19'
+          ? process.env.F317_VERIFIED_SUBTITLE_RETURN_ARCHIVE
+          : version === '0.1.0-alpha.15'
+            ? process.env.F317_VERIFIED_UNIFIED_ARCHIVE
+            : version === '0.1.0-alpha.14'
+              ? process.env.F317_VERIFIED_MODERN_ARCHIVE
+              : undefined;
   const originalBytes = actualArchive ? await readFile(actualArchive) : f.bytes;
   const bytes = alterArchive ? alterArchive(originalBytes) : originalBytes;
   const entry = actualArchive
@@ -122,6 +140,7 @@ export async function modernCompanionInstallFixture(
         ownerUserId: owner,
         origin: 'http://localhost:5102',
         openConversation: async () => true,
+        ...(observePresentation ? { observePresentation } : {}),
       });
     },
     desktopExecutor: {
@@ -161,6 +180,7 @@ export async function modernCompanionInstallFixture(
   assert.equal(companionCommandValidator(contract)({ kind: 'settings.read' }), version !== '0.1.0-alpha.13');
   return {
     runtime,
+    app,
     actualArchive,
     launch,
     config,

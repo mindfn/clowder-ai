@@ -8,6 +8,7 @@ import { WorkspaceContentSourceService } from '../src/domains/workspace/workspac
 import { signEditToken, writeWorkspaceFile } from '../src/domains/workspace/workspace-edit.js';
 import { uploadWorkspaceFile } from '../src/domains/workspace/workspace-file-mutations.js';
 import { readWorkspaceFilePreview } from '../src/domains/workspace/workspace-file-read.js';
+import { WorkspaceWritebackJournal, workspaceWritebackReceiptRef } from '../src/domains/workspace/writeback/journal.js';
 import { WorkspaceWritebackService } from '../src/domains/workspace/writeback/service.js';
 
 const digest = (bytes: Buffer | string) => `sha256:${createHash('sha256').update(bytes).digest('hex')}`;
@@ -122,6 +123,48 @@ test('drift before acceptance is conflict and preserves both candidate and curre
     assert.equal(result.state, 'conflict');
     assert.equal(result.currentRevision, digest('external'));
     assert.equal(await readFile(f.path, 'utf8'), 'external');
+  } finally {
+    service.close();
+    await f.cleanup();
+  }
+});
+
+test('artifact reads never settle a prepared or unknown writeback, while cold applied reads remain pure', async () => {
+  const f = await fixture();
+  let service = new WorkspaceWritebackService({
+    ...f.options,
+    checkpoint: async (point) => {
+      if (point === 'renamed') throw new Error('lost delivery after rename');
+    },
+  });
+  try {
+    await assert.rejects(service.accept(f.command, f.principal), /lost delivery/);
+    service.close();
+    service = new WorkspaceWritebackService(f.options);
+    const journal = new WorkspaceWritebackJournal(f.options.databasePath);
+    try {
+      const ref = workspaceWritebackReceiptRef(f.principal.userId, f.command.acceptOperationId);
+      const prepared = journal.get(ref)!;
+      assert.equal(prepared.state, 'prepared');
+      assert.equal(await service.findApplied(ref, { userId: 'human' }), null);
+      assert.deepEqual(journal.get(ref), prepared, 'a read cannot recover the write or settle its journal');
+      assert.deepEqual(await readFile(f.path), f.command.bytes);
+      journal.save({ ...prepared, state: 'unknown' });
+      assert.equal(await service.findApplied(ref, { userId: 'human' }), null);
+      assert.equal(journal.get(ref)?.state, 'unknown');
+      journal.save(prepared);
+      const applied = await service.accept(f.command, f.principal);
+      await writeFile(f.path, 'Later owner edit');
+      const before = journal.get(ref);
+      const read = await service.findApplied(ref, { userId: 'human' });
+      assert.equal(read?.writtenRevision, applied.writtenRevision);
+      assert.equal(read?.currentRevision, digest('Later owner edit'));
+      assert.equal(await service.findApplied(ref, { userId: 'other' }), null);
+      assert.deepEqual(journal.get(ref), before);
+      assert.equal(await readFile(f.path, 'utf8'), 'Later owner edit');
+    } finally {
+      journal.close();
+    }
   } finally {
     service.close();
     await f.cleanup();

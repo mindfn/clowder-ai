@@ -84,6 +84,8 @@ const REASON_PALETTE: Record<CliErrorReasonCode, Palette> = {
   // Tier 2 — transient, retry later
   quota_exceeded: { ...PALETTE_TRANSIENT, Icon: GaugeIcon },
   network_error: { ...PALETTE_TRANSIENT, Icon: CloudOffIcon },
+  upstream_service_error: { ...PALETTE_TRANSIENT, Icon: CloudOffIcon },
+  stream_disconnected: { ...PALETTE_TRANSIENT, Icon: CloudOffIcon },
   // F212 Phase E (cloud codex P1 fix per @co-creator organic 2026-05-29): Anthropic server-side
   // temporary throttling — NOT user quota. Same transient tier (retry 30-60s) but distinct
   // hourglass icon to differentiate from gauge (quota) at-a-glance.
@@ -320,6 +322,14 @@ export function CliDiagnosticsPanel({ errorMessage, diagnostics, dedupCount }: C
             <span className="font-medium">invocationId:</span> {truncateMiddle(diagnostics.debugRef.invocationId, 32)}
           </span>
         )}
+        {diagnostics.debugRef.upstreamRequestId &&
+          /^[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$/i.test(
+            diagnostics.debugRef.upstreamRequestId,
+          ) && (
+            <span className="break-all">
+              <span className="font-medium">request ID:</span> {diagnostics.debugRef.upstreamRequestId}
+            </span>
+          )}
         {DEBUG_REF_CONTEXT_FIELDS.map(([key, label]) => {
           const value = diagnostics.debugRef[key];
           return value ? (

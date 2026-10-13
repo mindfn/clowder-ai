@@ -14,7 +14,7 @@ test('Live profile cannot boot with a borrowed ambient identity', () => {
   );
 });
 
-test('Live gets memory drilldown and household coordination without operational or origin-bound mutation tools', () => {
+test('Live gets memory drilldown, coordination and its scoped Task lifecycle without operational tools', () => {
   const env = { desktopMode: 'live-companion' };
   const names = new Set([...buildCollabTools(env), ...buildMemoryTools(env)].map((tool) => tool.name));
   for (const name of [
@@ -29,16 +29,21 @@ test('Live gets memory drilldown and household coordination without operational 
     'recall_person_relationship',
     'list_tasks',
     'cross_post_message',
-    'complete_a2a_dispatch',
     'preview_open',
+    'admit_entrusted_work',
+    'read_entrusted_work',
+    'update_entrusted_work',
+    'update_task',
+    'close_entrusted_work',
   ])
     assert.ok(names.has(`cat_cafe_${name}`), name);
   for (const name of [
+    'complete_a2a_dispatch',
     'shell_exec',
     'propose_thread',
     'propose_profile_update',
     'forget_person',
-    'update_task',
+    'create_task',
     'library_archive',
     'library_list',
     'register_schedule',

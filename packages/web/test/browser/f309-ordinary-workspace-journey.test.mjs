@@ -3,6 +3,7 @@ import { mkdir } from 'node:fs/promises';
 import { after, before, test } from 'node:test';
 import { probeDocumentReceiptClick } from './f309-document-receipt-stability.mjs';
 import { registerFirstFileJourney } from './f309-first-file-journey.mjs';
+import { registerNativeSendAckCloseJourneys } from './f309-native-send-ack-close.mjs';
 import { registerDocumentReopenJourney } from './f309-ordinary-document-reopen.mjs';
 import { registerArtworkEntryJourneys } from './f309-ordinary-workspace-journey-artwork-entry.mjs';
 import { registerOrdinaryChatCompareJourney } from './f309-ordinary-workspace-journey-chat-compare.mjs';
@@ -23,6 +24,7 @@ import {
 import { registerOrdinaryTextQuoteJourney } from './f309-ordinary-workspace-journey-text-quote.mjs';
 import { registerOrdinaryVideoJourney } from './f309-ordinary-workspace-journey-video.mjs';
 import { registerOrdinaryVideoModificationJourney } from './f309-ordinary-workspace-journey-video-modification.mjs';
+import { registerPublishedTextJourneys } from './f309-published-text-journey.mjs';
 
 let suite;
 
@@ -31,7 +33,7 @@ before(async () => {
 });
 
 after(async () => {
-  await stopF309OrdinaryWorkspaceJourney(suite);
+  if (suite) await stopF309OrdinaryWorkspaceJourney(suite);
 });
 
 registerOrdinaryImageJourney(() => suite);
@@ -51,6 +53,7 @@ registerOrdinaryChatCompareRoundJourney(() => suite);
 registerOrdinaryDocumentJourney(() => suite);
 registerDocumentReopenJourney(() => suite);
 registerFirstFileJourney(() => suite);
+registerPublishedTextJourneys(() => suite);
 
 for (const changesAdjacentGeometry of [false, true]) {
   test(
@@ -106,3 +109,8 @@ for (const changesAdjacentGeometry of [false, true]) {
     },
   );
 }
+
+registerNativeSendAckCloseJourneys(async () => {
+  await stopF309OrdinaryWorkspaceJourney(suite);
+  suite = undefined;
+});

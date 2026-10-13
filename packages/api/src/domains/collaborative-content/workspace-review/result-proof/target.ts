@@ -1,4 +1,4 @@
-import { isDeepStrictEqual, MIMEType } from 'node:util';
+import { isDeepStrictEqual } from 'node:util';
 import type { VideoProjectDocumentV1, VideoProjectReviewTarget } from '@cat-cafe/shared';
 import { WorkspaceContentReviewError } from '../errors.js';
 import { assertProjectReviewTarget } from '../video-project-review-anchors.js';
@@ -8,6 +8,9 @@ import {
   type ProjectReviewUsage as Usage,
   unchangedIdentityPermutation,
 } from './correspondence.js';
+
+import { assetMaterial } from './material.js';
+import { momentRangeEvidence } from './moment-range.js';
 
 type Document = VideoProjectDocumentV1;
 type Segment = Document['timeline']['segments'][number];
@@ -144,6 +147,7 @@ function momentEvidence(
 ): Evidence | undefined {
   // Location hints constrain identity/time; a region independently limits proof to visible inputs.
   assertProjectReviewTarget(document, target);
+  if (target.endTick !== undefined) return momentRangeEvidence(document, target);
   const timeline = document.timeline;
   const segments = timeline.segments.filter((segment) =>
     containsTick(target.tick, segment.startTick, segment.durationTicks),
@@ -239,25 +243,6 @@ function eventUsage(document: Document, event: Event): Usage {
     endTick: event.startTick + (event.durationTicks ?? 1),
     assetVersionRef: event.assetVersionRef,
     content: event.assetVersionRef ? assetMaterial(document, event.assetVersionRef) : undefined,
-  };
-}
-
-function assetMaterial(document: Document, id: string) {
-  const version = document.assets.flatMap((asset) => asset.versions).find((version) => version.id === id);
-  if (!version) return invalid();
-  let mime: MIMEType;
-  try {
-    mime = new MIMEType(version.mediaType);
-  } catch {
-    return invalid();
-  }
-  // Encoded digest fixes byte length/intrinsic dimensions/natural duration; correcting facts is not rendering.
-  // MIME essence controls the generic decoder kind. Undeclared parameters are not proof inputs.
-  // Applied playback intervals remain in timeline/visual/event evidence, not intrinsic asset metadata.
-  return {
-    sha256: version.sha256,
-    mediaType: mime.essence,
-    rotation: version.rotation ?? 0,
   };
 }
 

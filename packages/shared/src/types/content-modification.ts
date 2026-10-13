@@ -2,7 +2,13 @@ import { z } from 'zod';
 import { artifactReviewAnchorSchema } from './artifact-review.js';
 import { type ArtifactReviewImageEdit, artifactReviewImageEditSchema } from './artifact-review-drawing.js';
 import { mediaModificationSelectionItemSchema } from './artifact-review-media.js';
+import {
+  projectModificationSelectionItemSchema,
+  projectModificationSourceSchema,
+  validateProjectModification,
+} from './content-modification-project.js';
 import { evolutionMediaLocatorSchema } from './evolution-media-source.js';
+import { videoProjectReviewAnchorSchema } from './video-project-review.js';
 import { workspaceContentLocatorSchema, workspaceTextAnchorSchema } from './workspace-content-review.js';
 
 const id = z.string().trim().min(1).max(256);
@@ -11,6 +17,7 @@ const sha = z.string().regex(/^sha256:[a-f0-9]{64}$/);
 const businessTime = z.number().int().positive().safe();
 
 export const contentModificationSourceSchema = z.discriminatedUnion('kind', [
+  projectModificationSourceSchema,
   z
     .object({ kind: z.literal('artifact-review'), reviewId: id, round: revision, expectedReviewRevision: revision })
     .strict(),
@@ -43,7 +50,11 @@ export const contentModificationSourceSchema = z.discriminatedUnion('kind', [
     .strict(),
 ]);
 
-const contentModificationSelectionSchema = z.union([artifactReviewAnchorSchema, workspaceTextAnchorSchema]);
+const contentModificationSelectionSchema = z.union([
+  artifactReviewAnchorSchema,
+  workspaceTextAnchorSchema,
+  videoProjectReviewAnchorSchema,
+]);
 export type ContentModificationSelection = z.infer<typeof contentModificationSelectionSchema>;
 const textModificationSelectionItemSchema = z
   .object({
@@ -55,6 +66,7 @@ const textModificationSelectionItemSchema = z
 export const contentModificationSelectionItemSchema = z.union([
   textModificationSelectionItemSchema,
   mediaModificationSelectionItemSchema,
+  projectModificationSelectionItemSchema,
 ]);
 
 export const contentModificationTakeoverSchema = z
@@ -74,7 +86,7 @@ export const contentModificationRequestSchema = z
     threadId: id,
     intent: z
       .object({
-        body: z.string().max(4000),
+        body: z.string().max(8000),
         imageEdit: artifactReviewImageEditSchema.optional(),
         selection: contentModificationSelectionSchema.optional(),
         selections: z.array(contentModificationSelectionItemSchema).min(1).max(12).optional(),
@@ -143,6 +155,27 @@ export type ContentModificationRequest = z.infer<typeof contentModificationReque
 /** One explicit human submit; operational refs never supply the human principal or default target. */
 export const contentModificationRequestContractSchema = contentModificationRequestSchema.superRefine((request, ctx) => {
   const selections = request.intent.selections;
+  if (request.source.kind === 'video-project') {
+    validateProjectModification(
+      { source: request.source, intent: request.intent, taskContext: request.taskContext },
+      ctx,
+    );
+    return;
+  }
+  if (request.intent.body.length > 4000)
+    ctx.addIssue({
+      code: 'custom',
+      path: ['intent', 'body'],
+      message: 'Legacy text/media instructions remain at most 4000 characters',
+    });
+  if (selections?.some((item) => item.selection.kind === 'video-project')) {
+    ctx.addIssue({
+      code: 'custom',
+      path: ['intent', 'selections'],
+      message: 'Project selections require a project source',
+    });
+    return;
+  }
   if (!selections) return;
   const text = selections.filter((item) => item.selection.kind === 'text_quote');
   if (text.length === 0) {
@@ -222,6 +255,10 @@ export function imageModificationInstruction(edit: ArtifactReviewImageEdit): str
 
 /** Shared by the visible confirmation and the server; never model-generated or silently truncated. */
 export function contentModificationOutcome(intent: ContentModificationRequest['intent']): string {
+  const projectSelections = normalizeModificationSelections(intent);
+  if (projectSelections.length && projectSelections.every((item) => item.selection.kind === 'video-project'))
+    return `处理原消息中具名审片意见：${projectSelections.map((item) => item.id).join('、')}。完整说明与冻结输入保留在原消息和同一审片账本；返回相关新版本与每条意见的具名处理回执。`;
+
   const edit = intent.imageEdit;
   const instruction = edit ? imageModificationInstruction(edit) : '';
   const selectionInstructions = normalizeModificationSelections(intent).flatMap((item) =>

@@ -1,9 +1,5 @@
-import {
-  type Capability,
-  type PluginManifest,
-  validateEffectiveGrants,
-  validateManifest,
-} from '@clowder-ai/plugin-contract';
+import { type Capability, type PluginManifest, validateEffectiveGrants } from '@clowder-ai/plugin-contract';
+import { validateHostPluginManifest } from '../desktop-window-runtime/presentation-manifest.js';
 
 /** Exact npm package consumed by this Host build. */
 export const PLUGIN_CONTRACT_PACKAGE_VERSION = '0.1.0-beta.21' as const;
@@ -26,7 +22,7 @@ export const PLUGIN_MANIFEST_CONTRACT_VERSIONS = [
 
 export const DEFAULT_PLUGIN_CONTRACT_RUNTIME = {
   manifestContractVersions: PLUGIN_MANIFEST_CONTRACT_VERSIONS,
-  validateManifest,
+  validateManifest: validateHostPluginManifest,
   validateEffectiveGrants,
 };
 

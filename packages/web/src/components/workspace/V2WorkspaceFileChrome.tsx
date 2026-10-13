@@ -1,5 +1,8 @@
 'use client';
 import type { ReactNode } from 'react';
+import { resolveShellCopy } from '@/components/shell/shell-copy';
+import { readShellLanguage } from '@/components/shell/shell-language';
+import { workspaceChromeCopy } from '@/components/workbench/workspace-chrome.shell-copy';
 import { FileIcon } from './FileIcons';
 import { V2WorkspaceMenu } from './V2WorkspaceMenu';
 import type { WorkspaceFileViewerProps } from './WorkspaceFileViewer.types';
@@ -8,11 +11,22 @@ import { WorkspaceToolbarButton as Button } from './WorkspaceToolbarButton';
 export function fileReturnLabel(origin: WorkspaceFileViewerProps['navigationOrigin']): string {
   if (origin?.kind === 'meeting-transcript') return '‹ 会议伴随';
   if (origin?.kind === 'workspace-changes') return '‹ 变更';
-  if (origin?.kind === 'workspace-home-search') return '‹ 搜索结果';
+  if (origin?.kind === 'workspace-home-search' || origin?.kind === 'workspace-tools-search')
+    return `‹ ${resolveShellCopy(workspaceChromeCopy, readShellLanguage()).toolsSearch}`;
+  if (origin?.kind === 'workspace-home-artifact')
+    return `‹ ${resolveShellCopy(workspaceChromeCopy, readShellLanguage()).home}`;
   if (origin?.kind === 'chat-file-link') return '‹ 聊天';
   if (origin?.kind === 'workspace-document') return '‹ 文档';
   if (origin?.kind === 'artifact-list') return '‹ 作品';
   return '‹ 文件';
+}
+
+function fileChromeBackLabel(p: Pick<WorkspaceFileViewerProps, 'navigationOrigin' | 'showFileQuotes'>): string {
+  const returnsToWorkspaceSource =
+    p.navigationOrigin?.kind === 'workspace-home-artifact' ||
+    p.navigationOrigin?.kind === 'workspace-tools-search' ||
+    p.navigationOrigin?.kind === 'workspace-home-search';
+  return p.showFileQuotes && !returnsToWorkspaceSource ? '返回来源' : fileReturnLabel(p.navigationOrigin);
 }
 
 /** Presentation only: content, editing, speech, navigation and annotations retain their owners. */
@@ -63,7 +77,7 @@ export function V2WorkspaceFileChrome({
             data-testid="v2-file-back"
             className="shrink-0 border-r border-cafe-subtle px-3 py-2 text-xs font-semibold text-cafe-secondary"
           >
-            {fileReturnLabel(p.navigationOrigin)}
+            {fileChromeBackLabel(p)}
           </button>
         )}
         <div className="flex min-w-0 flex-1 overflow-x-auto scrollbar-none">
@@ -114,7 +128,11 @@ export function V2WorkspaceFileChrome({
           {p.file.size < 1024 ? `${p.file.size}B` : `${Math.round(p.file.size / 1024)}KB`}
         </span>
         <span className="v2-file-view-toggle shrink-0">{toggle}</span>
-        <Button onClick={onAsk} title="把这个文件交给当前对话，请猫修改">
+        <Button
+          onClick={onAsk}
+          disabled={p.modificationDisabled || (p.onRequestModification ? p.editMode : false)}
+          title="把这个文件交给当前对话，请猫修改"
+        >
           请猫修改
         </Button>
         {p.collaborationAvailable && p.onOpenCollaboration && (

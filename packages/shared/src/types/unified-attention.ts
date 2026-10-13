@@ -7,6 +7,7 @@ import {
   approvalResolutionSchema,
 } from './approval-lifecycle.js';
 import { preparedArtifactSnapshotV1Schema } from './growing-artifact.js';
+import { runtimeQuestionSchema } from './runtime-interaction.js';
 
 export type UnifiedAttentionApproval = ApprovalHubItem;
 /** Canonical renderer fields; bind the read's verified identity.ownerUserId when rendering ApprovalItemCard. */
@@ -107,15 +108,53 @@ export type UnifiedAttentionSourceRead = {
   status: UnifiedAttentionSourceStatus;
   startedAt: number;
   observedAt: number;
-  coverage: 'all_registered_F246_producers' | 'current_linked_F310_five_producers';
+  coverage:
+    | 'all_registered_F246_producers'
+    | 'current_linked_F310_five_producers'
+    | 'pending_f306_structured_choices'
+    | 'explicit_user_mentions';
   exhaustiveness: 'complete' | 'partial' | 'unknown';
 };
+
+/** Read-only coordinates for one canonical, still-pending provider-native question. */
+export const unifiedAttentionChoiceRequestSchema = z
+  .object({
+    interactionId: z.string().trim().min(1),
+    revision: z.number().int().nonnegative(),
+    requesterCatId: z.string().trim().min(1),
+    createdAt: z.number().int().nonnegative(),
+    title: z.string().trim().min(1),
+    questions: z.array(runtimeQuestionSchema).min(1),
+    cardRef: z
+      .object({
+        threadId: z.string().trim().min(1),
+        messageId: z.string().trim().min(1),
+        blockId: z.string().trim().min(1),
+      })
+      .strict(),
+  })
+  .strict();
+
+export type UnifiedAttentionChoiceRequest = z.infer<typeof unifiedAttentionChoiceRequestSchema>;
 
 /** Host-only source DTO. Packaged renderers receive their separately fenced presentation. */
 export interface UnifiedAttentionItemV1 {
   decisionRef: string;
-  kind: 'approval' | 'judgment' | 'repair';
+  kind: 'approval' | 'judgment' | 'repair' | 'user_mention';
   summary: string;
+  /** Latest explicitly addressed public cat message in one conversation; no inferred category or urgency. */
+  userMention?: {
+    threadId: string;
+    threadTitle?: string;
+    expectedRevision?: number;
+    handled?: boolean;
+    messageId: string;
+    catId: string;
+    content: string;
+    timestamp: number;
+  };
+  /** Present only for a canonical pending F306 question; ordinary rich interactive blocks never project here. */
+  choiceRequest?: UnifiedAttentionChoiceRequest;
   approval?: UnifiedAttentionVisibleApproval;
   linkedNeedsMe: { ownerRead: UnifiedAttentionWork; receipt: UnifiedAttentionReceipt }[];
 }
@@ -126,12 +165,21 @@ export interface UnifiedAttentionReadV1 {
   scope: 'owner_all_projects';
   identity: { ownerUserId: string };
   observedAt: number;
-  sources: { approvals: UnifiedAttentionSourceRead; needsMe: UnifiedAttentionSourceRead };
+  sources: {
+    approvals: UnifiedAttentionSourceRead;
+    needsMe: UnifiedAttentionSourceRead;
+    structuredChoices?: UnifiedAttentionSourceRead;
+    userMentions?: UnifiedAttentionSourceRead;
+  };
   readWindow: { startedAt: number; endedAt: number; consistency: 'independent_source_reads' };
   consistency: { state: 'verified' | 'uncertain'; reasons: string[] };
   items: UnifiedAttentionItemV1[];
   /** Present only for complete coverage with verified source identity and version deduplication, before paging. */
   totalCount?: number;
+  /** Exact open approvals + canonical pending structured choice requests; mentions, repairs and ordinary interactive are excluded. */
+  attentionCount?: number;
+  mentionCounts?: { today: number; week: number; earlier: number; handled: number };
+  mentionPeriod?: 'recent' | 'today' | 'week' | 'earlier' | 'handled';
   /** hasMore describes only the known rows from this independent-source read. */
   page: {
     offset: number;

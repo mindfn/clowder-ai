@@ -2157,7 +2157,7 @@ export async function* routeParallel(
               });
             }
           }
-        } else if (!sawUserFacingSystemInfo) {
+        } else if (!(signalForCat?.(msg.catId) ?? signal)?.aborted && !sawUserFacingSystemInfo) {
           // No persisted message for fully silent turns.
           if (deps.draftStore && ownInvId) {
             deps.draftStore.delete(userId, threadId, ownInvId)?.catch?.(noop);

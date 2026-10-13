@@ -123,6 +123,9 @@ export interface RouteStrategyDeps {
   services: Record<string, AgentService>;
   unavailableServices?: ReadonlyMap<string, AgentRegistrationFailure>;
   invocationDeps: InvocationDeps;
+  dotReplyTarget?: (
+    source: import('../../cloud-bridge/dot/dot-reply-authority.js').DotReplyCandidate,
+  ) => Promise<boolean>;
   messageStore: IMessageStore;
   deliveryCursorStore?: DeliveryCursorStore;
   /** #80: Streaming draft persistence store */

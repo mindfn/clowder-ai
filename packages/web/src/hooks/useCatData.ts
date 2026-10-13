@@ -24,6 +24,7 @@ export interface CatData {
   mentionPatterns: string[];
   breedId?: string;
   accountRef?: string;
+  accountBindingMode?: 'follow' | 'override';
   /** clowder-ai#340 P5: CLI client identity (renamed from provider). */
   clientId: string;
   /** Canonical member access mode resolved by the server config boundary. */

@@ -4,6 +4,7 @@ import { join } from 'node:path';
 import { test } from 'node:test';
 import { deriveNamedAlphaCoordinates } from './alpha-coordinates.mjs';
 import { NAMED_ALPHA_PORTS, namedAlphaFixture } from './alpha-named-fixture.mjs';
+import * as redisProcess from './alpha-redis-process.mjs';
 import { captureNamedAlphaRedisIdentity, verifyNamedAlphaRedisIdentity } from './alpha-redis-process.mjs';
 import { PROCESS_START_TIME_FORMAT } from './process-identity.mjs';
 
@@ -134,5 +135,172 @@ test('failed Redis captures preserve their cause and remain unproven', (t) => {
       assert.ok(error.message.includes(cause.message), error.message);
       return true;
     });
+  }
+});
+
+function readinessFixture(t, observations) {
+  const f = redisFixture(t);
+  const proof = captureNamedAlphaRedisIdentity(f.raw, f.deps);
+  let elapsed = 0;
+  const calls = [];
+  let reads = 0;
+  const deps = {
+    readListeners: () => {
+      calls.push('listeners');
+      return [proof.pid];
+    },
+    capture: () => {
+      calls.push('identity');
+      const next = observations[Math.min(reads++, observations.length - 1)];
+      elapsed += next.elapsed ?? 0;
+      if (next.error) throw next.error;
+      return { ...f.identity, ...next };
+    },
+    now: () => elapsed,
+    sleep: (ms) => {
+      elapsed += ms;
+      calls.push('wait');
+    },
+    run: (command, args, options) => {
+      calls.push('protocol');
+      assert.equal(command, 'redis-cli');
+      assert.deepEqual(args, ['-h', '127.0.0.1', '-p', '15397', '--raw', 'ping']);
+      assert.equal(options.timeout, 2000);
+      return 'PONG\n';
+    },
+  };
+  return { ...f, proof, deps, calls, reads: () => reads, elapsed: () => elapsed };
+}
+
+const unreadable = { command: '(redis-server)', argvAvailable: false };
+
+test('startup PING rechecks complete identity after transient unreadable argv, never using cached fields', (t) => {
+  const f = readinessFixture(t, [unreadable, {}]);
+  const savedProof = structuredClone(f.proof);
+  assert.equal(redisProcess.pingNamedAlphaRedis(f.raw, f.proof, f.deps), true);
+  assert.deepEqual(f.calls, ['listeners', 'identity', 'wait', 'listeners', 'identity', 'protocol']);
+  assert.deepEqual(f.proof, savedProof, 'an unreadable sample must not modify the stored ownership proof');
+});
+
+test('startup PING preserves a permanently unreadable refusal and has bounded rereads', (t) => {
+  const f = readinessFixture(t, [unreadable]);
+  assert.throws(() => redisProcess.pingNamedAlphaRedis(f.raw, f.proof, f.deps), /argv unavailable/);
+  assert.ok(f.reads() > 1 && f.reads() <= 10);
+  assert.ok(f.elapsed() <= 1000);
+  assert.equal(f.calls.includes('protocol'), false);
+});
+
+test('startup PING stops on a conclusive identity difference even when argv is unreadable', (t) => {
+  for (const delta of [
+    { cwd: '/foreign' },
+    { startedAtEpochMs: 123 },
+    { ucomm: 'node' },
+    { command: 'redis-server foreign', argvAvailable: true },
+  ]) {
+    const f = readinessFixture(t, [{ ...unreadable, ...delta }, {}]);
+    assert.throws(() => redisProcess.pingNamedAlphaRedis(f.raw, f.proof, f.deps), /incarnation/);
+    assert.equal(f.reads(), 1);
+    assert.equal(f.calls.includes('wait'), false);
+    assert.equal(f.calls.includes('protocol'), false);
+  }
+});
+
+test('startup PING rejects replacement listeners, invalid stored proof and capture exceptions without retries', (t) => {
+  const replaced = readinessFixture(t, [{}]);
+  assert.throws(
+    () =>
+      redisProcess.pingNamedAlphaRedis(replaced.raw, replaced.proof, {
+        ...replaced.deps,
+        readListeners: () => [41022],
+      }),
+    /replaced/,
+  );
+  assert.equal(replaced.calls.length, 0);
+  const unproven = readinessFixture(t, [{}]);
+  assert.throws(
+    () =>
+      redisProcess.pingNamedAlphaRedis(
+        unproven.raw,
+        {
+          ...unproven.proof,
+          process: { ...unproven.proof.process, ...unreadable },
+        },
+        unproven.deps,
+      ),
+    /unreadable/,
+  );
+  assert.equal(unproven.reads(), 1);
+  assert.equal(unproven.calls.includes('protocol'), false);
+  const gone = readinessFixture(t, [{ error: new Error('fixture ESRCH') }, {}]);
+  assert.throws(() => redisProcess.pingNamedAlphaRedis(gone.raw, gone.proof, gone.deps), /fixture ESRCH/);
+  assert.equal(gone.reads(), 1);
+  assert.equal(gone.calls.includes('protocol'), false);
+});
+
+test('a listener replaced during the retry wait never receives a PING', (t) => {
+  const f = readinessFixture(t, [unreadable, {}]);
+  let listeners = 0;
+  assert.throws(
+    () =>
+      redisProcess.pingNamedAlphaRedis(f.raw, f.proof, {
+        ...f.deps,
+        readListeners: () => [++listeners === 1 ? 41021 : 41022],
+      }),
+    /replaced/,
+  );
+  assert.equal(listeners, 2);
+  assert.equal(f.reads(), 1, 'second listener check refuses before another identity read');
+  assert.equal(f.calls.includes('protocol'), false);
+});
+
+test('startup identity rereads cannot extend the replaced one-second wait or publish late success', (t) => {
+  const unknown = readinessFixture(t, [unreadable, { ...unreadable, elapsed: 980 }, {}]);
+  assert.throws(() => redisProcess.pingNamedAlphaRedis(unknown.raw, unknown.proof, unknown.deps), /argv unavailable/);
+  assert.equal(unknown.reads(), 2, 'do not start another observation after the retry deadline');
+  assert.equal(unknown.calls.includes('protocol'), false);
+  const slow = readinessFixture(t, [unreadable, { elapsed: 1001 }]);
+  assert.throws(() => redisProcess.pingNamedAlphaRedis(slow.raw, slow.proof, slow.deps), /wait budget/);
+  assert.equal(slow.calls.includes('protocol'), false);
+});
+
+test('the original first identity check does not consume the one-second settling allowance', (t) => {
+  const readable = readinessFixture(t, [{ elapsed: 1200 }]);
+  assert.equal(redisProcess.pingNamedAlphaRedis(readable.raw, readable.proof, readable.deps), true);
+  assert.equal(readable.reads(), 1);
+  const recovered = readinessFixture(t, [{ ...unreadable, elapsed: 1200 }, { elapsed: 350 }]);
+  assert.equal(redisProcess.pingNamedAlphaRedis(recovered.raw, recovered.proof, recovered.deps), true);
+  assert.equal(recovered.reads(), 2);
+  assert.ok(
+    recovered.elapsed() - 1200 < 1000,
+    'only the extra observation and wait use the replaced settling allowance',
+  );
+});
+
+test('repeated unavailable samples never slide the original retry deadline forward', (t) => {
+  const f = readinessFixture(t, [{ ...unreadable, elapsed: 120 }]);
+  assert.throws(() => redisProcess.pingNamedAlphaRedis(f.raw, f.proof, f.deps), /wait budget/);
+  assert.equal(f.reads(), 8, 'seven additional observations fit; a fresh budget for every refusal would allow ten');
+  assert.equal(f.elapsed(), 1120, 'the retry allowance starts once, after the first 120ms observation');
+  assert.equal(f.calls.includes('protocol'), false);
+});
+
+test('startup PING reports protocol refusal separately and does not replay a protocol command', (t) => {
+  for (const result of ['NOAUTH Authentication required.', new Error('fixture connection refused')]) {
+    const f = readinessFixture(t, [{}]);
+    let pings = 0;
+    assert.throws(
+      () =>
+        redisProcess.pingNamedAlphaRedis(f.raw, f.proof, {
+          ...f.deps,
+          run: () => {
+            pings += 1;
+            if (result instanceof Error) throw result;
+            return result;
+          },
+        }),
+      /Alpha Redis PING.*(NOAUTH|connection refused)/,
+    );
+    assert.equal(pings, 1);
+    assert.equal(f.reads(), 1);
   }
 });

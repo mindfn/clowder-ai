@@ -26,6 +26,7 @@ export interface ModificationDraftScope {
   intent?: ModificationDraft['intent'];
 }
 export function modificationSourceVersion(source: ContentModificationRequest['source']): string {
+  if (source.kind === 'video-project') throw new Error('Project screening marks use the original Chat composer');
   return source.kind === 'publication'
     ? `${source.contentRef}:${source.ownerRevision}`
     : source.kind === 'artifact-review'
@@ -33,6 +34,7 @@ export function modificationSourceVersion(source: ContentModificationRequest['so
       : `${source.reviewId}:${source.expectedSourceRevision}`;
 }
 export function modificationStorageKey(ownerUserId: string, source: ContentModificationRequest['source']): string {
+  if (source.kind === 'video-project') throw new Error('Project screening marks use the original Chat composer');
   const object = source.kind === 'publication' ? source.contentRef : source.reviewId;
   return `cat-cafe:content-modification:${ownerUserId}:${object}`;
 }

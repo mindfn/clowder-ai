@@ -24,7 +24,8 @@ export interface ContentModificationProgress {
         ledgerRef?: string;
         legacyReview?: { reviewId: string; round: number };
       }
-    | { kind: 'text'; reviewId: string; sourceRevision: string };
+    | { kind: 'text'; reviewId: string; sourceRevision: string }
+    | { kind: 'project'; contentRef: string; ownerRevision: number; ledgerRef: string };
   task?: { taskId: string; revision: number; receiptRef: string };
   review?: { reviewId: string; round?: number; receiptRef: string };
 }
@@ -53,6 +54,7 @@ export interface ContentModificationRequestView {
   /** Server-resolved opaque ids for this request only, in the original selection order. */
   selectionAnnotations?: { selectionId: string; annotationId: string }[];
   stage:
+    | 'accepted'
     | 'saving_source'
     | 'preparing_content'
     | 'admitting_task'

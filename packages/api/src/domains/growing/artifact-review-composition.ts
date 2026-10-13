@@ -9,6 +9,8 @@ import { ModificationPublicationGrants } from '../collaborative-content/modifica
 import { ModificationTargetService } from '../collaborative-content/modification/target-service.js';
 import { ContentTextModificationService } from '../collaborative-content/modification/text/text-service.js';
 import type { EvolutionMediaReadPort } from '../collaborative-content/workspace-review/evolution-review-source.js';
+import { VideoProjectMessageImporter } from '../collaborative-content/workspace-review/project-message/import.js';
+import type { VideoProjectMessageAuthority } from '../collaborative-content/workspace-review/project-message/types.js';
 import { WorkspaceContentReviewService } from '../collaborative-content/workspace-review/service.js';
 import { VideoProjectReviewService } from '../collaborative-content/workspace-review/video-project-review-service.js';
 import type { VideoProjectReviewPort } from '../collaborative-content/workspace-review/video-project-review-source.js';
@@ -18,6 +20,7 @@ import { PublishedMediaAccess } from '../video-studio/content-owner/published-me
 import { PublishedMediaService } from '../video-studio/content-owner/published-media-service.js';
 import { PublishedMediaSource } from '../video-studio/content-owner/published-media-source.js';
 import type { ProjectContentOwnerService } from '../video-studio/content-owner/service.js';
+import type { VideoProjectScreeningService } from '../video-studio/project/screening-service.js';
 import type { WorkspaceContentSourceService } from '../workspace/workspace-content-source.js';
 import { createArtifactReviewRecoveryTaskSpec } from './ArtifactReviewRecoveryTaskSpec.js';
 import {
@@ -34,6 +37,8 @@ export function createArtifactReviewIntegration(deps: {
   uploadDir: string;
   owner: ProjectContentOwnerService;
   projects?: VideoProjectReviewPort;
+  screenings?: VideoProjectScreeningService;
+  projectMessageAuthority?: VideoProjectMessageAuthority;
   publications: PreparedArtifactReader;
   workspace?: WorkspaceContentSourceService;
   evolution?: EvolutionMediaReadPort;
@@ -41,6 +46,7 @@ export function createArtifactReviewIntegration(deps: {
   tasks: Pick<ITaskStore, 'get' | 'listByThread'>;
   threads: Pick<IThreadStore, 'get' | 'list'>;
   messages: ConstructorParameters<typeof PublishedMediaSource>[0]['messages'];
+  readPrivateMessageImage?: ConstructorParameters<typeof PublishedMediaSource>[0]['readPrivateMessageImage'];
   delivery: ArtifactReviewReturnDispatcherDeps['delivery'];
   emit: ArtifactReviewReturnDispatcherDeps['emit'];
   onError: (error: unknown) => void;
@@ -56,6 +62,7 @@ export function createArtifactReviewIntegration(deps: {
     artifacts: deps.publications,
     messages: deps.messages,
     uploadDir: deps.uploadDir,
+    ...(deps.readPrivateMessageImage ? { readPrivateMessageImage: deps.readPrivateMessageImage } : {}),
     ...(deps.workspace ? { workspace: deps.workspace } : {}),
     ...(deps.evolution ? { evolution: deps.evolution } : {}),
   });
@@ -78,9 +85,18 @@ export function createArtifactReviewIntegration(deps: {
         ...(deps.projects ? { projects: deps.projects } : {}),
       })
     : undefined;
-  const projectReviews = deps.projects
-    ? new VideoProjectReviewService({ store: store.ledgers, projects: deps.projects })
-    : undefined;
+  const projectMessages =
+    deps.projects && deps.screenings && deps.projectMessageAuthority
+      ? new VideoProjectMessageImporter({
+          store: store.ledgers,
+          projects: deps.projects,
+          screenings: deps.screenings,
+          authority: deps.projectMessageAuthority,
+        })
+      : undefined;
+  const projectReviews =
+    projectMessages?.reviews ??
+    (deps.projects ? new VideoProjectReviewService({ store: store.ledgers, projects: deps.projects }) : undefined);
   const invalidate = (ownerUserId: string) =>
     deps.emit(ownerUserId, 'entrusted_work_projection_invalidated', { ownerUserId });
   const notifyChanged = (ownerUserId: string, reviewId: string) => {
@@ -126,6 +142,7 @@ export function createArtifactReviewIntegration(deps: {
     targets,
     ledgers,
     projectReviews,
+    projectMessages,
     reviews,
     store,
     producer,

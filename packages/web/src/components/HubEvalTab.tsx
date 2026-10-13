@@ -4,6 +4,7 @@ import { type ReactNode, useCallback, useEffect, useState } from 'react';
 import { useCatNameResolver } from '@/hooks/useCatNameResolver';
 import { apiFetch } from '@/utils/api-client';
 import { PawFeelSettingsSection } from './eval-settings/PawFeelSettingsSection';
+import { useEvalCopy, useEvalLanguage } from './eval-workspace/eval-workspace.shell-copy';
 import { HubEvalMetricGlossary } from './HubEvalMetricGlossary';
 import {
   deriveDomainScheduleLine,
@@ -18,6 +19,7 @@ import { HubEvalVerdictCard } from './HubEvalVerdictCard';
 export { VERDICT_LABELS };
 
 export function HubEvalTab() {
+  const t = useEvalCopy();
   const [summary, setSummary] = useState<EvalHubSummary | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -43,18 +45,16 @@ export function HubEvalTab() {
 
   let periodicSurface: ReactNode;
   if (loading) {
-    periodicSurface = <p className="text-sm text-cafe-muted">加载周期评估…</p>;
+    periodicSurface = <p className="text-sm text-cafe-muted">{t.loading}</p>;
   } else if (error) {
     periodicSurface = (
       <div className="rounded-lg bg-cafe-surface-elevated p-4 text-sm text-conn-red-text" role="alert">
-        周期 Eval Hub 暂时不可用：{error}
+        {t.hubUnavailable}: {error}
       </div>
     );
   } else if (!summary || (summary.items.length === 0 && summary.domains.length === 0)) {
     periodicSurface = (
-      <div className="rounded-lg bg-cafe-surface-elevated p-4 text-sm text-cafe-secondary">
-        还没有 live verdict。Eval Hub 只展示已经提交证据包的真实 eval 结论。
-      </div>
+      <div className="rounded-lg bg-cafe-surface-elevated p-4 text-sm text-cafe-secondary">{t.noSummary}</div>
     );
   } else {
     periodicSurface = <PeriodicEvalSurface summary={summary} onCatUpdated={fetchSummary} />;
@@ -68,22 +68,22 @@ export function HubEvalTab() {
   );
 }
 
-function PeriodicEvalSurface({ summary, onCatUpdated }: { summary: EvalHubSummary; onCatUpdated: () => void }) {
+/** Original periodic ledger content, also used by the Workspace owner with the same summary and refresh authority. */
+export function PeriodicEvalSurface({ summary, onCatUpdated }: { summary: EvalHubSummary; onCatUpdated: () => void }) {
+  const t = useEvalCopy();
   return (
     <>
-      <p className="text-xs text-cafe-muted">
-        Harness Eval 控制面板：猫猫定期评估自身协作机制的健康度，下方是最新评估结论。
-      </p>
+      <p className="text-xs text-cafe-muted">{t.periodicDescription}</p>
       <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
-        <StatCell label="评估结论" sublabel="总数" value={summary.counts.total} />
-        <StatCell label="需处理" sublabel="build/fix/delete" value={summary.counts.actionable} />
-        <StatCell label="持续观察" sublabel="暂无异常" value={summary.counts.keepObserve} />
-        <StatCell label="过期" sublabel="需重新评估" value={summary.counts.stale} />
+        <StatCell label={t.verdictCount} sublabel={t.total} value={summary.counts.total} />
+        <StatCell label={t.actionable} sublabel="build/fix/delete" value={summary.counts.actionable} />
+        <StatCell label={t.keepObserve} sublabel={t.noAnomaly} value={summary.counts.keepObserve} />
+        <StatCell label={t.stale} sublabel={t.needsReeval} value={summary.counts.stale} />
       </div>
 
       {summary.domains.length > 0 && (
         <div className="space-y-3">
-          <h2 className="text-sm font-semibold text-cafe">评估域总览</h2>
+          <h2 className="text-sm font-semibold text-cafe">{t.domains}</h2>
           {summary.domains.map((domain) => (
             <DomainCard key={domain.domainId} domain={domain} onCatUpdated={onCatUpdated} />
           ))}
@@ -91,9 +91,7 @@ function PeriodicEvalSurface({ summary, onCatUpdated }: { summary: EvalHubSummar
       )}
 
       {summary.items.length === 0 && (
-        <div className="rounded-lg bg-cafe-surface-elevated p-4 text-sm text-cafe-secondary">
-          还没有 live verdict。Eval Hub 只展示已经提交证据包的真实 eval 结论。
-        </div>
+        <div className="rounded-lg bg-cafe-surface-elevated p-4 text-sm text-cafe-secondary">{t.noSummary}</div>
       )}
 
       {summary.items.length > 0 && (
@@ -124,6 +122,8 @@ function StatCell({ label, sublabel, value }: { label: string; sublabel?: string
 }
 
 function DomainCard({ domain, onCatUpdated }: { domain: EvalDomainSummary; onCatUpdated?: () => void }) {
+  const t = useEvalCopy();
+  const language = useEvalLanguage();
   const resolveCatName = useCatNameResolver();
   const [editing, setEditing] = useState(false);
   const [catId, setCatId] = useState(domain.evalCatId);
@@ -178,7 +178,7 @@ function DomainCard({ domain, onCatUpdated }: { domain: EvalDomainSummary; onCat
             <p className="mt-1 text-xs leading-relaxed text-cafe-secondary">{domain.descriptionForHuman}</p>
           ) : null}
           <p className="mt-1 text-xs text-cafe-muted">
-            评估频率: {domain.frequency} · 评估猫:{' '}
+            {t.frequency}: {domain.frequency} · {t.evalCat}:{' '}
             {editing ? (
               <span className="inline-flex items-center gap-1">
                 {availableCats.length > 0 ? (
@@ -208,7 +208,7 @@ function DomainCard({ domain, onCatUpdated }: { domain: EvalDomainSummary; onCat
                   disabled={saving}
                   className="rounded bg-[var(--console-button-emphasis)] px-2 py-0.5 text-xs text-[var(--cafe-surface)] hover:opacity-90 disabled:opacity-50"
                 >
-                  {saving ? '...' : '保存'}
+                  {saving ? '...' : t.save}
                 </button>
                 <button
                   type="button"
@@ -219,7 +219,7 @@ function DomainCard({ domain, onCatUpdated }: { domain: EvalDomainSummary; onCat
                   }}
                   className="text-xs text-cafe-muted hover:text-cafe"
                 >
-                  取消
+                  {t.cancel}
                 </button>
               </span>
             ) : (
@@ -229,7 +229,7 @@ function DomainCard({ domain, onCatUpdated }: { domain: EvalDomainSummary; onCat
                   type="button"
                   onClick={startEditing}
                   className="text-xs text-cafe-muted hover:text-cafe"
-                  title="编辑评估猫"
+                  title={t.editCat}
                 >
                   ✏️
                 </button>
@@ -238,7 +238,7 @@ function DomainCard({ domain, onCatUpdated }: { domain: EvalDomainSummary; onCat
           </p>
           {error && <p className="mt-1 text-xs text-conn-red-text">{error}</p>}
           {(() => {
-            const line = deriveDomainScheduleLine(domain);
+            const line = deriveDomainScheduleLine(domain, language);
             if (line.kind === 'sunset') {
               return (
                 <p className="mt-0.5 text-xs text-cafe-muted" title="Sunset — domain.yaml has enabled: false">
@@ -255,14 +255,14 @@ function DomainCard({ domain, onCatUpdated }: { domain: EvalDomainSummary; onCat
         </div>
         <div className="flex shrink-0 flex-col items-end gap-1">
           <span className="inline-flex rounded-md bg-cafe-surface px-2.5 py-1 text-xs font-semibold text-[var(--console-button-emphasis)]">
-            {deriveDomainStateBadge(domain)}
+            {deriveDomainStateBadge(domain, language)}
           </span>
           {(() => {
-            const label = deriveDomainVerdictLabel(domain);
+            const label = deriveDomainVerdictLabel(domain, language);
             if (!label) return null;
             return (
               <span className="inline-flex rounded-md border border-cafe bg-cafe-surface px-2.5 py-0.5 text-xs font-medium text-cafe-secondary">
-                结论：{label}
+                {t.verdict}: {label}
               </span>
             );
           })()}
@@ -273,14 +273,14 @@ function DomainCard({ domain, onCatUpdated }: { domain: EvalDomainSummary; onCat
           href={`/thread/${encodeURIComponent(domain.systemThreadId)}`}
           className="rounded-md border border-cafe px-3 py-1.5 text-xs font-medium text-cafe-secondary hover:text-cafe"
         >
-          {domain.displayName} 工作线程
+          {domain.displayName} · {t.workThread}
         </a>
         {domain.domainId === 'eval:memory' && (
           <a
             href="/memory/health"
             className="rounded-md border border-cafe px-3 py-1.5 text-xs font-medium text-cafe-secondary hover:text-cafe"
           >
-            记忆健康
+            {t.memoryHealth}
           </a>
         )}
       </div>

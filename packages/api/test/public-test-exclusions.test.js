@@ -41,6 +41,7 @@ const RECONCILED_EXCLUSIONS = [
   'harness-eval/legacy-reeval-case-(?:hub|migration)\\.test',
   '^test/taste\\-takeaway\\-house\\-drafts\\.test\\.js$',
   '^test/harness\\-eval/capability\\-evolution\\-measurement\\-binding\\-resolver\\.test\\.js$',
+  '^test/f306-native-home-provider-hooks\\.test\\.js$',
 ];
 
 async function listTestFiles(rootDir, relDir = '') {

@@ -1,7 +1,7 @@
 'use client';
 
 import type { ContentModificationRecord, ContentModificationRequest } from '@cat-cafe/shared';
-import { useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { ContentModificationLanding } from '@/components/content-review/ContentModificationLanding';
 import { modificationSourceVersion, modificationStorageKey } from '@/components/content-review/modification-draft';
 import {
@@ -20,14 +20,18 @@ export function WorkspaceModificationEntry({
   path,
   target,
   disabled,
+  allowNewRequest = true,
   onApplied,
   onExpanded,
   onComparing,
+  openRequest = 0,
+  hideTrigger = false,
 }: {
   view: ContentReviewView;
   path: string;
   target: WorkspaceAnnotationTarget | null;
   disabled: boolean;
+  allowNewRequest?: boolean;
   onApplied?: (writtenRevision?: string) => Promise<void> | void;
   onExpanded?: () => void;
   /**
@@ -36,6 +40,8 @@ export function WorkspaceModificationEntry({
    * the file, and closing the panel, say `null`. The revision is how a newer navigation is told apart later.
    */
   onComparing?: (navigationRevision: number | null) => void;
+  openRequest?: number;
+  hideTrigger?: boolean;
 }) {
   const [intent, setIntent] = useState<{
     sourceVersion: string;
@@ -91,14 +97,15 @@ export function WorkspaceModificationEntry({
     onExpanded,
     onComparing,
   ]);
-  const open = async () => {
+  const open = useCallback(async () => {
     if (preparing || view.sourceState === 'unavailable') return;
     setError(null);
     setPreparing(true);
     const ticket = ++generation.current;
     try {
       let next: Omit<ContentModificationRequest['intent'], 'body'>;
-      if (!disabled && target?.kind === 'text_quote') {
+      if (!allowNewRequest) next = {};
+      else if (!disabled && target?.kind === 'text_quote') {
         const response = await apiFetch('/api/content-modifications/selection', {
           method: 'POST',
           headers: { 'content-type': 'application/json' },
@@ -119,31 +126,54 @@ export function WorkspaceModificationEntry({
     } finally {
       if (generation.current === ticket) setPreparing(false);
     }
-  };
+  }, [
+    preparing,
+    view.sourceState,
+    allowNewRequest,
+    disabled,
+    target,
+    requestSource,
+    openKey,
+    sourceVersion,
+    onExpanded,
+  ]);
+  const openedRequest = useRef(0);
+  useEffect(() => {
+    if (!openRequest || openedRequest.current === openRequest) return;
+    openedRequest.current = openRequest;
+    void open();
+  }, [openRequest, open]);
   return (
     <>
-      <div className="flex shrink-0 items-center justify-end gap-2 bg-cafe-surface px-3 py-2">
-        {error ? (
-          <p role="alert" className="text-xs text-cafe-error">
-            {error}
-          </p>
-        ) : null}
-        <button
-          type="button"
-          data-testid="content-modification-entry"
-          disabled={view.sourceState === 'unavailable' || preparing}
-          onClick={() => void open()}
-          className="shrink-0 rounded-md border border-cafe-subtle px-3 py-1.5 text-xs font-semibold text-cafe-accent"
-        >
-          {preparing
-            ? '正在核对选区…'
-            : disabled
-              ? '修改记录'
-              : source.kind === 'evolution'
-                ? '作为新作品修改'
-                : '请猫修改'}
-        </button>
-      </div>
+      {!hideTrigger && (allowNewRequest || !intent) ? (
+        <div className="flex shrink-0 items-center justify-end gap-2 bg-cafe-surface px-3 py-2">
+          {error ? (
+            <p role="alert" className="text-xs text-cafe-error">
+              {error}
+            </p>
+          ) : null}
+          <button
+            type="button"
+            data-testid={allowNewRequest ? 'content-modification-entry' : 'content-modification-records'}
+            disabled={view.sourceState === 'unavailable' || preparing}
+            onClick={() => void open()}
+            className="shrink-0 rounded-md border border-cafe-subtle px-3 py-1.5 text-xs font-semibold text-cafe-accent"
+          >
+            {preparing
+              ? '正在核对选区…'
+              : disabled || !allowNewRequest
+                ? '修改记录'
+                : source.kind === 'evolution'
+                  ? '作为新作品修改'
+                  : '请猫修改'}
+          </button>
+        </div>
+      ) : null}
+      {hideTrigger && error ? (
+        <p role="alert" className="px-3 text-xs text-cafe-error">
+          {error}
+        </p>
+      ) : null}
       {intent && view.sourceState !== 'unavailable' ? (
         <>
           {source.kind === 'evolution' ? (
@@ -157,7 +187,7 @@ export function WorkspaceModificationEntry({
             </p>
           ) : null}
           <ContentModificationLanding
-            allowNewRequest={!disabled}
+            allowNewRequest={allowNewRequest && !disabled}
             title={path.split('/').at(-1) || path}
             ownerUserId={view.review.ownerUserId}
             source={requestSource}

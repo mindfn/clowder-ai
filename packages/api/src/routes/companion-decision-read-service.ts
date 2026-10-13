@@ -1,4 +1,7 @@
+import { parseRuntimeInteractionRequest, type RuntimeInteractionRecord } from '@cat-cafe/shared';
 import type { FastifyInstance } from 'fastify';
+import type { IMessageStore } from '../domains/cats/services/stores/ports/MessageStore.js';
+import type { RuntimeInteractionPendingReadSource } from '../domains/runtime-interaction/ports/RuntimeInteractionStore.js';
 import { projectCompanionDecisions } from './companion-decision-projection.js';
 import {
   approvalsSourceSchema,
@@ -6,12 +9,17 @@ import {
   type DecisionSourceRead,
   needsMeSourceSchema,
 } from './companion-decision-sources.js';
+import { type MentionReadOptions, readUserMentionTodos } from './user-mention-todo-projection.js';
 
 /** Each source is independently read and fenced to this request's principal. No cache or writer. */
 export async function readCompanionDecisionProjection(
   app: FastifyInstance,
   userId: string,
   page: { offset: number; limit: number },
+  messageStore?: Pick<IMessageStore, 'listUserMentionRequests'> &
+    Partial<Pick<IMessageStore, 'listHandledUserMentions' | 'getUserMentionStateRevisions'>>,
+  mentionOptions?: MentionReadOptions,
+  runtimeInteractionStore?: RuntimeInteractionPendingReadSource,
 ) {
   const config = {
     approvals: {
@@ -60,14 +68,99 @@ export async function readCompanionDecisionProjection(
       state: { status, coverage, exhaustiveness, startedAt, observedAt: Date.now() } satisfies DecisionSourceRead,
     };
   };
-  const [approvals, needsMe] = await Promise.all([read('approvals'), read('needsMe')]);
-  return projectCompanionDecisions(
+  const [approvals, needsMe, userMentions, structuredChoices] = await Promise.all([
+    read('approvals'),
+    read('needsMe'),
+    messageStore ? readUserMentionTodos(messageStore, userId, mentionOptions) : undefined,
+    runtimeInteractionStore ? readStructuredChoices(runtimeInteractionStore, userId) : undefined,
+  ]);
+  const projection = projectCompanionDecisions(
     approvals.body ?? { items: [] },
     needsMe.body ?? { ownerReads: [] },
     userId,
     page,
     Date.now(),
-    { approvals: approvals.state, needsMe: needsMe.state },
+    {
+      approvals: approvals.state,
+      needsMe: needsMe.state,
+      ...(structuredChoices ? { structuredChoices: structuredChoices.state } : {}),
+    },
+    userMentions,
+    structuredChoices?.body,
+  );
+  await Promise.all(
+    projection.items.map(async (row) => {
+      if (!row.userMention) return;
+      try {
+        const thread = await mentionOptions?.threads?.get(row.userMention.threadId);
+        row.userMention.threadTitle =
+          thread?.createdBy === userId ? thread.title?.trim() || row.userMention.threadId : row.userMention.threadId;
+      } catch {
+        row.userMention.threadTitle = row.userMention.threadId;
+      }
+    }),
+  );
+  return projection;
+}
+
+async function readStructuredChoices(
+  store: RuntimeInteractionPendingReadSource,
+  userId: string,
+): Promise<{ body?: RuntimeInteractionRecord[]; state: DecisionSourceRead }> {
+  const startedAt = Date.now();
+  const base = {
+    coverage: 'pending_f306_structured_choices' as const,
+    startedAt,
+    observedAt: Date.now(),
+  };
+  let records: RuntimeInteractionRecord[];
+  let exhaustiveness: DecisionSourceRead['exhaustiveness'];
+  try {
+    if (store.readPendingIndexByUser) {
+      const read = await store.readPendingIndexByUser(userId);
+      records = read.records;
+      exhaustiveness = read.exhaustiveness;
+    } else {
+      records = await store.listPendingByUser(userId);
+      exhaustiveness = 'partial';
+    }
+  } catch {
+    return { state: { ...base, observedAt: Date.now(), status: 'unavailable', exhaustiveness: 'unknown' } };
+  }
+  try {
+    for (const record of records) {
+      parseRuntimeInteractionRequest(record.request);
+      if (
+        !isPendingIndexSnapshotStatus(record.status) ||
+        record.request.owner.userId !== userId ||
+        !Number.isSafeInteger(record.updatedAt) ||
+        record.updatedAt < 0 ||
+        !validCardRef(record)
+      ) {
+        throw new Error('structured choice source identity mismatch');
+      }
+    }
+  } catch {
+    return { state: { ...base, observedAt: Date.now(), status: 'invalid', exhaustiveness: 'unknown' } };
+  }
+  return {
+    body: records.filter((record) => record.status === 'pending'),
+    state: { ...base, observedAt: Date.now(), status: 'available', exhaustiveness },
+  };
+}
+
+function isPendingIndexSnapshotStatus(status: RuntimeInteractionRecord['status']): boolean {
+  return ['pending', 'answered', 'declined', 'cancelled', 'invalidated'].includes(status);
+}
+
+function validCardRef(record: RuntimeInteractionRecord): boolean {
+  const { cardRef } = record;
+  return Boolean(
+    cardRef &&
+      cardRef.threadId === record.request.owner.threadId &&
+      cardRef.threadId.trim().length > 0 &&
+      cardRef.messageId.trim().length > 0 &&
+      cardRef.blockId.trim().length > 0,
   );
 }
 

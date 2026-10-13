@@ -51,6 +51,7 @@ test('an actual mp4 yields stream identity and presentation ticks without assumi
   assert.equal((media.durationTicks * media.timebase.numerator) / media.timebase.denominator, 1);
   assert.equal(media.streamId, '0:0x1');
   assert.equal(media.rotation, 0);
+  assert.deepEqual(media.frameRate, { numerator: 24, denominator: 1 });
 });
 
 test('rotation and non-square pixels retain transform evidence; ambiguous streams and missing ticks fail closed', () => {
@@ -86,4 +87,41 @@ test('rotation and non-square pixels retain transform evidence; ambiguous stream
   );
   assert.throws(() => parseVideoProbe({ ...probe, streams: [stream, { ...stream, index: 1 }] }), /invalid_media/);
   assert.throws(() => parseVideoProbe({ ...probe, streams: [{ ...stream, duration_ts: undefined }] }), /invalid_media/);
+});
+
+test('verified frameRate comes from complete uniform packet PTS, while VFR or missing evidence stays unknown', () => {
+  const stream = {
+    index: 0,
+    id: '0x1',
+    codec_type: 'video',
+    codec_name: 'h264',
+    field_order: 'progressive',
+    nb_frames: '3',
+    width: 160,
+    height: 96,
+    sample_aspect_ratio: '1:1',
+    time_base: '1/30',
+    start_pts: 0,
+    duration_ts: 3,
+    disposition: { attached_pic: 0 },
+  };
+  const base = { format: { format_name: 'mp4', start_time: '0' }, streams: [stream] };
+  const packets = [0, 2, 1].map((pts) => ({ stream_index: 0, pts, duration: 1 }));
+  assert.deepEqual(parseVideoProbe({ ...base, packets }).frameRate, { numerator: 30, denominator: 1 });
+  assert.equal(parseVideoProbe(base).frameRate, undefined);
+  assert.equal(parseVideoProbe({ ...base, packets, streams: [{ ...stream, codec_name: 'vp9' }] }).frameRate, undefined);
+  assert.equal(parseVideoProbe({ ...base, packets, streams: [{ ...stream, field_order: 'tt' }] }).frameRate, undefined);
+  assert.equal(parseVideoProbe({ ...base, packets: packets.slice(1) }).frameRate, undefined);
+  assert.equal(
+    parseVideoProbe({
+      ...base,
+      streams: [{ ...stream, duration_ts: 4 }],
+      packets: [
+        { stream_index: 0, pts: 0, duration: 1 },
+        { stream_index: 0, pts: 1, duration: 2 },
+        { stream_index: 0, pts: 3, duration: 1 },
+      ],
+    }).frameRate,
+    undefined,
+  );
 });

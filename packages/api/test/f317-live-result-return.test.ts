@@ -114,6 +114,18 @@ test('completed tool commentary cannot crowd out the actual final result', async
   assert.deepEqual(f.spoken, ['ACTUAL_RESULT']);
 });
 
+test('the complete sourced result stays available for history while the voice return uses its opening conclusion', async () => {
+  const f = fixture();
+  f.fence.ownerChanged();
+  await f.client.submitText('Compare the reports', 'source');
+  f.observe('item/completed', { type: 'userMessage', clientId: 'source' });
+  f.start('answer');
+  const body = '这份报告不是你问的 SOP。\n\n证据：第一份文件的版本与主题不同。\n\n原引用与完整分析在这里。';
+  await f.finish('answer', body);
+  assert.deepEqual(f.spoken, ['这份报告不是你问的 SOP。']);
+  assert.ok(body.includes('完整分析'), 'voice selection never rewrites the original persisted body');
+});
+
 test('a distinct committed speech segment retires an answer without requiring transcript delta or done', async () => {
   const f = fixture();
   f.observe('thread/realtime/item/completed', {

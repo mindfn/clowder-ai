@@ -25,6 +25,7 @@ export function openWorkspaceFileStamp(
   input: Parameters<typeof createFileSurface>[0],
   isV2: boolean,
   disposition?: WorkspaceOpenRequest['disposition'],
+  visitThreadId?: string,
 ): void {
   const store = useF307ExperienceWorkbenchStore.getState();
   const permanent = disposition === 'permanent';
@@ -45,6 +46,7 @@ export function openWorkspaceFileStamp(
         type: 'promote-preview-surface',
         surfaceId: existing.id,
         entitlement: { kind: 'user', reason: 'open-from-chat' },
+        visitThreadId,
       });
     }
   }
@@ -52,5 +54,6 @@ export function openWorkspaceFileStamp(
     type: isV2 && !permanent ? 'open-preview-surface' : 'open-surface',
     surface,
     entitlement: { kind: 'user', reason: 'open-from-chat' },
+    visitThreadId,
   });
 }

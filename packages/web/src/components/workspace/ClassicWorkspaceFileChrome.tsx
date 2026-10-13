@@ -108,6 +108,20 @@ export function ClassicWorkspaceFileChrome({
           className="flex w-max min-w-full items-center justify-between gap-3"
         >
           <div className="flex shrink-0 items-center gap-2">
+            {props.showFileQuotes && props.onBack && (
+              <ToolbarBtn onClick={props.onBack} title="返回打开文件的来源">
+                返回来源
+              </ToolbarBtn>
+            )}
+            {props.onRequestModification && (
+              <ToolbarBtn
+                onClick={props.onRequestModification}
+                disabled={props.modificationDisabled || editMode}
+                title="打开此文件的修改请求"
+              >
+                请猫修改
+              </ToolbarBtn>
+            )}
             {file.size > 0 && (
               <span className="text-micro text-cafe-secondary font-mono flex-shrink-0">
                 {file.size < 1024 ? `${file.size}B` : `${Math.round(file.size / 1024)}KB`}

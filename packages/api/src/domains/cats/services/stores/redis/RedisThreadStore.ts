@@ -647,7 +647,47 @@ export class RedisThreadStore implements IThreadStore {
 
   async updateTitle(threadId: string, title: string): Promise<void> {
     const key = ThreadKeys.detail(threadId);
-    await this.setDetailFields(key, 'title', title);
+    await this.setDetailFields(key, 'title', title, 'titleSource', 'user', 'titleCatId', '');
+  }
+
+  async setSessionImport(threadId: string, value: NonNullable<Thread['sessionImport']>): Promise<void> {
+    await this.setDetailFields(
+      ThreadKeys.detail(threadId),
+      'sessionImportSessionId',
+      value.sessionId,
+      'sessionImportCatId',
+      value.catId,
+    );
+  }
+
+  async setAutomaticTitle(
+    threadId: string,
+    title: string,
+    source: 'temporary' | 'cat',
+    catId?: string,
+  ): Promise<boolean> {
+    const key = ThreadKeys.detail(threadId);
+    const changed = await this.redis.eval(
+      `
+      if redis.call('HEXISTS', KEYS[1], 'id') == 0 then return 0 end
+      local deleted = redis.call('HGET', KEYS[1], 'deletedAt')
+      if deleted and deleted ~= '' and deleted ~= '0' then return 0 end
+      local current = redis.call('HGET', KEYS[1], 'title') or ''
+      local source = redis.call('HGET', KEYS[1], 'titleSource')
+      if not source then source = current == '' and 'temporary' or 'user' end
+      if source ~= 'temporary' then return 0 end
+      if ARGV[2] == 'temporary' and current ~= '' then return 0 end
+      redis.call('HSET', KEYS[1], 'title', ARGV[1], 'titleSource', ARGV[2], 'titleCatId', ARGV[3])
+      return 1
+    `,
+      1,
+      key,
+      title,
+      source,
+      catId ?? '',
+    );
+    if (changed === 1) await this.applyKeyRetention([key]);
+    return changed === 1;
   }
 
   async compareAndSetTitle(threadId: string, expectedTitle: string, nextTitle: string): Promise<boolean> {
@@ -1323,6 +1363,14 @@ export class RedisThreadStore implements IThreadStore {
       id: thread.id,
       projectPath: thread.projectPath,
       title: thread.title ?? '',
+      titleSource: thread.titleSource ?? (thread.title ? 'user' : 'temporary'),
+      titleCatId: thread.titleCatId ?? '',
+      ...(thread.sessionImport
+        ? {
+            sessionImportSessionId: thread.sessionImport.sessionId,
+            sessionImportCatId: thread.sessionImport.catId,
+          }
+        : {}),
       createdBy: thread.createdBy,
       lastActiveAt: String(thread.lastActiveAt),
       createdAt: String(thread.createdAt),
@@ -1427,6 +1475,18 @@ export class RedisThreadStore implements IThreadStore {
       id: data.id ?? '',
       projectPath: data.projectPath ?? 'default',
       title: data.title || null,
+      titleSource:
+        data.titleSource === 'cat' || data.titleSource === 'temporary'
+          ? data.titleSource
+          : data.title
+            ? 'user'
+            : 'temporary',
+      ...(data.titleCatId ? { titleCatId: data.titleCatId } : {}),
+      ...(data.sessionImportSessionId && data.sessionImportCatId
+        ? {
+            sessionImport: { sessionId: data.sessionImportSessionId, catId: data.sessionImportCatId },
+          }
+        : {}),
       createdBy: data.createdBy ?? 'unknown',
       participants: [], // Loaded separately from Set
       lastActiveAt: parseInt(data.lastActiveAt ?? '0', 10),

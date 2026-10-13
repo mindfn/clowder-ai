@@ -1,7 +1,7 @@
 import { basename, dirname, isAbsolute, join, resolve } from 'node:path';
 import { kernelPath, unfoldedJoin } from './lib/shell-directory.mjs';
 import { withoutInterpreterSource } from './native-effect-interpreter-source.mjs';
-import { invocationTargetView } from './native-effect-invocation-targets.mjs';
+import { invocationTargetView, observedReadProgram } from './native-effect-invocation-targets.mjs';
 import { commandName, shellInvocation, shellWords } from './native-effect-shell-tokenizer.mjs';
 import { fileProgramAnalysis } from './native-effect-write-effects.mjs';
 
@@ -21,13 +21,14 @@ import { fileProgramAnalysis } from './native-effect-write-effects.mjs';
  * Whatever is not read with certainty -- a `-C` value with a variable, a tilde or a
  * substitution, `-C` after another global option -- leaves the segment unchanged.
  */
-export function segmentView(segment, location, roleSource = segment) {
+export function segmentView(segment, location, roleSource = segment, namespaceStable = true) {
   const program = shellInvocation(segment).words[0];
   const named =
     program && /^\/(?:usr\/)?s?bin\/[^/]+$/.test(program.value)
       ? segment.slice(0, program.start) + commandName(program.value) + segment.slice(program.end)
       : segment;
-  const context = gitDirectoryContext(named, location);
+  const readProgram = observedReadProgram(roleSource, location, namespaceStable);
+  const context = gitDirectoryContext(readProgram.command ?? named, location);
   const command = withoutGhMessageData(withoutInterpreterSource(context.command));
   // File roles parsed from text do not attest the executing shell/program.
   // Keep cwd for sort/sed writes until the executor supplies that missing fact.
@@ -40,15 +41,19 @@ export function segmentView(segment, location, roleSource = segment) {
     location: roles?.call.cwd ?? context.location,
     targetCwd: roles ? roles.call.cwd : targetCwd,
     roles,
-    targetText: withObservedWriteAliases(roles?.text ?? command),
+    unprovedReadProgram:
+      readProgram.unproved ??
+      (commandName(program?.value) === 'diff' || (commandName(program?.value) === 'gh' && program.value.includes('/'))),
+    targetText: withObservedWriteAliases(roles?.text ?? command, roles?.call.cwd ?? context.location),
   };
 }
 
-function withObservedWriteAliases(command) {
+function withObservedWriteAliases(command, location) {
   const writes = fileProgramAnalysis(command).writes ?? [];
   const aliases = writes
-    .filter((path) => typeof path === 'string' && isAbsolute(path))
-    .flatMap((path) => {
+    .filter((path) => typeof path === 'string' && (isAbsolute(path) || location))
+    .flatMap((operand) => {
+      const path = unfoldedJoin(location ?? '/', operand);
       const physical = kernelPath(path);
       const parent = physical ? null : kernelPath(dirname(path));
       return physical ? [physical] : parent ? [join(parent, basename(path))] : [];

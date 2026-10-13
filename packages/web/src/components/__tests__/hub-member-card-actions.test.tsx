@@ -1,25 +1,62 @@
-// @vitest-environment node
+import { act } from 'react';
+import { createRoot, type Root } from 'react-dom/client';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import type { CatData } from '@/hooks/useCatData';
+import { HubMemberOverviewCard } from '../HubMemberOverviewCard';
 
-import { readFileSync } from 'node:fs';
-import { dirname, resolve } from 'node:path';
-import { fileURLToPath } from 'node:url';
-import { describe, expect, it } from 'vitest';
+const cat: CatData = {
+  id: 'test-codex',
+  displayName: 'Test Codex',
+  clientId: 'openai',
+  defaultModel: 'test',
+  color: { primary: '#5B8C5A', secondary: '#FFFFFF' },
+  mentionPatterns: ['@test-codex'],
+  avatar: '',
+  roleDescription: '',
+  personality: '',
+  carrier: 'app_server',
+};
 
-const testDir = dirname(fileURLToPath(import.meta.url));
-const src = readFileSync(resolve(testDir, '..', 'HubMemberOverviewCard.tsx'), 'utf8');
-
-describe('HubMemberOverviewCard action isolation', () => {
-  it('toggle onClick calls stopPropagation to prevent row edit', () => {
-    expect(src).toMatch(/SettingsResourceToggleSwitch[\s\S]*?onClick=\{[\s\S]*?stopPropagation/);
+describe('Hub member actions and effective transport', () => {
+  let host: HTMLDivElement;
+  let root: Root;
+  beforeEach(() => {
+    vi.stubGlobal('IS_REACT_ACT_ENVIRONMENT', true);
+    host = document.createElement('div');
+    document.body.append(host);
+    root = createRoot(host);
+  });
+  afterEach(() => {
+    act(() => root.unmount());
+    host.remove();
+    vi.unstubAllGlobals();
   });
 
-  it('delete onClick calls stopPropagation to prevent row edit', () => {
-    expect(src).toMatch(/SettingsResourceIconButton[\s\S]*?onClick=\{[\s\S]*?stopPropagation/);
+  it('toggle and delete call their own action without opening the row editor', () => {
+    const onEdit = vi.fn();
+    const onToggleAvailability = vi.fn();
+    const onDelete = vi.fn();
+    act(() => root.render(<HubMemberOverviewCard {...{ cat, onEdit, onToggleAvailability, onDelete }} />));
+    const toggle = host.querySelector<HTMLButtonElement>('button[aria-label="停用成员：Test Codex"]');
+    const remove = host.querySelector<HTMLButtonElement>('button[aria-label="删除成员"]');
+    expect(toggle).not.toBeNull();
+    expect(remove).not.toBeNull();
+    act(() => {
+      toggle?.click();
+      remove?.click();
+    });
+    expect(onToggleAvailability).toHaveBeenCalledExactlyOnceWith(cat);
+    expect(onDelete).toHaveBeenCalledExactlyOnceWith(cat);
+    expect(onEdit).not.toHaveBeenCalled();
+    act(() => host.querySelector<HTMLElement>('[data-testid="cat-card-test-codex"]')?.click());
+    expect(onEdit).toHaveBeenCalledExactlyOnceWith(cat);
   });
 
-  it('renders the canonical carrier without provider-specific precedence rules', () => {
-    expect(src).toContain("cat.carrier.replace('_', ' ').toUpperCase()");
-    expect(src).not.toContain('codexCarrier');
-    expect(src).not.toContain('adapterMode');
+  it('renders the canonical carrier', () => {
+    act(() => root.render(<HubMemberOverviewCard cat={cat} />));
+    expect(host.textContent).toContain('APP SERVER');
+    act(() => root.render(<HubMemberOverviewCard cat={{ ...cat, carrier: 'acp' }} />));
+    expect(host.textContent).toContain('ACP');
+    expect(host.textContent).not.toContain('APP SERVER');
   });
 });

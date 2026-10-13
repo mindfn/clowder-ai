@@ -46,7 +46,8 @@ function receiptStatus(outcome: BridgeDispatchOutcome): CloudBridgeOutboundRecei
 }
 
 function receiptTransport(outcome: BridgeDispatchOutcome): CloudBridgeOutboundReceiptV1['transport'] {
-  if (outcome.kind === 'sent' || outcome.reason === 'host-append-failed') return 'host';
+  if (outcome.kind === 'sent') return outcome.transport;
+  if (outcome.reason === 'host-append-failed') return 'host';
   return 'none';
 }
 
@@ -90,7 +91,10 @@ export function buildFallbackMessageContent(args: {
     catId: args.catId,
     status: 'unavailable',
     reason: args.reason,
-    message: messageByReason[args.reason](String(args.catId)),
+    message:
+      String(args.catId) === 'gpt-dot'
+        ? `尚未确认送达 dot。请在 ChatGPT 云端插件详情查看连接状态。`
+        : messageByReason[args.reason](String(args.catId)),
     detail: args.detail ?? '',
   });
 }
@@ -122,7 +126,10 @@ export function buildCloudBridgeStatusContent(args: {
     type: 'cloud_bridge_status',
     catId: args.catId,
     status: 'sent',
-    message: `已发送给 @${args.catId}，等待它从 ChatGPT 云端会话回写。`,
+    message:
+      String(args.catId) === 'gpt-dot'
+        ? '召唤已收件，等待 dot 读取原消息并在原处回复。'
+        : `已发送给 @${args.catId}，等待它从 ChatGPT 云端会话回写。`,
     transport: args.outcome.transport,
     hostMessageId: args.outcome.hostMessageId,
     ...(outboundReceipt ? { outboundReceipt } : {}),

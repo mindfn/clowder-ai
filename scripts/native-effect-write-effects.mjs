@@ -1,3 +1,4 @@
+import { outputFileAnalysis } from './native-effect-output-file-roles.mjs';
 import { sedScriptAnalysis } from './native-effect-sed-classifier.mjs';
 import { commandName, shellInvocation } from './native-effect-shell-tokenizer.mjs';
 
@@ -86,8 +87,16 @@ export function fileProgramEffect(raw) {
 /** The effect and its complete explicit file roles come from the same parse. */
 export function fileProgramAnalysis(raw) {
   const invocation = shellInvocation(raw);
-  if (!invocation.syntaxComplete || !invocation.words[0]?.literal) return { effect: 'unknown', paths: null };
+  if (!invocation.words[0]?.literal) return { effect: 'unknown', paths: null };
   const name = commandName(invocation.words[0].value);
+  const output = outputFileAnalysis(name, invocation.words.slice(1), invocation.syntaxComplete);
+  if (output)
+    return {
+      ...output,
+      paths: invocation.syntaxComplete ? output.paths : null,
+      redirections: invocation.redirections,
+    };
+  if (!invocation.syntaxComplete) return { effect: 'unknown', paths: null };
   if (!['sed', 'gsed', 'sort'].includes(name)) return { effect: 'unknown', paths: null };
   const analysis = fileArgumentAnalysis(invocation.words.slice(1), name === 'sort');
   if (name === 'gsed' && analysis.effect === 'read') return { effect: 'unknown', paths: null };

@@ -3067,6 +3067,23 @@ export async function* routeSerial(
             '[F215] Publishing opus-4.6 relay through completed-response durable wake',
           );
         }
+        // A bounded dot consultation returns via the actual execution source;
+        // plain replyTo/text cannot grant this target. Existing routing dedup merges @dot.
+        if (
+          !collectiveBoundTurn &&
+          !hadError &&
+          !catSignal?.aborted &&
+          turnTriggerMessageId &&
+          deps.dotReplyTarget &&
+          (await deps.dotReplyTarget({
+            userId,
+            threadId,
+            catId,
+            replyTo: streamReplyTo,
+            extra: { causal: { kind: 'invocation_reply', triggerMessageId: turnTriggerMessageId } },
+          }))
+        )
+          a2aMentions = [...new Set([...a2aMentions, createCatId('gpt-dot')])];
 
         // Preserve independent first-pass reasoning inside one serial route.
         // Only debug mode injects an earlier cat's in-flight response directly;

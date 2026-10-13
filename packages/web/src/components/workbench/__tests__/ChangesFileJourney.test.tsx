@@ -128,6 +128,8 @@ afterEach(() => {
 });
 
 it('opens the real diff action and returns to the same selected diff DOM, mode and scroll', async () => {
+  const initialDiffRequests = api.requests.filter((input) => input.startsWith('/api/workspace/diff')).length;
+  expect(initialDiffRequests).toBeGreaterThan(0);
   const original = owner(changes.id);
   const fileChoice = [...original.querySelectorAll<HTMLButtonElement>('button')].find(
     (item) => item.textContent?.includes('a.ts') && !item.textContent?.includes('打开文件'),
@@ -166,7 +168,9 @@ it('opens the real diff action and returns to the same selected diff DOM, mode a
   expect(
     [...original.querySelectorAll('button')].filter((item) => item.textContent?.trim() === '打开文件'),
   ).toHaveLength(1);
-  expect(api.requests.filter((input) => input.startsWith('/api/workspace/diff'))).toHaveLength(1);
+  // Compare with the settled initial mount: this journey protects return continuity,
+  // including no new diff fetch when the retained owner becomes visible again.
+  expect(api.requests.filter((input) => input.startsWith('/api/workspace/diff'))).toHaveLength(initialDiffRequests);
 });
 
 it('keeps a failed file read in the original owner and offers a real return to Changes', async () => {

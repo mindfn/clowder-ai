@@ -22,7 +22,8 @@ export function alphaIdentityRefusal({ subject, expected, current, required, mis
     ),
   );
   const argvUnavailable = expected?.argvAvailable === false || current?.argvAvailable === false;
-  return new Error(
-    !knownDifference && argvUnavailable ? `${subject} identity unreadable (argv unavailable)` : mismatchMessage,
-  );
+  const unreadable = !knownDifference && argvUnavailable;
+  return Object.assign(new Error(unreadable ? `${subject} identity unreadable (argv unavailable)` : mismatchMessage), {
+    code: unreadable ? 'ALPHA_IDENTITY_ARGV_UNAVAILABLE' : 'ALPHA_IDENTITY_MISMATCH',
+  });
 }

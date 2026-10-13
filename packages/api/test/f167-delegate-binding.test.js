@@ -11,6 +11,7 @@ import assert from 'node:assert/strict';
 import { describe, test } from 'node:test';
 import {
   admissionRequest,
+  CHILD_CAT,
   CHILD_THREAD,
   makeProposal,
   makeProposalLister,
@@ -43,16 +44,16 @@ const { ProposalStoreDelegateProvider, ThreadDelegateBindingProvider } = await i
 describe('F167 ThreadDelegateBindingProvider — task-scoped proposal binding', () => {
   test('proposal with matching subjectTaskId → returns binding', async () => {
     const provider = new ThreadDelegateBindingProvider(makeProposalLister([makeProposalListItem()]));
-    const binding = await provider.getBindingForTask(TASK_ID, OWNER_THREAD, TENANT);
-    assert.ok(binding, 'should return a binding for the matching task');
-    assert.equal(binding.proposalId, PROPOSAL_ID);
-    assert.equal(binding.approvedUnderOwner, SOURCE_CAT);
+    const bindings = await provider.getBindingsForTask(TASK_ID, OWNER_THREAD, TENANT);
+    assert.equal(bindings.length, 1, 'should return one binding for the matching task');
+    assert.equal(bindings[0].proposalId, PROPOSAL_ID);
+    assert.equal(bindings[0].approvedUnderOwner, SOURCE_CAT);
   });
 
-  test('no proposals from thread → null (fail closed)', async () => {
+  test('no proposals from thread → empty bindings (fail closed)', async () => {
     const provider = new ThreadDelegateBindingProvider(makeProposalLister([]));
-    const binding = await provider.getBindingForTask(TASK_ID, OWNER_THREAD, TENANT);
-    assert.equal(binding, null, 'no proposals → fail closed');
+    const bindings = await provider.getBindingsForTask(TASK_ID, OWNER_THREAD, TENANT);
+    assert.deepEqual(bindings, [], 'no proposals → fail closed');
   });
 
   // P1-1 core fix: task B in the same thread cannot borrow task A's approval
@@ -63,11 +64,11 @@ describe('F167 ThreadDelegateBindingProvider — task-scoped proposal binding', 
       makeProposalLister([makeProposalListItem({ subjectTaskId: TASK_ID })]),
     );
     // Task A gets the binding
-    const bindingA = await provider.getBindingForTask(TASK_ID, OWNER_THREAD, TENANT);
-    assert.ok(bindingA, 'task A should get the binding');
+    const bindingsA = await provider.getBindingsForTask(TASK_ID, OWNER_THREAD, TENANT);
+    assert.equal(bindingsA.length, 1, 'task A should get the binding');
     // Task B must NOT get the binding
-    const bindingB = await provider.getBindingForTask(TASK_B, OWNER_THREAD, TENANT);
-    assert.equal(bindingB, null, 'task B must not borrow task A approval');
+    const bindingsB = await provider.getBindingsForTask(TASK_B, OWNER_THREAD, TENANT);
+    assert.deepEqual(bindingsB, [], 'task B must not borrow task A approval');
   });
 
   // P1-1 core fix: adding unrelated proposal doesn't break existing binding
@@ -83,21 +84,21 @@ describe('F167 ThreadDelegateBindingProvider — task-scoped proposal binding', 
       ]),
     );
     // Task A still gets its binding — not broken by the second proposal
-    const bindingA = await provider.getBindingForTask(TASK_ID, OWNER_THREAD, TENANT);
-    assert.ok(bindingA, 'task A binding must survive addition of unrelated proposal');
-    assert.equal(bindingA.proposalId, 'prop-for-a');
+    const bindingsA = await provider.getBindingsForTask(TASK_ID, OWNER_THREAD, TENANT);
+    assert.equal(bindingsA.length, 1, 'task A binding must survive addition of unrelated proposal');
+    assert.equal(bindingsA[0].proposalId, 'prop-for-a');
     // Task C gets its own binding
-    const bindingC = await provider.getBindingForTask('task-c', OWNER_THREAD, TENANT);
-    assert.ok(bindingC, 'task C should get its own binding');
-    assert.equal(bindingC.proposalId, 'prop-for-c');
+    const bindingsC = await provider.getBindingsForTask('task-c', OWNER_THREAD, TENANT);
+    assert.equal(bindingsC.length, 1, 'task C should get its own binding');
+    assert.equal(bindingsC[0].proposalId, 'prop-for-c');
   });
 
-  test('legacy proposal without subjectTaskId → null (fail closed)', async () => {
+  test('legacy proposal without subjectTaskId → empty bindings (fail closed)', async () => {
     const provider = new ThreadDelegateBindingProvider(
       makeProposalLister([makeProposalListItem({ subjectTaskId: undefined })]),
     );
-    const binding = await provider.getBindingForTask(TASK_ID, OWNER_THREAD, TENANT);
-    assert.equal(binding, null, 'legacy proposal without subjectTaskId → fail closed');
+    const bindings = await provider.getBindingsForTask(TASK_ID, OWNER_THREAD, TENANT);
+    assert.deepEqual(bindings, [], 'legacy proposal without subjectTaskId → fail closed');
   });
 
   test('approved proposal without createdThreadId is excluded', async () => {
@@ -107,9 +108,9 @@ describe('F167 ThreadDelegateBindingProvider — task-scoped proposal binding', 
         makeProposalListItem({ proposalId: 'prop-with-child', createdThreadId: CHILD_THREAD }),
       ]),
     );
-    const binding = await provider.getBindingForTask(TASK_ID, OWNER_THREAD, TENANT);
-    assert.ok(binding, 'should find the one with createdThreadId');
-    assert.equal(binding.proposalId, 'prop-with-child');
+    const bindings = await provider.getBindingsForTask(TASK_ID, OWNER_THREAD, TENANT);
+    assert.equal(bindings.length, 1, 'should find the one with createdThreadId');
+    assert.equal(bindings[0].proposalId, 'prop-with-child');
   });
 
   test('non-approved proposals are excluded', async () => {
@@ -120,15 +121,15 @@ describe('F167 ThreadDelegateBindingProvider — task-scoped proposal binding', 
         makeProposalListItem({ proposalId: 'prop-approved' }),
       ]),
     );
-    const binding = await provider.getBindingForTask(TASK_ID, OWNER_THREAD, TENANT);
-    assert.ok(binding);
-    assert.equal(binding.proposalId, 'prop-approved');
+    const bindings = await provider.getBindingsForTask(TASK_ID, OWNER_THREAD, TENANT);
+    assert.equal(bindings.length, 1);
+    assert.equal(bindings[0].proposalId, 'prop-approved');
   });
 
-  test('tenant mismatch → null (fail closed)', async () => {
+  test('tenant mismatch → empty bindings (fail closed)', async () => {
     const provider = new ThreadDelegateBindingProvider(makeProposalLister([makeProposalListItem()]));
-    const binding = await provider.getBindingForTask(TASK_ID, OWNER_THREAD, 'wrong-tenant');
-    assert.equal(binding, null, 'tenant mismatch → fail closed');
+    const bindings = await provider.getBindingsForTask(TASK_ID, OWNER_THREAD, 'wrong-tenant');
+    assert.deepEqual(bindings, [], 'tenant mismatch → fail closed');
   });
 
   test('approvedUnderOwner reflects sourceCatId, not a passed-in value', async () => {
@@ -136,9 +137,24 @@ describe('F167 ThreadDelegateBindingProvider — task-scoped proposal binding', 
     const provider = new ThreadDelegateBindingProvider(
       makeProposalLister([makeProposalListItem({ sourceCatId: DIFFERENT_SOURCE })]),
     );
-    const binding = await provider.getBindingForTask(TASK_ID, OWNER_THREAD, TENANT);
-    assert.ok(binding);
-    assert.equal(binding.approvedUnderOwner, DIFFERENT_SOURCE, 'approvedUnderOwner must be proposal.sourceCatId');
+    const bindings = await provider.getBindingsForTask(TASK_ID, OWNER_THREAD, TENANT);
+    assert.equal(bindings.length, 1);
+    assert.equal(bindings[0].approvedUnderOwner, DIFFERENT_SOURCE, 'approvedUnderOwner must be proposal.sourceCatId');
+  });
+
+  test('multiple same-task approvals return independent tenant-scoped bindings', async () => {
+    const provider = new ThreadDelegateBindingProvider(
+      makeProposalLister([
+        makeProposalListItem({ proposalId: 'prop-old', createdThreadId: 'thread-old' }),
+        makeProposalListItem({ proposalId: 'prop-current', createdThreadId: 'thread-current' }),
+        makeProposalListItem({ proposalId: 'prop-other-tenant', createdBy: 'other-user' }),
+      ]),
+    );
+    const bindings = await provider.getBindingsForTask(TASK_ID, OWNER_THREAD, TENANT);
+    assert.deepEqual(
+      bindings.map((binding) => binding.proposalId),
+      ['prop-old', 'prop-current'],
+    );
   });
 });
 
@@ -149,11 +165,12 @@ describe('F167 ThreadDelegateBindingProvider — task-scoped proposal binding', 
 /** Build full pipeline using real ThreadDelegateBindingProvider + ProposalStoreDelegateProvider. */
 function buildProductionPipeline({
   proposal = makeProposal(),
+  proposals,
   proposalListItems = [makeProposalListItem()],
   task = makeTask(),
 } = {}) {
   const bindingProvider = new ThreadDelegateBindingProvider(makeProposalLister(proposalListItems));
-  const delegateProvider = new ProposalStoreDelegateProvider(makeProposalStore(proposal), bindingProvider);
+  const delegateProvider = new ProposalStoreDelegateProvider(makeProposalStore(proposals ?? proposal), bindingProvider);
   const taskProvider = {
     async get(id) {
       return id === task.id ? task : null;
@@ -183,14 +200,95 @@ describe('F167 production pipeline — ThreadDelegateBindingProvider end-to-end'
     await assert.rejects(service.admit(admissionRequest()), (err) => err instanceof ActionSuccessorStandingError);
   });
 
-  test('multiple approved proposals → production chain rejects (ambiguous)', async () => {
-    const { service } = buildProductionPipeline({
+  test('multiple independently approved proposals admit the exact requested child', async () => {
+    const oldProposalId = 'prop-old-child';
+    const oldChildCat = 'sonnet';
+    const oldChildThread = 'thread-old-child';
+    const pipelineOptions = {
+      proposals: [
+        makeProposal({
+          proposalId: oldProposalId,
+          createdThreadId: oldChildThread,
+          preferredCats: [oldChildCat],
+        }),
+        makeProposal(),
+      ],
       proposalListItems: [
-        makeProposalListItem({ proposalId: 'prop-1', createdThreadId: 'child-1' }),
-        makeProposalListItem({ proposalId: 'prop-2', createdThreadId: 'child-2' }),
+        makeProposalListItem({ proposalId: oldProposalId, createdThreadId: oldChildThread }),
+        makeProposalListItem(),
+      ],
+    };
+    const { service } = buildProductionPipeline(pipelineOptions);
+    const result = await service.admit(admissionRequest());
+    assert.equal(result.admit, true, 'the exact current child pair should select its independently approved proposal');
+    assert.ok(
+      result.lease.evidenceRefs.includes(`proposal:${PROPOSAL_ID}:approved:thread:${CHILD_THREAD}:cat:${CHILD_CAT}`),
+      'the lease must retain the matched proposal authority',
+    );
+
+    const { service: structuredTransferService } = buildProductionPipeline(pipelineOptions);
+    const structuredTransferRequest = admissionRequest();
+    const structuredTransferResult = await structuredTransferService.admit({
+      ...structuredTransferRequest,
+      actorCatId: OWNER_CAT,
+      sourceThreadId: OWNER_THREAD,
+      action: {
+        ...structuredTransferRequest.action,
+        claimOrigin: 'structured_transfer',
+      },
+    });
+    assert.equal(
+      structuredTransferResult.admit,
+      true,
+      'the canonical owner should transfer to the exact approved child through the same proposal set',
+    );
+
+    const { service: oldChildService } = buildProductionPipeline(pipelineOptions);
+    const oldChildResult = await oldChildService.admit(
+      admissionRequest({
+        actorCatId: oldChildCat,
+        holderCatIds: [oldChildCat],
+        sourceThreadId: oldChildThread,
+        targetThreadId: oldChildThread,
+      }),
+    );
+    assert.ok(
+      oldChildResult.lease.evidenceRefs.includes(
+        `proposal:${oldProposalId}:approved:thread:${oldChildThread}:cat:${oldChildCat}`,
+      ),
+      'the older exact child pair remains backed by its own durable approval',
+    );
+  });
+
+  test('multiple approved proposals do not authorize a cat/thread pair assembled across approvals', async () => {
+    const oldProposalId = 'prop-old-child';
+    const oldChildCat = 'sonnet';
+    const oldChildThread = 'thread-old-child';
+    const { service } = buildProductionPipeline({
+      proposals: [
+        makeProposal({
+          proposalId: oldProposalId,
+          createdThreadId: oldChildThread,
+          preferredCats: [oldChildCat],
+        }),
+        makeProposal(),
+      ],
+      proposalListItems: [
+        makeProposalListItem({ proposalId: oldProposalId, createdThreadId: oldChildThread }),
+        makeProposalListItem(),
       ],
     });
-    await assert.rejects(service.admit(admissionRequest()), (err) => err instanceof ActionSuccessorStandingError);
+    await assert.rejects(
+      service.admit(
+        admissionRequest({
+          actorCatId: oldChildCat,
+          holderCatIds: [oldChildCat],
+          sourceThreadId: CHILD_THREAD,
+          targetThreadId: CHILD_THREAD,
+        }),
+      ),
+      (err) => err instanceof ActionSuccessorStandingError,
+    );
   });
 
   test('task owner changed from original proposer → production chain rejects', async () => {

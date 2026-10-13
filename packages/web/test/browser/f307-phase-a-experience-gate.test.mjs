@@ -10,7 +10,10 @@ import { fileURLToPath } from 'node:url';
 import { chromium } from '../../../ppt-forge/node_modules/playwright/index.mjs';
 import { registerDefaultEntryJourney } from './default-entry-journey.harness.mjs';
 import { registerChatFileTabJourneys } from './f307-chat-file-tabs.journey.mjs';
+import { registerHomeSearchReturnJourneys } from './f307-home-search-return.journey.mjs';
 import { closeMobileSidebarIfOpen } from './f307-mobile-sidebar.harness.mjs';
+import { registerPluginScrollJourneys } from './f307-plugin-scroll.journey.mjs';
+import { registerPullRequestChangesJourneys } from './f307-pull-request-changes.journey.mjs';
 import {
   canonicalWorktreeId,
   EVOLUTION_PROGRAM_ID,
@@ -441,8 +444,11 @@ after(async () => {
   if (testTsconfigPath) await rm(testTsconfigPath, { force: true });
 });
 
+registerHomeSearchReturnJourneys(() => ({ browser, baseUrl, evidenceDir: EVIDENCE_DIR }));
+registerPullRequestChangesJourneys(() => ({ browser, baseUrl, evidenceDir: EVIDENCE_DIR }));
 registerChatFileTabJourneys(() => ({ browser, baseUrl, evidenceDir: EVIDENCE_DIR }));
 registerV2FocusExitJourneys(() => ({ browser, baseUrl }));
+registerPluginScrollJourneys(() => ({ browser, baseUrl, evidenceDir: EVIDENCE_DIR }));
 
 test('Workspace open waits for client interactivity instead of clicking server-rendered chrome', async () => {
   const context = await browser.newContext();
@@ -933,12 +939,16 @@ test(
       await assertArtifactFullWindowRoundTrip(page);
 
       await page.getByTestId('f307-tab-workspace').click();
+      const artifactsSurfaceId = await workbench.getAttribute('data-active-surface');
       await artifactRows.filter({ hasText: 'PR #307 Real Surface Adapters' }).click();
-      assert.match(await workbench.getAttribute('data-active-surface'), /^review:/);
-      await page.getByTestId('f307-tab-review').waitFor();
+      const prSurfaceId = `workspace:surface:changes:pr:${encodeURIComponent(
+        JSON.stringify(['pr:owner/cat-cafe#307', WORKTREE_ID]),
+      )}`;
+      assert.equal(await workbench.getAttribute('data-active-surface'), prSurfaceId);
+      await workbench.locator(`[data-tab-surface-id="${prSurfaceId}"] [role="tab"]`).waitFor();
       assert.equal(await workbench.getAttribute('data-surface-count'), '6');
 
-      await page.getByTestId('f307-tab-workspace').click();
+      await workbench.locator(`[data-tab-surface-id="${artifactsSurfaceId}"] [role="tab"]`).click();
       await page.getByRole('button', { name: '全局', exact: true }).click();
       const ownerBArtifact = page.locator('[data-artifact-row]').filter({ hasText: 'owner-b.ts' });
       await ownerBArtifact.waitFor();
@@ -1046,7 +1056,7 @@ test(
       assert.equal(await workbench.getAttribute('data-active-surface'), `browser-owner:${WORKTREE_ID}`);
       assert.match(await workbench.getAttribute('data-surface-order'), /artifact:/);
       assert.match(await workbench.getAttribute('data-surface-order'), new RegExp(`artifact:${OTHER_THREAD_ID}:`));
-      assert.match(await workbench.getAttribute('data-surface-order'), /review:/);
+      assert.ok((await workbench.getAttribute('data-surface-order')).split(',').includes(prSurfaceId));
       assert.match(await workbench.getAttribute('data-surface-order'), /agent-run:/);
       await page.getByRole('tab', { name: 'owner-b.ts', exact: true }).click();
       assert.match(await workbench.getAttribute('data-active-surface'), new RegExp(`^artifact:${OTHER_THREAD_ID}:`));
@@ -1773,6 +1783,91 @@ test('the real Thread shell resolves invalid persisted surfaces to canonical Hom
     await context.close();
   }
 });
+
+test(
+  'explicit Schedule input uses the original wide owner and returns to the saved rail',
+  { timeout: 90_000 },
+  async () => {
+    for (const width of [1440, 390]) {
+      const context = await browser.newContext({ viewport: { width, height: 900 } });
+      await context.addInitScript(() => window.localStorage.clear());
+      const page = await context.newPage();
+      await page.route('**/api/**', (route) => {
+        const url = new URL(route.request().url());
+        if (url.pathname === '/api/entrusted-work/needs-me') return json(route, { ownerReads: [] });
+        const response = realSurfaceApiResponse(route.request(), false);
+        return json(route, response.body, response.status);
+      });
+      try {
+        await page.goto(baseUrl, { waitUntil: 'domcontentloaded' });
+        await ensureWorkspaceOpen(page);
+        const workbench = page.getByTestId('f307-experience-workbench');
+        await page.getByTestId('workspace-launcher-needs-me').click();
+        const input = page.getByTestId('needs-me-goto-schedule');
+        await input.waitFor();
+        const railBefore = await workbench.boundingBox();
+        const composer = page.locator('textarea').last();
+        const draft = 'Schedule original Chat draft';
+        if (width === 1440) await composer.fill(draft);
+        await input.focus();
+        await input.press('Enter');
+        const panel = page.getByTestId('product-schedule-panel');
+        await panel.waitFor();
+        const surfaceId = 'workspace:mode:product-schedule';
+        await page.waitForFunction(
+          (id) =>
+            document.querySelector('[data-testid="f307-experience-workbench"]')?.getAttribute('data-active-surface') ===
+            id,
+          surfaceId,
+        );
+        if (width === 1440) {
+          await page.waitForFunction(
+            () =>
+              document.querySelector('[data-testid="contextual-workspace-host"]')?.getAttribute('data-presentation') ===
+              'wide-workspace',
+          );
+          assert.equal(await workbench.getAttribute('data-main-area-attention'), surfaceId);
+          const wide = await panel.boundingBox();
+          const chat = page.getByTestId('thread-chat-host');
+          const chatBox = await chat.boundingBox();
+          assert.ok(wide && railBefore && wide.width > railBefore.width, 'Schedule expands the original Workspace');
+          assert.ok(await chat.isVisible(), 'the signed wide layout keeps the original Chat visible');
+          assert.ok(
+            wide && chatBox && chatBox.width > 0 && chatBox.x + chatBox.width <= wide.x + 1,
+            'Chat stays to the left of the wide Workspace without overlap',
+          );
+          await page.screenshot({
+            path: path.join(EVIDENCE_DIR, 'schedule-explicit-desktop-wide.png'),
+            fullPage: true,
+          });
+          await page.getByTestId('f307-return-from-main-area').click();
+          await page.waitForFunction(
+            () =>
+              document.querySelector('[data-testid="contextual-workspace-host"]')?.getAttribute('data-presentation') ===
+              'right-rail',
+          );
+          const railAfter = await workbench.boundingBox();
+          assert.ok(
+            railBefore && railAfter && Math.abs(railBefore.width - railAfter.width) <= 1,
+            'exit restores the original rail width',
+          );
+          assert.equal(await workbench.getAttribute('data-main-area-attention'), '');
+          assert.equal(await composer.inputValue(), draft, 'attention and exit preserve the original Chat draft');
+          assert.equal(await workbench.getAttribute('data-active-surface'), surfaceId);
+        } else {
+          assert.equal(await workbench.getAttribute('data-main-area-attention'), '');
+          assert.ok(
+            await panel.evaluate((node) => node.scrollWidth <= node.clientWidth + 1),
+            'mobile retains the original full-screen owner without horizontal overflow',
+          );
+          await page.screenshot({ path: path.join(EVIDENCE_DIR, 'schedule-explicit-mobile.png'), fullPage: true });
+        }
+      } finally {
+        await context.close();
+      }
+    }
+  },
+);
 
 test(
   'F310 exact prepared publication returns to the same Schedule/Needs Me item at desktop and 390px',

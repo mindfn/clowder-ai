@@ -9,6 +9,8 @@ import {
 } from '@cat-cafe/shared';
 import Database from 'better-sqlite3';
 import { WorkspaceContentReviewError } from './errors.js';
+import { ProjectReviewAudienceStore } from './project-message/audience-store.js';
+import { VideoProjectMessageImportCursor } from './project-message/cursor.js';
 import { RetainedWorkspaceLedger } from './retained-ledger.js';
 
 interface ReviewRow {
@@ -27,6 +29,11 @@ interface LegacyOperationResultRow extends OperationRow {
 export interface WorkspaceReviewMutation {
   readonly reviewId: string;
   readonly expectedRevision: number;
+  /** Original caller CAS remains stable when an audience revision is translated to canonical CAS. */
+  readonly fingerprintRevision?: number;
+  /** Internal derivative bookkeeping commits or rolls back with the authoritative operation. */
+  readonly committed?: (result: WorkspaceReviewMutationResult) => void;
+  readonly assertScopedRevision?: () => void;
   readonly operationId: string;
   readonly actor: WorkspaceContentActor;
   readonly now: string;
@@ -46,6 +53,8 @@ export class WorkspaceContentReviewStore {
   private readonly database: Database.Database;
   private readonly ownsDatabase: boolean;
   readonly retained: RetainedWorkspaceLedger;
+  readonly projectAudiences: ProjectReviewAudienceStore;
+  readonly projectMessageImports: VideoProjectMessageImportCursor;
 
   constructor(
     path: string | Database.Database,
@@ -99,7 +108,9 @@ export class WorkspaceContentReviewStore {
         PRIMARY KEY(review_id, operation_id)
       );
     `);
+    this.projectAudiences = new ProjectReviewAudienceStore(this.database);
     this.retained = new RetainedWorkspaceLedger(this.database);
+    this.projectMessageImports = new VideoProjectMessageImportCursor(this.database);
   }
 
   close(): void {
@@ -203,11 +214,10 @@ export class WorkspaceContentReviewStore {
         const current = this.get(input.reviewId);
         if (!current) throw new WorkspaceContentReviewError('not_found');
         if (current.revision !== input.expectedRevision) throw new WorkspaceContentReviewError('revision_conflict');
-        return {
-          review: current,
-          receipt: this.writeOperationReceipt(input, current, false),
-          replayed: false,
-        };
+        input.assertScopedRevision?.();
+        const result = { review: current, receipt: this.writeOperationReceipt(input, current, false), replayed: false };
+        input.committed?.(result);
+        return result;
       })
       .immediate();
   }
@@ -224,6 +234,7 @@ export class WorkspaceContentReviewStore {
         const current = this.get(input.reviewId);
         if (!current) throw new WorkspaceContentReviewError('not_found');
         if (current.revision !== input.expectedRevision) throw new WorkspaceContentReviewError('revision_conflict');
+        input.assertScopedRevision?.();
         const next = workspaceContentReviewSchema.parse(transition(current));
         if (
           next.reviewId !== current.reviewId ||
@@ -238,7 +249,9 @@ export class WorkspaceContentReviewStore {
           .run(next.revision, JSON.stringify(next), next.reviewId, current.revision);
         if (changed.changes !== 1) throw new WorkspaceContentReviewError('revision_conflict');
         const receipt = this.writeOperationReceipt(input, next, false);
-        return { review: next, receipt, replayed: false };
+        const result = { review: next, receipt, replayed: false };
+        input.committed?.(result);
+        return result;
       })
       .immediate();
   }
@@ -271,6 +284,8 @@ export class WorkspaceContentReviewStore {
 
 function fingerprint(input: WorkspaceReviewMutation): string {
   return createHash('sha256')
-    .update(JSON.stringify([input.actor, input.expectedRevision, input.kind, input.request]))
+    .update(
+      JSON.stringify([input.actor, input.fingerprintRevision ?? input.expectedRevision, input.kind, input.request]),
+    )
     .digest('hex');
 }

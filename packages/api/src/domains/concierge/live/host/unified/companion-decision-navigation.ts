@@ -6,6 +6,14 @@ import type { IThreadStore } from '../../../../cats/services/stores/ports/Thread
 import { isTimelinePublished, passesManagedHoldViewerBoundary } from '../../../../cats/services/stores/visibility.js';
 import type { CompanionDecisionDestination } from './companion-unified-decisions.js';
 
+/** The Host chooses the origin and the revalidated source; the package supplies neither. */
+export function companionDecisionUrl(destination: CompanionDecisionDestination, frontendBaseUrl: string): string {
+  const url = new URL(`/thread/${encodeURIComponent(destination.threadId)}`, frontendBaseUrl);
+  url.searchParams.set('message', destination.messageId);
+  if (destination.blockId !== undefined) url.searchParams.set('block', destination.blockId);
+  return url.href;
+}
+
 interface DecisionSocket {
   handshake: { headers: { cookie?: string } };
   emit(event: string, destination: CompanionDecisionDestination): void;
@@ -40,6 +48,7 @@ interface Options {
   messages: Pick<IMessageStore, 'getById'>;
   threads: Pick<IThreadStore, 'get' | 'list'>;
   assertCurrent(): Promise<void>;
+  openBrowser(destination: CompanionDecisionDestination): Promise<boolean>;
   hasRecipient(): boolean;
   emit(destination: CompanionDecisionDestination): void;
 }
@@ -77,9 +86,11 @@ export function createCompanionDecisionNavigation(options: Options) {
     async openDecision(destination: CompanionDecisionDestination): Promise<boolean> {
       if (!(await canOpenDecision(destination))) return false;
       await options.assertCurrent();
-      if (!options.hasRecipient()) return false;
-      // The synchronous delivery after this lease check cannot acquire renderer-selected coordinates.
-      options.emit(destination);
+      // Socket navigation alone can silently change a background tab. The native opener
+      // activates the browser; the URL also preserves the source on a fresh page load.
+      if (!(await options.openBrowser(destination))) return false;
+      await options.assertCurrent();
+      if (options.hasRecipient()) options.emit(destination);
       return true;
     },
   };

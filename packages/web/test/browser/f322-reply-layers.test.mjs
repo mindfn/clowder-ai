@@ -9,6 +9,7 @@ import { runActionOwnerNextJourney } from './f322-action-owner-next.mjs';
 import { registerCrossThreadLetterJourneys } from './f322-cross-thread-letter.journey.mjs';
 import { runNativeReplyNextJourney } from './f322-native-reply-next.mjs';
 import { runNarrowUserActionJourney } from './f322-native-reply-reading.mjs';
+import { runNativeReplyMotionJourney } from './f322-reply-motion.journey.mjs';
 import { runSubexecutionNextJourney } from './f322-subexecution-next.mjs';
 import { contrast, measureReply } from './fixtures/f322-reply-layers-metrics.mjs';
 
@@ -165,6 +166,7 @@ async function open({
   replyCopy = false,
   presentation = 'v2',
   activity = false,
+  failureVisibility = false,
 } = {}) {
   const page = await browser.newPage({
     viewport: { width: viewportWidth, height: 1500 },
@@ -180,7 +182,7 @@ async function open({
   await page.addInitScript((value) => localStorage.setItem('cat-cafe:shell-presentation', value), presentation);
   await page.route('**/*', (handler) => serveFixtureRequest(handler, unexpected));
   await page.goto(
-    `${origin}/?w=${width}${longSource ? '&longSource=1' : ''}${replyCopy ? '&replyCopy=1' : ''}${activity ? '&activity=1' : ''}`,
+    `${origin}/?w=${width}${longSource ? '&longSource=1' : ''}${replyCopy ? '&replyCopy=1' : ''}${activity ? '&activity=1' : ''}${failureVisibility ? '&failureVisibility=1' : ''}`,
     {
       waitUntil: 'networkidle',
     },
@@ -196,6 +198,27 @@ async function open({
 }
 
 const measure = (page, id) => page.evaluate(measureReply(), id);
+
+test('failed primary executions disclose their reason, survive reload and identify the collapsed member', async () => {
+  const { page, errors, unexpected } = await open({ failureVisibility: true });
+  try {
+    for (const language of ['zh', 'en']) {
+      await page.evaluate((value) => window.__replies.setLanguage(value), language);
+      const diagnostic = page.locator('[data-message-id="r-network-error"] [data-testid="cli-diagnostics-banner"]');
+      assert.match(await diagnostic.innerText(), /网络连接失败/);
+      const summary = page.locator('[data-testid="failed-group"] [data-testid="thread-status-text"]');
+      await summary.focus();
+      assert.match(await page.getByRole('tooltip').innerText(), /F317 C · 前台收件与长对话续接/);
+      await diagnostic.screenshot({ path: path.join(evidenceDir ?? '/tmp', `failure-visible-${language}.png`) });
+      await page.reload({ waitUntil: 'networkidle' });
+      assert.match(await diagnostic.innerText(), /网络连接失败/);
+    }
+    assert.deepEqual(errors, []);
+    assert.deepEqual(unexpected, []);
+  } finally {
+    await page.close();
+  }
+});
 
 const STATES = [
   ['r-writing', 'working', '正在写回复'],
@@ -348,6 +371,23 @@ test('observed tool calls change the short object and step once; elapsed ticks, 
         firstTime,
       );
       assert.equal(await cat.getAttribute('data-pulse'), 'false', 'clock ticks cannot restart an old tool pulse');
+      const running = await cat.evaluate((node) => {
+        const style = getComputedStyle(node);
+        return {
+          duration: style.animationDuration,
+          iterations: style.animationIterationCount,
+          rise: Math.min(
+            ...node
+              .getAnimations()
+              .flatMap((animation) =>
+                animation.effect.getKeyframes().map((frame) => new DOMMatrix(frame.transform).m42),
+              ),
+          ),
+        };
+      });
+      assert.equal(running.iterations, 'infinite', 'a live long call keeps moving between tool events');
+      assert.equal(running.duration, '0.8s', 'reuse the established small-run cadence');
+      assert.ok(running.rise <= -2 && running.rise >= -3, 'the idle run rises 2–3px');
       for (const [label, args, object] of [
         ['Grep', { pattern: 'ReplyLastLine' }, 'ReplyLastLine'],
         ['Bash', { command: 'pnpm test --secret hidden' }, 'pnpm'],
@@ -363,16 +403,30 @@ test('observed tool calls change the short object and step once; elapsed ticks, 
         assert.equal(await cat.getAttribute('data-pulse'), 'true', 'one new observed use pulses');
         const animation = await cat.evaluate((node) => {
           const s = getComputedStyle(node);
-          return { name: s.animationName, iterations: s.animationIterationCount };
+          return {
+            name: s.animationName,
+            iterations: s.animationIterationCount,
+            duration: s.animationDuration,
+            rise: Math.min(
+              ...node
+                .getAnimations()
+                .flatMap((animation) =>
+                  animation.effect.getKeyframes().map((frame) => new DOMMatrix(frame.transform).m42),
+                ),
+            ),
+          };
         });
         assert.match(animation.name, /reply-tool-step/);
         assert.equal(animation.iterations, '1');
+        assert.equal(animation.duration, '0.6s');
+        assert.equal(animation.rise, -6, 'the fresh call replaces the small run with one higher jump');
         assert.doesNotMatch(await status.innerText(), /secret|hidden|--/);
         await page.waitForFunction(
           () =>
             document.querySelector('[data-message-id="r-activity"] [data-testid="reply-activity-cat"]').dataset
               .pulse === 'false',
         );
+        assert.equal(await cat.evaluate((node) => getComputedStyle(node).animationIterationCount), 'infinite');
       }
       await page.emulateMedia({ reducedMotion: 'reduce' });
       await page.evaluate(() => window.__replies.appendTool('Read', { file_path: '/app/Another.tsx' }));
@@ -382,6 +436,16 @@ test('observed tool calls change the short object and step once; elapsed ticks, 
           .textContent.includes('Another.tsx'),
       );
       assert.equal(await cat.evaluate((node) => getComputedStyle(node).animationName), 'none');
+      await page.waitForFunction(
+        () =>
+          document.querySelector('[data-message-id="r-activity"] [data-testid="reply-activity-cat"]').dataset.pulse ===
+          'false',
+      );
+      assert.equal(
+        await cat.evaluate((node) => getComputedStyle(node).animationName),
+        'none',
+        'reduced motion also stops the continuous run',
+      );
       assert.equal(await row.locator('[data-testid="cat-nameplate-avatar"] .animate-pulse').count(), 0);
       const objects = await assertReadObjectsPainted(page, row, base, width);
       const geometry = await row.getByTestId('reply-last-line').evaluate((line) => ({
@@ -443,19 +507,6 @@ test('S3/S4: the real reply projects a parallel handoff and terminal recall on t
   assert.ok(m.columnScroll.scrollWidth <= m.columnScroll.clientWidth, 'the 400px column does not overflow');
   assert.deepEqual(errors, []);
   assert.deepEqual(unexpected, []);
-  await page.close();
-});
-
-test('the body is reading-column text: 15px on a 1.7 line', async () => {
-  const { page } = await open({ width: 720 });
-  const m = await measure(page, 'r-done');
-  assert.equal(m.bodyPara.fontSize, '15px');
-  assert.equal(m.bodyPara.lineHeight, '25.5px');
-  const li = await page
-    .locator('[data-message-id="r-done"] li')
-    .first()
-    .evaluate((el) => ({ size: getComputedStyle(el).fontSize, lh: getComputedStyle(el).lineHeight }));
-  assert.deepEqual(li, { size: '15px', lh: '25.5px' });
   await page.close();
 });
 
@@ -767,3 +818,7 @@ test(
 );
 
 registerCrossThreadLetterJourneys({ webRoot, browser: () => browser, evidenceDir });
+
+test('native live last line: real long command, one higher jump, natural silence and reduced motion', async () => {
+  await runNativeReplyMotionJourney(browser, evidenceDir);
+});

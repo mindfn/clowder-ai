@@ -9,7 +9,7 @@ import { after, before, test } from 'node:test';
 import { fileURLToPath } from 'node:url';
 import { chromium } from '../../../ppt-forge/node_modules/playwright/index.mjs';
 import { realSurfaceApiResponse, THREAD_ID } from './f307-real-surface-fixtures.mjs';
-import { ensureWorkspaceOpen } from './f307-workspace-open.mjs';
+import { openWorkspaceTools } from './f307-workspace-open.mjs';
 import { cats, detail, exactInput, firstSentence, generations, summary } from './f322-trajectory-data.mjs';
 import { runTrajectoryReviewRegressions } from './f322-trajectory-review-journey.mjs';
 import { createNextDevTestEnvironment } from './next-dev-test-environment.mjs';
@@ -71,6 +71,8 @@ after(async () => {
     JSON.stringify(
       {
         head: execFileSync('git', ['rev-parse', 'HEAD'], { cwd: REPO, encoding: 'utf8' }).trim(),
+        worktree: REPO,
+        baseUrl,
         sourceDiff: execFileSync('git', ['diff', 'HEAD', '--', 'packages/web/src'], { cwd: REPO, encoding: 'utf8' }),
         data: 'synthetic network fixture; production Next app, ChatContainer, F307 host, CSS and resize',
         measurements,
@@ -81,26 +83,30 @@ after(async () => {
   );
 });
 
-async function open(shell, theme, fixture = { summary, detail }) {
+async function open(shell, theme, fixture = { summary, detail }, language = 'zh') {
   const context = await browser.newContext({
     viewport: { width: 1440, height: 900 },
     permissions: ['clipboard-read', 'clipboard-write'],
   });
   await context.addInitScript(
-    ({ shell, theme }) => {
+    ({ shell, theme, language }) => {
       localStorage.setItem('cat-cafe:shell-presentation', shell);
       localStorage.setItem('theme', theme);
+      localStorage.setItem('cat-cafe:shell-language', language);
     },
-    { shell, theme },
+    { shell, theme, language },
   );
   const page = await context.newPage();
   const errors = [],
     calls = [];
   page.on('pageerror', (error) => errors.push(error.message));
+  page.on('request', (request) => {
+    const url = new URL(request.url());
+    if (url.pathname.startsWith('/api/')) calls.push(`${request.method()} ${url.pathname}${url.search}`);
+  });
   await page.route('**/api/**', (route) => {
     const request = route.request(),
       url = new URL(request.url());
-    calls.push(`${request.method()} ${url.pathname}${url.search}`);
     let response;
     if (url.pathname === '/api/cats') response = { body: { cats } };
     else if (url.pathname.endsWith('/invocations')) response = { body: { invocations: [fixture.summary], total: 1 } };
@@ -125,8 +131,8 @@ async function open(shell, theme, fixture = { summary, detail }) {
   });
   await page.goto(`${baseUrl}/thread/${THREAD_ID}?shell=${shell}`, { waitUntil: 'networkidle' });
   await page.waitForFunction((theme) => document.documentElement.dataset.theme === theme, theme);
-  await ensureWorkspaceOpen(page);
-  await page.getByTestId('workspace-launcher-trajectory').click();
+  const tools = await openWorkspaceTools(page);
+  await tools.getByTestId('workspace-launcher-trajectory').click();
   const panel = page.getByTestId('trajectory-panel');
   await panel.waitFor();
   await panel.getByTestId('invocation-trajectory-list').waitFor();
@@ -135,7 +141,7 @@ async function open(shell, theme, fixture = { summary, detail }) {
 
 async function resize(page, target) {
   const host = page.getByTestId('contextual-workspace-host');
-  const handle = page.getByRole('separator', { name: '右侧面板分隔条', exact: true });
+  const handle = page.getByRole('separator', { name: /^(右侧面板分隔条|Right panel separator)$/, exact: true });
   for (let n = 0; n < 3; n++) {
     const box = await host.boundingBox(),
       grip = await handle.boundingBox();
@@ -350,4 +356,211 @@ test(
       resize,
       snapshot: (name, page) => page.screenshot({ path: path.join(OUT, `${name}.png`) }),
     }),
+);
+
+test(
+  'English trajectory content follows the real Host language across list, detail, sessions and search',
+  { timeout: 180000 },
+  async () => {
+    const { page, context, panel, errors, calls } = await open('v2', 'light', { summary, detail }, 'en');
+    try {
+      await page.route('**/request-generations*', (route) => {
+        const data = generations(new URL(route.request().url()).searchParams.get('reveal') === 'exact');
+        const envelope = data.generations[0].envelope;
+        data.generations[0].terminal = {
+          type: 'request_generation_terminal',
+          requestGenerationId: envelope.requestGenerationId,
+          generationOrdinal: envelope.generationOrdinal,
+          terminalAt: 85000,
+          outcome: 'accepted',
+        };
+        data.gaps = [{ kind: 'evidence_gap', fromOrdinal: 2, toOrdinal: 4, state: 'unknown', reason: 'ordinal_gap' }];
+        return route.fulfill({ json: data });
+      });
+      for (const width of [720, 300]) {
+        await resize(page, width);
+        await panel.getByRole('button', { name: 'Each run', exact: true }).waitFor();
+        assert.match(await panel.innerText(), /Done/);
+        assert.equal(
+          await panel.getByTestId('first-assistant-preview').innerText(),
+          firstSentence,
+          'native output stays in its original language',
+        );
+        const copy = panel.getByRole('button', { name: `Copy invocation ID: ${summary.invocationId}`, exact: true });
+        await copy.click();
+        assert.equal(await page.evaluate(() => navigator.clipboard.readText()), summary.invocationId);
+        await measure(page, `en-${width}-list`, '[data-testid="trajectory-panel"]');
+        await page.screenshot({ path: path.join(OUT, `en-${width}-list.png`) });
+        await panel.locator('article > button').first().click();
+        const run = page.getByTestId('invocation-trajectory-detail');
+        await run.getByText('Trigger input', { exact: true }).waitFor();
+        const returnMessage = run.getByRole('button', { name: 'Return to original message', exact: true });
+        await returnMessage.waitFor({ state: 'visible' });
+        assert.equal(await returnMessage.count(), 1);
+        assert.match(await run.innerText(), /Duration/);
+        assert.match(await run.innerText(), /Progress/);
+        await run.getByRole('button', { name: 'View first-output records', exact: true }).click();
+        await run.getByTestId('first-output-source').getByText('Raw record #101', { exact: true }).waitFor();
+        const input = run.getByTestId('request-generation-section');
+        await input.getByRole('button', { name: 'Expand with source permissions', exact: true }).click();
+        await input.getByText('Accepted', { exact: true }).waitFor();
+        assert.equal(await input.getByText('Submission record gap #2–4', { exact: true }).count(), 1);
+        assert.equal(
+          await input.getByText('Compactions: 0 · Input materials: 0 admitted / 0 omitted', { exact: true }).count(),
+          1,
+        );
+        await input.getByText('Expand submitted content', { exact: true }).click();
+        assert.equal(await input.locator('pre').textContent(), exactInput);
+        await measure(page, `en-${width}-input`, '[data-testid="invocation-trajectory-detail"]');
+        await page.screenshot({ path: path.join(OUT, `en-${width}-input.png`) });
+        if (width === 300) {
+          await input.getByText('Expand submitted content', { exact: true }).click();
+          await input.getByText('Accepted', { exact: true }).scrollIntoViewIfNeeded();
+          await page.screenshot({ path: path.join(OUT, 'en-generation-state.png') });
+        }
+        await run.getByRole('button', { name: 'Raw records', exact: true }).click();
+        await run.getByRole('button', { name: 'Show 100 more records', exact: true }).click();
+        assert.equal(await run.locator('[data-raw-event-no]').count(), detail.events.length);
+        await run.getByRole('button', { name: '‹ Trajectory', exact: true }).click();
+      }
+      // Controlled HTTP responses exercise the existing real session/search readers;
+      // this does not certify provider records, authorization or runtime health.
+      await page.route('**/api/threads/**/sessions', (route) =>
+        route.fulfill({
+          json: {
+            sessions: [
+              {
+                id: 'session-active-language',
+                cliSessionId: 'cli-active-language',
+                catId: summary.catId,
+                seq: 3,
+                status: 'active',
+                messageCount: 3,
+                createdAt: Date.now() - 60000,
+              },
+              {
+                id: summary.sessionId,
+                cliSessionId: 'cli-exact-language',
+                catId: summary.catId,
+                seq: 2,
+                status: 'sealed',
+                messageCount: 7,
+                createdAt: Date.now() - 60000,
+                sealedAt: Date.now() - 30000,
+                compressionCount: 0,
+                sealReason: 'manual',
+              },
+            ],
+          },
+        }),
+      );
+      await panel.getByRole('button', { name: 'Sessions', exact: true }).click();
+      await panel.getByRole('heading', { name: 'Session records', exact: true }).waitFor();
+      await panel
+        .getByRole('button')
+        .filter({ hasText: /Archived/ })
+        .click();
+      await panel.getByText('Session segment 3', { exact: true }).waitFor();
+      const segment = panel.getByText('Session segment 3', { exact: true });
+      await segment.scrollIntoViewIfNeeded();
+      const visibleSegment = await segment.evaluate((node) => {
+        const range = document.createRange();
+        range.selectNodeContents(node);
+        const bounds = range.getBoundingClientRect();
+        const clippedBy = [];
+        for (let parent = node.parentElement; parent; parent = parent.parentElement) {
+          const style = getComputedStyle(parent);
+          const rect = parent.getBoundingClientRect();
+          if (
+            /(hidden|clip|auto|scroll)/.test(style.overflowX) &&
+            (bounds.left < rect.left - 1 || bounds.right > rect.right + 1)
+          ) {
+            clippedBy.push(parent.className);
+          }
+        }
+        const painted = node.contains(
+          document.elementFromPoint((bounds.left + bounds.right) / 2, (bounds.top + bounds.bottom) / 2),
+        );
+        return { text: node.textContent, width: bounds.width, clippedBy, painted };
+      });
+      measurements.push({ name: 'en-300-session-segment', ...visibleSegment });
+      assert.deepEqual(visibleSegment.clippedBy, [], JSON.stringify(visibleSegment));
+      assert.equal(visibleSegment.painted, true, JSON.stringify(visibleSegment));
+
+      await panel.getByRole('button', { name: 'View', exact: true }).click();
+      await panel.getByText('Session events', { exact: true }).waitFor();
+      await measure(page, 'en-300-sessions', '[data-testid="trajectory-panel"]');
+      await page.screenshot({ path: path.join(OUT, 'en-300-sessions.png') });
+      // These POSTs are controlled failures in the isolated Host, never writes to
+      // a runtime/Alpha session. The server may reject a previously enabled action.
+      for (const action of [
+        {
+          url: '**/api/sessions/session-active-language/seal',
+          selector: 'seal-session-session-active-language',
+          code: 'SESSION_ACTIVE_INVOCATION',
+          raw: '请先停止该 Agent，再封存会话',
+          text: 'Stop this Agent before archiving the session.',
+        },
+        {
+          url: '**/api/sessions/session-active-language/seal',
+          selector: 'seal-session-session-active-language',
+          code: 'SESSION_SEAL_RACE',
+          raw: '会话状态已变化，请刷新后重试',
+          text: 'The session changed; refresh and try again.',
+        },
+        {
+          url: '**/api/sessions/*/unseal',
+          selector: `restore-session-${summary.sessionId}`,
+          code: 'active_session_changed',
+          raw: '后端恢复冲突',
+          text: 'The active session changed; refresh before restoring.',
+        },
+        {
+          url: '**/api/threads/*/sessions/*/compact-native',
+          selector: 'compact-native-session-session-active-language',
+          code: 'NATIVE_SESSION_BUSY',
+          raw: '后端压缩冲突',
+          text: 'Wait for this Agent’s work to finish before compacting.',
+        },
+      ]) {
+        await page.route(action.url, (route) =>
+          route.fulfill({ status: 409, json: { code: action.code, error: action.raw } }),
+        );
+        const button = panel.getByTestId(action.selector);
+        assert.equal(await button.isEnabled(), true);
+        if (action.code === 'active_session_changed') page.once('dialog', (dialog) => dialog.accept());
+        await button.click();
+        const feedback = panel.getByTestId('session-action-error');
+        await feedback.getByText(action.text, { exact: true }).waitFor();
+        assert.equal(await feedback.innerText(), action.text);
+        assert.equal(
+          await panel.getByTestId('session-card-active').count(),
+          1,
+          'rejection must not manufacture a successful transition',
+        );
+      }
+      await panel.getByTestId('session-action-error').scrollIntoViewIfNeeded();
+      await page.screenshot({ path: path.join(OUT, 'en-session-actions.png') });
+      await page.route('**/api/threads/**/sessions/search?**', (route) => route.fulfill({ json: { hits: [] } }));
+      await panel.getByRole('button', { name: 'Search', exact: true }).click();
+      await panel.getByPlaceholder('Search session content…').fill('needle');
+      await panel.getByRole('button', { name: 'Search', exact: true }).last().click();
+      await panel.getByText('No matching results', { exact: true }).waitFor();
+      assert(calls.some((call) => call.includes('q=needle&scope=both')));
+      await measure(page, 'en-300-search', '[data-testid="trajectory-panel"]');
+      await page.screenshot({ path: path.join(OUT, 'en-300-search.png') });
+      const sourceReads = () =>
+        calls.filter((call) => /\/invocations|\/sessions|request-generations/.test(call)).length;
+      const reads = sourceReads();
+      await page.evaluate(() => {
+        localStorage.setItem('cat-cafe:shell-language', 'zh');
+        window.dispatchEvent(new CustomEvent('cat-cafe:shell-language-sync'));
+      });
+      await panel.getByRole('button', { name: '每一轮', exact: true }).waitFor();
+      assert.equal(sourceReads(), reads, 'language switch must not reload source records');
+      assert.deepEqual(errors, []);
+    } finally {
+      await context.close();
+    }
+  },
 );

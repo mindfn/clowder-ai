@@ -45,7 +45,7 @@ export interface LauncherWorkspaceSearch {
   error: string | null;
   onSearch: (query: string) => Promise<void> | void;
   onReset: () => void;
-  onOpenResult: (path: string, line: number) => void;
+  onOpenResult: (path: string, line: number, origin?: WorkspaceFileNavigationOrigin) => void;
   onViewAll: (query: string) => void;
   /** Reconstruct the current Home query at the exact time a result is opened. */
   fileNavigationOrigin?: () => WorkspaceFileNavigationOrigin | undefined;

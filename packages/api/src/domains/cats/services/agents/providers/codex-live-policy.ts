@@ -4,7 +4,6 @@ export const CODEX_LIVE_DISABLED_FEATURES = [
   'unified_exec',
   'shell_snapshot',
   'apply_patch_freeform',
-  'multi_agent',
   'apps',
   'plugins',
   'remote_plugin',
@@ -29,6 +28,8 @@ export const CODEX_LIVE_POLICY_ARGS = [
   // tool dispatcher, not shell/Node access; those capabilities stay disabled above.
   '--enable',
   'code_mode_host',
+  '--enable',
+  'multi_agent',
   '--config',
   'web_search="disabled"',
   '--config',

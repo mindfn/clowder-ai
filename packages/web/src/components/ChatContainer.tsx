@@ -60,6 +60,7 @@ import { ThreadChatExport, ThreadChatSurface, useThreadChatRuntime } from './thr
 import type { RegisterChatReadingPort } from './thread-chat/useThreadChatReadingPort';
 import { type VoteConfig, VoteConfigModal } from './VoteConfigModal';
 import { WorkspacePanel } from './WorkspacePanel';
+import { DEFAULT_ARTIFACT_WORK_CHAT_BASIS } from './workbench/artifact-work-presentation';
 import { useF307ExperienceWorkbenchStore } from './workbench/experience-workbench-store';
 import { useArtifactWorkHostPresentation } from './workbench/useArtifactWorkHostPresentation';
 import { ContextualWorkspaceChrome } from './workspace/ContextualWorkspaceChrome';
@@ -196,6 +197,8 @@ function InteractiveChatContainer({ threadId }: ChatContainerProps) {
   const statusPanelOpen = useChatStore((s) => s.rightPanelOpen);
   const setRightPanelOpen = useChatStore((s) => s.setRightPanelOpen);
   const mainAreaAttentionSurfaceId = useF307ExperienceWorkbenchStore((state) => state.mainAreaAttentionSurfaceId);
+  const attentionPresentation = useF307ExperienceWorkbenchStore((state) => state.mainAreaAttentionPresentation);
+  const setAttentionChatBasis = useF307ExperienceWorkbenchStore((state) => state.setMainAreaAttentionChatBasis);
   const exitMainAreaAttention = useF307ExperienceWorkbenchStore((state) => state.exitMainAreaAttention);
   const [workspacePanelMounted, setWorkspacePanelMounted] = useState(rightPanelMode === 'workspace');
   const [activityPanelMounted, setActivityPanelMounted] = useState(false);
@@ -238,12 +241,18 @@ function InteractiveChatContainer({ threadId }: ChatContainerProps) {
   const {
     splitPreferenceActive: artifactSplitPreferenceActive,
     fullWindowActive: artifactFullWindowActive,
+    workspaceWideActive,
     chatBasis: artifactWorkChatBasis,
     invalidateHost: invalidateArtifactWorkHost,
     resizeChatBasis: resizeArtifactWorkChatBasis,
     resetChatBasis: resetArtifactWorkChatBasis,
   } = useArtifactWorkHostPresentation({ threadId, viewMode, isDesktop, statusPanelOpen, rightPanelMode });
-  const activeChatBasis = artifactSplitPreferenceActive ? artifactWorkChatBasis : chatBasis;
+  const activeChatBasis =
+    workspaceWideActive && attentionPresentation.kind === 'chat-workspace'
+      ? attentionPresentation.chatBasis
+      : artifactSplitPreferenceActive
+        ? artifactWorkChatBasis
+        : chatBasis;
   const containerRef = useRef<HTMLDivElement>(null);
   const handleHorizontalResize = useCallback(
     (delta: number) => {
@@ -251,13 +260,25 @@ function InteractiveChatContainer({ threadId }: ChatContainerProps) {
       const totalWidth = containerRef.current.offsetWidth;
       if (totalWidth === 0) return;
       const pct = (delta / totalWidth) * 100;
+      if (workspaceWideActive && attentionPresentation.kind === 'chat-workspace') {
+        captureChatReadingBeforeLayoutChange();
+        setAttentionChatBasis(attentionPresentation.chatBasis + pct);
+        return;
+      }
       if (artifactSplitPreferenceActive) {
         resizeArtifactWorkChatBasis(pct);
         return;
       }
       setChatBasis((previous) => Math.min(80, Math.max(20, previous + pct)));
     },
-    [artifactSplitPreferenceActive, resizeArtifactWorkChatBasis, setChatBasis],
+    [
+      artifactSplitPreferenceActive,
+      resizeArtifactWorkChatBasis,
+      setChatBasis,
+      workspaceWideActive,
+      attentionPresentation,
+      setAttentionChatBasis,
+    ],
   );
   // clowder-ai#28: drag-to-resize for right status panel (negative delta = panel wider)
   const handleStatusPanelResize = useCallback(
@@ -300,8 +321,10 @@ function InteractiveChatContainer({ threadId }: ChatContainerProps) {
     isDesktop &&
     statusPanelOpen &&
     rightPanelMode === 'workspace' &&
-    mainAreaAttentionSurfaceId !== null;
-  const messageSearchAvailable = isV2 && viewMode === 'single' && !artifactFullWindowActive && !mainAreaAttentionActive;
+    mainAreaAttentionSurfaceId !== null &&
+    (attentionPresentation.kind !== 'chat-workspace' || attentionPresentation.threadId === threadId);
+  const mainAreaOverlayActive = mainAreaAttentionActive && attentionPresentation.kind === 'overlay';
+  const messageSearchAvailable = isV2 && viewMode === 'single' && !artifactFullWindowActive && !mainAreaOverlayActive;
   const messageSearch = useMessageSearchHost({
     threadId,
     pushThreadRoute: navigateToThread,
@@ -311,11 +334,24 @@ function InteractiveChatContainer({ threadId }: ChatContainerProps) {
   useEffect(() => {
     if (
       mainAreaAttentionSurfaceId !== null &&
-      (viewMode !== 'single' || !isDesktop || !statusPanelOpen || rightPanelMode !== 'workspace')
+      (viewMode !== 'single' ||
+        !isDesktop ||
+        !statusPanelOpen ||
+        rightPanelMode !== 'workspace' ||
+        (attentionPresentation.kind === 'chat-workspace' && attentionPresentation.threadId !== threadId))
     ) {
       exitMainAreaAttention();
     }
-  }, [exitMainAreaAttention, isDesktop, mainAreaAttentionSurfaceId, rightPanelMode, statusPanelOpen, viewMode]);
+  }, [
+    exitMainAreaAttention,
+    isDesktop,
+    mainAreaAttentionSurfaceId,
+    rightPanelMode,
+    statusPanelOpen,
+    viewMode,
+    attentionPresentation,
+    threadId,
+  ]);
 
   useEffect(() => {
     if (isDesktop || !statusPanelOpen) return;
@@ -895,10 +931,10 @@ function InteractiveChatContainer({ threadId }: ChatContainerProps) {
       )}
 
       <div
-        className={`flex min-w-0 flex-col ${mainAreaAttentionActive ? 'invisible pointer-events-none' : ''} ${
+        className={`flex min-w-0 flex-col ${mainAreaOverlayActive ? 'invisible pointer-events-none' : ''} ${
           artifactFullWindowActive ? 'absolute inset-0 z-50 pointer-events-none' : ''
         }`}
-        aria-hidden={mainAreaAttentionActive || undefined}
+        aria-hidden={mainAreaOverlayActive || undefined}
         data-testid="thread-chat-host"
         data-presentation={artifactFullWindowActive ? 'artifact-full-window' : 'conversation'}
         style={
@@ -1175,7 +1211,7 @@ function InteractiveChatContainer({ threadId }: ChatContainerProps) {
           At 768px+ they use the split host; below 768px the same host becomes a full-screen overlay. */}
       {statusPanelOpen &&
         isDesktop &&
-        !mainAreaAttentionActive &&
+        !mainAreaOverlayActive &&
         !artifactFullWindowActive &&
         (rightPanelMode === 'status' ? (
           <ResizeHandle
@@ -1192,6 +1228,11 @@ function InteractiveChatContainer({ threadId }: ChatContainerProps) {
             onResize={handleHorizontalResize}
             onCollapse={closeStatusPanel}
             onDoubleClick={() => {
+              if (workspaceWideActive) {
+                captureChatReadingBeforeLayoutChange();
+                setAttentionChatBasis(DEFAULT_ARTIFACT_WORK_CHAT_BASIS);
+                return;
+              }
               if (artifactSplitPreferenceActive) {
                 resetArtifactWorkChatBasis();
                 return;
@@ -1207,7 +1248,7 @@ function InteractiveChatContainer({ threadId }: ChatContainerProps) {
               ? 'hidden'
               : artifactFullWindowActive
                 ? 'absolute inset-x-0 top-0 z-40 flex min-h-0 flex-col overflow-hidden bg-[var(--console-panel-bg)]'
-                : mainAreaAttentionActive
+                : mainAreaOverlayActive
                   ? 'absolute inset-0 z-40 flex min-h-0 flex-col overflow-hidden bg-[var(--console-panel-bg)]'
                   : isDesktop
                     ? 'flex min-h-0 flex-col overflow-hidden'
@@ -1216,7 +1257,7 @@ function InteractiveChatContainer({ threadId }: ChatContainerProps) {
           style={
             artifactFullWindowActive
               ? { bottom: bottomChromeHeight }
-              : statusPanelOpen && isDesktop && !mainAreaAttentionActive
+              : statusPanelOpen && isDesktop && !mainAreaOverlayActive
                 ? rightPanelMode === 'status'
                   ? { width: statusPanelWidth, flexShrink: 0 }
                   : { flex: '1 1 0%', minWidth: 0 }
@@ -1224,16 +1265,18 @@ function InteractiveChatContainer({ threadId }: ChatContainerProps) {
           }
           role="region"
           aria-label={
-            artifactFullWindowActive ? '整窗 Workspace' : mainAreaAttentionActive ? '主区 Workspace' : '上下文侧栏'
+            artifactFullWindowActive ? '整窗 Workspace' : mainAreaOverlayActive ? '主区 Workspace' : '上下文侧栏'
           }
           aria-hidden={!statusPanelOpen}
           data-testid="contextual-workspace-host"
           data-presentation={
             artifactFullWindowActive
               ? 'artifact-full-window'
-              : mainAreaAttentionActive
-                ? 'main-area-attention'
-                : 'right-rail'
+              : workspaceWideActive
+                ? 'wide-workspace'
+                : mainAreaOverlayActive
+                  ? 'main-area-attention'
+                  : 'right-rail'
           }
           data-attention-surface={mainAreaAttentionActive ? mainAreaAttentionSurfaceId : undefined}
         >

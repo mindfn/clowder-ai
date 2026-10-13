@@ -50,6 +50,14 @@ export function buildMessageDisclosureKey(
   return [threadId, owner, stableBubbleId, panel].map(encodeURIComponent).join(':');
 }
 
+/** Explicit navigation opens the existing record owner, including a deferred bubble before it mounts. */
+export function expandMessageExecutionRecord(
+  threadId: string,
+  message: Parameters<typeof buildMessageDisclosureKey>[1],
+): void {
+  setDisclosureOverride(buildMessageDisclosureKey(threadId, message, 'cli'), true);
+}
+
 function disclosureContentFingerprint(value: string): string {
   let first = 0x811c9dc5;
   let second = 0x9e3779b9;

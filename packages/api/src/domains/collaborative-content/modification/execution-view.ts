@@ -17,8 +17,8 @@ import {
 } from '../../cats/services/stores/ports/TurnExecutionStore.js';
 import type { ContentReturnIntent } from '../artifact-review/return-store.js';
 import type { ArtifactReviewStore } from '../artifact-review/store.js';
+import { isBoundMediaModificationReturn } from './bindings/media-return-binding.js';
 import { mediaPublicationProjection } from './media-publication/media-publication-return.js';
-import { isBoundMediaModificationReturn } from './media-return-binding.js';
 
 /** A queue carrier, a started executor and a returned result are separate owner facts. */
 export async function readModificationExecution(

@@ -1,6 +1,6 @@
 import { randomUUID } from 'node:crypto';
 import { test } from 'node:test';
-import { verifyScopedSessionStore, verifyScopedWithoutHome } from './f290-scoped-session-store.test.js';
+import { verifyScopedSessionStore, verifyScopedWithoutHome } from './helpers/f290-scoped-session-contract.js';
 
 test('Redis scoped session records persist without changing home active identity or gaining resume authority', async () => {
   const { assertRedisIsolationOrThrow } = await import('./helpers/redis-test-helpers.js');

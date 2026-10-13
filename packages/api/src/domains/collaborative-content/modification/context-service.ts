@@ -11,9 +11,9 @@ import { ArtifactReviewError } from '../artifact-review/errors.js';
 import type { ArtifactReviewService } from '../artifact-review/service.js';
 import type { ArtifactReviewStore } from '../artifact-review/store.js';
 import type { WorkspaceContentReviewService } from '../workspace-review/service.js';
+import { inspectEvolutionModification } from './bindings/evolution-binding.js';
+import { readLegacyModificationSource } from './bindings/legacy-review-binding.js';
 import { cancelledModificationReplacement } from './control/supersession.js';
-import { inspectEvolutionModification } from './evolution-binding.js';
-import { readLegacyModificationSource } from './legacy-review-binding.js';
 import { assertModificationSourceAuthority } from './request-authority.js';
 import type { ContentModificationService } from './service.js';
 
@@ -70,6 +70,7 @@ export class ContentModificationContextService {
   }
 
   private async authorizeSource(source: Source, principal: MediaReviewPrincipal): Promise<string | undefined> {
+    if (source.kind === 'video-project') throw new ArtifactReviewError('invalid_action');
     if (source.kind === 'artifact-review') {
       const { view } = await readLegacyModificationSource(this.deps.reviews, source, principal);
       return view.authority.ownerCatId ?? undefined;

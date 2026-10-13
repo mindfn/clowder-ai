@@ -47,12 +47,25 @@ function createMockProcess() {
   const stderr = new PassThrough();
   const emitter = new EventEmitter();
   const originalEmit = emitter.emit.bind(emitter);
+  let pendingExit;
   emitter.emit = (event, ...args) => {
+    // Invoke-time source validation can await filesystem I/O before spawn.
+    // A fixture cannot exit before the mock child is observed by spawnCli.
+    if (event === 'exit' && emitter.listenerCount('exit') === 0) {
+      pendingExit = args;
+      return false;
+    }
     const emitted = originalEmit(event, ...args);
     if (event === 'exit') {
       process.nextTick(() => originalEmit('close', ...args));
     }
     return emitted;
+  };
+  const flushPendingExit = () => {
+    if (!pendingExit || emitter.listenerCount('exit') === 0) return;
+    const args = pendingExit;
+    pendingExit = undefined;
+    setImmediate(() => emitter.emit('exit', ...args));
   };
   let stdinData = '';
   const proc = {
@@ -78,10 +91,12 @@ function createMockProcess() {
     }),
     on: (event, listener) => {
       emitter.on(event, listener);
+      flushPendingExit();
       return proc;
     },
     once: (event, listener) => {
       emitter.once(event, listener);
+      flushPendingExit();
       return proc;
     },
     get stdinData() {
@@ -299,6 +314,23 @@ async function collectCodexSpawnArgs(workingDirectory) {
 
   try {
     writeMcpDistStubs(runtimeRoot, CAT_CAFE_SPLIT_ENTRYPOINTS);
+    const workspace = process.env.CAT_CAFE_WORKSPACE_ROOT;
+    if (workspace) {
+      // These cases test allowed workspace arguments, with an explicitly configured default source.
+      writeCapabilitiesConfig(
+        workspace,
+        CAT_CAFE_SPLIT_SERVER_IDS.map((id, index) => ({
+          id,
+          type: 'mcp',
+          source: 'cat-cafe',
+          globalEnabled: true,
+          mcpServer: {
+            command: 'node',
+            args: [join(runtimeRoot, 'packages/mcp-server/dist', CAT_CAFE_SPLIT_ENTRYPOINTS[index + 1])],
+          },
+        })),
+      );
+    }
     await withRuntimeRootEnv(runtimeRoot, async () => {
       const promise = collect(
         service.invoke('hello from workspace env test', {

@@ -17,7 +17,8 @@ async function resolveExactWorktreeId(projectRoot: string, noun: string): Promis
   const matches = listed.filter((item) => item.root === projectRoot);
   const [match] = matches;
   if (matches.length !== 1 || !match) throw new Error(`未能唯一定位此${noun}的工作区。`);
-  return match.id;
+  // Carry the owner identity; display aliases still require legacy root recovery.
+  return match.rootIdentity ?? match.id;
 }
 
 const WORDING = {

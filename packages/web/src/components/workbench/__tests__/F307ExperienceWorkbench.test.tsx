@@ -13,10 +13,15 @@ import React, { act } from 'react';
 import { createRoot, type Root } from 'react-dom/client';
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import { encodeTeamWorkspaceSubject } from '@/components/routing-context/team-navigation';
+import { writeShellLanguage } from '@/components/shell/shell-language';
 import { writeShellPresentation } from '@/components/shell/shell-presentation';
 import type { WorkspaceSurfaceDescriptor } from '@/components/workbench/workbench-contract';
 import { createInitialWorkbenchState } from '@/components/workbench/workbench-model';
 import { WORKBENCH_STORAGE_KEY } from '@/components/workbench/workbench-persistence';
+import {
+  clearExecutionDetailRequest,
+  requestExecutionDetail,
+} from '@/components/workspace-home/execution-detail-request';
 import type { WorkspaceOpenRequest } from '@/stores/chat-types';
 import { useChatStore } from '@/stores/chatStore';
 import { useToastStore } from '@/stores/toastStore';
@@ -29,6 +34,7 @@ import {
   createEvolutionProgramSurface,
   createFilePreviewSurface,
   createFileSurface,
+  createProductScheduleReturnSurface,
   createTerminalSurface,
   createWorkspaceDestinationSurface,
   createWorkspaceModeSurface,
@@ -46,6 +52,12 @@ const mocks = vi.hoisted(() => ({
   executionsByKey: {} as Record<string, ActiveExecutionProjection>,
 }));
 
+vi.mock('@/components/listen-mode/ListenModePlayer', () => ({
+  ListenModePlayer: ({ variant = 'workspace' }: { variant?: string }) => (
+    <output data-testid="workbench-listen" data-variant={variant} />
+  ),
+}));
+
 vi.mock('@/hooks/useIsDesktop', async (importOriginal) => {
   const native = await importOriginal<typeof import('@/hooks/useIsDesktop')>();
   return {
@@ -56,7 +68,8 @@ vi.mock('@/hooks/useIsDesktop', async (importOriginal) => {
   };
 });
 
-vi.mock('@/stores/activeExecutionStore', () => ({
+vi.mock('@/stores/activeExecutionStore', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('@/stores/activeExecutionStore')>()),
   useActiveExecutionStore: (
     selector: (state: { executionsByKey: Record<string, ActiveExecutionProjection> }) => unknown,
   ) => selector({ executionsByKey: mocks.executionsByKey }),
@@ -80,6 +93,7 @@ vi.mock('../F307OwnerSurfaceRenderer', () => ({
     ) => void;
   }) => {
     const origin = surface.navigationOrigin;
+    const [week, setWeek] = React.useState('5–11');
     return (
       <div
         data-testid={`owner-surface-${surface.type}`}
@@ -88,6 +102,9 @@ vi.mock('../F307OwnerSurfaceRenderer', () => ({
         data-focus-mode={String(focusMode)}
       >
         {surface.title}
+        <button type="button" data-testid={`owner-week-${surface.id}`} onClick={() => setWeek('12–18')}>
+          {week}
+        </button>
         {surface.objectRef.kind === 'workspace-destination' && surface.objectRef.id === 'surface:changes' ? (
           <button type="button" data-testid="open-changes-file" onClick={() => onOpenSurface?.(FILE_SURFACE)}>
             打开文件
@@ -146,23 +163,48 @@ vi.mock('../F307SurfacePane', () => ({
   ),
 }));
 
-vi.mock('../F307WorkbenchSidecar', () => ({
-  F307WorkbenchSidecar: ({ visible = true }: { visible?: boolean }) => (
-    <div data-testid="workbench-sidecar" data-visible={visible} />
-  ),
-}));
+vi.mock('../F307WorkbenchSidecar', async (importOriginal) => {
+  const original = await importOriginal<typeof import('../F307WorkbenchSidecar')>();
+  return {
+    ...original,
+    F307MountedSurface: (props: React.ComponentProps<typeof original.F307MountedSurface>) => (
+      <div data-testid={props.sidecar ? 'workbench-sidecar' : undefined} data-visible={String(props.visible)}>
+        <original.F307MountedSurface {...props} />
+      </div>
+    ),
+    F307WorkbenchSidecar: ({
+      surface,
+      renderSurface,
+      visible = true,
+    }: {
+      surface: WorkspaceSurfaceDescriptor;
+      renderSurface: (surface: WorkspaceSurfaceDescriptor, visible: boolean) => React.ReactNode;
+      visible?: boolean;
+    }) => (
+      <div data-testid="workbench-sidecar" data-visible={visible}>
+        {renderSurface(surface, visible)}
+      </div>
+    ),
+  };
+});
 
 vi.mock('../F307WorkspaceHomePage', () => ({
   F307WorkspaceHomePage: ({
     workspaceSearchQuery,
+    workspaceSearchReturnOrigin,
     threadId,
     onSelectSurface,
   }: {
     workspaceSearchQuery?: string;
+    workspaceSearchReturnOrigin?: { viewportOffsetPx?: number };
     threadId: string;
     onSelectSurface: (surface: WorkspaceSurfaceDescriptor) => void;
   }) => (
-    <div data-testid="f307-workspace-home-page" data-workspace-search-query={workspaceSearchQuery ?? ''}>
+    <div
+      data-testid="f307-workspace-home-page"
+      data-workspace-search-query={workspaceSearchQuery ?? ''}
+      data-search-offset={workspaceSearchReturnOrigin?.viewportOffsetPx}
+    >
       Canonical Workspace Home
       {(['artifacts', 'schedule'] as const).map((mode) => (
         <button
@@ -297,6 +339,101 @@ describe('F307 zero-surface canonical Home invariant', () => {
       );
     });
   }
+
+  it('records a genuine host-thread request and reselect without inferring tab order', async () => {
+    const target = createWorkspaceModeSurface('artifacts', 'thread-a');
+    const request = {
+      revision: 1,
+      threadId: 'thread-a',
+      target: { kind: 'mode' as const, mode: 'artifacts' as const },
+    };
+    await renderWorkbench(request);
+    expect(container.querySelector('[data-testid="workbench-listen"]')?.getAttribute('data-variant')).toBe('workspace');
+    expect(useF307ExperienceWorkbenchStore.getState().layout.recentSurfaceIdsByThread?.['thread-a']).toEqual([
+      target.id,
+    ]);
+    const layout = useF307ExperienceWorkbenchStore.getState().layout;
+    useF307ExperienceWorkbenchStore.setState({ layout: { ...layout, recentSurfaceIdsByThread: {} } });
+    await renderWorkbench({ ...request, revision: 2 });
+    expect(useF307ExperienceWorkbenchStore.getState().layout.recentSurfaceIdsByThread?.['thread-a']).toEqual([
+      target.id,
+    ]);
+  });
+
+  it('returns a pure publication to Home before the file-only guard and keeps its tab', async () => {
+    const source = createFileSurface({ worktreeId: 'worktree-a', path: 'unrelated.md' });
+    const origin = {
+      kind: 'workspace-home-artifact' as const,
+      threadId: 'thread-a',
+      artifactId: encodeURIComponent(JSON.stringify(['image', null, '/uploads/work.png', 'message', 17, 'work'])),
+      viewportOffsetPx: 84,
+    };
+    const publication = { ...ARTIFACT_SURFACE, navigationOrigin: origin };
+    useF307ExperienceWorkbenchStore.setState({ layout: createInitialWorkbenchState([publication, source]) });
+    await renderWorkbench();
+    const back = container.querySelector<HTMLButtonElement>(`[data-testid="return-origin-${publication.id}"]`);
+    if (!back) throw new Error('The real owner Back callback is missing');
+    await act(async () => back.click());
+    expect(
+      container.querySelector('[data-testid="f307-experience-workbench"]')?.getAttribute('data-workbench-focus'),
+    ).toBe('home');
+    expect(useF307ExperienceWorkbenchStore.getState().layout.surfaces).toEqual([publication, source]);
+  });
+
+  it('keeps a cold explicit execution request above restored foreground, then honors a new foreground input', async () => {
+    const previousChat = useChatStore.getState();
+    useChatStore.setState({ currentThreadId: 'thread-a', presentationLock: null });
+    clearExecutionDetailRequest();
+    useF307ExperienceWorkbenchStore.setState({
+      layout: createInitialWorkbenchState([BROWSER_SURFACE, TERMINAL_SURFACE]),
+    });
+    const execution: ActiveExecutionProjection = {
+      kind: 'managed_command',
+      executionId: 'cold-managed',
+      catId: 'codex61-sol',
+      threadId: 'thread-source',
+      threadTitle: 'source',
+      startedAt: 17,
+      activity: 'test',
+      cancelability: { state: 'not_cancelable', reason: 'foreign_principal' },
+    };
+    const renderForeground = (foregroundSurfaceId: string) =>
+      root.render(
+        <F307ExperienceWorkbench
+          threadId="thread-a"
+          foregroundSurfaceId={foregroundSurfaceId}
+          visible
+          artifactWorkHostAvailable
+          onSelectDevSurface={() => undefined}
+          worktreeId="worktree-a"
+          openFilePath={null}
+          preview={{ path: '/' }}
+          onOpenAppRoute={mocks.openAppRoute}
+        />,
+      );
+    try {
+      // Queue the real transient request before the host mounts with a valid nonempty old foreground.
+      act(() => requestExecutionDetail(execution));
+      await act(async () => renderForeground(BROWSER_SURFACE.id));
+      expect(
+        container.querySelector('[data-testid="f307-experience-workbench"]')?.getAttribute('data-workbench-focus'),
+      ).toBe('home');
+      act(() =>
+        useF307ExperienceWorkbenchStore.getState().dispatch({
+          type: 'activate-surface',
+          surfaceId: TERMINAL_SURFACE.id,
+          entitlement: { kind: 'user', reason: 'surface-tab' },
+        }),
+      );
+      await act(async () => renderForeground(TERMINAL_SURFACE.id));
+      expect(
+        container.querySelector('[data-testid="f307-experience-workbench"]')?.getAttribute('data-workbench-focus'),
+      ).toBe('surface');
+    } finally {
+      clearExecutionDetailRequest();
+      useChatStore.setState(previousChat);
+    }
+  });
 
   it('reveals the existing active artifacts owner when an explicit works entry leaves Home', async () => {
     writeShellPresentation('v2');
@@ -788,7 +925,7 @@ describe('F307 zero-surface canonical Home invariant', () => {
     const onRestoreWorkspaceSearch = vi.fn();
     const surface = {
       ...FILE_SURFACE,
-      navigationOrigin: { kind: 'workspace-home-search' as const, query: 'canonical owner' },
+      navigationOrigin: { kind: 'workspace-home-search' as const, query: 'canonical owner', viewportOffsetPx: 84 },
     };
     useF307ExperienceWorkbenchStore.setState({
       layout: createInitialWorkbenchState([surface]),
@@ -803,6 +940,7 @@ describe('F307 zero-surface canonical Home invariant', () => {
     expect(onRestoreWorkspaceSearch).toHaveBeenCalledWith('canonical owner');
     const home = container.querySelector<HTMLElement>('[data-testid="f307-workspace-home-page"]');
     expect(home?.dataset.workspaceSearchQuery).toBe('canonical owner');
+    expect(home?.dataset.searchOffset).toBe('84');
     expect(useF307ExperienceWorkbenchStore.getState().mainAreaAttentionSurfaceId).toBeNull();
   });
 
@@ -998,6 +1136,32 @@ describe('F307 zero-surface canonical Home invariant', () => {
     expect(state.layout.activeSurfaceId).toBe(`evolution-program:${programId}`);
     expect(state.mainAreaAttentionSurfaceId).toBe(state.layout.activeSurfaceId);
     expect(onConsumed).toHaveBeenCalledWith(1);
+  });
+
+  it.each([true, false])('opens explicit Schedule with original attention only on desktop=%s', async (desktop) => {
+    mocks.isDesktop = desktop;
+    const onConsumed = vi.fn();
+    const request: WorkspaceOpenRequest = {
+      revision: 1,
+      threadId: 'thread-a',
+      target: { kind: 'mode', mode: 'product-schedule' },
+    };
+    await renderWorkbench(request, onConsumed);
+    const state = useF307ExperienceWorkbenchStore.getState();
+    expect(state.layout.activeSurfaceId).toBe('workspace:mode:product-schedule');
+    expect(state.mainAreaAttentionSurfaceId).toBe(desktop ? state.layout.activeSurfaceId : null);
+    expect(onConsumed).toHaveBeenCalledWith(1);
+    act(() => state.exitMainAreaAttention());
+    await renderWorkbench(request, onConsumed);
+    expect(useF307ExperienceWorkbenchStore.getState().mainAreaAttentionSurfaceId).toBeNull();
+    expect(onConsumed).toHaveBeenCalledTimes(1);
+  });
+
+  it('does not widen a passively restored Schedule without a new explicit input', async () => {
+    const schedule = createWorkspaceModeSurface('product-schedule', 'thread-a');
+    useF307ExperienceWorkbenchStore.setState({ layout: createInitialWorkbenchState([schedule]) });
+    await renderWorkbench();
+    expect(useF307ExperienceWorkbenchStore.getState().mainAreaAttentionSurfaceId).toBeNull();
   });
 
   it.each([
@@ -1340,6 +1504,50 @@ describe('F307 zero-surface canonical Home invariant', () => {
     expect(browser?.dataset.surfaceVisible).toBe('false');
   });
 
+  it.each([
+    'desktop',
+    'mobile',
+  ] as const)('keeps the same Schedule owner and local week through %s publication returns', async (presentation) => {
+    mocks.isDesktop = presentation === 'desktop';
+    const schedule = createWorkspaceModeSurface('product-schedule', 'thread-a');
+    const selected = createProductScheduleReturnSurface(schedule, 'task:work:calendar-task');
+    if (!selected) throw new Error('The original Schedule return factory must accept its exact item');
+    useF307ExperienceWorkbenchStore.setState({ layout: createInitialWorkbenchState([schedule]), hydrated: true });
+    await renderWorkbench();
+    const owner = container.querySelector<HTMLElement>(`[data-owner-surface-id="${schedule.id}"]`);
+    if (!owner) throw new Error('The original owner must be mounted');
+    const nextWeek = owner.querySelector<HTMLButtonElement>(`[data-testid="owner-week-${schedule.id}"]`);
+    if (!nextWeek) throw new Error('The owner must expose its local view');
+    await act(async () => nextWeek.click());
+    owner.scrollTop = 218;
+    for (let attempt = 0; attempt < 2; attempt++) {
+      await act(async () =>
+        useF307ExperienceWorkbenchStore.getState().dispatch({
+          type: 'open-artifact-with-return',
+          artifact: ARTIFACT_SURFACE,
+          returnSurface: selected,
+          presentation,
+          entitlement: { kind: 'user', reason: 'workspace-home-selection' },
+        }),
+      );
+      expect(container.querySelectorAll(`[data-owner-surface-id="${schedule.id}"]`)).toHaveLength(1);
+      expect(container.querySelector(`[data-owner-surface-id="${schedule.id}"]`)).toBe(owner);
+      expect(nextWeek.textContent).toBe('12–18');
+      expect(owner.scrollTop).toBe(218);
+      await act(async () =>
+        useF307ExperienceWorkbenchStore.getState().dispatch({
+          type: 'close-artifact-to-return',
+          artifactSurfaceId: ARTIFACT_SURFACE.id,
+          entitlement: { kind: 'user', reason: 'return-origin' },
+        }),
+      );
+      expect(container.querySelector(`[data-owner-surface-id="${schedule.id}"]`)).toBe(owner);
+      expect(nextWeek.textContent).toBe('12–18');
+      expect(owner.scrollTop).toBe(218);
+      expect(useF307ExperienceWorkbenchStore.getState().layout.activeSurfaceId).toBe(schedule.id);
+    }
+  });
+
   it('labels an Agent Run tab as running work and describes close as removing only its Workspace view', async () => {
     useF307ExperienceWorkbenchStore.setState({
       layout: createInitialWorkbenchState([AGENT_RUN_SURFACE]),
@@ -1394,6 +1602,75 @@ describe('F307 zero-surface canonical Home invariant', () => {
       activeSurfaceId: FILE_SURFACE.id,
       recentlyClosed: [],
     });
+  });
+
+  it('updates recently closed controls with the v2 language without losing expansion or restore identity', async () => {
+    writeShellPresentation('v2');
+    writeShellLanguage('en');
+    useF307ExperienceWorkbenchStore.setState({
+      layout: { ...createInitialWorkbenchState(), recentlyClosed: [FILE_SURFACE] },
+      hydrated: true,
+    });
+    await renderWorkbench();
+    const toggle = container.querySelector<HTMLButtonElement>('[data-testid="f307-recently-closed-toggle"]')!;
+    expect(toggle.textContent).toBe('Recently closed 1');
+    expect(toggle.getAttribute('aria-label')).toBe('Expand recently closed Workspace pages');
+    await act(async () => toggle.click());
+    expect(toggle.getAttribute('aria-label')).toBe('Collapse recently closed Workspace pages');
+    const restore = container.querySelector<HTMLButtonElement>('[data-testid="f307-restore-code"]')!;
+    expect(restore.textContent).toBe(`Restore ${FILE_SURFACE.title}`);
+
+    await act(async () => writeShellLanguage('zh'));
+    expect(container.querySelector('[data-testid="f307-recently-closed-toggle"]')).toBe(toggle);
+    expect(toggle.getAttribute('aria-expanded')).toBe('true');
+    expect(toggle.textContent).toBe('最近关闭 1');
+    expect(toggle.getAttribute('aria-label')).toBe('收起最近关闭的工作区页面');
+    expect(restore.textContent).toBe(`恢复 ${FILE_SURFACE.title}`);
+    await act(async () => writeShellLanguage('en'));
+    expect(restore.textContent).toBe(`Restore ${FILE_SURFACE.title}`);
+    await act(async () => restore.click());
+    expect(useF307ExperienceWorkbenchStore.getState().layout).toMatchObject({
+      surfaces: [FILE_SURFACE],
+      activeSurfaceId: FILE_SURFACE.id,
+      recentlyClosed: [],
+    });
+  });
+
+  it.each([
+    'v2',
+    'classic',
+  ] as const)('uses %s activity and restore labels with an English preference', async (presentation) => {
+    writeShellPresentation(presentation);
+    writeShellLanguage('en');
+    const activity = {
+      id: 'locale-test',
+      kind: 'surface-ready' as const,
+      message: '人写的提示',
+      surface: FILE_SURFACE,
+    };
+    useF307ExperienceWorkbenchStore.setState({
+      layout: {
+        ...createInitialWorkbenchState([BROWSER_SURFACE]),
+        recentlyClosed: [FILE_SURFACE],
+        activity: [activity],
+      },
+      hydrated: true,
+    });
+    await renderWorkbench();
+    const notice = container.querySelector('[data-testid="f307-activity-surface-ready"]')!;
+    expect(notice.querySelector('p')?.textContent).toBe(activity.message);
+    const [open, dismiss] = Array.from(notice.querySelectorAll<HTMLButtonElement>('button'));
+    expect(open.textContent?.trim()).toBe(presentation === 'v2' ? 'View' : '查看');
+    expect(dismiss.getAttribute('aria-label')).toBe(presentation === 'v2' ? 'Dismiss notification' : '关闭提醒');
+    const toggle = container.querySelector<HTMLButtonElement>('[data-testid="f307-recently-closed-toggle"]')!;
+    expect(toggle.getAttribute('aria-label')).toBe(
+      presentation === 'v2' ? 'Expand recently closed Workspace pages' : '展开最近关闭的工作区页面',
+    );
+    await act(async () => toggle.click());
+    const restore = container.querySelector<HTMLButtonElement>('[data-testid="f307-restore-code"]')!;
+    expect(restore.textContent).toBe(`${presentation === 'v2' ? 'Restore' : '恢复'} ${FILE_SURFACE.title}`);
+    await act(async () => dismiss.click());
+    expect(useF307ExperienceWorkbenchStore.getState().layout.activity).toEqual([]);
   });
 
   it('focuses Home when hydration filters every persisted surface as owner-invalid', async () => {

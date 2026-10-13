@@ -144,6 +144,17 @@ export function registerContentModificationRoutes(app: FastifyInstance, deps: Se
       return replyContentModificationError(reply, error);
     }
   });
+  app.post('/api/content-modifications/:requestId/publication-recovery', async (request, reply) => {
+    reply.header('Cache-Control', 'private, no-store');
+    const principal = directContentHuman(request);
+    if (!principal) return reply.code(401).send({ error: 'identity_required' });
+    try {
+      const { requestId } = params.parse(request.params);
+      return await deps.publicationRecovery.recover(requestId, request.body, principal);
+    } catch (error) {
+      return replyContentModificationError(reply, error);
+    }
+  });
   app.post('/api/content-modifications/:requestId/reject', async (request, reply) => {
     const principal = directContentHuman(request);
     if (!principal) return reply.code(401).send({ error: 'identity_required' });

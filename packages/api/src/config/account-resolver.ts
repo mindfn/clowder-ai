@@ -21,7 +21,6 @@ import {
 } from '@cat-cafe/shared';
 import { readAccountSnapshot, readAccountStoreSnapshot } from './account-store-snapshot.js';
 import { codexManagedStatus } from './codex-account-identity.js';
-import { codexManagedRuntimeHome } from './codex-managed-layout.js';
 import {
   assertProviderCredentialDestination,
   officialProviderFamily,
@@ -282,7 +281,9 @@ export function accountToRuntimeProfile(
       ? {
           codex: account.codex,
           envVars: {
-            HOME: codexManagedRuntimeHome(account.codex),
+            // OAuth owns Codex credentials/state, not the host's ordinary tools.
+            // Managed launches force file auth under CODEX_HOME; changing HOME
+            // also hides gh/Git settings, SSH config, browser caches and extensions.
             CODEX_HOME: account.codex.credentialHome,
             CODEX_SQLITE_HOME: account.codex.sqliteHome,
           },

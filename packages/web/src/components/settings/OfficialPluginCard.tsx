@@ -22,6 +22,8 @@ import {
   officialPluginPresentation as presentation,
 } from './official-plugin-presentation';
 import type { OfficialPluginAction, OfficialPluginInfo } from './official-plugin-types';
+import { PluginVisual } from './plugin-manager/PluginVisual';
+import type { PluginManagerDesignFixture } from './plugin-manager/plugin-manager-fixtures';
 import { SettingsBadge } from './primitives/SettingsBadge';
 import { SettingsDeleteButton } from './primitives/SettingsDeleteButton';
 import { SettingsPrimaryButton } from './primitives/SettingsPrimaryButton';
@@ -168,11 +170,13 @@ function historyImportTarget(plugin: OfficialPluginInfo, ownerAuthConnected: boo
 
 export function OfficialPluginCard({
   plugin,
+  visual,
   busy,
   onAction,
   onCatchUp,
 }: {
   plugin: OfficialPluginInfo;
+  visual?: Pick<PluginManagerDesignFixture, 'icon' | 'iconBg'>;
   busy: boolean;
   onAction: (action: OfficialPluginAction) => void;
   onCatchUp: (action: OfficialPluginCatchUpAction, fingerprint?: string) => void;
@@ -211,12 +215,16 @@ export function OfficialPluginCard({
           aria-expanded={expanded}
           onClick={() => setExpanded((current) => !current)}
         >
-          <div
-            className={settingsResourceAvatarClass}
-            style={{ backgroundColor: copy.avatarBackground, color: 'var(--cafe-surface)' }}
-          >
-            <HubIcon name={copy.icon} className="h-5 w-5" />
-          </div>
+          {visual ? (
+            <PluginVisual icon={visual.icon} iconBg={visual.iconBg} name={copy.name} size="large" />
+          ) : (
+            <div
+              className={settingsResourceAvatarClass}
+              style={{ backgroundColor: copy.avatarBackground, color: 'var(--cafe-image-foreground)' }}
+            >
+              <HubIcon name={copy.icon} className="h-5 w-5" />
+            </div>
+          )}
           <div className="min-w-0 flex-1">
             <SettingsText as="p" variant="sm" tone="default" className="font-semibold">
               {copy.name}

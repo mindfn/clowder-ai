@@ -11,6 +11,7 @@ export const MAX_PLUGIN_PACKAGE_BYTES = 32 * 1024 * 1024;
 /** @deprecated Use MAX_PLUGIN_PACKAGE_BYTES for source-neutral admission. */
 export const MAX_OFFICIAL_PACKAGE_BYTES = MAX_PLUGIN_PACKAGE_BYTES;
 const DOWNLOAD_TIMEOUT_MS = 30_000;
+const DOWNLOAD_ATTEMPTS = 2;
 const log = createModuleLogger('plugin/official-package-archive');
 
 // Transport errors may wrap an AggregateError with one cause per address.
@@ -74,50 +75,57 @@ export async function downloadCatalogArchive(entry: OfficialPluginCatalogEntry):
   if (url.protocol !== 'https:' || url.hostname !== 'registry.npmjs.org') {
     throw new OfficialPluginInstallError('PACKAGE_DOWNLOAD_FAILED', 'official package URL is outside npm registry');
   }
-  const startedAt = performance.now();
-  let phase: 'fetch' | 'response' | 'body' = 'fetch';
-  let response: Response | null = null;
-  const progress = { bytesReceived: 0 };
-  try {
-    response = await fetch(url, {
-      redirect: 'error',
-      signal: AbortSignal.timeout(DOWNLOAD_TIMEOUT_MS),
-      headers: { accept: 'application/octet-stream' },
-    });
-    phase = 'response';
-    if (!response.ok) {
-      throw new OfficialPluginInstallError(
-        'PACKAGE_DOWNLOAD_FAILED',
-        `official package registry returned HTTP ${response.status}`,
+  for (let attempt = 1; ; attempt += 1) {
+    const startedAt = performance.now();
+    let phase: 'fetch' | 'response' | 'body' = 'fetch';
+    let response: Response | null = null;
+    const progress = { bytesReceived: 0 };
+    try {
+      response = await fetch(url, {
+        redirect: 'error',
+        signal: AbortSignal.timeout(DOWNLOAD_TIMEOUT_MS),
+        headers: { accept: 'application/octet-stream' },
+      });
+      phase = 'response';
+      if (!response.ok) {
+        throw new OfficialPluginInstallError(
+          'PACKAGE_DOWNLOAD_FAILED',
+          `official package registry returned HTTP ${response.status}`,
+        );
+      }
+      phase = 'body';
+      return await readBoundedBody(response, progress);
+    } catch (error) {
+      const retrying = !(error instanceof OfficialPluginInstallError) && attempt < DOWNLOAD_ATTEMPTS;
+      log.warn(
+        {
+          catalogId: entry.catalogId,
+          packageName: entry.packageName,
+          version: entry.version,
+          attempt,
+          maxAttempts: DOWNLOAD_ATTEMPTS,
+          retrying,
+          phase,
+          elapsedMs: Math.round(performance.now() - startedAt),
+          bytesReceived: progress.bytesReceived,
+          response: response
+            ? {
+                url: response.url || null,
+                status: response.status,
+                redirected: response.redirected,
+                contentLength: response.headers.get('content-length'),
+              }
+            : null,
+          error: describeDownloadError(error),
+        },
+        'Official package archive download failed',
       );
+      if (retrying) continue;
+      if (error instanceof OfficialPluginInstallError) throw error;
+      throw new OfficialPluginInstallError('PACKAGE_DOWNLOAD_FAILED', 'official package download failed', {
+        cause: error,
+      });
     }
-    phase = 'body';
-    return await readBoundedBody(response, progress);
-  } catch (error) {
-    log.warn(
-      {
-        catalogId: entry.catalogId,
-        packageName: entry.packageName,
-        version: entry.version,
-        phase,
-        elapsedMs: Math.round(performance.now() - startedAt),
-        bytesReceived: progress.bytesReceived,
-        response: response
-          ? {
-              url: response.url || null,
-              status: response.status,
-              redirected: response.redirected,
-              contentLength: response.headers.get('content-length'),
-            }
-          : null,
-        error: describeDownloadError(error),
-      },
-      'Official package archive download failed',
-    );
-    if (error instanceof OfficialPluginInstallError) throw error;
-    throw new OfficialPluginInstallError('PACKAGE_DOWNLOAD_FAILED', 'official package download failed', {
-      cause: error,
-    });
   }
 }
 

@@ -64,7 +64,7 @@ const record: ContentModificationRecord = {
     intent: { body: '修改原文' },
     source: {
       kind: 'workspace',
-      locator: { worktreeId: 'worktree-a', path: 'notes.md' },
+      locator: { worktreeId: 'worktree-a', path: 'notes.txt' },
       expectedSourceRevision: `sha256:${'a'.repeat(64)}`,
       reviewId: 'review',
       expectedReviewRevision: 1,
@@ -74,16 +74,16 @@ const record: ContentModificationRecord = {
 const file = () =>
   new Response(
     JSON.stringify({
-      path: 'notes.md',
+      path: 'notes.txt',
       content: '# Original',
       sha256: 'source-sha',
       size: 10,
-      mime: 'text/markdown',
+      mime: 'text/plain',
       truncated: false,
     }),
   );
 
-describe('v2 file owner consumes the disclosure part of a receipt comparison navigation', () => {
+describe('v2 non-Markdown file owner consumes the disclosure part of a receipt comparison navigation', () => {
   let container: HTMLDivElement;
   let root: Root;
   const onReturn = vi.fn();
@@ -113,7 +113,7 @@ describe('v2 file owner consumes the disclosure part of a receipt comparison nav
     act(async () => {
       root.render(
         <F307FileOwnerSurface
-          surface={createFileSurface({ worktreeId: 'worktree-a', path: 'notes.md', navigationOrigin: origin })}
+          surface={createFileSurface({ worktreeId: 'worktree-a', path: 'notes.txt', navigationOrigin: origin })}
           onRequestDetach={vi.fn()}
           onReturnToNavigationOrigin={onReturn}
         />,
@@ -176,7 +176,7 @@ describe('v2 file owner consumes the disclosure part of a receipt comparison nav
         ...record,
         payload: {
           ...record.payload,
-          source: { ...record.payload.source, locator: { worktreeId: 'foreign-worktree', path: 'notes.md' } },
+          source: { ...record.payload.source, locator: { worktreeId: 'foreign-worktree', path: 'notes.txt' } },
         },
       } as ContentModificationRecord,
     },

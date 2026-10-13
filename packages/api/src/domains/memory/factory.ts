@@ -28,7 +28,7 @@ import { MemoryEmbeddingLifecycle } from './MemoryEmbeddingLifecycle.js';
 import type { PassageVectorStore } from './PassageVectorStore.js';
 import { createPersonalMemoryStore, registerPrivateAndExternalCollections } from './private-collection-bindings.js';
 import { ReflectionService } from './ReflectionService.js';
-import { SqliteEvidenceStore } from './SqliteEvidenceStore.js';
+import { SqliteEvidenceStore, type SqliteEvidenceStoreOptions } from './SqliteEvidenceStore.js';
 import type { VectorStore } from './VectorStore.js';
 
 export interface MemoryServices {
@@ -62,6 +62,8 @@ export interface MemoryServices {
 
 export interface MemoryConfig {
   type: 'sqlite';
+  /** API composition-root diagnostics apply only to the project connection shared with schedulerDb. */
+  readDiagnostics?: SqliteEvidenceStoreOptions['readDiagnostics'];
   /** For sqlite: path to evidence.sqlite file */
   sqlitePath?: string;
   /** For sqlite: root docs/ directory for IndexBuilder */
@@ -134,7 +136,7 @@ export async function createMemoryServices(config: MemoryConfig): Promise<Memory
   const markersDir = config.markersDir ?? 'docs/markers';
   const embedConfig = resolveEmbedConfig(config.embed);
 
-  const store = new SqliteEvidenceStore(sqlitePath);
+  const store = new SqliteEvidenceStore(sqlitePath, undefined, { readDiagnostics: config.readDiagnostics });
   await store.initialize();
   const stores = new Map<string, IEvidenceStore>();
   stores.set('project:cat-cafe', store);

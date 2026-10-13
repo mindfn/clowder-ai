@@ -2,16 +2,20 @@
 
 import { useCallback, useEffect, useState } from 'react';
 import { createPortal } from 'react-dom';
+import { API_URL } from '@/utils/api-client';
 
 async function copyImageToClipboard(url: string) {
-  const res = await fetch(url);
+  const source = new URL(url, window.location.origin);
+  const privateDotImage =
+    source.origin === new URL(API_URL).origin && source.pathname.startsWith('/api/plugins/chatgpt-dot/images/');
+  const res = await fetch(url, privateDotImage ? { credentials: 'include' } : undefined);
   if (!res.ok) throw new Error(`fetch failed: ${res.status}`);
   const blob = await res.blob();
   if (!blob.type.startsWith('image/')) throw new Error(`not an image: ${blob.type}`);
   await navigator.clipboard.write([new ClipboardItem({ [blob.type]: blob })]);
 }
 
-export function CopyButton({ url }: { url: string }) {
+export function CopyButton({ url, placement = 'overlay' }: { url: string; placement?: 'overlay' | 'below' }) {
   const [copied, setCopied] = useState(false);
 
   const handleCopy = useCallback(
@@ -36,7 +40,11 @@ export function CopyButton({ url }: { url: string }) {
     <button
       type="button"
       onClick={handleCopy}
-      className="absolute top-2 right-2 bg-[var(--console-overlay-control)] hover:bg-[var(--console-overlay-control-hover)] text-[var(--overlay-fg)] rounded-md px-2 py-1 text-xs opacity-0 group-hover:opacity-100 transition-opacity"
+      className={
+        placement === 'below'
+          ? 'rounded-md border border-cafe-subtle px-2 py-1 text-xs text-cafe-muted hover:text-cafe'
+          : 'absolute top-2 right-2 bg-[var(--console-overlay-control)] hover:bg-[var(--console-overlay-control-hover)] text-[var(--overlay-fg)] rounded-md px-2 py-1 text-xs opacity-0 group-hover:opacity-100 transition-opacity'
+      }
       title={copied ? 'Copied!' : 'Copy image'}
     >
       {copied ? 'Copied!' : 'Copy'}

@@ -24,6 +24,7 @@ import { PawIcon } from '../icons/PawIcon';
 import { MessageSelectionToolbar } from '../MessageSelectionToolbar';
 import { messageMountPolicy } from '../message-mount-policy';
 import { isMessageSelectableForBundle, MAX_SELECTED_MESSAGES } from '../message-selection';
+import { ImportedSessionNotice } from '../new-conversation/ImportedSessionNotice';
 import { ReplyRecallRuntimeProvider } from '../reply-layers/ReplyRecallRuntimeProvider';
 import type { CardConfirmationEntry } from '../rich/CardBlock';
 import { useShellPresentation } from '../shell/shell-presentation';
@@ -208,11 +209,11 @@ export function ThreadChatSurface({
           className={
             composerPresentation === 'v2'
               ? compact
-                ? 'h-full overflow-y-auto pl-3 pr-[42px] py-3'
-                : 'h-full overflow-y-auto p-4 pr-10'
+                ? 'h-full overflow-y-auto [overflow-anchor:none] pl-3 pr-[42px] py-3'
+                : 'h-full overflow-y-auto [overflow-anchor:none] p-4 pr-10'
               : compact
-                ? 'h-full overflow-y-auto px-3 py-3'
-                : 'h-full overflow-y-auto p-4'
+                ? 'h-full overflow-y-auto [overflow-anchor:none] px-3 py-3'
+                : 'h-full overflow-y-auto [overflow-anchor:none] p-4'
           }
           tabIndex={composerPresentation === 'v2' ? -1 : undefined}
           data-message-piano-ready={(composerPresentation === 'v2' && pianoReady) || undefined}
@@ -234,6 +235,7 @@ export function ThreadChatSurface({
               checkedAt={connectionStatus.checkedAt}
               isOfflineSnapshot={isOfflineSnapshot}
             />
+            {composerPresentation === 'v2' && !compact && <ImportedSessionNotice threadId={threadId} />}
             {timelineLead}
             {!hasMore && messages.length > 0 && (
               <div className="py-3 text-center text-xs text-cafe-muted">没有更多消息了</div>
@@ -327,7 +329,9 @@ export function ThreadChatSurface({
               }
               threadId={threadId}
               onSend={(content, images, whisper, replyToId, contextAttachments, explicitTargetCats) =>
-                handleSend(content, images, undefined, whisper, replyToId, contextAttachments, explicitTargetCats)
+                handleSend(content, images, undefined, whisper, replyToId, contextAttachments, explicitTargetCats, {
+                  consumeComposerDraft: true,
+                })
               }
               disabled={connectionStatus.isReadonly}
               hasActiveInvocation={hasActiveInvocation}

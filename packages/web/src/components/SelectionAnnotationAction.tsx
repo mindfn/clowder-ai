@@ -77,14 +77,30 @@ export function SelectionAnnotationAction({
   const [editing, setEditing] = useState(initialEditing);
   const [comment, setComment] = useState(initialComment);
   const commentRef = useRef<HTMLTextAreaElement>(null);
+  const editorRef = useRef<HTMLElement>(null);
   const commentId = useId();
   const commentHintId = `${commentId}-hint`;
   const ime = useIMEGuard();
-  const actionSurfaceRef = useActionSurfaceRef<HTMLElement>();
+  // Once opened, the editor owns a draft. Source toolbar geometry may change
+  // while incoming messages scroll its row out of view; that cannot revoke it.
+  const sourceOwner = editing ? null : undefined;
+  const actionSurfaceRef = useActionSurfaceRef<HTMLElement>(sourceOwner, undefined, editorRef);
   useActionOwnerReset(() => {
     setEditing(false);
     onClose?.();
-  });
+  }, sourceOwner);
+
+  useEffect(() => {
+    if (!editing) return;
+    const dismissOutside = (event: PointerEvent) => {
+      if (!(event.target instanceof Node) || editorRef.current?.contains(event.target)) return;
+      setEditing(false);
+      setComment(initialComment);
+      onClose?.();
+    };
+    document.addEventListener('pointerdown', dismissOutside);
+    return () => document.removeEventListener('pointerdown', dismissOutside);
+  }, [editing, initialComment, onClose]);
 
   useEffect(() => {
     void selectedText;
@@ -152,6 +168,14 @@ export function SelectionAnnotationAction({
       ref={actionSurfaceRef}
       data-testid="context-annotation-editor"
       data-context-annotation-ui
+      onKeyDown={(event) => {
+        if (event.key !== 'Escape') return;
+        event.preventDefault();
+        event.stopPropagation();
+        setEditing(false);
+        setComment(initialComment);
+        onClose?.();
+      }}
       style={annotationEditorPosition(position, positionMode)}
       className={`${positionClass} z-[80] flex max-h-[calc(100dvh-1rem)] w-[min(25rem,calc(100vw-1rem))] flex-col overflow-hidden rounded-2xl border border-cafe bg-cafe-surface-elevated shadow-2xl`}
       aria-label="添加选区批注"
@@ -182,11 +206,6 @@ export function SelectionAnnotationAction({
                 event.preventDefault();
                 save();
                 return;
-              }
-              if (event.key === 'Escape') {
-                setEditing(false);
-                setComment(initialComment);
-                onClose?.();
               }
             }}
             rows={3}

@@ -29,6 +29,22 @@ const MESSAGE_BUNDLE = {
 };
 
 describe('durable message extra carriers survive Redis round-trips', () => {
+  it('preserves the local-review original rich request digest while discarding malformed digests', async () => {
+    const { serializeExtra, safeParseExtra } = await import(
+      '../dist/domains/cats/services/stores/redis/redis-message-parsers.js'
+    );
+    const digest = 'a'.repeat(64);
+    assert.equal(
+      safeParseExtra(serializeExtra({ callbackRichRequestDigest: digest }))?.callbackRichRequestDigest,
+      digest,
+    );
+    const malformed = safeParseExtra(
+      JSON.stringify({ callbackRichRequestDigest: 'not-a-digest', isExplicitPost: true }),
+    );
+    assert.equal(malformed.callbackRichRequestDigest, undefined);
+    assert.equal(malformed.isExplicitPost, true);
+  });
+
   it('F317 preserves spoken-source identity and rejects malformed fields without dropping siblings', async () => {
     const { serializeExtra, safeParseExtra } = await import(
       '../dist/domains/cats/services/stores/redis/redis-message-parsers.js'

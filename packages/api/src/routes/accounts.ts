@@ -20,10 +20,12 @@ import { CodexLoginManager } from '../config/codex-login-manager.js';
 import { describeCodexManagedLayout, prepareCodexManagedLayout } from '../config/codex-managed-layout.js';
 import { configEventBus, createChangeSetId } from '../config/config-event-bus.js';
 import { deleteCredential, hasCredential, writeCredential } from '../config/credentials.js';
+import { resolveActiveProjectRoot } from '../utils/active-project-root.js';
 import { resolveUserId } from '../utils/request-identity.js';
 import { registerCodexBindingRoutes } from './accounts-codex-binding.js';
 import { registerCodexLoginRoutes } from './accounts-codex-login.js';
 import { registerCodexQuotaRoutes } from './accounts-codex-quota.js';
+import { inspectNativeAccountDefaults } from './accounts-native-view.js';
 import { resolveAccountProjectRoot } from './accounts-project-root.js';
 import { createBodySchema, deleteBodySchema, projectQuerySchema, updateBodySchema } from './accounts-schemas.js';
 import { accountToView, deriveAccountId } from './accounts-view.js';
@@ -97,7 +99,17 @@ export const accountsRoutes: FastifyPluginAsync<{
           projectRoot,
         ),
       );
-      return { projectPath: projectRoot, providers, unavailableAccounts: snapshot.unavailableAccounts };
+      const nativeDefaults = inspectNativeAccountDefaults(projectRoot);
+      for (const [id, account] of nativeDefaults.defaults) {
+        if (!snapshot.entries[id] && !snapshot.unavailableAccounts.some((row) => row.accountRef === id))
+          providers.push(accountToView(id, account, false, projectRoot));
+      }
+      return {
+        projectPath: projectRoot,
+        providers,
+        unavailableAccounts: snapshot.unavailableAccounts,
+        ...(nativeDefaults.error ? { nativeDefaultsError: nativeDefaults.error } : {}),
+      };
     } catch (error) {
       reply.status(400);
       return { error: error instanceof Error ? error.message : String(error) };
@@ -164,7 +176,7 @@ export const accountsRoutes: FastifyPluginAsync<{
       });
       return {
         projectPath: projectRoot,
-        profile: accountToView(profileId, account, !!body.apiKey),
+        profile: accountToView(profileId, account, !!body.apiKey, projectRoot),
       };
     } catch (err) {
       reply.status(400);
@@ -263,7 +275,7 @@ export const accountsRoutes: FastifyPluginAsync<{
       });
       return {
         projectPath: projectRoot,
-        profile: accountToView(params.profileId, account, hasCredential(params.profileId, projectRoot)),
+        profile: accountToView(params.profileId, account, hasCredential(params.profileId, projectRoot), projectRoot),
       };
     } catch (err) {
       reply.status(400);
@@ -296,7 +308,7 @@ export const accountsRoutes: FastifyPluginAsync<{
       // Check the runtime catalog for dangling references. Template is bootstrap-only
       // and is not part of runtime binding truth after catalog creation.
       if (!parsed.data.force && accountExists) {
-        const boundCatIds = findBoundCatIds(projectRoot, params.profileId);
+        const boundCatIds = findBoundCatIds(resolveActiveProjectRoot(), params.profileId);
         if (boundCatIds instanceof Error) {
           reply.status(500);
           return {
@@ -310,6 +322,12 @@ export const accountsRoutes: FastifyPluginAsync<{
             boundCatIds,
           };
         }
+        const catalogPath = resolveCatCatalogPath(resolveActiveProjectRoot());
+        if (
+          existsSync(catalogPath) &&
+          Object.values(loadCatConfig(catalogPath).selectedAccountRefs ?? {}).includes(params.profileId)
+        )
+          return reply.code(409).send({ error: '这个号是工具正在用的账号，请先换成另一个号再删除登记' });
         if (!isProjectScopedGlobalStore(projectRoot)) {
           reply.status(409);
           return {

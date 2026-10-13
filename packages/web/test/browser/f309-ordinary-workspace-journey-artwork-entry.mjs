@@ -107,12 +107,15 @@ export function registerArtworkEntryJourneys(suite) {
       const owner = await startRealWorkspaceOwner(data);
       let networkProxy;
       const mediaDir = await mkdtemp(path.join(owner.root, 'f309-artwork-entry-'));
-      const context = await suite().browser.newContext({ viewport: { width: 1440, height: 900 } });
+      const context = await suite().browser.newContext({ viewport: { width: 1280, height: 900 } });
       const sent = [],
         errors = [];
       try {
         networkProxy = await startWorkspaceNetworkProxy(suite().baseUrl, owner.api);
-        await writeFile(path.join(mediaDir, 'cover.png'), IMAGE_FIXTURE.bytes);
+        const actualReturnedImage = await readFile(
+          new URL('../../../../docs/evidence/2026-10-10-f309-5337-parent-alpha/generated.png', import.meta.url),
+        );
+        await writeFile(path.join(mediaDir, 'cover.png'), actualReturnedImage);
         await writeFile(path.join(mediaDir, 'notes.md'), '# 文档\n\n这一段需要协作批注。\n');
         const audio = Buffer.from(
           'UklGRsQAAABXQVZFZm10IBAAAAABAAEAQB8AAIA+AAACABAAZGF0YaAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA',
@@ -220,9 +223,23 @@ export function registerArtworkEntryJourneys(suite) {
             '这份未发送的草稿留在这里',
           THREAD_ID,
         );
-        await page.getByRole('button', { name: '打开作品 工作区作品', exact: true }).click();
+        const thumbnail = page.getByRole('button', { name: '打开作品 工作区作品', exact: true });
+        await thumbnail.click();
         const surface = page.locator('[data-testid="workspace-content-review-surface"]:visible');
         await surface.getByTestId('workspace-content-review-media').waitFor({ timeout: 30_000 });
+        await thumbnail.scrollIntoViewIfNeeded();
+        const thumbnailBox = await thumbnail.boundingBox();
+        assert.ok(thumbnailBox && thumbnailBox.width < 160, `narrow Chat thumbnail: ${JSON.stringify(thumbnailBox)}`);
+        await thumbnail.hover();
+        assert.equal(
+          await thumbnail.evaluate((button) => {
+            const box = button.getBoundingClientRect();
+            return button.contains(document.elementFromPoint(box.x + box.width / 2, box.y + box.height / 2));
+          }),
+          true,
+          'the thumbnail center opens the work instead of being intercepted by Copy',
+        );
+        await thumbnail.click();
         assert.equal(await surface.getAttribute('data-navigation-origin'), 'chat-file-link');
         assert.equal(await page.getByRole('dialog').count(), 0);
         const chatBox = await page.locator('[data-chat-container]').boundingBox();

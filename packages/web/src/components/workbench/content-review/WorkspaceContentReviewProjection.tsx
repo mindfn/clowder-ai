@@ -11,9 +11,10 @@ import type { WorkspaceAnnotationTarget } from './useWorkspaceContentReview';
 import { useWorkspaceMediaChat } from './useWorkspaceMediaChat';
 import { WorkspaceContentReviewComments } from './WorkspaceContentReviewComments';
 import { WorkspaceContentReviewMedia } from './WorkspaceContentReviewMedia';
+import { WorkspaceContentReviewSourceState } from './WorkspaceContentReviewSourceState';
 import { WorkspaceContentReviewText } from './WorkspaceContentReviewText';
 import { WorkspaceLegacyTextNotes } from './WorkspaceLegacyTextNotes';
-import { AddToChatButton, AddToChatNotice } from './WorkspaceMediaChatControls';
+import { AddToChatButton, AddToChatNotice, WholeWorkChatButton } from './WorkspaceMediaChatControls';
 import { WorkspaceModificationEntry } from './WorkspaceModificationEntry';
 import type { LegacyTextNotes } from './workspace-review-legacy-text';
 
@@ -40,6 +41,7 @@ export function WorkspaceContentReviewProjection({
   capabilities,
   workflow,
   legacyText,
+  fileReader,
 }: {
   readonly legacyText?: LegacyTextNotes;
   readonly capabilities: ContentLandingCapabilities;
@@ -60,6 +62,11 @@ export function WorkspaceContentReviewProjection({
   readonly refreshSource: () => Promise<void>;
   readonly act: Act;
   readonly onApplied?: (writtenRevision?: string) => Promise<void> | void;
+  readonly fileReader?: {
+    selection: { revision: string; quote: string } | null;
+    openRequest: number;
+    modificationDisabled: boolean;
+  };
 }) {
   const [discussionOpen, setDiscussionOpen] = useState(false);
   const [discussionFocusRequest, setDiscussionFocusRequest] = useState<FocusRequest | null>(null);
@@ -75,6 +82,7 @@ export function WorkspaceContentReviewProjection({
   // A text selection is live, like the card built on it: it targets "请猫修改" but is never stored as a draft,
   // so it cannot overwrite the quote of an old unsubmitted text draft.
   const [textSelection, setTextSelection] = useState<{ revision: string; quote: string } | null>(null);
+  const selectedText = fileReader ? fileReader.selection : textSelection;
   const focusSequence = useRef(0);
   const requestFocus = (annotationId: string): FocusRequest => ({ annotationId, requestId: ++focusSequence.current });
   const openDiscussion = (annotationId: string) => {
@@ -97,6 +105,18 @@ export function WorkspaceContentReviewProjection({
   const mediaChat = useWorkspaceMediaChat({ view, path, workflow, target, draft, setDraft, setTarget });
   if (source.kind === 'video-project')
     return <p className="p-3 text-sm text-cafe-muted">当前文件视图尚不支持视频项目审阅。</p>;
+  const imageChatPrimary = source.kind !== 'text' && source.mime === 'image/png';
+  const saveAnnotation = (
+    <button
+      type="submit"
+      aria-label="保存批注"
+      className={imageChatPrimary ? commentStyles.secondarySave : commentStyles.send}
+      disabled={!canWrite || !target || !draft.trim()}
+    >
+      {imageChatPrimary ? '保存批注' : <ReviewToolbarIcon name="send" />}
+      {!imageChatPrimary ? <span className="sr-only">保存批注</span> : null}
+    </button>
+  );
   const composer = (
     <>
       <form
@@ -116,15 +136,17 @@ export function WorkspaceContentReviewProjection({
           />
         </label>
         <AddToChatButton chat={mediaChat} />
-        <button
-          type="submit"
-          aria-label="保存批注"
-          className={commentStyles.send}
-          disabled={!canWrite || !target || !draft.trim()}
-        >
-          <ReviewToolbarIcon name="send" />
-          <span className="sr-only">保存批注</span>
-        </button>
+        {imageChatPrimary ? (
+          <details className={commentStyles.annotationActions}>
+            <summary aria-label="批注操作" title="批注操作">
+              <ReviewToolbarIcon name="more" />
+              <span className="sr-only">批注操作</span>
+            </summary>
+            <div className={commentStyles.annotationActionsBody}>{saveAnnotation}</div>
+          </details>
+        ) : (
+          saveAnnotation
+        )}
       </form>
       <AddToChatNotice chat={mediaChat} />
     </>
@@ -162,12 +184,17 @@ export function WorkspaceContentReviewProjection({
         path={path}
         target={
           source.kind === 'text'
-            ? textSelection?.revision === source.revision
-              ? { kind: 'text_quote', quote: textSelection.quote }
+            ? selectedText?.revision === source.revision
+              ? { kind: 'text_quote', quote: selectedText.quote }
               : null
             : target
         }
-        disabled={!canWrite || capabilities.requestModification.state !== 'available'}
+        allowNewRequest={!imageChatPrimary}
+        disabled={
+          !canWrite || capabilities.requestModification.state !== 'available' || !!fileReader?.modificationDisabled
+        }
+        openRequest={fileReader?.openRequest}
+        hideTrigger={!!fileReader}
         onApplied={onApplied}
         onExpanded={() => setModificationOpenRequest((request) => request + 1)}
         onComparing={setComparingAt}
@@ -189,7 +216,7 @@ export function WorkspaceContentReviewProjection({
             onShowRecord={openDiscussion}
           />
         ) : null}
-        {view.sourceState === 'current' ? (
+        {!fileReader && view.sourceState === 'current' ? (
           sourceTextRevision === source.revision ? (
             <WorkspaceContentReviewText
               text={sourceText}
@@ -273,6 +300,12 @@ export function WorkspaceContentReviewProjection({
           修改想法 · {target?.kind === 'media_anchor' ? '当前选区' : '整图'}
         </p>
       )}
+      {!comparing ? (
+        <div className="flex shrink-0 justify-end px-3 py-2">
+          <WholeWorkChatButton chat={mediaChat} />
+        </div>
+      ) : null}
+      {!mediaChat.offered ? <AddToChatNotice chat={mediaChat} /> : null}
       <div className={styles.modificationRegion}>{modification}</div>
       {discussionOpen || view.sourceState !== 'current' ? (
         <aside className={styles.drawer} aria-label="作品讨论">
@@ -288,33 +321,6 @@ export function WorkspaceContentReviewProjection({
           <div className={styles.drawerBody}>{comments}</div>
         </aside>
       ) : null}
-    </div>
-  );
-}
-
-function WorkspaceContentReviewSourceState({
-  view,
-  busy,
-  refreshSource,
-}: {
-  readonly view: ContentReviewView;
-  readonly busy: boolean;
-  readonly refreshSource: () => Promise<void>;
-}) {
-  if (view.sourceState === 'unavailable')
-    return <p className="p-3 text-sm text-cafe-muted">原内容当前不可读取；协作历史保留，但不展示旧内容缓存。</p>;
-  if (view.sourceState !== 'changed') return null;
-  return (
-    <div className="rounded border border-[var(--semantic-warning)] bg-[var(--semantic-warning-surface)] p-3 text-sm text-cafe-muted">
-      <p>原文件已改动。已有批注会如实显示重定位或失联状态；确认后才切换到当前版本。</p>
-      <button
-        type="button"
-        disabled={busy}
-        onClick={() => void refreshSource()}
-        className="mt-2 text-xs font-semibold text-cafe-accent hover:underline"
-      >
-        切换到当前版本
-      </button>
     </div>
   );
 }

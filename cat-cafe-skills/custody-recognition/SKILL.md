@@ -1,6 +1,6 @@
 ---
 name: custody-recognition
-tips_exempt: "普通话语在原 Feature 现场自然触发责任核验；这份内部 owner 政策不要求用户学新命令，原现场实样验收前不发布使用提示。"
+tips_exempt: "2026-10-10 renewal: clarifies the member-only canonical message source format and continuation of an existing entrusted Task; users still entrust or continue work in ordinary conversation, with no new Hub command or operation."
 description: "Use when 托付、获准开发或 Phase 续做。Not for 随口提及、未接受计划或注意力判断。Output: offer、Task 接责/续接或 abstain。"
 triggers:
   - "帮我接住"
@@ -106,11 +106,15 @@ Examples: “帮我接住”, “这件事你来跟”, or a direct request to o
 Call cat_cafe_admit_entrusted_work immediately with:
 
 - basis: explicit_entrustment;
-- the exact source message ref;
+- `sourceRefs: ["message:<sourceMessageId>"]`: exactly one current user-authored Message in the authenticated thread, not a `thread#message` link or a list of supporting messages;
 - a stable idempotency key derived from that source ref;
 - the intended outcome;
 - a closure condition and expected signal;
 - only source-backed time and Artifact refs.
+
+If this work already has a Task, read it with `read_entrusted_work` and continue through
+`update_entrusted_work` using its current revision. A follow-up or new invocation is not a new
+idempotency identity; if admission is retried, retain the original key and source.
 
 When the source states an unambiguous deadline or review time, resolve it against the authenticated
 invocation date/time and pass it in the top-level canonical `time.businessDeadline` or `time.reviewBy`

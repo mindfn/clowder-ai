@@ -114,7 +114,7 @@ test('F326 runtime composition shares the real F138 receipt and artifact-reviews
     const addressed = await reviews.act({
       principal: cat,
       reviewId: opened.review.reviewId,
-      expectedRevision: located.review.revision,
+      expectedRevision: (await reviews.read({ principal: cat, reviewId: opened.review.reviewId })).review.revision,
       operationId: 'record-address',
       action: {
         kind: 'addressed',
@@ -132,11 +132,9 @@ test('F326 runtime composition shares the real F138 receipt and artifact-reviews
       reviewId: opened.review.reviewId,
       operationId: 'record-address',
     });
-    assert.deepEqual(
-      (await integration.ledgers?.read({ principal, reviewId: opened.review.reviewId }))?.review,
-      addressed.review,
-    );
-    assert.deepEqual(integration.store.ledgers.getByContent('operator', receipt.contentRef), addressed.review);
+    const canonical = (await integration.ledgers?.read({ principal, reviewId: opened.review.reviewId }))?.review;
+    assert.deepEqual(canonical?.annotations, addressed.review.annotations);
+    assert.deepEqual(integration.store.ledgers.getByContent('operator', receipt.contentRef), canonical);
     assert.deepEqual(addressed.review.annotations[0]!.anchor, annotated.review.annotations[0]!.anchor);
     assert.deepEqual(
       addressed.review.annotations[0]!.projectHistory!.slice(0, -1),
@@ -154,7 +152,7 @@ test('F326 runtime composition shares the real F138 receipt and artifact-reviews
     );
     assert.deepEqual(
       (await integration.ledgers?.read({ principal, reviewId: opened.review.reviewId }))?.review,
-      addressed.review,
+      canonical,
     );
     assert.deepEqual(
       await integration.projectReviews?.operationReceipt({

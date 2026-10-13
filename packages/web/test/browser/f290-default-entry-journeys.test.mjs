@@ -10,6 +10,10 @@ import { openChannelFromCollectiveHome } from './f290-channel-entry.harness.mjs'
 import { defaultHumanAuthProvider, seedDefaultCollective } from './f290-default-client.fixture.mjs';
 import { reserveNativeOwnerPorts, startNativeOwner } from './f290-native-owner.harness.mjs';
 
+// Host fixtures allow up to 40 seconds for an honest production Next start. The outer
+// journey must outlive that startup SLA and still leave time for browser assertions.
+const HOST_JOURNEY_TIMEOUT = 90_000;
+
 async function createJourneyFixture(testContext, { host = false } = {}) {
   let ports;
   let dataDirectory;
@@ -97,7 +101,7 @@ registerDefaultEntryJourney(
 for (const shell of ['classic', 'v2']) {
   test(
     `F290 ${shell} shell rail opens the existing Collective across reload and warm re-entry`,
-    { timeout: 30_000 },
+    { timeout: HOST_JOURNEY_TIMEOUT },
     async (testContext) => {
       const { context, nativeOwner } = await createJourneyFixture(testContext, { host: true });
       const page = await context.newPage();
@@ -152,7 +156,7 @@ registerDefaultEntryJourney(
     journeyId: 'f290-host-default-entry',
     surfaceTestId: 'collective-launch-surface',
     title: 'Clowder AI Host opens the canonical Collective Client from /collective',
-    timeout: 30_000,
+    timeout: HOST_JOURNEY_TIMEOUT,
   },
   async (journey, testContext) => {
     const { context, nativeOwner } = await createJourneyFixture(testContext, { host: true });
@@ -168,7 +172,9 @@ registerDefaultEntryJourney(
       await journey.arrive(page);
       // Home can paint before the authenticated Host bridge is available.
       // Wait for its real navigation control before changing the embedded scene.
-      await collective.getByRole('button', { name: /^我的 Café/ }).waitFor();
+      await collective.locator('details.collective-menu > summary').click();
+      await collective.getByRole('button', { name: /^我的猫/ }).waitFor();
+      await collective.locator('details.collective-menu > summary').click();
       await openChannelFromCollectiveHome(collective, '产品方向');
       assert.equal(initialClientFrame.isDetached(), false, 'the entered Client must survive navigation');
       assert.equal(await page.locator('iframe[title="Collective"]').count(), 1);
@@ -178,20 +184,19 @@ registerDefaultEntryJourney(
       );
       assert.equal(request?.routeReceipt?.kind, 'thread_message');
       const destination = `/thread/${encodeURIComponent(request.routeReceipt.threadId)}`;
-      const activity = page.locator('section[aria-label="家里近况"]');
-      await activity.getByText('已送到私人 Thread，等待猫接手 · 在私人 Thread 查看').waitFor();
-      const activityLink = activity.getByRole('link', { name: /点名/ });
-      assert.equal(await activityLink.getAttribute('href'), destination);
       const evidence = await mkdtemp(path.join(tmpdir(), 'f290-owner-progress-evidence-'));
-      await page.screenshot({ path: path.join(evidence, 'queued-activity.png'), fullPage: true });
-      await collective.getByRole('button', { name: '我的 Café', exact: true }).click();
-      const privateThread = page.getByRole('link', { name: /在「.*」查看/ });
+      await collective.getByRole('button', { name: '我的猫', exact: true }).click();
+      const cafe = page.getByRole('complementary', { name: '我的猫', exact: true });
+      await cafe.getByRole('button', { name: '日程', exact: true }).click();
+      const requestArticle = cafe.getByRole('article').filter({ hasText: '帮我看看这条点名请求' });
+      await requestArticle.getByText('排着队', { exact: true }).waitFor();
+      const privateThread = requestArticle.getByRole('link', { name: '在家里查看', exact: true });
       await privateThread.waitFor();
       await privateThread.scrollIntoViewIfNeeded();
       assert.equal(await privateThread.getAttribute('href'), destination);
       assert.equal(initialClientFrame.isDetached(), false, 'the entered Client must survive Host updates');
       assert.equal(await page.locator('iframe[title="Collective"]').count(), 1);
-      await page.screenshot({ path: path.join(evidence, 'private-thread-link.png'), fullPage: true });
+      await page.screenshot({ path: path.join(evidence, 'queued-home-work.png'), fullPage: true });
       console.log(JSON.stringify({ evidence }));
     } finally {
       await page.close();

@@ -6,6 +6,7 @@ import type {
   PluginManagerListItem,
   PluginManagerListResponse,
 } from '@cat-cafe/shared';
+import { CHATGPT_CLOUD_ENTRY_LABEL } from '@cat-cafe/shared';
 import { apiFetch } from '@/utils/api-client';
 import type { PluginManagerDesignFixture, PluginManagerReadmeState } from './plugin-manager-fixtures';
 
@@ -56,7 +57,8 @@ export function designFixture(
   const capabilities = detail?.capabilities ?? plugin.capabilitySummary;
   return {
     id: plugin.pluginId,
-    displayName: plugin.displayName,
+    // The current built-in surface is distinct from the immutable installed release name.
+    displayName: plugin.pluginId === 'official.chatgpt-dot' ? CHATGPT_CLOUD_ENTRY_LABEL : plugin.displayName,
     description: plugin.description ?? plugin.displayName,
     icon: plugin.icon ?? 'blocks',
     ...(plugin.iconBg === undefined ? {} : { iconBg: plugin.iconBg }),
@@ -156,7 +158,7 @@ export async function fetchManagerDetail(
   const path = `/api/plugin-manager/plugins/${encodeURIComponent(pluginId)}`;
   const [response, documentation] = await Promise.all([
     afterMutation ? apiFetch(path, undefined, { afterCurrentGet: true }) : apiFetch(path),
-    fetchDocumentation(path),
+    pluginId === 'official.chatgpt-dot' ? Promise.resolve({ state: 'absent' } as const) : fetchDocumentation(path),
   ]);
   if (!response.ok) throw new Error(`detail request failed (${response.status})`);
   const value: unknown = await response.json();

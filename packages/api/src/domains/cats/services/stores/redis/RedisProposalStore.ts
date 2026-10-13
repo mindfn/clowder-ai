@@ -50,11 +50,7 @@ export class RedisProposalStore implements IProposalStore {
 
   constructor(redis: RedisClient, options?: { ttlSeconds?: number; dedupTtlSeconds?: number }) {
     this.redis = redis;
-    // Iron law #5 (LL-048): user-visible/recoverable state defaults to persistent (no TTL).
-    // Proposal hashes carry approval-card UI state + audit lineage (createdFromProposalId);
-    // an automatic expiry would 404 old cards, orphan pending/user/thread zset members, and
-    // erase the approval trail. TTL is only set when the caller explicitly opts in with
-    // ttlSeconds > 0.
+    // LL-048: proposal UI state and audit lineage persist unless the caller opts in to a positive TTL.
     const ttl = options?.ttlSeconds;
     if (ttl !== undefined && Number.isFinite(ttl) && ttl > 0) {
       this.ttlSeconds = Math.floor(ttl);
@@ -116,6 +112,10 @@ export class RedisProposalStore implements IProposalStore {
 
   async listByThread(threadId: string, limit: number = DEFAULT_LIST_LIMIT): Promise<ThreadProposal[]> {
     return this.loadFromIndex(ProposalKeys.threadList(threadId), limit);
+  }
+
+  async listAllByThread(threadId: string): Promise<ThreadProposal[]> {
+    return this.loadFromIndex(ProposalKeys.threadList(threadId), null);
   }
 
   async claimForApproval(input: ClaimForApprovalInput): Promise<ThreadProposal | null> {
@@ -331,8 +331,8 @@ export class RedisProposalStore implements IProposalStore {
     return fields;
   }
 
-  private async loadFromIndex(indexKey: string, limit: number): Promise<ThreadProposal[]> {
-    const ids = await this.redis.zrevrange(indexKey, 0, Math.max(0, limit - 1));
+  private async loadFromIndex(indexKey: string, limit: number | null): Promise<ThreadProposal[]> {
+    const ids = await this.redis.zrevrange(indexKey, 0, limit === null ? -1 : Math.max(0, limit - 1));
     if (ids.length === 0) return [];
     const pipeline = this.redis.pipeline();
     for (const id of ids) pipeline.hgetall(ProposalKeys.detail(id));

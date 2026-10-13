@@ -3,7 +3,9 @@ import { useChatStore } from '@/stores/chatStore';
 import { composerAttachments, queuedServerAckBlocks } from '../composer-queue';
 import {
   type AddMediaSelection,
+  type AddMediaWork,
   addMediaSelection,
+  addMediaWork,
   type MediaChatTarget,
   pendingMediaAttachment,
   removeMediaSelection,
@@ -43,6 +45,19 @@ function queueMediaChange(
 }
 
 export type AddMediaSelectionToChat = AddMediaSelection | { readonly kind: 'refused'; readonly reason: 'no_thread' };
+
+export function addMediaWorkToChat(
+  threadId: string | null,
+  target: MediaChatTarget,
+): AddMediaWork | { readonly kind: 'refused'; readonly reason: 'no_thread' } {
+  if (!threadId) return { kind: 'refused', reason: 'no_thread' };
+  if (queuedServerAckBlocks()) return { kind: 'refused', reason: 'recall_pending' };
+  const current = composerAttachments(threadId);
+  const result = addMediaWork(current, target);
+  if (result.kind === 'added')
+    queueMediaChange(threadId, result.attachment.id, result.attachment, pendingMediaAttachment(current) !== undefined);
+  return result;
+}
 
 export function addMediaSelectionToChat(
   threadId: string | null,

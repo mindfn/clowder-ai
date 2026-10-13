@@ -1,7 +1,7 @@
-import { createHash } from 'node:crypto';
+import { createHash, randomUUID } from 'node:crypto';
 import { constants as fsConstants } from 'node:fs';
-import { access, copyFile, mkdir, stat, writeFile } from 'node:fs/promises';
-import { basename, join, resolve } from 'node:path';
+import { access, copyFile, link, mkdir, open, stat, unlink, writeFile } from 'node:fs/promises';
+import { join, resolve } from 'node:path';
 import type { ImageContent } from '@cat-cafe/shared';
 
 export const ALLOWED_IMAGE_MIME_LIST = ['image/png', 'image/jpeg', 'image/gif', 'image/webp'] as const;
@@ -24,6 +24,8 @@ export class ImageUploadError extends Error {
     this.name = 'ImageUploadError';
   }
 }
+
+export class ImagePublicationConflictError extends ImageUploadError {}
 
 export function isAllowedImageMime(mimeType: string): mimeType is SupportedImageMime {
   return (ALLOWED_IMAGE_MIMES as ReadonlySet<string>).has(mimeType);
@@ -99,7 +101,7 @@ export async function saveImageBufferToUploadDir(input: {
   mimeType: string;
   uploadDir: string;
   filenameStem: string;
-  onExists?: OnExistsBehavior;
+  onExists?: OnExistsBehavior | 'verify';
 }): Promise<SavedImageAsset> {
   const mimeType = ensureSupportedImageMime(input.mimeType);
   if (input.buffer.byteLength > MAX_IMAGE_FILE_SIZE) {
@@ -108,6 +110,7 @@ export async function saveImageBufferToUploadDir(input: {
 
   const target = await ensureImageTarget(input.uploadDir, mimeType, input.filenameStem);
   const onExists = input.onExists ?? 'reuse';
+  if (onExists === 'verify') return saveImmutableImageBuffer(target, input.buffer);
   try {
     await writeFile(target.absPath, input.buffer, { flag: 'wx' });
   } catch (error) {
@@ -115,6 +118,45 @@ export async function saveImageBufferToUploadDir(input: {
     return handleExistingTarget(target, onExists);
   }
   return target;
+}
+
+/** Publish a complete immutable file; concurrent writers compare the winner, never a partial write. */
+async function saveImmutableImageBuffer(target: SavedImageAsset, bytes: Buffer): Promise<SavedImageAsset> {
+  const temporary = `${target.absPath}.${randomUUID()}.tmp`;
+  try {
+    await writeFile(temporary, bytes, { flag: 'wx', mode: 0o600, flush: true });
+    try {
+      await link(temporary, target.absPath);
+    } catch (error) {
+      if (!isFileExistsError(error)) throw error;
+      await assertPublishedImageBytes(target.absPath, bytes);
+    }
+    return target;
+  } finally {
+    await unlink(temporary).catch((error: unknown) => {
+      if (!isFileNotFoundError(error)) throw error;
+    });
+  }
+}
+
+async function assertPublishedImageBytes(path: string, bytes: Buffer): Promise<void> {
+  const existing = await open(path, fsConstants.O_RDONLY | fsConstants.O_NOFOLLOW);
+  try {
+    const info = await existing.stat();
+    if (!info.isFile() || info.size !== bytes.length)
+      throw new ImagePublicationConflictError('Publication key already names different image bytes');
+    const actual = Buffer.alloc(bytes.length + 1);
+    let length = 0;
+    while (length < actual.length) {
+      const { bytesRead } = await existing.read(actual, length, actual.length - length, length);
+      if (!bytesRead) break;
+      length += bytesRead;
+    }
+    if (!actual.subarray(0, length).equals(bytes))
+      throw new ImagePublicationConflictError('Publication key already names different image bytes');
+  } finally {
+    await existing.close();
+  }
 }
 
 export async function copyImageFileToUploadDir(input: {

@@ -18,12 +18,16 @@ export function ExecutionCancelButton({
   label = '停止',
   pendingLabel = '停止中…',
   ariaLabel,
+  onRequestCancel,
+  nonCancelableCopy = NON_CANCELABLE_COPY,
   className = 'text-xs text-cafe-muted hover:text-conn-red-text transition-colors',
 }: {
   execution: ActiveExecutionProjection;
   label?: ReactNode;
   pendingLabel?: ReactNode;
   ariaLabel?: string;
+  onRequestCancel?: () => void;
+  nonCancelableCopy?: Record<keyof typeof NON_CANCELABLE_COPY, string>;
   className?: string;
 }) {
   const pending = useActiveExecutionStore((state) => state.cancelPendingByKey[activeExecutionKey(execution)] === true);
@@ -40,7 +44,7 @@ export function ExecutionCancelButton({
     );
   }
   if (execution.cancelability.state === 'not_cancelable') {
-    const reason = NON_CANCELABLE_COPY[execution.cancelability.reason];
+    const reason = nonCancelableCopy[execution.cancelability.reason];
     return (
       <span className="text-micro text-cafe-muted" data-testid="execution-not-cancelable" title={reason}>
         {reason}
@@ -64,7 +68,7 @@ export function ExecutionCancelButton({
   return (
     <button
       type="button"
-      onClick={() => void cancel()}
+      onClick={onRequestCancel ?? (() => void cancel())}
       className={className}
       aria-label={ariaLabel ?? `Stop ${execution.catId} ${execution.kind} ${execution.executionId}`}
     >

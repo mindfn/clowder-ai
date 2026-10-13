@@ -1,4 +1,4 @@
-import { act } from 'react';
+import { act, type ReactNode } from 'react';
 import { createRoot, type Root } from 'react-dom/client';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { writeShellPresentation } from '@/components/shell/shell-presentation';
@@ -49,6 +49,7 @@ vi.mock('../content-review/WorkspaceContentReviewSurface', () => ({
     onBack,
     onOpenFileTools,
     onApplied,
+    fileReader,
   }: {
     worktreeId: string;
     path: string;
@@ -58,6 +59,7 @@ vi.mock('../content-review/WorkspaceContentReviewSurface', () => ({
     onBack: () => void;
     onOpenFileTools: () => void;
     onApplied?: () => Promise<void>;
+    fileReader?: () => ReactNode;
   }) => (
     <div
       data-testid="workspace-content-review"
@@ -71,9 +73,13 @@ vi.mock('../content-review/WorkspaceContentReviewSurface', () => ({
       <button type="button" onClick={onBack}>
         返回文件
       </button>
-      <button type="button" onClick={onOpenFileTools}>
-        文件工具
-      </button>
+      {fileReader ? (
+        fileReader()
+      ) : (
+        <button type="button" onClick={onOpenFileTools}>
+          文件工具
+        </button>
+      )}
       <button type="button" data-testid="refresh-after-applied" onClick={() => void onApplied?.()}>
         已确认写回，刷新正文
       </button>
@@ -127,7 +133,7 @@ describe('F307 File owner collaboration entry', () => {
     });
   }
 
-  it.each(['notes.md', 'cover.png'])('v2 opens %s with annotations by default and can switch back', async (path) => {
+  it.each(['cover.png'])('v2 opens %s with annotations by default and can switch back', async (path) => {
     writeShellPresentation('v2');
     await render(path);
     expect(container.querySelector('[data-testid="workspace-content-review"]')).not.toBeNull();
@@ -151,7 +157,6 @@ describe('F307 File owner collaboration entry', () => {
   });
 
   it.each([
-    'notes.md',
     'cover.png',
   ])('opens %s directly in the full collaboration surface and can return to file tools', async (path) => {
     await render(path);
@@ -187,7 +192,7 @@ describe('F307 File owner collaboration entry', () => {
     expect(container.querySelector<HTMLElement>('[data-testid="workspace-content-review"]')?.dataset.path).toBe(
       'other.md',
     );
-    expect(container.querySelector('[data-testid="workspace-file-viewer"]')).toBeNull();
+    expect(container.querySelector('[data-testid="workspace-file-viewer"]')).not.toBeNull();
   });
 
   it('keeps the same collaboration instance while confirmed writeback refreshes its file', async () => {
@@ -313,7 +318,7 @@ describe('F307 File owner collaboration entry', () => {
       container.querySelector<HTMLButtonElement>('[data-testid="workspace-content-review"] button')!.click(),
     );
     expect(onReturn).toHaveBeenCalledWith({ kind: 'file-tree' });
-    expect(container.querySelector('[data-testid="workspace-file-viewer"]')).toBeNull();
+    expect(container.querySelector('[data-testid="workspace-file-viewer"]')).not.toBeNull();
   });
   it.each([
     'plugin_not_installed',

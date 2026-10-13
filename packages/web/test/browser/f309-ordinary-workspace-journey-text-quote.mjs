@@ -4,8 +4,18 @@ import { mkdir, mkdtemp, readFile } from 'node:fs/promises';
 import path from 'node:path';
 import { test } from 'node:test';
 import { ensureWorkspaceOpen } from './f307-workspace-open.mjs';
-import { EVIDENCE } from './f309-ordinary-workspace-journey-chat-progress.mjs';
-import { routeThroughRealOwner, startRealWorkspaceOwner } from './f309-ordinary-workspace-real-owner.mjs';
+import {
+  captureComposerDraftFailure,
+  closeComposerWorkspaceOwner,
+  observeComposerDraftExit,
+  routeComposerDraft,
+  startComposerWorkspaceOwner,
+} from './f309-composer-workspace-owner.mjs';
+import { registerFileQuotePersistenceJourneys } from './f309-file-quote-persistence.mjs';
+import { assertThemeApplied, EVIDENCE } from './f309-ordinary-workspace-journey-chat-progress.mjs';
+import { THREAD_ID } from './f309-ordinary-workspace-journey-fixture.mjs';
+import { routeThroughRealOwner } from './f309-ordinary-workspace-real-owner.mjs';
+import { registerPendingFileQuoteEditJourneys } from './f309-pending-file-quote-edit.mjs';
 
 const FILE_NAME = 'f309-text-quote-journey.md';
 const FILE_PATH = `packages/web/test/browser/fixtures/${FILE_NAME}`;
@@ -56,19 +66,26 @@ async function selectRendered(page, from, to) {
 // CVO095/098 (Astra plan §3): a text selection goes through the one existing chain — in-place card →
 // chat annotation chip → explicit send — never a second F309 text annotation.
 export function registerOrdinaryTextQuoteJourney(suite) {
-  async function openFromHome({ viewport, prefix, run }) {
+  async function openFromHome({ viewport, prefix, run, draft, dark = false }) {
     const evidence = await mkdtemp(`/tmp/${prefix}-`);
-    const owner = await startRealWorkspaceOwner(path.join(evidence, 'data'));
+    const owner = await startComposerWorkspaceOwner(path.join(evidence, 'data'));
     const context = await suite().browser.newContext({ viewport });
+    if (dark) await context.addInitScript(() => window.localStorage.setItem('theme', 'dark'));
     const errors = [];
     const posts = [];
     const sent = [];
+    const browserDraftEvents = await observeComposerDraftExit(context);
     try {
       await routeThroughRealOwner(context, owner, {
         extra: async (route, url) => {
+          if (await routeComposerDraft(route, url, owner)) return true;
           if (url.pathname !== '/api/messages' || route.request().method() !== 'POST') return false;
           sent.push(route.request().postDataJSON());
-          await route.fulfill({ status: 200, contentType: 'application/json', body: '{}' });
+          await route.fulfill({
+            status: 200,
+            contentType: 'application/json',
+            body: JSON.stringify({ userMessageId: 'file-quote-send-receipt' }),
+          });
           return true;
         },
       });
@@ -78,6 +95,25 @@ export function registerOrdinaryTextQuoteJourney(suite) {
         if (request.method() === 'POST') posts.push(new URL(request.url()).pathname);
       });
       await page.goto(suite().baseUrl, { waitUntil: 'domcontentloaded' });
+      if (dark) {
+        await page.waitForFunction(() => document.documentElement.getAttribute('data-theme') === 'dark');
+        await assertThemeApplied(page, true);
+      }
+      if (draft) {
+        // SSR already has the thread attribute; wait for the client handlers before typing into that owner.
+        await page.waitForLoadState('networkidle');
+        await page
+          .locator(`[data-thread-chat-surface][data-thread-id="${THREAD_ID}"]`)
+          .getByLabel('消息输入框')
+          .fill(draft);
+        await page.waitForFunction(
+          ([threadId, expected]) => {
+            const drafts = JSON.parse(sessionStorage.getItem('cat-cafe:thread-drafts') ?? '[]');
+            return drafts.some(([id, text]) => id === threadId && text === expected);
+          },
+          [THREAD_ID, draft],
+        );
+      }
       await ensureWorkspaceOpen(page);
       const home = page.getByTestId('workspace-launcher-home');
       await home.getByTestId('workspace-launcher-search').fill(FILE_NAME);
@@ -88,10 +124,11 @@ export function registerOrdinaryTextQuoteJourney(suite) {
         .click();
       const surface = page.getByTestId('workspace-content-review-surface');
       await surface.getByText(TO, { exact: false }).waitFor({ timeout: 30_000 });
-      assert.equal(await surface.locator('h2').first().getAttribute('title'), FILE_NAME);
-      await run({ page, surface, errors, posts, sent, evidence });
+      assert.equal(await surface.locator(`[data-owner-path="${FILE_PATH}"]`).count(), 1);
+      await run({ page, surface, errors, posts, sent, evidence, owner, context });
     } catch (error) {
       const page = context.pages()[0];
+      await captureComposerDraftFailure({ directory: EVIDENCE, prefix, page, owner, browserDraftEvents, sent, error });
       const body = page
         ? await page
             .locator('body')
@@ -100,11 +137,10 @@ export function registerOrdinaryTextQuoteJourney(suite) {
         : 'no page';
       throw new Error(
         `${error instanceof Error ? error.message : String(error)}\nerrors: ${errors}\nposts: ${posts}\nbody: ${body}`,
+        { cause: error },
       );
     } finally {
-      await context.unrouteAll({ behavior: 'ignoreErrors' });
-      await context.close();
-      await owner.close();
+      await closeComposerWorkspaceOwner(context, owner);
     }
   }
 
@@ -147,6 +183,14 @@ export function registerOrdinaryTextQuoteJourney(suite) {
     await page.getByTestId('context-annotations-summary').waitFor({ state: 'attached' });
     assert.deepEqual(posts.slice(before), [], 'adding a place writes nothing');
   }
+
+  registerPendingFileQuoteEditJourneys({
+    openFromHome,
+    addPlace,
+    modelProjection,
+    filePath: FILE_PATH,
+  });
+  registerFileQuotePersistenceJourneys({ openFromHome, addPlace, suite });
 
   test(
     'text: a rendered selection → card → chat chip → explicit send, as the original chain',

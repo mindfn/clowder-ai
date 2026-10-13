@@ -35,9 +35,14 @@ function validReference(ref: string): boolean {
 /** References and body are data; the Host's binding is supplied separately. */
 export function renderLiveControlledContext(input: LiveControlledContext): string {
   if (
-    !['inbox_notice', 'meeting_context', 'recovery_context', 'page_action_result', 'owner_voice_context'].includes(
-      input.kind,
-    ) ||
+    ![
+      'inbox_notice',
+      'meeting_context',
+      'recovery_context',
+      'page_action_result',
+      'owner_voice_context',
+      'late_result_notice',
+    ].includes(input.kind) ||
     !input.text.trim() ||
     input.text.length > 8_000 ||
     input.sourceRefs.length < 1 ||
@@ -124,7 +129,7 @@ export class LiveContextGate {
   private async deliver(input: LiveControlledContext, text: string, signal: AbortSignal): Promise<'accepted'> {
     const authorize = async () => {
       if (
-        ['meeting_context', 'page_action_result', 'owner_voice_context'].includes(input.kind) &&
+        ['meeting_context', 'page_action_result', 'owner_voice_context', 'late_result_notice'].includes(input.kind) &&
         !input.authorizeSource
       )
         return false;

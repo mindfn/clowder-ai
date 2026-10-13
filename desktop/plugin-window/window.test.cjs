@@ -9,6 +9,55 @@ const input = {
   presentation: { width: 320, height: 350, frame: false, transparent: true, alwaysOnTop: true, skipTaskbar: true },
 };
 
+test('Host opens the exact decision link with macOS foreground activation, without approving', async () => {
+  const f = electronFixture();
+  const opened = [];
+  f.electron.shell.openExternal = async (...args) => opened.push(args);
+  const managed = await createManagedWindow(f.electron, input);
+  try {
+    const url = 'http://localhost:5511/thread/thread-owner?message=message-source&block=approval-card';
+    await managed.navigate({ url });
+    assert.deepEqual(opened, [[url, { activate: true }]]);
+    await managed.navigate({ url: 'http://localhost:5511/thread/thread-owner' });
+    assert.equal(opened.length, 2, 'conversation opening still works');
+    for (const url of [
+      'https://example.com/thread/thread-owner?message=source',
+      'http://owner:secret@localhost:5511/thread/thread-owner?message=source',
+      'http://localhost:5511/thread/thread-owner?message=one&message=two',
+      'http://localhost:5511/thread/thread-owner?message=source&block=one&block=two',
+      'http://localhost:5511/thread/thread-owner?block=card',
+      'http://localhost:5511/thread/thread-owner?message=source&approve=1',
+      'http://localhost:5511/thread/thread-owner?message=source&block=../card',
+      'http://localhost:5511/thread/thread-owner?message=source#foreign',
+    ])
+      await assert.rejects(managed.navigate({ url }), /Invalid conversation navigation/);
+    assert.equal(opened.length, 2, 'untrusted URLs never reach the OS');
+  } finally {
+    managed.close();
+  }
+});
+
+test('text submission observation uses only the current validated surface and carries references, never the body', async () => {
+  const f = electronFixture();
+  const observations = [];
+  const managed = await createManagedWindow(f.electron, input, {
+    validate: () => true,
+    request: async () => ({ kind: 'ok' }),
+    onTextSubmission: (value) => observations.push(value),
+  });
+  try {
+    const request = f.handlers.get('companion:request');
+    const event = { sender: f.window.webContents, senderFrame: f.window.webContents.mainFrame };
+    const now = Date.now();
+    await request(event, { kind: 'text', text: 'Private body', clientMessageId: 'request' }, false, now);
+    assert.deepEqual(observations, [{ stage: 'client_text_sent', observedAt: now, clientMessageId: 'request' }]);
+    await request({ ...event, senderFrame: {} }, { kind: 'text', clientMessageId: 'foreign' }, false, now);
+    assert.equal(observations.length, 1);
+  } finally {
+    managed.close();
+  }
+});
+
 test('Host media revocation cuts capture without closing the cat window or admitting a new offer', async () => {
   const f = electronFixture();
   const commands = [];

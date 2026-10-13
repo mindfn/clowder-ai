@@ -87,6 +87,9 @@ function approvalsReadInFull(read: UnifiedAttentionReadV1): boolean {
     approvals.status === 'available' &&
     approvals.exhaustiveness === 'complete' &&
     read.consistency.state === 'verified' &&
+    read.page.offset === 0 &&
+    read.mentionPeriod !== 'earlier' &&
+    read.mentionPeriod !== 'handled' &&
     read.page.hasMore === false &&
     read.page.hasMoreApprovals !== true
   );

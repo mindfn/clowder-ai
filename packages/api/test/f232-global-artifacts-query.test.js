@@ -56,6 +56,72 @@ describe('GET /api/artifacts — server-side query params (F232 Phase B)', () =>
   const T1 = { id: 'T1', title: 'F232 产物', createdBy: 'alice' };
   const T2 = { id: 'T2', title: 'F229 审计', createdBy: 'alice' };
 
+  it('the named global works view shares the thread delivery boundary and preserves original default catalogue', async () => {
+    const tasks = [
+      {
+        kind: 'work',
+        subjectKey: 'pr:org/repo#12',
+        title: 'Explicit PR',
+        updatedAt: 200,
+        ownerCatId: 'codex61-sol',
+        userId: 'alice',
+      },
+      {
+        kind: 'work',
+        subjectKey: 'pr:org/repo#13',
+        title: 'Other owner',
+        updatedAt: 300,
+        ownerCatId: 'codex61-sol',
+        userId: 'bob',
+      },
+    ];
+    app = await makeApp({
+      threads: [T1],
+      threadMessages: { T1: messagesT1 },
+      threadTasks: { T1: tasks },
+      threadMemory: {
+        T1: {
+          recentArtifacts: [
+            {
+              type: 'file',
+              ref: 'private-ledger.md',
+              label: 'private-ledger.md',
+              updatedAt: 999,
+              updatedBy: 'codex61-sol',
+            },
+          ],
+        },
+      },
+    });
+    const works = (await app.inject({ method: 'GET', url: '/api/artifacts?view=works', headers: AUTH })).json();
+    assert.equal(works.view, 'works');
+    assert.equal(works.complete, true);
+    assert.equal(works.total, 3);
+    assert.equal(
+      works.artifacts.every((item) => item.threadId === T1.id),
+      true,
+    );
+    assert.equal(works.artifacts.find((item) => item.type === 'pr')?.ref, 'org/repo#12');
+    assert.equal(
+      works.artifacts.some((item) => item.fileLedgerRef),
+      false,
+    );
+    const classic = (await app.inject({ method: 'GET', url: '/api/artifacts', headers: AUTH })).json();
+    assert.equal(
+      classic.artifacts.some((item) => item.fileLedgerRef === 'private-ledger.md'),
+      true,
+    );
+    assert.equal(
+      classic.artifacts.some((item) => item.type === 'pr'),
+      false,
+    );
+    for (const query of ['view=works&limit=1', 'view=works&view=works'])
+      assert.equal(
+        (await app.inject({ method: 'GET', url: `/api/artifacts?${query}`, headers: AUTH })).statusCode,
+        400,
+      );
+  });
+
   // Messages with rich blocks: image by opus, file by codex, code-diff by opus
   const messagesT1 = [
     {

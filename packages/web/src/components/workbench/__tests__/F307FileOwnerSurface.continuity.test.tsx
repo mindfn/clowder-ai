@@ -1,4 +1,4 @@
-import { act } from 'react';
+import { act, type ReactNode } from 'react';
 import { createRoot, type Root } from 'react-dom/client';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { useChatStore } from '@/stores/chatStore';
@@ -26,10 +26,19 @@ vi.mock('socket.io-client', () => ({
   }),
 }));
 vi.mock('../content-review/WorkspaceContentReviewSurface', () => ({
-  WorkspaceContentReviewSurface: ({ onOpenFileTools }: { onOpenFileTools: () => void }) => (
-    <button type="button" data-testid="open-file-tools" onClick={onOpenFileTools}>
-      文件工具
-    </button>
+  WorkspaceContentReviewSurface: ({
+    onOpenFileTools,
+    fileReader,
+  }: {
+    onOpenFileTools: () => void;
+    fileReader?: () => ReactNode;
+  }) => (
+    <>
+      {fileReader?.()}
+      <button type="button" data-testid="open-file-tools" onClick={onOpenFileTools}>
+        文件工具
+      </button>
+    </>
   ),
 }));
 vi.mock('@/components/workspace/WorkspaceFileViewer', () => ({

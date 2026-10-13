@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import { mkdtempSync } from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { beforeEach, describe, test } from 'node:test';
+import { beforeEach, describe, mock, test } from 'node:test';
 import Fastify from 'fastify';
 import './helpers/setup-cat-registry.js';
 import { canonicalTestMessageInput } from './helpers/message-from-fixtures.js';
@@ -76,6 +76,144 @@ describe('Callback routes: agent-key auth path', () => {
 
   async function issueGptProKey(userId = TEST_USER) {
     return agentKeyRegistry.issue('gpt-pro', userId);
+  }
+
+  test('agent-key rich gallery fallback rejects an unregistered local image without storing a message', async () => {
+    const app = await createApp();
+    const { secret } = await issueKey();
+    const block = {
+      id: 'unregistered-local',
+      kind: 'media_gallery',
+      v: 1,
+      items: [{ url: '/outside-registered-workspaces/image.png' }],
+    };
+    const response = await app.inject({
+      method: 'POST',
+      url: '/api/callbacks/post-message',
+      headers: { 'x-agent-key-secret': secret },
+      payload: {
+        threadId: ownedThreadId,
+        content: '```cc_rich\n' + JSON.stringify({ v: 1, blocks: [block] }) + '\n```',
+      },
+    });
+    assert.equal(response.statusCode, 400, response.body);
+    assert.equal(response.json().code, 'RICH_MEDIA_URL_INVALID');
+    assert.equal(messageStore.getRecent(10).length, 0);
+    assert.equal(socketManager.getMessages().length, 0);
+    await app.close();
+  });
+
+  test('agent-key review gallery retries preserve the stored image after file deletion and reject changed content', async () => {
+    const { mkdtemp, writeFile, unlink, rm } = await import('node:fs/promises');
+    const { tmpdir } = await import('node:os');
+    const { join } = await import('node:path');
+    const { registerWorktrees } = await import('../dist/domains/workspace/workspace-security.js');
+    const root = await mkdtemp(join(tmpdir(), 'agent-review-gallery-'));
+    registerWorktrees([{ id: 'agent-review-gallery', root, branch: 'test', head: 'test' }]);
+    const file = join(root, 'image.png');
+    await writeFile(file, 'image');
+    await threadStore.addParticipants(ownedThreadId, ['codex']);
+    const app = await createApp();
+    const { secret } = await issueKey();
+    const block = { id: 'review-image', kind: 'media_gallery', v: 1, items: [{ url: file }] };
+    const content =
+      '@codex\n\nAPPROVED with image.\n```cc_rich\n' + JSON.stringify({ v: 1, blocks: [block] }) + '\n```';
+    const payload = {
+      content,
+      threadId: ownedThreadId,
+      targetCats: ['codex'],
+      clientMessageId: 'agent-gallery-review',
+      localReviewVerdict: 'approved',
+      reviewedHeadSha: 'b'.repeat(40),
+      reviewSubjectRef: 'pr:zts212653/cat-cafe#5402',
+      acceptedSourceRef: 'thread_gallery#0001791732286388-000638-08ea8f11',
+      acceptedRevision: '0001791732286388-000638-08ea8f11',
+    };
+    const headers = { 'x-agent-key-secret': secret };
+    try {
+      const first = await app.inject({ method: 'POST', url: '/api/callbacks/post-message', headers, payload });
+      assert.equal(first.statusCode, 200, first.body);
+      const stored = messageStore.getRecent(10)[0];
+      const { safeParseExtra } = await import('../dist/domains/cats/services/stores/redis/redis-message-parsers.js');
+      stored.extra = safeParseExtra(JSON.stringify(stored.extra));
+      await unlink(file);
+      const retry = await app.inject({ method: 'POST', url: '/api/callbacks/post-message', headers, payload });
+      assert.equal(retry.statusCode, 200, retry.body);
+      assert.equal(retry.json().status, 'duplicate');
+      assert.equal(retry.json().messageId, stored.id);
+      const changed = await app.inject({
+        method: 'POST',
+        url: '/api/callbacks/post-message',
+        headers,
+        payload: { ...payload, content: content.replace('image.png', 'changed.png') },
+      });
+      assert.equal(changed.statusCode, 409, changed.body);
+      assert.equal(changed.json().kind, 'review_fact_idempotency_conflict');
+      assert.equal(messageStore.getRecent(10).length, 1);
+    } finally {
+      await app.close();
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
+  for (const legacy of [false, true]) {
+    test(`agent-key durable audio review retry preserves raw input (legacy=${legacy})`, async () => {
+      const { mkdtemp, rm } = await import('node:fs/promises');
+      const { tmpdir } = await import('node:os');
+      const { join } = await import('node:path');
+      const { initVoiceBlockSynthesizer, getVoiceBlockSynthesizer } = await import(
+        '../dist/domains/cats/services/tts/VoiceBlockSynthesizer.js'
+      );
+      const root = await mkdtemp(join(tmpdir(), 'agent-audio-review-'));
+      initVoiceBlockSynthesizer({}, root);
+      let synthesisCalls = 0;
+      const stub = mock.method(getVoiceBlockSynthesizer(), 'resolveVoiceBlocks', async (blocks) => {
+        synthesisCalls++;
+        return blocks.map((block) =>
+          block.kind === 'audio' ? { ...block, url: '/uploads/agent-review.wav', mimeType: 'audio/wav' } : block,
+        );
+      });
+      await threadStore.addParticipants(ownedThreadId, ['codex']);
+      const app = await createApp();
+      const { secret } = await issueKey();
+      const block = { id: 'spoken-review', kind: 'audio', v: 1, text: '审查通过' };
+      const content = '@codex\n\nAPPROVED.\n```cc_rich\n' + JSON.stringify({ v: 1, blocks: [block] }) + '\n```';
+      const payload = {
+        content,
+        threadId: ownedThreadId,
+        targetCats: ['codex'],
+        clientMessageId: 'agent-audio-review',
+        localReviewVerdict: 'approved',
+        reviewedHeadSha: 'b'.repeat(40),
+        reviewSubjectRef: 'pr:zts212653/cat-cafe#5402',
+        acceptedSourceRef: 'thread_gallery#0001791732286388-000638-08ea8f11',
+        acceptedRevision: '0001791732286388-000638-08ea8f11',
+      };
+      const headers = { 'x-agent-key-secret': secret };
+      try {
+        const first = await app.inject({ method: 'POST', url: '/api/callbacks/post-message', headers, payload });
+        assert.equal(first.statusCode, 200, first.body);
+        const stored = messageStore.getRecent(10)[0];
+        if (legacy) delete stored.extra.callbackRichRequestDigest;
+        const retry = await app.inject({ method: 'POST', url: '/api/callbacks/post-message', headers, payload });
+        assert.equal(retry.statusCode, 200, retry.body);
+        assert.equal(retry.json().messageId, stored.id);
+        assert.equal(synthesisCalls, legacy ? 2 : 1);
+        const changed = await app.inject({
+          method: 'POST',
+          url: '/api/callbacks/post-message',
+          headers,
+          payload: { ...payload, content: content.replace('审查通过', '换一段语音') },
+        });
+        assert.equal(changed.statusCode, 409, changed.body);
+        assert.equal(changed.json().kind, 'review_fact_idempotency_conflict');
+        assert.equal(messageStore.getRecent(10).length, 1);
+      } finally {
+        stub.mock.restore();
+        await app.close();
+        await rm(root, { recursive: true, force: true });
+      }
+    });
   }
 
   // ---- GET /api/callbacks/auth-probe ----

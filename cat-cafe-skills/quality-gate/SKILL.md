@@ -161,11 +161,13 @@ Step 5: 参考与实物对照 — 有产品/体验要求时
 
 Step 6: RUN — 运行风险匹配的验证命令（必须这次真实运行）
   ① 先列五轴风险与受影响面；命令逐条对应 claim，不按“写了代码”机械全跑
+     测试增量先按 docs/ops/testing-standard.md 核真实失败、最低足够层级、已有覆盖缺口与成本；pass 数不代替判断
   ② 默认：受影响 package / schema / generator / docs checker + git diff --check
   ③ 新行为 / bug：相关行为或回归测试；现有精确检查红可以直接作 RED
   ④ targeted 无法覆盖实际风险时才跑 pnpm gate；作者可按 merge-gate「Gate 选择」带依据调整机器默认 full，保留按风险要求的独立审查和硬边界
   ⑤ Redis 相关改动额外跑：pnpm --filter @cat-cafe/api test:redis（租用隔离端口；保护 6397/6398/6399/6401）
   ⑥ 相关或尚未排除关联的红灯先修；已证实无关的失败保留并交原 owner，不阻塞自己的充分验证；不得隐去失败
+     批量清理先收齐并完成成批修改，再集中验证；之后只为实质变化、新失败或未解决疑点补跑相关项
 
 Step 7: READ — 完整读输出，看 exit code，数失败数
 

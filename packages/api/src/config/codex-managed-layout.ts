@@ -69,11 +69,7 @@ export function prepareCodexManagedLayout(layout: CodexManagedAccount, projectRo
     const target = join(layout.stateRoot, name);
     ensureLink(target, join(layout.credentialHome, name));
   }
-  mkdirSync(join(dirname(layout.credentialHome), 'runtime-home'), { recursive: true, mode: 0o700 });
   return { ...layout, prepared: true };
-}
-export function codexManagedRuntimeHome(layout: CodexManagedAccount): string {
-  return join(dirname(layout.credentialHome), 'runtime-home');
 }
 /** Read-only admission validates source links, including a replaced config link. */
 export function validateCodexManagedLayout(layout: CodexManagedAccount): void {

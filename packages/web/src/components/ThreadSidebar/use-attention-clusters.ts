@@ -44,6 +44,7 @@ async function persistThreadAttentionPreference(input: {
   anchor: string;
   alias?: string | null;
   open?: boolean | null;
+  collapsedPeek?: boolean | null;
   memberSort?: ThreadAttentionMemberSort | null;
 }): Promise<ThreadAttentionPreferences> {
   const response = await apiFetch('/api/config/thread-attention', {
@@ -83,6 +84,7 @@ export function useAttentionClusters(
   const [openPreferences, setOpenPreferences] = useState<Record<string, boolean>>(readOpenPreferences);
   const [aliases, setAliases] = useState<Record<string, string>>({});
   const [memberSort, setMemberSort] = useState<Record<string, ThreadAttentionMemberSort>>({});
+  const [collapsedPeek, setCollapsedPeek] = useState<Record<string, boolean>>({});
   const [pendingSort, setPendingSort] = useState<ReadonlySet<string>>(new Set());
   const [savedGroups, setSavedGroups] = useState<ThreadAttentionPreferences['groups']>([]);
   const [preferenceError, setPreferenceError] = useState<string | null>(null);
@@ -91,6 +93,7 @@ export function useAttentionClusters(
   const receivePreferences = useCallback((preferences: ThreadAttentionPreferences) => {
     setAliases(preferences.aliases ?? {});
     setMemberSort(preferences.memberSort ?? {});
+    setCollapsedPeek(preferences.collapsedPeek ?? {});
     setOpenPreferences(preferences.open ?? {});
     setSavedGroups(preferences.groups ?? []);
     cacheOpenPreferences(preferences.open ?? {});
@@ -113,6 +116,7 @@ export function useAttentionClusters(
       anchor: string;
       alias?: string | null;
       open?: boolean | null;
+      collapsedPeek?: boolean | null;
       memberSort?: ThreadAttentionMemberSort | null;
     }) => {
       const intent = typeof input.open === 'boolean' ? beginOpen(input.anchor, input.open) : null;
@@ -189,7 +193,17 @@ export function useAttentionClusters(
     groupLoadError,
     reloadGroups,
     openGroup: (groupId: string) => enqueuePreferenceMutation({ anchor: `group:${groupId}`, open: true }),
+    keepGroupCollapsed: (cluster: AttentionCluster) =>
+      openPreferences[cluster.anchor] === false
+        ? mutationQueue.current
+        : enqueuePreferenceMutation({ anchor: cluster.anchor, open: false }),
     isOpen,
+    collapsedPeek,
+    toggleCollapsedPeek: (cluster: AttentionCluster) =>
+      enqueuePreferenceMutation({
+        anchor: cluster.anchor,
+        collapsedPeek: collapsedPeek[cluster.anchor] === false,
+      }),
     toggle,
     titleFor,
     rename,

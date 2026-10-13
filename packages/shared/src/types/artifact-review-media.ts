@@ -22,6 +22,8 @@ export const immutableMediaSchema = z.discriminatedUnion('kind', [
       timebase: rational,
       startTick: tick,
       durationTicks: positive,
+      /** Present only when complete packet PTS prove a uniform frame clock. Legacy/VFR remains absent. */
+      frameRate: rational.optional(),
       containerStartSeconds: z.number().finite(),
     })
     .strict(),

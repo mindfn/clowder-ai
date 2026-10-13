@@ -12,6 +12,7 @@ interface EntrustedWorkBriefInput {
   preparedArtifact: EntrustedWorkOwnerReadV1['preparedArtifact'];
   timeRefs: EntrustedWorkOwnerReadV1['timeRefs'];
   attentionReceipts: EntrustedWorkOwnerReadV1['attentionReceipts'];
+  terminal?: EntrustedWorkOwnerReadV1['terminal'];
 }
 
 type Brief = EntrustedWorkOwnerReadV1['brief'];
@@ -59,6 +60,20 @@ function composeVerifiedMilestone(
   eligibleReceipts: EligibleReceipt[],
 ): Brief['verifiedMilestone'] {
   if (input.freshnessState === 'stale') return { kind: 'unknown', reason: 'stale_owner_read' };
+  if (input.terminal?.state === 'cancelled') {
+    return {
+      kind: 'work_cancelled',
+      evidenceRef: input.terminal.disposition.dispositionRef,
+      revision: input.revision,
+    };
+  }
+  if (input.terminal?.state === 'abandoned') {
+    return {
+      kind: 'work_abandoned',
+      evidenceRef: input.terminal.disposition.dispositionRef,
+      revision: input.revision,
+    };
+  }
   if (input.currentState === 'done')
     return { kind: 'work_completed', evidenceRef: input.ownerRef, revision: input.revision };
   const [soleReceipt, secondReceipt] = eligibleReceipts;

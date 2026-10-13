@@ -17,13 +17,14 @@ import {
 } from './native-effect-repository-classifier.mjs';
 import {
   commandName,
+  shellInvocation,
   stripHarmlessRedirections,
   stripShellComments,
   tokenizeSimpleShellCommand,
   unquotedShellText,
 } from './native-effect-shell-tokenizer.mjs';
 import { isConstrainedSqliteRead, isUnconstrainedSqliteOperation } from './native-effect-sqlite-classifier.mjs';
-import { fileProgramEffect, redisEffect } from './native-effect-write-effects.mjs';
+import { fileProgramAnalysis, fileProgramEffect, redisEffect } from './native-effect-write-effects.mjs';
 
 export {
   constrainedGhPullRequestOperation,
@@ -235,6 +236,8 @@ function isWriteOperation(raw) {
 }
 
 function isReadOperation(raw) {
+  const files = fileProgramAnalysis(raw);
+  if (files.handled && files.effect !== 'read') return false;
   return (
     isConstrainedDateRead(raw) ||
     isStatRead(raw) ||
@@ -249,11 +252,12 @@ function isReadOperation(raw) {
     /^\s*cd\b[^;&|]*&&\s*git\s+(?:status|log|diff|show|branch(?:\s+--show-current)?)\b/i.test(raw) ||
     /^\s*(?:cat|ls|pwd|rg|grep|find|head|tail|echo|printf|git\s+(?:status|log|diff|show|branch))\b/i.test(raw) ||
     /^\s*(?:wc|uniq|cut|tr|column|jq)\b/i.test(raw) ||
-    fileProgramEffect(raw) === 'read'
+    (!files.handled && files.effect === 'read')
   );
 }
 
 function isLocalObservation(raw) {
+  if (isDiffRead(raw)) return true;
   const tokens = tokenizeSimpleShellCommand(raw);
   if (!tokens) return false;
   const executable = tokens[0];
@@ -263,6 +267,33 @@ function isLocalObservation(raw) {
   if (['ps', '/bin/ps', '/usr/bin/ps', 'lsof', '/usr/bin/lsof', '/usr/sbin/lsof'].includes(executable)) return true;
   if (['test', '/bin/test', '/usr/bin/test'].includes(executable)) return tokens.length > 1;
   return ['[', '/bin/[', '/usr/bin/['].includes(executable) && tokens.at(-1) === ']';
+}
+
+function isDiffRead(raw) {
+  const invocation = shellInvocation(raw);
+  if (!invocation.complete || invocation.words.some((word) => !word.literal)) return false;
+  const [program, ...args] = invocation.words.map((word) => word.value);
+  if (program !== 'diff') return false;
+  let operands = 0;
+  let options = true;
+  for (const token of args) {
+    if (options && token === '--') options = false;
+    else if (!options || !token.startsWith('-') || token === '-') operands++;
+    else if (
+      !/^-[abBcdiNpqrstTuwyZ]+$/.test(token) &&
+      ![
+        '--text',
+        '--brief',
+        '--recursive',
+        '--unified',
+        '--context',
+        '--ignore-case',
+        '--report-identical-files',
+      ].includes(token)
+    )
+      return false;
+  }
+  return operands === 2;
 }
 
 function isLivenessProbe({ name, operands }) {

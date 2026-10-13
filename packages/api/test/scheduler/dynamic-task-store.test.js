@@ -4,7 +4,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { beforeEach, describe, test } from 'node:test';
 import Database from 'better-sqlite3';
-import { applyMigrations, SCHEMA_V5 } from '../../dist/domains/memory/schema.js';
+import { applyMigrations, SCHEMA_V4, SCHEMA_V5 } from '../../dist/domains/memory/schema.js';
 import { DynamicTaskStore } from '../../dist/infrastructure/scheduler/DynamicTaskStore.js';
 import { installV43CueLedgerSchemaFixture } from '../helpers/v43-memory-cue-ledger-fixture.js';
 
@@ -62,6 +62,7 @@ test('V44 preserves legacy tasks and private owner auth across a database restar
   const dbPath = join(root, 'scheduler.sqlite');
   let db = new Database(dbPath);
   db.exec(SCHEMA_V5);
+  db.exec(SCHEMA_V4); // A V43 database already contains the V4 summary watermark tables.
   installV43CueLedgerSchemaFixture(db);
   db.exec(`
     CREATE TABLE schema_version (

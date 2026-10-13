@@ -5,10 +5,25 @@ import path from 'node:path';
 import { createChatProofHarness } from './f322-chat-proof-harness.mjs';
 import { buildChatProof } from './fixtures/f322-chat-real-page-build.mjs';
 import { BUSY_THREAD, GROUP_ID } from './fixtures/f322-chat-real-page-data.mjs';
-import { measureSidebarSignalLayout, setupSidebarProof } from './fixtures/f322-sidebar-v2-data.mjs';
+import {
+  measureSidebarGroupHierarchy,
+  measureSidebarSignalLayout,
+  setupSidebarProof,
+} from './fixtures/f322-sidebar-v2-data.mjs';
+
+async function assertGroupHierarchy(sidebar) {
+  const hierarchy = await sidebar.evaluate(measureSidebarGroupHierarchy);
+  assert.ok(hierarchy.headers > 0);
+  assert.ok(hierarchy.members > 0, 'expanded Group hierarchy includes real member rows');
+  assert.ok(hierarchy.columns && hierarchy.outerColumns, 'Group icons/names share the outer Thread pin/title columns');
+  assert.ok(hierarchy.memberColumns, 'the whole member row is indented 20px');
+  assert.ok(hierarchy.framed, 'each virtual Group segment keeps its hairline sides and 10px end corners');
+  assert.ok(hierarchy.lifted, 'Group fill is brighter than the Sidebar frame in both themes');
+  assert.equal(hierarchy.rail, 0, 'Group blocks replace the vertical tree rail');
+}
 
 export async function runSidebarV2Journey(t, browser) {
-  const evidence = path.join(os.tmpdir(), 'f322-sidebar-v2-proof');
+  const evidence = process.env.F322_SIDEBAR_EVIDENCE_DIR ?? path.join(os.tmpdir(), 'f322-sidebar-v2-proof');
   mkdirSync(evidence, { recursive: true });
   const built = await buildChatProof();
   writeFileSync(path.join(evidence, 'built.json'), JSON.stringify(built));
@@ -24,9 +39,24 @@ export async function runSidebarV2Journey(t, browser) {
             const sidebar = page.locator('[data-shell-sidebar="v2"]');
             const busy = page.locator(`[data-thread-id="${BUSY_THREAD}"]`);
             await busy.getByTestId('thread-row-working').waitFor();
+            await assertGroupHierarchy(sidebar);
+            assert.equal(
+              await sidebar.getByTestId('group-pinned').count(),
+              0,
+              'member pins do not imply Group pinning',
+            );
+            const titleTimes = await sidebar.getByTestId('thread-row-time').allTextContents();
+            assert.ok(titleTimes.length > 0);
+            assert.ok(
+              titleTimes.every((time) =>
+                language === 'en' ? /^(just now|\d+ (min|h|d))$/.test(time) : /^(刚刚|\d+[分时天])$/.test(time),
+              ),
+              'title-line activity time follows the shell language',
+            );
             assert.equal(await busy.locator('[data-testid="thread-signal-cats"] img').count(), 2);
             assert.equal(await busy.getByTestId('thread-cats-more').textContent(), crowded ? '+11' : '+1');
             async function executionLine(width = 300) {
+              await assertGroupHierarchy(sidebar);
               const signals = busy.getByTestId('thread-row-signals');
               const expected = width === 300 ? 20 : width === 240 ? 44 : 68;
               await page.waitForFunction(
@@ -59,6 +89,10 @@ export async function runSidebarV2Journey(t, browser) {
               if (!layout.statusVisible) {
                 await page.locator('textarea').focus();
                 await busy.getByTestId('thread-status-text').focus();
+                // A resize is pointer input. Enter via real keys, as the canonical real-page consumer does.
+                await page.keyboard.press('Tab');
+                await page.keyboard.press('Shift+Tab');
+                assert.ok(await busy.getByTestId('thread-status-text').evaluate((el) => document.activeElement === el));
                 const recovery = page.getByRole('tooltip').filter({ hasText: layout.statusLabel });
                 await recovery.waitFor();
                 assert.equal(await recovery.innerText(), layout.statusLabel);
@@ -261,11 +295,32 @@ export async function runSidebarV2Journey(t, browser) {
               status: el.querySelector('[data-testid="group-status-line"]').getBoundingClientRect(),
             }));
             assert.ok(groupLines.status.top >= groupLines.title.bottom, 'collapsed group has the same two-line rhythm');
-            assert.equal(await group.getByTestId('group-mention').count(), 1);
-            assert.equal(await group.getByTestId('group-unread').count(), 1);
+            assert.equal(
+              await group.getByTestId('group-mention').count(),
+              0,
+              'collapsed header does not duplicate shortcut mentions',
+            );
+            assert.equal(
+              await group.getByTestId('group-unread').count(),
+              0,
+              'collapsed header has one attention count',
+            );
             const summary = await group.getByTestId('group-status-line').evaluate(measureSidebarSignalLayout);
             assert.ok(summary.contained && summary.noOverlap && summary.avatarsContained && summary.statusWhole);
-            assert.ok(summary.rightAligned, 'collapsed Group uses the same fixed-fact flow');
+            assert.deepEqual(
+              summary.badgeRows,
+              [],
+              'collapsed status carries presence; attention labels belong to shortcuts',
+            );
+            await page.locator(`[data-attention-cluster="group:${GROUP_ID}"] button[aria-controls]`).click();
+            const grow = await handle.boundingBox();
+            await page.mouse.move(grow.x + 2, 250);
+            await page.mouse.down();
+            await page.mouse.move(grow.x + 142, 250, { steps: 8 });
+            await page.mouse.up();
+            assert.equal(await sidebar.evaluate((el) => el.getBoundingClientRect().width), 300);
+            await executionLine();
+            assert.ok(await geometry(), 'virtual rows recover on width growth');
           } finally {
             await harness.closeProof(proof);
             await context.close();

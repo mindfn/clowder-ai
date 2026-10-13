@@ -1,6 +1,6 @@
 ---
 name: agent-product-promo-director
-tips_exempt: "2026-10-09 truth-model change: §7 adds a dramatization lane so a promo's story layer can be invented; only claims used as real proof (product capability, track record, work attribution) must match the facts. 2026-10-07 review-order change: after the brief, operator sees a one-line story, then a minimal sample of the riskiest beat, then the full rough cut (video-voice-and-timeline ref §1); the voice draft is cat-side only. Earlier 2026-10-05 handoff update. No new filming tool or user entry."
+tips_exempt: "Renewed 2026-10-13: human agency, peer collaboration and transitions between worlds refine the existing promo directing method and cold-read questions; dramatization and review order remain unchanged. No new filming tool or user entry."
 description: >
   Agent/AI 产品宣传片的创意导演层：先锁产品主角、观众信念变化与影片格式，再把不可见的 Agent
   协作翻译成可拍的故事、镜头、运动、声音和 provenance contract。Use when: 用户问 Agent 产品宣传片
@@ -162,15 +162,21 @@ brief 通过后交给 `video-forge`，由它负责素材、全局旁白、强制
 | 每个 click 都 ding/whoosh | 声音没有语义层级 | 只 cue 因果转折；给对白和静默留空间 |
 | 找同行说“通过”但 operator 不买账 | 验收者错位 | 创意直接回 operator，技术事实再找对应 gate |
 | 宣传片写成纪录片：只用真事、给台词标出处、照实写「还在练」 | 纪录片的事实纪律压到了宣传片的故事上（operator 2026-10-04 至 10-09 纠正 4 次：「我们又不是拍纪录片」「这是宣传片，不是历史纪录片」「这他妈是个宣传片啊」） | 故事层按 `dramatization` 编到能引起共鸣；只守当真实证明用的主张（§7） |
+| 人只出现在聊天框里：界面算人的世界，小楼算猫的世界 | 人的主动性没被演出来：同传、会议这类段落看不到「他想要什么、做了什么」，画面直接跳到结果（《AI-native builder 的一天》，operator 2026-10-12：「我只出现在聊天框里，至少到 2 分半之前」「这里的突兀本质上是缺少了我」） | 关键段落里要看得见：人的愿望或处境、人和猫各自做了什么、结果怎样改变人的下一步。人不必每镜出场，夜里猫自己干活、猫的特写、界面近景都可以成立，但离开人物的镜头要能接回这条关系。界面可以放进他手里的设备；人可以只出背影，方便观众代入 |
+| 把家里的猫编成「X 队」，一队一只猫 | You 觉得「队」听起来像 agent team 的主从结构；家里是住在同一个 thread 里的对等协作，「一队只有一只猫」看着也怪（同片，operator 2026-10-12） | 不编队，直接说那件事本身（「鸭鸭学踢球」）。对等不靠猫的数量或硬塞 review 台词证明：在有代表性的协作段落里，让观众看见不同的猫各自提出判断、接话或修订，一起改变同一件事 |
+| 冷读说看不懂，就加章节卡和注释 | 卡片越加越多，后半段像功能清单（同片第二次模拟冷读：「越来越像功能清单」） | 先把缺掉的那一步动作演出来，再考虑加字。必要的术语可以在第一次需要时用一句短注；标题若保留，用来帮观众追踪故事里的问题，不写成功能名（见 `../.cat-cafe-shared-refs/narrative-clarity.md` §3） |
+| 表里两个世界各拍各的，在两边来回硬切 | 观众每切一次都要重新找自己在哪，两个世界的关系没被演出来（《AI-native builder 的一天》早饭段第一版，10-12）。operator：「完全可以一个镜头我的背影然后拉进到屏幕进入屏幕里 看真实表世界，然后切里世界……人家大导演都是如何表现表里的」 | 给每个世界定一扇固定的门，每次进出都走它（笔记本屏幕、毛线球）。过门要有理由：这边一个动作引起那边一个动作。用形状或方向对上来过门（剪辑台上标红的那格 → 小楼显示器上的同一格；毛线球从右边滚出 → 从左边滚进来）。同一件东西在两边各有一个样子（演员表 ↔ 聊天里的一条消息）。人的身体可以当开关（往前凑就推进屏幕，往后靠就退出来）。可参照：《黑客帝国》的屏幕和电话线、《盗梦空间》的跨层因果、《头脑特工队》的总部与外面、今敏的匹配剪辑 |
 
 ## Pressure tests
 
 交付 brief 前逐题回答：
 
+0. 关键段落里，观众看得见人的愿望或处境、人和猫各自的行动，以及结果怎样改变人的下一步吗？离开人物的镜头能接回这条关系吗？
+
 1. 把案例页面/最终成果换掉，产品故事还成立吗？
 2. 观众能指出意图、holder、动作、纠正、结果和延续分别在哪里吗？
 3. 每个主要镜头里，世界内部发生了什么？若只剩 zoom，删掉会怎样？
-4. 每个剪切是因为意义变化，还是因为时间到了？
+4. 每个剪切是因为意义变化，还是因为时间到了？有没有一个东西（形状、方向、动作、声音）把观众带过去？
 5. 每个声音 cue 的语义工作是什么？删掉是否损失因果或情绪？
 6. 这是宣传片还是纪录/demo？宣传片的故事层有没有被纪录片纪律捆住？当真实证明用的能力、业绩和作品归属，和事实一致吗？
 7. 若成果本来就是产品承诺，产品的控制与迭代仍清楚吗？

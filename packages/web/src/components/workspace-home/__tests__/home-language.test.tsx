@@ -36,7 +36,11 @@ vi.mock('@/stores/chatStore', () => ({
 vi.mock('@/components/ChatVoiceFeatureControls', () => ({ ChatVoiceFeatureControls: () => null }));
 
 import { WorkspaceLauncherSearch } from '@/components/workspace/WorkspaceLauncherSearch';
+import { HomeLiveCard } from '../HomeLiveCard';
+import { HomeWaitCard } from '../HomeWaitCard';
 import { WorkspaceHomeV2 } from '../WorkspaceHomeV2';
+import { WorkspaceToolsContent } from '../WorkspaceToolsContent';
+
 import { homeCopy } from '../workspace-home.shell-copy';
 import { command, live, NOW, seed, waitItem } from './home-fixtures';
 
@@ -99,17 +103,22 @@ describe('F322 AC-B6–B8 · the Workspace home speaks the chosen language', () 
   async function renderHome(props: Partial<React.ComponentProps<typeof WorkspaceHomeV2>> = {}) {
     await act(async () => {
       root.render(
-        <WorkspaceHomeV2
-          threadId="thread-here"
-          defaultCatId="codex-sol"
-          worktreeId="wt-1"
-          repository={{ name: 'cat-cafe', branch: 'feat/f322-home' }}
-          destinationMessage={null}
-          onSelectDevSurface={vi.fn()}
-          onSelectDestination={vi.fn()}
-          onSelectExecution={vi.fn()}
-          {...props}
-        />,
+        <>
+          <HomeLiveCard threadId="thread-here" onSelectExecution={vi.fn()} />
+          <HomeWaitCard />
+          <WorkspaceToolsContent
+            worktreeId="wt-1"
+            onOpenSettings={vi.fn()}
+            onClose={vi.fn()}
+            onSelectRecentSurface={vi.fn()}
+            recentSurfaces={[]}
+            onSelectDevSurface={vi.fn()}
+            repository={{ name: 'cat-cafe', branch: 'feat/f322-home' }}
+            onSelectDestination={vi.fn()}
+            workspaceSearch={props.workspaceSearch}
+            initialSearchQuery={props.workspaceSearchQuery}
+          />
+        </>,
       );
     });
   }
@@ -204,13 +213,11 @@ describe('F322 AC-B6–B8 · the Workspace home speaks the chosen language', () 
       }
       expect(q('#home-live-title')?.textContent).toBe('Happening now');
       expect(q('#home-wait-title')?.textContent).toBe('Waiting to resume');
-      expect(qa('.home-group-title').map((node) => node.textContent)).toEqual(['Code', 'Activity', 'Other']);
-      expect(q('.home-signpost')?.textContent).toContain('approvals and pending items are in To-do');
-      expect(q('.home-signpost')?.textContent).toContain(
-        'Work handed to cats will move to To-do › All work. Until then, open it here.',
-      );
-      expect(q('[data-workspace-destination="workspace:capability-evolution"]')?.getAttribute('aria-label')).toBe(
-        'Open Capability evolution',
+      expect(qa('.home-group-title').map((node) => node.textContent)).toEqual(['Activity', 'Code', 'Other']);
+      expect(q('.home-signpost')?.textContent).toContain('approvals and items needing you are in To-do');
+      expect(q('.home-signpost')?.textContent).toContain('Open Schedule');
+      expect(q('[data-workspace-destination="workspace:capability-evolution"]')?.textContent).toContain(
+        'Capability evolution',
       );
       expect(q('[data-workspace-destination="surface:changes"]')?.textContent).toContain('3 files');
     });
@@ -240,14 +247,17 @@ describe('F322 AC-B6–B8 · the Workspace home speaks the chosen language', () 
       fillTheWholePage();
       await renderHome();
       const live = text();
-      expect(live).toContain('Everywhere · 2');
+      expect(live).toContain('All conversations · 3 running');
       expect(live).toContain('Current conversation');
-      expect(live).toContain('Background task · Full check · 0:50');
-      expect(live).toContain('Live run');
-      expect(live).toContain('Waiting on background work · Lint');
+      expect(live).toContain('Running full gate');
+      expect(live).toContain('0:50');
+      expect(live).toContain('Replying');
+      expect(live).toContain('Running code checks');
       expect(
-        qa('[data-testid="workspace-open-running-object"]').map((node) => node.getAttribute('aria-label')),
-      ).toEqual(['Details']);
+        qa('[data-testid="home-execution-trajectory"]').every((node) =>
+          node.getAttribute('aria-label')?.includes('trajectory'),
+        ),
+      ).toBe(true);
     });
 
     it('words the condition so it agrees with one service or several', () => {
@@ -374,7 +384,7 @@ describe('F322 AC-B6–B8 · the Workspace home speaks the chosen language', () 
       await renderHome();
       expect(q('#home-live-title')?.textContent).toBe('正在发生');
       expect(q('#home-wait-title')?.textContent).toBe('等待与接回');
-      expect(qa('.home-group-title').map((node) => node.textContent)).toEqual(['代码', '活动', '其他']);
+      expect(qa('.home-group-title').map((node) => node.textContent)).toEqual(['活动', '代码', '其他']);
       expect(text()).toContain('等待运行版本包含 bbbbbbbb，API + WEB 就绪');
       expect(text()).toContain('运行版本已包含 dddddddd，API 已就绪');
       expect(text()).toContain('等待新启动，API 就绪');

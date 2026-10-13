@@ -1,8 +1,10 @@
 import type { Dispatch, SetStateAction } from 'react';
+import { accountFormCopy } from './accounts/account-form.shell-copy';
 import type { BuiltinAccountClient } from './hub-accounts.types';
 import { HubIcon } from './hub-icons';
 import { TagEditor } from './hub-tag-editor';
 import { formInputClass } from './mcp-form-helpers';
+import { useShellCopy } from './shell/shell-copy';
 
 /** Match accounts-schemas.ts: mixed-case tails are valid, CAT_CAFE_ stays reserved. */
 export function isValidAccountEnvKey(key: string): boolean {
@@ -63,13 +65,14 @@ export function AccountConnectionFields({
   setAdvancedOpen: Dispatch<SetStateAction<boolean>>;
   clearError: () => void;
 }) {
+  const t = useShellCopy(accountFormCopy);
   return (
     <>
       {/* API Key mode: Base URL + API Key */}
       {!isOAuth && (
         <>
           <div>
-            <label className="mb-1 block text-xs font-medium text-cafe-secondary">API 服务地址 (Base URL)</label>
+            <label className="mb-1 block text-xs font-medium text-cafe-secondary">{t.baseUrl}</label>
             <input
               value={baseUrl}
               onChange={(e) => setBaseUrl(e.target.value)}
@@ -78,9 +81,7 @@ export function AccountConnectionFields({
             />
           </div>
           <div>
-            <label className="mb-1 block text-xs font-medium text-cafe-secondary">
-              API Key{isEdit && '（留空保持不变）'}
-            </label>
+            <label className="mb-1 block text-xs font-medium text-cafe-secondary">API Key{isEdit && t.keyKeep}</label>
             <input
               type="password"
               autoComplete="off"
@@ -100,13 +101,15 @@ export function AccountConnectionFields({
         <>
           {/* 可用模型 */}
           <div>
-            <label className="mb-1 block text-xs font-medium text-cafe-secondary">可用模型</label>
+            <label className="mb-1 block text-xs font-medium text-cafe-secondary">{t.models}</label>
             <TagEditor
               tags={models}
               tone="purple"
-              addLabel="+ 添加"
-              placeholder="输入模型名"
-              emptyLabel={isOAuth ? '(可选，留空使用默认模型)' : '(至少添加 1 个模型)'}
+              addLabel={t.addModel}
+              commitLabel={t.commitModel}
+              removeLabel={t.removeModel}
+              placeholder={t.modelHint}
+              emptyLabel={isOAuth ? t.modelsOptional : t.modelsRequired}
               onChange={setModels}
               minCount={0}
             />
@@ -115,7 +118,7 @@ export function AccountConnectionFields({
               clientId &&
               (MODEL_SUGGESTIONS[initialClientId ?? clientId] ?? []).filter((m) => !models.includes(m)).length > 0 && (
                 <div className="mt-1.5 flex flex-wrap items-center gap-1">
-                  <span className="text-micro text-cafe-muted">推荐</span>
+                  <span className="text-micro text-cafe-muted">{t.recommended}</span>
                   {(MODEL_SUGGESTIONS[initialClientId ?? clientId] ?? [])
                     .filter((m) => !models.includes(m))
                     .map((m) => (
@@ -140,13 +143,11 @@ export function AccountConnectionFields({
               className="flex w-full items-center gap-1 px-3 py-2 text-xs font-medium text-cafe-secondary hover:bg-[var(--console-card-bg)]"
             >
               <span className="text-micro">{advancedOpen ? '\u25BE' : '\u25B8'}</span>
-              高级配置 (可选)
+              {t.advanced}
             </button>
             {advancedOpen && (
               <div className="console-divider-t px-3 pb-3 pt-2">
-                <p className="mb-2 text-micro text-cafe-muted">
-                  自定义环境变量，启动 agent 时注入子进程 (CAT_CAFE_ 前缀为保留变量)
-                </p>
+                <p className="mb-2 text-micro text-cafe-muted">{t.envHint}</p>
                 <div className="space-y-1.5">
                   {envEntries.map((entry, i) => (
                     <div key={i} className="flex items-center gap-1.5">
@@ -183,7 +184,8 @@ export function AccountConnectionFields({
                         type="button"
                         onClick={() => setEnvEntries(envEntries.filter((_, j) => j !== i))}
                         className="text-xs text-cafe-muted hover:text-semantic-critical"
-                        title="删除"
+                        title={t.delete}
+                        aria-label={t.delete}
                       >
                         <HubIcon name="trash" className="h-3.5 w-3.5" />
                       </button>
@@ -191,8 +193,8 @@ export function AccountConnectionFields({
                   ))}
                   {envEntries.some((e) => e.key.trim() && !isValidAccountEnvKey(e.key.trim())) && (
                     <p className="text-micro text-semantic-critical">
-                      {envEntries.some((e) => e.key.trim().startsWith('CAT_CAFE_')) ? 'CAT_CAFE_ 前缀为系统保留；' : ''}
-                      变量名须以大写字母或下划线开头，后续可含 A-Z、a-z、0-9、_
+                      {envEntries.some((e) => e.key.trim().startsWith('CAT_CAFE_')) ? t.reserved : ''}
+                      {t.invalidEnv}
                     </p>
                   )}
                 </div>
@@ -201,7 +203,7 @@ export function AccountConnectionFields({
                   onClick={() => setEnvEntries([...envEntries, { key: '', value: '' }])}
                   className="mt-2 text-micro font-medium text-cafe-accent hover:text-cafe-accent-hover"
                 >
-                  + 添加变量
+                  {t.addEnv}
                 </button>
               </div>
             )}

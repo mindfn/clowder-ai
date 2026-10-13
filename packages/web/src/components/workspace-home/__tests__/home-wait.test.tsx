@@ -40,7 +40,7 @@ vi.mock('@/components/ChatVoiceFeatureControls', () => ({
 }));
 
 import { cancelProjectedExecution } from '@/hooks/useActiveExecutionProjection';
-import { WorkspaceHomeV2 } from '../WorkspaceHomeV2';
+import { HomeWaitCard } from '../HomeWaitCard';
 import { NOW, waitItem } from './home-fixtures';
 
 describe('F322 new-shell Workspace home · 等待与接回', () => {
@@ -79,22 +79,18 @@ describe('F322 new-shell Workspace home · 等待与接回', () => {
     vi.unstubAllGlobals();
   });
 
-  async function renderHome(props: Partial<React.ComponentProps<typeof WorkspaceHomeV2>> = {}): Promise<void> {
-    await act(async () => {
-      root.render(
-        <WorkspaceHomeV2
-          threadId="thread-here"
-          defaultCatId="codex-sol"
-          worktreeId="wt-1"
-          repository={{ name: 'cat-cafe', branch: 'feat/f322-workspace-home' }}
-          destinationMessage={null}
-          onSelectDevSurface={onSelectDevSurface}
-          onSelectDestination={onSelectDestination}
-          onSelectExecution={onSelectExecution}
-          {...props}
-        />,
-      );
-    });
+  it('does not flash a known empty card during background projection polls', async () => {
+    const { HomeWaitCard } = await import('../HomeWaitCard');
+    mocks.projection = { projectPath: '/repo', items: [], candidate: null } as DeploymentWaitListResponse;
+    for (const state of ['ready', 'loading', 'ready'] as const) {
+      mocks.hydration = state;
+      await act(async () => root.render(<HomeWaitCard hideWhenEmpty />));
+      expect(container.querySelector('[data-testid="workspace-deployment-waits"]')).toBeNull();
+    }
+  });
+
+  async function renderHome(): Promise<void> {
+    await act(async () => root.render(<HomeWaitCard />));
   }
 
   const q = (selector: string) => container.querySelector<HTMLElement>(selector);

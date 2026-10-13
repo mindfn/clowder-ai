@@ -5,6 +5,7 @@ import { RoutingContextLedger } from '@/components/routing-context/RoutingContex
 import { useCatData } from '@/hooks/useCatData';
 import { catDossierCoversStrengths, useDossierProfiles } from '@/hooks/useDossierProfiles';
 import { apiFetch } from '@/utils/api-client';
+import { accountsCopy } from '../accounts/accounts.shell-copy';
 import { ConnectorPluginInstallButton } from '../ConnectorPluginInstallButton';
 import { CatOverviewTab, type ConfigData } from '../config-viewer-tabs';
 import { DesktopUpdateSettingsPanel } from '../DesktopUpdateSettingsPanel';
@@ -18,6 +19,7 @@ import { type MemberDeleteCopy, MemberEditorHost } from '../members/MemberEditor
 import { MemberListHost } from '../members/MemberListHost';
 import { useMemberReturn } from '../members/useMemberReturn';
 import { PushSettingsPanel } from '../PushSettingsPanel';
+import { useShellCopy } from '../shell/shell-copy';
 import { useShellPresentation } from '../shell/shell-presentation';
 import { useConfirm } from '../useConfirm';
 import { VoiceSettingsPanel } from '../VoiceSettingsPanel';
@@ -45,6 +47,7 @@ interface SettingsContentProps {
 }
 
 export function SettingsContent({ section, initialEditCatId }: SettingsContentProps) {
+  const accountsText = useShellCopy(accountsCopy);
   const { cats, refresh, isLoading: catsLoading, hasFetched: catsKnown } = useCatData();
   const isV2 = useShellPresentation() === 'v2';
   const memberReturn = useMemberReturn();
@@ -325,7 +328,10 @@ export function SettingsContent({ section, initialEditCatId }: SettingsContentPr
   return (
     <>
       {!(isV2 && section === 'members') && (
-        <SettingsPageHeader title={meta.label} subtitle={meta.description}>
+        <SettingsPageHeader
+          title={section === 'accounts' ? accountsText.title : meta.label}
+          subtitle={section === 'accounts' ? accountsText.subtitle : meta.description}
+        >
           {section === 'im' && <ConnectorPluginInstallButton onInstalled={() => setImRefreshKey((k) => k + 1)} />}
         </SettingsPageHeader>
       )}

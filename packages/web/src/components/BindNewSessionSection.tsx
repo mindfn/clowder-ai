@@ -1,3 +1,5 @@
+import { sessionChainCopy } from '@/components/session-chain.shell-copy';
+import { useTrajectoryCopy } from '@/components/workspace/trajectory/use-trajectory-copy';
 /**
  * F33: Bind an external CLI session to a cat that has no active session in this thread yet.
  * Extracted from SessionChainPanel to keep file size under 350 lines.
@@ -18,6 +20,7 @@ export interface BindNewSessionSectionProps {
 
 export function BindNewSessionSection({ threadId, activeCatIds, onBound, disabled }: BindNewSessionSectionProps) {
   const { cats } = useCatData();
+  const t = useTrajectoryCopy(sessionChainCopy);
   const [expanded, setExpanded] = useState(false);
   const [selectedCat, setSelectedCat] = useState('');
   const [sessionId, setSessionId] = useState('');
@@ -63,7 +66,7 @@ export function BindNewSessionSection({ threadId, activeCatIds, onBound, disable
         disabled={disabled}
         className="text-micro text-cafe-muted hover:text-cafe-secondary transition-colors mt-1 disabled:opacity-40 disabled:cursor-not-allowed"
       >
-        + 绑定命令行会话
+        {t.newBinding}
       </button>
     );
   }
@@ -71,7 +74,7 @@ export function BindNewSessionSection({ threadId, activeCatIds, onBound, disable
   return (
     <div className="mt-2 p-2 rounded-lg bg-[var(--console-shell-bg)]">
       <div className="flex items-center justify-between mb-1.5">
-        <span className="text-micro font-medium text-cafe-secondary">绑定命令行会话</span>
+        <span className="text-micro font-medium text-cafe-secondary">{t.bindingTitle}</span>
         <button
           type="button"
           onClick={() => {
@@ -89,7 +92,7 @@ export function BindNewSessionSection({ threadId, activeCatIds, onBound, disable
           onChange={(e) => setSelectedCat(e.target.value)}
           className="w-full text-xs px-2 py-1 rounded-[10px] border-transparent bg-[var(--console-field-bg,var(--console-card-bg))] focus:outline-none focus:ring-1 focus:ring-cafe-accent"
         >
-          <option value="">选择猫猫...</option>
+          <option value="">{t.selectCat}</option>
           {availableCats.map((cat) => (
             <option key={cat.id} value={cat.id}>
               {formatCatName(cat)}
@@ -105,7 +108,7 @@ export function BindNewSessionSection({ threadId, activeCatIds, onBound, disable
             if (ime.isComposing()) return;
             if (e.key === 'Enter') void handleBind();
           }}
-          placeholder="命令行会话 ID"
+          placeholder={t.cliId}
           maxLength={500}
           className="w-full text-xs font-mono px-2 py-1 rounded-[10px] border-transparent bg-[var(--console-field-bg,var(--console-card-bg))] focus:outline-none focus:ring-1 focus:ring-cafe-accent"
         />
@@ -115,13 +118,7 @@ export function BindNewSessionSection({ threadId, activeCatIds, onBound, disable
           disabled={status === 'saving' || !sessionId.trim() || !selectedCat || disabled}
           className="w-full text-micro px-2 py-1 rounded bg-cafe-surface hover:bg-[var(--console-hover-bg)] disabled:opacity-40 transition-colors"
         >
-          {status === 'saving'
-            ? '绑定中...'
-            : status === 'ok'
-              ? '已绑定'
-              : status === 'error'
-                ? '绑定失败，重试'
-                : '绑定'}
+          {status === 'saving' ? t.binding : status === 'ok' ? t.bound : status === 'error' ? t.bindFailed : t.bind}
         </button>
       </div>
     </div>

@@ -14,6 +14,7 @@ import {
   type CatId,
   CORE_COMMANDS,
   catRegistry,
+  createCatId,
   type EventMemoryRecord,
   type ILimbNode,
 } from '@cat-cafe/shared';
@@ -215,6 +216,7 @@ import { RedisContextEpochStore } from './domains/cats/services/stores/redis/Red
 import { RedisInvocationRecordStore } from './domains/cats/services/stores/redis/RedisInvocationRecordStore.js';
 import { RedisMessageStore } from './domains/cats/services/stores/redis/RedisMessageStore.js';
 import { RedisPresentationLedgerStore } from './domains/cats/services/stores/redis/RedisPresentationLedgerStore.js';
+import { userMentionEvent } from './domains/cats/services/stores/user-mention-index.js';
 import { SkillConsumptionReceiptService } from './domains/cats/services/tool-usage/SkillConsumptionReceiptService.js';
 import { DocumentListenRepository } from './domains/cats/services/tts/DocumentListenRepository.js';
 import {
@@ -227,10 +229,13 @@ import { TtsRegistry } from './domains/cats/services/tts/TtsRegistry.js';
 import { startTtsCacheCleaner } from './domains/cats/services/tts/tts-cache-cleaner.js';
 import { initVoiceBlockSynthesizer } from './domains/cats/services/tts/VoiceBlockSynthesizer.js';
 import type { AgentService, ClaudeCompactionHooksFactory } from './domains/cats/services/types.js';
+import { EntrustedWorkHumanTerminalService } from './domains/growing/EntrustedWorkHumanTerminalService.js';
+import { EntrustedWorkLifecycleService } from './domains/growing/EntrustedWorkLifecycleService.js';
 import {
   EntrustedWorkOwnerReadService,
   type PreparedArtifactReader,
 } from './domains/growing/EntrustedWorkOwnerReadService.js';
+import { EntrustedWorkTaskExecutionService } from './domains/growing/EntrustedWorkTaskExecutionService.js';
 import { F232PreparedArtifactReader } from './domains/growing/F232PreparedArtifactReader.js';
 import { F290CollectiveWorkResultProducerAdapter } from './domains/growing/F290CollectiveWorkResultProducerAdapter.js';
 import {
@@ -399,6 +404,7 @@ import { PawFeelDispositionReconciler } from './infrastructure/harness-eval/paw-
 import { createPawFeelReconciliationTaskSpec } from './infrastructure/harness-eval/paw-feel-disposition/reconciliation-task-spec.js';
 import { PawFeelFixEvidenceResolver } from './infrastructure/harness-eval/paw-feel-disposition/route-evidence-resolver.js';
 import { PawFeelDispositionService } from './infrastructure/harness-eval/paw-feel-disposition/service.js';
+import { registerMessageReadDiagnostics } from './infrastructure/message-read-diagnostics-plugin.js';
 import { runSchedulerReplyUserIdBackfill } from './infrastructure/scheduler/scheduler-reply-userid-backfill.js';
 import { securityHeadersPlugin } from './infrastructure/security-headers.js';
 import { sessionAuthPlugin, sessionRoute } from './infrastructure/session-auth.js';
@@ -549,6 +555,7 @@ import {
   worldRoutes,
 } from './routes/index.js';
 import { knowledgeFeedRoutes } from './routes/knowledge-feed.js';
+import { createLiveTaskAuthority } from './routes/live-task-authority.js';
 import { marketplaceRoutes } from './routes/marketplace.js';
 import { registerPersonMemoryDecisionRoutes } from './routes/person-memory-decision-routes.js';
 import { personMemoryOwnerReadRoutes } from './routes/person-memory-owner-read.js';
@@ -623,6 +630,7 @@ async function main(): Promise<void> {
   const telemetryHandle = initTelemetry();
 
   const app = Fastify({ logger: customLogger as unknown as import('fastify').FastifyBaseLogger });
+  const messageReadDiagnostics = registerMessageReadDiagnostics(app);
   const privateUserId = (process.env.CAT_CAFE_USER_ID ?? 'default-user').trim();
   let runtimeDeploymentRevision: string | null = null;
   let runtimeDeploymentContext: RuntimeDeploymentProcessContext | undefined;
@@ -995,13 +1003,19 @@ async function main(): Promise<void> {
 
   // F102 KD-34: append listener placeholder (wired after memoryServices init)
   let appendListener: MessageAppendListener | null = null;
+  let projectMessageProducer:
+    | ((message: import('./domains/cats/services/stores/ports/MessageStore.js').StoredMessage) => Promise<void>)
+    | undefined;
   let custodyOpportunityObservation:
     | ReturnType<typeof import('./domains/growing/CustodyOpportunityRuntime.js').startCustodyOpportunityObservation>
     | undefined;
 
   const messageStore = createMessageStore(redis, {
+    readDiagnostics: messageReadDiagnostics,
     onAppend: (msg) => {
       appendListener?.(msg);
+      if (userMentionEvent(msg))
+        socketManager?.emitToUser(msg.userId, 'entrusted_work_projection_invalidated', { ownerUserId: msg.userId });
       custodyOpportunityObservation?.notifySourceChanged(msg);
     },
   });
@@ -1217,12 +1231,12 @@ async function main(): Promise<void> {
             return proposalStore.get(id);
           },
         },
-        // ThreadDelegateBindingProvider: resolves task→proposal binding
-        // via the thread→proposal chain. Uses proposalStore.listByThread
-        // to find approved proposals from the task's parent thread.
+        // ThreadDelegateBindingProvider: resolves task→proposal bindings
+        // via the complete thread→proposal authority chain. Product list
+        // windows must not silently revoke older approved children.
         new proposalDelegateMod.ThreadDelegateBindingProvider({
-          async listByThread(threadId: string, limit?: number) {
-            return proposalStore.listByThread(threadId, limit);
+          async listAllByThread(threadId: string) {
+            return proposalStore.listAllByThread(threadId);
           },
         }),
       ),
@@ -1430,6 +1444,10 @@ async function main(): Promise<void> {
   initRepoIdentity(repoRoot);
 
   const { createMemoryServices } = await import('./domains/memory/factory.js');
+  const { createSqliteReadDiagnostics } = await import('./infrastructure/sqlite-read-diagnostics.js');
+  const readDiagnostics = createSqliteReadDiagnostics({
+    onSlowRead: (event) => app.log.warn({ module: 'sqlite-read', ...event }, 'Slow synchronous SQLite .all read'),
+  });
   // Resolve embed mode. Priority:
   //   1. If the user enabled the Embedding service in console (service.enabled=true),
   //      force the in-process mode to 'on' (or honor an explicit 'shadow' / 'on' env
@@ -1454,6 +1472,7 @@ async function main(): Promise<void> {
   );
   const memoryServices = await createMemoryServices({
     type: 'sqlite',
+    readDiagnostics,
     sqlitePath: process.env.EVIDENCE_DB ?? resolve(repoRoot, 'evidence.sqlite'),
     docsRoot,
     markersDir,
@@ -1769,6 +1788,15 @@ async function main(): Promise<void> {
       app.addHook('onClose', async () => clearInterval(dirtyFlushTimer));
     }
   }
+
+  const priorTimelineListener = messageStore.onTimelineChanged;
+  messageStore.onTimelineChanged = (message) => {
+    priorTimelineListener?.(message);
+    if (userMentionEvent(message) || message.mentionsUser)
+      socketManager?.emitToUser(message.userId, 'entrusted_work_projection_invalidated', {
+        ownerUserId: message.userId,
+      });
+  };
 
   // ── F139: Unified Scheduler (TaskRunnerV2) ──
   const { TaskRunnerV2 } = await import('./infrastructure/scheduler/TaskRunnerV2.js');
@@ -2494,7 +2522,16 @@ async function main(): Promise<void> {
   });
   personalChromeAssistantReturnPoller.start();
   app.addHook('onClose', async () => personalChromeAssistantReturnPoller.stop());
+  let dotEventsBridge:
+    | import('./domains/cats/services/cloud-bridge/dot/DotEventsBridge.js').DotEventsBridge
+    | undefined;
+  let dotReturnService:
+    | import('./domains/cats/services/cloud-bridge/dot/DotReturnService.js').DotReturnService
+    | undefined;
+  let dotAskService: import('./domains/cats/services/cloud-bridge/dot/DotAskService.js').DotAskService | undefined;
   const cloudInvokeBridge = new CloudInvokeBridge({
+    dispatchDot: async (params) =>
+      dotEventsBridge?.dispatch(params) ?? { kind: 'fallback', reason: 'no-adapter', detail: 'dot 连接尚未就绪。' },
     hostAdapter: personalChromeHostAdapter,
     emitFallback: async ({ threadId: fbThreadId, catId: fbCatId, reason }) => {
       // invokeSingleCat owns the one user-visible status so route persistence,
@@ -2733,6 +2770,7 @@ async function main(): Promise<void> {
     conciergeConfigStore: conciergeConfigStoreShared,
     conciergeTriagePlanStore,
     cloudInvokeBridge,
+    dotReplyTarget: (source) => dotAskService?.replyTarget(source) ?? Promise.resolve(false),
     cloudReturnGrantStore,
     turnExecutionStore,
     ...(freshnessStateStore ? { freshnessStateStore } : {}),
@@ -3207,6 +3245,9 @@ async function main(): Promise<void> {
 
   // Register routes (socketManager injected, no circular import)
   const messagesOpts = {
+    onStoredProjectMessage: async (
+      message: import('./domains/cats/services/stores/ports/MessageStore.js').StoredMessage,
+    ) => projectMessageProducer?.(message),
     registry,
     messageStore,
     socketManager,
@@ -4304,9 +4345,18 @@ async function main(): Promise<void> {
     isLiveConfigChangePending: (userId) => liveCompanionSessions.isChangingPreferences(userId),
   });
   const { companionDecisionRoutes } = await import('./routes/companion-decision-routes.js');
-  await app.register(companionDecisionRoutes, { ownerUserId: privateUserId });
+  await app.register(companionDecisionRoutes, {
+    ownerUserId: privateUserId,
+    messageStore,
+    threadStore,
+    runtimeInteractionStore: runtimeInteractionRuntime.store,
+    onResolved: (ownerUserId) =>
+      socketManager?.emitToUser(ownerUserId, 'entrusted_work_projection_invalidated', { ownerUserId }),
+  });
   let homeHub: import('./domains/concierge/live/host/home/home-hub-delivery.js').HomeHubDelivery | undefined;
   const artifactWorkLineageHolder: import('./domains/video-studio/content-owner/global-artifact-work-lineage.js').GlobalArtifactWorkLineageResolverHolder =
+    {};
+  const acceptedWorkspaceArtifactsHolder: import('./domains/collaborative-content/modification/accepted-workspace-artifacts.js').AcceptedWorkspaceArtifactReaderHolder =
     {};
   if (liveCompanionSessions) {
     const { createF317MeetingControlBundle } = await import('./routes/f317-meeting-control-bundle.js');
@@ -5165,6 +5215,12 @@ async function main(): Promise<void> {
   const callbackOpts = {
     ...(liveCompanionSessions ? { companionProjectPath: resolveActiveProjectRoot() } : {}),
     ...(liveCompanionSessions
+      ? {
+          liveTaskAuthority: createLiveTaskAuthority(liveCompanionSessions, turnExecutionStore),
+        }
+      : {}),
+    ...(liveCompanionSessions ? { companionRuntimeInteractionStore: runtimeInteractionRuntime.store } : {}),
+    ...(liveCompanionSessions
       ? { withLiveCarrierOperation: liveCompanionSessions.withCarrierOperation.bind(liveCompanionSessions) }
       : {}),
     ...(ballCustodyEventLog ? { ballCustodyEventLog } : {}),
@@ -5186,6 +5242,22 @@ async function main(): Promise<void> {
     agentKeyRegistry,
     cloudReturnBindingSigner,
     cloudReturnGrantStore,
+    admitDotAsk: async (input) => {
+      if (!dotAskService) throw new Error('dot_ask_unavailable');
+      return dotAskService.admit(input);
+    },
+    dotReplyTarget: (source) => dotAskService?.replyTarget(source) ?? Promise.resolve(false),
+    admitDotReturn: async (input: {
+      agentKeyId: string;
+      userId: string;
+      threadId: string;
+      sourceMessageId: string;
+      eventId: string;
+      content: string;
+    }) => {
+      if (!dotReturnService) throw new Error('dot_connection_unavailable');
+      return dotReturnService.admitReturn(input);
+    },
     messageStore,
     threadExecutionSituationSource,
     socketManager,
@@ -5348,6 +5420,7 @@ async function main(): Promise<void> {
     sessionChainStore,
     transcriptWriter,
     artifactWorkLineage: artifactWorkLineageHolder,
+    acceptedWorkspaceArtifacts: acceptedWorkspaceArtifactsHolder,
     deliveryCursorStore,
     invocationQueue,
     queueProcessor,
@@ -5543,15 +5616,27 @@ async function main(): Promise<void> {
     './domains/concierge/live/host/home/companion-work-publication.js'
   );
   const { assertCompanionWorkProject } = await import('./domains/concierge/live/host/companion-work-port.js');
-  const { createCompanionDecisionNavigation, createCompanionDecisionSocketDelivery } = await import(
-    './domains/concierge/live/host/unified/companion-decision-navigation.js'
-  );
+  const { companionDecisionUrl, createCompanionDecisionNavigation, createCompanionDecisionSocketDelivery } =
+    await import('./domains/concierge/live/host/unified/companion-decision-navigation.js');
   const companionDesktopRoot = join(findMonorepoRoot(), 'desktop');
   const companionDesktopComponent = new DesktopWindowComponent({
     desktopRoot: companionDesktopRoot,
     cacheRoot: join(resolveActiveProjectRoot(), '.cat-cafe', 'components', 'desktop-window'),
   });
+  const { DotConnectionService } = await import('./domains/cats/services/cloud-bridge/dot/DotConnectionService.js');
+  const { DotConnectionRuntime } = await import('./domains/cats/services/cloud-bridge/dot/DotConnectionRuntime.js');
+  let dotConnectionService: InstanceType<typeof DotConnectionService> | undefined;
+  let dotRoundTripVerified = async () => false;
   const pluginRuntime = createDormantPluginRuntimeComposition({
+    builtinRuntimes: new Map([
+      [
+        'official.chatgpt-dot',
+        new DotConnectionRuntime(
+          () => dotConnectionService,
+          () => dotRoundTripVerified(),
+        ),
+      ],
+    ]),
     projectRoot: pluginProjectRoot,
     editorParentOrigin: new URL(resolveFrontendBaseUrl(process.env, app.log)).origin,
     desktopExecutor: {
@@ -5590,6 +5675,8 @@ async function main(): Promise<void> {
         messages: messageStore,
         threads: threadStore,
         assertCurrent: assertWorkCurrent,
+        openBrowser: (destination) =>
+          navigate(companionDecisionUrl(destination, resolveFrontendBaseUrl(process.env, app.log))),
         ...createCompanionDecisionSocketDelivery({
           ownerUserId: privateUserId,
           parseCookie: (header) => app.parseCookie(header),
@@ -5646,6 +5733,10 @@ async function main(): Promise<void> {
           }
         : undefined;
       return new CompanionHostBridge({
+        observeVoice: (observation) => liveCompanionSessions.observeVoice(privateUserId, observation),
+        observeTextSubmission: (observation) => liveCompanionSessions.observeTextSubmission(privateUserId, observation),
+        observePresentation: (observation, verifyHost) =>
+          liveCompanionSessions.observePresentation(privateUserId, observation, verifyHost),
         app,
         ownerUserId: privateUserId,
         origin: `http://127.0.0.1:${PORT}`,
@@ -5745,7 +5836,9 @@ async function main(): Promise<void> {
     await officialPluginAuth.shutdown();
     await pluginRuntime.shutdown('api_shutdown');
   });
-  const { OFFICIAL_PLUGIN_POLICIES } = await import('./domains/plugin/official-catalog.js');
+  const { OFFICIAL_PLUGIN_POLICIES, OFFICIAL_PLUGIN_CATALOG, OFFICIAL_BUNDLED_MANIFESTS } = await import(
+    './domains/plugin/official-catalog.js'
+  );
   const { RefreshingOfficialPluginCatalog } = await import('./domains/plugin/official-catalog-provider.js');
   const { OfficialPluginHistoryImportService } = await import('./domains/plugin/official-plugin-history-import.js');
   const { OfficialPluginMeetingIntakeService } = await import('./domains/plugin/official-plugin-meeting-intake.js');
@@ -5771,6 +5864,7 @@ async function main(): Promise<void> {
     loadCatalog: () => loadMachinePluginCatalog(OFFICIAL_PLUGIN_CATALOG_URL),
     validateCatalog: validatePluginCatalog,
     hostPolicies: pluginManagerHostPolicies,
+    bundledEntries: OFFICIAL_PLUGIN_CATALOG.filter((entry) => entry.pluginId === 'official.chatgpt-dot'),
   });
   const { FilesystemBuiltinPluginPackageMaterializer } = await import(
     './domains/plugin/manager/builtin-package-materializer.js'
@@ -5804,14 +5898,21 @@ async function main(): Promise<void> {
       },
     }),
   ]);
+  const { DotPluginStateProjection } = await import(
+    './domains/cats/services/cloud-bridge/dot/DotPluginStateProjection.js'
+  );
   const pluginManagerRuntime = createPluginManagerRuntimeComposition({
+    additionalStateProjection: new DotPluginStateProjection(
+      () => dotConnectionService,
+      () => dotRoundTripVerified(),
+    ),
     runtime: pluginRuntime,
     catalogProvider: pluginManagerCatalog,
     officialRouteCatalogProvider: officialPluginCatalog,
     prepareDesktopComponent: async () => {
       await companionDesktopComponent.prepare();
     },
-    catalogManifests: [],
+    catalogManifests: OFFICIAL_BUNDLED_MANIFESTS,
     compatibility: repositoryPluginManagerCompatibility,
     auth: officialPluginAuth,
     builtinContributions: {
@@ -5831,13 +5932,6 @@ async function main(): Promise<void> {
   const hostListening = new Promise<void>((resolve) => {
     releaseHostListening = resolve;
   });
-  const externalPluginRecovery = await pluginRuntime.recoverAfterRestart({ desktopWindowsAfter: hostListening });
-  app.log.info(
-    `[api] K-2 plugin runtime recovered ` +
-      `(sessions=${externalPluginRecovery.brokerSessions}, instances=${externalPluginRecovery.inventoryInstances}, ` +
-      `resumeRequested=${externalPluginRecovery.resumeRequested}; ` +
-      `live=${externalPluginRecovery.resumeRequested > 0 ? 'reconciling' : 'dormant'})`,
-  );
   const { pluginManagerUploadRoutes, registerPluginManagerRoutes } = await import('./routes/plugin-manager-routes.js');
   await app.register(async (managerApp) => {
     registerPluginManagerRoutes(managerApp, {
@@ -5882,10 +5976,45 @@ async function main(): Promise<void> {
   );
   const { registerCollaborativeContentRoutes } = await import('./routes/collaborative-content-routes.js');
   const { registerWorkspaceContentEditorRoutes } = await import('./routes/workspace-content-editor-routes.js');
+  let projectCatGrants:
+    | import('./domains/collaborative-content/workspace-review/project-message/cat-grants.js').ProjectMessageCatGrants
+    | undefined;
+  const projectMessageAuthority: import('./domains/collaborative-content/workspace-review/project-message/types.js').VideoProjectMessageAuthority =
+    {
+      messages: messageStore,
+      authorizeSource: async ({ principal, threadId, messageId }) => {
+        const thread = await threadStore.get(threadId);
+        if (!thread || thread.createdBy !== principal.userId || thread.deletedAt)
+          throw new Error('Project source access denied');
+        if (messageId) {
+          const message = await messageStore.getById(messageId);
+          if (!message || message.userId !== principal.userId || message.threadId !== threadId)
+            throw new Error('Project source access denied');
+        }
+      },
+    };
   const collaborativeContent = createCollaborativeContentComposition({
     dataDir: process.env.CAT_CAFE_DATA_DIR ?? join(resolveActiveProjectRoot(), '.cat-cafe'),
     ownerUserId: privateUserId,
     plugins: pluginRuntime,
+    authorizeVideoProjectCat: async (input) => {
+      if (!projectCatGrants) throw new Error('Video project source authority unavailable');
+      await projectCatGrants.authorize(input);
+    },
+    authorizeVideoProjectSelfReviewSource: async (input) => {
+      if (!projectCatGrants) throw new Error('Video project source authority unavailable');
+      await projectCatGrants.authorize({ ...input, permission: 'write' });
+      const witness = await projectCatGrants.sourceWitness(input.principal, input.contentRef);
+      return {
+        refs: [`message:${witness.sourceMessageId}@${witness.sourceMessageRevision}`, `thread:${witness.threadId}`],
+      };
+    },
+  });
+  const { videoProjectRoutes } = await import('./routes/video-project-routes.js');
+  await app.register(videoProjectRoutes, {
+    projects: collaborativeContent.projects,
+    screenings: collaborativeContent.screenings,
+    mediaSource: collaborativeContent.projectMediaSource,
   });
   namedCatContentHolder.current = collaborativeContent.namedCats;
   registerCollaborativeContentRoutes(app, { ...collaborativeContent, ownerUserId: privateUserId });
@@ -5937,6 +6066,167 @@ async function main(): Promise<void> {
       serviceInstanceId: localCollectiveRecovery.serviceInstanceId,
     },
     '[api] local Collective Service recovery reconciled',
+  );
+  const { DotConnectionStore } = await import('./domains/cats/services/cloud-bridge/dot/DotConnectionStore.js');
+  const { ensureDotIdentity } = await import('./domains/cats/services/cloud-bridge/dot/dot-identity.js');
+  const { registerDotConnectionRoutes } = await import('./routes/chatgpt-dot-connection-routes.js');
+  dotConnectionService = new DotConnectionService({
+    store: new DotConnectionStore(resolve(pluginProjectRoot, '.cat-cafe', 'plugin-host', 'dot-connection.json')),
+    keys: agentKeyRegistry,
+    ensureIdentity: async () => {
+      if (ensureDotIdentity(pluginProjectRoot)) {
+        await syncAgentRegistry(reconcileCatRegistry(pluginProjectRoot, new Set()));
+        await configEventBus.emitChangeAsync({
+          source: 'cat-config',
+          scope: 'domain',
+          changedKeys: ['gpt-dot'],
+          changeSetId: `dot-identity:${Date.now()}`,
+          timestamp: Date.now(),
+        });
+      }
+    },
+    authority: async () => {
+      const inventory = await pluginRuntime.inventoryStore.snapshot();
+      const instance = inventory.instances.find(
+        (candidate) => candidate.pluginId === 'official.chatgpt-dot' && candidate.lifecycleState === 'installed',
+      );
+      return instance ? { ownerUserId: privateUserId, pluginInstanceId: instance.pluginInstanceId } : null;
+    },
+  });
+  registerDotConnectionRoutes(app, {
+    connection: dotConnectionService,
+    publicBaseUrl: () => process.env.CAT_CAFE_REMOTE_PUBLIC_BASE_URL,
+  });
+  const { DotDispatchStore } = await import('./domains/cats/services/cloud-bridge/dot/DotDispatchStore.js');
+  const { DotEventsBridge } = await import('./domains/cats/services/cloud-bridge/dot/DotEventsBridge.js');
+  const { DotReturnService } = await import('./domains/cats/services/cloud-bridge/dot/DotReturnService.js');
+  const { DotImageService } = await import('./domains/cats/services/cloud-bridge/dot/DotImageService.js');
+  const dotDispatches = new DotDispatchStore(resolve(pluginProjectRoot, '.cat-cafe', 'plugin-host', 'dot-dispatches'));
+  dotRoundTripVerified = async () => {
+    const state = await dotConnectionService?.current();
+    if (!state || state.testEventIds.length !== 2) return false;
+    const records = await Promise.all(state.testEventIds.map((id) => dotDispatches.read(id)));
+    return records.every(
+      (record) =>
+        record?.attemptId === state.attemptId &&
+        record.agentKeyId === state.agentKeyId &&
+        record.connectionTest &&
+        !!record.sourceReadAt &&
+        !!record.replyMessageId,
+    );
+  };
+  const dotEnabled = async () =>
+    (await pluginRuntime.inventoryStore.snapshot()).instances.some(
+      (instance) =>
+        instance.pluginId === 'official.chatgpt-dot' &&
+        instance.lifecycleState === 'installed' &&
+        instance.activationState === 'enabled',
+    );
+  const { DotAskService } = await import('./domains/cats/services/cloud-bridge/dot/DotAskService.js');
+  dotAskService = new DotAskService({
+    connection: dotConnectionService,
+    messages: messageStore,
+    threads: threadStore,
+    enabled: dotEnabled,
+    post: async (secret, payload) => {
+      const result = await app.inject({
+        method: 'POST',
+        url: '/api/callbacks/post-message',
+        headers: { 'x-agent-key-secret': secret },
+        payload,
+      });
+      const body = result.json() as { messageId?: string; kind?: string };
+      if (result.statusCode !== 200 || !body.messageId)
+        throw new Error(
+          body.kind === 'dot_ask_idempotency_conflict' || body.kind === 'dot_ask_delivery_pending'
+            ? body.kind
+            : 'dot_ask_not_persisted',
+        );
+      return body;
+    },
+  });
+  dotEventsBridge = new DotEventsBridge({
+    connection: dotConnectionService,
+    dispatches: dotDispatches,
+    messageStore,
+    threadStore,
+    enabled: dotEnabled,
+    allowedCats: async () => (await dotConnectionService?.status())?.allowedCatIds ?? [],
+  });
+  dotReturnService = new DotReturnService({
+    connection: dotConnectionService,
+    dispatches: dotDispatches,
+    messages: messageStore,
+    threads: threadStore,
+    enabled: dotEnabled,
+    postReply: async ({ secret, eventId, threadId, sourceMessageId, content }) => {
+      const result = await app.inject({
+        method: 'POST',
+        url: '/api/callbacks/post-message',
+        headers: { 'x-agent-key-secret': secret, 'x-cat-cafe-dot-event-id': eventId },
+        payload: { threadId, replyTo: sourceMessageId, content },
+      });
+      const body = result.json() as { messageId?: string };
+      if (result.statusCode !== 200 || !body.messageId) throw new Error('dot_reply_not_persisted');
+      return { messageId: body.messageId };
+    },
+  });
+  const dotImages = new DotImageService({
+    directory: resolve(pluginProjectRoot, '.cat-cafe', 'plugin-host', 'dot-images'),
+    returns: dotReturnService,
+    connection: dotConnectionService,
+    dispatches: dotDispatches,
+    messages: messageStore,
+    threads: threadStore,
+    emit: ({ threadId, messageId, block }) => {
+      socketManager?.broadcastAgentMessage(
+        {
+          type: 'system_info',
+          catId: createCatId('gpt-dot'),
+          content: JSON.stringify({ type: 'rich_block', block, messageId }),
+          invocationId: messageId,
+          timestamp: Date.now(),
+        },
+        threadId,
+      );
+    },
+  });
+  const { registerDotMcpRoutes } = await import('./routes/chatgpt-dot-mcp-routes.js');
+  const { registerDotImageRoutes } = await import('./routes/chatgpt-dot-image-routes.js');
+  registerDotMcpRoutes(app, {
+    connection: dotConnectionService,
+    returns: dotReturnService,
+    ask: (secret, input) => dotAskService!.ask(secret, input),
+    publishImage: (secret, input) => dotImages.publish(secret, input),
+  });
+  registerDotImageRoutes(app, dotImages);
+  const { registerDotTestRoutes } = await import('./routes/chatgpt-dot-test-routes.js');
+  const { DotConnectionTestService } = await import(
+    './domains/cats/services/cloud-bridge/dot/DotConnectionTestService.js'
+  );
+  const dotConnectionTests = new DotConnectionTestService({
+    connection: dotConnectionService,
+    dispatches: dotDispatches,
+    bridge: dotEventsBridge,
+    messages: messageStore,
+    threads: threadStore,
+    grants: cloudReturnGrantStore,
+    projectPath: pluginProjectRoot,
+  });
+  registerDotTestRoutes(app, {
+    connection: dotConnectionService,
+    dispatches: dotDispatches,
+    threads: threadStore,
+    startTest: (ownerUserId) => dotConnectionTests.run(ownerUserId),
+    selectableCat: (id) => !!catRegistry.tryGet(id),
+  });
+  // Dot resume consumes its persisted connection and source proofs, composed above.
+  const externalPluginRecovery = await pluginRuntime.recoverAfterRestart({ desktopWindowsAfter: hostListening });
+  app.log.info(
+    `[api] K-2 plugin runtime recovered ` +
+      `(sessions=${externalPluginRecovery.brokerSessions}, instances=${externalPluginRecovery.inventoryInstances}, ` +
+      `resumeRequested=${externalPluginRecovery.resumeRequested}; ` +
+      `live=${externalPluginRecovery.resumeRequested > 0 ? 'reconciling' : 'dormant'})`,
   );
   const { registerCollectiveConnectorRoutes } = await import('./routes/collective-connector-routes.js');
   const collectiveEntryCats = () =>
@@ -6099,8 +6389,11 @@ async function main(): Promise<void> {
   const artifactReview = createArtifactReviewIntegration({
     dataDir: process.env.CAT_CAFE_DATA_DIR ?? join(resolveActiveProjectRoot(), '.cat-cafe'),
     uploadDir: getDefaultUploadDir(process.env.UPLOAD_DIR),
+    readPrivateMessageImage: async (id, principal) => (await dotImages.read(id, principal.userId)).bytes,
     owner: collaborativeContent.owner,
     projects: collaborativeContent.projects,
+    screenings: collaborativeContent.screenings,
+    projectMessageAuthority,
     publications: preparedArtifactReader,
     workspace: workspaceContentReviews.source,
     ...(evolutionProgramService
@@ -6120,6 +6413,31 @@ async function main(): Promise<void> {
     onError: (error) => app.log.warn({ err: error }, '[artifact-review] recovery remains pending'),
   });
   artifactWorkLineageHolder.current = artifactReview.globalArtifactWorkLineage;
+  if (artifactReview.projectMessages) {
+    const { createProjectMessageProducer } = await import(
+      './domains/collaborative-content/workspace-review/project-message/producer.js'
+    );
+    projectMessageProducer = createProjectMessageProducer({
+      importer: artifactReview.projectMessages,
+      changed: (userId, reviewId) => socketManager?.emitToUser(userId, 'artifact_review_changed', { reviewId }),
+    });
+    const priorProjectAppend = appendListener;
+    appendListener = (message) => {
+      priorProjectAppend?.(message);
+      void projectMessageProducer?.(message).catch((error) =>
+        app.log.warn({ err: error }, 'Project opinion remains recoverable from source message'),
+      );
+    };
+    const oldTimeline = messageStore.onTimelineChanged;
+    messageStore.onTimelineChanged = (message) => {
+      oldTimeline?.(message);
+      void projectMessageProducer?.(message).catch((error) =>
+        app.log.warn({ err: error }, 'Project opinion remains recoverable from source message'),
+      );
+    };
+    const { registerVideoProjectReviewRoutes } = await import('./routes/video-project-review-routes.js');
+    registerVideoProjectReviewRoutes(app, artifactReview.projectMessages);
+  }
   collectivePreparedArtifactReader = artifactReview.artifactReader;
   app.addHook('onClose', async () => artifactReview.store.close());
   taskRunnerV2.register(artifactReview.recoverySpec);
@@ -6141,6 +6459,7 @@ async function main(): Promise<void> {
     source: workspaceContentReviews.source,
     files: workspaceContentReviews.reviews,
     artifacts: artifactReview,
+    project: { projects: collaborativeContent.projects, authority: projectMessageAuthority },
     tasks: taskStore,
     messages: messageStore,
     turnExecutions: turnExecutionStore,
@@ -6154,7 +6473,32 @@ async function main(): Promise<void> {
       socketManager?.emitToUser(ownerUserId, 'entrusted_work_projection_invalidated', { ownerUserId }),
     onError: (error) => app.log.warn({ err: error }, '[content-modification] request remains pending'),
   });
+  acceptedWorkspaceArtifactsHolder.current = modifications.workspaceArtifacts;
   contentControlReceipts = modifications.runtimeControls;
+  if (modifications.projectTakeover && artifactReview.projectReviews) {
+    const { ProjectMessageCatGrants } = await import(
+      './domains/collaborative-content/workspace-review/project-message/cat-grants.js'
+    );
+    projectCatGrants = new ProjectMessageCatGrants({
+      turns: turnExecutionStore,
+      authority: projectMessageAuthority,
+      ledgers: artifactReview.store.ledgers,
+      takeover: modifications.projectTakeover,
+    });
+    const { registerCallbackVideoProjectCommandRoutes } = await import(
+      './routes/callback-video-project-command-routes.js'
+    );
+    await registerCallbackVideoProjectCommandRoutes(app, {
+      projects: collaborativeContent.projects,
+      reviews: artifactReview.projectReviews,
+      selfReviews: collaborativeContent.selfReviews,
+      takeover: modifications.projectTakeover,
+      threads: threadStore,
+      registry,
+      changed: (ownerUserId, contentRef) =>
+        socketManager?.emitToUser(ownerUserId, 'artifact_review_changed', { contentRef }),
+    });
+  }
   registerContentModificationRoutes(app, modifications);
   await registerCallbackArtifactReviewRoutes(app, {
     ...artifactReview,
@@ -6280,10 +6624,28 @@ async function main(): Promise<void> {
     await custodyOpportunityObservation?.close();
   });
   registerCustodyOpportunityRoutes(app, custodyOpportunityRuntime);
+  const entrustedWorkTaskExecution = new EntrustedWorkTaskExecutionService({
+    ...(actionSuccessorLeaseStore ? { leaseStore: actionSuccessorLeaseStore } : {}),
+    invocationRecords: invocationRecordStore,
+    turnExecutions: turnExecutionStore,
+    tracker: invocationTracker,
+  });
+  const invalidateEntrustedWorkProjection = (ownerUserId: string) =>
+    socketManager?.emitToUser(ownerUserId, 'entrusted_work_projection_invalidated', { ownerUserId });
+  const entrustedWorkHumanTerminal = new EntrustedWorkHumanTerminalService({
+    tasks: taskStore,
+    lifecycle: new EntrustedWorkLifecycleService(taskStore, {
+      artifactReader: preparedArtifactReader,
+      onChanged: invalidateEntrustedWorkProjection,
+    }),
+    messages: messageStore,
+    execution: entrustedWorkTaskExecution,
+  });
   const entrustedWorkOwnerRead = new EntrustedWorkOwnerReadService({
     tasks: taskStore,
     producerCatalog: needsMeProducerCatalog,
     artifactReader: artifactReview.artifactReader,
+    taskExecution: entrustedWorkTaskExecution,
   });
   await app.register(async (scope) => {
     registerEntrustedWorkReadRoutes(scope, {
@@ -6576,7 +6938,7 @@ async function main(): Promise<void> {
     socketManager,
     waitLifecycleHolder,
     deploymentWaitLifecycleHolder,
-    artifactReader: preparedArtifactReader,
+    humanTerminal: entrustedWorkHumanTerminal,
   });
   registerDeploymentWaitProjectionRoutes(app, {
     threadStore,
@@ -7063,8 +7425,73 @@ async function main(): Promise<void> {
   await app.register((await import('./routes/drift.js')).unifiedDriftRoutes);
   await app.register(memoryRoutes, { memoryStore, threadStore });
 
+  const resolveLocalCodexReader = (catId: string) => {
+    const catConfig = catRegistry.tryGet(catId)?.config;
+    if (
+      !catConfig?.cli ||
+      catId === 'gpt-pro' ||
+      catConfig.provider === 'openai-chatgpt-pro' ||
+      catConfig.clientId !== 'openai' ||
+      !agentRegistry.has(catId)
+    )
+      throw new Error('Session tool unavailable');
+    const projectRoot = resolveActiveProjectRoot();
+    const account = resolveForClient(
+      projectRoot,
+      'openai',
+      resolveBoundAccountRefForCat(projectRoot, catId, catConfig),
+    );
+    if (!account) throw new Error('Codex account unavailable');
+    const accountError = validateRuntimeProviderBinding('openai', account, catConfig.defaultModel);
+    if (accountError) throw new Error(accountError);
+    return { service: agentRegistry.get(catId), account, cliConfigArgs: catConfig.cliConfigArgs, cwd: projectRoot };
+  };
+  const inspectLocalSession = async (catId: string, sessionId: string) => {
+    const catConfig = catRegistry.tryGet(catId)?.config;
+    if (!catConfig?.cli || catId === 'gpt-pro' || catConfig.provider === 'openai-chatgpt-pro')
+      throw new Error('This member does not use a local command-line tool');
+    if (catConfig?.clientId === 'anthropic') {
+      const { inspectClaudeLocalSession } = await import(
+        './domains/cats/services/session/import/LocalSessionInspection.js'
+      );
+      const metadata = await inspectClaudeLocalSession(sessionId);
+      const { realpath } = await import('node:fs/promises');
+      return { ...metadata, projectPath: await realpath(metadata.projectPath) };
+    }
+    const { service, ...configuration } = resolveLocalCodexReader(catId);
+    if (!service.inspectLocalSession) throw new Error('This Codex member cannot inspect native sessions');
+    const metadata = await service.inspectLocalSession({
+      ...configuration,
+      sessionId,
+      invocationId: 'local-session-import:' + randomUUID(),
+      timeoutMs: 8_000,
+    });
+    const { realpath } = await import('node:fs/promises');
+    return { ...metadata, projectPath: await realpath(metadata.projectPath) };
+  };
+
+  const listLocalSessions = async (catId: string, limit: number) => {
+    const catConfig = catRegistry.tryGet(catId)?.config;
+    if (catConfig?.cli && catConfig.clientId === 'anthropic') {
+      const { readClaudeRecentSessionIndex } = await import(
+        './domains/cats/services/session/import/ClaudeRecentSessionIndex.js'
+      );
+      return readClaudeRecentSessionIndex(limit, process.env.CLAUDE_CONFIG_DIR ?? join(homedir(), '.claude'));
+    }
+    const { service, ...configuration } = resolveLocalCodexReader(catId);
+    if (!service.listLocalSessions) throw new Error('This Codex member cannot list native sessions');
+    return service.listLocalSessions({
+      ...configuration,
+      limit,
+      invocationId: 'local-session-list:' + randomUUID(),
+      timeoutMs: 8_000,
+    });
+  };
+
   // Session chain (F24)
   await app.register(sessionChainRoutes, {
+    inspectLocalSession,
+    listLocalSessions,
     sessionChainStore,
     threadStore,
     messageStore,

@@ -75,7 +75,7 @@ describe('F322 设置与管理 shell (v2)', () => {
 
   it('old /settings?s= links and extra positioning params keep working, including deep-linked cat editing', () => {
     render('s=accounts&cat=opus');
-    expect(host.querySelector('[data-testid="settings-entry-connect"]')?.getAttribute('aria-current')).toBe('page');
+    expect(host.querySelector('[data-testid="settings-entry-team"]')?.getAttribute('aria-current')).toBe('page');
     const content = host.querySelector('[data-testid="content"]');
     expect(content?.getAttribute('data-section')).toBe('accounts');
     render('s=members&cat=opus');
@@ -90,7 +90,7 @@ describe('F322 设置与管理 shell (v2)', () => {
     click('settings-entry-connect');
     expect(nav.replace).toHaveBeenCalledTimes(1);
     const url = String(nav.replace.mock.calls[0]?.[0]);
-    expect(url).toContain('s=accounts');
+    expect(url).toContain('s=im');
     expect(url).toContain('from=thread-1');
     expect(url).toContain('cat=opus');
   });

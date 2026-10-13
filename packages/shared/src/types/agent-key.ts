@@ -9,7 +9,8 @@ export interface AgentKeyRecord {
   salt: string;
   scope: 'user-bound';
   issuedAt: number;
-  expiresAt: number;
+  /** null is an explicitly provisioned revocation-bound service credential; default keys still expire. */
+  expiresAt: number | null;
   rotatedFrom?: string;
   graceUntil?: number;
   lastUsedAt?: number;

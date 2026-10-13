@@ -1,7 +1,8 @@
 import assert from 'node:assert/strict';
 import { writeFile } from 'node:fs/promises';
 import { test } from 'node:test';
-import { ensureWorkspaceOpen } from './f307-workspace-open.mjs';
+import { openWorkspaceTools } from './f307-workspace-open.mjs';
+import { registerWholeImageChatJourney } from './f309-image-chat-primary.mjs';
 import {
   assertFitsViewport,
   assertReadable,
@@ -150,9 +151,11 @@ async function assertLegible(root, label, measured) {
 }
 
 export function registerOrdinaryChatMediaJourney(suite) {
-  async function openWork() {
+  async function openWork({ shell, ...options } = {}) {
     const sent = [];
-    const opened = await openChatPage(suite, {
+    const chosenSuite = shell ? () => ({ ...suite(), baseUrl: `${suite().baseUrl}?shell=${shell}` }) : suite;
+    const opened = await openChatPage(chosenSuite, {
+      ...options,
       messages: [],
       handleApi: async (request, url) => {
         if (url.pathname === '/api/messages' && request.method() === 'POST') {
@@ -163,13 +166,13 @@ export function registerOrdinaryChatMediaJourney(suite) {
       },
     });
     const { page } = opened;
-    await ensureWorkspaceOpen(page);
-    const home = page.getByTestId('workspace-launcher-home');
+    const home = await openWorkspaceTools(page);
     await home.getByTestId('workspace-launcher-search').fill('cover');
     await home.getByTestId('workspace-launcher-file-result').filter({ hasText: '文件名' }).click();
     await page.getByTestId('workspace-content-review-media').waitFor({ timeout: 30_000 });
     return { ...opened, sent };
   }
+  registerWholeImageChatJourney(openWork);
 
   const addPlace = async (page, words) => {
     if (words) await page.getByPlaceholder('写下这条批注…').fill(words);
@@ -185,6 +188,13 @@ export function registerOrdinaryChatMediaJourney(suite) {
       try {
         // The whole image, with words for that place.
         await page.getByRole('button', { name: '标注整张图片', exact: true }).click();
+        const save = page.getByRole('button', { name: '保存批注', exact: true });
+        assert.equal(await save.isVisible(), false, 'saving is an explicit editing action, not another primary send');
+        const editing = page.getByLabel('批注操作', { exact: true });
+        await editing.click();
+        assert.equal(await save.isVisible(), true, 'the original save remains reachable');
+        await page.screenshot({ path: `${EVIDENCE}/media-chat-annotation-actions-1440.png` });
+        await editing.click();
         await addPlace(page, '移除角落的标志');
         const chip = page.locator(CHIP);
         await chip.waitFor({ timeout: 15_000 });

@@ -43,8 +43,21 @@ export const threadSignalsCopy = defineShellCopy(
       conversations: '个对话',
       catsWorking: (count: number) => `${count} 只在干活`,
       groupErrors: (count: number) => `${count} 个出错`,
+      groupErrorDetails: (count: number, titles: string) => `${count} 个出错，发生在：\n${titles}`,
+      untitled: '未命名对话',
       groupReplied: (count: number) => `${count} 个已回复`,
+      needsDecision: '等你决定',
+      toSee: (count: number) => `${count} 条要看`,
+      moreToSee: (count: number) => `还有 ${count} 条 · 展开`,
+      showCollapsedPeek: '收起时露出要我看的',
+      decisionsUnknown: '待办尚未确认',
       remaining: (count: number) => `其余 ${count} 个对话`,
+      activity: {
+        now: '刚刚',
+        minutes: (count: number) => `${count}分`,
+        hours: (count: number) => `${count}时`,
+        days: (count: number) => `${count}天`,
+      },
     },
     en: {
       labels: 'Labels',
@@ -87,9 +100,47 @@ export const threadSignalsCopy = defineShellCopy(
       conversations: 'conversations',
       catsWorking: (count: number) => `${count} working`,
       groupErrors: (count: number) => `${count} error${count === 1 ? '' : 's'}`,
+      groupErrorDetails: (count: number, titles: string) => `${count} error${count === 1 ? '' : 's'} in:\n${titles}`,
+      untitled: 'Untitled conversation',
       groupReplied: (count: number) => `${count} replied`,
+      needsDecision: 'To decide',
+      toSee: (count: number) => `${count} to see`,
+      moreToSee: (count: number) => `${count} more · Expand`,
+      showCollapsedPeek: 'Show what needs me when collapsed',
+      decisionsUnknown: 'Decisions not confirmed',
       remaining: (count: number) => `${count} more conversation${count === 1 ? '' : 's'}`,
+      activity: {
+        now: 'just now',
+        minutes: (count: number) => `${count} min`,
+        hours: (count: number) => `${count} h`,
+        days: (count: number) => `${count} d`,
+      },
     },
   },
-  { samples: { remaining: [[1], [7]], catsWorking: [[1], [12]], groupErrors: [[1], [2]], groupReplied: [[1], [2]] } },
+  {
+    samples: {
+      remaining: [[1], [7]],
+      catsWorking: [[1], [12]],
+      groupErrors: [[1], [2]],
+      groupErrorDetails: [
+        [1, 'First conversation'],
+        [2, 'Second conversation'],
+      ],
+      groupReplied: [[1], [2]],
+      toSee: [[0], [1], [5]],
+      moreToSee: [[1], [2]],
+      'activity.minutes': [[1], [4]],
+      'activity.hours': [[1], [12]],
+      'activity.days': [[1], [7]],
+    },
+  },
 );
+
+/** The title-line activity time follows v2 copy; classic and other consumers keep their existing formatter. */
+export function formatSidebarActivityTime(timestamp: number, copy: (typeof threadSignalsCopy)['zh'], now = Date.now()) {
+  const elapsed = Math.max(0, now - timestamp);
+  if (elapsed < 60_000) return copy.activity.now;
+  if (elapsed < 3_600_000) return copy.activity.minutes(Math.floor(elapsed / 60_000));
+  if (elapsed < 86_400_000) return copy.activity.hours(Math.floor(elapsed / 3_600_000));
+  return copy.activity.days(Math.floor(elapsed / 86_400_000));
+}

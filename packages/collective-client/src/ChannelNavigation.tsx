@@ -8,8 +8,6 @@ export function ChannelNavigation({
   onQuery,
   onSelect,
   onMembers,
-  onCafe,
-  onReplayGuide,
   guideCatCount,
 }: {
   readonly channels: ReturnType<typeof channelDestinations>;
@@ -18,8 +16,6 @@ export function ChannelNavigation({
   readonly onQuery: (value: string) => void;
   readonly onSelect: (id: string) => void;
   readonly onMembers: () => void;
-  readonly onCafe?: () => void;
-  readonly onReplayGuide?: () => void;
   readonly guideCatCount?: number;
 }) {
   const visible = channels.filter((channel) =>
@@ -53,12 +49,12 @@ export function ChannelNavigation({
                 <strong>{channel.id}</strong>
                 <small>
                   {channel.id === 'general' && guideCatCount !== undefined
-                    ? `${guideCatCount} 位猫猫已加入`
-                    : channel.catCount
-                      ? `${channel.catCount} 位猫猫已加入`
-                      : channel.messageCount
-                        ? `${channel.messageCount} 条消息`
-                        : '还很安静'}
+                    ? guideCatCount
+                      ? '伙伴正在加入'
+                      : '正在准备'
+                    : channel.messageCount
+                      ? `${channel.messageCount} 条消息`
+                      : ''}
                 </small>
               </span>
             </button>
@@ -76,28 +72,7 @@ export function ChannelNavigation({
             </span>
           </button>
         </nav>
-        {onCafe && (
-          <section className="destination-list cafe-destination">
-            <p>你的 Café</p>
-            <button type="button" className="destination-item" onClick={onCafe}>
-              <span className="destination-symbol">
-                <CollectiveIcon kind="home" />
-              </span>
-              <span>
-                <strong>我的 Café</strong>
-                <small>带伙伴加入 · 管理参与</small>
-              </span>
-            </button>
-            <p className="private-boundary">加入频道不会公开家里的私人对话</p>
-            {onReplayGuide && (
-              <button type="button" className="first-entry-replay" onClick={onReplayGuide}>
-                再看一遍演示
-              </button>
-            )}
-          </section>
-        )}
       </div>
-      {onCafe && <div className="host-activity-space" aria-hidden="true" />}
     </>
   );
 }

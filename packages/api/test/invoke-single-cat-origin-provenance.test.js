@@ -53,12 +53,14 @@ test('invokeSingleCat persists the exact turn trigger separately from A2A reply 
   assert.equal(createArgs[6], 'msg-user-direct', 'exact turn origin must reach callback auth storage');
 });
 
-for (const [origin, provenance, expected] of [
+for (const [origin, provenance, expected, live = false, explicitSeed = false] of [
   ['interactive', 'strict', true],
   ['interactive', 'legacy_fallback', false],
   ['a2a', 'strict', false],
+  ['interactive', 'strict', false, true],
+  ['interactive', 'strict', false, true, true],
 ]) {
-  test(`F321 opening hook binds the exact owner trigger only for ${origin}/${provenance}`, async () => {
+  test(`F321 opening hook: ${origin}/${provenance}, Live=${live}, explicit cue=${explicitSeed}`, async () => {
     const { invokeSingleCat } = await import('../dist/domains/cats/services/agents/invocation/invoke-single-cat.js');
     const prepared = [];
     const resolved = [];
@@ -115,10 +117,26 @@ for (const [origin, provenance, expected] of [
       invocationOrigin: origin,
       ownerAuthProvenance: provenance,
       executionCausal: { triggerMessageId: 'first-owner-message' },
+      ...(live
+        ? { liveCompanion: { finished: new Promise(() => {}), ready: async () => {}, observe: async () => {} } }
+        : {}),
+      ...(explicitSeed
+        ? {
+            memoryCueOpportunitySeeds: [
+              {
+                kind: 'thread_opened',
+                producer: 'owner_message',
+                occurredAt: 1,
+                payload: { sourceMessageId: 'explicit' },
+              },
+            ],
+          }
+        : {}),
     })) {
     }
     assert.equal(prepared.length, expected ? 1 : 0);
-    assert.equal(resolved.length, expected ? 1 : 0);
+    assert.equal(resolved.length, expected || explicitSeed ? 1 : 0);
+    if (explicitSeed) assert.equal(resolved[0].seeds[0].payload.sourceMessageId, 'explicit');
     if (expected) {
       assert.equal(prepared[0].sourceMessageId, 'first-owner-message');
       assert.equal(prepared[0].consumerCatId, 'codex');

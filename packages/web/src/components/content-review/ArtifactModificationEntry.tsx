@@ -11,12 +11,14 @@ export function ArtifactModificationEntry({
   round,
   draft,
   disabled,
+  allowNewRequest = true,
   onRegionHandedOff,
 }: {
   view: ArtifactReviewView;
   round: ArtifactReviewRound;
   draft: ReviewDraft;
   disabled: boolean;
+  allowNewRequest?: boolean;
   /** The chosen region now belongs to a recorded erase request; the canvas selection is released. */
   onRegionHandedOff?: () => void;
 }) {
@@ -38,7 +40,7 @@ export function ArtifactModificationEntry({
           onClick={() => setOpen(true)}
           className="rounded-md border border-cafe-subtle px-3 py-1.5 text-xs font-semibold text-cafe-accent"
         >
-          {disabled ? '修改记录' : '请猫修改'}
+          {disabled || !allowNewRequest ? '修改记录' : '请猫修改'}
         </button>
       </div>
       {open ? (
@@ -52,8 +54,9 @@ export function ArtifactModificationEntry({
           suggestedThreadId={view.review.task.threadId}
           initialIntent={draft.anchor ? { selection: draft.anchor } : {}}
           initialIntentSourceVersion={modificationSourceVersion(source)}
-          allowNewRequest={!disabled}
+          allowNewRequest={allowNewRequest && !disabled}
           onRequestKnown={(request) => {
+            if (!allowNewRequest) return;
             const { imageEdit, selection } = request.record.payload.intent;
             if (
               imageEdit?.kind === 'erase-region' &&

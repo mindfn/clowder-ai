@@ -2,8 +2,9 @@ import assert from 'node:assert/strict';
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
-import { after, before, beforeEach, describe, it } from 'node:test';
+import { after, afterEach, before, beforeEach, describe, it } from 'node:test';
 import { fileURLToPath } from 'node:url';
+import { selectFakeCodexHome } from './helpers/fake-codex-home.js';
 
 const { bootstrapCatCatalog, resolveCatCatalogPath, writeCatCatalog } = await import(
   '../dist/config/cat-catalog-store.js'
@@ -353,6 +354,8 @@ function collectCatalogCatIds(catalog) {
 describe('cat-catalog-store', () => {
   // Isolate provider profiles to a clean tmpdir so tests don't read from ~/.cat-cafe/
   let savedGlobalRoot;
+  let savedCodexHome;
+  let savedCodexSqliteHome;
   const isolationRoot = mkdtempSync(join(tmpdir(), 'cat-catalog-store-isolation-'));
   before(() => {
     savedGlobalRoot = process.env.CAT_CAFE_GLOBAL_CONFIG_ROOT;
@@ -360,6 +363,14 @@ describe('cat-catalog-store', () => {
   });
   beforeEach(() => {
     process.env.CAT_CAFE_GLOBAL_CONFIG_ROOT = isolationRoot;
+    savedCodexHome = process.env.CODEX_HOME;
+    savedCodexSqliteHome = process.env.CODEX_SQLITE_HOME;
+  });
+  afterEach(() => {
+    if (savedCodexHome === undefined) delete process.env.CODEX_HOME;
+    else process.env.CODEX_HOME = savedCodexHome;
+    if (savedCodexSqliteHome === undefined) delete process.env.CODEX_SQLITE_HOME;
+    else process.env.CODEX_SQLITE_HOME = savedCodexSqliteHome;
   });
   after(() => {
     if (savedGlobalRoot === undefined) delete process.env.CAT_CAFE_GLOBAL_CONFIG_ROOT;
@@ -735,6 +746,7 @@ describe('cat-catalog-store', () => {
 
   it('creates a new runtime member without corrupting v2 top-level fields', async () => {
     const projectRoot = mkdtempSync(join(tmpdir(), 'cat-catalog-store-'));
+    selectFakeCodexHome(projectRoot);
     const templatePath = join(projectRoot, 'cat-template.json');
     writeFileSync(templatePath, JSON.stringify(validConfig(), null, 2));
     writeCatCatalog(projectRoot, validConfig());
@@ -776,6 +788,7 @@ describe('cat-catalog-store', () => {
 
   it('persists voiceConfig when creating a runtime member', async () => {
     const projectRoot = mkdtempSync(join(tmpdir(), 'cat-catalog-store-'));
+    selectFakeCodexHome(projectRoot);
     const templatePath = join(projectRoot, 'cat-template.json');
     writeFileSync(templatePath, JSON.stringify(validConfig(), null, 2));
     writeCatCatalog(projectRoot, validConfig());
@@ -1220,6 +1233,7 @@ describe('cat-catalog-store', () => {
 
   it('persists acp tombstone when disabling template-inherited ACP transport', async () => {
     const projectRoot = mkdtempSync(join(tmpdir(), 'cat-catalog-store-'));
+    selectFakeCodexHome(projectRoot);
     const templatePath = join(projectRoot, 'cat-template.json');
     const template = validConfig();
     template.breeds[0].variants[0].clientId = 'google';
@@ -1620,6 +1634,7 @@ describe('cat-catalog-store', () => {
 
   it('rejects runtime members that reuse an alias from another cat', () => {
     const projectRoot = mkdtempSync(join(tmpdir(), 'cat-catalog-store-'));
+    selectFakeCodexHome(projectRoot);
     const templatePath = join(projectRoot, 'cat-template.json');
     writeFileSync(templatePath, JSON.stringify(validConfig(), null, 2));
     writeCatCatalog(projectRoot, validConfig());
@@ -1652,6 +1667,7 @@ describe('cat-catalog-store', () => {
 
   it('deletes a runtime-created member without touching the rest of the catalog', async () => {
     const projectRoot = mkdtempSync(join(tmpdir(), 'cat-catalog-store-'));
+    selectFakeCodexHome(projectRoot);
     const templatePath = join(projectRoot, 'cat-template.json');
     writeFileSync(templatePath, JSON.stringify(validConfig(), null, 2));
     writeCatCatalog(projectRoot, validConfig());
@@ -1707,6 +1723,7 @@ describe('cat-catalog-store', () => {
     const siblingRoot = join(parentRoot, 'clowder-ai-old');
     mkdirSync(projectRoot, { recursive: true });
     mkdirSync(siblingRoot, { recursive: true });
+    selectFakeCodexHome(projectRoot);
 
     const templatePath = join(projectRoot, 'cat-template.json');
     const siblingTemplatePath = join(siblingRoot, 'cat-template.json');
@@ -1756,6 +1773,7 @@ describe('cat-catalog-store', () => {
     const siblingRoot = join(parentRoot, 'clowder-ai-old');
     mkdirSync(projectRoot, { recursive: true });
     mkdirSync(siblingRoot, { recursive: true });
+    selectFakeCodexHome(projectRoot);
 
     const templatePath = join(projectRoot, 'cat-template.json');
     const siblingTemplatePath = join(siblingRoot, 'cat-template.json');

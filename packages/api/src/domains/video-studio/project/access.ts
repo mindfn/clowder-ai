@@ -14,6 +14,10 @@ export type AuthorizeVideoProjectCat = (input: {
   readonly permission: VideoProjectPermission;
 }) => Promise<void>;
 
+export class VideoProjectAccessError extends Error {
+  readonly code = 'access_denied';
+}
+
 export class VideoProjectAccess {
   constructor(
     readonly ownerUserId: string,
@@ -26,14 +30,14 @@ export class VideoProjectAccess {
     permission: VideoProjectPermission,
   ): Promise<void> {
     if (principal.userId !== this.ownerUserId || !principal.actor.actorId || principal.actor.actorId.length > 256)
-      throw new Error('Video project access denied');
+      throw new VideoProjectAccessError('Video project access denied');
     if (principal.actor.kind === 'human') {
       if (principal.actor.actorId !== principal.userId || principal.invocationId !== undefined)
-        throw new Error('Video project access denied: Human identity mismatch');
+        throw new VideoProjectAccessError('Video project access denied: Human identity mismatch');
       return;
     }
     if (principal.actor.kind !== 'cat' || !principal.invocationId || !this.authorizeCat)
-      throw new Error('Video project access denied: Cat authorization required');
+      throw new VideoProjectAccessError('Video project access denied: Cat authorization required');
     await this.authorizeCat({ principal, contentRef, permission });
   }
 }

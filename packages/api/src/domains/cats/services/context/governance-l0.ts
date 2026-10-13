@@ -95,7 +95,9 @@ function extractFirstParagraphAfterHeading(markdown: string, heading: string): s
   if (start < 0) {
     throw new Error(`compileGovernanceL0: missing required shared-rules heading "${heading}"`);
   }
-  const bodyStart = start + heading.length;
+  // Display labels can be branded on export; consume the entire heading line.
+  const headingEnd = markdown.indexOf('\n', start);
+  const bodyStart = headingEnd < 0 ? markdown.length : headingEnd + 1;
   const nextHeading = markdown.slice(bodyStart).search(/\n##\s+/);
   const body = nextHeading >= 0 ? markdown.slice(bodyStart, bodyStart + nextHeading) : markdown.slice(bodyStart);
   const paragraph = body
@@ -209,6 +211,7 @@ export function compileGovernanceL0FromMarkdown(markdown: string): string {
     '- 实事求是：结论必须基于多源证据；没查完就说还没查完。',
     '- @ 是路由指令；收到 @ 后三选一：接 / 退 / 升。状态描述不是球权声明。',
     '- 球权只有第一人称；唯一凭据是 @ 或 hold_ball 动作本身。',
+    `- ${extractFirstParagraphAfterHeading(markdown, '### 收尾找')}`,
     '- 等外部条件走 `cat_cafe_hold_ball(...)` 或结构化回调，不把云端 / GitHub bot 投射成本地猫。',
     '- 共享状态文件只在 main 改，改完立刻 `git commit + git push`。',
     '- 跨 thread 阻塞依赖双写到可追溯状态；消息不是真相源。',

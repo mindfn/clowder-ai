@@ -45,7 +45,10 @@ export async function readPublishedMessageItem(
   const url = messageItemUrl(message, source);
   if (!url || url !== source.expectedUrl || String(message.timestamp) !== source.messageRevision)
     throw new MediaOwnerError('publication_changed');
-  const file = /^\/uploads\/([a-zA-Z0-9][a-zA-Z0-9._-]*\.(png|mp4))$/i.exec(url);
+  const privateImage = /^\/api\/plugins\/chatgpt-dot\/images\/(dot_img_[a-f0-9]{64})\.png$/.exec(url);
+  const file =
+    /^\/uploads\/([a-zA-Z0-9][a-zA-Z0-9._-]*\.(png|mp4))$/i.exec(url) ??
+    (privateImage ? [url, `${privateImage[1]}.png`, 'png'] : null);
   if (!file?.[1] || !file[2]) throw new MediaOwnerError('invalid_media');
   const mediaType = file[2].toLowerCase() === 'png' ? ('image/png' as const) : ('video/mp4' as const);
   return {
@@ -53,6 +56,7 @@ export async function readPublishedMessageItem(
       (artifact) => artifact.url === url,
     ).length,
     fileName: file[1],
+    ...(privateImage?.[1] ? { privateImageId: privateImage[1] } : {}),
     publisherCatId: message.catId,
     mediaType,
     publication: {

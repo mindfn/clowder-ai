@@ -6,6 +6,8 @@ import {
   type HostCompanionReply as CompanionReply,
   type HostCompanionState,
   type HostNativeWork,
+  type HostTextSubmission,
+  type HostVoiceObservation,
   hostNativeWork,
   validateHostCompanionCommand as validateCompanionCommand,
   validateHostCompanionReply as validateCompanionReply,
@@ -30,6 +32,7 @@ import {
   CompanionUnifiedDecisions,
 } from './host/unified/companion-unified-decisions.js';
 import { LiveCompanionSelectionError, resolveLiveCompanionSelection } from './live-companion-selection.js';
+import type { LivePresentationObservation, LivePresentationReply } from './live-presentation-observations.js';
 
 type Options = ConstructorParameters<typeof CompanionOwnerClient>[0] & {
   /** Exact published archive admission from the installed package digest. */
@@ -40,6 +43,12 @@ type Options = ConstructorParameters<typeof CompanionOwnerClient>[0] & {
   readonly openConversation: (threadId: string) => Promise<boolean>;
   readonly canOpenDecision?: (destination: CompanionDecisionDestination) => Promise<boolean>;
   readonly openDecision?: (destination: CompanionDecisionDestination) => Promise<boolean>;
+  readonly observeVoice?: (observation: HostVoiceObservation) => Promise<void>;
+  readonly observeTextSubmission?: (observation: HostTextSubmission & { callId: string }) => Promise<void>;
+  readonly observePresentation?: (
+    observation: LivePresentationObservation,
+    verifyHost: () => Promise<boolean>,
+  ) => Promise<LivePresentationReply>;
 };
 export class CompanionHostBridge {
   private readonly client: CompanionOwnerClient;
@@ -80,9 +89,13 @@ export class CompanionHostBridge {
     if (!validateCompanionCommand(input, this.options.companionContract))
       return { kind: 'error', code: 'invalid_request' };
     try {
-      await this.assertCurrent();
+      if (input.kind !== 'presentation.observe') await this.assertCurrent();
       const reply = await this.execute(input);
-      if (!(input.kind === 'companion.disable' && reply.kind === 'companion-lifecycle')) await this.assertCurrent();
+      if (
+        input.kind !== 'presentation.observe' &&
+        !(input.kind === 'companion.disable' && reply.kind === 'companion-lifecycle')
+      )
+        await this.assertCurrent();
       return validateCompanionReply(reply, this.options.companionContract)
         ? reply
         : { kind: 'error', code: 'unavailable' };
@@ -104,6 +117,21 @@ export class CompanionHostBridge {
     this.unified.reset();
     this.options.work?.reset();
     await this.stop();
+  }
+  async observeVoice(observation: HostVoiceObservation): Promise<void> {
+    await this.assertCurrent();
+    if (observation.callId !== this.callId || !this.options.observeVoice) return;
+    await this.options.observeVoice(observation);
+  }
+  async observeTextSubmission(observation: HostTextSubmission): Promise<void> {
+    const current = this.callId;
+    const generation = this.generation;
+    if (!current || !this.options.observeTextSubmission) return;
+    await this.assertCurrent();
+    this.assertGeneration(generation);
+    await this.options.observeTextSubmission({ ...observation, callId: current });
+    this.assertGeneration(generation);
+    await this.assertCurrent();
   }
   private async execute(command: CompanionCommand): Promise<CompanionReply> {
     switch (command.kind) {
@@ -145,7 +173,7 @@ export class CompanionHostBridge {
         return { kind: 'navigation', delivery: opened ? 'requested' : 'unconfirmed' };
       }
       case 'decisions.read':
-        return ['0.1.0-beta.24', '0.1.0-beta.25'].includes(this.options.companionContract ?? '')
+        return ['0.1.0-beta.24', '0.1.0-beta.25', '0.1.0-beta.27'].includes(this.options.companionContract ?? '')
           ? this.unified.read(command.offset, command.limit)
           : readCompanionDecisions(this.client, command.offset, command.limit);
       case 'decision.open':
@@ -178,6 +206,24 @@ export class CompanionHostBridge {
         const transcript = await readModernCompanionTranscript(this.client, current);
         this.assertGeneration(generation);
         return transcript;
+      }
+      case 'presentation.observe': {
+        const current = this.callId;
+        const generation = this.generation;
+        if (!current || current !== command.callId) return { kind: 'error', code: 'invalid_request' };
+        if (!this.options.observePresentation) return { kind: 'error', code: 'unavailable' };
+        // The consumer repeats this guard after any asynchronous reference read,
+        // before recording a fact. Checking only after its reply would be too late.
+        const verifyHost = async () => {
+          try {
+            await this.assertCurrent();
+          } catch {
+            return false;
+          }
+          return !this.closed && this.callId === current && this.generation === generation;
+        };
+        if (!(await verifyHost())) return { kind: 'error', code: 'invalid_request' };
+        return this.options.observePresentation(command, verifyHost);
       }
       case 'text':
         if (!this.callId && (this.pending || this.changingDocuments)) throw new CompanionBridgeError('busy');
@@ -282,6 +328,9 @@ export class CompanionHostBridge {
       nativeActivity,
       nativeWork,
       liveTransport: { kind: 'gpt_live_v3', verifiedModel: null },
+      ...(this.options.companionContract === '0.1.0-beta.27'
+        ? { meeting: { kind: 'unconfirmed', sharing: false, paused: false, sourceLabel: null } as const }
+        : {}),
     };
   }
   private prepare(): Promise<CompanionReply> {

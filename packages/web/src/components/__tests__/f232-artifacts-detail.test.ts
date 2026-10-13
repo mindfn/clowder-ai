@@ -11,7 +11,8 @@ const { mockState } = vi.hoisted(() => ({
 }));
 
 vi.mock('@/utils/api-client', () => ({ API_URL: 'http://test.local', apiFetch: vi.fn() }));
-vi.mock('@/hooks/useThreadArtifacts', () => ({
+vi.mock('@/hooks/useThreadArtifacts', async (original) => ({
+  ...(await original<object>()),
   useThreadArtifacts: () => ({ artifacts: mockState.artifacts, loading: false, error: null }),
 }));
 vi.mock('@/hooks/useCatData', () => ({

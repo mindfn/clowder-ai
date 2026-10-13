@@ -129,7 +129,7 @@ export class CodexAppServerHostPool {
 
     try {
       const connection = await this.connectEntry(entry);
-      return wrapReservedHostConnection({
+      const connectionWithLease = wrapReservedHostConnection({
         connection,
         reusedSessionHost,
         abortObserved: () => lease.abortObserved,
@@ -138,6 +138,7 @@ export class CodexAppServerHostPool {
         terminateHost: () => this.closeEntry(entry, 'forced'),
         rememberSession: (sessionId) => this.rememberSession(entry, lease, sessionId),
       });
+      return { ...connectionWithLease, hostAcquisitionMode: reused ? 'warm' : 'cold' };
     } catch (error) {
       await this.closeEntry(entry, 'connect_failed');
       throw error;

@@ -45,6 +45,8 @@ export class ContentModificationResultService {
     record: ContentModificationRecord,
     principal: MediaReviewPrincipal,
   ): Promise<ModificationCandidate[]> {
+    if (record.payload.source.kind === 'video-project' || record.progress.prepared?.kind === 'project')
+      throw new ModificationTextError('invalid_patch');
     const bound = record.progress.review;
     if (!bound) return [];
     if (record.progress.prepared?.kind === 'text') {

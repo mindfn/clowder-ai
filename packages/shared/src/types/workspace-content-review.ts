@@ -2,6 +2,7 @@ import { z } from 'zod';
 import { artifactReviewAnchorSchema, immutableMediaSchema, reviewedMediaAssetSchema } from './artifact-review.js';
 import { artifactReviewDrawingSchema, artifactReviewImageEditSchema } from './artifact-review-drawing.js';
 import { evolutionMediaLocatorSchema } from './evolution-media-source.js';
+import { videoProjectMessageContextSchema } from './video-project-message.js';
 import {
   type VideoProjectReviewAnchor,
   videoProjectReviewAnchorSchema,
@@ -141,6 +142,8 @@ export const workspaceContentAnnotationSchema = z
     replies: z.array(workspaceContentReplySchema).max(100).optional(),
     /** F326 project-only append-only events; absent on legacy text/media annotations. */
     projectHistory: z.array(videoProjectReviewHistorySchema).min(1).max(1000).optional(),
+    /** Original delivered Human message and frozen screening evidence; absent on Phase A direct opinions. */
+    projectMessage: videoProjectMessageContextSchema.optional(),
   })
   .strict();
 export type WorkspaceContentAnnotation = z.infer<typeof workspaceContentAnnotationSchema>;

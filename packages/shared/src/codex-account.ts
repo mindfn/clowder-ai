@@ -42,6 +42,8 @@ export interface CodexManagedAccount {
   readonly attempt?: CodexLoginAttempt;
 }
 export interface AccountQuotaObservation {
+  /** Non-secret principal that produced this observation; legacy observations are unverified. */
+  readonly owner?: { accountRef: string; userId: string; workspaceId: string };
   readonly observedAt: number;
   readonly status: 'ok' | 'unavailable' | 'unsupported';
   readonly source: 'codex_official_readonly';
@@ -54,6 +56,18 @@ export interface AccountQuotaObservation {
     resetsText?: string;
   }>;
   readonly error?: string;
+}
+export function accountQuotaOwnerMatches(
+  observation: AccountQuotaObservation | undefined,
+  accountRef: string,
+  identity: CodexAccountIdentity | undefined,
+): boolean {
+  return (
+    !!identity &&
+    observation?.owner?.accountRef === accountRef &&
+    observation.owner.userId === identity.userId &&
+    observation.owner.workspaceId === identity.workspaceId
+  );
 }
 export interface ExecutionAccountSnapshot {
   readonly accountRef: string;

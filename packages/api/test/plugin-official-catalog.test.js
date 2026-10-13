@@ -7,7 +7,8 @@ import {
   RefreshingOfficialPluginCatalog,
 } from '../dist/domains/plugin/index.js';
 
-const policy = OFFICIAL_PLUGIN_POLICIES[0];
+const policy = OFFICIAL_PLUGIN_POLICIES.find((entry) => entry.catalogId === 'feishu-meeting-intake');
+assert.ok(policy);
 const alpha9Digest = 'sha512-d1wf5Il1Ls18Db9EUB4S0qqhDFRe6mSLIyv9E3Tz7VqI59gffHCe+JKmCJOYVGJBiv1ItrTq8ChthF0SzdSWYQ==';
 const alpha10Digest = `sha512-${Buffer.alloc(64, 10).toString('base64')}`;
 

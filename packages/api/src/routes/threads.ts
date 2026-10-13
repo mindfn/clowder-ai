@@ -7,8 +7,8 @@
  * DELETE /api/threads/:id  - 删除对话
  */
 
-import type { CatId, GlobalArtifactDTO, GlobalArtifactsResponse } from '@cat-cafe/shared';
-import { catIdSchema } from '@cat-cafe/shared';
+import type { CatId, GlobalArtifactDTO, GlobalArtifactsResponse, ThreadArtifactDTO } from '@cat-cafe/shared';
+import { catIdSchema, projectThreadWorks } from '@cat-cafe/shared';
 import { projectRecentWorks } from '@cat-cafe/shared/recent-works';
 import type { FastifyPluginAsync } from 'fastify';
 import { z } from 'zod';
@@ -19,10 +19,11 @@ import type { TaskProgressStore } from '../domains/cats/services/agents/invocati
 import { collectRecentGlobalWorkCandidates } from '../domains/cats/services/agents/routing/recent-global-work-reader.js';
 import {
   aggregateProjectedThreadArtifacts,
-  aggregateThreadArtifacts,
   collectAllThreadMessages,
   collectThreadMessageArtifacts,
+  projectMessageArtifacts,
 } from '../domains/cats/services/agents/routing/thread-artifacts-aggregator.js';
+import { threadWorksPrs } from '../domains/cats/services/agents/routing/thread-works-prs.js';
 import { resolveBootcampWorkspaceRoot } from '../domains/cats/services/bootcamp/workspace-root.js';
 import { AuditEventTypes, getEventAuditLog } from '../domains/cats/services/orchestration/EventAuditLog.js';
 import { isHomeSession } from '../domains/cats/services/session/session-scope.js';
@@ -53,6 +54,11 @@ import {
   passesManagedHoldViewerBoundary,
   SYSTEM_USER_IDS,
 } from '../domains/cats/services/stores/visibility.js';
+import {
+  type AcceptedWorkspaceArtifactReaderHolder,
+  type AppliedWorkspaceReceiptMessage,
+  projectAppliedWorkspaceReceipts,
+} from '../domains/collaborative-content/modification/accepted-workspace-artifacts.js';
 import { projectThreadRelations } from '../domains/thread-navigation/thread-relation-projection.js';
 import type { GlobalArtifactWorkLineageResolverHolder } from '../domains/video-studio/content-owner/global-artifact-work-lineage.js';
 import { createModuleLogger } from '../infrastructure/logger.js';
@@ -78,6 +84,7 @@ const recentWorksQuerySchema = z
     limit: z.coerce.number().int().min(1).max(12).default(3),
   })
   .strict();
+const worksQuerySchema = z.object({ view: z.literal('works') }).strict();
 
 type StoredReadCoordinateAssessment =
   | { kind: 'valid'; primary: NonNullable<ReturnType<typeof parseCursor>> }
@@ -421,8 +428,10 @@ export interface ThreadsRoutesOptions {
   sessionChainStore?: ISessionChainStore;
   /** F232: in-memory transcript buffer reader for pre-seal file artifact visibility. */
   transcriptWriter?: TranscriptWriter;
-  /** F309: late-bound owner-backed batch projection for GET /api/artifacts. */
+  /** F309: late-bound owner-backed batch projection for global and thread artifact reads. */
   artifactWorkLineage?: GlobalArtifactWorkLineageResolverHolder;
+  /** F309: pure projection of already-accepted original file results. */
+  acceptedWorkspaceArtifacts?: AcceptedWorkspaceArtifactReaderHolder;
   /**
    * F229: Reserved — no longer used by GET /api/threads.
    * createdBy=userId (P1 fix) means threadStore.list(userId) already returns concierge threads;
@@ -453,6 +462,23 @@ async function projectGlobalArtifactWorkLineage(
   } catch (error) {
     log.warn({ err: error }, 'F309 artifact work lineage unavailable');
     return { artifacts, total: artifacts.length, workLineage: 'unavailable' };
+  }
+}
+
+// Accepted-file availability is independent of the F138 work-lineage contract.
+async function readAcceptedWorkspaceArtifacts(
+  holder: AcceptedWorkspaceArtifactReaderHolder | undefined,
+  ownerUserId: string,
+  threadId: string,
+  receipts: readonly AppliedWorkspaceReceiptMessage[],
+): Promise<{ artifacts: ThreadArtifactDTO[]; complete: boolean }> {
+  if (receipts.length === 0) return { artifacts: [], complete: true };
+  if (!holder?.current) return { artifacts: [], complete: false };
+  try {
+    return { artifacts: await holder.current.read({ ownerUserId, threadId, receipts }), complete: true };
+  } catch {
+    log.warn({ threadId }, 'Accepted workspace artifact owner unavailable');
+    return { artifacts: [], complete: false };
   }
 }
 
@@ -573,6 +599,7 @@ const createThreadSchema = z
     userId: z.string().min(1).max(100).optional(),
     /** Owner-scoped first-send replay key. Same owner + key resolves the same thread. */
     idempotencyKey: z.string().uuid().optional(),
+    temporaryTitle: z.string().min(1).max(200).optional(),
     title: z.string().min(1).max(200).optional(),
     projectPath: z.string().min(1).max(500).optional(),
     /** F32-b Phase 2: Thread-level cat preference (validated against catRegistry) */
@@ -805,6 +832,7 @@ export const threadsRoutes: FastifyPluginAsync<ThreadsRoutesOptions> = async (ap
     const {
       userId: legacyUserId,
       idempotencyKey,
+      temporaryTitle,
       title,
       projectPath,
       preferredCats,
@@ -830,7 +858,8 @@ export const threadsRoutes: FastifyPluginAsync<ThreadsRoutesOptions> = async (ap
         thread = await threadStore.ensureOwnedThread({
           userId,
           idempotencyKey,
-          title: title ?? null,
+          title: title ?? temporaryTitle ?? null,
+          titleSource: title ? 'user' : 'temporary',
           participants: [],
           projectPath: resolvedProjectPath.projectPath,
         });
@@ -843,6 +872,7 @@ export const threadsRoutes: FastifyPluginAsync<ThreadsRoutesOptions> = async (ap
       }
     } else {
       thread = await threadStore.create(userId, title, resolvedProjectPath.projectPath);
+      if (!title && temporaryTitle) await threadStore.setAutomaticTitle(thread.id, temporaryTitle, 'temporary');
     }
 
     // F32-b Phase 2: Set preferred cats if provided at creation time
@@ -1469,6 +1499,10 @@ export const threadsRoutes: FastifyPluginAsync<ThreadsRoutesOptions> = async (ap
       reply.status(401);
       return { error: 'Identity required' };
     }
+    const rawQuery = request.query as Record<string, unknown>;
+    const worksView = Object.hasOwn(rawQuery, 'view');
+    if (worksView && !worksQuerySchema.safeParse(rawQuery).success)
+      return reply.code(400).send({ error: 'Invalid works view query' });
 
     const { threadId } = request.params;
     const thread = await threadStore.get(threadId);
@@ -1490,16 +1524,46 @@ export const threadsRoutes: FastifyPluginAsync<ThreadsRoutesOptions> = async (ap
     // 否则 shared system thread 上 Alice 会看到 Bob 的 PR titles/refs。messages 已由
     // collectAllThreadMessages(userId) scoped；ledger 是 thread 级产物记录（updatedBy=cat/'user'，非
     // user 私有数据），无需过滤。
-    const prTasks = allTasks.filter((t) => t.kind === 'pr_tracking' && t.userId === userId);
-    const mem = await threadStore.getThreadMemory(threadId);
+    const prTasks = worksView
+      ? threadWorksPrs(allTasks, userId, thread.createdBy)
+      : allTasks.filter((t) => t.kind === 'pr_tracking' && t.userId === userId);
+    const mem = worksView ? null : await threadStore.getThreadMemory(threadId);
     // P1 fix (砚砚 review): ledger 含 file/plan/feature-doc 文档产物（F148 类型），不止 file；都映射为面板 file 类，不静默丢
     const persistedFileLedger = (mem?.recentArtifacts ?? []).filter(
       (a) => a.type === 'file' || a.type === 'plan' || a.type === 'feature-doc',
     );
-    const liveFileLedger = await collectLiveFileLedger(opts.sessionChainStore, opts.transcriptWriter, threadId, userId);
+    const liveFileLedger = worksView
+      ? []
+      : await collectLiveFileLedger(opts.sessionChainStore, opts.transcriptWriter, threadId, userId);
     const fileLedger = [...persistedFileLedger, ...liveFileLedger];
-    const artifacts = aggregateThreadArtifacts({ messages, prTasks, fileLedger });
-    return { threadId, artifacts };
+    const acceptedFiles = await readAcceptedWorkspaceArtifacts(
+      opts.acceptedWorkspaceArtifacts,
+      userId,
+      threadId,
+      projectAppliedWorkspaceReceipts(messages),
+    );
+    const artifacts = aggregateProjectedThreadArtifacts({
+      messageArtifacts: [...projectMessageArtifacts(messages), ...acceptedFiles.artifacts],
+      prTasks,
+      fileLedger: worksView ? [] : fileLedger,
+    });
+    const projected = await projectGlobalArtifactWorkLineage(
+      opts.artifactWorkLineage,
+      userId,
+      artifacts.map((artifact) => ({ ...artifact, threadId, threadTitle: thread.title ?? '' })),
+    );
+    return {
+      threadId,
+      artifacts: projected.artifacts.map(({ threadId: _threadId, threadTitle: _threadTitle, ...artifact }) => artifact),
+      workLineage: projected.workLineage,
+      ...(worksView
+        ? {
+            view: 'works',
+            total: projectThreadWorks(projected.artifacts, projected.workLineage === 'resolved').length,
+            complete: !!messageStore && !!taskStore && acceptedFiles.complete,
+          }
+        : {}),
+    };
   });
 
   // F232 Phase B: GET /api/artifacts — global artifact aggregation across all user threads (AC-B1, AC-B2).
@@ -1512,7 +1576,10 @@ export const threadsRoutes: FastifyPluginAsync<ThreadsRoutesOptions> = async (ap
     }
 
     const rawQuery = request.query as Record<string, unknown>;
-    if (Object.hasOwn(rawQuery, 'view')) {
+    const worksView = rawQuery.view === 'works';
+    if (worksView && !worksQuerySchema.safeParse(rawQuery).success)
+      return reply.code(400).send({ error: 'Invalid works view query' });
+    if (Object.hasOwn(rawQuery, 'view') && !worksView) {
       const parsed = recentWorksQuerySchema.safeParse(rawQuery);
       if (!parsed.success) {
         reply.status(400);
@@ -1533,20 +1600,37 @@ export const threadsRoutes: FastifyPluginAsync<ThreadsRoutesOptions> = async (ap
     const perThread = new Array<GlobalArtifactDTO[]>(userThreads.length);
     const threadEntries = userThreads.entries();
     let scanFailed = false;
+    let worksComplete = !!messageStore && !!taskStore;
     const workers = Array.from({ length: Math.min(4, userThreads.length) }, async () => {
       for (const [index, thread] of threadEntries) {
         if (scanFailed) break;
         try {
+          const receipts: AppliedWorkspaceReceiptMessage[] = [];
           const messageArtifacts = messageStore
-            ? await collectThreadMessageArtifacts(messageStore, thread.id, userId)
+            ? await collectThreadMessageArtifacts(messageStore, thread.id, userId, (page) => {
+                receipts.push(...projectAppliedWorkspaceReceipts(page));
+              })
             : [];
+          const acceptedFiles = await readAcceptedWorkspaceArtifacts(
+            opts.acceptedWorkspaceArtifacts,
+            userId,
+            thread.id,
+            receipts,
+          );
+          if (!acceptedFiles.complete) worksComplete = false;
           const allTasks = taskStore ? await taskStore.listByThread(thread.id) : [];
-          const prTasks = allTasks.filter((t) => t.kind === 'pr_tracking' && t.userId === userId);
-          const mem = await threadStore.getThreadMemory(thread.id);
+          const prTasks = worksView
+            ? threadWorksPrs(allTasks, userId, thread.createdBy)
+            : allTasks.filter((t) => t.kind === 'pr_tracking' && t.userId === userId);
+          const mem = worksView ? null : await threadStore.getThreadMemory(thread.id);
           const fileLedger = (mem?.recentArtifacts ?? []).filter(
             (a) => a.type === 'file' || a.type === 'plan' || a.type === 'feature-doc',
           );
-          const artifacts = aggregateProjectedThreadArtifacts({ messageArtifacts, prTasks, fileLedger });
+          const artifacts = aggregateProjectedThreadArtifacts({
+            messageArtifacts: [...messageArtifacts, ...acceptedFiles.artifacts],
+            prTasks,
+            fileLedger: worksView ? [] : fileLedger,
+          });
           perThread[index] = artifacts.map((a) => ({
             ...a,
             threadId: thread.id,
@@ -1569,7 +1653,15 @@ export const threadsRoutes: FastifyPluginAsync<ThreadsRoutesOptions> = async (ap
       rawQuery as { type?: string; cat?: string; q?: string | string[] },
     );
 
-    return projectGlobalArtifactWorkLineage(opts.artifactWorkLineage, userId, all);
+    const projected = await projectGlobalArtifactWorkLineage(opts.artifactWorkLineage, userId, all);
+    return worksView
+      ? {
+          ...projected,
+          view: 'works',
+          total: projectThreadWorks(projected.artifacts, projected.workLineage === 'resolved').length,
+          complete: worksComplete,
+        }
+      : projected;
   });
 
   // F35: PATCH /api/threads/:id/reveal — reveal all whispers in a thread

@@ -1,9 +1,18 @@
-import { type ContextAttachment, ContextAttachmentsSchema } from '@cat-cafe/shared';
+import {
+  type ContextAttachment,
+  ContextAttachmentSchema,
+  ContextAttachmentsSchema,
+  type QuoteContextAttachment,
+} from '@cat-cafe/shared';
 import { useChatStore } from '@/stores/chatStore';
 import { useToastStore } from '@/stores/toastStore';
 import { createQuoteContextAttachment } from '../chat-context-reference';
 import { composerAttachments, queuedServerAckBlocks } from '../composer-queue';
 import { COMPOSER_RECALL_PENDING_COPY, COMPOSER_TOO_LARGE_COPY } from '../composer-refusal-copy';
+import {
+  PROJECT_SCREENING_GROUP_CONFLICT,
+  projectScreeningComposerConflict,
+} from '../project-screening-composer-group';
 
 /** A selection in one workspace file, with only the coordinates that were actually known. */
 export interface WorkspaceFileQuote {
@@ -59,9 +68,13 @@ export function workspaceFileQuoteAttachment(quote: WorkspaceFileQuote): Context
 
 export type AddWorkspaceFileQuote =
   | { readonly kind: 'added' }
-  | { readonly kind: 'refused'; readonly reason: 'too_large' | 'recall_pending' };
+  | { readonly kind: 'refused'; readonly reason: 'too_large' | 'recall_pending' | 'other_source' };
 
-const REFUSAL_COPY = { too_large: COMPOSER_TOO_LARGE_COPY, recall_pending: COMPOSER_RECALL_PENDING_COPY } as const;
+const REFUSAL_COPY = {
+  too_large: COMPOSER_TOO_LARGE_COPY,
+  recall_pending: COMPOSER_RECALL_PENDING_COPY,
+  other_source: PROJECT_SCREENING_GROUP_CONFLICT,
+} as const;
 
 /**
  * The one "add to chat" for a workspace file selection: it lands in that thread's chat input as an
@@ -74,21 +87,76 @@ const REFUSAL_COPY = { too_large: COMPOSER_TOO_LARGE_COPY, recall_pending: COMPO
  * keep the selection and the words where they are.
  */
 export function addWorkspaceFileQuoteToChat(threadId: string, quote: WorkspaceFileQuote): AddWorkspaceFileQuote {
-  const refuse = (reason: 'too_large' | 'recall_pending'): AddWorkspaceFileQuote => {
+  return admitQuoteToChat(threadId, () => workspaceFileQuoteAttachment(quote));
+}
+
+/** Shared admission for a source-bound text quote; the current composer remains its only draft. */
+export function addQuoteToChat(threadId: string, attachment: ContextAttachment): AddWorkspaceFileQuote {
+  return admitQuoteToChat(threadId, () => attachment);
+}
+
+function admitQuoteToChat(threadId: string, makeAttachment: () => ContextAttachment): AddWorkspaceFileQuote {
+  const refuse = (reason: 'too_large' | 'recall_pending' | 'other_source'): AddWorkspaceFileQuote => {
     useToastStore
       .getState()
       .addToast({ type: 'error', title: '没能放进输入框', message: REFUSAL_COPY[reason], duration: 6000 });
     return { kind: 'refused', reason };
   };
   if (queuedServerAckBlocks()) return refuse('recall_pending');
-  const attachment = workspaceFileQuoteAttachment(quote);
+  const attachment = makeAttachment();
   // The canonical rule for what one message carries, over the whole input: its stored draft with what is queued
   // applied, and this place.
-  if (!ContextAttachmentsSchema.safeParse([...composerAttachments(threadId), attachment]).success)
-    return refuse('too_large');
+  const effective = [...composerAttachments(threadId), attachment];
+  if (projectScreeningComposerConflict(effective)) return refuse('other_source');
+  if (!ContextAttachmentsSchema.safeParse(effective).success) return refuse('too_large');
   const store = useChatStore.getState();
   const queued = store.pendingChatInsert;
   const base = queued && queued.threadId === threadId ? queued : { threadId, text: '' };
   store.setPendingChatInsert({ ...base, contextAttachments: [...(base.contextAttachments ?? []), attachment] });
   return { kind: 'added' };
+}
+
+/** Update the same unsent place through the composer's delta, preserving every other queued word and reference. */
+export function editWorkspaceFileQuoteInChat(
+  threadId: string,
+  original: QuoteContextAttachment,
+  comment: string | null,
+): boolean {
+  const store = useChatStore.getState();
+  if (store.currentThreadId !== threadId) return false;
+  const refuse = (reason: keyof typeof REFUSAL_COPY) => {
+    useToastStore
+      .getState()
+      .addToast({ type: 'error', title: '没能更新批注', message: REFUSAL_COPY[reason], duration: 6000 });
+    return false;
+  };
+  if (queuedServerAckBlocks()) return refuse('recall_pending');
+  const attachments = composerAttachments(threadId);
+  const current = attachments.find((attachment) => attachment.id === original.id);
+  if (
+    current?.kind !== 'quote' ||
+    !(current.source.kind === 'workspace_file' || (current.source.kind === 'message' && current.source.artifactFile)) ||
+    current.text !== original.text ||
+    JSON.stringify(current.source) !== JSON.stringify(original.source)
+  )
+    return false;
+  const parsed = comment === null ? null : ContextAttachmentSchema.safeParse({ ...current, comment });
+  if (parsed && !parsed.success) return refuse('too_large');
+  const updated = parsed?.success ? parsed.data : null;
+  const next = attachments.flatMap((attachment) =>
+    attachment.id !== current.id ? [attachment] : updated ? [updated] : [],
+  );
+  if (!ContextAttachmentsSchema.safeParse(next).success) return refuse('too_large');
+  const queued = store.pendingChatInsert;
+  const base = queued?.threadId === threadId ? queued : { threadId, text: '' };
+  const incoming = (base.contextAttachments ?? []).flatMap((attachment) =>
+    attachment.id !== current.id ? [attachment] : updated ? [updated] : [],
+  );
+  if (updated && !incoming.some((attachment) => attachment.id === current.id)) incoming.push(updated);
+  store.setPendingChatInsert({
+    ...base,
+    contextAttachments: incoming,
+    removeContextAttachmentIds: [...new Set([...(base.removeContextAttachmentIds ?? []), current.id])],
+  });
+  return true;
 }

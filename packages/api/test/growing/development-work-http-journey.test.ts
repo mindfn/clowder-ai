@@ -236,6 +236,11 @@ test('untimed development crosses MCP, HTTP, original Task, publication, return 
   const schedule = (await scheduleResponse.json()).ownerReads;
   assert.equal(schedule.length, 1);
   const current = await decode(callbackPost('/api/callbacks/read-entrusted-work', { taskId, observedRevision: 3 }));
+  // Separate HTTP reads observe execution at separate times; compare all other fields.
+  assert.equal(typeof schedule[0].execution.observedAt, 'number');
+  assert.equal(typeof current.ownerRead.execution.observedAt, 'number');
+  schedule[0].execution.observedAt = 0;
+  current.ownerRead.execution.observedAt = 0;
   assert.deepEqual(schedule[0], current.ownerRead);
   assert.equal(schedule[0].envelope.subjectRef, `task:work:${taskId}`);
   assert.equal(schedule[0].envelope.revision, 3);

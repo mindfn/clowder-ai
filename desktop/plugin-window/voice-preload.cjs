@@ -6,6 +6,19 @@ const denied = (code) => ({ kind: 'error', code });
 function voiceEvent(event, current) {
   if (current !== epoch) return;
   const value = { kind: 'audio', type: event.type };
+  if (event.type === 'response-observation') {
+    if (
+      !['first_audio_output', 'owner_voice_completed'].includes(event.stage) ||
+      !Number.isSafeInteger(event.observedAt) ||
+      !/^[A-Za-z0-9_-]{1,160}$/.test(event.turnId ?? '')
+    )
+      return;
+    return ipcRenderer.send('companion:voice-observation', {
+      stage: event.stage,
+      observedAt: event.observedAt,
+      turnId: event.turnId,
+    });
+  }
   if (['connected', 'recovering', 'recovered', 'error'].includes(event.type))
     return ipcRenderer.send('companion:voice-event', value);
   if (event.type === 'turn-created') {

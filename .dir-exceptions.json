@@ -1,6 +1,27 @@
 {
   "exceptions": [
     {
+      "path": "packages/api/src/domains/concierge/live",
+      "owner": "codex-astra",
+      "reason": "2026-10-13 public sync: 24 to 27 files after F317 presentation observations, response timing and native subexecution records. These readers share the existing live-call lifecycle; retain the reviewed import boundaries for this cut and reassess an observation/projection split before expiry.",
+      "expiresAt": "2026-10-27",
+      "ticket": "F317 / clowder-ai#1589"
+    },
+    {
+      "path": "packages/api/src/domains/concierge/live/host",
+      "owner": "codex-astra",
+      "reason": "2026-10-13 public sync: 24 to 25 files after F317 late-result notices. The notice adapter belongs to the current Host result-return lifecycle. Avoid moving that reviewed authority boundary solely to reduce the count; reassess the Host adapter grouping before expiry.",
+      "expiresAt": "2026-10-27",
+      "ticket": "F317 / clowder-ai#1589"
+    },
+    {
+      "path": "packages/api/src/domains/growing",
+      "owner": "codex-astra",
+      "reason": "2026-10-13 public sync: 24 to 31 files after F310 authenticated human-terminal and Task-execution evidence readers. Keep the reviewed Task-owned contracts intact in this cut; evaluate human-terminal and execution-read subdirectories with their import/authority boundaries before expiry.",
+      "expiresAt": "2026-10-27",
+      "ticket": "F310 / clowder-ai#1589"
+    },
+    {
       "path": "packages/api/src/domains/cats/services/agents/routing",
       "owner": "opus-48",
       "reason": "2026-08-31 renewal (F23 gate option b — freshness/ real split in same PR). 33 files. Agent routing + artifact tracking remain one unsplit agents subdomain.",

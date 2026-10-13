@@ -7,11 +7,15 @@ export default defineConfig({
     // Only vitest-runner tests. Most shared tests use node:test (import from 'node:test')
     // and run separately via `node --test`. Vitest tests import from 'vitest'.
     include: [
+      'src/__tests__/content-modification-project.test.ts',
       'src/__tests__/video-project.test.ts',
       'src/__tests__/video-project-references.test.ts',
       'src/__tests__/video-project-editing.test.ts',
       'src/__tests__/video-project-timebase.test.ts',
       'src/__tests__/video-project-check-definition.test.ts',
+      'src/__tests__/video-project-screening.test.ts',
+      'src/__tests__/video-project-screening-frame.test.ts',
+      'src/__tests__/video-project-review-region.test.ts',
       'test/concierge-config.test.js',
       'src/__tests__/companion-identity.test.ts',
       'src/__tests__/message-output-layout.test.ts',
@@ -37,6 +41,7 @@ export default defineConfig({
       'src/__tests__/memory-write-opportunity.test.ts',
       'src/__tests__/standing-reflex-episode.test.ts',
       'src/__tests__/growing-contract.test.ts',
+      'src/__tests__/entrusted-work-human-terminal.test.ts',
       'src/__tests__/growing-development-contract.test.ts',
       'src/__tests__/memory-architecture-closure.test.ts',
       'src/__tests__/lesson-learning-closure.test.ts',

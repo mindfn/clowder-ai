@@ -14,6 +14,7 @@ import { apiFetch } from '@/utils/api-client';
 import { isWorkspaceArtworkPath } from './artifact-work-presentation';
 import { WorkspaceOfficeSurface } from './content-editor/WorkspaceOfficeSurface';
 import { ContentLandingHeader } from './content-review/ContentLandingHeader';
+import type { ContentFileReaderControls } from './content-review/ContentReviewSurface';
 import { WorkspaceContentReviewSurface } from './content-review/WorkspaceContentReviewSurface';
 import { useF307ExperienceWorkbenchStore } from './experience-workbench-store';
 import { createFilesSurface, resolveFileTarget } from './real-surface-adapters';
@@ -175,21 +176,7 @@ function ResolvedFileOwnerSurface({
   const isCollaborativeText = isMarkdown || /\.txt$/i.test(target.path) || canEdit;
   const collaborationAvailable =
     (isCollaborativeText && !file.truncated) || file.mime === 'image/png' || file.mime === 'video/mp4';
-  if ((collaborationOpen ?? (!isV2 || isWorkspaceArtworkPath(target.path))) && collaborationAvailable)
-    return (
-      <WorkspaceContentReviewSurface
-        worktreeId={target.worktreeId}
-        path={target.path}
-        sourceText={file.content}
-        sourceTextRevision={toWorkspaceContentRevision(file.sha256)}
-        scrollToLine={target.scrollToLine}
-        navigationOrigin={navigationOrigin}
-        onApplied={() => refreshFile(target.path)}
-        onOpenFileTools={() => setCollaborationOpen(false)}
-        onBack={onBack}
-      />
-    );
-  return (
+  const fileReader = (controls?: ContentFileReaderControls) => (
     <div className="flex min-h-0 flex-1" data-owner-worktree={target.worktreeId} data-owner-path={target.path}>
       <WorkspaceFileViewer
         {...viewport}
@@ -220,7 +207,11 @@ function ResolvedFileOwnerSurface({
         onToggleMarkdownRendered={() => setMarkdownRendered((current) => !current)}
         onToggleHtmlPreview={() => setHtmlPreview((current) => !current)}
         onToggleJsxPreview={() => setJsxPreview((current) => !current)}
-        collaborationAvailable={collaborationAvailable}
+        showFileQuotes={!!controls}
+        onQuoteSelected={controls?.onQuoteSelected}
+        onRequestModification={controls?.onRequestModification}
+        modificationDisabled={controls?.modificationDisabled}
+        collaborationAvailable={!controls && collaborationAvailable}
         onOpenCollaboration={() => {
           promoteWorkspacePreview(surfaceId);
           setCollaborationOpen(true);
@@ -238,6 +229,24 @@ function ResolvedFileOwnerSurface({
       />
     </div>
   );
+  if (
+    (isMarkdown && !file.truncated) ||
+    ((collaborationOpen ?? (!isV2 || isWorkspaceArtworkPath(target.path))) && collaborationAvailable)
+  )
+    return (
+      <WorkspaceContentReviewSurface
+        worktreeId={target.worktreeId}
+        path={target.path}
+        sourceText={file.content}
+        sourceTextRevision={toWorkspaceContentRevision(file.sha256)}
+        scrollToLine={target.scrollToLine}
+        navigationOrigin={navigationOrigin}
+        onApplied={() => refreshFile(target.path)}
+        {...(isMarkdown ? { fileReader } : { onOpenFileTools: () => setCollaborationOpen(false) })}
+        onBack={onBack}
+      />
+    );
+  return fileReader();
 }
 
 export function F307FileOwnerSurface({

@@ -253,7 +253,7 @@ export function Composer({
           <span>@{draft.recipientLabel || '已选成员'}</span>
           <button
             type="button"
-            aria-label="取消点名"
+            aria-label="移除 @"
             onClick={() => {
               setDraft((current) => ({
                 ...current,
@@ -276,7 +276,7 @@ export function Composer({
       )}
       {unresolved && mentionQuery === undefined && (
         <p role="alert" className="composer-warning">
-          请用 @ 选择当前频道的成员，或移除未确认的点名。
+          请用 @ 选择当前频道的成员，或移除没选中的 @。
         </p>
       )}
       {expanded && (

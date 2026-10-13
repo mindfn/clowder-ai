@@ -666,6 +666,7 @@ REDIS_DBFILE=${REDIS_DBFILE:-dump.rdb}
 REDIS_PIDFILE="${REDIS_DATA_DIR}/redis-${REDIS_PORT}.pid"
 REDIS_LOGFILE="${REDIS_DATA_DIR}/redis-${REDIS_PORT}.log"
 STARTED_REDIS=false
+REDIS_STARTUP_DATA_UNVERIFIED=false
 NAMED_ALPHA_REDIS_IDENTITY=""
 NAMED_ALPHA_REDIS_LEASE_FILE=""
 F247_CLOUD_OWNER_FILE=""
@@ -754,7 +755,17 @@ named_alpha_redis_is_owned() {
     [ -n "${CAT_CAFE_ALPHA_COORDINATES:-}" ] || return 0
     [ -n "$NAMED_ALPHA_REDIS_IDENTITY" ] || return 1
     node "$SCRIPT_DIR/lib/alpha-redis-process.mjs" verify \
-        "$CAT_CAFE_ALPHA_COORDINATES" "$NAMED_ALPHA_REDIS_IDENTITY" >/dev/null 2>&1
+        "$CAT_CAFE_ALPHA_COORDINATES" "$NAMED_ALPHA_REDIS_IDENTITY" >/dev/null
+}
+
+redis_startup_ping() {
+    if [ -n "${CAT_CAFE_ALPHA_COORDINATES:-}" ]; then
+        node "$SCRIPT_DIR/lib/alpha-redis-process.mjs" ping-ready \
+            "$CAT_CAFE_ALPHA_COORDINATES" "$NAMED_ALPHA_REDIS_IDENTITY"
+    else
+        sleep 1
+        redis_ping
+    fi
 }
 
 named_alpha_capture_redis_identity() {
@@ -1588,8 +1599,9 @@ print_f247_cloud_status_summary() {
 # USE_REDIS=false (--memory): 跳过 Redis, 强制内存存储
 assert_alpha_redis_runtime_dir() {
     [ "$DAEMON_DEPLOYMENT_ID" = "alpha" ] || return 0
+    REDIS_STARTUP_DATA_UNVERIFIED=true
     local raw_dir actual_dir expected_dir appendonly_raw appendonly dump_size dbsize
-    raw_dir="$(redis-cli -h 127.0.0.1 -p "$REDIS_PORT" --raw config get dir 2>/dev/null)" || {
+    raw_dir="$(redis-cli -h 127.0.0.1 -p "$REDIS_PORT" --raw config get dir)" || {
         echo "[start-dev] cannot verify Alpha Redis data directory on port $REDIS_PORT" >&2
         return 1
     }
@@ -1599,7 +1611,7 @@ assert_alpha_redis_runtime_dir() {
         echo "[start-dev] Alpha Redis data directory mismatch on port $REDIS_PORT" >&2
         return 1
     fi
-    appendonly_raw="$(redis-cli -h 127.0.0.1 -p "$REDIS_PORT" --raw config get appendonly 2>/dev/null)" || return 1
+    appendonly_raw="$(redis-cli -h 127.0.0.1 -p "$REDIS_PORT" --raw config get appendonly)" || return 1
     appendonly="$(printf '%s\n' "$appendonly_raw" | sed -n '2p' | tr -d '\r')"
     if [ "$appendonly" != "yes" ]; then
         echo "[start-dev] Alpha Redis requires AOF persistence on port $REDIS_PORT" >&2
@@ -1607,9 +1619,9 @@ assert_alpha_redis_runtime_dir() {
     fi
     dump_size="$(cat_cafe_file_size_bytes "$REDIS_DATA_DIR/dump.rdb")"
     if [ "$dump_size" -ge 1024 ] && [ "${CAT_CAFE_ALPHA_ALLOW_EMPTY_REDIS:-0}" != "1" ]; then
-        dbsize="$(redis-cli -h 127.0.0.1 -p "$REDIS_PORT" dbsize 2>/dev/null)" || dbsize=""
-        if ! [[ "$dbsize" =~ ^[0-9]+$ ]] || [ "$dbsize" -eq 0 ]; then
-            echo "[start-dev] Alpha Redis loaded an empty database or dbsize is unreadable from a nonempty snapshot on port $REDIS_PORT" >&2
+        dbsize="$(cat_cafe_redis_read_dbsize "$REDIS_PORT")" || return 1
+        if [ "$dbsize" -eq 0 ]; then
+            echo "[start-dev] Alpha Redis loaded an empty database from a nonempty snapshot on port $REDIS_PORT" >&2
             # The directory identity was verified above. An ordinary shutdown
             # would rewrite the RDB with this empty state and destroy the copy
             # we need for recovery, so stop only this Alpha instance nosave.
@@ -1623,6 +1635,20 @@ assert_alpha_redis_runtime_dir() {
             echo "[start-dev] Alpha Redis is still listening; do not use an ordinary shutdown on port $REDIS_PORT" >&2
             return 1
         fi
+    fi
+    REDIS_STARTUP_DATA_UNVERIFIED=false
+}
+
+redis_startup_data_allows_save() {
+    [ "${REDIS_STARTUP_DATA_UNVERIFIED:-false}" = true ] || return 0
+    [ "$(cat_cafe_file_size_bytes "$REDIS_DATA_DIR/dump.rdb")" -ge 1024 ] || return 0
+    local size
+    # A failed startup read is not evidence that saving over its snapshot is safe.
+    # This read uses the same strict per-command ownership wrapper as cleanup.
+    size="$(cat_cafe_redis_read_dbsize "$REDIS_PORT")" || return 1
+    if [ "$size" -eq 0 ]; then
+        echo "[start-dev] preserving unverified startup data and its snapshot; no saving cleanup" >&2
+        return 1
     fi
 }
 
@@ -1669,16 +1695,19 @@ setup_storage() {
             --pidfile "$REDIS_PIDFILE" \
             --logfile "$REDIS_LOGFILE" "${ownership_args[@]}" \
             || { if [ -n "${CAT_CAFE_ALPHA_COORDINATES:-}" ]; then exit 1; fi; }
-        sleep 1
-        if redis_ping; then
+        if redis_startup_ping; then
             assert_alpha_redis_runtime_dir || exit 1
             STARTED_REDIS=true
             echo -e "${GREEN}  ✓ Redis 已启动 (端口 $REDIS_PORT)${NC}"
             if [ -z "${CAT_CAFE_ALPHA_COORDINATES:-}" ]; then export REDIS_URL="redis://localhost:$REDIS_PORT"; fi
             print_redis_runtime_info
         else
-            echo -e "${RED}  ✗ Redis 启动失败${NC}"
-            echo -e "${RED}    使用 --memory 标志允许内存模式启动${NC}"
+            if [ -n "${CAT_CAFE_ALPHA_COORDINATES:-}" ]; then
+                echo "[start-dev] named Alpha Redis readiness unverified; stopping startup (see identity/PING cause above)" >&2
+            else
+                echo -e "${RED}  ✗ Redis 启动失败${NC}"
+                echo -e "${RED}    使用 --memory 标志允许内存模式启动${NC}"
+            fi
             exit 1
         fi
     else
@@ -1703,7 +1732,7 @@ cleanup() {
     echo ""
     echo "正在关闭服务..."
 
-    local job_pid
+    local job_pid shutdown_output shutdown_status
     while IFS= read -r job_pid; do
         register_managed_pid "$job_pid"
     done <<< "$(jobs -p 2>/dev/null || true)"
@@ -1725,13 +1754,23 @@ cleanup() {
             echo "[start-dev] preserving unproven or replaced named Alpha Redis; no protocol command or signal sent" >&2
             CLEANUP_STATUS=1
         elif redis_ping; then
-            archive_redis_snapshot "pre-stop"
-            if redis-cli -p "$REDIS_PORT" shutdown save &> /dev/null; then
-                echo "  Redis (端口 $REDIS_PORT) 已关闭"
-            elif [ -n "${CAT_CAFE_ALPHA_COORDINATES:-}" ]; then
+            if ! redis_startup_data_allows_save; then
                 CLEANUP_STATUS=1
+            else
+                archive_redis_snapshot "pre-stop"
+                if shutdown_output="$(redis-cli -p "$REDIS_PORT" shutdown save 2>&1)"; then
+                    echo "  Redis (端口 $REDIS_PORT) 已关闭"
+                else
+                    shutdown_status=$?
+                    printf '[start-dev] Redis shutdown save failed (port %s, exit %s): %s\n' \
+                        "$REDIS_PORT" "$shutdown_status" "$shutdown_output" >&2
+                    if [ -n "${CAT_CAFE_ALPHA_COORDINATES:-}" ]; then
+                        CLEANUP_STATUS=1
+                    fi
+                fi
             fi
         elif [ -n "${CAT_CAFE_ALPHA_COORDINATES:-}" ]; then
+            echo "[start-dev] could not confirm Redis liveness (PING or ownership re-check) (port $REDIS_PORT); preserving ownership" >&2
             CLEANUP_STATUS=1
         fi
     fi

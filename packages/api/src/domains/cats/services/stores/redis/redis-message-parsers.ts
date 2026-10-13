@@ -31,6 +31,8 @@ import {
   contentModificationSourceMessageV1Schema,
   createCatId,
   deliveryDecisionCueCarrierV1Schema,
+  dotAskMetadataSchema,
+  entrustedWorkHumanTerminalReceiptV1Schema,
   evolutionPreparationSubmissionV1Schema,
   isCloudBridgeRetryV1,
   isLifecycleStoredMessageMetadata,
@@ -48,6 +50,7 @@ import {
 } from '@cat-cafe/shared';
 import { parsePluginMessageExtra } from '../../../../messaging/envelope.js';
 import { MAX_PERSISTED_SUBEXECUTION_EVENTS, type MessageMetadata } from '../../types.js';
+import { liveResultNoticeSchema, liveReturnProjectionSchema } from '../live-result-carriers.js';
 import { parseMessageDeliveryBoundary } from '../message-delivery-boundary.js';
 import { MessageRecallMarker, StoredMessage, StoredPluginMessage, StoredToolEvent } from '../ports/MessageStore.js';
 import type { TurnExecutionMessageProjection } from '../ports/TurnExecutionStore.js';
@@ -260,9 +263,11 @@ type ExtraCarrierPersistence = ExtraCarrierPersistenceClassification<{
   liveCompanion: 'parsed';
   liveAdmission: 'parsed';
   rich: 'parsed';
+  callbackRichRequestDigest: 'parsed';
   isExplicitPost: 'parsed';
   stream: 'parsed';
   causal: 'parsed';
+  dotAsk: 'parsed';
   deliveryBoundary: 'parsed';
   proactive: 'parsed';
   memoryCue: 'parsed';
@@ -288,6 +293,7 @@ type ExtraCarrierPersistence = ExtraCarrierPersistenceClassification<{
   systemInfo: 'parsed';
   a2aRouting: 'parsed';
   custodyOfferV1: 'derived';
+  entrustedWorkHumanTerminalReceiptV1: 'parsed';
   evolutionPreparationSubmissionV1: 'parsed';
   pluginMessage: 'parsed';
   routingWarnings: 'parsed';
@@ -395,6 +401,7 @@ function parseLiveCompanionCarrier(value: unknown): StoredMessageExtra['liveComp
   const candidate = value as Record<string, unknown>;
   const validId = (id: unknown): id is string => typeof id === 'string' && /^[A-Za-z0-9_-]{1,160}$/.test(id);
   const identity = companionIdentitySnapshotV1Schema.safeParse(candidate.identity);
+  const projection = liveReturnProjectionSchema.safeParse(candidate.returnProjection);
   if (candidate.modality === 'typed') {
     if (
       !validId(candidate.callId) ||
@@ -429,6 +436,7 @@ function parseLiveCompanionCarrier(value: unknown): StoredMessageExtra['liveComp
     modality: candidate.modality,
     ...(candidate.role === 'user' || candidate.role === 'assistant' ? { role: candidate.role } : {}),
     ...(candidate.modality === 'result' ? { nativeTurnId: candidate.nativeTurnId as string } : {}),
+    ...(candidate.modality === 'result' && projection.success ? { returnProjection: projection.data } : {}),
     ...(identity.success ? { identity: identity.data } : {}),
   };
 }
@@ -494,6 +502,13 @@ export function safeParseExtra(raw: string | undefined): StoredMessage['extra'] 
     const failureReturn = parseA2AFailureReturn(parsed.a2aFailureReturn);
     if (failureReturn) {
       result.a2aFailureReturn = failureReturn;
+      hasField = true;
+    }
+    const entrustedWorkTerminalReceipt = entrustedWorkHumanTerminalReceiptV1Schema.safeParse(
+      parsed.entrustedWorkHumanTerminalReceiptV1,
+    );
+    if (entrustedWorkTerminalReceipt.success) {
+      result.entrustedWorkHumanTerminalReceiptV1 = entrustedWorkTerminalReceipt.data;
       hasField = true;
     }
     if (parsed.collectiveOwnerAdmissionV1 !== undefined) {
@@ -661,6 +676,12 @@ export function safeParseExtra(raw: string | undefined): StoredMessage['extra'] 
       hasField = true;
     }
 
+    const dotAsk = dotAskMetadataSchema.safeParse(parsed.dotAsk);
+    if (dotAsk.success) {
+      result.dotAsk = dotAsk.data;
+      hasField = true;
+    }
+
     // Validate stream sub-field shape (#80: draft dedup key)
     // F194 Phase Z9 hotfix: preserve turnInvocationId (per-cat-turn id, written
     // by Z9 backend stamping). Pre-hotfix parser rebuilt only { invocationId },
@@ -808,6 +829,13 @@ export function safeParseExtra(raw: string | undefined): StoredMessage['extra'] 
       hasField = true;
     }
 
+    if (
+      typeof parsed.callbackRichRequestDigest === 'string' &&
+      /^[0-9a-f]{64}$/.test(parsed.callbackRichRequestDigest)
+    ) {
+      result.callbackRichRequestDigest = parsed.callbackRichRequestDigest;
+      hasField = true;
+    }
     if (parsed.isExplicitPost === true) {
       result.isExplicitPost = true;
       hasField = true;
@@ -842,6 +870,12 @@ export function safeParseExtra(raw: string | undefined): StoredMessage['extra'] 
       if (receipt.success) {
         result.systemInfo = { v: 1, payload: receipt.data, fallbackCatId: receipt.data.target.targetCatId };
         hasField = true;
+      } else if (parsed.systemKind === 'context_briefing') {
+        const notice = liveResultNoticeSchema.safeParse(parsed.systemInfo.payload);
+        if (notice.success) {
+          result.systemInfo = { v: 1, payload: notice.data };
+          hasField = true;
+        }
       }
     }
 

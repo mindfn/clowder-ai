@@ -5,7 +5,7 @@
  */
 
 import assert from 'node:assert/strict';
-import { afterEach, beforeEach, test } from 'node:test';
+import { afterEach, beforeEach, mock, test } from 'node:test';
 import './helpers/setup-cat-registry.js';
 import Fastify from 'fastify';
 import { appendTestLifecycleResponseSource } from './helpers/message-from-fixtures.js';
@@ -393,6 +393,128 @@ test('a durable review fact recovers one author wake after transient Queue failu
   assert.equal(harness.invocationQueue.list(harness.thread.id, 'user-1').length, 1);
   assert.equal(new Set(harness.drainNotifications.flat()).size, 1);
 });
+
+test('a durable review gallery recovers its author wake after the local source disappears', async () => {
+  const { mkdtemp, writeFile, unlink, rm } = await import('node:fs/promises');
+  const { tmpdir } = await import('node:os');
+  const { join } = await import('node:path');
+  const { registerWorktrees } = await import('../dist/domains/workspace/workspace-security.js');
+  const root = await mkdtemp(join(tmpdir(), 'review-gallery-recovery-'));
+  registerWorktrees([{ id: 'review-gallery-recovery', root, branch: 'test', head: 'test' }]);
+  const file = join(root, 'image.png');
+  await writeFile(file, 'image');
+  const harness = await createHarness({ failEnqueueAttempts: 1 });
+  const block = { id: 'review-image', kind: 'media_gallery', v: 1, items: [{ url: file }] };
+  const content = '@codex\n\nAPPROVED with image.\n```cc_rich\n' + JSON.stringify({ v: 1, blocks: [block] }) + '\n```';
+  const payload = {
+    content,
+    targetCats: ['codex'],
+    clientMessageId: 'durable-gallery-recovery',
+    localReviewVerdict: 'approved',
+    reviewedHeadSha: 'b'.repeat(40),
+    ...REVIEW_ANCHOR,
+  };
+  const headers = { 'x-invocation-id': harness.auth.invocationId, 'x-callback-token': harness.auth.callbackToken };
+  try {
+    const first = await app.inject({ method: 'POST', url: '/api/callbacks/post-message', headers, payload });
+    assert.equal(first.statusCode, 503, first.body);
+    assert.equal(
+      harness.messageStore.getByThreadIncludingQueued(harness.thread.id, 20, 'user-1').length,
+      0,
+      'failed atomic admission publishes neither source nor wake',
+    );
+    const accepted = await app.inject({ method: 'POST', url: '/api/callbacks/post-message', headers, payload });
+    assert.equal(accepted.statusCode, 200, accepted.body);
+    const durable = harness.messageStore.getByThreadIncludingQueued(harness.thread.id, 20, 'user-1')[0];
+    assert.match(durable.extra.rich.blocks[0].items[0].url, /^\/api\/workspace\/file\/raw\?/);
+    const { safeParseExtra } = await import('../dist/domains/cats/services/stores/redis/redis-message-parsers.js');
+    durable.extra = safeParseExtra(JSON.stringify(durable.extra));
+    await unlink(file);
+    const retry = await app.inject({ method: 'POST', url: '/api/callbacks/post-message', headers, payload });
+    assert.equal(retry.statusCode, 200, retry.body);
+    assert.equal(retry.json().status, 'duplicate');
+    assert.equal(retry.json().messageId, durable.id);
+    assert.equal(harness.invocationQueue.list(harness.thread.id, 'user-1').length, 1);
+    assert.equal(harness.messageStore.getByThreadIncludingQueued(harness.thread.id, 20, 'user-1').length, 1);
+    const changed = { ...payload, content: content.replace('image.png', 'different.png') };
+    const conflict = await app.inject({
+      method: 'POST',
+      url: '/api/callbacks/post-message',
+      headers,
+      payload: changed,
+    });
+    assert.equal(conflict.statusCode, 409, conflict.body);
+    assert.equal(conflict.json().kind, 'review_fact_idempotency_conflict');
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+for (const legacy of [false, true]) {
+  test(`durable audio review recovery preserves raw input (legacy=${legacy})`, async () => {
+    const { mkdtemp, rm } = await import('node:fs/promises');
+    const { tmpdir } = await import('node:os');
+    const { join } = await import('node:path');
+    const { initVoiceBlockSynthesizer, getVoiceBlockSynthesizer } = await import(
+      '../dist/domains/cats/services/tts/VoiceBlockSynthesizer.js'
+    );
+    const root = await mkdtemp(join(tmpdir(), 'audio-review-retry-'));
+    initVoiceBlockSynthesizer({}, root);
+    let synthesisCalls = 0;
+    const stub = mock.method(getVoiceBlockSynthesizer(), 'resolveVoiceBlocks', async (blocks) => {
+      synthesisCalls++;
+      return blocks.map((block) =>
+        block.kind === 'audio' ? { ...block, url: '/uploads/review-speech.wav', mimeType: 'audio/wav' } : block,
+      );
+    });
+    const harness = await createHarness({ failEnqueueAttempts: 1 });
+    const block = { id: 'spoken-review', kind: 'audio', v: 1, text: '这轮审查通过' };
+    const content = '@codex\n\nAPPROVED.\n```cc_rich\n' + JSON.stringify({ v: 1, blocks: [block] }) + '\n```';
+    const payload = {
+      content,
+      targetCats: ['codex'],
+      clientMessageId: 'audio-review-recovery',
+      localReviewVerdict: 'approved',
+      reviewedHeadSha: 'b'.repeat(40),
+      ...REVIEW_ANCHOR,
+    };
+    const headers = { 'x-invocation-id': harness.auth.invocationId, 'x-callback-token': harness.auth.callbackToken };
+    try {
+      const first = await app.inject({ method: 'POST', url: '/api/callbacks/post-message', headers, payload });
+      assert.equal(first.statusCode, 503, first.body);
+      assert.equal(
+        harness.messageStore.getByThreadIncludingQueued(harness.thread.id, 20, 'user-1').length,
+        0,
+        'failed atomic admission publishes neither source nor wake',
+      );
+      const accepted = await app.inject({ method: 'POST', url: '/api/callbacks/post-message', headers, payload });
+      assert.equal(accepted.statusCode, 200, accepted.body);
+      const stored = harness.messageStore.getByThreadIncludingQueued(harness.thread.id, 20, 'user-1')[0];
+      assert.equal(stored.extra.rich.blocks[0].url, '/uploads/review-speech.wav');
+      if (legacy) delete stored.extra.callbackRichRequestDigest;
+      const retry = await app.inject({ method: 'POST', url: '/api/callbacks/post-message', headers, payload });
+      assert.equal(retry.statusCode, 200, retry.body);
+      assert.equal(retry.json().messageId, stored.id);
+      assert.equal(harness.invocationQueue.list(harness.thread.id, 'user-1').length, 1);
+      assert.equal(
+        synthesisCalls,
+        legacy ? 3 : 2,
+        'accepted replay does not rerun TTS; rejected atomic admission has no reusable persisted media',
+      );
+      const changed = await app.inject({
+        method: 'POST',
+        url: '/api/callbacks/post-message',
+        headers,
+        payload: { ...payload, content: content.replace('这轮审查通过', '换一段语音') },
+      });
+      assert.equal(changed.statusCode, 409, changed.body);
+      assert.equal(changed.json().kind, 'review_fact_idempotency_conflict');
+    } finally {
+      stub.mock.restore();
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+}
 
 test('a new HEAD stores a fresh review fact while retaining the old HEAD as history', async () => {
   const harness = await createHarness();

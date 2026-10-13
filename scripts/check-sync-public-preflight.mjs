@@ -133,6 +133,45 @@ function publicWorkflowScriptErrors(repoRoot) {
   return [...new Set(errors)].sort();
 }
 
+function hookScriptPaths(activeText) {
+  const paths = new Set(extractRootScriptPathRefs(activeText));
+  const outside = [];
+  for (const match of activeText.matchAll(/((?:\.\.\/)+|\$REPO_ROOT\/)(scripts\/[A-Za-z0-9_./@+-]+)/g)) {
+    if (match[1].startsWith('../../')) outside.push(`${match[1]}${match[2]}`);
+    else paths.add(match[2]);
+  }
+  return { paths, outside };
+}
+
+function publicHookScriptErrors(repoRoot) {
+  const hookRoot = resolve(repoRoot, '.githooks');
+  if (!existsSync(hookRoot)) return [];
+  const errors = [];
+  for (const entry of readdirSync(hookRoot, { withFileTypes: true })) {
+    if (!entry.isFile()) continue;
+    const hookPath = `.githooks/${entry.name}`;
+    const activeText = readFileSync(resolve(hookRoot, entry.name), 'utf8')
+      .split(/\r?\n/)
+      .filter((line) => !/^\s*#/.test(line))
+      .join('\n');
+    // These literal root companions include the staged Biome invocation
+    // "$(dirname "${BASH_SOURCE[0]}")/../scripts/...". This is a bounded
+    // pre-install path audit, not a shell interpreter or dynamic closure proof.
+    const { paths, outside } = hookScriptPaths(activeText);
+    errors.push(...outside.map((path) => `${hookPath} -> outside export root ${path}`));
+    for (const scriptPath of paths) {
+      const absolutePath = resolve(repoRoot, scriptPath);
+      const fromRoot = relative(repoRoot, absolutePath);
+      if (fromRoot === '..' || fromRoot.startsWith(`..${sep}`) || isAbsolute(fromRoot)) {
+        errors.push(`${hookPath} -> outside export root ${scriptPath}`);
+      } else if (!existsSync(absolutePath)) {
+        errors.push(`${hookPath} -> missing ${scriptPath}`);
+      }
+    }
+  }
+  return [...new Set(errors)].sort();
+}
+
 function loadCapabilityTipInventories(repoRoot, baseRef) {
   try {
     const inventoryPath = resolve(repoRoot, INVENTORY_PATH);
@@ -256,6 +295,7 @@ export function checkSyncPublicPreflight(repoRoot = defaultRepoRoot, options = {
   const errors = [
     ...packageClosure.errors,
     ...publicWorkflowScriptErrors(repoRoot),
+    ...publicHookScriptErrors(repoRoot),
     ...tipReferenceRegressions.errors,
     ...tipExportCoverage.errors,
     ...capabilityTips.errors,

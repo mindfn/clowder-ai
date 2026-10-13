@@ -63,6 +63,7 @@ describe('Workspace Panel selected Terminal identity', () => {
     writeShellPresentation('classic');
     window.localStorage.clear();
     vi.mocked(apiFetch).mockReset();
+    vi.restoreAllMocks();
     delete (globalThis as { React?: typeof React }).React;
     delete (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT;
   });
@@ -71,7 +72,15 @@ describe('Workspace Panel selected Terminal identity', () => {
     await act(async () => {
       root.render(<WorkspacePanel threadId="linked-thread" projectPath="/tmp/cafe-linked" />);
     });
-    const button = container.querySelector<HTMLButtonElement>('[data-testid="workspace-launcher-dev-terminal"]');
+    const trigger = container.querySelector<HTMLElement>('[data-testid="v2-workspace-tools"]');
+    const details = trigger?.closest('details');
+    if (!trigger || !details) throw new Error('Missing original + menu');
+    vi.spyOn(trigger, 'getClientRects').mockReturnValue([new DOMRect(0, 0, 32, 32)] as unknown as DOMRectList);
+    await act(async () => {
+      details.open = true;
+      details.dispatchEvent(new Event('toggle'));
+    });
+    const button = document.querySelector<HTMLButtonElement>('[data-workspace-destination="surface:terminal"]');
     expect(button).not.toBeNull();
     await act(async () => button?.click());
     return container.querySelector('output[data-terminal-query-owner]')?.getAttribute('data-terminal-query-owner');

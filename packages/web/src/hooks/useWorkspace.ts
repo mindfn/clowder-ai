@@ -13,6 +13,7 @@ export type { SearchResult } from './useWorkspaceSearch';
 export interface WorktreeEntry {
   id: string;
   canonicalId?: string | null;
+  rootIdentity?: string;
   root: string;
   branch: string;
   head: string;
@@ -75,6 +76,8 @@ function reconcileDiscoveredWorktree(
 
   const state = useChatStore.getState();
   const currentId = state.workspaceWorktreeId;
+  // Keep the content owner's namespace on every read, including after a remount or inventory change.
+  if (currentId?.startsWith('f063_root_v1_')) return;
   const listedId = resolveListedWorktreeId(entries, currentId, aliases);
   if (listedId) {
     if (listedId !== currentId) normalizeWorktreeId(listedId);

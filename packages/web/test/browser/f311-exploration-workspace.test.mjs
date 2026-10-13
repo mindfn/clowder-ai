@@ -19,6 +19,7 @@ import {
   verifySameRunGuard,
 } from './f311-exploration-recovery.journey.mjs';
 import { startExplorationBrowserFixture } from './f311-exploration-workspace.harness.mjs';
+import { waitForResponsiveWorkspaceLayout } from './f311-responsive-workspace-layout.mjs';
 import { CONTRACT_THREAD_ID } from './f311-workspace-browser.harness.mjs';
 
 await import('tsx');
@@ -158,13 +159,15 @@ test(
       await subset.getByText(/^仅在对照侧：/).waitFor();
       await subset.getByText(/^仅在本版侧：/).waitFor();
       await page.setViewportSize({ width: 320, height: 900 });
+      await waitForResponsiveWorkspaceLayout(page, page.getByTestId('evolution-program-surface'), 320);
       await subset.scrollIntoViewIfNeeded();
       await contained(subset);
       await contained(work);
       await capture(page, 'exploration-partial-scope-320');
       await page.setViewportSize({ width: 1360, height: 960 });
       const expand = page.getByRole('button', { name: '展开阅读 →', exact: true });
-      if (await expand.isVisible()) await expand.click();
+      // Wait for the desktop control after resize; a one-shot visibility probe can skip reopening.
+      await expand.click();
       await work.waitFor();
       await comparison.getByRole('button', { name: /^退步 [1-9]/ }).click();
       await comparison.getByRole('button', { name: /左侧 · 更远/ }).click();
@@ -317,6 +320,7 @@ test(
       assert.equal(reading[fixture.duck.program.programId].exploration.draft.binding.title, 'v8');
       for (const width of [416, 320]) {
         await page.setViewportSize({ width, height: 900 });
+        await waitForResponsiveWorkspaceLayout(page, page.getByTestId('evolution-program-surface'), width);
         await contained(work);
         await page.getByTestId('evolution-program-surface').evaluate((el) => {
           el.scrollTop = 0;

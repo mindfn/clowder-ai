@@ -21,7 +21,7 @@ mcp_admission_claims:
 
 # F323: Runtime Restart Coordination｜等待登记、优雅重启与自动回访
 
-> **Status**: in-progress；Phase A #4853 已合入、双 owner 隔离回访已验、日常 runtime 已加载；原 Task 已取得 gen1 真实即时匹配回执，AC-A11 清单/存量核实及用户现场收尾中，Phase B/C 尚未交付 | **Owner**: 本 thread 指挥责任猫 Astra（@codex-astra, gpt-6-astra）与 Opus55（@opus55, claude-opus-5-5） | **Priority**: P1
+> **Status**: in-progress；Phase A 保留，等待回访已加载，原 Task607 继续 A 的用户现场与事故恢复验收；Phase B 已由 #5201 撤回，原 B→C 承接方案失效，尚无获准的新维护执行方案 | **Owner**: 本 thread 指挥责任猫 Astra（@codex-astra, gpt-6-astra）与 Opus55（@opus55, claude-opus-5-5） | **Priority**: P1
 >
 > **operator kickoff**: `[thread-id]#private-source-id`（2026-09-26 PT / 2026-09-27 UTC）：“我们正式立项一下？”；最大痛点是“不知道有多少猫工作干完了要重启”，数小时后重启完需要自动唤醒当时等待的猫。
 > **Original scope**: 同 thread 的 `private-source-id`（通知工作猫、重启后续办）、`private-source-id`（同位置三态按钮）、`private-source-id`（自然收尾、意外中断、主动直接 stop）、`private-source-id`（重启来源审计、异构消息通道）。
@@ -30,7 +30,26 @@ Architecture cell: `ball-custody`, `dispatch`, `runtime-deployment`
 
 Boundary: Task 条件等待归 ball-custody；准入/投递/执行归 dispatch；既有 F300 / ADR-039 停启与部署事实归 runtime-deployment；用户入口消费现有 Hub 工作状态。
 
-Map delta: `runtime-deployment` 启动历史、API/Web readiness 与部署版本证明随 Phase A #4853 实现；等待仍扩展原 Task，准入仍归 dispatch。三态网页控制与维护停启属于后续 Phase，未新增日常 runtime 的部署授权。
+Map delta: `runtime-deployment` 启动历史、API/Web readiness 与部署版本证明随 Phase A #4853 实现；等待仍扩展原 Task，准入仍归 dispatch。B 的维护准入实现已撤回；三态网页控制与维护停启保留为未满足需求，当前没有在建的 C1/C2 承诺，也未新增日常 runtime 的部署授权。
+
+## 当前执行范围（2026-10-12 对账）
+
+operator 原件 `[thread-id]#private-source-id` 已取消 F323
+working threads，并决定撤销 Phase B 的十个提交、保留 A；Astra 在同 thread
+`private-source-id` 明确同意该范围。
+[#5201](https://github.com/zts212653/clowder-ai/pull/5201) 已合入
+`91a8f58e6c6a2e4a8ba94eb5f63cb9d419aab431`；原控制面
+[#5170](https://github.com/zts212653/clowder-ai/pull/5170) 已关闭且未合入。
+
+原 Task607 承载 Phase A 与旧 hold、Queue、Alpha 等事故恢复验收，不能当作 C1/C2 的执行承诺。
+下文 B/C 的需求和 AC 保留历史，不授权恢复已取消的执行。重新选择维护方案时，须先由 operator
+在本原现场明确具名方案、scope 与授权，再接回原消费者。
+
+F306 D 的原维护需求仍未满足；它依赖的原 B→C 承接方案已撤回，尚无获准的新执行方案，
+不应写成“等待在建 C1/C2 部署”。F300 的独立 executor 保护继续有效；部署 ready、人工 restart
+均不证明 D 的自动维护旅程通过。F306 原 owner 的对账请求为
+`[thread-id]#private-source-id`，撤回口径更正为本 thread
+`private-source-id`；原 Task3168 仍由 Sol6.1 负责。
 
 ## Why
 

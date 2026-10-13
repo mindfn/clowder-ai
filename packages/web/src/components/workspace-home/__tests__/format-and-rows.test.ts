@@ -56,16 +56,23 @@ describe('Workspace home formatting', () => {
 describe('Workspace home tool rows', () => {
   it('lists the tools in the design order and groups', () => {
     expect(HOME_ROWS.map((row) => `${row.group}/${row.id}`)).toEqual([
+      'activity/host:now',
+      'activity/host:status',
+      'activity/mode:trajectory',
+      'activity/action:theater',
+      'activity/mode:schedule',
+      'activity/mode:eval',
       'code/surface:files',
       'code/surface:changes',
       'code/surface:git',
       'code/surface:terminal',
       'code/surface:browser',
-      'activity/host:status',
-      'activity/mode:trajectory',
-      'activity/action:theater',
       'other/mode:recall',
-      'other/voice',
+      'other/host:voice',
+      'other/host:films',
+      'other/mode:team',
+      'other/mode:community',
+      'other/workspace:capability-evolution',
     ]);
     expect(new Set(HOME_ROWS.map((row) => row.id)).size).toBe(HOME_ROWS.length);
   });
@@ -73,15 +80,23 @@ describe('Workspace home tool rows', () => {
   it('keeps the classic test ids so existing journeys find a tool in either shell', () => {
     const ids = HOME_ROWS.flatMap((row) => (row.kind === 'destination' ? [destinationTestId(row.destination)] : []));
     expect(ids).toEqual([
+      'workspace-launcher-now',
+      'workspace-launcher-status',
+      'workspace-launcher-trajectory',
+      'workspace-launcher-theater',
+      'workspace-launcher-schedule',
+      'workspace-launcher-eval',
       'workspace-launcher-dev-files',
       'workspace-launcher-dev-changes',
       'workspace-launcher-dev-git',
       'workspace-launcher-dev-terminal',
       'workspace-launcher-dev-browser',
-      'workspace-launcher-status',
-      'workspace-launcher-trajectory',
-      'workspace-launcher-theater',
       'workspace-launcher-recall',
+      'workspace-launcher-voice',
+      'workspace-launcher-films',
+      'workspace-launcher-team',
+      'workspace-launcher-community',
+      'workspace-launcher-capability-evolution',
     ]);
   });
 
@@ -101,15 +116,11 @@ describe('Workspace home tool rows', () => {
     // Where each mode the classic launcher offered goes in the new shell (verified reachable in the real host, see the
     // preservation matrix at the top of home-rows.ts). A new WorkspaceMode must be placed here on purpose.
     const relocated = {
-      team: '设置与管理 · 猫猫团队',
       'needs-me': '待办 · 打开待处理列表',
-      'product-schedule': '页脚链接 · 全部工作（待办里的「全部工作」接上前）',
+      'product-schedule': '待办及工具页脚 · 日程',
       tasks: '对话顶栏 · 任务',
-      schedule: '设置与管理 · 调度',
       approval: '待办 · 打开审批列表',
       artifacts: '对话顶栏 · 作品',
-      community: '设置与管理 · 社区',
-      eval: '设置与管理 · 评估',
     } as const;
     const onThisPage = HOME_ROWS.flatMap((row) =>
       row.kind === 'destination' && row.destination.kind === 'mode' ? [row.destination.id] : [],
@@ -122,8 +133,12 @@ describe('Workspace home tool rows', () => {
     const matching = (query: string) => HOME_ROWS.filter((row) => rowMatchesQuery(row, query)).map((row) => row.id);
     expect(matching('')).toHaveLength(HOME_ROWS.length);
     expect(matching('终端')).toEqual(['surface:terminal']);
-    expect(matching('git')).toEqual(['surface:git']);
-    expect(matching('会议')).toEqual(['voice']);
+    expect(matching('git')).toEqual(['surface:git', 'mode:community']);
+    for (const query of ['调度', 'scheduling']) expect(matching(query)).toContain('mode:schedule');
+    for (const query of ['评估', 'periodic']) expect(matching(query)).toContain('mode:eval');
+    for (const query of ['社区', 'community']) expect(matching(query)).toContain('mode:community');
+    for (const query of ['能力进化', 'evolution']) expect(matching(query)).toContain('workspace:capability-evolution');
+    expect(matching('会议')).toEqual(['host:voice']);
     expect(matching('zzz-nothing')).toEqual([]);
   });
 
@@ -149,7 +164,7 @@ describe('Workspace home tool rows', () => {
     expect(matching('页面预览')).toEqual(['surface:browser']);
     expect(matching('modified')).toEqual(['surface:changes']);
     expect(matching('修改')).toEqual(['surface:changes']);
-    expect(matching('meeting')).toEqual(['voice']);
+    expect(matching('meeting')).toEqual(['host:voice']);
     expect(matching('replay')).toEqual(['action:theater']);
     expect(matching('trace')).toEqual(['mode:trajectory']);
     expect(matching('轨迹')).toEqual(['mode:trajectory']);

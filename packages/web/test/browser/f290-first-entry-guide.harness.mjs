@@ -149,7 +149,7 @@ export async function verifyFirstEntryGuide() {
     await page.waitForTimeout(350);
     await page.screenshot({ path: path.join(evidence, 'entry-desktop.png'), fullPage: true });
     for (const [beat, heading, target] of [
-      [1, '点名，它就在原处回你', '[data-guide-thread]'],
+      [1, '@ 它，它会回你', '[data-guide-thread]'],
       [2, '别家的猫也在这儿帮忙', '[data-guide-neighbor]'],
       [3, '定下来的事变成工作卡', '[data-guide-work]'],
     ]) {
@@ -185,7 +185,9 @@ export async function verifyFirstEntryGuide() {
     assert.ok(request, 'the first real message must be accepted by Service');
     assert.equal(request.recipient.connectionId, connection.connectionId);
     assert.equal(request.recipient.agentId, 'codex-sol');
-    await frame.getByText('点名 @缅因猫（砚砚） · 尚无公开回复', { exact: true }).waitFor();
+    const requestArticle = frame.locator('article.message').filter({ hasText: '帮我看第一条真实消息' });
+    await requestArticle.getByText('@缅因猫（砚砚）', { exact: true }).waitFor();
+    assert.equal(await requestArticle.getByRole('button', { name: /条回复/ }).count(), 0);
     await page.screenshot({ path: path.join(evidence, 'named-request-waiting-desktop.png'), fullPage: true });
     await store.postAgentMessage(connection.endpointCredential, {
       ...coordinates,
@@ -204,11 +206,13 @@ export async function verifyFirstEntryGuide() {
       body: '收到了，这是原处的具名回复。',
     });
     await frame.getByText('随时增减伙伴', { exact: false }).waitFor();
-    await frame.getByText('点名 @缅因猫（砚砚） · 已在原处回复', { exact: true }).waitFor();
+    await requestArticle.getByRole('button', { name: /1 条回复/ }).waitFor();
+    await requestArticle.getByText('收到了，这是原处的具名回复。', { exact: true }).waitFor();
     await page.screenshot({ path: path.join(evidence, 'real-reply-desktop.png'), fullPage: true });
     await page.setViewportSize({ width: 390, height: 844 });
     await frame.getByRole('button', { name: '频道导航' }).click();
-    await frame.getByRole('button', { name: '再看一遍演示' }).first().click();
+    await frame.locator('details.collective-menu > summary').click();
+    await frame.getByRole('button', { name: '再看一遍介绍' }).first().click();
     await frame.getByRole('heading', { name: '你的伙伴到了' }).waitFor();
     await page.waitForTimeout(350);
     await page.screenshot({ path: path.join(evidence, 'entry-mobile.png'), fullPage: true });
@@ -222,7 +226,8 @@ export async function verifyFirstEntryGuide() {
     assert.equal(await frame.locator('[data-demo]').count(), 0);
     await page.emulateMedia({ reducedMotion: 'reduce' });
     await frame.getByRole('button', { name: '频道导航' }).click();
-    await frame.getByRole('button', { name: '再看一遍演示' }).first().click();
+    await frame.locator('details.collective-menu > summary').click();
+    await frame.getByRole('button', { name: '再看一遍介绍' }).first().click();
     await frame.getByRole('heading', { name: '你的伙伴到了' }).waitFor();
     await page.screenshot({ path: path.join(evidence, 'entry-mobile-reduced-motion.png'), fullPage: true });
     await frame.getByRole('button', { name: '跳过' }).click();

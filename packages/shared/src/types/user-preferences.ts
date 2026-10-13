@@ -37,6 +37,8 @@ export type ThreadAttentionMemberSort = 'manual' | 'running-first';
 export interface ThreadAttentionPreferences {
   aliases?: Record<string, string>;
   open?: Record<string, boolean>;
+  /** F322: collapsed Groups reveal attention shortcuts unless explicitly disabled. */
+  collapsedPeek?: Record<string, boolean>;
   /** Missing inherits manual order. Running-first is a view; membership order remains durable truth. */
   memberSort?: Record<string, ThreadAttentionMemberSort>;
 }

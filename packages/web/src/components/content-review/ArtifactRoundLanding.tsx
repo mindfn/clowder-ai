@@ -203,6 +203,7 @@ export function ArtifactRoundLanding({
                 round={round}
                 draft={selectedDraft}
                 disabled={!projection.canWrite || !canWrite}
+                allowNewRequest={round.asset.mediaType !== 'image/png'}
                 onRegionHandedOff={() => effective.setTarget(null)}
               />
             ),

@@ -65,17 +65,22 @@ export class RedisTaskEntrustedWorkMutationStore {
         return { kind: 'revision_conflict', task: existing };
       }
 
+      const { completion: _previousCompletion, ...openWork } = existing.entrustedWork;
       const updated: TaskItem = reconcileDeploymentWaitTaskMutation(existing, {
         ...existing,
         status: 'done',
         entrustedWork: {
-          ...existing.entrustedWork,
+          ...openWork,
           revision: existing.entrustedWork.revision + 1,
           closure: input.closure,
-          completion: {
-            recordedAt: Date.now(),
-            ...(input.artifactSnapshot ? { artifactSnapshot: input.artifactSnapshot } : {}),
-          },
+          ...(input.closure.state === 'satisfied'
+            ? {
+                completion: {
+                  recordedAt: Date.now(),
+                  ...(input.artifactSnapshot ? { artifactSnapshot: input.artifactSnapshot } : {}),
+                },
+              }
+            : {}),
         },
         updatedAt: Date.now(),
       });

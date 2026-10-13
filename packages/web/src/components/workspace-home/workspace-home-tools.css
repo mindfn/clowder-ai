@@ -116,10 +116,6 @@
   color: var(--shell-muted);
 }
 
-[data-shell="v2"] .home-voice-panel {
-  margin-top: 6px;
-}
-
 [data-shell="v2"] .home-signpost {
   margin: 20px 4px 0;
   line-height: 1.6;

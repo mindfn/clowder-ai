@@ -207,7 +207,7 @@ test('Task414 shape: exact owner reattaches a new delegate to the same approved 
   assert.ok(result.lease.evidenceRefs.includes('message:successor-handoff'));
 });
 
-test('returned delegation cannot move the successor to a different child', async () => {
+test('returned delegation cannot move the successor to an unapproved child', async () => {
   const f = fixture({ targetThreadId: 'thread-unapproved-child' });
   await assert.rejects(f.service.admit(f.request), /standing|approved|child/i);
   assert.equal(f.current().generation, 2);

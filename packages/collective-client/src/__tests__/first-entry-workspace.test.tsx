@@ -96,7 +96,7 @@ it('waits for an exact published empty participation before telling a newly pair
     );
   });
   expect(container.textContent).toContain('这台 Café 还没有可参与的伙伴');
-  expect(container.textContent).toContain('去我的 Café 登记');
+  expect(container.textContent).toContain('去「我的猫」登记');
   await act(async () => {
     window.dispatchEvent(
       new MessageEvent('message', {
@@ -270,9 +270,9 @@ it('plays the guide locally, leaves Service events untouched, and hands the real
     input.dispatchEvent(new Event('input', { bubbles: true }));
   });
   expect(
-    [...container.querySelectorAll('button')].filter((button) => button.textContent === '再看一遍演示'),
+    [...container.querySelectorAll('button')].filter((button) => button.textContent === '再看一遍介绍'),
   ).toHaveLength(1);
-  const replay = [...container.querySelectorAll('button')].find((button) => button.textContent === '再看一遍演示');
+  const replay = [...container.querySelectorAll('button')].find((button) => button.textContent === '再看一遍介绍');
   if (!replay) throw new Error('Expected a replay control');
   await act(async () => replay.click());
   expect(container.querySelector('[aria-label="入场演示"]')).not.toBeNull();
@@ -311,5 +311,5 @@ it('plays the guide locally, leaves Service events untouched, and hands the real
     );
   });
   expect(container.querySelector('[aria-label="入场演示"]')).toBeNull();
-  expect(container.textContent).toContain('再看一遍演示');
+  expect(container.textContent).toContain('再看一遍介绍');
 });

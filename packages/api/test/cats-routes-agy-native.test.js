@@ -6,6 +6,8 @@ import { test } from 'node:test';
 import { catRegistry } from '@cat-cafe/shared';
 import Fastify from 'fastify';
 import './helpers/setup-cat-registry.js';
+import { selectFakeCodexHome } from './helpers/fake-codex-home.js';
+
 const { catsRoutes } = await import('../dist/routes/cats.js');
 const { _resetCachedConfig, loadCatConfig, toAllCatConfigs } = await import('../dist/config/cat-config-loader.js');
 const profile = {
@@ -21,11 +23,18 @@ const headers = { 'x-cat-cafe-user': 'default-user' };
 
 async function fixture(initialProfile) {
   const root = mkdtempSync(join(tmpdir(), 'f325-cats-native-'));
-  const keys = ['CAT_TEMPLATE_PATH', 'CAT_CAFE_GLOBAL_CONFIG_ROOT', 'CAT_CAFE_CONFIG_ROOT'];
+  const keys = [
+    'CAT_TEMPLATE_PATH',
+    'CAT_CAFE_GLOBAL_CONFIG_ROOT',
+    'CAT_CAFE_CONFIG_ROOT',
+    'CODEX_HOME',
+    'CODEX_SQLITE_HOME',
+  ];
   const saved = keys.map((key) => process.env[key]);
   process.env.CAT_TEMPLATE_PATH = join(root, 'cat-template.json');
   process.env.CAT_CAFE_GLOBAL_CONFIG_ROOT = root;
   process.env.CAT_CAFE_CONFIG_ROOT = root;
+  selectFakeCodexHome(root);
   const template = {
     version: 2,
     breeds: [

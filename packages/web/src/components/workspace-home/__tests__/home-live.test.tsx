@@ -5,6 +5,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { useActiveExecutionStore } from '@/stores/activeExecutionStore';
 
 const mocks = vi.hoisted(() => ({
+  catNames: new Map<string, { displayName: string; nickname?: string; variantLabel?: string }>(),
   projection: null as DeploymentWaitListResponse | null,
   hydration: 'ready' as 'idle' | 'loading' | 'ready' | 'error',
   retry: vi.fn(),
@@ -15,7 +16,7 @@ const mocks = vi.hoisted(() => ({
 
 vi.mock('@/hooks/useCatData', () => ({
   useCatData: () => ({
-    getCatById: (id: string) => (id === 'codex-sol' ? { displayName: '小太阳' } : undefined),
+    getCatById: (id: string) => mocks.catNames.get(id) ?? (id === 'codex-sol' ? { displayName: '小太阳' } : undefined),
   }),
 }));
 vi.mock('@/components/CatAvatar', () => ({
@@ -40,7 +41,7 @@ vi.mock('@/components/ChatVoiceFeatureControls', () => ({
 }));
 
 import { cancelProjectedExecution } from '@/hooks/useActiveExecutionProjection';
-import { WorkspaceHomeV2 } from '../WorkspaceHomeV2';
+import { HomeLiveCard } from '../HomeLiveCard';
 import { command, live, NOW, seed } from './home-fixtures';
 
 describe('F322 new-shell Workspace home · 正在发生', () => {
@@ -56,6 +57,7 @@ describe('F322 new-shell Workspace home · 正在发生', () => {
     vi.useFakeTimers({ toFake: ['Date', 'setInterval', 'clearInterval'] });
     vi.setSystemTime(NOW);
     useActiveExecutionStore.getState().reset();
+    mocks.catNames.clear();
     mocks.projection = null;
     mocks.hydration = 'idle';
     mocks.retry.mockReset();
@@ -79,22 +81,8 @@ describe('F322 new-shell Workspace home · 正在发生', () => {
     vi.unstubAllGlobals();
   });
 
-  async function renderHome(props: Partial<React.ComponentProps<typeof WorkspaceHomeV2>> = {}): Promise<void> {
-    await act(async () => {
-      root.render(
-        <WorkspaceHomeV2
-          threadId="thread-here"
-          defaultCatId="codex-sol"
-          worktreeId="wt-1"
-          repository={{ name: 'cat-cafe', branch: 'feat/f322-workspace-home' }}
-          destinationMessage={null}
-          onSelectDevSurface={onSelectDevSurface}
-          onSelectDestination={onSelectDestination}
-          onSelectExecution={onSelectExecution}
-          {...props}
-        />,
-      );
-    });
+  async function renderHome(): Promise<void> {
+    await act(async () => root.render(<HomeLiveCard threadId="thread-here" onSelectExecution={onSelectExecution} />));
   }
 
   const q = (selector: string) => container.querySelector<HTMLElement>(selector);
@@ -106,15 +94,15 @@ describe('F322 new-shell Workspace home · 正在发生', () => {
       await renderHome();
 
       expect(q('[data-testid="workspace-developing"] h2')?.textContent).toBe('正在发生');
-      expect(q('[data-testid="workspace-developing"]')?.textContent).toContain('全局 · 2');
+      expect(q('[data-testid="workspace-developing"]')?.textContent).toContain('所有对话 · 2 件在跑');
       const rows = qa('[data-testid="workspace-running-object"]');
       expect(rows).toHaveLength(2);
 
       expect(rows[0]?.textContent).toContain('小太阳');
       expect(rows[0]?.textContent).toContain('当前对话');
-      expect(rows[0]?.querySelector('.home-live-sub')?.textContent).toBe('改窄屏设计稿');
-      expect(rows[0]?.querySelector('.home-live-status')?.textContent).toBe('回复中');
-      expect(rows[0]?.querySelector('a')?.getAttribute('href')).toBe('/thread/thread-here');
+      expect(rows[0]?.querySelector('.home-live-sub')?.textContent).toBe('当前对话 · 改窄屏设计稿');
+      expect(rows[0]?.querySelector('.home-live-status')?.textContent).toBe('正在回话');
+      expect(rows[0]?.querySelector('button')?.disabled).toBe(false);
 
       expect(rows[1]?.textContent).toContain('opus');
       expect(rows[1]?.textContent).not.toContain('当前对话');
@@ -122,44 +110,57 @@ describe('F322 new-shell Workspace home · 正在发生', () => {
       expect(open?.textContent).toContain('opus');
       expect(open?.textContent).toContain('F322 第1段');
       expect(open?.querySelector('button')).toBeNull();
-      expect(open?.getAttribute('href')).toBe('/thread/thread-other');
+      act(() => rows[1]?.querySelector<HTMLButtonElement>('[data-testid="home-execution-trajectory"]')?.click());
+      expect(onSelectExecution).toHaveBeenCalledWith(
+        expect.objectContaining({ threadId: 'thread-other', executionId: 'e2' }),
+      );
     });
 
-    it('keeps 详情 and 停止 on the exact execution they were rendered for', async () => {
+    it('keeps conversation navigation separate from the exact trajectory and Stop controls', async () => {
       const turn = live('codex-sol', 'thread-here', 'x', 'e1');
       seed([turn]);
       await renderHome();
-
-      act(() => q('[data-testid="workspace-open-running-object"]')?.click());
+      const row = q('[data-testid="workspace-open-running-object"]');
+      expect(row?.tagName).toBe('A');
+      act(() => q('[data-testid="home-execution-trajectory"]')?.click());
       expect(onSelectExecution).toHaveBeenCalledExactlyOnceWith(turn);
-
-      expect(q('[data-testid="workspace-open-running-object"]')?.getAttribute('aria-label')).toBe('详情');
-      expect(q('[data-testid="workspace-open-running-object"]')?.textContent).toBe('›');
-      const stop = q('button[aria-label^="Stop "]');
-      expect(stop?.textContent).toBe('■');
-      await act(async () => stop?.click());
-      expect(cancelProjectedExecution).toHaveBeenCalledExactlyOnceWith(turn);
+      expect(qa('button.home-stop')).toHaveLength(1);
+      expect(qa('[data-testid="home-execution-trajectory"]')).toHaveLength(1);
+      expect(cancelProjectedExecution).not.toHaveBeenCalled();
+    });
+    it('keeps a full nickname and adds models only for distinct cats sharing a nickname in this list', async () => {
+      const name = { displayName: '缅因猫', nickname: '小太阳·砚砚', variantLabel: 'GPT-6.1 Sol' };
+      mocks.catNames.set('codex-sol', name);
+      seed(Array.from({ length: 20 }, (_, i) => live('codex-sol', 'thread-here', 'title', `e${i}`)));
+      await renderHome();
+      expect(qa('.home-live-name').map((node) => node.textContent)).toEqual(Array(20).fill('小太阳·砚砚'));
+      mocks.catNames.set('other-sol', { ...name, variantLabel: 'GPT-6 Sol' });
+      seed([live('codex-sol', 'thread-here', 'title', 'a'), live('other-sol', 'thread-here', 'title', 'b')]);
+      await renderHome();
+      expect(qa('.home-live-name').map((node) => node.textContent)).toEqual([
+        '小太阳·砚砚 · GPT-6.1 Sol',
+        '小太阳·砚砚 · GPT-6 Sol',
+      ]);
     });
 
-    it('lists a row’s live run and background task as sub-rows, each with its own 停止 and a ticking clock', async () => {
+    it('lists every live run and background command separately with exact stop and ticking clocks', async () => {
       const turn = { ...live('codex-sol', 'thread-here', 'x', 'e1'), startedAt: NOW - 120_000 };
       const gate = command('codex-sol', 'thread-here', 'hold-1', 'full_gate', NOW - 50_000);
       seed([turn, gate]);
       await renderHome();
 
-      expect(qa('[data-testid="workspace-running-object"]')).toHaveLength(1);
-      const subs = qa('[data-testid="workspace-running-activity"]');
-      expect(subs.map((sub) => sub.querySelector('.home-live-subtext')?.textContent)).toEqual([
-        '实时运行',
-        '后台任务 · 完整检查 · 0:50',
-      ]);
-      expect(container.textContent).not.toContain('门禁');
-      expect(qa('button[aria-label^="Stop "]')).toHaveLength(2);
+      expect(qa('[data-testid="workspace-running-object"]')).toHaveLength(2);
+      const rows = qa('[data-testid="workspace-running-object"]');
+      expect(rows[0]?.textContent).toContain('2:00');
+      expect(rows[1]?.textContent).toContain('在跑全量门禁');
+      expect(rows[1]?.textContent).toContain('0:50');
+      expect(container.textContent).toContain('全量门禁');
+      expect(qa('button.home-stop')).toHaveLength(2);
 
       await act(async () => {
         vi.advanceTimersByTime(2_000);
       });
-      expect(qa('[data-testid="workspace-running-activity"]')[1]?.textContent).toContain('后台任务 · 完整检查 · 0:52');
+      expect(qa('[data-testid="workspace-running-object"]')[1]?.textContent).toContain('0:52');
     });
 
     it('says what it cannot verify instead of staying silent', async () => {
@@ -188,11 +189,11 @@ describe('F322 new-shell Workspace home · 正在发生', () => {
       );
     });
 
-    it('renders nothing when nothing is running and the state is verified', async () => {
+    it('keeps the section and one empty line when nothing is running', async () => {
       seed([]);
       await renderHome();
-      expect(q('[data-testid="workspace-developing"]')).toBeNull();
-      expect(q('[data-testid="workspace-developing-status"]')).toBeNull();
+      expect(q('[data-testid="workspace-developing"]')).not.toBeNull();
+      expect(q('[data-testid="workspace-developing-status"]')?.textContent).toBe('现在没有在跑的');
     });
   });
 });

@@ -7,6 +7,7 @@
 
 import assert from 'node:assert/strict';
 import { beforeEach, describe, test } from 'node:test';
+import { isValidRichBlock } from '@cat-cafe/shared';
 import Fastify from 'fastify';
 import {
   adaptInvocationQueue,
@@ -4186,6 +4187,91 @@ describe('Callback Routes', () => {
     const richMsg = msgs.find((m) => m.type === 'system_info');
     assert.ok(richMsg, 'rich_block system_info broadcast should exist');
     assert.equal(richMsg.invocationId, invocationId, 'rich_block system_info broadcast must include invocationId');
+  });
+
+  test('create-rich-block resolves registered local images before buffering and broadcasting', async () => {
+    const { mkdtemp, writeFile, rm } = await import('node:fs/promises');
+    const { tmpdir } = await import('node:os');
+    const { join } = await import('node:path');
+    const { registerWorktrees } = await import('../dist/domains/workspace/workspace-security.js');
+    const root = await mkdtemp(join(tmpdir(), 'rich-images-'));
+    registerWorktrees([{ id: 'rich-images', root, branch: 'test', head: 'test' }]);
+    const file = join(root, 'a #100%.png');
+    await writeFile(file, Buffer.from('image'));
+    const app = await createApp();
+    const { invocationId, callbackToken } = await registry.create('user-1', 'opus', 'thread-local-images');
+    try {
+      const response = await app.inject({
+        method: 'POST',
+        url: '/api/callbacks/create-rich-block',
+        headers: { 'x-invocation-id': invocationId, 'x-callback-token': callbackToken },
+        payload: { block: { id: 'local-image', kind: 'media_gallery', v: 1, items: [{ url: file, alt: 'draft' }] } },
+      });
+      assert.equal(response.statusCode, 200, response.body);
+      const block = JSON.parse(socketManager.getMessages()[0].content).block;
+      assert.equal(block.items[0].url, '/api/workspace/file/raw?worktreeId=rich-images&path=a+%23100%25.png');
+      assert.equal(block.items[0].alt, 'draft');
+      const { getRichBlockBuffer } = await import('../dist/domains/cats/services/agents/invocation/RichBlockBuffer.js');
+      assert.deepEqual(getRichBlockBuffer().consume('thread-local-images', 'opus', invocationId), [block]);
+    } finally {
+      await app.close();
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
+  test('rich image validation rejects unusable paths without publishing through either callback route', async () => {
+    const { mkdtemp, writeFile, symlink, truncate, rm } = await import('node:fs/promises');
+    const { tmpdir } = await import('node:os');
+    const { join } = await import('node:path');
+    const { registerWorktrees } = await import('../dist/domains/workspace/workspace-security.js');
+    const root = await mkdtemp(join(tmpdir(), 'rich-images-invalid-'));
+    const outside = await mkdtemp(join(tmpdir(), 'rich-images-outside-'));
+    registerWorktrees([{ id: 'rich-images-invalid', root, branch: 'test', head: 'test' }]);
+    await writeFile(join(outside, 'secret.png'), 'outside');
+    await writeFile(join(root, '.env.png'), 'secret');
+    await writeFile(join(root, 'notes.md'), 'not an image');
+    await writeFile(join(root, 'large.png'), '');
+    await truncate(join(root, 'large.png'), 10 * 1024 * 1024 + 1);
+    await symlink(join(outside, 'secret.png'), join(root, 'escape.png'));
+    const app = await createApp();
+    const thread = threadStore.create('user-1', 'Invalid images');
+    const { invocationId, callbackToken } = await registry.create('user-1', 'opus', thread.id);
+    const headers = { 'x-invocation-id': invocationId, 'x-callback-token': callbackToken };
+    try {
+      for (const url of [
+        join(outside, 'secret.png'),
+        join(root, '.env.png'),
+        join(root, 'escape.png'),
+        join(root, 'missing.png'),
+        join(root, 'notes.md'),
+        join(root, 'large.png'),
+        root,
+        '',
+        'file:///tmp/image.png',
+      ]) {
+        const block = { id: 'bad-image', kind: 'media_gallery', v: 1, items: [{ url }] };
+        for (const route of ['create-rich-block', 'post-message']) {
+          // The inline protocol drops malformed URL shapes before gallery admission; MCP never emits them.
+          if (route === 'post-message' && !isValidRichBlock(block)) continue;
+          const payload =
+            route === 'create-rich-block'
+              ? { block }
+              : {
+                  content: '```cc_rich\n' + JSON.stringify({ v: 1, blocks: [block] }) + '\n```',
+                };
+          const response = await app.inject({ method: 'POST', url: '/api/callbacks/' + route, headers, payload });
+          assert.equal(response.statusCode, 400, route + ': ' + url + ': ' + response.body);
+          assert.match(response.body, /RICH_MEDIA_URL_INVALID/);
+          assert.match(response.body, /uploads/);
+        }
+      }
+      assert.equal(socketManager.getMessages().length, 0);
+      assert.equal(messageStore.getRecent(10).length, 0);
+    } finally {
+      await app.close();
+      await rm(root, { recursive: true, force: true });
+      await rm(outside, { recursive: true, force: true });
+    }
   });
 
   test('#454: create-rich-block broadcast includes invocationId', async () => {

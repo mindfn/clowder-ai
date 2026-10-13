@@ -1,10 +1,12 @@
-import type { ProviderSubexecutionSemanticEvent } from '@cat-cafe/shared';
+import { createCatId, type ProviderSubexecutionSemanticEvent } from '@cat-cafe/shared';
 import React, { act } from 'react';
 import { createRoot, type Root } from 'react-dom/client';
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import { ThreadChatHistoryAdmissionProvider } from '@/components/thread-chat/ThreadChatRuntimeProvider';
 import { useChatStore } from '@/stores/chatStore';
 import { apiFetch } from '@/utils/api-client';
+import { MessageStore } from '../../../../api/src/domains/cats/services/stores/ports/MessageStore.js';
+import { LiveSubexecutionLog } from '../../../../api/src/domains/concierge/live/live-subexecution-log.js';
 import { useChatHistory } from '../useChatHistory';
 
 vi.mock('@/utils/api-client', () => ({ apiFetch: vi.fn() }));
@@ -105,5 +107,73 @@ describe('F307 child identity history hydration', () => {
     const hydrated = useChatStore.getState().messages[0];
     expect(hydrated?.content).toBe('root final remains primary after refresh');
     expect(hydrated?.metadata?.subexecutionEvents).toEqual([childEvent]);
+  });
+
+  it('exposes standalone Live usage records from the actual Message writer while the root is still running', async () => {
+    const threadId = 'thread-subexecution-history';
+    const store = new MessageStore();
+    const log = new LiveSubexecutionLog({
+      scope: { userId: 'owner', threadId, catId: createCatId('codex61-sol'), callId: 'call' },
+      rootThread: () => 'root',
+      available: () => true,
+      verify: async () => true,
+      store,
+      publish() {},
+    });
+    log.rootStarted('root', 'turn-root');
+    const common = {
+      type: 'app_server.subexecution' as const,
+      subexecution_id: 'child',
+      root_execution_id: 'root',
+      parent_execution_id: 'root',
+      root_turn_id: 'turn-root',
+      parent_turn_id: 'turn-root',
+      agent_path: '/root/reader',
+      depth: 1,
+    };
+    await log.observe({ ...common, event_id: 'started', occurred_at: 1000, stage: 'started' });
+    await log.observe({
+      ...common,
+      event_id: 'result',
+      occurred_at: 1250,
+      stage: 'message',
+      turn_id: 'child-turn',
+      content: 'Two distinct reports',
+      message_phase: 'final_answer',
+    });
+    await log.observe({
+      ...common,
+      event_id: 'completed',
+      occurred_at: 1500,
+      stage: 'completed',
+      turn_id: 'child-turn',
+    });
+    const records = await store.getByThread(threadId);
+    apiFetchMock.mockResolvedValue({
+      ok: true,
+      json: async () => ({ messages: records, tasks: [], hasMore: false }),
+    } as Response);
+    await act(async () => {
+      root.render(
+        <ThreadChatHistoryAdmissionProvider>
+          <HookProbe threadId={threadId} />
+        </ThreadChatHistoryAdmissionProvider>,
+      );
+    });
+    await act(async () => {
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+    const hydrated = useChatStore.getState().messages;
+    expect(hydrated).toHaveLength(3);
+    expect(hydrated.map((m) => m.metadata?.subexecutionEvents?.[0]?.stage)).toEqual([
+      'started',
+      'message',
+      'completed',
+    ]);
+    expect(hydrated[1]?.content).toContain('Two distinct reports');
+    expect(hydrated[2]?.content).toContain('结果引用：thread:thread-subexecution-history#');
+    expect(hydrated[2]?.content).toContain('家内工具不可用');
+    log.close();
   });
 });

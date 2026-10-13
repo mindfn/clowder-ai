@@ -647,6 +647,64 @@ gpt-pro（以及未来 claude-cloud / gemini-cloud 等其他 cloud cats），不
 
 **Status**: in-progress；Astra 负责设计/范围，Sol61 实现。operator 于本 thread `[thread-id]#private-source-id` 接受概念并要求直接开发、在真实代码里打磨。
 
+**2026-10-11 实现状态**：首版 #5336 已合入 `7c6ef410e4`，browser admission #5343 已合入 `fad12058a8`。
+已有 MCP 复用纠正 #5381 已合入 `9c04cba87becb03b44ca71962f7d9d9d5425c95c`：保留原 `/mcp` 与 Pro 口令/工具，
+固定共享入口新增 dot Events/三工具；Host 保持 owner、配对与 exact-source 回程/图片权限。界面统一为「ChatGPT 云端」，
+目标 dot 只准备订阅，Pro/dot 成员分别显示；Chrome 辅助仍由原 producer 管理。
+作者真实 Remote HTTP→Fastify Host→来源回帖/私有 PNG、默认入口 1440/390 验证通过；
+cloud R1 与 Sonnet typed 终审 `66e86edc` 已消费，后续仅机械转录其两项文字建议及无关 main 合流。
+这些是实现/合同证据，不是实际 ChatGPT dot 的收件、手机呈现或原图验收。
+存量安装仍保存旧 manifest 名称，#5389 已合入 `0e62427e543045511041017f747684853acae5f3`：仅将当前 builtin 列表/详情标签投影为「ChatGPT 云端」，
+保留原包名、ID、版本、digest 和连接；成员页明确「身份独立，沿用已连接的猫咖插件」。Sonnet 在 `e8aaab6b` 独立复现旧安装 RED/GREEN 并放行，
+后续仅机械转录其一行文案建议，成员相关检查 13/13。原生 browser merge plan 的四个 unmapped inputs 保持诚实记录，采用风险匹配的组件检查，未声称 plan ready/full green。
+标准 Alpha 在 `0e62427e54` 的真实旧安装已通过默认菜单进入、列表与详情、1440/390 窄屏及共享连接文案检查，未发安装/订阅准备/凭据修改请求；
+生产仍在 boot 22、revision `140dc4115d8`，本轮不停止/重启 API/Web。此前原执行 Task936 登记了 generation 5 的
+`revision_included=0e62427e54`（api/web）单次部署等待；加载后沿同一个既有 MCP 刷新独立 Remote，再验真实订阅、
+本人 A/B、获准家猫与原图。续办已加入 source341/350 的 329/331 真实反例：dot 主动询问按 Pro 作者落盘、家猫回信进入未绑定的 Pro 回程。
+该主动询问分支也须验真实送回同一 dot，不能仅凭新版加载或首条召唤成功宣称双向贯通；官方受控 runtime 更新仍需本人明确许可。
+Alpha 交付与完整 G1 的真实 provider 验收仍分别按实物留痕，阶段保持 in-progress。
+
+**G1-6 主动询问回程已合入**：[#5397](https://github.com/zts212653/clowder-ai/pull/5397) 的 landed revision 为 `05343af4bb24b1df6336bfdb68f5178a24f1371f`。
+同一 MCP 增加有界 `cat_cafe_dot_ask`，Host 固定 dot 作者，家猫正式 callback/stream 按真实执行来源自动回送原订阅；
+一次受询回信不扩大永久召唤白名单。多猫部分失败如实可重试，保留原消息与幂等 key；本人回复 dot 提问保留普通召唤权限。
+Sonnet 已对最终 `c6d3f953` 给出 typed approved（本 thread `private-source-id`），独立接受第四轮假阳性 pushback；
+作者最后选择 21/21 与 API build/types 通过，独立最终选择 42/42、隔离 Redis 1/1 通过。原生 browser merge plan 17 条 backend/MCP/shared unmapped 仍为 blocked，未声称 full 或 browser 绿。
+
+标准 Alpha 已加载 `05343af4`，shared/API/MCP 构建 stamp 一致，boot 116；真实默认菜单、旧安装、1440/390、共享连接文案及无二次地址入口已复验。
+Alpha 不持有全局 Pro sidecar，Host 本轮只验无凭据 401 / 错凭据 403，未借正式凭据或创建新连接、订阅、问题。
+页面在 `http://localhost:3011/settings?s=plugins` 可试用，托管为 launchd；Hub 打开请求 `unconfirmed/no_matching_client`，不宣称用户已看到。
+正式 runtime 仍 boot 22 / `140dc4115d8`；原 936 Task 的单次部署等待现为 generation 6、`revision_included=05343af4`（api/web），取代此前 generation 5。
+新版本实际加载后继续验真实 dot Events、A/B 原处回程、获准家猫、主动询问回信与 PNG/原图刷新。未获正式受控重启许可，未自行停止服务；G1/Phase G 不关闭。
+
+**正式加载更新（boot23）**：运行版本 `9fade4a70022bd81b480581e0aad2458032dca44` 已包含 `05343af4`，原936的generation6部署等待已matched。
+独立Remote同时从runtime checkout加载新版，无需本负责人另启/重启服务；Host四个dot工具及公网同一 `/mcp` 的17工具、`dot.summoned`、现代JSON与原Pro SSE目录均实际200。
+主人的现有插件页读取及未配对dot「准备订阅说明」已通过，Pro连接、口令、包身份保留；本次配对说明已提供本人，只需发给同一现有dot，无二次安装配置。
+当前实际仍无目标dot订阅/唤醒/来源回程/图片回执。正式加载条件已解除，剩余入口在真实dot客户端注册回调，然后继续原936验完整旅程。
+
+**2026-10-12 灰开关反馈已交 Alpha**：[#5436](https://github.com/zts212653/clowder-ai/pull/5436) 合入 `f03983dc4a`。
+原专用详情没有接住 blocked-toggle 请求；现点未就绪开关会解释订阅/两处往返步骤，并链接现有 ChatGPT 插件页。
+局部产品快车道作者27项、类型/格式/diff检查通过；真实 Alpha 在包含修复的 `122c9eddd6` 上1440/390均核提示、外链与零配置POST。
+正式runtime未动，尚未加载这份界面反馈。订阅说明已交目标dot，但其13:06 UTC实际发现仍为旧工具/无Clowder AI Events；
+本轮无新的真实订阅或事件回执，不要求本人重复搬运说明、不把原任务改回等旧部署；原936继续验客户端发现、订阅与完整回程/PNG。
+
+**2026-10-12 16:08 UTC 客户端发现已恢复**：本人在原 ChatGPT 猫咖连接完成 Refresh（来源1899）。
+目标 dot 主会话实查并回传四项 `cat_cafe_dot_*` 工具、猫咖事件源及 `dot.summoned` 的严格配对参数（来源1951），旧目录缺失阻塞解除。
+16:13 UTC 正式状态投影仍为未配对、无订阅及回程/图片记录；现有说明已于13:23 UTC过期，不得继续使用旧attempt或伪造订阅。
+下一步由本人在同一「ChatGPT 云端」详情重新准备有效订阅说明，交给原目标dot建立真实订阅；不重装、改Pro连接或重启runtime。
+这项客户端授权操作尚无合法Needs Me producer，原936如实记录该入口缺口，不伪造approval/runtime_interaction。
+
+**2026-10-12 新说明已交，真实订阅创建失败**：目标dot16:26/16:27两次创建均Task Service ERROR（来源2017）。
+正式状态revision5与新attempt匹配，尝试时有效；16:45仍未配对、无订阅/验证/回程/图片记录。
+两次窗口的Host共享RPC有四条HTTP200，但现有日志未记录RPC方法/错误体，不能认定subscribe已成功或唯一定位challenge失败层。
+剩余阻塞转为具体RPC/Task Service错误的观测缺口；不再等待本人Refresh或已完成的准备动作，未改配置、凭据或服务，原936继续验G1。
+
+**2026-10-12 回调Host与安全诊断修复已合入/Alpha验证**：[#5443](https://github.com/zts212653/clowder-ai/pull/5443) 合入 `65cdb541296f0c773b44cb2544e4d669ec66e7a0`。
+修正签名headers覆盖原域名Host的确定缺口，保留已验证IP、TLS/SNI与签名；订阅日志只保留方法、hostname、有界失败类别/系统码，不记录配对或callback秘密。
+Sonnet独立审查最终HEAD `7f0012f358` 放行（来源235），包含真实本地TLS、fake-IP拒绝与日志隐私验证；作者相关60/60、最终增量7/7、API类型检查通过。
+Alpha实际HEAD/build stamp `007ebaf646` 包含合入修复，健康检查ok，合入后回归7/7；正式runtime仍boot24/`8f98aed76a`，尚未加载新补丁。
+系统DNS的fake-IP与正式公网地址校验冲突已独立复现，但真实callback hostname及16:26唯一失败原因未知；没有放行保留网段、改网络/凭据或创建新订阅。
+原936已登记包含`65cdb541`的正式部署单次续办；加载后的真实订阅、双向原处回复及PNG仍待验，不据此关闭G1。
+
 ## Acceptance Criteria
 
 ### Phase A（Design Gate） ✅ done 2026-06-21

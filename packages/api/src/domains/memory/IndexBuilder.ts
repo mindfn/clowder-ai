@@ -35,6 +35,7 @@ import { type DocumentPassageSource, replaceDocumentPassages } from './replace-d
 import type { SqliteEvidenceStore } from './SqliteEvidenceStore.js';
 import { SIGNAL_FLAGS } from './summary-config.js';
 import type { VectorStore } from './VectorStore.js';
+import { createVectorInvalidator } from './vector-invalidation.js';
 
 /**
  * Bump when scanner extraction logic changes (e.g., new fields derived from
@@ -536,7 +537,6 @@ export class IndexBuilder implements IIndexBuilder {
       if (!currentAnchors.has(row.anchor)) {
         if (row.anchor.startsWith('thread-')) continue;
         await this.store.deleteByAnchor(row.anchor);
-        this.embedDeps?.vectorStore.delete(row.anchor);
         this.pendingDocumentVectorAnchors.delete(row.anchor);
         removedAnchors.push(row.anchor);
       }
@@ -647,7 +647,6 @@ export class IndexBuilder implements IIndexBuilder {
       signal?.throwIfAborted();
       if (anchors.has(anchor) || this.dirtyThreads.has(anchor.slice('thread-'.length))) continue;
       await this.store.deleteByAnchor(anchor);
-      this.embedDeps?.vectorStore.delete(anchor);
       this.pendingDocumentVectorAnchors.delete(anchor);
       removed = true;
     }
@@ -840,7 +839,6 @@ export class IndexBuilder implements IIndexBuilder {
         | undefined;
       if (row) {
         await this.store.deleteByAnchor(row.anchor);
-        this.embedDeps?.vectorStore.delete(row.anchor);
         this.pendingDocumentVectorAnchors.delete(row.anchor);
         await this.store.runExclusive(() =>
           db.prepare('DELETE FROM document_vector_sources WHERE anchor = ?').run(row.anchor),
@@ -1169,6 +1167,8 @@ export class IndexBuilder implements IIndexBuilder {
     const lease: MessageRecallSuppressionLease = { threadId, messageId, leaseId: randomUUID() };
     await this.store.runExclusive(() => {
       const db = this.store.getDb();
+      const invalidatePassage = createVectorInvalidator(db, 'passage_vectors');
+      const invalidateDocument = createVectorInvalidator(db, 'evidence_vectors');
       db.transaction(() => {
         const passage = db
           .prepare(
@@ -1220,9 +1220,9 @@ export class IndexBuilder implements IIndexBuilder {
           docAnchor,
         );
         db.prepare("DELETE FROM doc_aliases WHERE doc_anchor = ? AND source = 'doc-title'").run(docAnchor);
+        invalidatePassage(passageVectorKey(docAnchor, passageId));
+        invalidateDocument(docAnchor);
       })();
-      this.embedDeps?.passageVectorStore?.delete(passageVectorKey(docAnchor, passageId));
-      this.embedDeps?.vectorStore.delete(docAnchor);
     });
     try {
       await this.store.refreshEntityMentions([docAnchor]);
@@ -1246,6 +1246,8 @@ export class IndexBuilder implements IIndexBuilder {
     const passageId = `msg-${lease.messageId}`;
     const restored = await this.store.runExclusive(() => {
       const db = this.store.getDb();
+      const invalidatePassage = createVectorInvalidator(db, 'passage_vectors');
+      const invalidateDocument = createVectorInvalidator(db, 'evidence_vectors');
       return db.transaction(() => {
         const row = db
           .prepare(
@@ -1318,12 +1320,12 @@ export class IndexBuilder implements IIndexBuilder {
           passageId,
         );
         mirrorDocAliases(db);
+        invalidatePassage(passageVectorKey(docAnchor, passageId));
+        invalidateDocument(docAnchor);
         return true;
       })();
     });
     if (!restored) return false;
-    this.embedDeps?.passageVectorStore?.delete(passageVectorKey(docAnchor, passageId));
-    this.embedDeps?.vectorStore.delete(docAnchor);
     await this.store.refreshEntityMentions([docAnchor]);
     await this.restoreSuppressionEmbeddings(docAnchor);
     return true;
@@ -1335,6 +1337,8 @@ export class IndexBuilder implements IIndexBuilder {
     const passageId = `msg-${lease.messageId}`;
     await this.store.runExclusive(() => {
       const db = this.store.getDb();
+      const invalidatePassage = createVectorInvalidator(db, 'passage_vectors');
+      const invalidateDocument = createVectorInvalidator(db, 'evidence_vectors');
       db.transaction(() => {
         const exists = db
           .prepare(
@@ -1371,9 +1375,9 @@ export class IndexBuilder implements IIndexBuilder {
              abstractive_token_count = NULL
            WHERE thread_id = ?`,
         ).run(lease.threadId);
+        invalidatePassage(passageVectorKey(docAnchor, passageId));
+        invalidateDocument(docAnchor);
       })();
-      this.embedDeps?.passageVectorStore?.delete(passageVectorKey(docAnchor, passageId));
-      this.embedDeps?.vectorStore.delete(docAnchor);
     });
     await this.store.refreshEntityMentions([docAnchor]);
   }
@@ -1647,7 +1651,7 @@ export class IndexBuilder implements IIndexBuilder {
         replaceDocumentPassages(
           this.store.getDb(),
           [source],
-          this.embedDeps?.passageVectorStore ? (key) => this.embedDeps!.passageVectorStore!.delete(key) : undefined,
+          createVectorInvalidator(this.store.getDb(), 'passage_vectors'),
         ),
       );
     }
@@ -1661,6 +1665,9 @@ export class IndexBuilder implements IIndexBuilder {
   private async indexPassages(threads: ThreadSnapshot[], signal?: AbortSignal): Promise<void> {
     if (!this.messageListFn) return;
     const db = this.store.getDb();
+    const contentChangedStmt = db.prepare(
+      'SELECT content IS NOT ? AS changed FROM evidence_passages WHERE doc_anchor = ? AND passage_id = ?',
+    );
 
     // Phase I (AC-I2): never delete missing passages on rebuild.
     // Existing returned messages still need to refresh so new block metadata can backfill.
@@ -1689,38 +1696,45 @@ export class IndexBuilder implements IIndexBuilder {
         continue;
       }
 
-      const tx = db.transaction((msgs: StoredMessageSnapshot[], offset: number) => {
-        signal?.throwIfAborted();
-        const suppressed = this.suppressedMessageIds(thread.id);
-        let changed = false;
-        for (let i = 0; i < msgs.length; i++) {
-          const msg = msgs[i];
-          if (suppressed.has(msg.id)) continue;
-          const content = buildSearchableMessageContent(msg);
-          if (!content) continue;
-          const docAnchor = `thread-${thread.id}`;
-          const passageId = `msg-${msg.id}`;
-          const result = upsertStmt.run(
-            docAnchor,
-            passageId,
-            content,
-            msg.catId ?? 'user',
-            offset + i,
-            new Date(msg.timestamp).toISOString(),
-          );
-          if (result.changes > 0) {
-            changed = true;
-            this.embedDeps?.passageVectorStore?.delete(passageVectorKey(docAnchor, passageId));
+      const tx = db.transaction(
+        (msgs: StoredMessageSnapshot[], offset: number, invalidateVector: (key: string) => void) => {
+          signal?.throwIfAborted();
+          const suppressed = this.suppressedMessageIds(thread.id);
+          let changed = false;
+          for (let i = 0; i < msgs.length; i++) {
+            const msg = msgs[i];
+            if (suppressed.has(msg.id)) continue;
+            const content = buildSearchableMessageContent(msg);
+            if (!content) continue;
+            const docAnchor = `thread-${thread.id}`;
+            const passageId = `msg-${msg.id}`;
+            const previous = contentChangedStmt.get(content, docAnchor, passageId) as { changed: number } | undefined;
+            const result = upsertStmt.run(
+              docAnchor,
+              passageId,
+              content,
+              msg.catId ?? 'user',
+              offset + i,
+              new Date(msg.timestamp).toISOString(),
+            );
+            if (result.changes > 0) {
+              changed = true;
+              if (previous?.changed !== 0) invalidateVector(passageVectorKey(docAnchor, passageId));
+            }
           }
-        }
-        return changed;
-      });
+          return changed;
+        },
+      );
 
       // Route batch insert through single-writer queue (F163 AC-A5)
       let changed = false;
       for (let offset = 0; offset < messages.length; offset += PASSAGE_WRITE_BATCH_SIZE) {
         const batchChanged = await this.store.runExclusive(() =>
-          tx(messages.slice(offset, offset + PASSAGE_WRITE_BATCH_SIZE), offset),
+          tx(
+            messages.slice(offset, offset + PASSAGE_WRITE_BATCH_SIZE),
+            offset,
+            createVectorInvalidator(db, 'passage_vectors'),
+          ),
         );
         changed ||= batchChanged;
       }

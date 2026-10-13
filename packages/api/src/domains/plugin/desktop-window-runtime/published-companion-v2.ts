@@ -6,10 +6,16 @@ export const PUBLISHED_COMPANION_V2 = {
   packageDigest: 'sha512-ABEFM559peLzWfxlBKiCtYznDZ+olFdjfH/P7BZ6qeeykVCyUdtA7abF9jkrvzZefNvx3ghDk9n1IRgmP9lU/A==',
 } as const;
 
+/** Final registry release from source1351's B delivery; the digest is archive authority. */
+export const PUBLISHED_COMPANION_PRESENTATION = {
+  version: '0.1.0-alpha.24',
+  packageDigest: 'sha512-TN23gstQt3AC79zddScxjr9q9ZPGaNn+ieGdrLvfm3Ju+ev1cBjH/z7US8pxP3bLLF6FbFYfPbFmogb9EeIxug==',
+} as const;
+
 export interface CompanionArchiveContract {
   readonly version: string;
   readonly packageDigest: string;
-  readonly contract: '0.1.0-beta.21' | '0.1.0-beta.23' | '0.1.0-beta.24' | '0.1.0-beta.25';
+  readonly contract: '0.1.0-beta.21' | '0.1.0-beta.23' | '0.1.0-beta.24' | '0.1.0-beta.25' | '0.1.0-beta.27';
 }
 
 /** Host-owned archive catalog, never negotiated by bridgeVersion or renderer input. */
@@ -40,10 +46,16 @@ export const COMPANION_ARCHIVE_CONTRACTS: readonly CompanionArchiveContract[] = 
     packageDigest: 'sha512-YMfQcRHdn/F99FbfGDgbQlIHURA/RJvyh/4mNSVlK/dAa2Egx30WVD2YuWuClNH7mVypnK22q7LWoFKm48f4lA==',
     contract: '0.1.0-beta.25',
   },
+  { ...PUBLISHED_COMPANION_PRESENTATION, contract: '0.1.0-beta.27' },
 ];
 
 export function isModernCompanionContract(contract: CompanionArchiveContract['contract'] | undefined): boolean {
-  return contract === '0.1.0-beta.23' || contract === '0.1.0-beta.24' || contract === '0.1.0-beta.25';
+  return (
+    contract === '0.1.0-beta.23' ||
+    contract === '0.1.0-beta.24' ||
+    contract === '0.1.0-beta.25' ||
+    contract === '0.1.0-beta.27'
+  );
 }
 
 export function resolveCompanionArchiveContract(

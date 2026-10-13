@@ -1,7 +1,18 @@
 #!/usr/bin/env node
 
 import { spawn } from 'node:child_process';
-import { copyFileSync, existsSync, mkdirSync, mkdtempSync, readdirSync, renameSync, rmSync, watch } from 'node:fs';
+import {
+  copyFileSync,
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readdirSync,
+  renameSync,
+  rmSync,
+  unwatchFile,
+  watch,
+  watchFile,
+} from 'node:fs';
 import { createRequire } from 'node:module';
 import { dirname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -121,12 +132,40 @@ function copyAppGlobalCss() {
   }
 }
 
+export function pollVendorCssFiles(paths, changed, interval = 1000) {
+  return paths.map((src) => {
+    const listener = () => changed(src);
+    watchFile(src, { persistent: true, interval }, listener);
+    return { close: () => unwatchFile(src, listener) };
+  });
+}
+
 function watchAppGlobalCss() {
   for (const cssFile of appGlobalCssFiles) {
     const { src } = appGlobalCssPaths(cssFile);
     if (!existsSync(src)) {
       throw new Error(`Missing app global CSS: ${src}`);
     }
+  }
+  // Match Next/Watchpack's existing polling mode when native file-event admission is exhausted.
+  if (process.env.WATCHPACK_POLLING === 'true' || /^[1-9]\d*$/.test(process.env.WATCHPACK_POLLING ?? '')) {
+    const interval = Math.max(500, Math.min(10000, Number(process.env.WATCHPACK_POLLING) || 1000));
+    const paths = appGlobalCssFiles.map((file) => appGlobalCssPaths(file).src);
+    console.log(`[sync-vendor-assets] polling ${paths.length} app CSS files every ${interval}ms`);
+    return pollVendorCssFiles(
+      paths,
+      (src) => {
+        try {
+          copyAppGlobalCssFile(appGlobalCssFiles[paths.indexOf(src)]);
+        } catch (error) {
+          console.error(
+            '[sync-vendor-assets] CSS polling failed:',
+            error instanceof Error ? error.message : String(error),
+          );
+        }
+      },
+      interval,
+    );
   }
   return [
     watch(resolve(webRoot, 'src', 'app'), { persistent: true }, (_eventType, filename) => {

@@ -51,6 +51,7 @@ import {
   skillConsumptionTools,
 } from './tools/index.js';
 import { liveMeetingTools } from './tools/live-meeting-tools.js';
+import { memberImageTools } from './tools/member-image-tools.js';
 import { pageActionTools } from './tools/page-action-tools.js';
 
 export const CANONICAL_TOOL_SOURCES = {
@@ -72,6 +73,7 @@ export const CANONICAL_TOOL_SOURCES = {
     ...pageActionTools,
     ...homeActionTools,
     ...liveMeetingTools,
+    ...memberImageTools,
     ...skillConsumptionTools,
     ...entrustedWorkReadTools,
     ...developmentWorkTools,

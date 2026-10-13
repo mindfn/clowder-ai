@@ -8,6 +8,7 @@
  * The row is a fixed height and the panel overlays the conversation, so opening it never moves the chat.
  */
 import { useEffect, useRef, useState } from 'react';
+import { activeExecutionKey } from '@/stores/activeExecutionStore';
 import { CatAvatar } from '../CatAvatar';
 import { ForceResetDialog } from '../ForceResetDialog';
 import { QueueSteerDialog } from '../QueueSteerDialog';
@@ -95,9 +96,10 @@ function Body({
       <output
         data-testid="execution-row-text-compact"
         aria-label={fullStatus}
-        className={`${styles.compactStatus} flex-none font-medium text-cafe-secondary`}
+        className={`${styles.compactStatus} min-w-0 flex-1 items-center gap-1 font-medium text-cafe-secondary`}
       >
-        {rowCompactStatusText(model, words)}
+        {model.single ? <span className="min-w-0 truncate">{resolveCatName(model.single.catId)}</span> : null}
+        <span className="flex-none whitespace-nowrap">{rowCompactStatusText(model, words)}</span>
       </output>
       {model.staleNote ? (
         <span
@@ -108,7 +110,7 @@ function Body({
           {words.stale}
         </span>
       ) : null}
-      {model.panelToggle ? <Chevron open={open} /> : null}
+      {model.panelToggle && !model.single ? <Chevron open={open} /> : null}
     </>
   );
 }
@@ -146,6 +148,9 @@ export function ExecutionRow({ threadId }: { threadId: string }) {
     <div
       ref={rootRef}
       data-testid="execution-row"
+      data-execution-thread-id={threadId}
+      data-execution-keys={JSON.stringify(controller.executions.map(activeExecutionKey))}
+      tabIndex={-1}
       data-status={model.status}
       data-tone={tone}
       className={`${styles.container} relative mb-2 px-4`}
@@ -155,7 +160,18 @@ export function ExecutionRow({ threadId }: { threadId: string }) {
         className="flex h-9 items-center gap-2 rounded-xl border px-3 text-xs"
         style={{ background: executionRowToneSurface(tone), borderColor: executionRowToneColor(tone) }}
       >
-        {model.panelToggle ? (
+        {model.single ? (
+          <button
+            type="button"
+            data-testid="execution-row-locate"
+            aria-label={words.actions.locate}
+            title={rowStatusText(model, controller.resolveCatName, words)}
+            onClick={() => model.single && controller.locate(model.single)}
+            className="shell-focusable flex min-w-0 flex-1 items-center gap-2 text-left"
+          >
+            <Body controller={controller} open={false} tone={tone} words={words} />
+          </button>
+        ) : model.panelToggle ? (
           <button
             type="button"
             data-testid="execution-row-toggle"
@@ -170,6 +186,18 @@ export function ExecutionRow({ threadId }: { threadId: string }) {
             <Body controller={controller} open={false} tone={tone} words={words} />
           </div>
         )}
+        {model.single && model.panelToggle ? (
+          <button
+            type="button"
+            data-testid="execution-row-toggle"
+            aria-expanded={panelOpen}
+            aria-label={words.panel.queue(model.visibleQueueCount)}
+            onClick={() => setOpen(!panelOpen)}
+            className="shell-focusable flex-none"
+          >
+            <Chevron open={panelOpen} />
+          </button>
+        ) : null}
         <ExecutionRowActions controller={controller} words={words} />
       </div>
       {panelOpen ? <ExecutionRowPanel controller={controller} /> : null}

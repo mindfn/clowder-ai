@@ -17,6 +17,7 @@ describe('F310 entrusted-work owner-read MCP projection', () => {
       taskId: 'task-1',
       observedRevision: 7,
       includeCompleted: true,
+      includeCancelled: true,
     });
     assert.equal(parsed.success, true);
 

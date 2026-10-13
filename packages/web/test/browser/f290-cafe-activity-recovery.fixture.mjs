@@ -56,9 +56,7 @@ export async function ownerActivityRecovery() {
       seeded,
       serviceUrl: server.url,
     });
-    const activity = host.getByRole('region', { name: '家里近况', exact: true });
     assert.equal(await host.evaluate(() => 'serviceWorker' in navigator), false);
-    await activity.getByText('本频道共 2 只猫可回应 · 此处预览 2 只', { exact: true }).waitFor();
     let unavailable = true;
     const reads = [];
     await context.route(/\/api\/plugins\/collective-connector\/[^/]+\/(work-policy|listening)$/, async (route) => {
@@ -66,19 +64,20 @@ export async function ownerActivityRecovery() {
       if (unavailable) return route.fulfill({ status: 403, json: { code: 'CONNECTOR_OWNER_MISMATCH' } });
       return route.fallback();
     });
-    await embedded.getByRole('button', { name: '我的 Café', exact: true }).click();
+    await embedded.getByRole('button', { name: '我的猫', exact: true }).click();
+    await cafe.getByRole('button', { name: '授权', exact: true }).click();
     await cafe.getByRole('alert').waitFor({ timeout: 7_000 });
     await host.screenshot({ path: path.join(evidence, 'settings-read-failed.png'), fullPage: true });
     unavailable = false;
     await cafe.getByRole('button', { name: '重新读取', exact: true }).click();
     await cafe.getByRole('alert').waitFor({ state: 'detached' });
-    await cafe.getByText('尚无授权规则。猫可以回应；持续工作需要你允许。', { exact: true }).waitFor();
+    await cafe.getByText('猫会在频道里回应别人；要接持续的工作，会先来问你。', { exact: true }).waitFor();
     assert.ok(
       reads.every((read) => read.method === 'GET'),
       'recovery must not change listening or Work authority',
     );
     await host.screenshot({ path: path.join(evidence, 'settings-read-recovered.png'), fullPage: true });
-    await cafe.getByRole('button', { name: '关闭我的 Café', exact: true }).click();
+    await cafe.getByRole('button', { name: '关闭我的猫', exact: true }).click();
     const body = '请在这个原请求的位置回应，私人入口只留在我的 Café。';
     assert.equal((await owner.receiveRequest(body)).failed, 0);
     const item = (await owner.connector.listInbox(owner.connection.connectionId)).find(
@@ -88,7 +87,9 @@ export async function ownerActivityRecovery() {
     const thread = await owner.threads.get(item.routeReceipt.threadId);
     assert.equal(thread.createdBy, owner.userId);
     const href = `/thread/${encodeURIComponent(thread.id)}`;
-    const link = activity.getByRole('link', { name: /在私人 Thread 查看/ });
+    await embedded.getByRole('button', { name: '我的猫', exact: true }).click();
+    await cafe.getByRole('button', { name: '日程', exact: true }).click();
+    const link = cafe.getByRole('link', { name: '在家里查看', exact: true });
     await link.waitFor({ timeout: 7_000 });
     assert.equal(await link.getAttribute('href'), href);
     assert.equal((await owner.tasks.listByKind('work')).length, 0, 'a named response cannot manufacture a Work grant');

@@ -1,35 +1,73 @@
-import type { ReactNode } from 'react';
+import type { MouseEvent, ReactNode } from 'react';
 import { CollectiveWorldRail } from './CollectiveWorldRail.js';
 import type { CollectiveMembership } from './client-types.js';
-
-function connectionLabel(
-  connection: 'online' | 'offline',
-  embedded: boolean,
-  canPair: boolean,
-  cafeConnection?: { readonly catCount?: number },
-): string {
-  if (connection === 'offline') return '暂时离线 · 发送失败后可以重试';
-  if (!embedded) return '共同家园在线';
-  if (cafeConnection) {
-    return cafeConnection.catCount === undefined
-      ? '这台 Café 已连接 · 正在读取伙伴'
-      : `这台 Café 已连接 · ${cafeConnection.catCount} 位猫猫在场`;
-  }
-  return canPair ? '共同家园在线 · 这台 Café 还没连接' : '共同家园在线';
-}
 
 function DestinationTitle({
   collective,
   onHome,
+  meta,
+  canSteward,
+  canLeave,
+  onInvite,
+  onCafe,
+  onReplayGuide,
+  onLeave,
 }: {
   readonly collective?: CollectiveMembership;
   readonly onHome?: () => void;
+  readonly meta?: ReactNode;
+  readonly canSteward: boolean;
+  readonly canLeave: boolean;
+  readonly onInvite: () => void;
+  readonly onCafe?: () => void;
+  readonly onReplayGuide?: () => void;
+  readonly onLeave?: () => void;
 }) {
-  if (!onHome || !collective) return <h1>{collective?.name ?? '共同家园'}</h1>;
+  if (!collective) return <h1>共同家园</h1>;
+  const hasMenu = Boolean(onHome || canSteward || onCafe || onReplayGuide || (canLeave && onLeave));
+  if (!hasMenu) return <h1>{collective.name}</h1>;
+  const action = (callback: () => void) => (event: MouseEvent<HTMLButtonElement>) => {
+    event.currentTarget.closest('details')?.removeAttribute('open');
+    callback();
+  };
   return (
-    <button type="button" className="destination-home" aria-label={`打开${collective.name}首页`} onClick={onHome}>
-      <h1>{collective.name}</h1>
-    </button>
+    <details className="collective-menu">
+      <summary aria-label={`${collective.name}菜单`}>
+        <h1>{collective.name}</h1>
+        <span aria-hidden="true">⌄</span>
+      </summary>
+      <div className="collective-menu-popover">
+        <button
+          type="button"
+          className="collective-menu-heading"
+          aria-label={onHome ? `打开${collective.name}首页` : undefined}
+          onClick={onHome ? action(onHome) : undefined}
+        >
+          <strong>{collective.name}</strong>
+          {meta && <span>{meta}</span>}
+        </button>
+        {canSteward && (
+          <button type="button" onClick={action(onInvite)}>
+            邀请成员
+          </button>
+        )}
+        {onCafe && (
+          <button type="button" onClick={action(onCafe)}>
+            我的猫… <small>仅自己可见</small>
+          </button>
+        )}
+        {onReplayGuide && (
+          <button type="button" onClick={action(onReplayGuide)}>
+            再看一遍介绍
+          </button>
+        )}
+        {canLeave && onLeave && (
+          <button type="button" className="collective-menu-muted" onClick={action(onLeave)}>
+            离开共同体…
+          </button>
+        )}
+      </div>
+    </details>
   );
 }
 
@@ -42,13 +80,14 @@ export function ProductShell({
   connection,
   canSteward,
   canPair,
-  cafeConnection,
   pairNudge = false,
   canLeave = false,
   notice,
   onInvite,
   onPair,
   onLeave,
+  onCafe,
+  onReplayGuide,
   destinations,
   headerMeta,
   children,
@@ -63,13 +102,14 @@ export function ProductShell({
   readonly connection: 'online' | 'offline';
   readonly canSteward: boolean;
   readonly canPair: boolean;
-  readonly cafeConnection?: { readonly catCount?: number };
   readonly pairNudge?: boolean;
   readonly canLeave?: boolean;
   readonly notice?: string;
   readonly onInvite: () => void;
   readonly onPair: () => void;
   readonly onLeave?: () => void;
+  readonly onCafe?: () => void;
+  readonly onReplayGuide?: () => void;
   readonly destinations?: ReactNode;
   readonly headerMeta?: ReactNode;
   readonly navigationOpen?: boolean;
@@ -97,42 +137,32 @@ export function ProductShell({
       )}
       <aside className="destination-pane" data-spatial-role="destination-pane" aria-label="共同家园导航">
         <header className="destination-header">
-          <DestinationTitle collective={collective} onHome={onHome} />
-          {headerMeta ? (
-            <p>{headerMeta}</p>
-          ) : (
-            <p>{connection === 'offline' ? '暂时离线，正在等待恢复' : '人和猫一起交流的地方'}</p>
-          )}
+          <DestinationTitle
+            collective={collective}
+            onHome={onHome}
+            meta={headerMeta}
+            canSteward={canSteward}
+            canLeave={canLeave}
+            onInvite={onInvite}
+            onCafe={onCafe}
+            onReplayGuide={onReplayGuide}
+            onLeave={onLeave}
+          />
           <button type="button" className="navigation-close" aria-label="收起频道导航" onClick={onCloseNavigation}>
             ×
           </button>
         </header>
         {destinations}
         <footer className="destination-footer">
-          {(canSteward || (embedded && canPair) || canLeave) && (
+          {embedded && canPair && (
             <div className="steward-actions">
-              {canSteward && (
-                <button type="button" onClick={onInvite}>
-                  邀请成员
-                </button>
-              )}
-              {embedded && canPair && (
-                <button type="button" className={pairNudge ? 'pair-nudge' : undefined} data-guide-pair onClick={onPair}>
-                  连接此 Café
-                </button>
-              )}
-              {canLeave && onLeave && (
-                <button type="button" onClick={onLeave}>
-                  退出共同家园
-                </button>
-              )}
+              <button type="button" className={pairNudge ? 'pair-nudge' : undefined} data-guide-pair onClick={onPair}>
+                连接此 Café
+              </button>
             </div>
           )}
           {notice && <p className="destination-notice">{notice}</p>}
-          <p className="connection-line">
-            <span data-status={connection} />
-            {connectionLabel(connection, embedded, canPair, cafeConnection)}
-          </p>
+          {connection === 'offline' && <p className="connection-line">暂时离线 · 发送失败后可以重试</p>}
         </footer>
       </aside>
       <section className="primary-scene" data-spatial-role="primary-scene">

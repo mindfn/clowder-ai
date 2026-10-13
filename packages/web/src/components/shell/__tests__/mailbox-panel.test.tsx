@@ -9,6 +9,8 @@ const data = vi.hoisted(() => ({
     result: { kind: 'loading' } as unknown,
     staleRead: null as unknown,
     refetch: vi.fn(),
+    nextPage: vi.fn(),
+    previousPage: vi.fn(),
     readsStarted: () => 1,
     resultGeneration: 1 as number | null,
   },
@@ -76,10 +78,15 @@ function read(overrides: Partial<UnifiedAttentionReadV1> = {}): UnifiedAttention
     scope: 'owner_all_projects',
     identity: { ownerUserId: 'owner-1' },
     observedAt: 3,
-    sources: { approvals: source(), needsMe: source({ coverage: 'current_linked_F310_five_producers' }) },
+    sources: {
+      approvals: source(),
+      needsMe: source({ coverage: 'current_linked_F310_five_producers' }),
+      structuredChoices: source({ coverage: 'pending_f306_structured_choices' }),
+    },
     readWindow: { startedAt: 1, endedAt: 3, consistency: 'independent_source_reads' },
     consistency: { state: 'verified', reasons: [] },
     items: [],
+    attentionCount: overrides.totalCount,
     page: { offset: 0, limit: 20, scope: 'known_rows', hasMore: false },
     ...overrides,
   };
@@ -119,9 +126,40 @@ describe('F322 待办 (the mailbox) on the unified read', () => {
     delete (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT;
   });
 
+  it('opens Schedule from the second mailbox tab through the original Workspace destination and closes the panel', () => {
+    show(ok({ totalCount: 0 }));
+    render();
+    open();
+    const schedule = document.querySelector<HTMLButtonElement>('[data-testid="mailbox-tab-schedule"]');
+    expect(schedule).not.toBeNull();
+    expect(schedule?.textContent).toBe('日程');
+    expect(schedule?.querySelector('[data-testid*="count"]')).toBeNull();
+    act(() => schedule?.click());
+    expect(data.mode).toHaveBeenCalledWith('product-schedule');
+    expect(data.push).not.toHaveBeenCalled();
+    expect(panel()).toBeNull();
+    expect(data.navigate).not.toHaveBeenCalled();
+  });
+
+  it('keeps a mention in the panel while the decision-only badge is zero', () => {
+    show(
+      ok({
+        items: [{ decisionRef: 'mention:one', kind: 'user_mention', summary: '@你请求', linkedNeedsMe: [] }],
+        totalCount: 1,
+        attentionCount: 0,
+      }),
+    );
+    render();
+    expect(host.querySelector('[data-testid="rail-badge-count"]')).toBeNull();
+    open();
+    expect(text('mailbox-tab-count')).toBe('1');
+    expect(rows()).toHaveLength(1);
+    expect(text('mailbox-state-text')).toContain('1 件');
+  });
+
   describe('what the rail entry claims', () => {
     const badgeOf = () => host.querySelector('[data-testid^="rail-badge-"]');
-    const cases: [string, MailboxRead, string, string | null][] = [
+    const cases: [string, MailboxRead, string, string | null, string?][] = [
       ['first read in flight', { kind: 'loading' }, '读取中', 'loading'],
       ['proven total of 3', ok({ items: [approvalItem('a'), approvalItem('b')], totalCount: 3 }), '3 件', 'count'],
       [
@@ -132,14 +170,15 @@ describe('F322 待办 (the mailbox) on the unified read', () => {
       ],
       ['proven empty', ok({ items: [], totalCount: 0 }), '暂无', null],
       [
-        'one side unread, rows from the other: "!" and confirmed-has-items, never a dot (1.6 board)',
+        'one side unread and an unqualified judgment row: "!", with no decision count claim',
         ok({
           status: 'partial',
           items: [judgmentItem('j')],
           sources: { approvals: source({ status: 'unavailable', exhaustiveness: 'unknown' }), needsMe: source() },
         }),
-        '仅部分读取 · 已确认有事',
+        '仅部分读取',
         'alert',
+        '仅部分读取 · 已确认有事',
       ],
       [
         'one side unread, nothing from the other',
@@ -166,14 +205,14 @@ describe('F322 待办 (the mailbox) on the unified read', () => {
       ['route failure', { kind: 'failed', reason: 'unavailable' }, '暂不可用', 'alert'],
       ['explicit 401', { kind: 'failed', reason: 'unauthenticated' }, '需要登录', null],
     ];
-    it.each(cases)('%s → %s', (_name, result, state, badge) => {
+    it.each(cases)('%s → %s', (_name, result, state, badge, panelState = state) => {
       show(result);
       render();
       expect(button().getAttribute('aria-label')).toBe(`待办，${state}`);
       expect(button().getAttribute('title')).toBeNull();
       expect(badgeOf()?.getAttribute('data-testid') ?? null).toBe(badge ? `rail-badge-${badge}` : null);
       open();
-      expect(text('mailbox-state-text')).toBe(state);
+      expect(text('mailbox-state-text')).toBe(panelState === '暂无' ? '暂无待办' : panelState);
       expect(text('mailbox-title')).toBe('待办');
       expect(document.querySelector('[data-testid="mailbox-panel"] [title]')).toBeNull();
     });
@@ -271,17 +310,17 @@ describe('F322 待办 (the mailbox) on the unified read', () => {
       expect(panel()).toBeNull();
     });
 
-    it('is one full-height panel titled 待办 with a single tab, 需要我处理, whose count is only the proven total', () => {
+    it('is one full-height panel with a plain 需要我处理 heading and only the proven count', () => {
       show(ok({ items: [approvalItem('a')], totalCount: 7 }));
       render();
       open();
       expect(panel()?.className).toMatch(/\btop-0\b/);
       expect(panel()?.className).toMatch(/\bbottom-0\b/);
       expect(panel()?.getAttribute('aria-label')).toBe('待办');
-      const tabs = [...document.querySelectorAll('[role="tab"]')];
-      expect(tabs.map((tab) => tab.textContent)).toEqual(['需要我处理7']);
-      expect(tabs[0].getAttribute('aria-selected')).toBe('true');
-      expect(document.querySelector('[role="tabpanel"]')?.getAttribute('aria-labelledby')).toBe(tabs[0].id);
+      expect(document.querySelector('[role="tab"]')).toBeNull();
+      const heading = document.querySelector('[data-testid="mailbox-tab-needs-me"]');
+      expect(heading?.textContent).toBe('需要我处理7');
+      expect(document.querySelector('[role="region"]')?.getAttribute('aria-labelledby')).toBe(heading?.id);
     });
 
     it('prints no number beside the tab when the total is unconfirmed, partial, loading or failed', () => {
@@ -336,18 +375,16 @@ describe('F322 待办 (the mailbox) on the unified read', () => {
         expect(rows()[1].style.border).not.toContain('--shell-hairline-strong');
       });
 
-      it('draws the tab as the board does: a framed track, a paper segment, the count as a primary-soft pill', () => {
-        show(ok({ items: [approvalItem('a')], totalCount: 4 }));
+      it('shows two destination buttons and keeps the proven count on Needs me alone', () => {
+        show(ok({ totalCount: 7 }));
         render();
         open();
-        const track = document.querySelector<HTMLElement>('[role="tablist"]');
-        const tab = document.querySelector<HTMLElement>('[role="tab"]');
-        const count = document.querySelector<HTMLElement>('[data-testid="mailbox-tab-count"]');
-        expect(track?.style.background).toContain('--shell-frame');
-        expect(tab?.style.background).toContain('--shell-paper');
-        expect(count?.style.background).toContain('--shell-primary-soft');
-        expect(count?.style.color).toContain('--shell-primary-text');
-        expect(count?.textContent).toBe('4');
+        expect(document.querySelector('[role="tablist"]')).toBeNull();
+        expect(document.querySelector('[data-testid="mailbox-tab-needs-me"]')?.tagName).toBe('BUTTON');
+        expect(document.querySelector('[data-testid="mailbox-tab-schedule"]')?.textContent).toBe('日程');
+        const pill = document.querySelector<HTMLElement>('[data-testid="mailbox-tab-count"]');
+        expect(pill?.style.background).toBe('var(--shell-primary-soft)');
+        expect(pill?.style.color).toBe('var(--shell-primary-text)');
       });
 
       it('an approval row leads with the proposing cat’s avatar and bold name, then the title, then the feature', () => {
@@ -564,7 +601,7 @@ describe('F322 待办 (the mailbox) on the unified read', () => {
         expect(text('mailbox-place-note')).toBeNull();
         expect(openOriginal()).toHaveLength(0);
         expect(text('mailbox-history')).toBe('已处理的');
-        expect(text('mailbox-filter-batch')).toBe('筛选与批量处理');
+        expect(text('mailbox-filter-batch')).toBe('审批记录');
       });
 
       it.each([
@@ -709,7 +746,7 @@ describe('F322 待办 (the mailbox) on the unified read', () => {
       expect(document.querySelector('[data-testid="mailbox-stale-note"]')).toBeNull();
     });
 
-    it('says the page is a prefix when more rows exist, without claiming everything was read when it is not', () => {
+    it('describes the current page and exposes real navigation when more rows exist', () => {
       show(
         ok({
           items: [approvalItem('a')],
@@ -719,7 +756,10 @@ describe('F322 待办 (the mailbox) on the unified read', () => {
       );
       render();
       open();
-      expect(text('mailbox-has-more')).toBe('还有更多事项，这里先显示前 20 件');
+      expect(text('mailbox-has-more')).toBe('还有更多事项，本页显示 1 件');
+      act(() => document.querySelector<HTMLButtonElement>('[data-testid="mailbox-next-page"]')?.click());
+      expect(data.view.nextPage).toHaveBeenCalledOnce();
+      expect(document.querySelector<HTMLButtonElement>('[data-testid="mailbox-previous-page"]')?.disabled).toBe(true);
     });
 
     it('stays quiet about paging when the page reports no more rows', () => {

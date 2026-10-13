@@ -1,6 +1,6 @@
 ---
 name: receive-review
-tips_exempt: "Renewed 2026-10-07 for reviewer-owned sandbox finish/check before each verdict; this is internal author/reviewer lifecycle guidance with no end-user Hub operation."
+tips_exempt: "Renewed 2026-10-13: evidence reuse, measured validation cost and browser checks selected by real UX risk refine the existing review workflow; no new end-user Hub operation."
 description: "处理 reviewer 反馈：Red→Green 修复 + 按 engagement mode 收口。Use when: 收到 review 结果或 P1/P2。Not for: 发 review 请求、自检。Output: 按 iterative / one-shot 契约闭环。"
 triggers:
   - "review 结果"
@@ -211,7 +211,7 @@ VERIFY 完所有 findings 之后、动手修之前，做一次 failure-mode 判�
 | P1-1 | {描述} | ✅ | {test file}: FAIL → PASS |
 | P2-1 | {描述} | ✅ | {test file}: FAIL → PASS |
 
-测试结果：pnpm test → {X} passed, 0 failed
+验证结果：{受影响检查的真实命令、结果、仍有效的复用证据与本轮总耗时}
 Commit: {sha} — {message}
 Fresh-Context Delta: {N} FC:covered, {M} FC:new, {K} FC:N/A <!-- 仅 review request 含 FC 节时 -->
 
@@ -228,17 +228,19 @@ Fresh-Context Delta: {N} FC:covered, {M} FC:new, {K} FC:N/A <!-- 仅 review requ
 
 > 教训（F121 狼人杀）：reviewer 只看代码没打开浏览器，author 连续 9 轮瞎猜修都没被发现。
 
-**涉及 UX/前端/交互的改动，reviewer 必须实际打开浏览器操作验证**，不能只看代码和测试输出。
+**改变真实 UX/布局/浏览器交互时，reviewer 必须实际打开正确环境操作关键路径**，不能只看源码猜画面。
+纯测试退役、静态规则搬迁或既有证据仍覆盖的机械改动，按测试规范检查
+保留的失败故事和承接证据，不因文件在前端目录而再占浏览器。修复测试先判真实契约，不沿过时断言继续加固本地自证。
 
 ```
 验证清单：
 1. 打开浏览器（Playwright/Chrome MCP）访问对应页面
 2. 按 AC 或 bug 复现步骤实际操作
-3. 截图/录屏作为验证证据
+3. 按待判断的风险选截图/录屏/DOM assertion；外观需要看画面时采图，不按状态数量凑截图
 4. 如果和设计稿（.pen）有出入，标注差异
 ```
 
-没有浏览器验证的前端 review = 走过场。
+主题/宽度矩阵保留独有视觉风险，不机械重复全部业务操作。浏览器暂不可用时写清真实缺口，不假报操作通过。
 
 ## TAKEOVER 降级（同线程同任务）
 

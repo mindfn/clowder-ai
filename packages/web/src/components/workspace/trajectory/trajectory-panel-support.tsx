@@ -6,12 +6,14 @@ import type {
   RequestGenerationProjectionV1,
 } from '@cat-cafe/shared';
 import { type Dispatch, type SetStateAction, useEffect } from 'react';
+import type { ShellLanguage } from '@/components/shell/shell-language';
 import { subscribeBrowserThreadRoute } from '@/components/ThreadSidebar/thread-navigation';
 import { apiFetch } from '@/utils/api-client';
 import type { ResolvedTrajectoryTarget, TrajectoryResolutionError } from './canonical-trajectory-resolution';
 import { type InvocationDetailResponse, InvocationTrajectoryDetail } from './InvocationTrajectoryDetail';
 import { reconcileInvocationSummary } from './invocation-trajectory-model';
 import { TrajectoryResolutionFailure, TrajectoryResolutionLoading } from './TrajectoryResolutionState';
+import { trajectoryCopy } from './trajectory.shell-copy';
 import {
   clearInvocationTrajectoryUrl,
   readTrajectoryTarget,
@@ -173,6 +175,7 @@ export function useInvocationDetail({
 }
 
 export function renderTrajectoryTargetState({
+  language = 'zh',
   activeThreadId,
   back,
   detail,
@@ -193,6 +196,7 @@ export function renderTrajectoryTargetState({
   scopedTarget,
   target,
 }: {
+  language?: ShellLanguage;
   activeThreadId: string;
   back: () => void;
   detail: InvocationDetailResponse | null;
@@ -249,7 +253,7 @@ export function renderTrajectoryTargetState({
           className="rounded-lg border border-cafe px-3 py-2 font-semibold text-cafe-secondary"
           onClick={back}
         >
-          轨迹读取失败，返回列表
+          {trajectoryCopy[language].backList}
         </button>
       </div>
     );

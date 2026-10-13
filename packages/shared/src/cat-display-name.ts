@@ -1,5 +1,6 @@
 export interface CatDisplayNameData {
   readonly displayName: string;
+  readonly nickname?: string;
   readonly variantLabel?: string;
 }
 

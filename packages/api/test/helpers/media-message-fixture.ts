@@ -1,3 +1,4 @@
+import assert from 'node:assert/strict';
 import { execFile } from 'node:child_process';
 import { randomUUID } from 'node:crypto';
 import { mkdtemp } from 'node:fs/promises';
@@ -22,7 +23,7 @@ export async function mediaMessageFixture(
   t: { after: (callback: () => Promise<void>) => void },
   mediaType: 'image/png' | 'video/mp4' = 'image/png',
   turnExecutions?: TurnExecutionSourceReadPort,
-  options?: { authenticatedQueue?: boolean; nativeImageArchiveDirectory?: string },
+  options?: { authenticatedQueue?: boolean; nativeImageArchiveDirectory?: string; publicationLedger?: boolean },
 ) {
   const root = await mkdtemp(join(tmpdir(), 'f309-media-intake-'));
   const extension = mediaType === 'image/png' ? 'png' : 'mp4';
@@ -105,19 +106,37 @@ export async function mediaMessageFixture(
     f.store.close();
     console.info(`retained owned media review data: ${root}`);
   });
+  if (options?.publicationLedger) {
+    const asset = await f.media.prepare({ ...f.prepare, principal: f.human });
+    const ledgers = new WorkspaceContentReviewService({ source, store: f.store.ledgers, publications: f.media });
+    await ledgers.prepare({ publication: asset, principal: f.human, operationId: randomUUID() });
+  }
   const opened = await f.reviews.prepare(f.prepare, f.human);
+  const linkedRound = opened.review.rounds[0];
+  let attachmentSource: MediaContextAttachment['source'] = {
+    kind: 'artifact-review',
+    reviewId: opened.review.reviewId,
+    expectedReviewRevision: opened.review.revision,
+    round: 1,
+  };
+  if (options?.publicationLedger) {
+    assert.ok(linkedRound?.ledgerRef);
+    assert.ok(linkedRound.ledgerRevision);
+    attachmentSource = {
+      kind: 'publication',
+      contentRef: linkedRound.asset.contentRef,
+      ownerRevision: linkedRound.asset.ownerRevision,
+      ledgerRef: linkedRound.ledgerRef,
+      expectedLedgerRevision: linkedRound.ledgerRevision,
+    };
+  }
   const attachment: MediaContextAttachment = {
     v: 1,
     id: 'image',
     kind: 'media',
     title: opened.review.title,
     mediaType,
-    source: {
-      kind: 'artifact-review',
-      reviewId: opened.review.reviewId,
-      expectedReviewRevision: opened.review.revision,
-      round: 1,
-    },
+    source: attachmentSource,
     taskContext: {
       kind: 'media',
       taskId: f.taskId,

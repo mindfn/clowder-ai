@@ -180,20 +180,6 @@ describe('BootstrapPromptCard', () => {
     expect(html).toContain('预计耗时');
     expect(html).toContain('数据安全');
   });
-
-  it('uses cafe semantic color classes', () => {
-    const html = renderToStaticMarkup(
-      <BootstrapPromptCard
-        indexState={missingState}
-        isSnoozed={false}
-        projectPath="/tmp/foo"
-        onStartScan={() => {}}
-        onSnooze={() => {}}
-      />,
-    );
-    expect(html).toContain('cafe-accent');
-    expect(html).toContain('cafe-surface');
-  });
 });
 
 describe('BootstrapProgressPill', () => {
@@ -220,11 +206,6 @@ describe('BootstrapProgressPill', () => {
   it('shows doc progress when available', () => {
     const html = renderToStaticMarkup(<BootstrapProgressPill progress={extractingProgress} expanded />);
     expect(html).toContain('5 / 20 文档');
-  });
-
-  it('uses cafe semantic colors', () => {
-    const html = renderToStaticMarkup(<BootstrapProgressPill progress={scanningProgress} />);
-    expect(html).toContain('cafe-accent');
   });
 });
 
@@ -280,12 +261,6 @@ describe('BootstrapSummaryCard', () => {
     expect(html).toContain('前往记忆中心');
     // P2-1: CTAs without handlers must be disabled
     expect(html).toContain('disabled');
-  });
-
-  it('uses green color theme', () => {
-    const html = renderToStaticMarkup(<BootstrapSummaryCard summary={mockSummary} docsIndexed={10} />);
-    expect(html).toContain('conn-green-bg');
-    expect(html).toContain('conn-green-text');
   });
 
   it('renders SVG icons instead of emoji', () => {

@@ -150,6 +150,10 @@ html[data-shell="v2"] {
 }
 
 [data-shell="v2"] [data-testid="chat-input-composer-row"]:focus-within {
+  border-color: color-mix(in srgb, var(--shell-hairline-strong) 65%, var(--shell-body) 35%);
+}
+
+[data-shell="v2"] [data-testid="chat-input-composer-row"][data-composer-keyboard-focus="true"] {
   outline: 2px solid var(--cafe-accent);
   outline-offset: 2px;
 }
@@ -162,18 +166,24 @@ html[data-shell="v2"] {
   width: calc(100% - 32px);
   max-width: 720px;
   margin: 8px auto 0;
-  background: var(--shell-paper);
-  border: 1px solid var(--shell-hairline-strong);
-  border-radius: 12px;
+  padding: 0;
+  background: transparent;
+  border: 0;
+  border-radius: 0;
 }
 
 [data-shell="v2"] [data-testid="chat-input-composer-row"] textarea {
   background: transparent;
   border-color: transparent;
   box-shadow: none;
+  outline: none;
 }
 
 [data-shell="v2"] [data-testid="chat-input-composer-row"] textarea:focus {
   background: transparent;
   box-shadow: none;
+}
+
+[data-shell="v2"] [data-testid="chat-input-composer-row"] textarea:focus-visible {
+  outline: none;
 }

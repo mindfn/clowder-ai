@@ -1,42 +1,48 @@
 import type { PawFeelInboxItem } from '@cat-cafe/shared';
+import { pawFeelDutyCopy } from './paw-feel-duty.shell-copy';
 
-function responsibilityDetail(item: PawFeelInboxItem): string | undefined {
+function responsibilityDetail(item: PawFeelInboxItem, language: 'zh' | 'en'): string | undefined {
+  const t = pawFeelDutyCopy[language];
   switch (item.responsibility.exitKind) {
     case 'signature_request':
-      return `等待独立签署；排除报告猫 @${item.responsibility.signerExclusionCatId ?? 'unknown'} 自签${
-        item.responsibility.preferredSignerCatId ? ` · 首选 @${item.responsibility.preferredSignerCatId}` : ''
-      }`;
+      return t.signature(
+        item.responsibility.signerExclusionCatId ?? 'unknown',
+        item.responsibility.preferredSignerCatId ?? '',
+      );
     case 'explicit_blocker':
-      return `阻塞 ${item.responsibility.blocker?.code ?? 'unknown'} · ${item.responsibility.blocker?.ref ?? ''}`;
+      return t.blocker(item.responsibility.blocker?.code ?? 'unknown', item.responsibility.blocker?.ref ?? '');
     case 'pending_proposal':
-      return `等待 durable proposal ${item.responsibility.proposalId ?? 'unavailable'} 获批`;
+      return t.proposal(item.responsibility.proposalId ?? 'unavailable');
     default:
       return undefined;
   }
 }
 
-function dispositionDetail(item: PawFeelInboxItem): string | undefined {
+function dispositionDetail(item: PawFeelInboxItem, language: 'zh' | 'en'): string | undefined {
+  const t = pawFeelDutyCopy[language];
   const { disposition } = item;
   switch (disposition.state) {
     case 'routed':
-      return `已移交至 ${disposition.targetThreadId ?? disposition.proposalId ?? '责任面'}，不代表已经修复`;
+      return t.routed(disposition.targetThreadId ?? disposition.proposalId ?? t.responsibilitySurface);
     case 'route_pending':
       return disposition.targetThreadId
-        ? `等待 ${disposition.targetThreadId} 接单`
-        : `F128 proposal ${disposition.proposalId ?? 'unavailable'} 当前不是 pending，需重新路由或显式阻塞`;
+        ? t.pending(disposition.targetThreadId)
+        : t.staleProposal(disposition.proposalId ?? 'unavailable');
     case 'duplicate':
-      return disposition.duplicateOf ? `重复于 ${disposition.duplicateOf}` : undefined;
+      return disposition.duplicateOf ? t.duplicate(disposition.duplicateOf) : undefined;
     case 'fix': {
-      const binding = `由 @${disposition.ownerCatId ?? 'unknown'} 负责 · 任务 ${
-        disposition.taskId ?? 'unavailable'
-      } · F167 lease ${disposition.actionLeaseRef?.leaseId ?? 'unavailable'}`;
-      return item.responsibility.validExit ? binding : `${binding} · 当前 active lease 复验失败`;
+      const binding = t.binding(
+        disposition.ownerCatId ?? 'unknown',
+        disposition.taskId ?? 'unavailable',
+        disposition.actionLeaseRef?.leaseId ?? 'unavailable',
+      );
+      return item.responsibility.validExit ? binding : `${binding} · ${t.failedLease}`;
     }
     default:
-      return disposition.reasonCode ? `理由：${disposition.reasonCode}` : undefined;
+      return disposition.reasonCode ? t.reason(disposition.reasonCode) : undefined;
   }
 }
 
-export function pawFeelDutyDetail(item: PawFeelInboxItem): string | undefined {
-  return responsibilityDetail(item) ?? dispositionDetail(item);
+export function pawFeelDutyDetail(item: PawFeelInboxItem, language: 'zh' | 'en' = 'zh'): string | undefined {
+  return responsibilityDetail(item, language) ?? dispositionDetail(item, language);
 }

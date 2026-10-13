@@ -15,7 +15,10 @@ const { contentState } = vi.hoisted(() => ({
   },
 }));
 
-vi.mock('@/utils/api-client', () => ({ API_URL: 'http://test.local' }));
+vi.mock('@/utils/api-client', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('@/utils/api-client')>()),
+  API_URL: 'http://test.local',
+}));
 vi.mock('@/hooks/useArtifactContent', () => ({ useArtifactContent: () => contentState.value }));
 vi.mock('../MarkdownContent', () => ({
   MarkdownContent: ({ content, basePath, worktreeId }: { content: string; basePath?: string; worktreeId?: string }) =>
@@ -31,10 +34,19 @@ vi.mock('../workspace/CodeViewer', () => ({
 
 import { ArtifactDetailView } from '../artifacts/ArtifactDetailView';
 
+const mountedRoots: Root[] = [];
+afterEach(() => {
+  act(() => {
+    for (const root of mountedRoots.splice(0)) root.unmount();
+  });
+  document.body.innerHTML = '';
+});
+
 function renderDetail(artifact: ThreadArtifactDTO, worktreeId: string | null = 'wt1') {
   const container = document.createElement('div');
   document.body.appendChild(container);
   const root: Root = createRoot(container);
+  mountedRoots.push(root);
   act(() => {
     root.render(
       createElement(ArtifactDetailView, {
@@ -57,9 +69,6 @@ describe('F232 AC-A7 text view 看正文', () => {
   });
   beforeEach(() => {
     contentState.value = { content: null, path: '', isMarkdown: false, loading: false, error: false };
-  });
-  afterEach(() => {
-    document.body.innerHTML = '';
   });
 
   it('markdown 产物（backlog）→ MarkdownContent 渲染正文', () => {
@@ -169,9 +178,6 @@ describe('F232 P1-1 download view — binary 产物不空白', () => {
   });
   afterAll(() => {
     delete (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT;
-  });
-  afterEach(() => {
-    document.body.innerHTML = '';
   });
 
   it('uploads binary（有 url）→ 下载/打开链接（不空白）', () => {

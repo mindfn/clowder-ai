@@ -43,6 +43,8 @@ beforeEach(() => {
   currentConnections = [connection];
   vi.mocked(apiFetch).mockImplementation(async (url) => {
     if (String(url).endsWith('/work/result/accepted')) return response(workReconciliationResult);
+    if (String(url).endsWith('/work-policy')) return response({ policy: null, localAdoption: null });
+    if (String(url).endsWith('/listening')) return response({ attentionRevision: 0, channelListening: {} });
     return response(
       String(url).endsWith('/participation')
         ? {
@@ -81,7 +83,7 @@ it('identifies a sole revoked connection without losing its Host re-pair context
     connectionId: connection.connectionId,
     authorityStatus: 'revoked',
   });
-  expect(container.querySelector('[aria-label="我的 Café"]')).toBeNull();
+  expect(container.querySelector('[aria-label="我的猫"]')).toBeNull();
 });
 it('reports an exactly published zero-cat participation to the current Client bridge', async () => {
   vi.mocked(apiFetch).mockImplementation(async (url) =>
@@ -144,12 +146,12 @@ it.each([
       privateThread: { id: 'thread_private', title: 'Collective #general 公共参与' },
       execution: { stage: 'ended' },
     },
-    expected: '执行已结束，尚未回到频道',
+    expected: '做完了，还没回复',
   },
   {
     case: 'a missing private Thread at delivery',
     request: { delivery: 'route_failed', failure: { code: 'ROUTE_THREAD_UNAVAILABLE' } },
-    expected: '点名暂未送达：私人入口已失效，授权仍有效时会在修复后自动补送',
+    expected: '没送到：家里的入口失效了，修好后会自动补送',
   },
 ])('shows the exact named request state for $case in the Host activity area', async ({ request, expected }) => {
   vi.mocked(apiFetch).mockImplementation(async (url) =>
@@ -205,24 +207,26 @@ it.each([
     humanId: connection.authorizedHumanId,
     channelId: 'general',
     channelIds: ['general'],
-    openCafe: false,
+    openCafe: true,
   });
-  await vi.waitFor(() => expect(container.querySelector('[aria-label="家里近况"]')?.textContent).toContain(expected));
+  const calendar = Array.from(container.querySelectorAll('button')).find((button) => button.textContent === '日程');
+  await act(async () => calendar?.click());
+  await vi.waitFor(() => expect(container.querySelector('[aria-label="日程"]')?.textContent).toContain(expected));
 });
 it('attributes a failed named request to the actual delivery boundary instead of the owner settings', () => {
-  expect(requestStatus(failedRequest('ROUTE_THREAD_UNAVAILABLE'))).toBe(
-    '点名暂未送达：私人入口已失效，授权仍有效时会在修复后自动补送',
+  expect(requestStatus(failedRequest('ROUTE_THREAD_UNAVAILABLE'))).toBe('没送到：家里的入口失效了，修好后会自动补送');
+  expect(requestStatus(failedRequest('ECONNREFUSED'))).toBe('没送到：服务暂时不可用，正在重试');
+  expect(requestStatus(failedRequest('ROUTE_CAT_UNAVAILABLE'))).toBe('没送到：猫暂时不可用，正在重试');
+  expect(requestStatus(failedRequest('ROUTE_QUEUE_FULL'))).toBe('没送到：猫的队列已满，正在重试');
+  expect(requestStatus(failedRequest('PARTICIPATION_REVOKED'))).toBe('没送到：这条请求的授权已失效，不会自动重发');
+  expect(requestStatus(failedRequest('UNEXPECTED_ROUTE_FAILURE'))).toBe('没送到：家里的投递遇到问题');
+  expect(requestStatus(failedRequest('ROUTE_QUEUE_FULL', false))).toBe('没送到：猫的队列已满，正在重试');
+  expect(requestStatus(failedRequest('ROUTE_THREAD_UNAVAILABLE', false))).toBe(
+    '没送到：家里的入口失效了，修好后会自动补送',
   );
-  expect(requestStatus(failedRequest('ECONNREFUSED'))).toBe('点名暂未送达：服务暂不可用，正在重试');
-  expect(requestStatus(failedRequest('ROUTE_CAT_UNAVAILABLE'))).toBe('点名暂未送达：猫暂不可用，正在重试');
-  expect(requestStatus(failedRequest('ROUTE_QUEUE_FULL'))).toBe('点名暂未送达：猫的队列已满，正在重试');
-  expect(requestStatus(failedRequest('PARTICIPATION_REVOKED'))).toBe(
-    '点名未送达：这条请求的参与授权已失效，不会自动重发',
+  expect(requestStatus(failedRequest('PARTICIPATION_REVOKED', false))).toBe(
+    '没送到：这条请求的授权已失效，不会自动重发',
   );
-  expect(requestStatus(failedRequest('UNEXPECTED_ROUTE_FAILURE'))).toBe('点名未送达：家里的投递遇到问题');
-  expect(requestStatus(failedRequest('ROUTE_QUEUE_FULL', false))).toBe('回应请求暂未送达：猫的队列已满，正在重试');
-  expect(requestStatus(failedRequest('ROUTE_THREAD_UNAVAILABLE', false))).toBe('回应请求未送达：私人 Thread 不可用');
-  expect(requestStatus(failedRequest('PARTICIPATION_REVOKED', false))).toBe('回应请求未送达：这条请求的参与授权不匹配');
 });
 it('opens the native Café only for the current default Client and clears it on a new frame session', async () => {
   await act(async () => root.render(<CollectiveLaunchSurface initialServiceUrl={service} />));
@@ -249,9 +253,28 @@ it('opens the native Café only for the current default Client and clears it on 
   await message(iframe, projection, 'https://foreign.invalid');
   await message(iframe, { ...projection, humanId: 'human_other123' });
   await message(iframe, { ...projection, privateThreadId: 'injected' });
-  expect(container.querySelector('[aria-label="我的 Café"]')).toBeNull();
+  expect(container.querySelector('[aria-label="我的猫"]')).toBeNull();
   await message(iframe, projection);
-  expect(container.querySelector('[aria-label="我的 Café"]')).not.toBeNull();
+  expect(container.querySelector('[aria-label="我的猫"]')).not.toBeNull();
+  const section = {
+    type: 'collective:client-cafe-section',
+    bridgeId: init.bridgeId,
+    contextId: projection.contextId,
+    contextRevision: projection.revision,
+    serviceInstanceId: connection.serviceInstanceId,
+    collectiveId: connection.collectiveId,
+    humanId: connection.authorizedHumanId,
+    channelId: projection.channelId,
+    section: 'channel',
+  };
+  await message(iframe, section, 'https://foreign.invalid');
+  await message(iframe, { ...section, humanId: 'human_other123' });
+  await message(iframe, { ...section, contextRevision: projection.revision + 1 });
+  expect(container.querySelector('button[aria-pressed="true"]')?.textContent).toBe('我的猫');
+  await message(iframe, section);
+  expect(container.querySelector('button[aria-pressed="true"]')?.textContent).toBe('频道');
+  const channel = Array.from(container.querySelectorAll('button')).find((button) => button.textContent === '频道');
+  await act(async () => channel?.click());
   expect(container.textContent).toContain('# 产品方向');
   expect(JSON.stringify(post.mock.calls)).not.toContain('secret-thread');
   expect(JSON.stringify(post.mock.calls)).not.toContain('PRIVATE_HOST_ONLY');
@@ -310,12 +333,12 @@ it('opens the native Café only for the current default Client and clears it on 
   );
   await message(iframe, { ...projection, revision: 2, openCafe: false });
   await message(iframe, projection);
-  expect(container.querySelector('[aria-label="我的 Café"]')).toBeNull();
+  expect(container.querySelector('[aria-label="我的猫"]')).toBeNull();
   await message(iframe, { ...projection, revision: 3 });
-  expect(container.querySelector('[aria-label="我的 Café"]')).not.toBeNull();
+  expect(container.querySelector('[aria-label="我的猫"]')).not.toBeNull();
   act(() => iframe.dispatchEvent(new Event('load')));
   await message(iframe, { ...projection, revision: 4 });
-  expect(container.querySelector('[aria-label="我的 Café"]')).toBeNull();
+  expect(container.querySelector('[aria-label="我的猫"]')).toBeNull();
 });
 
 it('selects the requested connection and resends exact Work focus for each current context revision', async () => {
