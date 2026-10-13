@@ -3039,10 +3039,27 @@ export class QueueProcessor {
     if (await this.reconcileClaimedGroupWithExistingReceiver(entries, targetCatId)) {
       return { started: false };
     }
-    if (!(await this.startReservedEntry(entry, slotKey, targetCatId, [targetCatId], false, undefined, batchMembers))) {
+    // Return the existing durable handoff result, not merely a slot reservation.
+    // This also releases the source claim before a sibling Steer target is tried.
+    let reportAdmission!: (admitted: boolean) => void;
+    const admission = new Promise<boolean>((resolve) => {
+      reportAdmission = resolve;
+    });
+    if (
+      !(await this.startReservedEntry(
+        entry,
+        slotKey,
+        targetCatId,
+        [targetCatId],
+        false,
+        undefined,
+        batchMembers,
+        reportAdmission,
+      ))
+    ) {
       return { started: false };
     }
-    return { started: true, entry };
+    return { started: await admission, entry };
   }
 
   // ── Internal ──
@@ -3059,6 +3076,7 @@ export class QueueProcessor {
     suppressAutomaticFollowUp = false,
     conversationBatchResolution?: ConversationBatchResolution,
     claimedBatchMembers: readonly QueueEntry[] = [],
+    reportAdmission?: (admitted: boolean) => void,
   ): Promise<boolean> {
     const attemptedQueueEntryIds = [entry.id, ...claimedBatchMembers.map((candidate) => candidate.id)];
     const reservation = this.reserveProcessingSlot(slotKey, entry.id, queueEntryOwnerId(entry));
@@ -3092,8 +3110,10 @@ export class QueueProcessor {
       [...claimedBatchMembers],
       conversationBatchResolution,
       liveCall,
+      reportAdmission,
     ).then(
       (result) => {
+        reportAdmission?.(false);
         if (!this.releaseProcessingSlot(slotKey, reservation)) {
           this.deps.log.info(
             { threadId: entry.threadId, catId, entryId: entry.id, invocationId: result.invocationId },
@@ -3111,6 +3131,7 @@ export class QueueProcessor {
         this.signalDeliveryBatchDone(entry.threadId, result.status);
       },
       () => {
+        reportAdmission?.(false);
         if (!this.releaseProcessingSlot(slotKey, reservation)) {
           this.deps.log.info(
             { threadId: entry.threadId, catId, entryId: entry.id },
@@ -3679,6 +3700,7 @@ export class QueueProcessor {
     exactBatchEntries: readonly QueueEntry[] = [],
     conversationBatchResolution?: ConversationBatchResolution,
     liveCall?: import('../../../../concierge/live/LiveCompanionCall.js').LiveCompanionCall,
+    reportAdmission?: (admitted: boolean) => void,
   ): Promise<QueueExecutionResult> {
     const { queue, invocationTracker, invocationRecordStore, router, socketManager, messageStore, log } = this.deps;
     const threadId = entry.threadId;
@@ -4830,6 +4852,7 @@ export class QueueProcessor {
                   '[QueueProcessor] lifecycle handoff committed but Queue projection emit failed',
                 );
               }
+              reportAdmission?.(true);
               return {
                 responseMessageId: observed.message.id,
                 priorFrontierMessageId: observed.priorFrontierMessageId,

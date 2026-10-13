@@ -316,7 +316,17 @@ describe('ExecutionRow (F322 original-B)', () => {
       if (path.endsWith('/targets'))
         return json(
           init?.method === 'POST'
-            ? { targets: [{ entryId: 'q1', targetCatId: 'opus', strategy: 'guide_reply' }] }
+            ? {
+                targets: [
+                  {
+                    entryId: 'q1',
+                    targetCatId: 'opus',
+                    strategy: 'guide_reply',
+                    status: 200,
+                    result: { outcome: 'appended' },
+                  },
+                ],
+              }
             : { sourceRecordId: 'm-q1', targets: [{ targetCatId: 'opus', state: 'pending', actionable: true }] },
         );
       return json({ queue: [], activeInvocations: [] });
@@ -339,7 +349,9 @@ describe('ExecutionRow (F322 original-B)', () => {
     expect($('steer-confirm')).not.toBeNull();
     await click($('steer-confirm'));
     expect(calls()).toContain(`POST /api/threads/${THREAD}/queue/q1/targets`);
-    expect(calls()).toContain(`POST /api/threads/${THREAD}/queue/q1/continue`);
+    expect(calls().filter((call) => call.startsWith('POST '))).toEqual([
+      `POST /api/threads/${THREAD}/queue/q1/targets`,
+    ]);
   });
 
   it('3  several runs: no single ■ on the row; each run has its own in the panel', async () => {

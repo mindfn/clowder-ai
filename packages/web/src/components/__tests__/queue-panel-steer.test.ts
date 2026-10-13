@@ -45,11 +45,13 @@ vi.mock('@/hooks/useCatData', () => ({
   },
 }));
 
-vi.mock('@/utils/api-client', () => ({
+vi.mock('@/utils/api-client', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('@/utils/api-client')>()),
   apiFetch: vi.fn(),
 }));
 
 const NOW = Date.now();
+let transportTestSequence = 1;
 
 const QUEUED_ENTRY: QueueEntry = {
   id: 'q1',
@@ -101,10 +103,16 @@ async function defaultApiFetch(path: string, init?: RequestInit) {
       targets: (body.targets ?? []).map((target) => ({
         ...target,
         entryId: 'q1',
+        status: 200,
+        result: target.strategy === 'guide_reply' ? { outcome: 'appended' } : { started: true },
       })),
     });
   }
   return response({ queue: [] });
+}
+
+function targetResult(result: Record<string, unknown>, status = 200, targetCatId = 'opus') {
+  return response({ targets: [{ entryId: 'q1', targetCatId, strategy: 'guide_reply', status, result }] }) as Response;
 }
 
 async function openSteer(container: HTMLDivElement) {
@@ -157,12 +165,40 @@ describe('QueuePanel steer (F047)', () => {
       ],
     });
     useToastStore.setState({ toasts: [] });
+    vi.spyOn(Date, 'now').mockReturnValue(NOW + transportTestSequence++ * 10_000);
   });
 
   afterEach(() => {
     act(() => root.unmount());
     container.remove();
-    vi.clearAllMocks();
+    vi.restoreAllMocks();
+  });
+
+  it.each(['guide_reply', 'interrupt_reply'])('uses one mutation for the complete %s operation', async (strategy) => {
+    vi.mocked(apiFetch).mockImplementation(async (path, init) => {
+      if (path.endsWith('/targets') && init?.method === 'POST')
+        return response({
+          targets: [{ entryId: 'q1', targetCatId: 'opus', strategy, status: 200, result: { outcome: 'queued' } }],
+        }) as Response;
+      return defaultApiFetch(path, init) as Promise<Response>;
+    });
+    useChatStore.setState({ queue: [QUEUED_ENTRY] });
+    await act(async () => root.render(React.createElement(QueuePanel, { threadId: 'thread-1' })));
+    await openSteer(container);
+    act(() =>
+      container
+        .querySelector<HTMLButtonElement>(
+          strategy === 'guide_reply' ? '[data-testid="steer-guide-reply"]' : '[data-testid="steer-interrupt-reply"]',
+        )
+        ?.click(),
+    );
+    await act(async () => container.querySelector<HTMLButtonElement>('[data-testid="steer-confirm"]')?.click());
+    expect(
+      vi
+        .mocked(apiFetch)
+        .mock.calls.filter(([, init]) => init?.method === 'POST')
+        .map(([path]) => path),
+    ).toEqual(['/api/threads/thread-1/queue/q1/targets']);
   });
 
   it('renders Steer for a durable pending entry', () => {
@@ -185,7 +221,7 @@ describe('QueuePanel steer (F047)', () => {
     await act(async () => guide?.click());
     await act(async () => container.querySelector<HTMLButtonElement>('[data-testid="steer-confirm"]')?.click());
     expect(apiFetch).toHaveBeenCalledWith(
-      '/api/threads/thread-1/queue/q1/continue',
+      '/api/threads/thread-1/queue/q1/targets',
       expect.objectContaining({ method: 'POST' }),
     );
   });
@@ -443,10 +479,7 @@ describe('QueuePanel steer (F047)', () => {
         targets: [{ targetCatId: 'opus', strategy: 'interrupt_reply', membershipAtOpen: 'member' }],
       }),
     });
-    expect(apiFetch).toHaveBeenCalledWith(
-      '/api/threads/thread-1/queue/q1/steer',
-      expect.objectContaining({ body: JSON.stringify({ targetCatId: 'opus' }) }),
-    );
+    expect(vi.mocked(apiFetch).mock.calls.filter(([, init]) => init?.method === 'POST')).toHaveLength(1);
   });
 
   it('lets a targetless queued message select an exact current-thread member', async () => {
@@ -601,8 +634,8 @@ describe('QueuePanel steer (F047)', () => {
 
   it('preserves an explicit entry restriction instead of calling every 409 a stale queue', async () => {
     vi.mocked(apiFetch).mockImplementation(async (path, init) => {
-      if (path.endsWith('/continue'))
-        return response({ code: 'ENTRY_CONTINUE_UNAVAILABLE', error: '该条目不支持不中断发送' }, 409) as Response;
+      if (path.endsWith('/targets') && init?.method === 'POST')
+        return targetResult({ code: 'ENTRY_CONTINUE_UNAVAILABLE', error: '该条目不支持不中断发送' }, 409);
       return defaultApiFetch(path, init) as Promise<Response>;
     });
     useChatStore.setState({ queue: [QUEUED_ENTRY] });
@@ -646,8 +679,8 @@ describe('QueuePanel steer (F047)', () => {
       },
     };
     vi.mocked(apiFetch).mockImplementation(async (path, init) => {
-      if (path.endsWith('/continue'))
-        return response({ outcome: 'queued', effective: 'continue_current', reason: 'active_run_pending' }) as Response;
+      if (path.endsWith('/targets') && init?.method === 'POST')
+        return targetResult({ outcome: 'queued', effective: 'continue_current', reason: 'active_run_pending' });
       if (path.endsWith('/queue'))
         return response({
           queue: [pending],
@@ -673,8 +706,8 @@ describe('QueuePanel steer (F047)', () => {
     'network-failure',
   ])('does not assert pending client state after Queue convergence or failed refresh (%s)', async (refreshState) => {
     vi.mocked(apiFetch).mockImplementation(async (path, init) => {
-      if (path.endsWith('/continue'))
-        return response({ outcome: 'queued', effective: 'continue_current', reason: 'active_run_pending' }) as Response;
+      if (path.endsWith('/targets') && init?.method === 'POST')
+        return targetResult({ outcome: 'queued', effective: 'continue_current', reason: 'active_run_pending' });
       if (path.endsWith('/queue')) {
         if (refreshState === 'network-failure') throw new TypeError('Failed to fetch');
         return response({ queue: [] }, refreshState === 'converged' ? 200 : 503) as Response;
@@ -689,58 +722,13 @@ describe('QueuePanel steer (F047)', () => {
     const toasts = useToastStore.getState().toasts;
     expect(toasts.some((toast) => toast.message?.includes('客户端尚未接受'))).toBe(false);
     if (refreshState !== 'converged') {
-      expect(toasts.at(-1)?.message).toContain('刷新未完成');
-      expect(toasts.at(-1)?.title).toBe('发送请求已保存');
+      expect(toasts.some((toast) => toast.type === 'info')).toBe(false);
+      if (refreshState === 'network-failure') expect(toasts.at(-1)?.title).toBe('后端连接异常');
       expect(toasts.some((toast) => toast.title === 'Steer 失败')).toBe(false);
     }
   });
 
-  it.each([
-    'pending',
-    'retired',
-    'offline',
-  ])('preserves saved guide intent after follow-up network loss (%s)', async (state) => {
-    vi.mocked(apiFetch).mockImplementation(async (path, init) => {
-      if (path.endsWith('/continue')) throw new TypeError('Failed to fetch');
-      if (path.endsWith('/queue')) {
-        if (state === 'offline') throw new TypeError('Failed to fetch');
-        return response({ queue: state === 'pending' ? [QUEUED_ENTRY] : [] }) as Response;
-      }
-      return defaultApiFetch(path, init) as Promise<Response>;
-    });
-    useChatStore.setState({ queue: [QUEUED_ENTRY] });
-    await act(async () => root.render(React.createElement(QueuePanel, { threadId: 'thread-1' })));
-    await openSteer(container);
-    act(() => container.querySelector<HTMLButtonElement>('[data-testid="steer-guide-reply"]')?.click());
-    await act(async () => container.querySelector<HTMLButtonElement>('[data-testid="steer-confirm"]')?.click());
-    expect(apiFetch).toHaveBeenCalledWith('/api/threads/thread-1/queue');
-    expect(container.querySelector('[data-testid="steer-confirm"]')).toBeNull();
-    const toasts = useToastStore.getState().toasts;
-    expect(toasts.some((toast) => toast.title === 'Steer 失败')).toBe(false);
-    expect(toasts.some((toast) => /已追加|已读/.test(toast.message ?? ''))).toBe(false);
-    if (state === 'offline') expect(toasts.at(-1)?.message).toContain('刷新未完成');
-    if (state === 'retired') expect(toasts.some((toast) => toast.message?.includes('仍在队列'))).toBe(false);
-    if (state === 'pending') expect(toasts.at(-1)?.title).toBe('引导请求已保存');
-  });
-
-  it('does not claim the saved mapping proves an interrupt happened after network loss', async () => {
-    vi.mocked(apiFetch).mockImplementation(async (path, init) => {
-      if (path.endsWith('/steer')) throw new TypeError('Failed to fetch');
-      if (path.endsWith('/queue')) return response({ queue: [QUEUED_ENTRY] }) as Response;
-      return defaultApiFetch(path, init) as Promise<Response>;
-    });
-    useChatStore.setState({ queue: [QUEUED_ENTRY] });
-    await act(async () => root.render(React.createElement(QueuePanel, { threadId: 'thread-1' })));
-    await openSteer(container);
-    act(() => container.querySelector<HTMLButtonElement>('[data-testid="steer-interrupt-reply"]')?.click());
-    await act(async () => container.querySelector<HTMLButtonElement>('[data-testid="steer-confirm"]')?.click());
-    const toast = useToastStore.getState().toasts.at(-1);
-    expect(toast?.title).toBe('发送请求已保存');
-    expect(toast?.message).toContain('尚未确认中断');
-    expect(toast?.message).not.toMatch(/已中断|已追加|客户端接受后/);
-  });
-
-  it('still reports a submission failure when the mapping POST itself rejects', async () => {
+  it('uses shared connection feedback when the single operation loses its response', async () => {
     vi.mocked(apiFetch).mockImplementation(async (path, init) => {
       if (path.endsWith('/targets') && init?.method === 'POST') throw new TypeError('Failed to fetch');
       return defaultApiFetch(path, init) as Promise<Response>;
@@ -750,37 +738,49 @@ describe('QueuePanel steer (F047)', () => {
     await openSteer(container);
     act(() => container.querySelector<HTMLButtonElement>('[data-testid="steer-guide-reply"]')?.click());
     await act(async () => container.querySelector<HTMLButtonElement>('[data-testid="steer-confirm"]')?.click());
-    expect(useToastStore.getState().toasts.at(-1)?.title).toBe('Steer 失败');
+    expect(useToastStore.getState().toasts.at(-1)?.title).toBe('后端连接异常');
     expect(useToastStore.getState().toasts.some((toast) => toast.title === '发送请求已保存')).toBe(false);
   });
 
-  it('continues the other saved target after the first follow-up loses its connection', async () => {
-    const attempted: string[] = [];
+  it('reports only the failed target when the same operation delivers its sibling', async () => {
     vi.mocked(apiFetch).mockImplementation(async (path, init) => {
-      if (path.endsWith('/continue')) {
-        const target = JSON.parse(String(init?.body)).targetCatId;
-        attempted.push(target);
-        if (target === 'opus') throw new TypeError('Failed to fetch');
-        return response({ outcome: 'queued' }) as Response;
-      }
+      if (path.endsWith('/targets') && init?.method === 'POST')
+        return response({
+          targets: [
+            {
+              entryId: 'q1',
+              targetCatId: 'opus',
+              strategy: 'guide_reply',
+              status: 502,
+              result: { code: 'PROVIDER_REJECTED', error: 'Client 拒绝追加' },
+            },
+            {
+              entryId: 'q1',
+              targetCatId: 'codex',
+              strategy: 'guide_reply',
+              status: 200,
+              result: { outcome: 'appended' },
+            },
+          ],
+        }) as Response;
       return defaultApiFetch(path, init) as Promise<Response>;
     });
     useChatStore.setState({ queue: [QUEUED_ENTRY] });
     await act(async () => root.render(React.createElement(QueuePanel, { threadId: 'thread-1' })));
     await openSteer(container);
-    act(() => container.querySelector<HTMLButtonElement>('[data-testid="steer-guide-reply"]')?.click());
     act(() => container.querySelector<HTMLButtonElement>('[data-testid="steer-target-codex"]')?.click());
-    act(() => container.querySelector<HTMLButtonElement>('[data-testid="steer-guide-reply"]')?.click());
     await act(async () => container.querySelector<HTMLButtonElement>('[data-testid="steer-confirm"]')?.click());
-    expect(attempted).toEqual(['opus', 'codex']);
-    expect(useToastStore.getState().toasts.some((toast) => toast.title === 'Steer 失败')).toBe(false);
+    expect(vi.mocked(apiFetch).mock.calls.filter(([, init]) => init?.method === 'POST')).toHaveLength(1);
+    const toast = useToastStore.getState().toasts.at(-1);
+    expect(toast?.message).toContain('opus: Client 拒绝追加');
+    expect(toast?.message).not.toContain('codex');
   });
 
   it('keeps feedback scoped to the source thread when the user switches during confirmation', async () => {
     vi.mocked(apiFetch).mockImplementation(async (path, init) => {
-      if (path.endsWith('/continue')) {
+      if (path.endsWith('/targets') && init?.method === 'POST') {
         useChatStore.getState().setCurrentThread('thread-other');
-        return response({ outcome: 'queued', effective: 'continue_current', reason: 'active_run_pending' }) as Response;
+        return targetResult({ outcome: 'queued', effective: 'continue_current', reason: 'active_run_pending' });
       }
       if (path.endsWith('/queue')) return response({ queue: [QUEUED_ENTRY] }) as Response;
       return defaultApiFetch(path, init) as Promise<Response>;
@@ -796,12 +796,8 @@ describe('QueuePanel steer (F047)', () => {
 
   it('reports a saved next-work fallback without claiming Append delivery', async () => {
     vi.mocked(apiFetch).mockImplementation(async (path, init) => {
-      if (path.endsWith('/continue'))
-        return response({
-          outcome: 'queued',
-          effective: 'next_work',
-          reason: 'parent_terminal_before_exposure',
-        }) as Response;
+      if (path.endsWith('/targets') && init?.method === 'POST')
+        return targetResult({ outcome: 'queued', effective: 'next_work', reason: 'parent_terminal_before_exposure' });
       if (path.endsWith('/queue'))
         return response({
           queue: [
@@ -828,7 +824,7 @@ describe('QueuePanel steer (F047)', () => {
     expect(useToastStore.getState().toasts.at(-1)?.message).not.toMatch(/已追加|已读/);
   });
 
-  it('treats a follow-up action that loses to ordinary drain as converged', async () => {
+  it('refreshes an operation that loses its claim to ordinary drain', async () => {
     vi.mocked(apiFetch).mockImplementation(async (path, init) => {
       if (path.endsWith('/cats')) {
         return response({
@@ -844,11 +840,16 @@ describe('QueuePanel steer (F047)', () => {
           }) as Response;
         }
         return response({
-          targets: [{ targetCatId: 'opus', strategy: 'interrupt_reply', entryId: 'q1' }],
+          targets: [
+            {
+              targetCatId: 'opus',
+              strategy: 'interrupt_reply',
+              entryId: 'q1',
+              status: 409,
+              result: { code: 'ENTRY_PROCESSING' },
+            },
+          ],
         }) as Response;
-      }
-      if (path.endsWith('/queue/q1/steer')) {
-        return response({ code: 'ENTRY_PROCESSING', error: '条目正在处理中' }, 409) as Response;
       }
       return response({ queue: [], paused: false }) as Response;
     });
@@ -905,11 +906,17 @@ describe('QueuePanel steer (F047)', () => {
 
     act(() => container.querySelector<HTMLButtonElement>('[data-testid="steer-guide-reply"]')?.click());
     await act(async () => container.querySelector<HTMLButtonElement>('[data-testid="steer-confirm"]')?.click());
-    expect(apiFetch).toHaveBeenCalledWith('/api/threads/thread-1/queue/q1/continue', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ targetCatId: 'opus' }),
-    });
+    expect(apiFetch).toHaveBeenCalledWith(
+      '/api/threads/thread-1/queue/q1/targets',
+      expect.objectContaining({
+        method: 'POST',
+        body: JSON.stringify({
+          sourceRecordId: 'm1',
+          observedPendingTargetIds: ['opus'],
+          targets: [{ targetCatId: 'opus', strategy: 'guide_reply', membershipAtOpen: 'member' }],
+        }),
+      }),
+    );
   });
 
   it('keeps guide capability and default strategy independent of active-run state', async () => {

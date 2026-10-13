@@ -4,7 +4,7 @@
  * GET    /api/threads/:threadId/queue               → 列出队列条目
  * DELETE /api/threads/:threadId/queue/:entryId       → 撤回条目
  * GET    /api/threads/:threadId/queue/:entryId/targets → 读取同源逐目标终局/待处理真相
- * POST   /api/threads/:threadId/queue/:entryId/targets → 原子绑定/扩展同源逐目标 Steer 工单
+ * POST   /api/threads/:threadId/queue/:entryId/targets → 绑定同源逐目标意图并通过共同 Queue 执行 Steer
  * POST   /api/threads/:threadId/queue/:entryId/steer → Steer queued entry（取消当前轮并以同一消息立即启动）
  * POST   /api/threads/:threadId/queue/:entryId/continue → 立即引导当前回复，或保留为排队等待
  * POST   /api/threads/:threadId/queue/:entryId/append → Append queued entry into exact existing Active Run(s)
@@ -1220,6 +1220,133 @@ export const queueRoutes: FastifyPluginAsync<QueueRoutesOptions> = async (app, o
     },
   );
 
+  type TargetExecutionResult = { status: number; result: Record<string, unknown> };
+
+  // Both the combined Console operation and the legacy single-target routes use
+  // the same Queue handoff. Intent is bound once, before these execution steps.
+  const guideQueuedTarget = async (
+    threadId: string,
+    userId: string,
+    entryId: string,
+    targetCatId: CatId,
+    authorIntent: NonNullable<ReturnType<typeof resolveQueueAuthorIntentByCatId>[string]>,
+    drain = true,
+  ): Promise<TargetExecutionResult> => {
+    if (authorIntent.fallbackAt === undefined) {
+      const append = await queueProcessor.tryAutoAppendExactEntry({
+        threadId,
+        userId,
+        entryId,
+        targetCatId,
+      });
+      if (append.outcome === 'appended') return { status: 200, result: append };
+      if (append.reason === 'active_run_pending') {
+        if (drain) void queueProcessor.requestDrain(threadId);
+        await emitQueueUpdated(
+          socketManager,
+          userId,
+          threadId,
+          invocationQueue.list(threadId, userId),
+          'continue_current_pending',
+        );
+        return {
+          status: 200,
+          result: { outcome: 'queued', targetCatId, effective: 'continue_current', reason: 'active_run_pending' },
+        };
+      }
+      if (append.reason === 'provider_rejected') {
+        return {
+          status: 502,
+          result: { error: '当前 Agent Client 拒绝了 Append；失败回执已保留', code: 'PROVIDER_REJECTED' },
+        };
+      }
+      await invocationQueue.fallbackQueuedAuthorIntentDurable(
+        threadId,
+        userId,
+        entryId,
+        targetCatId,
+        'parent_terminal_before_exposure',
+      );
+    }
+
+    if (drain) void queueProcessor.requestDrain(threadId);
+    await emitQueueUpdated(
+      socketManager,
+      userId,
+      threadId,
+      invocationQueue.list(threadId, userId),
+      'continue_current_fallback',
+    );
+    return {
+      status: 200,
+      result: {
+        outcome: 'queued',
+        targetCatId,
+        effective: 'next_work',
+        reason: authorIntent.fallbackReason ?? 'parent_terminal_before_exposure',
+      },
+    };
+  };
+
+  const interruptQueuedTarget = async (
+    threadId: string,
+    userId: string,
+    entryId: string,
+    steerCatId: string,
+    request: FastifyRequest,
+  ): Promise<TargetExecutionResult> => {
+    // The ledger claim is the one durable dequeue fence. It happens before
+    // cancellation so a losing claim cannot kill the active turn, and it can
+    // be restored in place if cancellation fails.
+    let claimed;
+    try {
+      claimed = await invocationQueue.claimExactSteerEntryDurable(threadId, userId, entryId, steerCatId);
+    } catch (err) {
+      request.log.error({ err, threadId, entryId }, 'Failed to claim durable Queue row before Steer preemption');
+      return { status: 503, result: { error: 'Steer 暂不可用', code: 'STEER_CLAIM_FAILED' } };
+    }
+    if (claimed.outcome === 'rejected') {
+      const status = claimed.reason === 'entry_not_found' ? 404 : 409;
+      return {
+        status,
+        result:
+          claimed.reason === 'entry_processing'
+            ? { error: '条目正在处理中，无法 steer', code: 'ENTRY_PROCESSING' }
+            : { error: '队列条目不存在', code: 'ENTRY_NOT_FOUND' },
+      };
+    }
+
+    let handedOff = false;
+    try {
+      const preemption = await preemptSteerTarget(threadId, userId, steerCatId, entryId, request);
+      if (!preemption.ok) {
+        await invocationQueue.restoreClaimedEntries(threadId, [entryId]);
+        return { status: preemption.status, result: { error: preemption.error, code: preemption.code } };
+      }
+
+      const result = await queueProcessor.processClaimedSteerEntries(threadId, userId, [entryId], steerCatId);
+      if (!result.started) {
+        await invocationQueue.restoreClaimedEntries(threadId, [entryId]);
+        await emitQueueUpdated(socketManager, userId, threadId, invocationQueue.list(threadId, userId), 'steer_failed');
+        return { status: 503, result: { error: 'Steer 启动失败，请重试', code: 'STEER_START_FAILED' } };
+      }
+
+      handedOff = true;
+      await emitQueueUpdated(
+        socketManager,
+        userId,
+        threadId,
+        invocationQueue.list(threadId, userId),
+        'steer_immediate',
+      );
+
+      return { status: 200, result: projectQueueStartResult(result) };
+    } catch (error) {
+      if (!handedOff) await invocationQueue.restoreClaimedEntries(threadId, [entryId]);
+      throw error;
+    }
+  };
+
   // POST /api/threads/:threadId/queue/:entryId/targets
   // Merge explicit modal edits into current Queue + History truth. Delivery
   // that wins while the modal is open is an idempotent no-op, not a conflict.
@@ -1424,12 +1551,38 @@ export const queueRoutes: FastifyPluginAsync<QueueRoutesOptions> = async (app, o
         invocationQueue.list(threadId, guard.userId),
         'steer_targets_resolved',
       );
-      // Mapping is a durable Queue mutation in its own right. If the browser
-      // disappears before issuing the per-target follow-up commands, ordinary
-      // Queue liveness must still converge every newly added row.
+      // Execute before waking ordinary drain: interrupt must claim this exact
+      // source before cancelling, and sibling targets must retain their results.
+      const executed: Array<(typeof targets)[number] & TargetExecutionResult> = [];
+      for (const target of targets) {
+        try {
+          const execution =
+            target.strategy === 'interrupt_reply'
+              ? await interruptQueuedTarget(threadId, guard.userId, entryId, target.targetCatId, request)
+              : await guideQueuedTarget(
+                  threadId,
+                  guard.userId,
+                  entryId,
+                  target.targetCatId as CatId,
+                  authorIntentByCatId[target.targetCatId]!,
+                  false,
+                );
+          executed.push({ ...target, ...execution });
+        } catch (error) {
+          request.log.error(
+            { error, threadId, entryId, targetCatId: target.targetCatId },
+            'Queue target execution failed',
+          );
+          executed.push({
+            ...target,
+            status: 503,
+            result: { code: 'STEER_EXECUTION_FAILED', error: '投递未完成，请查看队列状态后重试' },
+          });
+        }
+      }
       void queueProcessor.requestDrain(threadId);
       return {
-        targets,
+        targets: executed,
         skippedAlreadyDispatched: normalizedTargets
           .filter((target) => alreadyDispatched.has(target.targetCatId))
           .map((target) => target.targetCatId),
@@ -1505,52 +1658,9 @@ export const queueRoutes: FastifyPluginAsync<QueueRoutesOptions> = async (app, o
         return { error: '队列状态已变化，请刷新后重试', code: 'CONTINUE_STATE_CHANGED' };
       }
 
-      if (authorIntent.fallbackAt === undefined) {
-        const append = await queueProcessor.tryAutoAppendExactEntry({
-          threadId,
-          userId: guard.userId,
-          entryId,
-          targetCatId,
-        });
-        if (append.outcome === 'appended') return append;
-        if (append.reason === 'active_run_pending') {
-          void queueProcessor.requestDrain(threadId);
-          await emitQueueUpdated(
-            socketManager,
-            guard.userId,
-            threadId,
-            invocationQueue.list(threadId, guard.userId),
-            'continue_current_pending',
-          );
-          return { outcome: 'queued', targetCatId, effective: 'continue_current', reason: 'active_run_pending' };
-        }
-        if (append.reason === 'provider_rejected') {
-          reply.status(502);
-          return { error: '当前 Agent Client 拒绝了 Append；失败回执已保留', code: 'PROVIDER_REJECTED' };
-        }
-        await invocationQueue.fallbackQueuedAuthorIntentDurable(
-          threadId,
-          guard.userId,
-          entryId,
-          targetCatId,
-          'parent_terminal_before_exposure',
-        );
-      }
-
-      void queueProcessor.requestDrain(threadId);
-      await emitQueueUpdated(
-        socketManager,
-        guard.userId,
-        threadId,
-        invocationQueue.list(threadId, guard.userId),
-        'continue_current_fallback',
-      );
-      return {
-        outcome: 'queued',
-        targetCatId,
-        effective: 'next_work',
-        reason: authorIntent.fallbackReason ?? 'parent_terminal_before_exposure',
-      };
+      const execution = await guideQueuedTarget(threadId, guard.userId, entryId, targetCatId, authorIntent);
+      reply.status(execution.status);
+      return execution.result;
     },
   );
 
@@ -1599,55 +1709,9 @@ export const queueRoutes: FastifyPluginAsync<QueueRoutesOptions> = async (app, o
         reply.status(400);
         return { error: '所选成员不属于此消息的当前对话目标', code: 'INVALID_STEER_TARGET' };
       }
-      // The ledger claim is the one durable dequeue fence. It happens before
-      // cancellation so a losing claim cannot kill the active turn, and it can
-      // be restored in place if cancellation fails.
-      let claimed;
-      try {
-        claimed = await invocationQueue.claimExactSteerEntryDurable(threadId, guard.userId, entryId, steerCatId);
-      } catch (err) {
-        request.log.error({ err, threadId, entryId }, 'Failed to claim durable Queue row before Steer preemption');
-        reply.status(503);
-        return { error: 'Steer 暂不可用', code: 'STEER_CLAIM_FAILED' };
-      }
-      if (claimed.outcome === 'rejected') {
-        const status = claimed.reason === 'entry_not_found' ? 404 : 409;
-        reply.status(status);
-        return claimed.reason === 'entry_processing'
-          ? { error: '条目正在处理中，无法 steer', code: 'ENTRY_PROCESSING' }
-          : { error: '队列条目不存在', code: 'ENTRY_NOT_FOUND' };
-      }
-
-      const preemption = await preemptSteerTarget(threadId, guard.userId, steerCatId, entryId, request);
-      if (!preemption.ok) {
-        await invocationQueue.restoreClaimedEntries(threadId, [entryId]);
-        reply.status(preemption.status);
-        return { error: preemption.error, code: preemption.code };
-      }
-
-      const result = await queueProcessor.processClaimedSteerEntries(threadId, guard.userId, [entryId], steerCatId);
-      if (!result.started) {
-        await invocationQueue.restoreClaimedEntries(threadId, [entryId]);
-        await emitQueueUpdated(
-          socketManager,
-          guard.userId,
-          threadId,
-          invocationQueue.list(threadId, guard.userId),
-          'steer_failed',
-        );
-        reply.status(503);
-        return { error: 'Steer 启动失败，请重试', code: 'STEER_START_FAILED' };
-      }
-
-      await emitQueueUpdated(
-        socketManager,
-        guard.userId,
-        threadId,
-        invocationQueue.list(threadId, guard.userId),
-        'steer_immediate',
-      );
-
-      return projectQueueStartResult(result);
+      const execution = await interruptQueuedTarget(threadId, guard.userId, entryId, steerCatId, request);
+      reply.status(execution.status);
+      return execution.result;
     },
   );
 
