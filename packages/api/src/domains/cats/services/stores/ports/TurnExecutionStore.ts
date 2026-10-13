@@ -10,6 +10,8 @@ import type {
   TurnExecutionStatus,
   TurnExecutionTerminalInput,
   TurnExecutionTerminalStatus,
+  TurnOutputFence,
+  TurnOutputFenceVerdict,
 } from '@cat-cafe/shared';
 
 export type {
@@ -24,6 +26,8 @@ export type {
   TurnExecutionStatus,
   TurnExecutionTerminalInput,
   TurnExecutionTerminalStatus,
+  TurnOutputFence,
+  TurnOutputFenceVerdict,
 } from '@cat-cafe/shared';
 
 export function projectTurnExecutionMessage(record: TurnExecutionRecord): TurnExecutionMessageProjection {
@@ -34,6 +38,31 @@ export function projectTurnExecutionMessage(record: TurnExecutionRecord): TurnEx
   };
 }
 
+export interface TurnExecutionSourceQuery {
+  userId: string;
+  threadId: string;
+  catId: string;
+  messageId: string;
+}
+
+/** Existing execution causality is an internal fact, never a delivery/read receipt or grant. */
+export function matchesTurnExecutionSource(record: TurnExecutionRecord, query: TurnExecutionSourceQuery): boolean {
+  return (
+    record.userId === query.userId &&
+    record.threadId === query.threadId &&
+    record.catId === query.catId &&
+    record.executionKind === 'ordinary' &&
+    typeof record.parentInvocationId === 'string' &&
+    record.parentInvocationId.length > 0 &&
+    record.parentInvocationId !== record.invocationId &&
+    (record.causal?.triggerMessageId === query.messageId ||
+      record.causal?.coveredMessageIds?.includes(query.messageId) === true)
+  );
+}
+
+export type TurnExecutionSourceReadPort = Pick<ITurnExecutionStore, 'get'> &
+  Partial<Pick<ITurnExecutionStore, 'listBySource'>>;
+
 export interface ITurnExecutionStore {
   createRunning(input: CreateTurnExecutionInput): CreateTurnExecutionResult | Promise<CreateTurnExecutionResult>;
   bindCoveredMessageIds(
@@ -41,6 +70,8 @@ export interface ITurnExecutionStore {
     messageIds: readonly string[],
   ): BindCoveredMessageIdsResult | Promise<BindCoveredMessageIdsResult>;
   get(invocationId: string): TurnExecutionRecord | null | Promise<TurnExecutionRecord | null>;
+  /** Scoped historical lookup over existing records, including retired-Queue executions. Ambiguity belongs to the caller. */
+  listBySource(query: TurnExecutionSourceQuery): TurnExecutionRecord[] | Promise<TurnExecutionRecord[]>;
   listByParent(parentInvocationId: string): TurnExecutionRecord[] | Promise<TurnExecutionRecord[]>;
   /**
    * F297 (PR #3748 R3 P1-2): user-scoped running-child enumerator — **owner truth**.
@@ -58,6 +89,24 @@ export interface ITurnExecutionStore {
     cutoffStartedAt: number,
     input: InterruptRunningTurnExecutionsInput,
   ): TurnExecutionRecord[] | Promise<TurnExecutionRecord[]>;
+  /**
+   * F117 KD-21: ended child turns whose response R is not yet confirmed terminal. Every terminal
+   * transition enters this ledger atomically with the transition, so neither a failed R commit nor
+   * a crash between the two writes can hide the turn from the next settlement pass.
+   */
+  listResponsePending(): TurnExecutionRecord[] | Promise<TurnExecutionRecord[]>;
+  /** Leaves the ledger once the turn's response R is confirmed terminal (or the turn has none). */
+  clearResponsePending(invocationId: string): void | Promise<void>;
+  /**
+   * F117 KD-21: records the action fence's verdict on a gated child's output, so every later
+   * settlement reads it instead of a process-local decision. The fence only moves forward
+   * (gated → allowed → rejected); an open child, or one recorded before the fence existed, is left
+   * as it is. Returns the record after the write, or null when the child is unknown.
+   */
+  settleOutputFence(
+    invocationId: string,
+    verdict: TurnOutputFenceVerdict,
+  ): TurnExecutionRecord | null | Promise<TurnExecutionRecord | null>;
 }
 
 export type BindCoveredMessageIdsResult =
@@ -76,7 +125,38 @@ export function assertCoveredMessageIds(messageIds: readonly string[]): void {
   }
 }
 
-const EXECUTION_KINDS = new Set<TurnExecutionKind>(['ordinary', 'routing_guard', 'freshness_supplement']);
+const EXECUTION_KINDS = new Set<TurnExecutionKind>(['ordinary', 'routing_guard']);
+const OUTPUT_FENCES = new Set<string>(['open', 'gated', 'allowed', 'rejected']);
+const GATED_FENCE_RANK: Record<Exclude<TurnOutputFence, 'open'>, number> = { gated: 0, allowed: 1, rejected: 2 };
+
+export function isTurnOutputFence(value: unknown): value is TurnOutputFence {
+  return typeof value === 'string' && OUTPUT_FENCES.has(value);
+}
+
+/**
+ * The fence after a verdict: a gated fence only moves forward. An open fence, and a record written
+ * before the fence existed, stay as they are.
+ */
+export function advanceTurnOutputFence(
+  current: TurnOutputFence | undefined,
+  verdict: TurnOutputFenceVerdict,
+): TurnOutputFence | undefined {
+  if (current === undefined || current === 'open') return current;
+  return GATED_FENCE_RANK[verdict] > GATED_FENCE_RANK[current] ? verdict : current;
+}
+
+/** A child is created open or gated; the verdicts arrive later through settleOutputFence. */
+export function assertCreatableOutputFence(input: CreateTurnExecutionInput): void {
+  if (input.outputFence !== undefined && input.outputFence !== 'open' && input.outputFence !== 'gated') {
+    throw new Error(`a turn execution can only be created open or gated, not ${String(input.outputFence)}`);
+  }
+}
+
+/** The fence a store records for a new child: every child has one, and an omitted fence is open. */
+export function createdOutputFence(input: CreateTurnExecutionInput): 'open' | 'gated' {
+  return input.outputFence === 'gated' ? 'gated' : 'open';
+}
+
 const TERMINAL_STATUSES = new Set<TurnExecutionTerminalStatus>(['succeeded', 'failed', 'canceled', 'interrupted']);
 
 function assertNonEmpty(value: string, field: string): void {
@@ -97,13 +177,13 @@ export function assertCreateTurnExecutionInput(input: CreateTurnExecutionInput):
     throw new Error(`invalid executionKind: ${String(input.executionKind)}`);
   }
   assertTimestamp(input.startedAt, 'startedAt');
+  if (input.outputFence !== undefined && !isTurnOutputFence(input.outputFence)) {
+    throw new Error(`invalid outputFence: ${String(input.outputFence)}`);
+  }
   if (input.queueCompletionPolicy !== undefined && input.queueCompletionPolicy !== 'explicit_source') {
     throw new Error('invalid queueCompletionPolicy');
   }
   if (input.causal?.triggerMessageId !== undefined) assertNonEmpty(input.causal.triggerMessageId, 'triggerMessageId');
-  if (input.causal?.freshnessSupplementId !== undefined) {
-    assertNonEmpty(input.causal.freshnessSupplementId, 'freshnessSupplementId');
-  }
   if (input.causal?.routingGuardReason !== undefined && input.causal.routingGuardReason !== 'missing_routing_exit') {
     throw new Error(`invalid routingGuardReason: ${String(input.causal.routingGuardReason)}`);
   }
@@ -152,13 +232,13 @@ export function cloneTurnExecutionRecord(record: TurnExecutionRecord): TurnExecu
     status: record.status,
     ...(record.endedAt !== undefined ? { endedAt: record.endedAt } : {}),
     ...(record.terminalReason !== undefined ? { terminalReason: record.terminalReason } : {}),
+    ...(record.outputFence !== undefined ? { outputFence: record.outputFence } : {}),
   };
 }
 
 function canonicalCausalRefs(causal: TurnExecutionCausalRefs | undefined): TurnExecutionCausalRefs {
   return {
     ...(causal?.triggerMessageId !== undefined ? { triggerMessageId: causal.triggerMessageId } : {}),
-    ...(causal?.freshnessSupplementId !== undefined ? { freshnessSupplementId: causal.freshnessSupplementId } : {}),
     ...(causal?.routingGuardReason !== undefined ? { routingGuardReason: causal.routingGuardReason } : {}),
     ...(causal?.coveredMessageIds !== undefined ? { coveredMessageIds: [...causal.coveredMessageIds].sort() } : {}),
   };

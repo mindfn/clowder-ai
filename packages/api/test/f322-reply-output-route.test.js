@@ -6,6 +6,7 @@ import {
 } from '../dist/domains/cats/services/agents/providers/codex-event-transform.js';
 import { routeParallel } from '../dist/domains/cats/services/agents/routing/route-parallel.js';
 import { routeSerial } from '../dist/domains/cats/services/agents/routing/route-serial.js';
+import { MessageStore } from '../dist/domains/cats/services/stores/ports/MessageStore.js';
 import { safeParseExtra, serializeExtra } from '../dist/domains/cats/services/stores/redis/redis-message-parsers.js';
 import { subexecutionReadbackFrames } from './helpers/f322-subexecution-readback.mjs';
 
@@ -102,16 +103,12 @@ function fixture(realProducer = false, childFrames = [], childBeforeText = false
       yield { type: 'done', catId: 'codex', timestamp: 6 };
     },
   };
-  const store = {
-    async append(input) {
-      const value = { ...input, id: `message-${records.length}`, extra: safeParseExtra(serializeExtra(input.extra)) };
-      records.push(value);
-      return value;
-    },
-    getById: async (id) => records.find((record) => record.id === id) ?? null,
-    getRecent: () => [],
-    getMentionsFor: () => [],
-    getRecentMentionsFor: () => [],
+  const store = new MessageStore();
+  const append = store.append.bind(store);
+  store.append = (input) => {
+    const value = append(input);
+    records.push(value);
+    return value;
   };
   const deps = {
     services: { codex: service },

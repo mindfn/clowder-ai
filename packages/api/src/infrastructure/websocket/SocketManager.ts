@@ -26,7 +26,7 @@ const log = createModuleLogger('ws');
 
 interface QueueProcessorLike {
   canReleaseSlotForUser(threadId: string, catId: string, userId: string): boolean;
-  clearPause(threadId: string, catId?: string): void;
+  hasProcessingSlotReservation(threadId: string, catId: string): boolean;
   releaseSlot(threadId: string, catId: string): void;
   suppressAutoResume(threadId: string, catId: string, executionIds?: readonly string[]): void;
 }
@@ -54,19 +54,12 @@ function validateRoomJoin(roomInput: unknown, userId: string): RoomJoinAck {
 export function buildCancelMessages(result: CancelResult): AgentMessage[] {
   if (!result.cancelled) return [];
   const catIds = result.catIds.length > 0 ? result.catIds : ['opus'];
-  const primaryCatId = catIds[0] ?? 'opus';
   const now = Date.now();
   const messages: AgentMessage[] = [];
 
-  // Single system_info to avoid "cancel chorus"
-  messages.push({
-    type: 'system_info',
-    catId: createCatId(primaryCatId),
-    content: '⏹ 已取消',
-    timestamp: now,
-  });
-
-  // Per-cat done to ensure each cat's loading state is cleared
+  // The durable response message owns the visible canceled terminal. This
+  // broadcast is transport cleanup only, so a second centered system row would
+  // duplicate the same fact in History.
   for (const catId of catIds) {
     messages.push({
       type: 'done',
@@ -172,9 +165,9 @@ export class SocketManager {
 
   private setupEventHandlers(): void {
     this.io.on('connection', (socket: Socket) => {
-      // F156: Server determines identity — never trust client-supplied userId.
-      // Use the original HTTP-issued session; query/auth/header user claims are never principals.
-      // Keep the legacy single-user room for clients without a valid session.
+      // Reuse HTTP's validated session principal, never handshake.auth.userId.
+      // Keep the legacy anonymous boundary; a missing/invalid session cannot
+      // promote a connection to a configured instance owner.
       const userId =
         sessionUserIdForCookies(fastifyCookie.parse(socket.handshake.headers.cookie ?? '')) ?? 'default-user';
       log.info({ socketId: socket.id, userId }, 'Client connected');
@@ -189,7 +182,6 @@ export class SocketManager {
       );
 
       // F39: Auto-join user-scoped room for emitToUser (multi-tab support)
-      // Auto-join only the room selected by the server-owned session identity.
       socket.join(`user:${userId}`);
 
       socket.on('disconnect', () => {
@@ -331,8 +323,9 @@ export class SocketManager {
               for (const msg of buildCancelMessages(scopedResult)) {
                 this.broadcastAgentMessage(msg, data.threadId);
               }
-              this.queueProcessor?.clearPause(data.threadId, data.catId);
-              this.queueProcessor?.releaseSlot(data.threadId, data.catId);
+              if (!this.queueProcessor?.hasProcessingSlotReservation(data.threadId, data.catId)) {
+                this.queueProcessor?.releaseSlot(data.threadId, data.catId);
+              }
             }
             // F108 + F086: Also abort multi-mention dispatches for this specific cat
             this.multiMentionOrchestrator?.abortBySlot?.(data.threadId, data.catId);
@@ -366,15 +359,18 @@ export class SocketManager {
                 this.broadcastAgentMessage(msg, data.threadId);
               }
               for (const catId of terminalCatIds) {
-                this.queueProcessor?.clearPause(data.threadId, catId);
-                this.queueProcessor?.releaseSlot(data.threadId, catId);
+                if (!this.queueProcessor?.hasProcessingSlotReservation(data.threadId, catId)) {
+                  this.queueProcessor?.releaseSlot(data.threadId, catId);
+                }
                 // Suppress auto-resume for BOTH paths:
                 // - Queued invocations: executeEntry also sets suppress (belt-and-suspenders)
                 // - Direct invocations (messages.ts): only this external call covers them
                 //   because they don't go through executeEntry
                 // Protected by: cancel_all reason, exact canceled execution IDs, 60s TTL
                 const executionId = cancelAllResult.executionIdByCatId?.[catId];
-                this.queueProcessor?.suppressAutoResume(data.threadId, catId, executionId ? [executionId] : []);
+                if (executionId) {
+                  this.queueProcessor?.suppressAutoResume(data.threadId, catId, [executionId]);
+                }
               }
             }
             // F156 P1-fix: Use per-cat abortBySlot instead of thread-wide abortByThread.

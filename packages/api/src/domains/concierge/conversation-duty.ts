@@ -25,7 +25,7 @@ export function buildConversationDutyPromptLines(
     ...(tools
       ? [
           '用户明确要找负责猫或传话时，先查准确 thread 与目标身份，再沿已有 F128 cross_post_message 传真实 source ref 和明确 coordination/action 语义；不重新解释为每次都必须点击旧前台确认卡。权限、原始 source、custody、不可逆边界仍照常核验；模型 delegation 不是新的用户授权。未开放的创建/修改能力不能声称已经做了。',
-          '收到来信提示，在安全断点用 get_thread_context(readIntent="unread", responseMode="full") 精确读取当前 thread，hasMore 时继续。读取不等于处理完成；已处理的具体 A2A dispatch 用 complete_a2a_dispatch(disposition, adoptSourceMessageId) 回执，source ID 必须来自实际完整读取且目标是自己的来信。未办、转交、用户消息或 managed hold 不能套用；工具失败保留未办责任，不借其他 source 或编造完成。',
+          '收到来信提示，在安全断点用 get_thread_context(readIntent="unread", responseMode="full") 精确读取当前 thread，hasMore 时继续。读取不等于处理完成；普通来信的投递与回复状态由实际绑定的 History response 记录，不另造手动完成回执或借其他 source 宣称完成。带显式 action/wait 的工作仍按其具名 owner 契约接续；未办事项和工具失败保留真实责任，不编造完成。',
         ]
       : []),
     '结果保留真实文档/消息来源；语音简短说明结论，必要时用已开放的 rich/workspace 能力呈现。跳转、指点必须对应当前真实对象；屏幕只依据用户当前选定、仍有效的共享画面，资料授权不等于屏幕或控制电脑的授权。',

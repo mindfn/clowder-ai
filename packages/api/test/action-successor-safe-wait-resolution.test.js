@@ -12,15 +12,11 @@
  */
 import assert from 'node:assert/strict';
 import { describe, test } from 'node:test';
+import { buildActionSuccessorFence } from '../dist/domains/ball-custody/ActionSuccessorAdmissionContract.js';
+import { actionSuccessorInvocationKeyForTarget } from '../dist/domains/cats/services/agents/invocation/InvocationQueue.js';
+import { queueEntryId } from '../dist/domains/cats/services/agents/invocation/queue-ledger/QueueLedger.js';
 import { MAX_REFRESH_ATTEMPTS, resolveSafeWaitCarrier } from '../dist/routes/callback-action-carrier-resolution.js';
-import {
-  carrier,
-  lease,
-  oldInvocationKey,
-  record,
-  recordStore,
-  request,
-} from './helpers/direct-action-carrier-fixtures.js';
+import { lease, request } from './helpers/direct-action-carrier-fixtures.js';
 
 const HOLDER = 'codex-sol';
 
@@ -40,12 +36,95 @@ function scriptedLeaseStore(...answers) {
   };
 }
 
-function resolve({ observed, messages, leaseStore, records }) {
-  return resolveSafeWaitCarrier({
-    messageStore: { getByThreadAfter: async () => messages },
-    invocationRecordStore: recordStore(
-      records ?? new Map([[oldInvocationKey(observed, HOLDER), record(observed, HOLDER)]]),
+/** The resolver reads Queue pending work or exact source → response → child → parent evidence. */
+function carrier(current, catId, state) {
+  const id = `source-${current.generation}-${catId}`;
+  const scope = { userId: current.tenantScope, threadId: current.holderThreadId };
+  const source = {
+    id,
+    ...scope,
+    catId: current.predecessorCatId,
+    from: { kind: 'agent', catId: current.predecessorCatId },
+    content: 'Implement task',
+    mentions: [catId],
+    timestamp: 100,
+  };
+  const entry = {
+    id: queueEntryId(id),
+    ...scope,
+    owner: { kind: 'user', userId: scope.userId },
+    status: 'queued',
+    targets: [catId],
+    payload: { messageId: id, sourceRecordId: id },
+    execution: { actionSuccessorFence: buildActionSuccessorFence(current, current.dispatchId) },
+  };
+  if (state === 'queued') return { source, entry };
+  const childId = `child-${current.generation}-${catId}`;
+  const parentId = `parent-${current.generation}-${catId}`;
+  const response = {
+    id: `response-${current.generation}-${catId}`,
+    ...scope,
+    catId,
+    from: { kind: 'agent', catId },
+    lifecycle: {
+      kind: 'response',
+      invocationId: childId,
+      targetId: catId,
+      inputMessageIds: [id],
+      inputEntryIds: [entry.id],
+      status: state === 'interrupted' ? 'interrupted' : 'completed',
+    },
+  };
+  source.lifecycle = {
+    kind: 'input',
+    orderKey: `100:${id}`,
+    dispatchRefs: [{ targetId: catId, phase: 'settled', statusMessageId: response.id, dispatchedAt: 110 }],
+  };
+  const child = {
+    invocationId: childId,
+    parentInvocationId: parentId,
+    ...scope,
+    catId,
+    status: state === 'interrupted' ? 'interrupted' : 'succeeded',
+    causal: { triggerMessageId: id },
+  };
+  const parent = {
+    id: parentId,
+    ...scope,
+    targetCats: [catId],
+    successfulCatIds: [catId],
+    status: state === 'interrupted' ? 'failed' : 'succeeded',
+    idempotencyKey: actionSuccessorInvocationKeyForTarget(id, catId),
+    actionLeaseCarrier: { kind: 'action_successor', leaseId: current.leaseId, generation: current.generation },
+  };
+  return { source, response, child, parent };
+}
+
+function resolve({ observed, messages, leaseStore }) {
+  const byId = new Map(
+    messages.flatMap((value) =>
+      value.response
+        ? [
+            [value.source.id, value.source],
+            [value.response.id, value.response],
+          ]
+        : [[value.source.id, value.source]],
     ),
+  );
+  const parents = new Map(messages.filter((value) => value.parent).map((value) => [value.parent.id, value.parent]));
+  const children = new Map(
+    messages.filter((value) => value.child).map((value) => [value.child.invocationId, value.child]),
+  );
+  return resolveSafeWaitCarrier({
+    invocationQueue: {
+      listAllDurable: async () => messages.filter((value) => value.entry).map((value) => value.entry),
+    },
+    messageStore: {
+      getByThreadAfter: async () => messages.map((value) => value.source),
+      getById: async (id) => byId.get(id) ?? null,
+    },
+    invocationRecordStore: { get: async (id) => parents.get(id) ?? null },
+    turnExecutionStore: { get: async (id) => children.get(id) ?? null },
     leaseStore,
     lease: observed,
     admissionInput: request(observed),
@@ -111,16 +190,10 @@ describe('F167 safe_wait is only answered from the lease that is in the store no
     const observed = lease();
     const winner = lease({ generation: 2, revision: observed.revision + 1, dispatchId: 'post:winner-dispatch' });
     const leaseStore = scriptedLeaseStore({ outcome: 'stale_generation', lease: winner });
-    const records = new Map([
-      [oldInvocationKey(observed, HOLDER), record(observed, HOLDER)],
-      [oldInvocationKey(winner, HOLDER), record(winner, HOLDER)],
-    ]);
-
     const resolution = await resolve({
       observed,
       messages: [carrier(observed, HOLDER, 'handled'), carrier(winner, HOLDER, 'handled')],
       leaseStore,
-      records,
     });
 
     assert.equal(resolution.kind, 'respond');
@@ -176,7 +249,6 @@ describe('F167 safe_wait is only answered from the lease that is in the store no
 
     const resolution = await resolveSafeWaitCarrier({
       messageStore: { getByThreadAfter: async () => [carrier(observed, HOLDER, 'handled')] },
-      invocationRecordStore: recordStore(new Map()),
       leaseStore,
       lease: observed,
       admissionInput: request(observed, { actorCatId: 'someone-else' }),
@@ -188,46 +260,22 @@ describe('F167 safe_wait is only answered from the lease that is in the store no
   });
 });
 
-/**
- * A runtime restart interrupts a holder either after its provider already read the action (it may have partly run)
- * or before (it never saw the work). Re-sending the same action replays the same generation only in the second case;
- * in the first the predecessor is told who read it and how to run it again on purpose.
- */
-describe('F167 restart-interrupted carrier is replayed only when no holder had read the action', () => {
-  test('a holder that read the action before the restart is refused with its read, never replayed', async () => {
-    const observed = lease();
-    const leaseStore = scriptedLeaseStore();
-    const interrupted = carrier(observed, HOLDER, 'interrupted');
-    interrupted.queueCustody.bodyExposures = [{ targetCatId: HOLDER, invocationId: `child-${HOLDER}`, seenAt: 115 }];
-
-    const resolution = await resolve({ observed, messages: [interrupted], leaseStore, records: new Map() });
-
-    assert.equal(resolution.kind, 'respond');
-    assert.equal(resolution.statusCode, 409);
-    assert.equal(resolution.body.status, 'action_carrier_unavailable');
-    assert.equal(resolution.body.reason, 'interrupted_after_read');
-    assert.deepEqual(resolution.body.interruptedReads, [
-      { catId: HOLDER, invocationId: `child-${HOLDER}`, seenAt: 115 },
-    ]);
-    assert.match(resolution.body.nextStep, /replace/);
-    assert.equal(resolution.body.actionLease.leaseId, observed.leaseId, 'the caller gets the lease it would replace');
-    assert.equal(leaseStore.calls.length, 0, 'no generation is moved on the caller’s behalf');
-  });
-
-  test('a holder that was only awakened, never shown the action, is still replayed on the same generation', async () => {
-    const observed = lease();
-    const leaseStore = scriptedLeaseStore();
-
-    const resolution = await resolve({
-      observed,
-      messages: [carrier(observed, HOLDER, 'interrupted')],
-      leaseStore,
-      records: new Map(),
+describe('F167 restart resumes the same carrier independently of reading evidence', () => {
+  for (const status of ['pending', 'read']) {
+    test(`an interrupted carrier with ${status} input keeps its original generation`, async () => {
+      const observed = lease();
+      const leaseStore = scriptedLeaseStore();
+      const interrupted = carrier(observed, HOLDER, 'interrupted');
+      interrupted.source.lifecycle.dispatchRefs[0].inputRead = {
+        status,
+        ...(status === 'read' ? { at: 115 } : {}),
+      };
+      const resolution = await resolve({ observed, messages: [interrupted], leaseStore });
+      assert.equal(resolution.kind, 'continue');
+      assert.equal(resolution.admissionOutcome, 'replayed');
+      assert.equal(resolution.fence.generation, observed.generation);
+      assert.equal(leaseStore.calls.length, 0, 'no new generation or replacement proof');
+      assert.equal(interrupted.source.lifecycle.dispatchRefs[0].inputRead.status, status);
     });
-
-    assert.equal(resolution.kind, 'continue');
-    assert.equal(resolution.admissionOutcome, 'replayed');
-    assert.equal(resolution.fence.generation, observed.generation);
-    assert.equal(leaseStore.calls.length, 0);
-  });
+  }
 });

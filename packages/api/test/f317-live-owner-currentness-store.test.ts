@@ -3,8 +3,6 @@ import { randomUUID } from 'node:crypto';
 import { test } from 'node:test';
 import { createCatId } from '@cat-cafe/shared';
 import { Redis } from 'ioredis';
-import { InvocationQueue } from '../src/domains/cats/services/agents/invocation/InvocationQueue.js';
-import { createInitialQueuedMessageCustody } from '../src/domains/cats/services/agents/invocation/QueuedMessageCustodyCoordinator.js';
 import {
   type IMessageStore,
   MessageStore,
@@ -51,7 +49,7 @@ for (const backend of ['memory', 'redis'] as const)
           await store.append({
             userId: 'owner',
             threadId: 'home',
-            catId: createCatId('sonnet'),
+            from: { kind: 'agent', catId: createCatId('sonnet') },
             content: 'history',
             mentions: [],
             timestamp: 100 + i,
@@ -64,7 +62,7 @@ for (const backend of ['memory', 'redis'] as const)
         const source = await store.append({
           userId: 'owner',
           threadId: 'home',
-          catId: null,
+          from: { kind: 'user', userId: 'owner' },
           content: 'current input',
           mentions: [],
           timestamp: 1_000,
@@ -78,7 +76,7 @@ for (const backend of ['memory', 'redis'] as const)
           await store.append({
             userId: 'owner',
             threadId: 'home',
-            catId: createCatId('sonnet'),
+            from: { kind: 'agent', catId: createCatId('sonnet') },
             content: 'later assistant reply',
             mentions: [],
             timestamp: 2_000 + i,
@@ -91,7 +89,7 @@ for (const backend of ['memory', 'redis'] as const)
         await store.append({
           userId: 'owner',
           threadId: 'home',
-          catId: createCatId('sonnet'),
+          from: { kind: 'agent', catId: createCatId('sonnet') },
           content: '256th later reply',
           mentions: [],
           timestamp: 3_000,
@@ -100,31 +98,20 @@ for (const backend of ['memory', 'redis'] as const)
         const latest = await store.append({
           userId: 'owner',
           threadId: 'home',
-          catId: null,
+          from: { kind: 'user', userId: 'owner' },
           content: 'new current input',
           mentions: [],
           timestamp: 4_000,
         });
         assert.equal(await isLatestOwnerMessage(store, scope, latest), true);
-        const entry = new InvocationQueue().enqueue({
-          userId: 'owner',
-          threadId: 'home',
-          source: 'user',
-          ownerAuthProvenance: 'strict',
-          content: 'correction',
-          targetCats: [createCatId('codex61-sol')],
-          intent: 'coordinate',
-        }).entry;
-        assert.ok(entry);
         const queued = await store.append({
           userId: 'owner',
           threadId: 'home',
-          catId: null,
+          from: { kind: 'user', userId: 'owner' },
           content: 'correction',
           mentions: [],
           timestamp: 1,
           deliveryStatus: 'queued',
-          queueCustody: createInitialQueuedMessageCustody(entry),
         });
         assert.equal(
           (await store.getByThread('home', 256, 'owner', { includeQueuedUserMessages: true })).some(

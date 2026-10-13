@@ -1,8 +1,8 @@
 import type { CatData } from '@/hooks/useCatData';
 import type { HubCatEditorFormState } from './hub-cat-editor.model';
 
-export function usesAgyNative(form: Pick<HubCatEditorFormState, 'clientId' | 'acpEnabled' | 'agyNativeEnabled'>) {
-  return form.clientId === 'google' && !form.acpEnabled && form.agyNativeEnabled === true;
+export function usesAgyNative(form: Pick<HubCatEditorFormState, 'clientId' | 'carrier' | 'agyNativeEnabled'>) {
+  return form.clientId === 'google' && form.carrier !== 'acp' && form.agyNativeEnabled === true;
 }
 
 export function buildAgyProfilePatch(

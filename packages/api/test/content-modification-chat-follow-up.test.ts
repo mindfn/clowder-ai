@@ -9,6 +9,7 @@ import type {
 import Fastify from 'fastify';
 import { InvocationRegistry } from '../src/domains/cats/services/agents/invocation/InvocationRegistry.js';
 import type { PersistedQueueDeliveryInput } from '../src/domains/cats/services/agents/invocation/PersistedQueueDelivery.js';
+import { queueEntryId } from '../src/domains/cats/services/agents/invocation/queue-ledger/QueueLedger.js';
 import { assembleContext } from '../src/domains/cats/services/context/ContextAssembler.js';
 import { DeliveryCursorStore } from '../src/domains/cats/services/stores/ports/DeliveryCursorStore.js';
 import { MessageStore } from '../src/domains/cats/services/stores/ports/MessageStore.js';
@@ -33,7 +34,7 @@ for (const state of ['conflict', 'unknown'] as const) {
       threads.updateThinkingMode(thread.id, 'play');
       const source = messages.append({
         userId: 'operator',
-        catId: null,
+        from: { kind: 'user', userId: 'operator' },
         threadId: thread.id,
         content: 'Please update the private document.',
         mentions: [targetCatId],
@@ -65,7 +66,8 @@ for (const state of ['conflict', 'unknown'] as const) {
       const carrier = messages
         .getByThread(thread.id, 100, 'operator', { includeQueuedUserMessages: true })
         .find((message) => message.source?.connector === 'content-modification-result');
-      assert.ok(carrier?.queueCustody);
+      assert.ok(carrier);
+      assert.equal(Object.hasOwn(carrier, 'queueCustody'), false);
       assert.equal(carrier.visibility ?? 'public', visibility);
       assert.deepEqual(carrier.whisperTo ?? [], visibility === 'whisper' ? [targetCatId] : []);
       assert.deepEqual(carrier.source?.meta, {
@@ -80,9 +82,10 @@ for (const state of ['conflict', 'unknown'] as const) {
       });
 
       const awakenedId = await live.waitForAwakening(carrier.id);
-      const entry = live.queue.getEntrySnapshot(thread.id, 'operator', carrier.queueCustody.entryId);
-      assert.ok(entry);
-      await live.coordinator.commitSuccessfulTargets(entry, [targetCatId], awakenedId, Date.now());
+      const entryId = queueEntryId(carrier.id);
+      assert.equal(await live.queue.getDurableEntry(thread.id, entryId), null);
+      assert.equal(live.starts.length, 1);
+      assert.equal(live.starts[0].invocationId, awakenedId);
       assert.equal(messages.getById(carrier.id)?.deliveryStatus, 'delivered');
 
       const exactDelivery = deliveryInput(carrier, state, visibility);
@@ -215,6 +218,7 @@ function deliveryInput(
     idempotencyKey: `f309-result-follow-up:${createHash('sha256').update(`writeback-${state}`).digest('hex')}`,
     content: carrier.content,
     source: carrier.source,
+    from: carrier.from,
     sourceCategory: 'producer_return' as const,
   };
   return visibility === 'whisper' ? { ...common, visibility, whisperTo: [targetCatId] } : { ...common, visibility };

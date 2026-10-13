@@ -24,7 +24,6 @@ import type { WorkspaceContentReviewService } from '../workspace-review/service.
 import { workspaceReviewIdentity } from '../workspace-review/workspace-review-anchors.js';
 import type { ContentModificationJournal } from './journal.js';
 import { type MediaMessageTakeoverDeps, resolveMediaMessagePayload } from './media-message/media-message-takeover.js';
-import { hasCurrentModificationQueueExposure } from './request-authority.js';
 import { ModificationTextError } from './text/text-store.js';
 
 type CatPrincipal = MediaReviewPrincipal & {
@@ -212,9 +211,7 @@ function assertTakeoverSource(
     message.recall ||
     message.deletedAt !== undefined ||
     message._tombstone ||
-    (!isDelivered(message) &&
-      (!principal.invocationId ||
-        !hasCurrentModificationQueueExposure(message, principal.actor.actorId, principal.invocationId))) ||
+    !isDelivered(message) ||
     !message.mentions.some((catId) => catId === principal.actor.actorId) ||
     (message.visibility === 'whisper' && !message.whisperTo?.some((catId) => catId === principal.actor.actorId))
   )

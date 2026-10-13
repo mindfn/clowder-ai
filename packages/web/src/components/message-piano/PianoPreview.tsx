@@ -5,7 +5,6 @@ import type { PianoKey } from './piano-geometry';
 
 export function PianoPreview({
   message,
-  messages,
   keyData,
   trackHeight,
   label,
@@ -13,7 +12,6 @@ export function PianoPreview({
   color,
 }: {
   message: ChatMessage;
-  messages: readonly ChatMessage[];
   keyData: PianoKey;
   trackHeight: number;
   label: string;
@@ -25,7 +23,8 @@ export function PianoPreview({
     0,
     Math.min(trackHeight - expandedHeight, keyData.trackTop + keyData.trackHeight / 2 - expandedHeight / 2),
   );
-  const human = message.type === 'user' && !message.catId;
+  const human = message.from?.kind === 'user';
+  const actorCatId = message.from?.kind === 'agent' ? message.from.catId : undefined;
   return (
     <>
       <div
@@ -39,8 +38,8 @@ export function PianoPreview({
         style={{ top: Math.max(24, Math.min(trackHeight - 24, keyData.trackTop)) }}
       >
         <div className="flex items-center gap-2 font-medium">
-          {message.catId ? (
-            <CatAvatar catId={message.catId} size={20} ring="none" />
+          {actorCatId ? (
+            <CatAvatar catId={actorCatId} size={20} ring="none" />
           ) : (
             <span
               aria-hidden="true"
@@ -54,7 +53,7 @@ export function PianoPreview({
             {label} · {formatTime(message.timestamp)}
           </span>
         </div>
-        <div className="line-clamp-2 mt-1">{messageNavigatorPreviewText(message, messages)}</div>
+        <div className="line-clamp-2 mt-1">{messageNavigatorPreviewText(message)}</div>
         {keyData.error && <div className="mt-1 text-conn-red-text">○ 这里出过错</div>}
         {keyData.awaitingResponse && <div className="mt-1">⚑ 等你回应</div>}
       </div>

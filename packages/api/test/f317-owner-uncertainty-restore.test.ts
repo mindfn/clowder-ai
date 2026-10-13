@@ -1,15 +1,12 @@
 import assert from 'node:assert/strict';
 import { randomUUID } from 'node:crypto';
 import { test } from 'node:test';
-import { Redis } from 'ioredis';
+import type { Redis } from 'ioredis';
 import { RedisMessageStore } from '../src/domains/cats/services/stores/redis/RedisMessageStore.js';
 import { isLatestOwnerMessage } from '../src/domains/concierge/live/host/voice/live-owner-currentness.js';
-import { makeQueuedMessageCustody } from './helpers/queued-message-custody.js';
-import {
-  assertRedisIsolationOrThrow,
-  cleanupClientKeyspace,
-  redisIsolationSkipReason,
-} from './helpers/redis-test-helpers.js';
+import { ownedRedisFixture } from './helpers/owned-redis-fixture.js';
+
+const owned = ownedRedisFixture('f117-source-accounting');
 
 const scope = {
   userId: 'owner',
@@ -27,20 +24,15 @@ const options = {
 const input = {
   userId: 'owner',
   threadId: 'home',
-  catId: null,
+  from: { kind: 'user', userId: 'owner' },
   content: 'backdated queued correction',
   mentions: [],
   timestamp: 1,
   deliveryStatus: 'queued',
-  queueCustody: makeQueuedMessageCustody(),
 };
 for (const scenario of ['restore', 'hard-tombstone', 'hard-delete-race'])
-  test('source1453 ' + scenario, { skip: redisIsolationSkipReason(process.env.REDIS_URL) }, async () => {
-    assertRedisIsolationOrThrow(process.env.REDIS_URL, 'F317 restore probe');
-    const redis = new Redis(process.env.REDIS_URL, {
-      keyPrefix: 'f317-restore-' + randomUUID() + ':',
-      maxRetriesPerRequest: 1,
-    });
+  test('source1453 ' + scenario, {}, async () => {
+    const redis = owned.client('f317-restore-' + randomUUID() + ':');
     const store = new RedisMessageStore(redis, { ttlSeconds: 0 });
     try {
       const source = await store.append({
@@ -48,7 +40,6 @@ for (const scenario of ['restore', 'hard-tombstone', 'hard-delete-race'])
         timestamp: 9000,
         content: 'current source',
         deliveryStatus: undefined,
-        queueCustody: undefined,
       });
       const queued = await store.append(input);
       await store.softDelete(queued.id, 'owner');
@@ -90,7 +81,6 @@ for (const scenario of ['restore', 'hard-tombstone', 'hard-delete-race'])
         );
       }
     } finally {
-      await cleanupClientKeyspace(redis);
-      await redis.quit();
+      redis.disconnect();
     }
   });

@@ -185,8 +185,8 @@ export class ContentModificationChatProjection {
     });
     if (record.progress.prepared?.kind === 'media') await this.deps.authorizeMediaReceipt?.(record);
     const appended = await this.deps.messages.appendIdempotent({
-      userId: 'system',
-      catId: null,
+      userId: record.ownerUserId,
+      from: { kind: 'system', service: 'content-modification' },
       content: receiptContent(receipt),
       mentions: [],
       timestamp: event.observedAt,
@@ -217,7 +217,8 @@ export class ContentModificationChatProjection {
   ): ContentModificationChatProjectionResult {
     const parsed = contentModificationReceiptV1Schema.safeParse(message.extra?.contentModificationReceiptV1);
     if (
-      message.userId !== 'system' ||
+      message.userId !== record.ownerUserId ||
+      message.from?.kind !== 'system' ||
       message.threadId !== record.payload.threadId ||
       message.catId !== null ||
       message.replyTo !== record.progress.sourceMessageId ||

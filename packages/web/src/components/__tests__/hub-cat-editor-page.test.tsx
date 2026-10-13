@@ -15,6 +15,7 @@ const cat: CatData = {
   avatar: '/avatars/codex.png',
   color: { primary: '#5B8C5A', secondary: '#D4E6D3' },
   mentionPatterns: ['@test-member'],
+  carrier: 'cli',
   clientId: 'anthropic',
   defaultModel: 'test-model',
   accountRef: 'claude',

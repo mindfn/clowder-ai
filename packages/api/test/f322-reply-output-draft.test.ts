@@ -11,6 +11,7 @@ class HashRedis {
   hashes = new Map<string, Record<string, string>>();
   sets = new Map<string, Set<string>>();
   expirations: number[] = [];
+  persistentKeys = new Set<string>();
 
   async hget(key: string, field: string) {
     return this.hashes.get(key)?.[field] ?? null;
@@ -44,6 +45,10 @@ class HashRedis {
     this.expirations.push(seconds);
     return 1;
   }
+  async persist(key: string) {
+    this.persistentKeys.add(key);
+    return 1;
+  }
   multi() {
     const operations: Array<() => Promise<unknown>> = [];
     const pipeline = {
@@ -65,6 +70,10 @@ class HashRedis {
       },
       sadd: (key: string, value: string) => {
         operations.push(() => this.sadd(key, value));
+        return pipeline;
+      },
+      persist: (key: string) => {
+        operations.push(() => this.persist(key));
         return pipeline;
       },
       expire: (key: string, seconds: number) => {
@@ -134,10 +143,8 @@ test('the Redis draft wire preserves ordered output ranges across a fresh reader
   assert.equal(restored.content, content, 'the complete body stays the only stored body');
   assert.deepEqual(restored.toolEvents, draft.toolEvents);
   assert.deepEqual(restored.extra?.outputLayout, outputLayout);
-  assert.ok(
-    redis.expirations.every((seconds) => seconds === 300),
-    'existing TTL is unchanged',
-  );
+  assert.deepEqual(redis.expirations, [], 'user-visible drafts have no automatic expiration');
+  assert.equal(redis.persistentKeys.size, 2, 'both the owned draft and its thread index remain persistent');
 });
 
 test('unknown/legacy draft content remains whole and owner-scoped', async () => {

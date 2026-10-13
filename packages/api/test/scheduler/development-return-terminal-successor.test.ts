@@ -18,8 +18,7 @@ const terminalGenerationCases = [
   { label: 'failed', outcome: 'failed' },
   { label: 'canceled', outcome: 'canceled' },
   { label: 'unavailable', outcome: 'unavailable' },
-  { label: 'interrupted-after-read' },
-] satisfies Array<{ label: string; outcome?: ActionSuccessorHolderOutcome }>;
+] satisfies Array<{ label: string; outcome: ActionSuccessorHolderOutcome }>;
 
 for (const terminalCase of terminalGenerationCases) {
   test(`a ${terminalCase.label} successor generation remains a terminal predecessor for the next reporter`, async (t) => {
@@ -103,24 +102,15 @@ for (const terminalCase of terminalGenerationCases) {
     );
     assert.deepEqual(second.reporterCatIds, [FIRST_SUCCESSOR]);
 
-    const terminal = terminalCase.outcome
-      ? recordActionSuccessorOutcome(box.lease, {
-          generation: box.lease.generation,
-          catId: FIRST_SUCCESSOR,
-          outcome: terminalCase.outcome,
-          evidenceRef: `queue:first-successor:${terminalCase.outcome}`,
-          now: f.service.now() + 1,
-        })
-      : box.lease;
-    const interruptedGeneration = terminalCase.outcome
-      ? undefined
-      : {
-          generation: terminal.generation,
-          evidenceRef: `carrier-interrupted-after-read:${terminal.leaseId}:g${terminal.generation}:${FIRST_SUCCESSOR}@${f.child.id}`,
-        };
+    const terminal = recordActionSuccessorOutcome(box.lease, {
+      generation: box.lease.generation,
+      catId: FIRST_SUCCESSOR,
+      outcome: terminalCase.outcome,
+      evidenceRef: `execution:first-successor:${terminalCase.outcome}`,
+      now: f.service.now() + 1,
+    });
     const replaced = replaceActionSuccessor(terminal, {
       expectedGeneration: terminal.generation,
-      ...(interruptedGeneration ? { interruptedGeneration } : {}),
       holderCatIds: [SECOND_SUCCESSOR],
       holderThreadId: f.child.id,
       predecessorCatId: f.actor.catId,
@@ -132,10 +122,7 @@ for (const terminalCase of terminalGenerationCases) {
       now: f.service.now() + 2,
     });
     assert.equal(replaced.outcome, 'replaced');
-    assert.equal(
-      replaced.lease.replacementTransitions.at(-1)?.reason,
-      terminalCase.outcome ? 'holder_terminal' : 'interrupted',
-    );
+    assert.equal(replaced.lease.replacementTransitions.at(-1)?.reason, 'holder_terminal');
     box.lease = replaced.lease;
 
     f.tick(20_000);
@@ -158,7 +145,7 @@ for (const terminalCase of terminalGenerationCases) {
 
     const report = f.messages.append({
       userId: f.actor.userId,
-      catId: SECOND_SUCCESSOR,
+      from: { kind: 'agent', catId: SECOND_SUCCESSOR },
       threadId: f.child.id,
       content: `Second successor completed after ${terminalCase.label}`,
       mentions: [],

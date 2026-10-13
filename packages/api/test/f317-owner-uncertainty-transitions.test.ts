@@ -1,29 +1,34 @@
 import assert from 'node:assert/strict';
 import { randomUUID } from 'node:crypto';
 import { test } from 'node:test';
-import { Redis } from 'ioredis';
+import type { Redis } from 'ioredis';
+import { InvocationQueue } from '../src/domains/cats/services/agents/invocation/InvocationQueue.js';
+import { RedisQueueLedgerStore } from '../src/domains/cats/services/agents/invocation/queue-ledger/RedisQueueLedgerStore.js';
 import { RedisMessageStore } from '../src/domains/cats/services/stores/redis/RedisMessageStore.js';
-import { makeQueuedMessageCustody } from './helpers/queued-message-custody.js';
-import {
-  assertRedisIsolationOrThrow,
-  cleanupClientKeyspace,
-  redisIsolationSkipReason,
-} from './helpers/redis-test-helpers.js';
+import { ownedRedisFixture } from './helpers/owned-redis-fixture.js';
+
+const owned = ownedRedisFixture('f117-source-accounting');
 
 const options = {
   includeQueuedUserMessages: true,
   includeRecalledUserMessages: true,
   onlyUnpositionedOwnerMessages: true,
 };
-const input = { userId: 'owner', threadId: 'home', catId: null, content: 'input', mentions: [], timestamp: 100 };
+const input = {
+  userId: 'owner',
+  threadId: 'home',
+  from: { kind: 'user', userId: 'owner' },
+  content: 'input',
+  mentions: [],
+  timestamp: 100,
+};
 const index = 'msg:owner-uncertainty:home';
 
 for (const scenario of [
   'legacy',
   'delivery',
   'cancel',
-  'prepare',
-  'frontier',
+  'atomic-admission',
   'observed-frontier',
   'delete',
   'version',
@@ -32,22 +37,17 @@ for (const scenario of [
   'hydration',
   'short-hydration',
   'saturation',
-  'custody',
   'reassign',
   'expired',
 ] as const)
-  test(`Redis owner uncertainty: ${scenario}`, { skip: redisIsolationSkipReason(process.env.REDIS_URL) }, async (t) => {
-    const url = process.env.REDIS_URL;
-    assert.ok(url);
-    assertRedisIsolationOrThrow(url, 'F317 owner uncertainty transition');
-    const redis = new Redis(url, { keyPrefix: `f317-uncertainty-state-${randomUUID()}:`, maxRetriesPerRequest: 1 });
+  test(`Redis owner uncertainty: ${scenario}`, {}, async (t) => {
+    const redis = owned.client(`f317-uncertainty-state-${randomUUID()}:`);
     const store = new RedisMessageStore(redis, { ttlSeconds: 0 });
     const read = () => store.getByThread('home', 1, 'owner', options);
     const queued = () =>
       store.append({
         ...input,
         deliveryStatus: 'queued',
-        queueCustody: makeQueuedMessageCustody({ status: 'terminal', pendingTargetCats: [] }),
       });
     try {
       if (scenario === 'legacy') {
@@ -71,23 +71,26 @@ for (const scenario of [
         else assert.equal((await store.markCanceled(message.id))?.deliveryTransitioned, true);
         assert.deepEqual(await read(), []);
         assert.equal(await redis.zcard(index), 0);
-      } else if (scenario === 'prepare') {
-        const message = await store.append(input);
+      } else if (scenario === 'atomic-admission' || scenario === 'observed-frontier') {
         await read();
-        assert.equal((await store.prepareQueueAdmission(message.id)).kind, 'prepared');
-        assert.equal((await store.initializeQueueCustody(message.id, makeQueuedMessageCustody())).kind, 'initialized');
-        assert.deepEqual(
-          (await read()).map((row) => row.id),
-          [message.id],
-        );
-      } else if (scenario === 'frontier' || scenario === 'observed-frontier') {
-        await read();
-        const message = { ...input, deliveryStatus: 'queued' as const, queueCustody: makeQueuedMessageCustody() };
+        const message = { ...input, deliveryStatus: 'queued' as const };
         const result =
-          scenario === 'frontier'
-            ? await store.appendIfThreadFrontier(message, null)
+          scenario === 'atomic-admission'
+            ? await new InvocationQueue(new RedisQueueLedgerStore(redis)).send(store, message, {
+                threadId: 'home',
+                userId: 'owner',
+                from: input.from,
+                content: input.content,
+                kind: 'conversation_input',
+                ownerAuthProvenance: 'strict',
+                targetCats: ['opus'],
+                intent: 'execute',
+              })
             : await store.appendAndObservePriorFrontier(message);
-        assert.equal(result.kind, 'committed');
+        assert.equal(
+          scenario === 'atomic-admission' ? result.outcome : result.kind,
+          scenario === 'atomic-admission' ? 'enqueued' : 'committed',
+        );
         assert.equal((await read()).length, 1);
       } else if (scenario === 'delete') {
         const message = await queued();
@@ -96,17 +99,8 @@ for (const scenario of [
         assert.deepEqual(await read(), []);
         assert.equal(await redis.zcard(index), 0);
         await store.deleteByThread('home');
-        assert.equal(await redis.exists(`${index}:version`), 0);
-      } else if (scenario === 'custody') {
-        await read();
-        const initial = makeQueuedMessageCustody();
-        const message = await store.append({ ...input, deliveryStatus: 'queued', queueCustody: initial });
-        const next = { ...initial, revision: 2, status: 'terminal', pendingTargetCats: [], updatedAt: 2_000 };
-        assert.equal(
-          (await store.transitionQueueCustody(message.id, { expectedRevision: 1, next, deliveredAt: 2_000 })).kind,
-          'updated',
-        );
-        assert.deepEqual(await read(), []);
+        assert.equal(await store.getById(message.id), null);
+        assert.deepEqual(await read(), [], 'a retained index version cannot resurrect deleted History');
       } else if (scenario === 'reassign') {
         const message = await queued();
         await read();
@@ -168,14 +162,13 @@ for (const scenario of [
           await store.append({
             ...input,
             userId: 'foreign',
+            from: { kind: 'user', userId: 'foreign' },
             timestamp: i + 1,
             deliveryStatus: 'queued',
-            queueCustody: makeQueuedMessageCustody(),
           });
         await assert.rejects(read(), /saturated/, 'bounded uncertainty cannot be mistaken for proven absence');
       }
     } finally {
-      await cleanupClientKeyspace(redis);
-      await redis.quit();
+      redis.disconnect();
     }
   });

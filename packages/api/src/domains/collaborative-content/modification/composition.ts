@@ -6,7 +6,7 @@ import type { PersistedQueueDeliveryPort } from '../../cats/services/agents/invo
 import { CodexNativeImageEvidenceReader } from '../../cats/services/agents/providers/CodexNativeImageEvidenceReader.js';
 import type { IMessageStore } from '../../cats/services/stores/ports/MessageStore.js';
 import type { ITaskStore } from '../../cats/services/stores/ports/TaskStore.js';
-import type { ITurnExecutionStore } from '../../cats/services/stores/ports/TurnExecutionStore.js';
+import type { TurnExecutionSourceReadPort } from '../../cats/services/stores/ports/TurnExecutionStore.js';
 import type { createArtifactReviewIntegration } from '../../growing/artifact-review-composition.js';
 import { EntrustedWorkLifecycleService } from '../../growing/EntrustedWorkLifecycleService.js';
 import { MediaOwnerError } from '../../video-studio/content-owner/media-errors.js';
@@ -39,8 +39,8 @@ export function createContentModificationIntegration(deps: {
   artifacts: ReturnType<typeof createArtifactReviewIntegration>;
   tasks: ITaskStore;
   messages: IMessageStore;
-  turnExecutions?: Pick<ITurnExecutionStore, 'get'>;
-  queue?: Pick<InvocationQueue, 'getEntrySnapshot'>;
+  turnExecutions?: TurnExecutionSourceReadPort;
+  queue?: Pick<InvocationQueue, 'getEntrySnapshot' | 'getDurableEntriesForMessages'>;
   delivery?: PersistedQueueDeliveryPort;
   changed: (userId: string) => void;
   sourceChanged?: (ownerUserId: string, threadId: string, messageId: string) => void;
@@ -103,6 +103,7 @@ export function createContentModificationIntegration(deps: {
     store,
     messages: deps.messages,
     tasks: deps.tasks,
+    ...(deps.queue ? { queue: deps.queue } : {}),
     ...(deps.turnExecutions ? { turnExecutions: deps.turnExecutions } : {}),
     lifecycle,
     content,

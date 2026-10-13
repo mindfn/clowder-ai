@@ -80,7 +80,13 @@ describe('useCatData applies catOrder', () => {
 
   it('reorders cats according to /api/config/cat-order', async () => {
     wireApiFetch({
-      '/api/cats': { cats: [{ id: 'opus' }, { id: 'opus-47' }, { id: 'gpt52' }] },
+      '/api/cats': {
+        cats: [
+          { id: 'opus', carrier: 'cli' },
+          { id: 'opus-47', carrier: 'cli' },
+          { id: 'gpt52', carrier: 'cli' },
+        ],
+      },
       '/api/config/cat-order': { catOrder: ['opus-47', 'gpt52'] },
     });
 
@@ -97,7 +103,13 @@ describe('useCatData applies catOrder', () => {
 
   it('leaves cats in original order when cat-order returns empty', async () => {
     wireApiFetch({
-      '/api/cats': { cats: [{ id: 'opus' }, { id: 'opus-47' }, { id: 'gpt52' }] },
+      '/api/cats': {
+        cats: [
+          { id: 'opus', carrier: 'cli' },
+          { id: 'opus-47', carrier: 'cli' },
+          { id: 'gpt52', carrier: 'cli' },
+        ],
+      },
       '/api/config/cat-order': { catOrder: [] },
     });
 
@@ -114,7 +126,13 @@ describe('useCatData applies catOrder', () => {
 
   it('stale saveCatOrder success does not overwrite newer save in cache', async () => {
     wireApiFetch({
-      '/api/cats': { cats: [{ id: 'opus' }, { id: 'opus-47' }, { id: 'gpt52' }] },
+      '/api/cats': {
+        cats: [
+          { id: 'opus', carrier: 'cli' },
+          { id: 'opus-47', carrier: 'cli' },
+          { id: 'gpt52', carrier: 'cli' },
+        ],
+      },
       '/api/config/cat-order': { catOrder: [] },
     });
 
@@ -160,7 +178,13 @@ describe('useCatData applies catOrder', () => {
 
   it('older success after newer failure still updates cache', async () => {
     wireApiFetch({
-      '/api/cats': { cats: [{ id: 'opus' }, { id: 'opus-47' }, { id: 'gpt52' }] },
+      '/api/cats': {
+        cats: [
+          { id: 'opus', carrier: 'cli' },
+          { id: 'opus-47', carrier: 'cli' },
+          { id: 'gpt52', carrier: 'cli' },
+        ],
+      },
       '/api/config/cat-order': { catOrder: [] },
     });
 

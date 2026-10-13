@@ -189,8 +189,8 @@ function Host() {
       presentation="v2"
       disabled={latest.phase === 'creating' || latest.phase === 'sending'}
       onDraftChange={latest.onDraftChange}
-      onSend={(content, images, whisper, deliveryMode, replyToId, messageDisposition, contextAttachments) =>
-        latest.send({ content, images, whisper, deliveryMode, replyToId, messageDisposition, contextAttachments })
+      onSend={(content, images, whisper, replyToId, contextAttachments, explicitTargetCats) =>
+        latest.send({ content, images, whisper, replyToId, contextAttachments, explicitTargetCats })
       }
     />
   ) : null;

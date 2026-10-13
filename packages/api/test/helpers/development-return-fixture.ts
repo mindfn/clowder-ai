@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import type { TestContext } from 'node:test';
 import Database from 'better-sqlite3';
 import './setup-cat-registry.js';
-import { MessageStore } from '../../src/domains/cats/services/stores/ports/MessageStore.js';
+import { MessageStore } from '../../dist/domains/cats/services/stores/ports/MessageStore.js';
 import { InMemoryProposalStore } from '../../src/domains/cats/services/stores/ports/ProposalStore.js';
 import { TaskStore } from '../../src/domains/cats/services/stores/ports/TaskStore.js';
 import { ThreadStore } from '../../src/domains/cats/services/stores/ports/ThreadStore.js';
@@ -15,8 +15,9 @@ import { createPersistedQueueFixture } from './persisted-queue-fixture.js';
 
 export async function createDevelopmentReturnFixture(
   t: TestContext,
-  options: { proposalDelegateCatId?: string; ownerCatId?: string } = {},
+  options: { ownerCatId?: string; proposalDelegateCatId?: string } = {},
 ) {
+  const ownerCatId = options.ownerCatId ?? 'codex-sol';
   const db = new Database(':memory:');
   applyMigrations(db);
   t.after(() => db.close());
@@ -25,12 +26,11 @@ export async function createDevelopmentReturnFixture(
     messages = new MessageStore(),
     proposals = new InMemoryProposalStore();
   const original = threads.create('human', 'Original', process.cwd());
-  const ownerCatId = options.ownerCatId ?? 'codex-sol';
   const actor = { userId: 'human', catId: ownerCatId, threadId: original.id };
   let now = Date.now();
   const source = messages.append({
     userId: 'human',
-    catId: null,
+    from: { kind: 'user', userId: 'human' },
     threadId: original.id,
     content: '完成这个 B 子工作',
     mentions: [],
@@ -73,13 +73,12 @@ export async function createDevelopmentReturnFixture(
     title: 'Execution',
     reason: 'Authorized sub-work',
     parentThreadId: original.id,
-    preferredCats: [options.proposalDelegateCatId ?? actor.catId],
-    subjectTaskId: admitted.task.id,
-    subjectTaskTitle: admitted.task.title,
-    approvedDevelopmentScope: admitted.task.entrustedWork.developmentScope,
+    preferredCats: [options.proposalDelegateCatId ?? ownerCatId],
     projectPath: process.cwd(),
     createdBy: 'human',
     reportingMode: 'final-only',
+    subjectTaskId: admitted.task.id,
+    approvedDevelopmentScope: admitted.task.entrustedWork!.developmentScope,
   });
   const child = threads.create('human', 'Execution', process.cwd(), original.id, {
     createdFromProposalId: proposal.proposalId,
@@ -92,7 +91,8 @@ export async function createDevelopmentReturnFixture(
   const definitions = new DynamicTaskStore(db),
     events = [],
     wakes = [],
-    deliveries = new Map();
+    deliveries = new Map(),
+    admissions = [];
   let queueFull = false;
   const runner = new TaskRunnerV2({
     ledger: new RunLedger(db),
@@ -106,6 +106,7 @@ export async function createDevelopmentReturnFixture(
     async deliver(input) {
       if (queueFull) throw new Error('Owner queue is full');
       const result = await transport.delivery.deliver(input);
+      admissions.push({ input, result });
       if (result.message) {
         if (!deliveries.has(input.idempotencyKey))
           wakes.push([input.threadId, input.targetCatId, input.ownerUserId, input.content, result.message.id]);
@@ -150,6 +151,7 @@ export async function createDevelopmentReturnFixture(
     events,
     wakes,
     deliveries,
+    admissions,
     transport,
     input,
     setQueueFull(value) {
@@ -161,7 +163,7 @@ export async function createDevelopmentReturnFixture(
     report() {
       return messages.append({
         userId: 'human',
-        catId: ownerCatId,
+        from: { kind: 'agent', catId: ownerCatId },
         threadId: child.id,
         content: 'Accepted development result and validation',
         mentions: [],

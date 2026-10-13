@@ -46,7 +46,7 @@ describe('AgentRouter routing preview', () => {
     messageStore.append({
       threadId: thread.id,
       userId: 'owner',
-      catId: null,
+      from: { kind: 'user', userId: 'owner' },
       content: '@opus 上一条明确找你',
       mentions: ['opus'],
       timestamp: Date.now(),

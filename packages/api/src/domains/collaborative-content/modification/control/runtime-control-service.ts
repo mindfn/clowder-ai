@@ -2,7 +2,7 @@ import { isDeepStrictEqual } from 'node:util';
 import { contentRuntimeControlTargetSchema } from '@cat-cafe/shared';
 import type { InvocationQueue } from '../../../cats/services/agents/invocation/InvocationQueue.js';
 import type { NativeControlCommand } from '../../../cats/services/agents/invocation/NativeControlReceipt.js';
-import type { ITurnExecutionStore } from '../../../cats/services/stores/ports/TurnExecutionStore.js';
+import type { TurnExecutionSourceReadPort } from '../../../cats/services/stores/ports/TurnExecutionStore.js';
 import type { MediaReviewPrincipal } from '../../../video-studio/content-owner/published-media-access.js';
 import type { ContentModificationJournal } from '../journal.js';
 import { ContentModificationJournalError } from '../journal-errors.js';
@@ -14,7 +14,7 @@ export class ModificationRuntimeControlService {
       journal: ContentModificationJournal;
       requests: ContentModificationService;
       queue?: Pick<InvocationQueue, 'getEntrySnapshot'>;
-      turns?: Pick<ITurnExecutionStore, 'get'>;
+      turns?: TurnExecutionSourceReadPort;
     },
   ) {}
   async confirm(requestId: string, raw: unknown, principal: MediaReviewPrincipal) {
@@ -43,8 +43,14 @@ export class ModificationRuntimeControlService {
       const entry = this.deps.queue?.getEntrySnapshot(view.record.payload.threadId, principal.userId, target.entryId);
       if (
         !entry ||
-        ![entry.messageId, ...(entry.mergedMessageIds ?? [])].includes(target.messageId) ||
-        !entry.allTargetCats?.some((cat) => cat === view.record.payload.targetCatId)
+        entry.id !== target.entryId ||
+        entry.status !== 'queued' ||
+        entry.owner.kind !== 'user' ||
+        entry.owner.userId !== principal.userId ||
+        entry.threadId !== view.record.payload.threadId ||
+        entry.payload.messageId !== target.messageId ||
+        entry.payload.sourceRecordId !== target.messageId ||
+        !entry.targets.includes(view.record.payload.targetCatId)
       )
         throw new ContentModificationJournalError('invalid_progress');
       // The native DELETE performs the atomic exclusive-source check immediately before removal.
@@ -58,6 +64,7 @@ export class ModificationRuntimeControlService {
         const turn = await this.deps.turns?.get(action.target.invocationId);
         const executionState =
           turn &&
+          turn.invocationId === action.target.invocationId &&
           turn.parentInvocationId === action.target.executionId &&
           turn.threadId === action.threadId &&
           turn.catId === action.catId &&

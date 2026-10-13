@@ -23,7 +23,7 @@ function source(messages: MessageStore, eventId: string, workRequest?: string) {
   return messages.append({
     userId: 'owner',
     threadId: 'channel',
-    catId: null,
+    from: { kind: 'external', connectorId: 'collective' },
     mentions: [],
     timestamp: 1,
     content: `Deliver a guide for ${eventId}`,

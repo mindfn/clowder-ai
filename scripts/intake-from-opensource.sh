@@ -474,6 +474,18 @@ resolve_local_brand_scope() {
 run_brand_validation() {
   local scope_files="${1:-}"
   local scope_label="${2:-absorb PR}"
+  # A public export has provenance and no home exporter. Its sanitizer has
+  # transformed the home-only expectations below; validate the public domain
+  # instead. The checker validates provenance and HEAD as well as index state.
+  if _brand_file_exists ".sync-provenance.json" && ! _brand_file_exists "scripts/sync-to-opensource.sh"; then
+    local public_args=()
+    if [ "$FROM_INDEX" = true ]; then public_args+=(--from-index); fi
+    _BRAND_VIOLATION_COUNT=0
+    if ! printf '%s\n' "$scope_files" | node "$SOURCE_DIR/scripts/public-brand-validation.mjs" "${public_args[@]}"; then
+      _BRAND_VIOLATION_COUNT=1
+    fi
+    return
+  fi
   local -a _BRAND_SCOPE_ARRAY=()
   local scope_path_list scoped_path scope_path_count=0
   if [ -n "$scope_files" ]; then

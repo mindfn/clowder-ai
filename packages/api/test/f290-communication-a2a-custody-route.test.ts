@@ -20,7 +20,7 @@ for (const scope of ['private', 'public', 'delegated-private'] satisfies ScopeCa
         assert.equal(
           escaped.length,
           0,
-          `Collective text must not defer ordinary home custody: ${JSON.stringify(escaped.map((entry) => ({ source: entry.source, scope: entry.executionScope ?? 'home', target: entry.targetCats })))}`,
+          `Collective text must not defer ordinary home custody: ${JSON.stringify(escaped.map((entry) => ({ source: entry.from, scope: entry.execution.executionScope ?? 'home', target: entry.targets })))}`,
         );
       } finally {
         await f.close();
@@ -36,11 +36,15 @@ for (const defer of ['busy', 'pending', 'interrupted'] satisfies DeferCase[]) {
       await f.run();
       assert.equal(f.calls[0]?.policy, undefined);
       const deferred = f.queue.list(f.threadId, f.cafe.ownerUserId);
-      assert.equal(deferred.length, 1, 'The actual branch still accepts ordinary A2A responsibility');
-      assert.deepEqual(deferred[0].targetCats, [NEXT_CAT]);
-      assert.equal(deferred[0].source, 'agent');
-      assert.equal(deferred[0].executionScope, undefined);
-      assert.ok(deferred[0].a2aTriggerMessageId, 'Durable output supplies the actual deferred trigger');
+      if (defer === 'interrupted') {
+        assert.equal(deferred.length, 0, 'Interrupted output is not a completed A2A source');
+        return;
+      }
+      assert.equal(deferred.length, 1, 'Completed output admits one independent Queue successor');
+      assert.deepEqual(deferred[0].targets, [NEXT_CAT]);
+      assert.equal(deferred[0].from.kind, 'agent');
+      assert.equal(deferred[0].execution.executionScope, undefined);
+      assert.ok(deferred[0].execution.a2aTriggerMessageId, 'Durable output supplies the actual deferred trigger');
     } finally {
       await f.close();
     }

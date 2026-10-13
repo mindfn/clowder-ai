@@ -1,6 +1,6 @@
 import './helpers/setup-cat-registry.js';
 import assert from 'node:assert/strict';
-import { mkdtemp, rm } from 'node:fs/promises';
+import { mkdtemp } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { test } from 'node:test';
@@ -35,7 +35,7 @@ function scopedStore() {
 
 test('an actual ordinary invocation cannot resume a running scoped native ID from an otherwise empty chain', async (t) => {
   const directory = await mkdtemp(join(tmpdir(), 'f290-home-invoke-'));
-  t.after(() => rm(directory, { recursive: true, force: true }));
+  t.after(() => console.info('retained scoped home session fixture:', directory));
   const { store, record } = scopedStore();
   const resumed: Array<string | undefined> = [];
   const service: AgentService = {
@@ -83,7 +83,14 @@ test('an actual ordinary invocation cannot resume a running scoped native ID fro
 test('ordinary incremental prompts cannot recover scoped file evidence from the full-chain fallback', async () => {
   const { store, record } = scopedStore();
   const messages = new MessageStore();
-  messages.append({ ...base, catId: null, content: 'HOME_ONLY', mentions: [], timestamp: Date.now() });
+  messages.append({
+    userId: base.userId,
+    threadId: base.threadId,
+    from: { kind: 'user', userId: base.userId },
+    content: 'HOME_ONLY',
+    mentions: [],
+    timestamp: Date.now(),
+  });
   const reads: string[] = [];
   const deps = {
     services: {},

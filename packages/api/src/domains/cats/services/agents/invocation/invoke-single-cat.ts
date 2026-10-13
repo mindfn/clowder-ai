@@ -11,6 +11,7 @@
 
 import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
+import { cloudDispatchSourceMatches } from '../../cloud-bridge/cloud-dispatch-source.js';
 import { isHomeSession } from '../../session/session-scope.js';
 
 const execFileAsync = promisify(execFile);
@@ -30,7 +31,6 @@ import {
   type RequestGenerationPresentationV1,
   type RequestGenerationRetryReason,
   type RequestGenerationSourceRef,
-  type RoutingPreflightDecisionV1,
   resolveCodexSpeed,
   type SealReason,
   type SessionPolicySnapshot,
@@ -86,6 +86,7 @@ import { resolveCliCommand } from '../../../../../utils/cli-resolve.js';
 import { resolveCliTimeoutMs } from '../../../../../utils/cli-timeout.js';
 import { findMonorepoRoot, isSameProject } from '../../../../../utils/monorepo-root.js';
 import { resolvePersistentProjectPathDetailed } from '../../../../../utils/persistent-project-path.js';
+import { readProcessActivity } from '../../../../../utils/process-activity-registry.js';
 import { pathsEqual } from '../../../../../utils/project-path.js';
 import { tcpProbe } from '../../../../../utils/tcp-probe.js';
 import { estimateTokens } from '../../../../../utils/token-counter.js';
@@ -107,10 +108,6 @@ import {
   type AsrPersonMemoryPresentationEnvelope,
   type AsrPersonMemoryPresentationReceipt,
 } from '../../../../memory/people/AsrPersonMemoryOpportunityPromptService.js';
-import {
-  classifyRoutingDispatchFailure,
-  type RoutingDispatchFailureClass,
-} from '../../../../routing-context/RoutingDispatchSignalContract.js';
 import type { AgentPaneRegistry } from '../../../../terminal/agent-pane-registry.js';
 import type { TmuxGateway } from '../../../../terminal/tmux-gateway.js';
 import { resolveBootcampWorkspaceRoot } from '../../bootcamp/workspace-root.js';
@@ -266,7 +263,6 @@ export function requestGenerationMessageSourceRefs(input: {
   readonly injectSystemPrompt: boolean;
   readonly hasContextHint: boolean;
   readonly hasStagingPrepend: boolean;
-  readonly hasRoutingContextProjection?: boolean;
   readonly hasMissionPrefix: boolean;
 }): RequestGenerationSourceRef[] {
   const refs: RequestGenerationSourceRef[] = [
@@ -282,9 +278,6 @@ export function requestGenerationMessageSourceRefs(input: {
       ? [{ owner: 'runtime_context' as const, ref: `context-management-hint:${input.invocationId}` }]
       : []),
     ...(input.hasStagingPrepend ? [{ owner: 'system_prompt' as const, ref: 'staging:adr-038' }] : []),
-    ...(input.hasRoutingContextProjection
-      ? [{ owner: 'runtime_context' as const, ref: `routing-context:${input.invocationId}` }]
-      : []),
     ...(input.hasMissionPrefix ? [{ owner: 'home_state' as const, ref: `thread-mission:${input.threadId}` }] : []),
     { owner: 'runtime_context', ref: `transcript-path-hints:${input.threadId}` },
   ];
@@ -608,6 +601,7 @@ import type {
   AgentRouteIntent,
   AgentService,
   AgentServiceOptions,
+  ClaudeCompactionHooksFactory,
   ContextContinuityHandshake,
   InvocationOrigin,
   ProviderCompactionObservation,
@@ -629,7 +623,7 @@ import type { ResumeFailureKind } from './invoke-helpers.js';
 import {
   classifyResumeFailure,
   extractTaskProgress,
-  isCliTimeoutError,
+  isCliStartupTimeoutError,
   isContextWindowOverflowError,
   isMalformedToolCallError,
   isMissingClaudeSessionError,
@@ -639,6 +633,7 @@ import {
   isTransientCliExitCode1,
   preflightRace,
 } from './invoke-helpers.js';
+import { MEMBER_TIMEOUT_REASON, MemberOutputTimeout, type MemberTimeoutEvent } from './member-output-timeout.js';
 import type { TaskProgressItem, TaskProgressStatus, TaskProgressStore } from './TaskProgressStore.js';
 import { assertToolExecutionPolicySupported, ToolExecutionPolicyUnavailableError } from './tool-execution-policy.js';
 
@@ -1118,14 +1113,17 @@ export interface InvocationDeps {
   readonly collectiveContext?: () =>
     | import('../../../../plugin/builtin-runtime/collective-current-context.js').CollectiveCurrentContext
     | undefined;
-  /** F293: fresh owner-scoped sparse routing projection resolved for every provider generation. */
-  readonly routingContextPromptProjection?: import('../../../../routing-context/RoutingContextPromptProjector.js').RoutingContextPromptProjectionPort;
-  /** F293: observes routing evidence only after the canonical child terminal is durable. */
-  readonly routingDispatchSignalObserver?: import('../../../../routing-context/RoutingDispatchSignalContract.js').RoutingDispatchTerminalObserver;
   /** F296 B3b-1: single owner of context epoch and cold/hot mode for provider-bound invocations. */
   readonly contextEpochOwner?: Pick<ContextEpochOwner, 'resolve' | 'observeCompaction' | 'confirmColdConsumed'>;
   /** Live project-hook auth readiness required before Claude can own a compaction sequence. */
   readonly hookAuthenticationReady?: boolean | (() => boolean);
+  /** Active-workspace PreCompact carrier readiness; independent from callback registry recovery. */
+  readonly claudeProjectHookCarrierReady?: boolean | ((projectRoot: string) => boolean);
+  /**
+   * F117 K2: Claude compaction hooks for a carrier that runs them in-process (the Agent SDK carrier).
+   * Once wired they are that carrier's own proof: authenticated by construction, registered by it.
+   */
+  readonly claudeCompactionHooks?: ClaudeCompactionHooksFactory;
   /** F296 B3b-2: shared admission/delivery state machine for dynamic prompt projections. */
   readonly presentationLedger?: Pick<PresentationLedger, 'reserve' | 'commit' | 'release'>;
   /** F276 Wave 2 bridge: cross-invocation terminal truth consulted at opportunity admission. */
@@ -1164,18 +1162,6 @@ export interface InvocationDeps {
   readonly guideSessionStore?: import('../../../../guides/GuideSessionRepository.js').IGuideSessionStore;
   /** F155 B-6: Dismiss tracker for guide offer suppression */
   readonly dismissTracker?: import('../../../../guides/GuideDismissTracker.js').IGuideDismissTracker;
-  /** F091: Lookup signal articles linked to a thread for context injection */
-  readonly signalArticleLookup?: (threadId: string) => Promise<
-    readonly {
-      id: string;
-      title: string;
-      source: string;
-      tier: number;
-      contentSnippet: string;
-      note?: string | undefined;
-      relatedDiscussions?: readonly { sessionId: string; snippet: string; score: number }[] | undefined;
-    }[]
-  >;
   /** F229: Concierge config store for duty-cat岗位 prompt injection (optional, fail-open) */
   readonly conciergeConfigStore?: import('../../../../concierge/ConciergeConfigStore.js').IConciergeConfigStore;
   /** F229 Phase B: TriagePlan store for triage-plan marker → confirm/cancel card actions (optional, fail-open) */
@@ -1192,11 +1178,6 @@ export interface InvocationDeps {
   readonly cloudReturnGrantStore?: Pick<
     import('../../cloud-bridge/cloud-return-grant.js').CloudReturnGrantStore,
     'issue'
-  >;
-  /** Server-owned exact A2A terminal producer used by the cloud transport. */
-  readonly a2aDispatchDispositionService?: Pick<
-    import('../../../../ball-custody/A2ADispatchDispositionService.js').A2ADispatchDispositionService,
-    'complete'
   >;
   /**
    * F254 Phase B3/B4: Optional freshness re-invoke callback.
@@ -1217,7 +1198,7 @@ export interface InvocationDeps {
   readonly providerNativeFreshnessFactory?: (params: {
     liveResultConsumerActive?: () => boolean;
     liveExposureReason?: (
-      message: import('../../freshness/checkFreshnessForPostMessage.js').FreshnessReadableMessage,
+      message: import('../../freshness/freshness-unseen-source.js').FreshnessReadableMessage,
     ) => 'same_live_call_exposure' | null;
     invocationId: string;
     threadId: string;
@@ -1228,19 +1209,6 @@ export interface InvocationDeps {
   }) => Promise<import('../../freshness/FreshnessNoticeBroker.js').ActiveInvocationFreshnessController | null>;
   /** F306: canonical cross-provider request/response surface. */
   readonly runtimeInteractionPort?: import('../../../../runtime-interaction/ports/RuntimeInteractionPort.js').RuntimeInteractionPort;
-  readonly freshnessReinvokeCheck?: (params: {
-    invocationId: string;
-    threadId: string;
-    catId: import('@cat-cafe/shared').CatId;
-    userId: string;
-  }) => Promise<{
-    shouldReinvoke: boolean;
-    reason: string;
-    skipReason?: string;
-    noticeIds: string[];
-    senders: string[];
-    reinvokePrompt?: string;
-  } | null>;
   /** F287: invocation-bound Cue resolver; receives only server-owned typed seeds. */
   readonly memoryCuePromptService?: MemoryCueInvocationPromptResolver;
   /** F312: lane-owned standing predicate for an unconsumed canonical Profile revision. */
@@ -1256,13 +1224,11 @@ export interface InvocationDeps {
  * Per-invocation parameters
  */
 export interface InvocationParams {
+  readonly onRemoteExecutionDispatched?: AgentServiceOptions['onRemoteExecutionDispatched'];
   readonly liveCompanion?: AgentServiceOptions['liveCompanion'];
   /** Route-owned intent projected to provider behavior only when its provenance permits it. */
   readonly routeIntent?: AgentRouteIntent;
   /** F293: deterministic message scope, independent from provider prompt inference. */
-  readonly routingContextIntent?: 'review' | 'architecture';
-  /** F293: exact actual-send decision retained until the durable terminal transition. */
-  readonly routingDispatchPreflightDecision?: RoutingPreflightDecisionV1;
   readonly catId: CatId;
   readonly service: AgentService;
   /** #1208: one pre-provider capacity owner shared by all invocation consumers. */
@@ -1324,6 +1290,11 @@ export interface InvocationParams {
   readonly contentBlocks?: readonly MessageContent[];
   readonly uploadDir?: string;
   readonly signal?: AbortSignal;
+  /**
+   * F117 KD-22 (J4): arms this member's output timeout (`CLI_TIMEOUT_MS`). Called once when it
+   * fires; the route keeps the diagnostics and has the Queue stop the member. Absent → no timeout.
+   */
+  readonly onMemberTimeout?: (timeout: MemberTimeoutEvent) => void;
   readonly isLastCat: boolean;
   /** Static identity prompt — prepended to prompt on new sessions (gated by F-BLOAT logic) */
   readonly systemPrompt?: string;
@@ -1346,6 +1317,12 @@ export interface InvocationParams {
   readonly executionKind?: TurnExecutionKind;
   /** Typed causal provenance used by history, relevance, and UI projections. */
   readonly executionCausal?: TurnExecutionCausalRefs;
+  /**
+   * F117 KD-21: this child belongs to an action-fenced dispatch, so it is created with a gated
+   * output fence and no settlement path may publish its draft before the fence allows it. Any
+   * other child is created open.
+   */
+  readonly outputFenced?: boolean;
   /** Exact persisted message bodies exposed to this child invocation's prompt. */
   readonly promptMessageIds?: readonly string[];
   /** Persists per-target body exposure after child identity exists and before provider start. */
@@ -1356,9 +1333,25 @@ export interface InvocationParams {
     invocationId: string;
     messageIds: readonly string[];
     seenAt: number;
-  }) => Promise<
-    readonly import('../../../../ball-custody/TurnCustodyProjectionService.js').TurnCustodyWakeProvenance[] | void
-  >;
+  }) => Promise<void>;
+  /** Create the exact child's durable processing response before provider startup. */
+  readonly onLifecycleInvocationStarted?: (input: {
+    threadId: string;
+    userId: string;
+    catId: CatId;
+    invocationId: string;
+    parentInvocationId: string;
+    startedAt: number;
+  }) => Promise<{
+    responseMessageId: string;
+    priorFrontierMessageId: string | null;
+    activeRun: import('@cat-cafe/shared').LifecycleActiveRun;
+  }>;
+  /** Bind the exact live provider adapter after provider turn acceptance. */
+  readonly onAgentClientActiveRunReady?: (input: {
+    catId: CatId;
+    dispatcher: import('../../types.js').AgentClientActiveRunDispatcher;
+  }) => (() => void) | undefined;
   /** Scope-free seeds are bound only after this child invocation id exists. */
   readonly memoryCueOpportunitySeeds?: readonly MemoryCueOpportunitySeed[];
   /** F276 trial: source-only ASR scenes bound to their exact owner trigger message. */
@@ -1510,6 +1503,7 @@ export async function* invokeSingleCat(deps: InvocationDeps, params: InvocationP
     provider: 'other' as const,
     carrier: 'other' as const,
     deliverySemantics: 'undeclared' as const,
+    activeInvocationGuidance: 'undeclared' as const,
   };
   let invocationCapacitySnapshot = params.capacitySnapshot;
 
@@ -1641,38 +1635,28 @@ export async function* invokeSingleCat(deps: InvocationDeps, params: InvocationP
   let turnExecutionFailureReason: string | undefined;
   let turnExecutionInterruptionReason: string | undefined;
   let turnExecutionCompletedSuccessfully = false;
-  let routingDispatchFailureClass: RoutingDispatchFailureClass | undefined;
-  let routingFailureObservedAt: number | undefined;
 
   // F153: Record cat invocation count with trigger type
   const triggerType = params.a2aTriggerMessageId ? 'mention' : params.parentInvocationId ? 'routing' : 'default';
   catInvocationCount.add(1, { [AGENT_ID]: catId, [TRIGGER]: triggerType });
 
-  // F089: Optional invocation-level timeout — independent of the NDJSON stream timeout.
-  // CLI_TIMEOUT_MS=0 means manual-cancel-only, so no automatic outer timer is armed.
-  const INVOCATION_TIMEOUT_MULTIPLIER = 2;
-  const cliTimeoutMs = resolveCliTimeoutMs(undefined);
-  const invocationTimeoutMs = cliTimeoutMs * INVOCATION_TIMEOUT_MULTIPLIER;
-  const invocationAc = new AbortController();
-  let invocationTimer: ReturnType<typeof setTimeout> | null = null;
-  const resetInvocationTimeout = (): void => {
-    if (invocationTimer) clearTimeout(invocationTimer);
-    if (invocationTimeoutMs <= 0) {
-      invocationTimer = null;
-      return;
-    }
-    invocationTimer = setTimeout(() => {
-      log.error({ invocationId, catId, threadId, timeoutMs: invocationTimeoutMs }, 'Invocation hard timeout fired');
-      invocationAc.abort(new Error('invocation_timeout'));
-    }, invocationTimeoutMs);
-    invocationTimer.unref();
-  };
-  resetInvocationTimeout();
-
-  // Merge caller signal (user cancel) with invocation timeout — neither loses semantics.
-  const signal: AbortSignal | undefined = callerSignal
-    ? AbortSignal.any([callerSignal, invocationAc.signal])
-    : invocationAc.signal;
+  // F117 KD-22 (J4): this member's one timeout — no output for CLI_TIMEOUT_MS (0 = never). When it
+  // fires the member is stopped the way Stop stops it (reason `timeout`), through the caller's
+  // signal, so the run winds down through the same path as a Stop.
+  const onMemberTimeout = params.onMemberTimeout;
+  const memberTimeout = onMemberTimeout
+    ? new MemberOutputTimeout({
+        timeoutMs: resolveCliTimeoutMs(undefined),
+        probeProcess: () => readProcessActivity(invocationId),
+        invocationId,
+        onTimeout: (diagnostics) => {
+          log.warn({ invocationId, catId, threadId, diagnostics }, 'Member output timeout fired; stopping the member');
+          onMemberTimeout({ executionId: executionParentInvocationId, diagnostics });
+        },
+      })
+    : undefined;
+  // A run without a caller signal (no Queue slot) can still be torn down only by its own end.
+  const signal: AbortSignal = callerSignal ?? new AbortController().signal;
 
   log.info({ invocationId, catId, threadId, userId }, 'Created invocation');
 
@@ -2153,6 +2137,7 @@ export async function* invokeSingleCat(deps: InvocationDeps, params: InvocationP
           startedAt: executionStartedAt,
           ...(params.liveCompanion ? { queueCompletionPolicy: 'explicit_source' as const } : {}),
           ...(Object.keys(executionCausal).length > 0 ? { causal: executionCausal } : {}),
+          outputFence: params.outputFenced ? 'gated' : 'open',
         });
       } catch (error) {
         // Auth was minted first so the exact child id could be shared with the
@@ -2186,6 +2171,17 @@ export async function* invokeSingleCat(deps: InvocationDeps, params: InvocationP
       ownsTurnExecution = true;
     }
 
+    const lifecycleAdmission = params.onLifecycleInvocationStarted
+      ? await params.onLifecycleInvocationStarted({
+          threadId,
+          userId,
+          catId,
+          invocationId,
+          parentInvocationId: executionParentInvocationId,
+          startedAt: executionStartedAt,
+        })
+      : undefined;
+
     // F22 R2 P1-1 + durable child truth: expose the exact child identity only
     // after its running record exists. Keeping this yield inside the outer try
     // guarantees iterator.return() reaches the lifecycle terminalizer.
@@ -2194,6 +2190,9 @@ export async function* invokeSingleCat(deps: InvocationDeps, params: InvocationP
       catId,
       turnInvocationId: invocationId,
       turnExecutionStartedAt: executionStartedAt,
+      ...(lifecycleAdmission ? { lifecycleResponseMessageId: lifecycleAdmission.responseMessageId } : {}),
+      ...(lifecycleAdmission ? { activeRun: lifecycleAdmission.activeRun } : {}),
+      ...(lifecycleAdmission ? { lifecyclePriorFrontierMessageId: lifecycleAdmission.priorFrontierMessageId } : {}),
       extra: {
         turnExecution: {
           invocationId,
@@ -2236,7 +2235,7 @@ export async function* invokeSingleCat(deps: InvocationDeps, params: InvocationP
             beforeProviderLaunch,
           }),
       })) {
-        resetInvocationTimeout();
+        memberTimeout?.observe(message);
         if (message.type === 'error') hadError = true;
         if (message.type === 'done' && !hadError) turnExecutionCompletedSuccessfully = true;
         yield { ...message, turnInvocationId: invocationId, turnExecutionStartedAt: executionStartedAt };
@@ -2278,7 +2277,7 @@ export async function* invokeSingleCat(deps: InvocationDeps, params: InvocationP
             },
           }),
       })) {
-        resetInvocationTimeout();
+        memberTimeout?.observe(message);
         if (message.type === 'error') hadError = true;
         if (message.type === 'done' && !hadError) turnExecutionCompletedSuccessfully = true;
         yield { ...message, turnInvocationId: invocationId, turnExecutionStartedAt: executionStartedAt };
@@ -2309,17 +2308,28 @@ export async function* invokeSingleCat(deps: InvocationDeps, params: InvocationP
             ? {
                 kind: 'cat' as const,
                 id: cloudCalledBy,
-                ...(params.parentInvocationId ? { invocationId: params.parentInvocationId } : {}),
               }
             : ({ kind: 'user' as const, id: userId } satisfies CloudBridgeAuditContext['sourceSender'])
           : undefined);
+      const sourceMatches =
+        sourceMessageId && sourceSender
+          ? await cloudDispatchSourceMatches({
+              messageStore: deps.messageStore,
+              sourceMessageId,
+              sourceSender,
+              threadId,
+              userId,
+              targetCatId: catId,
+            })
+          : false;
       if (
         deps.cloudInvokeBridge &&
         deps.cloudReturnGrantStore &&
         cloudIntent &&
         cloudCalledBy &&
         sourceMessageId &&
-        sourceSender
+        sourceSender &&
+        sourceMatches
       ) {
         let threadMetadata = null;
         if (threadStore) {
@@ -2371,7 +2381,8 @@ export async function* invokeSingleCat(deps: InvocationDeps, params: InvocationP
       } else {
         const reason = !sourceMessageId
           ? 'missing-source-message-id'
-          : deps.cloudInvokeBridge && (!deps.cloudReturnGrantStore || !cloudIntent || !cloudCalledBy || !sourceSender)
+          : deps.cloudInvokeBridge &&
+              (!deps.cloudReturnGrantStore || !cloudIntent || !cloudCalledBy || !sourceSender || !sourceMatches)
             ? 'incomplete-dispatch-provenance'
             : 'no-adapter';
         const detail = !sourceMessageId
@@ -2389,22 +2400,6 @@ export async function* invokeSingleCat(deps: InvocationDeps, params: InvocationP
             hasMentioningCatId: Boolean(cloudCalledBy),
           },
           'F247 cloud transport unavailable before dispatch',
-        );
-      }
-
-      if (params.a2aTriggerMessageId) {
-        if (!deps.a2aDispatchDispositionService) {
-          throw new Error('a2a_dispatch_disposition_service_unavailable');
-        }
-        await deps.a2aDispatchDispositionService.complete(
-          {
-            invocationId,
-            catId,
-            threadId,
-            a2aTriggerMessageId: params.a2aTriggerMessageId,
-            originTriggerMessageId: sourceMessageId,
-          },
-          'completed',
         );
       }
 
@@ -3458,6 +3453,10 @@ export async function* invokeSingleCat(deps: InvocationDeps, params: InvocationP
             reason: 'context capability undeclared; F296 fail-closed projection',
           }
         : undefined);
+    const claudeCompactionHooks =
+      contextCapability?.provider === 'anthropic' && contextCapability.carrier === 'agent_sdk'
+        ? deps.claudeCompactionHooks?.({ invocationId, userId, catId, threadId })
+        : undefined;
     // F296 B4a: the adapter must expose the seam AND the carrier must be one we
     // dynamically proved has it. Either half missing keeps the carrier cold.
     const providerPreflightAvailable = typeof service.invokeWithContinuityPreflight === 'function';
@@ -3519,38 +3518,6 @@ export async function* invokeSingleCat(deps: InvocationDeps, params: InvocationP
       await exposeCurrentPromptMessages();
       return true;
     };
-    let routingContextPrepend = '';
-    let routingContextProjectionFailureAudited = false;
-    const resolveRoutingContextProjection = async (): Promise<void> => {
-      routingContextPrepend = '';
-      if (!deps.routingContextPromptProjection) return;
-      try {
-        routingContextPrepend = await deps.routingContextPromptProjection.resolve({
-          ownerId: userId,
-          ...(params.routingContextIntent ? { intent: params.routingContextIntent } : {}),
-        });
-      } catch (err) {
-        log.warn(
-          { threadId, invocationId, catId, errorName: err instanceof Error ? err.name : 'unknown' },
-          'Routing context prompt projection failed; continuing without dynamic routing context',
-        );
-        if (routingContextProjectionFailureAudited) return;
-        routingContextProjectionFailureAudited = true;
-        try {
-          await auditLog.append({
-            type: AuditEventTypes.ROUTING_CONTEXT_PROJECTION_FAILED,
-            threadId,
-            data: {
-              catId,
-              invocationId,
-              errorName: err instanceof Error ? err.name : 'unknown',
-            },
-          });
-        } catch (auditErr) {
-          log.warn({ threadId, invocationId, auditErr }, 'Routing context projection failure audit write failed');
-        }
-      }
-    };
     const applyEpochScopedPrompt = async (): Promise<void> => {
       const promptBuiltForEpoch = await applyContextPromptFactory();
       if (
@@ -3567,7 +3534,6 @@ export async function* invokeSingleCat(deps: InvocationDeps, params: InvocationP
       await resolveInvocationMemoryCues();
       resolveEntityNudgePresentation();
       await resolveAsrPersonMemoryOpportunities(contextContinuityHandshake);
-      await resolveRoutingContextProjection();
     };
 
     // F-BLOAT: Only inject staticIdentity (systemPrompt) on new provider sessions.
@@ -3646,9 +3612,6 @@ export async function* invokeSingleCat(deps: InvocationDeps, params: InvocationP
           : `${promptWithMission}`;
       if (contextHintPrefix) composedEffectivePrompt = `${contextHintPrefix}\n\n---\n\n${composedEffectivePrompt}`;
       if (stagingPrepend) composedEffectivePrompt = `${stagingPrepend}\n\n---\n\n${composedEffectivePrompt}`;
-      if (routingContextPrepend) {
-        composedEffectivePrompt = `${routingContextPrepend}\n\n---\n\n${composedEffectivePrompt}`;
-      }
       /* @segment M2 — Transcript Path Hints */
       composedEffectivePrompt = appendTranscriptPathHints(composedEffectivePrompt, TRANSCRIPT_DIR, threadId);
       return { promptWithInvocationAdditions: composedPrompt, effectivePrompt: composedEffectivePrompt };
@@ -3810,7 +3773,6 @@ export async function* invokeSingleCat(deps: InvocationDeps, params: InvocationP
                 injectSystemPrompt,
                 hasContextHint: Boolean(contextHintPrefix),
                 hasStagingPrepend: Boolean(stagingPrepend),
-                hasRoutingContextProjection: Boolean(routingContextPrepend),
                 hasMissionPrefix: Boolean(missionPrefix),
               });
               return {
@@ -3939,7 +3901,7 @@ export async function* invokeSingleCat(deps: InvocationDeps, params: InvocationP
           ...(params.liveCompanion?.exposureReason
             ? {
                 liveExposureReason: (
-                  message: import('../../freshness/checkFreshnessForPostMessage.js').FreshnessReadableMessage,
+                  message: import('../../freshness/freshness-unseen-source.js').FreshnessReadableMessage,
                 ) => params.liveCompanion!.exposureReason!(message),
               }
             : {}),
@@ -3971,6 +3933,9 @@ export async function* invokeSingleCat(deps: InvocationDeps, params: InvocationP
         ? codexExecutionAccountSnapshot(resolvedAccount, codexAccountLaunch)
         : undefined;
     const baseOptions: AgentServiceOptions = {
+      ...(params.onRemoteExecutionDispatched
+        ? { onRemoteExecutionDispatched: params.onRemoteExecutionDispatched }
+        : {}),
       ...(params.routeIntent ? { routeIntent: params.routeIntent } : {}),
       callbackEnv,
       ...(compactionLaunchPlan ? { compactionLaunchPlan } : {}),
@@ -4024,6 +3989,15 @@ export async function* invokeSingleCat(deps: InvocationDeps, params: InvocationP
                 ownerUserId: userId,
                 ownerCatId: catId,
               }),
+          }
+        : {}),
+      ...(claudeCompactionHooks ? { claudeCompactionHooks } : {}),
+      ...(params.onAgentClientActiveRunReady
+        ? {
+            activeRunDispatch: {
+              invocationId,
+              register: (dispatcher) => params.onAgentClientActiveRunReady!({ catId, dispatcher }),
+            },
           }
         : {}),
       invocationId,
@@ -5289,15 +5263,7 @@ export async function* invokeSingleCat(deps: InvocationDeps, params: InvocationP
 
     const streamProcessedOutputs = async function* (sourceMsg: AgentMessage | undefined): AsyncIterable<AgentMessage> {
       if (!sourceMsg) return;
-      const messageObservedAt = Date.now();
       for (const out of await processMessage(sourceMsg)) {
-        routingDispatchFailureClass ??= classifyRoutingDispatchFailure({
-          ...(out.metadata?.cliDiagnostics?.reasonCode
-            ? { cliReasonCode: out.metadata.cliDiagnostics.reasonCode }
-            : {}),
-          ...(out.errorCode ? { providerErrorCode: out.errorCode } : {}),
-        });
-        if (routingDispatchFailureClass !== undefined) routingFailureObservedAt ??= messageObservedAt;
         if (out.type === 'error') {
           hadError = true;
           turnExecutionFailureReason ??= 'provider_execution_failed';
@@ -5333,32 +5299,6 @@ export async function* invokeSingleCat(deps: InvocationDeps, params: InvocationP
               spanId: sc.spanId,
               ...(parentSid ? { parentSpanId: parentSid } : {}),
             };
-          }
-          // F254 B3/B4: Check for freshness re-invoke after terminal event.
-          // Fail-open: errors here never block the done signal.
-          if (deps.freshnessReinvokeCheck && !hadError && !signal?.aborted) {
-            try {
-              const decision = await deps.freshnessReinvokeCheck({
-                invocationId,
-                threadId,
-                catId,
-                userId: params.userId,
-              });
-              if (decision) {
-                // Attach decision to done metadata for routing layer.
-                // Initialize metadata if missing (some provider paths emit done without it).
-                if (!out.metadata) {
-                  (out as unknown as Record<string, unknown>).metadata = {};
-                }
-                (out.metadata as unknown as Record<string, unknown>).freshnessReinvoke = decision;
-                log.info(
-                  { catId, threadId, invocationId, shouldReinvoke: decision.shouldReinvoke, reason: decision.reason },
-                  '[F254-B3] freshness re-invoke decision',
-                );
-              }
-            } catch (err) {
-              log.warn({ catId, threadId, invocationId, err }, '[F254-B3] freshness re-invoke check failed, fail-open');
-            }
           }
           // A consumer may stop as soon as it receives the terminal `done`.
           // Record success before yielding that boundary so iterator.return()
@@ -5642,21 +5582,20 @@ export async function* invokeSingleCat(deps: InvocationDeps, params: InvocationP
           msg = projected;
         }
         if (currentRequestGenerationCommit) await observeCurrentRequestGeneration(msg);
-        // F149: provider_signal / liveness_signal must NOT reset timeout — prevents "续命"
-        // F198 Phase C P2-1: status (daemon detail progress) also must NOT reset timeout —
-        // a daemon sending frequent status updates must not evade the 30-min kill deadline.
-        if (msg.type !== 'provider_signal' && msg.type !== 'liveness_signal' && msg.type !== 'status')
-          resetInvocationTimeout();
+        // F117 KD-22: only member output restarts the timeout; signals, status and diagnostics
+        // never do (F149, F198 Phase C), so a member cannot keep itself alive without working.
+        memberTimeout?.observe(msg);
         if (msg.contextCompaction) {
+          // F117 K2: in-process hooks are authenticated by construction and registered by the
+          // carrier itself; only a project hook depends on callback auth and the workspace files.
           const hookAuthenticationReady =
-            typeof deps.hookAuthenticationReady === 'function'
+            claudeCompactionHooks !== undefined ||
+            (typeof deps.hookAuthenticationReady === 'function'
               ? deps.hookAuthenticationReady()
-              : (deps.hookAuthenticationReady ?? false);
-          // #1542: carrier readiness is the launch plan actually handed to this
-          // invocation's spawn — configuration presence elsewhere can no longer
-          // masquerade as a live carrier. This still cannot substitute for the
-          // current-invocation authenticated attestation checked below.
-          const hookCarrierReady = compactionLaunchPlan?.ready === true;
+              : (deps.hookAuthenticationReady ?? false));
+          // In-process hooks prove their own carrier registration. Project hooks
+          // require the plan actually passed to this invocation's launch.
+          const hookCarrierReady = claudeCompactionHooks !== undefined || compactionLaunchPlan?.ready === true;
           // Ask the state machine with no attestation first. Only its specific
           // "attestation unavailable" edge authorizes the session read below;
           // auth/carrier/capability failures stop before sequence state.
@@ -5761,8 +5700,10 @@ export async function* invokeSingleCat(deps: InvocationDeps, params: InvocationP
           suppressedTransientCliError = msg;
           continue;
         }
-        // #774 self-heal: CLI timeout during session resume with no substantive output
-        // → likely stale/unreachable session. Suppress and retry without session.
+        // #774 self-heal: a resumed session whose CLI never produced its first event (startup
+        // watchdog) → likely stale/unreachable session. Suppress and retry without session.
+        // F117 KD-22: silence after the member started is not retried — its output timeout stops
+        // the member as an ordinary, resendable failure.
         // Uses attemptHasSubstantiveOutput (not attemptHasContentOutput) because
         // timeout_diagnostics (system_info) must NOT block the retry path.
         if (
@@ -5770,7 +5711,7 @@ export async function* invokeSingleCat(deps: InvocationDeps, params: InvocationP
           options.sessionId &&
           !attemptHasSubstantiveOutput &&
           msg.type === 'error' &&
-          isCliTimeoutError(msg.error)
+          isCliStartupTimeoutError(msg.error)
         ) {
           suppressedTimeoutError = msg;
           continue;
@@ -6237,8 +6178,9 @@ export async function* invokeSingleCat(deps: InvocationDeps, params: InvocationP
     didComplete = true; // F118 AC-C5: Normal completion reached
   } catch (err) {
     await closeActiveServiceIterator();
+    // F117 KD-22: a member stopped by its output timeout failed; any other stop cancelled it.
     await terminateCurrentRequestGeneration(
-      signal?.aborted ? 'cancelled' : 'error',
+      signal.aborted && signal.reason !== MEMBER_TIMEOUT_REASON ? 'cancelled' : 'error',
       err instanceof Error ? err.message : String(err),
     );
     // F152: Record error on invocation span + OTel log
@@ -6288,26 +6230,29 @@ export async function* invokeSingleCat(deps: InvocationDeps, params: InvocationP
       tracing: { traceId: sc.traceId, spanId: sc.spanId, ...(parentSid ? { parentSpanId: parentSid } : {}) },
     };
   } finally {
+    memberTimeout?.close();
+    // F117 KD-22: a member stopped by its output timeout failed; any other stop cancelled it.
+    const timedOut = callerSignal?.aborted === true && callerSignal.reason === MEMBER_TIMEOUT_REASON;
     await closeActiveServiceIterator();
     await terminateCurrentRequestGeneration(
       turnExecutionCompletedSuccessfully
         ? 'accepted'
-        : callerSignal?.aborted || invocationAc.signal.aborted
+        : callerSignal?.aborted && !timedOut
           ? 'cancelled'
-          : hadError || turnExecutionFailureReason !== undefined
+          : timedOut || hadError || turnExecutionFailureReason !== undefined
             ? 'error'
             : 'unknown',
-      turnExecutionFailureReason ?? turnExecutionInterruptionReason,
+      timedOut ? MEMBER_TIMEOUT_REASON : (turnExecutionFailureReason ?? turnExecutionInterruptionReason),
     );
     await presentationDelivery?.release('invocation_finalized_without_delivery');
     if (deps.turnExecutionStore && ownsTurnExecution) {
       let terminal: TurnExecutionTerminalInput;
       if (turnExecutionCompletedSuccessfully) {
         terminal = { status: 'succeeded', endedAt: Date.now() };
+      } else if (timedOut) {
+        terminal = { status: 'failed', endedAt: Date.now(), terminalReason: MEMBER_TIMEOUT_REASON };
       } else if (callerSignal?.aborted) {
         terminal = { status: 'canceled', endedAt: Date.now(), terminalReason: 'user_cancel' };
-      } else if (invocationAc.signal.aborted) {
-        terminal = { status: 'failed', endedAt: Date.now(), terminalReason: 'invocation_timeout' };
       } else if (turnExecutionFailureReason !== undefined || hadError) {
         terminal = {
           status: 'failed',
@@ -6325,34 +6270,6 @@ export async function* invokeSingleCat(deps: InvocationDeps, params: InvocationP
         const result = await deps.turnExecutionStore.transitionTerminal(invocationId, terminal);
         if (result.outcome === 'not_found' || result.record === null) {
           log.error({ invocationId, terminal }, 'Turn execution disappeared before terminal transition');
-        } else if (
-          deps.routingDispatchSignalObserver &&
-          params.routingDispatchPreflightDecision &&
-          result.record.status !== 'running' &&
-          result.record.endedAt !== undefined
-        ) {
-          const failureClass =
-            routingDispatchFailureClass ??
-            classifyRoutingDispatchFailure({ terminalReason: result.record.terminalReason });
-          try {
-            await deps.routingDispatchSignalObserver.observeTerminal({
-              ownerId: userId,
-              observationId: invocationId,
-              observedAt: result.record.endedAt,
-              evidenceRef: `turn-execution:${invocationId}`,
-              catId,
-              status: result.record.status,
-              ...(result.record.status === 'failed' && failureClass ? { failureClass } : {}),
-              ...(result.record.status === 'failed' && routingFailureObservedAt !== undefined
-                ? { failureObservedAt: routingFailureObservedAt }
-                : {}),
-              preflightDecision: params.routingDispatchPreflightDecision,
-            });
-          } catch (err) {
-            // Durable lifecycle truth and delivery already committed. Routing observation
-            // is advisory and must never rewrite or suppress that canonical terminal.
-            log.warn({ invocationId, err }, 'F293 durable dispatch signal observation failed');
-          }
         }
       } catch (err) {
         // A running record is deliberately left for startup reconciliation;
@@ -6364,9 +6281,6 @@ export async function* invokeSingleCat(deps: InvocationDeps, params: InvocationP
     // F153 Phase J AC-J4: drain any open tool spans whose tool_result never arrived
     // (abort / error / timeout). Mirrors PR #732 mention_dispatch abort-safety pattern.
     toolSpanTracker.endAllOrphans('aborted');
-
-    // F089: Clear invocation hard timeout
-    if (invocationTimer) clearTimeout(invocationTimer);
 
     // F118/#1329: Release runtime resume custody before conversation policy
     // custody. Every release is idempotent, including partial acquisition.

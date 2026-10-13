@@ -1140,14 +1140,13 @@ describe('F167 explicit replace of a generation interrupted after a holder read 
     assert.equal(result.lease, active);
   });
 
-  it('moves the interrupted active generation to the next one without inventing any holder outcome', () => {
+  it('ignores a retired interruption hint without advancing the active generation', () => {
     const active = claimActionSuccessor(null, baseClaim()).lease;
     const result = replaceActionSuccessor(active, replaceInput({ interruptedGeneration: interruptedEvidence }));
-    assert.equal(result.outcome, 'replaced');
-    assert.equal(result.lease.generation, 2);
-    assert.equal(result.lease.status, 'active');
+    assert.equal(result.outcome, 'proof_required');
+    assert.equal(result.lease, active);
     assert.deepEqual(result.lease.holderOutcomes, {});
-    assert.ok(result.lease.evidenceRefs.includes(interruptedEvidence.evidenceRef), 'the interruption is on record');
+    assert.equal(result.lease.evidenceRefs.includes(interruptedEvidence.evidenceRef), false);
   });
 
   it('ignores interruption proof that names a different generation', () => {

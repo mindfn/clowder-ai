@@ -11,7 +11,7 @@ import { deriveReplyExecutionState, deriveReplyStatus, type ReplyStatusInput } f
 
 const base: ReplyStatusInput = {
   streaming: false,
-  phase: undefined,
+  status: undefined,
   errored: false,
   failure: { reasonCode: undefined, timeoutDiagnostics: false },
   quiet: null,
@@ -22,22 +22,22 @@ const input = (over: Partial<ReplyStatusInput>): ReplyStatusInput => ({ ...base,
 
 describe('deriveReplyStatus', () => {
   it.each([
-    [{ streaming: true, phase: 'succeeded', errored: false }, 'terminal'],
-    [{ streaming: true, phase: 'canceled', errored: false }, 'terminal'],
-    [{ streaming: true, phase: 'failed', errored: false }, 'terminal'],
-    [{ streaming: false, phase: 'running', errored: false }, 'running'],
-    [{ streaming: false, phase: 'unknown_running', errored: false }, 'unverified'],
+    [{ streaming: true, status: 'completed', errored: false }, 'terminal'],
+    [{ streaming: true, status: 'canceled', errored: false }, 'terminal'],
+    [{ streaming: true, status: 'failed', errored: false }, 'terminal'],
+    [{ streaming: false, status: 'processing', errored: false }, 'running'],
+    [{ streaming: false, status: 'interrupted', errored: false }, 'terminal'],
   ] as const)('derives one canonical execution state from %o', (facts, expected) => {
     expect(deriveReplyExecutionState(facts)).toBe(expected);
   });
 
   it('a reply that finished normally says nothing, with or without a recorded succeeded phase', () => {
     expect(deriveReplyStatus(base)).toBeNull();
-    expect(deriveReplyStatus(input({ phase: 'succeeded' }))).toBeNull();
-    expect(deriveReplyStatus(input({ phase: 'succeeded', streaming: true }))).toBeNull();
+    expect(deriveReplyStatus(input({ status: 'completed' }))).toBeNull();
+    expect(deriveReplyStatus(input({ status: 'completed', streaming: true }))).toBeNull();
   });
 
-  describe('running', () => {
+  describe('processing', () => {
     it('before any tool call it is writing the reply', () => {
       expect(deriveReplyStatus(input({ streaming: true }))).toEqual({ kind: 'working', action: null });
     });
@@ -53,7 +53,7 @@ describe('deriveReplyStatus', () => {
     });
 
     it('a canonical "running" phase is running even when the stream flag is gone', () => {
-      expect(deriveReplyStatus(input({ phase: 'running' }))).toEqual({ kind: 'working', action: null });
+      expect(deriveReplyStatus(input({ status: 'processing' }))).toEqual({ kind: 'working', action: null });
     });
 
     it('went quiet: the quiet fact replaces the verb, with the minutes only when the start of the silence is known', () => {
@@ -74,20 +74,20 @@ describe('deriveReplyStatus', () => {
 
   describe("can't be checked", () => {
     it('unknown_running wins over a stream flag that nothing is feeding any more', () => {
-      expect(deriveReplyStatus(input({ streaming: true, phase: 'unknown_running' }))).toEqual({ kind: 'unverified' });
-      expect(deriveReplyStatus(input({ phase: 'unknown_running' }))).toEqual({ kind: 'unverified' });
+      expect(deriveReplyStatus(input({ streaming: true, status: 'interrupted' }))).toEqual({ kind: 'stopped' });
+      expect(deriveReplyStatus(input({ status: 'interrupted' }))).toEqual({ kind: 'stopped' });
     });
   });
 
   describe('did not end well', () => {
     it('failed by the canonical phase, or by the message itself being an error', () => {
-      expect(deriveReplyStatus(input({ phase: 'failed' }))).toEqual({ kind: 'failed', reason: null });
+      expect(deriveReplyStatus(input({ status: 'failed' }))).toEqual({ kind: 'failed', reason: null });
       expect(deriveReplyStatus(input({ errored: true }))).toEqual({ kind: 'failed', reason: null });
     });
 
     it('names the reason when the diagnostics carry one of the three it knows', () => {
       const failed = (reasonCode: string | undefined, timeoutDiagnostics = false) =>
-        deriveReplyStatus(input({ phase: 'failed', failure: { reasonCode, timeoutDiagnostics } }));
+        deriveReplyStatus(input({ status: 'failed', failure: { reasonCode, timeoutDiagnostics } }));
       expect(failed('cli_response_timeout')).toEqual({ kind: 'failed', reason: 'response_timeout' });
       expect(failed('cli_stall_timeout')).toEqual({ kind: 'failed', reason: 'stall_timeout' });
       expect(failed('silent_completion')).toEqual({ kind: 'failed', reason: 'silent_completion' });
@@ -97,27 +97,24 @@ describe('deriveReplyStatus', () => {
     it('a reason it does not know is not guessed: "did not finish" without one', () => {
       expect(
         deriveReplyStatus(
-          input({ phase: 'failed', failure: { reasonCode: 'auth_failed', timeoutDiagnostics: false } }),
+          input({ status: 'failed', failure: { reasonCode: 'auth_failed', timeoutDiagnostics: false } }),
         ),
       ).toEqual({ kind: 'failed', reason: null });
     });
 
     it('stopped says stopped, and does not say who stopped it', () => {
-      expect(deriveReplyStatus(input({ phase: 'canceled' }))).toEqual({ kind: 'stopped' });
+      expect(deriveReplyStatus(input({ status: 'canceled' }))).toEqual({ kind: 'stopped' });
     });
 
     it('precedence: stopped > failed > cannot be checked > running', () => {
-      expect(deriveReplyStatus(input({ phase: 'canceled', errored: true, streaming: true }))).toEqual({
+      expect(deriveReplyStatus(input({ status: 'canceled', errored: true, streaming: true }))).toEqual({
         kind: 'stopped',
       });
-      expect(deriveReplyStatus(input({ phase: 'failed', streaming: true, quiet: { since: null } }))).toEqual({
+      expect(deriveReplyStatus(input({ status: 'failed', streaming: true, quiet: { since: null } }))).toEqual({
         kind: 'failed',
         reason: null,
       });
-      expect(deriveReplyStatus(input({ errored: true, phase: 'unknown_running' }))).toEqual({
-        kind: 'failed',
-        reason: null,
-      });
+      expect(deriveReplyStatus(input({ errored: true, status: 'interrupted' }))).toEqual({ kind: 'stopped' });
     });
   });
 });

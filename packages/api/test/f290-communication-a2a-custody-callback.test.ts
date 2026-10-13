@@ -10,12 +10,11 @@ test('validated first callback hop remains admitted to its original private Work
     const first = await f.firstHop();
     assert.equal(first.current.work.task.id, f.task.id);
     assert.deepEqual(first.source.extra?.collectiveWorkDelegationV1?.targetCatIds, [DELEGATE]);
-    const carrier = f.queue
-      .list(f.task.threadId, f.cafe.ownerUserId)
-      .find((entry) => entry.targetCats.includes(DELEGATE));
+    const carrier = f.queue.list(f.task.threadId, f.cafe.ownerUserId).find((entry) => entry.targets.includes(DELEGATE));
     assert.ok(carrier);
-    assert.equal(carrier.a2aTriggerMessageId, first.source.id);
-    assert.equal((await f.messages.getById(first.source.id))?.queueCustody?.pendingTargetCats.includes(DELEGATE), true);
+    assert.equal(carrier.execution.a2aTriggerMessageId, first.source.id);
+    assert.equal(Object.hasOwn((await f.messages.getById(first.source.id))!, 'queueCustody'), false);
+    assert.ok(carrier.targets.includes(DELEGATE));
     assert.deepEqual(
       await f.tasks.get(f.task.id),
       before,
@@ -38,11 +37,11 @@ for (const addressing of ['explicit-target', 'line-start-mention'] as const) {
       const second = await f.post(first.credentials, payload);
       const escaped = f.queue
         .list(f.task.threadId, f.cafe.ownerUserId)
-        .find((entry) => entry.targetCats.includes(NEXT_CAT));
+        .find((entry) => entry.targets.includes(NEXT_CAT));
       assert.equal(
         second.statusCode,
         403,
-        `Second post must be refused; actual ${second.statusCode}, C scope=${escaped?.executionScope ?? 'home'}`,
+        `Second post must be refused; actual ${second.statusCode}, C scope=${escaped?.execution.executionScope ?? 'home'}`,
       );
       assert.equal(escaped, undefined, 'Refused C must have neither an ordinary nor a private Queue carrier');
       const posted = second.json().messageId;
@@ -76,12 +75,9 @@ test('ordinary home callback addressing still creates ordinary A2A custody', asy
     assert.equal(posted.statusCode, 200, posted.body);
     const carrier = f.queue.list(home.id, f.cafe.ownerUserId)[0];
     assert.ok(carrier);
-    assert.equal(carrier.executionScope, undefined);
-    assert.ok(carrier.messageId);
-    assert.equal(
-      (await f.messages.getById(carrier.messageId))?.queueCustody?.pendingTargetCats.includes(NEXT_CAT),
-      true,
-    );
+    assert.equal(carrier.execution.executionScope, undefined);
+    assert.ok(carrier.payload.messageId);
+    assert.equal(carrier.targets.includes(NEXT_CAT), true);
   } finally {
     f.tracker.cancelAll(home.id);
     await f.close();

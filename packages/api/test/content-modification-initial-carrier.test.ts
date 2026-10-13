@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { randomUUID } from 'node:crypto';
-import { mkdtemp, rm, writeFile } from 'node:fs/promises';
+import { mkdtemp, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { test } from 'node:test';
@@ -68,7 +68,7 @@ for (const visibility of ['public', 'whisper'] as const) {
       integration.writer.close();
       fileStore.close();
       activeStore?.close();
-      await rm(root, { recursive: true, force: true });
+      console.log(`retained owned review data: ${root}`);
     });
 
     const opened = await files.prepare({
@@ -79,7 +79,7 @@ for (const visibility of ['public', 'whisper'] as const) {
     const sourceMessage = live.messages.append({
       userId: 'operator',
       threadId: live.thread.id,
-      catId: null,
+      from: { kind: 'user', userId: 'operator' },
       mentions: [targetCatId],
       timestamp: Date.now(),
       content: 'Please revise the selected heading.',
@@ -113,8 +113,15 @@ for (const visibility of ['public', 'whisper'] as const) {
       record.progress.sourceVisibility,
       visibility === 'whisper' ? { visibility, whisperTo: [targetCatId] } : { visibility: 'public' },
     );
-    const admitted = initialCarrier(live.messages, live.thread.id, record.requestId);
-    assert.ok(admitted?.queueCustody);
+    const admitted = await waitForInitialCarrier(live.messages, live.thread.id, record.requestId, () =>
+      errors
+        .flatMap((error) => (error instanceof AggregateError ? error.errors : [error]))
+        .map((error) => String(error instanceof Error ? error.stack : error))
+        .join('\n'),
+    );
+    assert.ok(admitted);
+    assert.equal(admitted.lifecycle?.kind, 'input');
+    assert.equal(Object.hasOwn(admitted, 'queueCustody'), false);
 
     live.store.close();
     activeStore = undefined;
@@ -138,7 +145,8 @@ for (const visibility of ['public', 'whisper'] as const) {
     await restartedDispatcher.drain();
 
     const carrier = initialCarrier(live.messages, live.thread.id, record.requestId);
-    assert.ok(carrier?.queueCustody);
+    assert.ok(carrier);
+    assert.equal(carrier.lifecycle?.kind, 'input');
     assert.equal(carrier.id, admitted.id, 'restart replay reuses the original durable Queue carrier');
     assert.equal(
       live.messages
@@ -165,9 +173,10 @@ for (const visibility of ['public', 'whisper'] as const) {
     });
 
     const childId = await live.dispatch.waitForAwakening(carrier.id);
-    const entry = live.queue.getEntrySnapshot(live.thread.id, 'operator', carrier.queueCustody.entryId);
-    assert.ok(entry);
-    await live.dispatch.coordinator.commitSuccessfulTargets(entry, [targetCatId], childId, Date.now());
+    assert.equal(live.dispatch.turns.get(childId)?.parentInvocationId, live.starts[0]?.parentInvocationId);
+    // The controlled provider settles its canonical response; no second custody
+    // coordinator is allowed to synthesize an independent delivery verdict.
+    await live.dispatch.close();
     assert.equal(live.messages.getById(carrier.id)?.deliveryStatus, 'delivered');
 
     live.threads.updateThinkingMode(live.thread.id, 'play');
@@ -207,6 +216,21 @@ function initialCarrier(messages: MessageStore, threadId: string, requestId: str
   return messages
     .getByThread(threadId, 100, 'operator', { includeQueuedUserMessages: true })
     .find((message) => message.source?.meta?.requestId === requestId);
+}
+
+async function waitForInitialCarrier(
+  messages: MessageStore,
+  threadId: string,
+  requestId: string,
+  failure: () => string,
+) {
+  const deadline = Date.now() + 2000;
+  for (;;) {
+    const carrier = initialCarrier(messages, threadId, requestId);
+    if (carrier) return carrier;
+    if (Date.now() >= deadline) assert.fail(`Review outbox did not reach common durable send: ${failure()}`);
+    await new Promise<void>((resolve) => setTimeout(resolve, 5));
+  }
 }
 
 async function readAs(app: ReturnType<typeof Fastify>, registry: InvocationRegistry, threadId: string, catId: string) {

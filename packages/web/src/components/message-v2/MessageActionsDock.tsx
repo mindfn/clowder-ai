@@ -2,9 +2,7 @@ import type { ReactNode } from 'react';
 import { useTts } from '@/hooks/useTts';
 import type { ChatMessage } from '@/stores/chat-types';
 import { AppTooltip } from '../AppTooltip';
-import { CopyIdButton } from '../CopyIdButton';
 import { useShellCopy } from '../shell/shell-copy';
-import { TrueRecallActionButton } from '../TrueRecallActionButton';
 import { MessageActionScope } from './message-action-ownership';
 import { messageActionsCopy } from './message-actions-copy';
 
@@ -14,7 +12,7 @@ const paths = {
   trajectory: 'M5 6v8a4 4 0 004 4h8M3 3h4v4H3zM17 17h4v4h-4z',
   read: 'm7 4 13 8L7 20z',
   stop: 'M7 4v16M17 4v16',
-  edit: 'm14 5 5 5M5 19h4L20 8l-4-4L5 15z',
+  branch: 'm14 5 5 5M5 19h4L20 8l-4-4L5 15z',
   remove: 'M4 7h16M7 7l1 14h8l1-14M9 7V3h6v4',
   more: 'M5 11v2M12 11v2M19 11v2',
 };
@@ -62,43 +60,8 @@ function DockAction({
   );
 }
 
-export function MessageOverflowItems({
-  messageId,
-  onBranch,
-  onPermanent,
-}: {
-  messageId: string;
-  onBranch: () => void;
-  onPermanent: () => void;
-}) {
-  const t = useShellCopy(messageActionsCopy);
-  return (
-    <>
-      <CopyIdButton messageId={messageId} label={t.copyId} />
-      <button
-        type="button"
-        role="menuitem"
-        className="min-h-11 w-full px-3 py-2 text-left text-sm text-cafe-secondary hover:bg-cafe-surface-elevated"
-        onClick={onBranch}
-      >
-        {t.branch}
-      </button>
-      <div role="separator" className="my-1 border-t border-cafe" />
-      <button
-        type="button"
-        role="menuitem"
-        className="min-h-11 w-full px-3 py-2 text-left text-sm text-conn-red-text hover:bg-cafe-surface-elevated"
-        onClick={onPermanent}
-      >
-        {t.permanent}
-      </button>
-    </>
-  );
-}
-
 interface Props {
   message: ChatMessage;
-  threadId: string;
   positionClass: string;
   visibilityClass: string;
   compact: boolean;
@@ -107,7 +70,7 @@ interface Props {
   onSelect?: () => void;
   onReply: () => void;
   onTrajectory?: () => void;
-  onEdit: () => void;
+  onBranch: () => void;
   onDelete: () => void;
   onMore: () => void;
   overflowOpen: boolean;
@@ -144,7 +107,6 @@ function OverflowMenu({
 /** The existing action owner's paint, anchored to the zero-size author slot. */
 export function MessageActionsDock({
   message,
-  threadId,
   positionClass,
   visibilityClass,
   compact,
@@ -153,7 +115,7 @@ export function MessageActionsDock({
   onSelect,
   onReply,
   onTrajectory,
-  onEdit,
+  onBranch,
   onDelete,
   onMore,
   overflowOpen,
@@ -189,12 +151,7 @@ export function MessageActionsDock({
         )}
         {canAct && (
           <>
-            {isUser && (
-              <>
-                <DockAction label={t.edit} icon="edit" onClick={onEdit} />
-                <TrueRecallActionButton message={message} threadId={threadId} />
-              </>
-            )}
+            <DockAction label={t.branch} icon="branch" onClick={onBranch} />
             <DockAction label={t.remove} icon="remove" onClick={onDelete} />
             <div className="relative">
               <DockAction label={t.more} icon="more" onClick={onMore} expanded={overflowOpen} />

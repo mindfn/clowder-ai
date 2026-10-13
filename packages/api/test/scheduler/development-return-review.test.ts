@@ -8,7 +8,7 @@ function resume(f) {
   const message = f.messages.append({
     userId: f.actor.userId,
     threadId: f.actor.threadId,
-    catId: null,
+    from: { kind: 'user', userId: f.actor.userId },
     content: '继续 Phase B',
     mentions: [],
     timestamp: f.service.now() + 1,

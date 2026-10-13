@@ -124,7 +124,7 @@ export class MediaPublicationContinuation {
     }
     const recovered = await this.deps.messages.appendIdempotent({
       userId: record.ownerUserId,
-      catId: null,
+      from: { kind: 'system', service: 'media-publication' },
       threadId: record.payload.threadId,
       mentions: [],
       content: '原请求生成的图片',
@@ -181,7 +181,7 @@ export class MediaPublicationContinuation {
   ) {
     await this.deps.messages.appendIdempotent({
       userId: record.ownerUserId,
-      catId: null,
+      from: { kind: 'system', service: 'media-publication' },
       threadId: record.payload.threadId,
       mentions: [],
       timestamp: Date.now(),

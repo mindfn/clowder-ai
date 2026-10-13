@@ -104,7 +104,7 @@ describe('F167 durable replacement generation edges', () => {
     }
   });
 
-  it('records interrupted-after-read without inventing a holder outcome', () => {
+  it('does not grant replacement authority from a retired interruption hint', () => {
     const interrupted = replaceActionSuccessor(
       activeLease(),
       replacementInput({
@@ -114,10 +114,9 @@ describe('F167 durable replacement generation edges', () => {
         },
       }),
     );
-    assert.equal(interrupted.outcome, 'replaced');
-    const transition = interrupted.lease.replacementTransitions[0];
-    assert.equal(transition.reason, 'interrupted');
-    assert.deepEqual(transition.holderOutcomes, {});
-    assert.equal(replacementTransitionMatchesDelegateLineage(transition, route), true);
+    assert.equal(interrupted.outcome, 'proof_required');
+    assert.equal(interrupted.lease.generation, 1);
+    assert.deepEqual(interrupted.lease.replacementTransitions, []);
+    assert.deepEqual(interrupted.lease.holderOutcomes, {});
   });
 });
