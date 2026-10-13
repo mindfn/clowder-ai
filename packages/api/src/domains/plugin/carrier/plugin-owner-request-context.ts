@@ -1,13 +1,37 @@
 import { AsyncLocalStorage } from 'node:async_hooks';
 
+/** Captured before package code runs. Digests identify bytes; none of these fields is a bearer. */
+export interface PluginOwnerHttpRequestIdentity {
+  readonly kind: 'owner_http';
+  readonly requestId: string;
+  /** Transport diagnostics only; Fastify may allow caller-supplied/repeated IDs. */
+  readonly transportRequestId: string;
+  readonly pluginId: string;
+  readonly pluginInstanceId: string;
+  readonly userId: string;
+  readonly contributionId: string;
+  readonly method: string;
+  readonly declaredPath: string;
+  readonly path: string;
+  readonly bodyDigest: string;
+  readonly queryDigest: string;
+}
+type RequestIdentitySeed = Omit<
+  PluginOwnerHttpRequestIdentity,
+  'kind' | 'pluginId' | 'pluginInstanceId' | 'userId' | 'contributionId'
+>;
+
 /** Host-only HTTP authority. It is never serialized into the package request or native context. */
 export interface PluginOwnerRequestContext {
   readonly userId: string;
   readonly operation: 'read' | 'write';
   readonly signal: AbortSignal;
+  /** Absent on legacy Host seeds; consumers requiring request identity must refuse absence. */
+  readonly requestIdentity?: PluginOwnerHttpRequestIdentity;
   assertCurrent(): Promise<void>;
 }
-interface RequestAuthority extends PluginOwnerRequestContext {
+interface RequestAuthority extends Omit<PluginOwnerRequestContext, 'requestIdentity'> {
+  readonly requestIdentity?: RequestIdentitySeed;
   readonly pluginId: string;
   readonly contributionId: string;
 }
@@ -34,6 +58,7 @@ export async function withPluginOwnerRequest<T>(
     userId,
     operation,
     signal,
+    ...(input.requestIdentity ? { requestIdentity: Object.freeze({ ...input.requestIdentity }) } : {}),
     assertCurrent: async () => {
       if (!active || signal.aborted) expired();
     },
@@ -63,6 +88,18 @@ export async function withPluginOwnerWebhook<T>(
     userId: request.userId,
     operation: request.operation,
     signal: request.signal,
+    ...(request.requestIdentity
+      ? {
+          requestIdentity: Object.freeze({
+            ...request.requestIdentity,
+            kind: 'owner_http' as const,
+            pluginId,
+            pluginInstanceId: instanceId,
+            userId: request.userId,
+            contributionId,
+          }),
+        }
+      : {}),
     assertCurrent: async () => {
       if (!active) expired();
       await request.assertCurrent();

@@ -1,3 +1,4 @@
+import { createHash, randomUUID } from 'node:crypto';
 import type { FastifyInstance, FastifyPluginAsync, FastifyReply, FastifyRequest } from 'fastify';
 import { withoutPluginCallContext } from '../../domains/plugin/carrier/plugin-call-context.js';
 import { withPluginOwnerRequest } from '../../domains/plugin/carrier/plugin-owner-request-context.js';
@@ -76,6 +77,7 @@ async function forwardPluginWebhook(
   // Await the response already started by authorization, including async onSend hooks.
   if (principal === false) return reply;
 
+  const requestIdentity = captureOwnerHttpRequest(request, target);
   const lifetime = requestLifetime(request, reply);
   let failurePhase: 'invocation' | 'validation' = 'invocation';
   try {
@@ -104,6 +106,7 @@ async function forwardPluginWebhook(
               userId: principal.id,
               operation: target.method === 'GET' ? 'read' : 'write',
               signal: lifetime.signal,
+              requestIdentity,
             },
             invoke,
           ),
@@ -143,6 +146,24 @@ async function forwardPluginWebhook(
   } finally {
     lifetime.close();
   }
+}
+
+function captureOwnerHttpRequest(request: FastifyRequest, target: Extract<ResolvedTarget, { ok: true }>) {
+  // Capture trusted route facts and original bytes before any package handler can mutate its input.
+  // This ID identifies one authenticated HTTP request, not a cross-request retry contract.
+  const rawUrl = request.raw.url ?? '';
+  const queryStart = rawUrl.indexOf('?');
+  return {
+    requestId: randomUUID(),
+    transportRequestId: request.id,
+    method: target.method,
+    declaredPath: target.declared.path,
+    path: target.path,
+    bodyDigest: createHash('sha256').update(rawBodyFor(request)).digest('hex'),
+    queryDigest: createHash('sha256')
+      .update(queryStart < 0 ? '' : rawUrl.slice(queryStart + 1))
+      .digest('hex'),
+  };
 }
 
 function requestLifetime(request: FastifyRequest, reply: FastifyReply): { signal: AbortSignal; close(): void } {

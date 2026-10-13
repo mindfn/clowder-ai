@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict';
+import { createHash } from 'node:crypto';
 import { test } from 'node:test';
 import Fastify from 'fastify';
 import * as contexts from '../dist/domains/plugin/carrier/plugin-call-context.js';
@@ -7,7 +8,7 @@ import { pluginWebhookForwardingRoutes } from '../dist/routes/plugin/plugin-webh
 
 const owner = process.env.DEFAULT_OWNER_USER_ID?.trim() || 'owner';
 
-async function fixture(t, handler, { anonymous = false, timeoutMs = 1000 } = {}) {
+async function fixture(t, handler, { anonymous = false, timeoutMs = 1000, fastifyOptions = {} } = {}) {
   const webhooks = new DeclaredRuntimeContributions({
     packages: {
       resolveInstalledPackage: async () => {
@@ -38,7 +39,7 @@ async function fixture(t, handler, { anonymous = false, timeoutMs = 1000 } = {})
     },
     handler,
   );
-  const app = Fastify();
+  const app = Fastify(fastifyOptions);
   t.after(() => app.close());
   app.decorateRequest('sessionUserId', undefined);
   // Test auth seam: unlike the body principal, only this authenticated session reaches the Host guard.
@@ -229,4 +230,107 @@ test('disconnected HTTP request invalidates a still-running package handler', as
   assert.ok(captured);
   assert.match(rejected?.message ?? '', /no longer current/);
   assert.equal(captured.signal.aborted, true);
+});
+
+const digest = (value) => createHash('sha256').update(value).digest('hex');
+
+test('Host captures immutable request semantics before package mutation and binds the actual instance', async (t) => {
+  const body = '{"requestId":"package-chosen","task":"one"}';
+  let identity;
+  const f = await fixture(t, async (_id, _method, input) => {
+    identity = current().requestIdentity;
+    input.request.body.requestId = 'other';
+    input.request.body.task = 'other';
+    input.request.path = 'different';
+    input.request.query.mode = 'changed';
+    input.request.rawBody.fill(0);
+    return { status: 200, body: {} };
+  });
+  const response = await f.app.inject({
+    method: 'POST',
+    url: '/api/plugins/dev.clowder.owner-context/owner?mode=a%2Fb',
+    headers: { origin: 'http://localhost:5173', 'content-type': 'application/json' },
+    payload: body,
+  });
+  assert.equal(response.statusCode, 200);
+  assert.ok(identity, 'Host request identity missing');
+  assert.equal(identity.kind, 'owner_http');
+  assert.equal(identity.pluginId, 'dev.clowder.owner-context');
+  assert.equal(identity.pluginInstanceId, 'instance');
+  assert.equal(identity.userId, owner);
+  assert.equal(identity.contributionId, 'owner');
+  assert.equal(identity.method, 'POST');
+  assert.equal(identity.declaredPath, 'owner');
+  assert.equal(identity.path, 'owner');
+  assert.equal(identity.bodyDigest, digest(body));
+  assert.equal(identity.queryDigest, digest('mode=a%2Fb'));
+  assert.notEqual(identity.requestId, 'package-chosen');
+  assert.ok(Object.isFrozen(identity));
+  assert.throws(() => {
+    identity.requestId = 'forged';
+  }, TypeError);
+});
+
+test('two Host requests cannot alias through a repeated transport id or body requestId', async (t) => {
+  const captured = [];
+  const f = await fixture(
+    t,
+    async () => {
+      captured.push(current().requestIdentity);
+      return { status: 200, body: {} };
+    },
+    { fastifyOptions: { genReqId: () => 'same-transport-id' } },
+  );
+  for (let i = 0; i < 2; i++)
+    assert.equal((await f.request('POST', { requestId: 'same-business-id' })).statusCode, 200);
+  assert.ok(captured.every(Boolean), 'Host request identities missing');
+  assert.notEqual(captured[0].requestId, captured[1].requestId);
+  assert.equal(captured[0].transportRequestId, 'same-transport-id');
+  assert.equal(captured[1].transportRequestId, 'same-transport-id');
+  assert.equal(captured[0].bodyDigest, captured[1].bodyDigest);
+});
+
+test('same call keeps one private identity across awaits without exposing it in package arguments', async (t) => {
+  let before, after, leaked;
+  const f = await fixture(t, async (_id, _method, input) => {
+    before = current().requestIdentity;
+    await Promise.resolve();
+    after = current().requestIdentity;
+    leaked = JSON.stringify(input).includes(before?.requestId ?? 'missing');
+    return { status: 200, body: {} };
+  });
+  assert.equal((await f.request('POST', {})).statusCode, 200);
+  assert.ok(before, 'Host request identity missing');
+  assert.equal(after, before);
+  assert.equal(leaked, false);
+});
+
+test('request descriptor distinguishes raw payload and query bytes and exact HTTP method', async (t) => {
+  const captured = [];
+  const f = await fixture(t, async () => {
+    captured.push(current().requestIdentity);
+    return { status: 200, body: {} };
+  });
+  for (const [method, query, body] of [
+    ['POST', 'q=a', '{"a":1}'],
+    ['POST', 'q=%61', '{ "a":1 }'],
+    ['GET', 'q=a', undefined],
+  ]) {
+    assert.equal(
+      (
+        await f.app.inject({
+          method,
+          url: `/api/plugins/dev.clowder.owner-context/owner?${query}`,
+          headers: { origin: 'http://localhost:5173', ...(body ? { 'content-type': 'application/json' } : {}) },
+          ...(body ? { payload: body } : {}),
+        })
+      ).statusCode,
+      200,
+    );
+  }
+  assert.ok(captured.every(Boolean), 'Host request identities missing');
+  assert.notEqual(captured[0].bodyDigest, captured[1].bodyDigest);
+  assert.notEqual(captured[0].queryDigest, captured[1].queryDigest);
+  assert.equal(captured[2].method, 'GET');
+  assert.equal(captured[2].bodyDigest, digest(''));
 });
