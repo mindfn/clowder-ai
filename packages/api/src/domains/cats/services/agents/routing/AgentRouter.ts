@@ -68,6 +68,7 @@ import { routeParallel } from '../routing/route-parallel.js';
 import { routeSerial } from '../routing/route-serial.js';
 import { appendContextAttachmentsToPrompt } from './context-attachment-prompt.js';
 import { routePublicInvocation } from './route-public-invocation.js';
+import { routeTaskInvocation } from './route-task-invocation.js';
 
 const log = createModuleLogger('agent-router');
 const routeTracer = trace.getTracer('cat-cafe-api', '0.1.0');
@@ -1594,6 +1595,10 @@ export class AgentRouter {
     intent: IntentResult,
     options: RouteExecutionOptions,
   ): AsyncIterable<AgentMessage> {
+    if (options.pluginTaskBinding !== undefined || options.pluginTaskExecution !== undefined) {
+      yield* routeTaskInvocation(this.getStrategyDeps(), { userId, threadId, userMessageId, targetCats, options });
+      return;
+    }
     if (options.publicInvocationBinding !== undefined || options.publicInvocationExecution !== undefined) {
       yield* routePublicInvocation(this.getStrategyDeps(), { userId, threadId, userMessageId, targetCats, options });
       return;
