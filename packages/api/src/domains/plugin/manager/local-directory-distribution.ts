@@ -64,7 +64,15 @@ function count(budget: Budget, size: number): void {
   }
 }
 
-function assertPublishedMain(snapshot: string, main: string, members: readonly Member[]): void {
+function assertPublishedMain(
+  snapshot: string,
+  manifest: Record<string, unknown> | undefined,
+  members: readonly Member[],
+): void {
+  // exports takes precedence over legacy main. An empty main does not declare
+  // an executable entry (for example, declaration-only dependency packages).
+  const main = manifest?.main;
+  if (manifest?.exports != null || typeof main !== 'string' || main === '') return;
   const root = realpathSync(snapshot);
   const target = pathOf(root, main.replace(/^\.\//, ''));
   let entry: string;
@@ -279,8 +287,7 @@ export async function prepareLocalDirectoryDistribution(
       node.members = members;
       node.snapshot = snapshot;
       node.packDigest = hash(await lifetime.io(() => readFile(archive)));
-      const main = node.source.manifest?.main;
-      if (typeof main === 'string') assertPublishedMain(snapshot, main, members);
+      assertPublishedMain(snapshot, node.source.manifest, members);
     }
 
     const preparedRoot = resolve(operation, 'package');
@@ -341,8 +348,7 @@ export async function prepareLocalDirectoryDistribution(
           invalid('DEPENDENCY_SOURCE_CHANGED', 'private publication snapshot changed');
         await writeMember(destination, member, sealed.bytes, lifetime);
       }
-      const main = node.source.manifest?.main;
-      if (typeof main === 'string') assertPublishedMain(destination, main, node.members);
+      assertPublishedMain(destination, node.source.manifest, node.members);
     }
 
     // Re-read source bytes and metadata after all pack work. No subsequent
