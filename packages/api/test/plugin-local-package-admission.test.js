@@ -283,3 +283,95 @@ test('rejects a source that changes its archive digest before admission', async 
   );
   assert.equal((await store.snapshot()).instances.length, 0);
 });
+
+test('owner directory reselection upgrades a failed stopped instance without discarding history or data', async () => {
+  const sourceRoot = await tempRoot('cat-cafe-local-update-');
+  await writeLocalPackage(sourceRoot);
+  const { admission, packagesRoot, store } = await harness();
+  const first = await admission.install({ kind: 'local-directory', path: sourceRoot });
+  const error = { code: 'UNEXPECTED_RUNTIME_FAILURE', exitCode: 1, signal: null, occurredAt: 12000 };
+  await store.transaction((tx) => {
+    const instance = tx.instances.get(first.pluginInstanceId);
+    tx.instances.put({ ...instance, activationState: 'error', lastRuntimeError: error });
+  });
+  const before = await store.snapshot();
+  const dataFile = join(packagesRoot, 'owner-data-kept');
+  await writeFile(dataFile, 'retained');
+  await writeFile(join(sourceRoot, 'dist/entrypoint.js'), '// repaired local module\n');
+  const updated = await admission.install({ kind: 'local-directory', path: sourceRoot });
+  const after = await store.snapshot();
+  assert.equal(updated.pluginInstanceId, first.pluginInstanceId);
+  assert.notEqual(updated.packageDigest, first.packageDigest);
+  assert.equal(after.instances.length, 1);
+  assert.equal(after.instances[0].installedAt, before.instances[0].installedAt);
+  assert.equal(after.instances[0].lifecycleRevision, before.instances[0].lifecycleRevision + 1);
+  assert.deepEqual(after.instances[0].lastRuntimeError, error);
+  assert.equal(after.grants[0].grantRevision, before.grants[0].grantRevision + 1);
+  assert.ok(after.packages.some((p) => p.packageDigest === first.packageDigest));
+  await access(join(packagesRoot, packageDirectoryName(first.packageDigest), 'package.tgz'));
+  assert.equal(await readFile(dataFile, 'utf8'), 'retained');
+});
+
+test('directory reselection cannot replace a running instance', async () => {
+  const sourceRoot = await tempRoot('cat-cafe-local-update-running-');
+  await writeLocalPackage(sourceRoot);
+  const { admission, store } = await harness();
+  const installed = await admission.install({ kind: 'local-directory', path: sourceRoot });
+  await store.transaction((tx) => {
+    tx.instances.put({
+      ...tx.instances.get(installed.pluginInstanceId),
+      runtimeState: 'healthy',
+      activationState: 'enabled',
+    });
+  });
+  const before = await store.snapshot();
+  await writeFile(join(sourceRoot, 'dist/entrypoint.js'), '// update\n');
+  await assert.rejects(
+    admission.install({ kind: 'local-directory', path: sourceRoot }),
+    (error) => error.code === 'INVENTORY_REJECTED' && error.cause?.code === 'RUNTIME_NOT_STOPPED',
+  );
+  assert.deepEqual(await store.snapshot(), before);
+});
+
+test('directory update retains the request-start grant fence while source verification is in flight', async () => {
+  const sourceRoot = await tempRoot('cat-cafe-local-update-grant-');
+  await writeLocalPackage(sourceRoot);
+  let revoke = false;
+  const h = await harness({
+    grantPolicy: async () => {
+      if (revoke)
+        await h.inventory.revokeGrant({
+          pluginInstanceId: 'pi_local',
+          capability: 'events.publish',
+          expectedGrantRevision: 1,
+        });
+      return ['events.publish'];
+    },
+  });
+  const first = await h.admission.install({ kind: 'local-directory', path: sourceRoot });
+  revoke = true;
+  await writeFile(join(sourceRoot, 'dist/entrypoint.js'), '// update\n');
+  await assert.rejects(
+    h.admission.install({ kind: 'local-directory', path: sourceRoot }),
+    (error) => error.code === 'INVENTORY_REJECTED' && error.cause?.code === 'STALE_GRANT_REVISION',
+  );
+  const after = await h.store.snapshot();
+  assert.equal(after.instances[0].packageDigest, first.packageDigest);
+  assert.equal(after.grants[0].grantRevision, 2);
+  assert.deepEqual(after.grants[0].effectiveGrants, []);
+});
+
+test('directory reselection does not silently take over an archive-origin instance', async () => {
+  const sourceRoot = await tempRoot('cat-cafe-local-update-origin-');
+  await writeLocalPackage(sourceRoot);
+  const archive = await packageArchive();
+  const archivePath = join(await tempRoot('cat-cafe-local-update-archive-'), 'package.tgz');
+  await writeFile(archivePath, archive.bytes);
+  const { admission, store } = await harness();
+  await admission.install({ kind: 'local-archive', path: archivePath });
+  const before = await store.snapshot();
+  await assert.rejects(admission.install({ kind: 'local-directory', path: sourceRoot }), {
+    code: 'INVENTORY_REJECTED',
+  });
+  assert.deepEqual(await store.snapshot(), before);
+});

@@ -9,7 +9,13 @@ import { FilesystemVerifiedPluginPackageLocator } from '../external-runtime/file
 import type { PluginManifestValidator } from '../external-runtime/package-staging.js';
 import type { VerifiedPluginPackage } from '../external-runtime/types.js';
 import type { HostInventoryControlPlane } from '../host-inventory/control-plane.js';
-import { type PluginDependencyClosure, PluginInventoryError } from '../host-inventory/types.js';
+import {
+  type InventoryMutationResult,
+  type PackageAdmissionCandidate,
+  type PluginDependencyClosure,
+  PluginInventoryError,
+  type PluginInventorySnapshot,
+} from '../host-inventory/types.js';
 import { MAX_PLUGIN_PACKAGE_BYTES, publishPluginPackageArchive } from '../official-package-archive.js';
 import { prepareLocalDirectoryDistribution } from './local-directory-distribution.js';
 import type { LocalDirectoryOperation } from './local-directory-operation.js';
@@ -369,6 +375,9 @@ export class LocalPluginPackageAdmission {
     fence: LocalPluginAdmissionFence = {},
     provenance: LocalPluginPackageProvenance = { kind: source.kind },
   ) {
+    // Capture the current instance/grant fences before asynchronous source work.
+    // A later owner mutation must win over this directory reselection.
+    const inventoryAtRequest = await this.options.inventory.store.snapshot();
     const bytes =
       source.kind === 'local-directory'
         ? await archiveLocalDirectory(source.path, this.packagesRoot, this.tarBin, this.options.npmBin, fence.signal)
@@ -417,33 +426,69 @@ export class LocalPluginPackageAdmission {
       const packageMetadata = await readPackageMetadata(located.rootDir);
       const admittedProvenance = { ...provenance, ...packageMetadata };
       await publishPluginPackageArchive(this.packagesRoot, digest, bytes);
-      try {
-        const installed = await this.options.inventory.installPackage({
-          manifest: located.manifest,
-          computedPackageDigest: digest,
-          expectedPackageDigest: digest,
-          packagePluginId: located.manifest.pluginId,
-          effectiveGrants,
-          signalSchemas,
-          provenance: admittedProvenance,
-        });
-        return { pluginId: located.manifest.pluginId, ...installed };
-      } catch (error) {
-        if (error instanceof PluginInventoryError) throw inventoryAdmissionError(error);
-        throw error;
-      }
+      const installed = await this.admitCandidate(source, inventoryAtRequest, {
+        manifest: located.manifest,
+        computedPackageDigest: digest,
+        expectedPackageDigest: digest,
+        packagePluginId: located.manifest.pluginId,
+        effectiveGrants,
+        signalSchemas,
+        provenance: admittedProvenance,
+      });
+      return { pluginId: located.manifest.pluginId, ...installed };
     } catch (error) {
-      if (error instanceof LocalPluginPackageAdmissionError) {
-        const failureCode = ['UNSUPPORTED_TRANSPORT', 'INVALID_PACKAGE_SCHEMA'].includes(error.code)
-          ? (error.code as PluginPackageQuarantineFailureCode)
-          : error.code === 'INVENTORY_REJECTED'
-            ? quarantineFailureCodeFromInventoryError(error.cause)
-            : undefined;
-        if (failureCode) await this.recordQuarantine(provenance, digest, failureCode);
-      }
+      await this.recordAdmissionFailure(error, provenance, digest);
       throw error;
     } finally {
       await located.release();
+    }
+  }
+
+  private async admitCandidate(
+    source: LocalPluginPackageSource,
+    inventoryAtRequest: PluginInventorySnapshot,
+    candidate: PackageAdmissionCandidate,
+  ): Promise<InventoryMutationResult> {
+    try {
+      const current = inventoryAtRequest.instances.find(
+        (instance) => instance.pluginId === candidate.packagePluginId && instance.lifecycleState === 'installed',
+      );
+      const previousPackage = inventoryAtRequest.packages.find(
+        (record) => record.packageDigest === current?.packageDigest,
+      );
+      const directoryUpdate =
+        source.kind === 'local-directory' &&
+        candidate.provenance?.kind === 'local-directory' &&
+        current !== undefined &&
+        previousPackage?.provenance?.kind === 'local-directory' &&
+        previousPackage.provenance.packageName === candidate.provenance.packageName;
+      if (!directoryUpdate) return await this.options.inventory.installPackage(candidate);
+      const grants = inventoryAtRequest.grants.find((grant) => grant.pluginInstanceId === current.pluginInstanceId);
+      if (!grants) throw new PluginInventoryError('INVENTORY_INVARIANT', 'current instance has no grant record');
+      return await this.options.inventory.upgradePackage({
+        ...candidate,
+        pluginInstanceId: current.pluginInstanceId,
+        expectedLifecycleRevision: current.lifecycleRevision,
+        expectedGrantRevision: grants.grantRevision,
+      });
+    } catch (error) {
+      if (error instanceof PluginInventoryError) throw inventoryAdmissionError(error);
+      throw error;
+    }
+  }
+
+  private async recordAdmissionFailure(
+    error: unknown,
+    provenance: LocalPluginPackageProvenance,
+    digest: string,
+  ): Promise<void> {
+    if (error instanceof LocalPluginPackageAdmissionError) {
+      const failureCode = ['UNSUPPORTED_TRANSPORT', 'INVALID_PACKAGE_SCHEMA'].includes(error.code)
+        ? (error.code as PluginPackageQuarantineFailureCode)
+        : error.code === 'INVENTORY_REJECTED'
+          ? quarantineFailureCodeFromInventoryError(error.cause)
+          : undefined;
+      if (failureCode) await this.recordQuarantine(provenance, digest, failureCode);
     }
   }
 
