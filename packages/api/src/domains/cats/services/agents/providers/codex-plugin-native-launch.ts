@@ -6,11 +6,13 @@ import type { NativeMcpServer } from '../../../../plugin/declared/native-mcp-lau
 import type { AgentServiceOptions } from '../../types.js';
 import { normalizeToolExecutionPolicy } from '../invocation/tool-execution-policy.js';
 import { CODEX_LIVE_DISABLED_FEATURES } from './codex-live-policy.js';
+import { captureTaskSandbox } from './codex-plugin-task-sandbox.js';
 
 const AUTH_KEYS = ['OPENAI_API_KEY', 'OPENAI_ORG_ID', 'OPENAI_ORGANIZATION', 'OPENAI_PROJECT_ID'] as const;
 const MINIMAL_PATH = `${dirname(process.execPath)}:/usr/bin:/bin`;
 
 export interface PreparedCodexNativeLaunch {
+  readonly kind: 'public' | 'entrusted_work';
   readonly options: AgentServiceOptions;
   readonly env: Record<string, string>;
   readonly args: readonly string[];
@@ -29,7 +31,7 @@ export async function prepareCodexNativeLaunch(
   if (
     !port ||
     typeof port.assertCurrent !== 'function' ||
-    port.sandbox?.kind !== 'public' ||
+    (port.sandbox?.kind !== 'public' && port.sandbox?.kind !== 'entrusted_work') ||
     options.toolExecutionPolicy?.mode !== 'plugin_native' ||
     carrier !== 'exec_json' ||
     !frozenPrompt ||
@@ -45,6 +47,8 @@ export async function prepareCodexNativeLaunch(
     throw new Error('plugin_native_launch_unavailable');
 
   const policy = normalizeToolExecutionPolicy(options.toolExecutionPolicy);
+  const task = captureTaskSandbox(options);
+  const attempt = task ? new AbortController() : undefined;
   const server = snapshotServer(port.server);
   const workspace = port.sandbox.workspaceRoot;
   if (typeof workspace !== 'string' || !isAbsolute(workspace) || options.workingDirectory !== workspace)
@@ -54,11 +58,12 @@ export async function prepareCodexNativeLaunch(
   if (!workspaceStat.isDirectory() || (workspaceStat.mode & 0o077) !== 0)
     throw new Error('plugin_native_workspace_not_private');
   const assertAdmission = port.assertCurrent.bind(port);
-  const signal = options.signal;
-  const assertCurrent = async () => {
+  const signal = attempt ? AbortSignal.any([options.signal, attempt.signal]) : options.signal;
+  const checkCurrent = async () => {
     signal?.throwIfAborted();
     await assertAdmission();
     signal?.throwIfAborted();
+    task?.assertCurrent();
     const currentWorkspace = statSync(canonicalWorkspace);
     if (
       realpathSync(workspace) !== canonicalWorkspace ||
@@ -69,6 +74,14 @@ export async function prepareCodexNativeLaunch(
       throw new Error('plugin_native_workspace_changed');
     }
   };
+  const assertCurrent = async () => {
+    try {
+      await checkCurrent();
+    } catch (error) {
+      attempt?.abort(error);
+      throw error;
+    }
+  };
   // Capture every mutable launch input before the first await, including credentials.
   const callbackEnv = { ...options.callbackEnv };
   const accountEnv = { ...options.accountEnv };
@@ -77,6 +90,7 @@ export async function prepareCodexNativeLaunch(
   }
   const captured: AgentServiceOptions = {
     ...options,
+    signal,
     workingDirectory: canonicalWorkspace,
     callbackEnv,
     accountEnv,
@@ -154,11 +168,15 @@ export async function prepareCodexNativeLaunch(
       '--config',
       'orchestrator.mcp.enabled=false',
       '--config',
-      'default_permissions="plugin_native_public"',
-      '--config',
-      'permissions.plugin_native_public.filesystem={"/"="deny",":minimal"="read"}',
-      '--config',
-      'permissions.plugin_native_public.network=false',
+      ...(task
+        ? task.args(controlRoot)
+        : [
+            'default_permissions="plugin_native_public"',
+            '--config',
+            'permissions.plugin_native_public.filesystem={"/"="deny",":minimal"="read"}',
+            '--config',
+            'permissions.plugin_native_public.network={enabled=false}',
+          ]),
       '--config',
       'approval_policy="never"',
       '--config',
@@ -167,7 +185,11 @@ export async function prepareCodexNativeLaunch(
       'apps._default.enabled=false',
       '--config',
       'mcp_servers={}',
-      ...[...CODEX_LIVE_DISABLED_FEATURES, 'hooks'].flatMap((feature) => ['--config', `features.${feature}=false`]),
+      ...[...CODEX_LIVE_DISABLED_FEATURES, 'hooks']
+        .filter(
+          (feature) => !task || !['shell_tool', 'unified_exec', 'apply_patch_freeform', 'hooks'].includes(feature),
+        )
+        .flatMap((feature) => ['--config', `features.${feature}=false`]),
       '--config',
       'features.code_mode_host=true',
       '--config',
@@ -179,7 +201,15 @@ export async function prepareCodexNativeLaunch(
       '--config',
       `mcp_servers.${name}.enabled=true`,
     ];
-    return { options: captured, env, args: Object.freeze(args), serverName: server.name, assertCurrent, dispose };
+    return {
+      kind: task ? 'entrusted_work' : 'public',
+      options: captured,
+      env,
+      args: Object.freeze(args),
+      serverName: server.name,
+      assertCurrent,
+      dispose,
+    };
   } catch (error) {
     dispose();
     throw error;

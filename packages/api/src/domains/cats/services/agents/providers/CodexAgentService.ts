@@ -2023,8 +2023,7 @@ export class CodexAgentService implements AgentService {
           ...dedup(modelArgs),
           ...dedup(reasoningArgs),
           ...dedup(contextWindowArgs),
-          '--sandbox',
-          sandboxMode,
+          ...(native?.kind === 'entrusted_work' ? [] : ['--sandbox', sandboxMode]),
           ...(readOnly || native ? [] : ['--add-dir', '.git']),
           ...dedup(approvalArgs),
           ...dedup(appsWriteApprovalArgs),
@@ -2268,7 +2267,7 @@ export class CodexAgentService implements AgentService {
       const schemaDeliveryProfile =
         readOnly || native ? ('readonly' as const) : live ? ('desktop' as const) : ('full' as const);
       const schemaDeliveryProfileId = native
-        ? 'plugin-native:public'
+        ? `plugin-native:${native.kind}`
         : live
           ? 'desktop:live-companion'
           : schemaDeliveryProfile;
