@@ -78,9 +78,9 @@ export function capturePublicInvocationAuth<T extends Identity>(input: T): T {
   }
 }
 
-/** Public records must not expose the memory backend's mutable canonical identity. */
+/** Bound records must not expose the memory backend's mutable canonical identity. */
 export function publicInvocationRecordView(record: InvocationRecord): InvocationRecord {
-  if (record.publicInvocationBinding === undefined) return record;
+  if (record.publicInvocationBinding === undefined && record.pluginTaskBinding === undefined) return record;
   return {
     ...record,
     clientMessageIds: new Set(record.clientMessageIds),

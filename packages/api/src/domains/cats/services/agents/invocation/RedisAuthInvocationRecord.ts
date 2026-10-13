@@ -6,6 +6,7 @@ import {
   type InvocationRecord,
 } from './InvocationRegistry.js';
 import { normalizeOwnerAuthProvenance } from './owner-auth-provenance.js';
+import { capturePluginTaskInvocationAuth } from './plugin-task-invocation-binding.js';
 import { capturePublicInvocationAuth } from './public-invocation-auth-binding.js';
 import { parseToolExecutionPolicy } from './tool-execution-policy.js';
 
@@ -49,8 +50,35 @@ function applyOptionalFields(record: InvocationRecord, fields: Record<string, st
   }
 }
 
+/**
+ * Every newly written record carries an independent envelope, so losing a whole
+ * binding payload cannot silently turn a scoped principal into an ordinary one.
+ * Unversioned ordinary/public/managed records retain their historical decoder;
+ * unversioned Task principals never shipped and are rejected, not backfilled.
+ * This is a corruption check, not protection against arbitrary Redis rewrites.
+ */
+function hasValidPrincipalEnvelope(fields: Record<string, string>): boolean {
+  const task = Object.hasOwn(fields, 'pluginTaskBinding') || Object.hasOwn(fields, 'pluginTaskBindingVersion');
+  const publicPlugin = Object.hasOwn(fields, 'publicInvocationBinding');
+  const managed = Object.hasOwn(fields, 'managedWorkId') || Object.hasOwn(fields, 'managedWorkAttemptId');
+  if (!Object.hasOwn(fields, 'recordSchemaVersion') && !Object.hasOwn(fields, 'principalKind')) return !task;
+  if (fields.recordSchemaVersion !== '1') return false;
+  switch (fields.principalKind) {
+    case 'ordinary':
+      return !task && !publicPlugin && !managed;
+    case 'plugin_task':
+      return task && !publicPlugin && !managed;
+    case 'public_plugin':
+      return publicPlugin && !task && !managed;
+    case 'managed_work':
+      return Boolean(fields.managedWorkId && fields.managedWorkAttemptId) && !task && !publicPlugin;
+    default:
+      return false;
+  }
+}
+
 export function authRecordFromRedisHash(fields: Record<string, string>, msgs: Set<string>): InvocationRecord | null {
-  if (!fields.invocationId || !fields.callbackToken) return null;
+  if (!fields.invocationId || !fields.callbackToken || !hasValidPrincipalEnvelope(fields)) return null;
   if (Boolean(fields.managedWorkId) !== Boolean(fields.managedWorkAttemptId)) return null;
   const state = parseAuthState(fields.state);
   if (!state) return null;
@@ -71,6 +99,18 @@ export function authRecordFromRedisHash(fields: Record<string, string>, msgs: Se
   };
   try {
     applyOptionalFields(record, fields);
+    if (Object.hasOwn(fields, 'pluginTaskBinding') || Object.hasOwn(fields, 'pluginTaskBindingVersion')) {
+      if (
+        fields.pluginTaskBindingVersion !== '1' ||
+        !fields.pluginTaskBinding ||
+        fields.ownerAuthProvenance !== 'unknown' ||
+        ['publicInvocationBinding', 'managedWorkId', 'managedWorkAttemptId', 'a2aTriggerMessageId'].some((k) =>
+          Object.hasOwn(fields, k),
+        )
+      )
+        return null;
+      return capturePluginTaskInvocationAuth({ ...record, pluginTaskBinding: JSON.parse(fields.pluginTaskBinding) });
+    }
     if (Object.hasOwn(fields, 'publicInvocationBinding')) {
       // Do not normalize corrupt owner/partial lane fields into a valid public identity.
       if (

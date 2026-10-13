@@ -15,6 +15,7 @@ import {
   type VerifyResult,
 } from './InvocationRegistry.js';
 import { normalizeOwnerAuthProvenance } from './owner-auth-provenance.js';
+import { capturePluginTaskInvocationAuth } from './plugin-task-invocation-binding.js';
 import { capturePublicInvocationAuth } from './public-invocation-auth-binding.js';
 import {
   CLAIM_AUTH_MESSAGE_ID_LUA,
@@ -31,6 +32,13 @@ const KEY_LATEST = AuthInvocationKeys.latest;
 const KEY_REFRESH_COOLDOWN = (id: string) => `auth:refresh-cooldown:${id}`;
 const DEFAULT_TOMBSTONE_GC_TTL_MS = 30 * 24 * 60 * 60 * 1000;
 const MAX_CLIENT_MESSAGE_IDS = 1000;
+function principalKind(input: AuthInvocationInput): string {
+  if (input.pluginTaskBinding) return 'plugin_task';
+  if (input.publicInvocationBinding) return 'public_plugin';
+  if (input.managedWorkBinding) return 'managed_work';
+  return 'ordinary';
+}
+
 export class RedisAuthInvocationBackend implements IAuthInvocationBackend {
   private readonly tombstoneGcTtlMs: number;
 
@@ -42,8 +50,12 @@ export class RedisAuthInvocationBackend implements IAuthInvocationBackend {
   }
 
   async create(input: AuthInvocationInput): Promise<void> {
-    input = capturePublicInvocationAuth(input);
+    input = capturePluginTaskInvocationAuth(capturePublicInvocationAuth(input));
     const fields: string[] = [
+      'recordSchemaVersion',
+      '1',
+      'principalKind',
+      principalKind(input),
       'invocationId',
       input.invocationId,
       'callbackToken',
@@ -71,6 +83,9 @@ export class RedisAuthInvocationBackend implements IAuthInvocationBackend {
     if (input.toolExecutionPolicy) fields.push('toolExecutionPolicy', JSON.stringify(input.toolExecutionPolicy));
     if (input.publicInvocationBinding)
       fields.push('publicInvocationBinding', JSON.stringify(input.publicInvocationBinding));
+
+    if (input.pluginTaskBinding)
+      fields.push('pluginTaskBindingVersion', '1', 'pluginTaskBinding', JSON.stringify(input.pluginTaskBinding));
 
     const latestKey = KEY_LATEST(input.threadId, input.catId as string);
     for (let attempt = 0; attempt < 8; attempt += 1) {
