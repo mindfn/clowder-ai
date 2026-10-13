@@ -497,3 +497,95 @@ test('continuation rejects ordinary CRUD tasks and cannot move the admitted Task
     (error) => error.code === 'DELIVERY_REJECTED',
   );
 });
+
+test('first preparation persists a distinct execution receipt and retry recovers it without dispatch', async () => {
+  const f = await fixture();
+  const first = await f.host.prepareEntrusted(f.input);
+  assert.match(first.executionRef ?? '', /^message:/);
+  assert.notEqual(first.executionRef, first.admissionRef);
+  const receipt = f.messages.getById(first.executionRef.slice(8));
+  assert.match(receipt.content, /"kind":"plugin_task_execution"/);
+  assert.equal(receipt.queueCustody, undefined);
+  assert.equal(receipt.source, undefined);
+  const task = structuredClone(f.tasks.get(first.taskRef.slice(10)));
+  const results = await Promise.all([
+    f.host.prepareEntrusted(f.input),
+    createPluginTaskHost(f.deps).prepareEntrusted(f.input),
+  ]);
+  assert.ok(results.every((r) => r.executionRef === first.executionRef));
+  assert.deepEqual(f.tasks.get(task.id), task);
+  assert.equal(
+    f.messages.getByThread(f.thread.id).filter((m) => m.content.startsWith('Host plugin Task execution receipt.'))
+      .length,
+    1,
+  );
+});
+
+test('first execution receipt inherits original clarification attribution across owner and background retries', async () => {
+  for (const initialOwner of [false, true]) {
+    const f = await fixture();
+    const incomplete = structuredClone(f.input);
+    delete incomplete.subject.closure;
+    const result = initialOwner
+      ? await f.owner('write', () => f.host.prepareEntrusted(incomplete))
+      : await f.host.prepareEntrusted(incomplete);
+    assert.equal(result.result, 'needs_clarification');
+    assert.equal(
+      f.messages.getByThread(f.thread.id).filter((m) => m.content.startsWith('Host plugin Task execution receipt.'))
+        .length,
+      0,
+    );
+    const complete = initialOwner
+      ? await f.host.prepareEntrusted(f.input)
+      : await f.owner('write', () => f.host.prepareEntrusted(f.input));
+    assert.match(complete.executionRef ?? '', /^message:/);
+    assert.ok(
+      f.messages
+        .getById(complete.executionRef.slice(8))
+        .content.includes(`"mode":"${initialOwner ? 'owner_request' : 'plugin_policy'}"`),
+    );
+  }
+});
+
+test('first execution receipt conflict and Task drift after persistence never authorize a successful preparation', async () => {
+  for (const drift of [false, true]) {
+    const f = await fixture();
+    const append = f.messages.appendIdempotent.bind(f.messages);
+    let reached = false;
+    f.messages.appendIdempotent = async (value) => {
+      const result = await append(value);
+      if (value.idempotencyKey.startsWith('plugin-task-execution:')) {
+        reached = true;
+        if (drift) f.tasks.listByKind('work')[0].entrustedWork.revision++;
+        else result.message.content += 'tampered';
+      }
+      return result;
+    };
+    await assert.rejects(() => f.host.prepareEntrusted(f.input));
+    assert.equal(reached, true);
+    assert.equal(f.tasks.listByKind('work').length, 1, 'retain admitted Task for explicit recovery, never erase data');
+  }
+});
+
+test('lost first execution response resumes the same durable Task and execution receipt', async () => {
+  const f = await fixture();
+  const append = f.messages.appendIdempotent.bind(f.messages);
+  let lost;
+  f.messages.appendIdempotent = async (value) => {
+    const result = await append(value);
+    if (value.idempotencyKey.startsWith('plugin-task-execution:') && !lost) {
+      lost = result.message.id;
+      throw Error('injected lost execution response');
+    }
+    return result;
+  };
+  await assert.rejects(() => f.host.prepareEntrusted(f.input), /injected lost/);
+  const retry = await createPluginTaskHost(f.deps).prepareEntrusted(f.input);
+  assert.equal(retry.executionRef, `message:${lost}`);
+  assert.equal(f.tasks.listByKind('work').length, 1);
+  assert.equal(
+    f.messages.getByThread(f.thread.id).filter((m) => m.content.startsWith('Host plugin Task execution receipt.'))
+      .length,
+    1,
+  );
+});

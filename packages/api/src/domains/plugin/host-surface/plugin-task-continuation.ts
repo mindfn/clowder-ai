@@ -5,11 +5,11 @@ import type { IMessageStore } from '../../cats/services/stores/ports/MessageStor
 import { ExternalPluginRuntimeError } from '../external-runtime/types.js';
 import type { PluginTaskHostDeps } from './plugin-task-host.js';
 import {
-  type PluginTaskContinuationReceiptData,
+  type PluginTaskExecutionReceiptData,
   pluginTaskAdmissionContent,
   pluginTaskAdmissionKey,
-  pluginTaskContinuationContent,
-  pluginTaskContinuationKey,
+  pluginTaskExecutionContent,
+  pluginTaskExecutionKey,
   pluginTaskReceiptModes,
 } from './plugin-task-receipt.js';
 
@@ -124,7 +124,7 @@ export async function readPluginContinuationTask(
   return task;
 }
 
-export interface PluginContinuationSnapshot {
+export interface PluginTaskExecutionSnapshot {
   readonly source: {
     readonly id: string;
     readonly threadId: string;
@@ -132,27 +132,29 @@ export interface PluginContinuationSnapshot {
     readonly revision: number;
   };
   readonly threadId: string;
-  readonly continuation?: TaskItem;
+  readonly task?: TaskItem;
 }
 /** Preserve the immutable first admission, writing only an execution receipt. No queue or provider effect. */
-export async function preparePluginTaskContinuation(
+export async function preparePluginTaskExecutionReceipt(
   deps: PluginTaskHostDeps,
-  snapshot: PluginContinuationSnapshot,
+  snapshot: PluginTaskExecutionSnapshot,
   mode: string,
-  read: () => Promise<PluginContinuationSnapshot>,
+  kind: PluginTaskExecutionReceiptData['kind'],
+  read: () => Promise<PluginTaskExecutionSnapshot>,
   current: () => Promise<void>,
 ) {
-  const task = snapshot.continuation;
+  const task = snapshot.task;
   const messages = deps.admission?.messageStore;
   const admission = task?.entrustedWork?.admission;
   if (admission?.basis !== 'authorized_source') refuse('Task continuation lacks authorized-source admission');
   const admissionRef = admission.authorityRef;
   if (!task?.entrustedWork || !admissionRef || !messages || !deps.ownerUserId || !deps.pluginInstanceId)
     refuse('Task continuation unavailable');
-  if (task.entrustedWork.admission.sourceRefs.includes(`message:${snapshot.source.id}`))
-    refuse('Continuation requires a new durable source');
-  const data: PluginTaskContinuationReceiptData = {
-    kind: 'plugin_task_continuation',
+  const isFirstSource = task.entrustedWork.admission.sourceRefs.includes(`message:${snapshot.source.id}`);
+  if (isFirstSource !== (kind === 'plugin_task_execution'))
+    refuse('Execution phase does not match the admitted source');
+  const data: PluginTaskExecutionReceiptData = {
+    kind,
     version: 1,
     pluginInstanceId: deps.pluginInstanceId,
     userId: deps.ownerUserId,
@@ -168,8 +170,8 @@ export async function preparePluginTaskContinuation(
     threadId: task.threadId,
     admissionRef,
   };
-  const content = (origin: string) => pluginTaskContinuationContent(data, origin);
-  const key = pluginTaskContinuationKey(deps.pluginInstanceId, snapshot.source.id, task.ownerCatId);
+  const content = (origin: string) => pluginTaskExecutionContent(data, origin);
+  const key = pluginTaskExecutionKey(deps.pluginInstanceId, snapshot.source.id, task.ownerCatId, kind);
   if (!isDeepStrictEqual(snapshot, await read())) refuse('Task continuation changed before receipt persistence');
   await current();
   const { message } = await messages.appendIdempotent({
@@ -196,8 +198,9 @@ export async function preparePluginTaskContinuation(
     refuse('Task continuation receipt conflicts with the existing source request');
   if (!isDeepStrictEqual(snapshot, await read())) refuse('Task continuation changed during receipt persistence');
   await current();
+  if (!isDeepStrictEqual(task, structuredClone(await deps.taskStore?.get(task.id))))
+    refuse('Task changed after execution receipt persistence');
   return Object.freeze({
-    result: 'resumed' as const,
     taskRef: `task:work:${task.id}`,
     taskRevision: task.entrustedWork.revision,
     threadId: task.threadId,

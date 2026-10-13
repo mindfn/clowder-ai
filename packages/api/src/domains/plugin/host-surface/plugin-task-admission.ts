@@ -13,7 +13,7 @@ import { snapshotPluginProtocolData } from '../carrier/plugin-protocol-data.js';
 import { ExternalPluginRuntimeError } from '../external-runtime/types.js';
 import type { PluginInventoryStore } from '../host-inventory/ports.js';
 import { createPluginSourceFactsHost } from './plugin-source-facts-host.js';
-import { preparePluginTaskContinuation, readPluginContinuationTask } from './plugin-task-continuation.js';
+import { preparePluginTaskExecutionReceipt, readPluginContinuationTask } from './plugin-task-continuation.js';
 import type { PluginTaskHostDeps } from './plugin-task-host.js';
 import {
   type PluginTaskReceiptData,
@@ -60,7 +60,7 @@ export type PluginTaskAdmissionResult =
       readonly taskRevision: number;
       readonly threadId: string;
       readonly admissionRef: string;
-      readonly executionRef?: string;
+      readonly executionRef: string;
     };
 
 /** Host-only stores and fences. This object never crosses the module boundary. */
@@ -217,12 +217,16 @@ export async function preparePluginEntrustedTask(
         revision: source.extra.pluginMessage.revision,
       },
       threadId,
-      ...(continuation ? { continuation } : {}),
+      ...(continuation ? { task: continuation } : {}),
     };
   };
   const source = await read();
   if (!isDeepStrictEqual(source, await read())) refuse('Task source changed during admission');
-  if (value.subject.kind === 'continue') return preparePluginTaskContinuation(deps, source, mode, read, current);
+  if (value.subject.kind === 'continue')
+    return Object.freeze({
+      result: 'resumed' as const,
+      ...(await preparePluginTaskExecutionReceipt(deps, source, mode, 'plugin_task_continuation', read, current)),
+    });
   const sourceRef = `message:${source.source.id}`;
   const key = pluginTaskAdmissionKey(instanceId, sourceRef, value.targetCatId);
   const receiptData: PluginTaskReceiptData = {
@@ -335,11 +339,25 @@ export async function preparePluginEntrustedTask(
     task.entrustedWork.closure.state !== 'open'
   )
     refuse('Task no longer matches the prepared admission');
-  return Object.freeze({
-    result: result.result,
+  const selector = {
+    kind: 'continue' as const,
     taskRef: result.subjectRef,
-    taskRevision: task.entrustedWork.revision,
-    threadId: task.threadId,
-    admissionRef,
-  });
+    expectedRevision: task.entrustedWork.revision,
+  };
+  const readExecution = async () => {
+    const task = await readPluginContinuationTask(deps, selector, value.targetCatId);
+    const live = await read();
+    if (!isDeepStrictEqual(source, live)) refuse('First execution source changed');
+    await current();
+    return { ...live, task };
+  };
+  const execution = await preparePluginTaskExecutionReceipt(
+    deps,
+    { ...source, task: structuredClone(task) },
+    receiptMode,
+    'plugin_task_execution',
+    readExecution,
+    current,
+  );
+  return Object.freeze({ result: result.result, ...execution });
 }

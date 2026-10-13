@@ -13,7 +13,7 @@ import {
 import { createPluginTaskInvocationCurrentness } from '../dist/domains/plugin/host-surface/plugin-task-currentness.js';
 import { createPluginTaskHost } from '../dist/domains/plugin/host-surface/plugin-task-host.js';
 
-async function fixture(manual = false) {
+async function fixture(manual = false, firstExecution = false) {
   const messages = new MessageStore(),
     tasks = new TaskStore(),
     threads = new ThreadStore();
@@ -65,13 +65,17 @@ async function fixture(manual = false) {
         () => withPluginOwnerWebhook('neutral', 'owner', 'instance', false, () => {}, prepare),
       )
     : await prepare();
-  const next = messages.append({ ...structuredClone(source), id: undefined, content: 'Continue report', timestamp: 2 });
-  const resumed = await host.prepareEntrusted({
-    sourceMessageId: next.id,
-    targetCatId: 'codex',
-    destination: { kind: 'derived_from_source' },
-    subject: { kind: 'continue', taskRef: first.taskRef, expectedRevision: first.taskRevision },
-  });
+  const next = firstExecution
+    ? source
+    : messages.append({ ...structuredClone(source), id: undefined, content: 'Continue report', timestamp: 2 });
+  const resumed = firstExecution
+    ? first
+    : await host.prepareEntrusted({
+        sourceMessageId: next.id,
+        targetCatId: 'codex',
+        destination: { kind: 'derived_from_source' },
+        subject: { kind: 'continue', taskRef: first.taskRef, expectedRevision: first.taskRevision },
+      });
   const state = {
     instances: [
       {
@@ -430,4 +434,29 @@ test('owner, target, origin and provenance in the invocation must exactly match 
     { pluginTaskBinding: { ...f.principal.pluginTaskBinding, executionRef: f.first.admissionRef } },
   ])
     await assert.rejects(() => f.check({ ...f.principal, ...change }));
+});
+
+test('first execution passes the actual compiled Host reader for derived and owner-selected Task threads', async () => {
+  for (const manual of [false, true]) {
+    const f = await fixture(manual, true);
+    assert.match(f.first.executionRef ?? '', /^message:/);
+    assert.notEqual(f.first.executionRef, f.first.admissionRef);
+    assert.equal(f.principal.pluginTaskBinding.sourceMessageId, f.source.id);
+    await f.check(f.principal);
+    const receipt = f.messages.getById(f.first.executionRef.slice(8));
+    receipt.content = receipt.content.replace('"kind":"plugin_task_execution"', '"kind":"plugin_task_continuation"');
+    await assert.rejects(
+      () => f.check(f.principal),
+      'continuation-shaped body cannot replace a first execution receipt',
+    );
+  }
+});
+
+test('first execution requires the protected execution index as well as a matching receipt body', async () => {
+  const f = await fixture(false, true);
+  assert.match(f.first.executionRef ?? '', /^message:/);
+  await f.check(f.principal);
+  const get = f.messages.getByIdempotencyKey.bind(f.messages);
+  f.messages.getByIdempotencyKey = (...args) => (args[2].startsWith('plugin-task-execution:') ? null : get(...args));
+  await assert.rejects(() => f.check(f.principal));
 });

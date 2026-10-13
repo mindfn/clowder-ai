@@ -13,10 +13,10 @@ import { ExternalPluginRuntimeError } from '../external-runtime/types.js';
 import type { PluginInventoryStore } from '../host-inventory/ports.js';
 import { readPluginContinuationTask } from './plugin-task-continuation.js';
 import {
-  pluginTaskContinuationContent,
-  pluginTaskContinuationKey,
   pluginTaskDispatchContent,
   pluginTaskDispatchKey,
+  pluginTaskExecutionContent,
+  pluginTaskExecutionKey,
   pluginTaskReceiptModes,
 } from './plugin-task-receipt.js';
 
@@ -141,8 +141,7 @@ export function createPluginTaskInvocationCurrentness(deps: PluginTaskCurrentnes
       if (
         !source.source ||
         source.extra?.pluginMessage?.instanceId !== b.pluginInstanceId ||
-        source.extra.pluginMessage.revision !== b.sourceRevision ||
-        admission.sourceRefs.includes(`message:${source.id}`)
+        source.extra.pluginMessage.revision !== b.sourceRevision
       )
         refuse();
       const sourceThread = await readOwnedThread(deps, source.threadId);
@@ -153,7 +152,9 @@ export function createPluginTaskInvocationCurrentness(deps: PluginTaskCurrentnes
         b.ownerUserId,
       );
       const receiptData = {
-        kind: 'plugin_task_continuation' as const,
+        kind: admission.sourceRefs.includes(`message:${source.id}`)
+          ? ('plugin_task_execution' as const)
+          : ('plugin_task_continuation' as const),
         version: 1 as const,
         pluginInstanceId: b.pluginInstanceId,
         userId: b.ownerUserId,
@@ -172,14 +173,12 @@ export function createPluginTaskInvocationCurrentness(deps: PluginTaskCurrentnes
       if (
         execution.source ||
         execution.threadId !== source.threadId ||
-        !pluginTaskReceiptModes.some(
-          (mode) => execution.content === pluginTaskContinuationContent(receiptData, mode),
-        ) ||
+        !pluginTaskReceiptModes.some((mode) => execution.content === pluginTaskExecutionContent(receiptData, mode)) ||
         (
           await deps.messageStore.getByIdempotencyKey(
             b.ownerUserId,
             source.threadId,
-            pluginTaskContinuationKey(b.pluginInstanceId, source.id, b.targetCatId),
+            pluginTaskExecutionKey(b.pluginInstanceId, source.id, b.targetCatId, receiptData.kind),
           )
         )?.id !== execution.id
       )
