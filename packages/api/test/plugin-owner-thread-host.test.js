@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
+import { PluginOwnerOperationExpiredError } from '../dist/domains/plugin/carrier/plugin-owner-operation-context.js';
 import { neutralFixture } from './helpers/neutral-host-fixture.js';
 
 const capabilities = ['thread.listMetadata', 'thread.write'];
@@ -125,5 +126,75 @@ test('grant revocation during an awaited thread read prevents the participant wr
   const denied = await f.http('ownerThreads', 'addParticipants', { threadId: f.thread.id, catIds: ['cat'] });
   assert.equal(intercepted, true);
   assert.notEqual(denied.statusCode, 200, denied.body);
+  assert.deepEqual((await get(f.thread.id)).participants, []);
+});
+
+async function ownerOperation(f, run, options = {}) {
+  const { withOwnerOperationInvocation, consumeOwnerOperationInvocation } = await import(
+    '../dist/domains/plugin/carrier/plugin-owner-operation-context.js'
+  );
+  const controller = options.controller ?? new AbortController();
+  const instanceId = options.instanceId ?? f.installed.pluginInstanceId;
+  const request = {
+    pluginId: 'owner-operation-test',
+    operationKey: 'participation',
+    actionId: 'sync',
+    requestId: 'owner-thread-operation',
+    userId: options.userId ?? f.owner,
+    signal: controller.signal,
+    assertCurrent() {
+      controller.signal.throwIfAborted();
+    },
+  };
+  return withOwnerOperationInvocation(
+    request,
+    instanceId,
+    'participation.sync',
+    async () => {},
+    () => consumeOwnerOperationInvocation(instanceId, 'participation.sync', undefined, () => {}, run),
+  );
+}
+
+test('Settings owner operation can read, create and update its own threads through the existing carrier', async (t) => {
+  const f = await fixture(t);
+  await ownerOperation(f, async () => {
+    assert.equal((await f.host().ownerThreads.get(f.thread.id)).id, f.thread.id);
+    const created = await f.host().ownerThreads.create({ title: 'Settings participation' });
+    assert.equal(created.createdBy, f.owner);
+    const updated = await f.host().ownerThreads.addParticipants({ threadId: created.id, catIds: ['cat'] });
+    assert.deepEqual(updated.participants, ['cat']);
+    const foreign = await f.threads.create('another-owner', 'foreign');
+    assert.equal(await f.host().ownerThreads.get(foreign.id), null);
+  });
+});
+
+test('Settings owner operation still requires matching owner, instance and thread grants', async (t) => {
+  const f = await fixture(t);
+  for (const options of [{ userId: 'another-owner' }, { instanceId: 'another-instance' }]) {
+    await assert.rejects(() => ownerOperation(f, () => f.host().ownerThreads.get(f.thread.id), options));
+  }
+  const ungranted = await fixture(t, { grants: [], independentNative: true });
+  await assert.rejects(() => ownerOperation(ungranted, () => ungranted.host().ownerThreads.get(ungranted.thread.id)));
+});
+
+test('Settings operation cancellation during thread read prevents participant mutation and late return', async (t) => {
+  const f = await fixture(t);
+  const controller = new AbortController();
+  const get = f.threads.get.bind(f.threads);
+  let reached = false;
+  f.threads.get = async (...args) => {
+    const value = await get(...args);
+    reached = true;
+    controller.abort(new Error('Settings request cancelled'));
+    return value;
+  };
+  await assert.rejects(
+    () =>
+      ownerOperation(f, () => f.host().ownerThreads.addParticipants({ threadId: f.thread.id, catIds: ['cat'] }), {
+        controller,
+      }),
+    PluginOwnerOperationExpiredError,
+  );
+  assert.equal(reached, true);
   assert.deepEqual((await get(f.thread.id)).participants, []);
 });

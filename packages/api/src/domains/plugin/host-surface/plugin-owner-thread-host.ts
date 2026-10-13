@@ -1,5 +1,6 @@
 import type { IThreadStore, Thread } from '../../cats/services/stores/ports/ThreadStore.js';
 import { currentPluginOwnerRequestContext } from '../carrier/plugin-call-context.js';
+import { currentOwnerOperation } from '../carrier/plugin-owner-operation-context.js';
 import { snapshotPluginProtocolData } from '../carrier/plugin-protocol-data.js';
 import { ExternalPluginRuntimeError } from '../external-runtime/types.js';
 import { type PluginThreadProjectionDeps, validatePreferredCats } from './plugin-thread-projections.js';
@@ -10,7 +11,7 @@ export interface PluginOwnerThread {
   readonly participants: readonly string[];
 }
 
-/** Strict owner-request variants; plugin bindings and native invocations confer no ownership. */
+/** Authenticated owner requests and Settings operations; native calls confer no ownership. */
 export interface PluginOwnerThreadHost {
   get(threadId: string): Promise<PluginOwnerThread | null>;
   create(input: { readonly title: string }): Promise<PluginOwnerThread>;
@@ -60,8 +61,9 @@ export function createPluginOwnerThreadHost(deps: Deps): PluginOwnerThreadHost {
     if (!deps.ownerUserId || !deps.threadStore) {
       throw new ExternalPluginRuntimeError('UNSUPPORTED_TRANSPORT', 'Host owner thread services unavailable');
     }
-    const owner = currentPluginOwnerRequestContext(deps.pluginInstanceId);
-    if (!owner || owner.userId !== deps.ownerUserId || (write && owner.operation !== 'write')) {
+    const request = currentPluginOwnerRequestContext(deps.pluginInstanceId);
+    const owner = request ?? currentOwnerOperation(deps.pluginInstanceId);
+    if (!owner || owner.userId !== deps.ownerUserId || (write && request && request.operation !== 'write')) {
       refuse('A current authenticated owner request is required for owner threads');
     }
     return {
