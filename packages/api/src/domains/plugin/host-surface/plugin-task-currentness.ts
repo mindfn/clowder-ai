@@ -2,8 +2,10 @@ import { createHash } from 'node:crypto';
 import { isDeepStrictEqual } from 'node:util';
 import type { CatId } from '@cat-cafe/shared';
 import {
+  capturePluginTaskBinding,
   capturePluginTaskInvocationAuth,
   type PluginTaskCurrentnessInput,
+  type PluginTaskInvocationBinding,
 } from '../../cats/services/agents/invocation/plugin-task-invocation-binding.js';
 import type { IMessageStore, StoredMessage } from '../../cats/services/stores/ports/MessageStore.js';
 import { assertQueueCustodyMessageBinding } from '../../cats/services/stores/ports/queued-message-custody.js';
@@ -12,6 +14,11 @@ import type { IThreadStore } from '../../cats/services/stores/ports/ThreadStore.
 import { ExternalPluginRuntimeError } from '../external-runtime/types.js';
 import type { PluginInventoryStore } from '../host-inventory/ports.js';
 import { readPluginContinuationTask } from './plugin-task-continuation.js';
+import {
+  assertUnstartedTaskCustody,
+  createTaskQueueAuthority,
+  type PluginTaskAuthorityPhase,
+} from './plugin-task-queue-authority.js';
 import {
   pluginTaskDispatchContent,
   pluginTaskDispatchKey,
@@ -59,21 +66,23 @@ async function readOwnedThread(deps: PluginTaskCurrentnessDeps, id: string, targ
   return thread;
 }
 
-function assertTaskDispatchCustody(trigger: StoredMessage, input: PluginTaskCurrentnessInput): string {
+function assertTaskDispatchCustody(
+  trigger: StoredMessage,
+  b: PluginTaskInvocationBinding,
+  phase: PluginTaskAuthorityPhase,
+): string {
   assertQueueCustodyMessageBinding(trigger);
-  const b = input.pluginTaskBinding;
   const custody = trigger.queueCustody;
   if (
     !custody ||
     custody.pluginPublicInvocation ||
     custody.ownerUserId !== b.ownerUserId ||
     custody.ownerAuthProvenance !== 'unknown' ||
-    custody.status !== 'processing' ||
     custody.intent !== 'execute' ||
     custody.carrierByTargetCatId !== undefined ||
+    custody.carrierStateByTargetCatId !== undefined ||
     !isDeepStrictEqual(custody.allTargetCats, [b.targetCatId]) ||
     !custody.pendingTargetCats.includes(b.targetCatId as CatId) ||
-    custody.awakenedInvocationIdByCatId?.[b.targetCatId] !== input.invocationId ||
     custody.handledByCatIds.includes(b.targetCatId as CatId) ||
     custody.failedByCatIds.includes(b.targetCatId as CatId) ||
     custody.withdrawnByCatIds?.includes(b.targetCatId as CatId) ||
@@ -82,16 +91,41 @@ function assertTaskDispatchCustody(trigger: StoredMessage, input: PluginTaskCurr
     custody.prestartRetirement
   )
     refuse();
+  if (phase.kind === 'queue') {
+    if (custody.entryId !== phase.entryId) refuse();
+    assertUnstartedTaskCustody(custody, b.targetCatId);
+  } else if (
+    custody.status !== 'processing' ||
+    custody.awakenedInvocationIdByCatId?.[b.targetCatId] !== phase.invocationId
+  ) {
+    refuse();
+  }
   return custody.entryId;
 }
 
 /** Read-only Host authority, independent of package claims and callback credentials. */
 export function createPluginTaskInvocationCurrentness(deps: PluginTaskCurrentnessDeps) {
+  const read = createAuthorityReader(deps);
   return async (raw: PluginTaskCurrentnessInput): Promise<void> => {
-    // Revalidate at this boundary too; only the Registry supplies invocation identity.
-    const input = capturePluginTaskInvocationAuth(raw),
-      b = input.pluginTaskBinding;
-    if (!b || input.userId !== deps.ownerUserId || !input.invocationId) refuse();
+    const input = capturePluginTaskInvocationAuth(raw);
+    if (!input.pluginTaskBinding || input.userId !== deps.ownerUserId || !input.invocationId) refuse();
+    await read(input.pluginTaskBinding, { kind: 'invocation', invocationId: input.invocationId });
+  };
+}
+
+/** Host Queue selection and one-time child binding; not an SDK authorization surface. */
+export function createPluginTaskQueueAuthority(
+  deps: PluginTaskCurrentnessDeps & {
+    messageStore: Pick<IMessageStore, 'getById' | 'getByIdempotencyKey' | 'transitionQueueCustody'>;
+  },
+) {
+  return createTaskQueueAuthority(deps.messageStore, deps.ownerUserId, createAuthorityReader(deps));
+}
+
+function createAuthorityReader(deps: PluginTaskCurrentnessDeps) {
+  return async (raw: PluginTaskInvocationBinding, phase: PluginTaskAuthorityPhase): Promise<void> => {
+    const b = capturePluginTaskBinding(raw);
+    if (b.ownerUserId !== deps.ownerUserId) refuse();
     const installation = async () => {
       const state = structuredClone(await deps.inventory.snapshot());
       const instance = state.instances.find((i) => i.pluginInstanceId === b.pluginInstanceId);
@@ -197,7 +231,7 @@ export function createPluginTaskInvocationCurrentness(deps: PluginTaskCurrentnes
           trigger.id
       )
         refuse();
-      const entryId = assertTaskDispatchCustody(trigger, input);
+      const entryId = assertTaskDispatchCustody(trigger, b, phase);
       await installation();
       // Do not freeze normal mutable Queue progress; its validity is checked on each read.
       return {
@@ -212,7 +246,12 @@ export function createPluginTaskInvocationCurrentness(deps: PluginTaskCurrentnes
         sourceThread: { id: sourceThread.id, createdBy: sourceThread.createdBy },
         taskThread: { id: taskThread.id, createdBy: taskThread.createdBy, participants: taskThread.participants },
         execution: { id: execution.id, content: execution.content },
-        trigger: { id: trigger.id, content: trigger.content, entryId },
+        trigger: {
+          id: trigger.id,
+          content: trigger.content,
+          entryId,
+          ...(phase.kind === 'queue' ? { custody: trigger.queueCustody } : {}),
+        },
       };
     };
     const before = await read();

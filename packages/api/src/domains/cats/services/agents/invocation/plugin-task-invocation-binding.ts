@@ -61,11 +61,10 @@ function coordinate(value: unknown): value is string {
     ![...value].some((c) => c.charCodeAt(0) < 32 || c.charCodeAt(0) === 127)
   );
 }
-/** Snapshot and validate before mutation/await, including direct backend callers and Redis decode. */
-export function capturePluginTaskInvocationAuth<T extends Identity>(input: T): T {
-  if (input.pluginTaskBinding === undefined) return input;
+/** Validate durable Host coordinates without inventing an invocation or tool policy. */
+export function capturePluginTaskBinding(value: unknown): PluginTaskInvocationBinding {
   try {
-    const binding = snapshotPluginProtocolData(input.pluginTaskBinding) as PluginTaskInvocationBinding;
+    const binding = snapshotPluginProtocolData(value) as PluginTaskInvocationBinding;
     if (
       !binding ||
       typeof binding !== 'object' ||
@@ -80,6 +79,17 @@ export function capturePluginTaskInvocationAuth<T extends Identity>(input: T): T
       binding.triggerMessageId === binding.sourceMessageId
     )
       refuse();
+    return binding;
+  } catch {
+    return refuse();
+  }
+}
+
+/** Snapshot and validate before mutation/await, including direct backend callers and Redis decode. */
+export function capturePluginTaskInvocationAuth<T extends Identity>(input: T): T {
+  if (input.pluginTaskBinding === undefined) return input;
+  try {
+    const binding = capturePluginTaskBinding(input.pluginTaskBinding);
     const policy = parseToolExecutionPolicy(JSON.stringify(snapshotPluginProtocolData(input.toolExecutionPolicy)));
     if (
       input.userId !== binding.ownerUserId ||

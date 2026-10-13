@@ -10,7 +10,10 @@ import {
   withPluginOwnerRequest,
   withPluginOwnerWebhook,
 } from '../dist/domains/plugin/carrier/plugin-owner-request-context.js';
-import { createPluginTaskInvocationCurrentness } from '../dist/domains/plugin/host-surface/plugin-task-currentness.js';
+import * as currentnessModule from '../dist/domains/plugin/host-surface/plugin-task-currentness.js';
+
+const { createPluginTaskInvocationCurrentness } = currentnessModule;
+
 import { createPluginTaskHost } from '../dist/domains/plugin/host-surface/plugin-task-host.js';
 
 async function fixture(manual = false, firstExecution = false) {
@@ -150,14 +153,15 @@ async function fixture(manual = false, firstExecution = false) {
     awakenedAtByCatId: { codex: 3 },
   };
   let available = true;
-  const check = createPluginTaskInvocationCurrentness({
+  const currentnessDeps = {
     ownerUserId: 'owner',
     taskStore: tasks,
     messageStore: messages,
     threadStore: threads,
     inventory: { snapshot: async () => state },
     isCatAvailable: (id) => available && id === 'codex',
-  });
+  };
+  const check = createPluginTaskInvocationCurrentness(currentnessDeps);
   const principal = {
     invocationId: 'inv',
     userId: 'owner',
@@ -175,6 +179,7 @@ async function fixture(manual = false, firstExecution = false) {
   };
   return {
     check,
+    currentnessDeps,
     principal,
     tasks,
     messages,
@@ -459,4 +464,263 @@ test('first execution requires the protected execution index as well as a matchi
   const get = f.messages.getByIdempotencyKey.bind(f.messages);
   f.messages.getByIdempotencyKey = (...args) => (args[2].startsWith('plugin-task-execution:') ? null : get(...args));
   await assert.rejects(() => f.check(f.principal));
+});
+
+async function queueFixture(manual = false, firstExecution = false) {
+  const f = await fixture(manual, firstExecution);
+  f.trigger.queueCustody.sourceCategory = 'plugin_task';
+  f.trigger.queueCustody.status = 'queued';
+  delete f.trigger.queueCustody.awakenedInvocationIdByCatId;
+  delete f.trigger.queueCustody.awakenedAtByCatId;
+  const input = {
+    messageId: f.trigger.id,
+    entryId: 'entry',
+    userId: 'owner',
+    threadId: f.taskThread.id,
+    targetCatId: 'codex',
+  };
+  assert.equal(typeof currentnessModule.createPluginTaskQueueAuthority, 'function', 'Host queue authority port exists');
+  const authority = currentnessModule.createPluginTaskQueueAuthority(f.currentnessDeps);
+  return { ...f, input, authority };
+}
+
+test('Queue preflight re-reads actual first/continuation receipts without inventing an invocation', async () => {
+  for (const manual of [false, true])
+    for (const first of [false, true]) {
+      const f = await queueFixture(manual, first);
+      const binding = await f.authority.read(f.input);
+      assert.deepEqual(binding, f.principal.pluginTaskBinding);
+      assert.ok(Object.isFrozen(binding));
+      await assert.rejects(f.check(f.principal), /authority/);
+    }
+});
+
+test('Queue preflight rejects ordinary/public/started/seen/failed/withdrawn or wrong-entry triggers', async () => {
+  const mutations = [
+    (f) => {
+      delete f.trigger.queueCustody.sourceCategory;
+    },
+    (f) => {
+      f.trigger.queueCustody.sourceCategory = 'connector';
+    },
+    (f) => {
+      f.trigger.queueCustody.status = 'processing';
+    },
+    (f) => {
+      f.trigger.queueCustody.awakenedInvocationIdByCatId = { codex: 'old' };
+    },
+    (f) => {
+      f.trigger.queueCustody.seenByCatIds = ['codex'];
+    },
+    (f) => {
+      f.trigger.queueCustody.failedByCatIds = ['codex'];
+    },
+    (f) => {
+      f.trigger.queueCustody.withdrawnByCatIds = ['codex'];
+    },
+    (f) => {
+      f.trigger.queueCustody.entryId = 'replacement';
+    },
+    (f) => {
+      f.trigger.queueCustody.pluginPublicInvocation = {};
+    },
+    (f) => {
+      f.trigger.queueCustody.targetAttempts = [{ sequence: 2, state: 'queued' }];
+    },
+  ];
+  for (const mutate of mutations) {
+    const f = await queueFixture();
+    mutate(f);
+    await assert.rejects(f.authority.read(f.input));
+  }
+});
+
+test('Queue body is only a selector: malformed coordinates, ordinary copies and lost protected index deny', async () => {
+  for (const change of [
+    (f) => {
+      f.trigger.content += ' ';
+    },
+    (f) => {
+      f.trigger.content = f.trigger.content.replace('"version":1', '"version":2');
+    },
+    (f) => {
+      f.trigger.content = f.trigger.content.replace('"version":1', '"extra":true,"version":1');
+    },
+    (f) => {
+      f.messages.getByIdempotencyKey = async () => null;
+    },
+    (f) => {
+      f.input.targetCatId = 'opus';
+    },
+    (f) => {
+      f.input.userId = 'foreign';
+    },
+    (f) => {
+      f.trigger.source = { connector: 'fake' };
+    },
+  ]) {
+    const f = await queueFixture();
+    change(f);
+    await assert.rejects(f.authority.read(f.input));
+  }
+});
+
+test('Queue preflight rejects live Task/source/installation changes and async custody drift', async () => {
+  for (const change of [
+    (f) => {
+      f.task.entrustedWork.revision++;
+    },
+    (f) => {
+      f.next.extra.pluginMessage.revision++;
+    },
+    (f) => {
+      f.state.instances[0].activationState = 'disabled';
+    },
+    (f) => {
+      f.state.grants[0].grantRevision++;
+    },
+    (f) => {
+      f.unavailable();
+    },
+  ]) {
+    const f = await queueFixture();
+    change(f);
+    await assert.rejects(f.authority.read(f.input));
+  }
+  const f = await queueFixture();
+  const get = f.messages.getById.bind(f.messages);
+  let reads = 0;
+  f.messages.getById = async (id) => {
+    if (id === f.trigger.id && ++reads === 3) f.trigger.queueCustody.entryId = 'replacement';
+    return get(id);
+  };
+  await assert.rejects(f.authority.read(f.input));
+});
+
+test('Queue child binding uses real custody CAS, exact-child reread and preserves original Task', async () => {
+  const f = await queueFixture(true);
+  const binding = await f.authority.read(f.input);
+  const original = structuredClone(f.task);
+  const result = await f.authority.bindChild({ ...f.input, binding, invocationId: 'inv' });
+  assert.equal(result.kind, 'bound');
+  assert.equal(result.custody.status, 'processing');
+  assert.equal(result.custody.awakenedInvocationIdByCatId.codex, 'inv');
+  assert.equal(result.custody.targetAttempts[0].invocationId, 'inv');
+  await f.check(f.principal);
+  assert.deepEqual(f.task, original);
+  await assert.rejects(f.authority.bindChild({ ...f.input, binding, invocationId: 'other' }));
+  await assert.rejects(f.authority.read(f.input));
+});
+
+test('Concurrent Queue children cannot both bind the same execution', async () => {
+  const f = await queueFixture();
+  const binding = await f.authority.read(f.input);
+  const results = await Promise.allSettled(
+    ['inv', 'other'].map((invocationId) => f.authority.bindChild({ ...f.input, binding, invocationId })),
+  );
+  assert.equal(results.filter((r) => r.status === 'fulfilled').length, 1);
+  assert.equal(f.trigger.queueCustody.revision, 2);
+});
+
+test('Queue CAS lost response and post-write revocation never return a successful launch authorization', async () => {
+  for (const mode of ['lost_response', 'revoked']) {
+    const f = await queueFixture();
+    const binding = await f.authority.read(f.input);
+    const cas = f.messages.transitionQueueCustody.bind(f.messages);
+    f.messages.transitionQueueCustody = async (...args) => {
+      const result = await cas(...args);
+      if (mode === 'lost_response') throw new Error('lost response');
+      f.task.entrustedWork.revision++;
+      return result;
+    };
+    await assert.rejects(f.authority.bindChild({ ...f.input, binding, invocationId: 'inv' }));
+    assert.equal(f.trigger.queueCustody.awakenedInvocationIdByCatId.codex, 'inv');
+    await assert.rejects(f.authority.read(f.input));
+  }
+});
+
+test('Queue selectors and expected binding are frozen before asynchronous reads', async () => {
+  const f = await queueFixture();
+  const binding = structuredClone(await f.authority.read(f.input));
+  const input = { ...f.input, binding, invocationId: 'inv' };
+  const get = f.messages.getById.bind(f.messages);
+  let changed = false;
+  f.messages.getById = async (id) => {
+    if (!changed) {
+      changed = true;
+      input.invocationId = 'foreign';
+      input.targetCatId = 'opus';
+      binding.taskId = 'foreign';
+    }
+    return get(id);
+  };
+  const result = await f.authority.bindChild(input);
+  assert.equal(result.custody.awakenedInvocationIdByCatId.codex, 'inv');
+  await f.check(f.principal);
+});
+
+test('Queue expected binding cannot substitute another execution, and the checked custody revision is the CAS input', async () => {
+  const f = await queueFixture();
+  const binding = await f.authority.read(f.input);
+  await assert.rejects(
+    f.authority.bindChild({
+      ...f.input,
+      binding: { ...binding, executionRef: 'message:foreign' },
+      invocationId: 'inv',
+    }),
+  );
+  const cas = f.messages.transitionQueueCustody.bind(f.messages);
+  let seenRevision;
+  f.messages.transitionQueueCustody = (id, args) => {
+    seenRevision = args.expectedRevision;
+    f.trigger.queueCustody.revision++;
+    return cas(id, args);
+  };
+  await assert.rejects(f.authority.bindChild({ ...f.input, binding, invocationId: 'inv' }));
+  assert.equal(seenRevision, 1);
+  assert.equal(f.trigger.queueCustody.awakenedInvocationIdByCatId, undefined);
+});
+
+for (const operation of ['read', 'bindChild']) {
+  test(`R2 Task Queue ${operation} rejects per-target carrier state before any CAS`, async () => {
+    const f = await queueFixture();
+    const binding = await f.authority.read(f.input);
+    f.trigger.queueCustody.carrierStateByTargetCatId = { codex: { status: 'queued' } };
+    let writes = 0;
+    const cas = f.messages.transitionQueueCustody.bind(f.messages);
+    f.messages.transitionQueueCustody = (...args) => {
+      writes++;
+      return cas(...args);
+    };
+    await assert.rejects(
+      operation === 'read'
+        ? f.authority.read(f.input)
+        : f.authority.bindChild({ ...f.input, binding, invocationId: 'inv' }),
+    );
+    assert.equal(writes, 0);
+    assert.equal(f.trigger.queueCustody.status, 'queued');
+  });
+}
+
+test('R2 Task currentness rejects per-target state introduced after the child CAS', async () => {
+  const f = await queueFixture();
+  const binding = await f.authority.read(f.input);
+  await f.authority.bindChild({ ...f.input, binding, invocationId: 'inv' });
+  f.trigger.queueCustody.carrierStateByTargetCatId = { codex: { status: 'queued' } };
+  await assert.rejects(f.check(f.principal));
+});
+
+test('R2 bound Task custody is not queued by the real startup projection', async () => {
+  const { queuedCarrierEntryIds } = await import(
+    '../dist/domains/cats/services/agents/invocation/QueuedMessageCustodyCarrierProjection.js'
+  );
+  const { buildQueueEntry } = await import(
+    '../dist/domains/cats/services/agents/invocation/QueuedMessageCustodyStartupQueueEntry.js'
+  );
+  const f = await queueFixture();
+  assert.deepEqual(queuedCarrierEntryIds(f.trigger), ['entry']);
+  const binding = await f.authority.read(f.input);
+  await f.authority.bindChild({ ...f.input, binding, invocationId: 'inv' });
+  assert.deepEqual(queuedCarrierEntryIds(f.trigger), []);
+  assert.throws(() => buildQueueEntry([f.trigger], 'entry'), /no target/);
 });
