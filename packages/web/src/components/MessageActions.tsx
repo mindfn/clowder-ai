@@ -10,6 +10,7 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { useIsDesktop } from '@/hooks/useIsDesktop';
 import { type TextSelectionAction, useTextSelectionAction } from '@/hooks/useTextSelectionAction';
+import { useTts } from '@/hooks/useTts';
 import type { ChatMessage } from '@/stores/chatStore';
 import { useChatStore } from '@/stores/chatStore';
 import { useToastStore } from '@/stores/toastStore';
@@ -35,6 +36,7 @@ import { useShellCopy } from './shell/shell-copy';
 import { useShellPresentation } from './shell/shell-presentation';
 import { pushThreadRouteWithHistory } from './ThreadSidebar/thread-navigation';
 import { TransferTargetPicker } from './TransferTargetPicker';
+import { TtsPlayButton } from './TtsPlayButton';
 import { useMessageAnnotationMarkers } from './useMessageAnnotationMarkers';
 
 function showErrorToast(title: string, body?: Record<string, unknown>) {
@@ -171,6 +173,7 @@ export function MessageActions({
 }: MessageActionsProps) {
   const presentation = useShellPresentation();
   const words = useShellCopy(messageActionsCopy);
+  const { state: ttsState, synthesize: ttsSynthesize, activeMessageId } = useTts();
   const [dialog, setDialog] = useState<DialogState>({ type: 'none' });
   const [overflowOpen, setOverflowOpen] = useState(false);
   const [compactOpen, setCompactOpen] = useState(false);
@@ -407,6 +410,19 @@ export function MessageActions({
       <CopyIdButton messageId={message.id} />
     ) : (
       <>
+        {invocationTrajectory && (
+          <button
+            type="button"
+            role="menuitem"
+            className="min-h-11 w-full px-3 py-2 text-left text-sm text-cafe-secondary transition-colors hover:bg-cafe-surface-elevated"
+            onClick={() => {
+              setOverflowOpen(false);
+              openMessageInvocationTrajectory(message, threadId);
+            }}
+          >
+            查看这轮轨迹
+          </button>
+        )}
         <button
           type="button"
           role="menuitem"
@@ -476,25 +492,18 @@ export function MessageActions({
             : undefined
         }
       >
-        {hasSelectionShortcut && (
-          <button
-            type="button"
-            onClick={() => onEnterSelection?.(message.id)}
-            className={`rounded p-1 text-cafe-muted transition-colors hover:bg-cafe-surface-elevated hover:text-cafe-primary ${
-              isUser ? 'order-2' : ''
-            }`}
-            title="多选消息"
-            aria-label="多选消息"
-          >
-            <svg aria-hidden="true" className="h-3.5 w-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-              <rect x="3" y="4" width="6" height="6" rx="1" strokeWidth={2} />
-              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="m4.5 7 1.25 1.25L8 6" />
-              <rect x="3" y="14" width="6" height="6" rx="1" strokeWidth={2} />
-              <path strokeLinecap="round" strokeWidth={2} d="M13 7h8M13 17h8" />
-            </svg>
-          </button>
-        )}
         <div data-testid="message-secondary-actions" className={`${isUser ? 'order-1' : ''} flex gap-0.5`.trim()}>
+          {isAssistant && canAct && message.catId && message.content.trim() && (
+            <TtsPlayButton
+              messageId={message.id}
+              text={message.content}
+              catId={message.catId}
+              ttsState={ttsState}
+              activeMessageId={activeMessageId}
+              onSynthesize={ttsSynthesize}
+            />
+          )}
+          <CopyIdButton messageId={message.id} />
           <button
             type="button"
             onClick={() => {
@@ -520,7 +529,7 @@ export function MessageActions({
               />
             </svg>
           </button>
-          {invocationTrajectory && (
+          {invocationTrajectory && !isAssistant && (
             <button
               type="button"
               onClick={() => openMessageInvocationTrajectory(message, threadId)}
@@ -543,8 +552,43 @@ export function MessageActions({
               </svg>
             </button>
           )}
+          {hasSelectionShortcut && (
+            <button
+              type="button"
+              onClick={() => onEnterSelection?.(message.id)}
+              className="rounded p-1 text-cafe-muted transition-colors hover:bg-cafe-surface-elevated hover:text-cafe-primary"
+              title="多选消息"
+              aria-label="多选消息"
+            >
+              <svg aria-hidden="true" className="h-3.5 w-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <rect x="3" y="4" width="6" height="6" rx="1" strokeWidth={2} />
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="m4.5 7 1.25 1.25L8 6" />
+                <rect x="3" y="14" width="6" height="6" rx="1" strokeWidth={2} />
+                <path strokeLinecap="round" strokeWidth={2} d="M13 7h8M13 17h8" />
+              </svg>
+            </button>
+          )}
           {canAct && (
             <>
+              <button
+                type="button"
+                onClick={handleBranch}
+                className="rounded p-1 text-cafe-muted transition-colors hover:bg-cafe-surface-elevated hover:text-cafe-accent"
+                title="创建分支"
+                aria-label="创建分支"
+              >
+                <svg aria-hidden="true" className="h-3.5 w-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor">
+                  <circle cx="6" cy="5" r="2" strokeWidth={2} />
+                  <circle cx="18" cy="6" r="2" strokeWidth={2} />
+                  <circle cx="18" cy="18" r="2" strokeWidth={2} />
+                  <path
+                    strokeLinecap="round"
+                    strokeLinejoin="round"
+                    strokeWidth={2}
+                    d="M6 7v7a4 4 0 004 4h6M8 7a5 5 0 005 5h3"
+                  />
+                </svg>
+              </button>
               <button
                 type="button"
                 onClick={handleSoftDelete}
@@ -561,60 +605,36 @@ export function MessageActions({
                   />
                 </svg>
               </button>
-              {canAct && (
-                <>
+              {isAssistant && invocationTrajectory && (
+                <div className="relative">
                   <button
                     type="button"
-                    onClick={handleBranch}
-                    className="p-1 rounded hover:bg-cafe-surface-elevated text-cafe-muted hover:text-conn-blue-text transition-colors"
-                    title="创建分支"
-                    aria-label="创建分支"
+                    onClick={() => setOverflowOpen((open) => !open)}
+                    className="rounded p-1 text-cafe-muted transition-colors hover:bg-cafe-surface-elevated hover:text-cafe-primary"
+                    title="更多消息操作"
+                    aria-label="更多消息操作"
+                    aria-haspopup="menu"
+                    aria-expanded={overflowOpen}
                   >
-                    <svg
-                      aria-hidden="true"
-                      className="w-3.5 h-3.5"
-                      fill="none"
-                      stroke="currentColor"
-                      viewBox="0 0 24 24"
-                    >
-                      <path
-                        strokeLinecap="round"
-                        strokeLinejoin="round"
-                        strokeWidth={2}
-                        d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z"
-                      />
+                    <svg className="h-3.5 w-3.5" fill="currentColor" viewBox="0 0 24 24" aria-hidden="true">
+                      <circle cx="5" cy="12" r="1.8" />
+                      <circle cx="12" cy="12" r="1.8" />
+                      <circle cx="19" cy="12" r="1.8" />
                     </svg>
                   </button>
-                </>
+                  {overflowOpen && isDesktop && !compactActions && (
+                    <div
+                      role="menu"
+                      aria-label="更多消息操作"
+                      className={`absolute top-full z-40 mt-1 w-40 rounded-lg border border-cafe bg-cafe-surface py-1 shadow-lg ${
+                        isUser ? 'right-0' : 'left-0'
+                      }`}
+                    >
+                      {overflowMenuItems}
+                    </div>
+                  )}
+                </div>
               )}
-              <div className="relative">
-                <button
-                  type="button"
-                  onClick={() => setOverflowOpen((open) => !open)}
-                  className="rounded p-1 text-cafe-muted transition-colors hover:bg-cafe-surface-elevated hover:text-cafe-primary"
-                  title="更多消息操作"
-                  aria-label="更多消息操作"
-                  aria-haspopup="menu"
-                  aria-expanded={overflowOpen}
-                >
-                  <svg className="h-3.5 w-3.5" fill="currentColor" viewBox="0 0 24 24" aria-hidden="true">
-                    <circle cx="5" cy="12" r="1.8" />
-                    <circle cx="12" cy="12" r="1.8" />
-                    <circle cx="19" cy="12" r="1.8" />
-                  </svg>
-                </button>
-                {overflowOpen && isDesktop && !compactActions && (
-                  <div
-                    role="menu"
-                    aria-label="更多消息操作"
-                    className={`absolute top-full z-40 mt-1 w-40 rounded-lg border border-cafe bg-cafe-surface py-1 shadow-lg ${
-                      isUser ? 'right-0' : 'left-0'
-                    }`}
-                  >
-                    {overflowMenuItems}
-                  </div>
-                )}
-              </div>
             </>
           )}
         </div>

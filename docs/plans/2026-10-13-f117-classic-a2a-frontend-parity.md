@@ -45,6 +45,20 @@ classic 应对齐 develop_base 的旧版空间关系、菜单布局与既有操�
 
 数据契约以 [F117 主文档](../features/F117-message-delivery-lifecycle.md) 为准：Queue 是尚待投递工作，History 是已发生事实；投递、执行归属、原生已读证据互不代替。
 
+### 后端能力合并边界（operator 再确认）
+
+classic／v2 是展示分支；旧版保留 develop_base 的布局与既有操作，随后再补新版展示。共享组件应围绕 presentation 分支承载这两种布局，不让 main 的新版摆放规则覆盖旧版，也不建立两份业务状态。后端继续以 #1398 的共同 send、单一 Queue、History 和精确原生读取证据为准；同步 main 是迁入新增能力的消费者，不是换回旧 A2A 状态机。
+
+| main 能力族 | #1398 的承接边界 | 已有源码／验证锚点 |
+|---|---|---|
+| 用户、成员、外部入口与 SDK 输入 | 共同准入，冻结 target／intent／audience；相同 ID 重放保持原身份 | `InvocationQueue.send`、`PersistedQueueDelivery`；`a2a-1577-sdk-input-seam`、producer-category、message-scope |
+| 修改请求、工作 producer、调度与部署通知 | 原业务 authority 保留，投递通过同一适配器；队列退休后消费持久事实 | modification-source、work-producer、deployment-publication、scheduler、refusal seams |
+| Collective 与插件来源 | structured source 与精确 caller／owner／thread 边界；不以 transport 标签代替授权 | collective-reconsideration、hold-consumer、action-history seams |
+| 私密媒体回流及追加 | 复用持久 TurnExecution 见证，public input／reply／causal 不挂私密 ID，内部读取与结算保留 | 私密 witness／callback／Append／store reopen／nonrecipient play 回归与独立复核 |
+| 历史、上下文、全文 drill、搜索与 Live inbox | 从持久消息与独立读取回执投影；执行归属／完成不冒充已读 | document、message-drill、thread-context、live-inbox、observational-projection seams |
+
+以上是已核对的 main 差集及接线结论，不是宣称整个 main 的所有功能均已真实体验。初期真实遗漏（私密执行见证、Append 公开引用、terminal settlement）已沿上述已有所有者补齐；它们不能被描述成“单一 Queue 会自动覆盖、从未需要迁移”。#1587 只有 Web 变更，本次头部／工具栏修复也不改 API/shared/MCP。旧原生记录保持各自 SHA；Claude、真实媒体生成、最终组合运行、历史／混合版本、rollback／off-mode 与 operator／soak 继续按版本报告未验范围。
+
 ## 3. develop_base 已做的调整，以及 #1398 的保留情况
 
 以下路径均相对仓库根目录。表中的“已保留”是代码对照结论，不是本轮完整 UI 体验通过结论。
@@ -96,6 +110,14 @@ classic 应对齐 develop_base 的旧版空间关系、菜单布局与既有操�
 **验收**：长／短／已删除来源，展开后全文可读且能收起，“跳到原文”定位 exact source；键盘能操作，不嵌套 button，不改变原消息或回执。
 
 服务端 `replyPreview.content` 是短摘要，不能因控件变大就称为全文。展开态只从当前已授权 timeline 的唯一 exact parent 取正文；删除、撤回、重复绑定或其他 thread 的全局 store 不提供正文。原文尚未加载时只保留现有摘要与跳转，不借 transport 或调用者 ID 获得额外读取权限。v2 继续使用原摘要与直接跳转。
+
+### C2b：作者行与消息操作条的完整旧版布局
+
+operator 后续的两张实际截图指出 C1–C4 之外的遗漏：来源应在“轨迹”前；右侧三角是朗读控件，应位于消息操作条内，不能误认成来源展开。真实 develop_base `7adb57df` 的常用操作顺序为朗读 → 复制 ID → 引用 → 多选 → 分支 → 删除。
+
+**改法**：仅 classic 作者行将来源排在轨迹前，将朗读交回现有 MessageActions 与同一 TTS singleton；常用条恢复以上顺序和分支图标。保留 main 新增的“更多”能力与原生轨迹入口，classic 的重复轨迹操作放在“更多”菜单内。v2 的 action overlay、nameplate、轨迹入口与生命周期事实不改。展开来源继续独占下一行，不挤压作者时间；不是整文件回滚到旧版。
+
+**验收**：使用完整 ChatMessage + MessageActions 的组合验证头部顺序、TTS 的准确消息 ID／正文／成员、复制、引用、多选、分支、删除的排列，以及窄屏操作 sheet、更多轨迹和 v2 overlay。实际旧版页面须包含用户反馈的普通短来源消息，不只用长摘要证明展开。迁移分析／代码回归不替代 operator 的实际体验确认。
 
 ### C3：追加消息圆点的来源主题色
 

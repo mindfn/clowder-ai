@@ -10,7 +10,6 @@ import { type CSSProperties, memo, type ReactNode } from 'react';
 import { formatVisibleSystemInfo } from '@/hooks/system-info-visible';
 import { type CatData, formatCatName } from '@/hooks/useCatData';
 import { useCoCreatorConfig } from '@/hooks/useCoCreatorConfig';
-import { useTts } from '@/hooks/useTts';
 import { resolveCatDisplayName } from '@/lib/cat-display-name';
 import { catColorVar, catSlug } from '@/lib/cat-slug';
 import { CO_CREATOR_COLOR } from '@/lib/color-defaults';
@@ -83,7 +82,6 @@ import { useShellPresentation } from './shell/shell-presentation';
 import { TerminalDiagnosticsPanel } from './TerminalDiagnosticsPanel';
 import { ThinkingContent } from './ThinkingContent';
 import { pushThreadRouteWithHistory } from './ThreadSidebar/thread-navigation';
-import { TtsPlayButton } from './TtsPlayButton';
 
 const BREED_STYLES: Record<string, { radius: string; font?: string }> = {
   ragdoll: { radius: 'rounded-2xl rounded-bl-sm' },
@@ -204,7 +202,6 @@ function ChatMessageContent({
   // The Café 1.6 cat reply (nameplate, no outer bubble) is a presentation of the same message, switched by the one shell
   // switch. Read it with the other hooks, before any early return.
   const shellPresentation = useShellPresentation();
-  const { state: ttsState, synthesize: ttsSynthesize, activeMessageId } = useTts();
   const replyRecall = useReplyRecallProjection(message.id);
   const coCreator = useCoCreatorConfig();
   const currentThreadId = useChatStore((s) => s.currentThreadId);
@@ -863,7 +860,9 @@ function ChatMessageContent({
           {shellPresentation === 'v2' ? <MessageActionSlot /> : <CopyIdButton messageId={message.id} />}
           <MessageAuthorDetails>
             {/* New shell: the trajectory moved to the last line of the reply (ReplyLayers), and "running" is the status there. */}
-            {showsNameplate ? null : <InvocationTrajectoryAnchor message={message} threadId={renderThreadId} />}
+            {shellPresentation === 'v2' && !showsNameplate && (
+              <InvocationTrajectoryAnchor message={message} threadId={renderThreadId} />
+            )}
             {message.extra?.recovery?.kind === 'f254_withheld_message' && (
               <span
                 className="shrink-0 rounded-full border border-conn-blue-ring bg-conn-blue-bg px-1.5 py-0.5 text-micro font-semibold text-[var(--semantic-info)]"
@@ -908,15 +907,8 @@ function ChatMessageContent({
                 getCatById={getCatById}
               />
             )}
-            {shellPresentation === 'classic' && hasTextContent && !message.isStreaming && (
-              <TtsPlayButton
-                messageId={message.id}
-                text={message.content}
-                catId={message.catId!}
-                ttsState={ttsState}
-                activeMessageId={activeMessageId}
-                onSynthesize={ttsSynthesize}
-              />
+            {shellPresentation === 'classic' && (
+              <InvocationTrajectoryAnchor message={message} threadId={renderThreadId} />
             )}
             {shellPresentation === 'classic' && <MessageActionSlot />}
           </MessageAuthorDetails>
