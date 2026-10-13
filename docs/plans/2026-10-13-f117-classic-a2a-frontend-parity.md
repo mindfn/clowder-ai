@@ -137,4 +137,6 @@ classic 应对齐 develop_base 的旧版空间关系、菜单布局与既有操�
 - `1398-sender-identity.test.tsx`、`message-dispatch-avatars.test.tsx`、`delivery-response-ownership.test.tsx`：来源、回执、exact 归属。
 - `thinking-indicator-v2.test.tsx` 与执行条／Queue 的相关测试：只去重展示，保留真实状态与操作。
 
+组件级浏览器证明入口为 `packages/web/test/browser/classic-a2a-parity.test.mjs`。测试要求显式提供 `CLASSIC_A2A_PLAYWRIGHT_MODULE`（已安装的 Playwright ESM 模块）；需要复用本机浏览器时可提供 `PLAYWRIGHT_CHROMIUM_EXECUTABLE_PATH`。它拦截传输并验证真实组件与 CSS，不等于真实 native／后端验收，不依赖已退役的 `ppt-forge` 路径。
+
 本文件是迁移分析与待实施清单，不是上述修复已完成的验收报告。冻结 #1398 的后端／私密边界绿灯、旧版基础体验和长期验收是不同证据，不能互相替代。

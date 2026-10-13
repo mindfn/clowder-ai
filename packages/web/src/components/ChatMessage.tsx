@@ -623,7 +623,7 @@ function ChatMessageContent({
     const userHeader = humanPresentation ? (
       humanHeader
     ) : (
-      <div className="flex flex-wrap justify-end items-center gap-2 mb-1">
+      <div className={`flex ${shellPresentation === 'classic' ? 'flex-wrap ' : ''}justify-end items-center gap-2 mb-1`}>
         <MessageActionSlot />
         {isWhisper && (
           <span

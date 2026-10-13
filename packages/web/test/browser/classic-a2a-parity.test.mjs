@@ -5,10 +5,13 @@ import { test } from 'node:test';
 import { fileURLToPath } from 'node:url';
 import { build } from 'vite';
 
-// Reuse the installed browser test driver; no package install or product dependency.
-const { chromium } = await import(
-  process.env.CLASSIC_A2A_PLAYWRIGHT_MODULE ?? '../../../ppt-forge/node_modules/playwright/index.mjs'
+// Reuse an explicitly supplied browser proof driver, without a product dependency
+// or a fallback to a retired package's node_modules.
+assert.ok(
+  process.env.CLASSIC_A2A_PLAYWRIGHT_MODULE,
+  'Set CLASSIC_A2A_PLAYWRIGHT_MODULE to an installed Playwright ESM module',
 );
+const { chromium } = await import(process.env.CLASSIC_A2A_PLAYWRIGHT_MODULE);
 
 // Deterministic frontend rendering proof; no native provider or backend lifecycle claim.
 test(
