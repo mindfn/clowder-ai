@@ -1231,14 +1231,13 @@ export const queueRoutes: FastifyPluginAsync<QueueRoutesOptions> = async (app, o
     targetCatId: CatId,
     authorIntent: NonNullable<ReturnType<typeof resolveQueueAuthorIntentByCatId>[string]>,
     drain = true,
+    onHandoff?: () => void,
   ): Promise<TargetExecutionResult> => {
     if (authorIntent.fallbackAt === undefined) {
-      const append = await queueProcessor.tryAutoAppendExactEntry({
-        threadId,
-        userId,
-        entryId,
-        targetCatId,
-      });
+      const append = await queueProcessor.tryAutoAppendExactEntry(
+        { threadId, userId, entryId, targetCatId },
+        onHandoff,
+      );
       if (append.outcome === 'appended') return { status: 200, result: append };
       if (append.reason === 'active_run_pending') {
         if (drain) void queueProcessor.requestDrain(threadId);
@@ -1551,38 +1550,48 @@ export const queueRoutes: FastifyPluginAsync<QueueRoutesOptions> = async (app, o
         invocationQueue.list(threadId, guard.userId),
         'steer_targets_resolved',
       );
-      // Execute before waking ordinary drain: interrupt must claim this exact
-      // source before cancelling, and sibling targets must retain their results.
-      const executed: Array<(typeof targets)[number] & TargetExecutionResult> = [];
+      // Serialize Queue claims until their durable handoff, not until native ACK.
+      // Keep every completion so late rejection still returns its exact result
+      // after the processor records failure and detaches the refused input.
+      const completions: Array<Promise<(typeof targets)[number] & TargetExecutionResult>> = [];
       for (const target of targets) {
-        try {
-          const execution =
-            target.strategy === 'interrupt_reply'
-              ? await interruptQueuedTarget(threadId, guard.userId, entryId, target.targetCatId, request)
-              : await guideQueuedTarget(
-                  threadId,
-                  guard.userId,
-                  entryId,
-                  target.targetCatId as CatId,
-                  authorIntentByCatId[target.targetCatId]!,
-                  false,
-                );
-          executed.push({ ...target, ...execution });
-        } catch (error) {
-          request.log.error(
-            { error, threadId, entryId, targetCatId: target.targetCatId },
-            'Queue target execution failed',
-          );
-          executed.push({
-            ...target,
-            status: 503,
-            result: { code: 'STEER_EXECUTION_FAILED', error: '投递未完成，请查看队列状态后重试' },
-          });
-        }
+        let releaseHandoff!: () => void;
+        const handoff = new Promise<void>((resolve) => {
+          releaseHandoff = resolve;
+        });
+        const completion = (async () => {
+          try {
+            const execution =
+              target.strategy === 'interrupt_reply'
+                ? await interruptQueuedTarget(threadId, guard.userId, entryId, target.targetCatId, request)
+                : await guideQueuedTarget(
+                    threadId,
+                    guard.userId,
+                    entryId,
+                    target.targetCatId as CatId,
+                    authorIntentByCatId[target.targetCatId]!,
+                    false,
+                    releaseHandoff,
+                  );
+            return { ...target, ...execution };
+          } catch (error) {
+            request.log.error(
+              { error, threadId, entryId, targetCatId: target.targetCatId },
+              'Queue target execution failed',
+            );
+            return {
+              ...target,
+              status: 503,
+              result: { code: 'STEER_EXECUTION_FAILED', error: '投递未完成，请查看队列状态后重试' },
+            };
+          }
+        })();
+        completions.push(completion);
+        await Promise.race([completion, handoff]);
       }
       void queueProcessor.requestDrain(threadId);
       return {
-        targets: executed,
+        targets: await Promise.all(completions),
         skippedAlreadyDispatched: normalizedTargets
           .filter((target) => alreadyDispatched.has(target.targetCatId))
           .map((target) => target.targetCatId),
