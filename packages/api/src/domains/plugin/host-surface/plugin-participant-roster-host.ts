@@ -12,15 +12,23 @@ export interface PluginParticipant {
   readonly defaultModel: string;
   readonly roleDescription?: string;
   readonly avatar?: string;
+  /** Quota availability only; independent of provider routing or native policy support. */
+  readonly available?: boolean;
   readonly supported: boolean;
 }
+export interface PluginParticipantRosterInput {
+  readonly contributionId: string;
+  /** Explicit opt-in keeps legacy strict participant schemas unchanged. */
+  readonly includeAvailability?: true;
+}
 export interface PluginParticipantRosterHost {
-  listForNativeContribution(input: { readonly contributionId: string }): Promise<readonly PluginParticipant[]>;
+  listForNativeContribution(input: PluginParticipantRosterInput): Promise<readonly PluginParticipant[]>;
 }
 /** Host dependencies, never exposed to a package. Capability is not invocation admission. */
 export interface PluginParticipantRosterServices {
-  listCats(): readonly Omit<PluginParticipant, 'supported'>[];
+  listCats(): readonly Omit<PluginParticipant, 'supported' | 'available'>[];
   publicAvatar(value: string | undefined): Promise<string | undefined>;
+  isCatAvailable(catId: string): boolean;
   supportsNativeAction(catId: string, policy: ToolExecutionPolicy): boolean;
 }
 interface Deps {
@@ -34,13 +42,14 @@ interface Deps {
 function refuse(message: string): never {
   throw new ExternalPluginRuntimeError('DELIVERY_REJECTED', message);
 }
-function declaredScope(deps: Deps, input: { readonly contributionId: string }) {
+function declaredScope(deps: Deps, input: PluginParticipantRosterInput) {
   const snapshot = snapshotPluginProtocolData(input);
   if (!snapshot || typeof snapshot !== 'object' || Array.isArray(snapshot))
     throw new TypeError('Expected an input object');
   const value = snapshot as Record<string, unknown>;
   if (
-    Object.keys(value).length !== 1 ||
+    Object.keys(value).some((key) => key !== 'contributionId' && key !== 'includeAvailability') ||
+    (Object.hasOwn(value, 'includeAvailability') && value.includeAvailability !== true) ||
     typeof value.contributionId !== 'string' ||
     !value.contributionId.length ||
     value.contributionId.length > 256 ||
@@ -58,6 +67,7 @@ function declaredScope(deps: Deps, input: { readonly contributionId: string }) {
     refuse('An admitted native contribution with declared actions is required');
   return {
     contributionId: contribution.id,
+    includeAvailability: value.includeAvailability === true,
     methods: contribution.actions.map((a) => a.method),
     capabilities: feature.capabilities,
   };
@@ -79,8 +89,8 @@ export function createPluginParticipantRosterHost(deps: Deps): PluginParticipant
     return refuse('Participant roster requires a current owner request or native invocation');
   }
   return Object.freeze({
-    async listForNativeContribution(input: { readonly contributionId: string }) {
-      const { contributionId, methods, capabilities } = declaredScope(deps, input);
+    async listForNativeContribution(input: PluginParticipantRosterInput) {
+      const { contributionId, methods, capabilities, includeAvailability } = declaredScope(deps, input);
       if (!deps.services)
         throw new ExternalPluginRuntimeError('UNSUPPORTED_TRANSPORT', 'Host participant roster unavailable');
       const services = deps.services;
@@ -107,7 +117,7 @@ export function createPluginParticipantRosterHost(deps: Deps): PluginParticipant
         ...(cat.roleDescription === undefined ? {} : { roleDescription: cat.roleDescription }),
         avatar: cat.avatar,
       }));
-      const rows: Omit<PluginParticipant, 'supported'>[] = [];
+      const rows: Omit<PluginParticipant, 'supported' | 'available'>[] = [];
       for (const cat of cats) {
         await current();
         const avatar = await services.publicAvatar(cat.avatar);
@@ -123,7 +133,11 @@ export function createPluginParticipantRosterHost(deps: Deps): PluginParticipant
       await current();
       return Object.freeze(
         rows.map((row) =>
-          Object.freeze({ ...row, supported: services.supportsNativeAction(row.catId, policy) === true }),
+          Object.freeze({
+            ...row,
+            ...(includeAvailability ? { available: services.isCatAvailable(row.catId) === true } : {}),
+            supported: services.supportsNativeAction(row.catId, policy) === true,
+          }),
         ),
       );
     },

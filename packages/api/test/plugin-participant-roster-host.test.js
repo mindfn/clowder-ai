@@ -20,6 +20,7 @@ function services(overrides = {}) {
         available: true,
       },
     ],
+    isCatAvailable: () => true,
     publicAvatar: async () => 'data:image/webp;base64,dGVzdA==',
     supportsNativeAction: (catId, policy) => {
       checked.push({ catId, policy });
@@ -91,6 +92,9 @@ test('roster rejects body-supplied methods or authority and unknown/non-native c
     { contributionId: 'native', pluginInstanceId: 'foreign' },
     { contributionId: 'native', supported: true },
     { contributionId: 'missing' },
+    { contributionId: 'native', includeAvailability: false },
+    { contributionId: 'native', includeAvailability: 'true' },
+    { contributionId: 'native', includeAvailability: null },
     { contributionId: 'owner' },
   ]) {
     const response = await f.httpGet('participantRoster', 'listForNativeContribution', value);
@@ -216,4 +220,81 @@ test('public participant avatar keeps only bounded decoded thumbnails and refuse
   ]) {
     assert.equal(await publicParticipantAvatar(value, roots), undefined);
   }
+});
+
+test('roster quota availability is independent of native support and ignores row-supplied availability', async (t) => {
+  let available = false;
+  let supported = true;
+  const f = await neutralFixture(t, {
+    participantRoster: services({
+      isCatAvailable: () => available,
+      supportsNativeAction: () => supported,
+    }),
+  });
+  const read = () =>
+    result(
+      f.httpGet('participantRoster', 'listForNativeContribution', {
+        contributionId: 'native',
+        includeAvailability: true,
+      }),
+    );
+  const before = await read();
+  assert.equal(before[0].available, false);
+  assert.equal(before[0].supported, true);
+  available = true;
+  supported = false;
+  const after = await read();
+  assert.equal(after[0].available, true);
+  assert.equal(after[0].supported, false);
+  assert.equal(before[0].available, false);
+});
+
+test('roster reads current quota after asynchronous avatar projection', async (t) => {
+  let available = true;
+  const f = await neutralFixture(t, {
+    participantRoster: services({
+      isCatAvailable: () => available,
+      publicAvatar: async () => {
+        available = false;
+        return undefined;
+      },
+    }),
+  });
+  const rows = await result(
+    f.httpGet('participantRoster', 'listForNativeContribution', {
+      contributionId: 'native',
+      includeAvailability: true,
+    }),
+  );
+  assert.equal(rows[0].available, false);
+});
+
+test('roster quota uses actual config availability, including missing roster entry compatibility', async (t) => {
+  const { getRoster, isCatAvailable } = await import('../dist/config/cat-config-loader.js');
+  const roster = getRoster();
+  const before = roster.codex.available;
+  t.after(() => {
+    roster.codex.available = before;
+  });
+  const f = await neutralFixture(t, {
+    participantRoster: services({
+      listCats: () =>
+        ['codex', 'missing-roster-entry'].map((catId) => ({ catId, displayName: catId, defaultModel: 'test' })),
+      isCatAvailable,
+    }),
+  });
+  roster.codex.available = false;
+  const rows = await result(
+    f.httpGet('participantRoster', 'listForNativeContribution', {
+      contributionId: 'native',
+      includeAvailability: true,
+    }),
+  );
+  assert.deepEqual(
+    rows.map(({ catId, available, supported }) => ({ catId, available, supported })),
+    [
+      { catId: 'codex', available: false, supported: false },
+      { catId: 'missing-roster-entry', available: true, supported: false },
+    ],
+  );
 });

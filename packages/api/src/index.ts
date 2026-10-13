@@ -5070,6 +5070,7 @@ async function main(): Promise<void> {
           avatars: join(findMonorepoRoot(), 'packages/web/public/avatars'),
           uploads: getDefaultUploadDir(process.env.UPLOAD_DIR),
         }),
+      isCatAvailable,
       supportsNativeAction: (catId, policy) => router.supportsToolExecutionPolicy(catId, policy),
     },
     threadDeepLinkUrl: createThreadDeepLinkUrl(frontendBaseUrl),
