@@ -42,6 +42,7 @@ import { ModulePluginRuntime } from './builtin-runtime/carriers/module-plugin-ru
 import { StaticPluginRuntime } from './builtin-runtime/carriers/static-plugin-runtime.js';
 import { PluginRuntimeCarrierRouter } from './carrier/runtime-carrier.js';
 import { ContentEditorPluginRuntime } from './content-editor-runtime/runtime.js';
+import { ContentEditorSemanticWorker } from './content-editor-runtime/semantic-worker.js';
 import { PluginPredicateProviderRegistry } from './custody/predicate-provider-registry.js';
 import type { CloudConversationHostRegistry } from './declared/cloud-conversation-host-registry.js';
 import type { DeclaredScheduleTaskRunner } from './declared/declared-runtime-contributions.js';
@@ -216,6 +217,7 @@ export interface DormantPluginRuntimeComposition {
    * stays assertable against the runtime that spends it, not just the constant. */
   readonly externalRuntime: ExternalPluginRuntimeSupervisor;
   readonly contentEditors?: ContentEditorPluginRuntime;
+  readonly editorWorkers?: ContentEditorSemanticWorker;
   readonly desktopWindows?: DesktopWindowPluginRuntime;
   readonly ownerDesktop?: OwnerDesktop;
   readonly messaging: MessagingService;
@@ -401,6 +403,7 @@ export function createDormantPluginRuntimeComposition(
     ...(options.processes === undefined ? {} : { processes: options.processes }),
     ...(options.now === undefined ? {} : { now: options.now }),
   });
+  let editorWorkers: ContentEditorSemanticWorker | undefined;
   const contentEditors =
     options.editorParentOrigin === undefined
       ? undefined
@@ -410,8 +413,12 @@ export function createDormantPluginRuntimeComposition(
           broker,
           packages,
           parentOrigin: options.editorParentOrigin,
+          onRevoke: async (id) => {
+            await editorWorkers?.abortAndWait(id);
+          },
           ...(options.now === undefined ? {} : { now: options.now }),
         });
+  editorWorkers = contentEditors ? new ContentEditorSemanticWorker({ editors: contentEditors, packages }) : undefined;
   const desktopWindows = options.desktopExecutor
     ? new DesktopWindowPluginRuntime({
         inventory: inventoryStore,
@@ -605,6 +612,7 @@ export function createDormantPluginRuntimeComposition(
     ...(predicateProvider === undefined ? {} : { predicateProvider }),
     externalRuntime: externalSupervisor,
     ...(contentEditors === undefined ? {} : { contentEditors }),
+    ...(editorWorkers === undefined ? {} : { editorWorkers }),
     ...(desktopWindows === undefined ? {} : { desktopWindows }),
     ...(desktopWindows === undefined
       ? {}

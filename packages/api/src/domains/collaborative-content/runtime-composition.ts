@@ -19,6 +19,7 @@ import { EditorSessionService } from './editor-session-service.js';
 import { type ContentInspectionPort, NamedCatContentService } from './named-cat-content-service.js';
 import { CollaborativePatchService, type ContentPatchMaterializerPort } from './patch-service.js';
 import { createPluginEditorAuthority } from './plugin-editor-authority.js';
+import { createPluginEditorWorker } from './plugin-editor-worker.js';
 import { OfficeProviderBindingStore } from './provider-binding-store.js';
 import { SemanticOperationStore } from './semantic-operation-store.js';
 import { WorkspaceEditorService } from './workspace-editor-service.js';
@@ -26,7 +27,7 @@ import { WorkspaceEditorService } from './workspace-editor-service.js';
 export function createCollaborativeContentComposition(options: {
   readonly dataDir: string;
   readonly ownerUserId: string;
-  readonly plugins: Pick<DormantPluginRuntimeComposition, 'inventoryStore' | 'contentEditors'>;
+  readonly plugins: Pick<DormantPluginRuntimeComposition, 'inventoryStore' | 'contentEditors' | 'editorWorkers'>;
   readonly materializer?: ContentPatchMaterializerPort;
   readonly inspector?: ContentInspectionPort;
   readonly readSource?: (worktreeId: string, path: string) => Promise<Buffer>;
@@ -63,11 +64,12 @@ export function createCollaborativeContentComposition(options: {
   const bindings = new OfficeProviderBindingStore({ dataDir: options.dataDir });
   const { authority, surfaces } = createPluginEditorAuthority(runtime);
   const sessions = new EditorSessionService({ dataDir: options.dataDir, owner, bindings, authority });
+  const semantic = createPluginEditorWorker(options.plugins.editorWorkers);
   const patches = new CollaborativePatchService({
     owner,
     sessions,
     semanticOperations: new SemanticOperationStore(options.dataDir),
-    ...(options.materializer ? { materializer: options.materializer } : {}),
+    materializer: options.materializer ?? semantic,
   });
   const bridge = new EditorBridgeService({ owner, sessions, patches });
   const workspace = new WorkspaceEditorService({
@@ -84,7 +86,7 @@ export function createCollaborativeContentComposition(options: {
     sessions,
     owner,
     patches,
-    ...(options.inspector ? { inspector: options.inspector } : {}),
+    inspector: options.inspector ?? semantic,
     workspace,
   });
   return {
