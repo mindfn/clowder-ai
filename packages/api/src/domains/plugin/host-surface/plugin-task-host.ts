@@ -14,6 +14,12 @@ import type { IThreadStore } from '../../cats/services/stores/ports/ThreadStore.
 import { currentPluginCallContext, currentPluginOwnerRequestContext } from '../carrier/plugin-call-context.js';
 import { ExternalPluginRuntimeError } from '../external-runtime/types.js';
 import { hostCapabilityRefusal } from './host-capability-refusal.js';
+import {
+  type PluginTaskAdmissionInput,
+  type PluginTaskAdmissionResult,
+  type PluginTaskAdmissionServices,
+  preparePluginEntrustedTask,
+} from './plugin-task-admission.js';
 import { assertPluginTaskGovernance } from './plugin-task-governance.js';
 import { type PluginTaskReadItem, projectOwnedPluginTasks } from './plugin-task-read.js';
 import { setPluginTaskWait } from './plugin-task-wait.js';
@@ -39,6 +45,7 @@ export interface PluginTaskUpdateInput {
 }
 
 export interface PluginTaskHost {
+  prepareEntrusted(input: PluginTaskAdmissionInput): Promise<PluginTaskAdmissionResult>;
   setWait(taskId: string, input: PluginWaitUpdate): Promise<TaskItem | null>;
   get(taskId: string): Promise<PluginTaskReadItem | null>;
   listByThread(threadId: string): Promise<readonly PluginTaskReadItem[]>;
@@ -51,6 +58,7 @@ export interface PluginTaskHost {
 }
 
 export interface PluginTaskHostDeps {
+  readonly admission?: PluginTaskAdmissionServices;
   readonly pluginInstanceId?: string;
   readonly pluginId: string;
   readonly effectiveGrants: readonly string[];
@@ -179,6 +187,7 @@ export function createPluginTaskHost(input: PluginTaskHostDeps): PluginTaskHost 
     return after;
   };
   return {
+    prepareEntrusted: (value) => preparePluginEntrustedTask(input, value),
     setWait: (taskId, value) =>
       setPluginTaskWait(
         requireGrant('task.write'),

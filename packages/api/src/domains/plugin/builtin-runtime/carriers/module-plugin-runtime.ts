@@ -57,6 +57,7 @@ import {
   type PluginPrivateStoragePort,
   type PluginStorageHost,
 } from '../../host-surface/plugin-private-storage.js';
+import type { PluginTaskAdmissionServices } from '../../host-surface/plugin-task-admission.js';
 import { createPluginTaskHost, type PluginTaskHost } from '../../host-surface/plugin-task-host.js';
 import {
   createPluginThreadHost,
@@ -143,6 +144,11 @@ export interface ModulePluginRuntimeOptions {
   readonly taskStore?: ITaskStore;
   readonly taskOwnerUserId?: string;
   readonly taskThreadStore?: Pick<IThreadStore, 'get'>;
+  readonly taskAdmission?: (
+    pluginInstanceId: string,
+    packageDigest: string,
+    assertActivation: () => void,
+  ) => Promise<PluginTaskAdmissionServices>;
   readonly custody?: (pluginInstanceId: string) => PluginCustodyHost;
   readonly neutral?: (
     pluginInstanceId: string,
@@ -373,6 +379,12 @@ export class ModulePluginRuntime implements BundledPluginRuntime {
         });
         assertActivation();
       }
+      const taskAdmission = await this.options.taskAdmission?.(
+        pluginInstanceId,
+        packageRecord.packageDigest,
+        assertActivation,
+      );
+      assertActivation();
       const candidate = await plugin.start({
         ...neutral,
         ...(browserServices ? { browserServices: browserServices.host } : {}),
@@ -381,6 +393,7 @@ export class ModulePluginRuntime implements BundledPluginRuntime {
         storage,
         ...(this.options.custody ? { custody: this.options.custody(pluginInstanceId) } : {}),
         tasks: createPluginTaskHost({
+          ...(taskAdmission ? { admission: taskAdmission } : {}),
           pluginInstanceId,
           pluginId: packageRecord.pluginId,
           effectiveGrants,

@@ -451,6 +451,17 @@ export function createDormantPluginRuntimeComposition(
   });
   const moduleRuntime = new ModulePluginRuntime({
     browserServices,
+    taskAdmission: (pluginInstanceId, packageDigest, assertActivation) =>
+      createPluginTaskAdmissionServices({
+        pluginInstanceId,
+        packageDigest,
+        assertActivation,
+        inventory: inventoryStore,
+        messageStore: options.messageStore,
+        isCatAvailable: (catId) =>
+          options.threadProjections?.cats?.getAllCatIds().includes(catId) === true &&
+          options.threadProjections.cats.isCatAvailable(catId),
+      }),
     neutral: (pluginInstanceId, packageDigest, assertActivation) =>
       createPluginNeutralHost({
         pluginInstanceId,
@@ -1106,3 +1117,5 @@ export function createPluginManagerRuntimeComposition(
     quarantines,
   };
 }
+
+import { createPluginTaskAdmissionServices } from './host-surface/plugin-task-admission.js';
