@@ -14,6 +14,7 @@ import { ExternalPluginRuntimeError } from '../external-runtime/types.js';
 import type { PluginInventoryStore } from '../host-inventory/ports.js';
 import { createPluginSourceFactsHost } from './plugin-source-facts-host.js';
 import { preparePluginTaskExecutionReceipt, readPluginContinuationTask } from './plugin-task-continuation.js';
+import { resolvePluginTaskExecutionThread } from './plugin-task-execution-thread.js';
 import type { PluginTaskHostDeps } from './plugin-task-host.js';
 import {
   type PluginTaskReceiptData,
@@ -192,7 +193,9 @@ export async function preparePluginEntrustedTask(
       refuse('Task source thread is unavailable');
     const threadId =
       continuation?.threadId ??
-      (value.destination.kind === 'existing_thread' ? value.destination.threadId : source.threadId);
+      (value.destination.kind === 'existing_thread'
+        ? value.destination.threadId
+        : await resolvePluginTaskExecutionThread(deps, source, sourceThread, value.targetCatId, current));
     if (
       continuation &&
       value.destination.kind === 'existing_thread' &&

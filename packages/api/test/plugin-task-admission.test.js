@@ -589,3 +589,140 @@ test('lost first execution response resumes the same durable Task and execution 
     1,
   );
 });
+
+for (const caller of ['background', 'native']) {
+  test(`derived Task site: ${caller} first admission creates an owned private child and reuses it`, async () => {
+    const f = await fixture();
+    f.thread.projectPath = '/fixture/project';
+    const prepare = () => f.host.prepareEntrusted(f.input);
+    const run = () =>
+      caller === 'background'
+        ? prepare()
+        : withPluginCallContext(
+            'instance',
+            {
+              userId: 'owner',
+              threadId: f.thread.id,
+              catId: 'codex',
+              invocationId: 'native',
+              originTriggerMessageId: f.source.id,
+              toolExecutionPolicy: {
+                mode: 'plugin_native',
+                pluginInstanceId: 'instance',
+                contributionId: 'native',
+                actionMethods: ['accept'],
+              },
+              assertCurrent: async () => {},
+              assertInvocationCurrent: async () => {},
+            },
+            prepare,
+          );
+    const [first, second] = await Promise.all([run(), run()]);
+    assert.notEqual(first.threadId, f.source.threadId);
+    assert.equal(second.threadId, first.threadId);
+    assert.equal(second.taskRef, first.taskRef);
+    const child = f.threads.get(first.threadId);
+    assert.equal(child.createdBy, 'owner');
+    assert.equal(child.parentThreadId, f.source.threadId);
+    assert.equal(child.projectPath, '/fixture/project');
+    assert.deepEqual(child.participants, ['codex']);
+    const next = f.messages.append({ ...structuredClone(f.source), id: undefined, content: 'Continue', timestamp: 4 });
+    const continued = await f.host.prepareEntrusted({
+      ...f.input,
+      sourceMessageId: next.id,
+      subject: { kind: 'continue', taskRef: first.taskRef, expectedRevision: first.taskRevision },
+    });
+    assert.equal(continued.threadId, child.id);
+    assert.equal(f.threads.getChildThreads(f.thread.id).length, 1);
+  });
+}
+
+test('derived Task site: new-request replay reuses an existing owner-selected Task thread', async () => {
+  const f = await fixture();
+  const target = f.threads.create('owner', 'Manual');
+  f.threads.addParticipants(target.id, ['codex']);
+  const first = await f.owner('write', () =>
+    f.host.prepareEntrusted({ ...f.input, destination: { kind: 'existing_thread', threadId: target.id } }),
+  );
+  const replay = await f.host.prepareEntrusted(f.input);
+  assert.equal(replay.threadId, target.id);
+  assert.equal(replay.taskRef, first.taskRef);
+  assert.equal(f.threads.getChildThreads(f.thread.id).length, 0);
+});
+
+test('derived Task site: a source thread need not already contain the execution cat', async () => {
+  const f = await fixture();
+  f.thread.participants = [];
+  const first = await f.host.prepareEntrusted(f.input);
+  assert.notEqual(first.threadId, f.thread.id);
+  assert.deepEqual(f.threads.get(first.threadId).participants, ['codex']);
+  assert.deepEqual(f.thread.participants, []);
+});
+
+test('derived Task site: revoked authority during owned-thread creation never admits a Task', async () => {
+  const f = await fixture();
+  const ensure = f.threads.ensureOwnedThread.bind(f.threads);
+  let calls = 0;
+  f.threads.ensureOwnedThread = async (seed) => {
+    calls++;
+    const child = ensure(seed);
+    f.expire();
+    return child;
+  };
+  await assert.rejects(() => f.host.prepareEntrusted(f.input));
+  assert.equal(calls, 1);
+  assert.equal(f.tasks.listByKind('work').length, 0);
+});
+
+test('derived Task site: missing owned-thread service does not fall back to the source thread', async () => {
+  const f = await fixture();
+  f.deps.readThreadStore = { get: f.threads.get.bind(f.threads) };
+  await assert.rejects(() => createPluginTaskHost(f.deps).prepareEntrusted(f.input));
+  assert.equal(f.tasks.listByKind('work').length, 0);
+});
+
+test('derived Task site: canonical child identity, ownership and parent cannot be substituted', async () => {
+  for (const change of [
+    (child) => {
+      child.createdBy = 'foreign';
+    },
+    (child) => {
+      child.parentThreadId = 'foreign-parent';
+    },
+    (child) => {
+      child.projectPath = '/foreign/project';
+    },
+    (child) => {
+      child.participants = [];
+    },
+    (child) => {
+      child.deletedAt = 1;
+    },
+  ]) {
+    const f = await fixture();
+    const ensure = f.threads.ensureOwnedThread.bind(f.threads);
+    f.threads.ensureOwnedThread = async (seed) => {
+      const child = ensure(seed);
+      change(child);
+      return child;
+    };
+    await assert.rejects(() => f.host.prepareEntrusted(f.input));
+    assert.equal(f.tasks.listByKind('work').length, 0);
+  }
+  const f = await fixture();
+  f.threads.ensureOwnedThread = async () => f.thread;
+  await assert.rejects(() => f.host.prepareEntrusted(f.input));
+  assert.equal(f.tasks.listByKind('work').length, 0);
+});
+
+test('derived Task site: source recall during child creation cannot produce an admission', async () => {
+  const f = await fixture();
+  const ensure = f.threads.ensureOwnedThread.bind(f.threads);
+  f.threads.ensureOwnedThread = async (seed) => {
+    const child = ensure(seed);
+    f.source.recall = { recalledAt: 1 };
+    return child;
+  };
+  await assert.rejects(() => f.host.prepareEntrusted(f.input));
+  assert.equal(f.tasks.listByKind('work').length, 0);
+});

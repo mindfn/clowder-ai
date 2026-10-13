@@ -144,7 +144,7 @@ export interface ModulePluginRuntimeOptions {
   readonly browserServices?: PrepareModuleBrowserServices;
   readonly taskStore?: ITaskStore;
   readonly taskOwnerUserId?: string;
-  readonly taskThreadStore?: Pick<IThreadStore, 'get'>;
+  readonly taskThreadStore?: Pick<IThreadStore, 'get'> & Partial<Pick<IThreadStore, 'ensureOwnedThread'>>;
   readonly taskDispatch?: (pluginInstanceId: string) => PluginTaskDispatchServices | undefined;
   readonly taskAdmission?: (
     pluginInstanceId: string,

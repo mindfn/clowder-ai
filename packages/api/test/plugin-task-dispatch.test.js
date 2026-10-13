@@ -86,7 +86,8 @@ async function fixture(continued = false) {
     messages,
     tasks,
     threads,
-    thread,
+    thread: threads.get(admission.threadId),
+    sourceThread: thread,
     source: currentSource,
     state,
     deps,
@@ -321,7 +322,7 @@ test('producer rejects native origin mismatch even with a valid prepared executi
         invocationId: 'native',
         userId: 'owner',
         catId: 'codex',
-        threadId: f.thread.id,
+        threadId: f.sourceThread.id,
         originTriggerMessageId: 'wrong',
         toolExecutionPolicy: {
           mode: 'plugin_native',
@@ -587,7 +588,7 @@ test('producer native exact-origin lane accepts the current receipt', async () =
       invocationId: 'native',
       userId: 'owner',
       catId: 'codex',
-      threadId: f.thread.id,
+      threadId: f.sourceThread.id,
       originTriggerMessageId: f.source.id,
       toolExecutionPolicy: {
         mode: 'plugin_native',

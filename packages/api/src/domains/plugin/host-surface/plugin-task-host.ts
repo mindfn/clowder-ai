@@ -72,7 +72,7 @@ export interface PluginTaskHostDeps {
   readonly effectiveGrants: readonly string[];
   readonly taskStore: ITaskStore | undefined;
   readonly threadStore?: Pick<IThreadStore, 'get'>;
-  readonly readThreadStore?: Pick<IThreadStore, 'get'>;
+  readonly readThreadStore?: Pick<IThreadStore, 'get'> & Partial<Pick<IThreadStore, 'ensureOwnedThread'>>;
   readonly ownerUserId?: string;
   readonly assertCurrent?: () => void | Promise<void>;
 }

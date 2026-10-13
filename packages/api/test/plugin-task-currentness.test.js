@@ -42,7 +42,7 @@ async function fixture(manual = false, firstExecution = false) {
     admission: { messageStore: messages, isCatAvailable: () => true, assertCurrent: async () => {} },
   };
   const host = createPluginTaskHost(deps);
-  const taskThread = manual ? threads.create('owner', 'Chosen Task thread') : thread;
+  let taskThread = manual ? threads.create('owner', 'Chosen Task thread') : thread;
   threads.addParticipants(taskThread.id, ['codex']);
   const prepare = () =>
     host.prepareEntrusted({
@@ -68,6 +68,7 @@ async function fixture(manual = false, firstExecution = false) {
         () => withPluginOwnerWebhook('neutral', 'owner', 'instance', false, () => {}, prepare),
       )
     : await prepare();
+  taskThread = threads.get(first.threadId);
   const next = firstExecution
     ? source
     : messages.append({ ...structuredClone(source), id: undefined, content: 'Continue report', timestamp: 2 });
@@ -257,7 +258,7 @@ test('Task/source/admission/execution/owner and installation changes independent
       f.thread.createdBy = 'foreign';
     },
     (f) => {
-      f.thread.participants = [];
+      f.taskThread.participants = [];
     },
     (f) => {
       f.unavailable();
