@@ -49,7 +49,7 @@ classic 应对齐 develop_base 的旧版空间关系、菜单布局与既有操�
 
 classic／v2 是展示分支；旧版保留 develop_base 的布局与既有操作，随后再补新版展示。共享组件应围绕 presentation 分支承载这两种布局，不让 main 的新版摆放规则覆盖旧版，也不建立两份业务状态。后端继续以 #1398 的共同 send、单一 Queue、History 和精确原生读取证据为准；同步 main 是迁入新增能力的消费者，不是换回旧 A2A 状态机。
 
-| main 能力族 | #1398 的承接边界 | 已有源码／验证锚点 |
+| 已核对的业务能力族 | #1398 的承接边界 | 已有源码／验证锚点 |
 |---|---|---|
 | 用户、成员、外部入口与 SDK 输入 | 共同准入，冻结 target／intent／audience；相同 ID 重放保持原身份 | `InvocationQueue.send`、`PersistedQueueDelivery`；`a2a-1577-sdk-input-seam`、producer-category、message-scope |
 | 修改请求、工作 producer、调度与部署通知 | 原业务 authority 保留，投递通过同一适配器；队列退休后消费持久事实 | modification-source、work-producer、deployment-publication、scheduler、refusal seams |
@@ -57,7 +57,7 @@ classic／v2 是展示分支；旧版保留 develop_base 的布局与既有操�
 | 私密媒体回流及追加 | 复用持久 TurnExecution 见证，public input／reply／causal 不挂私密 ID，内部读取与结算保留 | 私密 witness／callback／Append／store reopen／nonrecipient play 回归与独立复核 |
 | 历史、上下文、全文 drill、搜索与 Live inbox | 从持久消息与独立读取回执投影；执行归属／完成不冒充已读 | document、message-drill、thread-context、live-inbox、observational-projection seams |
 
-以上是已核对的 main 差集及接线结论，不是宣称整个 main 的所有功能均已真实体验。初期真实遗漏（私密执行见证、Append 公开引用、terminal settlement）已沿上述已有所有者补齐；它们不能被描述成“单一 Queue 会自动覆盖、从未需要迁移”。#1587 只有 Web 变更，本次头部／工具栏修复也不改 API/shared/MCP。旧原生记录保持各自 SHA；Claude、真实媒体生成、最终组合运行、历史／混合版本、rollback／off-mode 与 operator／soak 继续按版本报告未验范围。
+以上是对 main 消费者和 #1398 既有职责的接线核对，不是宣称整个 main 的所有功能均已真实体验，也不表示表中每项都是 main 新增。私密执行见证是媒体消费者迁入共同执行记录时的接线缺口；Append 公开引用过滤和 terminal settlement 本来就是 #1398 的职责，实际私密验收揭示了自身实现遗漏，已分别复用共同投影与现有内部精确绑定修正。这两项不是 main 特有的新能力，不新增投递机制、隐私账本或补偿层。#1587 只有 Web 变更，本次头部／工具栏修复也不改 API/shared/MCP。旧原生记录保持各自 SHA；Claude、真实媒体生成、最终组合运行、历史／混合版本、rollback／off-mode 与 operator／soak 继续按版本报告未验范围。
 
 ## 3. develop_base 已做的调整，以及 #1398 的保留情况
 
