@@ -81,7 +81,7 @@ export async function neutralFixture(t, options = {}) {
   const source = `export default { create() { return { start(host) { globalThis[${JSON.stringify(key)}](host);
     const call = async input => { const method = host[input.service]?.[input.method];
       return { available: typeof method === 'function', result: method ? await method(input.value) : null }; };
-    return { actions: { 'neutral.http': async ({request}) => ({status:200, body:await call(request.method === 'GET' ? JSON.parse(request.query.input) : request.body)}),
+    return { ${options.publicVerifier ? 'publicInvocationVerifier: async (_input, context) => { await context.assertCurrent(); return { current: true }; },' : ''} actions: { 'neutral.http': async ({request}) => ({status:200, body:await call(request.method === 'GET' ? JSON.parse(request.query.input) : request.body)}),
       'neutral.call': call }, stop() {} }; } }; } };`;
   await writeFile(join(packageRoot, 'plugin.mjs'), source);
   await writeFile(join(packageRoot, 'mcp.js'), '// Never spawned by this fixture.\n');
@@ -100,6 +100,7 @@ export async function neutralFixture(t, options = {}) {
     threadOwnerUserId: owner,
     messageStore: messages,
     threadStore: threads,
+    ...(options.publicInvocations ? { publicInvocations: options.publicInvocations } : {}),
     ...(options.threadProjections ? { threadProjections: options.threadProjections } : {}),
     ...(options.participantRoster ? { participantRoster: options.participantRoster } : {}),
     ...(options.unavailable

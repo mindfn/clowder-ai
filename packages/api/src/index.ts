@@ -4879,6 +4879,10 @@ async function main(): Promise<void> {
   let dotConnectionService: InstanceType<typeof DotConnectionService> | undefined;
   let dotRoundTripVerified = async () => false;
   const pluginRuntime = cloudConversations.createRuntime({
+    publicInvocations: {
+      queue: invocationQueue,
+      resume: (threadId, userId) => queueProcessor.resumeAfterStartup(threadId, userId),
+    },
     ...(actionSuccessorLeaseStore && actionSuccessorCompletionService
       ? {
           custody: { leaseStore: actionSuccessorLeaseStore, completionService: actionSuccessorCompletionService },

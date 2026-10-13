@@ -13,6 +13,7 @@ import type { IMessageStore } from '../../cats/services/stores/ports/MessageStor
 import type { IThreadStore } from '../../cats/services/stores/ports/ThreadStore.js';
 import { currentPluginCallContext, currentPluginOwnerRequestContext } from '../carrier/plugin-call-context.js';
 import { snapshotPluginProtocolData } from '../carrier/plugin-protocol-data.js';
+import type { PublicInvocationVerifierPort } from '../carrier/public-invocation-verifier.js';
 import { ExternalPluginRuntimeError } from '../external-runtime/types.js';
 import type { PluginInventoryStore, PluginInventoryTransaction } from '../host-inventory/ports.js';
 import type { PluginGrantRecord, PluginInstanceRecord, PluginPackageRecord } from '../host-inventory/types.js';
@@ -22,6 +23,11 @@ import {
   type PluginParticipantRosterHost,
   type PluginParticipantRosterServices,
 } from './plugin-participant-roster-host.js';
+import {
+  createPluginPublicInvocationHost,
+  type PluginPublicInvocationHost,
+  type PluginPublicInvocationServices,
+} from './plugin-public-invocation-host.js';
 import {
   createPluginSourceFactsHost,
   type PluginNativeContextHost,
@@ -35,6 +41,7 @@ export interface PluginDeploymentServices {
   getReviewPolicy(): DeploymentCatalog['policy'];
 }
 export interface PluginNeutralHost {
+  readonly publicInvocations: PluginPublicInvocationHost;
   readonly sourceFacts: PluginSourceFactsHost;
   readonly nativeContext: PluginNativeContextHost;
   readonly ownerThreads: PluginOwnerThreadHost;
@@ -53,7 +60,9 @@ interface Deps {
   readonly ownerUserId: string | undefined;
   readonly threadStore: IThreadStore | undefined;
   readonly sourceStore: IFrustrationIssueStore | undefined;
-  readonly messageStore?: Pick<IMessageStore, 'getById'>;
+  readonly messageStore?: Pick<IMessageStore, 'getById' | 'prepareQueueAdmission' | 'initializeQueueCustody'>;
+  readonly publicInvocations?: PluginPublicInvocationServices;
+  readonly verifyPublicInvocation: PublicInvocationVerifierPort['invokePublicInvocationVerifier'];
   readonly deployment: PluginDeploymentServices | undefined;
   readonly participantRoster?: PluginParticipantRosterServices;
   readonly projectPath?: string;
@@ -180,6 +189,20 @@ export async function createPluginNeutralHost(deps: Deps): Promise<PluginNeutral
   const read = ['frustration.read'];
   const write = ['frustration.read', 'frustration.link'];
   return Object.freeze({
+    publicInvocations: createPluginPublicInvocationHost({
+      pluginInstanceId: deps.pluginInstanceId,
+      packageDigest: deps.packageDigest,
+      lifecycleRevision,
+      grantRevision,
+      manifest,
+      effectiveGrants: grant.effectiveGrants,
+      ownerUserId: deps.ownerUserId,
+      messages: deps.messageStore,
+      threads: deps.threadStore,
+      services: deps.publicInvocations,
+      verify: deps.verifyPublicInvocation,
+      assertCurrent: current,
+    }),
     ...createPluginSourceFactsHost({
       pluginInstanceId: deps.pluginInstanceId,
       ownerUserId: deps.ownerUserId,

@@ -75,6 +75,7 @@ import { PluginMediaReadService } from './host-surface/plugin-media-host.js';
 import { createPluginNeutralHost, type PluginDeploymentServices } from './host-surface/plugin-neutral-host.js';
 import type { PluginParticipantRosterServices } from './host-surface/plugin-participant-roster-host.js';
 import { RedisPluginPrivateStorage } from './host-surface/plugin-private-storage.js';
+import type { PluginPublicInvocationServices } from './host-surface/plugin-public-invocation-host.js';
 import {
   type BuiltinPluginPackageMaterializer,
   FilesystemBuiltinPluginPackageMaterializer,
@@ -118,6 +119,7 @@ export interface PluginRuntimePersistencePaths {
 
 export interface DormantPluginRuntimeCompositionOptions {
   readonly builtinRuntimes?: ReadonlyMap<string, BuiltinPluginRuntime>;
+  readonly publicInvocations?: PluginPublicInvocationServices;
   readonly projectRoot: string;
   readonly paths?: PluginRuntimePersistencePaths;
   readonly messageStore: IMessageStore;
@@ -453,6 +455,8 @@ export function createDormantPluginRuntimeComposition(
         sourceStore: options.frustrationIssueStore,
         messageStore: options.messageStore,
         deployment: options.deployment,
+        ...(options.publicInvocations ? { publicInvocations: options.publicInvocations } : {}),
+        verifyPublicInvocation: (...args) => supervisor.invokePublicInvocationVerifier(...args),
         ...(options.participantRoster ? { participantRoster: options.participantRoster } : {}),
         projectPath: options.projectRoot,
         ...(options.threadProjections?.cats ? { cats: options.threadProjections.cats } : {}),
