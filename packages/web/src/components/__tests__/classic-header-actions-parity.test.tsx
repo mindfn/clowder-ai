@@ -31,6 +31,7 @@ describe('classic author row and action strip match the runtime reference', () =
   afterEach(() => {
     h.dispose();
     vi.restoreAllMocks();
+    vi.unstubAllGlobals();
   });
   const message = streamReply({
     replyTo: 'source-1',
@@ -82,6 +83,22 @@ describe('classic author row and action strip match the runtime reference', () =
       x.textContent?.includes('查看这轮轨迹'),
     );
     expect(item).toBeTruthy();
+  });
+  it('keeps a portaled compact action sheet in normal flow, separate from the author slot', () => {
+    vi.stubGlobal('matchMedia', (query: string) => ({
+      matches: query.includes('max-width: 767px'),
+      addEventListener: vi.fn(),
+      removeEventListener: vi.fn(),
+    }));
+    render();
+    act(() =>
+      required(h.container.querySelector<HTMLButtonElement>('[data-testid="message-actions-compact-trigger"]')).click(),
+    );
+    const sheet = required(document.querySelector<HTMLElement>('[data-testid="message-actions-compact-sheet"]'));
+    const toolbar = required(sheet.querySelector<HTMLElement>('[role="toolbar"]'));
+    expect(toolbar.classList.contains('absolute')).toBe(false);
+    expect([...toolbar.classList].some((token) => token.includes('translate-y'))).toBe(false);
+    expect(toolbar.querySelector('button[aria-label="播放语音"]')).toBeTruthy();
   });
   it('keeps a trajectory control for non-assistant notices that have no assistant author anchor', () => {
     render({ ...message, type: 'system' });

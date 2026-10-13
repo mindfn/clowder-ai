@@ -478,7 +478,7 @@ export function MessageActions({
         data-testid="message-actions-toolbar"
         role="toolbar"
         aria-label="消息操作"
-        className={`${toolbarVisibilityClass} ${actionSlot ? actionSlotPositionClass : `absolute ${toolbarPositionClass}`} z-30 flex transition-opacity bg-cafe-surface/90 rounded-lg shadow-sm border border-cafe ${
+        className={`${toolbarVisibilityClass} ${compactPresentation ? 'relative' : actionSlot ? actionSlotPositionClass : `absolute ${toolbarPositionClass}`} z-30 flex transition-opacity bg-cafe-surface/90 rounded-lg shadow-sm border border-cafe ${
           compactPresentation
             ? 'w-full justify-center gap-1 p-2 [&_button]:min-h-11 [&_button]:min-w-11'
             : 'gap-0.5 px-1 py-0.5'
@@ -492,7 +492,10 @@ export function MessageActions({
             : undefined
         }
       >
-        <div data-testid="message-secondary-actions" className={`${isUser ? 'order-1' : ''} flex gap-0.5`.trim()}>
+        <div
+          data-testid="message-secondary-actions"
+          className={`${isUser ? 'order-1' : ''} flex ${compactPresentation ? 'flex-wrap justify-center gap-1' : 'gap-0.5'}`.trim()}
+        >
           {isAssistant && canAct && message.catId && message.content.trim() && (
             <TtsPlayButton
               messageId={message.id}
