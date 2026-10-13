@@ -375,3 +375,97 @@ test('directory reselection does not silently take over an archive-origin instan
   });
   assert.deepEqual(await store.snapshot(), before);
 });
+
+async function archiveSource(entrypoint, packageName = '@clowder-ai/official-test-source') {
+  const archive = await packageArchive({
+    extraFiles: {
+      'dist/entrypoint.js': entrypoint,
+      'package.json': JSON.stringify({ name: packageName, version: '0.1.0-alpha.1', type: 'module' }),
+    },
+  });
+  const path = join(await tempRoot('cat-cafe-local-archive-update-'), 'package.tgz');
+  await writeFile(path, archive.bytes);
+  return { kind: 'local-archive', path };
+}
+
+test('archive reselection preserves the instance, old package and retained data', async () => {
+  const { admission, store, packagesRoot } = await harness();
+  const first = await admission.install(await archiveSource('// first'));
+  const dataFile = join(packagesRoot, 'retained-owner-data');
+  await writeFile(dataFile, 'retained');
+  const before = await store.snapshot();
+  const updated = await admission.install(await archiveSource('// updated'));
+  const after = await store.snapshot();
+  assert.equal(updated.pluginInstanceId, first.pluginInstanceId);
+  assert.notEqual(updated.packageDigest, first.packageDigest);
+  assert.equal(after.instances.length, 1);
+  assert.equal(after.instances[0].installedAt, before.instances[0].installedAt);
+  assert.equal(after.instances[0].lifecycleRevision, before.instances[0].lifecycleRevision + 1);
+  assert.equal(after.grants[0].grantRevision, before.grants[0].grantRevision + 1);
+  await access(join(packagesRoot, packageDirectoryName(first.packageDigest), 'package.tgz'));
+  assert.equal(await readFile(dataFile, 'utf8'), 'retained');
+});
+
+test('archive reselection refuses a running instance without changing inventory', async () => {
+  const { admission, store } = await harness();
+  const first = await admission.install(await archiveSource('// first'));
+  await store.transaction((tx) =>
+    tx.instances.put({
+      ...tx.instances.get(first.pluginInstanceId),
+      runtimeState: 'healthy',
+      activationState: 'enabled',
+    }),
+  );
+  const before = await store.snapshot();
+  await assert.rejects(
+    admission.install(await archiveSource('// updated')),
+    (error) => error.code === 'INVENTORY_REJECTED' && error.cause?.code === 'RUNTIME_NOT_STOPPED',
+  );
+  assert.deepEqual(await store.snapshot(), before);
+});
+
+test('archive reselection retains the request-start grant revision', async () => {
+  let revoke = false;
+  const h = await harness({
+    grantPolicy: async () => {
+      if (revoke)
+        await h.inventory.revokeGrant({
+          pluginInstanceId: 'pi_local',
+          capability: 'events.publish',
+          expectedGrantRevision: 1,
+        });
+      return ['events.publish'];
+    },
+  });
+  const first = await h.admission.install(await archiveSource('// first'));
+  revoke = true;
+  await assert.rejects(
+    h.admission.install(await archiveSource('// updated')),
+    (error) => error.code === 'INVENTORY_REJECTED' && error.cause?.code === 'STALE_GRANT_REVISION',
+  );
+  const after = await h.store.snapshot();
+  assert.equal(after.instances[0].packageDigest, first.packageDigest);
+  assert.equal(after.grants[0].grantRevision, 2);
+  assert.deepEqual(after.grants[0].effectiveGrants, []);
+});
+
+test('archive reselection cannot switch package identity or source kind', async () => {
+  const { admission, store } = await harness();
+  await admission.install(await archiveSource('// first'));
+  const before = await store.snapshot();
+  await assert.rejects(admission.install(await archiveSource('// other', '@clowder-ai/other-package')), {
+    code: 'INVENTORY_REJECTED',
+  });
+  assert.deepEqual(await store.snapshot(), before);
+  const h = await harness();
+  const directory = await tempRoot('cat-cafe-local-directory-origin-');
+  await writeLocalPackage(directory);
+  await writeFile(
+    join(directory, 'package.json'),
+    JSON.stringify({ name: '@clowder-ai/official-test-source', version: '0.1.0-alpha.1' }),
+  );
+  await h.admission.install({ kind: 'local-directory', path: directory });
+  const directoryBefore = await h.store.snapshot();
+  await assert.rejects(h.admission.install(await archiveSource('// updated')), { code: 'INVENTORY_REJECTED' });
+  assert.deepEqual(await h.store.snapshot(), directoryBefore);
+});

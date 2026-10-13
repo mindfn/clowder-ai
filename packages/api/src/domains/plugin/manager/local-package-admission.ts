@@ -456,13 +456,13 @@ export class LocalPluginPackageAdmission {
       const previousPackage = inventoryAtRequest.packages.find(
         (record) => record.packageDigest === current?.packageDigest,
       );
-      const directoryUpdate =
-        source.kind === 'local-directory' &&
-        candidate.provenance?.kind === 'local-directory' &&
+      const localUpdate =
+        candidate.provenance?.kind === source.kind &&
         current !== undefined &&
-        previousPackage?.provenance?.kind === 'local-directory' &&
+        previousPackage?.provenance?.kind === source.kind &&
+        (source.kind === 'local-directory' || candidate.provenance.packageName !== undefined) &&
         previousPackage.provenance.packageName === candidate.provenance.packageName;
-      if (!directoryUpdate) return await this.options.inventory.installPackage(candidate);
+      if (!localUpdate) return await this.options.inventory.installPackage(candidate);
       const grants = inventoryAtRequest.grants.find((grant) => grant.pluginInstanceId === current.pluginInstanceId);
       if (!grants) throw new PluginInventoryError('INVENTORY_INVARIANT', 'current instance has no grant record');
       return await this.options.inventory.upgradePackage({
