@@ -68,6 +68,27 @@ let sessionRefresh: Promise<void> | null = null;
 let sessionCsrfToken: string | null = null;
 let lastSessionFailureToastAt = 0;
 
+const reportedConnectionErrors = new WeakSet<object>();
+let lastConnectionFailureAt = Number.NEGATIVE_INFINITY;
+
+/** Shared transport feedback; a lost response does not prove a mutation failed. */
+export function reportApiConnectionFailure(error: unknown): boolean {
+  if (!(error instanceof Error) || (error.name !== 'TypeError' && error.name !== 'TimeoutError')) return false;
+  if (reportedConnectionErrors.has(error)) return true;
+  reportedConnectionErrors.add(error);
+  const now = Date.now();
+  if (now - lastConnectionFailureAt >= 5_000) {
+    lastConnectionFailureAt = now;
+    useToastStore.getState().addToast({
+      type: 'error',
+      title: '后端连接异常',
+      message: '未能取得后端响应，请检查服务并刷新确认操作结果。',
+      duration: 5000,
+    });
+  }
+  return true;
+}
+
 export interface ApiFetchOptions {
   /**
    * A mutation happened while this exact GET may already be active. Attach the
@@ -237,6 +258,15 @@ function withoutCallerSignal(init?: RequestInit): RequestInit | undefined {
 }
 
 async function performApiFetch(path: string, init?: RequestInit): Promise<Response> {
+  try {
+    return await performSessionRequest(path, init);
+  } catch (error) {
+    if (!init?.signal?.aborted) reportApiConnectionFailure(error);
+    throw error;
+  }
+}
+
+async function performSessionRequest(path: string, init?: RequestInit): Promise<Response> {
   const initialSessionGate = ensureSession();
   await waitForPromiseWithSignal(initialSessionGate, init?.signal);
   const normalized = withSessionCsrf(ensureBodyForMutation(init));

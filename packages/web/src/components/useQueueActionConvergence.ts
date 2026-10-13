@@ -10,7 +10,7 @@ import type { QueueActiveInvocationSlot } from '@/hooks/queue-active-invocation-
 import { reconcileQueueActiveInvocationProjection } from '@/hooks/queue-active-invocation-reconciliation';
 import { useChatStore } from '@/stores/chatStore';
 import { useToastStore } from '@/stores/toastStore';
-import { apiFetch } from '@/utils/api-client';
+import { apiFetch, reportApiConnectionFailure } from '@/utils/api-client';
 import { queuedGuidanceCopy } from './execution-row/queue-toast-copy';
 import type { SteerSubmission } from './SteerQueuedEntryModal';
 
@@ -26,27 +26,22 @@ interface MappedSteerTarget {
   entryId: string;
   targetCatId: string;
   strategy: 'guide_reply' | 'interrupt_reply';
+  status: number;
+  result: { outcome?: string; code?: string; error?: string };
 }
 
-async function submitMappedSteerTargets(threadId: string, targets: MappedSteerTarget[]) {
+function collectSteerResults(targets: MappedSteerTarget[]) {
   const failures: string[] = [];
   const queuedTargets: Array<{ entryId: string; targetCatId: string }> = [];
   for (const target of targets) {
-    const route = target.strategy === 'guide_reply' ? 'continue' : 'steer';
-    const response = await apiFetch(`/api/threads/${threadId}/queue/${target.entryId}/${route}`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ targetCatId: target.targetCatId }),
-    });
-    const data = await response.json().catch(() => ({}));
-    if (response.ok) {
-      if (data?.outcome === 'queued') queuedTargets.push(target);
-      continue;
+    const data = target.result;
+    if (!data || typeof target.status !== 'number') {
+      failures.push(`${target.targetCatId}: 未收到投递结果，请刷新查看队列状态`);
+    } else if (target.status >= 200 && target.status < 300) {
+      if (data.outcome === 'queued') queuedTargets.push(target);
+    } else if (data.code !== 'ENTRY_PROCESSING' && data.code !== 'ENTRY_NOT_FOUND') {
+      failures.push(`${target.targetCatId}: ${steerFailureMessage(target.status, data.code, data.error)}`);
     }
-    if (response.status === 404 || data?.code === 'ENTRY_PROCESSING' || data?.code === 'ENTRY_NOT_FOUND') {
-      continue;
-    }
-    failures.push(`${target.targetCatId}: ${steerFailureMessage(response.status, data?.code, data?.error)}`);
   }
   return { failures, queuedTargets };
 }
@@ -56,12 +51,7 @@ function queuedGuidanceFeedback(
   targets: Array<{ entryId: string; targetCatId: string }>,
   refreshed: boolean,
 ): { title: string; message: string } | undefined {
-  if (targets.length === 0) return;
-  if (!refreshed)
-    return {
-      title: '发送请求已保存',
-      message: '队列刷新未完成，尚未确认消息是否投递；请刷新查看最新状态。',
-    };
+  if (targets.length === 0 || !refreshed) return;
   const current = useChatStore.getState().getThreadState(threadId);
   const messages = targets.flatMap(({ entryId, targetCatId }) => {
     const entry = current.queue.find(
@@ -84,7 +74,10 @@ export function useQueueActionConvergence(threadId: string) {
   const [steerEntryId, setSteerEntryId] = useState<string | null>(null);
 
   const refreshQueue = useCallback(async () => {
-    const response = await apiFetch(`/api/threads/${threadId}/queue`).catch(() => null);
+    const response = await apiFetch(`/api/threads/${threadId}/queue`).catch((error) => {
+      reportApiConnectionFailure(error);
+      return null;
+    });
     if (!response?.ok) return false;
     const data = await response.json().catch(() => ({}));
     if (!Array.isArray(data?.queue)) return false;
@@ -130,7 +123,7 @@ export function useQueueActionConvergence(threadId: string) {
           return;
         }
 
-        const { failures, queuedTargets } = await submitMappedSteerTargets(threadId, mapping.targets);
+        const { failures, queuedTargets } = collectSteerResults(mapping.targets);
         setSteerEntryId(null);
         const refreshed = await refreshQueue();
         if (failures.length > 0) {
@@ -144,7 +137,8 @@ export function useQueueActionConvergence(threadId: string) {
         }
         const feedback = queuedGuidanceFeedback(threadId, queuedTargets, refreshed);
         if (feedback) addToast({ type: 'info', ...feedback, threadId, duration: 5000 });
-      } catch {
+      } catch (error) {
+        if (reportApiConnectionFailure(error) || (error instanceof Error && error.name === 'AbortError')) return;
         addToast({ type: 'error', title: 'Steer 失败', message: 'Steer 失败，请重试', threadId, duration: 5000 });
       }
     },

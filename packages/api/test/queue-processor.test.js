@@ -1826,6 +1826,48 @@ describe('QueueProcessor over the source-row pending Queue', () => {
     assert.equal(observedStatus, 'processing', JSON.stringify(errorLog(harness)));
   });
 
+  it('reports Steer started only after Queue handoff, without waiting for provider completion', async () => {
+    let releaseAdmission, releaseProvider;
+    const admissionGate = new Promise((resolve) => {
+      releaseAdmission = resolve;
+    });
+    const providerGate = new Promise((resolve) => {
+      releaseProvider = resolve;
+    });
+    let entered = false;
+    const harness = createHarness({
+      routeExecution: async function* (...args) {
+        entered = true;
+        await admissionGate;
+        await startLifecycle(args, 'turn-steer-handoff');
+        await providerGate;
+        yield { type: 'done', catId: 'opus', isFinal: true, timestamp: Date.now() };
+      },
+    });
+    const admitted = await admitMessage(harness, { targetCats: ['opus', 'codex'] });
+    await harness.queue.claimExactSteerEntryDurable('thread-1', 'user-1', admitted.entry.id, 'opus');
+    let returned = false;
+    const execution = harness.processor
+      .processClaimedSteerEntries('thread-1', 'user-1', [admitted.entry.id], 'opus')
+      .then((result) => {
+        returned = true;
+        return result;
+      });
+    try {
+      await waitFor(() => entered);
+      assert.equal(returned, false, 'a reservation is not a successful Queue handoff');
+      releaseAdmission();
+      assert.equal((await execution).started, true);
+      const remaining = harness.queue.getEntrySnapshot('thread-1', 'user-1', admitted.entry.id);
+      assert.deepEqual(remaining.targets, ['codex']);
+      assert.equal(remaining.status, 'queued', 'sibling target can now be claimed by the same operation');
+    } finally {
+      releaseAdmission();
+      releaseProvider();
+      await execution;
+    }
+  });
+
   it('restores a claimed Steer row in its original place when the target slot is busy', async () => {
     const harness = createHarness();
     const admitted = await admitMessage(harness);

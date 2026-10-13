@@ -19,7 +19,7 @@ async function waitFor(predicate) {
   }
 }
 
-async function harness() {
+async function harness({ guide = false } = {}) {
   const queue = new InvocationQueue();
   const tracker = new InvocationTracker();
   const store = new MessageStore();
@@ -117,6 +117,7 @@ async function harness() {
     userId: 'user-1',
     kind: 'conversation_input',
     sourceId: 'issue1371-prestart-source',
+    ...(guide ? { ownerAuthProvenance: 'strict', autoExecute: true } : {}),
     content: 'independent targets',
     targetCats: ['opus', 'codex'],
     intent: 'execute',
@@ -139,7 +140,13 @@ async function harness() {
   const entry = admitted.entry;
   const app = Fastify();
   await app.register(queueRoutes, {
-    threadStore: { get: async () => ({ id: 'thread-1', createdBy: 'user-1' }) },
+    resolveCarrierCapability: () => ({
+      provider: 'openai_codex',
+      carrier: 'codex_app_server',
+      activeInvocationGuidance: 'supported',
+      deliverySemantics: 'exact_active_turn',
+    }),
+    threadStore: { get: async () => ({ id: 'thread-1', createdBy: 'user-1', participants: ['opus', 'codex'] }) },
     invocationQueue: queue,
     invocationTracker: tracker,
     queueProcessor: processor,
@@ -161,6 +168,188 @@ async function harness() {
   };
 }
 
+function bindAppendRun(h, catId) {
+  const parent = `parent-${catId}`,
+    invocationId = `turn-${catId}`,
+    startedAt = Date.now();
+  h.tracker.start('thread-1', catId, 'user-1', [catId], parent);
+  const response = h.store.append({
+    from: { kind: 'agent', catId },
+    userId: 'user-1',
+    threadId: 'thread-1',
+    content: '',
+    mentions: [],
+    origin: 'stream',
+    timestamp: startedAt,
+    lifecycle: {
+      kind: 'response',
+      orderKey: `${startedAt}:${invocationId}`,
+      invocationId,
+      targetId: catId,
+      inputEntryIds: [],
+      inputMessageIds: [],
+      status: 'processing',
+      startedAt,
+    },
+  });
+  assert.ok(
+    h.tracker.bindLifecycleActiveRun(
+      {
+        threadId: 'thread-1',
+        targetId: catId,
+        invocationId,
+        responseMessageId: response.id,
+        inputEntryIds: [],
+        inputMessageIds: [],
+        privateInputEntryIds: [],
+        startedAt,
+      },
+      parent,
+    ),
+  );
+  return { invocationId, responseId: response.id };
+}
+
+for (const firstResult of ['accepted', 'rejected', 'throws']) {
+  test(`one guide request releases the sibling at handoff while preserving a delayed ${firstResult} ACK`, async (t) => {
+    const h = await harness({ guide: true });
+    t.after(() => h.app.close());
+    h.releaseCreate();
+    const runs = { opus: bindAppendRun(h, 'opus'), codex: bindAppendRun(h, 'codex') };
+    let releaseAck;
+    const ackGate = new Promise((resolve) => {
+      releaseAck = resolve;
+    });
+    const calls = [];
+    for (const catId of ['opus', 'codex']) {
+      assert.ok(
+        h.tracker.bindAgentClientActiveRunDispatcher('thread-1', catId, {
+          invocationId: runs[catId].invocationId,
+          capabilities: { append: true, steer: true },
+          handle: { provider: 'openai_codex', carrier: 'codex_app_server' },
+          dispatch: async () => {
+            calls.push(catId);
+            if (catId === 'opus') {
+              await ackGate;
+              if (firstResult === 'throws') throw new Error('native append refused');
+              if (firstResult === 'rejected') return { accepted: false, reason: 'provider_rejected' };
+            }
+            return { accepted: true, handle: {} };
+          },
+        }),
+      );
+    }
+    let requestFinished = false;
+    const request = h.app
+      .inject({
+        method: 'POST',
+        url: `/api/threads/thread-1/queue/${h.entry.id}/targets`,
+        headers: { 'x-cat-cafe-user': 'user-1' },
+        payload: {
+          sourceRecordId: h.source.id,
+          observedPendingTargetIds: ['opus', 'codex'],
+          targets: ['opus', 'codex'].map((targetCatId) => ({
+            targetCatId,
+            strategy: 'guide_reply',
+            membershipAtOpen: 'member',
+          })),
+        },
+      })
+      .then((response) => {
+        requestFinished = true;
+        return response;
+      });
+    let blocked;
+    try {
+      await waitFor(() => calls.includes('codex'));
+      assert.equal(requestFinished, false, 'final per-target results must still include the held ACK');
+      assert.equal(h.queue.list('thread-1', 'user-1').length, 0, 'both targets handed off before the slow ACK');
+    } catch (error) {
+      blocked = error;
+    } finally {
+      releaseAck();
+    }
+    const response = await request;
+    assert.ifError(blocked);
+    assert.equal(response.statusCode, 200, response.body);
+    const targets = response.json().targets;
+    assert.deepEqual(calls, ['opus', 'codex'], 'one dispatch per target');
+    assert.equal(targets[1].result.outcome, 'appended');
+    assert.equal(targets[1].status, 200);
+    if (firstResult === 'accepted') {
+      assert.equal(targets[0].result.outcome, 'appended');
+      assert.equal(h.queue.list('thread-1', 'user-1').length, 0);
+    } else {
+      assert.equal(targets[0].status, 502);
+      assert.equal(targets[0].result.code, 'PROVIDER_REJECTED');
+      assert.equal(
+        h.queue.list('thread-1', 'user-1').length,
+        0,
+        'native refusal follows the shared settled-failure path',
+      );
+      const refs = h.store.getById(h.source.id).lifecycle.dispatchRefs;
+      const refused = refs.find((ref) => ref.targetId === 'opus');
+      const accepted = refs.find((ref) => ref.targetId === 'codex');
+      assert.equal(refused.phase, 'settled');
+      const failure = h.store.getById(refused.statusMessageId);
+      assert.equal(failure.lifecycle.kind, 'delivery_failure');
+      assert.equal(failure.lifecycle.status, 'failed');
+      assert.equal(failure.lifecycle.inputMessageId, h.source.id);
+      assert.deepEqual(failure.lifecycle.requestedTargets, ['opus']);
+      assert.equal(accepted.phase, 'dispatched');
+      assert.equal(accepted.statusMessageId, runs.codex.responseId);
+      assert.ok(h.store.getById(runs.codex.responseId).lifecycle.inputMessageIds.includes(h.source.id));
+      assert.ok(!h.store.getById(runs.opus.responseId).lifecycle.inputMessageIds.includes(h.source.id));
+    }
+  });
+}
+
+test('one Steer request interrupts two busy targets through real Queue handoff and replays without new runs', async (t) => {
+  const h = await harness();
+  t.after(() => h.app.close());
+  const opus = h.tracker.start('thread-1', 'opus', 'user-1', ['opus'], 'old-opus');
+  const codex = h.tracker.start('thread-1', 'codex', 'user-1', ['codex'], 'old-codex');
+  h.releaseCreate();
+  const input = {
+    method: 'POST',
+    url: `/api/threads/thread-1/queue/${h.entry.id}/targets`,
+    headers: { 'x-cat-cafe-user': 'user-1' },
+    payload: {
+      sourceRecordId: h.source.id,
+      observedPendingTargetIds: ['opus', 'codex'],
+      targets: [
+        { targetCatId: 'opus', strategy: 'interrupt_reply', membershipAtOpen: 'member' },
+        { targetCatId: 'codex', strategy: 'interrupt_reply', membershipAtOpen: 'member' },
+      ],
+    },
+  };
+  const res = await h.app.inject(input);
+  assert.equal(res.statusCode, 200, res.body);
+  assert.deepEqual(
+    res.json().targets.map((target) => [target.targetCatId, target.status, target.result.started]),
+    [
+      ['opus', 200, true],
+      ['codex', 200, true],
+    ],
+  );
+  assert.equal(opus.signal.aborted, true);
+  assert.equal(codex.signal.aborted, true);
+  assert.equal(h.queue.list('thread-1', 'user-1').length, 0);
+  assert.deepEqual(
+    h.store
+      .getById(h.source.id)
+      .lifecycle.dispatchRefs.map((ref) => ref.targetId)
+      .sort(),
+    ['codex', 'opus'],
+  );
+  const before = h.records.create.mock.callCount();
+  const replay = await h.app.inject(input);
+  assert.equal(replay.statusCode, 200, replay.body);
+  assert.deepEqual(replay.json().targets, []);
+  assert.deepEqual(replay.json().skippedAlreadyDispatched, ['opus', 'codex']);
+  assert.equal(h.records.create.mock.callCount(), before);
+});
+
 test('#1371: explicit Steer consumes one target and preserves the busy sibling', async (t) => {
   const h = await harness();
   t.after(() => h.app.close());
@@ -168,16 +357,15 @@ test('#1371: explicit Steer consumes one target and preserves the busy sibling',
 
   const claimed = await h.queue.claimExactSteerEntryDurable('thread-1', 'user-1', h.entry.id, 'codex');
   assert.equal(claimed.outcome, 'claimed');
-  const started = await h.processor.processClaimedSteerEntries(
+  const started = h.processor.processClaimedSteerEntries(
     'thread-1',
     'user-1',
     claimed.entries.map((entry) => entry.id),
     'codex',
   );
-  assert.equal(started.started, true);
-
   await waitFor(() => h.records.create.mock.calls.length === 1);
   h.releaseCreate();
+  assert.equal((await started).started, true);
   await waitFor(
     () => h.store.getById(h.source.id).lifecycle?.dispatchRefs?.some((ref) => ref.targetId === 'codex') === true,
   );
