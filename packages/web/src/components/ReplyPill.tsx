@@ -1,11 +1,13 @@
 'use client';
 
 import type { ReplyPreview } from '@cat-cafe/shared';
+import { useId, useState } from 'react';
+import { useMeasuredOverflow } from '@/components/content-overflow/useMeasuredOverflow';
 import { useShellPresentation } from '@/components/shell/shell-presentation';
 import type { CatData } from '@/hooks/useCatData';
 import { useCoCreatorConfig } from '@/hooks/useCoCreatorConfig';
 import { tintOf } from '@/lib/hex-color';
-import { resolveMessageSender } from '@/lib/resolve-sender';
+import { messageSenderThemeColor, resolveMessageSender } from '@/lib/resolve-sender';
 import { focusLineageMessage } from '@/utils/focusLineageMessage';
 import { SenderAvatar } from './SenderAvatar';
 
@@ -17,41 +19,71 @@ interface ReplyPillProps {
 
 /**
  * F121: Reply pill badge — shows "↩ 头像 猫名: 摘要" in breed color.
- * DirectionPill 同款药丸风格，click scrolls to original message.
+ * Classic truncation expands in place; jumping to the source stays a separate action.
  *
  * F322 B: in the new shell the words are written in the cat's readable name role (`--color-{cat}-text`), not in its identity
- * hex; the 12.5% tint behind them stays the identity colour, because it says who. Classic keeps the hex (frozen).
+ * hex; the 12.5% tint behind them stays the identity colour, because it says who.
  */
 export function ReplyPill({ replyPreview, replyToId, getCatById }: ReplyPillProps) {
   const coCreator = useCoCreatorConfig();
   const nameRole = useShellPresentation() === 'v2';
+  const [expanded, setExpanded] = useState(false);
+  const contentId = useId();
+  const { ref, overflowing } = useMeasuredOverflow<HTMLSpanElement>({ axis: 'inline', active: !nameRole && !expanded });
   const { content, deleted } = replyPreview;
 
   const sender = resolveMessageSender(replyPreview, getCatById, coCreator, { nameRole });
   const senderLabel = deleted ? '' : sender.label;
   const previewText = deleted ? '消息已删除' : content;
+  const canExpand = !nameRole && !deleted && (overflowing || expanded);
+  const showExpanded = canExpand && expanded;
+  const themeColor = messageSenderThemeColor(replyPreview, sender, getCatById);
 
   const handleClick = () => {
     focusLineageMessage(replyToId);
   };
 
   return (
-    <button
-      type="button"
-      onClick={handleClick}
-      className="inline-flex items-center gap-1 text-micro font-medium px-1.5 py-0.5 rounded-full whitespace-nowrap max-w-[200px] cursor-pointer hover:opacity-80 transition-opacity"
-      style={{ backgroundColor: tintOf(sender.color, '20'), color: sender.textColor }}
-      title={deleted ? '消息已删除' : `${senderLabel}: ${content}`}
-    >
-      <span aria-hidden="true" className="shrink-0">
-        ↩
-      </span>
-      {!deleted && <SenderAvatar sender={sender} className="h-3 w-3" />}
-      <span className="min-w-0 truncate">
-        {senderLabel}
-        {senderLabel && !deleted ? ': ' : ''}
-        {previewText}
-      </span>
-    </button>
+    <span className="inline-flex min-w-0 max-w-full flex-wrap items-center gap-1">
+      <button
+        type="button"
+        onClick={canExpand ? () => setExpanded((current) => !current) : handleClick}
+        aria-expanded={canExpand ? showExpanded : undefined}
+        aria-controls={canExpand ? contentId : undefined}
+        className={`inline-flex min-w-0 gap-1 text-micro font-medium px-1.5 py-0.5 cursor-pointer hover:opacity-80 transition-opacity focus-visible:outline focus-visible:outline-2 focus-visible:outline-current ${showExpanded ? 'items-start rounded-lg max-w-full' : 'items-center rounded-full whitespace-nowrap max-w-[200px]'}`}
+        style={
+          nameRole
+            ? { backgroundColor: tintOf(sender.color, '20'), color: sender.textColor }
+            : {
+                backgroundColor: `color-mix(in srgb, ${themeColor} 12.5%, transparent)`,
+                color: sender.isCoCreator ? sender.textColor : themeColor,
+              }
+        }
+        title={deleted ? '消息已删除' : `${senderLabel}: ${content}`}
+      >
+        <span aria-hidden="true" className="shrink-0">
+          ↩
+        </span>
+        {!deleted && <SenderAvatar sender={sender} className="h-3 w-3" />}
+        <span
+          id={contentId}
+          ref={ref}
+          className={showExpanded ? 'min-w-0 whitespace-pre-wrap break-words' : 'min-w-0 truncate'}
+        >
+          {senderLabel}
+          {senderLabel && !deleted ? ': ' : ''}
+          {previewText}
+        </span>
+      </button>
+      {showExpanded && (
+        <button
+          type="button"
+          onClick={handleClick}
+          className="shrink-0 text-micro font-medium text-[var(--color-cocreator-primary)] hover:underline"
+        >
+          跳到原文
+        </button>
+      )}
+    </span>
   );
 }

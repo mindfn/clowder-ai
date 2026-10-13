@@ -103,7 +103,9 @@ describe('ReplyPill', () => {
       />,
     );
     expect(html).toContain('color:var(--color-cocreator-text)');
-    expect(html).toContain('background-color:#D4A76A20');
+    expect(html).toContain(
+      'background-color:color-mix(in srgb, var(--color-cocreator-primary, #D4A76A) 12.5%, transparent)',
+    );
     expect(html).not.toMatch(/[^-]color:#D4A76A/);
   });
 
@@ -115,7 +117,7 @@ describe('ReplyPill', () => {
         getCatById={mockGetCatById}
       />,
     );
-    expect(html).toMatch(/[^-]color:#8B5CF6/);
+    expect(html).toContain('color:var(--color-opus-primary, #8B5CF6)');
   });
 
   it('uses fallback color for unknown cat', () => {

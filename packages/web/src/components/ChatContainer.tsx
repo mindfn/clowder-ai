@@ -54,7 +54,6 @@ import { RuntimeUpdateRequiredDialog } from './RuntimeUpdateRequiredDialog';
 import { SplitPaneChatView } from './SplitPaneView';
 import { useShellPresentation } from './shell/shell-presentation';
 import { useSettingsReadingPort } from './shell/useSettingsSourceReturn';
-import { ThinkingIndicator } from './ThinkingIndicator';
 import { ThreadSidebar } from './ThreadSidebar';
 import { assignDocumentRoute, pushThreadRouteWithHistory } from './ThreadSidebar/thread-navigation';
 import { ThreadChatExport, ThreadChatSurface, useThreadChatRuntime } from './thread-chat';
@@ -955,8 +954,6 @@ function InteractiveChatContainer({ threadId }: ChatContainerProps) {
           />
         ) : (
           <>
-            {!artifactFullWindowActive && <ThinkingIndicator threadId={threadId} />}
-
             <ThreadChatSurface
               threadId={threadId}
               density="full"

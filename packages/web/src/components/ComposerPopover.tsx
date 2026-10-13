@@ -25,12 +25,14 @@ export function ComposerPopover({
   label,
   onClose,
   preferredWidth,
+  presentation = 'v2',
   children,
 }: {
   anchor: RefObject<HTMLButtonElement>;
   label: string;
   onClose: () => void;
   preferredWidth?: number;
+  presentation?: 'classic' | 'v2';
   children: ReactNode;
 }) {
   const panel = useRef<HTMLDivElement>(null);
@@ -84,7 +86,11 @@ export function ComposerPopover({
         window.innerHeight,
         preferredWidth,
       )}
-      className="z-[70] flex flex-col overflow-y-auto overscroll-contain rounded-lg border border-[var(--shell-hairline-strong)] bg-[var(--shell-paper)] p-1 text-[var(--shell-body)] shadow-lg"
+      className={`z-[70] flex flex-col overflow-y-auto overscroll-contain ${
+        presentation === 'classic'
+          ? 'rounded-2xl bg-cafe-surface-canvas p-1.5 text-cafe-secondary shadow-xl'
+          : 'rounded-lg border border-[var(--shell-hairline-strong)] bg-[var(--shell-paper)] p-1 text-[var(--shell-body)] shadow-lg'
+      }`}
     >
       {children}
     </div>,

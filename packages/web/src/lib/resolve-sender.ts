@@ -21,7 +21,7 @@ import {
 import type { CoCreatorConfig } from '@/components/config-viewer-types';
 import type { CatData } from '@/hooks/useCatData';
 import { formatCatDisplayName } from '@/lib/cat-display-name';
-import { catColorVar } from '@/lib/cat-slug';
+import { catColorVar, catSlug } from '@/lib/cat-slug';
 import { CO_CREATOR_COLOR, UNKNOWN_CAT_COLOR } from '@/lib/color-defaults';
 
 export interface SenderMeta {
@@ -94,6 +94,18 @@ export interface ResolveSenderOptions {
    * gets the hex it always got. An unknown id has no token to point at and keeps its fallback hex.
    */
   nameRole?: boolean;
+}
+
+/** Identity marks follow the sender's current theme, like the classic message navigator. */
+export function messageSenderThemeColor(
+  message: MessageSenderIdentity,
+  sender: SenderMeta,
+  getCatById: (id: string) => CatData | undefined,
+): string {
+  if (sender.isCoCreator) return `var(--color-cocreator-primary, ${sender.color})`;
+  const catId = message.from?.kind === 'agent' ? message.from.catId : undefined;
+  const cat = catId ? getCatById(catId) : undefined;
+  return cat && catSlug(cat.id) === cat.id ? `var(--color-${cat.id}-primary, ${sender.color})` : sender.color;
 }
 
 /**

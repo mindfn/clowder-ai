@@ -144,7 +144,7 @@ describe('AppendedInputReceipts: expand in place, jump separately', () => {
     expect(status?.dataset.appendDeliveryState).toBe('unavailable');
     expect(status?.getAttribute('aria-label')).toBe('已收到 lang · 补充一条消息');
     expect(status?.querySelector('.animate-pulse')).toBeNull();
-    expect(status?.querySelector('span')?.style.backgroundColor).toBe('rgb(176, 95, 69)');
+    expect(status?.querySelector('span')?.style.backgroundColor).toBe('var(--color-cocreator-primary, #B05F45)');
     vi.useFakeTimers();
     const enter = new Event('pointerover', { bubbles: true });
     Object.defineProperty(enter, 'pointerType', { value: 'mouse' });
@@ -168,7 +168,7 @@ describe('AppendedInputReceipts: expand in place, jump separately', () => {
     };
     await render([member, external]);
     expect(row('member-source').querySelector<HTMLElement>('button span')?.style.backgroundColor).toBe(
-      'rgb(101, 157, 98)',
+      'var(--color-codex-primary, #659D62)',
     );
     expect(row('external-source').querySelector<HTMLElement>('button span')?.style.backgroundColor).toBe(
       'rgb(100, 116, 139)',

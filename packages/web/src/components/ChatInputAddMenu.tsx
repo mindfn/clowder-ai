@@ -49,13 +49,19 @@ export function ChatInputAddMenu({
   const unavailable = Boolean(disabled || sendDisabled);
 
   return (
-    <ComposerPopover anchor={triggerRef} label={t.addContent} onClose={onClose} preferredWidth={304}>
+    <ComposerPopover
+      anchor={triggerRef}
+      label={t.addContent}
+      onClose={onClose}
+      preferredWidth={304}
+      presentation={presentation}
+    >
       <div id="composer-add-menu" data-testid="composer-add-menu" className="bg-cafe-surface-canvas">
         {view === 'disposition' && messageDisposition ? (
           <MessageDispositionSelector controller={messageDisposition} onBack={() => setView('root')} />
         ) : (
           <div role="menu" aria-label={t.addContent} className="w-full overflow-hidden rounded-lg">
-            {messageDisposition ? (
+            {presentation === 'v2' && messageDisposition ? (
               <AddMenuItem
                 testId="message-disposition-trigger"
                 dispositionSource={messageDisposition.source}
@@ -67,8 +73,10 @@ export function ChatInputAddMenu({
               />
             ) : null}
             {presentation === 'v2' && preferredCat ? <ComposerPreferredCatSection {...preferredCat} /> : null}
-            <div className="border-b border-cafe-subtle px-3 py-2 text-xs font-medium text-cafe-muted">{t.add}</div>
-            <div className="p-1.5">
+            {presentation === 'v2' ? (
+              <div className="border-b border-cafe-subtle px-3 py-2 text-xs font-medium text-cafe-muted">{t.add}</div>
+            ) : null}
+            <div className={presentation === 'v2' ? 'p-1.5' : undefined}>
               <AddMenuItem
                 tooltip={presentation === 'v2'}
                 testId="composer-add-context"
@@ -93,8 +101,19 @@ export function ChatInputAddMenu({
                   onAttach();
                 }}
               />
+              {presentation === 'classic' && messageDisposition ? (
+                <AddMenuItem
+                  testId="message-disposition-trigger"
+                  dispositionSource={messageDisposition.source}
+                  label="发送策略"
+                  description={messageDispositionLabel(messageDisposition.effective)}
+                  icon={<StrategyIcon />}
+                  disabled={messageDisposition.loading}
+                  onClick={() => setView('disposition')}
+                />
+              ) : null}
             </div>
-            <div className="border-t border-cafe-subtle p-1.5">
+            <div className={presentation === 'v2' ? 'border-t border-cafe-subtle p-1.5' : undefined}>
               <AddMenuItem
                 tooltip={presentation === 'v2'}
                 testId="composer-whisper"
@@ -178,6 +197,14 @@ function ContextIcon() {
   return (
     <svg className="h-5 w-5" viewBox="0 0 20 20" fill="currentColor" aria-hidden="true">
       <path d="M4 3a2 2 0 0 0-2 2v7a2 2 0 0 0 2 2h2v3l4-3h6a2 2 0 0 0 2-2V5a2 2 0 0 0-2-2H4Z" />
+    </svg>
+  );
+}
+
+function StrategyIcon() {
+  return (
+    <svg className="h-5 w-5" viewBox="0 0 20 20" fill="currentColor" aria-hidden="true">
+      <path d="M4 4a2 2 0 1 0 0 4 2 2 0 0 0 0-4Zm6 1a1 1 0 0 0 0 2h6a1 1 0 1 0 0-2h-6ZM4 12a2 2 0 1 0 0 4 2 2 0 0 0 0-4Zm6 1a1 1 0 1 0 0 2h6a1 1 0 1 0 0-2h-6Z" />
     </svg>
   );
 }

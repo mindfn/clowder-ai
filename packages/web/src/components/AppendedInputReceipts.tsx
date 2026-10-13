@@ -4,10 +4,11 @@ import { useId, useState } from 'react';
 import { AppTooltip } from '@/components/AppTooltip';
 import { useMeasuredOverflow } from '@/components/content-overflow/useMeasuredOverflow';
 import { ChevronIcon } from '@/components/hub-icons';
+import { useShellPresentation } from '@/components/shell/shell-presentation';
 import type { CatData } from '@/hooks/useCatData';
 import { useCoCreatorConfig } from '@/hooks/useCoCreatorConfig';
 import { dispatchReceiptDisplay, dispatchReceiptLabel } from '@/lib/dispatch-receipt-display';
-import { resolveMessageSender } from '@/lib/resolve-sender';
+import { messageSenderThemeColor, resolveMessageSender } from '@/lib/resolve-sender';
 import type { ChatMessage } from '@/stores/chat-types';
 import { focusLineageMessage } from '@/utils/focusLineageMessage';
 
@@ -126,6 +127,7 @@ interface AppendedInputReceiptsProps {
 
 export function AppendedInputReceipts({ response, timelineMessages, getCatById }: AppendedInputReceiptsProps) {
   const coCreator = useCoCreatorConfig();
+  const classic = useShellPresentation() === 'classic';
   const [listExpanded, setListExpanded] = useState(false);
   const [expandedRowIds, setExpandedRowIds] = useState<ReadonlySet<string>>(() => new Set());
   const appendedInputs = projectAppendedInputReceipts(response, timelineMessages);
@@ -180,7 +182,7 @@ export function AppendedInputReceipts({ response, timelineMessages, getCatById }
               key={source.id}
               source={source}
               response={response}
-              color={sender.color}
+              color={classic ? messageSenderThemeColor(source, sender, getCatById) : sender.color}
               label={sender.label}
               expanded={expandedRowIds.has(source.id)}
               onToggle={() => toggleRow(source.id)}
