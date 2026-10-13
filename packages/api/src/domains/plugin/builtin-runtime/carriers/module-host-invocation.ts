@@ -26,11 +26,16 @@ import {
   type PluginInvocationOutcome,
   settlePluginInvocation,
 } from '../../carrier/host-invocation.js';
-import { currentPluginCallContext, withoutPluginCallContext } from '../../carrier/plugin-call-context.js';
+import {
+  currentPluginCallContext,
+  type PluginCallContext,
+  withoutPluginCallContext,
+} from '../../carrier/plugin-call-context.js';
 import {
   consumeOwnerOperationInvocation,
   withCurrentOwnerOperation,
 } from '../../carrier/plugin-owner-operation-context.js';
+import { snapshotPluginProtocolData } from '../../carrier/plugin-protocol-data.js';
 import { ExternalPluginRuntimeError } from '../../external-runtime/types.js';
 
 export interface ModuleHostInvocationDeps {
@@ -58,6 +63,27 @@ export function exposesModuleAction(actions: Readonly<Record<string, unknown>> |
   return actions !== undefined && typeof resolvePackageAction(actions, method) === 'function';
 }
 
+/** Preserve authenticated facts without passing registry credentials or mutable aliases. */
+function projectNativeContext(caller: PluginCallContext | undefined) {
+  return caller
+    ? Object.freeze({
+        catId: caller.catId,
+        threadId: caller.threadId,
+        userId: caller.userId,
+        invocationId: caller.invocationId,
+        ownerAuthProvenance: caller.ownerAuthProvenance ?? 'unknown',
+        ...(caller.originTriggerMessageId === undefined
+          ? {}
+          : { originTriggerMessageId: caller.originTriggerMessageId }),
+        ...(caller.toolExecutionPolicy === undefined
+          ? {}
+          : { toolExecutionPolicy: snapshotPluginProtocolData(caller.toolExecutionPolicy) }),
+        ...(caller.source === undefined ? {} : { source: Object.freeze({ ...caller.source }) }),
+        assertCurrent: () => caller.assertCurrent(),
+      })
+    : undefined;
+}
+
 export function createModuleHostInvocation(deps: ModuleHostInvocationDeps): ModuleHostInvocation {
   const attempt = async (targetId: string, method: string, params: unknown): Promise<PluginInvocationOutcome> => {
     const actions = deps.runtime.actions(targetId);
@@ -74,16 +100,7 @@ export function createModuleHostInvocation(deps: ModuleHostInvocationDeps): Modu
     }
     // The boundary: from here the package's own code runs.
     const caller = currentPluginCallContext(targetId);
-    const publicContext = caller
-      ? Object.freeze({
-          catId: caller.catId,
-          threadId: caller.threadId,
-          userId: caller.userId,
-          invocationId: caller.invocationId,
-          ...(caller.source === undefined ? {} : { source: Object.freeze({ ...caller.source }) }),
-          assertCurrent: () => caller.assertCurrent(),
-        })
-      : undefined;
+    const publicContext = projectNativeContext(caller);
     return attemptPluginAction(() =>
       consumeOwnerOperationInvocation(
         targetId,
