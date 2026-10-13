@@ -117,7 +117,8 @@ function isSchedulerReplyPreview(replyPreview?: ChatMessageType['replyPreview'])
 function exactReplyPreview(
   message: ChatMessageType,
   timelineMessages: readonly ChatMessageType[],
-): ChatMessageType['replyPreview'] | undefined {
+  canExpandBody: boolean,
+): (NonNullable<ChatMessageType['replyPreview']> & { expandedContent?: string }) | undefined {
   if (message.replyPreview?.deleted) return message.replyPreview;
   if (!message.replyTo) return message.replyPreview;
   const parents = timelineMessages.filter((candidate) => candidate.id === message.replyTo);
@@ -131,6 +132,9 @@ function exactReplyPreview(
     source: parent.source,
     senderCatId,
     content: message.replyPreview?.content ?? parent.content,
+    // This is already the authorized timeline of the rendered surface. A stored preview is
+    // deliberately short; only an exact, unrecalled source can supply its expandable body.
+    ...(canExpandBody && !parent.extra?.recall ? { expandedContent: parent.content } : {}),
   };
 }
 
@@ -336,7 +340,11 @@ function ChatMessageContent({
   const hasTextContent = message.content.trim().length > 0;
   const isWhisper = message.visibility === 'whisper';
   const isRevealed = isWhisper && !!message.revealedAt;
-  const resolvedReplyPreview = exactReplyPreview(message, threadMessages);
+  const resolvedReplyPreview = exactReplyPreview(
+    message,
+    threadMessages,
+    shellPresentation === 'classic' && (timelineMessages !== undefined || currentThreadId === renderThreadId),
+  );
   const isSchedulerReply = isSchedulerReplyPreview(resolvedReplyPreview);
   const showSchedulerAccent =
     isSchedulerReply &&
@@ -594,7 +602,12 @@ function ChatMessageContent({
           </span>
         )}
         {message.replyTo && resolvedReplyPreview && !isSchedulerReply && (
-          <ReplyPill replyPreview={resolvedReplyPreview} replyToId={message.replyTo} getCatById={getCatById} />
+          <ReplyPill
+            replyPreview={resolvedReplyPreview}
+            expandedContent={resolvedReplyPreview.expandedContent}
+            replyToId={message.replyTo}
+            getCatById={getCatById}
+          />
         )}
       </div>
     );
@@ -620,7 +633,12 @@ function ChatMessageContent({
           </span>
         )}
         {message.replyTo && resolvedReplyPreview && !isSchedulerReply && (
-          <ReplyPill replyPreview={resolvedReplyPreview} replyToId={message.replyTo} getCatById={getCatById} />
+          <ReplyPill
+            replyPreview={resolvedReplyPreview}
+            expandedContent={resolvedReplyPreview.expandedContent}
+            replyToId={message.replyTo}
+            getCatById={getCatById}
+          />
         )}
         <span className="text-xs text-cafe-muted">{formatDualTime(message.timestamp, message.deliveredAt)}</span>
         {shellPresentation === 'classic' && <CopyIdButton messageId={message.id} />}
@@ -883,7 +901,12 @@ function ChatMessageContent({
               <DirectionPill direction={direction} getCatById={getCatById} />
             )}
             {message.replyTo && resolvedReplyPreview && !isSchedulerReply && (
-              <ReplyPill replyPreview={resolvedReplyPreview} replyToId={message.replyTo} getCatById={getCatById} />
+              <ReplyPill
+                replyPreview={resolvedReplyPreview}
+                expandedContent={resolvedReplyPreview.expandedContent}
+                replyToId={message.replyTo}
+                getCatById={getCatById}
+              />
             )}
             {shellPresentation === 'classic' && hasTextContent && !message.isStreaming && (
               <TtsPlayButton

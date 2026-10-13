@@ -13,6 +13,7 @@ import { SenderAvatar } from './SenderAvatar';
 
 interface ReplyPillProps {
   replyPreview: ReplyPreview;
+  expandedContent?: string;
   replyToId: string;
   getCatById: (id: string) => CatData | undefined;
 }
@@ -24,7 +25,7 @@ interface ReplyPillProps {
  * F322 B: in the new shell the words are written in the cat's readable name role (`--color-{cat}-text`), not in its identity
  * hex; the 12.5% tint behind them stays the identity colour, because it says who.
  */
-export function ReplyPill({ replyPreview, replyToId, getCatById }: ReplyPillProps) {
+export function ReplyPill({ replyPreview, expandedContent, replyToId, getCatById }: ReplyPillProps) {
   const coCreator = useCoCreatorConfig();
   const nameRole = useShellPresentation() === 'v2';
   const [expanded, setExpanded] = useState(false);
@@ -35,7 +36,10 @@ export function ReplyPill({ replyPreview, replyToId, getCatById }: ReplyPillProp
   const sender = resolveMessageSender(replyPreview, getCatById, coCreator, { nameRole });
   const senderLabel = deleted ? '' : sender.label;
   const previewText = deleted ? '消息已删除' : content;
-  const canExpand = !nameRole && !deleted && (overflowing || expanded);
+  const canExpand =
+    !nameRole &&
+    !deleted &&
+    (overflowing || expanded || (expandedContent !== undefined && expandedContent !== content));
   const showExpanded = canExpand && expanded;
   const themeColor = messageSenderThemeColor(replyPreview, sender, getCatById);
 
@@ -74,7 +78,7 @@ export function ReplyPill({ replyPreview, replyToId, getCatById }: ReplyPillProp
         >
           {senderLabel}
           {senderLabel && !deleted ? ': ' : ''}
-          {previewText}
+          {showExpanded ? (expandedContent ?? previewText) : previewText}
         </span>
       </button>
       {showExpanded && (

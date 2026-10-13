@@ -95,6 +95,8 @@ classic 应对齐 develop_base 的旧版空间关系、菜单布局与既有操�
 
 **验收**：长／短／已删除来源，展开后全文可读且能收起，“跳到原文”定位 exact source；键盘能操作，不嵌套 button，不改变原消息或回执。
 
+服务端 `replyPreview.content` 是短摘要，不能因控件变大就称为全文。展开态只从当前已授权 timeline 的唯一 exact parent 取正文；删除、撤回、重复绑定或其他 thread 的全局 store 不提供正文。原文尚未加载时只保留现有摘要与跳转，不借 transport 或调用者 ID 获得额外读取权限。v2 继续使用原摘要与直接跳转。
+
 ### C3：追加消息圆点的来源主题色
 
 **已查事实**：追加行目前传递 `resolveMessageSender(...).color` 的原始配置色。经典消息导航和执行条已有 source/member 的 CSS theme token。主题调节后的颜色可能不同于原始 hex；用户截图中 co-creator 的追加圆点与其显示主题色不同。
