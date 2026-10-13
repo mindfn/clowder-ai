@@ -10,7 +10,8 @@ import { ExternalPluginRuntimeError } from './types.js';
 export const PLUGIN_ARCHIVE_BUDGET = Object.freeze({
   compressedBytes: 32 * 1024 * 1024,
   expandedBytes: 64 * 1024 * 1024,
-  singleFileBytes: 32 * 1024 * 1024,
+  // Bundled native CLIs can exceed 32MiB; the whole package still shares 64MiB.
+  singleFileBytes: 64 * 1024 * 1024,
   regularFiles: 16_384,
   headers: 32_768,
   streamBytes: 96 * 1024 * 1024,
