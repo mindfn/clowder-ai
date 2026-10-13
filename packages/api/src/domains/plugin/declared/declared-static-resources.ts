@@ -1,4 +1,4 @@
-import { cp, lstat, mkdir, mkdtemp, readFile, realpath, rename, rm, stat, writeFile } from 'node:fs/promises';
+import { cp, lstat, mkdir, mkdtemp, readdir, readFile, realpath, rename, rm, stat, writeFile } from 'node:fs/promises';
 import { basename, isAbsolute, join, relative, resolve, sep } from 'node:path';
 import { isDeepStrictEqual } from 'node:util';
 import type { McpConfigIO } from '../../../config/capabilities/capability-mcp-service.js';
@@ -27,6 +27,52 @@ export interface DeclaredStaticResourceHost {
 interface MaterializedSkills {
   readonly names: readonly string[];
   readonly source: string;
+}
+
+/** Host-only lookup of this installed package's skill projection, never ambient owner skills. */
+export async function resolveDeclaredTaskSkillsRoot(
+  admission: PluginRuntimeAdmission,
+  host: DeclaredStaticResourceHost | undefined,
+): Promise<string> {
+  if (!host) throw new Error('task_skills_host_unavailable');
+  const skills = (admission.packageRecord.manifest.contributions ?? []).filter((item) => item.type === 'skill');
+  if (skills.length === 0) throw new Error('task_skills_not_declared');
+  const located = await host.packages.resolveInstalledPackage(admission.packageRecord.packageDigest);
+  try {
+    if (!isDeepStrictEqual(located.manifest, admission.packageRecord.manifest))
+      throw new Error('task_skills_package_changed');
+    await located.verifyIntegrity();
+    const names = await declaredSkillNames(located.rootDir, skills);
+    const stable = resolve(
+      pluginResourceRoot(host, admission.packageRecord.pluginId),
+      packageDirectoryName(admission.packageRecord.packageDigest),
+    );
+    const root = resolve(stable, 'skills');
+    if (!(await validMaterialization(stable, admission, names)) || (await realpath(root)) !== root)
+      throw new Error('task_skills_projection_unavailable');
+    if (!isDeepStrictEqual((await readdir(root)).sort(), [...names].sort()))
+      throw new Error('task_skills_projection_members_changed');
+    for (let index = 0; index < skills.length; index++) {
+      const source = await resolvePackageSkillDirectory(located.rootDir, skills[index].path);
+      await assertTaskSkillCopy(source, resolve(root, names[index]));
+    }
+    return root;
+  } finally {
+    await located.release();
+  }
+}
+
+async function assertTaskSkillCopy(source: string, target: string): Promise<void> {
+  const [original, copy] = await Promise.all([lstat(source), lstat(target)]);
+  if (original.isSymbolicLink() || copy.isSymbolicLink()) throw new Error('task_skills_symlink_rejected');
+  if (original.isDirectory() && copy.isDirectory()) {
+    const names = (await readdir(source)).sort();
+    if (!isDeepStrictEqual(names, (await readdir(target)).sort())) throw new Error('task_skills_members_changed');
+    for (const name of names) await assertTaskSkillCopy(resolve(source, name), resolve(target, name));
+  } else if (original.isFile() && copy.isFile()) {
+    if (!isDeepStrictEqual(await readFile(source), await readFile(target)))
+      throw new Error('task_skills_bytes_changed');
+  } else throw new Error('task_skills_file_type_changed');
 }
 
 const MARKER = '.clowder-resource.json';

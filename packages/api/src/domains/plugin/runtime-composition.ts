@@ -577,6 +577,7 @@ export function createDormantPluginRuntimeComposition(
       messageStore: options.messageStore,
       threadStore: options.threadStore,
     },
+    resolve(dirname(paths.inventorySnapshotPath), PLUGIN_HOST_ENTRIES.taskWorkspaces),
   );
   deliveryTarget.current = supervisor;
   supervisor.register(

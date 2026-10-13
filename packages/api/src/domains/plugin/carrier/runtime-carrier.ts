@@ -4,6 +4,7 @@ import {
   validateMessagingRowInput,
   validateMessagingRowResult,
 } from '@clowder-ai/plugin-contract';
+import type { PluginTaskCurrentnessInput } from '../../cats/services/agents/invocation/plugin-task-invocation-binding.js';
 import type { ToolExecutionPolicy } from '../../cats/services/types.js';
 import {
   type DeclaredPluginTool,
@@ -15,6 +16,7 @@ import {
   activateDeclaredStaticResources,
   type DeclaredStaticResourceHost,
   removeDeclaredStaticResources,
+  resolveDeclaredTaskSkillsRoot,
 } from '../declared/declared-static-resources.js';
 import { NativeMcpLaunches, type NativeMcpServer } from '../declared/native-mcp-launches.js';
 import { NativePluginActions } from '../declared/native-plugin-actions.js';
@@ -44,6 +46,7 @@ import {
   PUBLIC_INVOCATION_VERIFIER_METHOD,
   type PublicInvocationVerifierPort,
 } from './public-invocation-verifier.js';
+import { prepareTaskInvocationExecution } from './task-invocation-preparation.js';
 
 /**
  * F202 Train C1 — the Host's single runtime-carrier boundary.
@@ -95,6 +98,7 @@ export class PluginRuntimeCarrierRouter implements PluginRuntimeLifecyclePort {
     runtimeContributions?: DeclaredRuntimeContributionHost,
     private readonly beforeStop?: (instanceId: string, reason: string) => Promise<void>,
     private readonly publicInvocationSources?: PublicInvocationSourceServices,
+    private readonly taskWorkspacesRoot?: string,
   ) {
     this.#runtimeContributions = new DeclaredRuntimeContributions(
       runtimeContributions ?? {
@@ -294,6 +298,21 @@ export class PluginRuntimeCarrierRouter implements PluginRuntimeLifecyclePort {
     context: Parameters<PublicInvocationVerifierPort['invokePublicInvocationVerifier']>[2],
   ) {
     return preparePublicInvocationExecution(this.resolvePublicInvocationLaunch(instanceId, carrier, binding, context));
+  }
+
+  /** Existing native runtime, but only a Host-bound Task may select this persistent isolated preparation. */
+  prepareTaskInvocationExecution(
+    principal: PluginTaskCurrentnessInput,
+    context: Parameters<PublicInvocationVerifierPort['invokePublicInvocationVerifier']>[2],
+  ) {
+    return prepareTaskInvocationExecution(principal, context, {
+      sources: this.publicInvocationSources,
+      workspaceRoot: this.taskWorkspacesRoot,
+      admission: (id) => this.#admission(id),
+      generation: (id) => this.nativeActions.generation(id),
+      resolve: (policy) => this.resolveNativeMcpLaunch(policy),
+      skills: (admission) => resolveDeclaredTaskSkillsRoot(admission, this.resources),
+    });
   }
 
   /** Host execution fence; never exposed as an ordinary package action. */

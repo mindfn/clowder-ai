@@ -22,6 +22,7 @@ export const PLUGIN_HOST_ENTRIES = {
   broker: 'broker.json',
   packages: 'packages',
   resources: 'resources',
+  taskWorkspaces: 'task-workspaces',
   browserEndpoints: 'browser-endpoints',
   media: 'media',
   mediaEntitlements: 'media-entitlements.json',

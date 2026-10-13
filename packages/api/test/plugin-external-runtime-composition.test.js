@@ -262,10 +262,11 @@ test('production composition constructs and recovers K-2D but exposes no startup
     ),
   );
   assert.ok(gate, 'the desktop resume gate must be a Host-owned deferred promise');
+  // Initial package activation also needs the listening Host; preserve this exact ordering.
   assert.match(
     source,
     new RegExp(
-      `listen:\\s*async\\s*\\(\\)\\s*=>\\s*\\{\\s*const\\s+([A-Za-z_$][\\w$]*)\\s*=\\s*await app\\.listen\\(\\{ port: PORT, host: HOST \\}\\);\\s*${gate[1]}\\(\\);\\s*return\\s+\\1;\\s*\\}`,
+      `listen:\\s*async\\s*\\(\\)\\s*=>\\s*\\{\\s*const\\s+([A-Za-z_$][\\w$]*)\\s*=\\s*await app\\.listen\\(\\{ port: PORT, host: HOST \\}\\);\\s*${gate[1]}\\(\\);\\s*await initialPlugins\\?\\.activate\\(\\);\\s*return\\s+\\1;\\s*\\}`,
     ),
     'desktop windows may app.inject; the gate opens only once app.listen has booted Fastify',
   );
