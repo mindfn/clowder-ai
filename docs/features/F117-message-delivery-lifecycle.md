@@ -34,6 +34,8 @@ Why: pending delivery, accepted inputs, response outcomes and optional read evid
 
 ## Unified State Model
 
+旧版 A2A 前端的 develop_base 对照、已保留能力与 classic／v2 分阶段补齐，见 [前端迁移清单](../plans/2026-10-13-f117-classic-a2a-frontend-parity.md)。该清单不改变下面的单一 Queue／History 契约。
+
 | 事实 | Owner |
 |---|---|
 | 内容、作者身份、可见性、原始消息身份 | MessageStore source record |
