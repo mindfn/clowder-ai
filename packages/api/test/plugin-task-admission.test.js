@@ -316,3 +316,184 @@ test('replay refuses a changed request or closed Task and preserves the original
   await assert.rejects(() => f.host.prepareEntrusted(f.input));
   assert.equal(f.tasks.listByKind('work').length, 1);
 });
+
+async function continuationFixture() {
+  const f = await fixture();
+  const first = await f.host.prepareEntrusted(f.input);
+  const task = f.tasks.get(first.taskRef.slice('task:work:'.length));
+  const source = f.messages.append({
+    ...structuredClone(f.source),
+    id: undefined,
+    timestamp: 2,
+    content: 'Continue the same report with the new evidence.',
+  });
+  assert.notEqual(source.id, f.source.id);
+  const input = {
+    ...f.input,
+    sourceMessageId: source.id,
+    subject: { kind: 'continue', taskRef: first.taskRef, expectedRevision: first.taskRevision },
+  };
+  return { ...f, first, task, nextSource: source, continuation: input };
+}
+
+test('continuation reuses the first Task and immutable admission with one durable execution receipt', async () => {
+  const f = await continuationFixture();
+  const before = structuredClone(f.task);
+  const result = await f.host.prepareEntrusted(f.continuation);
+  assert.equal(result.result, 'resumed');
+  assert.equal(result.taskRef, f.first.taskRef);
+  assert.equal(result.admissionRef, f.first.admissionRef);
+  assert.ok(result.executionRef.startsWith('message:'));
+  assert.notEqual(result.executionRef, result.admissionRef);
+  const receipt = f.messages.getById(result.executionRef.slice(8));
+  assert.equal(receipt.source, undefined);
+  assert.equal(receipt.queueCustody, undefined);
+  assert.match(receipt.content, /plugin_policy/);
+  const repeats = await Promise.all([
+    f.host.prepareEntrusted(f.continuation),
+    createPluginTaskHost(f.deps).prepareEntrusted(f.continuation),
+  ]);
+  assert.ok(repeats.every((r) => r.executionRef === result.executionRef));
+  assert.deepEqual(f.tasks.get(before.id), before);
+  assert.equal(f.tasks.listByKind('work').length, 1);
+});
+
+test('background continuation returns to the first owner-selected Task thread', async () => {
+  const f = await fixture();
+  const target = f.threads.create('owner', 'Manually selected task thread');
+  f.threads.addParticipants(target.id, ['codex']);
+  const first = await f.owner('write', () =>
+    f.host.prepareEntrusted({ ...f.input, destination: { kind: 'existing_thread', threadId: target.id } }),
+  );
+  const next = f.messages.append({ ...structuredClone(f.source), id: undefined, timestamp: 3 });
+  const result = await f.host.prepareEntrusted({
+    ...f.input,
+    sourceMessageId: next.id,
+    subject: { kind: 'continue', taskRef: first.taskRef, expectedRevision: first.taskRevision },
+  });
+  assert.equal(result.threadId, target.id);
+  assert.equal(result.taskRef, first.taskRef);
+});
+
+test('continuation refuses stale, foreign, closed, ordinary or forged first admissions without a receipt', async () => {
+  for (const mutate of [
+    (f) => {
+      f.continuation.subject.expectedRevision++;
+    },
+    (f) => {
+      f.task.userId = 'foreign';
+    },
+    (f) => {
+      f.task.ownerCatId = 'opus';
+    },
+    (f) => {
+      f.task.entrustedWork.closure.state = 'completed';
+    },
+    (f) => {
+      f.task.status = 'done';
+    },
+    (f) => {
+      f.task.entrustedWork.admission.authorityRef = 'message:forged';
+    },
+    (f) => {
+      f.source.extra.pluginMessage.instanceId = 'other';
+    },
+    (f) => {
+      f.source.deletedAt = 1;
+    },
+    (f) => {
+      f.messages.getById(f.first.admissionRef.slice(8)).content += 'changed';
+    },
+    (f) => {
+      f.task.subjectKey = 'generic';
+    },
+  ]) {
+    const f = await continuationFixture();
+    mutate(f);
+    const before = f.messages.getByThread(f.thread.id).length;
+    await assert.rejects(
+      () => f.host.prepareEntrusted(f.continuation),
+      (error) => error.code === 'DELIVERY_REJECTED',
+    );
+    assert.equal(f.messages.getByThread(f.thread.id).length, before);
+    assert.equal(f.tasks.listByKind('work').length, 1);
+  }
+});
+
+test('continuation rechecks the Task after asynchronous source reads and after receipt persistence', async () => {
+  for (const afterReceipt of [false, true]) {
+    const f = await continuationFixture();
+    let changed = false;
+    if (afterReceipt) {
+      const append = f.messages.appendIdempotent.bind(f.messages);
+      f.messages.appendIdempotent = async (value) => {
+        const result = await append(value);
+        f.task.entrustedWork.revision++;
+        changed = true;
+        return result;
+      };
+    } else {
+      const get = f.messages.getById.bind(f.messages);
+      let reads = 0;
+      f.messages.getById = async (id) => {
+        const result = structuredClone(get(id));
+        if (id === f.nextSource.id && ++reads === 2) {
+          f.task.entrustedWork.revision++;
+          changed = true;
+        }
+        return result;
+      };
+    }
+    await assert.rejects(
+      () => f.host.prepareEntrusted(f.continuation),
+      (error) => error.code === 'DELIVERY_REJECTED',
+    );
+    assert.equal(changed, true, 'exercise the intended asynchronous mutation');
+    assert.equal(f.tasks.listByKind('work').length, 1);
+  }
+});
+
+test('one continuation source cannot select a second valid Task', async () => {
+  const f = await continuationFixture();
+  const accepted = await f.host.prepareEntrusted(f.continuation);
+  const otherSource = f.messages.append({ ...structuredClone(f.source), id: undefined, timestamp: 4 });
+  const other = await f.host.prepareEntrusted({ ...f.input, sourceMessageId: otherSource.id });
+  await assert.rejects(
+    () =>
+      f.host.prepareEntrusted({
+        ...f.continuation,
+        subject: { kind: 'continue', taskRef: other.taskRef, expectedRevision: other.taskRevision },
+      }),
+    (error) => error.code === 'DELIVERY_REJECTED',
+  );
+  assert.equal((await f.host.prepareEntrusted(f.continuation)).executionRef, accepted.executionRef);
+});
+
+test('continuation rejects ordinary CRUD tasks and cannot move the admitted Task', async () => {
+  const f = await continuationFixture();
+  const ordinary = f.tasks.create({
+    threadId: f.thread.id,
+    title: 'Ordinary',
+    why: '',
+    createdBy: 'user',
+    ownerCatId: 'codex',
+    userId: 'owner',
+  });
+  await assert.rejects(
+    () =>
+      f.host.prepareEntrusted({
+        ...f.continuation,
+        subject: { kind: 'continue', taskRef: `task:work:${ordinary.id}`, expectedRevision: 1 },
+      }),
+    (error) => error.code === 'DELIVERY_REJECTED',
+  );
+  const target = f.threads.create('owner', 'Not the admitted destination');
+  f.threads.addParticipants(target.id, ['codex']);
+  await assert.rejects(
+    () =>
+      f.owner('write', () =>
+        f.host.prepareEntrusted({ ...f.continuation, destination: { kind: 'existing_thread', threadId: target.id } }),
+      ),
+    (error) => error.code === 'DELIVERY_REJECTED',
+  );
+});
