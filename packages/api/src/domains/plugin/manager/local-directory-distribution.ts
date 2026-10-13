@@ -1,7 +1,8 @@
 import { execFile } from 'node:child_process';
 import { createHash } from 'node:crypto';
-import { constants } from 'node:fs';
+import { constants, realpathSync } from 'node:fs';
 import { chmod, lstat, mkdir, mkdtemp, readFile, rm, utimes, writeFile } from 'node:fs/promises';
+import { createRequire } from 'node:module';
 import { dirname, isAbsolute, relative, resolve, sep } from 'node:path';
 import { promisify } from 'node:util';
 import { PLUGIN_ARCHIVE_BUDGET, preflightPluginArchive } from '../external-runtime/archive-preflight.js';
@@ -60,6 +61,21 @@ function count(budget: Budget, size: number): void {
   budget.bytes += size;
   if (budget.files > PLUGIN_ARCHIVE_BUDGET.regularFiles || budget.bytes > PLUGIN_ARCHIVE_BUDGET.expandedBytes) {
     invalid('DEPENDENCY_PREPARATION_LIMIT', 'prepared publication members exceed Host archive budget');
+  }
+}
+
+function assertPublishedMain(snapshot: string, main: string, members: readonly Member[]): void {
+  const root = realpathSync(snapshot);
+  const target = pathOf(root, main.replace(/^\.\//, ''));
+  let entry: string;
+  try {
+    // Node permits extensionless and directory mains; resolve without executing package code.
+    entry = createRequire(resolve(root, 'package.json')).resolve(target);
+  } catch {
+    invalid('DEPENDENCY_SOURCE_INVALID', `built package entrypoint is absent: ${main}`);
+  }
+  if (!members.some((member) => resolve(root, member.path) === entry)) {
+    invalid('DEPENDENCY_SOURCE_INVALID', `built package entrypoint is outside publication members: ${main}`);
   }
 }
 
@@ -264,9 +280,7 @@ export async function prepareLocalDirectoryDistribution(
       node.snapshot = snapshot;
       node.packDigest = hash(await lifetime.io(() => readFile(archive)));
       const main = node.source.manifest?.main;
-      if (typeof main === 'string' && !members.some((member) => member.path === main.replace(/^\.\//, ''))) {
-        invalid('DEPENDENCY_SOURCE_INVALID', 'built package entrypoint is absent from publication members');
-      }
+      if (typeof main === 'string') assertPublishedMain(snapshot, main, members);
     }
 
     const preparedRoot = resolve(operation, 'package');
@@ -328,8 +342,7 @@ export async function prepareLocalDirectoryDistribution(
         await writeMember(destination, member, sealed.bytes, lifetime);
       }
       const main = node.source.manifest?.main;
-      if (typeof main === 'string' && !node.members.some((member) => member.path === main.replace(/^\.\//, '')))
-        invalid('DEPENDENCY_SOURCE_INVALID', 'built entrypoint is absent from publication members');
+      if (typeof main === 'string') assertPublishedMain(destination, main, node.members);
     }
 
     // Re-read source bytes and metadata after all pack work. No subsequent

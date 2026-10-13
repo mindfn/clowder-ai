@@ -364,3 +364,37 @@ test('cancels and releases staging while copying a directory without package.jso
     clearInterval(timer);
   }
 });
+
+test('installs a CommonJS dependency with an extensionless main using its published entry', async (t) => {
+  const f = await fixture(t);
+  const runtime = join(f.root, 'packages/runtime');
+  const metadata = JSON.parse(await readFile(join(runtime, 'package.json'), 'utf8'));
+  await json(join(runtime, 'package.json'), { ...metadata, type: 'commonjs', main: './dist/index' });
+  await writeFile(join(runtime, 'dist/index.js'), 'exports.value = 42;\n');
+  const installed = await f.createAdmission('npm').install({ kind: 'local-directory', path: f.source });
+  const located = await new FilesystemVerifiedPluginPackageLocator(f.inventoryRoot).resolveInstalledPackage(
+    installed.packageDigest,
+  );
+  try {
+    await rename(f.source, `${f.source}-moved`);
+    await rename(runtime, `${runtime}-moved`);
+    assert.equal((await import(pathToFileURL(join(located.rootDir, 'dist/entrypoint.js')).href)).value, 42);
+    await located.verifyIntegrity();
+  } finally {
+    await located.release();
+  }
+});
+
+test('does not admit missing or escaping dependency mains', async (t) => {
+  for (const main of ['./dist/missing', '../outside.js']) {
+    const f = await fixture(t);
+    const runtime = join(f.root, 'packages/runtime');
+    const metadata = JSON.parse(await readFile(join(runtime, 'package.json'), 'utf8'));
+    await json(join(runtime, 'package.json'), { ...metadata, main });
+    await assert.rejects(
+      () => f.createAdmission('npm').install({ kind: 'local-directory', path: f.source }),
+      (error) => error.code === 'INVALID_LOCAL_SOURCE' && error.cause?.code === 'DEPENDENCY_SOURCE_INVALID',
+    );
+    assert.deepEqual((await f.store.snapshot()).instances, []);
+  }
+});

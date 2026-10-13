@@ -1,6 +1,9 @@
 import type { Dirent } from 'node:fs';
 import { open, opendir } from 'node:fs/promises';
-import { PLUGIN_ARCHIVE_BUDGET } from '../external-runtime/archive-preflight.js';
+
+// Directory admission packs a complete dependency graph, rather than inspecting one
+// archive. Allow bounded preparation time for those sequential npm operations.
+const DIRECTORY_PREPARATION_DEADLINE_MS = 5 * 60_000;
 
 export class LocalDirectorySourceError extends Error {
   constructor(
@@ -20,7 +23,7 @@ export class LocalDirectoryOperation {
   private work = 0;
 
   constructor(signal?: AbortSignal) {
-    const deadline = AbortSignal.timeout(PLUGIN_ARCHIVE_BUDGET.deadlineMs);
+    const deadline = AbortSignal.timeout(DIRECTORY_PREPARATION_DEADLINE_MS);
     this.signal = signal ? AbortSignal.any([deadline, signal]) : deadline;
     this.check();
   }
