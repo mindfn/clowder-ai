@@ -39,7 +39,9 @@ export function formatSidebarStatusTime(presence: SidebarPresence, lastActiveAt:
 
 export function projectDisplayName(path: string): string {
   if (path === 'default') return '未分类';
-  const parts = path.replace(/\/+$/, '').split('/');
+  // Preserve drive-root labels, including their separators.
+  if (/^[a-z]:[\\/]+$/i.test(path)) return path;
+  const parts = path.replace(/[\\/]+$/, '').split(/[\\/]/);
   return parts[parts.length - 1] || path;
 }
 

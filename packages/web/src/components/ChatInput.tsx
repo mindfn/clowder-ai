@@ -60,6 +60,7 @@ import {
   threadReplyDrafts,
 } from './thread-drafts';
 import { useDurableComposerDraft } from './useDurableComposerDraft';
+import { useTextareaAutosize } from './useTextareaAutosize';
 import { WhisperCatSelector } from './WhisperCatSelector';
 
 /** Module-level draft storage — survives component unmount/remount across thread switches */
@@ -313,6 +314,11 @@ export function ChatInput({
     .map(formatCatDisplayName);
   const guideReplyHint =
     guideReplyNames.length > 0 ? `想调整方向？可直接给${guideReplyNames.join('/')}发消息，引导回复。` : undefined;
+  const textareaPlaceholder = whisperMode
+    ? shellV2
+      ? v2Copy.whisperPlaceholder
+      : '悄悄话...'
+    : (guideReplyHint ?? placeholder ?? (shellV2 ? v2Copy.placeholder : '输入消息... (@ 召唤猫猫 · /thread 引用对话)'));
 
   const [addMenuOpen, setAddMenuOpen] = useState(false);
   const [contextPickerMode, setContextPickerMode] = useState<ContextPickerMode | null>(null);
@@ -892,15 +898,7 @@ export function ChatInput({
     setGhostSuggestion(match);
   }, [input, findHistoryMatch]);
 
-  // Auto-resize textarea based on content
-  useEffect(() => {
-    const ta = textareaRef.current;
-    if (!ta) return;
-    ta.style.height = 'auto';
-    const isMobile = typeof window.matchMedia === 'function' ? window.matchMedia('(max-width: 767px)').matches : false;
-    const maxH = isMobile ? 120 : 200; // ~5 lines mobile, ~8 lines desktop
-    ta.style.height = `${Math.min(ta.scrollHeight, maxH)}px`;
-  }, [input, guideReplyHint]);
+  useTextareaAutosize(textareaRef, input, textareaPlaceholder);
 
   useEffect(() => {
     if (!activeMenu) return;
@@ -1141,15 +1139,7 @@ export function ChatInput({
             onFocus={() => onFocusChange?.(true)}
             onBlur={() => onFocusChange?.(false)}
             aria-label={shellV2 ? v2Copy.message : '消息输入框'}
-            placeholder={
-              whisperMode
-                ? shellV2
-                  ? v2Copy.whisperPlaceholder
-                  : '悄悄话...'
-                : (guideReplyHint ??
-                  placeholder ??
-                  (shellV2 ? v2Copy.placeholder : '输入消息... (@ 召唤猫猫 · /thread 引用对话)'))
-            }
+            placeholder={textareaPlaceholder}
             className={
               shellV2
                 ? `shell-focusable block min-h-[32px] w-full resize-none rounded-lg border-0 bg-transparent px-1 py-1 text-sm leading-6 text-[var(--shell-ink)] placeholder:text-[var(--shell-muted)] ${whisperMode ? 'bg-accent-50/50' : ''}`
