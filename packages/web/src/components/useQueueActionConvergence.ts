@@ -84,8 +84,8 @@ export function useQueueActionConvergence(threadId: string) {
   const [steerEntryId, setSteerEntryId] = useState<string | null>(null);
 
   const refreshQueue = useCallback(async () => {
-    const response = await apiFetch(`/api/threads/${threadId}/queue`);
-    if (!response.ok) return false;
+    const response = await apiFetch(`/api/threads/${threadId}/queue`).catch(() => null);
+    if (!response?.ok) return false;
     const data = await response.json().catch(() => ({}));
     if (!Array.isArray(data?.queue)) return false;
     setQueue(threadId, data.queue);

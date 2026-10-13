@@ -668,13 +668,17 @@ describe('QueuePanel steer (F047)', () => {
   });
 
   it.each([
-    true,
-    false,
-  ])('does not assert pending client state after Queue convergence or failed refresh (refreshed=%s)', async (refreshed) => {
+    'converged',
+    'http-failure',
+    'network-failure',
+  ])('does not assert pending client state after Queue convergence or failed refresh (%s)', async (refreshState) => {
     vi.mocked(apiFetch).mockImplementation(async (path, init) => {
       if (path.endsWith('/continue'))
         return response({ outcome: 'queued', effective: 'continue_current', reason: 'active_run_pending' }) as Response;
-      if (path.endsWith('/queue')) return response({ queue: [] }, refreshed ? 200 : 503) as Response;
+      if (path.endsWith('/queue')) {
+        if (refreshState === 'network-failure') throw new TypeError('Failed to fetch');
+        return response({ queue: [] }, refreshState === 'converged' ? 200 : 503) as Response;
+      }
       return defaultApiFetch(path, init) as Promise<Response>;
     });
     useChatStore.setState({ queue: [QUEUED_ENTRY] });
@@ -684,7 +688,25 @@ describe('QueuePanel steer (F047)', () => {
     await act(async () => container.querySelector<HTMLButtonElement>('[data-testid="steer-confirm"]')?.click());
     const toasts = useToastStore.getState().toasts;
     expect(toasts.some((toast) => toast.message?.includes('客户端尚未接受'))).toBe(false);
-    if (!refreshed) expect(toasts.at(-1)?.message).toContain('刷新未完成');
+    if (refreshState !== 'converged') {
+      expect(toasts.at(-1)?.message).toContain('刷新未完成');
+      expect(toasts.at(-1)?.title).toBe('发送请求已保存');
+      expect(toasts.some((toast) => toast.title === 'Steer 失败')).toBe(false);
+    }
+  });
+
+  it('still reports a submission failure when the POST itself rejects', async () => {
+    vi.mocked(apiFetch).mockImplementation(async (path, init) => {
+      if (path.endsWith('/continue')) throw new TypeError('Failed to fetch');
+      return defaultApiFetch(path, init) as Promise<Response>;
+    });
+    useChatStore.setState({ queue: [QUEUED_ENTRY] });
+    await act(async () => root.render(React.createElement(QueuePanel, { threadId: 'thread-1' })));
+    await openSteer(container);
+    act(() => container.querySelector<HTMLButtonElement>('[data-testid="steer-guide-reply"]')?.click());
+    await act(async () => container.querySelector<HTMLButtonElement>('[data-testid="steer-confirm"]')?.click());
+    expect(useToastStore.getState().toasts.at(-1)?.title).toBe('Steer 失败');
+    expect(useToastStore.getState().toasts.some((toast) => toast.title === '发送请求已保存')).toBe(false);
   });
 
   it('keeps feedback scoped to the source thread when the user switches during confirmation', async () => {
