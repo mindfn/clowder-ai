@@ -1,6 +1,7 @@
 import type { TaskItem } from '@cat-cafe/shared';
 import { entrustedWorkV1Schema } from '@cat-cafe/shared';
 import { prepareEntrustedWorkUpdate } from './EntrustedWorkContractUpdate.js';
+import { advanceEntrustedWorkRevision } from './EntrustedWorkRevision.js';
 import { reconcileDeploymentWaitTaskMutation } from './TaskDeploymentWaitState.js';
 import type {
   CloseEntrustedWorkStoreInput,
@@ -25,7 +26,7 @@ export class TaskEntrustedWorkMutationStore {
     const { completion: _previousCompletion, ...openWork } = existing.entrustedWork;
     const entrustedWork = entrustedWorkV1Schema.parse({
       ...openWork,
-      revision: existing.entrustedWork.revision + 1,
+      ...advanceEntrustedWorkRevision(existing.entrustedWork),
       closure: input.closure,
       ...(input.closure.state === 'satisfied'
         ? {

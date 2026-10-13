@@ -2,6 +2,7 @@ import type { TaskItem } from '@cat-cafe/shared';
 import type { RedisClient } from '@cat-cafe/shared/utils';
 import { developmentScopeKey } from '../ports/DevelopmentWorkTransition.js';
 import { prepareEntrustedWorkUpdate } from '../ports/EntrustedWorkContractUpdate.js';
+import { advanceEntrustedWorkRevision } from '../ports/EntrustedWorkRevision.js';
 import { reconcileDeploymentWaitTaskMutation } from '../ports/TaskDeploymentWaitState.js';
 import type {
   CloseEntrustedWorkStoreInput,
@@ -71,7 +72,7 @@ export class RedisTaskEntrustedWorkMutationStore {
         status: 'done',
         entrustedWork: {
           ...openWork,
-          revision: existing.entrustedWork.revision + 1,
+          ...advanceEntrustedWorkRevision(existing.entrustedWork),
           closure: input.closure,
           ...(input.closure.state === 'satisfied'
             ? {

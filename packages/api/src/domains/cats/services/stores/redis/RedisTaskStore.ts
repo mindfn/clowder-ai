@@ -1,3 +1,4 @@
+import { advanceEntrustedTaskAuthority } from '../ports/EntrustedWorkRevision.js';
 import { reconcilePluginWaitTaskMutation, replaceTaskPluginWait } from '../ports/TaskPluginWait.js';
 import type { ReplacePluginWaitInput } from '../ports/TaskStoreContract.js';
 /**
@@ -334,11 +335,11 @@ export class RedisTaskStore implements ITaskStore {
           }
 
           const existing = hydrateTask(data);
-          const updated: TaskItem = {
+          const updated = advanceEntrustedTaskAuthority(existing, {
             ...existing,
             automationState: mergeTaskAutomationState(existing.automationState, patch),
             updatedAt: Date.now(),
-          };
+          });
 
           const pipeline = session.multi();
           pipeline.hset(key, serializeTask(updated));

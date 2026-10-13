@@ -1,3 +1,4 @@
+import { advanceEntrustedTaskAuthority } from './EntrustedWorkRevision.js';
 import { reconcilePluginWaitTaskMutation, replaceTaskPluginWait } from './TaskPluginWait.js';
 import type { ReplacePluginWaitInput } from './TaskStoreContract.js';
 /**
@@ -198,11 +199,11 @@ export class TaskStore implements ITaskStore {
     const existing = this.tasks.get(taskId);
     if (!existing) return null;
 
-    const updated: TaskItem = {
+    const updated = advanceEntrustedTaskAuthority(existing, {
       ...existing,
       automationState: mergeTaskAutomationState(existing.automationState, patch),
       updatedAt: Date.now(),
-    };
+    });
     this.tasks.set(taskId, updated);
     return updated;
   }
