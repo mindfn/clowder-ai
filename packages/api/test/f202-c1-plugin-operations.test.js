@@ -6,7 +6,6 @@ import { createModuleHostInvocation } from '../dist/domains/plugin/builtin-runti
 import {
   InstalledPluginOperations,
   pluginOperationRoutes,
-  sendInstalledPluginTestResult,
 } from '../dist/domains/plugin/operations/plugin-operation-routes.js';
 
 const apps = [];
@@ -164,9 +163,6 @@ async function harness({ enabled = true, installed = true, timeoutMs = 50, gener
     if (typeof owner === 'string') request.sessionUserId = owner;
   });
   await app.register(pluginOperationRoutes, { operations });
-  app.post('/api/plugins/:pluginId/test', async (request, reply) =>
-    sendInstalledPluginTestResult(reply, await operations.runTest(request.params.pluginId)),
-  );
   return {
     app,
     calls,
@@ -364,4 +360,25 @@ test('operation routes fail closed for auth, lifecycle, declarations, invalid re
   });
   assert.equal(bounded.statusCode, 502);
   assert.equal(bounded.json().error, `Action failed: ${'x'.repeat(200)}`);
+});
+
+test('declared test route requires a direct local owner session before invoking a package', async () => {
+  const h = await harness();
+  const url = `/api/plugins/${pluginId}/test`;
+  const anonymous = await inject(h.app, { method: 'POST', url, headers: localHeaders });
+  assert.equal(anonymous.statusCode, 401, anonymous.payload);
+  const remote = await h.app.inject({ method: 'POST', url, headers: auth, remoteAddress: '203.0.113.9' });
+  assert.equal(remote.statusCode, 403, remote.payload);
+  assert.deepEqual(h.calls, []);
+});
+
+test('declared test route retains installed and enabled checks', async () => {
+  const disabled = await harness({ enabled: false });
+  const stopped = await inject(disabled.app, { method: 'POST', url: `/api/plugins/${pluginId}/test`, headers: auth });
+  assert.equal(stopped.statusCode, 409, stopped.payload);
+  assert.deepEqual(disabled.calls, []);
+  const missing = await harness({ installed: false });
+  const absent = await inject(missing.app, { method: 'POST', url: `/api/plugins/${pluginId}/test`, headers: auth });
+  assert.equal(absent.statusCode, 404, absent.payload);
+  assert.deepEqual(missing.calls, []);
 });

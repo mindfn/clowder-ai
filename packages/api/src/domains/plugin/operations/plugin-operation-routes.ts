@@ -403,6 +403,12 @@ export interface PluginOperationRoutesOptions {
 
 /** Fixed Host routes for package-declared operation actions and state reset. */
 export const pluginOperationRoutes: FastifyPluginAsync<PluginOperationRoutesOptions> = async (app, options) => {
+  app.post<{ Params: { pluginId: string } }>('/api/plugins/:pluginId/test', async (request, reply) => {
+    const access = requirePluginOwnerLocalAccess(request, 'write');
+    if ('error' in access) return pluginAccessError(reply, access);
+    return sendInstalledPluginTestResult(reply, await options.operations.runTest(request.params.pluginId));
+  });
+
   app.post<{ Params: { pluginId: string; operation: string; action: string } }>(
     '/api/plugins/:pluginId/actions/:operation/:action',
     async (request, reply) => {
