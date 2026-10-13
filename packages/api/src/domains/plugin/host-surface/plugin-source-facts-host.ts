@@ -1,5 +1,6 @@
 import { isDeepStrictEqual } from 'node:util';
 import { type IMessageStore, isDelivered, type StoredMessage } from '../../cats/services/stores/ports/MessageStore.js';
+import { assertQueueCustodyMessageBinding } from '../../cats/services/stores/ports/queued-message-custody.js';
 import type { IThreadStore } from '../../cats/services/stores/ports/ThreadStore.js';
 import { currentPluginCallContext, currentPluginOwnerRequestContext } from '../carrier/plugin-call-context.js';
 import { snapshotPluginProtocolData } from '../carrier/plugin-protocol-data.js';
@@ -96,6 +97,33 @@ export function createPluginSourceFactsHost(deps: Deps): {
     await deps.assertCurrent(['thread.readContent']);
     await caller.checkCaller();
   }
+  function assertReadableDelivery(message: StoredMessage, caller: Caller): void {
+    if (isDelivered(message)) return;
+    const native = caller.native;
+    if (!native || message.deliveryStatus !== 'queued' || message.catId !== null) refuse();
+    assertQueueCustodyMessageBinding(message);
+    const custody = message.queueCustody;
+    const carrier = custody?.pluginPublicInvocation;
+    if (
+      !custody ||
+      !carrier ||
+      carrier.pluginInstanceId !== deps.pluginInstanceId ||
+      carrier.sourceMessageId !== message.id ||
+      carrier.sourcePluginRevision !== message.extra?.pluginMessage?.revision ||
+      carrier.targetCatId !== native.catId ||
+      custody.ownerUserId !== caller.userId ||
+      custody.status !== 'processing' ||
+      custody.awakenedInvocationIdByCatId?.[native.catId] !== native.invocationId ||
+      !custody.pendingTargetCats.some((catId) => catId === native.catId) ||
+      custody.failedByCatIds.some((catId) => catId === native.catId) ||
+      custody.handledByCatIds.some((catId) => catId === native.catId) ||
+      custody.withdrawnByCatIds?.some((catId) => catId === native.catId) ||
+      custody.prestartRetirement ||
+      custody.steerRequestedByCatIds?.some((catId) => catId === native.catId) ||
+      custody.steeredInvocationIdByCatId?.[native.catId]
+    )
+      refuse();
+  }
   function sourceOf(message: StoredMessage | null, id: string, caller: Caller) {
     if (
       !message ||
@@ -107,11 +135,13 @@ export function createPluginSourceFactsHost(deps: Deps): {
       message.recall ||
       message._tombstone ||
       message.sourceParseFailure ||
-      !isDelivered(message) ||
       message.extra?.pluginMessage?.instanceId !== deps.pluginInstanceId ||
       !message.source?.connector
     )
       refuse();
+    // A running public child must read its exact queued origin to call the plugin's
+    // native methods. This does not expose queued sources to owner or unrelated calls.
+    assertReadableDelivery(message, caller);
     const projected: PluginSourceFact = {
       id: message.id,
       userId: message.userId,
