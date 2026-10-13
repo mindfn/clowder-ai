@@ -3,8 +3,10 @@ import { lstatSync, mkdirSync, realpathSync, type Stats } from 'node:fs';
 import { dirname, isAbsolute, join, relative, sep } from 'node:path';
 import { isDeepStrictEqual } from 'node:util';
 import {
+  capturePluginTaskBinding,
   capturePluginTaskInvocationAuth,
   type PluginTaskCurrentnessInput,
+  type PluginTaskInvocationBinding,
 } from '../../cats/services/agents/invocation/plugin-task-invocation-binding.js';
 import type { PublicInvocationExecution } from '../../cats/services/agents/invocation/public-invocation-execution.js';
 import type { ToolExecutionPolicy } from '../../cats/services/types.js';
@@ -25,7 +27,10 @@ interface Ports {
 function refuse(): never {
   throw new Error('task_launch_authority_unavailable');
 }
-function assertAdmission(admission: PluginRuntimeAdmission, input: PluginTaskCurrentnessInput) {
+function assertAdmission(
+  admission: PluginRuntimeAdmission,
+  input: Pick<PluginTaskCurrentnessInput, 'pluginTaskBinding' | 'toolExecutionPolicy'>,
+) {
   const b = input.pluginTaskBinding;
   const policy = input.toolExecutionPolicy;
   const { instance, packageRecord: pkg, effectiveGrants: grants } = admission;
@@ -61,6 +66,45 @@ function assertAdmission(admission: PluginRuntimeAdmission, input: PluginTaskCur
     !policy.actionMethods.every((method) => declaration.actions?.some((a) => a.method === method))
   )
     refuse();
+}
+
+/** Internal Queue preflight: derive methods from installed declarations, never from the trigger body. */
+export async function resolveTaskInvocationPolicy(
+  raw: PluginTaskInvocationBinding,
+  assertCurrent: () => Promise<void>,
+  ports: Pick<Ports, 'admission' | 'resolve' | 'generation'>,
+): Promise<Extract<ToolExecutionPolicy, { mode: 'plugin_native' }>> {
+  const binding = capturePluginTaskBinding(raw);
+  const generation = ports.generation(binding.pluginInstanceId);
+  await assertCurrent();
+  const admission = structuredClone(await ports.admission(binding.pluginInstanceId));
+  const manifest = admission.packageRecord.manifest;
+  const candidates = (manifest.contributions ?? []).filter(
+    (c) =>
+      c.type === 'mcp' &&
+      manifest.features.some(
+        (f) =>
+          f.capabilities.some((v: string) => v === 'task.admitEntrusted') &&
+          f.contributions?.some((ref) => ref.type === 'mcp' && ref.id === c.id),
+      ),
+  );
+  const declaration = candidates[0];
+  if (candidates.length !== 1 || declaration?.type !== 'mcp' || !declaration.actions?.length) refuse();
+  const methods = declaration.actions.map((a) => a.method);
+  if (new Set(methods).size !== methods.length) refuse();
+  const policy = Object.freeze({
+    mode: 'plugin_native' as const,
+    pluginInstanceId: binding.pluginInstanceId,
+    contributionId: declaration.id,
+    actionMethods: Object.freeze(methods),
+  });
+  assertAdmission(admission, { pluginTaskBinding: binding, toolExecutionPolicy: policy });
+  await ports.resolve(policy);
+  const current = structuredClone(await ports.admission(binding.pluginInstanceId));
+  assertAdmission(current, { pluginTaskBinding: binding, toolExecutionPolicy: policy });
+  if (!isDeepStrictEqual(admission, current) || ports.generation(binding.pluginInstanceId) !== generation) refuse();
+  await assertCurrent();
+  return policy;
 }
 
 function physicalDirectory(path: string): Stats {

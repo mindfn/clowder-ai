@@ -1,13 +1,11 @@
+export { assertUnstartedTaskCustody } from '../../cats/services/agents/invocation/plugin-task-queue-state.js';
+
 import { isDeepStrictEqual } from 'node:util';
 import {
   capturePluginTaskBinding,
   type PluginTaskInvocationBinding,
 } from '../../cats/services/agents/invocation/plugin-task-invocation-binding.js';
-import type {
-  IMessageStore,
-  QueuedMessageCustody,
-  StoredMessage,
-} from '../../cats/services/stores/ports/MessageStore.js';
+import type { IMessageStore, StoredMessage } from '../../cats/services/stores/ports/MessageStore.js';
 import {
   assertQueueCustodyTransition,
   cloneQueuedMessageCustody,
@@ -43,49 +41,6 @@ function capture(input: PluginTaskQueueSelection): PluginTaskQueueSelection {
   const result = { messageId, entryId, userId, threadId, targetCatId };
   if (!Object.values(result).every(coordinate)) refuse();
   return Object.freeze(result);
-}
-
-/** A durable lane discriminator, never authority. No started attempt can be replayed here. */
-export function assertUnstartedTaskCustody(c: QueuedMessageCustody, target: string): void {
-  const histories = [
-    c.failedByCatIds,
-    c.handledByCatIds,
-    c.withdrawnByCatIds,
-    c.steerRequestedByCatIds,
-    c.seenByCatIds,
-  ];
-  const witnesses = [
-    c.awakenedInvocationIdByCatId,
-    c.awakenedAtByCatId,
-    c.seenInvocationIdByCatId,
-    c.steeredInvocationIdByCatId,
-    c.targetOutcomeByCatId,
-  ];
-  if (
-    c.sourceCategory !== 'plugin_task' ||
-    c.status !== 'queued' ||
-    c.processingStartedAt !== undefined ||
-    c.receiptScope !== undefined ||
-    c.authorIntentByCatId !== undefined ||
-    c.carrierByTargetCatId !== undefined ||
-    c.carrierStateByTargetCatId !== undefined ||
-    c.prestartRetirement ||
-    histories.some((v) => v?.some((id) => id === target)) ||
-    witnesses.some((v) => v?.[target] !== undefined) ||
-    c.bodyExposures?.length ||
-    c.readEvidenceWitnesses?.length ||
-    (c.targetAttempts ?? []).length > 1 ||
-    (c.targetAttempts ?? []).some(
-      (a) =>
-        a.targetCatId !== target ||
-        a.state !== 'queued' ||
-        a.sequence !== 1 ||
-        a.invocationId !== undefined ||
-        a.seenAt !== undefined ||
-        a.terminalReason !== undefined,
-    )
-  )
-    refuse();
 }
 
 function decode(message: StoredMessage | null, selected: PluginTaskQueueSelection): PluginTaskInvocationBinding {

@@ -436,3 +436,27 @@ test('Task skills must be exactly the installed declared members, never extra am
     await assert.rejects(f.prepare());
   }
 });
+
+test('Queue policy derives only the sole granted Task MCP declaration', async (t) => {
+  const f = await fixture(t);
+  let checks = 0;
+  const actual = await f.router.resolveTaskInvocationPolicy(f.binding, async () => {
+    checks++;
+  });
+  assert.deepEqual(actual, f.policy);
+  assert.ok(Object.isFrozen(actual));
+  assert.ok(Object.isFrozen(actual.actionMethods));
+  assert.ok(checks >= 2);
+});
+test('Queue policy refuses ambiguous Task MCPs and an asynchronously revoked grant', async (t) => {
+  const f = await fixture(t);
+  f.pkg.manifest.contributions.push({ ...f.pkg.manifest.contributions[0], id: 'other' });
+  f.pkg.manifest.features[0].contributions.push({ type: 'mcp', id: 'other' });
+  await assert.rejects(() => f.router.resolveTaskInvocationPolicy(f.binding, async () => {}), /task.*authority/i);
+  f.pkg.manifest.contributions.pop();
+  f.pkg.manifest.features[0].contributions.pop();
+  f.state.beforeResolve = async () => {
+    f.grant.grantRevision++;
+  };
+  await assert.rejects(() => f.router.resolveTaskInvocationPolicy(f.binding, async () => {}), /task.*authority/i);
+});

@@ -2689,8 +2689,21 @@ async function main(): Promise<void> {
     observationProvider: runtimeDeploymentContext?.provider ?? { observe: async () => null },
   });
   const { createPublicQueueExecution } = await import('./domains/plugin/carrier/public-queue-execution.js');
+  const { createTaskQueueRoute } = await import('./domains/plugin/carrier/task-queue-route.js');
+  const { createTaskQueueExecution } = await import('./domains/plugin/carrier/task-queue-execution.js');
+  const { createPluginTaskQueueAuthority } = await import('./domains/plugin/host-surface/plugin-task-currentness.js');
+  let taskQueueAuthority: ReturnType<typeof createPluginTaskQueueAuthority> | undefined;
   const queueProcessor = new QueueProcessor(
     {
+    taskInvocationRoute: createTaskQueueRoute(
+      invocationQueue,
+      () => {
+        if (!taskQueueAuthority) throw new Error('task_queue_authority_not_ready');
+        return taskQueueAuthority;
+      },
+      () => pluginRuntime.supervisor,
+      createTaskQueueExecution(registry, () => pluginRuntime.supervisor),
+    ),
       publicInvocationExecution: createPublicQueueExecution(registry, () => pluginRuntime.supervisor),
       queue: invocationQueue,
       liveCompanionSessions,
@@ -5088,6 +5101,14 @@ async function main(): Promise<void> {
     getMentionPatterns: catRegistryMentionPatterns,
   });
   pluginTaskCurrentness = createPluginTaskInvocationCurrentness({
+    ownerUserId: privateUserId,
+    taskStore,
+    messageStore,
+    threadStore,
+    inventory: pluginRuntime.inventoryStore,
+    isCatAvailable: (catId) => catRegistry.getAllIds().includes(catId as CatId) && isCatAvailable(catId),
+  });
+  taskQueueAuthority = createPluginTaskQueueAuthority({
     ownerUserId: privateUserId,
     taskStore,
     messageStore,

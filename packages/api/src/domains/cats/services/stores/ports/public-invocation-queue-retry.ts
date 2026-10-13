@@ -11,6 +11,7 @@ export function isPublicInvocationRetryForbidden(custody: QueuedMessageCustody, 
   try {
     const selected: Record<string, unknown> = {};
     for (const key of [
+      'sourceCategory',
       'pluginPublicInvocation',
       'seenInvocationIdByCatId',
       'awakenedInvocationIdByCatId',
@@ -23,12 +24,21 @@ export function isPublicInvocationRetryForbidden(custody: QueuedMessageCustody, 
     }
     const data = snapshotPluginProtocolData(selected) as Pick<
       QueuedMessageCustody,
+      | 'sourceCategory'
       | 'pluginPublicInvocation'
       | 'seenInvocationIdByCatId'
       | 'awakenedInvocationIdByCatId'
       | 'bodyExposures'
       | 'targetAttempts'
     >;
+    // A Task execution has one child. A new attempt requires a new Host execution receipt.
+    if (data.sourceCategory === 'plugin_task')
+      return Boolean(
+        data.targetAttempts?.length ||
+          data.bodyExposures?.length ||
+          Object.keys(data.awakenedInvocationIdByCatId ?? {}).length ||
+          Object.keys(data.seenInvocationIdByCatId ?? {}).length,
+      );
     if (
       data.targetAttempts?.some(
         (attempt) => attempt.targetCatId === targetCatId && isPublicOutputNoReplayReason(attempt.terminalReason),

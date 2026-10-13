@@ -722,5 +722,394 @@ test('R2 bound Task custody is not queued by the real startup projection', async
   const binding = await f.authority.read(f.input);
   await f.authority.bindChild({ ...f.input, binding, invocationId: 'inv' });
   assert.deepEqual(queuedCarrierEntryIds(f.trigger), []);
-  assert.throws(() => buildQueueEntry([f.trigger], 'entry'), /no target/);
+  assert.throws(() => buildQueueEntry([f.trigger], 'entry'), /no target|Task Queue custody rejected/);
 });
+
+async function runTaskQueue({
+  fail = false,
+  lostCas = false,
+  revoke = false,
+  manual = false,
+  first = true,
+  missingPort = false,
+  silent = false,
+  parentState,
+  parentMismatch = false,
+  fullStartup = false,
+  parentClaimLost = false,
+  preclaimFence,
+} = {}) {
+  const f = await queueFixture(manual, first);
+  const [
+    { InvocationQueue },
+    { QueueProcessor },
+    { InvocationTracker },
+    { InvocationRecordStore },
+    { InMemoryTurnExecutionStore },
+    { CallbackAuthTurnExecutionLifecycle },
+    { AgentRegistry },
+    { AgentRouter },
+    { QueuedMessageCustodyCoordinator },
+    { buildQueueEntry },
+    { createTaskQueueRoute },
+  ] = await Promise.all([
+    import('../dist/domains/cats/services/agents/invocation/InvocationQueue.js'),
+    import('../dist/domains/cats/services/agents/invocation/QueueProcessor.js'),
+    import('../dist/domains/cats/services/agents/invocation/InvocationTracker.js'),
+    import('../dist/domains/cats/services/stores/ports/InvocationRecordStore.js'),
+    import('../dist/domains/cats/services/stores/memory/InMemoryTurnExecutionStore.js'),
+    import('../dist/domains/cats/services/agents/invocation/CallbackAuthTurnExecutionLifecycle.js'),
+    import('../dist/domains/cats/services/agents/registry/AgentRegistry.js'),
+    import('../dist/domains/cats/services/agents/routing/AgentRouter.js'),
+    import('../dist/domains/cats/services/agents/invocation/QueuedMessageCustodyCoordinator.js'),
+    import('../dist/domains/cats/services/agents/invocation/QueuedMessageCustodyStartupQueueEntry.js'),
+    import('../src/domains/plugin/carrier/task-queue-route.ts'),
+  ]);
+  const q = new InvocationQueue(),
+    entry = buildQueueEntry([f.trigger], 'entry');
+  const records = new InvocationRecordStore();
+  const parentBefore = [];
+  if (parentState) {
+    const create = records.create.bind(records);
+    let seeded = false;
+    records.create = async (input) => {
+      if (!seeded) {
+        seeded = true;
+        const first = await create({ ...input, ...(parentMismatch ? { targetCats: ['opus'] } : {}) });
+        if (parentState === 'succeeded') await records.update(first.invocationId, { status: 'running' });
+        if (parentState !== 'queued') assert.ok(await records.update(first.invocationId, { status: parentState }));
+        parentBefore.push(structuredClone(await records.get(first.invocationId)));
+      }
+      return create(input);
+    };
+  }
+  if (parentClaimLost) {
+    const update = records.update.bind(records);
+    records.update = async (id, input) => {
+      if (input.status === 'running' && input.expectedStatus) {
+        await update(id, { status: 'running' });
+        parentBefore[0] = structuredClone(await records.get(id));
+        return null;
+      }
+      return update(id, input);
+    };
+  }
+  let startup;
+  if (fullStartup) {
+    const { QueuedMessageCustodyStartupReconciler } = await import(
+      '../dist/domains/cats/services/agents/invocation/QueuedMessageCustodyStartupReconciler.js'
+    );
+    f.messages.scanByDeliveryStatus = () => [f.trigger.id]; // memory store omits the Redis scan port
+    startup = await new QueuedMessageCustodyStartupReconciler({
+      messageStore: f.messages,
+      invocationRecordStore: records,
+      invocationQueue: q,
+      log: { info() {}, warn() {} },
+    }).reconcile();
+  } else q.restoreDurableEntry(entry);
+  const turns = new InMemoryTurnExecutionStore(),
+    registry = new InvocationRegistry({ turnExecutionStore: turns, assertPluginTaskCurrent: f.check });
+  const state = {
+    starts: 0,
+    ownerReads: 0,
+    childId: undefined,
+    errors: [],
+    egress: [],
+    visible: [],
+    parentCleanup: [],
+    queueUpdates: [],
+  };
+  const agents = new AgentRegistry();
+  agents.register('codex', {
+    supportsPluginTaskLaunch: () => true,
+    supportsToolExecutionPolicy: () => false,
+    async *invoke() {
+      state.starts++;
+      if (!silent) yield { type: 'text', catId: 'codex', content: 'task output', timestamp: 1 };
+      yield fail
+        ? { type: 'error', catId: 'codex', error: 'fixture failed', timestamp: 2 }
+        : { type: 'done', catId: 'codex', timestamp: 2 };
+    },
+  });
+  const router = new AgentRouter({
+    agentRegistry: agents,
+    registry,
+    messageStore: f.messages,
+    sessionStore: {},
+    turnExecutionStore: new CallbackAuthTurnExecutionLifecycle(turns, registry),
+    threadStore: {
+      get() {
+        state.ownerReads++;
+        throw Error('ordinary owner history');
+      },
+    },
+  });
+  const execution = {
+    async prepare(input) {
+      state.childId = input.invocationId;
+      const record = await registry.getRecord(input.invocationId);
+      assert.equal(f.messages.getById(f.trigger.id).queueCustody.awakenedInvocationIdByCatId.codex, input.invocationId);
+      assert.equal((await registry.verifyLatest(input.invocationId, record.callbackToken)).ok, true);
+      return {
+        source: { messageId: f.trigger.id, content: 'Host Task' },
+        launch: {
+          server: { name: 'task', command: '/fixture/not-run', args: [], env: {}, transport: 'stdio' },
+          sandbox: {
+            kind: 'entrusted_work',
+            workspaceRoot: '/fixture/task',
+            runtimeSkillsRoot: '/fixture/skills',
+            taskBinding: f.principal.pluginTaskBinding,
+          },
+          assertCurrent: async () => f.check({ ...f.principal, invocationId: input.invocationId }),
+        },
+        dispose() {},
+      };
+    },
+  };
+  const route = createTaskQueueRoute(
+    q,
+    () => f.authority,
+    () => ({
+      async resolveTaskInvocationPolicy(_b, check) {
+        await check();
+        if (revoke) f.task.entrustedWork.closure.state = 'completed';
+        await check();
+        return f.principal.toolExecutionPolicy;
+      },
+    }),
+    execution,
+  );
+  if (lostCas) {
+    let lost = false;
+    const transition = f.messages.transitionQueueCustody.bind(f.messages);
+    f.messages.transitionQueueCustody = (id, input) => {
+      const result = transition(id, input);
+      if (!lost && input.next.awakenedInvocationIdByCatId?.codex) {
+        lost = true;
+        throw Error('lost CAS response');
+      }
+      return result;
+    };
+  }
+  const custody = new QueuedMessageCustodyCoordinator({ messageStore: f.messages });
+  const processor = new QueueProcessor({
+    queue: q,
+    messageStore: f.messages,
+    queueCustodyCoordinator: custody,
+    invocationTracker: new InvocationTracker(),
+    invocationRecordStore: records,
+    turnExecutionStore: turns,
+    taskInvocationRoute: missingPort ? undefined : route,
+    outboundHook: {
+      async deliver(...args) {
+        state.egress.push(['deliver', ...args]);
+      },
+    },
+    streamingHook: Object.fromEntries(
+      ['onStreamStart', 'onStreamChunk', 'onStreamEnd', 'cleanupPlaceholders', 'notifyDeliveryBatchDone'].map(
+        (name) => [
+          name,
+          async (...args) => {
+            state.egress.push([name, ...args]);
+          },
+        ],
+      ),
+    ),
+    threadMetaLookup() {
+      state.egress.push(['threadMeta']);
+      return {};
+    },
+    router: { routeExecution: (...args) => router.routeExecution(...args), async ackCollectedCursors() {} },
+    socketManager: {
+      broadcastAgentMessage(message) {
+        state.visible.push(message);
+        if (message.type === 'error') state.errors.push(message);
+      },
+      broadcastToRoom() {},
+      emitToUser(_userId, event, payload) {
+        if (event === 'queue_updated') state.queueUpdates.push(payload);
+      },
+    },
+    log: {
+      info() {},
+      warn() {},
+      error(...args) {
+        state.errors.push(args.map((arg) => (arg?.err ? { ...arg, err: arg.err.stack } : arg)));
+      },
+    },
+  });
+  state.completions = [];
+  processor.registerEntryCompleteHook('entry', (...args) => state.completions.push(args));
+  if (preclaimFence === 'reservation') processor.bindProcessingSlotInvocation = () => false;
+  if (preclaimFence === 'target') processor.reservedTargetStartBlocker = () => 'target_busy';
+  if (preclaimFence === 'session') {
+    let waited = false;
+    processor.deps.invocationTracker.startAll = () => null;
+    processor.deps.invocationTracker.waitForSessionSealRelease = async () => {
+      waited = true;
+    };
+    processor.reservedTargetStartBlocker = () => (waited ? 'reservation_replaced' : undefined);
+  }
+  const releaseParent = processor.routeChainTracker.release.bind(processor.routeChainTracker);
+  processor.routeChainTracker.release = (id) => {
+    if (parentBefore[0]?.id === id) state.parentCleanup.push(id);
+    return releaseParent(id);
+  };
+  processor.sessionContinuationCoordinator = {
+    async commitInvocationOutcome() {
+      state.ownerReads++;
+      throw Error('ordinary continuation write');
+    },
+    async prepareInvocationContext() {
+      state.ownerReads++;
+      throw Error('ordinary continuation read');
+    },
+  };
+  let settle;
+  const done = new Promise((resolve) => {
+    settle = resolve;
+  });
+  const complete = processor.onInvocationComplete.bind(processor);
+  processor.onInvocationComplete = async (...args) => {
+    await complete(...args);
+    settle(args[2]);
+  };
+  await processor.resumeAfterStartup(f.taskThread.id, 'owner');
+  let timer;
+  const status = await Promise.race([
+    done,
+    new Promise((resolve) => {
+      timer = setTimeout(() => resolve('not_dispatched'), 1500);
+    }),
+  ]);
+  clearTimeout(timer);
+  return { ...f, q, processor, registry, turns, records, parentBefore, startup, result: state, status };
+}
+
+test('real Task Queue recovery binds one canonical child before restricted provider and settles custody', async () => {
+  const f = await runTaskQueue();
+  assert.equal(f.status, 'succeeded', JSON.stringify(f.result.errors));
+  assert.equal(f.result.starts, 1);
+  assert.equal(f.result.ownerReads, 0);
+  const c = f.messages.getById(f.trigger.id).queueCustody;
+  assert.equal(c.targetOutcomeByCatId.codex.invocationId, f.result.childId);
+  assert.equal(c.targetOutcomeByCatId.codex.disposition, 'completed_with_turn');
+  await f.processor.tryAutoExecute(f.taskThread.id);
+  assert.equal(f.result.starts, 1);
+});
+test('real Task Queue provider failure retains its child and never retries ordinarily', async () => {
+  const f = await runTaskQueue({ fail: true });
+  assert.equal(f.status, 'failed');
+  assert.equal(f.result.starts, 1);
+  assert.equal(f.result.ownerReads, 0);
+  assert.equal(f.q.retryFailedTarget(f.taskThread.id, 'owner', 'entry', 'codex'), null);
+  assert.equal(f.messages.getByThread(f.taskThread.id).filter((m) => m.catId === 'codex').length, 0);
+});
+test('real Task Queue lost child CAS response retires credentials and never starts provider', async () => {
+  const f = await runTaskQueue({ lostCas: true });
+  assert.equal(f.status, 'failed');
+  assert.equal(f.result.starts, 0);
+  const attempts = f.messages.getById(f.trigger.id).queueCustody.targetAttempts;
+  assert.equal(attempts.length, 1);
+  const child = attempts[0].invocationId;
+  assert.ok(child);
+  const record = await f.registry.getRecord(child);
+  assert.notEqual(record.state, 'active');
+  await f.processor.tryAutoExecute(f.taskThread.id);
+  assert.equal(f.result.starts, 0);
+});
+test('real Task Queue revoke before registration never reads owner context or starts provider', async () => {
+  const f = await runTaskQueue({ revoke: true });
+  assert.equal(f.status, 'failed');
+  assert.equal(f.result.starts, 0);
+  assert.equal(f.result.ownerReads, 0);
+  assert.equal(f.messages.getById(f.trigger.id).queueCustody.awakenedInvocationIdByCatId?.codex, undefined);
+});
+
+test('real Task Queue continuation preserves the owner-selected Task thread', async () => {
+  const f = await runTaskQueue({ manual: true, first: false });
+  assert.equal(f.status, 'succeeded', JSON.stringify(f.result.errors));
+  assert.equal(f.result.starts, 1);
+  assert.equal(f.result.ownerReads, 0);
+  assert.equal((await f.registry.getRecord(f.result.childId)).threadId, f.taskThread.id);
+});
+test('Task Queue without its Host adapter stays queued and cannot fall through ordinary routing', async () => {
+  const f = await runTaskQueue({ missingPort: true });
+  assert.equal(f.status, 'not_dispatched');
+  assert.equal(f.result.starts, 0);
+  assert.equal(f.result.ownerReads, 0);
+  assert.equal(f.q.getEntrySnapshot(f.taskThread.id, 'owner', 'entry').status, 'queued');
+});
+
+for (const [name, options] of Object.entries({
+  success: {},
+  failure: { fail: true },
+  preflight: { revoke: true },
+  silent: { silent: true },
+})) {
+  test(`private Task Queue ${name} never publishes through ordinary connector hooks`, async () => {
+    const f = await runTaskQueue(options);
+    assert.notEqual(f.status, 'not_dispatched');
+    assert.deepEqual(f.result.egress, []);
+    assert.equal(f.result.ownerReads, 0);
+    if (name === 'success') assert.ok(f.result.visible.some((m) => m.type === 'text' && m.content === 'task output'));
+  });
+}
+
+test('R2 full startup reconciler restores an unstarted private Task without ordinary carrier state', async () => {
+  const f = await runTaskQueue({ fullStartup: true });
+  assert.equal(f.startup.entriesRestored, 1);
+  assert.equal(f.startup.messagesFailed, 0);
+  assert.deepEqual(f.startup.resumeScopes, [{ threadId: f.taskThread.id, userId: 'owner' }]);
+  assert.equal(f.status, 'succeeded', JSON.stringify(f.result.errors));
+  assert.equal(f.result.starts, 1);
+  assert.equal(f.messages.getById(f.trigger.id).queueCustody.carrierStateByTargetCatId, undefined);
+});
+for (const parentState of ['queued', 'failed']) {
+  test(`R2 Task parent ${parentState} survives a crash before child CAS and is reused exactly`, async () => {
+    const f = await runTaskQueue({ parentState });
+    assert.equal(f.status, 'succeeded', JSON.stringify(f.result.errors));
+    assert.equal(f.result.starts, 1);
+    assert.equal((await f.records.get(f.parentBefore[0].id)).status, 'succeeded');
+    assert.equal(f.messages.getById(f.trigger.id).queueCustody.targetAttempts.length, 1);
+  });
+}
+for (const [name, options] of Object.entries({
+  mismatch: { parentState: 'queued', parentMismatch: true },
+  running: { parentState: 'running' },
+  succeeded: { parentState: 'succeeded' },
+  claimLost: { parentState: 'queued', parentClaimLost: true },
+})) {
+  test(`R2 Task refuses ${name} parent without consuming custody or rewriting the record`, async () => {
+    const f = await runTaskQueue(options);
+    assert.equal(f.result.starts, 0);
+    assert.equal(f.status, 'failed');
+    assert.equal(f.q.getEntrySnapshot(f.taskThread.id, 'owner', 'entry')?.status, 'queued');
+    assert.equal(f.messages.getById(f.trigger.id).queueCustody.status, 'queued');
+    assert.deepEqual(await f.records.get(f.parentBefore[0].id), f.parentBefore[0]);
+    assert.deepEqual(f.result.parentCleanup, []);
+  });
+}
+
+for (const parentState of ['queued', 'failed']) {
+  for (const preclaimFence of ['reservation', 'target', 'session']) {
+    test(`R3 unclaimed ${parentState} parent is immutable across ${preclaimFence} fence`, async () => {
+      const f = await runTaskQueue({ parentState, preclaimFence });
+      assert.equal(f.result.starts, 0);
+      assert.deepEqual(await f.records.get(f.parentBefore[0].id), f.parentBefore[0]);
+      assert.equal(f.messages.getById(f.trigger.id).queueCustody.status, 'queued');
+      assert.equal(f.messages.getById(f.trigger.id).queueCustody.awakenedInvocationIdByCatId?.codex, undefined);
+      assert.deepEqual(f.result.parentCleanup, []);
+      assert.deepEqual(f.result.egress, []);
+      assert.deepEqual(f.result.visible, []);
+      assert.deepEqual(f.result.errors, []);
+      assert.deepEqual(f.result.completions, []);
+      assert.equal(f.processor.entryCompleteHooks.has('entry'), true);
+      assert.ok(f.result.queueUpdates.length > 0);
+      assert.equal(
+        f.result.queueUpdates.some((update) => update.action === 'completed'),
+        false,
+      );
+    });
+  }
+}

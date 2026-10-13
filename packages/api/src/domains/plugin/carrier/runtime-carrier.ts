@@ -46,7 +46,7 @@ import {
   PUBLIC_INVOCATION_VERIFIER_METHOD,
   type PublicInvocationVerifierPort,
 } from './public-invocation-verifier.js';
-import { prepareTaskInvocationExecution } from './task-invocation-preparation.js';
+import { prepareTaskInvocationExecution, resolveTaskInvocationPolicy } from './task-invocation-preparation.js';
 
 /**
  * F202 Train C1 — the Host's single runtime-carrier boundary.
@@ -298,6 +298,18 @@ export class PluginRuntimeCarrierRouter implements PluginRuntimeLifecyclePort {
     context: Parameters<PublicInvocationVerifierPort['invokePublicInvocationVerifier']>[2],
   ) {
     return preparePublicInvocationExecution(this.resolvePublicInvocationLaunch(instanceId, carrier, binding, context));
+  }
+
+  /** Queue-only method policy derivation, fenced by durable Host Task authority. */
+  resolveTaskInvocationPolicy(
+    binding: Parameters<typeof resolveTaskInvocationPolicy>[0],
+    assertCurrent: () => Promise<void>,
+  ) {
+    return resolveTaskInvocationPolicy(binding, assertCurrent, {
+      admission: (id) => this.#admission(id),
+      generation: (id) => this.nativeActions.generation(id),
+      resolve: (policy) => this.resolveNativeMcpLaunch(policy),
+    });
   }
 
   /** Existing native runtime, but only a Host-bound Task may select this persistent isolated preparation. */
