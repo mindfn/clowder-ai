@@ -39,6 +39,7 @@ function connectorGrants(...unused: readonly (typeof CONNECTOR_GRANTS)[number][]
  * only ever receive what its entry lists and its manifest requests.
  */
 export const OFFICIAL_PLUGIN_HOST_POLICIES: readonly MachineCatalogHostPolicy[] = [
+  { pluginId: 'dev.clowder.genoffice-docx', effectiveGrants: [] },
   {
     pluginId: 'official.collective-connector',
     // Persistence plus the shipped owner sync/native source path. Origins and

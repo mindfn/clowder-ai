@@ -5134,6 +5134,20 @@ async function main(): Promise<void> {
     threadStore,
     sources: { messageStore, ...(managedHoldDispositionService ? { managedHoldDispositionService } : {}) },
   });
+  const { prepareHostInitialPlugins } = await import('./domains/plugin/manager/initial-plugin-installation.js');
+  let initialPlugins: Awaited<ReturnType<typeof prepareHostInitialPlugins>> | undefined;
+  try {
+    initialPlugins = await prepareHostInitialPlugins({
+      runtime: pluginRuntime,
+      managerRuntime: pluginManagerRuntime,
+      catalog: pluginManagerCatalog,
+      onFailure: (pluginId, error) => app.log.warn({ pluginId, err: error }, '[api] Initial plugin setup pending'),
+    });
+  } catch (error) {
+    // Offline discovery must not prevent the Host from opening. The durable journal retries
+    // unfinished entries on restart; completed entries (including user uninstalls) stay completed.
+    app.log.warn({ err: error }, '[api] Initial plugin installation deferred until next startup');
+  }
   // F202 W2-6: grants follow the Host policy for instances installed before a policy change too;
   // done before recovery so every resumed runtime starts with the grants it will run with.
   const { reconcileOfficialPluginGrants } = await import('./domains/plugin/manager/official-plugin-grants.js');
@@ -6770,6 +6784,7 @@ async function main(): Promise<void> {
       listen: async () => {
         const listening = await app.listen({ port: PORT, host: HOST });
         releaseHostListening();
+        await initialPlugins?.activate();
         return listening;
       },
       recover: async () => {

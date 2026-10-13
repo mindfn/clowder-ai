@@ -381,7 +381,7 @@ export class BundledPluginRuntimeCarrier implements PluginRuntimeCarrier {
       !instance ||
       current?.pluginInstanceId !== pluginInstanceId ||
       instance.lifecycleState !== 'installed' ||
-      instance.configReadiness !== 'ready' ||
+      (!allowStopping && instance.configReadiness !== 'ready') ||
       !activationAllowed ||
       !packageRecord
     ) {

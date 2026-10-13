@@ -18,6 +18,7 @@ export function pluginHostRoot(projectRoot: string): string {
  */
 export const PLUGIN_HOST_ENTRIES = {
   inventory: 'inventory.json',
+  initialInstallation: 'initial-installation.json',
   broker: 'broker.json',
   packages: 'packages',
   resources: 'resources',
