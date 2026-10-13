@@ -14,7 +14,7 @@ import { createPluginSourceFactsHost } from '../src/domains/plugin/host-surface/
 
 const sourceId = '0000000000001000-000001-00000001';
 
-function fixture() {
+function fixture(generic = false) {
   const carrier = {
     version: 1,
     admissionId: 'admission',
@@ -46,7 +46,7 @@ function fixture() {
     status: 'queued',
     priority: 'normal',
     createdAt: 1000,
-    pluginPublicInvocation: carrier,
+    ...(generic ? {} : { pluginPublicInvocation: carrier }),
   };
   const store = new MessageStore();
   store.append({
@@ -72,6 +72,15 @@ function fixture() {
   };
   const coordinator = new QueuedMessageCustodyCoordinator({ messageStore: port, now: () => 2000 });
   const bind = (input = {}) => {
+    if (generic) {
+      Object.assign(entry, {
+        status: 'processing',
+        processingStartedAt: 2000,
+        queuedAwakenedInvocationIdByCatId: { astra: 'child-1' },
+        queuedAwakenedAtByCatId: { astra: 2000 },
+      });
+      return coordinator.persistEntry(entry);
+    }
     assert.equal(
       typeof coordinator.bindPublicInvocationChild,
       'function',
@@ -185,5 +194,69 @@ test('queued source rejects terminal or changed custody while reading', async ()
     };
     await assert.rejects(() => f.native());
     assert.ok(reads >= 2, 'the first read must reach the valid queued source');
+  }
+});
+
+test('ordinary send wake queued source is readable by its exact awakened native child without a public carrier', async () => {
+  const f = fixture(true);
+  await f.bind();
+  const before = structuredClone(f.store.getById(sourceId));
+  assert.equal(before.queueCustody.pluginPublicInvocation, undefined);
+  const value = await f.native();
+  assert.equal(value.source.id, sourceId);
+  assert.equal(value.invocationId, 'child-1');
+  assert.deepEqual(f.store.getById(sourceId), before);
+});
+
+test('ordinary queued wake still rejects unbound, foreign and retired callers', async () => {
+  const f = fixture(true);
+  await assert.rejects(() => f.native());
+  await f.bind();
+  assert.equal((await f.native()).source.id, sourceId);
+  for (const override of [
+    { invocationId: 'other' },
+    { catId: 'other' },
+    { userId: 'other' },
+    { originTriggerMessageId: 'other' },
+    { assertInvocationCurrent: undefined },
+  ]) {
+    await assert.rejects(() => f.native(override));
+  }
+  const get = f.port.getById;
+  f.port.getById = async (id) => {
+    const m = await get(id);
+    m.queueCustody.status = 'terminal';
+    return m;
+  };
+  await assert.rejects(() => f.native());
+});
+
+test('ordinary queued wake rejects custody replacement or revocation across source reads', async () => {
+  for (const change of [
+    (m) => {
+      m.queueCustody.entryId = 'replacement';
+    },
+    (m) => {
+      m.queueCustody.awakenedInvocationIdByCatId.astra = 'replacement';
+    },
+    (m) => {
+      m.extra.pluginMessage.instanceId = 'other';
+    },
+    (m) => {
+      m.recall = { recalledAt: 1 };
+    },
+  ]) {
+    const f = fixture(true);
+    await f.bind();
+    assert.equal((await f.native()).source.id, sourceId);
+    const get = f.port.getById;
+    let reads = 0;
+    f.port.getById = async (id) => {
+      const m = await get(id);
+      if (++reads >= 2) change(m);
+      return m;
+    };
+    await assert.rejects(() => f.native());
+    assert.ok(reads >= 2);
   }
 });

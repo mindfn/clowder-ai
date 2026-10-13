@@ -105,12 +105,15 @@ export function createPluginSourceFactsHost(deps: Deps): {
     const custody = message.queueCustody;
     const carrier = custody?.pluginPublicInvocation;
     if (
+      carrier &&
+      (carrier.pluginInstanceId !== deps.pluginInstanceId ||
+        carrier.sourceMessageId !== message.id ||
+        carrier.sourcePluginRevision !== message.extra?.pluginMessage?.revision ||
+        carrier.targetCatId !== native.catId)
+    )
+      refuse();
+    if (
       !custody ||
-      !carrier ||
-      carrier.pluginInstanceId !== deps.pluginInstanceId ||
-      carrier.sourceMessageId !== message.id ||
-      carrier.sourcePluginRevision !== message.extra?.pluginMessage?.revision ||
-      carrier.targetCatId !== native.catId ||
       custody.ownerUserId !== caller.userId ||
       custody.status !== 'processing' ||
       custody.awakenedInvocationIdByCatId?.[native.catId] !== native.invocationId ||
@@ -139,7 +142,7 @@ export function createPluginSourceFactsHost(deps: Deps): {
       !message.source?.connector
     )
       refuse();
-    // A running public child must read its exact queued origin to call the plugin's
+    // A running child must read its exact queued origin to call the plugin's
     // native methods. This does not expose queued sources to owner or unrelated calls.
     assertReadableDelivery(message, caller);
     const projected: PluginSourceFact = {
@@ -157,6 +160,14 @@ export function createPluginSourceFactsHost(deps: Deps): {
     return {
       fact: snapshotPluginProtocolData(projected) as PluginSourceFact,
       revision: message.extra.pluginMessage.revision,
+      // Keep the same Queue admission across both reads, including any public
+      // carrier. Ordinary send(wake) uses the existing generic Queue admission.
+      queueBinding: message.queueCustody
+        ? snapshotPluginProtocolData({
+            entryId: message.queueCustody.entryId,
+            pluginPublicInvocation: message.queueCustody.pluginPublicInvocation ?? null,
+          })
+        : null,
     };
   }
   async function readOnce(id: string, caller: Caller) {
