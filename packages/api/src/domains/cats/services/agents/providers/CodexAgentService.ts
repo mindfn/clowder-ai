@@ -1237,6 +1237,10 @@ export class CodexAgentService implements AgentService {
     return policy.mode === 'read_only' && this.carrierMode === 'exec_json';
   }
 
+  supportsPluginTaskLaunch(): boolean {
+    return this.carrierMode === 'exec_json';
+  }
+
   freshnessCarrierCapability(
     options?: Pick<AgentServiceOptions, 'liveCompanion' | 'requiredTools'>,
   ): AgentFreshnessCarrierCapability {

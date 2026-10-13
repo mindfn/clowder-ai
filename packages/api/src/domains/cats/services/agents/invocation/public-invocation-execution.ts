@@ -1,6 +1,8 @@
+import { isDeepStrictEqual } from 'node:util';
 import type { CatId } from '@cat-cafe/shared';
 import { snapshotPluginProtocolData } from '../../../../plugin/carrier/plugin-protocol-data.js';
 import type { AgentMessage, AgentService, AgentServiceOptions, ToolExecutionPolicy } from '../../types.js';
+import type { PluginTaskInvocationBinding } from './plugin-task-invocation-binding.js';
 
 /** Host owns preparation and cleanup until prepare resolves, including cancellation during preparation. */
 export interface PublicInvocationExecution {
@@ -9,8 +11,8 @@ export interface PublicInvocationExecution {
     readonly sourceMessageId: string;
     readonly signal: AbortSignal;
   }): Promise<{
-    /** Read from the exact durable public source. launch.assertCurrent must fence
-     * these same bytes as well as child identity and package authority. */
+    /** Host-selected prompt bound to the exact durable trigger. launch.assertCurrent
+     * must fence these bytes, child identity and package authority. */
     readonly source: { readonly messageId: string; readonly content: string };
     readonly launch: NonNullable<AgentServiceOptions['pluginNativeLaunch']>;
     dispose(): void | Promise<void>;
@@ -29,7 +31,7 @@ export function capturePublicInvocationExecution(
   return Object.freeze({ prepare: descriptor.value.bind(port) });
 }
 
-/** One attempt only. Registration and canonical lifecycle remain owned by invokeSingleCat. */
+/** One isolated plugin attempt. Public and Host-bound Task lanes share cleanup, never identity. */
 export async function* executePublicInvocation(input: {
   readonly port: PublicInvocationExecution | undefined;
   readonly invocationId: string;
@@ -40,9 +42,17 @@ export async function* executePublicInvocation(input: {
   readonly signal: AbortSignal;
   readonly callbackEnv: Readonly<Record<string, string>>;
   readonly expose: () => Promise<void>;
+  /** Only the Host registration path supplies these; a public call cannot request a Task sandbox. */
+  readonly taskBinding?: PluginTaskInvocationBinding;
+  readonly assertTaskCurrent?: () => Promise<void>;
   readonly close: (iterator: AsyncIterator<AgentMessage>) => Promise<boolean>;
 }): AsyncGenerator<AgentMessage, boolean> {
   if (!input.port || input.policy?.mode !== 'plugin_native') throw new Error('public_execution_unavailable');
+  const taskBinding = input.taskBinding
+    ? (snapshotPluginProtocolData(input.taskBinding) as PluginTaskInvocationBinding)
+    : undefined;
+  const taskCurrent = input.assertTaskCurrent;
+  if (taskBinding && typeof taskCurrent !== 'function') throw new Error('task_execution_currentness_required');
   const sourceMessageId = input.sourceMessageId;
   if (typeof sourceMessageId !== 'string' || !sourceMessageId.length)
     throw new Error('public_execution_source_invalid');
@@ -60,7 +70,12 @@ export async function* executePublicInvocation(input: {
   try {
     const source = capturePublicSource(prepared.source, sourceMessageId);
     const original = prepared.launch;
-    if (typeof original.assertCurrent !== 'function' || original.sandbox?.kind !== 'public') {
+    if (
+      typeof original.assertCurrent !== 'function' ||
+      (taskBinding
+        ? original.sandbox?.kind !== 'entrusted_work' || !isDeepStrictEqual(original.sandbox.taskBinding, taskBinding)
+        : original.sandbox?.kind !== 'public')
+    ) {
       throw new Error('public_execution_launch_invalid');
     }
     const check = original.assertCurrent.bind(original);
@@ -71,7 +86,9 @@ export async function* executePublicInvocation(input: {
     const assertCurrent = async () => {
       try {
         signal.throwIfAborted();
+        await taskCurrent?.();
         await check();
+        await taskCurrent?.();
         signal.throwIfAborted();
       } catch (error) {
         lifetime.abort(error);

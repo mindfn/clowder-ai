@@ -11,7 +11,7 @@ import { claudeExecutionAccountSnapshot, redactClaudeLaunchToken } from '../../.
  */
 
 import { execFile } from 'node:child_process';
-import { promisify } from 'node:util';
+import { isDeepStrictEqual, promisify } from 'node:util';
 import { cloudDispatchSourceMatches } from '../../cloud-bridge/cloud-dispatch-source.js';
 import { isHomeSession } from '../../session/session-scope.js';
 
@@ -178,6 +178,7 @@ import {
 } from './invocation-capacity-snapshot.js';
 import { resolveManagedWorkInvocationBinding } from './managed-work-invocation-binding.js';
 import { projectNativeGoalMessage } from './native-goal-observation.js';
+import { type PluginTaskInvocationBinding, pluginTaskCurrentnessInput } from './plugin-task-invocation-binding.js';
 import {
   type ProviderPresentationAttempt,
   type ProviderPromptPresentationEnvelope,
@@ -1237,6 +1238,9 @@ export interface InvocationParams {
   readonly publicInvocationBinding?: PublicInvocationAuthBinding;
   /** Host-only post-CAS public launch owner; absent ports fail closed on resume. */
   readonly publicInvocationExecution?: PublicInvocationExecution;
+  /** Host-derived Task coordinates and post-Queue-binding launch owner, never package input. */
+  readonly pluginTaskBinding?: PluginTaskInvocationBinding;
+  readonly pluginTaskExecution?: PublicInvocationExecution;
   readonly liveCompanion?: AgentServiceOptions['liveCompanion'];
   /** Route-owned intent projected to provider behavior only when its provenance permits it. */
   readonly routeIntent?: AgentRouteIntent;
@@ -1401,7 +1405,7 @@ export interface InvocationParams {
  */
 export async function* invokeSingleCat(deps: InvocationDeps, params: InvocationParams): AsyncIterable<AgentMessage> {
   const captured = capturePublicInvocationRegistration(deps, params);
-  if (captured.publicInvocationBinding === undefined) {
+  if (captured.publicInvocationBinding === undefined && captured.pluginTaskBinding === undefined) {
     yield* invokeSingleCatImpl(deps, captured);
     return;
   }
@@ -1427,7 +1431,7 @@ async function* invokeSingleCatImpl(
   let prompt = params.prompt;
   const invocationPromptAdditions: string[] = [];
   const isAgyNative = usesAgyNativeCarrier(service);
-  if (params.publicInvocationBinding !== undefined && isAgyNative) {
+  if ((params.publicInvocationBinding !== undefined || params.pluginTaskBinding !== undefined) && isAgyNative) {
     throw new Error('public_execution_carrier_unavailable');
   }
   const nativeCatConfig = catRegistry.tryGet(catId as string)?.config;
@@ -1470,7 +1474,11 @@ async function* invokeSingleCatImpl(
     isAgyNative && !params.toolExecutionPolicy
       ? callbackPolicyForAgyNativeMcpTools(nativeScope?.mcpTools ?? [])
       : params.toolExecutionPolicy;
-  assertToolExecutionPolicySupported(service, effectiveToolExecutionPolicy);
+  if (params.pluginTaskBinding !== undefined) {
+    if (service.supportsPluginTaskLaunch?.() !== true) throw new Error('task_execution_carrier_unavailable');
+  } else {
+    assertToolExecutionPolicySupported(service, effectiveToolExecutionPolicy);
+  }
   const freshnessCarrierCapability = service.freshnessCarrierCapability?.(
     params.liveCompanion ? { liveCompanion: params.liveCompanion } : undefined,
   ) ?? {
@@ -1523,6 +1531,7 @@ async function* invokeSingleCatImpl(
     params.ownerAuthProvenance,
     managedWorkBinding,
     params.publicInvocationBinding,
+    params.pluginTaskBinding,
   );
   onPublicRegistered?.(invocationId);
   let invocationHasAuthoritativeUsage = false;
@@ -2192,19 +2201,17 @@ async function* invokeSingleCatImpl(
       timestamp: Date.now(),
     };
 
-    if (params.publicInvocationBinding !== undefined) {
-      if (
-        !params.onPromptMessagesExposed ||
-        promptMessageIds.length !== 1 ||
-        promptMessageIds[0] !== params.publicInvocationBinding.carrier.sourceMessageId
-      ) {
+    if (params.publicInvocationBinding !== undefined || params.pluginTaskBinding !== undefined) {
+      const exactSource =
+        params.pluginTaskBinding?.triggerMessageId ?? params.publicInvocationBinding?.carrier.sourceMessageId;
+      if (!params.onPromptMessagesExposed || promptMessageIds.length !== 1 || promptMessageIds[0] !== exactSource) {
         throw new Error('public_execution_exact_exposure_required');
       }
       turnExecutionCompletedSuccessfully = yield* executePublicInvocation({
-        port: params.publicInvocationExecution,
+        port: params.pluginTaskBinding ? params.pluginTaskExecution : params.publicInvocationExecution,
         invocationId,
         catId,
-        sourceMessageId: params.publicInvocationBinding.carrier.sourceMessageId,
+        sourceMessageId: exactSource,
         service,
         policy: effectiveToolExecutionPolicy,
         signal,
@@ -2217,6 +2224,24 @@ async function* invokeSingleCatImpl(
           CAT_CAFE_THREAD_ID: threadId,
           CAT_CAFE_EXECUTION_ID: executionParentInvocationId,
         },
+        ...(params.pluginTaskBinding
+          ? {
+              taskBinding: params.pluginTaskBinding,
+              assertTaskCurrent: async () => {
+                const verified = await registry.verifyLatest(invocationId, callbackToken);
+                if (!verified.ok) throw new Error('task_execution_authority_expired');
+                const identity = pluginTaskCurrentnessInput(verified.record);
+                if (
+                  identity.userId !== userId ||
+                  identity.catId !== catId ||
+                  identity.threadId !== threadId ||
+                  !isDeepStrictEqual(identity.pluginTaskBinding, params.pluginTaskBinding) ||
+                  !isDeepStrictEqual(identity.toolExecutionPolicy, effectiveToolExecutionPolicy)
+                )
+                  throw new Error('task_execution_identity_changed');
+              },
+            }
+          : {}),
         expose: exposeCurrentPromptMessages,
         close: closeServiceIterator,
       });

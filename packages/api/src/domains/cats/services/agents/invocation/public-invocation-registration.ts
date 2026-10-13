@@ -2,12 +2,22 @@ import { snapshotPluginProtocolData } from '../../../../plugin/carrier/plugin-pr
 import { authTerminalFromTurnExecution } from './CallbackAuthTurnExecutionProjection.js';
 import type { AuthTerminalCommitInput } from './InvocationRegistry.js';
 import type { InvocationDeps, InvocationParams } from './invoke-single-cat.js';
+import { capturePluginTaskInvocationAuth } from './plugin-task-invocation-binding.js';
 import { capturePublicInvocationAuth } from './public-invocation-auth-binding.js';
 import { capturePublicInvocationExecution } from './public-invocation-execution.js';
 
-/** Capture public identity before setup can yield; absence keeps the ordinary path unchanged. */
+/** Capture Host plugin identity before setup yields; unbound Task ports never enter ordinary execution. */
 export function capturePublicInvocationRegistration(deps: InvocationDeps, params: InvocationParams): InvocationParams {
-  if (params.publicInvocationBinding === undefined) return params;
+  if (params.publicInvocationBinding === undefined && params.pluginTaskBinding === undefined) {
+    if (params.pluginTaskExecution !== undefined) throw new Error('task_registration_binding_required');
+    return params;
+  }
+  if (
+    (params.pluginTaskBinding !== undefined &&
+      (params.publicInvocationBinding !== undefined || params.publicInvocationExecution !== undefined)) ||
+    (params.publicInvocationBinding !== undefined && params.pluginTaskExecution !== undefined)
+  )
+    throw new Error('plugin_registration_conflicting_execution');
   if (
     params.systemPrompt ||
     params.contextPromptFactory ||
@@ -21,16 +31,20 @@ export function capturePublicInvocationRegistration(deps: InvocationDeps, params
     throw new Error('public_registration_owner_context_forbidden');
   }
   const execution = capturePublicInvocationExecution(params.publicInvocationExecution);
-  const identity = capturePublicInvocationAuth({
-    userId: params.userId,
-    threadId: params.threadId,
-    catId: params.catId,
-    ownerAuthProvenance: params.ownerAuthProvenance,
-    a2aTriggerMessageId: params.a2aTriggerMessageId,
-    originTriggerMessageId: params.executionCausal?.triggerMessageId,
-    toolExecutionPolicy: params.toolExecutionPolicy,
-    publicInvocationBinding: params.publicInvocationBinding,
-  });
+  const taskExecution = capturePublicInvocationExecution(params.pluginTaskExecution);
+  const identity = capturePluginTaskInvocationAuth(
+    capturePublicInvocationAuth({
+      userId: params.userId,
+      threadId: params.threadId,
+      catId: params.catId,
+      ownerAuthProvenance: params.ownerAuthProvenance,
+      a2aTriggerMessageId: params.a2aTriggerMessageId,
+      originTriggerMessageId: params.executionCausal?.triggerMessageId,
+      toolExecutionPolicy: params.toolExecutionPolicy,
+      publicInvocationBinding: params.publicInvocationBinding,
+      pluginTaskBinding: params.pluginTaskBinding,
+    }),
+  );
   if (
     !deps.turnExecutionStore ||
     typeof deps.turnExecutionStore.createRunning !== 'function' ||
@@ -43,6 +57,8 @@ export function capturePublicInvocationRegistration(deps: InvocationDeps, params
   return {
     ...params,
     publicInvocationExecution: execution,
+    pluginTaskExecution: taskExecution,
+    pluginTaskBinding: identity.pluginTaskBinding,
     userId: identity.userId,
     threadId: identity.threadId,
     catId: identity.catId,

@@ -1315,6 +1315,8 @@ export interface AgentService {
 
   /** True only when this concrete carrier applies the requested policy before model launch. */
   supportsToolExecutionPolicy?(policy: ToolExecutionPolicy): boolean;
+  /** Host-bound Task sandbox only; never authorizes ordinary plugin_native calls. */
+  supportsPluginTaskLaunch?(): boolean;
 
   /** F254 D2: effective carrier capability for this concrete service instance. */
   freshnessCarrierCapability?(
