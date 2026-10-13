@@ -264,6 +264,8 @@ export interface RouteOptions {
   /** Execution-owned fan-out policy. Queue dequeue uses parallel fan-out for one source
    *  with multiple targets; ordinary routes retain their intent-derived default. */
   targetDispatchMode?: 'serial' | 'parallel' | undefined;
+  publicInvocationBinding?: import('../invocation/invoke-single-cat.js').InvocationParams['publicInvocationBinding'];
+  publicInvocationExecution?: import('../invocation/public-invocation-execution.js').PublicInvocationExecution;
   liveCompanion?: import('../../types.js').AgentServiceOptions['liveCompanion'];
   /** Route-owned intent plus whether the user explicitly selected it. */
   routeIntent?: AgentRouteIntent;

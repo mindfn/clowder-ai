@@ -10,7 +10,6 @@ function withMessagePublicationIndexes(
   return withUserMentionIndex(withUncertaintyIndex(script, hashKey, indexExpression), hashKey, newKeysExpression);
 }
 
-import { PUBLIC_OUTPUT_DISCOVERY_HELPERS_LUA } from './public-output-discovery-lua.js';
 /**
  * Lua scripts for the #1200 visibility index.
  *
@@ -86,7 +85,6 @@ export const MAX_BACKFILL_MEMBERS = 50_000;
  */
 export const APPEND_WITH_VISIBILITY_LUA = withMessagePublicationIndexes(
   `${QUEUE_ADMISSION_VERDICT_LUA}
-${PUBLIC_OUTPUT_DISCOVERY_HELPERS_LUA}
 local hash = KEYS[1]
 local kp = ARGV[1]
 local msgId = ARGV[2]
@@ -246,50 +244,8 @@ if not isQueued then
   end
 end
 
--- Public recovery is store-authored; validate every touched key before any write.
-local publicRecovery = false
-local publicReceipt = nil
-for i = 1, #hsetArgs, 2 do
-  if hsetArgs[i] == 'extra' and hsetArgs[i+1] ~= '' then
-    local extra = cjson.decode(hsetArgs[i+1])
-    publicRecovery = extra.publicOutputRecoveryV1 ~= nil
-    publicReceipt = extra.publicOutputV1
-  end
-end
-local discoveryKey = kp .. 'msg:public-output:discovery:' .. threadId
-local discoverySource, discoveryChild
-local recoverySeq = 0
-local recoveryIndex = kp .. 'msg:public-output:pending'
-local recoveryHwm = kp .. 'msg:public-output:hwm'
-if publicRecovery then
-  if type(publicReceipt) ~= 'table' or type(publicReceipt.sourceMessageId) ~= 'string' or type(publicReceipt.childInvocationId) ~= 'string' then return redis.error_reply('PUBLIC_OUTPUT_DISCOVERY_IDENTITY') end
-  if not outputIndexValid(discoveryKey) then return redis.error_reply('PUBLIC_OUTPUT_DISCOVERY_INDEX_INVALID') end
-  discoverySource, discoveryChild = outputPrefixes(userId, publicReceipt.sourceMessageId, publicReceipt.childInvocationId)
-  local function checkType(key, expected)
-    local actual = redis.call('TYPE', key).ok
-    return actual == 'none' or actual == expected
-  end
-  if not checkType(recoveryIndex, 'zset') or not checkType(recoveryHwm, 'string') then return redis.error_reply('PUBLIC_OUTPUT_RECOVERY_KEY_TYPE') end
-  local hwmRaw = redis.call('GET', recoveryHwm)
-  local hwm = 0
-  if hwmRaw then hwm = tonumber(hwmRaw) end
-  if hwm == nil or hwm ~= hwm or hwm < 0 or hwm ~= math.floor(hwm) or hwm >= 9007199254740991 then return redis.error_reply('PUBLIC_OUTPUT_RECOVERY_HWM') end
-  recoverySeq = hwm + 1
-  if score == nil or score ~= score or score == math.huge or score == -math.huge then return redis.error_reply('PUBLIC_OUTPUT_SCORE') end
-  local indexKeys = {kp .. 'msg:timeline', kp .. 'msg:user:' .. userId, kp .. 'msg:thread:' .. threadId, visKey}
-  for _, key in ipairs(indexKeys) do if not checkType(key, 'zset') then return redis.error_reply('PUBLIC_OUTPUT_TIMELINE_TYPE') end end
-  for _, cat in ipairs(mentions) do if not checkType(kp .. 'msg:mentions:' .. cat, 'zset') then return redis.error_reply('PUBLIC_OUTPUT_MENTION_TYPE') end end
-  if not checkType(metaKey, 'hash') then return redis.error_reply('PUBLIC_OUTPUT_VISIBILITY_TYPE') end
-end
-
 -- 2. Write message hash (all fields at once)
 redis.call('HSET', hash, unpack(hsetArgs))
-
-if publicRecovery then
-  redis.call('SET', recoveryHwm, string.format('%.0f', recoverySeq))
-  redis.call('ZADD', recoveryIndex, recoverySeq, msgId)
-  redis.call('ZADD', discoveryKey, 0, discoverySource .. msgId, 0, discoveryChild .. msgId)
-end
 
 -- 3. ZADDs: timeline, user, thread
 redis.call('ZADD', kp .. 'msg:timeline', score, msgId)

@@ -3,7 +3,6 @@ import { type CanonicalVisibilityCursor, compareCursors, cursorFor, parseCursor 
 import { type MessageDeliveryBoundary, parseMessageDeliveryBoundary } from '../../stores/message-delivery-boundary.js';
 import type { StoredMessage } from '../../stores/ports/MessageStore.js';
 import type { ITurnExecutionStore } from '../../stores/ports/TurnExecutionStore.js';
-import { committedPublicInvocationOutput, hasPublicInvocationOutput } from '../../stores/public-invocation-output.js';
 import { canViewMessage, isOwnerVisibleManagedHoldConnector } from '../../stores/visibility.js';
 
 interface Target {
@@ -46,7 +45,6 @@ function verifiedDeliveryProof(
   target: Target,
 ): MessageDeliveryBoundary | undefined {
   if (!isOwnReply(reply, target)) return undefined;
-  if (hasPublicInvocationOutput(reply.extra) && !committedPublicInvocationOutput(reply)) return undefined;
   const proof = parseMessageDeliveryBoundary(reply.extra?.deliveryBoundary);
   if (
     !proof ||
@@ -109,7 +107,6 @@ export async function legacyBatonHasSucceededReply(input: {
   for (const message of messages) {
     if (
       isOwnReply(message, target) &&
-      !hasPublicInvocationOutput(message.extra) &&
       !message.extra?.deliveryBoundary &&
       message.extra?.causal?.triggerMessageId === sourceMessageId &&
       (message.content.trim().length > 0 || (message.contentBlocks?.length ?? 0) > 0)

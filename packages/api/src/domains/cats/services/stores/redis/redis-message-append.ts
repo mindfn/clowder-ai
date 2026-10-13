@@ -1,4 +1,3 @@
-import { assertPublicOutputReplay, capturePublicOutputAppend } from '../public-invocation-output-append.js';
 import type { RedisClient } from '@cat-cafe/shared/utils';
 import type { AppendMessageInput, MessageAppendListener, StoredMessage } from '../ports/MessageStore.js';
 import { canonicalizeAppendMessageInput, DEFAULT_THREAD_ID, generateSortableId } from '../ports/MessageStore.js';
@@ -125,7 +124,7 @@ export async function appendMessage(input: {
   onAppend?: MessageAppendListener;
 }): Promise<StoredMessage> {
   const { redis, ttlSeconds, loadById, onAppend } = input;
-  const message = canonicalizeAppendMessageInput(capturePublicOutputAppend(input.message, false));
+  const message = canonicalizeAppendMessageInput(input.message);
 
   const threadId = message.threadId ?? DEFAULT_THREAD_ID;
   const id = generateSortableId(message.timestamp);
@@ -161,10 +160,9 @@ export async function appendMessage(input: {
     throw new Error(`message append lost stored message: ${returnedId}`);
   }
 
-  assertPublicOutputReplay(message, stored);
   if (kind === 'committed' && onAppend) {
     try {
-      void Promise.resolve(onAppend(structuredClone(stored))).catch(() => {});
+      void Promise.resolve(onAppend(stored)).catch(() => {});
     } catch {
       // best-effort thread-index projection
     }

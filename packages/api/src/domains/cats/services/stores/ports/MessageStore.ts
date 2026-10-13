@@ -1,36 +1,3 @@
-import { assertPublicOutputReplay, capturePublicOutputAppend } from '../public-invocation-output-append.js';
-import {
-  capturePublicOutputLookup,
-  type PublicOutputLookupInput,
-  type PublicOutputLookupResult,
-  publicOutputLookupPrefixes,
-  resolvePublicOutputLookup,
-} from '../public-invocation-output-discovery.js';
-import {
-  capturePublicOutputQuarantine,
-  capturePublicRecoveryCheckpoint,
-  capturePublicRecoveryPage,
-  createPublicOutputRecovery,
-  type PublicOutputQuarantineInput,
-  type PublicOutputQuarantineResult,
-  type PublicOutputRecoveryCheckpoint,
-  type PublicOutputRecoveryCheckpointInput,
-  type PublicOutputRecoveryCheckpointResult,
-  type PublicOutputRecoveryPage,
-  type PublicOutputRecoveryPageInput,
-  type PublicOutputRecoveryRead,
-  type PublicOutputRecoveryV1,
-  publicOutputSoftDeleteRecovery,
-  publicRecoveryCursor,
-  readPublicOutputRecoveryMessage,
-  resolvePublicOutputQuarantine,
-} from '../public-invocation-output-recovery.js';
-import {
-  capturePublicOutputTransition,
-  type PublicOutputTransitionInput,
-  type PublicOutputTransitionResult,
-  resolvePublicOutputTransition,
-} from '../public-invocation-output-terminal.js';
 /**
  * Message Store
  * 内存消息存储，供 MCP 回传工具 get_thread_context / get_pending_mentions 使用
@@ -83,7 +50,6 @@ import type { MessageDeliveryBoundary } from '../message-delivery-boundary.js';
 import { messageFrom } from '../message-from.js';
 import { notifyMessageTimelineChange } from '../notify-message-timeline-change.js';
 import { type UserMentionHandlingMetadata, UserMentionIndex } from '../user-mention-index.js';
-import { hasPublicInvocationOutput, type PublicInvocationOutputV1 } from '../public-invocation-output.js';
 import {
   getTimelineOrderTime,
   isDurableOwnerReadEvidence,
@@ -414,11 +380,6 @@ export interface StoredMessage {
     };
     /** #1371: immutable prompt boundary written with initial formal output; generic patches cannot replace it. */
     deliveryBoundary?: MessageDeliveryBoundary;
-    /** Append-owned public identity; null preserves a malformed durable marker fail-closed.
-     * Presence cannot be added/removed by patches; terminal transitions need their dedicated CAS. */
-    publicOutputV1?: PublicInvocationOutputV1 | null;
-    /** Store-owned recovery control plane; malformed presence remains fail-closed. */
-    publicOutputRecoveryV1?: PublicOutputRecoveryV1 | null;
     /** F272: one canonical home message projected from a durable proactive visit. */
     proactive?: { visitId: string; intentId: string; source: 'private_time' };
     /** F287: server-written connector carrier; QueueProcessor still revalidates source + entry origin. */
@@ -1962,8 +1923,6 @@ export function mergeMessageExtra(
     evolutionPreparationSubmissionV1: _stripPreparation,
     dotAsk: _stripDotAsk,
     deliveryBoundary: _stripBoundary,
-    publicOutputV1: _stripPublicOutput,
-    publicOutputRecoveryV1: _stripPublicRecovery,
     ...incomingHost
   } = incoming ?? {};
   const merged = { ...(existing ?? {}), ...incomingHost };
@@ -1989,7 +1948,6 @@ export function mergeStoredToolEvents(
 }
 
 export function applyStreamMetadataAugment(msg: StoredMessage, patch: StreamMetadataAugmentInput): StoredMessage {
-  if (hasPublicInvocationOutput(msg.extra)) return msg;
   if (patch.thinking && patch.thinking.trim().length > 0) {
     msg.thinking = patch.thinking;
   }
@@ -2269,30 +2227,6 @@ export interface IMessageStore {
     id: string,
     input: CustodyOfferTransitionInput,
   ): CustodyOfferTransitionResult | Promise<CustodyOfferTransitionResult>;
-  scanPendingPublicInvocationOutputs(
-    input: PublicOutputRecoveryPageInput,
-  ): PublicOutputRecoveryPage | Promise<PublicOutputRecoveryPage>;
-  retireMissingPublicInvocationOutput(id: string): boolean | Promise<boolean>;
-  readPublicInvocationOutputRecovery(id: string): PublicOutputRecoveryRead | Promise<PublicOutputRecoveryRead>;
-  /** Exact append-owned discovery; terminal/quarantined outputs remain indexed. No history scan. */
-  findPublicInvocationOutput(
-    input: PublicOutputLookupInput,
-  ): PublicOutputLookupResult | Promise<PublicOutputLookupResult>;
-  quarantinePublicInvocationOutput(
-    id: string,
-    input: PublicOutputQuarantineInput,
-  ): PublicOutputQuarantineResult | Promise<PublicOutputQuarantineResult>;
-  getPublicInvocationOutputRecoveryCheckpoint():
-    | PublicOutputRecoveryCheckpoint
-    | Promise<PublicOutputRecoveryCheckpoint>;
-  advancePublicInvocationOutputRecoveryCheckpoint(
-    input: PublicOutputRecoveryCheckpointInput,
-  ): PublicOutputRecoveryCheckpointResult | Promise<PublicOutputRecoveryCheckpointResult>;
-  /** Exact pending output to a terminal receipt; caller owns child/auth authority verification. */
-  transitionPublicInvocationOutput(
-    id: string,
-    input: PublicOutputTransitionInput,
-  ): PublicOutputTransitionResult | Promise<PublicOutputTransitionResult>;
   /** F288: replace only the canonical plugin payload, independently of host extra metadata. */
   updatePluginMessage(
     id: string,
@@ -2374,16 +2308,6 @@ export interface IMessageStore {
    * because 'v' > any digit makes v1 permanently lose the lex comparison.
    */
   canonicalizeCursor?(messageId: string, threadId: string): string | Promise<string>;
-}
-
-/** The bounded memory adapter cannot accept more work until a retained pending output settles. */
-export class PublicOutputCapacityError extends Error {
-  readonly code = 'PUBLIC_OUTPUT_CAPACITY';
-
-  constructor() {
-    super('Message store capacity is exhausted by retained public output; retry after recovery or deletion');
-    this.name = 'PublicOutputCapacityError';
-  }
 }
 
 /** Max messages to keep in memory */
@@ -2622,11 +2546,6 @@ export class MessageStore {
       ...(end < upperBound ? { nextCursor: { offset: end, upperBound } } : {}),
     };
   }
-  private publicRecoverySeq = 0;
-  private readonly publicRecoveryIndex = new Map<string, number>();
-  private publicRecoveryCheckpoint: PublicOutputRecoveryCheckpoint = { revision: 0, cursor: null };
-  private publicOutputDiscovery = new Map<string, Set<string>>();
-  private publicOutputDiscoveryById = new Map<string, readonly string[]>();
   private readonly maxMessages: number;
   private readonly idempotencyIndex = new Map<string, string>();
   /** F102 KD-34: Listener called after every successful append (fire-and-forget) */
@@ -2648,9 +2567,6 @@ export class MessageStore {
     onAppend?: MessageAppendListener;
   }) {
     this.maxMessages = options?.maxMessages ?? MAX_MESSAGES;
-    if (!Number.isSafeInteger(this.maxMessages) || this.maxMessages < 0) {
-      throw new RangeError('maxMessages must be a finite nonnegative safe integer');
-    }
     this.onAppend = options?.onAppend;
   }
 
@@ -2662,15 +2578,6 @@ export class MessageStore {
   private pruneIdempotencyIndexForMessageIds(messageIds: readonly string[]): void {
     if (messageIds.length === 0) return;
     const removedIds = new Set(messageIds);
-    for (const id of removedIds) {
-      this.publicRecoveryIndex.delete(id);
-      for (const key of this.publicOutputDiscoveryById.get(id) ?? []) {
-        const members = this.publicOutputDiscovery.get(key);
-        members?.delete(id);
-        if (members?.size === 0) this.publicOutputDiscovery.delete(key);
-      }
-      this.publicOutputDiscoveryById.delete(id);
-    }
     for (const [key, value] of this.idempotencyIndex.entries()) {
       if (removedIds.has(value)) {
         this.idempotencyIndex.delete(key);
@@ -2686,32 +2593,6 @@ export class MessageStore {
     }
     message.visibilitySeq = this.visibilitySeq.get(message.id);
     this.userMentionIndex.observe(message);
-  }
-
-  /** Select evictions without mutation. Unknown public proof remains pinned, never silently lost. */
-  private selectAppendEvictions(): string[] {
-    const needed = this.messages.length + 1 - this.maxMessages;
-    if (needed <= 0) return [];
-    const ids: string[] = [];
-    for (const message of this.messages) {
-      let reclaimable: boolean =
-        !hasPublicInvocationOutput(message.extra) || message.deletedAt !== undefined || message._tombstone === true;
-      if (!reclaimable) {
-        const recovery = readPublicOutputRecoveryMessage(message);
-        reclaimable = recovery.kind === 'terminal' || recovery.kind === 'quarantined';
-      }
-      if (reclaimable) ids.push(message.id);
-      if (ids.length === needed) return ids;
-    }
-    throw new PublicOutputCapacityError();
-  }
-
-  private evictAppendCandidates(ids: readonly string[]): void {
-    if (ids.length === 0) return;
-    const removed = new Set(ids);
-    this.messages = this.messages.filter((message) => !removed.has(message.id));
-    this.pruneIdempotencyIndexForMessageIds(ids);
-    for (const id of ids) this.visibilitySeq.delete(id);
   }
 
   /**
@@ -2903,7 +2784,7 @@ export class MessageStore {
     reservedId?: string,
     options?: { deferVisibility?: boolean },
   ): StoredMessage {
-    const normalizedMessage = canonicalizeAppendMessageInput(capturePublicOutputAppend(msg));
+    const normalizedMessage = canonicalizeAppendMessageInput(msg);
     const threadId = normalizedMessage.threadId ?? DEFAULT_THREAD_ID;
     const idempotencyIndexKey = this.buildIdempotencyIndexKey(
       normalizedMessage.userId,
@@ -2915,9 +2796,9 @@ export class MessageStore {
       if (existingId) {
         const existing = this.getById(existingId);
         if (existing) {
-          assertPublicOutputReplay(normalizedMessage, existing);
           return existing;
         }
+        this.idempotencyIndex.delete(idempotencyIndexKey);
       }
     }
 
@@ -2927,39 +2808,11 @@ export class MessageStore {
     reservedId ??= mediaReservedId;
     if (reservedId !== undefined && this.getById(reservedId)) throw new Error('reserved message id collision');
     void idempotencyKey;
-    if (reservedId !== undefined && !/^\d{16}-\d{6,}-[0-9a-f]{8}$/.test(reservedId)) {
-      throw new TypeError('reserved message id has invalid shape');
-    }
-    const evictions = this.selectAppendEvictions();
     const stored: StoredMessage = {
       ...payload,
       id: reservedId ?? generateSortableId(normalizedMessage.timestamp),
       threadId,
     };
-    if (hasPublicInvocationOutput(stored.extra)) {
-      if (this.publicRecoverySeq >= Number.MAX_SAFE_INTEGER) throw new Error('Public recovery sequence exhausted');
-      stored.extra = { ...stored.extra, publicOutputRecoveryV1: createPublicOutputRecovery(normalizedMessage) };
-    }
-    const receipt = stored.extra?.publicOutputV1;
-    const discoveryKeys = receipt
-      ? publicOutputLookupPrefixes(
-          capturePublicOutputLookup({
-            userId: stored.userId,
-            threadId,
-            sourceMessageId: receipt.sourceMessageId,
-            childInvocationId: receipt.childInvocationId,
-          }),
-        ).map((prefix) => JSON.stringify([threadId, prefix]))
-      : [];
-    // Preparation above can fail; no message or index changes occur until it completes.
-    this.evictAppendCandidates(evictions);
-    if (hasPublicInvocationOutput(stored.extra)) this.publicRecoveryIndex.set(stored.id, ++this.publicRecoverySeq);
-    for (const key of discoveryKeys) {
-      const ids = this.publicOutputDiscovery.get(key) ?? new Set<string>();
-      ids.add(stored.id);
-      this.publicOutputDiscovery.set(key, ids);
-    }
-    if (discoveryKeys.length) this.publicOutputDiscoveryById.set(stored.id, discoveryKeys);
     this.messages.push(stored);
     if (idempotencyIndexKey) {
       this.idempotencyIndex.set(idempotencyIndexKey, stored.id);
@@ -2980,21 +2833,33 @@ export class MessageStore {
     }
     this.userMentionIndex.observe(stored);
 
+    // Trim oldest if over capacity
+    if (this.messages.length > this.maxMessages) {
+      const removed = this.messages.slice(0, this.messages.length - this.maxMessages);
+      this.messages = this.messages.slice(-this.maxMessages);
+      const removedIds = removed.map((entry) => entry.id);
+      this.pruneIdempotencyIndexForMessageIds(removedIds);
+      // #1200: Clean visibility entries for trimmed messages
+      for (const id of removedIds) {
+        this.visibilitySeq.delete(id);
+      }
+    }
+
     // F102 KD-34: fire-and-forget append listener for thread index updates
     // P2 fix: try-catch handles sync throws; Promise.resolve handles async rejections
     if (this.onAppend) {
       try {
-        void Promise.resolve(this.onAppend(structuredClone(stored))).catch(() => {});
+        void Promise.resolve(this.onAppend(stored)).catch(() => {});
       } catch {
         /* best-effort */
       }
     }
 
-    return structuredClone(stored);
+    return stored;
   }
 
   appendIdempotent(msg: AppendMessageInput): IdempotentAppendResult {
-    const normalizedMessage = structuredClone(normalizeJsonUnicode(capturePublicOutputAppend(msg)));
+    const normalizedMessage = normalizeJsonUnicode(msg);
     assertValidAppendMessageInput(normalizedMessage);
     if (normalizedMessage.idempotencyKey) {
       const existing = this.getByIdempotencyKey(
@@ -3002,7 +2867,7 @@ export class MessageStore {
         messageIdempotencyScope(normalizedMessage),
         normalizedMessage.idempotencyKey,
       );
-      if (existing) { assertPublicOutputReplay(normalizedMessage, existing); return { message: existing, idempotent: true }; }
+      if (existing) return { message: existing, idempotent: true };
     }
     return { message: this.append(normalizedMessage), idempotent: false };
   }
@@ -3024,7 +2889,7 @@ export class MessageStore {
   }
 
   appendAndObservePriorFrontier(msg: AppendMessageInput): ThreadObservedAppendResult {
-    const normalizedMessage = structuredClone(normalizeJsonUnicode(capturePublicOutputAppend(msg, false)));
+    const normalizedMessage = normalizeJsonUnicode(msg);
     assertValidAppendMessageInput(normalizedMessage);
     const threadId = normalizedMessage.threadId ?? DEFAULT_THREAD_ID;
     if (normalizedMessage.idempotencyKey) {
@@ -3034,7 +2899,6 @@ export class MessageStore {
         normalizedMessage.idempotencyKey,
       );
       if (existing) {
-        assertPublicOutputReplay(normalizedMessage, existing);
         const freshness = existing.extra?.freshness;
         return {
           kind: 'committed',
@@ -3063,8 +2927,7 @@ export class MessageStore {
    * Get a single message by its ID. Returns null if not found.
    */
   getById(id: string): StoredMessage | null {
-    const message = this.messages.find((m) => m.id === id);
-    return message ? structuredClone(message) : null;
+    return this.messages.find((m) => m.id === id) ?? null;
   }
 
   getPawFeelSourceProjections(ids: readonly string[]): Map<string, PawFeelSourceProjectionRead> {
@@ -3189,7 +3052,7 @@ export class MessageStore {
       if (userId && msg.userId !== userId) continue;
       matches.push(msg);
     }
-    return matches.reverse().map((message) => structuredClone(message));
+    return matches.reverse();
   }
 
   listOwnerMessagesInWindow(
@@ -3212,8 +3075,7 @@ export class MessageStore {
       .sort((left, right) => {
         const timelineDelta = getTimelineOrderTime(left) - getTimelineOrderTime(right);
         return timelineDelta || left.id.localeCompare(right.id);
-      })
-      .map((message) => structuredClone(message));
+      });
   }
 
   listOwnerMessageWindowSlice(
@@ -3263,9 +3125,9 @@ export class MessageStore {
     visible.sort((a, b) => (a.seq !== b.seq ? a.seq - b.seq : a.msg.id < b.msg.id ? -1 : 1));
 
     // Apply cursor filter using visibility ordering (not raw-ID lex)
-    if (!afterMessageId) return visible.slice(0, n).map((v) => structuredClone(v.msg));
+    if (!afterMessageId) return visible.slice(0, n).map((v) => v.msg);
     const cursor = parseCursor(afterMessageId);
-    if (!cursor) return visible.slice(0, n).map((v) => structuredClone(v.msg));
+    if (!cursor) return visible.slice(0, n).map((v) => v.msg);
 
     let afterSeq: number | null = null;
     if (cursor.version === 2) {
@@ -3274,10 +3136,10 @@ export class MessageStore {
       afterSeq = this.visibilitySeq.get(cursor.id) ?? null;
     }
 
-    if (afterSeq === null) return visible.slice(0, n).map((v) => structuredClone(v.msg)); // pruned → full scan
+    if (afterSeq === null) return visible.slice(0, n).map((v) => v.msg); // pruned → full scan
     const startIdx = visible.findIndex((v) => v.seq > afterSeq! || (v.seq === afterSeq! && v.msg.id > cursor.id));
     if (startIdx === -1) return [];
-    return visible.slice(startIdx, startIdx + n).map((v) => structuredClone(v.msg));
+    return visible.slice(startIdx, startIdx + n).map((v) => v.msg);
   }
 
   /**
@@ -3302,7 +3164,7 @@ export class MessageStore {
       }
     }
 
-    return matches.reverse().map((message) => structuredClone(message));
+    return matches.reverse();
   }
 
   /**
@@ -3337,7 +3199,7 @@ export class MessageStore {
     }
 
     // Reverse so oldest first
-    return matches.reverse().map((message) => structuredClone(message));
+    return matches.reverse();
   }
 
   getOwnerBeforeBounded(
@@ -3402,7 +3264,7 @@ export class MessageStore {
       if (userId && msg.userId !== userId && !isSystemUserMessage(msg)) continue;
       matches.push(msg);
     }
-    return matches.reverse().map((message) => structuredClone(message));
+    return matches.reverse();
   }
 
   getByThreadIncludingQueued(threadId: string, limit?: number, userId?: string): StoredMessage[] {
@@ -3421,7 +3283,7 @@ export class MessageStore {
       if (userId && msg.userId !== userId && !isSystemUserMessage(msg)) continue;
       matches.push(msg);
     }
-    return matches.reverse().map((message) => structuredClone(message));
+    return matches.reverse();
   }
 
   /**
@@ -3468,7 +3330,7 @@ export class MessageStore {
       }
       const projectVisibilitySeq = (message: StoredMessage): StoredMessage => {
         const seq = this.visibilitySeq.get(message.id);
-        return structuredClone(seq === undefined ? message : { ...message, visibilitySeq: seq });
+        return seq === undefined ? message : { ...message, visibilitySeq: seq };
       };
       if (!cursor) return ordered.slice(0, max).map(projectVisibilitySeq);
       const cursorIndex = ordered.findIndex((message) => message.id === cursor.id);
@@ -3510,20 +3372,20 @@ export class MessageStore {
       throw error;
     }
     if (!cursor) {
-      return visible.slice(0, max).map((v) => structuredClone(v.msg));
+      return visible.slice(0, max).map((v) => v.msg);
     }
 
     if (cursor.version === 2) {
       // v2: direct (seq, id) pair comparison — skip linear ID search
       const startIdx = visible.findIndex((v) => v.seq > cursor.seq || (v.seq === cursor.seq && v.msg.id > cursor.id));
       if (startIdx === -1) return [];
-      return visible.slice(startIdx, startIdx + max).map((v) => structuredClone(v.msg));
+      return visible.slice(startIdx, startIdx + max).map((v) => v.msg);
     }
 
     // v1: find cursor position by exact ID match
     const cursorIdx = visible.findIndex((v) => v.msg.id === cursor.id);
     if (cursorIdx >= 0) {
-      return visible.slice(cursorIdx + 1, cursorIdx + 1 + max).map((v) => structuredClone(v.msg));
+      return visible.slice(cursorIdx + 1, cursorIdx + 1 + max).map((v) => v.msg);
     }
 
     if (options?.unresolvedCursorPolicy === 'empty') return [];
@@ -3533,7 +3395,7 @@ export class MessageStore {
     // (lex-ID ordering disease). A far-future message that is later pruned would
     // permanently hide all normally-timestamped messages. Redis rescans from start
     // for pruned cursors; Memory must do the same for FM-4 parity.
-    return visible.slice(0, max).map((v) => structuredClone(v.msg));
+    return visible.slice(0, max).map((v) => v.msg);
   }
 
   /**
@@ -3626,7 +3488,7 @@ export class MessageStore {
       }
       matches.push(msg);
     }
-    return matches.reverse().map((message) => structuredClone(message));
+    return matches.reverse();
   }
 
   getByThreadBeforeBounded(
@@ -3664,7 +3526,7 @@ export class MessageStore {
       : undefined;
 
     return {
-      messages: messages.reverse().map((message) => structuredClone(message)),
+      messages: messages.reverse(),
       scannedCount: rawCandidates.length,
       storageRoundTrips: 0,
       exhausted: rawCandidates.length >= this.messages.length,
@@ -3695,11 +3557,7 @@ export class MessageStore {
   softDelete(id: string, deletedBy: string): StoredMessage | null {
     const msg = this.messages.find((m) => m.id === id);
     if (!msg) return null;
-    const now = Date.now();
-    const recovery = publicOutputSoftDeleteRecovery(msg, now);
-    if (recovery) msg.extra = { ...msg.extra, publicOutputRecoveryV1: recovery };
-    this.publicRecoveryIndex.delete(id);
-    msg.deletedAt = now;
+    msg.deletedAt = Date.now();
     msg.deletedBy = deletedBy;
     notifyMessageTimelineChange(this, msg);
     return msg;
@@ -3767,9 +3625,7 @@ export class MessageStore {
    */
   updateExtra(id: string, extra: HostMessageExtra): StoredMessage | null {
     const msg = this.messages.find((m) => m.id === id);
-    if (!msg || msg.recall || msg._tombstone || hasPublicInvocationOutput(msg.extra)) return null;
-    // Strip pluginMessage to prevent bypassing updatePluginMessage()'s
-    // revision check — matches Redis store behaviour (codex P2 fix).
+    if (!msg || msg.recall || msg._tombstone) return null;
     const {
       pluginMessage: _stripPlugin,
       custodyOfferV1: _stripCustody,
@@ -3777,12 +3633,10 @@ export class MessageStore {
       evolutionPreparationSubmissionV1: _stripPreparation,
       dotAsk: _stripDotAsk,
       deliveryBoundary: _stripBoundary,
-      publicOutputV1: _stripPublicOutput,
-      publicOutputRecoveryV1: _stripPublicRecovery,
       ...hostOnly
     } = extra as Record<string, unknown>;
     msg.extra = { ...msg.extra, ...hostOnly };
-    return structuredClone(msg);
+    return msg;
   }
 
   compareAndTransitionCustodyOffer(id: string, input: CustodyOfferTransitionInput): CustodyOfferTransitionResult {
@@ -3807,73 +3661,7 @@ export class MessageStore {
     }
     const nextOffer = custodyOfferV1Schema.parse(input.nextOffer);
     msg.extra = { ...msg.extra, custodyOfferV1: nextOffer };
-    return { kind: 'updated', message: structuredClone(msg) };
-  }
-
-  scanPendingPublicInvocationOutputs(input: PublicOutputRecoveryPageInput): PublicOutputRecoveryPage {
-    const { afterSeq, limit } = capturePublicRecoveryPage(input);
-    const all = [...this.publicRecoveryIndex].filter(([, seq]) => seq > afterSeq).sort((a, b) => a[1] - b[1]);
-    const rows = all.slice(0, limit);
-    return {
-      ids: rows.map(([id]) => id),
-      ...(rows.length ? { nextCursor: publicRecoveryCursor(rows[rows.length - 1]![1]) } : {}),
-      exhausted: all.length <= limit,
-    };
-  }
-  retireMissingPublicInvocationOutput(id: string): boolean {
-    if (this.messages.some((message) => message.id === id)) return false;
-    return this.publicRecoveryIndex.delete(id);
-  }
-  findPublicInvocationOutput(input: PublicOutputLookupInput): PublicOutputLookupResult {
-    const captured = capturePublicOutputLookup(input);
-    const members = publicOutputLookupPrefixes(captured).map((prefix) => {
-      const ids = this.publicOutputDiscovery.get(JSON.stringify([captured.threadId, prefix]));
-      // Consume only the first two values even if many duplicate outputs were appended.
-      const found: string[] = [];
-      if (ids)
-        for (const id of ids) {
-          found.push(prefix + id);
-          if (found.length === 2) break;
-        }
-      return found;
-    });
-    return resolvePublicOutputLookup(captured, members);
-  }
-  readPublicInvocationOutputRecovery(id: string): PublicOutputRecoveryRead {
-    return readPublicOutputRecoveryMessage(this.getById(id));
-  }
-  getPublicInvocationOutputRecoveryCheckpoint(): PublicOutputRecoveryCheckpoint {
-    return { ...this.publicRecoveryCheckpoint };
-  }
-  advancePublicInvocationOutputRecoveryCheckpoint(
-    input: PublicOutputRecoveryCheckpointInput,
-  ): PublicOutputRecoveryCheckpointResult {
-    const row = capturePublicRecoveryCheckpoint(input);
-    if (this.publicRecoveryCheckpoint.revision !== row.expectedRevision)
-      return { kind: 'conflict', checkpoint: this.getPublicInvocationOutputRecoveryCheckpoint() };
-    this.publicRecoveryCheckpoint = { revision: row.expectedRevision + 1, cursor: row.cursor };
-    return { kind: 'updated', checkpoint: this.getPublicInvocationOutputRecoveryCheckpoint() };
-  }
-  quarantinePublicInvocationOutput(id: string, input: PublicOutputQuarantineInput): PublicOutputQuarantineResult {
-    const captured = capturePublicOutputQuarantine(id, input);
-    const current = this.messages.find((message) => message.id === id) ?? null;
-    const result = resolvePublicOutputQuarantine(current, captured, Date.now());
-    if (result.kind === 'updated' && current) {
-      current.extra = structuredClone(result.message.extra);
-      this.publicRecoveryIndex.delete(id);
-    }
-    return result;
-  }
-
-  transitionPublicInvocationOutput(id: string, input: PublicOutputTransitionInput): PublicOutputTransitionResult {
-    const captured = capturePublicOutputTransition(id, input);
-    const current = this.messages.find((message) => message.id === id) ?? null;
-    const result = resolvePublicOutputTransition(current, captured);
-    if (result.kind === 'updated' && current) {
-      current.extra = structuredClone(result.message.extra);
-      this.publicRecoveryIndex.delete(id);
-    }
-    return result;
+    return { kind: 'updated', message: msg };
   }
 
   updatePluginMessage(id: string, pluginMessage: StoredPluginMessage, expectedRevision: number): StoredMessage | null {
@@ -3881,12 +3669,12 @@ export class MessageStore {
     if (!msg) return null;
     if (msg.extra?.pluginMessage?.revision !== expectedRevision) return null;
     msg.extra = { ...msg.extra, pluginMessage };
-    return structuredClone(msg);
+    return msg;
   }
 
   augmentStreamMetadata(id: string, patch: StreamMetadataAugmentInput): StoredMessage | null {
     const msg = this.messages.find((m) => m.id === id);
-    if (!msg || hasPublicInvocationOutput(msg.extra)) return null;
+    if (!msg) return null;
     const updated = applyStreamMetadataAugment(msg, patch);
     this.userMentionIndex.observe(updated);
     if (patch.mentionsUser) notifyMessageTimelineChange(this, updated);
@@ -4148,14 +3936,14 @@ export class MessageStore {
     if (msg.deliveryStatus === 'queued') return { kind: 'existing', message: { ...msg } };
     if (msg.deliveryStatus !== undefined) return { kind: 'conflict' };
     msg.deliveryStatus = 'queued';
-    return { kind: 'prepared', message: structuredClone(msg) };
+    return { kind: 'prepared', message: { ...msg } };
   }
 
   /** F117: CAS transition queued → canceled; non-queued messages return an applied=false receipt. */
   markCanceled(id: string): MarkCanceledResult | null {
     const msg = this.messages.find((m) => m.id === id);
     if (!msg) return null;
-    if (msg.deliveryStatus !== 'queued') return { ...structuredClone(msg), deliveryTransitioned: false };
+    if (msg.deliveryStatus !== 'queued') return { ...msg, deliveryTransitioned: false };
     msg.deliveryStatus = 'canceled';
     // A canceled response is the member-owned terminal surface. Queued source
     // work remains hidden, but removing a response from the visibility index

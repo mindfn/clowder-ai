@@ -1,4 +1,3 @@
-import { parsePublicOutputRecovery } from '../public-invocation-output-recovery.js';
 /**
  * Redis message field parsers — 从 RedisMessageStore 拆出的纯函数
  *
@@ -52,7 +51,6 @@ import { liveResultNoticeSchema, liveReturnProjectionSchema } from '../live-resu
 import { parseMessageDeliveryBoundary } from '../message-delivery-boundary.js';
 import { MessageRecallMarker, StoredMessage, StoredPluginMessage, StoredToolEvent } from '../ports/MessageStore.js';
 import type { TurnExecutionMessageProjection } from '../ports/TurnExecutionStore.js';
-import { hasPublicInvocationOutput, parsePublicInvocationOutput } from '../public-invocation-output.js';
 import { parseRecoveryMarker } from './redis-message-recovery-parser.js';
 
 export function safeParseMessageFrom(raw: string | undefined | null): MessageFrom | undefined {
@@ -267,8 +265,6 @@ type ExtraCarrierPersistence = ExtraCarrierPersistenceClassification<{
   causal: 'parsed';
   dotAsk: 'parsed';
   deliveryBoundary: 'parsed';
-  publicOutputV1: 'parsed';
-  publicOutputRecoveryV1: 'parsed';
   proactive: 'parsed';
   memoryCue: 'parsed';
   turnExecution: 'parsed';
@@ -692,15 +688,6 @@ export function safeParseExtra(raw: string | undefined): StoredMessage['extra'] 
       hasField = true;
     }
 
-    if (Object.hasOwn(parsed, 'publicOutputRecoveryV1')) {
-      result.publicOutputRecoveryV1 = parsePublicOutputRecovery(parsed.publicOutputRecoveryV1) ?? null;
-      hasField = true;
-    }
-    if (Object.hasOwn(parsed, 'publicOutputV1')) {
-      result.publicOutputV1 = parsePublicInvocationOutput(parsed.publicOutputV1) ?? null;
-      hasField = true;
-    }
-
     const deliveryBoundary = parseMessageDeliveryBoundary(parsed.deliveryBoundary);
     if (deliveryBoundary) {
       result.deliveryBoundary = deliveryBoundary;
@@ -1001,11 +988,8 @@ export function safeParsePawFeelSourceExtra(raw: string | undefined): PawFeelSou
  * to stay within AC-F6 100-byte budget per pointer.
  */
 export function serializeExtra(extra: NonNullable<StoredMessage['extra']>): string {
-  const normalized = hasPublicInvocationOutput(extra)
-    ? { ...extra, publicOutputV1: parsePublicInvocationOutput(extra.publicOutputV1) ?? null }
-    : extra;
-  const { tracing, ...rest } = normalized;
-  if (!tracing) return JSON.stringify(normalized);
+  const { tracing, ...rest } = extra;
+  if (!tracing) return JSON.stringify(extra);
   const compact: Record<string, string> = { t: tracing.traceId, s: tracing.spanId };
   if (tracing.parentSpanId) compact.p = tracing.parentSpanId;
   return JSON.stringify({ ...rest, tracing: compact });

@@ -125,8 +125,6 @@ import {
 import { InvocationTracker } from './domains/cats/services/agents/invocation/InvocationTracker.js';
 import { emitLifecycleMessageUpdated } from './domains/cats/services/agents/invocation/lifecycle-message-update.js';
 import type { NativeControlReceiptPort } from './domains/cats/services/agents/invocation/NativeControlReceipt.js';
-import { PublicInvocationOutputCommitCoordinator } from './domains/cats/services/agents/invocation/PublicInvocationOutputCommitCoordinator.js';
-import { PublicOutputRecoveryService } from './domains/cats/services/agents/invocation/PublicOutputRecoveryService.js';
 import type {
   InvocationRecordStoreLike,
   RouterLike,
@@ -145,10 +143,6 @@ import {
   createSidebarPresenceSource,
   type SidebarTerminalExecution,
 } from './domains/cats/services/agents/invocation/sidebar-presence-source.js';
-import {
-  recoverTerminalProofs,
-  TerminalProofRecoveryBarrier,
-} from './domains/cats/services/agents/invocation/TerminalProofRecoveryBarrier.js';
 import {
   listenBeforeTurnExecutionRecovery,
   TurnExecutionStartupReconciler,
@@ -931,7 +925,6 @@ async function main(): Promise<void> {
           onLifecycleSignal: onCallbackAuthLifecycleSignal,
         });
   const turnExecutionStore = new CallbackAuthTurnExecutionLifecycle(canonicalTurnExecutionStore, registry);
-  const terminalProofBarrier = new TerminalProofRecoveryBarrier();
   callbackAuthCapability = callbackAuthCapabilityForBackend(registryBackendKind);
   sessionHookAuthenticationReady = () => registry.isStartupRecoveryComplete();
   app.log.info({ callbackAuth: callbackAuthCapability }, '[api] InvocationRegistry initialized');
@@ -1014,17 +1007,6 @@ async function main(): Promise<void> {
         '[messaging] publish failed; subscribers will not see this message',
       );
     },
-  });
-  const publicOutputRecovery = new PublicOutputRecoveryService({
-    messageStore,
-    coordinator: new PublicInvocationOutputCommitCoordinator({
-      messageStore,
-      turnExecutionStore: canonicalTurnExecutionStore,
-      registry,
-      proofBarrier: terminalProofBarrier,
-    }),
-    authLifecycle: turnExecutionStore,
-    proofBarrier: terminalProofBarrier,
   });
   const runtimeInteractionRuntime = await createRuntimeInteractionRuntime({
     ...(redis ? { redis } : {}),
@@ -2697,8 +2679,10 @@ async function main(): Promise<void> {
     messageStore,
     observationProvider: runtimeDeploymentContext?.provider ?? { observe: async () => null },
   });
+  const { createPublicQueueExecution } = await import('./domains/plugin/carrier/public-queue-execution.js');
   const queueProcessor = new QueueProcessor(
     {
+      publicInvocationExecution: createPublicQueueExecution(registry, () => pluginRuntime.supervisor),
       queue: invocationQueue,
       liveCompanionSessions,
       invocationTracker,
@@ -6713,14 +6697,6 @@ async function main(): Promise<void> {
     await agentKeySidecarRenewalLoop?.stop();
   });
 
-  let publicOutputRecoveryTimer: ReturnType<typeof setInterval> | null = null;
-  let publicOutputRecoveryTick: Promise<void> | null = null;
-  app.addHook('onClose', async () => {
-    if (publicOutputRecoveryTimer) clearInterval(publicOutputRecoveryTimer);
-    publicOutputRecoveryTimer = null;
-    await publicOutputRecoveryTick;
-  });
-
   let runtimeSessionSealReaperTimer: ReturnType<typeof setInterval> | null = null;
   app.addHook('onClose', async () => {
     if (runtimeSessionSealReaperTimer) {
@@ -6791,10 +6767,8 @@ async function main(): Promise<void> {
         return listening;
       },
       recover: async () => {
-        const { authRecovery, childRecovery } = await recoverTerminalProofs({
-          barrier: terminalProofBarrier,
-          reconcileAuth: () => turnExecutionStore.reconcileStartup({ processStartedAt: PROCESS_START_AT }),
-          reconcileChildren: async () => {
+        if (!redis) return;
+        const authRecovery = await turnExecutionStore.reconcileStartup({ processStartedAt: PROCESS_START_AT });
         const liveExecutionOwners = await cliExecutionOwnerService.listLive();
         const childReconciler = new TurnExecutionStartupReconciler({
           store: turnExecutionStore,
@@ -6819,15 +6793,6 @@ async function main(): Promise<void> {
             '[api] Preserved prior running TurnExecutions because external process liveness was unknown',
           );
         }
-        return childRecovery;
-          },
-        });
-        const outputRecovery = await publicOutputRecovery.sweep({ limit: 100 });
-        app.log.info(
-          { kind: outputRecovery.kind, processed: outputRecovery.outcomes.length },
-          '[api] Public output startup recovery page completed',
-        );
-        if (!redis) return;
         const { StartupReconciler } = await import('./domains/cats/services/agents/invocation/StartupReconciler.js');
         const reconciler = new StartupReconciler({
           invocationRecordStore,
@@ -6866,31 +6831,6 @@ async function main(): Promise<void> {
   } catch (err) {
     await apiInstanceLease?.release().catch(() => {});
     throw err;
-  }
-  // Single bounded page per tick, with a persistent store checkpoint across restarts.
-  // Never overlap ticks; the worker also fences independently invoked sweeps.
-  if (terminalProofBarrier.isReady()) {
-    publicOutputRecoveryTimer = setInterval(() => {
-      if (publicOutputRecoveryTick) return;
-      publicOutputRecoveryTick = publicOutputRecovery
-        .sweep({ limit: 100 })
-        .then((result) => {
-          if (
-            result.kind !== 'completed' ||
-            result.outcomes.some((row) => row.kind === 'malformed' || row.kind === 'conflict')
-          ) {
-            app.log.warn(
-              { kind: result.kind, processed: result.outcomes.length },
-              '[api] Public output recovery page remains unresolved',
-            );
-          }
-        })
-        .catch((error) => app.log.warn({ error }, '[api] Public output recovery page failed'))
-        .finally(() => {
-          publicOutputRecoveryTick = null;
-        });
-    }, 30_000);
-    publicOutputRecoveryTimer.unref();
   }
   if (runtimeDeploymentContext) {
     try {

@@ -103,7 +103,9 @@ export async function* executePublicInvocation(input: {
       yield {
         type: message.type,
         catId: input.catId,
-        ...(message.type === 'text' ? { content: message.content } : {}),
+        ...(message.type === 'text'
+          ? { content: message.content, ...(message.textMode ? { textMode: message.textMode } : {}) }
+          : {}),
         timestamp: message.timestamp,
         turnInvocationId: input.invocationId,
       };
