@@ -16,7 +16,10 @@ export function createTaskQueueRoute(
   return Object.freeze({
     async resolve(
       raw: QueueEntry,
-    ): Promise<Pick<RouteOptions, 'pluginTaskBinding' | 'pluginTaskExecution' | 'toolExecutionPolicy'>> {
+    ): Promise<
+      | Pick<RouteOptions, 'pluginTaskBinding' | 'pluginTaskExecution' | 'toolExecutionPolicy'>
+      | { readonly kind: 'stale_task_projection' }
+    > {
       const entry = structuredClone(raw);
       assertTaskQueueEntry(entry);
       const messageId = entry.messageId;
@@ -30,40 +33,48 @@ export function createTaskQueueRoute(
         targetCatId,
       });
       const port = authority();
-      const binding = await port.read(selected);
-      const check = async () => {
-        if (!isDeepStrictEqual(await port.read(selected), binding)) throw new Error('task_queue_identity_changed');
-      };
-      const policy = await runtime().resolveTaskInvocationPolicy(binding, check);
-      await check();
-      return Object.freeze({
-        pluginTaskBinding: binding,
-        toolExecutionPolicy: policy,
-        pluginTaskExecution: Object.freeze({
-          async prepare(input: Parameters<PublicInvocationExecution['prepare']>[0]) {
-            input.signal.throwIfAborted();
-            if (input.sourceMessageId !== selected.messageId) throw new Error('task_queue_trigger_changed');
-            const bound = await port.bindChild({ ...selected, binding, invocationId: input.invocationId });
-            input.signal.throwIfAborted();
-            const current = queue.getEntrySnapshot(entry.threadId, entry.userId, entry.id);
-            if (
-              !current ||
-              current.status !== 'processing' ||
-              !isDeepStrictEqual(
-                { ...current, status: 'queued', processingStartedAt: undefined },
-                { ...entry, status: 'queued', processingStartedAt: undefined },
-              ) ||
-              !queue.restoreEntrySnapshotIfUnchanged(current, {
-                ...current,
-                queuedAwakenedInvocationIdByCatId: { ...bound.custody.awakenedInvocationIdByCatId },
-                queuedAwakenedAtByCatId: { ...bound.custody.awakenedAtByCatId },
-              })
-            )
-              throw new Error('task_queue_claim_lost');
-            return execution.prepare(input);
-          },
-        }),
-      });
+      if (await port.isStaleProjection(selected)) return { kind: 'stale_task_projection' };
+      try {
+        const binding = await port.read(selected);
+        const check = async () => {
+          if (!isDeepStrictEqual(await port.read(selected), binding)) throw new Error('task_queue_identity_changed');
+        };
+        const policy = await runtime().resolveTaskInvocationPolicy(binding, check);
+        await check();
+        return Object.freeze({
+          pluginTaskBinding: binding,
+          toolExecutionPolicy: policy,
+          pluginTaskExecution: Object.freeze({
+            async prepare(input: Parameters<PublicInvocationExecution['prepare']>[0]) {
+              input.signal.throwIfAborted();
+              if (input.sourceMessageId !== selected.messageId) throw new Error('task_queue_trigger_changed');
+              const bound = await port.bindChild({ ...selected, binding, invocationId: input.invocationId });
+              input.signal.throwIfAborted();
+              const current = queue.getEntrySnapshot(entry.threadId, entry.userId, entry.id);
+              if (
+                !current ||
+                current.status !== 'processing' ||
+                !isDeepStrictEqual(
+                  { ...current, status: 'queued', processingStartedAt: undefined },
+                  { ...entry, status: 'queued', processingStartedAt: undefined },
+                ) ||
+                !queue.restoreEntrySnapshotIfUnchanged(current, {
+                  ...current,
+                  queuedAwakenedInvocationIdByCatId: { ...bound.custody.awakenedInvocationIdByCatId },
+                  queuedAwakenedAtByCatId: { ...bound.custody.awakenedAtByCatId },
+                })
+              )
+                throw new Error('task_queue_claim_lost');
+              return execution.prepare(input);
+            },
+          }),
+        });
+      } catch (error) {
+        // A competing child/settlement can win during authority or policy reads.
+        // Only canonical projection obsolescence is cleanup, never a generic denial.
+        if (await port.isStaleProjection(selected)) return { kind: 'stale_task_projection' };
+        throw error;
+      }
     },
   });
 }

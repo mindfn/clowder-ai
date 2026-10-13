@@ -62,21 +62,30 @@ function coordinate(value: unknown): value is string {
   );
 }
 /** Validate durable Host coordinates without inventing an invocation or tool policy. */
+export type PluginTaskExecutionBinding = Omit<PluginTaskInvocationBinding, 'triggerMessageId'>;
+
+export function capturePluginTaskExecutionBinding(value: unknown): PluginTaskExecutionBinding {
+  return captureBinding(value, false);
+}
 export function capturePluginTaskBinding(value: unknown): PluginTaskInvocationBinding {
+  return captureBinding(value, true);
+}
+function captureBinding(value: unknown, withTrigger: boolean): PluginTaskInvocationBinding {
   try {
     const binding = snapshotPluginProtocolData(value) as PluginTaskInvocationBinding;
+    const coordinates = withTrigger ? strings : strings.filter((k) => k !== 'triggerMessageId');
     if (
       !binding ||
       typeof binding !== 'object' ||
       Array.isArray(binding) ||
-      !isDeepStrictEqual(Object.keys(binding).sort(), ['version', ...strings, ...revisions].sort()) ||
+      !isDeepStrictEqual(Object.keys(binding).sort(), ['version', ...coordinates, ...revisions].sort()) ||
       binding.version !== 1 ||
-      !strings.every((k) => coordinate(binding[k])) ||
+      !coordinates.every((k) => coordinate(binding[k])) ||
       !revisions.every((k) => Number.isSafeInteger(binding[k]) && binding[k] >= (k === 'grantRevision' ? 0 : 1)) ||
       !/^message:.+/.test(binding.admissionRef) ||
       !/^message:.+/.test(binding.executionRef) ||
       binding.admissionRef === binding.executionRef ||
-      binding.triggerMessageId === binding.sourceMessageId
+      (withTrigger && binding.triggerMessageId === binding.sourceMessageId)
     )
       refuse();
     return binding;

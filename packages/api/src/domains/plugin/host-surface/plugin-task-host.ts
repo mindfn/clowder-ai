@@ -20,6 +20,12 @@ import {
   type PluginTaskAdmissionServices,
   preparePluginEntrustedTask,
 } from './plugin-task-admission.js';
+import type { PluginTaskDispatchSelection } from './plugin-task-currentness.js';
+import {
+  dispatchPluginEntrustedTask,
+  type PluginTaskDispatchResult,
+  type PluginTaskDispatchServices,
+} from './plugin-task-dispatch.js';
 import { assertPluginTaskGovernance } from './plugin-task-governance.js';
 import { type PluginTaskReadItem, projectOwnedPluginTasks } from './plugin-task-read.js';
 import { setPluginTaskWait } from './plugin-task-wait.js';
@@ -45,6 +51,7 @@ export interface PluginTaskUpdateInput {
 }
 
 export interface PluginTaskHost {
+  dispatchEntrusted(input: PluginTaskDispatchSelection): Promise<PluginTaskDispatchResult>;
   prepareEntrusted(input: PluginTaskAdmissionInput): Promise<PluginTaskAdmissionResult>;
   setWait(taskId: string, input: PluginWaitUpdate): Promise<TaskItem | null>;
   get(taskId: string): Promise<PluginTaskReadItem | null>;
@@ -58,6 +65,7 @@ export interface PluginTaskHost {
 }
 
 export interface PluginTaskHostDeps {
+  readonly dispatch?: PluginTaskDispatchServices;
   readonly admission?: PluginTaskAdmissionServices;
   readonly pluginInstanceId?: string;
   readonly pluginId: string;
@@ -187,6 +195,7 @@ export function createPluginTaskHost(input: PluginTaskHostDeps): PluginTaskHost 
     return after;
   };
   return {
+    dispatchEntrusted: (value) => dispatchPluginEntrustedTask(input, value),
     prepareEntrusted: (value) => preparePluginEntrustedTask(input, value),
     setWait: (taskId, value) =>
       setPluginTaskWait(

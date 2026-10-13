@@ -2,7 +2,7 @@ import type { QueuedMessageCustody } from '../../stores/ports/MessageStore.js';
 import type { QueueEntry } from './InvocationQueue.js';
 
 /** A durable lane discriminator, never authority. No started attempt can be replayed here. */
-export function assertUnstartedTaskCustody(c: QueuedMessageCustody, target: string): void {
+export function isUnstartedTaskCustody(c: QueuedMessageCustody, target: string): boolean {
   const histories = [
     c.failedByCatIds,
     c.handledByCatIds,
@@ -17,7 +17,7 @@ export function assertUnstartedTaskCustody(c: QueuedMessageCustody, target: stri
     c.steeredInvocationIdByCatId,
     c.targetOutcomeByCatId,
   ];
-  if (
+  return !(
     c.sourceCategory !== 'plugin_task' ||
     c.status !== 'queued' ||
     c.processingStartedAt !== undefined ||
@@ -40,8 +40,11 @@ export function assertUnstartedTaskCustody(c: QueuedMessageCustody, target: stri
         a.seenAt !== undefined ||
         a.terminalReason !== undefined,
     )
-  )
-    throw new Error('Host Task Queue custody rejected');
+  );
+}
+
+export function assertUnstartedTaskCustody(c: QueuedMessageCustody, target: string): void {
+  if (!isUnstartedTaskCustody(c, target)) throw new Error('Host Task Queue custody rejected');
 }
 
 /** This marker excludes ordinary scheduling; durable Host re-reading remains the authority. */

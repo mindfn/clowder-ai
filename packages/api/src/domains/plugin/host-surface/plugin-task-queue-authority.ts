@@ -5,9 +5,11 @@ import {
   capturePluginTaskBinding,
   type PluginTaskInvocationBinding,
 } from '../../cats/services/agents/invocation/plugin-task-invocation-binding.js';
+import { isUnstartedTaskCustody } from '../../cats/services/agents/invocation/plugin-task-queue-state.js';
 import type { IMessageStore, StoredMessage } from '../../cats/services/stores/ports/MessageStore.js';
 import {
   assertQueueCustodyTransition,
+  assertQueuedMessageCustody,
   cloneQueuedMessageCustody,
 } from '../../cats/services/stores/ports/queued-message-custody.js';
 import { pluginTaskDispatchContent } from './plugin-task-receipt.js';
@@ -94,6 +96,31 @@ export function createTaskQueueAuthority(
     return { binding, custody: before.queueCustody };
   };
   return Object.freeze({
+    /** Projection hygiene only: never grants execution or changes durable custody. */
+    async isStaleProjection(input: PluginTaskQueueSelection): Promise<boolean> {
+      const selected = capture(input);
+      if (selected.userId !== ownerUserId) refuse();
+      const message = await store.getById(selected.messageId);
+      if (!message) return true;
+      if (
+        message.id !== selected.messageId ||
+        message.userId !== ownerUserId ||
+        message.threadId !== selected.threadId ||
+        message.catId !== null
+      )
+        refuse();
+      if (message.deliveryStatus === 'canceled' || message.recall || message.deletedAt || message._tombstone)
+        return true;
+      const custody = message.queueCustody;
+      if (!custody) return false;
+      assertQueuedMessageCustody(custody);
+      if (custody.sourceCategory !== 'plugin_task' || custody.ownerUserId !== ownerUserId) refuse();
+      return (
+        custody.entryId !== selected.entryId ||
+        custody.pendingTargetCats.length === 0 ||
+        !isUnstartedTaskCustody(custody, selected.targetCatId)
+      );
+    },
     read: async (input: PluginTaskQueueSelection) => (await readSnapshot(input)).binding,
     /** On any exception the caller must retire the child, even if the CAS already applied. */
     async bindChild(

@@ -58,6 +58,7 @@ import {
   type PluginStorageHost,
 } from '../../host-surface/plugin-private-storage.js';
 import type { PluginTaskAdmissionServices } from '../../host-surface/plugin-task-admission.js';
+import type { PluginTaskDispatchServices } from '../../host-surface/plugin-task-dispatch.js';
 import { createPluginTaskHost, type PluginTaskHost } from '../../host-surface/plugin-task-host.js';
 import {
   createPluginThreadHost,
@@ -144,6 +145,7 @@ export interface ModulePluginRuntimeOptions {
   readonly taskStore?: ITaskStore;
   readonly taskOwnerUserId?: string;
   readonly taskThreadStore?: Pick<IThreadStore, 'get'>;
+  readonly taskDispatch?: (pluginInstanceId: string) => PluginTaskDispatchServices | undefined;
   readonly taskAdmission?: (
     pluginInstanceId: string,
     packageDigest: string,
@@ -385,6 +387,7 @@ export class ModulePluginRuntime implements BundledPluginRuntime {
         assertActivation,
       );
       assertActivation();
+      const taskDispatch = this.options.taskDispatch?.(pluginInstanceId);
       const candidate = await plugin.start({
         ...neutral,
         ...(browserServices ? { browserServices: browserServices.host } : {}),
@@ -394,6 +397,7 @@ export class ModulePluginRuntime implements BundledPluginRuntime {
         ...(this.options.custody ? { custody: this.options.custody(pluginInstanceId) } : {}),
         tasks: createPluginTaskHost({
           ...(taskAdmission ? { admission: taskAdmission } : {}),
+          ...(taskDispatch ? { dispatch: taskDispatch } : {}),
           pluginInstanceId,
           pluginId: packageRecord.pluginId,
           effectiveGrants,

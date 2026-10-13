@@ -77,6 +77,8 @@ import { createPluginNeutralHost, type PluginDeploymentServices } from './host-s
 import type { PluginParticipantRosterServices } from './host-surface/plugin-participant-roster-host.js';
 import { RedisPluginPrivateStorage } from './host-surface/plugin-private-storage.js';
 import type { PluginPublicInvocationServices } from './host-surface/plugin-public-invocation-host.js';
+import { createPluginTaskDispatchAuthority } from './host-surface/plugin-task-currentness.js';
+import type { PluginTaskQueueServices } from './host-surface/plugin-task-dispatch.js';
 import {
   type BuiltinPluginPackageMaterializer,
   FilesystemBuiltinPluginPackageMaterializer,
@@ -121,6 +123,7 @@ export interface PluginRuntimePersistencePaths {
 export interface DormantPluginRuntimeCompositionOptions {
   readonly builtinRuntimes?: ReadonlyMap<string, BuiltinPluginRuntime>;
   readonly publicInvocations?: PluginPublicInvocationServices;
+  readonly taskInvocations?: PluginTaskQueueServices;
   readonly projectRoot: string;
   readonly paths?: PluginRuntimePersistencePaths;
   readonly messageStore: IMessageStore;
@@ -451,6 +454,24 @@ export function createDormantPluginRuntimeComposition(
   });
   const moduleRuntime = new ModulePluginRuntime({
     browserServices,
+    taskDispatch: (pluginInstanceId) => {
+      if (!options.taskInvocations || !options.taskStore || !options.threadStore || !options.threadOwnerUserId)
+        return undefined;
+      const authority = createPluginTaskDispatchAuthority(
+        {
+          ownerUserId: options.threadOwnerUserId,
+          taskStore: options.taskStore,
+          messageStore: options.messageStore,
+          threadStore: options.threadStore,
+          inventory: inventoryStore,
+          isCatAvailable: (catId) =>
+            options.threadProjections?.cats?.getAllCatIds().includes(catId) === true &&
+            options.threadProjections.cats.isCatAvailable(catId),
+        },
+        pluginInstanceId,
+      );
+      return { ...options.taskInvocations, messageStore: options.messageStore, readAuthority: authority.read };
+    },
     taskAdmission: (pluginInstanceId, packageDigest, assertActivation) =>
       createPluginTaskAdmissionServices({
         pluginInstanceId,

@@ -1,16 +1,20 @@
 import { createHash } from 'node:crypto';
 import { isDeepStrictEqual } from 'node:util';
 import type { CatId } from '@cat-cafe/shared';
+import { z } from 'zod';
 import {
   capturePluginTaskBinding,
+  capturePluginTaskExecutionBinding,
   capturePluginTaskInvocationAuth,
   type PluginTaskCurrentnessInput,
+  type PluginTaskExecutionBinding,
   type PluginTaskInvocationBinding,
 } from '../../cats/services/agents/invocation/plugin-task-invocation-binding.js';
 import type { IMessageStore, StoredMessage } from '../../cats/services/stores/ports/MessageStore.js';
 import { assertQueueCustodyMessageBinding } from '../../cats/services/stores/ports/queued-message-custody.js';
 import type { ITaskStore } from '../../cats/services/stores/ports/TaskStore.js';
 import type { IThreadStore } from '../../cats/services/stores/ports/ThreadStore.js';
+import { snapshotPluginProtocolData } from '../carrier/plugin-protocol-data.js';
 import { ExternalPluginRuntimeError } from '../external-runtime/types.js';
 import type { PluginInventoryStore } from '../host-inventory/ports.js';
 import { readPluginContinuationTask } from './plugin-task-continuation.js';
@@ -123,8 +127,11 @@ export function createPluginTaskQueueAuthority(
 }
 
 function createAuthorityReader(deps: PluginTaskCurrentnessDeps) {
-  return async (raw: PluginTaskInvocationBinding, phase: PluginTaskAuthorityPhase): Promise<void> => {
-    const b = capturePluginTaskBinding(raw);
+  return async (
+    raw: PluginTaskExecutionBinding,
+    phase: PluginTaskAuthorityPhase | { readonly kind: 'dispatch' },
+  ): Promise<void> => {
+    const b = phase.kind === 'dispatch' ? capturePluginTaskExecutionBinding(raw) : capturePluginTaskBinding(raw);
     if (b.ownerUserId !== deps.ownerUserId) refuse();
     const installation = async () => {
       const state = structuredClone(await deps.inventory.snapshot());
@@ -217,21 +224,31 @@ function createAuthorityReader(deps: PluginTaskCurrentnessDeps) {
         )?.id !== execution.id
       )
         refuse();
-      const trigger = liveMessage(
-        structuredClone(await deps.messageStore.getById(b.triggerMessageId)),
-        b.triggerMessageId,
-        b.ownerUserId,
-      );
-      if (
-        trigger.source ||
-        trigger.threadId !== b.threadId ||
-        trigger.deliveryStatus !== 'queued' ||
-        trigger.content !== pluginTaskDispatchContent(b) ||
-        (await deps.messageStore.getByIdempotencyKey(b.ownerUserId, b.threadId, pluginTaskDispatchKey(b)))?.id !==
-          trigger.id
-      )
-        refuse();
-      const entryId = assertTaskDispatchCustody(trigger, b, phase);
+      const triggerSnapshot = await (async () => {
+        if (phase.kind === 'dispatch') return undefined;
+        const full = capturePluginTaskBinding(raw);
+        const trigger = liveMessage(
+          structuredClone(await deps.messageStore.getById(full.triggerMessageId)),
+          full.triggerMessageId,
+          b.ownerUserId,
+        );
+        if (
+          trigger.source ||
+          trigger.threadId !== b.threadId ||
+          trigger.deliveryStatus !== 'queued' ||
+          trigger.content !== pluginTaskDispatchContent(b) ||
+          (await deps.messageStore.getByIdempotencyKey(b.ownerUserId, b.threadId, pluginTaskDispatchKey(b)))?.id !==
+            trigger.id
+        )
+          refuse();
+        const entryId = assertTaskDispatchCustody(trigger, full, phase);
+        return {
+          id: trigger.id,
+          content: trigger.content,
+          entryId,
+          ...(phase.kind === 'queue' ? { custody: trigger.queueCustody } : {}),
+        };
+      })();
       await installation();
       // Do not freeze normal mutable Queue progress; its validity is checked on each read.
       return {
@@ -246,12 +263,7 @@ function createAuthorityReader(deps: PluginTaskCurrentnessDeps) {
         sourceThread: { id: sourceThread.id, createdBy: sourceThread.createdBy },
         taskThread: { id: taskThread.id, createdBy: taskThread.createdBy, participants: taskThread.participants },
         execution: { id: execution.id, content: execution.content },
-        trigger: {
-          id: trigger.id,
-          content: trigger.content,
-          entryId,
-          ...(phase.kind === 'queue' ? { custody: trigger.queueCustody } : {}),
-        },
+        trigger: triggerSnapshot,
       };
     };
     const before = await read();
@@ -261,4 +273,60 @@ function createAuthorityReader(deps: PluginTaskCurrentnessDeps) {
     // against the canonical Task again before returning to Registry verification.
     if (!isDeepStrictEqual(before.task, structuredClone(await deps.taskStore.get(b.taskId)))) refuse();
   };
+}
+
+const dispatchSelectionSchema = z
+  .object({
+    taskRef: z.string().regex(/^task:work:\S{1,500}$/u),
+    taskRevision: z.number().int().positive(),
+    executionRef: z.string().regex(/^message:\S{1,500}$/u),
+  })
+  .strict();
+export type PluginTaskDispatchSelection = z.infer<typeof dispatchSelectionSchema>;
+export function capturePluginTaskDispatchSelection(raw: unknown): PluginTaskDispatchSelection {
+  return dispatchSelectionSchema.parse(snapshotPluginProtocolData(raw));
+}
+const receiptCoordinatesSchema = z.object({
+  source: z.object({ id: z.string(), revision: z.number() }),
+  targetCatId: z.string(),
+  threadId: z.string(),
+  admissionRef: z.string(),
+});
+/** Derive coordinates from stored receipt data, then authenticate its exact body and protected index. */
+export function createPluginTaskDispatchAuthority(deps: PluginTaskCurrentnessDeps, pluginInstanceId: string) {
+  const authenticate = createAuthorityReader(deps);
+  return Object.freeze({
+    async read(raw: PluginTaskDispatchSelection): Promise<PluginTaskExecutionBinding> {
+      const selected = capturePluginTaskDispatchSelection(raw);
+      const execution = liveMessage(
+        structuredClone(await deps.messageStore.getById(selected.executionRef.slice(8))),
+        selected.executionRef.slice(8),
+        deps.ownerUserId,
+      );
+      const data = receiptCoordinatesSchema.parse(
+        JSON.parse(execution.content.slice(execution.content.indexOf('\n') + 1)),
+      );
+      const state = structuredClone(await deps.inventory.snapshot());
+      const instance = state.instances.find((i) => i.pluginInstanceId === pluginInstanceId);
+      const grant = state.grants.find((g) => g.pluginInstanceId === pluginInstanceId);
+      const binding = capturePluginTaskExecutionBinding({
+        version: 1,
+        pluginInstanceId,
+        ownerUserId: deps.ownerUserId,
+        taskId: selected.taskRef.slice(10),
+        taskRevision: selected.taskRevision,
+        executionRef: selected.executionRef,
+        targetCatId: data.targetCatId,
+        threadId: data.threadId,
+        admissionRef: data.admissionRef,
+        sourceMessageId: data.source.id,
+        sourceRevision: data.source.revision,
+        packageDigest: instance?.packageDigest,
+        lifecycleRevision: instance?.lifecycleRevision,
+        grantRevision: grant?.grantRevision,
+      });
+      await authenticate(binding, { kind: 'dispatch' });
+      return binding;
+    },
+  });
 }
