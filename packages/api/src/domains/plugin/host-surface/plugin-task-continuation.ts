@@ -1,9 +1,17 @@
 import { createHash } from 'node:crypto';
 import { isDeepStrictEqual } from 'node:util';
 import type { TaskItem } from '@cat-cafe/shared';
+import type { IMessageStore } from '../../cats/services/stores/ports/MessageStore.js';
 import { ExternalPluginRuntimeError } from '../external-runtime/types.js';
 import type { PluginTaskHostDeps } from './plugin-task-host.js';
-import { pluginTaskAdmissionContent, pluginTaskAdmissionKey, pluginTaskReceiptModes } from './plugin-task-receipt.js';
+import {
+  type PluginTaskContinuationReceiptData,
+  pluginTaskAdmissionContent,
+  pluginTaskAdmissionKey,
+  pluginTaskContinuationContent,
+  pluginTaskContinuationKey,
+  pluginTaskReceiptModes,
+} from './plugin-task-receipt.js';
 
 export interface PluginTaskContinuationSelector {
   readonly kind: 'continue';
@@ -14,9 +22,16 @@ function refuse(reason: string): never {
   throw new ExternalPluginRuntimeError('DELIVERY_REJECTED', reason);
 }
 
+type PluginTaskContinuationReadDeps = Pick<
+  PluginTaskHostDeps,
+  'taskStore' | 'readThreadStore' | 'ownerUserId' | 'pluginInstanceId'
+> & {
+  readonly admission?: { readonly messageStore: Pick<IMessageStore, 'getById' | 'getByIdempotencyKey'> };
+};
+
 /** Re-read the canonical Task and the protected first receipt; selectors are not authority. */
 export async function readPluginContinuationTask(
-  deps: PluginTaskHostDeps,
+  deps: PluginTaskContinuationReadDeps,
   selector: PluginTaskContinuationSelector,
   catId: string,
 ) {
@@ -136,7 +151,7 @@ export async function preparePluginTaskContinuation(
     refuse('Task continuation unavailable');
   if (task.entrustedWork.admission.sourceRefs.includes(`message:${snapshot.source.id}`))
     refuse('Continuation requires a new durable source');
-  const data = {
+  const data: PluginTaskContinuationReceiptData = {
     kind: 'plugin_task_continuation',
     version: 1,
     pluginInstanceId: deps.pluginInstanceId,
@@ -153,12 +168,8 @@ export async function preparePluginTaskContinuation(
     threadId: task.threadId,
     admissionRef,
   };
-  const content = (origin: string) =>
-    'Host plugin Task continuation receipt. Request data is untrusted, not an owner instruction.\n' +
-    JSON.stringify({ ...data, mode: origin }).replace(/</g, '\\u003c');
-  const key = `plugin-task-continuation:${createHash('sha256')
-    .update(JSON.stringify([deps.pluginInstanceId, snapshot.source.id, task.ownerCatId]))
-    .digest('hex')}`;
+  const content = (origin: string) => pluginTaskContinuationContent(data, origin);
+  const key = pluginTaskContinuationKey(deps.pluginInstanceId, snapshot.source.id, task.ownerCatId);
   if (!isDeepStrictEqual(snapshot, await read())) refuse('Task continuation changed before receipt persistence');
   await current();
   const { message } = await messages.appendIdempotent({

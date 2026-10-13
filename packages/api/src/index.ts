@@ -125,6 +125,7 @@ import {
 import { InvocationTracker } from './domains/cats/services/agents/invocation/InvocationTracker.js';
 import { emitLifecycleMessageUpdated } from './domains/cats/services/agents/invocation/lifecycle-message-update.js';
 import type { NativeControlReceiptPort } from './domains/cats/services/agents/invocation/NativeControlReceipt.js';
+import type { PluginTaskCurrentnessInput } from './domains/cats/services/agents/invocation/plugin-task-invocation-binding.js';
 import type {
   InvocationRecordStoreLike,
   RouterLike,
@@ -287,6 +288,7 @@ import { TasteMemoryLifecycleStore } from './domains/memory/taste/TasteMemoryLif
 import { TasteMemoryProjectionWriter } from './domains/memory/taste/TasteMemoryProjectionWriter.js';
 import { importTasteTakeawayCandidates } from './domains/memory/taste/TasteTakeawayCandidateImporter.js';
 import { tasteDocumentAnchor } from './domains/memory/taste/taste-memory-identity.js';
+import { createPluginTaskInvocationCurrentness } from './domains/plugin/host-surface/plugin-task-currentness.js';
 import { publicParticipantAvatar } from './domains/plugin/host-surface/public-participant-avatar.js';
 import { PortDiscoveryService } from './domains/preview/port-discovery.js';
 import { collectRuntimePorts } from './domains/preview/port-validator.js';
@@ -908,6 +910,11 @@ async function main(): Promise<void> {
   const onCallbackAuthLifecycleSignal = (signal: CallbackAuthLifecycleSignal): void => {
     app.log.warn({ callbackAuthLifecycle: signal }, '[api] Callback auth lifecycle divergence detected');
   };
+  let pluginTaskCurrentness: ((input: PluginTaskCurrentnessInput) => Promise<void>) | undefined;
+  const assertPluginTaskCurrent = async (input: PluginTaskCurrentnessInput): Promise<void> => {
+    if (!pluginTaskCurrentness) throw new Error('Host Task currentness is not initialized');
+    await pluginTaskCurrentness(input);
+  };
   const registryBackendKind = selectInvocationBackendKind(process.env.CAT_CAFE_INVOCATION_REGISTRY, !!redis);
   const registry =
     registryBackendKind === 'redis' && redis
@@ -918,11 +925,13 @@ async function main(): Promise<void> {
           startupRecoveryRequired: true,
           turnExecutionStore: canonicalTurnExecutionStore,
           onLifecycleSignal: onCallbackAuthLifecycleSignal,
+          assertPluginTaskCurrent,
         })
       : new InvocationRegistry({
           tombstoneGcTtlMs: configuredTombstoneGcTtlMs,
           turnExecutionStore: canonicalTurnExecutionStore,
           onLifecycleSignal: onCallbackAuthLifecycleSignal,
+          assertPluginTaskCurrent,
         });
   const turnExecutionStore = new CallbackAuthTurnExecutionLifecycle(canonicalTurnExecutionStore, registry);
   callbackAuthCapability = callbackAuthCapabilityForBackend(registryBackendKind);
@@ -5076,6 +5085,14 @@ async function main(): Promise<void> {
     },
     getDefaultCatId,
     getMentionPatterns: catRegistryMentionPatterns,
+  });
+  pluginTaskCurrentness = createPluginTaskInvocationCurrentness({
+    ownerUserId: privateUserId,
+    taskStore,
+    messageStore,
+    threadStore,
+    inventory: pluginRuntime.inventoryStore,
+    isCatAvailable: (catId) => catRegistry.getAllIds().includes(catId as CatId) && isCatAvailable(catId),
   });
   pluginPredicateProvider = pluginRuntime.predicateProvider;
   trustedImagePathResolver = (hmrId) => pluginRuntime.mediaLedger.resolveTrustedBlobPath(hmrId);
