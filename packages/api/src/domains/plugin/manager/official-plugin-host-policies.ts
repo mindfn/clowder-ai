@@ -41,8 +41,9 @@ function connectorGrants(...unused: readonly (typeof CONNECTOR_GRANTS)[number][]
 export const OFFICIAL_PLUGIN_HOST_POLICIES: readonly MachineCatalogHostPolicy[] = [
   {
     pluginId: 'official.collective-connector',
-    // Service and connector persistence. Origins/limits come from browserServices, not config.
-    effectiveGrants: ['data.directory'],
+    // Persistence plus the shipped owner sync/native source path. Origins and
+    // limits still come from browserServices, not plugin configuration.
+    effectiveGrants: ['data.directory', 'thread.readContent', 'thread.listMetadata', 'thread.write', 'messaging.send'],
   },
   {
     pluginId: 'official.companion.personal-chrome',

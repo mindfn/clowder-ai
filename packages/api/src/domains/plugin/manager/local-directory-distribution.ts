@@ -154,7 +154,9 @@ function packResult(text: string): { files: { path: string; size: number }[]; fi
       invalid('DEPENDENCY_PACK_FAILED', 'npm pack returned invalid member metadata');
     }
     pathOf('/', file.path);
-    if (names.has(file.path) || file.path.split('/').includes('node_modules') || file.path === RECEIPT) {
+    // Root dependencies are reconstructed from the declared graph. Nested
+    // publication fixtures (for example pino's test/eval files) are package bytes.
+    if (names.has(file.path) || file.path.split('/')[0] === 'node_modules' || file.path === RECEIPT) {
       invalid('DEPENDENCY_PACK_FAILED', 'publication members contain a duplicate, hidden closure or reserved receipt');
     }
     names.add(file.path);

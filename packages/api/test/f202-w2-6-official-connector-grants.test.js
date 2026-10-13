@@ -92,15 +92,62 @@ test('Collective local directory admission receives only its persistent data cap
   }
 });
 
-test('Collective cannot regain removed config or additional capabilities by requesting them', () => {
+test('Collective cannot regain removed config or unrelated capabilities by requesting them', () => {
   assert.deepEqual(
     resolveLocalPluginEffectiveGrants(
       OFFICIAL_PLUGIN_HOST_POLICIES,
-      collectiveManifest(['data.directory', 'plugin.config.read', 'secret.read', 'thread.write']),
+      collectiveManifest(['data.directory', 'plugin.config.read', 'secret.read', 'media.read']),
     ),
     ['data.directory'],
   );
   assert.deepEqual(resolveLocalPluginEffectiveGrants(OFFICIAL_PLUGIN_HOST_POLICIES, collectiveManifest([])), []);
+});
+
+test('Collective ordinary native feature receives its declared thread and messaging grants on install and restart', async () => {
+  const capabilities = [
+    'data.directory',
+    'thread.readContent',
+    'thread.listMetadata',
+    'thread.write',
+    'messaging.send',
+  ];
+  const current = collectiveManifest(capabilities);
+  const grants = resolveLocalPluginEffectiveGrants(OFFICIAL_PLUGIN_HOST_POLICIES, current);
+  assert.deepEqual(sorted(grants), sorted(capabilities));
+  assert.equal(admitModuleBrowserServices(current, grants).active.has('collective-client-api'), true);
+  for (const missing of capabilities) {
+    assert.equal(
+      admitModuleBrowserServices(
+        current,
+        grants.filter((grant) => grant !== missing),
+      ).active.size,
+      0,
+    );
+  }
+  const store = new MemoryPluginInventoryStore();
+  const inventory = new HostInventoryControlPlane(store, { createInstanceId: () => 'pi_collective', now: () => 1 });
+  const digest = `sha512-${createHash('sha512').update('collective-native-policy').digest('base64')}`;
+  await inventory.installPackage({
+    manifest: current,
+    computedPackageDigest: digest,
+    expectedPackageDigest: digest,
+    packagePluginId: current.pluginId,
+    effectiveGrants: ['data.directory'],
+  });
+  const changes = await reconcileOfficialPluginGrants({
+    store,
+    inventory,
+    hostPolicies: OFFICIAL_PLUGIN_HOST_POLICIES,
+  });
+  assert.deepEqual(
+    sorted(changes[0].added),
+    sorted(capabilities.filter((capability) => capability !== 'data.directory')),
+  );
+  assert.deepEqual(sorted((await store.snapshot()).grants[0].effectiveGrants), sorted(capabilities));
+  assert.deepEqual(
+    await reconcileOfficialPluginGrants({ store, inventory, hostPolicies: OFFICIAL_PLUGIN_HOST_POLICIES }),
+    [],
+  );
 });
 
 test('Collective startup reconciliation grants only data directory to a previously ungranted instance', async () => {

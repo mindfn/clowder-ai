@@ -433,3 +433,29 @@ test('admits a type-only dependency with an empty main', async (t) => {
   const installed = await f.createAdmission('npm').install({ kind: 'local-directory', path: f.source });
   assert.ok(installed.packageDigest);
 });
+
+test('preserves published nested node_modules fixtures without treating them as root dependencies', async (t) => {
+  const f = await fixture(t);
+  const runtime = join(f.root, 'packages/runtime');
+  const metadata = JSON.parse(await readFile(join(runtime, 'package.json'), 'utf8'));
+  await json(join(runtime, 'package.json'), { ...metadata, files: ['dist', 'test'] });
+  const member = 'test/fixtures/eval/node_modules/file1.js';
+  await mkdir(join(runtime, 'test/fixtures/eval/node_modules'), { recursive: true });
+  await writeFile(join(runtime, member), 'module.exports = 17;\n');
+  const installed = await f.createAdmission('npm').install({ kind: 'local-directory', path: f.source });
+  const located = await new FilesystemVerifiedPluginPackageLocator(f.inventoryRoot).resolveInstalledPackage(
+    installed.packageDigest,
+  );
+  try {
+    await rename(f.source, `${f.source}-moved`);
+    await rename(runtime, `${runtime}-moved`);
+    assert.equal(
+      await readFile(join(located.rootDir, 'node_modules/runtime-dependency', member), 'utf8'),
+      'module.exports = 17;\n',
+    );
+    assert.equal((await import(pathToFileURL(join(located.rootDir, 'dist/entrypoint.js')).href)).value, 42);
+    await located.verifyIntegrity();
+  } finally {
+    await located.release();
+  }
+});
