@@ -44,13 +44,15 @@ export function ReplyPill({ replyPreview, replyToId, getCatById }: ReplyPillProp
   };
 
   return (
-    <span className="inline-flex min-w-0 max-w-full flex-wrap items-center gap-1">
+    <span
+      className={`inline-flex min-w-0 max-w-full flex-wrap items-center gap-1 ${showExpanded ? 'basis-full order-last' : ''}`}
+    >
       <button
         type="button"
         onClick={canExpand ? () => setExpanded((current) => !current) : handleClick}
         aria-expanded={canExpand ? showExpanded : undefined}
         aria-controls={canExpand ? contentId : undefined}
-        className={`inline-flex min-w-0 gap-1 text-micro font-medium px-1.5 py-0.5 cursor-pointer hover:opacity-80 transition-opacity focus-visible:outline focus-visible:outline-2 focus-visible:outline-current ${showExpanded ? 'items-start rounded-lg max-w-full' : 'items-center rounded-full whitespace-nowrap max-w-[200px]'}`}
+        className={`inline-flex min-w-0 gap-1 text-left font-medium px-1.5 py-0.5 cursor-pointer hover:opacity-80 transition-opacity focus-visible:outline focus-visible:outline-2 focus-visible:outline-current ${showExpanded ? 'text-xs items-start rounded-lg max-w-full' : 'text-micro items-center rounded-full whitespace-nowrap max-w-[200px]'}`}
         style={
           nameRole
             ? { backgroundColor: tintOf(sender.color, '20'), color: sender.textColor }

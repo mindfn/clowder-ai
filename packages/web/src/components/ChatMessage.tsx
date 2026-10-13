@@ -610,7 +610,7 @@ function ChatMessageContent({
     const userHeader = humanPresentation ? (
       humanHeader
     ) : (
-      <div className="flex justify-end items-center gap-2 mb-1">
+      <div className="flex flex-wrap justify-end items-center gap-2 mb-1">
         <MessageActionSlot />
         {isWhisper && (
           <span
@@ -805,7 +805,7 @@ function ChatMessageContent({
           className={
             shellPresentation === 'v2'
               ? 'flex flex-wrap items-center gap-x-2 gap-y-4 min-w-0'
-              : 'flex items-center gap-2 min-w-0'
+              : 'flex flex-wrap items-center gap-2 min-w-0'
           }
           data-message-author-row={shellPresentation === 'v2' ? '' : undefined}
         >
