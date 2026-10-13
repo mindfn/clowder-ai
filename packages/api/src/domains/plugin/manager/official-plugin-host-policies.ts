@@ -42,9 +42,16 @@ export const OFFICIAL_PLUGIN_HOST_POLICIES: readonly MachineCatalogHostPolicy[] 
   { pluginId: 'dev.clowder.genoffice-docx', effectiveGrants: [] },
   {
     pluginId: 'official.collective-connector',
-    // Persistence plus the shipped owner sync/native source path. Origins and
-    // limits still come from browserServices, not plugin configuration.
-    effectiveGrants: ['data.directory', 'thread.readContent', 'thread.listMetadata', 'thread.write', 'messaging.send'],
+    // Persistence, owner sync/native sources and the original owner view's Task summaries.
+    // Task reads remain owner-scoped in the Host; this grants no Task writes or admission.
+    effectiveGrants: [
+      'data.directory',
+      'thread.readContent',
+      'thread.listMetadata',
+      'thread.write',
+      'messaging.send',
+      'task.read',
+    ],
   },
   {
     pluginId: 'official.companion.personal-chrome',

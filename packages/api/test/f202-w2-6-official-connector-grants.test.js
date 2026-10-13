@@ -150,6 +150,46 @@ test('Collective ordinary native feature receives its declared thread and messag
   );
 });
 
+test('Collective owner view receives task.read on install and reconciliation, never task.write', async () => {
+  const original = ['data.directory', 'thread.readContent', 'thread.listMetadata', 'thread.write', 'messaging.send'];
+  const declared = [...original, 'task.read'];
+  const current = collectiveManifest([...declared, 'task.write']);
+  assert.deepEqual(sorted(resolveLocalPluginEffectiveGrants(OFFICIAL_PLUGIN_HOST_POLICIES, current)), sorted(declared));
+  assert.deepEqual(
+    sorted(resolveLocalPluginEffectiveGrants(OFFICIAL_PLUGIN_HOST_POLICIES, collectiveManifest(original))),
+    sorted(original),
+    'older manifests must not receive undeclared task.read',
+  );
+  const store = new MemoryPluginInventoryStore();
+  const inventory = new HostInventoryControlPlane(store, { createInstanceId: () => 'pi_collective', now: () => 1 });
+  const digest = `sha512-${createHash('sha512').update('collective-owner-view-policy').digest('base64')}`;
+  await inventory.installPackage({
+    manifest: current,
+    computedPackageDigest: digest,
+    expectedPackageDigest: digest,
+    packagePluginId: current.pluginId,
+    effectiveGrants: original,
+  });
+  const changes = await reconcileOfficialPluginGrants({
+    store,
+    inventory,
+    hostPolicies: OFFICIAL_PLUGIN_HOST_POLICIES,
+  });
+  assert.deepEqual(changes, [
+    {
+      pluginId: current.pluginId,
+      pluginInstanceId: 'pi_collective',
+      added: ['task.read'],
+      removed: [],
+    },
+  ]);
+  assert.deepEqual(sorted((await store.snapshot()).grants[0].effectiveGrants), sorted(declared));
+  assert.deepEqual(
+    await reconcileOfficialPluginGrants({ store, inventory, hostPolicies: OFFICIAL_PLUGIN_HOST_POLICIES }),
+    [],
+  );
+});
+
 test('Collective startup reconciliation grants only data directory to a previously ungranted instance', async () => {
   const store = new MemoryPluginInventoryStore();
   const inventory = new HostInventoryControlPlane(store, { createInstanceId: () => 'pi_collective', now: () => 1 });
