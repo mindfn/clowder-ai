@@ -31,13 +31,21 @@ interface MappedSteerTarget {
 async function submitMappedSteerTargets(threadId: string, targets: MappedSteerTarget[]) {
   const failures: string[] = [];
   const queuedTargets: Array<{ entryId: string; targetCatId: string }> = [];
+  const unconfirmedInterrupts: string[] = [];
   for (const target of targets) {
     const route = target.strategy === 'guide_reply' ? 'continue' : 'steer';
     const response = await apiFetch(`/api/threads/${threadId}/queue/${target.entryId}/${route}`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ targetCatId: target.targetCatId }),
-    });
+    }).catch(() => null);
+    if (!response) {
+      // /targets already persisted the intent and woke ordinary drain. A lost
+      // follow-up cannot undo that acceptance, or prevent the other targets.
+      if (target.strategy === 'guide_reply') queuedTargets.push(target);
+      else unconfirmedInterrupts.push(target.targetCatId);
+      continue;
+    }
     const data = await response.json().catch(() => ({}));
     if (response.ok) {
       if (data?.outcome === 'queued') queuedTargets.push(target);
@@ -48,7 +56,7 @@ async function submitMappedSteerTargets(threadId: string, targets: MappedSteerTa
     }
     failures.push(`${target.targetCatId}: ${steerFailureMessage(response.status, data?.code, data?.error)}`);
   }
-  return { failures, queuedTargets };
+  return { failures, queuedTargets, unconfirmedInterrupts };
 }
 
 function queuedGuidanceFeedback(
@@ -130,7 +138,10 @@ export function useQueueActionConvergence(threadId: string) {
           return;
         }
 
-        const { failures, queuedTargets } = await submitMappedSteerTargets(threadId, mapping.targets);
+        const { failures, queuedTargets, unconfirmedInterrupts } = await submitMappedSteerTargets(
+          threadId,
+          mapping.targets,
+        );
         setSteerEntryId(null);
         const refreshed = await refreshQueue();
         if (failures.length > 0) {
@@ -144,6 +155,15 @@ export function useQueueActionConvergence(threadId: string) {
         }
         const feedback = queuedGuidanceFeedback(threadId, queuedTargets, refreshed);
         if (feedback) addToast({ type: 'info', ...feedback, threadId, duration: 5000 });
+        if (unconfirmedInterrupts.length > 0) {
+          addToast({
+            type: 'info',
+            title: '发送请求已保存',
+            message: `${unconfirmedInterrupts.join('、')}：尚未确认中断请求的结果；请查看当前回复和队列状态。`,
+            threadId,
+            duration: 5000,
+          });
+        }
       } catch {
         addToast({ type: 'error', title: 'Steer 失败', message: 'Steer 失败，请重试', threadId, duration: 5000 });
       }
