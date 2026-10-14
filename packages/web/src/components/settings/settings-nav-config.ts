@@ -6,6 +6,9 @@ export interface SettingsSection {
   description: string;
 }
 
+/** F190 classic sections; v2 retains its separate route destinations and memory sidebar. */
+export const CLASSIC_DESTINATION_SECTION_IDS = ['memory', 'mission-hub', 'signals'] as const;
+
 export const SETTINGS_SECTIONS: SettingsSection[] = [
   {
     id: 'memory',

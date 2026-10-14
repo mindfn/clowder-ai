@@ -9,7 +9,7 @@ import {
   SETTINGS_IA,
   TEAM_WORKSPACE_PIN_ID,
 } from '../settings-ia';
-import { SETTINGS_SECTIONS } from '../settings-nav-config';
+import { CLASSIC_DESTINATION_SECTION_IDS, SETTINGS_SECTIONS } from '../settings-nav-config';
 
 describe('F322 设置与管理 information architecture', () => {
   it('has exactly the 11 decided first-level items, in the decided order and groups', () => {
@@ -39,7 +39,7 @@ describe('F322 设置与管理 information architecture', () => {
   });
 
   it('keeps every one of the 14 old sections, each under exactly one first-level item', () => {
-    const classicDestinationSections = new Set(['memory', 'mission-hub', 'signals']);
+    const classicDestinationSections = new Set<string>(CLASSIC_DESTINATION_SECTION_IDS);
     const originalSections = SETTINGS_SECTIONS.filter((section) => !classicDestinationSections.has(section.id));
     for (const section of originalSections) {
       const owners = SETTINGS_IA.filter(

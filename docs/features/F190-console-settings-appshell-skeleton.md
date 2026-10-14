@@ -639,10 +639,13 @@ Header 和 Sidebar 松紧不同**是设计意图**（spacious vs default），�
 
 ## Phase H: Activity Rail 入口收敛（2026-09-18）
 
-> Rebase continuity（2026-10-14，operator `thread_mu5cf8fpujtesgzn#0001791941881146-000060-f9c12cde`）：
-> 本轮保留最新上游 F322 v2 WorldRail、成员编辑宿主、账户与登录文案及 F317 桌面伴随入口。
-> 下述 rail 收敛断言适用于经典 ActivityBar；不覆盖 v2 WorldRail 的世界导航或其已交付入口。
-> 猫猫球的旧 web 显隐开关不恢复，Settings 继续使用上游桌面插件管理入口；审批计数兼容两种 header。
+> Rebase continuity（2026-10-14，实现方范围选择，待 CVO 确认）：operator 消息
+> `thread_mu5cf8fpujtesgzn#0001791941881146-000060-f9c12cde` 只授权 rebase，不是产品范围变更决定。
+> 实现方保留上游 F322 v2 WorldRail、成员编辑宿主、账户与登录文案及 F317 桌面伴随机制。
+> 下述 rail 收敛断言目前只作用于经典 ActivityBar；v2 仍有 Collective 世界入口与猫猫星球设置目的地。
+> 此 classic/v2 边界尚未获 CVO 确认；全局 capability tips 在两种外观中均不主动推广隐藏目的地。
+> 上游已撤掉猫猫球旧 web 显隐开关；Settings 通过共享伴随入口动作唤回桌面猫猫或打开原伴随对话，
+> 插件管理链接仅负责启停与恢复状态。该机制替换待 CVO 确认；审批计数兼容两种 header。
 
 > Source: `thread_mu5cf8fpujtesgzn#0001789638449393-000639-09e31777` +
 > `thread_mu5cf8fpujtesgzn#0001789700666600-000982-df932f7e` +
