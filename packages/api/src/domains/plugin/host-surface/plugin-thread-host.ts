@@ -1,7 +1,9 @@
 import type { IConnectorThreadBindingStore } from '../../../infrastructure/connectors/ConnectorThreadBindingStore.js';
 import type { IThreadStore, Thread } from '../../cats/services/stores/ports/ThreadStore.js';
+import { snapshotPluginProtocolData } from '../carrier/plugin-protocol-data.js';
 import { ExternalPluginRuntimeError } from '../external-runtime/types.js';
 import { hostCapabilityRefusal } from './host-capability-refusal.js';
+import { ensurePluginChildThread } from './plugin-thread-child.js';
 import {
   boundedLimit,
   type PluginThreadCats,
@@ -33,6 +35,10 @@ export interface PluginThreadListCursor {
   readonly id: string;
 }
 
+export type PluginThreadEnsureInput =
+  | { readonly title: string; readonly parentThreadId?: never; readonly participants?: never }
+  | { readonly title: string; readonly parentThreadId: string; readonly participants: readonly string[] };
+
 export interface PluginThreadHost {
   get(threadId: string): Promise<PluginThreadSummary | null>;
   /** Live keyset pagination: pass the last row's coordinates; a short/empty page ends traversal. */
@@ -51,7 +57,7 @@ export interface PluginThreadHost {
     patch: { readonly title?: string; readonly preferredCats?: readonly string[] },
   ): Promise<PluginThreadSummary>;
   findByKey(key: string): Promise<PluginThreadSummary | null>;
-  ensureByKey(key: string, input: { readonly title: string }): Promise<PluginThreadSummary>;
+  ensureByKey(key: string, input: PluginThreadEnsureInput): Promise<PluginThreadSummary>;
   bind(key: string, threadId: string): Promise<PluginThreadBindingSummary>;
   unbind(key: string): Promise<boolean>;
   listBindings(): Promise<readonly PluginThreadBindingSummary[]>;
@@ -308,10 +314,34 @@ export function createPluginThreadHost(input: PluginThreadHostDeps): PluginThrea
     },
     async ensureByKey(value, request) {
       requireGrant('thread.write');
+      request = snapshotPluginProtocolData(request) as PluginThreadEnsureInput;
       if (!request || typeof request !== 'object' || Array.isArray(request)) {
         throw new TypeError('thread ensure input must be an object');
       }
-      return ensure(bindingKey(value), title(request.title));
+      if (Object.keys(request).some((key) => !['title', 'parentThreadId', 'participants'].includes(key)))
+        throw new TypeError('Unexpected thread ensure fields');
+      const key = bindingKey(value),
+        requestedTitle = title(request.title);
+      if (!Object.hasOwn(request, 'parentThreadId') && !Object.hasOwn(request, 'participants'))
+        return ensure(key, requestedTitle);
+      const parentThreadId = threadId(request.parentThreadId);
+      const participants = validatePreferredCats(request.participants, input.cats);
+      const binding = await input.bindingStore.getByExternal(input.pluginId, key);
+      if (binding && binding.userId !== input.ownerUserId)
+        throw new ExternalPluginRuntimeError('DELIVERY_REJECTED', 'Thread binding belongs to another owner');
+      const thread = await ensurePluginChildThread({
+        store: input.threadStore,
+        ownerUserId: input.ownerUserId,
+        pluginId: input.pluginId,
+        key,
+        title: requestedTitle,
+        parentThreadId,
+        participants,
+        ...(binding ? { boundThreadId: binding.threadId } : {}),
+      });
+      await input.threadStore.updatePluginOwnership(thread.id, { v: 1, pluginInstanceId: input.pluginInstanceId });
+      await input.bindingStore.bind(input.pluginId, key, thread.id, input.ownerUserId);
+      return summary(thread);
     },
     async bind(value, id) {
       requireGrant('thread.write');

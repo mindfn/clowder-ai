@@ -28,12 +28,112 @@ function hostOf(options = {}) {
     effectiveGrants: options.effectiveGrants ?? ['thread.listMetadata', 'thread.readContent', 'thread.write'],
     threadStore,
     bindingStore,
+    cats: {
+      getAllCatIds: () => ['cat', 'peer'],
+      getRegisteredServices: () =>
+        new Map([
+          ['cat', {}],
+          ['peer', {}],
+        ]),
+      isCatAvailable: () => true,
+    },
     systemThreadTitle: options.systemThreadTitle ?? 'Fixture',
   });
   return { host, threadStore, bindingStore };
 }
 
 describe('F202 C1 — plugin Host thread surface', () => {
+  test('a package can idempotently ensure a child without Host selecting its business source', async () => {
+    const f = hostOf();
+    const parent = await f.threadStore.create(OWNER, 'Parent', '/workspace/parent-project');
+    const other = hostOf({ threadStore: f.threadStore, bindingStore: f.bindingStore });
+    const request = { title: 'Package chooses this title', parentThreadId: parent.id, participants: ['cat'] };
+    const [a, b] = await Promise.all([
+      f.host.ensureByKey('package-selected-key', request),
+      other.host.ensureByKey('package-selected-key', request),
+    ]);
+    assert.equal(a.id, b.id);
+    assert.notEqual(a.id, parent.id);
+    const stored = await f.threadStore.get(a.id);
+    assert.equal(stored.parentThreadId, parent.id);
+    assert.equal(stored.projectPath, parent.projectPath);
+    assert.equal(stored.createdBy, OWNER);
+    assert.deepEqual(stored.participants, ['cat']);
+    assert.equal((await f.host.findByKey('package-selected-key')).id, a.id);
+  });
+
+  test('child ensure refuses foreign parents even when a plugin binding exists', async () => {
+    const f = hostOf();
+    const parent = await f.threadStore.create('someone-else', 'Foreign');
+    await f.bindingStore.bind('dev.clowder.fixture', 'foreign', parent.id, OWNER);
+    await assert.rejects(() =>
+      f.host.ensureByKey('child', {
+        title: 'Child',
+        parentThreadId: parent.id,
+        participants: ['cat'],
+      }),
+    );
+    assert.equal(await f.host.findByKey('child'), null);
+  });
+
+  test('child ensure rejects changed parent or participant semantics under the same key', async () => {
+    const f = hostOf();
+    const parent = await f.threadStore.create(OWNER, 'Parent');
+    const other = await f.threadStore.create(OWNER, 'Other');
+    const input = { title: 'Child', parentThreadId: parent.id, participants: ['cat'] };
+    const first = await f.host.ensureByKey('child', input);
+    await assert.rejects(() => f.host.ensureByKey('child', { ...input, parentThreadId: other.id }));
+    await assert.rejects(() => f.host.ensureByKey('child', { ...input, participants: ['peer'] }));
+    assert.equal((await f.host.findByKey('child')).id, first.id);
+  });
+
+  test('child ensure cannot replace Host owner or project and checks participant identities', async () => {
+    const f = hostOf();
+    const parent = await f.threadStore.create(OWNER, 'Parent');
+    const input = { title: 'Child', parentThreadId: parent.id, participants: ['cat'] };
+    for (const delta of [{ userId: 'someone-else' }, { projectPath: '/foreign' }, { participants: ['unknown'] }]) {
+      await assert.rejects(() => f.host.ensureByKey('child', { ...input, ...delta }));
+    }
+    assert.equal(await f.host.findByKey('child'), null);
+  });
+
+  test('child ensure recovers the same durable child if binding acknowledgement is lost', async () => {
+    const f = hostOf();
+    const parent = await f.threadStore.create(OWNER, 'Parent');
+    const request = { title: 'Child', parentThreadId: parent.id, participants: ['cat'] };
+    const bind = f.bindingStore.bind.bind(f.bindingStore);
+    let lost = true;
+    f.bindingStore.bind = async (...args) => {
+      const result = await bind(...args);
+      if (lost) {
+        lost = false;
+        throw new Error('response lost');
+      }
+      return result;
+    };
+    await assert.rejects(() => f.host.ensureByKey('child', request), /response lost/);
+    const recovered = hostOf({ threadStore: f.threadStore, bindingStore: f.bindingStore });
+    const child = await recovered.host.ensureByKey('child', request);
+    assert.equal((await f.threadStore.list(OWNER)).length, 2);
+    assert.equal((await f.host.findByKey('child')).id, child.id);
+  });
+
+  test('child ensure refuses an already deleted parent', async () => {
+    const f = hostOf();
+    const parent = await f.threadStore.create(OWNER, 'Parent');
+    parent.deletedAt = Date.now();
+    await assert.rejects(
+      () =>
+        f.host.ensureByKey('child', {
+          title: 'Child',
+          parentThreadId: parent.id,
+          participants: ['cat'],
+        }),
+      /coordinates changed/,
+    );
+    assert.equal(await f.host.findByKey('child'), null);
+  });
+
   test('all thread mutations require the thread.write grant', async () => {
     const { host, threadStore } = hostOf({ effectiveGrants: ['thread.listMetadata', 'thread.readContent'] });
     const existing = await threadStore.create(OWNER, 'Existing');
@@ -41,6 +141,10 @@ describe('F202 C1 — plugin Host thread surface', () => {
     await assert.rejects(() => host.create({ title: 'Denied' }), /lacks thread\.write/);
     await assert.rejects(() => host.update(existing.id, { title: 'Denied' }), /lacks thread\.write/);
     await assert.rejects(() => host.ensureByKey('denied', { title: 'Denied' }), /lacks thread\.write/);
+    await assert.rejects(
+      () => host.ensureByKey('denied-child', { title: 'Denied', parentThreadId: existing.id, participants: ['cat'] }),
+      /lacks thread\.write/,
+    );
     await assert.rejects(() => host.bind('denied', existing.id), /lacks thread\.write/);
     await assert.rejects(() => host.unbind('denied'), /lacks thread\.write/);
     await assert.rejects(() => host.ensureSystemThread(), /lacks thread\.write/);
