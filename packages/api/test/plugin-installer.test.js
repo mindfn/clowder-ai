@@ -271,8 +271,7 @@ describe('installPlugin', { concurrency: false }, () => {
 set -eu
 archive="$2"
 dest="$4"
-base="$(basename "$archive")"
-id="\${base%.tar.gz}"
+id="$(tar tzf "$archive" | head -n 1 | cut -d/ -f1)"
 env_name="$(printf '%s' "$id" | tr '[:lower:]-' '[:upper:]_')_TOKEN"
 mkdir -p "$dest/$id"
 cat > "$dest/$id/connector.yaml" <<YAML

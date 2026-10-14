@@ -80,7 +80,7 @@ jobs:
               Write-Host "tar-case=$($variant.Name)"
               where.exe tar
               & $variant.Path --version
-              node --test packages/api/test/plugin-package-staging-diagnostics.test.js packages/api/test/plugin-companion-registry.smoke.mjs
+              node --test packages/api/test/plugin-package-staging-diagnostics.test.js packages/api/test/plugin-companion-registry.smoke.mjs packages/api/test/plugin-tar-portability.test.js
               if ($LASTEXITCODE -ne 0) { $failed += $variant.Name }
             }
           } finally {

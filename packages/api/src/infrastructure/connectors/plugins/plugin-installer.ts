@@ -14,8 +14,8 @@
  */
 
 import { execFile } from 'node:child_process';
-import { existsSync, lstatSync, readdirSync, type Stats } from 'node:fs';
-import { lstat, mkdir, mkdtemp, opendir, readdir, readFile, rm, writeFile } from 'node:fs/promises';
+import { existsSync, constants as fsConstants, lstatSync, readdirSync, type Stats } from 'node:fs';
+import { copyFile, lstat, mkdir, mkdtemp, opendir, readdir, readFile, rm, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { promisify } from 'node:util';
 import { parse as parseYaml, stringify as stringifyYaml } from 'yaml';
@@ -161,17 +161,25 @@ export async function installPlugin(
   const pluginsDir = resolvePluginsDir(projectRoot);
   await mkdir(pluginsDir, { recursive: true });
   const tmpDir = await mkdtemp(join(pluginsDir, '.tmp-install-'));
+  const extractedRoot = join(tmpDir, 'payload');
 
   try {
     // Extract tar.gz
     try {
-      await execFileAsync(resolveTarCommand(opts.tarBin), ['xzf', archivePath, '-C', tmpDir], { timeout: 30_000 });
+      await copyFile(archivePath, join(tmpDir, 'package.tgz'), fsConstants.COPYFILE_EXCL);
+      await mkdir(extractedRoot);
+      // GNU tar treats drive-colon archive operands as remote. The cwd root
+      // contains only Host-owned paths; extraction targets a separate payload tree.
+      await execFileAsync(resolveTarCommand(opts.tarBin), ['xzf', 'package.tgz', '-C', 'payload'], {
+        cwd: tmpDir,
+        timeout: 30_000,
+      });
     } catch (err) {
       return { code: 'EXTRACT_FAILED', message: `Failed to extract archive: ${(err as Error).message}` };
     }
 
     // Find the single top-level directory
-    const entries = (await readdir(tmpDir)).filter((e) => !e.startsWith('.'));
+    const entries = (await readdir(extractedRoot)).filter((e) => !e.startsWith('.'));
     if (entries.length !== 1) {
       return {
         code: 'INVALID_ARCHIVE',
@@ -179,7 +187,7 @@ export async function installPlugin(
       };
     }
 
-    const extractedDir = join(tmpDir, entries[0]);
+    const extractedDir = join(extractedRoot, entries[0]);
     const treeError = await validateExtractedTreeHasNoSymlinks(extractedDir, opts);
     if (treeError) return treeError;
 
