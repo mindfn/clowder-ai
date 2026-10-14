@@ -99,7 +99,9 @@ async function createMultiApprovedChildScenario(t: TestContext, laterSuccessor: 
   };
   const delegates = new ProposalStoreDelegateProvider(
     { get: async (id) => f.proposals.get(id) },
-    new ThreadDelegateBindingProvider({ listAllByThread: async (id) => f.proposals.listAllByThread(id) }),
+    new ThreadDelegateBindingProvider({
+      listAllByTaskThread: async (id) => f.proposals.listAllByThread(id),
+    }),
   );
   const resolver = new ActionSubjectTruthResolver(
     {

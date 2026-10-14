@@ -1,11 +1,39 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
+import { readQueueCarrierMessages } from '../dist/domains/cats/services/agents/invocation/QueueCarrierSourceProjection.js';
+import { MessageStore } from '../dist/domains/cats/services/stores/ports/MessageStore.js';
+import { createDeliverFn } from '../dist/infrastructure/scheduler/delivery.js';
 import { executeTaskPipeline } from '../dist/infrastructure/scheduler/execute-pipeline.js';
 import {
   createAlphaBrowserTemplate,
   supportsAlphaBrowserVerification,
 } from '../dist/infrastructure/scheduler/templates/alpha-browser.js';
 import { fixture } from './helpers/alpha-browser-template-fixture.js';
+
+for (const ownership of ['owner', 'guardian']) {
+  test(`Alpha ${ownership} notification remains readable by its invoked owner and rejects a foreign owner`, async () => {
+    const f = fixture();
+    const store = new MessageStore();
+    if (ownership === 'guardian') {
+      const drafts = f.runtime.alphaBrowserFailureTasks;
+      f.runtime.alphaBrowserFailureTasks = async () =>
+        (await drafts()).map((draft) => ({ ...draft, ownerCatId: null, ownership: 'unresolved' }));
+    }
+    f.context.deliver = createDeliverFn({
+      messageStore: store,
+      socketManager: { broadcastToRoom() {}, emitToUser() {} },
+    });
+    const spec = createAlphaBrowserTemplate(f.options).createSpec('alpha-subscription', f.params);
+    await spec.run.execute('alpha', 'alpha', f.context);
+    const [threadId, , userId, content, messageId] = f.triggered[0];
+    const entry = { id: 'alpha-notification', threadId, userId, messageId, mergedMessageIds: [] };
+    const messages = await readQueueCarrierMessages(entry, store);
+    assert.equal(messages[0].userId, f.options.ownerUserId);
+    assert.equal(messages[0].content, content);
+    assert.equal(messages[0].source.connector, 'scheduler', 'connector identity is independent of data ownership');
+    await assert.rejects(readQueueCarrierMessages({ ...entry, userId: 'foreign-owner' }, store), /out of scope/);
+  });
+}
 
 for (const restriction of ['scarce', 'unavailable', 'unregistered']) {
   test(`historical ${restriction} owner is preserved but only the subscription guardian is awakened`, async () => {

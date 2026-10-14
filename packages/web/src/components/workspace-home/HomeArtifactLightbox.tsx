@@ -4,6 +4,7 @@ import { useEffect, useLayoutEffect, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { resolveAssetUrl } from '@/components/artifacts/artifact-view';
 import { useShellCopy } from '@/components/shell/shell-copy';
+import { useShellLanguage } from '@/components/shell/shell-language';
 import { API_URL } from '@/utils/api-client';
 import { artifactObjectId } from '../workbench/real-surface-adapters';
 import { workspaceV3Copy } from './workspace-v3.shell-copy';
@@ -28,6 +29,7 @@ export function HomeArtifactLightbox({
   artifactKey?: (artifact: ThreadArtifactDTO) => string;
 }) {
   const t = useShellCopy(workspaceV3Copy);
+  const language = useShellLanguage();
   const close = useRef<HTMLButtonElement>(null);
   const focusedControl = useRef<HTMLElement | null>(null);
   const [failedUrl, setFailedUrl] = useState<string | null>(null);
@@ -60,7 +62,7 @@ export function HomeArtifactLightbox({
   }, [onClose]);
   const url = resolveAssetUrl(artifact.url, API_URL);
   return createPortal(
-    <div className="home-lightbox-backdrop" data-shell="v2">
+    <div className="home-lightbox-backdrop" data-shell="v2" lang={language === 'zh' ? 'zh-CN' : 'en'}>
       <section
         role="dialog"
         aria-modal="true"

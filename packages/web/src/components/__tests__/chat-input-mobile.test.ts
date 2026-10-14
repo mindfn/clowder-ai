@@ -106,46 +106,6 @@ describe('ChatInput progressive add menu', () => {
   });
 });
 
-describe('ChatInput textarea auto-grow', () => {
-  it('starts with rows=1', () => {
-    render();
-    const ta = container.querySelector('textarea')!;
-    expect(ta.getAttribute('rows')).toBe('1');
-  });
-
-  it('auto-grow uses matchMedia guard (no crash in test env)', () => {
-    // matchMedia may not be defined in jsdom — the guard prevents crash
-    render();
-    const ta = container.querySelector('textarea')!;
-    // Just verify textarea renders without errors
-    expect(ta).toBeTruthy();
-  });
-
-  it('auto-grow respects mobile max height when matchMedia is available', () => {
-    window.matchMedia = vi.fn().mockImplementation((query: string) => ({
-      matches: query.includes('max-width'), // mobile
-      media: query,
-      onchange: null,
-      addEventListener: vi.fn(),
-      removeEventListener: vi.fn(),
-      addListener: vi.fn(),
-      removeListener: vi.fn(),
-      dispatchEvent: vi.fn(),
-    }));
-    render();
-    const ta = container.querySelector('textarea')!;
-    // Simulate typing to trigger auto-grow effect
-    act(() => {
-      Object.defineProperty(ta, 'scrollHeight', { value: 200, writable: true });
-      ta.value = 'line1\nline2\nline3\nline4\nline5\nline6';
-      ta.dispatchEvent(new Event('input', { bubbles: true }));
-    });
-    // On mobile, max height is 120px
-    const height = parseInt(ta.style.height, 10);
-    expect(height).toBeLessThanOrEqual(120);
-  });
-});
-
 describe('ChatInput composer layout', () => {
   it('keeps the active invocation stop affordance visible while preserving hover and keyboard focus styling', () => {
     render({ hasActiveInvocation: true });

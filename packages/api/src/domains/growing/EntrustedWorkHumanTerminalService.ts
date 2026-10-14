@@ -230,8 +230,9 @@ export class EntrustedWorkHumanTerminalService {
     if (
       projection.state !== 'running' ||
       !task.userId ||
-      projection.binding.threadId !== task.threadId ||
-      projection.binding.catId !== task.ownerCatId
+      projection.taskRef.taskId !== task.id ||
+      projection.taskRef.subjectRef !== `task:work:${task.id}` ||
+      projection.taskRef.ownerRef !== `task:item:${task.id}`
     ) {
       return { projection };
     }

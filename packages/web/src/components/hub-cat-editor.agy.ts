@@ -25,7 +25,7 @@ export function buildAgyProfilePatch(
         .filter(Boolean),
     ),
   );
-  if (!trustedWorkspaces.length) throw new Error('AGY Native 需要至少一个批准工作区');
+  if (!form.agyAutoApprove && !trustedWorkspaces.length) throw new Error('AGY Native 需要至少一个批准工作区');
   const homeRoot = form.agyHomeRoot?.trim();
   if (trustedWorkspaces.some((path) => !path.startsWith('/')) || (homeRoot && !homeRoot.startsWith('/'))) {
     throw new Error('Profile 根目录和批准工作区必须使用绝对路径');
@@ -37,7 +37,7 @@ export function buildAgyProfilePatch(
       profileId,
       ...(homeRoot ? { homeRoot } : {}),
       model,
-      autoApprove: false,
+      autoApprove: form.agyAutoApprove === true,
       trustedWorkspaces,
     },
   };

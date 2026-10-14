@@ -2,7 +2,7 @@ import type { CatId } from '@cat-cafe/shared';
 import { isCliError, isCliTimeout } from '../../../../../../utils/cli-spawn.js';
 import type { AgentMessage, MessageMetadata } from '../../../types.js';
 import { type AgyStreamJsonTurn, summarizeAgyStreamJsonTurn } from '../agy-stream-json-parser.js';
-import { AGY_NATIVE_FILE_TOOLS } from './agy-native-policy.js';
+import { AGY_NATIVE_FILE_TOOLS, type AgyNativePermissionMode } from './agy-native-policy.js';
 
 export interface AgyNativeObservedTurn {
   readonly sessionId: string;
@@ -12,7 +12,6 @@ export interface AgyNativeObservedTurn {
 }
 
 const MAX_AGY_NATIVE_STREAM_CHARS = 8 * 1024 * 1024;
-const DECLARED_NATIVE_TOOLS = new Set<string>(AGY_NATIVE_FILE_TOOLS);
 const MISSING_FILE_ERROR_PREFIX =
   'declaring permissions: cortex tool view_file: convert tool call for permissions: model output error: ' +
   'invalid tool call error (invalid_args) failed to read file: stat ';
@@ -23,7 +22,12 @@ function asRecord(value: unknown): Record<string, unknown> | null {
 
 function verifiedInitSessionId(
   record: Record<string, unknown>,
-  expected: { readonly agentName: string; readonly spawnCwd: string; readonly model: string },
+  expected: {
+    readonly agentName: string;
+    readonly spawnCwd: string;
+    readonly model: string;
+    readonly permissionMode?: AgyNativePermissionMode;
+  },
   seen: boolean,
 ): string {
   const init = asRecord(record.init);
@@ -31,7 +35,7 @@ function verifiedInitSessionId(
     seen ||
     init?.agent !== expected.agentName ||
     init.cwd !== expected.spawnCwd ||
-    init.permission_mode !== 'request-review' ||
+    init.permission_mode !== (expected.permissionMode ?? 'request-review') ||
     init.model !== expected.model
   ) {
     throw new Error('AGY native init disagrees with the host-owned agent, spawn cwd, model, or permission mode');
@@ -53,7 +57,12 @@ function verifiedNativeTerminal(lines: readonly string[], sessionId: string, res
 /** Treat init as a claim that must match the launch plan, never as proof that L0 reached the model. */
 export async function readAgyNativeTurn(
   stream: AsyncIterable<unknown>,
-  expected: { readonly agentName: string; readonly spawnCwd: string; readonly model: string },
+  expected: {
+    readonly agentName: string;
+    readonly spawnCwd: string;
+    readonly model: string;
+    readonly permissionMode?: AgyNativePermissionMode;
+  },
   signal?: AbortSignal,
 ): Promise<AgyNativeObservedTurn> {
   const lines: string[] = [];
@@ -123,8 +132,9 @@ function projectToolMessages(catId: CatId, metadata: MessageMetadata, turn: AgyS
 function isDeclaredTurnTool(
   call: AgyStreamJsonTurn['toolCalls'][number],
   grantedMcpTools: ReadonlySet<string>,
+  declaredNativeTools: ReadonlySet<string>,
 ): boolean {
-  if (DECLARED_NATIVE_TOOLS.has(call.toolName)) return true;
+  if (declaredNativeTools.has(call.toolName)) return true;
   if (call.toolName !== 'call_mcp_tool') return false;
   const server = call.parameters.ServerName;
   const tool = call.parameters.ToolName;
@@ -151,6 +161,7 @@ export function projectAgyNativeTurn(
   observed: AgyNativeObservedTurn,
   cancelled: boolean,
   grantedMcpTools: readonly string[] = [],
+  declaredNativeTools: readonly string[] = AGY_NATIVE_FILE_TOOLS,
 ): AgentMessage[] {
   const { turn, transportError } = observed;
   const readObservations = turn.toolCalls.filter(isMissingFileObservation).map((call) => ({
@@ -183,7 +194,8 @@ export function projectAgyNativeTurn(
     (call) => (call.state === 'ERROR' || call.errorMessage !== null) && !isMissingFileObservation(call),
   );
   const grants = new Set(grantedMcpTools);
-  const unexpectedTool = turn.toolCalls.find((call) => !isDeclaredTurnTool(call, grants));
+  const tools = new Set(declaredNativeTools);
+  const unexpectedTool = turn.toolCalls.find((call) => !isDeclaredTurnTool(call, grants, tools));
   if (turn.outcome === 'ok' && !transportError && !cancelled && !incompleteTool && !unexpectedTool && !failedTool) {
     messages.push({ type: 'text', catId, content: turn.finalText, metadata, timestamp: Date.now() });
     messages.push({ type: 'done', catId, metadata, timestamp: Date.now() });

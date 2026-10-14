@@ -332,4 +332,13 @@ describe('ChatContainer bottom chrome observer', () => {
     expect(resizeObserverInstances).toHaveLength(2);
     expect(resizeObserverInstances[1]?.observe.mock.calls[0]?.[0]).toBe(secondBottomChrome);
   });
+
+  it('keeps the composer size subscription alive after StrictMode replays its effect', async () => {
+    await act(async () => {
+      root.render(React.createElement(React.StrictMode, null, renderChatContainer('thread-1')));
+    });
+    const active = resizeObserverInstances.filter((observer) => observer.disconnect.mock.calls.length === 0);
+    expect(active).toHaveLength(1);
+    expect(active[0]?.observe.mock.calls[0]?.[0]).toBe(container.querySelector('[data-thread-chat-footer]'));
+  });
 });

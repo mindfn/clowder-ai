@@ -125,13 +125,6 @@ describe('F190 visual contract — no hard borders in card/panel components', ()
     expect(src).not.toMatch(/md:border-r/);
   });
 
-  it('DefaultCatSelector uses console-card-bg shadow, not border-cafe', () => {
-    const src = readSrc('DefaultCatSelector.tsx');
-    expect(src).toContain('bg-[var(--console-card-bg)]');
-    expect(src).toContain('shadow-[var(--shadow-elevation-2)]');
-    expect(src).not.toMatch(/border border-cafe bg-cafe-surface/);
-  });
-
   it('BrakeSettingsPanel uses console-list-card shadow, not border-cafe', () => {
     const src = readSrc('BrakeSettingsPanel.tsx');
     expect(src).toContain('console-list-card');
@@ -275,12 +268,6 @@ describe('F190 visual contract — no hard borders in card/panel components', ()
   it('MemoryHub has h1 title header at text-xl', () => {
     const src = readSrc('memory/MemoryHub.tsx');
     expect(src).toMatch(/<h1.*text-xl font-bold/);
-  });
-
-  it('DefaultCatSelector has no fixed height, uses shadow', () => {
-    const src = readSrc('DefaultCatSelector.tsx');
-    expect(src).not.toContain('h-[72px]');
-    expect(src).toContain('shadow-[var(--shadow-elevation-2)]');
   });
 
   it('SettingsRow has default shadow and text-compact font-bold title', () => {

@@ -2,7 +2,9 @@
 
 import type { SettledApprovalHubItem } from '@cat-cafe/shared';
 import { useMemo, useState } from 'react';
+import { approvalHistoryCopy } from './approval-history.shell-copy';
 import { SettledHistoryCard } from './SettledHistoryCard';
+import { useShellCopy } from './shell/shell-copy';
 
 const INITIAL_VISIBLE_COUNT = 30;
 const LOAD_MORE_COUNT = 30;
@@ -46,6 +48,7 @@ interface ApprovalHistoryListProps {
 }
 
 export function ApprovalHistoryList({ items, now }: ApprovalHistoryListProps) {
+  const t = useShellCopy(approvalHistoryCopy);
   const [pagination, setPagination] = useState({ items, visibleCount: INITIAL_VISIBLE_COUNT });
   const visibleCount = pagination.items === items ? pagination.visibleCount : INITIAL_VISIBLE_COUNT;
 
@@ -58,7 +61,9 @@ export function ApprovalHistoryList({ items, now }: ApprovalHistoryListProps) {
       {groups.map((group) => (
         <section key={group.label} data-testid={`approval-history-group-${group.label}`}>
           <div className="sticky top-0 z-10 flex items-center gap-2 border-b border-cafe-subtle/20 bg-[var(--console-bg)]/95 px-3 py-1.5 backdrop-blur-sm">
-            <h3 className="text-micro font-semibold text-cafe-interactive/55">{group.label}</h3>
+            <h3 className="text-micro font-semibold text-cafe-interactive/55">
+              {{ 今天: t.today, 本周: t.week, 更早: t.earlier }[group.label]}
+            </h3>
             <span className="text-micro tabular-nums text-cafe-interactive/30">{group.items.length}</span>
           </div>
           <div className="space-y-2 px-3 py-3">
@@ -82,7 +87,7 @@ export function ApprovalHistoryList({ items, now }: ApprovalHistoryListProps) {
             className="w-full rounded-md border border-cafe-subtle/30 px-3 py-2 text-micro font-medium text-cafe-interactive/55 hover:border-cafe-subtle/60 hover:bg-cafe-surface/60 hover:text-cafe-interactive"
             data-testid="approval-history-load-more"
           >
-            显示更多（剩余 {remainingCount}）
+            {t.more(remainingCount)}
           </button>
         </div>
       )}

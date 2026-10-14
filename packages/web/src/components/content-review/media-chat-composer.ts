@@ -9,7 +9,9 @@ import {
   type MediaChatTarget,
   pendingMediaAttachment,
   removeMediaSelection,
+  sameMediaSource,
 } from './media-chat-selection';
+import { sameMediaContentWithAdvancedReview } from './media-work-identity';
 
 /**
  * Where circled places on an image enter the one chat composer. Like a text selection, it only lands in that
@@ -36,6 +38,7 @@ function queueMediaChange(
   if (replacing) removed.add(attachmentId);
   useChatStore.getState().setPendingChatInsert({
     ...base,
+    ...(!base.selectionRange ? { preserveSelection: base.preserveSelection ?? true } : {}),
     contextAttachments: [
       ...(base.contextAttachments ?? []).filter((attachment) => attachment.id !== attachmentId),
       ...(next ? [next] : []),
@@ -49,13 +52,22 @@ export type AddMediaSelectionToChat = AddMediaSelection | { readonly kind: 'refu
 export function addMediaWorkToChat(
   threadId: string | null,
   target: MediaChatTarget,
+  refreshWholeReview = false,
 ): AddMediaWork | { readonly kind: 'refused'; readonly reason: 'no_thread' } {
   if (!threadId) return { kind: 'refused', reason: 'no_thread' };
   if (queuedServerAckBlocks()) return { kind: 'refused', reason: 'recall_pending' };
   const current = composerAttachments(threadId);
-  const result = addMediaWork(current, target);
-  if (result.kind === 'added')
-    queueMediaChange(threadId, result.attachment.id, result.attachment, pendingMediaAttachment(current) !== undefined);
+  const pending = pendingMediaAttachment(current);
+  const refresh =
+    refreshWholeReview &&
+    pending?.selections.length === 0 &&
+    (sameMediaSource(pending, target) || sameMediaContentWithAdvancedReview(pending, target));
+  const result = addMediaWork(refresh ? current.filter((item) => item.id !== pending.id) : current, target);
+  if (result.kind === 'added') {
+    const attachment = refresh ? { ...result.attachment, id: pending.id } : result.attachment;
+    queueMediaChange(threadId, attachment.id, attachment, pending !== undefined);
+    return { ...result, attachment };
+  }
   return result;
 }
 
@@ -64,6 +76,7 @@ export function addMediaSelectionToChat(
   target: MediaChatTarget,
   anchor: ArtifactReviewAnchor,
   instruction?: string,
+  replaceWholeWork = false,
 ): AddMediaSelectionToChat {
   if (!threadId) return { kind: 'refused', reason: 'no_thread' };
   // A recall's answer waiting for the input is not something a place can be added to, or take the slot from: the input
@@ -71,9 +84,28 @@ export function addMediaSelectionToChat(
   // later.
   if (queuedServerAckBlocks()) return { kind: 'refused', reason: 'recall_pending' };
   const current = composerAttachments(threadId);
-  const result = addMediaSelection(current, target, anchor, instruction);
-  if (result.kind === 'added')
-    queueMediaChange(threadId, result.attachment.id, result.attachment, pendingMediaAttachment(current) !== undefined);
+  const pending = pendingMediaAttachment(current);
+  // The accepted image page references the whole work on open. A deliberate canvas selection replaces
+  // only that same-source empty reference, atomically after all ordinary selection/collection checks.
+  // Existing callers retain the refusal; another work, recall or invalid selection can never be erased.
+  const whole =
+    replaceWholeWork &&
+    pending &&
+    pending.selections.length === 0 &&
+    (sameMediaSource(pending, target) || sameMediaContentWithAdvancedReview(pending, target))
+      ? pending
+      : null;
+  const result = addMediaSelection(
+    whole ? current.filter((item) => item.id !== whole.id) : current,
+    target,
+    anchor,
+    instruction,
+  );
+  if (result.kind === 'added') {
+    const attachment = whole ? { ...result.attachment, id: whole.id } : result.attachment;
+    queueMediaChange(threadId, attachment.id, attachment, pending !== undefined);
+    return { ...result, attachment };
+  }
   return result;
 }
 

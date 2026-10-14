@@ -80,7 +80,7 @@ describe('F167 Phase Q: event-source hold retirement wiring', () => {
     const retired = [];
 
     const spec = createCiCdCheckTaskSpec({
-      taskStore: {},
+      taskStore: { get: async () => undefined },
       cicdRouter: {
         async route() {
           return {
@@ -144,7 +144,7 @@ describe('F167 Phase Q: event-source hold retirement wiring', () => {
     const triggers = [];
 
     const spec = createCiCdCheckTaskSpec({
-      taskStore: {},
+      taskStore: { get: async () => undefined },
       cicdRouter: {
         async route() {
           return {

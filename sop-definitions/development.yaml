@@ -129,6 +129,12 @@ stages:
           type: manual_only
           reason: Vision coverage has no machine-checkable report artifact yet; upgrade when quality-gate emits structured evidence.
           future_candidate: quality_gate_report_artifact
+      - id: quality-gate-confirmed-test-value
+        text: 本次已确认的同根低价值测试已按 testing-standard 保留并修正、合并、降层或删除，附承接覆盖和代表性检测力证据；不把已确认假绿留给无期限清理任务，也不扩成全仓扫描
+        severity: blocker
+        predicate:
+          type: manual_only
+          reason: Test stimulus, observation and detection power require author and selected reviewer judgment; command success is not semantic evidence. Use the existing PR, without another reviewer or full gate.
     pitfalls:
       - id: quality-gate-risk-matched-evidence
         text: 声称完成但没有与影响面匹配的验证证据（测试增量按 testing-standard 核真实失败、承接与成本；批量清理集中验证，高风险加强独立审查，targeted 无法覆盖才 full）

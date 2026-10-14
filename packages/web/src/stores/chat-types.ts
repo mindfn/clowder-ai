@@ -877,6 +877,11 @@ export interface ComposerDraftInsert {
   removeContextAttachmentIds?: string[];
   /** Server ACK owns the complete editor text; do not append it to a stale local snapshot. */
   authoritative?: boolean;
+  /** Unsent text requests must wait for the target owner's durable draft read. */
+  waitForDraft?: boolean;
+  /** Keep the existing draft's selection and focus when appending unsent text. */
+  preserveSelection?: boolean;
+  draftReadFailure?: { title: string; message: string };
   /** Newly transferred source range in authoritative text; ChatInput focuses and selects it after hydration. */
   selectionRange?: { start: number; end: number };
   /** Durable owner+thread draft revision acknowledged by the server. */
@@ -992,6 +997,7 @@ export interface WorkspaceOpenRequest {
       }
     | { kind: 'mode'; mode: Exclude<WorkspaceMode, 'dev' | 'team'> }
     | { kind: 'evolution-program'; programId: string }
+    | { kind: 'evolution-home' }
     | { kind: 'artifact'; artifact: ThreadArtifactDTO; navigationOrigin?: WorkspaceFileNavigationOrigin }
     | {
         kind: 'file';

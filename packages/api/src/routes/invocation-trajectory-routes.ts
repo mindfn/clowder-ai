@@ -15,6 +15,8 @@ import {
   requestGenerationSourceKey,
   resolveRequestGenerationSourceStates,
 } from '../domains/cats/services/session/transcript-index/request-generation-source-policy.js';
+import type { TranscriptReadObserver } from '../domains/cats/services/session/transcript-index/transcript-read-observer.js';
+import type { TranscriptReadStage } from '../infrastructure/transcript-read-diagnostics.js';
 import { resolveUserId } from '../utils/request-identity.js';
 import { strictParseTranscriptInteger } from './session-transcript-route-helpers.js';
 import type { ReadableSession, SessionTranscriptRouteOptions } from './session-transcript-route-types.js';
@@ -37,7 +39,9 @@ interface InvocationTrajectoryRouteDependencies {
     sessions: ReadableSession[],
     invocationId: string,
     signal?: AbortSignal,
+    observer?: TranscriptReadObserver,
   ) => Promise<ReadonlyMap<string, readonly TranscriptEvent[]>>;
+  createReadObserver?: (requestId: string, stage: TranscriptReadStage) => TranscriptReadObserver | undefined;
   messageStore?: SessionTranscriptRouteOptions['messageStore'];
   keyedContentDigest?: (value: string) => Promise<string>;
   profileRepository?: SessionTranscriptRouteOptions['profileRepository'];
@@ -97,6 +101,16 @@ export function registerInvocationTrajectoryRoutes(
     if (request.query.reveal !== undefined && request.query.reveal !== 'exact') {
       return reply.status(400).send({ error: 'Invalid reveal mode', code: 'INVOCATION_GENERATION_REVEAL_INVALID' });
     }
+    const observedRead =
+      (stage: TranscriptReadStage) => (sessions: ReadableSession[], invocationId: string, signal?: AbortSignal) => {
+        let observer: TranscriptReadObserver | undefined;
+        try {
+          observer = dependencies.createReadObserver?.(request.id, stage);
+        } catch {
+          /* Observation is optional. */
+        }
+        return dependencies.readInvocationEvents(sessions, invocationId, signal, observer);
+      };
     const result = await withTranscriptReadSignal(request, reply, (signal) =>
       resolveCanonicalInvocationTrajectory(
         {
@@ -112,7 +126,7 @@ export function registerInvocationTrajectoryRoutes(
           turnExecutionStore,
           sessionChainStore,
           threadStore,
-          readInvocationEvents: dependencies.readInvocationEvents,
+          readInvocationEvents: observedRead('canonical'),
         },
       ),
     );
@@ -126,7 +140,7 @@ export function registerInvocationTrajectoryRoutes(
     }
     try {
       const bySession = await withTranscriptReadSignal(request, reply, (signal) =>
-        dependencies.readInvocationEvents(sessions as ReadableSession[], request.params.invocationId, signal),
+        observedRead('generations')(sessions as ReadableSession[], request.params.invocationId, signal),
       );
       const events = sessions.flatMap((session) => [...(bySession.get((session as ReadableSession).id) ?? [])]);
       const hidden = projectRequestGenerations(events);

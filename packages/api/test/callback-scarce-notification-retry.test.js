@@ -5,7 +5,7 @@ import { createScarceNotificationFixture } from './helpers/scarce-notification-f
 async function setupPrincipal(t, principal) {
   const fixture = await createScarceNotificationFixture();
   t.after(() => fixture.close());
-  const auth = await fixture.setup();
+  const auth = await fixture.setup({ queued: true });
   const { secret } = await fixture.agentKeys.issue('opus', 'user-1');
   const payload = {
     threadId: fixture.target.id,
@@ -14,14 +14,14 @@ async function setupPrincipal(t, principal) {
     effectClass: 'fyi',
     clientMessageId: 'retry-notification',
   };
-  const send = () =>
+  const send = (overrides = {}) =>
     principal === 'invocation-token'
-      ? fixture.post(auth, payload)
+      ? fixture.post(auth, { ...payload, ...overrides })
       : fixture.app.inject({
           method: 'POST',
           url: '/api/callbacks/post-message',
           headers: { 'x-agent-key-secret': secret },
-          payload,
+          payload: { ...payload, ...overrides },
         });
   return { fixture, send };
 }
@@ -43,6 +43,20 @@ function assertOneQuietDelivery(fixture) {
 }
 
 for (const principal of ['invocation-token', 'agent-key']) {
+  test(`${principal}: the injected queue stays quiet for FYI but admits actionable delivery`, async (t) => {
+    const { fixture, send } = await setupPrincipal(t, principal);
+    const enqueue = t.mock.method(fixture.queue, 'enqueue');
+    assertReceipt(await send());
+    assertOneQuietDelivery(fixture);
+    assert.equal(enqueue.mock.callCount(), 0, 'FYI must never touch the real injected queue');
+    const active = await send({ targetCats: ['codex'], effectClass: 'coordinate', clientMessageId: 'active-control' });
+    assert.equal(active.statusCode, 200, active.body);
+    assert.equal(enqueue.mock.callCount(), 1, 'the route must actually be wired to this queue');
+    const queued = fixture.queue.list(fixture.target.id, 'user-1');
+    assert.equal(queued.length, 1);
+    assert.deepEqual(queued[0].targetCats, ['codex']);
+  });
+
   test(`${principal}: append failure leaves the same notification key retryable`, async (t) => {
     const { fixture, send } = await setupPrincipal(t, principal);
     const append = fixture.messages.appendIdempotent.bind(fixture.messages);

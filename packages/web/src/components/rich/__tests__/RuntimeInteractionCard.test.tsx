@@ -3,6 +3,7 @@ import { createRoot, type Root } from 'react-dom/client';
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import { apiFetch } from '@/utils/api-client';
 import { RichBlocks } from '../RichBlocks';
+import { RuntimeInteractionCard } from '../RuntimeInteractionCard';
 import { approvalRequest, block, cardRef, messageId, okJson, record } from './runtime-interaction-test-fixtures';
 
 vi.mock('@/utils/api-client', () => ({ apiFetch: vi.fn() }));
@@ -25,6 +26,48 @@ describe('RuntimeInteractionCard', () => {
   afterEach(() => {
     act(() => root.unmount());
     container.remove();
+  });
+
+  it.each([
+    ['another owner', 'another-user', 2000],
+    ['another observed version', 'user-1', 1999],
+  ] as const)('a hosted %s read cannot enable the canonical writer', async (_reason, ownerUserId, revision) => {
+    vi.mocked(apiFetch).mockResolvedValue(okJson({ interaction: record(approvalRequest()) }));
+    await act(async () =>
+      root.render(
+        <RuntimeInteractionCard
+          block={block}
+          messageId={messageId}
+          host={{ ownerUserId, revision, cardRef, readCurrent: true }}
+        />,
+      ),
+    );
+    expect([...container.querySelectorAll('button')].filter((button) => !button.disabled)).toHaveLength(0);
+    expect(vi.mocked(apiFetch).mock.calls.some(([, options]) => options?.method === 'POST')).toBe(false);
+  });
+
+  it('locks an aligned hosted card while its containing owner read is being refreshed', async () => {
+    vi.mocked(apiFetch).mockResolvedValue(okJson({ interaction: record(approvalRequest()) }));
+    await act(async () =>
+      root.render(
+        <RuntimeInteractionCard
+          block={block}
+          messageId={messageId}
+          host={{ ownerUserId: 'user-1', revision: 2000, cardRef, readCurrent: true }}
+        />,
+      ),
+    );
+    expect([...container.querySelectorAll('button')].some((button) => !button.disabled)).toBe(true);
+    await act(async () =>
+      root.render(
+        <RuntimeInteractionCard
+          block={block}
+          messageId={messageId}
+          host={{ ownerUserId: 'user-1', revision: 2000, cardRef, readCurrent: false }}
+        />,
+      ),
+    );
+    expect([...container.querySelectorAll('button')].some((button) => !button.disabled)).toBe(false);
   });
 
   it('hydrates exact approval decisions and submits through the canonical card ref', async () => {

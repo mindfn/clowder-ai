@@ -33,7 +33,11 @@ const { ActionSuccessorAdmissionService, ActionSuccessorStandingError } = await 
 const { ActionSubjectTruthResolver } = await import('../dist/domains/ball-custody/ActionSubjectTruthResolver.js');
 const { ProposalStoreDelegateProvider } = await import('../dist/domains/ball-custody/ProposalStoreDelegateProvider.js');
 
-const VALID_BINDING = { proposalId: PROPOSAL_ID, approvedUnderOwner: OWNER_CAT };
+const VALID_BINDING = {
+  proposalId: PROPOSAL_ID,
+  approvedUnderOwner: OWNER_CAT,
+  approvedChildThreadId: CHILD_THREAD,
+};
 
 /** Build full resolver→admission pipeline using real ProposalStoreDelegateProvider. */
 function buildRealDelegatePipeline({
@@ -99,7 +103,7 @@ describe('F167 approved-child delegation — real proposal-backed provider', () 
       makeProposalStore(null),
       makeBindingProvider({ binding: VALID_BINDING }),
     );
-    const delegates = await provider.getForTask(TASK_ID, OWNER_THREAD, OWNER_CAT, TENANT);
+    const delegates = await provider.getForTask(TASK_ID, OWNER_THREAD, OWNER_CAT, TENANT, DEV_SCOPE);
     assert.deepEqual(delegates, [], 'missing proposal → empty delegates');
   });
 
@@ -123,15 +127,50 @@ describe('F167 approved-child delegation — real proposal-backed provider', () 
     assert.deepEqual(delegates, [], 'withdrawn proposal → empty delegates');
   });
 
-  // ── Thread mismatch ──
+  // ── Parent/task relation ──
 
-  test('proposal sourceThreadId differs from task thread → child rejected', async () => {
+  test('proposal sourceThreadId may differ when its approved parent is the exact Task thread', async () => {
     const provider = new ProposalStoreDelegateProvider(
       makeProposalStore(makeProposal({ sourceThreadId: 'thread-different-source' })),
       makeBindingProvider({ binding: VALID_BINDING }),
     );
+    const delegates = await provider.getForTask(TASK_ID, OWNER_THREAD, OWNER_CAT, TENANT, DEV_SCOPE);
+    assert.equal(delegates.length, 1);
+  });
+
+  test('proposal parentThreadId differs from Task thread → child rejected', async () => {
+    const provider = new ProposalStoreDelegateProvider(
+      makeProposalStore(makeProposal({ parentThreadId: 'thread-wrong-parent' })),
+      makeBindingProvider({ binding: VALID_BINDING }),
+    );
     const delegates = await provider.getForTask(TASK_ID, OWNER_THREAD, OWNER_CAT, TENANT);
-    assert.deepEqual(delegates, [], 'thread mismatch → empty delegates');
+    assert.deepEqual(delegates, []);
+  });
+
+  test('proposal subjectTaskId differs from bound Task → child rejected on authoritative reread', async () => {
+    const provider = new ProposalStoreDelegateProvider(
+      makeProposalStore(makeProposal({ subjectTaskId: 'task-other' })),
+      makeBindingProvider({ binding: VALID_BINDING }),
+    );
+    const delegates = await provider.getForTask(TASK_ID, OWNER_THREAD, OWNER_CAT, TENANT);
+    assert.deepEqual(delegates, []);
+  });
+
+  test('authoritative approval identity and child coordinates must all remain exact', async () => {
+    const invalidProposals = [
+      makeProposal({ sourceCatId: 'different-owner' }),
+      makeProposal({ approvedBy: 'different-user' }),
+      makeProposal({ approvedBy: undefined }),
+      makeProposal({ approvedAt: undefined }),
+      makeProposal({ createdThreadId: 'different-child' }),
+    ];
+    for (const proposal of invalidProposals) {
+      const provider = new ProposalStoreDelegateProvider(
+        makeProposalStore(proposal),
+        makeBindingProvider({ binding: VALID_BINDING }),
+      );
+      assert.deepEqual(await provider.getForTask(TASK_ID, OWNER_THREAD, OWNER_CAT, TENANT), []);
+    }
   });
 
   // ── Tenant mismatch ──

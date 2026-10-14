@@ -47,6 +47,7 @@ export function WorkspaceFileViewer(props: WorkspaceFileViewerProps | PublishedT
   const quoteSource = published ? (published.publication.quoteSource ?? false) : undefined;
   const isV2 = useShellPresentation() === 'v2';
   const currentThreadId = useChatStore((s) => s.currentThreadId);
+  const onQuoteSelected = workspace?.onQuoteSelected;
   const mdContainerRef = useRef<HTMLDivElement>(null);
   const mdSelectionAction = useMarkdownSelectionAction(
     mdContainerRef,
@@ -85,9 +86,11 @@ export function WorkspaceFileViewer(props: WorkspaceFileViewerProps | PublishedT
         selectionStart: action.selectionStart,
         selectionEnd: action.selectionEnd,
       });
-      return result.kind === 'added';
+      if (result.kind !== 'added') return false;
+      onQuoteSelected?.('');
+      return true;
     },
-    [currentThreadId, currentWorktree, openFilePath, worktreeId, quoteSource],
+    [currentThreadId, currentWorktree, openFilePath, worktreeId, quoteSource, onQuoteSelected],
   );
 
   const rawUrl = (path: string) =>

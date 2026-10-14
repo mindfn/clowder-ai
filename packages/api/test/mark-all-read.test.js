@@ -88,9 +88,38 @@ describe('POST /api/threads/read/mark-all', () => {
     });
 
     assert.equal(res.statusCode, 200);
+    assert.equal(JSON.parse(res.body).handledMentionCount, 0);
     const body = JSON.parse(res.body);
     // Should have advanced cursors for threads that had messages
     assert.ok(body.advancedCount >= 2, `advancedCount=${body.advancedCount} should be >= 2`);
+  });
+
+  it('uses the same durable read evidence to move @you requests into viewed history', async () => {
+    const thread = threadStore.create('alice', 'Mention Thread');
+    const mention = messageStore.append({
+      userId: 'alice',
+      catId: 'codex-sol',
+      content: '@alice please read',
+      mentions: [],
+      mentionsUser: true,
+      timestamp: 1000,
+      threadId: thread.id,
+    });
+
+    const res = await app.inject({
+      method: 'POST',
+      url: '/api/threads/read/mark-all',
+      headers: { 'x-cat-cafe-user': 'alice' },
+    });
+
+    assert.equal(res.statusCode, 200);
+    assert.equal(JSON.parse(res.body).handledMentionCount, 1);
+    assert.deepEqual(messageStore.listUserMentionRequests('alice'), []);
+    assert.deepEqual(
+      messageStore.listHandledUserMentions('alice').map((message) => message.id),
+      [mention.id],
+    );
+    assert.equal(messageStore.getUserMentionHandlingMetadata('alice')[mention.id]?.reason, 'viewed');
   });
 
   it('acks threads whose latest visible item is queued cat-authored speech', async () => {

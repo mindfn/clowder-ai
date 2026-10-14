@@ -9,9 +9,7 @@
  *  - loading and failure withdraw the earlier claim — nothing here carries a previous number or previous rows.
  */
 import type { UnifiedAttentionReadV1, UnifiedAttentionSourceRead } from '@cat-cafe/shared';
-
-/** The user-facing name (1.6 status board: "待办"). The rail entry is still called the mailbox in code and docs. */
-export const MAILBOX_NAME = '待办';
+import { mailboxEntryCopy } from './mailbox/mailbox-entry.shell-copy';
 
 /**
  * One attempt's outcome. `unauthenticated` is only the route-level 401; every other failure (403, 5xx, network, a body
@@ -65,11 +63,12 @@ function deriveReadState(result: MailboxRead, field: 'attentionCount' | 'totalCo
 
   const qualifiedSource = read.sources.structuredChoices?.coverage === 'pending_f306_structured_choices';
   // Earlier/handled filters only narrow panel rows; the qualified count remains global.
+  const visibleAttention = read.personalView ? read.personalView.visibleAttentionCount : read.attentionCount;
   const attention =
     field === 'totalCount'
       ? exactTotal
-      : provenComplete && qualifiedSource && exactTotal !== null && read.attentionCount !== undefined
-        ? read.attentionCount
+      : provenComplete && qualifiedSource && exactTotal !== null && visibleAttention !== undefined
+        ? visibleAttention
         : null;
   if (attention === 0) return { kind: 'empty' };
   if (attention !== null && attention > 0) return { kind: 'has-items', count: attention, partial: false };
@@ -90,53 +89,36 @@ function deriveReadState(result: MailboxRead, field: 'attentionCount' | 'totalCo
 }
 
 /** Short state phrase used by the tooltip second line and the accessible name — the board's own short words. */
-export function mailboxStateText(state: MailboxState): string {
+export function mailboxStateText(state: MailboxState, t = mailboxEntryCopy.zh): string {
   switch (state.kind) {
     case 'loading':
-      return '读取中';
+      return t.state.loading;
     case 'has-items':
-      if (state.count !== null) return `${state.count} 件`;
-      return state.partial ? '仅部分读取 · 已确认有事' : '数量未确认';
+      if (state.count !== null) return t.state.count(state.count);
+      return state.partial ? t.state.partialItems : t.state.unconfirmed;
     case 'empty':
-      return '暂无';
+      return t.state.empty;
     case 'partial':
-      return '仅部分读取';
+      return t.state.partial;
     case 'unavailable':
-      return '暂不可用';
+      return t.state.unavailable;
     case 'login-required':
-      return '需要登录';
+      return t.state.login;
   }
 }
 
-export function mailboxAccessibleName(state: MailboxState): string {
-  return `${MAILBOX_NAME}，${mailboxStateText(state)}`;
-}
-
-/**
- * When the entry says "partial" although no source was left unread, the panel owes the user one line on why
- * (1.6 board, F310 withholds `totalCount`): both sources answered but the two could not be confirmed to agree, so an
- * empty result must not be called "暂无". A source that was not read names itself through `sourceStatusText`, so null here.
- */
-export function mailboxPartialNote(read: UnifiedAttentionReadV1): string | null {
-  const sources = Object.values(read.sources);
-  if (sources.some((source) => source.status !== 'available')) return null;
-  if (read.consistency.state === 'uncertain') return '审批和待处理是分开读的，这次没能确认两边对得上';
-  if (sources.some((source) => source.exhaustiveness !== 'complete')) return '这次没能确认两边都读全';
-  return null;
-}
-
 /** One source's own note inside the panel; null when that source was read completely. */
-export function sourceStatusText(source: UnifiedAttentionSourceRead): string | null {
+export function sourceStatusText(source: UnifiedAttentionSourceRead, t = mailboxEntryCopy.zh): string | null {
   switch (source.status) {
     case 'unauthenticated':
-      return '需要登录';
+      return t.source.login;
     case 'forbidden':
-      return '无权查看';
+      return t.source.forbidden;
     case 'invalid':
-      return '无法读取';
+      return t.source.invalid;
     case 'unavailable':
-      return '暂不可用';
+      return t.source.unavailable;
     case 'available':
-      return source.exhaustiveness === 'complete' ? null : '仅部分读取';
+      return source.exhaustiveness === 'complete' ? null : t.source.partial;
   }
 }

@@ -130,5 +130,12 @@ export function useChatArtworkEntry(publication?: PublishedMessageCoordinate) {
       if (ticket === generation.current) setBusy(false);
     }
   };
-  return { isV2, busy: busy || published.busy, error: error ?? published.error, source, open };
+  return {
+    isV2,
+    busy: busy || published.busy,
+    error: error ?? published.error,
+    source,
+    open,
+    versionFor: (entry: ArtworkEntry | null) => (entry?.kind === 'message' ? published.versionFor(entry) : undefined),
+  };
 }

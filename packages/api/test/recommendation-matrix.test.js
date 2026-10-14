@@ -311,3 +311,56 @@ describe('recommendation matrix — models carry resource requirements', () => {
     }
   });
 });
+
+describe('recommendation display locale preserves the original recommendation', () => {
+  const profiles = [];
+  for (const os of ['darwin', 'win32', 'linux'])
+    for (const arch of ['arm64', 'x64'])
+      for (const gpu of ['apple', 'cuda', 'rocm', 'none'])
+        for (const pythonArch of ['native', 'x86-emulated', 'missing'])
+          profiles.push(makeProfile({ os, arch, gpu, pythonArch }));
+  const withoutDisplay = (rec) => ({
+    ...rec,
+    notes: undefined,
+    unsupported: Boolean(rec.unsupported),
+    models: rec.models.map(({ description, performance, ...identity }) => identity),
+    customModelHint: rec.customModelHint
+      ? {
+          example: rec.customModelHint.example,
+          links: rec.customModelHint.links?.map(({ url }) => url),
+        }
+      : undefined,
+  });
+  test('default is exactly Chinese; English changes only display words for every reachable environment', () => {
+    for (const serviceId of getMatrixServiceIds())
+      for (const profile of profiles) {
+        const legacy = buildRecommendation(serviceId, profile);
+        const zh = buildRecommendation(serviceId, profile, 'zh');
+        const en = buildRecommendation(serviceId, profile, 'en');
+        assert.deepEqual(legacy, zh);
+        assert.deepEqual(withoutDisplay(en), withoutDisplay(zh));
+        const text = JSON.stringify({
+          models: en.models.map(({ description, performance }) => ({ description, performance })),
+          notes: en.notes,
+          unsupported: en.unsupported,
+          hint: en.customModelHint && {
+            requirement: en.customModelHint.requirement,
+            unsupported: en.customModelHint.unsupported,
+            labels: en.customModelHint.links?.map(({ label }) => label),
+          },
+        });
+        assert.doesNotMatch(text, /[\p{Script=Han}]/u, `${serviceId} / ${JSON.stringify(profile)}`);
+      }
+  });
+  test('unsupported architecture and no-entry guidance are localized without changing the profile', () => {
+    for (const profile of [
+      makeProfile({ arch: 'unsupported', archRaw: 'ia32' }),
+      makeProfile({ os: 'linux', arch: 'arm64', gpu: 'apple' }),
+    ]) {
+      const en = buildRecommendation('not-in-matrix', profile, 'en');
+      assert.ok(en.unsupported);
+      assert.deepEqual(en.profile, profile);
+      assert.doesNotMatch(JSON.stringify(en.unsupported), /[\p{Script=Han}]/u);
+    }
+  });
+});

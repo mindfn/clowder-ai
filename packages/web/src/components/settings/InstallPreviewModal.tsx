@@ -1,9 +1,10 @@
 'use client';
 
-import { type ReactNode, useEffect, useState } from 'react';
+import { type ReactNode, useEffect, useRef, useState } from 'react';
 import { useShellPresentation } from '@/components/shell/shell-presentation';
 import { apiFetch } from '@/utils/api-client';
 import { useShellCopy } from '../shell/shell-copy';
+import { useShellLanguage } from '../shell/shell-language';
 import {
   type EnvironmentProfile,
   EnvSummary,
@@ -91,6 +92,9 @@ export function InstallPreviewModal({
   const localizedCopy = useShellCopy(installPreviewCopy);
   const presentation = useShellPresentation();
   const isV2 = presentation === 'v2';
+  const language = useShellLanguage();
+  const readLocale = isV2 ? language : undefined;
+  const initializedPreview = useRef<string | null>(null);
   // Classic is a compatibility surface: its original Chinese copy stays byte-for-byte regardless of the v2 language choice.
   const t = isV2 ? localizedCopy : installPreviewCopy.zh;
   const isReconfigure = mode === 'reconfigure';
@@ -104,16 +108,26 @@ export function InstallPreviewModal({
   const [suggestedPort, setSuggestedPort] = useState<number | null>(null);
 
   useEffect(() => {
-    if (!open) return;
+    if (!open) {
+      initializedPreview.current = null;
+      return;
+    }
+    const identity = JSON.stringify([serviceId, initialModel, initialPort]);
+    const preserveDraft = initializedPreview.current === identity;
+    let current = true;
     setLoading(true);
     setError(null);
     setRecommendation(null);
-    setUseCustom(false);
-    setCustomModel('');
-    setPortInput(typeof initialPort === 'number' ? String(initialPort) : '');
-    setSuggestedPort(null);
-    apiFetch(`/api/services/${serviceId}/install-preview`)
+    if (!preserveDraft) {
+      initializedPreview.current = null;
+      setUseCustom(false);
+      setCustomModel('');
+      setPortInput(typeof initialPort === 'number' ? String(initialPort) : '');
+      setSuggestedPort(null);
+    }
+    apiFetch(`/api/services/${serviceId}/install-preview${readLocale ? `?locale=${readLocale}` : ''}`)
       .then(async (response) => {
+        if (!current) return;
         if (!response.ok) {
           setError(response.status === 403 ? { kind: 'forbidden' } : { kind: 'http', status: response.status });
           return;
@@ -123,9 +137,10 @@ export function InstallPreviewModal({
           recommendation: ServiceRecommendation;
           suggestedPort?: number;
         };
+        if (!current) return;
         setRecommendation(data.recommendation);
         const firstModel = data.recommendation.models[0]?.name ?? '';
-        if (initialModel) {
+        if (!preserveDraft && initialModel) {
           const matchesPreset = data.recommendation.models.some((model) => model.name === initialModel);
           if (matchesPreset) {
             setSelectedModel(initialModel);
@@ -134,17 +149,25 @@ export function InstallPreviewModal({
             setUseCustom(true);
             setCustomModel(initialModel);
           }
-        } else {
+        } else if (!preserveDraft) {
           setSelectedModel(firstModel);
         }
         if (data.suggestedPort) {
           setSuggestedPort(data.suggestedPort);
-          if (typeof initialPort !== 'number') setPortInput(String(data.suggestedPort));
+          if (!preserveDraft && typeof initialPort !== 'number') setPortInput(String(data.suggestedPort));
         }
+        initializedPreview.current = identity;
       })
-      .catch(() => setError({ kind: 'network' }))
-      .finally(() => setLoading(false));
-  }, [open, serviceId, initialModel, initialPort]);
+      .catch(() => {
+        if (current) setError({ kind: 'network' });
+      })
+      .finally(() => {
+        if (current) setLoading(false);
+      });
+    return () => {
+      current = false;
+    };
+  }, [open, serviceId, initialModel, initialPort, readLocale]);
 
   useEffect(() => {
     if (!open) return;
@@ -179,6 +202,9 @@ export function InstallPreviewModal({
     else portValue = value;
   }
 
+  const displayService =
+    isV2 && Object.hasOwn(t.services, serviceId) ? t.services[serviceId as keyof typeof t.services] : serviceName;
+
   const canConfirm =
     !loading && !error && !isUnsupported && !portError && (allModels.length === 0 || finalModel.length > 0);
 
@@ -190,7 +216,7 @@ export function InstallPreviewModal({
             id={isV2 ? 'install-preview-title' : undefined}
             className="text-base font-semibold text-[var(--console-modal-title)]"
           >
-            {isReconfigure ? t.dialog.reconfigureTitle(serviceName) : t.dialog.installTitle(serviceName)}
+            {isReconfigure ? t.dialog.reconfigureTitle(displayService) : t.dialog.installTitle(displayService)}
           </h3>
           <button
             type={isV2 ? 'button' : undefined}

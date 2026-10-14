@@ -22,7 +22,7 @@ import { liveDispatchAdoption } from '../src/domains/concierge/live/live-dispatc
 import { createA2ADispositionHarness } from './helpers/a2a-dispatch-disposition-harness.js';
 
 for (const transport of ['http', 'mcp'])
-  test(`production Host ${transport} requires real full read before exact adopted completion`, async () => {
+  test(`production Host ${transport} exact thread-context read can precede adopted completion`, async () => {
     const registry = new InvocationRegistry();
     const h = await createA2ADispositionHarness({ registry, deliveryStatus: 'queued' });
     const identity = await registry.create('user-1', 'codex-sol', 'thread-1');
@@ -34,11 +34,14 @@ for (const transport of ['http', 'mcp'])
       content: h.source.content,
       messageId: h.source.id,
       source: 'agent',
+      sourceCategory: 'a2a',
       targetCats: ['codex-sol'],
       intent: 'execute',
       ownerAuthProvenance: 'strict',
     }).entry;
     h.messageStore.initializeQueueCustody(h.source.id, createInitialQueuedMessageCustody(entry));
+    queue.markQueuedSeen('thread-1', 'user-1', entry.id, 'codex-sol', identity.invocationId, 500);
+    await coordinator.persistEntry(queue.getEntrySnapshot('thread-1', 'user-1', entry.id));
     const executions = new InMemoryTurnExecutionStore();
     executions.createRunning({
       invocationId: identity.invocationId,
@@ -69,6 +72,7 @@ for (const transport of ['http', 'mcp'])
         executions,
         messages: h.messageStore,
         adoptions: new TurnCustodyAdoptionRegistry(),
+        queue,
         live: sessions,
       }),
     });
@@ -133,11 +137,15 @@ for (const transport of ['http', 'mcp'])
         assert.match(JSON.stringify(unread), /adopted_dispatch_not_read/);
         const read = await mcp.callTool({
           name: 'cat_cafe_get_thread_context',
-          arguments: { responseMode: 'full' },
+          arguments: { messageId: h.source.id, before: 0, after: 0, responseMode: 'full' },
           _meta: meta,
         });
         assert.notEqual(read.isError, true, JSON.stringify(read));
         assert.match(JSON.stringify(read), new RegExp(h.source.id));
+        assert.equal(
+          h.messageStore.getById(h.source.id).queueCustody.readEvidenceWitnesses?.[0]?.evidenceKind,
+          'exact_full_message',
+        );
         assert.deepEqual(h.messageStore.getById(h.source.id).queueCustody.handledByCatIds, []);
         const result = await mcp.callTool(dispatch);
         assert.notEqual(result.isError, true, JSON.stringify(result));
@@ -158,9 +166,17 @@ for (const transport of ['http', 'mcp'])
       }
       const unread = await complete();
       assert.equal(unread.statusCode, 412, unread.body);
-      const read = await app.inject({ method: 'GET', url: '/api/callbacks/thread-context?responseMode=full', headers });
+      const read = await app.inject({
+        method: 'GET',
+        url: `/api/callbacks/thread-context?messageId=${h.source.id}&before=0&after=0&responseMode=full`,
+        headers,
+      });
       assert.equal(read.statusCode, 200, read.body);
       assert.ok(read.json().messages.some((message) => message.id === h.source.id));
+      assert.equal(
+        h.messageStore.getById(h.source.id).queueCustody.readEvidenceWitnesses?.[0]?.evidenceKind,
+        'exact_full_message',
+      );
       assert.deepEqual(h.messageStore.getById(h.source.id).queueCustody.handledByCatIds, []);
       const result = await complete();
       assert.equal(result.statusCode, 200, result.body);

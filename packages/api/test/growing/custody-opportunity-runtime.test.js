@@ -143,6 +143,33 @@ test('prospective registration excludes old sources and survives restart without
   assert.equal(read.readiness, 'collecting');
 });
 
+test('recognition requests the bounded human-source reader and preserves the native episode result', async (t) => {
+  const f = fixture(t);
+  const human = f.addSource('Please prepare a presentation');
+  const admitted = await f.admit(human);
+  f.messages.append({
+    userId: 'owner',
+    threadId: 'thread',
+    catId: 'sonnet',
+    timestamp: f.now(),
+    content: 'Cat response',
+  });
+  const nativeRead = f.messages.listOwnerMessageWindowSlice.bind(f.messages);
+  const calls = [];
+  t.mock.method(f.messages, 'listOwnerMessageWindowSlice', (...args) => {
+    calls.push(args);
+    return nativeRead(...args);
+  });
+  const read = await f.runtime.read('owner');
+  assert.equal(calls.length, 1);
+  assert.equal(calls[0][3], 5000);
+  assert.deepEqual(calls[0][4], { humanOnly: true });
+  assert.equal(read.measurement.episodes.length, 1);
+  assert.equal(read.measurement.episodes[0].source.subjectRef, `message:${human.id}`);
+  assert.equal(read.measurement.episodes[0].custody.taskRef.subjectRef, admitted.ownerRef);
+  assert.deepEqual(read.coverageGaps, []);
+});
+
 test('real owner offer, human decline and sampled silent windows share one denominator without invented TN', async (t) => {
   const f = fixture(t);
   const offered = f.addSource('We have a presentation to prepare');

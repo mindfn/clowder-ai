@@ -141,7 +141,10 @@ import {
 } from '../../session/transcript-index/request-generation-source-policy.js';
 import { AgyNativeAgentService } from '../providers/agy-native/AgyNativeAgentService.js';
 import { resolveAgyNativeCodingGrant } from '../providers/agy-native/agy-native-coding-grant.js';
-import { callbackPolicyForAgyNativeMcpTools } from '../providers/agy-native/agy-native-policy.js';
+import {
+  AGY_NATIVE_DEFAULT_MCP_TOOLS,
+  callbackPolicyForAgyNativeMcpTools,
+} from '../providers/agy-native/agy-native-policy.js';
 import { resolveDefaultClaudeMcpServerPath } from '../providers/ClaudeAgentService.js';
 import { ClaudeSdkAgentService } from '../providers/ClaudeSdkAgentService.js';
 import { buildClaudeCompactionLaunchPlan } from '../providers/claude-compaction-launch-plan.js';
@@ -1483,15 +1486,14 @@ export async function* invokeSingleCat(deps: InvocationDeps, params: InvocationP
       ? {
           ...nativeCodingGrant,
           mcpTools: [
-            'cat-cafe-collab/cat_cafe_get_thread_context',
+            ...AGY_NATIVE_DEFAULT_MCP_TOOLS,
             'cat-cafe-collab/cat_cafe_post_message',
             'cat-cafe-collab/cat_cafe_run_task_test',
           ],
         }
       : (params.agyNativeScope ?? {
           writableFiles: [],
-          mcpTools:
-            params.toolExecutionPolicy?.mode === 'read_only' ? [] : ['cat-cafe-collab/cat_cafe_get_thread_context'],
+          mcpTools: params.toolExecutionPolicy?.mode === 'read_only' ? [] : AGY_NATIVE_DEFAULT_MCP_TOOLS,
         })
     : undefined;
   if (isAgyNative && params.toolExecutionPolicy?.mode === 'callback_allowlist')

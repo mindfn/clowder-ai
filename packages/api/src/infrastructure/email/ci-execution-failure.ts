@@ -94,6 +94,12 @@ export async function enrichGitHubExecutionFailures(input: {
         enriched.push(check);
         continue;
       }
+      // A job that actually ran cannot be the zero-step billing failure.
+      // Annotation reads cannot change that typed execution fact.
+      if (job.runner_id !== 0 || !Array.isArray(job.steps) || job.steps.length !== 0) {
+        enriched.push(check);
+        continue;
+      }
       const annotations = await input.ghApiJson<Array<{ message?: string; title?: string }>>(
         `repos/${input.repoFullName}/check-runs/${checkRun.id}/annotations?per_page=100`,
       );

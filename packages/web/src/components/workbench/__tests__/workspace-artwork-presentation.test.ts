@@ -40,6 +40,38 @@ it('code files and malformed file identities keep the ordinary viewer geometry',
   expect(isWorkspaceFullWindowSurface(invalid, 'v2')).toBe(false);
 });
 
+it('a visible same-thread narrow artwork keeps the one composer without opening a desktop session', () => {
+  const file = createFileSurface({ worktreeId: 'wt-a', path: 'cover.png' });
+  const input = {
+    threadId: 'thread-a',
+    currentThreadId: 'thread-a',
+    mediaComposerSurfaceId: file.id,
+    viewMode: 'single' as const,
+    isDesktop: false,
+    statusPanelOpen: true,
+    rightPanelMode: 'workspace' as const,
+    shellPresentation: 'v2' as const,
+  };
+  const project = (patch = {}) =>
+    projectWorkspaceWorkHost(
+      { ...input, ...patch },
+      createInitialWorkbenchState([file]),
+      createArtifactWorkPresentationState(),
+    );
+  expect(project().narrowWorkComposerActive).toBe(true);
+  expect(project().hostEligible).toBe(false);
+  expect(project().fullWindowActive).toBe(false);
+  for (const patch of [
+    { currentThreadId: 'foreign' },
+    { statusPanelOpen: false },
+    { viewMode: 'split' },
+    { shellPresentation: 'classic' },
+    { mediaComposerSurfaceId: null },
+    { rightPanelMode: 'status' },
+  ])
+    expect(project(patch).narrowWorkComposerActive).toBe(false);
+});
+
 it('projects the explicit Schedule wide session beside visible Chat and suppresses only its sidebar projection', () => {
   const schedule = createWorkspaceModeSurface('product-schedule', 'thread-a');
   const layout = createInitialWorkbenchState([schedule]);

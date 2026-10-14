@@ -201,6 +201,7 @@ const REDIS_URL_PROBE = 'process.env.REDIS_URL ?? ""';
 test('with-test-home pins REDIS_URL when the outer shell has none', () => {
   const outer = { ...process.env };
   delete outer.REDIS_URL;
+  delete outer.CAT_CAFE_REDIS_TEST_ISOLATED;
 
   const result = spawnSync('bash', [withTestHome, 'node', '-p', REDIS_URL_PROBE], {
     cwd: resolve(__dirname, '..'),
@@ -217,6 +218,7 @@ test('with-test-home overrides an inherited REDIS_URL instead of trusting it', (
     cwd: resolve(__dirname, '..'),
     env: {
       ...process.env,
+      CAT_CAFE_REDIS_TEST_ISOLATED: '',
       REDIS_URL: 'redis://127.0.0.1:6399',
     },
     encoding: 'utf8',
@@ -224,4 +226,19 @@ test('with-test-home overrides an inherited REDIS_URL instead of trusting it', (
 
   assert.equal(result.status, 0, result.stderr);
   assert.equal(result.stdout.trim(), 'redis://127.0.0.1:6398');
+});
+
+test('with-test-home rejects an isolated flag without a runner lease before executing the command', () => {
+  const result = spawnSync('bash', [withTestHome, 'node', '-p', REDIS_URL_PROBE], {
+    env: {
+      ...process.env,
+      REDIS_URL: 'redis://127.0.0.1:6947/15',
+      CAT_CAFE_REDIS_TEST_ISOLATED: '1',
+      CAT_CAFE_REDIS_TEST_DB_MANIFEST: '',
+    },
+    encoding: 'utf8',
+  });
+  assert.notEqual(result.status, 0);
+  assert.equal(result.stdout, '');
+  assert.match(result.stderr, /refusing sandbox reentry/);
 });

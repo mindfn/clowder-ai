@@ -55,7 +55,7 @@ export interface QueueBodyExposure {
 
 /** Read provenance is independent of the first body exposure timestamp. */
 export interface QueueReadEvidenceWitness extends QueueBodyExposure {
-  evidenceKind: 'full_contiguous_thread_context';
+  evidenceKind: 'full_contiguous_thread_context' | 'exact_full_message';
   handoffEventId?: string;
 }
 
@@ -667,7 +667,11 @@ function assertBodyExposures(custody: QueuedMessageCustody, allTargets: Readonly
       (item) => item.targetCatId === witness.targetCatId && item.invocationId === witness.invocationId,
     );
     assertFiniteNonNegative(witness.seenAt, 'readEvidence.seenAt');
-    if (!exposure || witness.seenAt < exposure.seenAt || witness.evidenceKind !== 'full_contiguous_thread_context') {
+    if (
+      !exposure ||
+      witness.seenAt < exposure.seenAt ||
+      (witness.evidenceKind !== 'full_contiguous_thread_context' && witness.evidenceKind !== 'exact_full_message')
+    ) {
       throw new Error('read evidence must bind an exact prior body exposure and a supported read kind');
     }
     if (

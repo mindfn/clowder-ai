@@ -79,6 +79,7 @@ export interface GitHubScheduleDeps extends ScheduleFactoryDeps {
     targets: readonly PrCiStatusTarget[],
     signal?: AbortSignal,
   ) => Promise<ReadonlyMap<string, CiPollResult | null>>;
+  enrichFailureDetails?: (poll: CiPollResult, signal: AbortSignal) => Promise<CiPollResult>;
   conflictRouter: ConflictRouter;
   reviewFeedbackRouter: ReviewFeedbackRouter;
   /** F140/#949 correction + F167 R2: `get` lets ReviewFeedbackTaskSpec repair already-rotated
@@ -201,6 +202,7 @@ const cicdCheckFactory: ScheduleFactory = {
       taskStore: d.taskStore,
       cicdRouter: d.cicdRouter,
       fetchPrStatuses: d.fetchPrStatuses,
+      enrichFailureDetails: d.enrichFailureDetails,
       invokeTrigger: d.invokeTrigger,
       isSelfMerge: d.isSelfMerge,
       log: d.log,

@@ -5,6 +5,7 @@ import { accountsCopy } from '../accounts/accounts.shell-copy';
 import { HubIcon } from '../hub-icons';
 import { useShellCopy } from '../shell/shell-copy';
 import { PinToggle } from './SettingsPinToggle';
+import { useSettingsDetailText } from './settings-detail.shell-copy';
 import { type SettingsEntry, sectionLabel } from './settings-ia';
 
 const PANEL_ID = 'settings-tabpanel';
@@ -35,7 +36,9 @@ export function SettingsSecondLevel({
   children: ReactNode;
 }) {
   const accountsText = useShellCopy(accountsCopy);
-  const labelOf = (id: string) => (id === 'accounts' ? accountsText.title : sectionLabel(id));
+  const sectionText = useSettingsDetailText();
+  const labelOf = (id: string) =>
+    id === 'accounts' ? accountsText.title : (sectionText(id)?.title ?? sectionLabel(id));
   if (entry.destination.kind !== 'sections') return <>{children}</>;
   const items = entry.destination.items;
   const sectionIds = items.flatMap((item) => (item.kind === 'section' ? [item.sectionId] : []));

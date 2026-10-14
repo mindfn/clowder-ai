@@ -16,6 +16,7 @@ import type {
 } from '../../domains/github-signals/GitHubWaitLifecycleService.js';
 import { awaitsReviewCollection } from '../../domains/github-signals/GitHubWaitPredicateCatalog.js';
 import type { CiBucket, CiPollResult, CiRouteResult } from './ci-cd-contract.js';
+import { isStaleCiSnapshot } from './ci-cd-contract.js';
 import { buildCiMessageContent, buildLifecycleMessageContent } from './ci-message-content.js';
 import type { ConnectorDeliveryDeps } from './deliver-connector-message.js';
 
@@ -219,6 +220,8 @@ export class CiCdRouter {
     const sk = prSubjectKey(poll.repoFullName, poll.prNumber);
     const task = await this.opts.taskStore.getBySubject(sk);
     if (!task) return { kind: 'skipped', reason: `No tracking task for ${poll.repoFullName}#${poll.prNumber}` };
+    if (isStaleCiSnapshot(poll, task.automationState?.await))
+      throw new Error(`Stale CI snapshot for ${sk}; retry current HEAD`);
 
     const settled = settleEmptyCheckRollup(poll, task.automationState?.ci?.rollupObservation, this.now());
     const observedPoll = settled.poll;
@@ -291,6 +294,7 @@ export class CiCdRouter {
   ): Promise<GitHubWaitLifecycleResult> {
     return this.opts.waitLifecycle.observe({
       taskId: task.id,
+      sourceObservedAt: poll.observedAt,
       facts: {
         headSha: poll.headSha,
         ci: {

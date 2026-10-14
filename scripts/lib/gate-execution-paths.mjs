@@ -1,4 +1,5 @@
 export const GATE_EXECUTION_PATHS = Object.freeze([
+  'scripts/lib/gate-worktree-inputs.mjs',
   'scripts/classify-gate-route.mjs',
   'scripts/check-gate-browser-membership.mjs',
   'scripts/lib/gate-browser-membership.mjs',

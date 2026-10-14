@@ -6,6 +6,7 @@ import type {
 import type { ActionSuccessorLeaseStore } from './ActionSuccessorLeaseStore.js';
 import type { CanonicalActionTerminalPredicate } from './ActionTerminalPredicateCatalog.js';
 import {
+  boundGenerationHasTerminalDelegateOutcome,
   currentDelegateLineageGenerationHasExactEntry,
   isTerminalDelegateLineageOutcome,
 } from './action-successor-delegate-lineage.js';
@@ -131,6 +132,24 @@ function isDelegateLineageReplacement(
     ownerThreadId: input.sourceThreadId,
     childThreadId: current.holderThreadId,
   };
+  const humanEvidence = input.humanReassignmentEvidence;
+  const initialHumanReassignment = Boolean(
+    humanEvidence &&
+      current.generation === 1 &&
+      input.targetThreadId === current.holderThreadId &&
+      humanEvidence.userId === input.tenantScope &&
+      humanEvidence.threadId === current.holderThreadId &&
+      humanEvidence.authoredAt > current.createdAt &&
+      humanEvidence.authoredAt <= input.now &&
+      input.action.groundingEvidenceRef === `message:${humanEvidence.sourceMessageId}` &&
+      boundGenerationHasTerminalDelegateOutcome(
+        current,
+        current.generation,
+        current.holderCatIds,
+        current.holderThreadId,
+      ),
+  );
+  if (initialHumanReassignment) return true;
   if (!currentDelegateLineageGenerationHasExactEntry(current, lineageRoute)) {
     return false;
   }

@@ -66,6 +66,8 @@ import { WorkspacePanel } from './WorkspacePanel';
 import { DEFAULT_ARTIFACT_WORK_CHAT_BASIS } from './workbench/artifact-work-presentation';
 import { useF307ExperienceWorkbenchStore } from './workbench/experience-workbench-store';
 import { useArtifactWorkHostPresentation } from './workbench/useArtifactWorkHostPresentation';
+import { WorkspaceChatRevealProvider } from './workbench/WorkspaceChatReveal';
+import { WorkspaceChatWorkScopeProvider } from './workbench/WorkspaceChatWorkScope';
 import { ContextualWorkspaceChrome } from './workspace/ContextualWorkspaceChrome';
 import { FloatingTranscriptContainer } from './workspace/FloatingTranscriptContainer';
 import { ResizeHandle } from './workspace/ResizeHandle';
@@ -242,15 +244,38 @@ function InteractiveChatContainer({ threadId }: ChatContainerProps) {
     STATUS_PANEL_DEFAULT,
   );
   const isDesktop = useIsDesktop();
+  const currentWorkspaceThreadId = useChatStore((state) =>
+    state.currentThreadId === threadId && (!state.presentationLock || state.presentationLock.ownerThreadId === threadId)
+      ? threadId
+      : null,
+  );
+  const [mediaComposerSurfaceId, setMediaComposerSurfaceId] = useState<string | null>(null);
+  const registeredWorkId = useRef<string | null>(null);
+  const onRegisteredWorkChange = useCallback((id: string | null) => {
+    if (registeredWorkId.current === id) return;
+    captureChatReadingBeforeLayoutChange();
+    registeredWorkId.current = id;
+    setMediaComposerSurfaceId(id);
+  }, []);
   const {
     splitPreferenceActive: artifactSplitPreferenceActive,
     fullWindowActive: artifactFullWindowActive,
+    narrowWorkComposerActive,
     workspaceWideActive,
     chatBasis: artifactWorkChatBasis,
     invalidateHost: invalidateArtifactWorkHost,
     resizeChatBasis: resizeArtifactWorkChatBasis,
     resetChatBasis: resetArtifactWorkChatBasis,
-  } = useArtifactWorkHostPresentation({ threadId, viewMode, isDesktop, statusPanelOpen, rightPanelMode });
+  } = useArtifactWorkHostPresentation({
+    threadId,
+    currentThreadId: currentWorkspaceThreadId,
+    mediaComposerSurfaceId,
+    viewMode,
+    isDesktop,
+    statusPanelOpen,
+    rightPanelMode,
+  });
+  const workComposerOnlyActive = artifactFullWindowActive || narrowWorkComposerActive;
   const activeChatBasis =
     workspaceWideActive && attentionPresentation.kind === 'chat-workspace'
       ? attentionPresentation.chatBasis
@@ -328,6 +353,27 @@ function InteractiveChatContainer({ threadId }: ChatContainerProps) {
     mainAreaAttentionSurfaceId !== null &&
     (attentionPresentation.kind !== 'chat-workspace' || attentionPresentation.threadId === threadId);
   const mainAreaOverlayActive = mainAreaAttentionActive && attentionPresentation.kind === 'overlay';
+  const revealWorkspaceChat = useCallback(() => {
+    if (!isV2 || useChatStore.getState().currentThreadId !== threadId) return;
+    // Full-window Artifact work leaves room for the original composer; the other overlay hosts cover it.
+    if (
+      statusPanelOpen &&
+      rightPanelMode === 'workspace' &&
+      !narrowWorkComposerActive &&
+      (!isDesktop || (mainAreaOverlayActive && !artifactFullWindowActive))
+    )
+      closeStatusPanel();
+  }, [
+    isV2,
+    threadId,
+    statusPanelOpen,
+    rightPanelMode,
+    isDesktop,
+    mainAreaOverlayActive,
+    artifactFullWindowActive,
+    narrowWorkComposerActive,
+    closeStatusPanel,
+  ]);
   const messageSearchAvailable = isV2 && viewMode === 'single' && !artifactFullWindowActive && !mainAreaOverlayActive;
   const messageSearch = useMessageSearchHost({
     threadId,
@@ -801,8 +847,8 @@ function InteractiveChatContainer({ threadId }: ChatContainerProps) {
       if (typeof window === 'undefined' || typeof window.ResizeObserver !== 'function' || !node) return;
 
       let lastHeight = node.getBoundingClientRect().height;
-      const observer = new window.ResizeObserver(([entry]) => {
-        const nextHeight = entry?.contentRect.height ?? node.getBoundingClientRect().height;
+      const observer = new window.ResizeObserver(() => {
+        const nextHeight = node.getBoundingClientRect().height;
         if (Math.abs(nextHeight - lastHeight) <= 1) return;
         lastHeight = nextHeight;
         setBottomChromeHeight(Math.ceil(nextHeight));
@@ -823,8 +869,10 @@ function InteractiveChatContainer({ threadId }: ChatContainerProps) {
   );
 
   useEffect(() => {
+    // StrictMode replays effects after the ref callback; reconnect the subscription cleaned up by that replay.
+    if (bottomChromeRef.current && !bottomChromeObserverRef.current) attachBottomChromeRef(bottomChromeRef.current);
     return disconnectBottomChromeObserver;
-  }, [disconnectBottomChromeObserver]);
+  }, [attachBottomChromeRef, disconnectBottomChromeObserver]);
 
   // F069-R5: Ack read cursor server-side. The backend finds the latest real message
   // and acks it atomically — no frontend ID guessing, no timing races with fetchHistory.
@@ -912,493 +960,523 @@ function InteractiveChatContainer({ threadId }: ChatContainerProps) {
   const showNewConversationLanding = isV2 && threadId === 'default' && !artifactFullWindowActive;
 
   return (
-    <div ref={containerRef} className="relative flex h-screen h-dvh">
-      <MessageSearchOverlay
-        threadId={threadId}
-        host={messageSearch}
-        available={messageSearchAvailable}
-        resolveSpeaker={(speaker) => {
-          if (speaker === 'user') return coCreator.name;
-          const cat = cats.find((candidate) => candidate.id === speaker);
-          return cat ? formatCatName(cat) : speaker;
-        }}
-      />
-      {connectionStatus.updateRequired && <RuntimeUpdateRequiredDialog onReload={() => window.location.reload()} />}
-      {/* Mobile-only sidebar overlay — desktop sidebar is in AppShell */}
-      {sidebarOpen && !isDesktop && (
-        <>
-          <div
-            className="fixed inset-0 bg-[var(--console-overlay-backdrop)] backdrop-blur-sm z-20"
-            onClick={closeSidebar}
-            aria-hidden="true"
-          />
-          <div className="fixed inset-y-0 left-0 z-30 w-[240px]">
-            <ThreadSidebar onClose={closeSidebar} className="w-full" routeThreadId={threadId} />
-          </div>
-        </>
-      )}
-
-      <div
-        className={`flex min-w-0 flex-col ${mainAreaOverlayActive ? 'invisible pointer-events-none' : ''} ${
-          artifactFullWindowActive ? 'absolute inset-0 z-50 pointer-events-none' : ''
-        }`}
-        aria-hidden={mainAreaOverlayActive || undefined}
-        data-testid="thread-chat-host"
-        data-presentation={artifactFullWindowActive ? 'artifact-full-window' : 'conversation'}
-        style={
-          !artifactFullWindowActive &&
-          statusPanelOpen &&
-          isDesktop &&
-          (rightPanelMode === 'workspace' || rightPanelMode === 'transcript')
-            ? { flexBasis: `${activeChatBasis}%`, flexGrow: 0, flexShrink: 0 }
-            : { flex: '1 1 0%' }
-        }
-      >
-        {!artifactFullWindowActive && !showNewConversationLanding && (
-          <ChatContainerHeader
-            sidebarOpen={sidebarOpen}
-            onToggleSidebar={toggleSidebar}
-            threadId={threadId}
-            viewMode={viewMode}
-            onOpenMessageSearch={messageSearchAvailable ? messageSearch.openSearch : undefined}
-            messageSearchOpen={messageSearch.open}
-            onToggleViewMode={() => setViewMode(viewMode === 'single' ? 'split' : 'single')}
-            statusPanelOpen={statusPanelOpen && rightPanelMode === 'workspace'}
-            approvalCount={approvalCount}
-            hasWorkspaceActivity={hasProjectedExecution || workspaceSurface !== 'home' || presentationLock !== null}
-            onToggleStatusPanel={() => {
-              if (statusPanelOpen && rightPanelMode === 'workspace') {
-                closeStatusPanel();
-              } else {
-                if (isV2) captureChatReadingBeforeLayoutChange();
-                setWorkspacePanelMounted(true);
-                setRightPanelMode('workspace');
-                setRightPanelOpen(true);
-              }
-            }}
-          />
+    <WorkspaceChatWorkScopeProvider
+      threadId={threadId}
+      onRegisteredWorkChange={onRegisteredWorkChange}
+      getActiveSurfaceId={() => useF307ExperienceWorkbenchStore.getState().layout.activeSurfaceId}
+      isHostVisible={() => {
+        const chat = useChatStore.getState();
+        return (
+          isV2 &&
+          chat.currentThreadId === threadId &&
+          (!chat.presentationLock || chat.presentationLock.ownerThreadId === threadId) &&
+          chat.rightPanelOpen &&
+          chat.rightPanelMode === 'workspace' &&
+          document.visibilityState === 'visible'
+        );
+      }}
+    >
+      <div ref={containerRef} className="relative flex h-screen h-dvh">
+        <MessageSearchOverlay
+          threadId={threadId}
+          host={messageSearch}
+          available={messageSearchAvailable}
+          resolveSpeaker={(speaker) => {
+            if (speaker === 'user') return coCreator.name;
+            const cat = cats.find((candidate) => candidate.id === speaker);
+            return cat ? formatCatName(cat) : speaker;
+          }}
+        />
+        {connectionStatus.updateRequired && <RuntimeUpdateRequiredDialog onReload={() => window.location.reload()} />}
+        {/* Mobile-only sidebar overlay — desktop sidebar is in AppShell */}
+        {sidebarOpen && !isDesktop && (
+          <>
+            <div
+              className="fixed inset-0 bg-[var(--console-overlay-backdrop)] backdrop-blur-sm z-20"
+              onClick={closeSidebar}
+              aria-hidden="true"
+            />
+            <div className="fixed inset-y-0 left-0 z-30 w-[240px]">
+              <ThreadSidebar onClose={closeSidebar} className="w-full" routeThreadId={threadId} />
+            </div>
+          </>
         )}
 
-        {showNewConversationLanding ? (
-          <NewConversationPage
-            sidebarOpen={sidebarOpen}
-            statusPanelOpen={statusPanelOpen && rightPanelMode === 'workspace'}
-            hasWorkspaceActivity={hasProjectedExecution || workspaceSurface !== 'home' || presentationLock !== null}
-            onToggleSidebar={toggleSidebar}
-            onToggleStatusPanel={() => {
-              if (statusPanelOpen && rightPanelMode === 'workspace') {
-                closeStatusPanel();
-              } else {
-                captureChatReadingBeforeLayoutChange();
-                setWorkspacePanelMounted(true);
-                setRightPanelMode('workspace');
-                setRightPanelOpen(true);
-              }
-            }}
-            onNavigate={navigateToThread}
-          />
-        ) : (
-          <>
-            {!artifactFullWindowActive && intentMode === 'ideate' && <ParallelStatusBar threadId={threadId} />}
-            {!artifactFullWindowActive && <ThinkingIndicator threadId={threadId} />}
-
-            <ThreadChatSurface
+        <div
+          className={`flex min-w-0 flex-col ${mainAreaOverlayActive ? 'invisible pointer-events-none' : ''} ${
+            workComposerOnlyActive ? 'absolute inset-0 z-50 pointer-events-none' : ''
+          }`}
+          aria-hidden={mainAreaOverlayActive || undefined}
+          data-testid="thread-chat-host"
+          data-presentation={
+            narrowWorkComposerActive
+              ? 'narrow-work-composer'
+              : artifactFullWindowActive
+                ? 'artifact-full-window'
+                : 'conversation'
+          }
+          style={
+            !workComposerOnlyActive &&
+            statusPanelOpen &&
+            isDesktop &&
+            (rightPanelMode === 'workspace' || rightPanelMode === 'transcript')
+              ? { flexBasis: `${activeChatBasis}%`, flexGrow: 0, flexShrink: 0 }
+              : { flex: '1 1 0%' }
+          }
+        >
+          {!workComposerOnlyActive && !showNewConversationLanding && (
+            <ChatContainerHeader
+              sidebarOpen={sidebarOpen}
+              onToggleSidebar={toggleSidebar}
               threadId={threadId}
-              density="full"
-              presentation={artifactFullWindowActive ? 'composer-only' : 'conversation'}
-              onReadingPort={isV2 ? registerShellReadingPort : undefined}
-              messageConfirmations={messageConfirmations}
-              acceptUnscopedInteractiveSend
-              footerRef={attachBottomChromeRef}
-              timelineLead={
-                showAgentHookNotice ? (
-                  <div className="mb-3 flex justify-center text-left">
-                    <div className="max-w-[85%] w-full">
-                      <AgentHookHealthNotice
-                        health={agentHookHealth.health}
-                        error={agentHookHealth.error}
-                        syncing={agentHookHealth.syncing}
-                        synced={agentHookHealth.synced}
-                        syncAttempted={agentHookHealth.syncAttempted}
-                        onSync={agentHookHealth.sync}
-                      />
+              viewMode={viewMode}
+              onOpenMessageSearch={messageSearchAvailable ? messageSearch.openSearch : undefined}
+              messageSearchOpen={messageSearch.open}
+              onToggleViewMode={() => setViewMode(viewMode === 'single' ? 'split' : 'single')}
+              statusPanelOpen={statusPanelOpen && rightPanelMode === 'workspace'}
+              approvalCount={approvalCount}
+              hasWorkspaceActivity={hasProjectedExecution || workspaceSurface !== 'home' || presentationLock !== null}
+              onToggleStatusPanel={() => {
+                if (statusPanelOpen && rightPanelMode === 'workspace') {
+                  closeStatusPanel();
+                } else {
+                  if (isV2) captureChatReadingBeforeLayoutChange();
+                  setWorkspacePanelMounted(true);
+                  setRightPanelMode('workspace');
+                  setRightPanelOpen(true);
+                }
+              }}
+            />
+          )}
+
+          {showNewConversationLanding ? (
+            <NewConversationPage
+              sidebarOpen={sidebarOpen}
+              statusPanelOpen={statusPanelOpen && rightPanelMode === 'workspace'}
+              hasWorkspaceActivity={hasProjectedExecution || workspaceSurface !== 'home' || presentationLock !== null}
+              onToggleSidebar={toggleSidebar}
+              onToggleStatusPanel={() => {
+                if (statusPanelOpen && rightPanelMode === 'workspace') {
+                  closeStatusPanel();
+                } else {
+                  captureChatReadingBeforeLayoutChange();
+                  setWorkspacePanelMounted(true);
+                  setRightPanelMode('workspace');
+                  setRightPanelOpen(true);
+                }
+              }}
+              onNavigate={navigateToThread}
+            />
+          ) : (
+            <>
+              {!workComposerOnlyActive && intentMode === 'ideate' && <ParallelStatusBar threadId={threadId} />}
+              {!workComposerOnlyActive && <ThinkingIndicator threadId={threadId} />}
+
+              <ThreadChatSurface
+                threadId={threadId}
+                density="full"
+                presentation={workComposerOnlyActive ? 'composer-only' : 'conversation'}
+                onReadingPort={isV2 ? registerShellReadingPort : undefined}
+                messageConfirmations={messageConfirmations}
+                acceptUnscopedInteractiveSend
+                footerRef={attachBottomChromeRef}
+                timelineLead={
+                  showAgentHookNotice ? (
+                    <div className="mb-3 flex justify-center text-left">
+                      <div className="max-w-[85%] w-full">
+                        <AgentHookHealthNotice
+                          health={agentHookHealth.health}
+                          error={agentHookHealth.error}
+                          syncing={agentHookHealth.syncing}
+                          synced={agentHookHealth.synced}
+                          syncAttempted={agentHookHealth.syncAttempted}
+                          onSync={agentHookHealth.sync}
+                        />
+                      </div>
                     </div>
-                  </div>
-                ) : undefined
-              }
-              emptyState={
-                <div className="text-center mt-20">
-                  <PawIcon className="w-12 h-12 text-cafe-muted mx-auto mb-4" />
-                  <p className="text-lg text-cafe-secondary mb-1">欢迎来到 Clowder AI!</p>
-                  <p className="text-sm text-cafe-muted" suppressHydrationWarning>
-                    {cats.length > 0 ? '输入 @布偶 召唤布偶猫开始聊天' : '还没有可用成员，先开始新手教程创建第一只猫猫'}
-                  </p>
-                  {showSetupCard && govStatus && (
-                    <div className="mt-6 text-left">
-                      <ProjectSetupCard
-                        key={threadId}
-                        projectPath={currentProjectPath}
-                        isEmptyDir={govStatus.isEmptyDir}
-                        isGitRepo={govStatus.isGitRepo}
-                        gitAvailable={govStatus.gitAvailable}
-                        agentHookHealth={agentHookHealth.health}
-                        agentHookHealthError={agentHookHealth.error}
-                        agentHookSyncing={agentHookHealth.syncing}
-                        agentHookSynced={agentHookHealth.synced}
-                        agentHookSyncAttempted={agentHookHealth.syncAttempted}
-                        onSyncAgentHooks={agentHookHealth.sync}
-                        onComplete={() => {
-                          setSetupDone(true);
-                          govRefetch();
-                          void agentHookHealth.refresh();
-                        }}
-                      />
-                    </div>
-                  )}
-                  {!showSetupCard &&
-                    currentProjectPath &&
-                    currentProjectPath !== 'default' &&
-                    currentProjectPath !== 'lobby' && (
-                      <div className="mt-4 text-left">
-                        <BootstrapOrchestrator
+                  ) : undefined
+                }
+                emptyState={
+                  <div className="text-center mt-20">
+                    <PawIcon className="w-12 h-12 text-cafe-muted mx-auto mb-4" />
+                    <p className="text-lg text-cafe-secondary mb-1">欢迎来到 Clowder AI!</p>
+                    <p className="text-sm text-cafe-muted" suppressHydrationWarning>
+                      {cats.length > 0
+                        ? '输入 @布偶 召唤布偶猫开始聊天'
+                        : '还没有可用成员，先开始新手教程创建第一只猫猫'}
+                    </p>
+                    {showSetupCard && govStatus && (
+                      <div className="mt-6 text-left">
+                        <ProjectSetupCard
+                          key={threadId}
                           projectPath={currentProjectPath}
-                          indexState={indexState}
-                          isSnoozed={isSnoozed}
-                          progress={bootstrapProgress}
-                          summary={bootstrapSummary}
-                          durationMs={bootstrapDurationMs}
-                          isNewProject={setupDone}
-                          governanceDone={setupDone}
-                          onStartBootstrap={startBootstrap}
-                          onSnooze={snoozeBootstrap}
-                          onSearchKnowledge={handleSearchKnowledge}
-                          onGoToMemoryHub={handleGoToMemoryHub}
+                          isEmptyDir={govStatus.isEmptyDir}
+                          isGitRepo={govStatus.isGitRepo}
+                          gitAvailable={govStatus.gitAvailable}
+                          agentHookHealth={agentHookHealth.health}
+                          agentHookHealthError={agentHookHealth.error}
+                          agentHookSyncing={agentHookHealth.syncing}
+                          agentHookSynced={agentHookHealth.synced}
+                          agentHookSyncAttempted={agentHookHealth.syncAttempted}
+                          onSyncAgentHooks={agentHookHealth.sync}
+                          onComplete={() => {
+                            setSetupDone(true);
+                            govRefetch();
+                            void agentHookHealth.refresh();
+                          }}
                         />
                       </div>
                     )}
-                  {(() => {
-                    const isCurrentBootcamp = storeThreads.find((thread) => thread.id === threadId)?.bootcampState;
-                    if (isCurrentBootcamp) return null;
-                    if (bootcampCount > 0) {
+                    {!showSetupCard &&
+                      currentProjectPath &&
+                      currentProjectPath !== 'default' &&
+                      currentProjectPath !== 'lobby' && (
+                        <div className="mt-4 text-left">
+                          <BootstrapOrchestrator
+                            projectPath={currentProjectPath}
+                            indexState={indexState}
+                            isSnoozed={isSnoozed}
+                            progress={bootstrapProgress}
+                            summary={bootstrapSummary}
+                            durationMs={bootstrapDurationMs}
+                            isNewProject={setupDone}
+                            governanceDone={setupDone}
+                            onStartBootstrap={startBootstrap}
+                            onSnooze={snoozeBootstrap}
+                            onSearchKnowledge={handleSearchKnowledge}
+                            onGoToMemoryHub={handleGoToMemoryHub}
+                          />
+                        </div>
+                      )}
+                    {(() => {
+                      const isCurrentBootcamp = storeThreads.find((thread) => thread.id === threadId)?.bootcampState;
+                      if (isCurrentBootcamp) return null;
+                      if (bootcampCount > 0) {
+                        return (
+                          <button
+                            type="button"
+                            onClick={() => setShowBootcampList(true)}
+                            className="mt-6 inline-flex items-center gap-2 px-4 py-2 rounded-xl border border-cafe-accent/20 bg-accent-50 text-cafe-accent hover:bg-accent-100 transition-colors text-sm font-medium"
+                            data-testid="empty-state-bootcamp-list"
+                          >
+                            <BootcampIcon className="w-4 h-4" />
+                            我的训练营（{bootcampCount}）
+                          </button>
+                        );
+                      }
                       return (
                         <button
                           type="button"
                           onClick={() => setShowBootcampList(true)}
                           className="mt-6 inline-flex items-center gap-2 px-4 py-2 rounded-xl border border-cafe-accent/20 bg-accent-50 text-cafe-accent hover:bg-accent-100 transition-colors text-sm font-medium"
-                          data-testid="empty-state-bootcamp-list"
+                          data-testid="empty-state-bootcamp"
                         >
                           <BootcampIcon className="w-4 h-4" />
-                          我的训练营（{bootcampCount}）
+                          第一次来？开始猫猫训练营
                         </button>
                       );
-                    }
-                    return (
-                      <button
-                        type="button"
-                        onClick={() => setShowBootcampList(true)}
-                        className="mt-6 inline-flex items-center gap-2 px-4 py-2 rounded-xl border border-cafe-accent/20 bg-accent-50 text-cafe-accent hover:bg-accent-100 transition-colors text-sm font-medium"
-                        data-testid="empty-state-bootcamp"
-                      >
-                        <BootcampIcon className="w-4 h-4" />
-                        第一次来？开始猫猫训练营
-                      </button>
-                    );
-                  })()}
-                </div>
-              }
-              footerLead={
-                <>
-                  {!showFirstRunQuestPrompt &&
-                    !showQuestWizard &&
-                    (() => {
-                      const currentThread = storeThreads.find((thread) => thread.id === threadId);
-                      const questState = (currentThread as Record<string, unknown> | undefined)?.firstRunQuestState as
-                        | { phase: string; firstCatName?: string }
-                        | undefined;
-                      if (!questState) return null;
-                      return (
-                        <QuestBanner
-                          phase={questState.phase}
-                          firstCatName={questState.firstCatName}
-                          onAddSecondCat={() => setShowQuestWizard(true)}
-                          onStartBootcamp={() => setShowBootcampList(true)}
-                          onComplete={() =>
-                            assignDocumentRoute('/hub', typeof window !== 'undefined' ? window : undefined)
-                          }
-                        />
-                      );
                     })()}
-                  {isResearchMode && (
-                    <div className="mx-4 mb-2 rounded-lg border border-[var(--semantic-success)] bg-[var(--semantic-success-surface)] px-3 py-2 text-xs text-conn-emerald-text">
-                      多猫研究模式 — 文章上下文已注入。请输入研究问题，猫猫会自动调用 multi_mention 邀请其他猫参与分析。
-                    </div>
-                  )}
-                </>
-              }
-              composerClassName={(() => {
-                if (showFirstRunQuestPrompt || showQuestWizard) return '';
-                const currentThread = storeThreads.find((thread) => thread.id === threadId);
-                const bootcampState = currentThread?.bootcampState as { phase: string } | undefined;
-                if (bootcampState?.phase === 'phase-1-intro' && messages.length === 0) {
-                  return 'relative z-[70] quest-input-highlight rounded-xl mx-1';
+                  </div>
                 }
-                const questState = (currentThread as Record<string, unknown> | undefined)?.firstRunQuestState as
-                  | { phase: string }
-                  | undefined;
-                return questState?.phase === 'quest-2-cat-intro' ? 'quest-input-highlight rounded-xl mx-1' : '';
-              })()}
-              footerTail={
-                isGameActive && overlayMinimized && gameView?.threadId === threadId ? (
+                footerLead={
+                  <>
+                    {!showFirstRunQuestPrompt &&
+                      !showQuestWizard &&
+                      (() => {
+                        const currentThread = storeThreads.find((thread) => thread.id === threadId);
+                        const questState = (currentThread as Record<string, unknown> | undefined)?.firstRunQuestState as
+                          | { phase: string; firstCatName?: string }
+                          | undefined;
+                        if (!questState) return null;
+                        return (
+                          <QuestBanner
+                            phase={questState.phase}
+                            firstCatName={questState.firstCatName}
+                            onAddSecondCat={() => setShowQuestWizard(true)}
+                            onStartBootcamp={() => setShowBootcampList(true)}
+                            onComplete={() =>
+                              assignDocumentRoute('/hub', typeof window !== 'undefined' ? window : undefined)
+                            }
+                          />
+                        );
+                      })()}
+                    {isResearchMode && (
+                      <div className="mx-4 mb-2 rounded-lg border border-[var(--semantic-success)] bg-[var(--semantic-success-surface)] px-3 py-2 text-xs text-conn-emerald-text">
+                        多猫研究模式 — 文章上下文已注入。请输入研究问题，猫猫会自动调用 multi_mention
+                        邀请其他猫参与分析。
+                      </div>
+                    )}
+                  </>
+                }
+                composerClassName={(() => {
+                  if (showFirstRunQuestPrompt || showQuestWizard) return '';
+                  const currentThread = storeThreads.find((thread) => thread.id === threadId);
+                  const bootcampState = currentThread?.bootcampState as { phase: string } | undefined;
+                  if (bootcampState?.phase === 'phase-1-intro' && messages.length === 0) {
+                    return 'relative z-[70] quest-input-highlight rounded-xl mx-1';
+                  }
+                  const questState = (currentThread as Record<string, unknown> | undefined)?.firstRunQuestState as
+                    | { phase: string }
+                    | undefined;
+                  return questState?.phase === 'quest-2-cat-intro' ? 'quest-input-highlight rounded-xl mx-1' : '';
+                })()}
+                footerTail={
+                  isGameActive && overlayMinimized && gameView?.threadId === threadId ? (
+                    <button
+                      type="button"
+                      onClick={() => useGameStore.getState().restoreOverlay()}
+                      className="mx-4 mb-2 flex items-center justify-center gap-2 rounded-lg border border-[var(--color-cafe-accent)] bg-[var(--accent-50)] px-3 py-2 text-sm text-[var(--color-cafe-accent)] hover:bg-[var(--color-cocreator-surface)] transition-colors"
+                    >
+                      <GameIcon />
+                      返回游戏
+                    </button>
+                  ) : undefined
+                }
+              />
+
+              {/* F101: Game overlay — renders when a game is active */}
+              <GameOverlayConnector
+                gameView={gameView}
+                isGameActive={isGameActive}
+                overlayMinimized={overlayMinimized}
+                currentThreadId={threadId}
+                isNight={isNight}
+                selectedTarget={selectedTarget}
+                godScopeFilter={godScopeFilter}
+                isGodView={isGodView}
+                isDetective={isDetective}
+                detectiveBoundName={detectiveBoundName ?? undefined}
+                godSeats={godSeats}
+                godNightSteps={godNightSteps}
+                hasTargetedAction={hasTargetedAction}
+                myRole={myRole ?? undefined}
+                myRoleIcon={myRoleIcon ?? undefined}
+                myActionLabel={myActionLabel ?? undefined}
+                myActionHint={myActionHint ?? undefined}
+                altActionName={altActionName ?? undefined}
+                onClose={() => {
+                  useGameStore.getState().minimizeOverlay();
+                }}
+                onSelectTarget={(seatId) => useGameStore.getState().setSelectedTarget(seatId)}
+                onGodScopeChange={(scope) => useGameStore.getState().setGodScopeFilter(scope)}
+                onGodAction={(action) => godAction(threadId, action)}
+                onVote={() => {
+                  const state = useGameStore.getState();
+                  if (state.selectedTarget && state.mySeatId) {
+                    submitAction(threadId, state.mySeatId, 'vote', state.selectedTarget);
+                    state.setSelectedTarget(null);
+                  }
+                }}
+                onSpeak={(content) => {
+                  const state = useGameStore.getState();
+                  if (state.mySeatId) {
+                    submitAction(threadId, state.mySeatId, 'speak', undefined, { content });
+                  }
+                }}
+                onConfirmAction={() => {
+                  const state = useGameStore.getState();
+                  if (state.selectedTarget && state.mySeatId && state.currentActionName) {
+                    submitAction(threadId, state.mySeatId, state.currentActionName, state.selectedTarget);
+                    state.setSelectedTarget(null);
+                  }
+                }}
+                onConfirmAltAction={() => {
+                  const state = useGameStore.getState();
+                  if (state.selectedTarget && state.mySeatId && state.altActionName) {
+                    submitAction(threadId, state.mySeatId, state.altActionName, state.selectedTarget);
+                    state.setSelectedTarget(null);
+                  }
+                }}
+              />
+            </>
+          )}
+        </div>
+
+        {/* F284: visited Workspace/Activity panels stay mounted across fold and sibling-host switches.
+          At 768px+ they use the split host; below 768px the same host becomes a full-screen overlay. */}
+        {statusPanelOpen &&
+          isDesktop &&
+          !mainAreaOverlayActive &&
+          !artifactFullWindowActive &&
+          (rightPanelMode === 'status' ? (
+            <ResizeHandle
+              direction="horizontal"
+              label="右侧面板"
+              onResize={handleStatusPanelResize}
+              onCollapse={closeStatusPanel}
+              onDoubleClick={resetStatusPanelWidth}
+            />
+          ) : (
+            <ResizeHandle
+              direction="horizontal"
+              label="右侧面板"
+              onResize={handleHorizontalResize}
+              onCollapse={closeStatusPanel}
+              onDoubleClick={() => {
+                if (workspaceWideActive) {
+                  captureChatReadingBeforeLayoutChange();
+                  setAttentionChatBasis(DEFAULT_ARTIFACT_WORK_CHAT_BASIS);
+                  return;
+                }
+                if (artifactSplitPreferenceActive) {
+                  resetArtifactWorkChatBasis();
+                  return;
+                }
+                resetChatBasis();
+              }}
+            />
+          ))}
+        {(statusPanelOpen || workspacePanelMounted || activityPanelMounted) && (
+          <div
+            className={
+              !statusPanelOpen
+                ? 'hidden'
+                : workComposerOnlyActive
+                  ? 'absolute inset-x-0 top-0 z-40 flex min-h-0 flex-col overflow-hidden bg-[var(--console-panel-bg)]'
+                  : mainAreaOverlayActive
+                    ? 'absolute inset-0 z-40 flex min-h-0 flex-col overflow-hidden bg-[var(--console-panel-bg)]'
+                    : isDesktop
+                      ? 'flex min-h-0 flex-col overflow-hidden'
+                      : 'fixed inset-0 z-50 flex min-h-0 flex-col overflow-hidden bg-[var(--console-panel-bg)]'
+            }
+            style={
+              workComposerOnlyActive
+                ? { bottom: bottomChromeHeight }
+                : statusPanelOpen && isDesktop && !mainAreaOverlayActive
+                  ? rightPanelMode === 'status'
+                    ? { width: statusPanelWidth, flexShrink: 0 }
+                    : { flex: '1 1 0%', minWidth: 0 }
+                  : undefined
+            }
+            role="region"
+            aria-label={
+              workComposerOnlyActive ? '整窗 Workspace' : mainAreaOverlayActive ? '主区 Workspace' : '上下文侧栏'
+            }
+            aria-hidden={!statusPanelOpen}
+            data-testid="contextual-workspace-host"
+            data-presentation={
+              narrowWorkComposerActive
+                ? 'narrow-work-composer'
+                : artifactFullWindowActive
+                  ? 'artifact-full-window'
+                  : workspaceWideActive
+                    ? 'wide-workspace'
+                    : mainAreaOverlayActive
+                      ? 'main-area-attention'
+                      : 'right-rail'
+            }
+            data-attention-surface={mainAreaAttentionActive ? mainAreaAttentionSurfaceId : undefined}
+          >
+            <ContextualWorkspaceChrome
+              mode={rightPanelMode}
+              onFold={closeStatusPanel}
+              onNavigateHome={rightPanelMode === 'workspace' ? undefined : openWorkspaceLauncher}
+              showFold={rightPanelMode === 'workspace' && (isV2 || !isDesktop)}
+            >
+              {activityPanelMounted && (
+                <div className={rightPanelMode === 'status' ? 'flex min-h-0 flex-1' : 'hidden'}>
+                  <StatusPresentation
+                    intentMode={intentMode}
+                    targetCats={targetCats}
+                    catStatuses={catStatuses}
+                    catInvocations={catInvocations}
+                    activeInvocations={activeInvocations}
+                    hasActiveInvocation={hasActiveInvocation}
+                    threadId={threadId}
+                    messageSummary={messageSummary}
+                    width={isDesktop ? statusPanelWidth : '100%'}
+                  />
+                </div>
+              )}
+              {workspacePanelMounted && (
+                <div
+                  className={rightPanelMode === 'workspace' ? 'flex min-h-0 min-w-0 flex-1' : 'hidden'}
+                  data-testid="workspace-host-pane"
+                >
+                  <WorkspaceChatRevealProvider threadId={threadId} onReveal={revealWorkspaceChat}>
+                    <WorkspacePanel
+                      threadId={threadId}
+                      projectPath={isV2 ? workspaceProjectPath : undefined}
+                      defaultCatId={targetCats[0] || 'opus'}
+                      visible={statusPanelOpen && rightPanelMode === 'workspace' && documentVisible}
+                      artifactWorkHostAvailable
+                      statusSurface={
+                        <StatusPresentation
+                          intentMode={intentMode}
+                          targetCats={targetCats}
+                          catStatuses={catStatuses}
+                          catInvocations={catInvocations}
+                          activeInvocations={activeInvocations}
+                          hasActiveInvocation={hasActiveInvocation}
+                          threadId={threadId}
+                          messageSummary={messageSummary}
+                          width="100%"
+                        />
+                      }
+                    />
+                  </WorkspaceChatRevealProvider>
+                </div>
+              )}
+              {rightPanelMode === 'transcript' && statusPanelOpen && <TranscriptPanel />}
+            </ContextualWorkspaceChrome>
+          </div>
+        )}
+        <FloatingTranscriptContainer />
+        {showFirstRunQuestPrompt &&
+          createPortal(
+            <div className="fixed inset-0 z-[70] flex items-center justify-center bg-[var(--console-overlay-medium)] px-4 backdrop-blur-sm">
+              <div
+                className="w-full max-w-md rounded-2xl border border-conn-amber-ring bg-[var(--console-card-bg)] p-6 shadow-2xl"
+                onClick={(event) => event.stopPropagation()}
+              >
+                <h3 className="text-lg font-semibold text-cafe">开始猫猫新手教程？</h3>
+                <p className="mt-2 text-sm text-cafe-secondary">
+                  当前还没有可用成员。我们可以先带你创建第一只猫猫，再开始首个协作任务。
+                </p>
+                <div className="mt-5 flex justify-end gap-3">
                   <button
                     type="button"
-                    onClick={() => useGameStore.getState().restoreOverlay()}
-                    className="mx-4 mb-2 flex items-center justify-center gap-2 rounded-lg border border-[var(--color-cafe-accent)] bg-[var(--accent-50)] px-3 py-2 text-sm text-[var(--color-cafe-accent)] hover:bg-[var(--color-cocreator-surface)] transition-colors"
+                    onClick={handleSkipFirstRunQuest}
+                    className="rounded-lg border border-[var(--console-border-soft)] px-3 py-2 text-sm text-cafe-secondary hover:bg-[var(--console-hover-bg)]"
                   >
-                    <GameIcon />
-                    返回游戏
+                    跳过
                   </button>
-                ) : undefined
-              }
-            />
-
-            {/* F101: Game overlay — renders when a game is active */}
-            <GameOverlayConnector
-              gameView={gameView}
-              isGameActive={isGameActive}
-              overlayMinimized={overlayMinimized}
-              currentThreadId={threadId}
-              isNight={isNight}
-              selectedTarget={selectedTarget}
-              godScopeFilter={godScopeFilter}
-              isGodView={isGodView}
-              isDetective={isDetective}
-              detectiveBoundName={detectiveBoundName ?? undefined}
-              godSeats={godSeats}
-              godNightSteps={godNightSteps}
-              hasTargetedAction={hasTargetedAction}
-              myRole={myRole ?? undefined}
-              myRoleIcon={myRoleIcon ?? undefined}
-              myActionLabel={myActionLabel ?? undefined}
-              myActionHint={myActionHint ?? undefined}
-              altActionName={altActionName ?? undefined}
-              onClose={() => {
-                useGameStore.getState().minimizeOverlay();
-              }}
-              onSelectTarget={(seatId) => useGameStore.getState().setSelectedTarget(seatId)}
-              onGodScopeChange={(scope) => useGameStore.getState().setGodScopeFilter(scope)}
-              onGodAction={(action) => godAction(threadId, action)}
-              onVote={() => {
-                const state = useGameStore.getState();
-                if (state.selectedTarget && state.mySeatId) {
-                  submitAction(threadId, state.mySeatId, 'vote', state.selectedTarget);
-                  state.setSelectedTarget(null);
-                }
-              }}
-              onSpeak={(content) => {
-                const state = useGameStore.getState();
-                if (state.mySeatId) {
-                  submitAction(threadId, state.mySeatId, 'speak', undefined, { content });
-                }
-              }}
-              onConfirmAction={() => {
-                const state = useGameStore.getState();
-                if (state.selectedTarget && state.mySeatId && state.currentActionName) {
-                  submitAction(threadId, state.mySeatId, state.currentActionName, state.selectedTarget);
-                  state.setSelectedTarget(null);
-                }
-              }}
-              onConfirmAltAction={() => {
-                const state = useGameStore.getState();
-                if (state.selectedTarget && state.mySeatId && state.altActionName) {
-                  submitAction(threadId, state.mySeatId, state.altActionName, state.selectedTarget);
-                  state.setSelectedTarget(null);
-                }
-              }}
-            />
-          </>
-        )}
+                  <button
+                    type="button"
+                    onClick={handleStartFirstRunQuest}
+                    className="rounded-lg bg-cafe-accent px-3 py-2 text-sm font-medium text-[var(--cafe-surface)] hover:opacity-90"
+                  >
+                    开始教程
+                  </button>
+                </div>
+              </div>
+            </div>,
+            document.body,
+          )}
+        <FirstRunQuestWizard
+          open={showQuestWizard}
+          onClose={() => setShowQuestWizard(false)}
+          onCreated={handleQuestCreated}
+        />
+        <BootcampListModal open={showBootcampList} onClose={handleBootcampModalClose} currentThreadId={threadId} />
+        {showVoteModal && <VoteConfigModal onSubmit={handleVoteSubmit} onCancel={() => setShowVoteModal(false)} />}
+        {/* Bootcamp guide overlay: intro phase tips + lifecycle tips (phase-7.5 uses guide engine) */}
+        {(() => {
+          if (showFirstRunQuestPrompt || showQuestWizard) return null;
+          const bt = storeThreads.find((t) => t.id === threadId);
+          const raw = bt?.bootcampState;
+          if (!raw) return null;
+          const phase = raw.phase;
+          // Guide engine handles phase-7.5 and phase-10 — no custom overlay needed
+          if (phase === 'phase-7.5-add-teammate' || phase === 'phase-10-retro') return null;
+          const isLifecyclePhase = /^phase-(5|6|7|8|9|10|11)-/.test(phase);
+          if (!isLifecyclePhase && messages.length > 0) return null;
+          const leadCat = cats.find((c) => c.id === raw.leadCat) ?? cats[0];
+          const catName = leadCat ? formatCatName(leadCat) : undefined;
+          if (!catName) return null;
+          return <BootcampGuideOverlay phase={phase} catName={catName} hasMessages={messages.length > 0} />;
+        })()}
       </div>
-
-      {/* F284: visited Workspace/Activity panels stay mounted across fold and sibling-host switches.
-          At 768px+ they use the split host; below 768px the same host becomes a full-screen overlay. */}
-      {statusPanelOpen &&
-        isDesktop &&
-        !mainAreaOverlayActive &&
-        !artifactFullWindowActive &&
-        (rightPanelMode === 'status' ? (
-          <ResizeHandle
-            direction="horizontal"
-            label="右侧面板"
-            onResize={handleStatusPanelResize}
-            onCollapse={closeStatusPanel}
-            onDoubleClick={resetStatusPanelWidth}
-          />
-        ) : (
-          <ResizeHandle
-            direction="horizontal"
-            label="右侧面板"
-            onResize={handleHorizontalResize}
-            onCollapse={closeStatusPanel}
-            onDoubleClick={() => {
-              if (workspaceWideActive) {
-                captureChatReadingBeforeLayoutChange();
-                setAttentionChatBasis(DEFAULT_ARTIFACT_WORK_CHAT_BASIS);
-                return;
-              }
-              if (artifactSplitPreferenceActive) {
-                resetArtifactWorkChatBasis();
-                return;
-              }
-              resetChatBasis();
-            }}
-          />
-        ))}
-      {(statusPanelOpen || workspacePanelMounted || activityPanelMounted) && (
-        <div
-          className={
-            !statusPanelOpen
-              ? 'hidden'
-              : artifactFullWindowActive
-                ? 'absolute inset-x-0 top-0 z-40 flex min-h-0 flex-col overflow-hidden bg-[var(--console-panel-bg)]'
-                : mainAreaOverlayActive
-                  ? 'absolute inset-0 z-40 flex min-h-0 flex-col overflow-hidden bg-[var(--console-panel-bg)]'
-                  : isDesktop
-                    ? 'flex min-h-0 flex-col overflow-hidden'
-                    : 'fixed inset-0 z-50 flex min-h-0 flex-col overflow-hidden bg-[var(--console-panel-bg)]'
-          }
-          style={
-            artifactFullWindowActive
-              ? { bottom: bottomChromeHeight }
-              : statusPanelOpen && isDesktop && !mainAreaOverlayActive
-                ? rightPanelMode === 'status'
-                  ? { width: statusPanelWidth, flexShrink: 0 }
-                  : { flex: '1 1 0%', minWidth: 0 }
-                : undefined
-          }
-          role="region"
-          aria-label={
-            artifactFullWindowActive ? '整窗 Workspace' : mainAreaOverlayActive ? '主区 Workspace' : '上下文侧栏'
-          }
-          aria-hidden={!statusPanelOpen}
-          data-testid="contextual-workspace-host"
-          data-presentation={
-            artifactFullWindowActive
-              ? 'artifact-full-window'
-              : workspaceWideActive
-                ? 'wide-workspace'
-                : mainAreaOverlayActive
-                  ? 'main-area-attention'
-                  : 'right-rail'
-          }
-          data-attention-surface={mainAreaAttentionActive ? mainAreaAttentionSurfaceId : undefined}
-        >
-          <ContextualWorkspaceChrome
-            mode={rightPanelMode}
-            onFold={closeStatusPanel}
-            onNavigateHome={rightPanelMode === 'workspace' ? undefined : openWorkspaceLauncher}
-            showFold={rightPanelMode === 'workspace' && (isV2 || !isDesktop)}
-          >
-            {activityPanelMounted && (
-              <div className={rightPanelMode === 'status' ? 'flex min-h-0 flex-1' : 'hidden'}>
-                <StatusPresentation
-                  intentMode={intentMode}
-                  targetCats={targetCats}
-                  catStatuses={catStatuses}
-                  catInvocations={catInvocations}
-                  activeInvocations={activeInvocations}
-                  hasActiveInvocation={hasActiveInvocation}
-                  threadId={threadId}
-                  messageSummary={messageSummary}
-                  width={isDesktop ? statusPanelWidth : '100%'}
-                />
-              </div>
-            )}
-            {workspacePanelMounted && (
-              <div
-                className={rightPanelMode === 'workspace' ? 'flex min-h-0 min-w-0 flex-1' : 'hidden'}
-                data-testid="workspace-host-pane"
-              >
-                <WorkspacePanel
-                  threadId={threadId}
-                  projectPath={isV2 ? workspaceProjectPath : undefined}
-                  defaultCatId={targetCats[0] || 'opus'}
-                  visible={statusPanelOpen && rightPanelMode === 'workspace' && documentVisible}
-                  artifactWorkHostAvailable
-                  statusSurface={
-                    <StatusPresentation
-                      intentMode={intentMode}
-                      targetCats={targetCats}
-                      catStatuses={catStatuses}
-                      catInvocations={catInvocations}
-                      activeInvocations={activeInvocations}
-                      hasActiveInvocation={hasActiveInvocation}
-                      threadId={threadId}
-                      messageSummary={messageSummary}
-                      width="100%"
-                    />
-                  }
-                />
-              </div>
-            )}
-            {rightPanelMode === 'transcript' && statusPanelOpen && <TranscriptPanel />}
-          </ContextualWorkspaceChrome>
-        </div>
-      )}
-      <FloatingTranscriptContainer />
-      {showFirstRunQuestPrompt &&
-        createPortal(
-          <div className="fixed inset-0 z-[70] flex items-center justify-center bg-[var(--console-overlay-medium)] px-4 backdrop-blur-sm">
-            <div
-              className="w-full max-w-md rounded-2xl border border-conn-amber-ring bg-[var(--console-card-bg)] p-6 shadow-2xl"
-              onClick={(event) => event.stopPropagation()}
-            >
-              <h3 className="text-lg font-semibold text-cafe">开始猫猫新手教程？</h3>
-              <p className="mt-2 text-sm text-cafe-secondary">
-                当前还没有可用成员。我们可以先带你创建第一只猫猫，再开始首个协作任务。
-              </p>
-              <div className="mt-5 flex justify-end gap-3">
-                <button
-                  type="button"
-                  onClick={handleSkipFirstRunQuest}
-                  className="rounded-lg border border-[var(--console-border-soft)] px-3 py-2 text-sm text-cafe-secondary hover:bg-[var(--console-hover-bg)]"
-                >
-                  跳过
-                </button>
-                <button
-                  type="button"
-                  onClick={handleStartFirstRunQuest}
-                  className="rounded-lg bg-cafe-accent px-3 py-2 text-sm font-medium text-[var(--cafe-surface)] hover:opacity-90"
-                >
-                  开始教程
-                </button>
-              </div>
-            </div>
-          </div>,
-          document.body,
-        )}
-      <FirstRunQuestWizard
-        open={showQuestWizard}
-        onClose={() => setShowQuestWizard(false)}
-        onCreated={handleQuestCreated}
-      />
-      <BootcampListModal open={showBootcampList} onClose={handleBootcampModalClose} currentThreadId={threadId} />
-      {showVoteModal && <VoteConfigModal onSubmit={handleVoteSubmit} onCancel={() => setShowVoteModal(false)} />}
-      {/* Bootcamp guide overlay: intro phase tips + lifecycle tips (phase-7.5 uses guide engine) */}
-      {(() => {
-        if (showFirstRunQuestPrompt || showQuestWizard) return null;
-        const bt = storeThreads.find((t) => t.id === threadId);
-        const raw = bt?.bootcampState;
-        if (!raw) return null;
-        const phase = raw.phase;
-        // Guide engine handles phase-7.5 and phase-10 — no custom overlay needed
-        if (phase === 'phase-7.5-add-teammate' || phase === 'phase-10-retro') return null;
-        const isLifecyclePhase = /^phase-(5|6|7|8|9|10|11)-/.test(phase);
-        if (!isLifecyclePhase && messages.length > 0) return null;
-        const leadCat = cats.find((c) => c.id === raw.leadCat) ?? cats[0];
-        const catName = leadCat ? formatCatName(leadCat) : undefined;
-        if (!catName) return null;
-        return <BootcampGuideOverlay phase={phase} catName={catName} hasMessages={messages.length > 0} />;
-      })()}
-    </div>
+    </WorkspaceChatWorkScopeProvider>
   );
 }

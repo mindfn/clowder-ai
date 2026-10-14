@@ -1,7 +1,9 @@
+import type { IgnoredItemSnapshot } from '@cat-cafe/shared';
 import type { FastifyInstance } from 'fastify';
 import { z } from 'zod';
 import type { IMessageStore } from '../domains/cats/services/stores/ports/MessageStore.js';
 import { requirePluginOwnerLocalAccess } from './plugin-access-guards.js';
+import { readUserMentionPersonalPreview } from './user-mention-personal-preview.js';
 import { classifyUserMentionPeriod } from './user-mention-todo-projection.js';
 
 export type UserMentionInboxStore = Pick<
@@ -13,6 +15,7 @@ export type UserMentionInboxStore = Pick<
   | 'resolveUserMentionRequest'
   | 'initializeUserMentionInbox'
   | 'listHandledUserMentions'
+  | 'getUserMentionHandlingMetadata'
   | 'handleUserMentionRequests'
   | 'undoUserMentionHandling'
 >;
@@ -25,6 +28,7 @@ export function registerUserMentionHandlingRoutes(
     now?: () => number;
     cutover: number;
     onResolved?: (userId: string) => void;
+    readIgnoredItemPreferences?: (ownerUserId: string) => IgnoredItemSnapshot | Promise<IgnoredItemSnapshot>;
   },
 ) {
   const authorize = (request: Parameters<typeof requirePluginOwnerLocalAccess>[0], operation: 'read' | 'write') => {
@@ -39,10 +43,23 @@ export function registerUserMentionHandlingRoutes(
       .object({
         before: z.coerce.number().int().nonnegative().optional(),
         period: z.enum(['today', 'week', 'earlier', 'all']).default('week'),
+        personalView: z.literal('visible').optional(),
       })
       .strict()
       .safeParse(request.query);
     if (!query.success) return reply.code(400).send({ error: 'Invalid time boundary' });
+    if (query.data.personalView === 'visible') {
+      reply.header('cache-control', 'no-store');
+      return readUserMentionPersonalPreview({
+        ownerUserId: access.operator,
+        period: query.data.period,
+        before: query.data.before,
+        cutover: options.cutover,
+        now: (options.now ?? Date.now)(),
+        messageStore: options.messageStore,
+        readIgnoredItemPreferences: options.readIgnoredItemPreferences,
+      });
+    }
     if (!options.messageStore) return reply.code(503).send({ error: 'Message owner unavailable' });
     const rows = await options.messageStore.listUserMentionRequests(access.operator);
     const now = (options.now ?? Date.now)();

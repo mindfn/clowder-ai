@@ -1,9 +1,16 @@
 import { defineShellCopy } from '@/components/shell/shell-copy';
 
-/** Generated interface words only. Service names, model metadata, notes and provider guidance remain server data. */
+/** Generated interface words only. Known service titles use exact IDs; recommendation words come from the owner-localized read. */
 export const installPreviewCopy = defineShellCopy(
   {
     zh: {
+      services: {
+        'whisper-stt': '语音识别 (Whisper)',
+        'mlx-tts': '语音合成 (MLX)',
+        'embedding-model': '嵌入模型',
+        'llm-postprocess': 'LLM 后处理',
+        'audio-capture': '音频采集',
+      },
       dialog: {
         installTitle: (service: string) => `安装 ${service}`,
         reconfigureTitle: (service: string) => `修改 ${service}`,
@@ -62,6 +69,13 @@ export const installPreviewCopy = defineShellCopy(
       actions: { unsupported: '暂不支持', save: '保存修改', install: '开始安装' },
     },
     en: {
+      services: {
+        'whisper-stt': 'Speech recognition (Whisper)',
+        'mlx-tts': 'Speech synthesis (MLX)',
+        'embedding-model': 'Embedding model',
+        'llm-postprocess': 'LLM postprocessing',
+        'audio-capture': 'Audio capture',
+      },
       dialog: {
         installTitle: (service: string) => `Install ${service}`,
         reconfigureTitle: (service: string) => `Reconfigure ${service}`,

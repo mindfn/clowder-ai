@@ -1,5 +1,7 @@
 'use client';
 import { type ReactNode, useRef, useState } from 'react';
+import { useShellPresentation } from '@/components/shell/shell-presentation';
+import { resolveArtifactReviewTarget } from './artifact-review-surface';
 import { useF307ExperienceWorkbenchStore } from './experience-workbench-store';
 import { MessagePublicationLandingResolver } from './MessagePublicationLandingResolver';
 import { createMessagePublicationSurface } from './message-publication-surface';
@@ -12,13 +14,29 @@ export function ContentPublicationNavigator({
   children,
 }: {
   surface: WorkspaceSurfaceDescriptor;
-  children: ReactNode;
+  children: ReactNode | ((leadingAction?: ReactNode) => ReactNode);
 }) {
+  const isV2 = useShellPresentation() === 'v2';
   const [choosing, setChoosing] = useState(false);
   const trigger = useRef<HTMLButtonElement>(null);
   const visible = useWorkspaceSurfaceVisibility();
   const source = surface.messagePublicationSource;
-  if (!source) return children;
+  const render = (leadingAction?: ReactNode) => (typeof children === 'function' ? children(leadingAction) : children);
+  if (!source) return render();
+  const inHeader =
+    isV2 &&
+    typeof children === 'function' &&
+    (surface.ownerStateRef.owner === 'f138-publication' || resolveArtifactReviewTarget(surface) !== null);
+  const switchAction = (
+    <button
+      ref={trigger}
+      type="button"
+      className="shrink-0 rounded-md px-2 py-1 text-xs text-cafe-muted hover:text-cafe"
+      onClick={() => setChoosing(true)}
+    >
+      切换原作品
+    </button>
+  );
   return (
     <div className="flex min-h-0 flex-1 flex-col">
       {choosing ? (
@@ -41,13 +59,9 @@ export function ContentPublicationNavigator({
         </div>
       ) : null}
       <div className="flex min-h-0 flex-1 flex-col" style={choosing ? { display: 'none' } : undefined}>
-        <div className="flex shrink-0 justify-end px-3 pt-2">
-          <button ref={trigger} type="button" className="text-xs text-cafe-muted" onClick={() => setChoosing(true)}>
-            切换原作品
-          </button>
-        </div>
+        {!inHeader ? <div className="flex shrink-0 justify-end px-3 pt-2">{switchAction}</div> : null}
         <WorkspaceSurfaceVisibilityProvider visible={visible && !choosing}>
-          {children}
+          {render(inHeader ? switchAction : undefined)}
         </WorkspaceSurfaceVisibilityProvider>
       </div>
     </div>

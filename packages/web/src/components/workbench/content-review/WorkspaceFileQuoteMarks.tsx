@@ -3,6 +3,7 @@ import Image from 'next/image';
 import { type RefObject, useEffect, useRef, useState } from 'react';
 import { openExactPlace } from '@/components/shell/mailbox/open-exact-place';
 import { useShellCopy } from '@/components/shell/shell-copy';
+import { useShellPresentation } from '@/components/shell/shell-presentation';
 import { useCatData } from '@/hooks/useCatData';
 import { useCoCreatorConfig } from '@/hooks/useCoCreatorConfig';
 import { resolveCatDisplayName } from '@/lib/cat-display-name';
@@ -37,6 +38,7 @@ export function WorkspaceFileQuoteMarks({
 }) {
   const read = useWorkspaceFileQuotes(locator, revision, visible);
   const t = useShellCopy(workspaceFileQuotesCopy);
+  const isV2 = useShellPresentation() === 'v2';
   const { getCatById } = useCatData({ fetch: false });
   const human = useCoCreatorConfig();
   const list = useRef<HTMLDetailsElement>(null);
@@ -103,6 +105,7 @@ export function WorkspaceFileQuoteMarks({
           ? t.failed
           : null;
   const messageCount = new Set(read.quotes.map((quote) => `${quote.threadId}:${quote.messageId}`)).size;
+  if (isV2 && !error && read.state === 'ready' && messageCount === 0) return null;
   return (
     <>
       <section
@@ -154,13 +157,13 @@ export function WorkspaceFileQuoteMarks({
                   onClick={() => void read.loadMore()}
                   className="underline"
                 >
-                  {t.more}
+                  {isV2 ? t.earlier : t.more}
                 </button>
               ) : null}
             </div>
           </details>
         )}
-        {!error ? (
+        {!isV2 && !error ? (
           <button
             type="button"
             disabled={read.state === 'loading'}

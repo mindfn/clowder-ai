@@ -14,14 +14,22 @@ import { registerCallbackContentModificationRoutes } from '../../src/routes/call
 import { registerContentModificationRoutes } from '../../src/routes/content-modification-routes.js';
 import { createLiveReviewFixture } from './artifact-review-live-fixture.js';
 
-export async function cancellationFixture(t: TestContext) {
+export async function cancellationFixture(t: TestContext, options: { authenticateDelivery?: boolean } = {}) {
   const root = await mkdtemp(join(tmpdir(), 'f309-cancel-'));
   await writeFile(join(root, 'guide.md'), 'The old text.');
   const source = new WorkspaceContentSourceService({
     ownerUserId: 'operator',
     resolveWorktreeRoot: async () => ({ root, canonicalWorktreeId: 'work' }),
   });
-  const f = await createLiveReviewFixture(root, 'image/png', undefined, source);
+  const registry = new InvocationRegistry();
+  const f = await createLiveReviewFixture(
+    root,
+    'image/png',
+    undefined,
+    source,
+    undefined,
+    options.authenticateDelivery ? registry : undefined,
+  );
   const fileStore = new WorkspaceContentReviewStore(join(root, 'files.sqlite'));
   const files = new WorkspaceContentReviewService({ store: fileStore, source });
   const errors: unknown[] = [];
@@ -60,8 +68,7 @@ export async function cancellationFixture(t: TestContext) {
   };
   const app = Fastify();
   registerContentModificationRoutes(app, integration);
-  const registry = new InvocationRegistry(),
-    actor = await registry.create('operator', 'codex-astra', f.thread.id);
+  const actor = await registry.create('operator', 'codex-astra', f.thread.id);
   await registerCallbackContentModificationRoutes(app, {
     text: integration.text,
     receipts: integration.receipts,
@@ -89,5 +96,20 @@ export async function cancellationFixture(t: TestContext) {
       headers: { 'x-invocation-id': actor.invocationId, 'x-callback-token': actor.callbackToken },
       payload: { ...options, requestId: id },
     });
-  return { ...f, integration, app, requestId, payload, cancel, catRead, root, errors, actor, receiptEvents };
+  return {
+    ...f,
+    files,
+    workspaceSource: source,
+    integration,
+    app,
+    requestId,
+    payload,
+    cancel,
+    catRead,
+    root,
+    errors,
+    actor,
+    registry,
+    receiptEvents,
+  };
 }

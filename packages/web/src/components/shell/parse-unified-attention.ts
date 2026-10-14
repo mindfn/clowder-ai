@@ -41,8 +41,16 @@ function isChoiceRequest(value: unknown): boolean {
 }
 
 function isUserMention(value: unknown): boolean {
+  if (!isRecord(value)) return false;
+  const handlingProvenanceValid =
+    value.handledReason === undefined && value.handledAt === undefined
+      ? true
+      : value.handled === true &&
+        ['viewed', 'replied', 'ignored'].includes(String(value.handledReason)) &&
+        typeof value.handledAt === 'number' &&
+        Number.isSafeInteger(value.handledAt) &&
+        value.handledAt >= 0;
   return (
-    isRecord(value) &&
     isNonBlankString(value.threadId) &&
     isNonBlankString(value.messageId) &&
     isNonBlankString(value.catId) &&
@@ -53,8 +61,15 @@ function isUserMention(value: unknown): boolean {
         Number.isSafeInteger(value.expectedRevision) &&
         value.expectedRevision >= 0)) &&
     (value.handled === undefined || typeof value.handled === 'boolean') &&
+    handlingProvenanceValid &&
     typeof value.timestamp === 'number' &&
     Number.isFinite(value.timestamp)
+  );
+}
+
+function isPreferenceCoordinate(value: unknown, decisionRef: string): boolean {
+  return (
+    isRecord(value) && value.kind === 'mailbox' && value.decisionRef === decisionRef && isNonBlankString(value.version)
   );
 }
 
@@ -64,6 +79,11 @@ function isItem(value: unknown): boolean {
   if (typeof value.kind !== 'string' || !ITEM_KIND.has(value.kind)) return false;
   if (typeof value.summary !== 'string') return false;
   if (!Array.isArray(value.linkedNeedsMe)) return false;
+  if (
+    value.preferenceCoordinate !== undefined &&
+    !isPreferenceCoordinate(value.preferenceCoordinate, value.decisionRef)
+  )
+    return false;
   if (value.choiceRequest !== undefined && !isChoiceRequest(value.choiceRequest)) return false;
   if (value.kind === 'user_mention') return isUserMention(value.userMention);
   if (value.approval === undefined) return true;
@@ -80,7 +100,8 @@ function hasSources(body: Record<string, unknown>): boolean {
     isSourceRead(body.sources.approvals) &&
     isSourceRead(body.sources.needsMe) &&
     (body.sources.structuredChoices === undefined || isSourceRead(body.sources.structuredChoices)) &&
-    (body.sources.userMentions === undefined || isSourceRead(body.sources.userMentions))
+    (body.sources.userMentions === undefined || isSourceRead(body.sources.userMentions)) &&
+    (body.sources.personalPreferences === undefined || isSourceRead(body.sources.personalPreferences))
   );
 }
 
@@ -114,11 +135,98 @@ function hasPage(body: Record<string, unknown>): boolean {
   return isRecord(body.page) && typeof body.page.hasMore === 'boolean';
 }
 
+const PERSONAL_COUNT_FIELDS = [
+  'originalTotalCount',
+  'visibleTotalCount',
+  'ignoredTotalCount',
+  'originalAttentionCount',
+  'visibleAttentionCount',
+  'ignoredAttentionCount',
+] as const;
+
+const PERSONAL_GROUPS = ['decisions', 'userMentions', 'other'] as const;
+const PERSONAL_PARTITIONS = ['original', 'visible', 'ignored'] as const;
+
+function hasValidPersonalGroupCounts(
+  value: unknown,
+  totals: { original: number; visible: number; ignored: number },
+): boolean {
+  if (value === undefined) return true;
+  if (!isRecord(value)) return false;
+  const counts: Record<(typeof PERSONAL_PARTITIONS)[number], Record<(typeof PERSONAL_GROUPS)[number], number>> = {
+    original: { decisions: 0, userMentions: 0, other: 0 },
+    visible: { decisions: 0, userMentions: 0, other: 0 },
+    ignored: { decisions: 0, userMentions: 0, other: 0 },
+  };
+  for (const partition of PERSONAL_PARTITIONS) {
+    const group = value[partition];
+    if (!isRecord(group)) return false;
+    let sum = 0;
+    for (const key of PERSONAL_GROUPS) {
+      const count = group[key];
+      if (!Number.isSafeInteger(count) || (count as number) < 0) return false;
+      counts[partition][key] = count as number;
+      sum += count as number;
+    }
+    if (sum !== totals[partition]) return false;
+  }
+  return PERSONAL_GROUPS.every((key) => counts.original[key] === counts.visible[key] + counts.ignored[key]);
+}
+
+function hasValidPersonalCounts(view: Record<string, unknown>, body: Record<string, unknown>): boolean {
+  const present = PERSONAL_COUNT_FIELDS.filter((field) => view[field] !== undefined);
+  if (present.length === 0)
+    return view.groupCounts === undefined && body.totalCount === undefined && body.attentionCount === undefined;
+  if (present.length !== PERSONAL_COUNT_FIELDS.length || view.preferenceRevision === undefined) return false;
+  const counts = PERSONAL_COUNT_FIELDS.map((field) => view[field]);
+  if (counts.some((value) => !Number.isSafeInteger(value) || (value as number) < 0)) return false;
+  const [originalTotal, visibleTotal, ignoredTotal, originalAttention, visibleAttention, ignoredAttention] =
+    counts as number[];
+  if (originalTotal !== visibleTotal + ignoredTotal || originalAttention !== visibleAttention + ignoredAttention)
+    return false;
+  const selectedTotal = view.mode === 'visible' ? visibleTotal : ignoredTotal;
+  const selectedAttention = view.mode === 'visible' ? visibleAttention : ignoredAttention;
+  return (
+    hasValidPersonalGroupCounts(view.groupCounts, {
+      original: originalTotal,
+      visible: visibleTotal,
+      ignored: ignoredTotal,
+    }) &&
+    body.totalCount === selectedTotal &&
+    (body.attentionCount === undefined || body.attentionCount === selectedAttention)
+  );
+}
+
+function personalItemsHaveCoordinates(items: unknown): boolean {
+  return (
+    Array.isArray(items) &&
+    items.every((item) => isRecord(item) && isPreferenceCoordinate(item.preferenceCoordinate, String(item.decisionRef)))
+  );
+}
+
+function hasPersonalView(body: Record<string, unknown>): boolean {
+  if (body.personalView === undefined) return true;
+  if (!isRecord(body.personalView) || !['visible', 'ignored'].includes(String(body.personalView.mode))) return false;
+  const view = body.personalView;
+  if (!isRecord(body.sources) || !isSourceRead(body.sources.personalPreferences)) return false;
+  if (
+    view.preferenceRevision !== undefined &&
+    (!Number.isSafeInteger(view.preferenceRevision) || (view.preferenceRevision as number) < 0)
+  )
+    return false;
+  return personalItemsHaveCoordinates(body.items) && hasValidPersonalCounts(view, body);
+}
+
 export function parseUnifiedAttentionRead(body: unknown): UnifiedAttentionReadV1 | null {
   if (!isRecord(body) || body.version !== 1 || body.scope !== 'owner_all_projects') return null;
   if (typeof body.status !== 'string' || !OVERALL_STATUS.has(body.status)) return null;
   if (!Array.isArray(body.items) || !body.items.every(isItem)) return null;
   const structurallyValid =
-    hasOwnerIdentity(body) && hasSources(body) && hasConsistency(body) && hasValidTotal(body) && hasPage(body);
+    hasOwnerIdentity(body) &&
+    hasSources(body) &&
+    hasConsistency(body) &&
+    hasValidTotal(body) &&
+    hasPage(body) &&
+    hasPersonalView(body);
   return structurallyValid ? (body as unknown as UnifiedAttentionReadV1) : null;
 }

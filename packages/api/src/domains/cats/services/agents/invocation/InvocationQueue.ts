@@ -87,14 +87,14 @@ export interface QueueEntry {
   /** F122B: auto-execute without waiting for steer/manual trigger */
   autoExecute: boolean;
   /**
-   * Process-local fence while one persisted A2A trigger is binding its complete
-   * fan-out custody. Ordinary selectors must not publish any carrier from this
-   * admission before the canonical MessageStore CAS commits the whole group.
+   * Process-local mutation fence while a message-backed Queue source crosses an
+   * asynchronous durable commit. Producers use it while binding complete fan-out
+   * custody; exact adopted completion uses the same exclusion slot through its
+   * terminal append. Ordinary selectors cannot publish or mutate a fenced carrier.
    *
-   * The fence itself is process-local. MessageStore persists the corresponding
-   * QueueCustodyAdmissionIntent after policy decisions but before these carriers
-   * are staged, so startup reconstructs only the accepted subset and converges
-   * rejected targets directly into full-custody failure state.
+   * Producer admission remains restart-safe through QueueCustodyAdmissionIntent.
+   * A completion fence is shorter-lived and never persisted: after process loss,
+   * the canonical event log decides whether a retry appends or repairs a terminal.
    */
   queueCustodyAdmissionId?: string;
   /** F122B: which cat initiated this entry (for A2A/multi_mention display) */
@@ -160,6 +160,22 @@ export function exactA2ASourceMessageIds(
       ),
     ),
   ];
+}
+
+/** A targeted stored-message read represents the complete Queue body only for an unmerged singleton carrier. */
+export function isExactUnmergedQueueSource(
+  entry: { readonly messageId?: string | null; readonly mergedMessageIds?: readonly string[] },
+  messageId: string,
+): boolean {
+  return entry.messageId === messageId && !entry.mergedMessageIds?.length;
+}
+
+export interface ExactUnmergedSourceCommitInput {
+  readonly threadId: string;
+  readonly userId: string;
+  readonly entryId: string;
+  readonly messageId: string;
+  readonly targetCatId: string;
 }
 
 export interface EnqueueResult {
@@ -681,6 +697,46 @@ export class InvocationQueue {
   getEntrySnapshot(threadId: string, userId: string, entryId: string): QueueEntry | null {
     const entry = this.findEntry(threadId, userId, entryId);
     return entry ? InvocationQueue.cloneEntry(entry) : null;
+  }
+
+  /**
+   * Whether one exact queued carrier can be the source of a targeted-message
+   * terminal right now. This is the single Queue-side predicate used both by
+   * a replay check and by the commit fence below.
+   */
+  isExactUnmergedSourceCurrent(input: ExactUnmergedSourceCommitInput): boolean {
+    const entry = this.findEntry(input.threadId, input.userId, input.entryId);
+    return Boolean(
+      entry &&
+        entry.status === 'queued' &&
+        entry.source === 'agent' &&
+        entry.sourceCategory === 'a2a' &&
+        !entry.exactSteerBatch &&
+        isOrdinaryQueueTargetEligible(entry, input.targetCatId) &&
+        isExactUnmergedQueueSource(entry, input.messageId),
+    );
+  }
+
+  /**
+   * Linearize an exact-source terminal against every Queue mutation already
+   * fenced by queueCustodyAdmissionId. The fence is acquired synchronously
+   * before the operation yields and is released even when the append fails.
+   */
+  async withExactUnmergedSourceCommit<T>(
+    input: ExactUnmergedSourceCommitInput,
+    operation: () => Promise<T>,
+  ): Promise<{ outcome: 'committed'; value: T } | { outcome: 'unavailable' }> {
+    if (!this.isExactUnmergedSourceCurrent(input)) return { outcome: 'unavailable' };
+    const entry = this.findEntry(input.threadId, input.userId, input.entryId);
+    if (!entry) return { outcome: 'unavailable' };
+    const fenceId = `dispatch-completion:${randomUUID()}`;
+    entry.queueCustodyAdmissionId = fenceId;
+    try {
+      return { outcome: 'committed', value: await operation() };
+    } finally {
+      const current = this.findEntry(input.threadId, input.userId, input.entryId);
+      if (current?.queueCustodyAdmissionId === fenceId) delete current.queueCustodyAdmissionId;
+    }
   }
 
   /** Resolve a durable carrier by its globally unique entry id without trusting a source-thread projection. */

@@ -1,6 +1,7 @@
 import { createHmac, randomUUID, timingSafeEqual } from 'node:crypto';
 import https from 'node:https';
 import { createPinnedRequestOptions, resolveExternalUrl } from '../../../../../utils/url-safety.js';
+import { createProxyDotWebhookSender } from './dot-proxy-doh.js';
 
 export interface DotWebhookResponse {
   status: number;
@@ -11,6 +12,10 @@ export type DotWebhookSend = (
   headers: Record<string, string>,
   body: string,
 ) => Promise<DotWebhookResponse>;
+
+export function createDotWebhookSender(proxyUrl?: string): DotWebhookSend {
+  return proxyUrl === undefined ? sendDotWebhookPinned : createProxyDotWebhookSender(proxyUrl);
+}
 
 export function dotSigningKey(secret: string): Buffer {
   if (!/^whsec_[A-Za-z0-9+/]+={0,2}$/.test(secret)) throw new Error('invalid_signing_secret');

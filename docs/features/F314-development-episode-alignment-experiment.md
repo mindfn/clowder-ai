@@ -2,10 +2,10 @@
 feature_ids: [F314]
 related_features: [F100, F153, F167, F192, F267, F281, F298, F303, F310, F311, F321, F322, F323]
 topics: [development-process, intent-alignment, review, merge-gate, process-cost, main-health, soft-surface-convergence, experiment, self-evolution]
-tips_exempt: "Renewed 2026-10-13: the current exported delta only refreshes the document date; internal outcome alignment and owner-version responsibility still add no end-user command or UI and establish no efficacy verdict."
+tips_exempt: "Renewed 2026-10-14: this F314 delta records planned F311 lineage wiring and an internal case/version draft. It adds no shipped user entry or runtime capability and establishes no efficacy verdict; future user-facing F311 delivery retains its own discovery requirement."
 doc_kind: spec
 created: 2026-09-02
-updated: 2026-10-12
+updated: 2026-10-14
 description: "让一项托付跨阶段持续做对，尽早交付真实可用结果，以充分且相称的验证减少等待，并让猫自主续办、少占用人的协调注意力。现有 anchor 实验是其中一个有界机制。"
 description_source: human
 description_author: codex-astra
@@ -109,6 +109,26 @@ Phase B 的 exact version、证据与 owner receipts 进入既有 Evolution Prog
 - F311 Phase 3 已足以在成熟证据上形成 `keep | sunset | insufficient`；只有结论为 `tune`、需要受治理写回 owner 资产时，才依赖 Phase 4 的 mutation + fresh outcome 闭环；
 - 未来若要评估另一个不确定机制，必须另立 E0 合格 claim/Program，但仍可挂在 F314 的产品边界下；不得把多个变量塞进本 Program；
 - 首次可行动 verdict 完成后，F314 可以关闭；后续 Program 周期继续由 F311 与具名 consumer 持有，不靠operator或 F314 backlog 人肉续命。
+
+### F311 v2 接入：事故档案成为进化谱系的数据（2026-10-14）
+
+**来源**：operator `[thread-id]#private-source-id`。事故档案和错题本在累计 RSI 的进化数据；要把每次改过的开发流程版本放进 F311 的探索进化，开始建立进化谱系。F311 侧计划见 [F311 v2 用户旅程开发计划](F311-capability-evolution-workspace.md#v2-用户旅程开发计划2026-10-14-起)（切片 S4）。
+
+**对 F314 意味着什么**
+- **对象和边界不变**：仍是同一个 Program（`ba0f4524`）、同一个被进化对象（F100 的开发流程 harness 有效性）。不新开 Program，不改本期验收边界，也不改 operator B 处置。
+- **和上面「不得把多个变量塞进本 Program」怎么分开**：谱系只是这个对象真实历史的只读投影，回答「改过什么、之后发生了什么」，不形成 keep / tune / sunset，也不当作哪一版有效的证明。要评估某个具体机制，仍按上面那条另立 E0 合格的 claim / Program。
+- **版本**：这一个月真实改过的开发流程成员，包括：
+  - SOP；
+  - merge-gate、request-review、receive-review、quality-gate、worktree、feat-lifecycle 这几个 skill；
+  - 交接、共享规则、L0 提示词；
+  - DESIGN.md 里的交付与验收规则。
+
+  版本照 F100 适配器现有的做法从 git 历史读出（#4517 目前只覆盖 request-review 一个文件）。一次发布打包成一个版本，写清改了哪些成员；能追到事故的写出处，追不到的写「未关联」。F311 只投影，不复制资产。
+- **实验**：事故档案里的案例和「16 张 PR 有界对照」里的交付，挂在当时实际生效的那一版下面。每个案例写清偏离、人的代价、同类是否复发。档案不是全量普查，不能算成翻车率。
+
+**请 F314 帮的两件事**（都不急，手头工作做完再做）
+1. 以后新归档的案例多写两项：当时生效的流程版本；这次处置改了哪个成员、哪次提交。没写的，抽取时如实标「未关联」，不替原作者补因果。
+2. F311 v2 走通后，在 Alpha 上以真实使用者身份走一遍：从能力进化首页进到这条谱系，核对版本和案例有没有挂对。
 
 ## User Journey
 

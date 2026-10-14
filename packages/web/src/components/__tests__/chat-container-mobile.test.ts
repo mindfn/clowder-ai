@@ -15,6 +15,7 @@ import {
   createEvolutionProgramSurface,
   createWorkspaceModeSurface,
 } from '@/components/workbench/real-surface-adapters';
+import { useWorkspaceChatReveal } from '@/components/workbench/WorkspaceChatReveal';
 import { createInitialWorkbenchState } from '@/components/workbench/workbench-model';
 import type { ChatMessage as ChatMessageData, QueueEntry } from '@/stores/chat-types';
 import { useSidebarStore } from '@/stores/sidebarStore';
@@ -34,6 +35,7 @@ let mockRightPanelMode: 'status' | 'workspace' | 'transcript' = 'status';
 let mockRightPanelOpen = false;
 let mockWorkspaceMode = 'dev';
 let mockViewMode: 'single' | 'split' = 'single';
+let mockCurrentThreadId = 'test-thread';
 let mockConnectionStatus = {
   api: 'online' as const,
   socket: 'online' as const,
@@ -52,7 +54,7 @@ const PROGRAM_SURFACE = createEvolutionProgramSurface(`evolution-program:${'c'.r
 const REVIEW_SURFACE = createArtifactReviewSurface(`review-${'d'.repeat(64)}`, 'thread-source');
 
 const mockStoreState = () => ({
-  currentThreadId: 'test-thread',
+  currentThreadId: mockCurrentThreadId,
   threadStates: {},
   messages: mockMessages,
   queue: mockQueue,
@@ -102,7 +104,7 @@ vi.mock('@/stores/chatStore', () => {
     const state = mockStoreState();
     return selector ? selector(state) : state;
   };
-  return { useChatStore: hook };
+  return { useChatStore: Object.assign(hook, { getState: () => mockStoreState() }) };
 });
 
 vi.mock('next/navigation', () => ({ useRouter: () => ({ push: vi.fn() }) }));
@@ -176,13 +178,25 @@ vi.mock('../ThreadSidebar', () => ({
 vi.mock('../RightStatusPanel', () => ({
   RightStatusPanel: () => React.createElement('div', { 'data-testid': 'right-status-panel' }),
 }));
+vi.mock('../workspace-status/StatusPresentation', () => ({
+  StatusPresentation: () => React.createElement('div', { 'data-testid': 'right-status-panel' }),
+}));
 vi.mock('../WorkspacePanel', () => ({
   WorkspacePanel: (props: { statusSurface?: React.ReactNode; visible?: boolean }) => {
     const [statusOpen, setStatusOpen] = React.useState(false);
     const [programFace, setProgramFace] = React.useState<'judgment' | 'history'>('judgment');
+    const requestChat = useWorkspaceChatReveal();
     return React.createElement(
       'div',
       { 'data-testid': 'workspace-panel', 'data-workspace-visible': String(props.visible) },
+      ...['test-thread', 'another-thread'].map((threadId) =>
+        React.createElement('button', {
+          key: threadId,
+          type: 'button',
+          'data-testid': `request-chat-${threadId}`,
+          onClick: () => requestChat?.(threadId),
+        }),
+      ),
       React.createElement('button', {
         type: 'button',
         'data-testid': 'workspace-launcher-status',
@@ -326,6 +340,12 @@ describe('ChatContainer mobile interactions', () => {
     }));
   }
 
+  function requestChat(threadId = 'test-thread') {
+    const button = container.querySelector<HTMLButtonElement>(`[data-testid="request-chat-${threadId}"]`);
+    if (!button) throw new Error('expected a Workspace leaf requesting its original Chat');
+    button.click();
+  }
+
   beforeEach(() => {
     mockMessages = [];
     mockQueue = [];
@@ -333,6 +353,7 @@ describe('ChatContainer mobile interactions', () => {
     mockRightPanelOpen = false;
     mockWorkspaceMode = 'dev';
     mockViewMode = 'single';
+    mockCurrentThreadId = 'test-thread';
     mockConnectionStatus = {
       api: 'online',
       socket: 'online',
@@ -610,6 +631,124 @@ describe('ChatContainer mobile interactions', () => {
     });
 
     expect(mockCloseRightPanel).toHaveBeenCalledOnce();
+  });
+
+  it.each([false, true])('reveals the original Chat from a covering v2 Workspace on desktop=%s', async (desktop) => {
+    writeShellPresentation('v2');
+    mockMatchMedia(desktop);
+    mockRightPanelOpen = true;
+    mockRightPanelMode = 'workspace';
+    useF307ExperienceWorkbenchStore.setState({ layout: createInitialWorkbenchState([PROGRAM_SURFACE]) });
+    await act(async () => root.render(renderChatContainer('test-thread')));
+    if (desktop)
+      await act(async () => useF307ExperienceWorkbenchStore.getState().enterMainAreaAttention(PROGRAM_SURFACE.id));
+    const chat = container.querySelector('[data-testid="thread-chat-host"]');
+    const owner = container.querySelector('[data-testid="workspace-panel"]');
+    const layout = useF307ExperienceWorkbenchStore.getState().layout;
+    const order: string[] = [];
+    const capture = (event: Event) => {
+      if (isChatReadingCaptureRequest(event)) order.push('capture');
+    };
+    mockCloseRightPanel.mockImplementation(() => {
+      expect(useF307ExperienceWorkbenchStore.getState().mainAreaAttentionSurfaceId).toBeNull();
+      order.push('close');
+      mockRightPanelOpen = false;
+      mockRightPanelMode = 'status';
+    });
+    window.addEventListener(CHAT_LAYOUT_CHANGED_EVENT, capture);
+    try {
+      await act(async () => requestChat());
+      expect(order).toEqual(['capture', 'close']);
+      await act(async () => root.render(renderChatContainer('test-thread')));
+      expect(container.querySelector('[data-testid="thread-chat-host"]')).toBe(chat);
+      expect(container.querySelector('[data-testid="workspace-panel"]')).toBe(owner);
+      expect(container.querySelector('[data-testid="contextual-workspace-host"]')?.getAttribute('aria-hidden')).toBe(
+        'true',
+      );
+      expect(useF307ExperienceWorkbenchStore.getState().layout).toBe(layout);
+    } finally {
+      window.removeEventListener(CHAT_LAYOUT_CHANGED_EVENT, capture);
+    }
+  });
+
+  it.each([
+    { presentation: 'v2' as const, desktop: true, threadId: 'test-thread', open: true, mode: 'workspace' as const },
+    { presentation: 'v2' as const, desktop: false, threadId: 'another-thread', open: true, mode: 'workspace' as const },
+    {
+      presentation: 'classic' as const,
+      desktop: false,
+      threadId: 'test-thread',
+      open: true,
+      mode: 'workspace' as const,
+    },
+    { presentation: 'v2' as const, desktop: false, threadId: 'test-thread', open: false, mode: 'workspace' as const },
+    { presentation: 'v2' as const, desktop: false, threadId: 'test-thread', open: true, mode: 'status' as const },
+  ])('does not fold an uncovered or foreign Chat: $presentation/$desktop/$threadId/$open/$mode', async ({
+    presentation,
+    desktop,
+    threadId,
+    open,
+    mode,
+  }) => {
+    writeShellPresentation(presentation);
+    mockMatchMedia(desktop);
+    mockRightPanelOpen = true;
+    mockRightPanelMode = 'workspace';
+    await act(async () => root.render(renderChatContainer('test-thread')));
+    mockRightPanelOpen = open;
+    mockRightPanelMode = mode;
+    await act(async () => root.render(renderChatContainer('test-thread')));
+    await act(async () => requestChat(threadId));
+    expect(mockCloseRightPanel).not.toHaveBeenCalled();
+  });
+
+  it('rejects a reveal from the previous thread before its host has rerendered', async () => {
+    writeShellPresentation('v2');
+    mockRightPanelOpen = true;
+    mockRightPanelMode = 'workspace';
+    await act(async () => root.render(renderChatContainer('test-thread')));
+    mockCurrentThreadId = 'another-thread';
+    await act(async () => requestChat());
+    expect(mockCloseRightPanel).not.toHaveBeenCalled();
+  });
+
+  it('keeps full-window Artifact work when its original composer is already available', async () => {
+    writeShellPresentation('v2');
+    mockMatchMedia(true);
+    mockRightPanelOpen = true;
+    mockRightPanelMode = 'workspace';
+    const opened = reduceArtifactWorkPresentation(createArtifactWorkPresentationState(), {
+      type: 'begin',
+      initiator: 'user',
+      threadId: 'test-thread',
+      surfaceId: REVIEW_SURFACE.id,
+      returnHandle: {
+        host: { owner: 'chat-container', key: 'test-thread' },
+        workbench: { owner: 'f307', key: REVIEW_SURFACE.id },
+        chatReadingRef: null,
+        client: REVIEW_SURFACE.ownerStateRef,
+      },
+    }).state;
+    const session = opened.session;
+    if (!session) throw new Error('expected the original Artifact work presentation');
+    const fullWindow = reduceArtifactWorkPresentation(opened, {
+      type: 'enter-full-window',
+      initiator: 'user',
+      generation: session.generation,
+      threadId: session.threadId,
+      surfaceId: session.surfaceId,
+    }).state;
+    useF307ExperienceWorkbenchStore.setState({
+      layout: createInitialWorkbenchState([REVIEW_SURFACE]),
+      artifactWorkPresentation: fullWindow,
+    });
+    await act(async () => root.render(renderChatContainer('test-thread')));
+    expect(
+      container.querySelector('[data-testid="contextual-workspace-host"]')?.getAttribute('data-presentation'),
+    ).toBe('artifact-full-window');
+    await act(async () => requestChat());
+    expect(mockCloseRightPanel).not.toHaveBeenCalled();
+    expect(useF307ExperienceWorkbenchStore.getState().artifactWorkPresentation).toBe(fullWindow);
   });
 
   it.each([

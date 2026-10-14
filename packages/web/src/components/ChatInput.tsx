@@ -75,6 +75,7 @@ import { useComposerKeyboardFocus } from './use-composer-keyboard-focus';
 import { useDurableComposerDraft } from './useDurableComposerDraft';
 import { useTextareaAutosize } from './useTextareaAutosize';
 import { WhisperCatSelector } from './WhisperCatSelector';
+import { useWorkspaceChatWorkScope } from './workbench/WorkspaceChatWorkScope';
 
 /** Module-level draft storage — survives component unmount/remount across thread switches */
 export {
@@ -265,6 +266,7 @@ export function ChatInput({
   );
   const hasActiveInvocation = canonicalExecutions.length > 0 || hasUnverifiedLegacyExecution;
   const shellV2 = presentation === 'v2';
+  const workScope = useWorkspaceChatWorkScope();
   const stopState: 'available' | 'pending' | 'unavailable' | 'hidden' =
     canonicalExecutions.length === 0 ? (hasUnverifiedLegacyExecution ? 'unavailable' : 'hidden') : projectedCancelState;
   const activeCatIds = useMemo(() => {
@@ -459,6 +461,11 @@ export function ChatInput({
       }
       const trimmed = input.trim();
       if ((trimmed || contextAttachments.length > 0) && !disabled) {
+        const visibleWork =
+          shellV2 && contextAttachments.length === 0 && images.length === 0 && effectiveThreadId
+            ? workScope?.read(effectiveThreadId)
+            : null;
+        const sendContexts = visibleWork ? [visibleWork] : contextAttachments;
         const draftSnapshot = {
           text: input,
           images: [...images],
@@ -482,7 +489,7 @@ export function ChatInput({
         let admission: ReturnType<ChatInputProps['onSend']>;
         try {
           admission =
-            contextAttachments.length > 0
+            sendContexts.length > 0
               ? onSend(
                   trimmed,
                   images.length > 0 ? images : undefined,
@@ -490,7 +497,7 @@ export function ChatInput({
                   deliveryMode,
                   replyToMessage?.id,
                   declaredDisposition,
-                  contextAttachments,
+                  sendContexts,
                 )
               : onSend(
                   trimmed,
@@ -531,6 +538,8 @@ export function ChatInput({
       onSend,
       images,
       contextAttachments,
+      workScope,
+      shellV2,
       sendTemporarilyDisabled,
       whisperMode,
       whisperTargets,

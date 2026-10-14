@@ -189,11 +189,14 @@ export async function assertThemeApplied(page, dark) {
  * gets every API request first and may answer it (`{ body, status? }`, or `{ raw, contentType, status? }` for bytes);
  * anything it leaves alone falls through to the shared journey fixture.
  */
-export async function openChatPage(suite, { width = 1440, dark = false, messages, handleApi, sessionStorage = {} }) {
+export async function openChatPage(
+  suite,
+  { width = 1440, dark = false, messages, handleApi, sessionStorage = {}, resetLocalStorage = true },
+) {
   const { browser, baseUrl } = suite();
   await mkdir(EVIDENCE, { recursive: true });
   const context = await browser.newContext({ viewport: { width, height: 900 } });
-  await context.addInitScript(() => window.localStorage.clear());
+  if (resetLocalStorage) await context.addInitScript(() => window.localStorage.clear());
   // The real dark base is activated through next-themes' own persistence (the way f293-team-experience does);
   // a hand-set data-theme attribute is overwritten by the provider and leaves the page light.
   if (dark) await context.addInitScript(() => window.localStorage.setItem('theme', 'dark'));

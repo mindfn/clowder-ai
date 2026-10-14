@@ -1,8 +1,11 @@
 'use client';
 import { useState } from 'react';
+import { useShellPresentation } from '@/components/shell/shell-presentation';
 import type { ContentReviewController } from '@/components/workbench/content-review/content-review-contract';
 import type { ArtifactRoundProps } from '../ArtifactRoundLanding';
+import { artworkTitle } from '../artwork-title';
 import { ReviewRoundDecision } from '../ReviewRoundDecision';
+import { useArtifactChatDiscussion } from '../useArtifactChatDiscussion';
 import { MediaVersionCompare } from './MediaVersionCompare';
 import { reviewAuthorityMessages } from './review-authority-messages';
 
@@ -14,13 +17,24 @@ export function ArtifactMediaCompare({
   prefix,
   canWrite,
   onClose,
-  onBack,
-}: Pick<ArtifactRoundProps, 'view' | 'round' | 'controller' | 'prefix' | 'onBack'> & {
+  leadingAction,
+  titleInHost = false,
+  fullWindowAction,
+  title,
+}: Pick<
+  ArtifactRoundProps,
+  'view' | 'round' | 'controller' | 'prefix' | 'onBack' | 'leadingAction' | 'titleInHost' | 'fullWindowAction' | 'title'
+> & {
   canWrite: boolean;
   recovery?: Pick<ContentReviewController, 'pending' | 'busy' | 'error' | 'retryPending'>;
   onClose: () => void;
 }) {
+  const isV2 = useShellPresentation() === 'v2';
+  const workTitle = isV2
+    ? artworkTitle(title ?? view.review.title, round.asset.mediaType === 'image/png' ? '图片' : '作品')
+    : view.review.title;
   const pending = Boolean(controller.pending) || Boolean(recovery?.pending);
+  const discussion = useArtifactChatDiscussion(view, round, workTitle);
   const saving = controller.saving || Boolean(recovery?.busy);
   const error = recovery?.error ?? controller.error;
   const buttonClass =
@@ -33,10 +47,21 @@ export function ArtifactMediaCompare({
   return (
     <section className="flex min-h-0 flex-1 flex-col" data-testid="artifact-media-compare">
       <header className="flex shrink-0 flex-wrap items-center gap-3 border-b border-cafe-subtle px-3 py-2 text-xs">
+        {leadingAction}
         <button type="button" className={buttonClass} onClick={onClose}>
           返回作品
         </button>
-        <span className="min-w-0 flex-1 truncate">{view.review.title}</span>
+        {titleInHost ? null : <span className="min-w-0 flex-1 truncate">{workTitle}</span>}
+        {fullWindowAction ? (
+          <button
+            type="button"
+            className={buttonClass}
+            aria-label={fullWindowAction.active ? '展开聊天' : '整窗查看作品'}
+            onClick={fullWindowAction.onToggle}
+          >
+            {fullWindowAction.active ? '展开聊天' : '整窗'}
+          </button>
+        ) : null}
         <label>
           原版{' '}
           <select
@@ -51,10 +76,8 @@ export function ArtifactMediaCompare({
             ))}
           </select>
         </label>
-        <button type="button" className={buttonClass} onClick={onBack}>
-          返回来源
-        </button>
       </header>
+      {discussion.notice ? <p role="status">{discussion.notice}</p> : null}
       {error ? (
         <p role="alert" className="px-3 py-2 text-sm text-cafe-error">
           {error}
@@ -95,6 +118,7 @@ export function ArtifactMediaCompare({
               saving={controller.saving}
               draftKey={`${prefix}round:${round.number}:decision`}
               act={controller.act}
+              onDiscuss={discussion.discuss}
               compact
             />
           }

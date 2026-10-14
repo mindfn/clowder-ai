@@ -68,15 +68,28 @@ html[data-shell="v2"] {
   .shell-chat-header-layout {
     height: auto;
     min-height: 52px;
-    flex-wrap: wrap;
+    flex-wrap: nowrap;
     padding: 8px 12px;
     gap: 4px;
   }
 
-  .shell-chat-header-navigation,
-  .shell-chat-header-actions {
-    flex: 1 1 100%;
+  .shell-chat-header-navigation {
+    flex: 1 1 0;
     min-width: 0;
+  }
+  .shell-chat-header-actions {
+    flex: 0 0 auto;
+    flex-wrap: nowrap;
+    gap: 2px;
+  }
+  .shell-chat-header-actions button {
+    padding-inline: 5px;
+    gap: 3px;
+  }
+  /* Accessible names and real counts remain on the existing controls. */
+  .shell-chat-header-actions [data-testid="header-works"] > span:nth-child(2),
+  .shell-chat-header-actions [data-testid="header-tasks"] > span:nth-child(2) {
+    display: none;
   }
 }
 

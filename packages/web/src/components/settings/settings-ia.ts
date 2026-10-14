@@ -23,8 +23,7 @@ export type SettingsDestination =
   | { kind: 'theme' }
   | { kind: 'route'; path: string }
   | { kind: 'workspace-mode'; mode: Exclude<WorkspaceMode, 'dev' | 'team'> }
-  /** The capability-evolution home has no typed open request yet (F307); it is opened from the Workspace launcher. */
-  | { kind: 'workspace-launcher' };
+  | { kind: 'evolution-home' };
 
 export interface SettingsEntry {
   /** Stable id; pinned destinations are stored as `dest:<id>` so they can never collide with a section id (`system`). */
@@ -59,7 +58,7 @@ export const SETTINGS_IA: readonly SettingsEntry[] = [
     },
   },
   { id: 'schedule', label: '调度', icon: 'timer', group: 1, destination: { kind: 'workspace-mode', mode: 'schedule' } },
-  { id: 'evolution', label: '能力进化', icon: 'sparkles', group: 1, destination: { kind: 'workspace-launcher' } },
+  { id: 'evolution', label: '能力进化', icon: 'sparkles', group: 1, destination: { kind: 'evolution-home' } },
   { id: 'eval', label: '评估', icon: 'chart-pie', group: 1, destination: { kind: 'workspace-mode', mode: 'eval' } },
   {
     id: 'connect',

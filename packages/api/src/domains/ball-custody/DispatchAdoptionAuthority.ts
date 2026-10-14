@@ -1,3 +1,5 @@
+import type { InvocationQueue } from '../cats/services/agents/invocation/InvocationQueue.js';
+import { carrierEntryId } from '../cats/services/agents/invocation/QueuedMessageCustodyCarrierProjection.js';
 import { getQueueReadEvidence } from '../cats/services/agents/invocation/QueueReadEvidence.js';
 import { isDispatchSource } from '../cats/services/agents/invocation/queue-source-completion-policy.js';
 import type { IMessageStore } from '../cats/services/stores/ports/MessageStore.js';
@@ -16,6 +18,13 @@ interface Dependencies {
   messages: Pick<IMessageStore, 'getById'>;
   adoptions: TurnCustodyAdoptionRegistry;
   live?: Pick<LiveCompanionSessions, 'withCarrierOperation'>;
+  queue?: Pick<InvocationQueue, 'isExactUnmergedSourceCurrent' | 'withExactUnmergedSourceCommit'>;
+}
+
+interface ExactLiveSourceCoordinates {
+  readonly ownerUserId: string;
+  readonly entryId: string;
+  readonly alreadySettledByInvocation: boolean;
 }
 
 /** Carrier admission is separate from the exact dispatch event writer and its receipt projection. */
@@ -34,7 +43,19 @@ export class DispatchAdoptionAuthority {
       return this.deps.live.withCarrierOperation(auth, async () => {
         const witness = await getQueueReadEvidence(this.deps.messages, { ...auth, messageId });
         if (!witness) throw new A2ADispatchDispositionError('adopted_dispatch_not_read');
-        return consume({ carrierKind: 'live', witness });
+        return consume({
+          carrierKind: 'live',
+          witness,
+          ...(witness.evidenceKind === 'exact_full_message'
+            ? {
+                assertSourceCurrent: async () => {
+                  await this.assertExactLiveSourceCurrent(auth, messageId);
+                },
+                withSourceCurrentCommit: async <T>(commit: () => Promise<T>) =>
+                  this.withExactLiveSourceCurrentCommit(auth, messageId, commit),
+              }
+            : {}),
+        });
       });
     }
     if (!this.deps.adoptions.isAccepting(auth.invocationId))
@@ -105,5 +126,104 @@ export class DispatchAdoptionAuthority {
     );
     if (!exposure) throw new A2ADispatchDispositionError('adopted_dispatch_not_read');
     return { messageId, seenAt: exposure.seenAt, evidenceKind: 'queued_body_exposure' };
+  }
+
+  /**
+   * An exact stored-message witness covers the Queue carrier only while that
+   * carrier is still the same unmerged singleton. A later coalesce changes the
+   * body and must require a fresh complete-carrier read before disposition.
+   */
+  private async assertExactLiveSourceCurrent(auth: A2ADispatchDispositionAuth, messageId: string): Promise<void> {
+    const coordinates = await this.readExactLiveSourceCoordinates(auth, messageId);
+    if (coordinates.alreadySettledByInvocation) return;
+    if (
+      !this.deps.queue?.isExactUnmergedSourceCurrent({
+        threadId: auth.threadId,
+        userId: coordinates.ownerUserId,
+        entryId: coordinates.entryId,
+        messageId,
+        targetCatId: auth.catId,
+      })
+    ) {
+      throw new A2ADispatchDispositionError('adopted_dispatch_not_read');
+    }
+  }
+
+  private async withExactLiveSourceCurrentCommit<T>(
+    auth: A2ADispatchDispositionAuth,
+    messageId: string,
+    commit: () => Promise<T>,
+  ): Promise<T> {
+    const coordinates = await this.readExactLiveSourceCoordinates(auth, messageId);
+    if (coordinates.alreadySettledByInvocation) {
+      throw new A2ADispatchDispositionError('adopted_dispatch_not_read');
+    }
+    const queue = this.deps.queue;
+    if (!queue) throw new A2ADispatchDispositionError('adopted_dispatch_not_read');
+    const result = await queue.withExactUnmergedSourceCommit(
+      {
+        threadId: auth.threadId,
+        userId: coordinates.ownerUserId,
+        entryId: coordinates.entryId,
+        messageId,
+        targetCatId: auth.catId,
+      },
+      async () => {
+        const current = await this.readExactLiveSourceCoordinates(auth, messageId);
+        if (
+          current.alreadySettledByInvocation ||
+          current.ownerUserId !== coordinates.ownerUserId ||
+          current.entryId !== coordinates.entryId
+        ) {
+          throw new A2ADispatchDispositionError('adopted_dispatch_not_read');
+        }
+        return commit();
+      },
+    );
+    if (result.outcome === 'unavailable') {
+      throw new A2ADispatchDispositionError('adopted_dispatch_not_read');
+    }
+    return result.value;
+  }
+
+  private async readExactLiveSourceCoordinates(
+    auth: A2ADispatchDispositionAuth,
+    messageId: string,
+  ): Promise<ExactLiveSourceCoordinates> {
+    const message = await this.deps.messages.getById(messageId);
+    const custody = message?.queueCustody;
+    const ownerUserId = custody?.ownerUserId ?? message?.userId;
+    const exactOutcome = custody?.targetOutcomeByCatId?.[auth.catId];
+    // Preserve same-invocation idempotency after its successful receipt prunes
+    // the physical Queue entry. A different invocation cannot inherit it.
+    const alreadySettledByInvocation = Boolean(
+      custody?.handledByCatIds.includes(auth.catId) &&
+        exactOutcome?.disposition === 'dispatch_disposition' &&
+        exactOutcome.invocationId === auth.invocationId,
+    );
+    const entryId = custody ? carrierEntryId(custody, auth.catId) : undefined;
+    if (!alreadySettledByInvocation && message?.deliveryStatus !== 'queued') {
+      throw new A2ADispatchDispositionError('adopted_dispatch_not_read');
+    }
+    if (!alreadySettledByInvocation && custody?.status === 'terminal') {
+      throw new A2ADispatchDispositionError('adopted_dispatch_not_read');
+    }
+    if (
+      !auth.userId ||
+      !message ||
+      message.deletedAt ||
+      !custody ||
+      message.threadId !== auth.threadId ||
+      ownerUserId !== auth.userId ||
+      !isDispatchSource(message, auth.catId) ||
+      !custody.allTargetCats.includes(auth.catId) ||
+      custody.withdrawnByCatIds?.includes(auth.catId) ||
+      message.deliveryStatus === 'canceled' ||
+      !ownerUserId ||
+      !entryId
+    ) {
+      throw new A2ADispatchDispositionError('adopted_dispatch_not_read');
+    }
+    return { ownerUserId, entryId, alreadySettledByInvocation };
   }
 }

@@ -62,6 +62,7 @@ import {
   ActionSuccessorStandingError,
   buildActionSuccessorFence,
 } from '../domains/ball-custody/ActionSuccessorAdmissionService.js';
+import { resolveActionSuccessorHumanReassignmentEvidence } from '../domains/ball-custody/ActionSuccessorHumanReassignmentEvidence.js';
 import {
   ActionTerminalPredicateError,
   getActionTerminalCapabilityForPredicateKind,
@@ -80,6 +81,7 @@ import { createTypedWaitRegistration } from '../domains/ball-custody/TypedWaitRe
 import { transitionWaitState } from '../domains/ball-custody/wait-state-machine.js';
 import {
   type InvocationQueue,
+  isExactUnmergedQueueSource,
   isOrdinaryQueueTargetEligible,
 } from '../domains/cats/services/agents/invocation/InvocationQueue.js';
 import type { InvocationRegistry } from '../domains/cats/services/agents/invocation/InvocationRegistry.js';
@@ -3355,6 +3357,16 @@ export const callbacksRoutes: FastifyPluginAsync<CallbackRoutesOptions> = async 
               tenantScope: actor.userId,
             })
           : undefined;
+        const admissionNow = Date.now();
+        const humanReassignmentEvidence = action.replace
+          ? await resolveActionSuccessorHumanReassignmentEvidence({
+              messageStore,
+              groundingEvidenceRef: action.groundingEvidenceRef,
+              userId: actor.userId,
+              childThreadId: effectiveThreadId,
+              now: admissionNow,
+            })
+          : undefined;
         const admissionInput = {
           tenantScope: actor.userId,
           actorCatId: actor.catId,
@@ -3363,9 +3375,10 @@ export const callbacksRoutes: FastifyPluginAsync<CallbackRoutesOptions> = async 
           holderCatIds: actionHolderCatIds,
           dispatchId,
           evidenceRef: `callback:${invocationId}:${clientMessageId}`,
-          now: Date.now(),
+          now: admissionNow,
           ...(incomingActionLeaseRef ? { incomingActionLeaseRef } : {}),
           ...(interruptedGenerationEvidence ? { interruptedGenerationEvidence } : {}),
+          ...(humanReassignmentEvidence ? { humanReassignmentEvidence } : {}),
           action,
         };
         const admission = await opts.actionSuccessorAdmissionService.admit(
@@ -4739,14 +4752,24 @@ export const callbacksRoutes: FastifyPluginAsync<CallbackRoutesOptions> = async 
     // history read must not expose or acknowledge another thread's queued receipt custody.
     const canExposeQueuedBodies = principal.kind === 'invocation' && effectiveThreadId === principal.threadId;
     const queuedFullEntries =
-      isFullMode && isContiguousRead && canExposeQueuedBodies && opts.invocationQueue
-        ? opts.invocationQueue.getQueuedBodyMessagesForCat(
-            effectiveThreadId,
-            principalUserId,
-            principalCatId,
-            expectedParentInvocationId,
-            principal.invocationId,
-          )
+      isFullMode && (isContiguousRead || messageId !== undefined) && canExposeQueuedBodies && opts.invocationQueue
+        ? opts.invocationQueue
+            .getQueuedBodyMessagesForCat(
+              effectiveThreadId,
+              principalUserId,
+              principalCatId,
+              expectedParentInvocationId,
+              principal.invocationId,
+            )
+            .filter(
+              (entry) =>
+                isContiguousRead ||
+                // A targeted thread window returns one stored message body, not a
+                // coalesced Queue payload. Only bind exposure when those identities
+                // are the same; merged carriers remain eligible through the exact
+                // get-message drill, which projects their complete combined body.
+                (messageId !== undefined && isExactUnmergedQueueSource(entry, messageId)),
+            )
         : [];
     const originalQueuedEligibility = new Map(
       queuedFullEntries.map((entry) => {
@@ -5230,6 +5253,7 @@ export const callbacksRoutes: FastifyPluginAsync<CallbackRoutesOptions> = async 
           opts.holdBallDeps!.a2aDispatchDispositionService,
           request.callbackAuth,
           messageIds,
+          messageId && fullPublishedIds.has(messageId) ? messageId : undefined,
         );
         return a2aDispatchDisposition ? { ...body, a2aDispatchDisposition } : body;
       } catch (err) {
@@ -5240,22 +5264,39 @@ export const callbacksRoutes: FastifyPluginAsync<CallbackRoutesOptions> = async 
         return body;
       }
     };
+    // A published history body alone is not proof that the invocation consumed
+    // the current Queue carrier: a coalesced carrier has a larger body than any
+    // one stored message. Reuse the same singleton predicate that admitted the
+    // route-local Queue exposure so Live cannot mint broader authority.
+    const exactFullMessageId =
+      messageId &&
+      fullPublishedIds.has(messageId) &&
+      fullyReturnedQueuedEntries.some((entry) => isExactUnmergedQueueSource(entry, messageId))
+        ? messageId
+        : undefined;
+    const liveReadEvidenceKind = isContiguousRead
+      ? ('full_contiguous_thread_context' as const)
+      : exactFullMessageId
+        ? ('exact_full_message' as const)
+        : undefined;
     const commitLiveReadWitness = async (): Promise<void> => {
       if (
         !isFullMode ||
-        !isContiguousRead ||
+        !liveReadEvidenceKind ||
         principal.kind !== 'invocation' ||
         principal.threadId !== effectiveThreadId ||
         !opts.turnExecutionStore
       )
         return;
-      const messageIds = [
-        ...fullPublishedIds,
-        ...fullyReturnedQueuedEntries
-          .filter((entry) => returnedQueuedEntryIds.has(entry.entryId))
-          .flatMap((entry) => [entry.messageId, ...(entry.mergedMessageIds ?? [])])
-          .filter((id): id is string => typeof id === 'string'),
-      ];
+      const messageIds = exactFullMessageId
+        ? [exactFullMessageId]
+        : [
+            ...fullPublishedIds,
+            ...fullyReturnedQueuedEntries
+              .filter((entry) => returnedQueuedEntryIds.has(entry.entryId))
+              .flatMap((entry) => [entry.messageId, ...(entry.mergedMessageIds ?? [])])
+              .filter((id): id is string => typeof id === 'string'),
+          ];
       await recordLiveFullReadEvidence(
         messageStore,
         opts.turnExecutionStore,
@@ -5266,6 +5307,7 @@ export const callbacksRoutes: FastifyPluginAsync<CallbackRoutesOptions> = async 
           invocationId: principal.invocationId,
           messageIds,
           seenAt: Date.now(),
+          evidenceKind: liveReadEvidenceKind,
         },
         opts.ballCustodyEventLog,
       );
@@ -6030,6 +6072,7 @@ export const callbacksRoutes: FastifyPluginAsync<CallbackRoutesOptions> = async 
         result.a2aDispatchDisposition = await opts.holdBallDeps.a2aDispatchDispositionService.describe(
           request.callbackAuth,
           [message.id],
+          message.id,
         );
       } catch (err) {
         app.log.warn(

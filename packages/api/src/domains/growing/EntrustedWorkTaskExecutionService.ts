@@ -1,9 +1,11 @@
 import type { EntrustedWorkTaskExecutionStopV1, EntrustedWorkTaskExecutionV1, TaskItem } from '@cat-cafe/shared';
 import { entrustedWorkTaskExecutionStopV1Schema, entrustedWorkTaskExecutionV1Schema } from '@cat-cafe/shared';
 import type { ActionSuccessorLeaseStore } from '../ball-custody/ActionSuccessorLeaseStore.js';
+import type { TaskApprovedDelegateProvider } from '../ball-custody/action-subject-delegate-contract.js';
 import type { ActionSuccessorLease } from '../ball-custody/action-successor-state-machine.js';
 import type { IInvocationRecordStore, InvocationRecord } from '../cats/services/stores/ports/InvocationRecordStore.js';
 import type { ITurnExecutionStore } from '../cats/services/stores/ports/TurnExecutionStore.js';
+import { resolveTaskExecutionBinding, type TaskExecutionBinding } from './EntrustedWorkTaskExecutionBinding.js';
 import { collectTaskExecutionCandidates, type TaskExecutionCandidate } from './EntrustedWorkTaskExecutionCandidates.js';
 import {
   controlForTaskBindingRecord,
@@ -25,11 +27,11 @@ export interface EntrustedWorkTaskExecutionServiceDeps {
   readonly invocationRecords?: Pick<IInvocationRecordStore, 'listRunningByThread' | 'get'>;
   readonly turnExecutions?: Pick<ITurnExecutionStore, 'listRunningByUser'>;
   readonly tracker?: ExactInvocationTracker;
+  readonly taskApprovedDelegateProvider?: TaskApprovedDelegateProvider;
   readonly now?: () => number;
 }
 
 type ProjectionReason = EntrustedWorkTaskExecutionV1['reasonCode'];
-type TaskExecutionBinding = NonNullable<Extract<EntrustedWorkTaskExecutionV1, { state: 'running' }>['binding']>;
 type BindingLoadResult =
   | {
       readonly kind: 'ready';
@@ -64,7 +66,6 @@ export class EntrustedWorkTaskExecutionService {
       return { projection: this.unknown(task, 'execution_truth_unavailable', binding) };
     }
     const collected = await collectTaskExecutionCandidates({
-      task,
       userId,
       lease,
       invocationRecords,
@@ -103,10 +104,17 @@ export class EntrustedWorkTaskExecutionService {
           });
       return { kind: 'projected', inspection: { projection } };
     }
-    const binding = this.bindingFor(task, lease);
-    return binding
-      ? { kind: 'ready', lease, binding, userId: task.userId }
-      : { kind: 'projected', inspection: { projection: this.unknown(task, 'binding_task_mismatch') } };
+    const binding = await resolveTaskExecutionBinding(task, lease, this.deps.taskApprovedDelegateProvider);
+    if (binding.kind === 'ready') return { kind: 'ready', lease, binding: binding.binding, userId: task.userId };
+    return {
+      kind: 'projected',
+      inspection: {
+        projection: this.unknown(
+          task,
+          binding.kind === 'source_unavailable' ? 'binding_source_unavailable' : 'binding_task_mismatch',
+        ),
+      },
+    };
   }
 
   private runningInspection(
@@ -260,30 +268,6 @@ export class EntrustedWorkTaskExecutionService {
       left.threadId === right.threadId &&
       left.catId === right.catId
     );
-  }
-
-  private bindingFor(task: TaskItem, lease: ActionSuccessorLease) {
-    const [catId, secondCat] = lease.holderCatIds;
-    if (
-      lease.tenantScope !== task.userId ||
-      lease.subjectRef !== `subject:task:${task.id}` ||
-      lease.actionFamily !== 'implement' ||
-      lease.successorSlot !== 'implementer' ||
-      lease.terminalPredicate?.kind !== 'task_done' ||
-      lease.terminalPredicate.subjectRef !== `subject:task:${task.id}` ||
-      !catId ||
-      secondCat ||
-      lease.holderThreadId !== task.threadId ||
-      task.ownerCatId !== catId
-    ) {
-      return null;
-    }
-    return {
-      leaseId: lease.leaseId,
-      generation: lease.generation,
-      threadId: lease.holderThreadId,
-      catId,
-    };
   }
 
   private unknown(

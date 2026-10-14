@@ -94,6 +94,48 @@ it.each([
   );
   expect(model?.value).toBe('test-model');
 });
+it('renders Native fields and its original model validation in English', async () => {
+  const originalRead = vi.mocked(apiFetch).getMockImplementation();
+  if (!originalRead) throw Error('fixture read missing');
+  vi.mocked(apiFetch).mockImplementation((url, init) =>
+    url === '/api/accounts'
+      ? Promise.resolve(
+          new Response(
+            JSON.stringify({
+              providers: [
+                {
+                  id: 'gemini',
+                  clientId: 'google',
+                  displayName: 'Gemini',
+                  authType: 'oauth',
+                  kind: 'builtin',
+                  builtin: true,
+                  models: [],
+                },
+              ],
+            }),
+          ),
+        )
+      : originalRead(url, init),
+  );
+  await renderMember({ ...cat, clientId: 'google', accountRef: 'gemini' });
+  const transport = container.querySelector<HTMLSelectElement>('select[aria-label="Transport"]');
+  await act(async () => {
+    if (!transport) throw Error('Transport missing');
+    transport.value = 'agy-native';
+    transport.dispatchEvent(new Event('change', { bubbles: true }));
+  });
+  expectEnglish();
+  expect(
+    container.querySelector('textarea[aria-label="Approved workspaces"]')?.closest('label')?.textContent,
+  ).toContain('Approved workspaces');
+  const save = [...document.querySelectorAll('button')].find((button) => button.textContent === 'Save');
+  await act(async () => save?.click());
+  expect(container.querySelector('[role="alert"]')?.textContent).toBe(
+    'AGY Native needs at least one approved workspace.',
+  );
+  expect(vi.mocked(apiFetch).mock.calls.filter(([, init]) => init?.method)).toHaveLength(0);
+});
 it.each(['healthy', 'drifted'] as const)('explains protected cloud identity in English (%s)', async (state) => {
   await renderMember({
     ...cat,
@@ -139,7 +181,7 @@ it.each([
     ),
   );
   expect(container.querySelector('[role="alert"]')).toBeNull();
-  const submit = Array.from(container.querySelectorAll('button')).find((b) => b.textContent === button);
+  const submit = Array.from(document.querySelectorAll('button')).find((b) => b.textContent === button);
   expect(submit).toBeTruthy();
   expect(submit?.disabled).toBe(false);
   await act(async () => submit?.click());

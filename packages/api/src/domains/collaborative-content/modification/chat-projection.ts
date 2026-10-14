@@ -52,6 +52,10 @@ export class ContentModificationChatProjection {
       mediaEvents?: (record: ContentModificationRecord) => Promise<ReceiptEvent[]>;
       authorizeMediaReceipt?: (record: ContentModificationRecord) => Promise<unknown>;
       recoverPublication?: (record: ContentModificationRecord) => Promise<void>;
+      recoverTextCompletion?: (
+        record: ContentModificationRecord,
+        acceptance: ContentModificationAcceptance,
+      ) => Promise<void>;
       onSaved: (ownerUserId: string, threadId: string, messageId: string) => void | Promise<void>;
       onError: (error: unknown) => void;
     },
@@ -91,6 +95,8 @@ export class ContentModificationChatProjection {
               observedAt: visible.appliedAt ?? acceptance.acceptedAt,
               project: () => this.projectWriteback(record, acceptance, visible),
             });
+            if (record.progress.prepared?.kind === 'text' && visible.state === 'applied')
+              await this.deps.recoverTextCompletion?.(record, acceptance);
           }
         } catch (error) {
           this.deps.onError(error);

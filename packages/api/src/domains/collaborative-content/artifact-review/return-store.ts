@@ -1,6 +1,11 @@
-import type { ArtifactReview, ArtifactReviewReceipt } from '@cat-cafe/shared';
+import { isDeepStrictEqual } from 'node:util';
+import type { ArtifactReview, ArtifactReviewReceipt, ContentModificationRecord } from '@cat-cafe/shared';
 import type Database from 'better-sqlite3';
 import type { MediaPublicationReturnIntent } from '../modification/media-publication/media-publication-return.js';
+import {
+  type TextWritebackCompletionIntent,
+  textCompletionBinding,
+} from '../modification/text/text-writeback-completion-intent.js';
 import { PublicationGenerationStore } from './publication-generation-store.js';
 import type { ReviewMutation } from './store.js';
 
@@ -45,7 +50,11 @@ export interface TextModificationReturnIntent extends ReviewReturnTarget {
   messageId?: string;
   retirementReason?: string;
 }
-export type ContentReturnIntent = ReviewReturnIntent | TextModificationReturnIntent | MediaPublicationReturnIntent;
+export type ContentReturnIntent =
+  | ReviewReturnIntent
+  | TextModificationReturnIntent
+  | MediaPublicationReturnIntent
+  | TextWritebackCompletionIntent;
 
 export class ArtifactReviewReturnStore {
   readonly publications: PublicationGenerationStore;
@@ -96,6 +105,40 @@ export class ArtifactReviewReturnStore {
     this.database
       .prepare('INSERT INTO artifact_review_returns (receipt_ref,state,created_at,body) VALUES (?,?,?,?)')
       .run(intent.receiptRef, intent.state, intent.createdAt, JSON.stringify(intent));
+  }
+
+  /** Validated completion shares the request journal's cancellation/order fence, not a new ledger. */
+  recordTextCompletion(intent: TextWritebackCompletionIntent, requestRevision: number): void {
+    this.database
+      .transaction(() => {
+        const row = this.database
+          .prepare('SELECT revision,body FROM content_modification_requests WHERE request_id=? AND owner_user_id=?')
+          .get(intent.requestId, intent.ownerUserId) as { revision: number; body: string } | undefined;
+        const record = row ? (JSON.parse(row.body) as ContentModificationRecord) : undefined;
+        if (
+          !record ||
+          row?.revision !== requestRevision ||
+          record.control ||
+          record.progress.task?.taskId !== intent.taskId ||
+          record.payload.targetCatId !== intent.targetCatId ||
+          record.payload.threadId !== intent.threadId ||
+          record.progress.sourceMessageId !== intent.sourceMessageId
+        )
+          throw new Error('Text completion request changed before registration');
+        const prior = this.get(intent.receiptRef);
+        if (prior) {
+          if (
+            prior.kind !== intent.kind ||
+            !isDeepStrictEqual(textCompletionBinding(prior), textCompletionBinding(intent))
+          )
+            throw new Error('Text completion binding reused');
+          return;
+        }
+        this.database
+          .prepare('INSERT INTO artifact_review_returns(receipt_ref,state,created_at,body) VALUES(?,?,?,?)')
+          .run(intent.receiptRef, intent.state, intent.createdAt, JSON.stringify(intent));
+      })
+      .immediate();
   }
 
   /** Native publication registration, not a forged human review receipt. Shares the original owner outbox. */

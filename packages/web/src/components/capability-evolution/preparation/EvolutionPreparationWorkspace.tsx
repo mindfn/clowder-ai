@@ -5,41 +5,14 @@ import {
   type EvolutionPreparationSection as PreparationSection,
 } from '@cat-cafe/shared';
 import { useEffect, useMemo, useRef } from 'react';
+import { useShellPresentation } from '@/components/shell/shell-presentation';
 import type { EvolutionProgramProjection } from '../evolution-program-projection';
 import { DEFAULT_READING, useEvolutionReading } from '../evolution-reading-state';
+import { EvolutionPreparationActivityStatus } from './EvolutionPreparationOverview';
 import { EvolutionPreparationSection } from './EvolutionPreparationSection';
 import { EvolutionPreparationSectionIcon } from './EvolutionPreparationSectionIcon';
-import {
-  type EvolutionPreparationSectionProjection,
-  isVisiblePreparationSubmission,
-} from './evolution-preparation-resource';
-
-const SECTION_META: Record<
-  PreparationSection,
-  { label: string; hint: string; category: 'object' | 'rubric' | 'measurement' | 'diagnosis' }
-> = {
-  object_map: { label: '可进化对象', hint: '范围与可改边界', category: 'object' },
-  success_contract: { label: '好坏规约', hint: '判法、反例与裁判', category: 'rubric' },
-  measurement_plan: { label: '测量与实验准备', hint: 'GT 来源与实验条件', category: 'measurement' },
-  baseline_diagnosis: { label: '基线与初步诊断', hint: '事实、未知与竞争解释', category: 'diagnosis' },
-};
-
-function latestOpenActivity(section: EvolutionPreparationSectionProjection) {
-  return section.activities.find((activity) => activity.state !== 'superseded_by_submission');
-}
-
-function sectionState(section: EvolutionPreparationSectionProjection) {
-  const status = section.current?.status;
-  if (status === 'submitted') return { key: status, label: '已提交' };
-  if (status === 'needs_update') return { key: status, label: '需更新' };
-  if (status === 'materializing') return { key: status, label: '需恢复' };
-  if (status === 'source_unavailable' || status === 'source_invalid') return { key: status, label: '需处理' };
-  const activity = latestOpenActivity(section);
-  if (activity?.state === 'active') return { key: 'working', label: '正在进行' };
-  if (activity?.state === 'terminal') return { key: 'terminal', label: '运行已结束' };
-  if (activity) return { key: activity.state, label: '活动待核实' };
-  return { key: 'not_started', label: '待猫继续准备' };
-}
+import { isVisiblePreparationSubmission } from './evolution-preparation-resource';
+import { latestOpenActivity, SECTION_META, sectionState } from './preparation-section-presentation';
 
 function gtLabels(projection: EvolutionProgramProjection): Readonly<Record<string, string>> {
   const measurement = projection.preparation?.sections.measurement_plan.current;
@@ -58,6 +31,7 @@ function readableTarget(ownerStateRef: string): string {
 }
 
 export function EvolutionPreparationWorkspace({ projection }: { projection: EvolutionProgramProjection }) {
+  const v2 = useShellPresentation() === 'v2';
   const workspace = useRef<HTMLElement>(null);
   const programId = projection.program.programId;
   const reading = useEvolutionReading((state) => state.programs[programId] ?? DEFAULT_READING);
@@ -142,7 +116,7 @@ export function EvolutionPreparationWorkspace({ projection }: { projection: Evol
     >
       <header className="evolution-preparation-heading">
         <h2 className="sr-only">准备</h2>
-        <p>先看改进方向与选择理由，再核对判断标准和证据。</p>
+        {!v2 && <p>先看改进方向与选择理由，再核对判断标准和证据。</p>}
       </header>
       <div role="tablist" aria-label="准备阅读入口" className="evolution-preparation-tabs">
         {EVOLUTION_PREPARATION_SECTIONS.map((section) => {
@@ -177,10 +151,14 @@ export function EvolutionPreparationWorkspace({ projection }: { projection: Evol
                 <small data-preparation-section-state="working">猫正在准备</small>
               )}
               <small data-preparation-section-state={state.key}>{state.label}</small>
+              {v2 && isVisiblePreparationSubmission(preparation?.sections[section].current) && (
+                <small>草案 · 不等于验证</small>
+              )}
             </button>
           );
         })}
       </div>
+      {v2 && <EvolutionPreparationActivityStatus projection={projection} />}
       {selected === 'measurement_plan' && reading.preparationReturn && (
         <div className="evolution-preparation-return">
           <button type="button" className="evolution-link" onClick={() => selectSection('success_contract')}>

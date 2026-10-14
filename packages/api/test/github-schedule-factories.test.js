@@ -334,7 +334,7 @@ describe('GitHub schedule factory registration (F202-2B Task 3)', () => {
     const spec = factory.createTaskSpec(
       'schedule:github:cicd-check',
       makeGitHubDeps({
-        taskStore: { listByKind: async () => [task] },
+        taskStore: { listByKind: async () => [task], get: async () => task },
         cicdRouter: {
           route: async (poll) => {
             routed.push(poll.prNumber);

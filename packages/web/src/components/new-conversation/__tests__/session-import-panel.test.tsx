@@ -68,6 +68,19 @@ afterEach(async () => {
   await act(async () => root?.unmount());
   document.body.replaceChildren();
   vi.clearAllMocks();
+  vi.restoreAllMocks();
+});
+it('keeps the real viewport import panel open across stationary outside history scrolls', async () => {
+  vi.spyOn(HTMLElement.prototype, 'getBoundingClientRect').mockReturnValue(new DOMRect(24, 600, 40, 32));
+  api.mockResolvedValue({ ok: true, json: async () => ({ sessions: [] }) });
+  const admission = fixture();
+  await render(admission);
+  await click('接上 Claude Code / Codex 里已有的会话');
+  const history = document.createElement('div');
+  document.body.append(history);
+  await act(async () => history.dispatchEvent(new Event('scroll')));
+  expect(document.querySelector('[role="dialog"]')).not.toBeNull();
+  expect(admission.importSession).not.toHaveBeenCalled();
 });
 it('shows a locked session in place with a check-again action, and never starts admission', async () => {
   const admission = fixture();

@@ -1,5 +1,7 @@
 'use client';
 
+import { useEvolutionReading } from '@/components/capability-evolution/evolution-reading-state';
+import { createCapabilityEvolutionWorkspaceSurface } from './capability-evolution-workspace-adapter';
 import { createMessagePublicationSurface } from './message-publication-surface';
 
 /*
@@ -196,6 +198,7 @@ function useExplicitWorkspaceNavigation({
   threadId?: string;
 }) {
   const consumedRevision = useRef(0);
+  const activeThreadId = useChatStore((state) => state.currentThreadId);
   const { getCatById } = useCatData();
   const previewEnabled = useShellPresentation() === 'v2';
   const entryCopy = useShellCopy(workspaceChromeCopy);
@@ -204,7 +207,8 @@ function useExplicitWorkspaceNavigation({
       !hydrated ||
       !request ||
       request.revision <= consumedRevision.current ||
-      (request.threadId && request.threadId !== threadId)
+      (request.threadId && request.threadId !== threadId) ||
+      (activeThreadId && request.threadId !== activeThreadId)
     ) {
       return;
     }
@@ -215,28 +219,30 @@ function useExplicitWorkspaceNavigation({
           ? createPublicationSurface(request.target)
           : request.target.kind === 'team'
             ? createTeamWorkspaceSurface({ threadId, subject: request.target.subject })
-            : request.target.kind === 'evolution-program'
-              ? createEvolutionProgramSurface(request.target.programId)
-              : request.target.kind === 'artifact'
-                ? createArtifactSurface({
-                    threadId: request.threadId,
-                    artifact: request.target.artifact,
-                    navigationOrigin: request.target.navigationOrigin,
-                  })
-                : request.target.kind === 'file'
-                  ? (previewEnabled ? createFilePreviewSurface : createFileSurface)({
-                      worktreeId: request.target.worktreeId,
-                      path: request.target.path,
-                      scrollToLine: request.target.line ?? null,
+            : request.target.kind === 'evolution-home'
+              ? createCapabilityEvolutionWorkspaceSurface(threadId)
+              : request.target.kind === 'evolution-program'
+                ? createEvolutionProgramSurface(request.target.programId)
+                : request.target.kind === 'artifact'
+                  ? createArtifactSurface({
+                      threadId: request.threadId,
+                      artifact: request.target.artifact,
                       navigationOrigin: request.target.navigationOrigin,
                     })
-                  : request.target.kind === 'reveal'
-                    ? createFilesSurface(request.target.worktreeId, {
-                        reveal: { path: request.target.path, request: request.revision },
+                  : request.target.kind === 'file'
+                    ? (previewEnabled ? createFilePreviewSurface : createFileSurface)({
+                        worktreeId: request.target.worktreeId,
+                        path: request.target.path,
+                        scrollToLine: request.target.line ?? null,
                         navigationOrigin: request.target.navigationOrigin,
-                        repoRoot: request.target.repoRoot,
                       })
-                    : createWorkspaceModeSurface(request.target.mode, threadId);
+                    : request.target.kind === 'reveal'
+                      ? createFilesSurface(request.target.worktreeId, {
+                          reveal: { path: request.target.path, request: request.revision },
+                          navigationOrigin: request.target.navigationOrigin,
+                          repoRoot: request.target.repoRoot,
+                        })
+                      : createWorkspaceModeSurface(request.target.mode, threadId);
     const chat = useChatStore.getState();
     const source =
       request.target.kind === 'message-publication'
@@ -306,6 +312,11 @@ function useExplicitWorkspaceNavigation({
     }
     rememberWorkspaceForeground();
     setHomeOpen(false);
+    if (request.target.kind === 'evolution-home') {
+      useEvolutionReading.getState().selectWorkspaceProgram(threadId ?? 'global', null);
+      useEvolutionReading.getState().selectWorkspacePage(threadId ?? 'global', 'programs');
+      useF307ExperienceWorkbenchStore.getState().exitMainAreaAttention();
+    }
     if (request.target.kind === 'evolution-program') {
       useF307ExperienceWorkbenchStore.getState().enterMainAreaAttention(surface.id);
     } else if (isDesktop && threadId && request.target.kind === 'mode' && request.target.mode === 'product-schedule') {
@@ -318,6 +329,7 @@ function useExplicitWorkspaceNavigation({
     onConsumed?.(request.revision);
   }, [
     dispatch,
+    activeThreadId,
     hydrated,
     isDesktop,
     layout.activeSurfaceId,
@@ -404,13 +416,24 @@ export function F307ExperienceWorkbench({
   onOpenAppRoute: (href: string) => void;
 }) {
   const isDesktop = useIsDesktop();
+  const isV2 = useShellPresentation() === 'v2';
   const t = useShellCopy(workspaceChromeCopy);
   const [homeOpen, setHomeOpen] = useState(false);
   const [homeSearchQuery, setHomeSearchQuery] = useState('');
   const [toolsReturnRequest, setToolsReturnRequest] = useState<ToolsReturnRequest>();
   const toolsReturnSequence = useRef(0);
   const captureSettingsOrigin = useSettingsReadingEntry();
-  const toolsScopeKey = JSON.stringify([threadId, worktreeId]);
+  const [toolsScope, setToolsScope] = useState({ threadId, worktreeId, generation: 0 });
+  if (toolsScope.threadId !== threadId || toolsScope.worktreeId !== worktreeId) {
+    // First discovery binds an unbound menu; it must not dismiss or remount the user's search.
+    // A known root changing or disappearing, or a different thread, still resets the UI lifetime.
+    const bindsInitialRoot = isV2 && toolsScope.threadId === threadId && toolsScope.worktreeId === null;
+    setToolsScope({ threadId, worktreeId, generation: toolsScope.generation + (bindsInitialRoot ? 0 : 1) });
+  }
+  // This is a presentation lifetime, not a file/return authorization coordinate.
+  const toolsScopeKey = isV2
+    ? JSON.stringify([threadId, toolsScope.generation])
+    : JSON.stringify([threadId, worktreeId]);
   const previousToolsScope = useRef(toolsScopeKey);
   useEffect(() => {
     if (previousToolsScope.current === toolsScopeKey) return;
@@ -475,7 +498,6 @@ export function F307ExperienceWorkbench({
     threadId,
   });
 
-  const isV2 = useShellPresentation() === 'v2';
   const controlCopy = isV2 ? t : workspaceChromeCopy.zh;
   const projection = projectWorkbench(layout, isDesktop ? 1024 : 390);
   const zeroTopology = projection.visibleSurfaceIds.length === 0;
@@ -611,6 +633,21 @@ export function F307ExperienceWorkbench({
     <F307OwnerSurfaceRenderer
       surface={surface}
       surfaceVisible={surfaceVisible}
+      fullWindowAction={
+        artifactWorkHostAvailable &&
+        isDesktop &&
+        threadId &&
+        surface.id === activeWorkspaceSurface?.id &&
+        isWorkspaceFullWindowSurface(surface, 'v2')
+          ? {
+              active:
+                artifactWorkPresentation.session?.threadId === threadId &&
+                artifactWorkPresentation.session?.surfaceId === surface.id &&
+                artifactWorkPresentation.session?.mode === 'full-window',
+              onToggle: () => toggleArtifactWorkFullWindow(threadId, surface),
+            }
+          : undefined
+      }
       hostWorktreeId={canonicalWorktreeId ?? worktreeId}
       hostThreadId={threadId}
       focusMode={focusSurfaceId === surface.id}

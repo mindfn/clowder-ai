@@ -3,6 +3,7 @@ import {
   contentModificationPublicationCarrierV1Schema,
   contentModificationReceiptV1Schema,
   contentModificationRequestCarrierV1Schema,
+  contentTextWritebackCompletionCarrierV1Schema,
 } from '@cat-cafe/shared';
 
 interface HostMessageCandidate {
@@ -28,6 +29,12 @@ export function catConsumableHostSpeaker(message: HostMessageCandidate): string 
     return 'Host 作品修改回执';
   }
   const source = record(message.source);
+  if (
+    source?.connector === 'content-review' &&
+    source.label === 'Host 文档写回完成：原任务核证续办' &&
+    contentTextWritebackCompletionCarrierV1Schema.safeParse(source.meta).success
+  )
+    return 'Host 文档写回完成：原任务核证续办';
   if (
     source?.connector === 'content-review' &&
     source.label === 'Host 作品修改请求：原任务续办' &&

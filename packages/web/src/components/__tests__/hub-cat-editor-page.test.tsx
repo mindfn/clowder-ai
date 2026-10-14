@@ -57,7 +57,7 @@ describe('member page reuses the editor transaction', () => {
     vi.clearAllMocks();
   });
   const click = async (label: string) => {
-    const button = Array.from(container.querySelectorAll('button')).find((b) => b.textContent?.trim() === label);
+    const button = Array.from(document.querySelectorAll('button')).find((b) => b.textContent?.trim() === label);
     expect(button, `button ${label}`).toBeTruthy();
     await act(async () => button?.click());
   };
@@ -84,7 +84,7 @@ describe('member page reuses the editor transaction', () => {
   it('discards edits without writing configuration', async () => {
     await renderPage();
     await changeName('修改后');
-    expect(container.textContent).toContain('1 处修改未保存');
+    expect(document.querySelector('.member-save-bar')?.textContent).toContain('1 处修改未保存');
     await click('放弃');
     expect(container.querySelector<HTMLInputElement>('input[aria-label="Name"]')?.value).toBe('测试成员');
     expect(vi.mocked(apiFetch).mock.calls.filter(([, init]) => init?.method)).toHaveLength(0);
@@ -163,7 +163,7 @@ describe('member page reuses the editor transaction', () => {
       ),
     );
     expect(container.textContent).toContain('503');
-    expect(container.querySelector('.member-save-bar')).toBeNull();
+    expect(document.querySelector('.member-save-bar')).toBeNull();
     expect(vi.mocked(apiFetch).mock.calls.filter(([, init]) => init?.method)).toHaveLength(0);
   });
 });

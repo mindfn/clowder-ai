@@ -109,7 +109,7 @@ async function notifyAlphaFailure(
   if (ownerCatId && targetCatId !== ownerCatId) {
     content += `\n自动核验交给订阅守护者 ${targetCatId}；历史负责人 ${ownerCatId} 当前不接自动核验，原归属记录保留。`;
   }
-  const source = await ctx.deliver({ threadId, content, userId: 'scheduler' });
+  const source = await ctx.deliver({ threadId, content, userId: options.ownerUserId });
   // Delivery may yield while roster/policy changes. Retry with a truthful source
   // message instead of waking the now-ineligible cat or silently changing target.
   if (alphaTriageTarget(options, ownerCatId, guardianCatId) !== targetCatId) {

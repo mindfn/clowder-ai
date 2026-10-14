@@ -58,6 +58,7 @@ export class ProactiveMemoryCandidateDetector {
         input.ownerUserId,
         sinceInclusive,
         untilInclusive,
+        { humanOnly: true },
       );
       const eligibleMessages = await this.filterEligibleMessages(messages, input.ownerUserId);
       if (!eligibleMessages.some((message) => message.id === currentMessage.id)) return [];

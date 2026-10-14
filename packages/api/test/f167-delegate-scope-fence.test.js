@@ -42,7 +42,7 @@ function scopedProposal(scopeOverrides = {}) {
 }
 
 function scopedBinding() {
-  return { proposalId: PROPOSAL_ID, approvedUnderOwner: OWNER_CAT };
+  return { proposalId: PROPOSAL_ID, approvedUnderOwner: OWNER_CAT, approvedChildThreadId: CHILD_THREAD };
 }
 
 // ═══════════════════════════════════════════════════════════════════════

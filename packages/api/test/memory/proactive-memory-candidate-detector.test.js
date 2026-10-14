@@ -119,6 +119,29 @@ describe('ProactiveMemoryCandidateDetector', () => {
     assert.deepEqual(result, []);
   });
 
+  it('requests human-only owner-window reads without changing candidate coordinates', async (t) => {
+    addThread('thread-a');
+    addThread('thread-b');
+    const first = append('Alden', 'thread-a', 100);
+    const second = append('Alden', 'thread-b', 200);
+    append('Alden', 'thread-a', 250, { catId: 'sonnet' });
+    const current = append('Alden', 'thread-b', 300);
+    const nativeRead = messageStore.listOwnerMessagesInWindow.bind(messageStore);
+    const calls = [];
+    t.mock.method(messageStore, 'listOwnerMessagesInWindow', (...args) => {
+      calls.push(args);
+      return nativeRead(...args);
+    });
+    const candidates = await detector().detect({ ownerUserId: 'owner-1', currentUserMessageId: current.id, now: 300 });
+    assert.deepEqual(calls[0]?.[3], { humanOnly: true });
+    assert.equal(candidates.length, 1);
+    assert.deepEqual(candidates[0].sourceCoordinates, [
+      { threadId: 'thread-a', messageIds: [first.id] },
+      { threadId: 'thread-b', messageIds: [second.id, current.id] },
+    ]);
+    assert.equal(candidates[0].distinctMessageCount, 3);
+  });
+
   it('never combines another owner into the occurrence threshold', async () => {
     addThread('thread-a');
     addThread('thread-b');

@@ -30,7 +30,7 @@ const members = (result: ReturnType<typeof orderAttentionList>) =>
   result.items.flatMap((item) => (item.kind === 'cluster' ? item.members : [])).map((member) => member.id);
 
 describe('Group reading order lifecycle', () => {
-  it('r2 mixes groups and conversations by pinned membership then latest activity, with recent group members first', () => {
+  it('v2 mixes groups and conversations by outer attention priority, with recent group members first', () => {
     const rows = [
       { ...row('a'), pinned: false, lastActiveAt: 10 },
       { ...row('b'), pinned: false, lastActiveAt: 30 },
@@ -107,7 +107,7 @@ describe('Group reading order lifecycle', () => {
       const rows = [
         { ...row('a', working), pinned: false, lastActiveAt: activity, unreadCount: working ? 0 : 4 },
         { ...row('b'), pinned: false, lastActiveAt: 20 },
-        { ...row('outside'), pinned: false, lastActiveAt: 30 },
+        { ...row('outside'), pinned: false, lastActiveAt: 30, unreadCount: 4 },
       ];
       return arrangeAttentionRows(
         rows,

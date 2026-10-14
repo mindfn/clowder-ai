@@ -11,6 +11,7 @@ export const TASK_ID = 'task-f322';
 export const SUBJECT_REF = `subject:task:${TASK_ID}`;
 export const OWNER_CAT = 'codex-astra';
 export const OWNER_THREAD = 'thread-owner';
+export const STUDIO_THREAD = 'thread-studio';
 export const CHILD_CAT = 'codex6-sol';
 export const CHILD_THREAD = 'thread-child';
 export const TENANT = 'user-1';
@@ -99,8 +100,13 @@ export function makeProposal(overrides = {}) {
     status: 'approved',
     createdThreadId: CHILD_THREAD,
     sourceThreadId: OWNER_THREAD,
+    parentThreadId: OWNER_THREAD,
+    sourceCatId: OWNER_CAT,
     createdBy: TENANT,
+    approvedBy: TENANT,
+    approvedAt: 99,
     preferredCats: [CHILD_CAT],
+    subjectTaskId: TASK_ID,
     approvedDevelopmentScope: DEV_SCOPE,
     ...overrides,
   };
@@ -131,6 +137,8 @@ export function makeProposalListItem(overrides = {}) {
     proposalId: PROPOSAL_ID,
     status: 'approved',
     createdThreadId: CHILD_THREAD,
+    sourceThreadId: OWNER_THREAD,
+    parentThreadId: OWNER_THREAD,
     createdBy: TENANT,
     sourceCatId: SOURCE_CAT,
     subjectTaskId: TASK_ID,
@@ -140,7 +148,7 @@ export function makeProposalListItem(overrides = {}) {
 
 export function makeProposalLister(proposals = []) {
   return {
-    async listAllByThread(_threadId) {
+    async listAllByTaskThread(_threadId, _tenantScope) {
       return proposals;
     },
   };

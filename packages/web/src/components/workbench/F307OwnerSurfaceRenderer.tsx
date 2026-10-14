@@ -59,6 +59,7 @@ function AgentRunOwnerSurface({ surface }: { surface: WorkspaceSurfaceDescriptor
 interface F307OwnerSurfaceRendererProps {
   surface: WorkspaceSurfaceDescriptor;
   surfaceVisible?: boolean;
+  fullWindowAction?: { active: boolean; onToggle: () => void };
   hostWorktreeId?: string | null;
   hostThreadId?: string | null;
   focusMode?: boolean;
@@ -86,7 +87,9 @@ function F307OwnerSurfaceContent({
   onRefreshSurface,
   onRequestDetach,
   onReturnToFileOrigin,
-}: Omit<F307OwnerSurfaceRendererProps, 'surfaceVisible'>) {
+  leadingAction,
+  fullWindowAction,
+}: Omit<F307OwnerSurfaceRendererProps, 'surfaceVisible'> & { leadingAction?: ReactNode }) {
   const browserTarget = resolveBrowserTarget(surface);
   const returnToOrigin = () =>
     surface.navigationOrigin && onReturnToFileOrigin
@@ -182,6 +185,11 @@ function F307OwnerSurfaceContent({
       <ArtifactReviewSurface
         reviewId={target.reviewId}
         initialRound={target.round}
+        leadingAction={leadingAction}
+        titleInHost={false}
+        title={surface.title}
+        navigationOrigin={surface.navigationOrigin}
+        fullWindowAction={fullWindowAction}
         onContextChange={(context) =>
           useF307ExperienceWorkbenchStore.getState().dispatch({
             type: 'resolve-content-surface',
@@ -249,6 +257,7 @@ function F307OwnerSurfaceContent({
         <PublicationLandingResolver
           sourceSurface={surface}
           target={target}
+          leadingAction={leadingAction}
           onBack={returnToOrigin}
           onResolved={(resolved) =>
             useF307ExperienceWorkbenchStore
@@ -258,7 +267,9 @@ function F307OwnerSurfaceContent({
         >
           <PublicationContentReviewSurface
             {...target}
+            leadingAction={leadingAction}
             title={surface.title}
+            fullWindowAction={fullWindowAction}
             navigationOrigin={surface.navigationOrigin}
             onVersionChange={(ownerRevision) =>
               onRefreshSurface({
@@ -333,7 +344,7 @@ export function F307OwnerSurfaceRenderer({ surfaceVisible = true, ...props }: F3
     <WorkspaceSurfaceVisibilityProvider visible={surfaceVisible}>
       <WorkspacePreviewIntentProvider surfaceId={props.surface.id}>
         <ContentPublicationNavigator key={props.surface.id} surface={props.surface}>
-          <F307OwnerSurfaceContent {...props} />
+          {(leadingAction) => <F307OwnerSurfaceContent {...props} leadingAction={leadingAction} />}
         </ContentPublicationNavigator>
       </WorkspacePreviewIntentProvider>
     </WorkspaceSurfaceVisibilityProvider>

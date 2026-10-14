@@ -112,6 +112,79 @@ describe('POST /api/threads/:id/read/latest', () => {
     assert.equal(body.messageId, msg2.id);
   });
 
+  it('moves the exact @you request into viewed history when the durable thread read catches up', async () => {
+    const thread = threadStore.create('alice', 'Mention read');
+    const mention = messageStore.append({
+      userId: 'alice',
+      catId: 'codex-sol',
+      content: '@alice please take a look',
+      mentions: [],
+      mentionsUser: true,
+      timestamp: 1000,
+      threadId: thread.id,
+    });
+    assert.deepEqual(
+      messageStore.listUserMentionRequests('alice').map((message) => message.id),
+      [mention.id],
+    );
+
+    const res = await app.inject({
+      method: 'POST',
+      url: `/api/threads/${thread.id}/read/latest`,
+      headers: { 'x-cat-cafe-user': 'alice' },
+    });
+
+    assert.equal(res.statusCode, 200);
+    assert.equal(JSON.parse(res.body).caughtUp, true);
+    assert.equal(JSON.parse(res.body).handledMention, true);
+    assert.deepEqual(messageStore.listUserMentionRequests('alice'), []);
+    assert.deepEqual(
+      messageStore.listHandledUserMentions('alice').map((message) => message.id),
+      [mention.id],
+    );
+    assert.deepEqual(messageStore.getUserMentionHandlingMetadata('alice')[mention.id]?.reason, 'viewed');
+  });
+
+  it('does not let an older exact read boundary swallow a later @you request', async () => {
+    const thread = threadStore.create('alice', 'Mention read boundary');
+    const first = messageStore.append({
+      userId: 'alice',
+      catId: 'codex-sol',
+      content: '@alice first',
+      mentions: [],
+      mentionsUser: true,
+      timestamp: 1000,
+      threadId: thread.id,
+    });
+    const later = messageStore.append({
+      userId: 'alice',
+      catId: 'codex-sol',
+      content: '@alice later',
+      mentions: [],
+      mentionsUser: true,
+      timestamp: 2000,
+      threadId: thread.id,
+    });
+
+    const res = await app.inject({
+      method: 'PATCH',
+      url: `/api/threads/${thread.id}/read`,
+      headers: { 'x-cat-cafe-user': 'alice' },
+      payload: { upToMessageId: first.id },
+    });
+
+    assert.equal(res.statusCode, 200);
+    assert.equal(JSON.parse(res.body).handledMention, false);
+    assert.deepEqual(
+      messageStore.listUserMentionRequests('alice').map((message) => message.id),
+      [later.id],
+    );
+    assert.equal(
+      messageStore.listHandledUserMentions('alice').some((message) => message.id === later.id),
+      false,
+    );
+  });
+
   it("does not advance a foreign viewer through another owner's terminal managed hold", async () => {
     const thread = threadStore.create('system', 'Shared managed-hold thread');
     const anchor = messageStore.append({
@@ -323,11 +396,12 @@ describe('POST /api/threads/:id/read/latest', () => {
   // The frontend must NOT clear unread suppression in this case.
   it('returns caughtUp=false when stored cursor does not match latest', async () => {
     const thread = threadStore.create('alice', 'Stale cursor thread');
-    messageStore.append({
+    const mention = messageStore.append({
       userId: 'alice',
       catId: 'opus',
       content: 'visible message',
       mentions: [],
+      mentionsUser: true,
       timestamp: 1000,
       threadId: thread.id,
     });
@@ -349,6 +423,11 @@ describe('POST /api/threads/:id/read/latest', () => {
     // Stored != latest.cursor → caughtUp=false (frontend keeps badge)
     assert.equal(body.advanced, false);
     assert.equal(body.caughtUp, false);
+    assert.equal(body.handledMention, false);
+    assert.deepEqual(
+      messageStore.listUserMentionRequests('alice').map((message) => message.id),
+      [mention.id],
+    );
   });
 
   it('returns 501 when readStateStore is not available', async () => {

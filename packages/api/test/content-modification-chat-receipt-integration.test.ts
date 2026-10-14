@@ -9,6 +9,8 @@ import { cancellationFixture } from './helpers/content-modification-cancellation
 test('real callback candidate and human dispositions reach chat catch-up once without empty acknowledgement turns', async (t) => {
   const f = await cancellationFixture(t);
   const request = await f.integration.requests.submit(f.payload, f.human);
+  assert.ok(request.delivery?.messageId);
+  const originalInvocation = await f.dispatch.waitForAwakening(request.delivery.messageId);
   const source = await f.integration.text.read(f.requestId, f.cat);
   const originalStarts = f.starts.length;
   const respond = (expectedProposalRevision: number, replacement: string) =>
@@ -32,6 +34,7 @@ test('real callback candidate and human dispositions reach chat catch-up once wi
   const firstCandidateRef = first.json().proposalRef as string;
   assert.deepEqual(receiptStates(f), ['candidate']);
   assert.equal(f.receiptEvents.length, 1, 'new durable receipt requests one live history catch-up');
+  assert.equal(f.starts.length, originalStarts, 'candidate is display-only');
 
   const rejected = await f.app.inject({
     method: 'POST',
@@ -53,9 +56,11 @@ test('real callback candidate and human dispositions reach chat catch-up once wi
   );
   assert.deepEqual(receiptStates(f), ['candidate', 'rejected']);
   assert.equal(f.receiptEvents.length, 2, 'replayed rejection neither appends nor rebroadcasts');
+  assert.equal(f.starts.length, originalStarts, 'rejection is display-only');
 
   const second = await respond(1, 'better');
   assert.equal(second.statusCode, 200, second.body);
+  await f.dispatch.releaseProvider(originalInvocation);
   const applied = await f.app.inject({
     method: 'POST',
     url: `/api/content-modifications/${f.requestId}/accept`,
@@ -73,7 +78,22 @@ test('real callback candidate and human dispositions reach chat catch-up once wi
   assert.equal(applied.json().receipt.state, 'applied');
   assert.deepEqual(receiptStates(f), ['candidate', 'rejected', 'candidate', 'applied']);
   assert.equal(f.receiptEvents.length, 4);
-  assert.equal(f.starts.length, originalStarts, 'candidate/reject/applied never start an acknowledgement invocation');
+  const completion = f.messages
+    .getByThreadIncludingQueued(f.thread.id)
+    .find((m) => m.source?.meta?.kind === 'text_writeback_completion');
+  assert.ok(completion);
+  await f.dispatch.waitForAwakening(completion.id);
+  assert.equal(
+    f.starts.length,
+    originalStarts + 1,
+    'applied returns the exact still-open Task owner for verification, not an empty acknowledgement',
+  );
+  assert.equal(
+    f.messages
+      .getByThreadIncludingQueued(f.thread.id)
+      .filter((m) => m.source?.meta?.kind === 'text_writeback_completion').length,
+    1,
+  );
   assert.deepEqual(f.errors, []);
 
   for (const message of receiptMessages(f)) {

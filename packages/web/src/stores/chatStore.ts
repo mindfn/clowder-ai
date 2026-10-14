@@ -1375,6 +1375,7 @@ export interface ChatState {
   /** Explicit deep-link/navigation action; reveals the canonical Team workspace. */
   openTeamSubject: (subject: TeamWorkspaceSubject | null) => void;
   openEvolutionProgram: (programId: string) => void;
+  openEvolutionWorkspace: () => void;
   openPublishedArtifact: (
     threadId: string,
     artifact: ThreadArtifactDTO,
@@ -2234,6 +2235,21 @@ export const useChatStore = create<ChatState>((set, get) => ({
     });
     return true;
   },
+  openEvolutionWorkspace: () =>
+    set((state) => {
+      const revision = state.workspaceOpenRevision + 1;
+      const patch = { workspaceMode: 'dev' as const, rightPanelMode: 'workspace' as const, rightPanelOpen: true };
+      return {
+        ...patch,
+        workspaceOpenRevision: revision,
+        workspaceOpenRequest: {
+          revision,
+          threadId: state.currentThreadId,
+          target: { kind: 'evolution-home' as const },
+        },
+        ...mirrorActiveFlat(state, patch),
+      };
+    }),
   openEvolutionProgram: (programId) =>
     set((state) => {
       if (!/^evolution-program:[0-9a-f]{32}$/.test(programId)) return {};

@@ -15,7 +15,12 @@ import { createPersistedQueueFixture } from './persisted-queue-fixture.js';
 
 export async function createDevelopmentReturnFixture(
   t: TestContext,
-  options: { proposalDelegateCatId?: string; ownerCatId?: string } = {},
+  options: {
+    proposalDelegateCatId?: string;
+    ownerCatId?: string;
+    separateProposalSource?: boolean;
+    legacyReparentedChild?: boolean;
+  } = {},
 ) {
   const db = new Database(':memory:');
   applyMigrations(db);
@@ -65,14 +70,30 @@ export async function createDevelopmentReturnFixture(
     },
   });
   assert.ok('task' in admitted);
+  const proposalSourceThread = options.separateProposalSource
+    ? threads.create('human', 'Studio', process.cwd())
+    : original;
+  const proposalSource = options.separateProposalSource
+    ? messages.append({
+        userId: 'human',
+        catId: null,
+        threadId: proposalSourceThread.id,
+        content: '把这个精确子工作拆到批准 child',
+        mentions: [],
+        timestamp: now,
+      })
+    : source;
+  const proposalParentThread = options.legacyReparentedChild
+    ? threads.create('human', 'Alternate parent', process.cwd())
+    : original;
   const proposal = proposals.create({
-    sourceThreadId: original.id,
+    sourceThreadId: proposalSourceThread.id,
     sourceInvocationId: 'inv',
-    sourceMessageId: source.id,
+    sourceMessageId: proposalSource.id,
     sourceCatId: ownerCatId,
     title: 'Execution',
     reason: 'Authorized sub-work',
-    parentThreadId: original.id,
+    parentThreadId: proposalParentThread.id,
     preferredCats: [options.proposalDelegateCatId ?? actor.catId],
     subjectTaskId: admitted.task.id,
     subjectTaskTitle: admitted.task.title,
@@ -81,9 +102,9 @@ export async function createDevelopmentReturnFixture(
     createdBy: 'human',
     reportingMode: 'final-only',
   });
-  const child = threads.create('human', 'Execution', process.cwd(), original.id, {
+  const child = threads.create('human', 'Execution', process.cwd(), proposalParentThread.id, {
     createdFromProposalId: proposal.proposalId,
-    sourceThreadId: original.id,
+    sourceThreadId: proposalSourceThread.id,
     approvedBy: 'human',
     approvedAt: now,
   });
@@ -132,7 +153,7 @@ export async function createDevelopmentReturnFixture(
     taskId: admitted.task.id,
     expectedRevision: 1,
     executionThreadId: child.id,
-    sourceActionRef: `message:${source.id}`,
+    sourceActionRef: `message:${proposalSource.id}`,
     expectedSignal: 'terminal_report',
     slaUntil: now + 10000,
   };
@@ -144,6 +165,9 @@ export async function createDevelopmentReturnFixture(
     proposals,
     actor,
     child,
+    proposalSource,
+    proposalSourceThread,
+    proposalParentThread,
     service,
     runner,
     definitions,

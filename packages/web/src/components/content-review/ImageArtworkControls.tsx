@@ -1,0 +1,121 @@
+import type { ReactNode } from 'react';
+import { useShellCopy } from '@/components/shell/shell-copy';
+import styles from './image-artwork.module.css';
+import { imageArtworkCopy } from './image-artwork.shell-copy';
+import type { ReviewCanvasMode } from './ReviewCanvasToolbar';
+import { ReviewToolbarIcon } from './ReviewToolbarIcon';
+import type { useArtworkViewport } from './useArtworkViewport';
+
+/** Image actions share the measured canvas; viewport and annotation authority remain with its owner. */
+export function ImageArtworkControls({
+  mode,
+  canAnnotate,
+  canMarkup,
+  onModeChange,
+  viewport,
+  src,
+  discussionCount,
+  onOpenDiscussion,
+  wholeWorkAction,
+  children,
+}: {
+  mode: ReviewCanvasMode;
+  canAnnotate: boolean;
+  canMarkup: boolean;
+  onModeChange: (mode: ReviewCanvasMode) => void;
+  viewport: ReturnType<typeof useArtworkViewport>;
+  src: string | null;
+  discussionCount: number;
+  onOpenDiscussion: () => void;
+  wholeWorkAction?: ReactNode;
+  children: ReactNode;
+}) {
+  const t = useShellCopy(imageArtworkCopy);
+  return (
+    <>
+      <div className={styles.viewOptions}>
+        <details className={styles.menu}>
+          <summary aria-label={t.viewport}>
+            <span role="status" aria-label={t.scale}>
+              {Math.round(viewport.renderedScale * 100)}%
+            </span>
+            <span aria-hidden>⌄</span>
+          </summary>
+          <div className={styles.menuBody}>
+            <button type="button" onClick={viewport.fit}>
+              {t.fit}
+            </button>
+            <button type="button" onClick={viewport.actual}>
+              100%
+            </button>
+            <button type="button" aria-label={t.zoomOutLabel} onClick={viewport.zoomOut}>
+              {t.zoomOut}
+            </button>
+            <button type="button" aria-label={t.zoomInLabel} onClick={viewport.zoomIn}>
+              {t.zoomIn}
+            </button>
+            <button
+              type="button"
+              aria-pressed={viewport.panMode}
+              onClick={() => viewport.setPanMode(!viewport.panMode)}
+            >
+              {t.pan}
+            </button>
+          </div>
+        </details>
+        <details className={styles.menu}>
+          <summary aria-label={t.more}>
+            <ReviewToolbarIcon name="more" />
+          </summary>
+          <div className={styles.menuBody}>
+            {wholeWorkAction}
+            <button type="button" aria-label={t.discussionLabel} onClick={onOpenDiscussion}>
+              {t.discussion}
+              {discussionCount ? ` · ${discussionCount}` : ''}
+            </button>
+            {src ? (
+              <a href={src} download="作品.png">
+                {t.download}
+              </a>
+            ) : null}
+          </div>
+        </details>
+      </div>
+      <div
+        className={styles.tools}
+        data-review-mode={mode}
+        style={
+          mode !== 'markup' && typeof viewport.stageStyle.height === 'number'
+            ? {
+                top: `clamp(44px, ${viewport.mediaBottom + 12}px, calc(100% - 60px))`,
+                bottom: 'auto',
+              }
+            : undefined
+        }
+      >
+        {mode === 'markup' ? (
+          children
+        ) : (
+          <section aria-label={t.tools} data-review-mode={mode}>
+            <div className={styles.dock} role="toolbar" aria-label={t.modes}>
+              <button
+                type="button"
+                disabled={!canAnnotate}
+                aria-pressed={mode === 'comment'}
+                onClick={() => onModeChange(mode === 'comment' ? 'view' : 'comment')}
+              >
+                <ReviewToolbarIcon name="rectangle" />
+                {t.circle}
+              </button>
+              <span className={styles.separator} aria-hidden />
+              <button type="button" disabled={!canMarkup} onClick={() => onModeChange('markup')}>
+                <ReviewToolbarIcon name="brush" />
+                {t.brush}
+              </button>
+            </div>
+          </section>
+        )}
+      </div>
+    </>
+  );
+}

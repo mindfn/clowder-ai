@@ -2,8 +2,9 @@
 
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { ArtworkMediaFooter } from '@/components/content-review/ArtworkMediaFooter';
+import { ImageArtworkControls } from '@/components/content-review/ImageArtworkControls';
 import { ReviewCanvasPopover } from '@/components/content-review/ReviewCanvasPopover';
-import { type ReviewCanvasMode, ReviewCanvasToolbar } from '@/components/content-review/ReviewCanvasToolbar';
+import { type ReviewCanvasMode } from '@/components/content-review/ReviewCanvasToolbar';
 import { ReviewMediaOverlay } from '@/components/content-review/ReviewMediaOverlay';
 import { browserTimeToTick } from '@/components/content-review/review-geometry';
 import {
@@ -12,14 +13,15 @@ import {
   type ReviewMarkupTool,
   useReviewMarkupDraft,
 } from '@/components/content-review/review-markup-draft';
-import toolbarStyles from '@/components/content-review/review-toolbar.module.css';
 import styles from '@/components/content-review/review-workspace.module.css';
 import { useArtworkSave } from '@/components/content-review/useArtworkSave';
 import { useArtworkViewport } from '@/components/content-review/useArtworkViewport';
 import { usePresentedVideoFrame } from '@/components/content-review/usePresentedVideoFrame';
 import { useReviewMediaSelection } from '@/components/content-review/useReviewMediaSelection';
+import { useShellPresentation } from '@/components/shell/shell-presentation';
 import { useF307ExperienceWorkbenchStore } from '@/components/workbench/experience-workbench-store';
 import { useWorkspacePreviewIntent } from '../WorkspacePreviewIntent';
+import { WorkspaceReviewMarkupToolbar } from './WorkspaceReviewMarkupToolbar';
 import { WorkspaceReviewMediaElement } from './WorkspaceReviewMediaElement';
 import { workspaceFrameAnchor } from './workspace-content-review-anchors';
 import { useCanvasFocus, useDiscussionVideoSeek } from './workspace-review-media-focus';
@@ -52,15 +54,19 @@ export function WorkspaceContentReviewMedia({
   canMarkup = true,
   sourceError,
   pendingChatMarks,
+  imageChatPrimary = false,
+  wholeWorkAction,
 }: WorkspaceReviewMediaProps) {
   const draftStarted = useWorkspacePreviewIntent();
+  const isV2 = useShellPresentation() === 'v2';
+  const chatSelection = imageChatPrimary && isV2;
   const artwork = useRef<HTMLDivElement>(null);
   const video = useRef<HTMLVideoElement>(null);
   const stage = useRef<HTMLDivElement>(null);
   const viewportRef = useRef<HTMLElement>(null);
   const [seconds, setSeconds] = useState(0);
   // Only a writable round reopens its composer; read-only history always starts in view mode.
-  const startsInComment = canWrite && Boolean(selected || restoreComment);
+  const startsInComment = (canWrite || chatSelection) && Boolean(selected || restoreComment);
   const [mode, setMode] = useState<ReviewCanvasMode>(startsInComment ? 'comment' : 'view');
   const lastModificationOpenRequest = useRef(modificationOpenRequest);
   useEffect(() => {
@@ -78,6 +84,7 @@ export function WorkspaceContentReviewMedia({
   const [loadError, setLoadError] = useState<string | null>(null);
   const error = sourceError ?? loadError;
   const writable = canWrite && Boolean(src) && !error;
+  const selectable = chatSelection ? Boolean(src) && !error : writable;
   useEffect(() => {
     setLoadError(null);
   }, [src]);
@@ -128,11 +135,16 @@ export function WorkspaceContentReviewMedia({
   });
   const { saving, savingIds, notice: saveNotice } = markSave;
   const drawingKey = draftKey ?? `workspace-content-review:${reviewId}:${sourceRevision}`;
-  const viewport = useArtworkViewport(viewportRef, media);
+  const viewport = useArtworkViewport(
+    viewportRef,
+    media,
+    imageChatPrimary ? 1 : Number.POSITIVE_INFINITY,
+    imageChatPrimary,
+  );
   const selection = useReviewMediaSelection({
     media,
     mode,
-    canAnnotate: writable,
+    canAnnotate: selectable,
     selected,
     onSelect: (anchor) => {
       setMode('comment');
@@ -230,10 +242,14 @@ export function WorkspaceContentReviewMedia({
     />
   );
   const toolbar = (
-    <ReviewCanvasToolbar
+    <WorkspaceReviewMarkupToolbar
       mode={mode}
-      canAnnotate={writable}
-      canEditMarkup={writable && canMarkup && markup.canEdit}
+      writable={writable}
+      canMarkup={canMarkup}
+      markup={markup}
+      saving={saving}
+      saveDisabled={saveBlocked || textEditing}
+      onSave={saveMarks}
       onModeChange={onModeChange}
       tool={tool}
       onToolChange={setTool}
@@ -241,32 +257,16 @@ export function WorkspaceContentReviewMedia({
       onColorChange={setColor}
       strokeWidth={strokeWidth}
       onStrokeWidthChange={setStrokeWidth}
-      onFocus={focusArtwork}
-      saveAction={
-        mode === 'markup' ? (
-          <button
-            type="button"
-            className={toolbarStyles.saveButton}
-            disabled={
-              !writable || saveBlocked || !canMarkup || !markup.canEdit || !markup.marks.length || saving || textEditing
-            }
-            onClick={saveMarks}
-          >
-            {saving ? '正在保存…' : '完成并保存'}
-          </button>
-        ) : null
-      }
-      canUndo={markup.canUndo && !saving}
-      canRedo={markup.canRedo && !saving}
-      hasMarks={markup.marks.length > 0 && !saving}
-      onUndo={markup.undo}
-      onRedo={markup.redo}
-      onClear={markup.clear}
+      onFocus={imageChatPrimary ? undefined : focusArtwork}
       composer={mode === 'comment' && !selected ? composer : null}
     />
   );
   return (
-    <div ref={artwork} className={styles.artwork} data-testid="workspace-review-artwork">
+    <div
+      ref={artwork}
+      className={`${styles.artwork} ${imageChatPrimary ? styles.imageArtwork : ''}`}
+      data-testid="workspace-review-artwork"
+    >
       {saveNotice ? <output className="px-3 text-xs text-cafe-muted">{saveNotice}</output> : null}
       {markup.readError || markup.storageError ? (
         <p role="alert" className={`${styles.artworkNotice} px-3 text-xs text-cafe-error`}>
@@ -287,7 +287,10 @@ export function WorkspaceContentReviewMedia({
         className={styles.media}
         aria-label="作品画面"
         {...viewport.handlers}
-        style={{ cursor: viewport.canPan ? 'grab' : undefined }}
+        style={{
+          cursor: viewport.canPan ? 'grab' : undefined,
+          alignItems: imageChatPrimary && viewport.fitsVertically ? 'start' : undefined,
+        }}
       >
         <div ref={stage} data-testid="review-media-stage" className={styles.stage} style={viewport.stageStyle}>
           <WorkspaceReviewMediaElement
@@ -304,38 +307,59 @@ export function WorkspaceContentReviewMedia({
           {src && !error ? overlay : null}
         </div>
       </section>
-      {toolbar}
+      {imageChatPrimary ? (
+        <ImageArtworkControls
+          mode={mode}
+          canAnnotate={selectable}
+          canMarkup={writable && canMarkup && markup.canEdit}
+          onModeChange={(next) => {
+            if (next === 'markup') setTool('brush');
+            onModeChange(next);
+          }}
+          viewport={viewport}
+          src={src}
+          discussionCount={annotations.length}
+          onOpenDiscussion={onOpenDiscussion}
+          wholeWorkAction={wholeWorkAction}
+        >
+          {toolbar}
+        </ImageArtworkControls>
+      ) : (
+        toolbar
+      )}
       {error && src ? (
         <p role="alert" className="px-3 text-xs text-cafe-error">
           {error}
         </p>
       ) : null}
       {markupNotice ? <output className="px-3 text-xs text-cafe-muted">{markupNotice}</output> : null}
-      <ArtworkMediaFooter
-        viewport={viewport}
-        discussionCount={annotations.length}
-        onOpenDiscussion={onOpenDiscussion}
-        controls={{
-          media,
-          round: 1,
-          selected,
-          canAnnotate: writable,
-          src,
-          error,
-          selectionActive: selection.selectionActive,
-          selecting: selection.selecting,
-          showSelectionControls: mode !== 'markup',
-          frameTime,
-          seconds,
-          videoRef: video,
-          onSelect: (anchor) => {
-            setMode('comment');
-            onAnchorSelected(anchor);
-          },
-          onSelectingChange: selection.setSelecting,
-        }}
-      />
-      {writable && mode === 'comment' && selected ? (
+      {!imageChatPrimary ? (
+        <ArtworkMediaFooter
+          viewport={viewport}
+          discussionCount={annotations.length}
+          onOpenDiscussion={onOpenDiscussion}
+          controls={{
+            media,
+            round: 1,
+            selected,
+            canAnnotate: writable,
+            src,
+            error,
+            selectionActive: selection.selectionActive,
+            selecting: selection.selecting,
+            showSelectionControls: mode !== 'markup',
+            frameTime,
+            seconds,
+            videoRef: video,
+            onSelect: (anchor) => {
+              setMode('comment');
+              onAnchorSelected(anchor);
+            },
+            onSelectingChange: selection.setSelecting,
+          }}
+        />
+      ) : null}
+      {!imageChatPrimary && writable && mode === 'comment' && selected ? (
         <ReviewCanvasPopover
           anchor={selected}
           media={media}

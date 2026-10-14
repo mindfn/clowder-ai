@@ -35,6 +35,12 @@ export async function inspectContentModification(
         view.currentRevision,
         view.proposals.map((p) => p.receiptRef),
         view.rejections.map((item) => item.receiptRef),
+        view.acceptances.map(({ acceptance, receipt }) => [
+          acceptance.humanReceiptRef,
+          receipt?.state,
+          receipt?.writtenRevision,
+          receipt?.currentRevision,
+        ]),
         sourceDiscussions?.map((item) => [item.review.reviewId, item.review.revision]),
       ]),
     )
@@ -58,6 +64,7 @@ export async function inspectContentModification(
             proposalRevision: view.proposals.at(-1)?.revision ?? 0,
             execution: view.execution,
             rejections: view.rejections,
+            acceptances: view.acceptances,
             sourceDiscussions,
             trust: 'untrusted_user_content',
             writeback: 'human_explicit_acceptance_only',

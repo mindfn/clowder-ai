@@ -3,7 +3,9 @@ import { act } from 'react';
 import { createRoot, type Root } from 'react-dom/client';
 import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import { composerAttachments } from '@/components/composer-queue';
+import { addWorkspaceFileQuoteToChat, workspaceFileQuoteAttachment } from '@/components/workspace/workspace-file-quote';
 import { useChatStore } from '@/stores/chatStore';
+import { WorkspaceChatRevealProvider } from '../../WorkspaceChatReveal';
 import { WorkspaceSurfaceVisibilityProvider } from '../../WorkspaceSurfaceVisibility';
 import { WorkspaceContentReviewSurface } from '../WorkspaceContentReviewSurface';
 import { view } from './WorkspaceContentReviewSurface.fixture';
@@ -19,6 +21,10 @@ vi.mock('@/components/MarkdownContent', () => ({
       {content}
     </div>
   ),
+}));
+
+vi.mock('@/components/content-review/TextMessageRequestStatus', () => ({
+  TextMessageRequestStatus: ({ message }: { message: { id: string } }) => <output>{message.id}</output>,
 }));
 
 /** A text landing view for any path; the owner read is otherwise the shared fixture. */
@@ -66,6 +72,7 @@ function textNodeContaining(root: Element, needle: string): Text {
 describe('F309 text landing: a selection goes through the one existing chat quote chain', () => {
   let container: HTMLDivElement;
   let root: Root;
+  const revealChat = vi.fn();
   const initial = useChatStore.getState();
 
   beforeAll(() => {
@@ -73,6 +80,7 @@ describe('F309 text landing: a selection goes through the one existing chat quot
   });
   beforeEach(() => {
     mocks.apiFetch.mockReset();
+    revealChat.mockReset();
     useChatStore.setState({ currentThreadId: 'thread-a', pendingChatInsert: null });
     container = document.createElement('div');
     document.body.appendChild(container);
@@ -94,15 +102,17 @@ describe('F309 text landing: a selection goes through the one existing chat quot
     });
     await act(async () => {
       root.render(
-        <WorkspaceSurfaceVisibilityProvider visible={visible}>
-          <WorkspaceContentReviewSurface
-            worktreeId="worktree-a"
-            path={current.review.source.kind === 'text' ? current.review.source.locator.path : ''}
-            sourceText={sourceText}
-            sourceTextRevision={current.review.source.revision}
-            onBack={vi.fn()}
-          />
-        </WorkspaceSurfaceVisibilityProvider>,
+        <WorkspaceChatRevealProvider threadId="thread-a" onReveal={revealChat}>
+          <WorkspaceSurfaceVisibilityProvider visible={visible}>
+            <WorkspaceContentReviewSurface
+              worktreeId="worktree-a"
+              path={current.review.source.kind === 'text' ? current.review.source.locator.path : ''}
+              sourceText={sourceText}
+              sourceTextRevision={current.review.source.revision}
+              onBack={vi.fn()}
+            />
+          </WorkspaceSurfaceVisibilityProvider>
+        </WorkspaceChatRevealProvider>,
       );
     });
     for (let i = 0; i < 4; i += 1) await act(async () => Promise.resolve());
@@ -112,7 +122,10 @@ describe('F309 text landing: a selection goes through the one existing chat quot
     // jsdom has no layout: give the text surface the box a browser would, so the card has a place to open.
     const surface = container.querySelector<HTMLElement>('[data-testid="workspace-content-review-text"]');
     if (surface) surface.getBoundingClientRect = () => new DOMRect(0, 0, 800, 600);
-    await act(async () => selectText(node, start, end));
+    await act(async () => {
+      selectText(node, start, end);
+      surface?.dispatchEvent(new MouseEvent('mouseup', { bubbles: true }));
+    });
     const trigger = container.querySelector<HTMLButtonElement>(
       '[data-testid="workspace-content-review-text-add-to-chat"]',
     );
@@ -125,6 +138,198 @@ describe('F309 text landing: a selection goes through the one existing chat quot
       editor?.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true, cancelable: true })),
     );
   }
+
+  it('请猫修改 uses the two queued file places in the same composer and never opens a request form', async () => {
+    const current = textView('notes.md');
+    if (current.review.source.kind !== 'text') throw new Error('text only');
+    useChatStore.setState({ pendingChatInsert: { threadId: 'thread-a', text: '原有草稿\nsecond line' } });
+    for (const text of ['Intro line.', 'A unique source quote.']) {
+      addWorkspaceFileQuoteToChat('thread-a', {
+        text,
+        comment: '保留这条批注',
+        path: 'notes.md',
+        worktreeId: current.review.source.locator.worktreeId,
+        revision: current.review.source.revision,
+      });
+    }
+    const before = composerAttachments('thread-a');
+    await render(current, 'Intro line.\nA unique source quote.\n');
+    await act(async () =>
+      container.querySelector<HTMLButtonElement>('[data-testid="content-modification-entry"]')!.click(),
+    );
+    expect(mocks.apiFetch.mock.calls.some(([url]) => url === '/api/content-modifications/context')).toBe(false);
+    expect(composerAttachments('thread-a')).toEqual(before);
+    expect(useChatStore.getState().pendingChatInsert?.text).toBe('原有草稿\nsecond line');
+    expect(container.querySelector('[data-testid="content-modification-panel"]')).toBeNull();
+    expect(revealChat).toHaveBeenCalledTimes(1);
+  });
+
+  it('a saved annotation consumes its live selection before 请猫修改 uses the queued places', async () => {
+    const current = textView('notes.md');
+    if (current.review.source.kind !== 'text') throw new Error('text only');
+    const text = 'A unique source quote.';
+    await render(current, text);
+    const node = textNodeContaining(container.querySelector('[data-testid="rendered-markdown"]')!, text);
+    await annotate(node, 0, text.length, 'original comment');
+    const before = useChatStore.getState().pendingChatInsert;
+    expect(before?.contextAttachments).toHaveLength(1);
+    const beforeCalls = mocks.apiFetch.mock.calls.length;
+    await act(async () =>
+      container.querySelector<HTMLButtonElement>('[data-testid="content-modification-entry"]')!.click(),
+    );
+    expect(mocks.apiFetch.mock.calls.slice(beforeCalls).filter(([, init]) => init?.method === 'POST')).toEqual([]);
+    expect(useChatStore.getState().pendingChatInsert).toBe(before);
+  });
+
+  it('请猫修改 adds an explicitly selected place at the verified file revision without sending', async () => {
+    const current = textView('notes.md');
+    if (current.review.source.kind !== 'text') throw new Error('text only');
+    const text = 'Intro line.\nA unique source quote.\n';
+    await render(current, text);
+    const quote = 'A unique source quote.';
+    const start = text.indexOf(quote);
+    const node = textNodeContaining(container.querySelector('[data-testid="rendered-markdown"]')!, quote);
+    await act(async () => {
+      selectText(node, start, start + quote.length);
+      container
+        .querySelector('[data-testid="workspace-content-review-text"]')!
+        .dispatchEvent(new MouseEvent('mouseup', { bubbles: true }));
+    });
+    mocks.apiFetch.mockImplementation(async (url: string) => {
+      if (url === '/api/content-modifications/selection')
+        return new Response(
+          JSON.stringify({
+            selection: {
+              kind: 'text_quote',
+              baseRevision: current.review.source.revision,
+              start,
+              end: start + quote.length,
+              quote,
+              quoteDigest: `sha256:${'b'.repeat(64)}`,
+              contextDigest: `sha256:${'c'.repeat(64)}`,
+            },
+          }),
+        );
+      throw new Error(`unexpected route: ${url}`);
+    });
+    const beforeCalls = mocks.apiFetch.mock.calls.length;
+    await act(async () =>
+      container.querySelector<HTMLButtonElement>('[data-testid="content-modification-entry"]')!.click(),
+    );
+    expect(composerAttachments('thread-a')).toEqual([
+      expect.objectContaining({
+        kind: 'quote',
+        text: quote,
+        selectionStart: start,
+        selectionEnd: start + quote.length,
+        source: expect.objectContaining({
+          kind: 'workspace_file',
+          path: 'notes.md',
+          revision: current.review.source.revision,
+        }),
+      }),
+    ]);
+    expect(
+      mocks.apiFetch.mock.calls
+        .slice(beforeCalls)
+        .filter(([, init]) => init?.method === 'POST')
+        .map(([url]) => url),
+    ).toEqual(['/api/content-modifications/selection']);
+    expect(revealChat).toHaveBeenCalledTimes(1);
+  });
+
+  it('an empty 请猫修改 explains choosing places and opens no form', async () => {
+    await render(textView('notes.md'), 'A unique source quote.');
+    const beforeCalls = mocks.apiFetch.mock.calls.length;
+    await act(async () =>
+      container.querySelector<HTMLButtonElement>('[data-testid="content-modification-entry"]')!.click(),
+    );
+    expect(container.textContent).toContain('在文档里选一处或几处');
+    expect(mocks.apiFetch.mock.calls.slice(beforeCalls)).toEqual([]);
+    expect(composerAttachments('thread-a')).toEqual([]);
+    expect(revealChat).not.toHaveBeenCalled();
+    expect(container.querySelector('[data-testid="content-modification-panel"]')).toBeNull();
+  });
+
+  it('a late 请猫修改 selection answer cannot add a quote to another conversation', async () => {
+    const current = textView('notes.md');
+    const text = 'A unique source quote.';
+    await render(current, text);
+    const node = textNodeContaining(container.querySelector('[data-testid="rendered-markdown"]')!, text);
+    await act(async () => {
+      selectText(node, 0, text.length);
+      container
+        .querySelector('[data-testid="workspace-content-review-text"]')!
+        .dispatchEvent(new MouseEvent('mouseup', { bubbles: true }));
+    });
+    let finish!: (response: Response) => void;
+    mocks.apiFetch.mockImplementation(
+      () =>
+        new Promise<Response>((resolve) => {
+          finish = resolve;
+        }),
+    );
+    await act(async () =>
+      container.querySelector<HTMLButtonElement>('[data-testid="content-modification-entry"]')!.click(),
+    );
+    await act(async () => useChatStore.setState({ currentThreadId: 'thread-b' }));
+    await act(async () =>
+      finish(
+        new Response(
+          JSON.stringify({
+            selection: {
+              kind: 'text_quote',
+              baseRevision: current.review.source.revision,
+              start: 0,
+              end: text.length,
+              quote: text,
+              quoteDigest: `sha256:${'b'.repeat(64)}`,
+              contextDigest: `sha256:${'c'.repeat(64)}`,
+            },
+          }),
+        ),
+      ),
+    );
+    expect(useChatStore.getState().pendingChatInsert).toBeNull();
+    expect(revealChat).not.toHaveBeenCalled();
+  });
+
+  it('the document header uses the same exact sent Human quote rather than another file or mixed scope', async () => {
+    const current = textView('notes.md');
+    const message = (id: string, path: string, revision: string) => ({
+      id,
+      type: 'user' as const,
+      content: '请改这处',
+      timestamp: 1,
+      contentBlocks: [
+        {
+          type: 'context_attachment' as const,
+          attachment: workspaceFileQuoteAttachment({
+            text: 'A unique source quote.',
+            comment: '',
+            path,
+            revision,
+            worktreeId: 'worktree-a',
+          }),
+        },
+      ],
+    });
+    const exact = message('human-exact', 'notes.md', current.review.source.revision);
+    const other = message('human-other', 'other.md', current.review.source.revision);
+    useChatStore.setState({
+      messages: [
+        message('human-old', 'notes.md', `sha256:${'e'.repeat(64)}`),
+        exact,
+        other,
+        {
+          ...message('human-mixed', 'notes.md', current.review.source.revision),
+          contentBlocks: [...exact.contentBlocks, ...other.contentBlocks],
+        },
+      ],
+    });
+    await render(current, 'A unique source quote.');
+    expect(container.querySelector('[data-testid="text-work-progress"]')?.textContent).toBe('human-exact');
+  });
 
   it('Enter puts a workspace_file quote chip into the current chat input and writes nothing else', async () => {
     const sourceText = 'Intro line.\nA unique source quote.\n';

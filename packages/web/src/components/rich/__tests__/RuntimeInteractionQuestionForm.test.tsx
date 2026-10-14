@@ -4,6 +4,7 @@ import { createRoot, type Root } from 'react-dom/client';
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import { apiFetch } from '@/utils/api-client';
 import { RichBlocks } from '../RichBlocks';
+import { RuntimeInteractionQuestionForm } from '../RuntimeInteractionQuestionForm';
 import {
   block,
   cardRef,
@@ -34,6 +35,34 @@ describe('RuntimeInteractionQuestionForm', () => {
   afterEach(() => {
     act(() => root.unmount());
     container.remove();
+  });
+
+  it('keeps labels attached to their own inputs when the original and hosted form are both mounted', async () => {
+    const request: Extract<RuntimeInteractionRequest, { kind: 'question' }> = {
+      version: 1,
+      interactionId: 'interaction-ui',
+      kind: 'question',
+      owner,
+      provider,
+      createdAt: 1000,
+      title: 'Pick a destination',
+      questions: [{ id: 'destination', header: 'Destination', question: 'Where?' }],
+    };
+    await act(async () =>
+      root.render(
+        <>
+          <RuntimeInteractionQuestionForm request={request} disabled={false} onSubmit={vi.fn()} onReject={vi.fn()} />
+          <RuntimeInteractionQuestionForm request={request} disabled={false} onSubmit={vi.fn()} onReject={vi.fn()} />
+        </>,
+      ),
+    );
+    const inputs = [...container.querySelectorAll('input')];
+    expect(inputs).toHaveLength(2);
+    expect(new Set(inputs.map((input) => input.id)).size).toBe(2);
+    for (const form of container.querySelectorAll('form')) {
+      const label = form.querySelector('label');
+      expect(label?.htmlFor).toBe(form.querySelector('input')?.id);
+    }
   });
 
   it('submits every answer once and never echoes answer values after terminal state', async () => {

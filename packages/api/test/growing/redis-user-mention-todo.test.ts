@@ -35,6 +35,29 @@ after(async () => {
   }
 });
 
+async function assertLegacyCompatibleSignalScores(threadId: string, expectedIds: string[]): Promise<void> {
+  const rows = await redis.zrange(`msg:user-request-signals:owner:${threadId}`, 0, -1, 'WITHSCORES');
+  assert.equal(rows.length % 2, 0);
+  const entries: Array<[string, string]> = [];
+  for (let index = 0; index < rows.length; index += 2) {
+    const id = rows[index];
+    const score = rows[index + 1];
+    assert.ok(id);
+    assert.ok(score);
+    entries.push([id, score]);
+  }
+  entries.sort(([left], [right]) => left.localeCompare(right));
+  assert.deepEqual(
+    entries.map(([id]) => id),
+    [...expectedIds].sort(),
+  );
+  assert.deepEqual(
+    entries.map(([, score]) => score),
+    expectedIds.map(() => '0'),
+    'legacy Z*BYLEX readers require every signal member to use the same zero score',
+  );
+}
+
 test('message persistence opens, updates one thread, and survives a new store instance without TTL', async () => {
   const first = await messages.append(request);
   assert.equal((await messages.listUserMentionRequests('owner'))[0]?.id, first.id);
@@ -53,7 +76,95 @@ test('message persistence opens, updates one thread, and survives a new store in
   }
   await reloaded.append({ ...request, catId: null, mentionsUser: false, timestamp: 102 });
   assert.deepEqual(await messages.listUserMentionRequests('owner'), []);
+  assert.deepEqual(
+    (await messages.listHandledUserMentions('owner')).map((message) => message.id),
+    [next.id],
+  );
+  assert.deepEqual((await messages.getUserMentionHandlingMetadata('owner'))[next.id], {
+    reason: 'replied',
+    handledAt: 102,
+  });
 });
+
+test('durable read closes only the current @you source at or before its exact visibility boundary', async () => {
+  const first = await messages.append(request);
+  const boundary = await messages.append({ ...request, catId: 'codex61-sol', mentionsUser: false, timestamp: 101 });
+  assert.equal(await messages.resolveUserMentionRequestFromRead('owner', 'f320', boundary.id, 555), true);
+  assert.equal(await redis.hget('msg:user-requests:closed:owner', 'f320'), null);
+  assert.equal(await redis.hget('msg:user-requests:handled-through:owner', 'f320'), boundary.id);
+  assert.deepEqual(await messages.listUserMentionRequests('owner'), []);
+  assert.deepEqual((await messages.getUserMentionHandlingMetadata('owner'))[first.id], {
+    reason: 'viewed',
+    handledAt: 555,
+  });
+
+  const later = await messages.append({ ...request, timestamp: 102 });
+  assert.equal(await messages.resolveUserMentionRequestFromRead('owner', 'f320', boundary.id, 556), false);
+  assert.deepEqual(
+    (await messages.listUserMentionRequests('owner')).map((message) => message.id),
+    [later.id],
+  );
+  assert.equal((await messages.getUserMentionHandlingMetadata('owner'))[later.id], undefined);
+  assert.equal(await redis.ttl('msg:user-requests:handled-meta:owner'), -1);
+  assert.equal(await redis.ttl('msg:user-requests:handled-through:owner'), -1);
+});
+
+for (const [scenario, readBeforeLaterCommit] of [
+  ['read-before-later-commit', true],
+  ['older-boundary-after-both-commits', false],
+] as const) {
+  test(`durable reads preserve later-visible lower-id @you requests — ${scenario}`, async () => {
+    const threadId = `visibility-order-${scenario}`;
+    const firstCommitted = await messages.append({
+      ...request,
+      threadId,
+      content: '@co-creator first committed',
+      timestamp: 200,
+    });
+    let laterVisible: Awaited<ReturnType<RedisMessageStore['append']>>;
+    let handled: boolean;
+    if (readBeforeLaterCommit) {
+      handled = await messages.resolveUserMentionRequestFromRead('owner', threadId, firstCommitted.id, 1_000);
+      assert.equal(
+        await redis.hget('msg:user-requests:latest:owner', threadId),
+        null,
+        'read closure must not leave an id frontier that an older binary could use to swallow a later lower id',
+      );
+      laterVisible = await messages.append({
+        ...request,
+        threadId,
+        content: '@co-creator later visible',
+        timestamp: 100,
+      });
+      assert.equal(handled, true);
+      assert.deepEqual(
+        (await messages.listHandledUserMentions('owner')).map((message) => message.id),
+        [firstCommitted.id],
+      );
+    } else {
+      laterVisible = await messages.append({
+        ...request,
+        threadId,
+        content: '@co-creator later visible',
+        timestamp: 100,
+      });
+      await redis.hset('msg:user-requests:latest:owner', threadId, firstCommitted.id);
+      await redis.zadd(`msg:user-request-signals:owner:${threadId}`, 0, laterVisible.id, 0, firstCommitted.id);
+      handled = await messages.resolveUserMentionRequestFromRead('owner', threadId, firstCommitted.id, 1_000);
+      assert.equal(handled, false);
+      assert.deepEqual(await messages.listHandledUserMentions('owner'), []);
+    }
+
+    assert.ok(laterVisible.id < firstCommitted.id, 'fixture requires message-id order to oppose commit order');
+    const firstPosition = Number(await redis.zscore(`msg:visibility:${threadId}`, firstCommitted.id));
+    const laterPosition = Number(await redis.zscore(`msg:visibility:${threadId}`, laterVisible.id));
+    assert.ok(laterPosition > firstPosition, 'fixture requires the later commit to have the later visibility position');
+    assert.deepEqual(
+      (await messages.listUserMentionRequests('owner')).map((message) => message.id),
+      [laterVisible.id],
+    );
+  });
+}
 
 test('old handled actions cannot close the replacement; handled state survives reload and new mentions reopen', async () => {
   const first = await messages.append(request);
@@ -61,6 +172,9 @@ test('old handled actions cannot close the replacement; handled state survives r
   assert.equal(await messages.resolveUserMentionRequest('other', 'f320', next.id), false);
   assert.equal(await messages.resolveUserMentionRequest('owner', 'f320', first.id), false);
   assert.equal(await messages.resolveUserMentionRequest('owner', 'f320', next.id), true);
+  assert.equal(await redis.hget('msg:user-requests:closed:owner', 'f320'), next.id);
+  assert.equal(await redis.hget('msg:user-requests:handled-through:owner', 'f320'), null);
+  assert.equal((await messages.getUserMentionHandlingMetadata('owner'))[next.id]?.reason, 'ignored');
   assert.deepEqual(await new RedisMessageStore(redis).listUserMentionRequests('owner'), []);
   await messages.augmentStreamMetadata(next.id, { mentionsUser: true });
   assert.deepEqual(await messages.listUserMentionRequests('owner'), []);
@@ -85,6 +199,40 @@ test('all append paths and callback metadata replacement publish requests at per
     'observed',
     'replacement',
   ]);
+});
+
+test('every signal writer preserves the equal-zero score invariant for legacy lex readers', async () => {
+  const readBoundary = await messages.append({
+    ...request,
+    threadId: 'score-read',
+    content: '@co-creator first visible',
+    timestamp: 200,
+  });
+  const laterVisible = await messages.append({
+    ...request,
+    threadId: 'score-read',
+    content: '@co-creator later visible',
+    timestamp: 100,
+  });
+  await assertLegacyCompatibleSignalScores('score-read', [laterVisible.id, readBoundary.id]);
+  assert.equal(await messages.resolveUserMentionRequestFromRead('owner', 'score-read', readBoundary.id, 300), false);
+  await assertLegacyCompatibleSignalScores('score-read', [laterVisible.id, readBoundary.id]);
+
+  const replySurvivor = await messages.append({ ...request, threadId: 'score-reply', timestamp: 400 });
+  await messages.append({ ...request, threadId: 'score-reply', catId: null, mentionsUser: false, timestamp: 350 });
+  await assertLegacyCompatibleSignalScores('score-reply', [replySurvivor.id]);
+
+  const bulk = await messages.append({ ...request, threadId: 'score-bulk', timestamp: 500 });
+  const action = await messages.handleUserMentionRequests('owner', [{ threadId: bulk.threadId, messageId: bulk.id }]);
+  assert.ok(action);
+  assert.deepEqual(await messages.undoUserMentionHandling('owner', action.undoId), { restored: 1 });
+  await assertLegacyCompatibleSignalScores('score-bulk', [bulk.id]);
+
+  const single = await messages.append({ ...request, threadId: 'score-single', timestamp: 600 });
+  assert.equal(await messages.resolveUserMentionRequest('owner', single.threadId, single.id), true);
+  const revision = (await messages.getUserMentionStateRevisions('owner'))[single.threadId];
+  assert.equal(await messages.restoreUserMentionRequest('owner', single.threadId, single.id, revision), true);
+  await assertLegacyCompatibleSignalScores('score-single', [single.id]);
 });
 
 test('an older append or idempotent replay cannot reopen a replied thread; unrelated output does not close it', async () => {
@@ -246,6 +394,7 @@ test('legacy v1 closed cat source is retained; stale bulk snapshot and invalid s
   await redis.del('msg:user-requests:handled:owner');
   assert.ok((await messages.listHandledUserMentions('owner')).some((m) => m.id === one.id));
   await redis.hdel('msg:user-requests:closed:owner', 'one');
+  await redis.hdel('msg:user-requests:handled-through:owner', 'one');
   await redis.zadd('msg:user-requests:pending:owner', 0, 'one');
   await redis.zadd('msg:user-request-signals:owner:one', 0, one.id);
   const next = await messages.append({ ...request, threadId: 'two', timestamp: 101 });
@@ -287,13 +436,17 @@ test('upgrade saves pre-existing v1 handled references before a human reply chan
 
 registerMentionRestorationTests(() => new RedisMessageStore(redis));
 
-test('invalid restored/revision keys and revision values are rejected before canonical append writes', async () => {
-  for (const kind of ['restored', 'revision']) {
+test('invalid restored/revision/handled-through keys and revision values are rejected before canonical append writes', async () => {
+  for (const kind of ['restored', 'revision', 'handled-through']) {
     await cleanupClientKeyspace(redis);
     await redis.set(`msg:user-requests:${kind}:owner`, 'invalid');
     await assert.rejects(() => messages.append(request), /USER_MENTION_INDEX_INVALID/);
     assert.equal(await redis.zcard('msg:user:owner'), 0);
   }
+  await cleanupClientKeyspace(redis);
+  await redis.set('msg:user-requests:handled-meta:owner', 'invalid');
+  await assert.rejects(() => messages.append(request), /USER_MENTION_INDEX_INVALID/);
+  assert.equal(await redis.zcard('msg:user:owner'), 0);
   for (const raw of ['invalid', '1e1', '01', '+1', '']) {
     await cleanupClientKeyspace(redis);
     await redis.hset('msg:user-requests:revision:owner', 'f320', raw);

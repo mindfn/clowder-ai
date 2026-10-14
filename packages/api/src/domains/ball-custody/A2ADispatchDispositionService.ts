@@ -36,10 +36,13 @@ export { A2ADispatchDispositionError };
 
 /**
  * Evidence kinds accepted for adopted dispatch read-witness.
- * Only durable, server-recorded contiguous reads qualify — partial,
- * queue-exact, or client-asserted kinds are rejected.
+ * Only durable, server-recorded complete-body reads qualify — previews,
+ * queue-exact notice receipts, or client-asserted kinds are rejected.
  */
-const ALLOWED_ADOPTED_EVIDENCE_KINDS: ReadonlySet<string> = new Set(['full_contiguous_thread_context']);
+const ALLOWED_ADOPTED_EVIDENCE_KINDS: ReadonlySet<string> = new Set([
+  'full_contiguous_thread_context',
+  'exact_full_message',
+]);
 
 /** Query shape for the Live carrier predicate (F317 dispatch adoption). */
 export interface LiveCarrierQuery {
@@ -61,6 +64,7 @@ export interface DispatchAdoptionProof {
   readonly carrierKind: 'ordinary' | 'live';
   readonly witness: ReadEvidenceWitness;
   readonly assertSourceCurrent?: () => Promise<void>;
+  readonly withSourceCurrentCommit?: <T>(commit: () => Promise<T>) => Promise<T>;
 }
 
 interface DispatchAdoptionAuthorityPort {
@@ -71,6 +75,11 @@ interface DispatchAdoptionAuthorityPort {
   ): Promise<T>;
   candidates(auth: A2ADispatchDispositionAuth, messageIds: readonly string[]): Promise<string[]>;
 }
+
+type A2ADispatchResolvedSourceReason = 'already_terminal' | 'source_replaced' | 'source_withdrawn';
+
+const NO_A2A_DISPATCH_OBLIGATION_INSTRUCTION =
+  'The requested exact dispatch source is already terminal, replaced, or withdrawn. Do not call cat_cafe_complete_a2a_dispatch for it; this result proves only that this source owes no further disposition.';
 
 interface A2ADispatchDispositionDeps {
   readonly adoptionAuthority?: DispatchAdoptionAuthorityPort;
@@ -226,9 +235,10 @@ export class A2ADispatchDispositionService {
     adoptedSourceMessageId: string,
     disposition: A2ADispatchDisposition,
   ): Promise<A2ADispatchDispositionResult> {
-    if (this.deps.adoptionAuthority) {
+    const adoptionAuthority = this.deps.adoptionAuthority;
+    if (adoptionAuthority) {
       const attempt = () =>
-        this.deps.adoptionAuthority!.run(auth, adoptedSourceMessageId, async (proof) => {
+        adoptionAuthority.run(auth, adoptedSourceMessageId, async (proof) => {
           await this.assertLatestInvocation(auth.invocationId);
           return this.completeReadSource(auth, adoptedSourceMessageId, disposition, proof);
         });
@@ -278,13 +288,19 @@ export class A2ADispatchDispositionService {
     if (!readEvidence) {
       throw new A2ADispatchDispositionError('adopted_dispatch_not_read');
     }
+    // The legacy Live port can prove host/read identity but has no Queue
+    // transaction boundary. Exact stored-message evidence therefore fails
+    // closed here; full-contiguous evidence remains valid on this path.
+    if (readEvidence.evidenceKind === 'exact_full_message') {
+      throw new A2ADispatchDispositionError('adopted_dispatch_evidence_kind_rejected');
+    }
     return this.completeReadSource(auth, adoptedSourceMessageId, disposition, {
       carrierKind: 'live',
       witness: readEvidence,
     });
   }
 
-  async describe(auth: A2ADispatchDispositionAuth, messageIds: readonly string[]) {
+  async describe(auth: A2ADispatchDispositionAuth, messageIds: readonly string[], exactRequestedMessageId?: string) {
     if (!this.deps.adoptionAuthority) return undefined;
     await this.assertLatestInvocation(auth.invocationId);
     const candidates = [];
@@ -299,14 +315,89 @@ export class A2ADispatchDispositionService {
         arguments: { disposition: 'handled' as const, adoptSourceMessageId: sourceMessageId },
       });
     }
-    return candidates.length
-      ? {
-          state: 'pending' as const,
-          instruction:
-            'Complete each exact source only after its requested work is handled. Reading alone is not completion.',
-          candidates,
-        }
-      : undefined;
+    const exactResolvedSource = await this.resolveExactNoObligationReason(
+      auth,
+      messageIds,
+      candidates.map((candidate) => candidate.sourceMessageId),
+      exactRequestedMessageId,
+    );
+    const resolvedSources = exactResolvedSource
+      ? [{ sourceMessageId: exactRequestedMessageId, reason: exactResolvedSource }]
+      : [];
+    if (candidates.length) {
+      return {
+        state: 'pending' as const,
+        instruction:
+          'Complete each exact source only after its requested work is handled. Reading alone is not completion.',
+        candidates,
+        ...(resolvedSources.length ? { resolvedSources } : {}),
+      };
+    }
+    if (!exactResolvedSource) return undefined;
+    return {
+      state: 'no_obligation' as const,
+      candidates: [],
+      resolvedSources,
+      instruction: NO_A2A_DISPATCH_OBLIGATION_INSTRUCTION,
+    };
+  }
+
+  private async resolveExactNoObligationReason(
+    auth: A2ADispatchDispositionAuth,
+    messageIds: readonly string[],
+    candidateMessageIds: readonly string[],
+    exactRequestedMessageId?: string,
+  ): Promise<A2ADispatchResolvedSourceReason | undefined> {
+    if (
+      !exactRequestedMessageId ||
+      !messageIds.includes(exactRequestedMessageId) ||
+      candidateMessageIds.includes(exactRequestedMessageId)
+    ) {
+      return undefined;
+    }
+    try {
+      return await this.resolveNoObligationReason(auth, exactRequestedMessageId);
+    } catch (error) {
+      // Historical or partially recorded sources may have no handoff ledger.
+      // Their disposition is unknown; they must not hide valid pending
+      // candidates returned in the same exact-read window.
+      if (
+        !(error instanceof A2ADispatchDispositionError) ||
+        error.code !== 'a2a_dispatch_disposition_handoff_missing'
+      ) {
+        this.deps.log?.warn(
+          { error, sourceMessageId: exactRequestedMessageId, invocationId: auth.invocationId },
+          '[F167] exact dispatch disposition could not be resolved',
+        );
+      }
+      return undefined;
+    }
+  }
+
+  private async resolveNoObligationReason(
+    auth: A2ADispatchDispositionAuth,
+    sourceMessageId: string,
+  ): Promise<A2ADispatchResolvedSourceReason | undefined> {
+    const message = await this.deps.messageStore.getById(sourceMessageId);
+    if (!this.isExactA2ASource(message, auth)) return undefined;
+    const source: DispatchSource = {
+      sourceMessageId,
+      fromCatId: message.catId,
+      handoffSourceEventId: handedEventSourceId(sourceMessageId, auth.catId),
+    };
+    const events = await this.deps.ballCustodyEventLog.read(`ball:thread:${auth.threadId}`);
+    if (
+      findDispatchTerminal(events, { ...auth, sourceMessageId, fromCatId: source.fromCatId }) ||
+      message.queueCustody?.handledByCatIds.includes(auth.catId) ||
+      message.queueCustody?.targetOutcomeByCatId?.[auth.catId]
+    ) {
+      return 'already_terminal';
+    }
+    if (message.queueCustody?.withdrawnByCatIds?.includes(auth.catId)) {
+      return 'source_withdrawn';
+    }
+    const handoff = await this.inspectResolvedHandoff(auth.threadId, auth.catId, source, events);
+    return handoff.outcome === 'replaced' ? 'source_replaced' : undefined;
   }
 
   private async completeReadSource(
@@ -358,7 +449,7 @@ export class A2ADispatchDispositionService {
         witnessTimestamp: readEvidence.seenAt,
         readEvidenceKind: readEvidence.evidenceKind,
       },
-      proof.assertSourceCurrent,
+      proof,
     );
   }
 
@@ -367,7 +458,7 @@ export class A2ADispatchDispositionService {
     source: DispatchSource,
     disposition: A2ADispatchDisposition,
     adopted?: DispatchDispositionEventInput['adopted'],
-    assertSourceCurrent?: () => Promise<void>,
+    proof?: Pick<DispatchAdoptionProof, 'assertSourceCurrent' | 'withSourceCurrentCommit'>,
     via: NonNullable<DispatchDispositionEventInput['via']> = 'direct',
   ): Promise<A2ADispatchDispositionResult> {
     const subjectKey = `ball:thread:${auth.threadId}`;
@@ -385,7 +476,15 @@ export class A2ADispatchDispositionService {
         })
       : events.find((event) => event.sourceEventId === eventSourceId);
     if (prior) {
-      await assertSourceCurrent?.();
+      // The same invocation already crossed its source-current commit boundary
+      // before this durable terminal was appended. A later Queue mutation must
+      // not prevent idempotent receipt repair; another invocation still has to
+      // prove current authority before it may adopt the canonical terminal.
+      if (!adopted) {
+        await proof?.assertSourceCurrent?.();
+      } else if (prior.payload.invocationId !== auth.invocationId) {
+        await proof?.assertSourceCurrent?.();
+      }
       const canonicalDisposition =
         adopted && prior.payload.invocationId !== auth.invocationId
           ? (prior.payload.disposition as A2ADispatchDisposition)
@@ -416,21 +515,28 @@ export class A2ADispatchDispositionService {
       throw new A2ADispatchDispositionError('a2a_dispatch_disposition_replaced', inspection.replacement);
     }
     const retired = await this.resolveRetired(subjectKey, auth.catId, source.handoffSourceEventId, events);
-    if (assertSourceCurrent) {
+    const commit = () =>
+      this.recordDisposition(
+        auth,
+        source,
+        disposition,
+        subjectKey,
+        eventSourceId,
+        events.length,
+        retired,
+        adopted,
+        via,
+      );
+    if (proof?.withSourceCurrentCommit) {
       await this.assertLatestInvocation(auth.invocationId);
-      await assertSourceCurrent();
+      await proof.withSourceCurrentCommit(commit);
+    } else {
+      if (proof?.assertSourceCurrent) {
+        await this.assertLatestInvocation(auth.invocationId);
+        await proof.assertSourceCurrent();
+      }
+      await commit();
     }
-    await this.recordDisposition(
-      auth,
-      source,
-      disposition,
-      subjectKey,
-      eventSourceId,
-      events.length,
-      retired,
-      adopted,
-      via,
-    );
     const committed = (await this.deps.ballCustodyEventLog.read(subjectKey)).find(
       (event) => event.sourceEventId === eventSourceId,
     );

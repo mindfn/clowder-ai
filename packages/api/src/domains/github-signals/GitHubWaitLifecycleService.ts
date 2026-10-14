@@ -41,6 +41,8 @@ export interface GitHubCollectorPatch {
 
 export interface GitHubWaitObservation {
   readonly taskId: string;
+  /** Source query start; stale buffered HEADs cannot rewind a newer wait. */
+  readonly sourceObservedAt?: number;
   readonly facts: GitHubWaitFacts;
   readonly collectorPatch?: GitHubCollectorPatch;
   readonly subjectState?: 'merged' | 'closed';
@@ -68,7 +70,7 @@ export type GitHubWaitLifecycleResult =
        * collector state, not its match. Its source must collect it again — a cursor moved past it loses it.
        */
       readonly kind: 'unrecorded';
-      readonly reason: 'generation_changed_concurrently';
+      readonly reason: 'generation_changed_concurrently' | 'stale_source_observation';
     };
 
 /**
@@ -228,6 +230,16 @@ export class GitHubWaitLifecycleService {
   ): Promise<GitHubWaitLifecycleResult | typeof LOST_RACE> {
     const state = task.automationState;
     const active = state?.await;
+    if (
+      !input.subjectState &&
+      active &&
+      input.sourceObservedAt !== undefined &&
+      'headSha' in active.baseline &&
+      input.facts.headSha !== active.baseline.headSha &&
+      input.sourceObservedAt < active.baseline.capturedAt
+    ) {
+      return { kind: 'unrecorded', reason: 'stale_source_observation' };
+    }
     const collectorState = mergeCollectorState(task.kind, state, input.collectorPatch);
     if (!active) {
       if (input.subjectState) {

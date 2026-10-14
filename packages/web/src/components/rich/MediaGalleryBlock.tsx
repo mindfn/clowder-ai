@@ -108,8 +108,39 @@ export function MediaGalleryBlock({
                     />
                   </button>
                 )}
+                {published.isV2 ? (
+                  <figcaption className="flex min-w-0 items-center gap-2 text-xs text-cafe-secondary">
+                    <span className="min-w-0 flex-1 truncate" title={item.caption ?? item.alt ?? block.title}>
+                      {item.caption ?? item.alt ?? block.title ?? (language === 'en' ? 'Image' : '图片')}
+                    </span>
+                    <span className="shrink-0 text-cafe-muted">{language === 'en' ? 'Image' : '图片'}</span>
+                    {published.versionFor(source) ? (
+                      <span className="shrink-0">v{published.versionFor(source)}</span>
+                    ) : null}
+                    {!media.pending && !failed ? (
+                      <button
+                        type="button"
+                        disabled={published.busy}
+                        className="shrink-0 rounded border border-cafe-subtle px-2 py-1 font-semibold text-cafe-accent"
+                        onClick={async () => {
+                          const result = await published.open(
+                            source,
+                            item.caption ?? item.alt ?? block.title ?? '图片',
+                          );
+                          if (result.status === 'preview') {
+                            setPreviewReason(result.reason);
+                            setLightboxIndex(i);
+                          }
+                        }}
+                      >
+                        {language === 'en' ? 'Open' : '打开'}
+                      </button>
+                    ) : null}
+                  </figcaption>
+                ) : item.caption ? (
+                  <figcaption className="text-xs text-cafe-secondary">{item.caption}</figcaption>
+                ) : null}
                 {src && <CopyButton url={src} placement={published.isV2 ? 'below' : 'overlay'} />}
-                {item.caption && <figcaption className="text-xs text-cafe-secondary">{item.caption}</figcaption>}
               </figure>
             );
           })}

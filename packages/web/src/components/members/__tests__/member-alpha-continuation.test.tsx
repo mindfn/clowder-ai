@@ -92,7 +92,7 @@ async function render(member?: CatData) {
   return onSaved;
 }
 async function click(text: string) {
-  const button = [...container.querySelectorAll('button')].find((node) => node.textContent?.trim() === text);
+  const button = [...document.querySelectorAll('button')].find((node) => node.textContent?.trim() === text);
   expect(button, text).toBeTruthy();
   await act(async () => button?.click());
 }
@@ -170,7 +170,7 @@ it('retains no-account empty state without an automatic account or a write', asy
   accounts = [];
   await render();
   await completeIdentity();
-  const add = [...container.querySelectorAll('button')].find((node) => node.textContent?.trim() === 'Add');
+  const add = [...document.querySelectorAll('button')].find((node) => node.textContent?.trim() === 'Add');
   expect(add?.disabled).toBe(true);
   expect(writes()).toHaveLength(0);
 });

@@ -1,4 +1,5 @@
 import type { ArtifactReviewRound } from '@cat-cafe/shared';
+import type { ReactNode } from 'react';
 import { ReviewActor } from './ReviewActor';
 import { ReviewHistory } from './ReviewHistory';
 import { ReviewToolbarIcon } from './ReviewToolbarIcon';
@@ -12,6 +13,7 @@ export function ReviewVersionDetails({
   ownerUserId,
   onClose,
   onPreviousRound,
+  contextControl,
 }: {
   round: ArtifactReviewRound;
   reviewId: string;
@@ -19,6 +21,7 @@ export function ReviewVersionDetails({
   ownerUserId: string;
   onClose: () => void;
   onPreviousRound: () => void;
+  contextControl?: ReactNode;
 }) {
   return (
     <aside className={styles.drawer} aria-label="版本与历史">
@@ -32,6 +35,7 @@ export function ReviewVersionDetails({
         </button>
       </div>
       <div className={styles.drawerBody}>
+        {contextControl}
         {round.responses.length ? (
           <section className="rounded-xl border border-cafe-subtle p-4" aria-label="猫对上一版的回应">
             <h3 className="text-sm font-semibold text-cafe-black">这一版怎样回应了你的意见</h3>

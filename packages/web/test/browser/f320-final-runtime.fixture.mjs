@@ -12,6 +12,7 @@ import { invokeSingleCat } from '../../../api/src/domains/cats/services/agents/i
 import { accountsRoutes } from '../../../api/src/routes/accounts.ts';
 import { catsRoutes } from '../../../api/src/routes/cats.ts';
 import { configRoutes } from '../../../api/src/routes/config.ts';
+import { servicesRoutes } from '../../../api/src/routes/services.ts';
 import {
   createReviewState,
   findFreePort,
@@ -25,7 +26,12 @@ import {
 import { createFixtureLoginDriver } from './f320-native-login.fixture.mjs';
 import { createNextDevTestEnvironment } from './next-dev-test-environment.mjs';
 
-export async function startFinalAccountPreview({ withOverrides = false } = {}) {
+export async function startFinalAccountPreview({
+  withOverrides = false,
+  routingSnapshot,
+  withServicePreview = false,
+  ownerUserId,
+} = {}) {
   const saved = { ...process.env };
   const root = mkdtempSync(join(tmpdir(), 'f320-browser-api-'));
   Object.assign(process.env, {
@@ -40,6 +46,7 @@ export async function startFinalAccountPreview({ withOverrides = false } = {}) {
     CAT_CAFE_DISABLE_SHARED_STATE_PREFLIGHT: '1',
     AUDIT_LOG_DIR: join(root, 'audit'),
   });
+  if (ownerUserId !== undefined) process.env.DEFAULT_OWNER_USER_ID = ownerUserId;
   delete process.env.CODEX_HOME;
   delete process.env.CODEX_SQLITE_HOME;
   mkdirSync(join(root, '.cat-cafe'));
@@ -123,13 +130,14 @@ export async function startFinalAccountPreview({ withOverrides = false } = {}) {
   const fallback = createReviewState();
   app.addHook('onRequest', async (request, reply) => {
     request.headers['x-cat-cafe-user'] = 'fixture';
+    if (withServicePreview) request.sessionUserId = 'fixture';
     const origin = request.headers.origin;
     if (origin && /^http:\/\/(127\.0\.0\.1|localhost):\d+$/.test(origin))
       reply
         .header('access-control-allow-origin', origin)
         .header('access-control-allow-credentials', 'true')
         .header('access-control-allow-headers', 'content-type,x-csrf-token')
-        .header('access-control-allow-methods', 'GET,POST,PATCH,DELETE,OPTIONS');
+        .header('access-control-allow-methods', 'GET,POST,PUT,PATCH,DELETE,OPTIONS');
     if (request.method === 'OPTIONS') return reply.code(204).send();
   });
   app.options('/*', async () => ({}));
@@ -180,6 +188,7 @@ export async function startFinalAccountPreview({ withOverrides = false } = {}) {
       };
     if (url.pathname === '/api/agent-hooks/status') return { status: 'configured', targets: [] };
     if (url.pathname === '/api/routing-context/snapshot') {
+      if (routingSnapshot) return routingContextReadModelV1Schema.parse(routingSnapshot());
       const common = { v: 1, ownerId: 'fixture', observedAt: Date.now(), catalogRevision: 'fixture:f320' };
       return routingContextReadModelV1Schema.parse({
         ...common,
@@ -197,6 +206,22 @@ export async function startFinalAccountPreview({ withOverrides = false } = {}) {
     if (url.pathname === '/api/config/cat-order') return { catOrder: ['codex61-sol', 'codex-sol'] };
     return fixtureForApi(url, undefined, fallback);
   });
+  if (withServicePreview)
+    await app.register(servicesRoutes, {
+      env: { CAT_CAFE_PROFILE: 'test' },
+      fetchHealth: async () => ({ ok: true, status: 200, error: null }),
+      lifecycle: {
+        serviceConfig: {
+          get: () => ({
+            installed: true,
+            enabled: false,
+            selectedModel: 'mlx-community/Qwen3-ASR-1.7B-8bit',
+            port: 19876,
+          }),
+        },
+        findPidsByPort: async () => [],
+      },
+    });
   const requireApi = createRequire(new URL('../../../api/package.json', import.meta.url));
   const { Server } = requireApi('socket.io');
   const sockets = new Server(app.server, { cors: { origin: true, credentials: true } });

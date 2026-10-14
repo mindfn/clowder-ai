@@ -63,7 +63,7 @@ afterEach(() => {
   container.remove();
 });
 
-async function addSelection(filePath: string, openFilePath: string) {
+async function addSelection(filePath: string, openFilePath: string, onQuoteSelected = vi.fn()) {
   await act(async () => {
     root.render(
       <WorkspaceFileViewer
@@ -91,24 +91,40 @@ async function addSelection(filePath: string, openFilePath: string) {
         collaborationAvailable={false}
         onOpenCollaboration={vi.fn()}
         onSave={vi.fn()}
+        onQuoteSelected={onQuoteSelected}
         revealInFinder={vi.fn()}
       />,
     );
   });
   await act(async () => (container.querySelector('[data-testid="add-selection"]') as HTMLButtonElement).click());
   const [attachment] = (useChatStore.getState().pendingChatInsert?.contextAttachments ?? []) as ContextAttachment[];
-  if (attachment?.kind !== 'quote' || attachment.source.kind !== 'workspace_file') throw new Error('no file quote');
-  return attachment.source;
+  return attachment?.kind === 'quote' && attachment.source.kind === 'workspace_file' ? attachment.source : null;
 }
 
 it('names the version of the file it is showing when the selection is made in it', async () => {
   const source = await addSelection('docs/a.md', 'docs/a.md');
-  expect(source.path).toBe('docs/a.md');
-  expect(source.revision).toBe(`sha256:${DIGEST}`);
+  expect(source?.path).toBe('docs/a.md');
+  expect(source?.revision).toBe(`sha256:${DIGEST}`);
 });
 
 it('names no version when the file loaded is not the one the tab names', async () => {
   const source = await addSelection('docs/old.md', 'docs/a.md');
-  expect(source.path).toBe('docs/a.md');
-  expect('revision' in source).toBe(false);
+  expect(source?.path).toBe('docs/a.md');
+  expect(source).not.toHaveProperty('revision');
+});
+
+it('consumes the Markdown live selection only after its original quote enters Chat', async () => {
+  const onQuoteSelected = vi.fn();
+  const source = await addSelection('docs/a.md', 'docs/a.md', onQuoteSelected);
+  expect(source?.revision).toBe(`sha256:${DIGEST}`);
+  expect(onQuoteSelected.mock.calls).toEqual([['']]);
+});
+
+it('keeps the live selection when the original Chat admission refuses the quote', async () => {
+  const onQuoteSelected = vi.fn();
+  useChatStore.setState({
+    pendingChatInsert: { threadId: 'thread-1', text: '', authoritative: true, serverRevision: 5 },
+  });
+  expect(await addSelection('docs/a.md', 'docs/a.md', onQuoteSelected)).toBeNull();
+  expect(onQuoteSelected).not.toHaveBeenCalled();
 });

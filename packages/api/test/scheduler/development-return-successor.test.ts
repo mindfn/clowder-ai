@@ -13,7 +13,7 @@ const SUCCESSOR_CAT = 'codex61-sol';
 const SECOND_SUCCESSOR_CAT = 'kimi';
 
 test('a terminal return registration follows the exact returned action generation, not old preferredCats', async (t) => {
-  const f = await fixture(t, { proposalDelegateCatId: ORIGINAL_DELEGATE_CAT });
+  const f = await fixture(t, { proposalDelegateCatId: ORIGINAL_DELEGATE_CAT, separateProposalSource: true });
   const first = await f.service.register(f.actor, f.input, 'strict');
   assert.deepEqual(first.reporterCatIds, [ORIGINAL_DELEGATE_CAT]);
   f.tick(20_000);
@@ -27,8 +27,7 @@ test('a terminal return registration follows the exact returned action generatio
     predicate: { kind: 'task_done' },
   });
   const delegateEvidenceRef =
-    `proposal:${f.proposals.listByThread(f.actor.threadId)[0]?.proposalId}` +
-    `:approved:thread:${f.child.id}:cat:${ORIGINAL_DELEGATE_CAT}`;
+    `proposal:${f.child.createdFromProposalId}` + `:approved:thread:${f.child.id}:cat:${ORIGINAL_DELEGATE_CAT}`;
   const claimed = claimActionSuccessor(null, {
     leaseId: 'lease-development-successor',
     tenantScope: f.actor.userId,
@@ -138,20 +137,24 @@ test('a terminal return registration follows the exact returned action generatio
   const duplicate = await f.service.register(f.actor, successorInput, 'strict');
   const persisted = f.db
     .prepare(
-      'SELECT enabled, development_return_json, reviewed_development_return_json, successor_development_return_json FROM dynamic_task_defs WHERE id = ?',
+      `SELECT enabled, development_return_json, reviewed_development_return_json,
+        successor_development_return_json, parent_bound_development_return_json
+        FROM dynamic_task_defs WHERE id = ?`,
     )
     .get(next.registrationId) as {
     enabled: number;
     development_return_json: string | null;
     reviewed_development_return_json: string | null;
     successor_development_return_json: string | null;
+    parent_bound_development_return_json: string | null;
   };
 
   assert.equal(duplicate.registrationId, next.registrationId);
   assert.equal(persisted.enabled, 0, 'old binaries must not schedule an action-lineage return');
   assert.equal(persisted.development_return_json, null);
   assert.equal(persisted.reviewed_development_return_json, null);
-  assert.ok(persisted.successor_development_return_json);
+  assert.equal(persisted.successor_development_return_json, null);
+  assert.ok(persisted.parent_bound_development_return_json);
   assert.equal(
     persisted.reviewed_development_return_json ?? persisted.development_return_json,
     null,

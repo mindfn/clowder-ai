@@ -211,8 +211,10 @@ export function currentDelegateLineageSegmentStartGeneration(
         transition.toHolderThreadId === route.childThreadId,
     )
     .map((transition) => transition.toGeneration);
-  const startGeneration = Math.max(0, ...returnStarts, ...replacementStarts);
-  if (startGeneration < 1) return null;
+  // The initial approved delegate is generation 1. A canonical same-child
+  // g1→g2 terminal replacement is therefore the first exact entry edge even
+  // when no explicit return preceded it.
+  const startGeneration = Math.max(1, ...returnStarts, ...replacementStarts);
   if (startGeneration > lease.generation) return null;
 
   const currentSegmentMatches = replacementTransitionsOf(lease)

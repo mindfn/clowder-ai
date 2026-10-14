@@ -384,6 +384,81 @@ async function isReadStateCaughtUp(
   }
 }
 
+async function resolveMentionAtReadBoundary(
+  messageStore: IMessageStore,
+  userId: string,
+  threadId: string,
+  targetMessageId: string,
+  caughtUp: boolean,
+): Promise<boolean> {
+  if (!caughtUp) return false;
+  return messageStore.resolveUserMentionRequestFromRead(userId, threadId, targetMessageId, Date.now());
+}
+
+type LatestThreadReadResult =
+  | { kind: 'empty' }
+  | {
+      kind: 'acknowledged';
+      advanced: boolean;
+      caughtUp: boolean;
+      handledMention: boolean;
+      messageId: string;
+      cursor: string;
+    };
+
+async function acknowledgeLatestThreadRead(
+  readStateStore: IThreadReadStateStore,
+  messageStore: IMessageStore,
+  userId: string,
+  threadId: string,
+): Promise<LatestThreadReadResult> {
+  const latest = await messageStore.getLatestVisibleCursor(threadId, {
+    evidence: 'durable_owner_read',
+    viewerUserId: userId,
+  });
+  if (!latest) return { kind: 'empty' };
+  const advanced = await gatedReadStateAck(readStateStore, messageStore, userId, threadId, latest.cursor, {
+    repairUnresolvableLegacy: true,
+  });
+  const caughtUp = advanced
+    ? true
+    : await isReadStateCaughtUp(
+        await readStateStore.get(userId, threadId),
+        latest.cursor,
+        latest.messageId,
+        messageStore,
+        userId,
+        threadId,
+      );
+  const handledMention = await resolveMentionAtReadBoundary(messageStore, userId, threadId, latest.messageId, caughtUp);
+  return {
+    kind: 'acknowledged',
+    advanced,
+    caughtUp,
+    handledMention,
+    messageId: latest.messageId,
+    cursor: latest.cursor,
+  };
+}
+
+async function acknowledgeAllThreadReads(
+  threadStore: IThreadStore,
+  readStateStore: IThreadReadStateStore,
+  messageStore: IMessageStore,
+  userId: string,
+) {
+  const threads = await threadStore.list(userId);
+  let advancedCount = 0;
+  let handledMentionCount = 0;
+  for (const thread of threads) {
+    const result = await acknowledgeLatestThreadRead(readStateStore, messageStore, userId, thread.id);
+    if (result.kind !== 'acknowledged') continue;
+    if (result.advanced) advancedCount++;
+    if (result.handledMention) handledMentionCount++;
+  }
+  return { advancedCount, handledMentionCount, totalThreads: threads.length };
+}
+
 interface ThreadIndexBuilder {
   markThreadDirty(threadId: string): void;
   flushDirtyThreads?(): number | Promise<number>;
@@ -1796,25 +1871,7 @@ export const threadsRoutes: FastifyPluginAsync<ThreadsRoutesOptions> = async (ap
       return { error: 'Read state store or message store not available' };
     }
 
-    const threads = await threadStore.list(userId);
-    let advancedCount = 0;
-
-    for (const thread of threads) {
-      // F297 AC-D4: stay in visibility order, but require durable owner-read
-      // evidence so a queued mutable stream cannot be acknowledged mid-flight.
-      const latest = await messageStore.getLatestVisibleCursor(thread.id, {
-        evidence: 'durable_owner_read',
-        viewerUserId: userId,
-      });
-      if (!latest) continue;
-      // #1269: Gated ack — applies durable-slot gate + conditional pre-reconcile
-      const advanced = await gatedReadStateAck(opts.readStateStore!, messageStore, userId, thread.id, latest.cursor, {
-        repairUnresolvableLegacy: true,
-      });
-      if (advanced) advancedCount++;
-    }
-
-    return { advancedCount, totalThreads: threads.length };
+    return acknowledgeAllThreadReads(threadStore, opts.readStateStore, messageStore, userId);
   });
 
   // F069: PATCH /api/threads/:id/read — mark thread as read up to messageId
@@ -1852,6 +1909,7 @@ export const threadsRoutes: FastifyPluginAsync<ThreadsRoutesOptions> = async (ap
     // Without canonicalization, a raw v1 ID permanently loses to any v2 cursor
     // in SET_IF_GREATER because 'v' (0x76) > any digit — the ack silently no-ops.
     let cursorToken = parseResult.data.upToMessageId;
+    let targetMessageId = parseResult.data.upToMessageId;
     if (messageStore) {
       const msg = await messageStore.getById(parseResult.data.upToMessageId);
       if (!msg || msg.threadId !== id) {
@@ -1862,14 +1920,15 @@ export const threadsRoutes: FastifyPluginAsync<ThreadsRoutesOptions> = async (ap
       // same managed-hold owner/hidden boundary as timeline and latest-cursor
       // reads before canonicalization or legacy cursor repair can advance it.
       if (!passesManagedHoldViewerBoundary(msg, userId)) {
-        return { advanced: false, caughtUp: false };
+        return { advanced: false, caughtUp: false, handledMention: false };
       }
       // F297 AC-D4: direct message-id ACK is still owner-read evidence.
       // Mutable stream speech may paint while queued, but cannot advance the
       // durable cursor until the same message reaches final delivery.
       if (!isDurableOwnerReadEvidence(msg)) {
-        return { advanced: false, caughtUp: false };
+        return { advanced: false, caughtUp: false, handledMention: false };
       }
+      targetMessageId = msg.id;
       if (messageStore.canonicalizeCursor) {
         cursorToken = await messageStore.canonicalizeCursor(parseResult.data.upToMessageId, id);
       }
@@ -1884,9 +1943,11 @@ export const threadsRoutes: FastifyPluginAsync<ThreadsRoutesOptions> = async (ap
     // Check against both cursor (v2) and raw messageId (v1 fallback when V2 OFF)
     const afterState = await opts.readStateStore.get(userId, id);
     const caughtUp =
-      advanced ||
-      (await isReadStateCaughtUp(afterState, cursorToken, parseResult.data.upToMessageId, messageStore, userId, id));
-    return { advanced, caughtUp };
+      advanced || (await isReadStateCaughtUp(afterState, cursorToken, targetMessageId, messageStore, userId, id));
+    const handledMention = messageStore
+      ? await resolveMentionAtReadBoundary(messageStore, userId, id, targetMessageId, caughtUp)
+      : false;
+    return { advanced, caughtUp, handledMention };
   });
 
   // F069-R5: POST /api/threads/:id/read/latest — ack to latest real message server-side.
@@ -1916,27 +1977,18 @@ export const threadsRoutes: FastifyPluginAsync<ThreadsRoutesOptions> = async (ap
       return { error: 'Thread not found' };
     }
 
-    // F297 AC-D4: stay in visibility order, but require durable owner-read
-    // evidence so a queued mutable stream cannot be acknowledged mid-flight.
-    const latest = await messageStore.getLatestVisibleCursor(id, {
-      evidence: 'durable_owner_read',
-      viewerUserId: userId,
-    });
-    if (!latest) {
-      return { advanced: false, caughtUp: true, reason: 'no messages' };
+    const result = await acknowledgeLatestThreadRead(opts.readStateStore, messageStore, userId, id);
+    if (result.kind === 'empty') {
+      return { advanced: false, caughtUp: true, handledMention: false, reason: 'no messages' };
     }
-
-    // #1269: Gated ack — applies durable-slot gate + conditional pre-reconcile
-    const advanced = await gatedReadStateAck(opts.readStateStore, messageStore, userId, id, latest.cursor, {
-      repairUnresolvableLegacy: true,
-    });
-    // #1304: caughtUp distinguishes "cursor at latest" from "stale/can't compare"
-    // Check against both cursor (v2) and raw messageId (v1 fallback when V2 OFF)
-    const afterState = await opts.readStateStore.get(userId, id);
-    const caughtUp =
-      advanced || (await isReadStateCaughtUp(afterState, latest.cursor, latest.messageId, messageStore, userId, id));
     // #1200 RED #23b: return both raw messageId and canonical v2 cursor
-    return { advanced, caughtUp, messageId: latest.messageId, cursor: latest.cursor };
+    return {
+      advanced: result.advanced,
+      caughtUp: result.caughtUp,
+      handledMention: result.handledMention,
+      messageId: result.messageId,
+      cursor: result.cursor,
+    };
   });
 };
 

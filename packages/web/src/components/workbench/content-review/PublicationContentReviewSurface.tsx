@@ -1,10 +1,11 @@
 'use client';
 import { type ReviewedMediaAsset, reviewedMediaAssetSchema } from '@cat-cafe/shared';
-import { useEffect, useState } from 'react';
+import { type ReactNode, useEffect, useState } from 'react';
 import { checked } from '@/components/content-review/modification-http';
 import type { WorkspaceFileNavigationOrigin } from '@/stores/chat-types';
 import { apiFetch } from '@/utils/api-client';
 import { useWorkspaceSurfaceVisibility } from '../WorkspaceSurfaceVisibility';
+import { ContentLandingHeader } from './ContentLandingHeader';
 import { ContentReviewSurface } from './ContentReviewSurface';
 import { useWorkspaceContentReview } from './useWorkspaceContentReview';
 
@@ -15,6 +16,8 @@ type Props = {
   onBack: () => void;
   onVersionChange?: (revision: number) => void;
   navigationOrigin?: WorkspaceFileNavigationOrigin;
+  leadingAction?: ReactNode;
+  fullWindowAction?: { active: boolean; onToggle: () => void };
 };
 function checkedPublication(
   value: { asset: unknown; currentOwnerRevision: number },
@@ -48,7 +51,17 @@ function PublicationSelection(props: Props) {
     />
   );
 }
-function PublicationSurface({ contentRef, ownerRevision, title, onBack, navigationOrigin, onVersionChange }: Props) {
+function PublicationSurface({
+  contentRef,
+  ownerRevision,
+  title,
+  onBack,
+  navigationOrigin,
+  onVersionChange,
+  leadingAction,
+  fullWindowAction,
+}: Props) {
+  const titleInHost = false;
   const review = useWorkspaceContentReview({ publication: { contentRef, ownerRevision } });
   const visible = useWorkspaceSurfaceVisibility();
   const [latest, setLatest] = useState(ownerRevision),
@@ -90,7 +103,14 @@ function PublicationSurface({ contentRef, ownerRevision, title, onBack, navigati
   }, [contentRef, ownerRevision, visible, attempt]);
   if (error)
     return (
-      <section className="p-4">
+      <section>
+        <ContentLandingHeader
+          title={titleInHost ? undefined : title}
+          leadingAction={leadingAction}
+          fullWindowAction={fullWindowAction}
+          navigationOrigin={navigationOrigin}
+          onBack={onBack}
+        />
         <p role="alert" className="text-sm text-cafe-error">
           {error}
         </p>
@@ -118,6 +138,9 @@ function PublicationSurface({ contentRef, ownerRevision, title, onBack, navigati
       navigationOrigin={navigationOrigin}
       onBack={onBack}
       title={title}
+      titleInHost={titleInHost}
+      leadingAction={leadingAction}
+      fullWindowAction={fullWindowAction}
       workflow={
         historical
           ? {

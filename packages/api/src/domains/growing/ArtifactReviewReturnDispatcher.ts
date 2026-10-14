@@ -18,6 +18,10 @@ import {
 } from '../collaborative-content/modification/media-publication/media-publication-return.js';
 import type { ContentTextModificationService } from '../collaborative-content/modification/text/text-service.js';
 import { ModificationTextError } from '../collaborative-content/modification/text/text-store.js';
+import {
+  type TextWritebackCompletionIntent,
+  textWritebackCompletionProjection,
+} from '../collaborative-content/modification/text/text-writeback-completion-intent.js';
 import { MediaOwnerError } from '../video-studio/content-owner/media-errors.js';
 import { WorkspaceContentSourceError } from '../workspace/workspace-content-source.js';
 
@@ -37,6 +41,10 @@ export interface ArtifactReviewReturnDispatcherDeps {
 export class ArtifactReviewReturnDispatcher {
   private running: Promise<void> | undefined;
   private publicationCurrent?: (intent: MediaPublicationReturnIntent) => Promise<boolean>;
+  private textCompletionCurrent?: (intent: TextWritebackCompletionIntent) => Promise<boolean>;
+  setTextCompletionOwner(isCurrent: (intent: TextWritebackCompletionIntent) => Promise<boolean>): void {
+    this.textCompletionCurrent = isCurrent;
+  }
   setPublicationOwner(isCurrent: (intent: MediaPublicationReturnIntent) => Promise<boolean>): void {
     this.publicationCurrent = isCurrent;
   }
@@ -72,7 +80,7 @@ export class ArtifactReviewReturnDispatcher {
   }
 
   private async deliver(intent: ContentReturnIntent, signal: AbortSignal): Promise<void> {
-    if (this.deps.store.requests.cancellations.isReturnCancelled(intent.receiptRef)) {
+    if (this.isCancelled(intent)) {
       this.deps.store.returns.retire(intent.receiptRef, 'request_cancelled');
       this.deps.invalidate(intent.ownerUserId);
       return;
@@ -87,12 +95,15 @@ export class ArtifactReviewReturnDispatcher {
     const idempotencyKey = `f309-return:${createHash('sha256').update(intent.receiptRef).digest('hex')}`;
     await this.deps.authorizeDelivery?.(intent);
     signal.throwIfAborted();
-    if (intent.kind === 'resume_media_publication' && !(await this.isCurrent(intent))) {
+    if (
+      (intent.kind === 'resume_media_publication' || intent.kind === 'text_writeback_completion') &&
+      !(await this.isCurrent(intent))
+    ) {
       this.deps.store.returns.retire(intent.receiptRef, 'owner_coordinates_changed');
       this.deps.invalidate(intent.ownerUserId);
       return;
     }
-    if (this.deps.store.requests.cancellations.isReturnCancelled(intent.receiptRef)) {
+    if (this.isCancelled(intent)) {
       this.deps.store.returns.retire(intent.receiptRef, 'request_cancelled');
       this.deps.invalidate(intent.ownerUserId);
       return;
@@ -137,8 +148,18 @@ export class ArtifactReviewReturnDispatcher {
     this.deps.invalidate(intent.ownerUserId);
   }
 
+  private isCancelled(intent: ContentReturnIntent): boolean {
+    if (this.deps.store.requests.cancellations.isReturnCancelled(intent.receiptRef)) return true;
+    // Completion has its own return ref; only its current request owns cancellation, never the root A provenance.
+    return (
+      intent.kind === 'text_writeback_completion' &&
+      this.deps.store.requests.get(intent.requestId, intent.ownerUserId)?.control?.state === 'cancelled'
+    );
+  }
+
   private async isCurrent(intent: ContentReturnIntent): Promise<boolean> {
     try {
+      if (intent.kind === 'text_writeback_completion') return (await this.textCompletionCurrent?.(intent)) ?? false;
       if (intent.kind === 'resume_media_publication') return (await this.publicationCurrent?.(intent)) ?? false;
       if (intent.kind === 'request_text_edit') {
         return await this.isTextCurrent(intent);
@@ -186,6 +207,7 @@ type ReturnMessageProjection =
   | { content: string; source: ConnectorSource; visibility: 'whisper'; whisperTo: readonly string[] };
 
 function returnMessageProjection(store: ArtifactReviewStore, intent: ContentReturnIntent): ReturnMessageProjection {
+  if (intent.kind === 'text_writeback_completion') return textWritebackCompletionProjection(intent);
   if (intent.kind === 'resume_media_publication') return mediaPublicationProjection(intent);
   const isText = intent.kind === 'request_text_edit';
   const isMediaRequest =

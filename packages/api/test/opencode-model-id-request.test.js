@@ -330,7 +330,8 @@ test(
       if (openCodeProcess) await terminateOpenCodeProcess(openCodeProcess);
       server.closeAllConnections?.();
       await close(server);
-      rmSync(tempRoot, { recursive: true, force: true });
+      // Bound transient Windows EPERM retries after process cleanup; persistent failures still fail the test.
+      rmSync(tempRoot, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 });
     }
   },
 );

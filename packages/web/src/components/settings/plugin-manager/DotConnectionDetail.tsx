@@ -5,6 +5,7 @@ import { apiFetch } from '@/utils/api-client';
 import { SettingsPrimaryButton } from '../primitives/SettingsPrimaryButton';
 import { SettingsSecondaryButton } from '../primitives/SettingsSecondaryButton';
 import { SettingsText } from '../primitives/SettingsText';
+import { dotActivationFeedback } from './dot-activation-feedback';
 
 interface DotStatus {
   attemptId?: string | null;
@@ -30,10 +31,12 @@ interface DotTest {
 export function DotConnectionDetail({
   installed,
   activationRequest = 0,
+  activationAllowed = false,
   onStateChanged,
 }: {
   installed: boolean;
   activationRequest?: number;
+  activationAllowed?: boolean;
   onStateChanged?: () => void | Promise<void>;
 }) {
   const [status, setStatus] = useState<DotStatus | null>(null);
@@ -45,6 +48,7 @@ export function DotConnectionDetail({
   const [cats, setCats] = useState<Array<{ id: string; displayName?: string; name: string }>>([]);
   const [catsUnavailable, setCatsUnavailable] = useState(false);
   const observedAttempt = useRef<string | null | undefined>(undefined);
+  const activationNotice = useRef<HTMLDivElement>(null);
   const load = useCallback(async () => {
     try {
       const response = await apiFetch('/api/plugins/chatgpt-dot/connection');
@@ -68,6 +72,14 @@ export function DotConnectionDetail({
     const timer = setInterval(() => void load(), 5000);
     return () => clearInterval(timer);
   }, [load]);
+  useEffect(() => {
+    if (activationRequest > 0) void load();
+  }, [activationRequest, load]);
+  useEffect(() => {
+    if (activationRequest <= 0 || activationAllowed) return;
+    activationNotice.current?.scrollIntoView?.({ block: 'nearest' });
+    activationNotice.current?.focus({ preventScroll: true });
+  }, [activationRequest, activationAllowed]);
   useEffect(() => {
     if (!installed) return;
     void apiFetch('/api/cats')
@@ -170,12 +182,10 @@ export function DotConnectionDetail({
           {error}
         </p>
       )}
-      {installed && activationRequest > 0 && (
-        <div role="alert" className="space-y-2 rounded-lg bg-conn-amber-bg p-3">
+      {installed && activationRequest > 0 && !activationAllowed && (
+        <div ref={activationNotice} role="alert" tabIndex={-1} className="space-y-2 rounded-lg bg-conn-amber-bg p-3">
           <SettingsText as="p" variant="sm" tone="amber">
-            {status?.paired && status.subscription === 'active'
-              ? '请先点击「测试两处往返」，确认两处原对话都收到回复；验证通过后才能启用 dot 协作。'
-              : '先在 ChatGPT 完成 dot 订阅，再回到这里测试两处往返；验证通过后才能启用 dot 协作。'}
+            {dotActivationFeedback(status, tests)}
           </SettingsText>
           <a
             href="https://chatgpt.com/plugins"

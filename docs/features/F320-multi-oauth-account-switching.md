@@ -5,7 +5,7 @@ related_features: [F062, F136, F171, F291, F318, F319]
 topics: [accounts, oauth, credentials, provider-routing, hub-settings]
 doc_kind: spec
 created: 2026-09-24
-updated: 2026-10-13
+updated: 2026-10-14
 description: "同一家厂商可以登录多个 OAuth 账号（如公司号与私人号），各自隔离；按猫家族一键换绑，或按项目自动选用对应账号。"
 description_source: human
 description_author: opus55
@@ -18,6 +18,16 @@ description_updated_at: 2026-09-24T09:38:50Z
 
 **Codex-first 当前责任**：Astra (@codex-astra, gpt-6-astra) 规划/协调/验收，Sol61 (@codex61-sol, gpt-6.1-sol) 执行；保留原 Feature owner 与 Phase A/B/C。
 
+## Codex 当前闭环状态（2026-10-14 UTC）
+
+仍开放的 Codex 验收：真实每账号额度与实际消耗归属（含上述 A 消耗对应调用）、完整 A→B→A 返程及具体服务端压缩路径的未观测边界、正式账号页错误/恢复与中英文的原线真页回读。登录/持久化已有实现、隔离检查与用户使用证据，完整真人旅程仍由 Astra 按原约定协调归并；优先归并正常使用记录，不为了验收强行打断用户会话、反复真实换号或新增长轮 Alpha。未标 Codex 全部 AC 已满足，整项 Feature 保持 in-progress；Claude 与 Phase C 不并入本 Codex 结论。
+
+**额度功能入口**：设置 → 猫猫团队 → 账户与登录 → 展开已登录的 Codex 账号行 →「查询此账号额度」。现有 `CodexQuotaControl` 展示该身份的剩余百分比、重置时间和观测时间；未查询不代表额度为零。额度查询不是逐次现金扣费账单，A 的实际消耗仍须与调用启动快照和实际额度变化对齐。
+
+**Claude 接续提案（human537）**：You 要求独立 thread 看Ragdoll多账号如何开发，并偏好长效 token。本线已查标题清单，当前 F320 与 F318 原线程存在，未发现同标题 Claude 多账号执行 thread；据此发出 `proposal_mv81q3gh5yiwzup8`「F320 Ragdoll多账号｜长效 token 与一键切换」，提案返回 pending，不把 proposalId 冒充 threadId 或已开工。首位候选为原 Sol6.1，父 F320/Codex 责任保持。接续包优先核当前官方 CLI 的账号隔离、会话共享/续聊、现有 credential authority 与后续/在途边界，不自动激活 F318 carrier。
+
+2026-10-14 核 [Claude 官方认证文档](https://code.claude.com/docs/en/authentication#generate-a-long-lived-token)：`claude setup-token` 生成一年 OAuth token，供 `CLAUDE_CODE_OAUTH_TOKEN`；仅模型请求，不能读取 claude.ai connectors 或建立 Remote Control，本地 MCP 仍可用。文档的独立 `CLAUDE_CONFIG_DIR` 同时隔离设置、登录和历史，不能推断跨账号 resume 自然成立。本机 `claude --version` 为 2.1.296；文档承诺未折算为本 carrier/token 路径已验证。新接续先用 fake fixture，不让用户在聊天交 token、不替用户登录、不复制真实凭据或迁移默认 HOME；具体产品方案及适用能力由新 thread 取证后落实。
+
 ## 当前账号页返修（2026-10-13 UTC）
 
 实际枚举失败来自一个凭据与元数据不完整的旧 Kimi ref：catalog 能解析，但 canonical per-ref resolver 拒绝该 ref，旧默认枚举因此中断整份列表。隔离 RED→GREEN 证明修复将该 ref 单独保留为 rejected、正常默认号继续可见，凭据字节不变；真正损坏的 catalog 仍报错，修复后可恢复。默认补全与选用读取现在分别表达各自事实：补全失败不否定可信选择；成员选择读取失败、缺失或过期会撤销旧「正在用」，晚到旧读不能恢复它，换绑提交会作废更早的读。未改账号选择权威或真实绑定。
@@ -28,7 +38,7 @@ description_updated_at: 2026-09-24T09:38:50Z
 
 - 查清默认账号枚举失败的实际原因并用隔离复现验证修复；不能只藏错误。账号选择、成员绑定、登录是否可读分别按各自权威数据表达，未知身份显示「读不到／未确认」，不把查询失败当作解绑或自动换号，也不把无依据的状态标成「正在用」。已有可信选用事实不被另一项查询错误抹掉。保留原绑定与凭据归属，不搬 HOME、复制认证或改真实账号来制造正常。
 - 账号页的标题、表头、状态、提示、错误、菜单和动作，以及添加/换绑/展开等同一账号旅程，使用现有界面语言机制完整提供中英文。服务端已知错误与产品生成的默认号名也须有一致呈现；用户填写的备注、邮箱和工具固有名称保留原值，不伪造翻译或改存量数据。
-- 原作者完成有意义的 RED→GREEN、受影响检查和一次页面主线，覆盖默认查询失败、未知身份、可信选用状态及中英文切换；沿原非作者审查链交一张集中修复 PR。上述作者交付已在 #5458 完成，正式页面回读仍待加载；已接受的短验证与真人登录验收方式保持，不以新建大套 Alpha 前置阻挡交付。真人远端额度与压缩续聊等原开放项不被本轮代签。
+- 原作者完成有意义的 RED→GREEN、受影响检查和一次页面主线，覆盖默认查询失败、未知身份、可信选用状态及中英文切换；沿原非作者审查链交一张集中修复 PR。上述作者交付已在 #5458 完成并进入正式运行版本，正式页面完整回读仍待验；已接受的短验证与真人登录验收方式保持，不以新建大套 Alpha 前置阻挡交付。真人远端额度与压缩续聊等原开放项不被本轮代签。
 
 ## 宿主工具与额度返修（2026-10-12 UTC）
 

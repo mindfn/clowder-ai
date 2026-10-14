@@ -59,6 +59,7 @@ export async function ordinaryDispatchFixture(t, { live = false } = {}) {
       executions,
       messages: h.messageStore,
       adoptions: turnCustodyAdoptionRegistry,
+      queue,
     }),
     projectAdoptedDisposition: async (input) => {
       assert.equal(await receipts.repair(input), true);
@@ -128,6 +129,7 @@ export async function ordinaryDispatchFixture(t, { live = false } = {}) {
       content,
       messageId: source.id,
       source: 'agent',
+      sourceCategory: 'a2a',
       targetCats: ['codex-sol'],
       intent: 'execute',
       ownerAuthProvenance: 'strict',

@@ -33,11 +33,12 @@ describe('callback-anchor-helpers (F236 Phase A)', () => {
   });
 
   test('truncateHead: long text truncated to max, truncated=true, is a real prefix', () => {
-    const long = 'x'.repeat(500);
+    const head = 'HEAD:' + 'a'.repeat(275);
+    const long = head + 'MIDDLE:' + 'b'.repeat(200) + ':TAIL';
     const r = truncateHead(long, 280);
     assert.equal(r.preview.length, 280);
     assert.equal(r.truncated, true);
-    assert.ok(long.startsWith(r.preview), 'preview must be a genuine prefix of the original');
+    assert.equal(r.preview, head, 'keep the head, not a same-length middle or suffix');
   });
 
   test('truncateHead: exact-boundary text is not truncated', () => {
@@ -62,15 +63,12 @@ describe('callback-anchor-helpers (F236 Phase A)', () => {
   });
 
   test('truncateHeadTail: long text keeps BOTH head and tail + honest omission marker', () => {
-    const head = 'HEAD_INSTRUCTION ';
+    const head = 'HEAD:' + 'h'.repeat(135);
     const middle = 'm'.repeat(500);
-    const tail = ' TAIL_HANDOFF @opus go';
-    const text = head + middle + tail;
-    const r = truncateHeadTail(text, 280);
+    const tail = 't'.repeat(135) + ':TAIL';
+    const r = truncateHeadTail(head + middle + tail, 280);
     assert.equal(r.truncated, true);
-    assert.ok(r.preview.startsWith('HEAD_INSTRUCTION'), 'head preserved');
-    assert.ok(r.preview.endsWith('TAIL_HANDOFF @opus go'), 'tail (handoff) preserved — not lost');
-    assert.match(r.preview, /\bchars\b/, 'omission marker must be honest about how much was cut');
+    assert.equal(r.preview, `${head}…[+500 chars]…${tail}`, 'keep both ends and report exactly the omitted middle');
   });
 
   // ---- truncateAroundMatch (F236 R1 / 砚砚 P1 anti-变瞎子) ----

@@ -34,14 +34,16 @@ for (const carrier of ['live', 'ordinary'])
       const { QueuedMessageCustodyCoordinator, createInitialQueuedMessageCustody } = await import(
         '../dist/domains/cats/services/agents/invocation/QueuedMessageCustodyCoordinator.js'
       );
-      const { getQueueReadEvidence, recordLiveFullReadEvidence } = await import(
+      const { recordLiveFullReadEvidence } = await import(
         '../dist/domains/cats/services/agents/invocation/QueueReadEvidence.js'
       );
       const { DispatchAdoptionAuthority } = await import('../dist/domains/ball-custody/DispatchAdoptionAuthority.js');
       const { TurnCustodyAdoptionRegistry } = await import(
         '../dist/domains/ball-custody/TurnCustodyAdoptionRegistry.js'
       );
+      const { LiveCarrierOperationGate } = await import('../dist/domains/concierge/live/LiveCarrierOperationGate.js');
       const adoptions = new TurnCustodyAdoptionRegistry();
+      const liveGate = new LiveCarrierOperationGate();
       let unregister;
       const redis = createRedisClient({ url: process.env.REDIS_URL, keyPrefix: `f317-dispatch:${randomUUID()}:` });
       try {
@@ -85,6 +87,7 @@ for (const carrier of ['live', 'ordinary'])
           messageId: source.id,
           content: source.content,
           source: 'agent',
+          sourceCategory: 'a2a',
           targetCats: ['codex-sol'],
           intent: 'execute',
           ownerAuthProvenance: 'strict',
@@ -102,21 +105,30 @@ for (const carrier of ['live', 'ordinary'])
         await recordLiveFullReadEvidence(
           messages,
           executions,
-          { ...scope, messageIds: [source.id], seenAt: at + 3 },
+          {
+            ...scope,
+            messageIds: [source.id],
+            seenAt: at + 3,
+            evidenceKind: carrier === 'live' ? 'exact_full_message' : 'full_contiguous_thread_context',
+          },
           events,
         );
         unregister = adoptions.register(scope.invocationId, async () => {});
         const service = new A2ADispatchDispositionService({
-          ...(carrier === 'ordinary'
-            ? { adoptionAuthority: new DispatchAdoptionAuthority({ executions, messages, adoptions }) }
-            : {}),
+          adoptionAuthority: new DispatchAdoptionAuthority({
+            executions,
+            messages,
+            adoptions,
+            queue,
+            ...(carrier === 'live'
+              ? { live: { withCarrierOperation: (query, operation) => liveGate.runForCarrier(query, operation) } }
+              : {}),
+          }),
           registry: { isLatest: async () => true },
           messageStore: messages,
           ballCustodyEventLog: events,
           ballCustodyProjectionStore: projections,
           ballCustody: ingest,
-          isLiveCarrierInvocation: async () => true,
-          getReadEvidenceForMessage: (query) => getQueueReadEvidence(messages, query),
           projectAdoptedDisposition: async () => {
             throw new Error('synthetic crash after event');
           },

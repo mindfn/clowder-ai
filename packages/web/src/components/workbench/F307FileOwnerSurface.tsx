@@ -180,6 +180,7 @@ function ResolvedFileOwnerSurface({
     <div className="flex min-h-0 flex-1" data-owner-worktree={target.worktreeId} data-owner-path={target.path}>
       <WorkspaceFileViewer
         {...viewport}
+        nestedWork={isV2}
         file={file}
         openFilePath={target.path}
         openTabs={[target.path]}

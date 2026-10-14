@@ -12,9 +12,10 @@ interface FullReadInput {
   invocationId: string;
   messageIds: readonly string[];
   seenAt: number;
+  evidenceKind: QueueReadEvidenceWitness['evidenceKind'];
 }
 
-/** Called only at the full-contiguous response boundary, after visibility and body-budget filtering. */
+/** Called only at a complete-body response boundary, after visibility and body-budget filtering. */
 export async function recordLiveFullReadEvidence(
   messages: IMessageStore,
   executions: Pick<ITurnExecutionStore, 'get'>,
@@ -36,7 +37,7 @@ export async function recordLiveFullReadEvidence(
     targetCatId: input.catId,
     invocationId: input.invocationId,
     seenAt: input.seenAt,
-    evidenceKind: 'full_contiguous_thread_context',
+    evidenceKind: input.evidenceKind,
   };
   const events = await eventLog.read(`ball:thread:${input.threadId}`);
   for (const messageId of new Set(input.messageIds)) {

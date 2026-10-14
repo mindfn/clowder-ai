@@ -223,14 +223,36 @@ test('installed Pro connection → dot events → canonical reply and private or
         .statusCode,
       200,
     );
-    const call = (name: string, args: unknown) => rpc('tools/call', { name, arguments: args });
+    const metadata = {
+      'io.modelcontextprotocol/protocolVersion': '2026-07-28',
+      'io.modelcontextprotocol/clientCapabilities': {},
+    };
+    const call = (name: string, args: unknown) => rpc('tools/call', { name, arguments: args, _meta: metadata });
     const viaRemote = (name: string, args: unknown) => network!.rpc('tools/call', { name, arguments: args });
     const eventA = delivered.find((event) => event.data.thread_id === sources[0]!.threadId)!.eventId;
     const eventB = delivered.find((event) => event.data.thread_id === sources[1]!.threadId)!.eventId;
     const beforeRead = await call('cat_cafe_dot_reply', { event_id: eventA, content: 'reply' });
+    assert.equal(
+      beforeRead.error?.code,
+      -32000,
+      'metadata must reach source authorization rather than schema rejection',
+    );
     assert.equal(beforeRead.error.data.reason, 'dot_source_not_read');
     assert.ok((await call('cat_cafe_dot_read_source', { event_id: eventA, catId: 'gpt-pro' })).error);
     await Promise.all(delivered.map((event) => viaRemote('cat_cafe_dot_read_source', { event_id: event.eventId })));
+    const standaloneRead = await app.inject({
+      method: 'POST',
+      url: '/api/plugins/chatgpt-dot/mcp',
+      headers: { authorization: `Bearer ${setup.credentialSecret}` },
+      payload: {
+        jsonrpc: '2.0',
+        id: 1,
+        method: 'tools/call',
+        params: { name: 'cat_cafe_dot_read_source', arguments: { event_id: eventA }, _meta: metadata },
+      },
+    });
+    assert.equal(standaloneRead.json().error, undefined, 'standalone MCP accepts protocol metadata');
+    assert.equal(standaloneRead.json().result.structuredContent.source.id, sources[0]!.sourceMessageId);
     const bytes = await sharp({ create: { width: 16, height: 13, channels: 4, background: '#D4835A' } })
       .png()
       .toBuffer();

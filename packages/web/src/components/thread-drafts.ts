@@ -178,7 +178,10 @@ export function saveThreadDraftSelection(threadId: string, textarea: HTMLTextAre
   }
 }
 
-export function restoreThreadDraftSelection(threadId: string, textarea: HTMLTextAreaElement): void {
+export function readThreadDraftSelection(
+  threadId: string,
+  draftText: string,
+): { start: number; end: number; direction: 'forward' | 'backward' | 'none' } | undefined {
   try {
     const raw = window.sessionStorage.getItem(SELECTION_STORAGE_KEY + threadId);
     if (!raw) return;
@@ -186,7 +189,7 @@ export function restoreThreadDraftSelection(threadId: string, textarea: HTMLText
     if (!saved || typeof saved !== 'object') return;
     const { text, start, end, direction } = saved as Record<string, unknown>;
     if (
-      text !== textarea.value ||
+      text !== draftText ||
       text !== getThreadDraft(threadId) ||
       typeof start !== 'number' ||
       typeof end !== 'number' ||
@@ -194,13 +197,18 @@ export function restoreThreadDraftSelection(threadId: string, textarea: HTMLText
       !Number.isSafeInteger(end) ||
       start < 0 ||
       end < start ||
-      end > textarea.value.length
+      end > draftText.length
     )
       return;
-    textarea.setSelectionRange(start, end, direction === 'backward' || direction === 'forward' ? direction : 'none');
+    return { start, end, direction: direction === 'backward' || direction === 'forward' ? direction : 'none' };
   } catch {
     // Corrupt/unavailable mirrors cannot select a different draft or move focus.
   }
+}
+
+export function restoreThreadDraftSelection(threadId: string, textarea: HTMLTextAreaElement): void {
+  const selection = readThreadDraftSelection(threadId, textarea.value);
+  if (selection) textarea.setSelectionRange(selection.start, selection.end, selection.direction);
 }
 
 /** #934: Save/clear reply context for a thread draft. */

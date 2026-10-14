@@ -48,7 +48,7 @@ operator明确要求：
 - [F220](F220-a2a-collab-reliability.md) 持有 execution liveness；[F246](F246-approval-hub.md) 持有 exact proposal/stale approval，但尚无通用“人 + 猫针对同一 revision”的 AND-join。
 - [F307](F307-composable-workbench.md) 已把个人真实 surface adapters 落到同一个右侧 Workbench kernel；F293 的 Team 产品面可沿 descriptor/owner-state 边界接入，不再等待另一个 Workspace 宿主。
 - [F311](F311-capability-evolution-workspace.md) 已冻结完整的 Capability Evolution Program 生命周期，并把“F208 画像写回”与“F293 路由消费验证”拆成两个单变量对象；它需要 F293 提供真实消费证据，但不拥有路由判定，也不阻塞 F293 建设自己的 domain kernel。
-- F310、[F312](F312-memory-initiative-closure-command.md) 与 [F313](F313-analysis-to-outcome-closure-command.md) 分别冻结了真实托付、跨 owner release 与 finding→outcome 的持续持球/验收纪律。它们提供 journey/执行方法和 owner refs，不成为 F293 的第二套 custody、command 或 outcome store。
+- [F310](F310-growing-real-delegation.md)、[F312](F312-memory-initiative-closure-command.md) 与 [F313](F313-analysis-to-outcome-closure-command.md) 分别冻结了真实托付、跨 owner release 与 finding→outcome 的持续持球/验收纪律。它们提供 journey/执行方法和 owner refs，不成为 F293 的第二套 custody、command 或 outcome store。
 - Phase C 已由 PR #4211 合入：canonical F051 refresh、typed F153 health 与 durable dispatch terminal 统一经 `AutomaticRoutingSignalService` 写同一 immutable signal contract；resolver 用 shared owner revision 复用未变化 timeline、仍按每次 `observedAt` 重算 expiry。dispatch success 只恢复因果匹配的 exact-cat signal，provider-wide health recovery 仍归 F153 authority 或 bounded expiry。
 - 2026-09-07 页面审计：`TeamWorkspacePanel` 仍以 catId/provider/model/hash 作为列表主叙事，`RoutingPreferenceControls` 先于成员列表。F315 T1–T4 已有诊断；[PR #4293](https://github.com/zts212653/clowder-ai/pull/4293) 仍 OPEN，只覆盖三个 Team 文案/展示文件。当天只读接口样本为 28 位成员、18 位有画像；此数值不是产品常量或能力排名。
 - 底层使用私人还是公司账号，不是猫能可靠观测的事实。把它写成 `ExecutionSlot` 或展示字段只会制造 phantom precision。
@@ -102,7 +102,7 @@ Why: `routing-context` 继续只负责决策时的组合、解释与 preflight�
 | Feature | 它拥有 | F293 现在怎么接 | 是否阻塞 Phase A routing kernel |
 |---|---|---|---|
 | [F307](F307-composable-workbench.md) | Workspace working-set/layout/restore 宿主 | Team 以后作为 owner-backed surface descriptor 接入；F293 只供 read model 与动作，不写 layout truth | 否；产品激活仍服从 F307 Phase D |
-| F310 | 普通来源里的托付识别、Task custody admission、Needs Me/Schedule 旅程 | F293 只在需要选下一只猫时给 route decision；不把“识别到任务”或 Task admission 当 routing custody | 否 |
+| [F310](F310-growing-real-delegation.md) | 普通来源里的托付识别、Task custody admission、Needs Me/Schedule 旅程 | F293 只在需要选下一只猫时给 route decision；不把“识别到任务”或 Task admission 当 routing custody | 否 |
 | [F311](F311-capability-evolution-workspace.md) | Evolution Program、claim/economics、owner refs、keep/tune/rollback/sunset | F208 applied revision 的写回效果由 F293 before/after snapshot + preflight refs 证明；F311 只消费 lineage | 否；F300 缺口只 gate 需要同源读取的 join |
 | [F312](F312-memory-initiative-closure-command.md) | 记忆 initiative 的 release 顺序、runtime acceptance 与 vision guard | 复用其 command→execution→acceptance 纪律推进 F293，不复制 memory catalog/state | 否，非 runtime 依赖 |
 | [F313](F313-analysis-to-outcome-closure-command.md) | finding→approval→owner mutation→fresh outcome 的单 Feature 闭环 | 若 F293 将来收到真实 repair finding，沿 owner refs/Approval 处理；普通确定性实现仍走 tests/guards | 否，非 runtime 依赖 |

@@ -4,6 +4,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import type { CatData } from '@/hooks/useCatData';
 import { buildCatPatchPayload, initialState } from '../hub-cat-editor.model';
 import { AccountSection } from '../hub-cat-editor.sections';
+import { AgyNativeFields } from '../hub-cat-editor-agy';
 
 const cat: CatData = {
   id: 'gemini38',
@@ -87,6 +88,49 @@ describe('AGY Native member settings', () => {
       ),
     );
     expect(container.querySelector('option[value="agy-native"]')).toBeNull();
+  });
+
+  it('lets the member select automatic approval and removes the restricted workspace field', async () => {
+    const container = document.createElement('div');
+    document.body.append(container);
+    const root = createRoot(container);
+    unmount = () => {
+      act(() => root.unmount());
+      container.remove();
+    };
+    const onChange = vi.fn();
+    const form = initialState({ ...cat, agyProfile: profile });
+    await act(async () => root.render(<AgyNativeFields form={form} onChange={onChange} />));
+    const select = [...container.querySelectorAll('select')].find((element) =>
+      element.querySelector('option[value="auto"]'),
+    );
+    expect(select).toBeTruthy();
+    await act(async () => {
+      if (!select) throw new Error('Permission choice missing');
+      select.value = 'auto';
+      select.dispatchEvent(new Event('change', { bubbles: true }));
+    });
+    expect(onChange).toHaveBeenCalledWith({ agyAutoApprove: true });
+    await act(async () =>
+      root.render(<AgyNativeFields form={{ ...form, agyAutoApprove: true }} onChange={onChange} />),
+    );
+    expect(container.textContent).not.toContain('批准工作区');
+    expect(container.textContent).toContain('自动批准文件与命令操作');
+    expect(container.querySelector('textarea')).toBeNull();
+  });
+
+  it('does not inherit legacy CLI automatic approval when selecting a new Native carrier', () => {
+    const legacy = { ...cat, agyProfile: { ...profile, carrier: 'legacy' as const, autoApprove: true } };
+    expect(initialState(legacy).agyAutoApprove).toBe(false);
+  });
+
+  it('preserves explicit automatic approval without requiring a workspace allowlist', () => {
+    const automatic = { ...profile, autoApprove: true, trustedWorkspaces: [] };
+    const nativeCat = { ...cat, agyProfile: automatic };
+    const form = initialState(nativeCat);
+    expect(form.agyAutoApprove).toBe(true);
+    expect(buildCatPatchPayload(form, nativeCat, { accountAuthType: 'oauth' }).agyProfile).toEqual(automatic);
+    expect(() => buildCatPatchPayload({ ...form, agyAutoApprove: false }, nativeCat)).toThrow(/工作区/);
   });
 
   it('round trips Native configuration and uses the physical model ID', () => {

@@ -1,14 +1,16 @@
 'use client';
 
-import type { ArtifactReviewView, EntrustedWorkOwnerReadV1 } from '@cat-cafe/shared';
+import type { ArtifactReviewView, EntrustedWorkOwnerReadV1, IgnoredItemCoordinate } from '@cat-cafe/shared';
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { useShellCopy } from '@/components/shell/shell-copy';
 import { useEntrustedWorkProjection } from '@/hooks/useEntrustedWorkProjection';
+import { useIgnoredItemPreferences } from '@/hooks/useIgnoredItemPreferences';
 import { scheduleCopy } from './product-schedule.shell-copy';
+import { SchedulePanelControls } from './SchedulePanelControls';
 import { ScheduleWorkCard } from './ScheduleWorkCard';
 import { ScheduleWorkGroups } from './ScheduleWorkGroups';
 import { WorkCalendarView } from './WorkCalendarView';
-import { calendarDateKey, workCalendarDates, workDates } from './work-calendar';
+import { calendarDateKey, currentScheduleWorks, workCalendarDates, workDates } from './work-calendar';
 import styles from './work-schedule.module.css';
 
 export type PreparedArtifactCoordinate = NonNullable<EntrustedWorkOwnerReadV1['preparedArtifact']>;
@@ -16,21 +18,7 @@ export function scheduleItemRef(work: EntrustedWorkOwnerReadV1): string {
   // This is a Workspace return coordinate, not a new Task identity.
   return `${work.envelope.subjectRef}|${work.envelope.revision}${work.completion ? '|completed' : ''}`;
 }
-const STATE_ORDER = { blocked: 0, doing: 1, todo: 2, done: 3 } as const;
 type WorkFilter = 'all' | 'doing' | 'blocked' | 'todo';
-function currentWorks(reads: EntrustedWorkOwnerReadV1[]) {
-  const unique = new Map<string, EntrustedWorkOwnerReadV1>();
-  for (const work of reads) {
-    if (work.envelope.freshness.state !== 'current') continue;
-    const previous = unique.get(work.envelope.subjectRef);
-    if (!previous || previous.envelope.revision < work.envelope.revision) unique.set(work.envelope.subjectRef, work);
-  }
-  return [...unique.values()].sort(
-    (a, b) =>
-      STATE_ORDER[a.brief.current.state] - STATE_ORDER[b.brief.current.state] ||
-      Math.min(...workDates(a).map((time) => time.value)) - Math.min(...workDates(b).map((time) => time.value)),
-  );
-}
 
 export function ProductSchedulePanel({
   onOpenArtifact,
@@ -48,6 +36,11 @@ export function ProductSchedulePanel({
   const t = useShellCopy(scheduleCopy);
   const active = useEntrustedWorkProjection('schedule');
   const completed = useEntrustedWorkProjection('completed');
+  const preferences = useIgnoredItemPreferences();
+  const [showIgnored, setShowIgnored] = useState(false);
+  const [lastIgnored, setLastIgnored] = useState<{ ownerUserId: string; coordinate: IgnoredItemCoordinate } | null>(
+    null,
+  );
   const [scope, setScope] = useState<'active' | 'completed'>(() =>
     selectedItemRef?.endsWith('|completed') ? 'completed' : 'active',
   );
@@ -75,10 +68,10 @@ export function ProductSchedulePanel({
       : null;
   };
   const currentTime = now();
-  const works = useMemo(() => currentWorks(active.ownerReads), [active.ownerReads]);
+  const works = useMemo(() => currentScheduleWorks(active.ownerReads), [active.ownerReads]);
   const completedWorks = useMemo(
     () =>
-      currentWorks(completed.ownerReads).sort(
+      currentScheduleWorks(completed.ownerReads).sort(
         (a, b) => (b.completion?.recordedAt ?? 0) - (a.completion?.recordedAt ?? 0),
       ),
     [completed.ownerReads],
@@ -92,12 +85,27 @@ export function ProductSchedulePanel({
   const projection = scope === 'completed' ? completed : active;
   const source = scope === 'completed' ? completedWorks : works;
   const partial = projection.ownerReads.some((work) => work.envelope.freshness.state !== 'current');
+  const ignoreCoordinate = (work: EntrustedWorkOwnerReadV1): IgnoredItemCoordinate => ({
+    kind: 'schedule',
+    subjectRef: work.envelope.subjectRef,
+  });
+  const ignored = (work: EntrustedWorkOwnerReadV1) => preferences.isIgnored(ignoreCoordinate(work));
+  const ownerConfirmed =
+    preferences.ready &&
+    source.every((work) => work.envelope.visibility.ownerUserId === preferences.snapshot?.ownerUserId);
+  const ignoredCount = ownerConfirmed ? works.filter(ignored).length : null;
+  const undoCoordinate =
+    ownerConfirmed && lastIgnored?.ownerUserId === preferences.snapshot?.ownerUserId ? lastIgnored?.coordinate : null;
+  const shownWorks =
+    scope === 'completed' || !ownerConfirmed
+      ? source
+      : source.filter((work) => (showIgnored ? ignored(work) : !ignored(work)));
   const overdue = works.filter((work) =>
     workDates(work).some((time) => time.role === 'business_deadline' && time.value < currentTime),
   );
-  const visible = source.filter((work) => {
+  const visible = shownWorks.filter((work) => {
     if (scheduleItemRef(work) === selectedItemRef) return true;
-    if (scope === 'completed') return true;
+    if (scope === 'completed' || showIgnored) return true;
     if (filter !== 'all' && work.brief.current.state !== filter) return false;
     if (wide) return true;
     const dates = workCalendarDates(work);
@@ -148,6 +156,21 @@ export function ProductSchedulePanel({
         }
         selectedRef={selectedItemRef === itemRef ? selectedRef : undefined}
         artifactsLoading={artifactsLoading}
+        personal={
+          scope === 'active'
+            ? {
+                ignored: ownerConfirmed && ignored(work),
+                disabled: !ownerConfirmed || preferences.saving || partial,
+                onChange: (ignore) => {
+                  const coordinate = ignoreCoordinate(work);
+                  const ownerUserId = preferences.snapshot?.ownerUserId;
+                  void preferences.change(ignore ? [coordinate] : [], ignore ? [] : [coordinate]).then((saved) => {
+                    if (saved && ownerUserId) setLastIgnored(ignore ? { ownerUserId, coordinate } : null);
+                  });
+                },
+              }
+            : undefined
+        }
         onOpenArtifact={
           onOpenArtifact
             ? (artifact, itemRef, title) => {
@@ -173,40 +196,32 @@ export function ProductSchedulePanel({
       data-testid="product-schedule-panel"
       aria-label={t.title}
     >
-      <header className="mb-4 flex items-center justify-between gap-3">
-        <h2 className="text-xl font-semibold tracking-tight text-cafe-black">{t.title}</h2>
-        <button
-          type="button"
-          onClick={() => {
-            active.refetch();
-            completed.refetch();
-          }}
-          className="rounded-lg border border-cafe-subtle px-3 py-1.5 text-xs text-cafe-secondary hover:bg-cafe-surface"
-        >
-          {t.refresh}
-        </button>
-      </header>
-      <fieldset className="mb-4 flex gap-4 border-b border-cafe-subtle text-sm" aria-label={t.scope}>
-        {(['active', 'completed'] as const).map((value) => (
-          <button
-            type="button"
-            key={value}
-            aria-pressed={scope === value}
-            className={
-              scope === value
-                ? 'border-b-2 border-cafe-accent pb-2 font-semibold text-cafe-accent'
-                : 'pb-2 text-cafe-muted'
-            }
-            onClick={() => {
-              setScope(value);
-              setFilter('all');
-              setSelectedDay(null);
-            }}
-          >
-            {t[value]}
-          </button>
-        ))}
-      </fieldset>
+      <SchedulePanelControls
+        scope={scope}
+        showIgnored={showIgnored}
+        disabled={!ownerConfirmed || preferences.saving}
+        error={preferences.error}
+        hasUndo={undoCoordinate != null}
+        onRefresh={() => {
+          active.refetch();
+          completed.refetch();
+          void preferences.refetch();
+        }}
+        onScope={(value) => {
+          setScope(value);
+          setShowIgnored(false);
+          setFilter('all');
+          setSelectedDay(null);
+        }}
+        onIgnored={() => setShowIgnored(!showIgnored)}
+        onUndo={() => {
+          if (undoCoordinate)
+            void preferences.change([], [undoCoordinate]).then((saved) => {
+              if (saved) setLastIgnored(null);
+            });
+        }}
+        onDismissUndo={() => setLastIgnored(null)}
+      />
       {projection.loading ? <p className="py-6 text-sm text-cafe-muted">{t.loading}</p> : null}
       {projection.error ? (
         <p role="status" className="rounded-xl border border-semantic-critical p-4 text-sm text-cafe-secondary">
@@ -215,6 +230,11 @@ export function ProductSchedulePanel({
       ) : null}
       {!projection.loading && !projection.error ? (
         <>
+          {scope === 'active' && ownerConfirmed && !partial && ignoredCount !== null ? (
+            <p data-testid="schedule-personal-counts" className="mb-3 text-xs text-cafe-secondary">
+              {t.personalCounts(works.length, visible.length, ignoredCount)}
+            </p>
+          ) : null}
           {partial ? (
             <p role="status" className="mb-3 text-sm text-cafe-muted">
               {t.partial}
@@ -229,21 +249,23 @@ export function ProductSchedulePanel({
               {overdue.length > 0 ? `；${t.overdueSubset(overdue.length)}` : ''}
             </p>
           ) : null}
-          {scope === 'active' && overdue.length > 0 ? (
+          {scope === 'active' && !showIgnored && overdue.some((work) => !ownerConfirmed || !ignored(work)) ? (
             <details
               data-testid="schedule-overdue"
               className="mb-4 rounded-lg border border-cafe-subtle px-3 py-2 text-sm text-semantic-critical"
             >
               <summary className="cursor-pointer">{t.overdue(overdue.length)}</summary>
               <div className="mt-3 grid gap-3">
-                {overdue.filter((work) => !visible.includes(work)).map((work) => renderWork(work))}
+                {overdue
+                  .filter((work) => !visible.includes(work) && (!ownerConfirmed || !ignored(work)))
+                  .map((work) => renderWork(work))}
               </div>
             </details>
           ) : null}
           <div className={wide || scope === 'completed' ? styles.wideLayout : styles.layout}>
-            {!wide && scope === 'active' ? (
+            {!wide && !showIgnored && scope === 'active' ? (
               <WorkCalendarView
-                works={works}
+                works={ownerConfirmed ? works.filter((work) => !ignored(work)) : works}
                 month={month}
                 today={currentTime}
                 selectedDay={selectedDay}
@@ -257,13 +279,15 @@ export function ProductSchedulePanel({
             <div className={styles.worklist} data-testid="schedule-worklist">
               <div className="mb-3 flex flex-wrap items-center justify-between gap-2 text-xs">
                 <h3 className="font-semibold text-cafe-secondary">
-                  {scope === 'completed'
-                    ? t.completed
-                    : wide
-                      ? t.active
-                      : selectedDay
-                        ? t.day(selectedDay)
-                        : t.unscheduled}{' '}
+                  {showIgnored
+                    ? t.ignored
+                    : scope === 'completed'
+                      ? t.completed
+                      : wide
+                        ? t.active
+                        : selectedDay
+                          ? t.day(selectedDay)
+                          : t.unscheduled}{' '}
                   · {visible.length}
                 </h3>
                 {scope === 'active' ? (
@@ -300,7 +324,7 @@ export function ProductSchedulePanel({
                 completed={scope === 'completed'}
                 renderWork={(work) => renderWork(work)}
               />
-              {scope === 'active' ? (
+              {scope === 'active' && !showIgnored ? (
                 <section ref={recentScrollRef} data-testid="schedule-recent-completed" className={styles.recent}>
                   <h3 className="mb-3 text-sm font-semibold text-cafe-secondary">{t.recent}</h3>
                   {completed.loading ? (

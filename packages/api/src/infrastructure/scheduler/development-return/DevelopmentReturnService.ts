@@ -33,7 +33,7 @@ export interface DevelopmentReturnDeps {
   emit: (ownerUserId: string, event: string, data: unknown) => void;
   delivery: PersistedQueueDeliveryPort;
   definitions: DynamicTaskStore;
-  runner: Pick<TaskRunnerV2, 'registerDynamic' | 'getRegisteredTasks' | 'triggerNow' | 'rescheduleOnce'>;
+  runner: Pick<TaskRunnerV2, 'registerDynamic' | 'getRegisteredTasks' | 'triggerNow' | 'rescheduleOnce' | 'unregister'>;
   tasks: Pick<ITaskStore, 'get' | 'hasDevelopmentSource'>;
   threads: Pick<IThreadStore, 'get'>;
   proposals: Pick<IProposalStore, 'get'>;
@@ -61,7 +61,12 @@ export class DevelopmentReturnService {
     proof: OwnerAuthProvenance,
   ): Promise<Registration> {
     const now = this.now();
-    const { registration, returnStorage } = await prepareDevelopmentReturn(this.deps, actor, input, now);
+    const { registration, returnStorage, predecessorSupersession } = await prepareDevelopmentReturn(
+      this.deps,
+      actor,
+      input,
+      now,
+    );
     const id = registration.registrationId;
     const old = this.read(id);
     if (old) {
@@ -86,7 +91,9 @@ export class DevelopmentReturnService {
       proof,
       registration,
       returnStorage,
+      predecessorSupersession,
     );
+    if (predecessorSupersession) this.deps.runner.unregister(predecessorSupersession.registrationId);
     this.ensureScheduled(id);
     return registration;
   }

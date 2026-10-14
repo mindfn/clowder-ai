@@ -42,6 +42,7 @@ import { ServiceStatusPanel } from './ServiceStatusPanel';
 import { SettingsPageHeader } from './SettingsPageHeader';
 import { SettingsPlaceholder } from './SettingsPlaceholder';
 import { SkillsContent } from './SkillsContent';
+import { useSettingsDetailText } from './settings-detail.shell-copy';
 import { SETTINGS_SECTIONS } from './settings-nav-config';
 
 interface SettingsContentProps {
@@ -52,6 +53,7 @@ interface SettingsContentProps {
 
 export function SettingsContent({ section, initialEditCatId, initialReferrerThread = null }: SettingsContentProps) {
   const accountsText = useShellCopy(accountsCopy);
+  const sectionText = useSettingsDetailText();
   const { cats, refresh, isLoading: catsLoading, hasFetched: catsKnown } = useCatData();
   const isV2 = useShellPresentation() === 'v2';
   const memberReturn = useMemberReturn();
@@ -357,8 +359,16 @@ export function SettingsContent({ section, initialEditCatId, initialReferrerThre
     <>
       {!(isV2 && section === 'members') && (
         <SettingsPageHeader
-          title={section === 'accounts' ? accountsText.title : meta.label}
-          subtitle={section === 'accounts' ? accountsText.subtitle : meta.description}
+          title={section === 'accounts' ? accountsText.title : (sectionText(section)?.title ?? meta.label)}
+          subtitle={
+            section === 'accounts'
+              ? isV2
+                ? undefined
+                : accountsText.subtitle
+              : isV2
+                ? (sectionText(section)?.description ?? meta.description)
+                : meta.description
+          }
         >
           {section === 'im' && <ConnectorPluginInstallButton onInstalled={() => setImRefreshKey((k) => k + 1)} />}
         </SettingsPageHeader>

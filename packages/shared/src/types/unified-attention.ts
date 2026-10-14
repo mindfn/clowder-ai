@@ -1,5 +1,6 @@
 import { z } from 'zod';
 import { APPROVAL_PRODUCER_IDS } from '../approval-producer-catalog.js';
+import type { IgnoredItemCoordinate } from '../ignored-item-preference.js';
 import { type ApprovalHubItem, type ApprovalNavigation, validateApprovalNavigation } from './approval-hub.js';
 import {
   approvalLifecycleProjectionSchema,
@@ -112,9 +113,12 @@ export type UnifiedAttentionSourceRead = {
     | 'all_registered_F246_producers'
     | 'current_linked_F310_five_producers'
     | 'pending_f306_structured_choices'
-    | 'explicit_user_mentions';
+    | 'explicit_user_mentions'
+    | 'owner_personal_ignored_items';
   exhaustiveness: 'complete' | 'partial' | 'unknown';
 };
+
+export type UnifiedAttentionPreferenceCoordinate = Extract<IgnoredItemCoordinate, { kind: 'mailbox' }>;
 
 /** Read-only coordinates for one canonical, still-pending provider-native question. */
 export const unifiedAttentionChoiceRequestSchema = z
@@ -152,11 +156,45 @@ export interface UnifiedAttentionItemV1 {
     catId: string;
     content: string;
     timestamp: number;
+    /** Why this request entered handled history. Absent only for legacy/manual records without typed provenance. */
+    handledReason?: 'viewed' | 'replied' | 'ignored';
+    handledAt?: number;
   };
   /** Present only for a canonical pending F306 question; ordinary rich interactive blocks never project here. */
   choiceRequest?: UnifiedAttentionChoiceRequest;
   approval?: UnifiedAttentionVisibleApproval;
   linkedNeedsMe: { ownerRead: UnifiedAttentionWork; receipt: UnifiedAttentionReceipt }[];
+  /** Server-issued exact-version coordinate for the owner-private presentation preference writer. */
+  preferenceCoordinate?: UnifiedAttentionPreferenceCoordinate;
+}
+
+/** Exact groups from the full selected response vector, before offset/limit is applied. */
+export interface UnifiedAttentionItemGroupCountsV1 {
+  /** Open approvals and canonical pending structured choices. */
+  decisions: number;
+  userMentions: number;
+  /** Repairs, non-question judgments and every other non-mention item. */
+  other: number;
+}
+
+export interface UnifiedAttentionPersonalGroupCountsV1 {
+  original: UnifiedAttentionItemGroupCountsV1;
+  visible: UnifiedAttentionItemGroupCountsV1;
+  ignored: UnifiedAttentionItemGroupCountsV1;
+}
+
+export interface UnifiedAttentionPersonalViewV1 {
+  mode: 'visible' | 'ignored';
+  preferenceRevision?: number;
+  /** Exact full-set counts. Omitted together when source coverage, consistency or preference read is uncertain. */
+  originalTotalCount?: number;
+  visibleTotalCount?: number;
+  ignoredTotalCount?: number;
+  originalAttentionCount?: number;
+  visibleAttentionCount?: number;
+  ignoredAttentionCount?: number;
+  /** Exact full-vector presentation groups. Omitted whenever the exact personal counts are omitted. */
+  groupCounts?: UnifiedAttentionPersonalGroupCountsV1;
 }
 
 export interface UnifiedAttentionReadV1 {
@@ -170,6 +208,7 @@ export interface UnifiedAttentionReadV1 {
     needsMe: UnifiedAttentionSourceRead;
     structuredChoices?: UnifiedAttentionSourceRead;
     userMentions?: UnifiedAttentionSourceRead;
+    personalPreferences?: UnifiedAttentionSourceRead;
   };
   readWindow: { startedAt: number; endedAt: number; consistency: 'independent_source_reads' };
   consistency: { state: 'verified' | 'uncertain'; reasons: string[] };
@@ -180,6 +219,8 @@ export interface UnifiedAttentionReadV1 {
   attentionCount?: number;
   mentionCounts?: { today: number; week: number; earlier: number; handled: number };
   mentionPeriod?: 'recent' | 'today' | 'week' | 'earlier' | 'handled';
+  /** Present only when the caller explicitly requests an owner-personal visible or ignored view. */
+  personalView?: UnifiedAttentionPersonalViewV1;
   /** hasMore describes only the known rows from this independent-source read. */
   page: {
     offset: number;

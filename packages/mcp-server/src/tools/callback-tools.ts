@@ -873,6 +873,7 @@ export const crossPostMessageInputSchema = {
         'Requires explicit clientMessageId and targetCats. mode=single allows exactly one target; ' +
         'mode=parallel requires at least two targets plus parallelIntent. A duplicate active action returns safe_wait. ' +
         'Use claimOrigin=existing_standing plus groundingEvidenceRef for a verified self-claim. ' +
+        'For a canonical Task-owner replacement of an initial terminal delegate in the same approved child, groundingEvidenceRef may name the exact direct-human message:<id>; server-derived identity/revision evidence is required and prose is not parsed as authority. ' +
         'New claims require terminalPredicate typed parameters; server catalog owns completion semantics and exact revision freshness. ' +
         'Use returnToPredecessor for rejected custody: single mode returns the generation to the persisted predecessor; parallel mode records only the rejecting holder terminal and does not enqueue a whole-lease return. ' +
         EXECUTABLE_ACTION_SUCCESSOR_CONTRACT_DESCRIPTION +
@@ -4077,6 +4078,7 @@ export const callbackTools = [
       'GOTCHA: For a direct named external action, pass action + explicit clientMessageId + targetCats. For operator-gated new responsibility, pass proposedAction with effectClass=assign_work instead; action and assign_work remain mutually exclusive. ' +
       'Output: direct action admission posts and queues one fenced carrier; assign_work publishes one pending approval card and posts nothing to the target until approval atomically acquires the fence. ' +
       'Existing standing reuses the same CAS via claimOrigin="existing_standing" + groundingEvidenceRef. returnToPredecessor sends a rejected single generation to the server-persisted predecessor; parallel mode records only the rejecting holder terminal. ' +
+      'For a canonical Task-owner replacement of an initial terminal delegate in the same approved child, groundingEvidenceRef must be the exact direct-human message:<id>; server validation binds user, child, revision, and timing, and never turns prose alone into a grant. ' +
       'Structured action metadata currently requires invocation-token auth; agent-key callers fail closed with the non-retryable action_agent_key_unsupported status and never send an unfenced fallback. ' +
       'F247: gpt-pro agent-key returns carry only the exact replyTo from the runtime delta; authorization stays in server custody. ' +
       'Fallback must use replace with the active leaseId/generation after server-recorded terminal evidence. Use mode=parallel + parallelIntent only for deliberate independent review, #ideate, or explicit operator fan-out. ' +

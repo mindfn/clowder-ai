@@ -10850,6 +10850,7 @@ describe('invokeSingleCat audit events (P1 fix)', () => {
     const compiledBodies = [];
     const launches = [];
     const compilerCalls = [];
+    const nativeScopes = [];
     const nativeBody = '# Identity\nF325-CANONICAL-NATIVE-L0\n';
     const service = new AgyNativeAgentService({
       catId: 'gemini38',
@@ -10877,8 +10878,9 @@ describe('invokeSingleCat audit events (P1 fix)', () => {
       reason: 'native L0 route fixture',
     });
     const actualInvoke = service.invoke.bind(service);
-    service.invoke = (prompt, options) =>
-      actualInvoke(prompt, {
+    service.invoke = (prompt, options) => {
+      nativeScopes.push(options.agyNativeScope);
+      return actualInvoke(prompt, {
         ...options,
         beforeProviderLaunch: async (request) => {
           compiledBodies.push(request.nativeInstructions[0].body);
@@ -10903,6 +10905,7 @@ describe('invokeSingleCat audit events (P1 fix)', () => {
           };
         },
       });
+    };
     const deps = {
       ...makeDeps(),
       threadStore: {
@@ -10946,6 +10949,21 @@ describe('invokeSingleCat audit events (P1 fix)', () => {
         assert.ok(!body.includes('F129-DYNAMIC-PACK-MUST-NOT-BECOME-NATIVE-L0'));
       }
       assert.deepEqual(launches[1].args.slice(-2), ['--conversation', 'f325-native-route-session']);
+      assert.deepEqual(
+        nativeScopes.map((scope) => scope.mcpTools),
+        [[], []],
+        'host read_only cannot grant lifecycle writes',
+      );
+      const { toolExecutionPolicy: _readOnly, ...ordinaryParams } = params;
+      const ordinary = await collect(invokeSingleCat(deps, ordinaryParams));
+      assert.equal(ordinary.find((message) => message.type === 'error')?.error, undefined);
+      assert.deepEqual(nativeScopes[2].mcpTools, [
+        'cat-cafe-collab/cat_cafe_get_thread_context',
+        'cat-cafe-collab/cat_cafe_complete_a2a_dispatch',
+        'cat-cafe-collab/cat_cafe_complete_managed_hold',
+        'cat-cafe-collab/cat_cafe_complete_event_wait',
+        'cat-cafe-collab/cat_cafe_capture_paw_feel',
+      ]);
     } finally {
       await rm(base, { recursive: true, force: true });
     }
@@ -11154,6 +11172,10 @@ describe('invokeSingleCat audit events (P1 fix)', () => {
         taskId: grant.taskId,
         mcpTools: [
           'cat-cafe-collab/cat_cafe_get_thread_context',
+          'cat-cafe-collab/cat_cafe_complete_a2a_dispatch',
+          'cat-cafe-collab/cat_cafe_complete_managed_hold',
+          'cat-cafe-collab/cat_cafe_complete_event_wait',
+          'cat-cafe-collab/cat_cafe_capture_paw_feel',
           'cat-cafe-collab/cat_cafe_post_message',
           'cat-cafe-collab/cat_cafe_run_task_test',
         ],
@@ -11212,7 +11234,13 @@ describe('invokeSingleCat audit events (P1 fix)', () => {
       assert.equal(afterClosure.at(-1).errorCode, undefined);
       assert.deepEqual(seenScope, {
         writableFiles: [],
-        mcpTools: ['cat-cafe-collab/cat_cafe_get_thread_context'],
+        mcpTools: [
+          'cat-cafe-collab/cat_cafe_get_thread_context',
+          'cat-cafe-collab/cat_cafe_complete_a2a_dispatch',
+          'cat-cafe-collab/cat_cafe_complete_managed_hold',
+          'cat-cafe-collab/cat_cafe_complete_event_wait',
+          'cat-cafe-collab/cat_cafe_capture_paw_feel',
+        ],
       });
     } finally {
       catRegistry.reset();

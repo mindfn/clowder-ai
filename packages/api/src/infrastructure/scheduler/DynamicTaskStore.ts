@@ -42,7 +42,20 @@ export interface DynamicTaskDef {
   createdAt: string;
 }
 
-export type DevelopmentReturnStorage = 'direct' | 'reviewed' | 'successor';
+export type DevelopmentReturnStorage = 'direct' | 'reviewed' | 'successor' | 'parent_bound';
+
+function developmentReturnColumns(
+  registration: DevelopmentReturnRegistrationV1 | null,
+  storage: DevelopmentReturnStorage,
+) {
+  const value = registration ? JSON.stringify(registration) : null;
+  return {
+    direct: storage === 'direct' ? value : null,
+    reviewed: storage === 'reviewed' ? value : null,
+    successor: storage === 'successor' ? value : null,
+    parentBound: storage === 'parent_bound' ? value : null,
+  };
+}
 
 /** CRUD store for dynamic task definitions (Phase 3A AC-G3) */
 export class DynamicTaskStore {
@@ -57,6 +70,7 @@ export class DynamicTaskStore {
     privateOwnerAuthProvenance?: OwnerAuthProvenance,
     privateReturn?: DevelopmentReturnRegistrationV1,
     returnStorage: DevelopmentReturnStorage = 'direct',
+    predecessorSupersession?: DevelopmentReturnRegistrationV1,
   ): void {
     const registration = privateReturn ? developmentReturnRegistrationV1Schema.parse(privateReturn) : null;
     if (returnStorage !== 'direct' && !registration) {
@@ -71,16 +85,22 @@ export class DynamicTaskStore {
     ) {
       throw new Error('Execution return does not match its canonical schedule definition');
     }
+    if (
+      predecessorSupersession &&
+      (!registration || registration.predecessorRegistrationId !== predecessorSupersession.registrationId)
+    ) {
+      throw new Error('Active return supersession must name the new registration predecessor');
+    }
     const ownerAuthProvenance =
       privateOwnerAuthProvenance === undefined ? null : requireOwnerAuthProvenance(privateOwnerAuthProvenance);
+    const returnColumns = developmentReturnColumns(registration, returnStorage);
     this.db
       .transaction(() => {
-        if (registration)
-          assertDevelopmentReturnChain(registration, this.findPrivateExecutionReturns(registration.ownerThreadId));
+        this.preparePrivateReturnInsert(registration, predecessorSupersession);
         this.db
           .prepare(
-            `INSERT INTO dynamic_task_defs (id, template_id, trigger_json, params_json, entrusted_work_reevaluation_json, display_json, delivery_thread_id, enabled, created_by, created_at, owner_auth_provenance, development_return_json, reviewed_development_return_json, successor_development_return_json)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+            `INSERT INTO dynamic_task_defs (id, template_id, trigger_json, params_json, entrusted_work_reevaluation_json, display_json, delivery_thread_id, enabled, created_by, created_at, owner_auth_provenance, development_return_json, reviewed_development_return_json, successor_development_return_json, parent_bound_development_return_json)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
           )
           .run(
             def.id,
@@ -94,12 +114,53 @@ export class DynamicTaskStore {
             def.createdBy,
             def.createdAt,
             ownerAuthProvenance,
-            registration && returnStorage === 'direct' ? JSON.stringify(registration) : null,
-            returnStorage === 'reviewed' ? JSON.stringify(registration) : null,
-            returnStorage === 'successor' ? JSON.stringify(registration) : null,
+            returnColumns.direct,
+            returnColumns.reviewed,
+            returnColumns.successor,
+            returnColumns.parentBound,
           );
       })
       .immediate();
+  }
+
+  private preparePrivateReturnInsert(
+    registration: DevelopmentReturnRegistrationV1 | null,
+    predecessorSupersession: DevelopmentReturnRegistrationV1 | undefined,
+  ): void {
+    if (!registration) return;
+    if (predecessorSupersession) {
+      const currentPredecessor = this.getPrivateExecutionReturn(predecessorSupersession.registrationId);
+      if (JSON.stringify(currentPredecessor) !== JSON.stringify(predecessorSupersession)) {
+        throw new Error('Active return predecessor changed before supersession');
+      }
+    }
+    assertDevelopmentReturnChain(
+      registration,
+      this.findPrivateExecutionReturns(registration.ownerThreadId),
+      predecessorSupersession?.registrationId,
+    );
+    if (
+      predecessorSupersession &&
+      !this.replacePrivateExecutionReturn(predecessorSupersession.registrationId, predecessorSupersession, {
+        ...predecessorSupersession,
+        status: 'retired',
+        ...this.supersededRetirementReason(predecessorSupersession.registrationId),
+      })
+    ) {
+      throw new Error('Active return predecessor changed before supersession');
+    }
+  }
+
+  /**
+   * V46 can still decode the original direct column but predates the
+   * `superseded` reason. Its successor edge is the audit proof, so keep that
+   * legacy tombstone reasonless; fenced columns retain the explicit reason.
+   */
+  private supersededRetirementReason(id: string): { reason?: 'superseded' } {
+    const row = this.db
+      .prepare('SELECT development_return_json IS NOT NULL AS direct FROM dynamic_task_defs WHERE id = ?')
+      .get(id) as { direct: number } | undefined;
+    return row?.direct === 1 ? {} : { reason: 'superseded' };
   }
 
   /**
@@ -146,7 +207,7 @@ export class DynamicTaskStore {
     const rows = this.db
       .prepare(`SELECT * FROM dynamic_task_defs
         WHERE enabled = 1 OR reviewed_development_return_json IS NOT NULL
-          OR successor_development_return_json IS NOT NULL
+          OR successor_development_return_json IS NOT NULL OR parent_bound_development_return_json IS NOT NULL
         ORDER BY created_at DESC`)
       .all() as RawRow[];
     return rows.map(todef).filter((def) => def.enabled);
@@ -271,7 +332,8 @@ export class DynamicTaskStore {
 
   getPrivateExecutionReturn(id: string): DevelopmentReturnRegistrationV1 | null {
     const row = this.db
-      .prepare(`SELECT COALESCE(successor_development_return_json, reviewed_development_return_json, development_return_json)
+      .prepare(`SELECT COALESCE(parent_bound_development_return_json, successor_development_return_json,
+        reviewed_development_return_json, development_return_json)
       AS development_return_json FROM dynamic_task_defs WHERE id = ?`)
       .get(id) as { development_return_json: string | null } | undefined;
     return row?.development_return_json
@@ -304,15 +366,21 @@ export class DynamicTaskStore {
         .prepare(`UPDATE dynamic_task_defs SET
           development_return_json = CASE
             WHEN reviewed_development_return_json IS NULL AND successor_development_return_json IS NULL
+              AND parent_bound_development_return_json IS NULL
             THEN ? ELSE NULL END,
           reviewed_development_return_json = CASE WHEN reviewed_development_return_json IS NOT NULL THEN ? ELSE NULL END,
           successor_development_return_json = CASE
             WHEN successor_development_return_json IS NOT NULL THEN ? ELSE NULL END,
+          parent_bound_development_return_json = CASE
+            WHEN parent_bound_development_return_json IS NOT NULL THEN ? ELSE NULL END,
           enabled = CASE
             WHEN reviewed_development_return_json IS NOT NULL OR successor_development_return_json IS NOT NULL
+              OR parent_bound_development_return_json IS NOT NULL
             THEN 0 ELSE ? END
-      WHERE id = ? AND COALESCE(successor_development_return_json, reviewed_development_return_json, development_return_json) = ?`)
+      WHERE id = ? AND COALESCE(parent_bound_development_return_json, successor_development_return_json,
+        reviewed_development_return_json, development_return_json) = ?`)
         .run(
+          JSON.stringify(parsed),
           JSON.stringify(parsed),
           JSON.stringify(parsed),
           JSON.stringify(parsed),
@@ -326,8 +394,10 @@ export class DynamicTaskStore {
   findPrivateExecutionReturns(executionThreadId: string): DevelopmentReturnRegistrationV1[] {
     const rows = this.db
       .prepare(`SELECT id FROM dynamic_task_defs WHERE template_id = ?
-      AND (json_extract(COALESCE(successor_development_return_json, reviewed_development_return_json, development_return_json), '$.executionThreadId') = ?
-        OR json_extract(COALESCE(successor_development_return_json, reviewed_development_return_json, development_return_json), '$.ownerThreadId') = ?)`)
+      AND (json_extract(COALESCE(parent_bound_development_return_json, successor_development_return_json,
+          reviewed_development_return_json, development_return_json), '$.executionThreadId') = ?
+        OR json_extract(COALESCE(parent_bound_development_return_json, successor_development_return_json,
+          reviewed_development_return_json, development_return_json), '$.ownerThreadId') = ?)`)
       .all(DEVELOPMENT_RETURN_TEMPLATE_ID, executionThreadId, executionThreadId) as { id: string }[];
     return rows.flatMap(({ id }) => {
       const value = this.getPrivateExecutionReturn(id);
@@ -349,11 +419,15 @@ interface RawRow {
   created_at: string;
   reviewed_development_return_json: string | null;
   successor_development_return_json: string | null;
+  parent_bound_development_return_json: string | null;
 }
 
 function todef(row: RawRow): DynamicTaskDef {
   const params = JSON.parse(row.params_json) as Record<string, unknown>;
-  const fencedReturn = row.successor_development_return_json ?? row.reviewed_development_return_json;
+  const fencedReturn =
+    row.parent_bound_development_return_json ??
+    row.successor_development_return_json ??
+    row.reviewed_development_return_json;
   return {
     id: row.id,
     templateId: row.template_id,

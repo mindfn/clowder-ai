@@ -2,6 +2,7 @@ import { USER_MENTION_INDEX_LUA } from './user-mention-index-lua.js';
 
 const HANDLING_KEYS_LUA = `
 checkMentionKeys({KEYS[1], KEYS[2], KEYS[3]})
+checkMentionHistoryKeys(KEYS)
 for _, key in ipairs({KEYS[5], KEYS[6]}) do
   local kind=redis.call('TYPE',key).ok
   if kind ~= 'none' and kind ~= 'hash' then error('USER_MENTION_INDEX_INVALID') end
@@ -12,8 +13,12 @@ end
 const UNDO_ELIGIBILITY_LUA = `
 local function canUndoMention(row, keys, prefix, expectedOwner)
   local kind, id, thread, owner = mentionEvent(prefix .. 'msg:' .. row.messageId)
+  local replyClosedAfter = row.replyClosedAfter or row.closedAfter or ''
+  local handledThroughAfter = row.handledThroughAfter or ''
   return kind == 'request' and id == row.messageId and owner == expectedOwner and thread == row.threadId and
-    redis.call('HGET',keys[3],thread) == row.closedAfter and redis.call('HGET',keys[1],thread) == id and
+    (redis.call('HGET',keys[3],thread) or '') == replyClosedAfter and
+    (redis.call('HGET',mentionAux(keys,'handled-through'),thread) or '') == handledThroughAfter and
+    redis.call('HGET',keys[1],thread) == id and
     not redis.call('ZSCORE',keys[2],thread) and mentionRevision(keys,thread) == row.revision
 end
 `;
@@ -50,19 +55,29 @@ for _, row in ipairs(rows) do
   local kind, id, thread, owner = mentionEvent(ARGV[2] .. 'msg:' .. row.messageId)
   if kind ~= 'request' or owner ~= ARGV[3] or thread ~= row.threadId or
     redis.call('HGET', KEYS[1], thread) ~= id or not redis.call('ZSCORE', KEYS[2], thread) then return false end
-  local previous=redis.call('HGET',KEYS[3],thread) or ''
-  table.insert(saved, {threadId=thread, messageId=id, previous=previous, previousRestored=restored,
-    closedAfter=previous > id and previous or id, revision=revision+1, candidates=redis.call('ZRANGE',signals,0,-1)})
+  local previousReplyClosed=redis.call('HGET',KEYS[3],thread) or ''
+  local previousHandledThrough=redis.call('HGET',mentionAux(KEYS,'handled-through'),thread) or ''
+  local candidates=redis.call('ZRANGE',signals,0,-1)
+  local replyClosedAfter=previousReplyClosed > id and previousReplyClosed or id
+  for _, candidate in ipairs(candidates) do
+    if candidate > replyClosedAfter then replyClosedAfter=candidate end
+  end
+  table.insert(saved, {threadId=thread, messageId=id, previous=previousReplyClosed,
+    previousReplyClosed=previousReplyClosed, previousHandledThrough=previousHandledThrough,
+    previousRestored=restored, closedAfter=replyClosedAfter, replyClosedAfter=replyClosedAfter,
+    handledThroughAfter=previousHandledThrough, revision=revision+1, candidates=candidates})
 end
 if #saved == 0 or redis.call('EXISTS', KEYS[4]) == 1 then return false end
 local oldReceipt=redis.call('HGET',KEYS[6],ARGV[3])
 for _, row in ipairs(saved) do
-  redis.call('HSET', KEYS[5], row.messageId, row.threadId)
-  redis.call('HSET', KEYS[3], row.threadId, row.closedAfter)
+  recordMentionHandling(KEYS,row.messageId,row.threadId,'ignored',ARGV[5])
+  redis.call('HSET',KEYS[3],row.threadId,row.replyClosedAfter)
   redis.call('HDEL',mentionAux(KEYS,'restored'),row.threadId)
   bumpMentionRevision(KEYS,row.threadId)
-  redis.call('ZREM', KEYS[2], row.threadId)
-  redis.call('ZREMRANGEBYLEX', ARGV[2] .. 'msg:user-request-signals:' .. ARGV[3] .. ':' .. row.threadId, '-', '[' .. row.closedAfter)
+  local signals=ARGV[2] .. 'msg:user-request-signals:' .. ARGV[3] .. ':' .. row.threadId
+  redis.call('DEL',signals)
+  redis.call('ZREM',KEYS[2],row.threadId)
+  redis.call('HSET',KEYS[1],row.threadId,row.messageId)
 end
 if oldReceipt then redis.call('DEL',ARGV[2] .. 'msg:user-requests:undo:' .. ARGV[3] .. ':' .. oldReceipt) end
 redis.call('SET', KEYS[4], cjson.encode(saved))
@@ -82,14 +97,23 @@ end
 for _, row in ipairs(rows) do
   if canUndoMention(row,KEYS,ARGV[1],ARGV[2]) then
     local id,thread=row.messageId,row.threadId
-    if row.previous == '' then redis.call('HDEL', KEYS[3], thread)
-    else redis.call('HSET', KEYS[3], thread, row.previous) end
+    local previousReplyClosed=row.previousReplyClosed or row.previous or ''
+    if previousReplyClosed == '' then redis.call('HDEL', KEYS[3], thread)
+    else redis.call('HSET', KEYS[3], thread, previousReplyClosed) end
+    local previousHandledThrough=row.previousHandledThrough or ''
+    if previousHandledThrough == '' then redis.call('HDEL',mentionAux(KEYS,'handled-through'),thread)
+    else redis.call('HSET',mentionAux(KEYS,'handled-through'),thread,previousHandledThrough) end
     if row.previousRestored == '' then redis.call('HDEL',mentionAux(KEYS,'restored'),thread)
     else redis.call('HSET',mentionAux(KEYS,'restored'),thread,row.previousRestored) end
     bumpMentionRevision(KEYS,thread)
     redis.call('ZADD', KEYS[2], 0, thread)
-    for _, candidate in ipairs(row.candidates) do redis.call('ZADD', ARGV[1] .. 'msg:user-request-signals:' .. ARGV[2] .. ':' .. thread, 0, candidate) end
+    local signals=ARGV[1] .. 'msg:user-request-signals:' .. ARGV[2] .. ':' .. thread
+    for _, candidate in ipairs(row.candidates) do
+      local position=mentionPosition(ARGV[1],thread,candidate)
+      if position then addMentionSignal(signals,candidate) end
+    end
     redis.call('HDEL',KEYS[5],id)
+    redis.call('HDEL',mentionAux(KEYS,'handled-meta'),id)
     restored = restored + 1
   end
 end
@@ -115,16 +139,20 @@ return 1
 
 export const RESTORE_USER_MENTION_LUA = `${USER_MENTION_INDEX_LUA}
 checkMentionKeys({KEYS[1],KEYS[2],KEYS[3],KEYS[4]})
+checkMentionHistoryKeys(KEYS)
 local historyType=redis.call('TYPE',KEYS[5]).ok
 if historyType ~= 'none' and historyType ~= 'hash' then error('USER_MENTION_INDEX_INVALID') end
 local kind,id,thread,owner=mentionEvent(ARGV[1] .. 'msg:' .. ARGV[4])
 if kind ~= 'request' or owner ~= ARGV[2] or thread ~= ARGV[3] or redis.call('HGET',KEYS[5],id) ~= thread or
   redis.call('ZSCORE',KEYS[2],thread) or mentionRevision(KEYS,thread) ~= tonumber(ARGV[5]) then return 0 end
+local position=mentionPosition(ARGV[1],thread,id)
+if not position then return 0 end
 redis.call('HSET',mentionAux(KEYS,'restored'),thread,id)
 redis.call('HSET',KEYS[1],thread,id)
 redis.call('ZADD',KEYS[2],0,thread)
-redis.call('ZADD',KEYS[4],0,id)
+addMentionSignal(KEYS[4],id)
 redis.call('HDEL',KEYS[5],id)
+redis.call('HDEL',mentionAux(KEYS,'handled-meta'),id)
 bumpMentionRevision(KEYS,thread)
 return 1
 `;

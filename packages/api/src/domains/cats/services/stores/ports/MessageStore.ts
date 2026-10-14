@@ -38,11 +38,11 @@ import {
 } from '@cat-cafe/shared';
 import { normalizeJsonUnicode } from '../../../../../utils/json-unicode.js';
 import type { MessageMetadata } from '../../types.js';
-import { cursorFor, parseCursor } from '../cursor.js';
+import { compareCursors, cursorFor, parseCursor } from '../cursor.js';
 import type { MessageDeliveryBoundary } from '../message-delivery-boundary.js';
 import { notifyMessageTimelineChange } from '../notify-message-timeline-change.js';
 import { type QueueSourceMutationWatch, QueueSourceMutationWatchRegistry } from '../queue-source-mutation-watch.js';
-import { UserMentionIndex } from '../user-mention-index.js';
+import { type UserMentionHandlingMetadata, UserMentionIndex } from '../user-mention-index.js';
 import {
   getTimelineOrderTime,
   isDurableOwnerReadEvidence,
@@ -1117,6 +1117,9 @@ export interface IMessageStore {
   ): boolean | Promise<boolean>;
   initializeUserMentionInbox(startedAt: number): number | Promise<number>;
   listHandledUserMentions(userId: string): StoredMessage[] | Promise<StoredMessage[]>;
+  getUserMentionHandlingMetadata(
+    userId: string,
+  ): Record<string, UserMentionHandlingMetadata> | Promise<Record<string, UserMentionHandlingMetadata>>;
   handleUserMentionRequests(
     userId: string,
     refs: UserMentionHandlingRef[],
@@ -1132,6 +1135,13 @@ export interface IMessageStore {
     threadId: string,
     expectedMessageId: string,
     expectedRevision?: number,
+  ): boolean | Promise<boolean>;
+  /** Close only the current request proven at/before this durable visibility read boundary. */
+  resolveUserMentionRequestFromRead(
+    userId: string,
+    threadId: string,
+    upToMessageId: string,
+    handledAt: number,
   ): boolean | Promise<boolean>;
   /** F102 KD-34: Listener called after every successful append (fire-and-forget) */
   onAppend?: MessageAppendListener;
@@ -1200,13 +1210,18 @@ export interface IMessageStore {
     ownerUserId: string,
     sinceInclusive: number,
     untilInclusive: number,
+    options?: { humanOnly?: true },
   ): StoredMessage[] | Promise<StoredMessage[]>;
-  /** Bounded evidence read. hasMore is conservative over source index entries, never silently truncated. */
+  /**
+   * Bounded evidence read. hasMore is conservative over source index entries, never silently truncated.
+   * humanOnly excludes cat rows after the same candidate cap; their fatal custody parse errors remain errors.
+   */
   listOwnerMessageWindowSlice?(
     ownerUserId: string,
     sinceInclusive: number,
     untilInclusive: number,
     limit: number,
+    options?: { humanOnly?: true },
   ): { messages: StoredMessage[]; hasMore: boolean } | Promise<{ messages: StoredMessage[]; hasMore: boolean }>;
   /**
    * Enumerate content-free durable Queue custody for one owner. Replay filters
@@ -1519,6 +1534,10 @@ export class MessageStore {
     return this.userMentionIndex.handled(userId, (id) => this.getById(id));
   }
 
+  getUserMentionHandlingMetadata(userId: string): Record<string, UserMentionHandlingMetadata> {
+    return this.userMentionIndex.handlingMetadata(userId);
+  }
+
   handleUserMentionRequests(userId: string, refs: UserMentionHandlingRef[]) {
     this.listUserMentionRequests(userId);
     return this.userMentionIndex.handle(userId, refs);
@@ -1540,6 +1559,39 @@ export class MessageStore {
   ): boolean {
     this.listUserMentionRequests(userId);
     return this.userMentionIndex.resolve(userId, threadId, expectedMessageId, expectedRevision);
+  }
+
+  resolveUserMentionRequestFromRead(
+    userId: string,
+    threadId: string,
+    upToMessageId: string,
+    handledAt: number,
+  ): boolean {
+    if (!Number.isSafeInteger(handledAt) || handledAt < 0) return false;
+    const target = this.getById(upToMessageId);
+    if (
+      !target ||
+      target.threadId !== threadId ||
+      !isDurableOwnerReadEvidence(target) ||
+      !passesManagedHoldViewerBoundary(target, userId)
+    )
+      return false;
+    const current = this.listUserMentionRequests(userId).find((message) => message.threadId === threadId);
+    if (!current) return false;
+    const sourceCursor = this.canonicalizeCursor(current.id, threadId);
+    const targetCursor = this.canonicalizeCursor(target.id, threadId);
+    const parsedSource = parseCursor(sourceCursor);
+    const parsedTarget = parseCursor(targetCursor);
+    if (parsedSource?.version !== 2 || parsedTarget?.version !== 2 || compareCursors(sourceCursor, targetCursor) > 0) {
+      return false;
+    }
+    return this.userMentionIndex.resolveRead(
+      userId,
+      threadId,
+      current.id,
+      { id: parsedTarget.id, position: parsedTarget.seq },
+      handledAt,
+    );
   }
 
   onTimelineChanged?: MessageAppendListener;
@@ -1648,7 +1700,6 @@ export class MessageStore {
       threadId,
     };
     this.messages.push(stored);
-    this.userMentionIndex.observe(stored);
     if (idempotencyIndexKey) {
       this.idempotencyIndex.set(idempotencyIndexKey, stored.id);
     }
@@ -1666,6 +1717,7 @@ export class MessageStore {
       // get the canonical position without a re-read.
       stored.visibilitySeq = this.visibilitySeqCounter;
     }
+    this.userMentionIndex.observe(stored);
 
     // Trim oldest if over capacity
     if (this.messages.length > this.maxMessages) {
@@ -1913,7 +1965,12 @@ export class MessageStore {
     return matches.reverse();
   }
 
-  listOwnerMessagesInWindow(ownerUserId: string, sinceInclusive: number, untilInclusive: number): StoredMessage[] {
+  listOwnerMessagesInWindow(
+    ownerUserId: string,
+    sinceInclusive: number,
+    untilInclusive: number,
+    options?: { humanOnly?: true },
+  ): StoredMessage[] {
     assertValidStoredMessageTimestamp(sinceInclusive);
     assertValidStoredMessageTimestamp(untilInclusive);
     if (sinceInclusive > untilInclusive) return [];
@@ -1921,6 +1978,7 @@ export class MessageStore {
     return this.messages
       .filter((message) => {
         if (message.userId !== ownerUserId || message.deletedAt || !isDelivered(message)) return false;
+        if (options?.humanOnly && message.catId !== null) return false;
         const timelineTime = getTimelineOrderTime(message);
         return timelineTime >= sinceInclusive && timelineTime <= untilInclusive;
       })
@@ -1930,10 +1988,20 @@ export class MessageStore {
       });
   }
 
-  listOwnerMessageWindowSlice(ownerUserId: string, sinceInclusive: number, untilInclusive: number, limit: number) {
+  listOwnerMessageWindowSlice(
+    ownerUserId: string,
+    sinceInclusive: number,
+    untilInclusive: number,
+    limit: number,
+    options?: { humanOnly?: true },
+  ) {
     if (!Number.isInteger(limit) || limit < 1 || limit > 5_000) throw new Error('Invalid message window limit');
     const messages = this.listOwnerMessagesInWindow(ownerUserId, sinceInclusive, untilInclusive);
-    return { messages: messages.slice(0, limit), hasMore: messages.length > limit };
+    const candidates = messages.slice(0, limit);
+    return {
+      messages: options?.humanOnly ? candidates.filter((message) => message.catId === null) : candidates,
+      hasMore: messages.length > limit,
+    };
   }
 
   listOwnerQueueCustodyLifecycles(ownerUserId: string): QueueCustodyLifecycleRecord[] {
@@ -2578,7 +2646,6 @@ export class MessageStore {
       msg.timelineOrderAt = resolveDeliveryTimelineScore(msg, deliveredAt);
       msg.deliveredAt = deliveredAt;
       msg.deliveryStatus = 'delivered';
-      this.userMentionIndex.observe(msg);
       // #1269: Preserve existing visibility position for already-published speech.
       // Timeline-published queued cat speech gets visibilitySeq at append — delivery
       // must NOT reallocate or it would move the message after later arrivals and
@@ -2588,6 +2655,8 @@ export class MessageStore {
         this.visibilitySeqCounter = Math.max(this.visibilitySeqCounter + 1, Date.now());
         this.visibilitySeq.set(id, this.visibilitySeqCounter);
       }
+      msg.visibilitySeq = this.visibilitySeq.get(id);
+      this.userMentionIndex.observe(msg);
       notifyMessageTimelineChange(this, msg);
       return { ...msg, deliveryTransitioned: true };
     });
@@ -2683,7 +2752,6 @@ export class MessageStore {
       if (input.deliveredAt !== undefined) {
         msg.timelineOrderAt = resolveDeliveryTimelineScore(msg, input.deliveredAt);
         msg.deliveryStatus = 'delivered';
-        this.userMentionIndex.observe(msg);
         msg.deliveredAt = input.deliveredAt;
         // #1269 P1-2: allocate visibilitySeq when hidden queued work becomes visible.
         // Same guard as markDelivered: preserve existing position, allocate only when missing.
@@ -2691,6 +2759,8 @@ export class MessageStore {
           this.visibilitySeqCounter = Math.max(this.visibilitySeqCounter + 1, Date.now());
           this.visibilitySeq.set(id, this.visibilitySeqCounter);
         }
+        msg.visibilitySeq = this.visibilitySeq.get(id);
+        this.userMentionIndex.observe(msg);
       }
       if (input.deliveredAt !== undefined) notifyMessageTimelineChange(this, msg);
       return { kind: 'updated', message: { ...msg }, deliveryTransitioned: input.deliveredAt !== undefined };

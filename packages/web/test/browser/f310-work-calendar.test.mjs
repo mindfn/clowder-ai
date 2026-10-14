@@ -8,7 +8,11 @@ import { chromium } from '../../../ppt-forge/node_modules/playwright/index.mjs';
 import { registerDefaultEntryJourney } from './default-entry-journey.harness.mjs';
 import { availablePort, stopChild, waitForHttp } from './f290-runtime-journey.harness.mjs';
 import { CALENDAR_THREAD, createCalendarFixture } from './f310-work-calendar.fixture.mjs';
+import { assertApprovalHistoryJourney } from './f322-j3-approval-history.mjs';
 import { assertQualifiedMailboxCounts } from './f322-j3-attention.fixture.mjs';
+import { assertPersonalMailboxJourney } from './f322-j3-personal-mailbox.mjs';
+import { assertPersonalMailboxRaces } from './f322-j3-personal-races.mjs';
+import { assertPersonalScheduleJourney } from './f322-j3-personal-schedule.mjs';
 import {
   assertDifferentArtifactReadFailure,
   assertMobileScheduleControls,
@@ -121,7 +125,7 @@ registerDefaultEntryJourney(
       assert.ok(originalReading.scrollHeight > originalReading.height);
       await writeFile(path.join(evidence, 'j3-chat-reading-origin.json'), JSON.stringify(originalReading, null, 2));
       await page.getByTestId('mailbox-button').click();
-      await assertQualifiedMailboxCounts(page);
+      await assertQualifiedMailboxCounts(page, language, fixture.mentionCount);
       await page.getByTestId('mailbox-tab-schedule').press('Enter');
       await journey.arrive(page);
       const panel = page.getByTestId('product-schedule-panel');
@@ -152,9 +156,13 @@ registerDefaultEntryJourney(
       const entryChatVisible = await reading.isVisible();
       const undated = panel.getByTestId('schedule-unscheduled');
       const undatedBlocked = undated.locator(`[data-subject-ref="task:work:${fixture.undatedBlockedId}"]`);
-      assert.equal(
-        await undated.getByTestId('product-schedule-item').count(),
-        22,
+      assert.deepEqual(
+        await undated
+          .getByTestId('product-schedule-item')
+          .evaluateAll((elements) => elements.map((element) => element.dataset.subjectRef).sort()),
+        [fixture.undatedId, fixture.undatedBlockedId, ...fixture.undatedSampleIds, fixture.progress.taskId]
+          .map((id) => `task:work:${id}`)
+          .sort(),
         'Every undated work from the complete original read remains reachable',
       );
       assert.equal(
@@ -249,8 +257,12 @@ registerDefaultEntryJourney(
       await page.screenshot({ path: path.join(evidence, 'j3-month-list-artifact-back.png') });
       await panel.getByRole('button', { name: label('周', 'Week'), exact: true }).click();
       await panel.getByRole('button', { name: label('回到本周', 'Back to this week') }).click();
-      const today = new Date(fixture.now);
-      const key = `${today.getFullYear()}-${String(today.getMonth() + 1).padStart(2, '0')}-${String(today.getDate()).padStart(2, '0')}`;
+      // The original actual-start fact may be yesterday just after local midnight.
+      // Select its real marker, retaining the calendar filter instead of forcing the work into today.
+      const started = new Date(fixture.actualStart);
+      const key = `${started.getFullYear()}-${String(started.getMonth() + 1).padStart(2, '0')}-${String(started.getDate()).padStart(2, '0')}`;
+      if ((await panel.locator(`[data-calendar-date="${key}"]`).count()) === 0)
+        await panel.getByRole('button', { name: label('上一周', 'Previous week'), exact: true }).click();
       await panel.locator(`[data-calendar-date="${key}"]`).press('Enter');
       const work = page.locator(`[data-subject-ref="task:work:${fixture.taskId}"]`);
       await work.getByRole('heading', { name: fixture.title }).waitFor();
@@ -325,6 +337,10 @@ registerDefaultEntryJourney(
       );
       assert.equal(await composer.inputValue(), 'J3 原 Chat 草稿和选择位置');
       assert.deepEqual(await composer.evaluate((input) => [input.selectionStart, input.selectionEnd]), [3, 8]);
+      await assertPersonalScheduleJourney(page, fixture, language, evidence);
+      await assertPersonalMailboxRaces(page, fixture, language, evidence);
+      await assertPersonalMailboxJourney(page, fixture, language, evidence);
+      await assertApprovalHistoryJourney(page, fixture, language, evidence);
       t.diagnostic(
         JSON.stringify({
           baseUrl: base,
@@ -342,6 +358,21 @@ registerDefaultEntryJourney(
       if (!page.isClosed()) {
         await writeReadingFailure(page, evidence);
       }
+      await writeFile(
+        path.join(evidence, 'j3-failure-state.json'),
+        JSON.stringify(
+          {
+            sourceHead: process.env.F322_J3_SOURCE_HEAD ?? null,
+            controlled: true,
+            language,
+            preferenceSnapshot: fixture.preferenceSnapshot(),
+            mutations: fixture.mutations,
+            targetDraft: fixture.getDraft(fixture.progress.threadId),
+          },
+          null,
+          2,
+        ),
+      );
       throw error;
     }
   },

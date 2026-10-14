@@ -6,7 +6,7 @@ import type { ToolResult } from './file-tools.js';
 export const developmentReturnInputSchema = {
   ...developmentReturnActionV1Schema.shape,
   predecessorRegistrationId: developmentReturnActionV1Schema.shape.predecessorRegistrationId.describe(
-    'Required when this owner/Task has return history: exact eligible terminal predecessor, with no existing successor. Only one active return is allowed. A fresh authorized source and approved child may differ; the owner/Task must remain the same. Never fork or revive a cancelled wait.',
+    'Required when this owner/Task has return history: exact eligible terminal predecessor, or the one untouched waiting predecessor whose reporter generation the current action-lease proves was superseded in the same approved child. The latter is retired atomically with successor registration; reported, delivering, cancelled, or mismatched predecessors cannot be superseded. Only one active return is allowed.',
   ),
   action: developmentReturnActionV1Schema.shape.action
     .exclude(['read'])
@@ -26,7 +26,7 @@ export const developmentReturnInputSchema = {
     'Approved final-only child thread associated with the exact original human source.',
   ),
   sourceActionRef: developmentReturnActionV1Schema.shape.sourceActionRef.describe(
-    'Proposal-source return (the first registration, or a newly approved execution after a terminal predecessor): exact message:<id> authorization shared by the Task and that proposal. Same-child lineage after the initial explicit delegate return, including later server-terminal replacements: exact action-lease:<leaseId>:<generation> from the admitted replacement receipt, plus predecessorRegistrationId.',
+    'Proposal-source return (the first registration, or a newly approved execution after a terminal predecessor): exact message:<id> authorization shared by the Task and that proposal. Current same-child delegate lineage, including an initial g1 terminal replacement or later return/replacement, uses exact action-lease:<leaseId>:<generation> from the admitted receipt plus predecessorRegistrationId.',
   ),
   expectedSignal: developmentReturnActionV1Schema.shape.expectedSignal.describe(
     'terminal_report, required for register.',
@@ -65,7 +65,7 @@ export const developmentReturnTools = [
       'Use when: an approved execution child is doing accepted scoped development and its original Task owner needs a terminal result or bounded fact review across invocations. ' +
       'Not for: creating work, business reminders, replacing a human decision, generic cross-thread messages, or reading another thread’s Task. ' +
       'Output: private owner registration, child-safe reporting coordinates, or actual report delivery state. ' +
-      'GOTCHA: register in the original owner thread before waiting; the child reads/report coordinates only. A returned-delegate lineage reuses the current approved child and exact action-lease generation across explicit returns or server-terminal replacements. Moving a returned generation to another child requires an exact cat/thread pair from its own current, independently approved proposal for the same Task and scope; earlier child segments remain audit history and do not veto the current child. It never edits an old proposal or revives an old reporter. Persist the final result first, then report its source message. Event and timeout share one wake, and the original owner must reread current work and act. A wake is not evidence that development continued.',
+      'GOTCHA: register in the original owner thread before waiting; the child reads/report coordinates only. A current delegate lineage reuses the approved child and exact action-lease generation across an initial terminal replacement, explicit returns, or later server-terminal replacements. When that lease proves the existing untouched waiting reporter was superseded, register atomically retires the old return and creates one successor; never cancel, rewrite, or revive the old registration manually. Moving a returned generation to another child requires an exact cat/thread pair from its own current, independently approved proposal for the same Task and scope. Persist the final result first, then report its source message. Event and timeout share one wake, and the original owner must reread current work and act. A wake is not evidence that development continued.',
     inputSchema: developmentReturnInputSchema,
     handler: handleDevelopmentReturn,
     sourceFile: 'development-return-tools.ts',

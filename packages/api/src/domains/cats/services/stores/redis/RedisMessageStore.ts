@@ -5,7 +5,11 @@ import {
 } from '../../../../ball-custody/TypedWaitCustodyGuard.js';
 import type { UserMentionHandlingRef } from '../ports/MessageStore.js';
 import { messageIdempotencyScope } from '../ports/MessageStore.js';
-import { userMentionEvent } from '../user-mention-index.js';
+import {
+  type UserMentionHandlingMetadata,
+  type UserMentionHandlingReason,
+  userMentionEvent,
+} from '../user-mention-index.js';
 import { withOwnerUncertaintyIndex } from './owner-uncertainty-lua.js';
 import { readOwnerUncertainty } from './owner-uncertainty-read.js';
 import { ASSERT_TYPED_WAIT_CUSTODY_LUA, readRedisTypedWaitCustodyGuards } from './RedisTypedWaitCustodyGuard.js';
@@ -16,7 +20,12 @@ import {
   RESTORE_USER_MENTION_LUA,
   UNDO_USER_MENTIONS_LUA,
 } from './user-mention-handling-lua.js';
-import { READ_USER_MENTIONS_LUA, RESOLVE_USER_MENTION_LUA, withUserMentionIndex } from './user-mention-index-lua.js';
+import {
+  READ_USER_MENTIONS_LUA,
+  RESOLVE_USER_MENTION_FROM_READ_LUA,
+  RESOLVE_USER_MENTION_LUA,
+  withUserMentionIndex,
+} from './user-mention-index-lua.js';
 /**
  * Redis Message Store
  * Redis-backed message storage with same interface as in-memory MessageStore.
@@ -110,6 +119,7 @@ import {
   resolveDeliveryTimelineScore,
   resolveThreadMessageVisibility,
 } from '../visibility.js';
+import { HUMAN_SOURCE_HASH_LUA, humanSourceHash } from './redis-human-source-hash.js';
 import { appendMessage } from './redis-message-append.js';
 import { CANCEL_LUA, DELIVER_LUA, REASSIGN_LUA } from './redis-message-delivery-lua-scripts.js';
 import {
@@ -817,6 +827,22 @@ function parseCustodyOfferCasReceipt(result: unknown): CustodyOfferCasReceipt {
   };
 }
 
+const USER_MENTION_HANDLING_REASONS = new Set<UserMentionHandlingReason>(['viewed', 'replied', 'ignored']);
+
+function parseUserMentionHandlingMetadata(raw: string): UserMentionHandlingMetadata {
+  const parsed = JSON.parse(raw) as { reason?: unknown; handledAt?: unknown };
+  if (
+    typeof parsed.reason !== 'string' ||
+    !USER_MENTION_HANDLING_REASONS.has(parsed.reason as UserMentionHandlingReason) ||
+    typeof parsed.handledAt !== 'number' ||
+    !Number.isSafeInteger(parsed.handledAt) ||
+    parsed.handledAt < 0
+  ) {
+    throw new Error('Invalid user mention handling metadata');
+  }
+  return { reason: parsed.reason as UserMentionHandlingReason, handledAt: parsed.handledAt };
+}
+
 export class RedisMessageStore {
   async getLastUserMentionHandling(userId: string) {
     const result = (await this.redis.eval(
@@ -911,6 +937,12 @@ export class RedisMessageStore {
       .sort((a, b) => b.id.localeCompare(a.id));
   }
 
+  async getUserMentionHandlingMetadata(userId: string): Promise<Record<string, UserMentionHandlingMetadata>> {
+    await this.migrateHandledMentions(userId);
+    const rows = await this.redis.hgetall(`msg:user-requests:handled-meta:${userId}`);
+    return Object.fromEntries(Object.entries(rows).map(([id, raw]) => [id, parseUserMentionHandlingMetadata(raw)]));
+  }
+
   async handleUserMentionRequests(userId: string, refs: UserMentionHandlingRef[]) {
     const undoId = randomUUID();
     const handled = await this.redis.eval(
@@ -926,6 +958,7 @@ export class RedisMessageStore {
       this.keyPrefix,
       userId,
       undoId,
+      String(Date.now()),
     );
     return handled === null ? null : { handled: Number(handled), undoId };
   }
@@ -989,6 +1022,46 @@ export class RedisMessageStore {
           expectedMessageId,
           expectedRevision === undefined ? '' : String(expectedRevision),
           userId,
+          String(Date.now()),
+        ),
+      ) === 1
+    );
+  }
+
+  async resolveUserMentionRequestFromRead(
+    userId: string,
+    threadId: string,
+    upToMessageId: string,
+    handledAt: number,
+  ): Promise<boolean> {
+    if (!Number.isSafeInteger(handledAt) || handledAt < 0) return false;
+    const target = await this.getById(upToMessageId);
+    if (
+      !target ||
+      target.threadId !== threadId ||
+      !isDurableOwnerReadEvidence(target) ||
+      !passesManagedHoldViewerBoundary(target, userId)
+    )
+      return false;
+    await this.ensureVisibilityMigrated(threadId);
+    return (
+      Number(
+        await this.redis.eval(
+          RESOLVE_USER_MENTION_FROM_READ_LUA,
+          8,
+          `msg:user-requests:latest:${userId}`,
+          `msg:user-requests:pending:${userId}`,
+          `msg:user-requests:closed:${userId}`,
+          `msg:user-request-signals:${userId}:${threadId}`,
+          `msg:user-requests:handled:${userId}`,
+          `msg:user-requests:handled-meta:${userId}`,
+          MessageKeys.detail(upToMessageId),
+          MessageKeys.threadVisibility(threadId),
+          threadId,
+          this.keyPrefix,
+          userId,
+          upToMessageId,
+          String(handledAt),
         ),
       ) === 1
     );
@@ -1613,6 +1686,7 @@ export class RedisMessageStore {
     ownerUserId: string,
     sinceInclusive: number,
     untilInclusive: number,
+    options?: { humanOnly?: true },
   ): Promise<StoredMessage[]> {
     assertValidStoredMessageTimestamp(sinceInclusive);
     assertValidStoredMessageTimestamp(untilInclusive);
@@ -1623,7 +1697,7 @@ export class RedisMessageStore {
       String(sinceInclusive),
       String(untilInclusive),
     );
-    const messages = await this.hydrateMessages(ids);
+    const messages = await this.hydrateMessages(ids, options);
     return messages.filter((message) => message.userId === ownerUserId && isDelivered(message));
   }
 
@@ -1632,6 +1706,7 @@ export class RedisMessageStore {
     sinceInclusive: number,
     untilInclusive: number,
     limit: number,
+    options?: { humanOnly?: true },
   ) {
     assertValidStoredMessageTimestamp(sinceInclusive);
     assertValidStoredMessageTimestamp(untilInclusive);
@@ -1645,7 +1720,7 @@ export class RedisMessageStore {
       0,
       limit + 1,
     );
-    const messages = await this.hydrateMessages(ids.slice(0, limit));
+    const messages = await this.hydrateMessages(ids.slice(0, limit), options);
     return {
       messages: messages.filter((message) => message.userId === ownerUserId && isDelivered(message)),
       hasMore: ids.length > limit,
@@ -3217,11 +3292,12 @@ export class RedisMessageStore {
   /** Hydrate message IDs into full StoredMessage objects */
   private async hydrateMessages(
     ids: string[],
-    options?: { includeDeleted?: boolean; strict?: boolean },
+    options?: { includeDeleted?: boolean; strict?: boolean; humanOnly?: true },
   ): Promise<StoredMessage[]> {
     const pipeline = this.redis.multi();
     for (const id of ids) {
-      pipeline.hgetall(MessageKeys.detail(id));
+      if (options?.humanOnly) pipeline.eval(HUMAN_SOURCE_HASH_LUA, 1, MessageKeys.detail(id));
+      else pipeline.hgetall(MessageKeys.detail(id));
     }
     let span: MessageReadSpan | undefined;
     try {
@@ -3251,13 +3327,21 @@ export class RedisMessageStore {
           if (options?.strict) throw new Error('Owner uncertainty hydration failed');
           continue;
         }
-        const d = data as Record<string, string>;
+        const d = options?.humanOnly ? humanSourceHash(data) : (data as Record<string, string>);
+        if (!d) continue;
         if (!d.id) continue;
 
         const deletedAt = d.deletedAt ? parseInt(d.deletedAt, 10) : undefined;
 
         // ADR-008 D3: skip soft-deleted messages unless includeDeleted
         if (deletedAt && !options?.includeDeleted) continue;
+
+        if (options?.humanOnly && d.catId) {
+          // Exclusion must not hide the fatal persisted-custody errors of the original reader.
+          safeParseQueueCustody(d.queueCustody);
+          safeParseQueueCustodyAdmission(d.queueCustodyAdmission);
+          continue;
+        }
 
         const contentBlocks = span
           ? measureMessageReadParser(span, 'contentBlocks', d.contentBlocks?.length ?? 0, () =>

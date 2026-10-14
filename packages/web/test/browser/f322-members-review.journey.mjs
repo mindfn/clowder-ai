@@ -2,6 +2,54 @@ import assert from 'node:assert/strict';
 import path from 'node:path';
 import { test } from 'node:test';
 import { scene, screenshots } from './f322-members-fixture.mjs';
+import './f322-members-save-continuation.cases.mjs';
+import './f322-members-native-save.cases.mjs';
+
+for (const language of ['zh', 'en'])
+  test(`member model, account name and Team entry keep separate bilingual meanings (${language})`, async () => {
+    const { context, page, state } = await scene(1440, false, false, false, {
+      accounts: [
+        {
+          id: 'codex',
+          clientId: 'openai',
+          displayName: 'Codex App 登录（本机默认）',
+          authType: 'oauth',
+          builtin: true,
+          kind: 'builtin',
+          models: [],
+        },
+      ],
+    });
+    try {
+      Object.assign(state.cats[2], { cli: { command: 'codex' }, accountRef: 'codex', defaultModel: 'gpt-test' });
+      await page.reload();
+      await page.evaluate((language) => window.f322MemberFixture.writeLanguage(language), language);
+      await page.getByRole('columnheader', { name: language === 'en' ? 'Model' : '模型', exact: true }).waitFor();
+      await page.locator('tr[data-cat-id="fixture-c"]').waitFor();
+      const heads = await page.locator('.member-table th').allTextContents();
+      const accountColumn = heads.indexOf(language === 'en' ? 'Account' : '账号');
+      assert.ok(accountColumn > 0, 'The account name has its own column');
+      const row = page.locator('tr[data-cat-id="fixture-c"]');
+      const modelColumn = heads.indexOf(language === 'en' ? 'Model' : '模型');
+      assert.equal(await row.locator('td').nth(modelColumn).innerText(), 'Codex · gpt-test');
+      assert.equal(
+        await row.locator('td').nth(accountColumn).innerText(),
+        language === 'en' ? 'Codex App login (local default)' : 'Codex App 登录（本机默认）',
+      );
+      assert.equal(
+        await page.getByTestId('settings-open-team').innerText(),
+        language === 'en' ? 'Open cat team' : '打开猫猫团队',
+      );
+      if (screenshots) {
+        await page.screenshot({ path: path.join(screenshots, `model-account-${language}-1440.png`) });
+        await page.setViewportSize({ width: 390, height: 621 });
+        await row.locator('td').nth(accountColumn).scrollIntoViewIfNeeded();
+        await page.screenshot({ path: path.join(screenshots, `model-account-${language}-390.png`) });
+      }
+    } finally {
+      await context.close();
+    }
+  });
 
 test('recovered health stays available beyond the closed deadline in table, detail and history', async () => {
   const { context, page, state } = await scene(1440, false, false, false, { clockTime: Date.UTC(2026, 9, 3) });
@@ -76,13 +124,13 @@ test('recovered health stays available beyond the closed deadline in table, deta
     };
     await page.reload();
     const status = page.locator('tr[data-cat-id="fixture-a"] .member-status');
-    await status.getByText('可用', { exact: true }).waitFor();
+    await status.getByText('已恢复', { exact: true }).waitFor();
     assert.equal(await status.getByText(/至 /).count(), 0);
     await page.clock.runFor(1200);
-    assert.equal(await status.locator('.member-status-label').textContent(), '可用');
+    assert.equal(await status.getByText('已恢复', { exact: true }).count(), 1);
     await page.getByRole('button', { name: /测试甲.*fixture-a/ }).click();
     await page.getByTestId('member-detail-page').waitFor();
-    assert.equal(await page.locator('.member-detail-status .member-status-label').textContent(), '可用');
+    assert.equal(await page.locator('.member-detail-status').getByText('已恢复', { exact: true }).count(), 1);
     const history = await page.locator('.member-history-row summary').allTextContents();
     assert.equal(history.length, 2);
     assert.equal(

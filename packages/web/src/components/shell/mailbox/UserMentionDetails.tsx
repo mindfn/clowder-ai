@@ -3,8 +3,17 @@
 import type { UnifiedAttentionItemV1 } from '@cat-cafe/shared';
 import { useState } from 'react';
 import { apiFetch } from '@/utils/api-client';
+import { useShellCopy } from '../shell-copy';
+import { mailboxEntryCopy } from './mailbox-entry.shell-copy';
 
-export function UserMentionDetails({ request }: { request: NonNullable<UnifiedAttentionItemV1['userMention']> }) {
+export function UserMentionDetails({
+  request,
+  showHandling = true,
+}: {
+  request: NonNullable<UnifiedAttentionItemV1['userMention']>;
+  showHandling?: boolean;
+}) {
+  const t = useShellCopy(mailboxEntryCopy);
   const [pending, setPending] = useState(false);
   const [error, setError] = useState<string | null>(null);
   async function resolve() {
@@ -17,13 +26,13 @@ export function UserMentionDetails({ request }: { request: NonNullable<UnifiedAt
         body: JSON.stringify({ expectedMessageId: request.messageId, expectedRevision: request.expectedRevision }),
       });
       if (!response.ok) {
-        setError(response.status === 409 ? '这条对话有了新请求，请重新读取后处理。' : '未能标记处理，请重试。');
+        setError(response.status === 409 ? t.mentionChanged : t.mentionResolveFailed);
         if (response.status === 409) window.dispatchEvent(new Event('cat-cafe:user-mention-updated'));
         return;
       }
       window.dispatchEvent(new Event('cat-cafe:user-mention-updated'));
     } catch {
-      setError('未能标记处理，请重试。');
+      setError(t.mentionResolveFailed);
     } finally {
       setPending(false);
     }
@@ -41,13 +50,10 @@ export function UserMentionDetails({ request }: { request: NonNullable<UnifiedAt
           expectedRevision: request.expectedRevision,
         }),
       });
-      if (!response.ok)
-        throw new Error(
-          response.status === 409 ? '这条对话已有新请求或后续变化，请重新读取。' : '未能放回待办，请重试。',
-        );
+      if (!response.ok) throw new Error(response.status === 409 ? t.mentionRestoreChanged : t.mentionRestoreFailed);
       window.dispatchEvent(new Event('cat-cafe:user-mention-updated'));
     } catch (e) {
-      setError(e instanceof Error ? e.message : '未能放回待办，请重试。');
+      setError(e instanceof Error ? e.message : t.mentionRestoreFailed);
     } finally {
       setPending(false);
     }
@@ -57,27 +63,28 @@ export function UserMentionDetails({ request }: { request: NonNullable<UnifiedAt
       <p className="m-0 whitespace-pre-wrap break-words text-sm" data-testid="mailbox-mention-content">
         {request.content}
       </p>
-      {request.handled ? (
-        <button
-          type="button"
-          disabled={pending || request.expectedRevision === undefined}
-          onClick={() => void restore()}
-          className="shell-nav-row shell-focusable self-start rounded-lg px-3 py-1.5 text-sm"
-          data-testid="mailbox-mention-restore"
-        >
-          {pending ? '正在放回…' : '放回待办'}
-        </button>
-      ) : (
-        <button
-          type="button"
-          disabled={pending}
-          onClick={() => void resolve()}
-          className="shell-nav-row shell-focusable self-start rounded-lg px-3 py-1.5 text-sm"
-          data-testid="mailbox-mention-resolve"
-        >
-          {pending ? '正在标记…' : '已处理'}
-        </button>
-      )}
+      {showHandling &&
+        (request.handled ? (
+          <button
+            type="button"
+            disabled={pending || request.expectedRevision === undefined}
+            onClick={() => void restore()}
+            className="shell-nav-row shell-focusable self-start rounded-lg px-3 py-1.5 text-sm"
+            data-testid="mailbox-mention-restore"
+          >
+            {pending ? t.mentionRestoring : t.mentionRestore}
+          </button>
+        ) : (
+          <button
+            type="button"
+            disabled={pending}
+            onClick={() => void resolve()}
+            className="shell-nav-row shell-focusable self-start rounded-lg px-3 py-1.5 text-sm"
+            data-testid="mailbox-mention-resolve"
+          >
+            {pending ? t.mentionResolving : t.mentionHandled}
+          </button>
+        ))}
       {error ? (
         <p role="alert" className="m-0 text-sm">
           {error}

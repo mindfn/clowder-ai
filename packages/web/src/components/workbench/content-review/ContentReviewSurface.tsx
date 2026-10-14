@@ -1,6 +1,7 @@
 'use client';
 
 import { type ReactNode, useRef, useState } from 'react';
+import { TextWorkProgress } from '@/components/content-review/TextWorkProgress';
 import type { WorkspaceFileNavigationOrigin } from '@/stores/chat-types';
 import { useWorkspacePreviewIntent } from '../WorkspacePreviewIntent';
 import { ContentLandingHeader } from './ContentLandingHeader';
@@ -30,7 +31,10 @@ export function ContentReviewSurface({
   onApplied,
   onOpenFileTools,
   versionControl,
+  leadingAction,
+  fullWindowAction,
   title,
+  titleInHost = false,
   capabilities,
   workflow,
   publication,
@@ -46,7 +50,11 @@ export function ContentReviewSurface({
   readonly onApplied?: (writtenRevision?: string) => Promise<void> | void;
   readonly onOpenFileTools?: () => void;
   readonly versionControl?: ReactNode;
+  readonly leadingAction?: ReactNode;
+  readonly fullWindowAction?: { active: boolean; onToggle: () => void };
   readonly title?: string;
+  /** The active Workspace host already names this work; retain only its version and return controls here. */
+  readonly titleInHost?: boolean;
   readonly capabilities?: ContentLandingCapabilities;
   readonly workflow?: ContentReviewWorkflow;
   readonly publication?: PublicationDisplayRequest;
@@ -63,6 +71,7 @@ export function ContentReviewSurface({
     review.view.sourceState !== 'current' ||
     currentCapabilities?.requestModification.state !== 'available' ||
     (review.view.currentSource ?? review.view.review.source).revision !== sourceTextRevision;
+  const textSource = review.view?.currentSource ?? review.view?.review.source;
   usePublicationDisplay(root, publication, review.view, review.error);
   return (
     <section
@@ -73,14 +82,21 @@ export function ContentReviewSurface({
     >
       {!fileReader && (
         <ContentLandingHeader
-          title={title ?? (path.split('/').at(-1) || path)}
+          title={titleInHost ? undefined : (title ?? (path.split('/').at(-1) || path))}
           navigationOrigin={navigationOrigin}
           onBack={onBack}
           onOpenFileTools={onOpenFileTools}
           versionControl={versionControl}
+          leadingAction={leadingAction}
+          fullWindowAction={fullWindowAction}
         />
       )}
       {workflow?.status}
+      {review.view?.sourceState === 'current' &&
+      textSource?.kind === 'text' &&
+      textSource.revision === sourceTextRevision ? (
+        <TextWorkProgress locator={textSource.locator} revision={textSource.revision} />
+      ) : null}
       {review.error ? (
         <p role="alert" className="rounded bg-[var(--semantic-critical-surface)] p-2 text-xs text-cafe-error">
           {review.error}

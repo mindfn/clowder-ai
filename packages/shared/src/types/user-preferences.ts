@@ -5,6 +5,7 @@
  */
 
 import type { ConversationViewPreferences } from '../conversation-view-preference.js';
+import type { IgnoredItemPreferences } from '../ignored-item-preference.js';
 import type { MessageWorkDisposition } from './queue-receipt.js';
 
 export type MessageDispositionPreferenceSource = 'thread' | 'global' | 'product';
@@ -54,6 +55,8 @@ export interface BubbleDefaultPreferences {
 }
 
 export interface UserPreferences {
+  /** F322: owner-private ignored work/request coordinates. No TTL or canonical lifecycle effect. */
+  ignoredItems?: IgnoredItemPreferences;
   /** F321: background curation preference and its durable first-enable boundary. */
   memoryCuration?: { enabled: boolean; startedAt?: number; curatorCatId?: string };
   /** F166: Custom display order of cats. catIds not in this list fall back to cat-template.json order. */
