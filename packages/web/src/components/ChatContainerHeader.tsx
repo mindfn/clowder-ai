@@ -87,6 +87,7 @@ export function ChatContainerHeader({
               onToggleStatusPanel={onToggleStatusPanel}
               statusPanelOpen={statusPanelOpen}
               hasWorkspaceActivity={hasWorkspaceActivity}
+              approvalCount={approvalCount}
               tooltip
             />
           </div>
@@ -262,7 +263,7 @@ export function PanelToggle({
     </button>
   );
   return tooltip ? (
-    <AppTooltip label={label} side="bottom">
+    <AppTooltip label={accessibleLabel} side="bottom">
       {button}
     </AppTooltip>
   ) : (

@@ -639,6 +639,11 @@ Header 和 Sidebar 松紧不同**是设计意图**（spacious vs default），�
 
 ## Phase H: Activity Rail 入口收敛（2026-09-18）
 
+> Rebase continuity（2026-10-14，operator `thread_mu5cf8fpujtesgzn#0001791941881146-000060-f9c12cde`）：
+> 本轮保留最新上游 F322 v2 WorldRail、成员编辑宿主、账户与登录文案及 F317 桌面伴随入口。
+> 下述 rail 收敛断言适用于经典 ActivityBar；不覆盖 v2 WorldRail 的世界导航或其已交付入口。
+> 猫猫球的旧 web 显隐开关不恢复，Settings 继续使用上游桌面插件管理入口；审批计数兼容两种 header。
+
 > Source: `thread_mu5cf8fpujtesgzn#0001789638449393-000639-09e31777` +
 > `thread_mu5cf8fpujtesgzn#0001789700666600-000982-df932f7e` +
 > `thread_mu5cf8fpujtesgzn#0001789870249927-002117-9835e459` +

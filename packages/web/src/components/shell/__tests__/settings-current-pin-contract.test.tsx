@@ -42,7 +42,11 @@ describe('F322 selected-section pins and manual tabs', () => {
     delete (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT;
   });
   it.each(
-    SETTINGS_SECTIONS.map((section) => [section.id, section.label]),
+    // F190 also registers classic sections whose v2 destinations have separate route owners.
+    SETTINGS_SECTIONS.filter((section) => !['memory', 'mission-hub', 'signals'].includes(section.id)).map((section) => [
+      section.id,
+      section.label,
+    ]),
   )('%s is pinnable after selecting it, despite one current-section pin control', (id, label) => {
     const owner = entryForSection(id);
     if (!owner) throw new Error('Missing section owner');
