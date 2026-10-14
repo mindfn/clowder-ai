@@ -64,16 +64,55 @@ async function fixture(manual = false, firstExecution = false) {
           userId: 'owner',
           operation: 'write',
           signal: new AbortController().signal,
+          requestIdentity: {
+            requestId: crypto.randomUUID(),
+            transportRequestId: 'test',
+            method: 'POST',
+            declaredPath: 'owner',
+            path: 'owner',
+            bodyDigest: 'a'.repeat(64),
+            queryDigest: 'b'.repeat(64),
+          },
         },
         () => withPluginOwnerWebhook('neutral', 'owner', 'instance', false, () => {}, prepare),
       )
     : await prepare();
   taskThread = threads.get(first.threadId);
+  // Explicit legacy fixture: preserve v1 receipt bytes and namespace to test its unchanged exact-revision behavior.
+  const { pluginTaskAdmissionContent, pluginTaskExecutionContent, pluginTaskExecutionKey } = await import(
+    '../dist/domains/plugin/host-surface/plugin-task-receipt.js'
+  );
+  const legacyAdmission = messages.getById(first.admissionRef.slice(8));
+  const admissionData = JSON.parse(
+    legacyAdmission.content.split('<plugin_task_request>\n')[1].split('\n</plugin_task_request>')[0],
+  );
+  const { provenance: _provenance, mode: admissionMode, ...legacyData } = admissionData;
+  legacyAdmission.content = pluginTaskAdmissionContent({ ...legacyData, version: 1 }, admissionMode);
+  const currentExecution = messages.getById(first.executionRef.slice(8));
+  const {
+    executionAuthorityRevision: _epoch,
+    executionKind: _kind,
+    firstAdmission: _first,
+    request: _request,
+    mode: executionMode,
+    ...executionData
+  } = JSON.parse(currentExecution.content.split('\n').slice(1).join('\n'));
+  const legacyExecution = { ...executionData, version: 1 };
+  const stored = await messages.appendIdempotent({
+    userId: 'owner',
+    threadId: source.threadId,
+    catId: null,
+    mentions: [],
+    timestamp: 2,
+    content: pluginTaskExecutionContent(legacyExecution, executionMode),
+    idempotencyKey: pluginTaskExecutionKey('instance', source.id, 'codex', legacyExecution.kind),
+  });
+  const legacyFirst = { ...first, executionRef: `message:${stored.message.id}` };
   const next = firstExecution
     ? source
     : messages.append({ ...structuredClone(source), id: undefined, content: 'Continue report', timestamp: 2 });
   const resumed = firstExecution
-    ? first
+    ? legacyFirst
     : await host.prepareEntrusted({
         sourceMessageId: next.id,
         targetCatId: 'codex',
@@ -189,7 +228,7 @@ async function fixture(manual = false, firstExecution = false) {
     taskThread,
     source,
     next,
-    first,
+    first: legacyFirst,
     resumed,
     trigger,
     state,
@@ -442,7 +481,7 @@ test('owner, target, origin and provenance in the invocation must exactly match 
     await assert.rejects(() => f.check({ ...f.principal, ...change }));
 });
 
-test('first execution passes the actual compiled Host reader for derived and owner-selected Task threads', async () => {
+test('legacy first execution passes the compiled Host reader for derived and owner-selected Task threads', async () => {
   for (const manual of [false, true]) {
     const f = await fixture(manual, true);
     assert.match(f.first.executionRef ?? '', /^message:/);

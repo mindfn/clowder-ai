@@ -3,7 +3,9 @@ import { isDeepStrictEqual } from 'node:util';
 import type { TaskItem } from '@cat-cafe/shared';
 import type { IMessageStore } from '../../cats/services/stores/ports/MessageStore.js';
 import { ExternalPluginRuntimeError } from '../external-runtime/types.js';
+import { prepareTaskExecutionV2 } from './plugin-task-execution-v2.js';
 import type { PluginTaskHostDeps } from './plugin-task-host.js';
+import { assertTaskProvenance, type PluginTaskProvenance } from './plugin-task-provenance.js';
 import {
   type PluginTaskExecutionReceiptData,
   pluginTaskAdmissionContent,
@@ -11,6 +13,7 @@ import {
   pluginTaskExecutionContent,
   pluginTaskExecutionKey,
   pluginTaskReceiptModes,
+  taskAdmissionVersion,
 } from './plugin-task-receipt.js';
 
 export interface PluginTaskContinuationSelector {
@@ -34,6 +37,7 @@ export async function readPluginContinuationTask(
   deps: PluginTaskContinuationReadDeps,
   selector: PluginTaskContinuationSelector,
   catId: string,
+  boundAuthorityRevision?: number,
 ) {
   const tasks = deps.taskStore,
     messages = deps.admission?.messageStore,
@@ -52,7 +56,9 @@ export async function readPluginContinuationTask(
     task.status === 'done' ||
     !work ||
     work.closure.state !== 'open' ||
-    work.revision !== selector.expectedRevision ||
+    (boundAuthorityRevision === undefined
+      ? work.revision !== selector.expectedRevision
+      : work.executionAuthorityRevision !== boundAuthorityRevision) ||
     work.admission.basis !== 'authorized_source' ||
     work.admission.sourceRefs.length !== 1 ||
     !work.admission.sourceRefs[0]?.startsWith('message:') ||
@@ -87,12 +93,16 @@ export async function readPluginContinuationTask(
   if (!thread || thread.createdBy !== deps.ownerUserId || thread.deletedAt)
     refuse('Task first source thread is unavailable');
   const receipt = structuredClone(await messages.getById(work.admission.authorityRef.slice(8)));
+  const receiptVersion = taskAdmissionVersion(receipt?.content ?? '');
+  if (boundAuthorityRevision !== undefined && receiptVersion.version !== 2)
+    refuse('Legacy Task has no execution authority provenance');
+  if (receiptVersion.provenance) assertTaskProvenance(receiptVersion.provenance, instanceId, userId, source.id);
   const sourceRevision = source.extra.pluginMessage.revision;
   const expected = (mode: string) =>
     pluginTaskAdmissionContent(
       {
         kind: 'plugin_task_admission',
-        version: 1,
+        ...receiptVersion,
         pluginInstanceId: instanceId,
         userId,
         source: {
@@ -142,6 +152,7 @@ export async function preparePluginTaskExecutionReceipt(
   kind: PluginTaskExecutionReceiptData['kind'],
   read: () => Promise<PluginTaskExecutionSnapshot>,
   current: () => Promise<void>,
+  request?: PluginTaskProvenance,
 ) {
   const task = snapshot.task;
   const messages = deps.admission?.messageStore;
@@ -150,6 +161,12 @@ export async function preparePluginTaskExecutionReceipt(
   const admissionRef = admission.authorityRef;
   if (!task?.entrustedWork || !admissionRef || !messages || !deps.ownerUserId || !deps.pluginInstanceId)
     refuse('Task continuation unavailable');
+  const firstReceipt = await messages.getById(admissionRef.slice(8));
+  const first = taskAdmissionVersion(firstReceipt?.content ?? '');
+  if (first.version === 2) {
+    if (!first.provenance || !request) refuse('Task execution provenance unavailable');
+    return prepareTaskExecutionV2(deps, snapshot, first.provenance, request, kind, read, current);
+  }
   const isFirstSource = task.entrustedWork.admission.sourceRefs.includes(`message:${snapshot.source.id}`);
   if (isFirstSource !== (kind === 'plugin_task_execution'))
     refuse('Execution phase does not match the admitted source');

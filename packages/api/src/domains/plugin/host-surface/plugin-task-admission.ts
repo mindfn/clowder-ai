@@ -16,11 +16,13 @@ import { createPluginSourceFactsHost } from './plugin-source-facts-host.js';
 import { preparePluginTaskExecutionReceipt, readPluginContinuationTask } from './plugin-task-continuation.js';
 import { resolvePluginTaskExecutionThread } from './plugin-task-execution-thread.js';
 import type { PluginTaskHostDeps } from './plugin-task-host.js';
+import { captureTaskRequest } from './plugin-task-provenance.js';
 import {
   type PluginTaskReceiptData,
   pluginTaskAdmissionContent,
   pluginTaskAdmissionKey,
   pluginTaskReceiptModes,
+  taskAdmissionVersion,
 } from './plugin-task-receipt.js';
 
 const ref = z.string().trim().min(1).max(500);
@@ -143,6 +145,14 @@ export async function preparePluginEntrustedTask(
       native.toolExecutionPolicy.pluginInstanceId !== instanceId)
   )
     refuse('Task admission native source does not match');
+  const request = captureTaskRequest({
+    owner,
+    operation,
+    native,
+    pluginInstanceId: instanceId,
+    userId,
+    selection: value,
+  });
   const mode = owner || operation ? 'owner_request' : native ? 'native_request' : 'plugin_policy';
   if (value.destination.kind === 'existing_thread' && mode !== 'owner_request')
     refuse('Only an authenticated owner write may select the destination thread');
@@ -228,13 +238,22 @@ export async function preparePluginEntrustedTask(
   if (value.subject.kind === 'continue')
     return Object.freeze({
       result: 'resumed' as const,
-      ...(await preparePluginTaskExecutionReceipt(deps, source, mode, 'plugin_task_continuation', read, current)),
+      ...(await preparePluginTaskExecutionReceipt(
+        deps,
+        source,
+        mode,
+        'plugin_task_continuation',
+        read,
+        current,
+        request,
+      )),
     });
   const sourceRef = `message:${source.source.id}`;
   const key = pluginTaskAdmissionKey(instanceId, sourceRef, value.targetCatId);
   const receiptData: PluginTaskReceiptData = {
     kind: 'plugin_task_admission',
-    version: 1,
+    version: 2,
+    provenance: request,
     pluginInstanceId: instanceId,
     userId,
     source: {
@@ -264,7 +283,10 @@ export async function preparePluginEntrustedTask(
   await current();
   // The first durable receipt owns attribution, including clarification retries
   // made through a different currently authenticated entry point.
-  const receiptMode = pluginTaskReceiptModes.find((origin) => receipt.content === receiptContent(origin));
+  const first = taskAdmissionVersion(receipt.content);
+  const originalContent = (origin: string) =>
+    pluginTaskAdmissionContent({ ...receiptData, provenance: undefined, ...first }, origin);
+  const receiptMode = pluginTaskReceiptModes.find((origin) => receipt.content === originalContent(origin));
   if (
     receiptMode === undefined ||
     receipt.source ||
@@ -361,6 +383,7 @@ export async function preparePluginEntrustedTask(
     'plugin_task_execution',
     readExecution,
     current,
+    request,
   );
   return Object.freeze({ result: result.result, ...execution });
 }

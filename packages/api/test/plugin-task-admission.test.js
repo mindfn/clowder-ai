@@ -69,6 +69,15 @@ async function fixture(grants = ['task.admitEntrusted']) {
         userId: 'owner',
         operation,
         signal: new AbortController().signal,
+        requestIdentity: {
+          requestId: crypto.randomUUID(),
+          transportRequestId: 'test',
+          method: 'POST',
+          declaredPath: 'owner',
+          path: 'owner',
+          bodyDigest: 'a'.repeat(64),
+          queryDigest: 'b'.repeat(64),
+        },
       },
       () => withPluginOwnerWebhook('neutral', 'owner', 'instance', false, () => {}, run),
     );
@@ -554,7 +563,7 @@ test('first execution receipt conflict and Task drift after persistence never au
     let reached = false;
     f.messages.appendIdempotent = async (value) => {
       const result = await append(value);
-      if (value.idempotencyKey.startsWith('plugin-task-execution:')) {
+      if (value.idempotencyKey.startsWith('plugin-task-execution-v2:')) {
         reached = true;
         if (drift) f.tasks.listByKind('work')[0].entrustedWork.revision++;
         else result.message.content += 'tampered';
@@ -573,7 +582,7 @@ test('lost first execution response resumes the same durable Task and execution 
   let lost;
   f.messages.appendIdempotent = async (value) => {
     const result = await append(value);
-    if (value.idempotencyKey.startsWith('plugin-task-execution:') && !lost) {
+    if (value.idempotencyKey.startsWith('plugin-task-execution-v2:') && !lost) {
       lost = result.message.id;
       throw Error('injected lost execution response');
     }

@@ -11,6 +11,8 @@ import { currentPluginCallContext, currentPluginOwnerRequestContext } from '../c
 import { snapshotPluginProtocolData } from '../carrier/plugin-protocol-data.js';
 import { ExternalPluginRuntimeError } from '../external-runtime/types.js';
 import { type PluginSourceProgressFact, projectPluginQueueProgress } from './plugin-source-progress.js';
+import type { PluginTaskProvenance } from './plugin-task-provenance.js';
+import { parseTaskExecutionV2, taskReceiptDigest } from './plugin-task-receipt.js';
 
 /** Source facts are readable data, never a grant to invoke an agent or access owner context. */
 export interface PluginSourceFact {
@@ -44,6 +46,11 @@ export interface PluginNativeTaskContext extends PluginNativeContext {
     readonly admissionRef: string;
     readonly executionRef: string;
     readonly sourceRevision: number;
+    readonly execution?: {
+      readonly kind: 'initial' | 'owner_resume' | 'source_continuation';
+      readonly firstAdmissionKind: PluginTaskProvenance['kind'];
+      readonly requestKind: PluginTaskProvenance['kind'];
+    };
   };
 }
 export interface PluginNativeContextHost {
@@ -280,6 +287,19 @@ export function createPluginSourceFactsHost(deps: Deps): {
     if (!caller.native) refuse();
     const binding = caller.taskBinding;
     const source = await read(binding?.sourceMessageId ?? caller.native.originTriggerMessageId, caller);
+    let execution: PluginNativeTaskContext['task']['execution'];
+    if (binding?.version === 2) {
+      await current(caller);
+      const receipt = await caller.messages.getById(binding.executionRef.slice(8));
+      await current(caller);
+      if (!receipt || taskReceiptDigest(receipt.content) !== binding.executionReceiptDigest) refuse();
+      const data = parseTaskExecutionV2(receipt.content);
+      execution = {
+        kind: data.executionKind,
+        firstAdmissionKind: data.firstAdmission.kind,
+        requestKind: data.request.kind,
+      };
+    }
     return snapshotPluginProtocolData({
       ...caller.native,
       source,
@@ -291,6 +311,7 @@ export function createPluginSourceFactsHost(deps: Deps): {
               admissionRef: binding.admissionRef,
               executionRef: binding.executionRef,
               sourceRevision: binding.sourceRevision,
+              ...(execution ? { execution } : {}),
             },
           }
         : {}),

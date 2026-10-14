@@ -5,7 +5,9 @@ import { parseToolExecutionPolicy } from './tool-execution-policy.js';
 
 /** Host-derived execution coordinates, never a package-supplied grant or SDK DTO. */
 export interface PluginTaskInvocationBinding {
-  readonly version: 1;
+  readonly version: 1 | 2;
+  readonly executionAuthorityRevision?: number;
+  readonly executionReceiptDigest?: string;
   readonly pluginInstanceId: string;
   readonly ownerUserId: string;
   readonly taskId: string;
@@ -73,13 +75,19 @@ export function capturePluginTaskBinding(value: unknown): PluginTaskInvocationBi
 function captureBinding(value: unknown, withTrigger: boolean): PluginTaskInvocationBinding {
   try {
     const binding = snapshotPluginProtocolData(value) as PluginTaskInvocationBinding;
+    const v2Keys = binding?.version === 2 ? ['executionAuthorityRevision', 'executionReceiptDigest'] : [];
     const coordinates = withTrigger ? strings : strings.filter((k) => k !== 'triggerMessageId');
     if (
       !binding ||
       typeof binding !== 'object' ||
       Array.isArray(binding) ||
-      !isDeepStrictEqual(Object.keys(binding).sort(), ['version', ...coordinates, ...revisions].sort()) ||
-      binding.version !== 1 ||
+      !isDeepStrictEqual(Object.keys(binding).sort(), ['version', ...coordinates, ...revisions, ...v2Keys].sort()) ||
+      (binding.version !== 1 && binding.version !== 2) ||
+      (binding.version === 2 &&
+        (!Number.isSafeInteger(binding.executionAuthorityRevision) ||
+          (binding.executionAuthorityRevision ?? 0) < 1 ||
+          typeof binding.executionReceiptDigest !== 'string' ||
+          !/^[a-f0-9]{64}$/.test(binding.executionReceiptDigest))) ||
       !coordinates.every((k) => coordinate(binding[k])) ||
       !revisions.every((k) => Number.isSafeInteger(binding[k]) && binding[k] >= (k === 'grantRevision' ? 0 : 1)) ||
       !/^message:.+/.test(binding.admissionRef) ||

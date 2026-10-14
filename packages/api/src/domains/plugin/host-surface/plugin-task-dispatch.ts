@@ -15,7 +15,13 @@ import { currentPluginTransportPurpose } from '../carrier/plugin-transport-conte
 import { ExternalPluginRuntimeError } from '../external-runtime/types.js';
 import { capturePluginTaskDispatchSelection, type PluginTaskDispatchSelection } from './plugin-task-currentness.js';
 import type { PluginTaskHostDeps } from './plugin-task-host.js';
-import { pluginTaskDispatchContent, pluginTaskDispatchKey } from './plugin-task-receipt.js';
+import { captureTaskRequest } from './plugin-task-provenance.js';
+import {
+  parseTaskExecutionV2,
+  pluginTaskDispatchContent,
+  pluginTaskDispatchKey,
+  taskReceiptDigest,
+} from './plugin-task-receipt.js';
 
 export interface PluginTaskQueueServices {
   readonly queue: InvocationQueue;
@@ -74,7 +80,22 @@ export async function dispatchPluginEntrustedTask(
       native.toolExecutionPolicy.pluginInstanceId !== instanceId)
   )
     refuse();
+  const checkManualRequest = async () => {
+    if (binding.version !== 2) return;
+    const receipt = await services.messageStore.getById(binding.executionRef.slice(8));
+    if (!receipt || taskReceiptDigest(receipt.content) !== binding.executionReceiptDigest) refuse();
+    const data = parseTaskExecutionV2(receipt.content);
+    if (
+      data.executionKind === 'owner_resume' &&
+      !isDeepStrictEqual(
+        data.request,
+        captureTaskRequest({ owner, operation, native, pluginInstanceId: instanceId, userId }),
+      )
+    )
+      refuse();
+  };
   const checkAuthority = async () => {
+    await checkManualRequest();
     await current();
     if (!isDeepStrictEqual(binding, await services.readAuthority(input))) refuse();
     await current();

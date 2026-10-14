@@ -24,12 +24,15 @@ import {
   type PluginTaskAuthorityPhase,
 } from './plugin-task-queue-authority.js';
 import {
+  parseTaskExecutionV2,
   pluginTaskDispatchContent,
   pluginTaskDispatchKey,
   pluginTaskExecutionContent,
   pluginTaskExecutionKey,
   pluginTaskReceiptModes,
+  taskReceiptDigest,
 } from './plugin-task-receipt.js';
+import { taskExecutionAuthorityProjection, verifyTaskExecutionV2 } from './plugin-task-v2-currentness.js';
 
 interface PluginTaskCurrentnessDeps {
   readonly ownerUserId: string;
@@ -166,6 +169,7 @@ function createAuthorityReader(deps: PluginTaskCurrentnessDeps) {
         },
         { kind: 'continue', taskRef: `task:work:${b.taskId}`, expectedRevision: b.taskRevision },
         b.targetCatId,
+        b.version === 2 ? b.executionAuthorityRevision : undefined,
       );
       const admission = task.entrustedWork?.admission;
       if (
@@ -192,38 +196,42 @@ function createAuthorityReader(deps: PluginTaskCurrentnessDeps) {
         b.executionRef.slice(8),
         b.ownerUserId,
       );
-      const receiptData = {
-        kind: admission.sourceRefs.includes(`message:${source.id}`)
-          ? ('plugin_task_execution' as const)
-          : ('plugin_task_continuation' as const),
-        version: 1 as const,
-        pluginInstanceId: b.pluginInstanceId,
-        userId: b.ownerUserId,
-        source: {
-          id: source.id,
-          threadId: source.threadId,
-          revision: b.sourceRevision,
-          contentDigest: createHash('sha256').update(source.content).digest('hex'),
-        },
-        targetCatId: b.targetCatId,
-        taskId: b.taskId,
-        taskRevision: b.taskRevision,
-        threadId: b.threadId,
-        admissionRef: b.admissionRef,
-      };
-      if (
-        execution.source ||
-        execution.threadId !== source.threadId ||
-        !pluginTaskReceiptModes.some((mode) => execution.content === pluginTaskExecutionContent(receiptData, mode)) ||
-        (
-          await deps.messageStore.getByIdempotencyKey(
-            b.ownerUserId,
-            source.threadId,
-            pluginTaskExecutionKey(b.pluginInstanceId, source.id, b.targetCatId, receiptData.kind),
-          )
-        )?.id !== execution.id
-      )
-        refuse();
+      if (b.version === 2) {
+        await verifyTaskExecutionV2(b, task, source, execution, deps.messageStore);
+      } else {
+        const receiptData = {
+          kind: admission.sourceRefs.includes(`message:${source.id}`)
+            ? ('plugin_task_execution' as const)
+            : ('plugin_task_continuation' as const),
+          version: 1 as const,
+          pluginInstanceId: b.pluginInstanceId,
+          userId: b.ownerUserId,
+          source: {
+            id: source.id,
+            threadId: source.threadId,
+            revision: b.sourceRevision,
+            contentDigest: createHash('sha256').update(source.content).digest('hex'),
+          },
+          targetCatId: b.targetCatId,
+          taskId: b.taskId,
+          taskRevision: b.taskRevision,
+          threadId: b.threadId,
+          admissionRef: b.admissionRef,
+        };
+        if (
+          execution.source ||
+          execution.threadId !== source.threadId ||
+          !pluginTaskReceiptModes.some((mode) => execution.content === pluginTaskExecutionContent(receiptData, mode)) ||
+          (
+            await deps.messageStore.getByIdempotencyKey(
+              b.ownerUserId,
+              source.threadId,
+              pluginTaskExecutionKey(b.pluginInstanceId, source.id, b.targetCatId, receiptData.kind),
+            )
+          )?.id !== execution.id
+        )
+          refuse();
+      }
       const triggerSnapshot = await (async () => {
         if (phase.kind === 'dispatch') return undefined;
         const full = capturePluginTaskBinding(raw);
@@ -252,7 +260,7 @@ function createAuthorityReader(deps: PluginTaskCurrentnessDeps) {
       await installation();
       // Do not freeze normal mutable Queue progress; its validity is checked on each read.
       return {
-        task,
+        task: b.version === 2 ? taskExecutionAuthorityProjection(task) : task,
         source: {
           id: source.id,
           threadId: source.threadId,
@@ -271,7 +279,9 @@ function createAuthorityReader(deps: PluginTaskCurrentnessDeps) {
     await installation();
     // Task was read before the source/receipt/Queue awaits. Fence those awaits
     // against the canonical Task again before returning to Registry verification.
-    if (!isDeepStrictEqual(before.task, structuredClone(await deps.taskStore.get(b.taskId)))) refuse();
+    const finalTask = structuredClone(await deps.taskStore.get(b.taskId));
+    if (!isDeepStrictEqual(before.task, b.version === 2 ? taskExecutionAuthorityProjection(finalTask) : finalTask))
+      refuse();
   };
 }
 
@@ -309,8 +319,16 @@ export function createPluginTaskDispatchAuthority(deps: PluginTaskCurrentnessDep
       const state = structuredClone(await deps.inventory.snapshot());
       const instance = state.instances.find((i) => i.pluginInstanceId === pluginInstanceId);
       const grant = state.grants.find((g) => g.pluginInstanceId === pluginInstanceId);
+      const candidate = JSON.parse(execution.content.slice(execution.content.indexOf('\n') + 1));
+      const v2 = candidate?.version === 2 ? parseTaskExecutionV2(execution.content) : undefined;
       const binding = capturePluginTaskExecutionBinding({
-        version: 1,
+        version: v2 ? 2 : 1,
+        ...(v2
+          ? {
+              executionAuthorityRevision: v2.executionAuthorityRevision,
+              executionReceiptDigest: taskReceiptDigest(execution.content),
+            }
+          : {}),
         pluginInstanceId,
         ownerUserId: deps.ownerUserId,
         taskId: selected.taskRef.slice(10),

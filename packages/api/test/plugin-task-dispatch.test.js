@@ -125,7 +125,7 @@ for (const mutation of ['closed', 'source', 'grant', 'forged', 'index', 'extra']
     if (mutation === 'index') {
       const get = f.messages.getByIdempotencyKey.bind(f.messages);
       f.messages.getByIdempotencyKey = (...args) =>
-        args[2].startsWith('plugin-task-execution:') ? null : get(...args);
+        args[2].startsWith('plugin-task-execution-v2:') ? null : get(...args);
     }
     if (mutation === 'extra') f.selection.ownerUserId = 'owner';
     await assert.rejects(f.authority.read(f.selection));

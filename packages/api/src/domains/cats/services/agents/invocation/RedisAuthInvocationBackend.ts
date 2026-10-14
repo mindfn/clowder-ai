@@ -85,7 +85,12 @@ export class RedisAuthInvocationBackend implements IAuthInvocationBackend {
       fields.push('publicInvocationBinding', JSON.stringify(input.publicInvocationBinding));
 
     if (input.pluginTaskBinding)
-      fields.push('pluginTaskBindingVersion', '1', 'pluginTaskBinding', JSON.stringify(input.pluginTaskBinding));
+      fields.push(
+        'pluginTaskBindingVersion',
+        String(input.pluginTaskBinding.version),
+        'pluginTaskBinding',
+        JSON.stringify(input.pluginTaskBinding),
+      );
 
     const latestKey = KEY_LATEST(input.threadId, input.catId as string);
     for (let attempt = 0; attempt < 8; attempt += 1) {

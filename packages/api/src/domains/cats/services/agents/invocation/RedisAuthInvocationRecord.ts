@@ -101,7 +101,7 @@ export function authRecordFromRedisHash(fields: Record<string, string>, msgs: Se
     applyOptionalFields(record, fields);
     if (Object.hasOwn(fields, 'pluginTaskBinding') || Object.hasOwn(fields, 'pluginTaskBindingVersion')) {
       if (
-        fields.pluginTaskBindingVersion !== '1' ||
+        (fields.pluginTaskBindingVersion !== '1' && fields.pluginTaskBindingVersion !== '2') ||
         !fields.pluginTaskBinding ||
         fields.ownerAuthProvenance !== 'unknown' ||
         ['publicInvocationBinding', 'managedWorkId', 'managedWorkAttemptId', 'a2aTriggerMessageId'].some((k) =>
@@ -109,7 +109,9 @@ export function authRecordFromRedisHash(fields: Record<string, string>, msgs: Se
         )
       )
         return null;
-      return capturePluginTaskInvocationAuth({ ...record, pluginTaskBinding: JSON.parse(fields.pluginTaskBinding) });
+      const binding = JSON.parse(fields.pluginTaskBinding);
+      if (String(binding?.version) !== fields.pluginTaskBindingVersion) return null;
+      return capturePluginTaskInvocationAuth({ ...record, pluginTaskBinding: binding });
     }
     if (Object.hasOwn(fields, 'publicInvocationBinding')) {
       // Do not normalize corrupt owner/partial lane fields into a valid public identity.
