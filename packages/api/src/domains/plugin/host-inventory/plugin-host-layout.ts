@@ -23,6 +23,7 @@ export const PLUGIN_HOST_ENTRIES = {
   packages: 'packages',
   resources: 'resources',
   taskWorkspaces: 'task-workspaces',
+  taskArtifacts: 'task-artifacts',
   browserEndpoints: 'browser-endpoints',
   media: 'media',
   mediaEntitlements: 'media-entitlements.json',

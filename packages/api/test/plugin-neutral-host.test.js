@@ -239,3 +239,13 @@ test('source CAS rechecks a timed-out owner request before its atomic write', as
   await done;
   assert.equal((await f.store.getById(value.issueId)).communityIssueDraftId, undefined);
 });
+
+test('production module exposes Task artifact methods but owner HTTP, ordinary native and background have no Task authority', async (t) => {
+  const f = await neutralFixture(t);
+  assert.equal(typeof f.host().taskArtifacts.publishText, 'function');
+  assert.equal(typeof f.host().taskArtifacts.readText, 'function');
+  const value = { text: 'not a Task publication', mediaType: 'text/plain' };
+  await assert.rejects(() => f.host().taskArtifacts.publishText(value));
+  assert.notEqual((await f.http('taskArtifacts', 'publishText', value)).statusCode, 200);
+  await assert.rejects(() => f.native('taskArtifacts', 'publishText', value));
+});

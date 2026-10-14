@@ -99,6 +99,7 @@ export async function neutralFixture(t, options = {}) {
     projectRoot: root,
     threadOwnerUserId: owner,
     messageStore: messages,
+    ...(options.taskStore ? { taskStore: options.taskStore } : {}),
     threadStore: threads,
     ...(options.publicInvocations ? { publicInvocations: options.publicInvocations } : {}),
     ...(options.threadProjections ? { threadProjections: options.threadProjections } : {}),

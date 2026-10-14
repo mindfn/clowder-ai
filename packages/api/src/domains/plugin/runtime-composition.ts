@@ -485,6 +485,8 @@ export function createDormantPluginRuntimeComposition(
       }),
     neutral: (pluginInstanceId, packageDigest, assertActivation) =>
       createPluginNeutralHost({
+        taskStore: options.taskStore,
+        taskArtifactDirectory: resolve(dirname(paths.inventorySnapshotPath), PLUGIN_HOST_ENTRIES.taskArtifacts),
         pluginInstanceId,
         packageDigest,
         assertActivation,

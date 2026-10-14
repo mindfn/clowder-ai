@@ -111,6 +111,7 @@ export interface ModulePluginHostShape {
   readonly participantRoster?: PluginNeutralHost['participantRoster'];
   readonly sourceFacts?: PluginNeutralHost['sourceFacts'];
   readonly nativeContext?: PluginNeutralHost['nativeContext'];
+  readonly taskArtifacts?: PluginNeutralHost['taskArtifacts'];
   readonly threads: PluginThreadHost;
   readonly messaging: PluginMessagingHost;
   readonly media: PluginMediaHost;
