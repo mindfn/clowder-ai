@@ -30,10 +30,12 @@ export function upsertCapacityPinRecoveryNote(provenance: string, note: string):
 
 import { randomUUID } from 'node:crypto';
 import type { CatId, HybridProgress, SessionCapacityPin, SessionPolicySnapshot, SessionRecord } from '@cat-cafe/shared';
+import { isHomeSession } from '../../session/session-scope.js';
 import type { StoreReadOptions } from './StoreReadOptions.js';
 import { throwIfStoreReadAborted } from './StoreReadOptions.js';
 
 export interface CreateSessionInput {
+  scopedInvocation?: SessionRecord['scopedInvocation'];
   cliSessionId?: string;
   workingDirectory?: string;
   workspaceFingerprint?: string;
@@ -54,10 +56,39 @@ export interface CreateSessionInput {
   chainKey?: string;
 }
 
+/** Scoped nodes cannot enter any ordinary create/reuse path or change their source identity. */
+export function assertScopedSessionCreation(input: CreateSessionInput): void {
+  const scope = input.scopedInvocation;
+  if (!scope) return;
+  if (input.reuseExistingActive || input.reuseExistingCliSession || input.chainKey || input.cliSessionId)
+    throw new Error('scoped_session_not_resumable');
+  if (
+    typeof scope.invocationId !== 'string' ||
+    !scope.invocationId ||
+    typeof scope.originMessageId !== 'string' ||
+    !scope.originMessageId ||
+    !['collective-participation', 'collective-work'].includes(scope.executionScope)
+  )
+    throw new Error('scoped_session_identity_invalid');
+  if (
+    scope.executionScope === 'collective-work' &&
+    (typeof scope.taskId !== 'string' ||
+      !scope.taskId ||
+      typeof scope.executionRef !== 'string' ||
+      !scope.executionRef ||
+      typeof scope.authorityRef !== 'string' ||
+      !scope.authorityRef ||
+      !Number.isInteger(scope.executionRevision) ||
+      scope.executionRevision < 1)
+  )
+    throw new Error('scoped_session_identity_invalid');
+}
+
 export type SessionRecordPatch = Partial<
   Pick<
     SessionRecord,
     | 'cliSessionId'
+    | 'externalImport'
     | 'workingDirectory'
     | 'workspaceFingerprint'
     | 'status'
@@ -97,6 +128,8 @@ export type RestoreActiveSessionResult =
   | { status: 'target_missing' }
   | { status: 'target_not_restorable'; targetStatus: SessionRecord['status'] }
   | { status: 'active_changed'; activeSessionId?: string };
+
+export type CliSessionBinding = Pick<SessionRecord, 'id' | 'cliSessionId' | 'threadId' | 'catId' | 'userId'>;
 
 export interface ISessionChainStore {
   /** Create SessionRecord (seq auto-increments, status=active) */
@@ -140,6 +173,10 @@ export interface ISessionChainStore {
   update(id: string, patch: SessionRecordPatch): SessionRecord | null | Promise<SessionRecord | null>;
   /** Look up by CLI session ID */
   getByCliSessionId(cliSessionId: string): SessionRecord | null | Promise<SessionRecord | null>;
+  /** Bounded list admission reads only the CLI index and claim coordinates, never chains. */
+  getCliSessionBindings(
+    cliSessionIds: readonly string[],
+  ): Map<string, CliSessionBinding> | Promise<Map<string, CliSessionBinding>>;
   /**
    * F198 Bug #3: Look up by chainKey (stable bg conversation anchor). Returns
    * the record regardless of status (unlike getActive) so a sealed record is
@@ -198,6 +235,7 @@ export class SessionChainStore implements ISessionChainStore {
   }
 
   create(input: CreateSessionInput): SessionRecord {
+    assertScopedSessionCreation(input);
     if (input.reuseExistingActive) {
       const active = this.getActive(input.catId, input.threadId, input.userId);
       if (active) return active;
@@ -207,7 +245,10 @@ export class SessionChainStore implements ISessionChainStore {
       const existingId = this.cliIndex.get(input.cliSessionId);
       if (existingId) {
         const existing = this.records.get(existingId);
-        if (existing) return existing;
+        if (existing) {
+          if (existing.scopedInvocation) throw new Error('scoped_session_not_resumable');
+          return existing;
+        }
         this.cliIndex.delete(input.cliSessionId);
       }
     }
@@ -225,6 +266,7 @@ export class SessionChainStore implements ISessionChainStore {
     const id = randomUUID();
     const record: SessionRecord = {
       id,
+      ...(input.scopedInvocation ? { scopedInvocation: Object.freeze({ ...input.scopedInvocation }) } : {}),
       ...(input.cliSessionId ? { cliSessionId: input.cliSessionId } : {}),
       ...(input.workingDirectory ? { workingDirectory: input.workingDirectory } : {}),
       ...(input.workspaceFingerprint ? { workspaceFingerprint: input.workspaceFingerprint } : {}),
@@ -243,8 +285,10 @@ export class SessionChainStore implements ISessionChainStore {
     this.records.set(id, record);
     chain.push(id);
     this.chains.set(key, chain);
-    this.activeIndex.set(key, id);
-    this.ownerActiveIndex.set(this.ownerCatThreadKey(input.userId, input.catId, input.threadId), id);
+    if (!input.scopedInvocation) {
+      this.activeIndex.set(key, id);
+      this.ownerActiveIndex.set(this.ownerCatThreadKey(input.userId, input.catId, input.threadId), id);
+    }
     if (input.cliSessionId) this.cliIndex.set(input.cliSessionId, id);
     if (input.chainKey) this.chainKeyIndex.set(input.chainKey, id);
 
@@ -265,12 +309,14 @@ export class SessionChainStore implements ISessionChainStore {
   }
 
   getOrCreateActive(input: CreateSessionInput): SessionRecord {
+    if (input.scopedInvocation) throw new Error('scoped_session_not_resumable');
     const active = this.getActive(input.catId, input.threadId, input.userId);
     if (active) return active;
     if (input.cliSessionId) {
       const claimed = this.getByCliSessionId(input.cliSessionId);
       if (
         claimed?.status === 'active' &&
+        !claimed.scopedInvocation &&
         claimed.userId === input.userId &&
         claimed.catId === input.catId &&
         claimed.threadId === input.threadId
@@ -286,7 +332,7 @@ export class SessionChainStore implements ISessionChainStore {
 
   bindCliSessionId(id: string, cliSessionId: string): SessionRecord | null {
     const record = this.records.get(id);
-    if (!record || record.status !== 'active') return null;
+    if (!record || record.status !== 'active' || record.scopedInvocation) return null;
     const claimedBy = this.cliIndex.get(cliSessionId);
     if (claimedBy && claimedBy !== id) return null;
     if (record.cliSessionId) this.cliIndex.delete(record.cliSessionId);
@@ -375,6 +421,7 @@ export class SessionChainStore implements ISessionChainStore {
   restoreActiveSession(input: RestoreActiveSessionInput): RestoreActiveSessionResult {
     const target = this.records.get(input.targetSessionId);
     if (!target) return { status: 'target_missing' };
+    if (target.scopedInvocation) return { status: 'target_not_restorable', targetStatus: target.status };
 
     const key = this.catThreadKey(target.catId, target.threadId);
     const ownerKey = this.ownerCatThreadKey(target.userId, target.catId, target.threadId);
@@ -429,17 +476,24 @@ export class SessionChainStore implements ISessionChainStore {
     const key = this.catThreadKey(catId, threadId);
     const ownerKey = userId ? this.ownerCatThreadKey(userId, catId, threadId) : undefined;
     let activeId = ownerKey ? this.ownerActiveIndex.get(ownerKey) : this.activeIndex.get(key);
+    const indexed = activeId ? this.records.get(activeId) : undefined;
+    if (!isHomeSession(indexed) || indexed.status !== 'active' || (userId !== undefined && indexed.userId !== userId)) {
+      if (ownerKey) this.ownerActiveIndex.delete(ownerKey);
+      else this.activeIndex.delete(key);
+      activeId = undefined;
+    }
     if (!activeId && ownerKey) {
       const chain = this.chains.get(key) ?? [];
       activeId = [...chain].reverse().find((id) => {
         const record = this.records.get(id);
-        return record?.status === 'active' && record.userId === userId;
+        return isHomeSession(record) && record.status === 'active' && record.userId === userId;
       });
       if (activeId) this.ownerActiveIndex.set(ownerKey, activeId);
     }
     if (!activeId) return null;
     const record = this.records.get(activeId);
-    if (!record || record.status !== 'active' || (userId !== undefined && record.userId !== userId)) return null;
+    if (!isHomeSession(record) || record.status !== 'active' || (userId !== undefined && record.userId !== userId))
+      return null;
     return record;
   }
 
@@ -469,8 +523,12 @@ export class SessionChainStore implements ISessionChainStore {
   }
 
   update(id: string, patch: SessionRecordPatch): SessionRecord | null {
+    if ('scopedInvocation' in patch) throw new Error('scoped_session_identity_immutable');
     const record = this.records.get(id);
     if (!record) return null;
+    if (record.scopedInvocation && patch.cliSessionId !== undefined)
+      throw new Error('scoped_session_identity_immutable');
+    if (record.scopedInvocation && patch.status === 'active') throw new Error('scoped_session_not_resumable');
 
     if (patch.cliSessionId !== undefined) {
       // Update CLI index
@@ -483,7 +541,7 @@ export class SessionChainStore implements ISessionChainStore {
     if (patch.status !== undefined) {
       record.status = patch.status;
       const key = this.catThreadKey(record.catId, record.threadId);
-      if (patch.status === 'active') {
+      if (patch.status === 'active' && !record.scopedInvocation) {
         this.activeIndex.set(key, id);
         this.ownerActiveIndex.set(this.ownerCatThreadKey(record.userId, record.catId, record.threadId), id);
       } else {
@@ -516,6 +574,7 @@ export class SessionChainStore implements ISessionChainStore {
       else if (patch.hybridProgress !== undefined) record.hybridProgress = patch.hybridProgress;
     }
     if (patch.continuityCapsule !== undefined) record.continuityCapsule = patch.continuityCapsule;
+    if (patch.externalImport !== undefined) record.externalImport = patch.externalImport;
     if (patch.consecutiveRestoreFailures !== undefined)
       record.consecutiveRestoreFailures = patch.consecutiveRestoreFailures;
     if (patch.latestResumeSessionId !== undefined) record.latestResumeSessionId = patch.latestResumeSessionId;
@@ -529,6 +588,24 @@ export class SessionChainStore implements ISessionChainStore {
     const id = this.cliIndex.get(cliSessionId);
     if (!id) return null;
     return this.records.get(id) ?? null;
+  }
+
+  getCliSessionBindings(cliSessionIds: readonly string[]): Map<string, CliSessionBinding> {
+    const bindings = new Map<string, CliSessionBinding>();
+    for (const cliSessionId of new Set(cliSessionIds)) {
+      const id = this.cliIndex.get(cliSessionId);
+      const record = id ? this.records.get(id) : undefined;
+      if (record?.cliSessionId === cliSessionId) {
+        bindings.set(cliSessionId, {
+          id: record.id,
+          cliSessionId,
+          threadId: record.threadId,
+          catId: record.catId,
+          userId: record.userId,
+        });
+      }
+    }
+    return bindings;
   }
 
   getByChainKey(chainKey: string): SessionRecord | null {

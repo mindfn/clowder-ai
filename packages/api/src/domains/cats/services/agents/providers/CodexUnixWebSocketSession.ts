@@ -7,10 +7,18 @@ import { connect } from 'node:net';
 import { join } from 'node:path';
 import WebSocket from 'ws';
 import { MCP_CALLBACK_ENV_KEYS } from '../../../../../config/capabilities/mcp-constants.js';
+import { assertCodexManagedCarrierSupport } from '../../../../../config/codex-managed-support.js';
+import { assertCodexSharedStateCarrier } from '../../../../../config/codex-shared-state.js';
 import { buildChildEnv } from '../../../../../utils/cli-spawn.js';
 import { buildUnixSupervisedSpawnPlan } from '../../../../../utils/cli-supervised-process.js';
 import { sanitizeCliStderr } from '../../../../../utils/sanitize-cli-stderr.js';
+import { createStderrTail, type StderrTail } from '../../../../../utils/stderr-tail.js';
 import type { AgentCarrierSession, AgentCarrierSessionOptions } from '../../types.js';
+import { readCodexHostAuthIdentity } from './codex-host-auth-identity.js';
+import { codexHostServedModels } from './codex-served-model.js';
+
+/** Bounded stderr kept per host for socket-readiness diagnostics (pre-F319 value). */
+const HOST_STDERR_TAIL_CHARS = 8_192;
 
 const SOCKET_READY_TIMEOUT_MS = 10_000;
 const CLOSE_GRACE_MS = 1_500;
@@ -34,10 +42,13 @@ export interface CodexAppServerHostProcess {
 
 export interface PreparedCodexHostLaunch {
   signature: string;
+  authIdentity: string;
   launch: Omit<CodexAppServerHostLaunch, 'socketDirectory' | 'socketPath'>;
 }
 
-export function prepareCodexHostLaunch(options: AgentCarrierSessionOptions): PreparedCodexHostLaunch {
+export async function prepareCodexHostLaunch(options: AgentCarrierSessionOptions): Promise<PreparedCodexHostLaunch> {
+  assertCodexSharedStateCarrier(options.env);
+  assertCodexManagedCarrierSupport(options.env, options.command);
   const signatureEnv = Object.fromEntries(
     Object.entries(options.env ?? {}).filter(([key]) => !SESSION_SCOPED_ENV_KEYS.has(key)),
   );
@@ -54,6 +65,7 @@ export function prepareCodexHostLaunch(options: AgentCarrierSessionOptions): Pre
   };
   return {
     signature: createHash('sha256').update(JSON.stringify(signaturePayload)).digest('hex'),
+    authIdentity: await readCodexHostAuthIdentity(buildChildEnv(env, { workingDirectory: options.cwd }), options.cwd),
     launch: {
       command: options.command,
       args,
@@ -172,7 +184,7 @@ class SpawnedCodexAppServerHost implements CodexAppServerHostProcess {
   constructor(
     private readonly child: ChildProcess,
     readonly socketPath: string,
-    private readonly stderr: string[],
+    private readonly stderr: StderrTail,
   ) {}
 
   get isAlive(): boolean {
@@ -192,7 +204,7 @@ class SpawnedCodexAppServerHost implements CodexAppServerHostProcess {
   }
 
   diagnostic(): string {
-    return sanitizeCliStderr(this.stderr.join('').slice(-1_000));
+    return sanitizeCliStderr(this.stderr.value.slice(-1_000));
   }
 }
 
@@ -211,7 +223,13 @@ export async function removeCodexSocketDirectory(path: string): Promise<void> {
 }
 
 export async function spawnCodexAppServerHost(launch: CodexAppServerHostLaunch): Promise<CodexAppServerHostProcess> {
-  const stderr: string[] = [];
+  // F319 Phase B: the host serves many threads; every stderr line is offered to
+  // the served-model registry (trace lines only exist when observation is on),
+  // while the retained diagnostic tail stays bounded as before.
+  const stderr = createStderrTail({
+    maxChars: HOST_STDERR_TAIL_CHARS,
+    onLine: (line) => codexHostServedModels.ingestStderrLine(line),
+  });
   const childCwd = launch.cwd ?? process.cwd();
   const supervised = buildUnixSupervisedSpawnPlan(launch.command, launch.args, {
     env: normalizeEnv(launch.env, childCwd),
@@ -224,9 +242,8 @@ export async function spawnCodexAppServerHost(launch: CodexAppServerHostLaunch):
     stdio: ['ignore', 'ignore', 'pipe'],
   });
   child.stderr?.setEncoding('utf8');
-  child.stderr?.on('data', (chunk: string) => {
-    if (stderr.join('').length < 8_192) stderr.push(chunk);
-  });
+  child.stderr?.on('data', (chunk: string) => stderr.append(chunk));
+  child.stderr?.once('end', () => stderr.flush());
   const spawnState: { error?: Error } = {};
   child.once('error', (error) => {
     spawnState.error = error;

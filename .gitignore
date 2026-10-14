@@ -21,6 +21,9 @@ docs/markers/
 docs/features/index.json
 build/
 .next/
+# Isolated browser outputs are rebuildable; worktree:finish preserves them in quarantine.
+/packages/web/.next-test-*/
+/packages/web/tsconfig.next-test-*.json
 
 # PWA generated service worker files
 packages/web/public/sw.js

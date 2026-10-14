@@ -13,6 +13,9 @@ export const ProfileUpdateProposalKeys = {
   /** Sorted set of proposal IDs proposed in a source thread: profile-update:thread:{threadId} */
   threadList: (threadId: string) => `profile-update:thread:${threadId}`,
 
+  /** Durable owner-wide index, including transient approving proposals. */
+  userAll: (userId: string) => `profile-update:all:${userId}`,
+
   /**
    * Sorted set of settled (approved/rejected) proposal IDs for a user, scored by decision timestamp.
    * profile-update:settled:{userId}

@@ -3,19 +3,51 @@
 import { FitAddon } from '@xterm/addon-fit';
 import { Terminal } from '@xterm/xterm';
 import { useCallback, useEffect, useRef, useState } from 'react';
+import { useShellCopy } from '@/components/shell/shell-copy';
+import { useShellPresentation } from '@/components/shell/shell-presentation';
 import typographyTokens from '@/styles/typography-tokens.json';
 import { API_URL, apiFetch } from '@/utils/api-client';
 
-import { AgentPaneList } from './AgentPaneList';
+import { AgentPaneList, type AgentPaneSelectionMeta } from './AgentPaneList';
 import { AgentPaneViewer } from './AgentPaneViewer';
+import { type CodeToolsCopy, codeToolsCopy } from './code-tools.shell-copy';
 import { TERMINAL_THEME } from './terminal-theme';
 
 interface TerminalTabProps {
   worktreeId: string;
 }
 
-export function TerminalTab({ worktreeId }: TerminalTabProps) {
-  const [watchingPane, setWatchingPane] = useState<string | null>(null);
+type TerminalChromeCopy = Pick<
+  CodeToolsCopy['terminal'],
+  'myTerminalConnected' | 'myTerminalConnecting' | 'myTerminalDisconnected' | 'reconnect' | 'closeTerminal'
+>;
+
+const CLASSIC_COPY: TerminalChromeCopy = {
+  myTerminalConnected: 'Terminal',
+  myTerminalConnecting: 'Connecting…',
+  myTerminalDisconnected: 'Disconnected',
+  reconnect: 'Reconnect',
+  closeTerminal: 'Close Terminal',
+};
+
+interface WatchingPane {
+  paneId: string;
+  invocationId?: string;
+  catId?: string | null;
+}
+
+export function TerminalTab(props: TerminalTabProps) {
+  const presentation = useShellPresentation();
+  return presentation === 'v2' ? <TerminalTabV2 {...props} /> : <TerminalTabCore {...props} copy={CLASSIC_COPY} />;
+}
+
+function TerminalTabV2(props: TerminalTabProps) {
+  const copy = useShellCopy(codeToolsCopy).terminal;
+  return <TerminalTabCore {...props} copy={copy} />;
+}
+
+function TerminalTabCore({ worktreeId, copy }: TerminalTabProps & { copy: TerminalChromeCopy }) {
+  const [watchingPane, setWatchingPane] = useState<WatchingPane | null>(null);
   const containerRef = useRef<HTMLDivElement>(null);
   const terminalRef = useRef<Terminal | null>(null);
   const wsRef = useRef<WebSocket | null>(null);
@@ -132,17 +164,26 @@ export function TerminalTab({ worktreeId }: TerminalTabProps) {
     };
   }, [connect]);
 
+  const selectedPaneId = watchingPane?.paneId;
+
   if (watchingPane) {
-    return <AgentPaneViewer worktreeId={worktreeId} paneId={watchingPane} onBack={() => setWatchingPane(null)} />;
+    return (
+      <AgentPaneViewer
+        worktreeId={worktreeId}
+        paneId={watchingPane.paneId}
+        catId={watchingPane.catId}
+        onBack={() => setWatchingPane(null)}
+      />
+    );
   }
+
+  const handleSelectPane = (paneId: string, meta?: AgentPaneSelectionMeta) => {
+    setWatchingPane({ paneId, invocationId: meta?.invocationId, catId: meta?.catId });
+  };
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', height: '100%' }}>
-      <AgentPaneList
-        worktreeId={worktreeId}
-        onSelectPane={setWatchingPane}
-        selectedPaneId={watchingPane ?? undefined}
-      />
+      <AgentPaneList worktreeId={worktreeId} onSelectPane={handleSelectPane} selectedPaneId={selectedPaneId} />
       <div
         style={{
           display: 'flex',
@@ -168,7 +209,11 @@ export function TerminalTab({ worktreeId }: TerminalTabProps) {
           }}
         />
         <span>
-          {status === 'connected' ? 'Terminal' : status === 'connecting' ? 'Connecting\u2026' : 'Disconnected'}
+          {status === 'connected'
+            ? copy.myTerminalConnected
+            : status === 'connecting'
+              ? copy.myTerminalConnecting
+              : copy.myTerminalDisconnected}
         </span>
         {status === 'disconnected' && (
           <button
@@ -184,7 +229,7 @@ export function TerminalTab({ worktreeId }: TerminalTabProps) {
               fontSize: typographyTokens.fontSizePx.label,
             }}
           >
-            Reconnect
+            {copy.reconnect}
           </button>
         )}
         {(status === 'connected' || status === 'disconnected') && (
@@ -202,7 +247,7 @@ export function TerminalTab({ worktreeId }: TerminalTabProps) {
               marginLeft: 'auto',
             }}
           >
-            Close Terminal
+            {copy.closeTerminal}
           </button>
         )}
       </div>

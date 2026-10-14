@@ -189,5 +189,12 @@ type SplitPaneChatViewProps = Pick<SplitPaneViewProps, 'isReadonly' | 'onZoomToT
 /** Production split-preview adapter: one target-aware send lifecycle for its shared composer. */
 export function SplitPaneChatView(props: SplitPaneChatViewProps) {
   const { handleSend, uploadStatus, uploadError } = useSendMessage();
-  return <SplitPaneView {...props} onSend={handleSend} uploadStatus={uploadStatus} uploadError={uploadError} />;
+  const sendComposerDraft = useCallback<typeof handleSend>(
+    (...args) => {
+      args[8] = { ...args[8], consumeComposerDraft: true };
+      return handleSend(...args);
+    },
+    [handleSend],
+  );
+  return <SplitPaneView {...props} onSend={sendComposerDraft} uploadStatus={uploadStatus} uploadError={uploadError} />;
 }

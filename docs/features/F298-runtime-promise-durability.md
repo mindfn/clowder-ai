@@ -3,7 +3,7 @@ feature_ids: [F298]
 related_features: [F174, F167, F108, F048, F261, F275, F299, F300]
 topics: [runtime, durability, callback-auth, invocation-lifecycle]
 doc_kind: spec
-tips_exempt: "Renewed 2026-09-04 for the current F308 public-link projection only; automatic durability hardening still adds no user action or discoverable capability surface."
+tips_exempt: "Renewed 2026-10-13 for the historical close-audit attribution correction only; automatic durability hardening still adds no user action or discoverable capability surface."
 created: 2026-08-17
 description: "运行态承诺持久性：凭证/队列/唤醒等跨进程承诺必须活得比所服务过程长，内存态只能是 cache（ADR-045 收敛锚）"
 description_source: human
@@ -175,7 +175,7 @@ tips_exempt: 纯 runtime 持久性收敛，无用户操作面变化（用户感�
 
 ## Close Gate Report（2026-08-21）
 
-**愿景守护**：@opus5（Ragdoll Opus 5，非作者非 reviewer；作者 @fable5，Phase A 实现/证据 @codex-sol，Phase B @codex-terra）
+**愿景守护**：@opus5（Ragdoll Opus 5，非作者非 reviewer；Feature owner @fable5，Phase A/B 实现 @codex-sol，Phase A/B reviewer 及 Phase B 合入 @codex-terra；Phase B 另有 cloud review）
 
 ### 愿景三问
 

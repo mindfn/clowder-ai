@@ -1,5 +1,10 @@
 import { beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
-import { captureMessageScrollAnchor, restoreMessageScrollAnchor, scrollToMessage } from '@/utils/scrollToMessage';
+import {
+  captureMessageScrollAnchor,
+  highlightMessage,
+  restoreMessageScrollAnchor,
+  scrollToMessage,
+} from '@/utils/scrollToMessage';
 
 // jsdom doesn't provide CSS.escape — polyfill for tests
 beforeAll(() => {
@@ -40,7 +45,8 @@ describe('scrollToMessage', () => {
     container.getBoundingClientRect = () => ({ top: 100, bottom: 700 }) as DOMRect;
     const targetBoundary = document.createElement('div');
     targetBoundary.dataset.messageViewportId = 'target';
-    targetBoundary.getBoundingClientRect = () => ({ top: 280, bottom: 520 }) as DOMRect;
+    targetBoundary.getBoundingClientRect = () =>
+      ({ top: 680 - container.scrollTop, bottom: 920 - container.scrollTop }) as DOMRect;
     const target = document.createElement('div');
     target.dataset.messageId = 'target';
     targetBoundary.appendChild(target);
@@ -54,6 +60,62 @@ describe('scrollToMessage', () => {
       }),
     ).toBe(true);
     expect(container.scrollTop).toBe(560);
+  });
+
+  it('waits when the browser clamps a mounted anchor behind a short layout', () => {
+    const container = document.createElement('div');
+    let top = 200;
+    let maxTop = 400;
+    Object.defineProperty(container, 'scrollTop', {
+      get: () => top,
+      set: (value: number) => {
+        top = Math.min(value, maxTop);
+      },
+    });
+    container.getBoundingClientRect = () => ({ top: 100, bottom: 700 }) as DOMRect;
+    const boundary = document.createElement('div');
+    boundary.dataset.messageViewportId = 'target';
+    boundary.getBoundingClientRect = () => ({ top: 700 - top, bottom: 900 - top }) as DOMRect;
+    const target = document.createElement('div');
+    target.dataset.messageId = 'target';
+    boundary.appendChild(target);
+    container.appendChild(boundary);
+    const anchor = { messageId: 'target', viewportOffsetPx: 0 };
+    expect(restoreMessageScrollAnchor(container, anchor)).toBe(false);
+    maxTop = 800;
+    expect(restoreMessageScrollAnchor(container, anchor)).toBe(true);
+    expect(top).toBe(600);
+  });
+
+  it('does not certify an anchor when rendering changes its boundary during the scroll write', () => {
+    const container = document.createElement('div');
+    let top = 200;
+    let contentTop = 900;
+    let renderedPredecessor = false;
+    Object.defineProperty(container, 'scrollTop', {
+      get: () => top,
+      set: (value: number) => {
+        top = value;
+        if (!renderedPredecessor) {
+          renderedPredecessor = true;
+          contentTop += 120;
+        }
+      },
+    });
+    container.getBoundingClientRect = () => ({ top: 100, bottom: 700 }) as DOMRect;
+    const boundary = document.createElement('div');
+    boundary.dataset.messageViewportId = 'target';
+    boundary.getBoundingClientRect = () => ({ top: contentTop - top, bottom: contentTop + 200 - top }) as DOMRect;
+    const target = document.createElement('div');
+    target.dataset.messageId = 'target';
+    boundary.appendChild(target);
+    container.appendChild(boundary);
+    const anchor = { messageId: 'target', viewportOffsetPx: 0 };
+
+    expect(restoreMessageScrollAnchor(container, anchor)).toBe(false);
+    expect(boundary.getBoundingClientRect().top - container.getBoundingClientRect().top).toBe(120);
+    expect(restoreMessageScrollAnchor(container, anchor)).toBe(true);
+    expect(boundary.getBoundingClientRect().top - container.getBoundingClientRect().top).toBe(0);
   });
 
   it('scrolls to the element with matching data-message-id', () => {
@@ -70,6 +132,23 @@ describe('scrollToMessage', () => {
     });
   });
 
+  it.each([
+    400, 600, 3500,
+  ])('keeps the beginning visible for a %ipx message in the original reading viewport', (height) => {
+    const viewport = document.createElement('main');
+    Object.defineProperty(viewport, 'clientHeight', { value: 600 });
+    const target = document.createElement('article');
+    target.dataset.messageId = 'sized';
+    target.getBoundingClientRect = () => ({ height }) as DOMRect;
+    target.scrollIntoView = vi.fn();
+    viewport.append(target);
+    document.body.append(viewport);
+    expect(scrollToMessage('sized', viewport)).toBe(true);
+    expect(target.scrollIntoView).toHaveBeenCalledWith({
+      behavior: 'smooth',
+      block: height > 600 ? 'start' : 'center',
+    });
+  });
   it('adds highlight classes then removes after timeout', () => {
     vi.useFakeTimers();
     const el = document.createElement('div');
@@ -93,6 +172,92 @@ describe('scrollToMessage', () => {
   it('does nothing when element is not found', () => {
     // Should not throw
     scrollToMessage('nonexistent-id');
+  });
+
+  it('lets the reading owner defer highlighting until arrival without starting an expiry timer', () => {
+    vi.useFakeTimers();
+    try {
+      const el = document.createElement('div');
+      el.dataset.messageId = 'late';
+      el.scrollIntoView = vi.fn();
+      document.body.append(el);
+      expect(scrollToMessage('late', document, 'smooth', false)).toBe(true);
+      expect(el.classList.contains('ring-blue-400')).toBe(false);
+      vi.advanceTimersByTime(1800);
+      const cancel = highlightMessage('late');
+      expect(el.classList.contains('ring-blue-400')).toBe(true);
+      vi.advanceTimersByTime(1499);
+      expect(el.classList.contains('ring-blue-400')).toBe(true);
+      cancel?.();
+      expect(el.classList.contains('ring-blue-400')).toBe(false);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('keeps a newer activation and another surface intact when an older highlight is cancelled', () => {
+    vi.useFakeTimers();
+    try {
+      const surfaces = [document.createElement('main'), document.createElement('main')];
+      const targets = surfaces.map((surface) => {
+        const target = document.createElement('article');
+        target.dataset.messageId = 'source';
+        surface.append(target);
+        document.body.append(surface);
+        return target;
+      });
+      const old = highlightMessage('source', surfaces[0]);
+      highlightMessage('source', surfaces[1]);
+      vi.advanceTimersByTime(1000);
+      const current = highlightMessage('source', surfaces[0]);
+      old?.();
+      expect(targets.every((target) => target.classList.contains('ring-blue-400'))).toBe(true);
+      vi.advanceTimersByTime(500);
+      expect(targets[0].classList.contains('ring-blue-400')).toBe(true);
+      expect(targets[1].classList.contains('ring-blue-400')).toBe(false);
+      current?.();
+      expect(targets[0].classList.contains('ring-blue-400')).toBe(false);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('does not let an earlier immediate timer erase a later owner-settled highlight', () => {
+    vi.useFakeTimers();
+    try {
+      const target = document.createElement('article');
+      target.dataset.messageId = 'mode-switch-source';
+      target.scrollIntoView = vi.fn();
+      document.body.append(target);
+      scrollToMessage('mode-switch-source');
+      vi.advanceTimersByTime(1000);
+      highlightMessage('mode-switch-source');
+      vi.advanceTimersByTime(500);
+      expect(target.classList.contains('ring-blue-400')).toBe(true);
+      vi.advanceTimersByTime(1000);
+      expect(target.classList.contains('ring-blue-400')).toBe(false);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('gives an immediate navigation its original interval after cancelling an owner-settled activation', () => {
+    vi.useFakeTimers();
+    try {
+      const target = document.createElement('article');
+      target.dataset.messageId = 'return-classic-source';
+      target.scrollIntoView = vi.fn();
+      document.body.append(target);
+      highlightMessage('return-classic-source');
+      vi.advanceTimersByTime(1000);
+      scrollToMessage('return-classic-source');
+      vi.advanceTimersByTime(500);
+      expect(target.classList.contains('ring-blue-400')).toBe(true);
+      vi.advanceTimersByTime(1000);
+      expect(target.classList.contains('ring-blue-400')).toBe(false);
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it('returns true when the target element is found (lets callers retry until DOM is ready)', () => {

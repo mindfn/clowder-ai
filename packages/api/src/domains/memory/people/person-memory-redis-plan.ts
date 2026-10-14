@@ -6,6 +6,7 @@ export type RedisPlanMutation =
   | { op: 'srem'; keyIndex: number; member: string }
   | { op: 'zadd'; keyIndex: number; member: string; score: number }
   | { op: 'zrem'; keyIndex: number; member: string }
+  | { op: 'hset'; keyIndex: number; member: string; value: string }
   | { op: 'hdel'; keyIndex: number; member: string }
   | { op: 'del'; keyIndex: number };
 
@@ -78,6 +79,7 @@ const redisPlanSchema = z
           })
           .strict(),
         z.object({ op: z.literal('zrem'), keyIndex: keyIndexSchema, member: memberSchema }).strict(),
+        z.object({ op: z.literal('hset'), keyIndex: keyIndexSchema, member: memberSchema, value: z.string() }).strict(),
         z.object({ op: z.literal('hdel'), keyIndex: keyIndexSchema, member: memberSchema }).strict(),
         z.object({ op: z.literal('del'), keyIndex: keyIndexSchema }).strict(),
       ]),
@@ -179,6 +181,11 @@ export class PersonMemoryRedisPlan {
   hdel(key: string, member: string): void {
     this.expectType(key, 'hash', true);
     this.mutations.push({ op: 'hdel', keyIndex: this.keyIndex(key), member });
+  }
+
+  hset(key: string, member: string, value: string): void {
+    this.expectType(key, 'hash', true);
+    this.mutations.push({ op: 'hset', keyIndex: this.keyIndex(key), member, value });
   }
 
   del(key: string, type: CanonicalRedisValueType): void {

@@ -10,6 +10,7 @@ import {
 import {
   type Dispatch,
   KeyboardEvent,
+  type ReactNode,
   type SetStateAction,
   useCallback,
   useEffect,
@@ -20,6 +21,7 @@ import {
   useSyncExternalStore,
 } from 'react';
 import { useCatData } from '@/hooks/useCatData';
+import { type ProspectiveThreadRouting, useChatComposerRouting } from '@/hooks/useChatComposerRouting';
 import { useExecutionRecoveryVerification } from '@/hooks/useExecutionRecoveryVerification';
 import { reconnectGame } from '@/hooks/useGameReconnect';
 import { useIMEGuard } from '@/hooks/useIMEGuard';
@@ -31,23 +33,32 @@ import { useThreadLiveness } from '@/hooks/useThreadScopedSelectors';
 import type { DeliveryMode } from '@/stores/chat-types';
 import { useChatStore } from '@/stores/chatStore';
 import { useInputHistoryStore } from '@/stores/inputHistoryStore';
+import { useToastStore } from '@/stores/toastStore';
 import { apiFetch } from '@/utils/api-client';
 import { compressImage } from '@/utils/compressImage';
-import { AttachmentPreview } from './AttachmentPreview';
+import { AppTooltip } from './AppTooltip';
+import { ChatComposerDraftExtras } from './ChatComposerDraftExtras';
 import { ChatContextPicker } from './ChatContextPicker';
 import { ChatInputActionButton } from './ChatInputActionButton';
 import { ChatInputAddMenu } from './ChatInputAddMenu';
 import { ChatInputMenus } from './ChatInputMenus';
-import { ContextAttachmentList } from './ContextAttachmentView';
+import { ComposerRoutingPreview } from './ComposerRoutingPreview';
+import { chatComposerCopy } from './chat-composer.shell-copy';
 import { type ContextPickerMode, detectContextShortcut } from './chat-context-reference';
 import { buildCatOptions, type CatOption, detectMenuTrigger, GAME_LIST, WEREWOLF_MODES } from './chat-input-options';
-import { deriveImageLifecycleStatus, isImageLifecycleBlockingSend } from './chat-input-upload-state';
+import {
+  deriveImageLifecycleStatus,
+  type ImageLifecycleStatus,
+  isImageLifecycleBlockingSend,
+} from './chat-input-upload-state';
+import { composerAttachments } from './composer-queue';
 import { GameLobby, type GameStartPayload } from './game/GameLobby';
 import { HistorySearchModal } from './HistorySearchModal';
 import { MessageDispositionSelector } from './MessageDispositionSelector';
 import { classifyFreshnessCarrierSupport } from './message-disposition-presentation';
 import { PathCompletionMenu } from './PathCompletionMenu';
-import { ReplyPreviewBar } from './ReplyPreviewBar';
+import { projectScreeningComposerConflict } from './project-screening-composer-group';
+import { useShellCopy } from './shell/shell-copy';
 import { pushThreadRouteWithHistory } from './ThreadSidebar/thread-navigation';
 import {
   getThreadDraft,
@@ -60,8 +71,10 @@ import {
   threadImageDrafts,
   threadReplyDrafts,
 } from './thread-drafts';
+import { useComposerKeyboardFocus } from './use-composer-keyboard-focus';
 import { useDurableComposerDraft } from './useDurableComposerDraft';
-import { WhisperCatSelector, WhisperTargetChips } from './WhisperCatSelector';
+import { useTextareaAutosize } from './useTextareaAutosize';
+import { WhisperCatSelector } from './WhisperCatSelector';
 
 /** Module-level draft storage — survives component unmount/remount across thread switches */
 export {
@@ -75,8 +88,39 @@ export {
 } from './thread-drafts';
 
 const MAX_IMAGE_DRAFT_THREADS = 5;
+const NO_CONTEXT_ATTACHMENTS: ContextAttachment[] = [];
+const COMPOSER_GRID_ROWS = ['row-start-1', 'row-start-2', 'row-start-3', 'row-start-4'] as const;
+const subscribeNothing = () => () => {};
+/** False while hydrating server HTML, true afterwards (and on any plain client mount). */
+function useHydrated(): boolean {
+  return useSyncExternalStore(
+    subscribeNothing,
+    () => true,
+    () => false,
+  );
+}
+
+export interface ChatInputDraftSnapshot {
+  text: string;
+  files: File[];
+  contextAttachments: ContextAttachment[];
+}
 
 interface ChatInputProps {
+  /**
+   * Which presentation the HOST gives this composer. `'v2'` only where the host also mounts the one execution row above
+   * it (ThreadChatSurface): the row then says who is running / whether the run can be verified / how to stop it, so the
+   * composer drops its "猫猫正在回复中… 取消" bar and the empty-draft stop becomes its last control. Every other host
+   * (the split view mounts a bare ChatInput) keeps the classic composer, whatever shell is chosen — nothing there would
+   * say those things in its place.
+   */
+  presentation?: 'classic' | 'v2';
+  /** Host-owned project control; only shown by the v2 composer. */
+  composerContext?: ReactNode;
+  /** Host-owned first row inside the v2 composer card. */
+  composerHeader?: ReactNode;
+  /** Not-yet-created thread state. Existing threads read and write preferredCats through their canonical ThreadStore route. */
+  prospectiveThread?: ProspectiveThreadRouting;
   /** Thread ID for draft persistence — drafts are saved per-thread */
   threadId?: string;
   onSend: (
@@ -95,12 +139,71 @@ interface ChatInputProps {
   placeholder?: string;
   seed?: { id: string; text: string };
   onFocusChange?: (focused: boolean) => void;
+  /** Optional host-owned persistence mirror (for the pre-thread landing owner). */
+  onDraftChange?: (snapshot: ChatInputDraftSnapshot) => void;
 }
 
 const ACCEPTED_TYPES =
   'image/png,image/jpeg,image/gif,image/webp,application/pdf,text/plain,text/markdown,text/csv,application/json,application/zip,application/gzip,application/x-tar,application/octet-stream,audio/mpeg,audio/wav,audio/ogg,video/mp4,video/webm';
 
+function isComposerSendBlocked(imageStatus: ImageLifecycleStatus, unrestoredImageCount: number): boolean {
+  return isImageLifecycleBlockingSend(imageStatus) || unrestoredImageCount > 0;
+}
+
+interface RecoveredAttachmentsNoticeProps {
+  count: number;
+  discardLabel: string;
+  message: string;
+  preparing: boolean;
+  retryLabel: string;
+  onDiscard: () => void;
+  onRetry: () => void;
+}
+
+function RecoveredAttachmentsNotice({
+  count,
+  discardLabel,
+  message,
+  preparing,
+  retryLabel,
+  onDiscard,
+  onRetry,
+}: RecoveredAttachmentsNoticeProps) {
+  if (count === 0) return null;
+  return (
+    <div
+      className="mx-4 mt-2 flex flex-wrap items-center gap-2 rounded-lg border border-conn-amber-ring bg-conn-amber-bg px-3 py-2 text-xs text-conn-amber-text"
+      data-testid="composer-recovered-attachments-blocked"
+      role="alert"
+    >
+      <span className="min-w-0 flex-1">{message}</span>
+      <button
+        type="button"
+        className="shell-focusable rounded-md px-2 py-1 font-medium hover:bg-[var(--shell-selected)]"
+        data-testid="composer-recovered-attachments-retry"
+        disabled={preparing}
+        onClick={onRetry}
+      >
+        {retryLabel}
+      </button>
+      <button
+        type="button"
+        className="shell-focusable rounded-md px-2 py-1 font-medium hover:bg-[var(--shell-selected)]"
+        data-testid="composer-recovered-attachments-discard"
+        disabled={preparing}
+        onClick={onDiscard}
+      >
+        {discardLabel}
+      </button>
+    </div>
+  );
+}
+
 export function ChatInput({
+  presentation = 'classic',
+  composerContext,
+  composerHeader,
+  prospectiveThread,
   threadId,
   onSend,
   disabled,
@@ -110,9 +213,12 @@ export function ChatInput({
   placeholder,
   seed,
   onFocusChange,
+  onDraftChange,
 }: ChatInputProps) {
+  const v2Copy = useShellCopy(chatComposerCopy);
   const { cats } = useCatData();
   const ime = useIMEGuard();
+  const [routingCompositionActive, setRoutingCompositionActive] = useState(false);
   const catOptions = useMemo(() => buildCatOptions(cats), [cats]);
   // F108 Scene 2: whisper-eligible cats (CatData[] for WhisperCatSelector)
   const whisperCats = useMemo(() => cats.filter((c) => c.roster?.available !== false), [cats]);
@@ -158,6 +264,7 @@ export function ChatInput({
     unscopedHasActiveInvocation,
   );
   const hasActiveInvocation = canonicalExecutions.length > 0 || hasUnverifiedLegacyExecution;
+  const shellV2 = presentation === 'v2';
   const stopState: 'available' | 'pending' | 'unavailable' | 'hidden' =
     canonicalExecutions.length === 0 ? (hasUnverifiedLegacyExecution ? 'unavailable' : 'hidden') : projectedCancelState;
   const activeCatIds = useMemo(() => {
@@ -218,6 +325,10 @@ export function ChatInput({
   const [contextAttachments, setContextAttachments] = useState<ContextAttachment[]>(() =>
     threadId ? (threadContextAttachmentDrafts.get(threadId) ?? []) : [],
   );
+  // Context drafts are restored from this browser session, which the server never sees: keep them in state (so the
+  // draft sync below never clears them) but render them only once hydration is over, like the text draft.
+  const hydrated = useHydrated();
+  const shownContextAttachments = hydrated ? contextAttachments : NO_CONTEXT_ATTACHMENTS;
   const [isPreparingImages, setIsPreparingImages] = useState(false);
   const [whisperMode, setWhisperMode] = useState(false);
   const [whisperTargets, setWhisperTargets] = useState<Set<string>>(new Set());
@@ -253,9 +364,21 @@ export function ChatInput({
   const [showHistorySearch, setShowHistorySearch] = useState(false);
   const [lobbyMode, setLobbyMode] = useState<'player' | 'god-view' | 'detective' | null>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
+  useComposerKeyboardFocus(shellV2, textareaRef);
   const menuRef = useRef<HTMLDivElement>(null);
   const addButtonRef = useRef<HTMLButtonElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const { insertRecipientMention, preferredCatControl, routingPreview } = useChatComposerRouting({
+    enabled: shellV2,
+    threadId: effectiveThreadId,
+    prospectiveThread,
+    content: input,
+    setContent: setInput,
+    textareaRef,
+    whisperMode,
+    whisperTargets,
+    composing: routingCompositionActive,
+  });
 
   useEffect(() => {
     if (!seed || appliedSeedIdRef.current === seed.id) return;
@@ -269,12 +392,14 @@ export function ChatInput({
   const workspaceOpenFilePath = useChatStore((s) => s.workspaceOpenFilePath);
   const workspaceWorktreeId = useChatStore((s) => s.workspaceWorktreeId);
   const imageLifecycleStatus = deriveImageLifecycleStatus(isPreparingImages, uploadStatus);
-  const sendTemporarilyDisabled = isImageLifecycleBlockingSend(imageLifecycleStatus);
 
   const {
     beginAdmission: beginComposerDraftAdmission,
+    discardUnrestoredImages,
     markOptimisticallyCleared: markComposerDraftOptimisticallyCleared,
     removeImage: removeComposerDraftImage,
+    retryUnrestoredImages,
+    unrestoredImageCount,
   } = useDurableComposerDraft({
     threadId,
     input,
@@ -287,6 +412,8 @@ export function ChatInput({
     textareaRef,
     setIsPreparingImages,
   });
+  const v2UnrestoredImageCount = shellV2 ? unrestoredImageCount : 0;
+  const sendTemporarilyDisabled = isComposerSendBlocked(imageLifecycleStatus, v2UnrestoredImageCount);
 
   const handleTranscript = useCallback(
     (text: string) => {
@@ -323,6 +450,13 @@ export function ChatInput({
     (deliveryMode?: DeliveryMode) => {
       if (sendTemporarilyDisabled) return;
       if (whisperMode && whisperTargets.size === 0) return;
+      const conflict = projectScreeningComposerConflict(composerAttachments(effectiveThreadId, contextAttachments));
+      if (conflict) {
+        useToastStore
+          .getState()
+          .addToast({ type: 'error', title: '请先整理审片位置', message: conflict, duration: 6000 });
+        return;
+      }
       const trimmed = input.trim();
       if ((trimmed || contextAttachments.length > 0) && !disabled) {
         const draftSnapshot = {
@@ -409,6 +543,7 @@ export function ChatInput({
       beginComposerDraftAdmission,
       markComposerDraftOptimisticallyCleared,
       setInput,
+      effectiveThreadId,
     ],
   );
 
@@ -421,10 +556,10 @@ export function ChatInput({
     setShowGameMenu(false);
   }, []);
 
-  const closeContextPicker = useCallback(() => {
+  const closeContextPicker = useCallback((restoreComposerFocus = true) => {
     setContextPickerMode(null);
     setContextShortcutRange(null);
-    setTimeout(() => textareaRef.current?.focus(), 0);
+    if (restoreComposerFocus) setTimeout(() => textareaRef.current?.focus(), 0);
   }, []);
 
   const openContextPicker = useCallback(
@@ -441,6 +576,16 @@ export function ChatInput({
     (attachment: ContextAttachment) => {
       const parsed = ContextAttachmentSchema.safeParse(attachment);
       if (!parsed.success) return;
+      const conflict = projectScreeningComposerConflict([
+        ...composerAttachments(effectiveThreadId, contextAttachments),
+        parsed.data,
+      ]);
+      if (conflict) {
+        useToastStore
+          .getState()
+          .addToast({ type: 'error', title: '没能放进输入框', message: conflict, duration: 6000 });
+        return;
+      }
       setContextAttachments((previous) =>
         [...previous, parsed.data as ContextAttachment].slice(0, CONTEXT_ATTACHMENT_MAX_COUNT),
       );
@@ -451,7 +596,7 @@ export function ChatInput({
       }
       closeContextPicker();
     },
-    [closeContextPicker, contextShortcutRange, setInput],
+    [closeContextPicker, contextShortcutRange, setInput, contextAttachments, effectiveThreadId],
   );
 
   const [gameStarting, setGameStarting] = useState(false);
@@ -784,7 +929,7 @@ export function ChatInput({
 
   const handleGameClick = useCallback(() => {
     setAddMenuOpen(false);
-    closeContextPicker();
+    closeContextPicker(false);
     setShowMentions(false);
     setMentionStart(-1);
     setShowGameMenu((prev) => !prev);
@@ -802,16 +947,14 @@ export function ChatInput({
     });
   }, []);
 
-  // Sync text, images, context attachments, and reply context to thread-scoped draft stores.
-  // useLayoutEffect runs synchronously before browser paint and before unmount,
-  // ensuring the draft is written to the Map before the component is destroyed
-  // on thread switch (key={threadId}). useEffect would lose the final keystroke.
+  // Text writes are synchronous in setInput; the rendered SSR snapshot can be
+  // empty while that canonical store already holds a restored session draft.
+  // Persist attachments and reply context before unmount on a thread switch.
   useLayoutEffect(() => {
     if (!threadId) return;
     const hasDraft = input.trim().length > 0 || images.length > 0 || contextAttachments.length > 0;
     const firstPersistenceForThread = replyPersistenceThreadRef.current !== threadId;
     const replyDraft = replyToMessage ?? (firstPersistenceForThread ? (threadReplyDrafts.get(threadId) ?? null) : null);
-    syncDraftToStorage(threadId, input || undefined);
     syncContextAttachmentDraftToStorage(threadId, contextAttachments);
     // #934: Persist reply context alongside text/image drafts
     syncReplyDraftToStorage(threadId, replyDraft);
@@ -833,6 +976,14 @@ export function ChatInput({
     replyPersistenceThreadRef.current = threadId;
   }, [input, images, contextAttachments, threadId, setThreadHasDraft, replyToMessage]);
 
+  useEffect(() => {
+    onDraftChange?.({
+      text: input,
+      files: [...images],
+      contextAttachments: [...contextAttachments],
+    });
+  }, [contextAttachments, images, input, onDraftChange]);
+
   // F080: recalculate ghost suggestion whenever input changes (covers all setInput paths)
   useEffect(() => {
     const match = input.trim() ? findHistoryMatch(input) : null;
@@ -840,15 +991,7 @@ export function ChatInput({
     setGhostSuggestion(match);
   }, [input, findHistoryMatch]);
 
-  // Auto-resize textarea based on content
-  useEffect(() => {
-    const ta = textareaRef.current;
-    if (!ta) return;
-    ta.style.height = 'auto';
-    const isMobile = typeof window.matchMedia === 'function' ? window.matchMedia('(max-width: 767px)').matches : false;
-    const maxH = isMobile ? 120 : 200; // ~5 lines mobile, ~8 lines desktop
-    ta.style.height = `${Math.min(ta.scrollHeight, maxH)}px`;
-  }, [input]);
+  useTextareaAutosize(textareaRef, input);
 
   useEffect(() => {
     if (!activeMenu) return;
@@ -866,10 +1009,37 @@ export function ChatInput({
     return () => document.removeEventListener('mousedown', handler);
   }, [activeMenu, closeMenus]);
 
+  const composerDraftExtras = (
+    <ChatComposerDraftExtras
+      files={images}
+      contextAttachments={shownContextAttachments}
+      replyToMessage={replyToMessage}
+      cats={cats}
+      whisperMode={whisperMode}
+      whisperCats={whisperCats}
+      whisperTargets={whisperTargets}
+      onToggleWhisperTarget={toggleWhisperTarget}
+      onRemoveFile={handleRemoveImage}
+      onRemoveContext={(id) =>
+        setContextAttachments((previous) => previous.filter((attachment) => attachment.id !== id))
+      }
+      onClearReply={clearReplyTo}
+    />
+  );
+  const hasComposerDraftExtras =
+    whisperMode || images.length > 0 || shownContextAttachments.length > 0 || replyToMessage !== null;
+  const hasComposerHeader = shellV2 && composerHeader !== undefined && composerHeader !== null;
+  const headerRowCount: 0 | 1 = hasComposerHeader ? 1 : 0;
+  const draftExtrasRowCount: 0 | 1 = hasComposerDraftExtras ? 1 : 0;
+  const draftExtrasRow = COMPOSER_GRID_ROWS[headerRowCount];
+  const textareaRow = COMPOSER_GRID_ROWS[(headerRowCount + draftExtrasRowCount) as 0 | 1 | 2];
+  const controlsRow = COMPOSER_GRID_ROWS[(headerRowCount + draftExtrasRowCount + 1) as 1 | 2 | 3];
+
   return (
-    <div className="relative bg-[var(--console-shell-bg)] safe-area-bottom">
-      {/* F39: Queue status bar — visible when cat is running */}
-      {hasActiveInvocation && (
+    <div className={`relative safe-area-bottom ${shellV2 ? 'bg-[var(--shell-work)]' : 'bg-[var(--console-shell-bg)]'}`}>
+      {/* F39: Queue status bar — visible when cat is running. New shell (v2): the one execution row above the composer
+          says this and holds the stop; the classic interface keeps the bar unchanged. */}
+      {hasActiveInvocation && !shellV2 && (
         <div data-testid="active-invocation-banner" className="px-4 pt-2 flex items-center gap-2">
           <span className="inline-block w-2 h-2 rounded-full bg-[var(--color-cocreator-primary)] animate-pulse" />
           <span className="text-xs text-[var(--color-cocreator-primary)] font-medium">
@@ -899,7 +1069,7 @@ export function ChatInput({
         </div>
       )}
 
-      {dispositionIsMeaningful && (
+      {dispositionIsMeaningful && !shellV2 && (
         <MessageDispositionSelector
           controller={messageDisposition}
           carrierSupport={dispositionCarrierSupport}
@@ -979,20 +1149,19 @@ export function ChatInput({
         </div>
       )}
 
-      {whisperMode && (
-        <WhisperTargetChips cats={whisperCats} selected={whisperTargets} onToggle={toggleWhisperTarget} />
+      {shellV2 && (
+        <RecoveredAttachmentsNotice
+          count={unrestoredImageCount}
+          discardLabel={v2Copy.discardRecoveredAttachments}
+          message={v2Copy.recoveredAttachmentsBlocked}
+          preparing={isPreparingImages}
+          retryLabel={v2Copy.retryRecoveredAttachments}
+          onDiscard={() => void discardUnrestoredImages()}
+          onRetry={() => void retryUnrestoredImages()}
+        />
       )}
 
-      <AttachmentPreview files={images} onRemove={handleRemoveImage} />
-
-      <ContextAttachmentList
-        attachments={contextAttachments}
-        compact
-        onRemove={(id) => setContextAttachments((previous) => previous.filter((attachment) => attachment.id !== id))}
-      />
-
-      {/* #699: Reply preview bar — matches ReplyPill styling with sender theme color */}
-      {replyToMessage && <ReplyPreviewBar replyToMessage={replyToMessage} cats={cats} onClear={clearReplyTo} />}
+      {!shellV2 && composerDraftExtras}
 
       <input
         ref={fileInputRef}
@@ -1005,6 +1174,7 @@ export function ChatInput({
 
       {addMenuOpen && (
         <ChatInputAddMenu
+          presentation={presentation}
           onAttach={() => fileInputRef.current?.click()}
           onAddContext={() => openContextPicker('all')}
           onWhisperToggle={handleWhisperToggle}
@@ -1015,72 +1185,125 @@ export function ChatInput({
           sendDisabled={sendTemporarilyDisabled}
           maxImages={images.length >= 5}
           whisperMode={whisperMode}
+          messageDisposition={shellV2 && dispositionIsMeaningful ? messageDisposition : undefined}
+          dispositionCarrierSupport={shellV2 && dispositionIsMeaningful ? dispositionCarrierSupport : undefined}
+          preferredCat={shellV2 ? (preferredCatControl ?? undefined) : undefined}
         />
       )}
 
-      <div className="flex gap-2 items-center p-4 pt-2" data-testid="chat-input-composer-row">
+      <div
+        className={
+          shellV2
+            ? 'relative mx-4 mb-4 mt-2 grid grid-cols-[32px_minmax(0,1fr)_auto] items-center gap-x-2 gap-y-2 rounded-2xl border border-[var(--shell-hairline-strong)] bg-[var(--shell-paper)] px-3 pb-2 pt-2'
+            : 'flex gap-2 items-center p-4 pt-2'
+        }
+        data-testid="chat-input-composer-row"
+        data-composer-presentation={presentation}
+      >
+        {hasComposerHeader ? (
+          <div
+            className="col-span-3 col-start-1 row-start-1 -mx-2 -mt-2 border-b border-[var(--shell-hairline)] px-3 py-1.5"
+            data-testid="chat-composer-header"
+          >
+            {composerHeader}
+          </div>
+        ) : null}
+        {shellV2 && hasComposerDraftExtras ? (
+          <div
+            className={`col-span-3 col-start-1 ${draftExtrasRow} -mx-2 ${hasComposerHeader ? '' : '-mt-2 rounded-t-2xl'} border-b border-[var(--shell-hairline)] pb-1`}
+            data-testid="chat-composer-draft-extras"
+          >
+            {composerDraftExtras}
+          </div>
+        ) : null}
         {/* F284: one stable add entry; context, upload and modes disclose on demand. */}
-        <button
-          ref={addButtonRef}
-          type="button"
-          onClick={() => {
-            closeContextPicker();
-            closeMenus();
-            setAddMenuOpen((open) => !open);
-          }}
-          disabled={disabled || sendTemporarilyDisabled}
-          className={`p-3 rounded-xl transition-all disabled:cursor-not-allowed disabled:opacity-30 ${
-            addMenuOpen
-              ? 'text-cafe-accent bg-cafe-surface-sunken rotate-45'
-              : 'text-cafe-muted hover:text-cafe-accent hover:bg-cafe-surface'
-          }`}
-          aria-label="添加"
-          aria-expanded={addMenuOpen}
-          aria-controls="composer-add-menu"
-          title="添加上下文、上传或打开更多模式"
-        >
-          <svg className="w-5 h-5" viewBox="0 0 20 20" fill="currentColor" aria-hidden="true">
-            <path
-              fillRule="evenodd"
-              d="M10 3a1 1 0 011 1v5h5a1 1 0 110 2h-5v5a1 1 0 11-2 0v-5H4a1 1 0 110-2h5V4a1 1 0 011-1z"
-              clipRule="evenodd"
-            />
-          </svg>
-        </button>
+        <AppTooltip label={v2Copy.addHint} side="top" disabled={!shellV2 || addMenuOpen}>
+          <button
+            ref={addButtonRef}
+            type="button"
+            onClick={() => {
+              closeContextPicker(false);
+              closeMenus();
+              setAddMenuOpen((open) => !open);
+            }}
+            disabled={disabled || sendTemporarilyDisabled}
+            className={`${
+              shellV2
+                ? `shell-focusable col-start-1 ${controlsRow} flex h-8 w-8 items-center justify-center rounded-full border border-[var(--shell-hairline-strong)]`
+                : 'p-3 rounded-xl'
+            } transition-all disabled:cursor-not-allowed disabled:opacity-30 ${
+              addMenuOpen
+                ? 'text-cafe-accent bg-cafe-surface-sunken rotate-45'
+                : 'text-cafe-muted hover:text-cafe-accent hover:bg-cafe-surface'
+            }`}
+            aria-label={shellV2 ? v2Copy.add : '添加'}
+            aria-expanded={addMenuOpen}
+            aria-controls="composer-add-menu"
+            title={shellV2 ? undefined : '添加上下文、上传或打开更多模式'}
+          >
+            <svg className="w-5 h-5" viewBox="0 0 20 20" fill="currentColor" aria-hidden="true">
+              <path
+                fillRule="evenodd"
+                d="M10 3a1 1 0 011 1v5h5a1 1 0 110 2h-5v5a1 1 0 11-2 0v-5H4a1 1 0 110-2h5V4a1 1 0 011-1z"
+                clipRule="evenodd"
+              />
+            </svg>
+          </button>
+        </AppTooltip>
 
-        <div className="flex-1 relative" data-bootcamp-step="chat-input" data-guide-id="chat.input">
+        <div
+          className={shellV2 ? `relative col-span-3 col-start-1 ${textareaRow} min-w-0` : 'flex-1 relative'}
+          data-bootcamp-step="chat-input"
+          data-guide-id="chat.input"
+        >
           <textarea
             ref={textareaRef}
             value={input}
             onChange={handleChange}
             onKeyDown={handleKeyDown}
-            onCompositionStart={ime.onCompositionStart}
-            onCompositionEnd={ime.onCompositionEnd}
+            onCompositionStart={() => {
+              ime.onCompositionStart();
+              setRoutingCompositionActive(true);
+            }}
+            onCompositionEnd={() => {
+              ime.onCompositionEnd();
+              setRoutingCompositionActive(false);
+            }}
             onPaste={handlePaste}
             onFocus={() => onFocusChange?.(true)}
             onBlur={() => onFocusChange?.(false)}
-            aria-label="消息输入框"
+            aria-label={shellV2 ? v2Copy.message : '消息输入框'}
             placeholder={
               whisperMode
-                ? '悄悄话...'
+                ? shellV2
+                  ? v2Copy.whisperPlaceholder
+                  : '悄悄话...'
                 : hasActiveInvocation && !whisperTargetsAllIdle
                   ? displayedDisposition === 'continue_current'
-                    ? '接着当前工作补充...'
-                    : '继续输入，成为下一件工作...'
-                  : (placeholder ?? '输入消息... (@ 召唤猫猫 · /thread 引用对话)')
+                    ? shellV2
+                      ? v2Copy.continuePlaceholder
+                      : '接着当前工作补充...'
+                    : shellV2
+                      ? v2Copy.nextPlaceholder
+                      : '继续输入，成为下一件工作...'
+                  : (placeholder ?? (shellV2 ? v2Copy.placeholder : '输入消息... (@ 召唤猫猫 · /thread 引用对话)'))
             }
-            className={`w-full resize-none rounded-xl border p-3 text-sm focus:outline-none focus:ring-2 placeholder:text-cafe-muted ${
-              whisperMode
-                ? 'border-cafe-accent/30 bg-accent-50/50 focus:ring-cafe-accent'
-                : 'border-[var(--console-border-soft)] bg-transparent focus:bg-[var(--console-card-bg)] focus:ring-[var(--console-input-stroke)]'
-            }`}
+            className={
+              shellV2
+                ? `shell-focusable block min-h-[32px] w-full resize-none rounded-lg border-0 bg-transparent px-1 py-1 text-sm leading-6 text-[var(--shell-ink)] placeholder:text-[var(--shell-muted)] ${whisperMode ? 'bg-accent-50/50' : ''}`
+                : `w-full resize-none rounded-xl border p-3 text-sm focus:outline-none focus:ring-2 placeholder:text-cafe-muted ${
+                    whisperMode
+                      ? 'border-cafe-accent/30 bg-accent-50/50 focus:ring-cafe-accent'
+                      : 'border-[var(--console-border-soft)] bg-transparent focus:bg-[var(--console-card-bg)] focus:ring-[var(--console-input-stroke)]'
+                  }`
+            }
             rows={1}
             disabled={disabled}
           />
           {ghostSuggestion && !pathCompletion.isOpen && !contextPickerMode && (
             <div
               data-testid="ghost-suggestion"
-              className="absolute inset-0 pointer-events-none p-3 text-sm whitespace-pre-wrap break-words overflow-hidden rounded-xl"
+              className={`absolute inset-0 pointer-events-none text-sm whitespace-pre-wrap break-words overflow-hidden rounded-xl ${shellV2 ? 'px-1 py-1 leading-6' : 'p-3'}`}
               aria-hidden="true"
             >
               <span className="invisible">{input}</span>
@@ -1089,19 +1312,37 @@ export function ChatInput({
           )}
         </div>
 
-        <ChatInputActionButton
-          onTranscript={handleTranscript}
-          onSend={handleSend}
-          onStop={() => void handleProjectedStop()}
-          stopState={stopState}
-          onQueueSend={handleQueueSend}
-          onForceSend={handleForceSend}
-          disabled={disabled}
-          sendDisabled={sendTemporarilyDisabled}
-          hasActiveInvocation={whisperTargetsAllIdle ? false : hasActiveInvocation}
-          activeExecutionKey={whisperTargetsAllIdle ? undefined : activeExecutionKey}
-          hasText={Boolean(input.trim() || contextAttachments.length > 0)}
-        />
+        {shellV2 && (
+          <div
+            className={`col-start-2 ${controlsRow} flex min-w-0 items-center gap-1 border-l border-[var(--shell-hairline)] pl-2 ${
+              hasComposerHeader ? 'max-sm:flex-nowrap max-sm:gap-2 max-sm:pl-1.5' : ''
+            }`}
+            data-testid="chat-composer-context"
+          >
+            {composerContext}
+            <ComposerRoutingPreview
+              preview={routingPreview}
+              onInsertMention={insertRecipientMention}
+              compact={hasComposerHeader}
+            />
+          </div>
+        )}
+        <div className={shellV2 ? `col-start-3 ${controlsRow} flex shrink-0 items-center gap-1` : 'contents'}>
+          <ChatInputActionButton
+            onTranscript={handleTranscript}
+            onSend={handleSend}
+            onStop={() => void handleProjectedStop()}
+            stopState={stopState}
+            onQueueSend={handleQueueSend}
+            onForceSend={handleForceSend}
+            disabled={disabled}
+            sendDisabled={sendTemporarilyDisabled}
+            hasActiveInvocation={whisperTargetsAllIdle ? false : hasActiveInvocation}
+            activeExecutionKey={whisperTargetsAllIdle ? undefined : activeExecutionKey}
+            hasText={Boolean(input.trim() || shownContextAttachments.length > 0)}
+            presentation={shellV2 ? 'v2' : 'classic'}
+          />
+        </div>
       </div>
 
       {showHistorySearch && (

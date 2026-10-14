@@ -10,7 +10,7 @@
  * SessionSealer is responsible for the lifecycle state machine.
  */
 
-import type { CatId, SealResult } from '@cat-cafe/shared';
+import type { CatId, SealResult, SessionRecord } from '@cat-cafe/shared';
 import { createModuleLogger } from '../../../../infrastructure/logger.js';
 import { extractRecentArtifacts } from '../agents/routing/artifact-tracking.js';
 import { AuditEventTypes, getEventAuditLog } from '../orchestration/EventAuditLog.js';
@@ -20,6 +20,7 @@ import type { IThreadStore } from '../stores/ports/ThreadStore.js';
 import { buildThreadMemory } from './buildThreadMemory.js';
 import { extractDecisionSignals } from './extractDecisionSignals.js';
 import { generateHandoffDigest } from './HandoffDigestGenerator.js';
+import { getHomeSessionPosition } from './session-scope.js';
 import { formatEventsChat, formatEventsHandoff } from './TranscriptFormatter.js';
 import type { TranscriptReader } from './TranscriptReader.js';
 import type { ExtractiveDigestV1, TranscriptWriter } from './TranscriptWriter.js';
@@ -253,7 +254,7 @@ export class SessionSealer implements ISessionSealer {
     // (reconcileStuck/reconcileAllStuck) intentionally skip hooks to avoid
     // compounding failures in recovery code. Firing here on failure would also
     // risk double-invocation if the reaper later succeeds.
-    if (sealWriteSucceeded && this.postSealHooks.length > 0) {
+    if (sealWriteSucceeded && !record.scopedInvocation && this.postSealHooks.length > 0) {
       const hookEvent = {
         sessionId: args.sessionId,
         catId: record.catId,
@@ -374,19 +375,7 @@ export class SessionSealer implements ISessionSealer {
    * Returns true if all best-effort steps succeeded, false if any threw.
    * Callers use this to decide whether to emit SEAL_FINALIZED (clean) or log partial.
    */
-  private async doFinalize(
-    record: {
-      id: string;
-      threadId: string;
-      catId: string;
-      cliSessionId?: string;
-      seq: number;
-      createdAt: number;
-      sealReason?: string;
-      contextHealth?: import('@cat-cafe/shared').ContextHealth;
-    },
-    now: number,
-  ): Promise<boolean> {
+  private async doFinalize(record: SessionRecord, now: number): Promise<boolean> {
     let clean = true;
 
     // Phase C: Flush transcript + index + extractive digest
@@ -412,11 +401,18 @@ export class SessionSealer implements ISessionSealer {
       }
     }
 
+    // Scoped nodes archive execution, without starting home memory/digest work.
+    if (record.scopedInvocation) return clean;
+
     // F065 Phase B: Update thread memory after successful digest write
     if (this.threadStore && this.transcriptReader) {
       try {
         const digest = await this.transcriptReader.readDigest(record.id, record.threadId, record.catId);
         if (digest) {
+          const homePosition = getHomeSessionPosition(
+            await this.store.getChain(record.catId, record.threadId, record.userId),
+            record.id,
+          );
           const existingMemory = await this.threadStore.getThreadMemory(record.threadId);
           // #1208: summary sizing consumes the invocation health snapshot that
           // triggered the seal. A legacy record with no health gets the minimum
@@ -438,7 +434,7 @@ export class SessionSealer implements ISessionSealer {
           const updated = buildThreadMemory(
             existingMemory,
             digest as unknown as ExtractiveDigestV1,
-            maxTokens,
+            { maxTokens, homePosition },
             signals,
             fileArtifacts.length > 0 ? fileArtifacts : undefined,
           );

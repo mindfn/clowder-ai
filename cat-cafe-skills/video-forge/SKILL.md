@@ -1,314 +1,109 @@
 ---
 name: video-forge
-tips_exempt: "2026-09-15 narrative-method update: routes unclear explanations to causal review before existing production; no new video command or user-facing operation."
+tips_exempt: "Renewed 2026-10-13: music auditions, continuous-cut review and cat-run film statistics improve the existing production method. The command is a creator diagnostic, not a new user-facing product entry; dramatization and sample-first review remain unchanged."
 description: >
-  视频制作全链路：素材入库 → 剧本冻结 → 全局配音 → 对齐 → 渲染 → 审查 → 交付。
-  Use when: 已明确要制作视频、做 showcase、做教程视频、录屏剪辑、video review、节奏审查。
-  Not for: Agent 产品宣传片仍未锁定主角、观众信念与导演语法（先用 agent-product-promo-director）；
-  只找时效性外部参考（用 deep-research）；纯代码开发（用 worktree/tdd）、纯文档写作（直接写）、PPT（用 ppt-forge）。
-  Output: schema 驱动的视频成片 + operator 创意验收 + 风险匹配的技术审查 + 可发布。
+  用 Remotion 做有品味的视频：从一句话 brief 或一堆素材出发，先在素材里找戏（主张、反转、因果），
+  再推出风格、按声音排时间、写 Remotion 合成、用样张自审，交给 operator 看片。
+  Use when: 要做或改一支视频（宣传短片、产品界面演示、讲解/纪录片段、动态排版、录屏剪辑），
+  包括主角是家里的猫、片里有剧情的产品宣传片；或写、审 Remotion 代码的画面、运动、节奏与声音。
+  Not for: 只查某个 Remotion API 怎么写（读官方 remotion-best-practices skill 的 rules/）；
+  目的就是讲角色自己故事的动画短片（用 anime-forge）；Agent 产品宣传片还没想清楚讲什么（先用 agent-product-promo-director）；PPT（用 ppt-forge）。
+  Output: 一页 treatment + Remotion 工程 + 样张 contact sheet + Console 内联可播的预览片/成片。
 ---
 
-# Video Forge — AI 视频生产线
+# Video Forge：用 Remotion 做一支好看的片子
 
-> 关联 Feature: [F138 Video Studio](../../docs/features/F138-video-studio.md)
-> 技术收敛纪要: 2026-04-05 三猫收敛
+> 2026-10-04 重写。You 的标准："一句话做出来就让人想看完"。
+>
+> **先读 `refs/method.md`**：从素材里找戏、推出风格、让时间干活、边做边看、交出去听原话，一共五步。它是这份 skill 的核心，换任何题目都用得上。`taste.md` 是手艺标准，`remotion-build.md` 是工程，案例和工具只是方便。**工具可以不用，五步不能跳。**
 
-## Intent Gate：研究不是开机令
+## 为什么这是一份 skill
 
-进入生产线前先判用户要解决的究竟是哪一个问题：
+模型会写 Remotion 代码，但压力下会做出 PPT：静态画面加推拉、字淡入淡出、每个镜头都慢慢缩放、整页网页缩进画面、慢吞吞的插值占满时长。还有一种更隐蔽的失败：画面很干净，却没有故事。家里这些全踩过（见文末）。这份 skill 管四件模型不会自己做的事：**从素材里找出戏来**、**替人定审美**、**按节拍而不是按感觉排时间**、**渲染后真的去看样张**。API 用法交给官方 skill，这里不重复。
 
-| Intent | 用户真正要的 | 本轮输出 | 禁止偷换成 |
-|---|---|---|---|
-| `research` | “宣传片该怎么剪”“看看别人怎么做”“有什么剪辑手法/Skill” | `agent-product-promo-director` 的主角/故事/镜头/声音合同；时效性案例由 `deep-research` 供证 | 挑一个现成页面直接录制或渲染试片 |
-| `production` | 明确要求拍、剪、录、配音或渲染某一支片 | 下方开局参数 + 正式生产线 | 用研究报告代替成片 |
-| `review` | 判断一支已有视频哪里对/错 | 对已有 artifact 的可见性、内容与节奏 verdict | 未经要求另拍一版 |
+## 流程
 
-- 用户拿一个真实 thread、页面或旧片举例，只证明它是候选素材/证据，**不自动授权把它选成宣传片主题**。
-- `research` 或 brief 未锁先走 `agent-product-promo-director`；需要近期外部参考时再由它调用 `deep-research`。只有用户明确转入 `production` 且主角/格式/beat sheet 已锁，才继续本 Skill。
-- 意图模糊且开机会制造新素材时，留在可逆的 research/brief 层，并明确当前假设；不要用“先做个 rough cut 看看”代替方向判断。
+```
+一句话 brief / 一堆素材
+  → 方法五步的前三步想清楚（refs/method.md）
+  → treatment.md（一页纸：故事、风格语法表、情绪曲线、假设）→ 主张和反转压成一句话，先给 You（已接受的 brief 直接用）
+  → 最小样张：只做最可能毁掉整片的那一段（这段的配音与回听、局部时间线、搭建、自审）→ 给 You 看
+  → 过了再铺全片：声音稿（逐句合成 + Whisper 回听，猫自己用来查念错、量时长）→ 时间线（配音逐词对齐 / 音乐拍点）
+    → Remotion 搭建（theme.ts + 场景 + 镜头）→ 样张自审（contact sheet 五问）
+  → 全片粗片 → 给 You 看 → 按他一句话改
+  → 成片
+```
 
-> 失败史（2026-08-25）：用户最初要求研究真实 AI 产品宣传片的剪辑与叙事，团队却围绕一个 crime-wall 页面连续制作多版试片；后来即使修复了“PPT 化”的 motion 问题，仍然没有回答原问题。根因不是导演技巧不足，而是把 reference research 错路由成了 production。
+1. **treatment**：按 `refs/method.md` 第一到三步逐条回答：素材清单、主张、藏起来的证据（反转）、因果排列、观众记住的一句；风格从哪来、语法表、换素材测试；拍速、情绪曲线、最大的转折放在哪段安静里。再补色板、字体、片长（`refs/taste.md` §0）。**不要回头问一串开局参数**；拿不准的写成假设，片子出来他一眼就能改。只有一件事要先问，因为它会改方向：给谁看（家里看还是公开发）。这决定克隆声线、配乐和素材能不能用。写完把主张和反转压成一句话先给 You；已经接受过的 brief 直接用，不再要他点头。
+2. **声音稿与时间线**：最小样张只录那一段；样张过了再录全篇。有台词或旁白，录声音稿：`scripts/tts-check.py` 逐句合成、Whisper 回听，参考音先用 `--check-ref` 核对文字。声音稿是自己用的，不单独交 You 听：TTS 念白是片子最平的样子，他判断不了好坏。正式配音若是单一旁白的连续解说，可以整篇重新合成来保住语气，这时要整段回听、重新对齐。时间轴只按最终用进片子的那版音频排：时长从这版音频量，再强制对齐出逐词时间，用 `assets/craft/beats.ts` 变成节拍；只有音乐就按 BPM 或 `scripts/music-cues.py` 测出的起音点排。渲染前跑 `scripts/timeline-check.py`，两句话不许叠。见 `refs/remotion-build.md` §3 和共享参考 `../.cat-cafe-shared-refs/video-voice-and-timeline.md`。
+3. **搭建**：先读官方 skill 里对应的 `rules/*.md`，再写。把 `assets/craft/` 复制进工程（运动曲线与时长、镜头、遮罩出字、节拍）。全片取值只来自 `theme.ts`。
+4. **样张自审**：`scripts/contact-sheet.sh` 把每个节拍的开头、中间、结尾拼成一张图，用 Read 逐格看，过 `refs/taste.md` §10 的五问。不过就改，不拿去给人看。
+5. **给人看**：从便宜到贵（共享参考 §1）。有制作成本的第一样，是最可能毁掉整片的那一段做成 10–20 秒的最小样张；过了再给全片粗片（草图或静帧按真实台词时长拼起来）。静帧粗片可以用来验故事和节奏，不能当成片交付。草稿片按 `rich-messaging` 的视频规则发成 Console 内联播放器，附样张和 treatment。品味由 You 定；别的猫只审事实、技术、音画同步。
 
-## Narrative Subject Gate：产品是主角，成果只是 proof
+## 硬规矩（扫一眼版）
 
-讲解视频或已有成片被反馈“没看懂”时，按[叙事清晰度](../.cat-cafe-shared-refs/narrative-clarity.md)判断缺的是哪一步因果或角色行动，再进入对应制作/审查。只做技术剪辑、已有明确修订点时不重开叙事设计；不把技能读取当作观众理解的证据。
+| 规矩 | 一句话 |
+|---|---|
+| 画面内部必须有事发生 | 只有镜头在推拉、只有字在淡入，不算动作 |
+| 镜头默认锁定 | 运镜要有理由，0.6–1.2 秒，以停住结束；不给每个镜头加慢缩放 |
+| 能切就不移 | 从全景切到特写，比推过去干脆 |
+| 按最终画面排版 | 不把整页缩进画面；正文 ≥ 32px（1080p） |
+| 一帧一个焦点 | 其余退后：变暗、变淡、变模糊 |
+| 字用遮罩出现 | `assets/craft/Reveal.tsx`；一句只强调一个词 |
+| 没有线性运动 | 曲线按用途取 `assets/craft/motion.ts` |
+| 时间跟着声音走 | 节拍从对齐结果或 BPM 算；场景里不写死帧数；时间码只从时间轴 JSON 取 |
+| 每句台词都回听 | Whisper 听写对不上就换说法重录；听写只当提醒，不当证据 |
+| 音效要么像，要么不放 | 只放一听就懂的几声；合成的小音不像就删 |
+| 观众不该干等 | 按片子类型安排变化与有意的停顿，不按秒表；只有位置在变、没有意义的镜头剪短 |
+| 转场要有载体 | 说不出哪个东西把观众带进下一镜，就硬切 |
+| 确定性 | 只用 `useCurrentFrame()`；`random(seed)`；字体图片等加载 |
 
-产品宣传片在写分镜前，先用一句话回答：**观众看完应该想要哪个产品？**
+## 片子在讲事实时
 
-- 合格主语：用户的愿望进入产品 → 产品把它变成共享目标 → 猫猫在产品里记忆、接力、用工具、碰壁并纠错 → 共享工作区中的成果逐渐长出来。
-- 成果只承担 proof：网页、报告、代码或图片证明前面的产品过程真的完成了工作；它们不能取代产品成为整支片的 hero。
-- 视觉主线要持续留在产品世界中：thread、球权、记忆、工具状态、workspace 与人类反馈是连续动作，不是成品前的一组过场字卡。
-- 替换测试：把片中的具体成果换成另一种成果，若故事就不再成立，说明 brief 卖的是那个成果，不是 Clowder AI。
-- 创意主语、情绪与“像不像我们”由 operator 验收；同行 review 可以审事实、技术和证据纪律，不能替代创意 ground truth。低风险玩票式试验直接找 operator 校准，不用同行 review 代替 taste 判断。
+纪录、复盘、产品史这类片子，事实规矩跟着项目走：原话不改字，重演要标"重演"，概念稿要标"未实现"，没拿到的原文不编。好看不能拿事实换。宣传片的故事层不套这条：人物、场景、台词可以编，只有当真实证明用的能力、业绩、作品归属要和事实一致（见 `agent-product-promo-director` §7）。
 
-任一项不成立 → 停在 brief，不进素材、分镜或渲染。
+## 家里踩过的坑（2026-08 至 10 月）
 
-> 失败史（2026-08-25）：修正 Intent Gate 后的首版 hero blueprint 虽然写到了多猫协作，却仍让 crime-wall artifact 承担视觉高潮。operator 指出“我们卖的是自己的产品，不是做出来的那个东西”；根因是 brief 有过程词汇，但没有锁定叙事主语与创意验收者。
-
-## 核心原则
-
-**视频职责要覆盖，但不默认拉多猫。** 一只执行猫可以兼任编排、渲染与低风险技术 QA；只有风险路由要求独立验证、任务确实需要专长，或 operator 明确要求时才找其他猫。创意 ground truth 始终回 operator，不能用同行 review 替代。
-
-- 主执行猫（当前持球猫）：video-spec 编排 + 渲染 + 对齐集成 + 自证
-- 风险匹配的独立验证者（按需）：音画同步、事实、安全、schema 或发布风险
-- operator：创意主语、情绪、剧本与成片验收；玩票/低风险试验直接走此通道
-
-### 铁规矩
-
-1. **全局音频，不段级切碎** — TTS 拿完整剧本一口气读完，保住情绪和呼吸感（KD-12）
-2. **不赌 TTS 原生 timestamps** — forced alignment 出时间戳（KD-10）
-3. **拒绝暴力慢放** — 画面不够时：FREEZE_STYLIZED > B_ROLL > SLOW_MO（KD-14）
-4. **Contract 和 Renderer 解耦** — video-spec JSON 是真相源，Remotion/FFmpeg 是可替换渲染器
-5. **镜头内部必须发生事情** — 产品片 / showcase 的主要叙事节点必须有主体、UI 或状态随时间变化；静帧上的推拉、平移、溶解只算镜头包装，不算动作素材
-6. **产品是主角，成果只是 proof** — 过程持续展示产品如何组织协作；成品只证明它做成了，不能抢走叙事主语
-
-## 两条生产路径
-
-| | 路径 B：先脚本后素材 | 路径 A：先素材后配音 |
+| 做法 | 当时的结论 | 改法 |
 |---|---|---|
-| 触发 | "做个 showcase/教程视频" | "这段录屏帮我配个音" |
-| 人的输入 | 分镜脚本 + 素材 + 粗标 | 原始视频 + 风格关键词 |
-| spec 来源 | 人写 | 模型生成（PySceneDetect + VLM） |
-| Phase | Phase 1 主攻 | Phase 3 引入 |
+| 每个镜头持续慢慢推近，然后切 | You："看的我好晕"（08-25） | 镜头锁定，运镜以停住结束 |
+| 六张精修静帧 + 推拉转场 | You："把我们的视频变成了 ppt"（08-25） | 画面内部要有状态变化 |
+| 整页 HTML 原样缩进 1920×1080 | You："字太小了我根本看不见，画面太空了"（08-27） | 只取发生事情的那块，放大 |
+| 程序化树枝慢插值占满 178 秒 | You："信息密度太低了吧"（09-04） | 按内容安排节拍，剪掉没有意义的等待，能短就短 |
+| 固定机位 + 左栏字 + 循环光点（EP04 第四稿，10 月初） | 导演复盘（10-03）：读起来像幻灯片 | 字进画面里，镜头跟事件走 |
+| 用户让"研究怎么剪"，猫直接开拍试片（08-25） | 连拍几版，原问题没回答 | 研究问题交 `agent-product-promo-director`，开拍要等方向定 |
+| 一句话 brief 只做了三镜干净排版（本 skill 第一支样片，10-04） | You："有点太简单了，我看不出什么品味" | 一句话也要有角色、冲突、反转，风格选一个有性格的做到底 |
+| 参考音配错了文字（《醋醋喵》EP0，10-04） | 旁白开口先念出参考文字，后面全是胡言乱语，16 句全坏 | 用参考音前跑 `tts-check.py --check-ref` |
+| 每个动作都配一个合成音效（EP0） | You："音效还是很奇怪" | 只留一听就懂的几声，正式音效后期做 |
+| 跨镜头的长句压到下一句（EP0） | 两层字幕叠在一起 | 渲染前跑 `timeline-check.py` |
+| 反复复用 `make-score.py` 的同一套预设，没试听就当正式 BGM（变脸记、醋醋喵、《AI-native builder 的一天》） | You：「这个 BGM 是你什么御用 BGM？……它真的好奇怪」（10-12，EP0 之后第二次嫌声音怪） | 这套预设默认只用来排节奏、占位。正式音乐按段落情绪、对白和静默的效果试听后选用；来源和费用沿 You 已给的授权走（10-12 已允许 AI 生成和免费曲库），不为来源重复请示。来源不是质量判据，听起来对才算 |
+| 模拟冷读只给截帧和台词（《AI-native builder 的一天》，10-12） | 截帧能看出谁在画面里（第一次冷读已经说过人何时出现、两个世界关系不清），但看不到连续动作、时长感受和声音；「BGM 怪」是 You 自己看片才发现的 | 交冷读结果时写明它验证不了什么。声明节奏或声音完成之前，用带声的连续成片自己验一遍。模型模拟的冷读不等于真实陌生观众已经看懂（`../.cat-cafe-shared-refs/narrative-clarity.md` §5） |
+| 一句台词一个镜头，在背影、屏幕近景、工作室远景和近景四处来回跳；10 次切换里只有毛线球那 1 次有东西带着过去；两句台词之间是死寂（《AI-native builder 的一天》早饭段第一版，10-12） | You 先问「为什么看起来还是像ppt？」，又问「为什么云端的你做的 不像ppt ？ 他也是合成」。我先归因成画面不动，可他认可的云端那支同样有 75% 的帧不动，却没有一次硬切、几乎没有无声（我们是 84%、10 次、41%）。照「一个舞台、两扇门」重做后（静止 45%，真正的切换 4 处都有东西带着过去，无声 1.6%），You：「现在味道倒是对了」 | 嫌像 PPT 时，先用 `scripts/film-stats.py` 给自己的片子和他认可的参考片量同一组数，再找原因。少换场景，把戏放进一个舞台，镜头在里面走；每次切换都要说得出是什么带观众过去（形状对上、方向对上、这边一个动作引起那边一个动作、下一边的声音先进来）；声音底子不断 |
 
-两条路径共享同一套 segment contract + 渲染层。
+## 家里的工具
 
-## 开局参数（必须声明）
+| 东西 | 在哪 |
+|---|---|
+| Remotion 工作台（4.0.438，已装官方 skill） | You 机器 `~/projects/remotion-studio`；别人有未提交改动，只在自己的 `src/<Film>/` 里干活 |
+| 新建视频目录 | `pnpm video:new <slug>`（生成 `docs/videos/<slug>/`） |
+| 逐词强制对齐 | `scripts/video-forge/align.py`（Qwen3-ForcedAligner） |
+| 官方 Remotion skill | 工程里 `npx remotion skills add` / `update` |
+| 自己合成配乐和音效（无版权，卡在画面网格上；预设默认当占位，正式配乐见上面的坑） | `scripts/make-score.py <out> --bars N --sections "0-1:intro,2-9:groove,..." [--mute 起-止帧]` |
+| 量「像不像幻灯片」：静止帧占比、切点候选、无声占比，和参考片一起量 | `scripts/film-stats.py <片子> [参考片...]`（要 ffmpeg 和 numpy；切点候选里混着快速运镜，要逐个打开看是不是真切、有没有载体） |
+| 音乐拍点（没有稳定 BPM 时） | `scripts/music-cues.py <音频> --end-ms <片长>`（要 ffmpeg 和 numpy） |
+| 样张 | `scripts/contact-sheet.sh <video> <out.png> <帧号...>` |
+| 声音稿：逐句合成 + Whisper 回听；核对参考音 | `scripts/tts-check.py lines.json voices.json out/`；`--check-ref 参考音.wav "文字"` |
+| 时间轴检查（对白重叠、镜头缝） | `scripts/timeline-check.py timeline.json` |
+| 范例 | `refs/case-xianxian-faces.md`：方法五步在一支八格表情图短片上的一次应用（看怎么推，不抄风格）；`assets/example/README.md`：13 秒技术范例 |
+| 多段 AI 生成素材拼成"一镜到底" | `refs/continuity.md` 的接缝五问 |
 
-| 参数 | 说明 | 示例 |
-|------|------|------|
-| 类型 | 视频类型 | showcase / 教程 / 攻防战 / 播客 |
-| 时长目标 | 成片目标时长 | 60s / 3min / 6-8min |
-| 调性 | 整体情绪基调 | 真实生活感 / 高燃极客 / 温馨猫咖 |
-| 受众 | 谁看这个视频 | linux.do 社区 / B 站观众 / 内部 |
-| 配音方案 | 猫猫配音 / 纯字幕 / 原声 | 单猫旁白 / 多猫声线 / 无配音 |
+## 和别的 skill 的区别
 
-**没有开局参数 = 审查没有标准。开工前必须和operator确认。**
+- `agent-product-promo-director`：Agent 产品宣传片还不知道主角和要讲的信念时，先去那里定方向；定了再回来做。
+- `anime-forge`：按片子的目的分：推产品、讲功能的片子（宣传片、讲解片、demo），哪怕主角是家里的猫、片里有剧情，也走 `agent-product-promo-director` 定方向、`video-forge` 生产；目的就是讲角色自己故事的（醋醋喵这类连载、家里真事改编）才走 `anime-forge`。宣传片里要画出来的猫角色段落，流程留在本 skill，画稿照 anime-forge 的 `assets/art-brief-header.md` 写。两边共用 `../.cat-cafe-shared-refs/video-voice-and-timeline.md`。
+- 官方 `remotion-best-practices`：API 怎么写。本 skill：拍什么、怎么排、做得好不好看。
+- `ppt-forge`：要的是幻灯片，不是视频。
 
-## 场景路由（路径 B）
+## 下一步
 
-| 触发 | 场景 | 主导 | 说明 |
-|------|------|------|------|
-| operator说"做个视频" | **A: Brief + 素材盘点** | 主执行猫 | 确认开局参数 + 分镜表 + 素材需求清单 |
-| operator确认分镜 | **B: 素材入库** | operator录 + 主执行猫压缩归档 | 素材放 `docs/videos/{project}/assets/`，粗标写 `asset-markers.md` |
-| 素材到齐 | **C: video-spec 冻结** | 主执行猫 | 写 video-spec JSON（4 层 segment contract），operator确认 |
-| spec 确认 | **D: 全局配音 + 对齐** | 主执行猫 | CosyVoice 全局配音 → Qwen3-ForcedAligner → word_timestamps |
-| 对齐完成 | **E: Remotion 渲染** | 主执行猫 | schema → inputProps → preview render |
-| 预览版出来 | **F: 审查 Gate** | 主执行猫自证 + operator；风险命中时再加独立验证者 | 见下方审查标准 |
-| 审查通过 | **G: Final Render + 交付** | 主执行猫 | 高质量渲染 + 封面导出 + 发布 |
-| operator不满意 | **R: Patch Loop** | 主执行猫 + 视觉把关猫 | retiming / 重录 / 重写段落 |
-
-## 审查 Gate（F 场景）
-
-### F1: 音画同步审查（QA/审查猫）
-
-| 级别 | 维度 | 判定 |
-|------|------|------|
-| P1 | 配音和画面脱节 | 说到 X 时画面不是 X |
-| P1 | 时间戳偏移 | 字幕和声音对不上（>200ms） |
-| P1 | 音频断裂 | 段间有不自然的静音或跳跃 |
-| P2 | 音量不均 | 原声和配音音量差异大 |
-
-### F2: 节奏/调性审查（视觉把关猫）
-
-| 级别 | 维度 | 判定 |
-|------|------|------|
-| P1 | 暴力慢放 | 画面被强行降速拉伸，卡顿拖沓 |
-| P1 | 节奏断裂 | 高燃段突然变慢 / 温馨段突然快切 |
-| P1 | PPT 化 / 假运动 | 主要叙事节点只轮播静帧；唯一时间变化来自推拉、平移、字幕或转场 |
-| P2 | vibe 不连贯 | 整体情绪没有起承转合 |
-| P2 | 字幕风格不一致 | 不同段落字幕样式混乱 |
-
-#### F2.5: Motion Evidence Gate（产品片 / showcase）
-
-在预览渲染前，逐个主要叙事节点回答：**画面内部发生了什么？**
-
-- 合格证据：真实录制的操作/反馈、purpose-recorded UI 状态变化、主体动作，或实际动画合成中的形变/接力/聚合。
-- 不合格替代：对静态截图做 Ken Burns 推拉、横移、溶解、字幕入场；这些可以辅助动作，但不能独自承担动作。
-- 若本轮要验证的是运镜、节奏或剪辑，预演必须包含真实时间变化；style frame / 静态分镜只能验证构图与美术，不能冒充 motion animatic。
-- 任一主要节点没有 motion evidence → **BLOCK 预览交付**，回到素材补录或动效合成；不得再靠旁白、音乐或更多转场补偿。
-
-> 失败史（2026-08-25 crime-wall）：连续两版用 viewport motion 移动录屏，第三版把六张精修静帧放上时间轴；技术检查均绿，但观感依次是“晕”“怪”“PPT”。共同根因是把 camera motion 当成了 subject motion。
-
-### F3: 内容审查（operator）
-
-| 级别 | 维度 | 判定 |
-|------|------|------|
-| P1 | 事实错误 | 展示的功能/数据不对 |
-| P1 | 敏感信息泄露 | 截图里有 token / API key / 私人信息 |
-| P1 | 叙事主语错位 | 影片卖的是某个页面/文件，而不是产品如何让协作发生 |
-| P2 | 画面选取不佳 | "这段换个更好的片段" |
-
-## AI 视频生成（短片段素材）
-
-当素材来源是 AI 生成（而非人工录制）时，使用可用的视频生成工具（如 MCP 提供的 text2video / image2video 能力）。
-
-### 单段限制
-
-AI 视频生成 API 通常有单次时长限制（如 4-6 秒）。**不要试图用一次调用生成完整长视频。**
-
-### 多段生成策略
-
-目标时长超过单次限制时：
-1. **分镜拆段**：按 video-spec 的 segment contract 拆分，每段一个生成任务
-2. **逐段生成**：每段独立 submit → poll → 获取 resultUrl
-3. **下载素材**：将各段视频下载到 `docs/videos/{project}/assets/` 目录
-4. **FFmpeg 拼接**：按 segment 顺序拼接，注意转场处理
-   ```bash
-   # 简单拼接（同编码格式）
-   ffmpeg -f concat -safe 0 -i segments.txt -c copy output.mp4
-   # 需要重编码时（不同分辨率/编码）
-   ffmpeg -f concat -safe 0 -i segments.txt -c:v libx264 -crf 23 -c:a aac output.mp4
-   ```
-5. **预览拼接结果**：用 rich block 内联播放（见「视频预览」章节）
-
-### 注意事项
-
-- 多段拼接必须过连续性合约（见下方「多段拼接连续性合约」）
-- AI 生成的素材视为原始素材，后续配音/对齐/审查流程不变
-
-## 多段拼接连续性合约
-
-多段生成是正常的。假连续性不是。
-
-拼接前先分类目标输出：
-
-| 类型 | 定义 | 拼接约束 |
-|------|------|---------|
-| **Montage** | 显式多镜头序列 | 异源片段正常；转场可见且有意 |
-| **Pseudo-one-shot** | 伪一镜到底 / 连续动作 | 必须通过连续性检查（见 [`refs/continuity.md`](refs/continuity.md)） |
-
-**核心边界**：`concat`、`xfade`、crop、grading 是收尾工具，不是连续性修复工具。源片段不兼容时，后处理可以打磨接缝，但不能把它当作连续性的证明。
-
-### Seam Review Gate（多段 pseudo-one-shot 必过）
-
-成片后、final render 前，逐接缝回答 5 问：
-
-1. 角色是否仍然是同一个？
-2. 环境是否仍然是同一个场景？
-3. 色温是否足够稳定？
-4. 镜头方向是否连贯？
-5. 运动是否暗示同一个动作，还是独立片段？
-
-**任一项 "否" → 不能宣称 pseudo-one-shot → 走降级路径**（见 [`refs/continuity.md`](refs/continuity.md)）。
-
-> 详细的事前预测清单、降级路径和 15s 典型失败案例见 [`refs/continuity.md`](refs/continuity.md)。
-
-## 素材管理规范
-
-### 目录结构
-```
-docs/videos/{project-name}/
-├── asset-markers.md       ← 素材标注表（operator + 主执行猫共同编辑）
-├── video-spec.json        ← segment contract（主执行猫生成）
-├── voice-script.md        ← 配音剧本（主执行猫草稿 + operator确认）
-└── assets/                ← 原始素材（gitignore, 仅本地）
-    ├── 1-xxx.mov
-    ├── 2-xxx.mov
-    └── ...
-```
-
-### 素材压缩标准（入库前）
-```bash
-ffmpeg -i input.mov -c:v libx264 -crf 23 -c:a aac -b:a 128k output.mp4
-# 目标：1080p, CRF 23, AAC 128k
-```
-
-### 粗标格式（operator填）
-```
-时间 | 画面内容
-0:00 - 0:50 | operator在打字
-0:50 - 1:20 | Ragdoll开始回复，1:20 Maine Coon跟上
-```
-
-## retiming 策略优先级
-
-当配音长度和画面长度不匹配时，按以下优先级选择策略：
-
-| 优先级 | 策略 | 说明 | 适用场景 |
-|--------|------|------|---------|
-| 1 | TRIM | 裁剪多余部分 | 画面比配音长 |
-| 2 | FREEZE_STYLIZED | 定格末帧 + 毛玻璃/排版 | 配音比画面长，差距小 |
-| 3 | B_ROLL | 插入空镜/截图/动效 | 配音比画面长，差距大 |
-| 4 | SLOW_MO | 适度降速（≥0.7x） | 仅当画面本身适合慢放 |
-| 5 | LOOP | 往复循环 | 最后手段 |
-
-**绝对不允许 <0.7x 的慢放。** 如果需要填充超过 30% 的时间差，必须用 B_ROLL 或 FREEZE_STYLIZED。
-
-## 常见错误
-
-| 错误 | 修正 |
-|------|------|
-| TTS 逐段切碎生成 | 完整剧本全局配音，forced alignment 分段 |
-| 赌 TTS 原生 timestamps | 用 Qwen3-ForcedAligner / WhisperX |
-| 画面不够就暴力慢放 | 按 retiming 优先级处理 |
-| 没压缩就用原始素材 | 入库前统一压缩（CRF 23） |
-| segment contract 扁平不分层 | 4 层：source/narration/render/control |
-| 用户问“宣传片该怎么剪”时先拿现成页面试拍 | 先过 Intent Gate；研究只交 reference breakdown + brief，素材示例不是 production 授权 |
-| 宣传片围绕一个漂亮成果做 hero reveal | 先过 Narrative Subject Gate；Clowder AI 的协作过程是主角，成果只作 proof，创意方向由 operator 验收 |
-| 加速后沿用原始时间轴切段 | **加速会压缩时长，后续段的起始时间必须重新计算。** 例：A 段原 130s 以 2x 输出 65s，B 段在 final timeline 从 65s 开始而非 130s。用 output duration 逐段累加，不要用 source timestamps 直接拼 |
-| 只加速长等待段忽略短等待 | 分段不够细时，"Thinking"状态可能散落在多个区间里。逐段审素材，把所有等待态都标出来分别处理 |
-| 把 style frames 加转场后当产品视频 | 先过 Motion Evidence Gate；没有镜头内部动作就只交 storyboard/style reel，不交视频预览 |
-
-## 视频预览（Console 内联播放）
-
-生成的视频**必须在 Console 中内联可看**，不要只贴 URL 或本地路径。
-
-### 优先级
-
-1. **本地终稿 / `/uploads/...` URL** → 优先用 `kind:"file"` rich block，`mimeType:"video/mp4"`。Web UI 会直接渲染内联 `<video>` 播放器，并进入 artifact 索引
-2. **外部直链 URL**（如云端生成结果）→ 可直接发 `kind:"file"`；若你明确要 `autoplay muted`，再退回 `html_widget` + `<video>`
-3. **只有工作区本地文件、还没可访问 URL** → 先放到 `/uploads/...`，再发 rich block；不要直接贴源码路径
-
-### 示例：优先用 file rich block
-
-```
-cat_cafe_create_rich_block({
-  block: JSON.stringify({
-    id: "video-<唯一标识>",
-    kind: "file",
-    v: 1,
-    url: "/uploads/final-cut.mp4",
-    fileName: "final-cut.mp4",
-    mimeType: "video/mp4"
-  })
-})
-```
-
-### 示例：外部直链需要 autoplay 时再用 html_widget
-
-```
-cat_cafe_create_rich_block({
-  block: JSON.stringify({
-    id: "video-<唯一标识>",
-    kind: "html_widget",
-    v: 1,
-    title: "视频标题",
-    height: 420,
-    html: "<video controls autoplay muted playsinline style='width:100%;max-width:720px;border-radius:12px'><source src='<resultUrl>' type='video/mp4'></video>"
-  })
-})
-```
-
-### 注意事项
-
-- `file` rich block 保证的是**内联播放器**；如果你要强制自动播放，再考虑 `html_widget` + 外部直链
-- 本地视频目前没有图片那样的自动发布合约；要想稳定显示，先显式放到 `/uploads/...`
-- 如果 `create_rich_block` 返回 `stale_ignored`，说明回调凭据过期（见 #1092），可尝试在消息文本中嵌入 `` ```cc_rich `` 格式作为降级
-- 多段视频先用 FFmpeg 拼接成完整文件，再用一个 rich block 播放最终版
-
-## 技术栈
-
-| 层 | 组件 | License |
-|----|------|---------|
-| 渲染 | Remotion v4（Phase 1）/ FFmpeg（底层） | Remotion License / LGPL |
-| TTS | CosyVoice（已有猫猫声线） | Apache-2.0 |
-| 对齐 | Qwen3-ForcedAligner（首选）/ WhisperX（备选） | Apache-2.0 / BSD-2 |
-| 队列 | BullMQ（Phase 2 引入） | MIT |
-| 切分 | PySceneDetect（Phase 3 路径 A） | BSD-3 |
-| VLM | Qwen2.5-VL-3B（Phase 3 路径 A） | Apache-2.0 |
-
-## Next Step
-
-路径 B 完整流程跑通后 → `quality-gate`（自检）→ `request-review`（QA/审查猫审音画，视觉把关猫审节奏）
+草稿片给 You 看后按他的话改（不必开新流程）；成片要对外发布时，事实类片子请一只非作者的猫核一遍事实，再交 `rich-messaging` 投递。

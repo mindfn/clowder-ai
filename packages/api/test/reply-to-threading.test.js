@@ -127,6 +127,27 @@ describe('replyTo threading', () => {
     assert.equal(preview.content, '');
   });
 
+  test('hydrateReplyPreview never leaks a recalled body and names the recall explicitly', async () => {
+    const { MessageStore, hydrateReplyPreview } = await import(
+      '../dist/domains/cats/services/stores/ports/MessageStore.js'
+    );
+    const store = new MessageStore();
+    const parent = store.append({
+      userId: 'user-1',
+      catId: null,
+      content: 'This body must disappear from the receipt preview',
+      mentions: [],
+      timestamp: 1000,
+      threadId: 'thread-1',
+    });
+    parent.recall = { version: 1, exposure: 'seen', recalledAt: 1001 };
+
+    assert.deepEqual(await hydrateReplyPreview(store, parent.id), {
+      senderCatId: null,
+      content: '原话已撤回',
+    });
+  });
+
   test('hydrateReplyPreview returns null for nonexistent parent', async () => {
     const { MessageStore, hydrateReplyPreview } = await import(
       '../dist/domains/cats/services/stores/ports/MessageStore.js'

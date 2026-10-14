@@ -4,6 +4,9 @@ import { useCallback, useLayoutEffect, useRef } from 'react';
 import { shouldFoldText, TEXT_FOLD_THRESHOLD } from '@/utils/textFold';
 import { MarkdownContent } from './MarkdownContent';
 import { useMessageDisclosureState } from './message-disclosure-state';
+import { replyBodyCopy } from './reply-body.shell-copy';
+import { useShellCopy } from './shell/shell-copy';
+import { useShellPresentation } from './shell/shell-presentation';
 
 const COLLAPSED_MAX_HEIGHT = 320;
 
@@ -16,6 +19,8 @@ export function CollapsibleMarkdown({
   className?: string;
   disclosureKey?: string;
 }) {
+  const isV2 = useShellPresentation() === 'v2';
+  const t = useShellCopy(replyBodyCopy);
   const fold = shouldFoldText(content);
   const isExport =
     typeof window !== 'undefined' && new URLSearchParams(window.location.search).get('export') === 'true';
@@ -54,7 +59,13 @@ export function CollapsibleMarkdown({
         onClick={toggle}
         className="mt-1 text-xs text-cafe-muted hover:text-cafe-primary transition-colors"
       >
-        {collapsed ? `Show more (+${lineCount - TEXT_FOLD_THRESHOLD} lines)` : 'Show less'}
+        {isV2
+          ? collapsed
+            ? t.showMore(lineCount - TEXT_FOLD_THRESHOLD)
+            : t.showLess
+          : collapsed
+            ? `Show more (+${lineCount - TEXT_FOLD_THRESHOLD} lines)`
+            : 'Show less'}
       </button>
     </div>
   );

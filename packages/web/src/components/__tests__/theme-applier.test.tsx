@@ -24,7 +24,13 @@ vi.mock('@/utils/api-client', () => ({
   apiFetch: vi.fn(() => Promise.resolve({ ok: false })),
 }));
 
+/* What is in the room (hooks/useActualColours is covered on its own): a test sets it, then renders. */
+let mockActual: import('@/lib/readable-name-plate').ActualColours | undefined;
+vi.mock('@/hooks/useActualColours', () => ({ useActualColours: () => mockActual }));
+
 const { ThemeApplier } = await import('../ThemeApplier');
+const { buildCSS } = await import('../dev/oklch-tuner-css');
+const { getActiveTheme, useThemeStore } = await import('@/stores/themeStore');
 
 let root: Root;
 let container: HTMLDivElement;
@@ -51,6 +57,50 @@ describe('ThemeApplier', () => {
     });
 
     expect(mockSetTheme).not.toHaveBeenCalled();
+  });
+
+  describe('resolves the theme against what is in the room (F322 B, Opus 5.5 3619)', () => {
+    const noHc = { on: false, hue: 0, chroma: 0 };
+    const regular = {
+      cats: [
+        { h: 250, c: 0.12 },
+        { h: 25, c: 0.15 },
+        { h: 145, c: 0.1 },
+      ],
+      human: { h: 58, c: 0.04 },
+    };
+    const injected = () => document.getElementById('oklch-tuner-override')?.textContent ?? '';
+    const expected = (actual: typeof mockActual) =>
+      buildCSS(getActiveTheme(useThemeStore.getState()).params, noHc, actual);
+
+    afterEach(() => {
+      mockActual = undefined;
+    });
+
+    it('injects what buildCSS gives for the cats that exist, and again when the catalogue changes', () => {
+      mockActual = regular;
+      act(() => {
+        root.render(React.createElement(ThemeApplier));
+      });
+      expect(injected()).toBe(expected(regular));
+
+      const withExtreme = { ...regular, cats: [...regular.cats, { h: 328, c: 0.32 }] };
+      mockActual = withExtreme;
+      act(() => {
+        root.render(React.createElement(ThemeApplier));
+      });
+      expect(injected()).toBe(expected(withExtreme));
+      expect(expected(withExtreme)).not.toBe(expected(regular));
+    });
+
+    it('falls back to the swept range only while nothing is known about the room', () => {
+      mockActual = undefined;
+      act(() => {
+        root.render(React.createElement(ThemeApplier));
+      });
+
+      expect(injected()).toBe(expected(undefined));
+    });
   });
 
   it('syncs next-themes when it differs from the active base', () => {

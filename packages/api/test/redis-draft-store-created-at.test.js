@@ -22,6 +22,11 @@ class FakePipeline {
     return this;
   }
 
+  hdel(key, field) {
+    this.ops.push(() => this.redis.hdel(key, field));
+    return this;
+  }
+
   expire(key, seconds) {
     this.ops.push(() => this.redis.expire(key, seconds));
     return this;
@@ -48,6 +53,10 @@ class FakeRedis {
 
   async hget(key, field) {
     return this.hashes.get(key)?.get(field) ?? null;
+  }
+
+  async hdel(key, field) {
+    return this.hashes.get(key)?.delete(field) ? 1 : 0;
   }
 
   async hset(key, fieldsOrField, value) {

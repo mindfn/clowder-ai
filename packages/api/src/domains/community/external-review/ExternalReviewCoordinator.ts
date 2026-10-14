@@ -155,16 +155,20 @@ export class ExternalReviewCoordinator {
     const config = await this.opts.repoConfigStore.getByRepo(repoFullName);
     if (!config) return null;
     const subjectKey = prSubjectKey(repoFullName, prNumber);
+    const existing = await this.readAggregate(subjectKey);
+    const assignmentRevision = existing?.reviewerAssignmentRevision ?? 0;
+    const assignmentSuffix = assignmentRevision > 0 ? `:r${assignmentRevision}` : '';
     await this.appendAndApply(
       makeEvent(
-        `f168:external-review-assigned:${subjectKey}:${config.updatedAt}`,
+        `f168:external-review-assigned:${subjectKey}:${config.updatedAt}${assignmentSuffix}`,
         subjectKey,
         'case.external_review_assigned',
         {
           mode: config.reviewMode,
           cloudPolicy: config.cloudReviewPolicy,
-          reviewerCatId: tracking.catId,
-          reviewerThreadId: tracking.threadId,
+          reviewerCatId: existing?.reviewerCatId ?? tracking.catId,
+          reviewerThreadId: existing?.reviewerThreadId ?? tracking.threadId,
+          ...(assignmentRevision > 0 ? { expectedAssignmentRevision: assignmentRevision } : {}),
         },
         this.now(),
       ),

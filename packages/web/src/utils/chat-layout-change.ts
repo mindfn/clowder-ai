@@ -4,10 +4,13 @@ export interface ChatLayoutViewportAnchor {
   element: Element;
   viewportTop: number;
   fallbackScrollTop: number;
+  inputOccurredAt?: number;
 }
 
 interface ChatLayoutChangeDetail {
   viewportAnchor?: ChatLayoutViewportAnchor;
+  captureCurrentReading?: boolean;
+  inputOccurredAt?: number;
 }
 
 export function dispatchChatLayoutChanged(detail?: ChatLayoutChangeDetail): void {
@@ -15,6 +18,28 @@ export function dispatchChatLayoutChanged(detail?: ChatLayoutChangeDetail): void
     detail
       ? new CustomEvent<ChatLayoutChangeDetail>(CHAT_LAYOUT_CHANGED_EVENT, { detail })
       : new Event(CHAT_LAYOUT_CHANGED_EVENT),
+  );
+}
+
+/** Capture through the mounted reading owner before an explicit entry changes its layout. */
+export function captureChatReadingBeforeLayoutChange(inputOccurredAt?: number): void {
+  dispatchChatLayoutChanged({
+    captureCurrentReading: true,
+    ...(inputOccurredAt === undefined ? {} : { inputOccurredAt }),
+  });
+}
+
+export function readChatReadingInputTime(event: Event): number | null | undefined {
+  if (!(event instanceof CustomEvent)) return undefined;
+  const at = (event as CustomEvent<ChatLayoutChangeDetail>).detail?.inputOccurredAt;
+  if (at === undefined) return undefined;
+  return typeof at === 'number' && Number.isFinite(at) && at > 0 ? at : null;
+}
+
+export function isChatReadingCaptureRequest(event: Event): boolean {
+  return (
+    event instanceof CustomEvent &&
+    (event as CustomEvent<ChatLayoutChangeDetail>).detail?.captureCurrentReading === true
   );
 }
 

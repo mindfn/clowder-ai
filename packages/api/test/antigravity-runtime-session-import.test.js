@@ -239,3 +239,24 @@ describe('Antigravity legacy runtime-session import', () => {
     assert.doesNotMatch(source, /writeFileSync|persistSessionMap/);
   });
 });
+
+test('legacy import cannot reclassify a scoped CLI identity as an ordinary external runtime session', async () => {
+  const { RuntimeSessionStore, importLegacyAntigravitySessions } = await loadModules();
+  const runtimeSessionStore = new RuntimeSessionStore();
+  const scoped = sessionRecord({
+    scopedInvocation: {
+      invocationId: 'public-child',
+      executionScope: 'collective-participation',
+      originMessageId: 'public-source',
+    },
+  });
+  await withTempJson(JSON.stringify({ 'thread-1:antig-opus': 'cascade-1' }), async (file) => {
+    const result = await importLegacyAntigravitySessions({
+      path: file,
+      runtimeSessionStore,
+      sessionChainStore: sessionChainStoreFor(new Map([['cascade-1', scoped]])),
+    });
+    assert.equal(result.imported.length, 0);
+    assert.equal(await runtimeSessionStore.getByRuntimeSession('antigravity-desktop', 'cascade-1'), null);
+  });
+});

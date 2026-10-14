@@ -16,6 +16,7 @@ import { useCallback } from 'react';
 import { useCatNameResolver } from '@/hooks/useCatNameResolver';
 import { useCallbackAuthAggregate, useCallbackAuthAvailable, useCallbackAuthByCat } from '@/stores/callbackAuthStore';
 import { CatAvatar } from './CatAvatar';
+import { useSettingsReadingEntry } from './shell/useSettingsSourceReturn';
 
 interface CallbackAuthCatAvatarProps {
   catId: string;
@@ -29,11 +30,13 @@ export function CallbackAuthCatAvatar({ catId, size = 32, status }: CallbackAuth
   const aggregate = useCallbackAuthAggregate();
   const isAvailable = useCallbackAuthAvailable();
   const router = useRouter();
+  const captureSettingsOrigin = useSettingsReadingEntry();
   const resolveCatName = useCatNameResolver();
 
   const handleOpenDetails = useCallback(() => {
+    captureSettingsOrigin();
     router.push('/settings?s=ops&ops=observability&obs=callback-auth');
-  }, [router]);
+  }, [router, captureSettingsOrigin]);
 
   // Cloud Codex #1403 (round 2 + 7): backend snapshot's recent24h.byCat ONLY
   // accumulates FAILURE events — an absent entry means "no failure record",

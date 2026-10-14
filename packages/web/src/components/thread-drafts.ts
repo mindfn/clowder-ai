@@ -3,6 +3,7 @@ import { type ContextAttachment, ContextAttachmentsSchema } from '@cat-cafe/shar
 const STORAGE_KEY = 'cat-cafe:thread-drafts';
 const REPLY_STORAGE_KEY = 'cat-cafe:thread-reply-drafts';
 const CONTEXT_STORAGE_KEY = 'cat-cafe:thread-context-attachment-drafts';
+const SELECTION_STORAGE_KEY = 'cat-cafe:thread-draft-selection:';
 const EMPTY_CONTEXT_ATTACHMENTS: readonly ContextAttachment[] = [];
 const threadDraftListeners = new Set<() => void>();
 const contextAttachmentDraftListeners = new Set<() => void>();
@@ -145,6 +146,11 @@ export function syncDraftToStorage(threadId: string, text: string | undefined): 
   const previous = threadDrafts.get(threadId);
   const next = text?.trim() ? text : undefined;
   if (previous === next) return;
+  try {
+    window.sessionStorage.removeItem(SELECTION_STORAGE_KEY + threadId);
+  } catch {
+    // The owner text remains available even when the browser mirror is unavailable.
+  }
   if (next !== undefined) {
     threadDrafts.set(threadId, next);
   } else {
@@ -152,6 +158,49 @@ export function syncDraftToStorage(threadId: string, text: string | undefined): 
   }
   persistToStorage(threadDrafts);
   for (const listener of threadDraftListeners) listener();
+}
+
+/** Browser presentation of the same text draft; never a second content or server revision owner. */
+export function saveThreadDraftSelection(threadId: string, textarea: HTMLTextAreaElement): void {
+  if (textarea.value !== getThreadDraft(threadId) || !textarea.value) return;
+  try {
+    window.sessionStorage.setItem(
+      SELECTION_STORAGE_KEY + threadId,
+      JSON.stringify({
+        text: textarea.value,
+        start: textarea.selectionStart,
+        end: textarea.selectionEnd,
+        direction: textarea.selectionDirection,
+      }),
+    );
+  } catch {
+    // Browser presentation is best effort; the TTL=0 server draft is unchanged.
+  }
+}
+
+export function restoreThreadDraftSelection(threadId: string, textarea: HTMLTextAreaElement): void {
+  try {
+    const raw = window.sessionStorage.getItem(SELECTION_STORAGE_KEY + threadId);
+    if (!raw) return;
+    const saved: unknown = JSON.parse(raw);
+    if (!saved || typeof saved !== 'object') return;
+    const { text, start, end, direction } = saved as Record<string, unknown>;
+    if (
+      text !== textarea.value ||
+      text !== getThreadDraft(threadId) ||
+      typeof start !== 'number' ||
+      typeof end !== 'number' ||
+      !Number.isSafeInteger(start) ||
+      !Number.isSafeInteger(end) ||
+      start < 0 ||
+      end < start ||
+      end > textarea.value.length
+    )
+      return;
+    textarea.setSelectionRange(start, end, direction === 'backward' || direction === 'forward' ? direction : 'none');
+  } catch {
+    // Corrupt/unavailable mirrors cannot select a different draft or move focus.
+  }
 }
 
 /** #934: Save/clear reply context for a thread draft. */

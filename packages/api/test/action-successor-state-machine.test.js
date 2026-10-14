@@ -1109,3 +1109,73 @@ describe('F167 Phase S action successor state machine', () => {
     });
   });
 });
+
+/**
+ * A runtime restart that interrupts a generation after a holder read the action leaves the lease active with no
+ * holder outcome: what the holder did is unknown. An explicit replace is the issuer's decision to run it again, and
+ * the only thing that lets it move that active generation is server-derived proof of exactly that interruption.
+ */
+describe('F167 explicit replace of a generation interrupted after a holder read it', () => {
+  const interruptedEvidence = {
+    generation: 1,
+    evidenceRef: 'carrier-interrupted-after-read:lease-1:g1:codex-terra@child-1',
+  };
+  const replaceInput = (overrides = {}) => ({
+    expectedGeneration: 1,
+    holderCatIds: ['codex-terra'],
+    holderThreadId: 'thread-target',
+    predecessorCatId: 'codex-sol',
+    predecessorThreadId: 'thread-source',
+    dispatchId: 'dispatch-recovery',
+    terminalPredicate: reviewPredicate('aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa'),
+    evidenceRef: 'callback:predecessor:dispatch-recovery',
+    now: 200,
+    ...overrides,
+  });
+
+  it('keeps proof_required for an active generation when there is no interruption proof', () => {
+    const active = claimActionSuccessor(null, baseClaim()).lease;
+    const result = replaceActionSuccessor(active, replaceInput());
+    assert.equal(result.outcome, 'proof_required');
+    assert.equal(result.lease, active);
+  });
+
+  it('moves the interrupted active generation to the next one without inventing any holder outcome', () => {
+    const active = claimActionSuccessor(null, baseClaim()).lease;
+    const result = replaceActionSuccessor(active, replaceInput({ interruptedGeneration: interruptedEvidence }));
+    assert.equal(result.outcome, 'replaced');
+    assert.equal(result.lease.generation, 2);
+    assert.equal(result.lease.status, 'active');
+    assert.deepEqual(result.lease.holderOutcomes, {});
+    assert.ok(result.lease.evidenceRefs.includes(interruptedEvidence.evidenceRef), 'the interruption is on record');
+  });
+
+  it('ignores interruption proof that names a different generation', () => {
+    const active = claimActionSuccessor(null, baseClaim()).lease;
+    const result = replaceActionSuccessor(
+      active,
+      replaceInput({ interruptedGeneration: { ...interruptedEvidence, generation: 2 } }),
+    );
+    assert.equal(result.outcome, 'proof_required');
+  });
+
+  it('does not let interruption proof override a holder outcome or a completion candidate already recorded', () => {
+    const active = claimActionSuccessor(
+      null,
+      baseClaim({ mode: 'parallel', holderCatIds: ['codex-terra', 'gpt52'], parallelIntent: 'independent review' }),
+    ).lease;
+    const settled = recordActionSuccessorOutcome(active, {
+      generation: 1,
+      catId: 'codex-terra',
+      outcome: 'failed',
+      evidenceRef: 'test:holder-failed',
+      now: 150,
+    });
+    assert.equal(settled.status, 'active', 'one parallel holder settled, the lease is still active');
+    const result = replaceActionSuccessor(
+      settled,
+      replaceInput({ holderCatIds: ['codex-terra', 'gpt52'], interruptedGeneration: interruptedEvidence }),
+    );
+    assert.equal(result.outcome, 'proof_required');
+  });
+});

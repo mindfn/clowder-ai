@@ -1,11 +1,11 @@
 ---
 name: ppt-forge
-tips_exempt: "2026-09-15 storytelling handoff: clarifies fact gathering and causal layout in the existing slide workflow; the distinct story-preparation capability has its own tip."
+tips_exempt: "Renewed 2026-10-10: raster versus editable output routing refines the existing slide request; PPT discovery is already covered by the feature-ppt-forge tip, with no separate new capability."
 description: >
   PPT 制作全链路：内容分析 → 分页规划 → 低保真 MD → imagegen 精美图。
   架构猫写低保真 MD（ASCII art 结构图 + 视觉指引），imagegen 猫逐页出精美图。
   Use when: 做 PPT、做演示文稿、做 slide、帮朋友做 PPT、画架构图、画技术蓝图。
-  Not for: 纯代码开发（用 worktree/tdd）、纯文档写作（直接写）。
+  Not for: 可编辑 PPT、精确图表或原生文字（用 PPTX 技能或 HTML）；纯代码开发（用 worktree/tdd）、纯文档写作（直接写）。
   Output: 低保真 MD + AI 原生精美图（raster PNG）。
 ---
 
@@ -13,13 +13,13 @@ description: >
 
 ## 核心原则
 
-**架构猫写蓝图，imagegen 猫出精美图。** 不走 HTML/SVG 手工合成。
+先按 [image-generation 的交付物路由](../image-generation/SKILL.md#按交付物选择制作路径)选择制作路径。本技能承接整页图片：**架构猫写蓝图，imagegen 猫出精美图**；可编辑产物沿上述路由交给对应制作技能。
 
 - **架构猫**（当前持球猫）：内容分析 + 分页规划 + 低保真 MD 写作
 - **imagegen 猫**（imagegen 猫/云端 Codex）：逐页生成精美 raster PNG
 - **operator**：审稿 + 确认风格
 
-产出是 **AI 原生图片**——视觉质量远高于 HTML/CSS 手工画，且速度快。
+这条路径的产出是 **AI 原生图片**，用于不要求原生可编辑的完整视觉页面。
 
 ## 开局参数（必须声明）
 
@@ -112,7 +112,7 @@ status: lofi-draft
 3. **输出位置**：同目录 `assets/` 子目录
 4. **技术要求**：
    - 原生 imagegen 直出 raster PNG
-   - **不用 SVG / HTML 手工合成**（出来贼丑）
+   - 已选择整页图片路径时用 imagegen 直出，不擅自换成 SVG / HTML 拼装
    - 每页命名：`p{N}-{简短描述}.png`
 5. **内容约束**：
    - 严格遵循配色方案，不自由发挥
@@ -150,7 +150,7 @@ status: lofi-draft
 | 视觉指引缺配色 | imagegen 用默认配色 | 每页引用风格 preset |
 | 大段原文直接贴 | imagegen 不知道怎么排版 | 先做信息设计（分卡片/分层级/转图表） |
 | 没写精美图生成指引 | imagegen 猫要反复问风格 | 末尾必有总章 |
-| 用 SVG/HTML 合成 | **贼丑** | 只用原生 imagegen 直出 |
+| 把所有 PPT 都当成图片，或把整页图片需求改成手工拼装 | 交付物不符合用户要求 | 先按交付物路由选择图片或可编辑路径，再用对应技能制作 |
 
 ## 和其他 Skill 的关系
 

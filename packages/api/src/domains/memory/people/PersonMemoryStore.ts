@@ -23,6 +23,7 @@ import type {
   PersonRelationship,
   WriteOpportunityLineageV1,
 } from '@cat-cafe/shared';
+import type { OwnerMemoryActionStore } from './person-memory-owner-action-contract.js';
 
 export interface StagePersonMemoryCandidateInput {
   candidateId: CaptureCandidateId;
@@ -234,7 +235,7 @@ export type PersonAliasResolution =
   | { status: 'ambiguous'; people: PersonIdentity[] }
   | { status: 'not_available' };
 
-export interface PersonMemoryStore {
+export interface PersonMemoryStore extends OwnerMemoryActionStore {
   stageCandidate(input: StagePersonMemoryCandidateInput): Promise<StoredPersonMemoryCandidate>;
   renewDeferredCandidateClaim(
     input: RenewDeferredPersonMemoryCandidateClaimInput,
@@ -252,6 +253,8 @@ export interface PersonMemoryStore {
   markNotNow(ownerUserId: string, candidateId: string, decidedAt: number): Promise<StoredPersonMemoryCandidate>;
   withdrawCandidate(ownerUserId: string, candidateId: string, decidedAt: number): Promise<StoredPersonMemoryCandidate>;
   rejectCandidate(input: RejectPersonMemoryCandidateInput): Promise<PersonMemoryRejectResult>;
+  /** Owner-scoped read projection. Derived from canonical candidate indexes; never scans another owner. */
+  listPeople(ownerUserId: string): Promise<PersonIdentity[]>;
   getPerson(ownerUserId: string, personId: PersonId): Promise<PersonIdentity | null>;
   listCandidateIdsForPerson(ownerUserId: string, personId: PersonId): Promise<CaptureCandidateId[]>;
   resolveActivePersonByAlias(ownerUserId: string, alias: string): Promise<PersonAliasResolution>;

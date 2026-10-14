@@ -18,6 +18,7 @@ import type { DynamicTaskDef } from '../../infrastructure/scheduler/DynamicTaskS
 import type { DurableManagedGateJob } from './durable-managed-gate-job.js';
 
 export type ManagedCommandWakeState =
+  | 'not_started'
   | 'command_running'
   | 'condition_met'
   | 'message_written'
@@ -39,13 +40,19 @@ export interface ManagedCommandTerminalResult {
 }
 
 export interface ManagedCommandWakeProjection {
+  /** Persisted tightening-only policy; restart recovery never replays the command as ordinary. */
+  readonly executionPolicy?: 'read_only';
   readonly state: ManagedCommandWakeState;
   readonly command: string;
+  /** Exact command checkout; needed to materialize a cross-version frozen resume. */
+  readonly cwd?: string;
   readonly startedAt: number;
   /** F261: durable action-plane identity for canonical full gates. */
   readonly durableJob?: DurableManagedGateJob;
   /** F167 Phase P: persisted spawn pid. */
   readonly pid?: number | null;
+  readonly notStartedReason?: 'admission_rejected' | 'spawn_failed';
+  readonly notStartedDetail?: string;
   /** F167 Phase P: admission-fact text for startup re-delivery if append failed. */
   readonly admissionFact?: string;
   /** F167 Phase P: true once the admission-fact visibility message was durably appended. */
@@ -90,6 +97,7 @@ export function isPlainRecord(value: unknown): value is Record<string, unknown> 
 
 function isManagedCommandWakeState(value: unknown): value is ManagedCommandWakeState {
   return (
+    value === 'not_started' ||
     value === 'command_running' ||
     value === 'condition_met' ||
     value === 'message_written' ||
@@ -109,6 +117,7 @@ export function readManagedCommandWakeProjection(task: DynamicTaskDef): ManagedC
   if (!isPlainRecord(command) || !isManagedCommandWakeState(command.state)) return null;
   if (typeof command.command !== 'string' || command.command.length === 0) return null;
   if (typeof command.startedAt !== 'number') return null;
+  if (command.cwd !== undefined && (typeof command.cwd !== 'string' || command.cwd.length === 0)) return null;
   return command as unknown as ManagedCommandWakeProjection;
 }
 
@@ -146,8 +155,11 @@ export function readHoldLifecycleProjection(task: DynamicTaskDef): Record<string
   if (lifecycle.mode !== 'timer' && lifecycle.mode !== 'wake_when') return null;
   if (
     lifecycle.status !== 'active' &&
+    lifecycle.status !== 'not_started' &&
     lifecycle.status !== 'retired_by_event' &&
     lifecycle.status !== 'retired_by_replacement' &&
+    lifecycle.status !== 'retired_expired' &&
+    lifecycle.status !== 'retired_invalid' &&
     lifecycle.status !== 'cancel_requested' &&
     lifecycle.status !== 'cancelled_by_user' &&
     lifecycle.status !== 'escalated' &&
@@ -235,8 +247,33 @@ export function createInitialManagedCommandWakeProjection(
   command: string,
   startedAt: number,
   durableJob?: DurableManagedGateJob,
+  cwd?: string,
 ): ManagedCommandWakeProjection {
-  return { state: 'command_running', command, startedAt, ...(durableJob ? { durableJob } : {}) };
+  return {
+    state: 'command_running',
+    command,
+    startedAt,
+    ...(durableJob ? { durableJob } : {}),
+    ...(cwd ? { cwd } : {}),
+  };
+}
+
+/** Terminal no-spawn receipts redeliver only their admission fact, never a completion wake. */
+export function parseNotStartedManagedCommandTask(task: DynamicTaskDef | null): ParsedManagedCommandWakeTask | null {
+  if (!task || !isHoldBallWakeTask(task) || !task.deliveryThreadId) return null;
+  const lifecycle = readHoldLifecycleProjection(task);
+  const command = readManagedCommandWakeProjection(task);
+  const userId = task.params.triggerUserId;
+  if (lifecycle?.status !== 'not_started' || command?.state !== 'not_started' || typeof userId !== 'string' || !userId)
+    return null;
+  return {
+    task,
+    lifecycle,
+    command,
+    threadId: task.deliveryThreadId,
+    catId: task.createdBy.slice('hold-ball:'.length),
+    userId,
+  };
 }
 
 /**

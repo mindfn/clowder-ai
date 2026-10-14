@@ -1,4 +1,4 @@
-import type { QueueMessageReceiptProjection } from '@cat-cafe/shared';
+import type { QueueMessageReceiptProjection, ThreadArtifactDTO } from '@cat-cafe/shared';
 import { create } from 'zustand';
 import { getBubbleInvocationId } from '@/debug/bubbleIdentity';
 import { isBubbleInvariantStrictModeOn, recordBubbleInvariantViolation } from '@/debug/bubbleInvariantDiagnostics';
@@ -6,6 +6,7 @@ import { recordDebugEvent } from '@/debug/invocationEventDebug';
 import { getCachedCats } from '@/hooks/useCatData';
 import { formatCatDisplayName } from '@/lib/cat-display-name';
 import { inferFileKind, inferRenderMode } from '@/lib/file-kind';
+import type { ServedModelFacts } from '@/lib/served-model-facts';
 import { isWorkspaceMode, type WorkspaceMode } from '@/lib/workspace-modes';
 import {
   resolveNavigateTargetWorktreeId,
@@ -19,6 +20,7 @@ import {
   saveThreadWorkspaceState,
 } from '../utils/offline-store';
 import { findBubbleStoreInvariantViolations } from './bubble-invariants';
+import { rekeyPublicationOrigins } from './bubble-publication-origins';
 import type {
   CatInvocationInfo,
   CatStatusType,
@@ -28,6 +30,7 @@ import type {
   ComposerDraftInsert,
   GameState,
   PresentationLockSnapshot,
+  PresentationLockView,
   PresentationSurfaceState,
   QueueEntry,
   RichBlock,
@@ -36,7 +39,9 @@ import type {
   ThreadState,
   TokenUsage,
   ToolEvent,
+  WorkspaceFileNavigationOrigin,
   WorkspaceOpenRequest,
+  WorkspacePathOpenTarget,
   WorkspacePreviewState,
   WorkspaceSurface,
 } from './chat-types';
@@ -246,6 +251,7 @@ function snapshotActive(s: ChatState): ThreadState {
     workspaceMode: s.workspaceMode,
     teamWorkspaceSubject: s.teamWorkspaceSubject,
     workspaceSurface: s.workspaceSurface,
+    workspaceForegroundSurfaceId: s.workspaceForegroundSurfaceId,
     workspacePreview: s.workspacePreview,
     rightPanelMode: s.rightPanelMode,
     rightPanelOpen: s.rightPanelOpen,
@@ -418,6 +424,7 @@ function restoreWorkspaceView(
     ThreadState,
     | 'workspaceMode'
     | 'workspaceSurface'
+    | 'workspaceForegroundSurfaceId'
     | 'workspacePreview'
     | 'teamWorkspaceSubject'
     | 'rightPanelMode'
@@ -427,6 +434,7 @@ function restoreWorkspaceView(
   ChatState,
   | 'workspaceMode'
   | 'workspaceSurface'
+  | 'workspaceForegroundSurfaceId'
   | 'workspacePreview'
   | 'teamWorkspaceSubject'
   | 'rightPanelMode'
@@ -435,6 +443,8 @@ function restoreWorkspaceView(
   return {
     workspaceMode: resolveWorkspaceMode(ts),
     workspaceSurface: ts.workspaceSurface ?? 'home',
+    // Undefined preserves pre-reference snapshots' original F307 projection; null is an explicit Home.
+    workspaceForegroundSurfaceId: ts.workspaceForegroundSurfaceId,
     workspacePreview: ts.workspacePreview ?? { port: undefined, path: '/' },
     teamWorkspaceSubject: ts.teamWorkspaceSubject ?? null,
     rightPanelMode: ts.rightPanelMode ?? 'status',
@@ -466,6 +476,10 @@ export function captureThreadWorkspaceState(state: ChatState, threadId: string):
       workspaceMode: state.workspaceMode,
       teamWorkspaceSubject: state.teamWorkspaceSubject,
       workspaceSurface: state.workspaceSurface,
+      workspaceForegroundSurfaceId: state.workspaceForegroundSurfaceId,
+      workspaceOpenFilePath: state.workspaceOpenFilePath,
+      workspaceOpenFileLine: state.workspaceOpenFileLine,
+      workspaceOpenTabs: state.workspaceOpenTabs,
       workspacePreview: { ...state.workspacePreview },
       rightPanelMode: state.rightPanelMode,
       rightPanelOpen: state.rightPanelOpen,
@@ -475,6 +489,9 @@ export function captureThreadWorkspaceState(state: ChatState, threadId: string):
   return {
     revision: readWorkspaceRevision(threadId),
     workspaceWorktreeId: saved.workspaceWorktreeId,
+    workspaceOpenFilePath: saved.workspaceOpenFilePath,
+    workspaceOpenFileLine: saved.workspaceOpenFileLine,
+    workspaceOpenTabs: saved.workspaceOpenTabs,
     ...restoreWorkspaceView(saved),
     workspacePreview: { ...(saved.workspacePreview ?? { port: undefined, path: '/' }) },
   };
@@ -485,6 +502,10 @@ function workspaceStateContentEqual(a: PersistedThreadWorkspaceState, b: Persist
     a.workspaceWorktreeId === b.workspaceWorktreeId &&
     resolveWorkspaceMode(a) === resolveWorkspaceMode(b) &&
     a.workspaceSurface === b.workspaceSurface &&
+    a.workspaceForegroundSurfaceId === b.workspaceForegroundSurfaceId &&
+    a.workspaceOpenFilePath === b.workspaceOpenFilePath &&
+    a.workspaceOpenFileLine === b.workspaceOpenFileLine &&
+    JSON.stringify(a.workspaceOpenTabs ?? []) === JSON.stringify(b.workspaceOpenTabs ?? []) &&
     a.workspacePreview.port === b.workspacePreview.port &&
     a.workspacePreview.path === b.workspacePreview.path &&
     JSON.stringify(a.teamWorkspaceSubject ?? null) === JSON.stringify(b.teamWorkspaceSubject ?? null) &&
@@ -662,10 +683,14 @@ type ReplaceMessageIdResult = {
 
 function rekeyMessageIdentity(message: ChatMessage, fromId: string, toId: string): ChatMessage {
   const sourceIds = message.projectionSourceMessageIds;
-  if (!sourceIds?.includes(fromId)) return { ...message, id: toId };
+  // F309: media items the replaced record owned are named by the new id too, or they stay unopenable.
+  const origins = rekeyPublicationOrigins(message.projectionPublicationOrigins, fromId, toId);
+  const rekeyed =
+    origins === message.projectionPublicationOrigins ? message : { ...message, projectionPublicationOrigins: origins };
+  if (!sourceIds?.includes(fromId)) return { ...rekeyed, id: toId };
 
   return {
-    ...message,
+    ...rekeyed,
     id: toId,
     projectionSourceMessageIds: [...new Set(sourceIds.map((sourceId) => (sourceId === fromId ? toId : sourceId)))],
   };
@@ -718,6 +743,51 @@ function applyMessagePatch(message: ChatMessage, patch: ChatMessagePatch): ChatM
       ? { metadata: message.metadata ? { ...message.metadata, ...patch.metadata } : patch.metadata }
       : {}),
   };
+}
+
+export interface DefinitiveRichBlockOwner {
+  catId: string;
+  invocationId?: string;
+  turnInvocationId?: string;
+}
+
+/** A messageId-bound callback owns its block; an earlier same-turn stream copy was only a preview. */
+function appendRichBlockToMessages(
+  messages: ChatMessage[],
+  messageId: string,
+  block: RichBlock,
+  owner?: DefinitiveRichBlockOwner,
+): ChatMessage[] {
+  const target = messages.find((message) => message.id === messageId);
+  if (!target) return messages;
+  const definitiveCallback = owner && target.origin === 'callback';
+  let changed = false;
+  const next = messages.map((message) => {
+    if (message.id === messageId) {
+      const rich = message.extra?.rich ?? { v: 1 as const, blocks: [] };
+      if (rich.blocks.some((existing) => existing.id === block.id)) return message;
+      changed = true;
+      return { ...message, extra: { ...message.extra, rich: { ...rich, blocks: [...rich.blocks, block] } } };
+    }
+    if (!definitiveCallback || message.origin !== 'stream' || message.catId !== owner.catId) return message;
+    const stream = message.extra?.stream;
+    const sameTurn = owner.turnInvocationId
+      ? (stream?.turnInvocationId ?? stream?.invocationId) === owner.turnInvocationId
+      : Boolean(owner.invocationId && stream?.invocationId === owner.invocationId);
+    if (!sameTurn || !message.extra?.rich?.blocks.some((existing) => existing.id === block.id)) return message;
+    changed = true;
+    return {
+      ...message,
+      extra: {
+        ...message.extra,
+        rich: {
+          ...message.extra.rich,
+          blocks: message.extra.rich.blocks.filter((existing) => existing.id !== block.id),
+        },
+      },
+    };
+  });
+  return changed ? next : messages;
 }
 
 function patchMessageInList(messages: ChatMessage[], id: string, patch: ChatMessagePatch): ChatMessage[] {
@@ -1001,7 +1071,7 @@ export interface ChatState {
   appendToMessage: (id: string, content: string) => void;
   appendToolEvent: (id: string, event: ToolEvent) => void;
   /** F22: Append a rich block to a message */
-  appendRichBlock: (id: string, block: RichBlock) => void;
+  appendRichBlock: (id: string, block: RichBlock, owner?: DefinitiveRichBlockOwner) => void;
   /** F096: Update a specific rich block within a message */
   updateRichBlock: (messageId: string, blockId: string, patch: Record<string, unknown>) => void;
   setStreaming: (id: string, streaming: boolean) => void;
@@ -1024,6 +1094,12 @@ export interface ChatState {
   setMessageUsage: (messageId: string, usage: TokenUsage) => void;
   /** Merge metadata onto an active-thread message (parallel to setThreadMessageMetadata) */
   setMessageMetadata: (messageId: string, metadata: ChatMessageMetadata) => void;
+  /**
+   * F319 Phase E.1: merge the upstream served facts onto an active-thread message.
+   * `setMessageMetadata` is first-write-wins (per-chunk render guard), and served facts
+   * only exist at `done`, so they need their own merging path. No-op without metadata.
+   */
+  mergeMessageServedFacts: (messageId: string, facts: ServedModelFacts) => void;
   /** F045: Set or append extended thinking content on an assistant message */
   setMessageThinking: (messageId: string, thinking: string) => void;
   /** F081: Persist stream invocation identity onto a message for replace/hydration reconcile */
@@ -1151,6 +1227,7 @@ export interface ChatState {
   updateThreadTitle: (threadId: string, title: string) => void;
   updateThreadParticipants: (threadId: string, participants: string[]) => void;
   updateThreadPin: (threadId: string, pinned: boolean) => void;
+  updateThreadBacklogItem: (threadId: string, backlogItemId: string | null) => void;
   updateThreadFavorite: (threadId: string, favorited: boolean) => void;
   updateThreadThinkingMode: (threadId: string, mode: 'debug' | 'play') => void;
 
@@ -1169,7 +1246,12 @@ export interface ChatState {
   appendToThreadMessage: (threadId: string, messageId: string, content: string) => void;
   appendToolEventToThread: (threadId: string, messageId: string, event: ToolEvent) => void;
   /** F22: Append a rich block to a message in a specific thread */
-  appendRichBlockToThread: (threadId: string, messageId: string, block: RichBlock) => void;
+  appendRichBlockToThread: (
+    threadId: string,
+    messageId: string,
+    block: RichBlock,
+    owner?: DefinitiveRichBlockOwner,
+  ) => void;
   setThreadCatInvocation: (threadId: string, catId: string, info: Partial<CatInvocationInfo>) => void;
   setThreadMessageMetadata: (threadId: string, messageId: string, metadata: ChatMessageMetadata) => void;
   setThreadMessageUsage: (threadId: string, messageId: string, usage: TokenUsage) => void;
@@ -1270,6 +1352,15 @@ export interface ChatState {
   workspaceOpenFileLine: number | null;
   /** F284: current Workspace object; survives panel folds and route unmounts. */
   workspaceSurface: WorkspaceSurface;
+  workspaceForegroundSurfaceId: string | null | undefined;
+  setWorkspaceForegroundSurfaceId: (
+    surfaceId: string | null,
+    coordinate?: {
+      file?: { worktreeId: string; path: string; scrollToLine: number | null };
+      preview?: WorkspacePreviewState;
+    },
+  ) => void;
+  setWorkspaceViewport: (scrollTop: number) => void;
   /** Explicit user navigation: select the surface and reveal Workspace. */
   setWorkspaceSurface: (surface: WorkspaceSurface) => void;
   /** Passive thread restoration: select the surface without changing panel visibility. */
@@ -1284,13 +1375,38 @@ export interface ChatState {
   /** Explicit deep-link/navigation action; reveals the canonical Team workspace. */
   openTeamSubject: (subject: TeamWorkspaceSubject | null) => void;
   openEvolutionProgram: (programId: string) => void;
+  openPublishedArtifact: (
+    threadId: string,
+    artifact: ThreadArtifactDTO,
+    navigationOrigin?: WorkspaceFileNavigationOrigin,
+  ) => void;
+  /**
+   * Open one exact workspace file, or show one path in its file tree, in the Workbench of `threadId`.
+   * The request survives a route change and is consumed once by whichever Workbench mounts for that
+   * thread; it does not switch projects. Returns false when `threadId` is not the current thread, so a
+   * caller never navigates to nothing.
+   */
+  openWorkspacePath: (threadId: string, target: WorkspacePathOpenTarget) => boolean;
+  openPublication: (
+    target: Extract<WorkspaceOpenRequest['target'], { kind: 'publication' | 'message-publication' }>,
+    hostThreadId: string,
+  ) => boolean;
   /** Acknowledge one exact transient request after F307 has consumed it. */
   consumeWorkspaceOpenRequest: (revision: number) => void;
   workspaceEditToken: string | null;
   workspaceEditTokenExpiry: number | null;
   /** @internal Last workspace-file-set event context (timestamp + threadId).
    * Used by WorkspacePanel to distinguish fresh navigate from stale leftovers on mount. */
-  _workspaceFileSetAt: { ts: number; threadId: string | null };
+  _workspaceFileSetAt: {
+    ts: number;
+    threadId: string | null;
+    navigationOrigin?: WorkspaceFileNavigationOrigin;
+    disposition?: WorkspaceOpenRequest['disposition'];
+    revision?: number;
+    consumed?: boolean;
+  };
+  /** Acknowledge the exact transient file event after its topology is admitted. */
+  consumeWorkspaceFileSetAt: (stamp: ChatState['_workspaceFileSetAt']) => void;
   setRightPanelMode: (mode: 'status' | 'workspace' | 'transcript') => void;
   /** F284 × F120 review P1: canonical right panel visibility (orthogonal to
    * rightPanelMode). Snapshotted per thread — see ThreadState.rightPanelOpen. */
@@ -1306,17 +1422,16 @@ export interface ChatState {
     line?: number | null,
     worktreeId?: string | null,
     originThreadId?: string | null,
+    navigationOrigin?: WorkspaceFileNavigationOrigin,
+    disposition?: WorkspaceOpenRequest['disposition'],
   ) => void;
   closeWorkspaceTab: (path: string) => void;
   restoreWorkspaceTabs: (tabs: string[], openFile: string | null) => void;
   setWorkspaceEditToken: (token: string | null, expiresIn?: number) => void;
 
-  workspaceRevealPath: string | null;
-  setWorkspaceRevealPath: (path: string | null, originThreadId?: string | null) => void;
-
   // F063: Presentation Lock — freeze workspace during demos
   presentationLock: PresentationLockSnapshot | null;
-  enablePresentationLock: () => void;
+  enablePresentationLock: (visible?: PresentationLockView) => void;
   disablePresentationLock: () => void;
   replacePresentationLockTarget: (snapshot: PresentationLockSnapshot) => void;
   setPresentationLockViewport: (scrollTop: number) => void;
@@ -1620,6 +1735,65 @@ export const useChatStore = create<ChatState>((set, get) => ({
   workspaceOpenFilePath: null,
   workspaceOpenFileLine: null,
   workspaceSurface: 'home' as const,
+  workspaceForegroundSurfaceId: null,
+  setWorkspaceForegroundSurfaceId: (surfaceId, coordinate) =>
+    set((state) => {
+      const file = coordinate?.file;
+      const worktreeId = file
+        ? resolveNavigateTargetWorktreeId(
+            state.workspaceWorktreeId,
+            file.worktreeId,
+            scopeWorktreeAliases(
+              state.workspaceWorktreeAliases,
+              state.workspaceWorktreeAliasesProjectPath,
+              state.currentProjectPath,
+            ),
+          )
+        : state.workspaceWorktreeId;
+      if (worktreeId === undefined) return state;
+      const fileChanged =
+        file &&
+        (worktreeId !== state.workspaceWorktreeId ||
+          file.path !== state.workspaceOpenFilePath ||
+          file.scrollToLine !== state.workspaceOpenFileLine);
+      const preview = coordinate?.preview;
+      const previewChanged =
+        preview && (preview.port !== state.workspacePreview.port || preview.path !== state.workspacePreview.path);
+      if (state.workspaceForegroundSurfaceId === surfaceId && !fileChanged && !previewChanged) return state;
+      const patch: Partial<ThreadState> = {
+        workspaceForegroundSurfaceId: surfaceId,
+        ...(file && {
+          workspaceWorktreeId: worktreeId,
+          workspaceOpenFilePath: file.path,
+          workspaceOpenFileLine: file.scrollToLine,
+          workspaceOpenTabs: state.workspaceOpenTabs.includes(file.path)
+            ? state.workspaceOpenTabs
+            : [...state.workspaceOpenTabs, file.path],
+          workspaceSurface: 'files',
+        }),
+        ...(preview && { workspacePreview: preview, workspaceSurface: 'browser' }),
+      };
+      if (!state.presentationLock) {
+        return { ...patch, ...mirrorActiveFlat(state, patch), workspaceScrollTop: null };
+      }
+      const lock = state.presentationLock;
+      return {
+        ...patch,
+        workspaceScrollTop: null,
+        presentationLock: {
+          ...lock,
+          surfaceId,
+          ...(file && {
+            worktreeId: file.worktreeId,
+            filePath: file.path,
+            line: file.scrollToLine,
+            tabs: patch.workspaceOpenTabs ?? lock.tabs,
+          }),
+          scrollTop: null,
+        },
+      };
+    }),
+  setWorkspaceViewport: (scrollTop) => set({ workspaceScrollTop: scrollTop }),
   setWorkspaceSurface: (surface) => set({ workspaceSurface: surface, rightPanelMode: 'workspace' }),
   restoreWorkspaceSurface: (surface) => set({ workspaceSurface: surface }),
   workspacePreview: { port: undefined, path: '/' },
@@ -1653,11 +1827,44 @@ export const useChatStore = create<ChatState>((set, get) => ({
         ...mirrorActiveFlat(state, durablePatch),
       };
     }),
+  openPublishedArtifact: (threadId, artifact, navigationOrigin) =>
+    set((state) => {
+      if (state.currentThreadId !== threadId) return {};
+      const patch = { rightPanelOpen: true, rightPanelMode: 'workspace' as const, workspaceMode: 'dev' as const };
+      const revision = state.workspaceOpenRevision + 1;
+      return {
+        ...patch,
+        ...mirrorActiveFlat(state, patch),
+        workspaceOpenRevision: revision,
+        workspaceOpenRequest: {
+          revision,
+          disposition: 'preview' as const,
+          threadId,
+          target: { kind: 'artifact' as const, artifact, ...(navigationOrigin ? { navigationOrigin } : {}) },
+        },
+      };
+    }),
+  // An explicit open is honoured under a presentation lock too, as the file-stamp path it replaces was.
+  openWorkspacePath: (threadId, target) => {
+    const state = get();
+    if (state.currentThreadId !== threadId) return false;
+    const patch = { rightPanelOpen: true, rightPanelMode: 'workspace' as const, workspaceMode: 'dev' as const };
+    const revision = state.workspaceOpenRevision + 1;
+    set({
+      ...patch,
+      ...mirrorActiveFlat(state, patch),
+      workspaceOpenRevision: revision,
+      workspaceOpenRequest: { revision, threadId, target, disposition: 'preview' },
+    });
+    return true;
+  },
   consumeWorkspaceOpenRequest: (revision) =>
     set((state) => (state.workspaceOpenRequest?.revision === revision ? { workspaceOpenRequest: null } : {})),
   workspaceEditToken: null,
   workspaceEditTokenExpiry: null,
   _workspaceFileSetAt: { ts: 0, threadId: null },
+  consumeWorkspaceFileSetAt: (stamp) =>
+    set((state) => (state._workspaceFileSetAt === stamp ? { _workspaceFileSetAt: { ...stamp, consumed: true } } : {})),
   setRightPanelMode: (mode) => set({ rightPanelMode: mode }),
   rightPanelOpen: false,
   setRightPanelOpen: (open) => set({ rightPanelOpen: open }),
@@ -1719,11 +1926,18 @@ export const useChatStore = create<ChatState>((set, get) => ({
       workspaceWorktreeAliases: aliases,
       workspaceWorktreeAliasesProjectPath: projectPath ?? get().currentProjectPath,
     }),
-  setWorkspaceOpenFile: (path, line, targetWorktreeId, originThreadId) => {
+  setWorkspaceOpenFile: (path, line, targetWorktreeId, originThreadId, navigationOrigin, disposition) => {
     if (path) {
-      const stamp = { ts: Date.now(), threadId: originThreadId ?? get().currentThreadId };
-      const currentWorktreeId = get().workspaceWorktreeId;
       const state = get();
+      const navigationRevision = state.workspaceOpenRevision + 1;
+      const stamp = {
+        ts: Date.now(),
+        threadId: originThreadId ?? state.currentThreadId,
+        revision: navigationRevision,
+        ...(navigationOrigin ? { navigationOrigin } : {}),
+        ...(disposition ? { disposition } : {}),
+      };
+      const currentWorktreeId = get().workspaceWorktreeId;
       const scopedAliases = scopeWorktreeAliases(
         state.workspaceWorktreeAliases,
         state.workspaceWorktreeAliasesProjectPath,
@@ -1734,6 +1948,10 @@ export const useChatStore = create<ChatState>((set, get) => ({
         targetWorktreeId,
         scopedAliases,
       );
+      // An ordinary file navigation supersedes every earlier Workspace navigation, so it advances the same revision
+      // the explicit open requests use: whatever tied itself to an earlier navigation can then see it was replaced.
+      // An earlier request the Workbench has not consumed yet (not hydrated or mounted) is retired in the same update,
+      // otherwise it would arrive late and reopen the old file over the one the person just opened.
       // Switch worktree if a different one is specified
       if (effectiveTargetWorktreeId && effectiveTargetWorktreeId !== currentWorktreeId) {
         set({
@@ -1746,6 +1964,8 @@ export const useChatStore = create<ChatState>((set, get) => ({
           workspaceSurface: 'files',
           rightPanelMode: 'workspace',
           _workspaceFileSetAt: stamp,
+          workspaceOpenRevision: navigationRevision,
+          workspaceOpenRequest: null,
         });
       } else {
         const tabs = get().workspaceOpenTabs;
@@ -1757,6 +1977,8 @@ export const useChatStore = create<ChatState>((set, get) => ({
           workspaceSurface: 'files',
           rightPanelMode: 'workspace',
           _workspaceFileSetAt: stamp,
+          workspaceOpenRevision: navigationRevision,
+          workspaceOpenRequest: null,
         });
       }
       const lock = get().presentationLock;
@@ -1823,18 +2045,9 @@ export const useChatStore = create<ChatState>((set, get) => ({
       workspaceEditTokenExpiry: token && expiresIn ? Date.now() + expiresIn * 1000 : null,
     }),
 
-  workspaceRevealPath: null,
-  setWorkspaceRevealPath: (path, originThreadId) =>
-    set((state) => ({
-      workspaceRevealPath: path,
-      ...(path ? { workspaceSurface: 'files' as const } : {}),
-      rightPanelMode: 'workspace' as const,
-      _workspaceFileSetAt: { ts: Date.now(), threadId: originThreadId ?? state.currentThreadId },
-    })),
-
   // F063: Presentation Lock
   presentationLock: null,
-  enablePresentationLock: () =>
+  enablePresentationLock: (visible) =>
     set((state) => ({
       presentationLock: {
         ownerThreadId: state.currentThreadId,
@@ -1843,12 +2056,18 @@ export const useChatStore = create<ChatState>((set, get) => ({
           filePath: state.workspaceOpenFilePath,
           line: state.workspaceOpenFileLine,
           tabs: state.workspaceOpenTabs,
+          ...(state.workspaceForegroundSurfaceId !== undefined && {
+            workspaceForegroundSurfaceId: state.workspaceForegroundSurfaceId,
+          }),
+          ...restoreWorkspaceView(state),
         },
         worktreeId: state.workspaceWorktreeId,
         filePath: state.workspaceOpenFilePath,
         line: state.workspaceOpenFileLine,
         tabs: state.workspaceOpenTabs,
         scrollTop: null,
+        ...(state.workspaceForegroundSurfaceId != null && { surfaceId: state.workspaceForegroundSurfaceId }),
+        ...visible,
       },
     })),
   disablePresentationLock: () =>
@@ -1863,6 +2082,8 @@ export const useChatStore = create<ChatState>((set, get) => ({
           workspaceOpenTabs: ow.tabs,
           workspaceOpenFilePath: ow.filePath,
           workspaceOpenFileLine: ow.line,
+          workspaceForegroundSurfaceId: ow.workspaceForegroundSurfaceId,
+          ...(ow.workspaceSurface !== undefined && restoreWorkspaceView(ow)),
         };
       }
       const threadState = state.threadStates[state.currentThreadId];
@@ -1998,6 +2219,21 @@ export const useChatStore = create<ChatState>((set, get) => ({
 
   // Phase H: Workspace mode
   workspaceMode: 'dev' as const,
+  openPublication: (target, hostThreadId) => {
+    // An asynchronous owner read must not steal focus in a conversation opened in the meantime.
+    if (get().currentThreadId !== hostThreadId) return false;
+    set((state) => {
+      const revision = state.workspaceOpenRevision + 1;
+      const patch = { workspaceMode: 'dev' as const, rightPanelMode: 'workspace' as const, rightPanelOpen: true };
+      return {
+        ...patch,
+        workspaceOpenRevision: revision,
+        workspaceOpenRequest: { revision, threadId: hostThreadId, target, disposition: 'preview' },
+        ...mirrorActiveFlat(state, patch),
+      };
+    });
+    return true;
+  },
   openEvolutionProgram: (programId) =>
     set((state) => {
       if (!/^evolution-program:[0-9a-f]{32}$/.test(programId)) return {};
@@ -2278,15 +2514,9 @@ export const useChatStore = create<ChatState>((set, get) => ({
       messages: state.messages.map((m) => (m.id === id ? { ...m, toolEvents: [...(m.toolEvents ?? []), event] } : m)),
     })),
 
-  appendRichBlock: (id, block) =>
+  appendRichBlock: (id, block, owner) =>
     set((state) => ({
-      messages: state.messages.map((m) => {
-        if (m.id !== id) return m;
-        const rich = m.extra?.rich ?? { v: 1 as const, blocks: [] };
-        // Defensive dedup by block.id (server already deduplicates, this is a safety net)
-        if (rich.blocks.some((b: { id: string }) => b.id === block.id)) return m;
-        return { ...m, extra: { ...m.extra, rich: { ...rich, blocks: [...rich.blocks, block] } } };
-      }),
+      messages: appendRichBlockToMessages(state.messages, id, block, owner),
     })),
 
   /** F096: Update a specific rich block within a message (e.g. set disabled + selectedIds) */
@@ -2535,6 +2765,13 @@ export const useChatStore = create<ChatState>((set, get) => ({
     }));
   },
 
+  mergeMessageServedFacts: (messageId, facts) =>
+    set((state) => ({
+      messages: state.messages.map((m) =>
+        m.id === messageId && m.metadata ? { ...m, metadata: { ...m.metadata, ...facts } } : m,
+      ),
+    })),
+
   setMessageThinking: (messageId, thinking) =>
     set((state) => ({
       messages: state.messages.map((m) => (m.id === messageId ? { ...m, ...appendThinkingChunk(m, thinking) } : m)),
@@ -2692,6 +2929,13 @@ export const useChatStore = create<ChatState>((set, get) => ({
       ),
     })),
 
+  updateThreadBacklogItem: (threadId, backlogItemId) =>
+    set((state) => ({
+      threads: state.threads.map((thread) =>
+        thread.id === threadId ? { ...thread, backlogItemId: backlogItemId ?? undefined } : thread,
+      ),
+    })),
+
   updateThreadFavorite: (threadId, favorited) =>
     set((state) => ({
       threads: state.threads.map((t) =>
@@ -2760,6 +3004,8 @@ export const useChatStore = create<ChatState>((set, get) => ({
             workspaceOpenTabs: lock.ownerWorkspace.tabs,
             workspaceOpenFilePath: lock.ownerWorkspace.filePath,
             workspaceOpenFileLine: lock.ownerWorkspace.line,
+            workspaceForegroundSurfaceId: lock.ownerWorkspace.workspaceForegroundSurfaceId,
+            ...(lock.ownerWorkspace.workspaceSurface !== undefined && restoreWorkspaceView(lock.ownerWorkspace)),
           };
         } else {
           const prevThreadState = state.threadStates[state.currentThreadId];
@@ -2795,6 +3041,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
         flattened.workspaceOpenFilePath = lock.filePath;
         flattened.workspaceOpenFileLine = lock.line;
         flattened.workspaceScrollTop = lock.scrollTop;
+        flattened.workspaceForegroundSurfaceId = lock.surfaceId;
         // F284 × F120: surface/preview/panel are part of the frozen demo view —
         // keep the current (locked) values instead of restoring the target's.
         flattened.workspaceSurface = state.workspaceSurface;
@@ -3000,14 +3247,24 @@ export const useChatStore = create<ChatState>((set, get) => ({
     ),
 
   /** F22: Append a rich block to a message in a specific thread. */
-  appendRichBlockToThread: (threadId, messageId, block) =>
-    set((state) =>
-      updateThreadMessage(state, threadId, messageId, (m) => {
-        const rich = m.extra?.rich ?? { v: 1 as const, blocks: [] };
-        if (rich.blocks.some((b: { id: string }) => b.id === block.id)) return m;
-        return { ...m, extra: { ...m.extra, rich: { ...rich, blocks: [...rich.blocks, block] } } };
-      }),
-    ),
+  appendRichBlockToThread: (threadId, messageId, block, owner) =>
+    set((state) => {
+      if (threadId === state.currentThreadId) {
+        const messages = appendRichBlockToMessages(state.messages, messageId, block, owner);
+        if (messages === state.messages) return state;
+        return { messages, ...mirrorActiveFlat(state, { messages }) };
+      }
+      const existing = state.threadStates[threadId];
+      if (!existing) return state;
+      const messages = appendRichBlockToMessages(existing.messages, messageId, block, owner);
+      if (messages === existing.messages) return state;
+      return {
+        threadStates: {
+          ...state.threadStates,
+          [threadId]: { ...existing, messages, lastActivity: Date.now() },
+        },
+      };
+    }),
 
   /** Set/merge cat invocation info for a specific thread (active or background). */
   setThreadCatInvocation: (threadId, catId, info) =>
@@ -3666,6 +3923,12 @@ export function hydrateThreadWorkspaceState(
         workspaceMode: resolveWorkspaceMode(snapshot, resolveWorkspaceMode(current)),
         teamWorkspaceSubject: snapshot.teamWorkspaceSubject ?? null,
         workspaceSurface: snapshot.workspaceSurface,
+        workspaceForegroundSurfaceId: snapshot.workspaceForegroundSurfaceId,
+        ...(snapshot.workspaceOpenFilePath !== undefined && {
+          workspaceOpenFilePath: snapshot.workspaceOpenFilePath,
+          workspaceOpenFileLine: snapshot.workspaceOpenFileLine ?? null,
+          workspaceOpenTabs: snapshot.workspaceOpenTabs ?? [],
+        }),
         workspacePreview: { ...snapshot.workspacePreview },
         rightPanelMode: snapshot.rightPanelMode,
         rightPanelOpen: snapshot.rightPanelOpen,

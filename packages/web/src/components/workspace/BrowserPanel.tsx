@@ -2,21 +2,56 @@
 
 import { buildPreviewGatewayUrl } from '@cat-cafe/shared';
 import { useCallback, useEffect, useRef, useState, useSyncExternalStore } from 'react';
+import { useShellCopy } from '@/components/shell/shell-copy';
+import { useShellPresentation } from '@/components/shell/shell-presentation';
 import { useWorkspaceSurfaceVisibility } from '@/components/workbench/WorkspaceSurfaceVisibility';
 import { previewVisiblePageAdmissionController } from '@/lib/preview-visible-page-admission-controller';
 import { apiFetch } from '@/utils/api-client';
 import { BrowserTabBar } from './BrowserTabBar';
 import { BrowserToolbar } from './BrowserToolbar';
 import { ConsolePanel } from './ConsolePanel';
+import { type CodeToolsCopy, codeToolsCopy } from './code-tools.shell-copy';
 import { parsePreviewUrl } from './preview-url-utils';
 import { useHmrStatus } from './useHmrStatus';
 import { usePreviewBridge } from './usePreviewBridge';
+
+type PreviewCopy = CodeToolsCopy['preview'];
+
+const CLASSIC_COPY: PreviewCopy = {
+  back: 'Back',
+  forward: 'Forward',
+  refresh: 'Refresh',
+  go: 'Go',
+  screenshot: 'Capture Screenshot',
+  consoleToggle: 'Toggle Console',
+  newTab: 'New tab',
+  newTabTitle: 'New Tab',
+  gatewayUnavailable: 'Preview gateway not available',
+  invalidUrl: 'Enter a valid localhost URL (e.g. localhost:5173)',
+  hubPageWarning:
+    'This URL looks like a Clowder AI Hub page, not a dev server. Preview is designed for dev servers (Vite, Next.js, etc.).',
+  portNotAllowed: 'Port not allowed',
+  hmrConnected: (port: number) => `HMR connected · localhost:${port}`,
+  hmrDisconnected: 'HMR disconnected.',
+  hmrRetry: 'Retry',
+  screenshotSaved: 'Screenshot saved:',
+  loading: 'Loading preview...',
+  loadFailed: 'Failed to load preview',
+  emptyPrompt: 'Enter a localhost URL to preview',
+  targetStopped: (port: number) => `localhost:${port} stopped / unavailable`,
+  targetUnreachableTitle: (port: number) => `localhost:${port} 无响应 — preview 目标已停止或不可达`,
+  retryRecover: '重试恢复',
+  viaGateway: (target: number, gateway: number) => `localhost:${target} via gateway:${gateway}`,
+  noPreview: 'No preview',
+  iframeTitle: 'Preview',
+};
 
 export interface BrowserTab {
   id: string;
   port: number;
   path: string;
-  title: string;
+  /** null = the locale default at render time; a real address or user title is data and stays. */
+  title: string | null;
 }
 
 interface BrowserPanelProps {
@@ -35,12 +70,51 @@ interface PreviewStatus {
   gatewayPort: number;
 }
 
+/** Local, translatable feedback is kept as a semantic issue and worded at render time; server text passes through. */
+type PreviewIssue =
+  | { kind: 'gateway_unavailable' }
+  | { kind: 'invalid_url' }
+  | { kind: 'load_failed' }
+  | { kind: 'port_not_allowed' }
+  | { kind: 'server'; text: string };
+
+function previewIssueText(issue: PreviewIssue, copy: PreviewCopy): string {
+  switch (issue.kind) {
+    case 'gateway_unavailable':
+      return copy.gatewayUnavailable;
+    case 'invalid_url':
+      return copy.invalidUrl;
+    case 'load_failed':
+      return copy.loadFailed;
+    case 'port_not_allowed':
+      return copy.portNotAllowed;
+    case 'server':
+      return issue.text;
+  }
+}
+
+export function BrowserPanel(props: BrowserPanelProps) {
+  const presentation = useShellPresentation();
+  return presentation === 'v2' ? <BrowserPanelV2 {...props} /> : <BrowserPanelCore {...props} copy={CLASSIC_COPY} />;
+}
+
+function BrowserPanelV2(props: BrowserPanelProps) {
+  const copy = useShellCopy(codeToolsCopy).preview;
+  return <BrowserPanelCore {...props} copy={copy} />;
+}
+
 /**
  * F120: Embedded Browser Panel — previews localhost dev servers via reverse proxy.
  * The iframe loads through the Preview Gateway (独立 origin) to strip X-Frame-Options
  * and isolate cookies/storage from Hub.
  */
-export function BrowserPanel({ initialPort, initialPath, previewOnly, onNavigate }: BrowserPanelProps) {
+function BrowserPanelCore({
+  initialPort,
+  initialPath,
+  previewOnly,
+  onNavigate,
+  copy,
+}: BrowserPanelProps & { copy: PreviewCopy }) {
   const [gatewayPort, setGatewayPort] = useState<number>(0);
   const [targetPort, setTargetPort] = useState(initialPort ?? 0);
   const [urlInput, setUrlInput] = useState(
@@ -48,7 +122,8 @@ export function BrowserPanel({ initialPort, initialPath, previewOnly, onNavigate
   );
   const [targetPath, setTargetPath] = useState(initialPath ?? '/');
   const [isLoading, setIsLoading] = useState(false);
-  const [error, setError] = useState<string | null>(null);
+  const [error, setError] = useState<PreviewIssue | null>(null);
+  const [warning, setWarning] = useState<'hub_page' | null>(null);
   // F120 × F284: liveness of the preview target. A restored preview whose dev
   // server died must show an explicit stopped state, never an error-shell iframe.
   const [targetHealth, setTargetHealth] = useState<'checking' | 'reachable' | 'unreachable' | null>(null);
@@ -134,7 +209,7 @@ export function BrowserPanel({ initialPort, initialPath, previewOnly, onNavigate
       })
       .catch(() => {
         gatewayReadStarted.current = false;
-        setError('Preview gateway not available');
+        setError({ kind: 'gateway_unavailable' });
       });
   }, [surfaceVisible]);
 
@@ -162,8 +237,6 @@ export function BrowserPanel({ initialPort, initialPath, previewOnly, onNavigate
     if (!targetPort || !gatewayPort) return '';
     return buildPreviewGatewayUrl(gatewayPort, targetPort, targetPath);
   })();
-
-  const [warning, setWarning] = useState<string | null>(null);
 
   const requestPendingVisiblePageAdmission = useCallback(() => {
     if (
@@ -208,10 +281,12 @@ export function BrowserPanel({ initialPort, initialPath, previewOnly, onNavigate
     setWarning(null);
     const parsed = parsePreviewUrl(urlInput);
     if (!parsed.valid || !parsed.port) {
-      setError(parsed.error ?? 'Enter a valid localhost URL (e.g. localhost:5173)');
+      setError({ kind: 'invalid_url' });
       return;
     }
-    if (parsed.warning) setWarning(parsed.warning);
+    if (parsed.warning) {
+      setWarning('hub_page');
+    }
     const port = parsed.port;
     const path = parsed.path ?? '/';
     // Audit: validate + open via backend
@@ -223,7 +298,7 @@ export function BrowserPanel({ initialPort, initialPath, previewOnly, onNavigate
       .then((res) => res.json() as Promise<{ allowed: boolean; reason?: string }>)
       .then((data) => {
         if (!data.allowed) {
-          setError(data.reason ?? 'Port not allowed');
+          setError(data.reason ? { kind: 'server', text: data.reason } : { kind: 'port_not_allowed' });
           return;
         }
         // Audit navigate if path changed
@@ -323,7 +398,7 @@ export function BrowserPanel({ initialPort, initialPath, previewOnly, onNavigate
 
   const handleTabAdd = useCallback(() => {
     const id = `tab-${++tabIdCounter.current}`;
-    setTabs((prev) => [...prev, { id, port: 0, path: '/', title: 'New Tab' }]);
+    setTabs((prev) => [...prev, { id, port: 0, path: '/', title: null }]);
     setActiveTabId(id);
     activateView(0, '/');
   }, [activateView]);
@@ -344,6 +419,7 @@ export function BrowserPanel({ initialPort, initialPath, previewOnly, onNavigate
           consoleOpen={consoleOpen}
           onConsoleToggle={() => setConsoleOpen((v) => !v)}
           consoleCount={consoleEntries.length}
+          copy={copy}
         />
       )}
 
@@ -355,6 +431,8 @@ export function BrowserPanel({ initialPort, initialPath, previewOnly, onNavigate
           onSelect={handleTabSelect}
           onClose={handleTabClose}
           onAdd={handleTabAdd}
+          defaultTitle={copy.newTabTitle}
+          addTitle={copy.newTab}
         />
       )}
 
@@ -366,12 +444,12 @@ export function BrowserPanel({ initialPort, initialPath, previewOnly, onNavigate
             className={`w-1.5 h-1.5 rounded-full inline-block ${hmrStatus === 'connected' ? 'bg-conn-green-text' : 'bg-[var(--semantic-critical)]'}`}
           />
           {hmrStatus === 'connected' ? (
-            <span>HMR connected · localhost:{targetPort}</span>
+            <span>{copy.hmrConnected(targetPort)}</span>
           ) : (
             <span>
-              HMR disconnected.{' '}
+              {copy.hmrDisconnected}{' '}
               <button type="button" className="underline hover:text-[var(--ws-accent)]" onClick={handleRefresh}>
-                Retry
+                {copy.hmrRetry}
               </button>
             </span>
           )}
@@ -380,17 +458,17 @@ export function BrowserPanel({ initialPort, initialPath, previewOnly, onNavigate
 
       {error && (
         <div className="px-3 py-1.5 text-xs text-conn-red-text bg-conn-red-bg/80 border-b border-[var(--semantic-critical-surface)]">
-          {error}
+          {previewIssueText(error, copy)}
         </div>
       )}
       {warning && !error && (
         <div className="px-3 py-1.5 text-xs text-conn-amber-text bg-conn-amber-bg/80 border-b border-[var(--semantic-warning-surface)]">
-          {warning}
+          {copy.hubPageWarning}
         </div>
       )}
       {screenshotUrl && (
         <div className="px-3 py-1.5 text-xs text-conn-green-text bg-conn-green-bg/80 border-b border-[var(--semantic-success-surface)]">
-          Screenshot saved:{' '}
+          {copy.screenshotSaved}{' '}
           <a href={screenshotUrl} target="_blank" rel="noreferrer" className="underline">
             {screenshotUrl}
           </a>
@@ -403,13 +481,13 @@ export function BrowserPanel({ initialPort, initialPath, previewOnly, onNavigate
           className="flex-1 flex items-center justify-center text-[var(--ws-text)]/60 text-sm text-center"
         >
           <div>
-            <p>localhost:{targetPort} 无响应 — preview 目标已停止或不可达</p>
+            <p>{copy.targetUnreachableTitle(targetPort)}</p>
             <button
               type="button"
               className="mt-3 px-3 py-1 text-xs rounded border border-[var(--console-border-soft)] hover:text-[var(--ws-accent)]"
               onClick={handleRetryProbe}
             >
-              重试恢复
+              {copy.retryRecover}
             </button>
           </div>
         </div>
@@ -417,7 +495,7 @@ export function BrowserPanel({ initialPort, initialPath, previewOnly, onNavigate
         <div className="relative flex-1">
           {isLoading && (
             <div className="absolute inset-0 flex items-center justify-center bg-[var(--ws-surface)]/80 z-10">
-              <div className="text-xs text-[var(--ws-text)]/50">Loading preview...</div>
+              <div className="text-xs text-[var(--ws-text)]/50">{copy.loading}</div>
             </div>
           )}
           <iframe
@@ -426,7 +504,7 @@ export function BrowserPanel({ initialPort, initialPath, previewOnly, onNavigate
             sandbox="allow-scripts allow-forms allow-popups allow-downloads allow-same-origin"
             referrerPolicy="no-referrer"
             className="w-full h-full border-0"
-            title="Preview"
+            title={copy.iframeTitle}
             onLoad={() => {
               setIsLoading(false);
               setLoadedGatewayUrl(gatewayUrl);
@@ -434,7 +512,7 @@ export function BrowserPanel({ initialPort, initialPath, previewOnly, onNavigate
             onError={() => {
               setIsLoading(false);
               setLoadedGatewayUrl(null);
-              setError('Failed to load preview');
+              setError({ kind: 'load_failed' });
               if (pendingVisiblePageAdmission?.port === targetPort && pendingVisiblePageAdmission.path === targetPath) {
                 previewVisiblePageAdmissionController.fail(
                   pendingVisiblePageAdmission.eventId,
@@ -446,13 +524,13 @@ export function BrowserPanel({ initialPort, initialPath, previewOnly, onNavigate
         </div>
       ) : targetPort ? (
         <div className="flex-1 flex items-center justify-center bg-[var(--ws-surface)]/80">
-          <div className="text-xs text-[var(--ws-text)]/50">Loading preview...</div>
+          <div className="text-xs text-[var(--ws-text)]/50">{copy.loading}</div>
         </div>
       ) : (
         <div className="flex-1 flex items-center justify-center text-[var(--ws-text)]/40 text-sm text-center">
           <div>
             <div className="text-3xl mb-3 opacity-30">🌐</div>
-            <p>Enter a localhost URL to preview</p>
+            <p>{copy.emptyPrompt}</p>
           </div>
         </div>
       )}
@@ -465,15 +543,15 @@ export function BrowserPanel({ initialPort, initialPath, previewOnly, onNavigate
           {targetPort && gatewayPort && targetHealth === 'unreachable' ? (
             <span className="flex items-center gap-1">
               <span className="w-1.5 h-1.5 rounded-full bg-[var(--semantic-critical)] inline-block" />
-              localhost:{targetPort} stopped / unavailable
+              {copy.targetStopped(targetPort)}
             </span>
           ) : targetPort && gatewayPort ? (
             <span className="flex items-center gap-1">
               <span className="w-1.5 h-1.5 rounded-full bg-conn-green-text inline-block" />
-              localhost:{targetPort} via gateway:{gatewayPort}
+              {copy.viaGateway(targetPort, gatewayPort)}
             </span>
           ) : (
-            <span>No preview</span>
+            <span>{copy.noPreview}</span>
           )}
         </div>
       )}

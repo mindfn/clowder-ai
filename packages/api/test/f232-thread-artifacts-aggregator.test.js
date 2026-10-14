@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 
-const { aggregateThreadArtifacts, collectAllThreadMessages } = await import(
+const { aggregateThreadArtifacts, collectAllThreadMessages, projectRecentMessageArtifactPage } = await import(
   '../dist/domains/cats/services/agents/routing/thread-artifacts-aggregator.js'
 );
 
@@ -30,6 +30,33 @@ test('media_gallery block → one image artifact per item', () => {
   assert.ok(names.includes('架构图')); // caption
   assert.ok(names.includes('image')); // fallback when no caption/alt
   assert.ok(r.every((a) => a.sourceMessageId === 'm1'));
+});
+
+test('bounded recent projection caps a huge gallery while preserving canonical publication order', () => {
+  const itemCount = 20_000;
+  const limit = 12;
+  const page = projectRecentMessageArtifactPage(
+    msg('large-gallery', 100, [
+      {
+        kind: 'media_gallery',
+        v: 1,
+        id: 'gallery',
+        items: Array.from({ length: itemCount }, (_, index) => ({ url: `/uploads/${index}.png` })),
+      },
+    ]),
+    limit,
+  );
+  const result = page.artifacts;
+
+  const expectedIndices = Array.from({ length: itemCount }, (_, index) => index)
+    .sort((left, right) => `gallery:gallery:${left}`.localeCompare(`gallery:gallery:${right}`))
+    .slice(0, limit);
+  assert.equal(result.length, limit);
+  assert.equal(page.total, itemCount);
+  assert.deepEqual(
+    result.map((artifact) => artifact.publicationItem.itemIndex),
+    expectedIndices,
+  );
 });
 
 test('file block → file artifact with url + fileName', () => {

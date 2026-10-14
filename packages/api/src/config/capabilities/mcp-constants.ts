@@ -13,6 +13,18 @@ export const CAT_CAFE_SPLIT_ENTRYPOINTS = new Map([
   ['cat-cafe-finance', 'finance.js'],
 ]);
 
+/** Include F193 same-repo external migration entries in runtime binary/env binding. */
+export function isManagedCatCafeSplit(server: { name: string; source: string; args?: readonly string[] }): boolean {
+  const entrypoint = CAT_CAFE_SPLIT_ENTRYPOINTS.get(server.name);
+  if (!entrypoint) return false;
+  if (server.source === 'cat-cafe') return true;
+  return (
+    server.source === 'external' &&
+    typeof server.args?.[0] === 'string' &&
+    server.args[0].replace(/\\/g, '/').endsWith(`packages/mcp-server/dist/${entrypoint}`)
+  );
+}
+
 /** Use the Node executable that is already running Clowder AI for managed MCP servers. */
 export function resolveCatCafeNodeCommand(): string {
   return process.execPath?.trim() || 'node';

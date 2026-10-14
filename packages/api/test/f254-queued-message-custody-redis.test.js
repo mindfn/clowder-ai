@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict';
 import { after, before, beforeEach, describe, test } from 'node:test';
+import { makeQueueCancellationFixture } from './helpers/queue-cancellation-fixture.js';
 import { makeQueuedMessageCustody as makeCustody } from './helpers/queued-message-custody.js';
 import {
   assertRedisIsolationOrThrow,
@@ -9,35 +10,66 @@ import {
 
 const REDIS_URL = process.env.REDIS_URL;
 
+function noOpLog() {
+  const noop = () => {};
+  return { info: noop, warn: noop, error: noop, debug: noop, trace: noop, fatal: noop, child: noOpLog };
+}
+
 describe('F254 queued message custody Redis CAS', { skip: redisIsolationSkipReason(REDIS_URL) }, () => {
   let redis;
   let store;
   let invocationStore;
+  let RedisMessageStore;
   let InvocationQueue;
+  let QueueProcessor;
+  let QueueSourceCustodyAdmissionService;
+  let ConnectorInvokeTrigger;
+  let QueuedMessageCustodyCoordinator;
   let QueuedMessageCustodyStartupReconciler;
   let rebindCrossThreadQueueCarrierActionFence;
+  let createInitialQueuedMessageCustody;
+  let buildQueueEntry;
+  let resolveQueueTurnCustodyWake;
   let connected = false;
 
   before(async () => {
     assertRedisIsolationOrThrow(REDIS_URL, 'F254 queued message custody Redis CAS');
     const [
       { createRedisClient },
-      { RedisMessageStore },
+      redisMessageStoreModule,
       { RedisInvocationRecordStore },
       invocationQueueModule,
+      queueProcessorModule,
+      queueSourceCustodyAdmissionModule,
+      connectorInvokeTriggerModule,
       startupReconcilerModule,
       custodyCoordinatorModule,
+      startupQueueEntryModule,
+      wakeProvenanceModule,
     ] = await Promise.all([
       import('@cat-cafe/shared/utils'),
       import('../dist/domains/cats/services/stores/redis/RedisMessageStore.js'),
       import('../dist/domains/cats/services/stores/redis/RedisInvocationRecordStore.js'),
       import('../dist/domains/cats/services/agents/invocation/InvocationQueue.js'),
+      import('../dist/domains/cats/services/agents/invocation/QueueProcessor.js'),
+      import('../dist/domains/cats/services/agents/invocation/QueueSourceCustodyAdmission.js'),
+      import('../dist/infrastructure/email/ConnectorInvokeTrigger.js'),
       import('../dist/domains/cats/services/agents/invocation/QueuedMessageCustodyStartupReconciler.js'),
       import('../dist/domains/cats/services/agents/invocation/QueuedMessageCustodyCoordinator.js'),
+      import('../dist/domains/cats/services/agents/invocation/QueuedMessageCustodyStartupQueueEntry.js'),
+      import('../dist/domains/ball-custody/turn-custody-wake-provenance.js'),
     ]);
+    RedisMessageStore = redisMessageStoreModule.RedisMessageStore;
     InvocationQueue = invocationQueueModule.InvocationQueue;
+    QueueProcessor = queueProcessorModule.QueueProcessor;
+    QueueSourceCustodyAdmissionService = queueSourceCustodyAdmissionModule.QueueSourceCustodyAdmissionService;
+    ConnectorInvokeTrigger = connectorInvokeTriggerModule.ConnectorInvokeTrigger;
+    QueuedMessageCustodyCoordinator = custodyCoordinatorModule.QueuedMessageCustodyCoordinator;
     QueuedMessageCustodyStartupReconciler = startupReconcilerModule.QueuedMessageCustodyStartupReconciler;
     rebindCrossThreadQueueCarrierActionFence = custodyCoordinatorModule.rebindCrossThreadQueueCarrierActionFence;
+    createInitialQueuedMessageCustody = custodyCoordinatorModule.createInitialQueuedMessageCustody;
+    buildQueueEntry = startupQueueEntryModule.buildQueueEntry;
+    resolveQueueTurnCustodyWake = wakeProvenanceModule.resolveQueueTurnCustodyWake;
     redis = createRedisClient({ url: REDIS_URL });
     try {
       await redis.ping();
@@ -58,6 +90,180 @@ describe('F254 queued message custody Redis CAS', { skip: redisIsolationSkipReas
     if (!connected) return;
     await cleanupPrefixedRedisKeys(redis, ['msg:*', 'invoc:*', 'idemp:*']);
     await redis.quit();
+  });
+
+  for (const coalesced of [false, true]) {
+    test(`managed rollback revalidates a Redis source canceled during its lookup (coalesced=${coalesced})`, async () => {
+      const messages = new RedisMessageStore(redis, { ttlSeconds: 0 });
+      const queue = new InvocationQueue();
+      const source = await messages.append({
+        threadId: `thread-redis-canceled-during-restore-${coalesced}`,
+        userId: 'user-1',
+        catId: null,
+        content: 'Deployment ready',
+        mentions: ['codex'],
+        timestamp: 1_482,
+      });
+      const coordinator = new QueuedMessageCustodyCoordinator({ messageStore: messages });
+      const socketManager = {
+        broadcastAgentMessage() {},
+        broadcastToRoom() {},
+        emitToUser() {},
+      };
+      const trigger = new ConnectorInvokeTrigger({
+        router: {
+          async *routeExecution() {
+            throw new Error('busy-thread connector must not start a direct route');
+          },
+        },
+        socketManager,
+        invocationRecordStore: {},
+        invocationTracker: {},
+        invocationQueue: queue,
+        queueProcessor: { isThreadBusy: () => true, tryAutoExecute: async () => false },
+        messageStore: messages,
+        queueCustodyCoordinator: coordinator,
+        log: noOpLog(),
+      });
+      const policy = { forceQueue: true, coalesceKey: `redis-cancel-during-restore-${coalesced}` };
+      assert.equal(
+        await trigger.trigger(source.threadId, 'codex', source.userId, source.content, source.id, undefined, policy),
+        'enqueued',
+      );
+      const sibling = coalesced
+        ? await messages.append({
+            threadId: source.threadId,
+            userId: source.userId,
+            catId: null,
+            content: 'Independent work remains',
+            mentions: ['codex'],
+            timestamp: 1_483,
+          })
+        : undefined;
+      if (sibling) {
+        assert.equal(
+          await trigger.trigger(
+            sibling.threadId,
+            'codex',
+            sibling.userId,
+            sibling.content,
+            sibling.id,
+            undefined,
+            policy,
+          ),
+          'enqueued',
+        );
+      }
+      const [entry] = queue.list(source.threadId, source.userId);
+      assert.ok(entry);
+      assert.deepEqual(entry.mergedMessageIds, sibling ? [sibling.id] : []);
+      const readerInvocationId = `redis-terminal-reader-canceled-during-restore-${coalesced}`;
+      assert.equal(
+        queue.markQueuedSeen(source.threadId, source.userId, entry.id, 'codex', readerInvocationId, 1_484),
+        true,
+      );
+      await coordinator.persistEntry(queue.getEntrySnapshot(source.threadId, source.userId, entry.id));
+
+      let checkingDurable = false;
+      let failedLookup = false;
+      let restoring = false;
+      let enteredLookup;
+      const lookupEntered = new Promise((resolve) => {
+        enteredLookup = resolve;
+      });
+      let releaseLookup;
+      const lookupReleased = new Promise((resolve) => {
+        releaseLookup = resolve;
+      });
+      const getById = messages.getById.bind(messages);
+      messages.getById = async (messageId) => {
+        if (checkingDurable && !failedLookup && messageId === source.id) {
+          failedLookup = true;
+          throw new Error('one transient durable-source lookup failure');
+        }
+        const snapshot = structuredClone(await getById(messageId));
+        const delayedMessageId = sibling?.id ?? source.id;
+        if (restoring && messageId === delayedMessageId) {
+          enteredLookup();
+          await lookupReleased;
+        }
+        return snapshot;
+      };
+      const admission = new QueueSourceCustodyAdmissionService({ queue, messageStore: messages });
+      const processor = new QueueProcessor({
+        queue,
+        messageStore: messages,
+        queueCustodyCoordinator: coordinator,
+        queueSourceCustodyAdmission: {
+          restoreHandledCarrier(result) {
+            restoring = true;
+            return admission.restoreHandledCarrier(result);
+          },
+        },
+        invocationTracker: {},
+        invocationRecordStore: {},
+        router: {},
+        socketManager,
+        log: noOpLog(),
+      });
+      const hasDurableMessageCustody = processor.hasDurableMessageCustody.bind(processor);
+      processor.hasDurableMessageCustody = async (...args) => {
+        checkingDurable = true;
+        try {
+          return await hasDurableMessageCustody(...args);
+        } finally {
+          checkingDurable = false;
+        }
+      };
+      const terminal = processor.markQueuedHandledOnSuccess(source.threadId, 'codex', readerInvocationId);
+      await lookupEntered;
+      assert.deepEqual(queue.list(source.threadId, source.userId), []);
+      assert.equal((await messages.markCanceled(source.id))?.deliveryTransitioned, true);
+      releaseLookup();
+      await terminal;
+
+      const remaining = queue.list(source.threadId, source.userId);
+      if (!sibling) {
+        assert.deepEqual(remaining, []);
+        assert.deepEqual(queue.listAutoExecute(source.threadId), []);
+        return;
+      }
+      assert.equal(remaining.length, 1);
+      assert.equal(remaining[0]?.messageId, sibling.id);
+      assert.deepEqual(remaining[0]?.mergedMessageIds, []);
+      assert.equal(remaining[0]?.content, sibling.content);
+      assert.deepEqual(
+        queue.listAutoExecute(source.threadId).map((candidate) => candidate.messageId),
+        [sibling.id],
+      );
+    });
+  }
+
+  test('concurrent withdrawal durably retains an unadmitted failure and the original TTL-0 body', async () => {
+    const fixture = makeQueueCancellationFixture();
+    const original = await store.append(fixture.store.getById(fixture.message.id));
+    const entry = { ...fixture.entries[0], messageId: original.id };
+    const { QueuedMessageCustodyCoordinator } = await import(
+      '../dist/domains/cats/services/agents/invocation/QueuedMessageCustodyCoordinator.js'
+    );
+    const coordinators = [0, 1].map(() => new QueuedMessageCustodyCoordinator({ messageStore: store }));
+    const results = await Promise.all(coordinators.map((coordinator) => coordinator.withdrawEntry(entry)));
+    assert.deepEqual(results.sort(), [false, true]);
+    const retained = await store.getById(original.id);
+    assert.equal(retained.content, original.content);
+    assert.equal(retained.deliveryStatus, 'queued');
+    assert.equal(retained.queueCustody.status, 'terminal');
+    assert.deepEqual(retained.queueCustody.pendingTargetCats, []);
+    assert.deepEqual(retained.queueCustody.failedByCatIds, ['opus']);
+    assert.deepEqual(retained.queueCustody.withdrawnByCatIds, ['codex']);
+    assert.deepEqual(retained.queueCustody.carrierByTargetCatId, original.queueCustody.carrierByTargetCatId);
+    assert.deepEqual(
+      retained.queueCustody.targetAttempts.filter((attempt) => attempt.targetCatId === 'opus'),
+      original.queueCustody.targetAttempts.filter((attempt) => attempt.targetCatId === 'opus'),
+    );
+    assert.equal(await redis.ttl(`msg:${original.id}`), -1);
+    await coordinators[0].persistEntry(entry);
+    assert.deepEqual((await store.getById(original.id)).queueCustody, retained.queueCustody);
   });
 
   test('round-trips TTL-0 custody and lets only one concurrent revision win', async () => {
@@ -199,6 +405,85 @@ describe('F254 queued message custody Redis CAS', { skip: redisIsolationSkipReas
     assert.equal(await redis.hget(`msg:${canceled.id}`, 'queueCustodyAdmission'), null);
   });
 
+  test('atomic Queue admission maintains the reverse exposure index and validates it before canonical writes', async () => {
+    const source = await store.append({
+      userId: 'user-1',
+      catId: null,
+      content: 'already seen deployment wake',
+      mentions: ['codex'],
+      timestamp: 1_050,
+      threadId: 'thread-admission-exposure-index',
+    });
+    const queue = new InvocationQueue();
+    const entry = queue.enqueue({
+      threadId: source.threadId,
+      userId: source.userId,
+      ownerAuthProvenance: 'unknown',
+      source: 'connector',
+      targetCats: ['codex'],
+      messageId: source.id,
+      content: source.content,
+      intent: 'execute',
+      autoExecute: true,
+      priority: 'normal',
+    }).entry;
+    assert.ok(entry);
+    assert.equal(
+      queue.markQueuedSeen(source.threadId, source.userId, entry.id, 'codex', 'seen-before-admit', 1_060),
+      true,
+    );
+    const exposed = queue.getEntrySnapshot(source.threadId, source.userId, entry.id);
+    assert.ok(exposed);
+    const custody = createInitialQueuedMessageCustody(exposed);
+
+    assert.equal((await store.admitQueueCustody(source.id, custody)).kind, 'initialized');
+    assert.deepEqual(
+      (await store.getByQueueExposure(source.threadId, 'codex', 'seen-before-admit')).map((message) => message.id),
+      [source.id],
+    );
+    assert.equal((await store.admitQueueCustody(source.id, structuredClone(custody))).kind, 'existing');
+    assert.deepEqual(
+      (await store.getByQueueExposure(source.threadId, 'codex', 'seen-before-admit')).map((message) => message.id),
+      [source.id],
+      'idempotent admission must not duplicate reverse-index membership',
+    );
+
+    const invalid = await store.append({
+      userId: 'user-1',
+      catId: null,
+      content: 'must remain ordinary when the derived index is corrupt',
+      mentions: ['codex'],
+      timestamp: 1_070,
+      threadId: 'thread-admission-invalid-exposure-index',
+    });
+    const invalidEntry = queue.enqueue({
+      threadId: invalid.threadId,
+      userId: invalid.userId,
+      ownerAuthProvenance: 'unknown',
+      source: 'connector',
+      targetCats: ['codex'],
+      messageId: invalid.id,
+      content: invalid.content,
+      intent: 'execute',
+      autoExecute: true,
+      priority: 'normal',
+    }).entry;
+    assert.ok(invalidEntry);
+    assert.equal(
+      queue.markQueuedSeen(invalid.threadId, invalid.userId, invalidEntry.id, 'codex', 'invalid-index-read', 1_080),
+      true,
+    );
+    const invalidExposed = queue.getEntrySnapshot(invalid.threadId, invalid.userId, invalidEntry.id);
+    assert.ok(invalidExposed);
+    await redis.set(`msg:queue-exposures:${invalid.threadId}`, 'wrong-type');
+    await assert.rejects(
+      store.admitQueueCustody(invalid.id, createInitialQueuedMessageCustody(invalidExposed)),
+      /WRONGTYPE|QUEUE_EXPOSURE/i,
+    );
+    assert.equal((await store.getById(invalid.id)).deliveryStatus, undefined);
+    assert.equal((await store.getById(invalid.id)).queueCustody, undefined);
+  });
+
   test('round-trips an action-successor carrier rebind and refuses generation rewind', async () => {
     const message = await store.append({
       userId: 'user-1',
@@ -320,6 +605,54 @@ describe('F254 queued message custody Redis CAS', { skip: redisIsolationSkipReas
     });
     await store.markDelivered(delivered.id, 1_002);
     assert.deepEqual(await store.prepareQueueAdmission(delivered.id), { kind: 'conflict' });
+  });
+
+  test('atomically admits an ordinary source and exact Queue custody in one Redis transition', async () => {
+    const source = await store.append({
+      userId: null,
+      catId: 'codex-astra',
+      content: 'ordinary A2A reply before occupied-slot defer',
+      mentions: [],
+      timestamp: 1_100,
+      threadId: 'thread-atomic-source-custody',
+    });
+    const custody = makeCustody({
+      entryId: 'carrier-codex61-sol',
+      ownerUserId: 'user-1',
+      sourceCategory: 'a2a',
+      allTargetCats: ['codex61-sol'],
+      pendingTargetCats: ['codex61-sol'],
+      createdAt: 1_100,
+      updatedAt: 1_100,
+    });
+
+    const results = await Promise.all([
+      store.admitQueueCustody(source.id, custody),
+      store.admitQueueCustody(source.id, structuredClone(custody)),
+    ]);
+    assert.deepEqual(results.map((result) => result.kind).sort(), ['existing', 'initialized']);
+    const admitted = await store.getById(source.id);
+    assert.equal(admitted.deliveryStatus, 'queued');
+    assert.deepEqual(admitted.queueCustody, custody);
+    assert.deepEqual(await store.admitQueueCustody(source.id, { ...custody, entryId: 'foreign' }), {
+      kind: 'conflict',
+    });
+    assert.equal(await redis.ttl(`msg:${source.id}`), -1);
+
+    const delivered = await store.append({
+      userId: null,
+      catId: 'codex-astra',
+      content: 'already delivered source',
+      mentions: [],
+      timestamp: 1_101,
+      threadId: source.threadId,
+      deliveryStatus: 'queued',
+    });
+    assert.equal((await store.markDelivered(delivered.id, 1_102)).deliveryTransitioned, true);
+    assert.deepEqual(await store.admitQueueCustody(delivered.id, custody), { kind: 'conflict' });
+    const unchanged = await store.getById(delivered.id);
+    assert.equal(unchanged.deliveryStatus, 'delivered');
+    assert.equal(unchanged.queueCustody, undefined);
   });
 
   test('forward queued-inclusive reads preserve raw thread order across an exposed queued cursor', async () => {
@@ -1157,6 +1490,80 @@ describe('F254 queued message custody Redis CAS', { skip: redisIsolationSkipReas
         kind: 'source_response',
         outputMessageIds: [response.id],
       },
+    });
+  });
+
+  test('sourceCategory survives append, CAS transition, and startup rebuild', async () => {
+    const threadId = 'thread-source-category';
+    const message = await store.append({
+      userId: 'user-1',
+      catId: null,
+      content: 'producer return wake',
+      mentions: ['codex'],
+      timestamp: 1_000,
+      threadId,
+      deliveryStatus: 'queued',
+      // A valid ConnectorSource needs `icon`; without it Redis drops the source and the rebuilt
+      // entry turns into a user wake, which would pass `kind === 'unstructured'` for the wrong reason.
+      source: { connector: 'content-review', label: '产物审阅', icon: 'cat-cafe', meta: {} },
+      queueCustody: makeCustody({
+        sourceCategory: 'producer_return',
+        allTargetCats: ['codex'],
+        pendingTargetCats: ['codex'],
+      }),
+    });
+    const reread = await store.getById(message.id);
+    assert.equal(reread.queueCustody.sourceCategory, 'producer_return');
+    const cur = reread.queueCustody;
+    await store.transitionQueueCustody(message.id, {
+      expectedRevision: cur.revision,
+      next: { ...cur, revision: cur.revision + 1, updatedAt: cur.updatedAt ?? cur.createdAt },
+    });
+    const afterTransition = await store.getById(message.id);
+    assert.equal(afterTransition.queueCustody.sourceCategory, 'producer_return');
+    const rebuilt = buildQueueEntry([afterTransition], afterTransition.queueCustody.entryId);
+    assert.equal(rebuilt.source, 'connector');
+    assert.equal(rebuilt.sourceCategory, 'producer_return');
+    assert.deepEqual(await resolveQueueTurnCustodyWake(rebuilt, { getById: async () => afterTransition }), {
+      kind: 'unstructured',
+      source: 'producer_return',
+    });
+  });
+
+  test('a queued Repo Inbox wake keeps repo_inbox through Redis and resolves unstructured after restart (F167)', async () => {
+    const threadId = 'thread-repo-inbox-category';
+    const message = await store.append({
+      userId: 'user-1',
+      catId: null,
+      content: 'New issue #1576',
+      mentions: ['codex'],
+      timestamp: 1_000,
+      threadId,
+      deliveryStatus: 'queued',
+      source: { connector: 'github-repo-event', label: 'Repo Inbox', icon: 'github', meta: {} },
+      queueCustody: makeCustody({
+        sourceCategory: 'repo_inbox',
+        allTargetCats: ['codex'],
+        pendingTargetCats: ['codex'],
+      }),
+    });
+    const reread = await store.getById(message.id);
+    assert.equal(reread.queueCustody.sourceCategory, 'repo_inbox');
+    const cur = reread.queueCustody;
+    await store.transitionQueueCustody(message.id, {
+      expectedRevision: cur.revision,
+      next: { ...cur, revision: cur.revision + 1, updatedAt: cur.updatedAt ?? cur.createdAt },
+    });
+    const afterTransition = await store.getById(message.id);
+    const rebuilt = buildQueueEntry([afterTransition], afterTransition.queueCustody.entryId);
+    assert.deepEqual(
+      { catId: afterTransition.catId, connector: afterTransition.source?.connector, source: rebuilt.source },
+      { catId: null, connector: 'github-repo-event', source: 'connector' },
+    );
+    assert.equal(rebuilt.sourceCategory, 'repo_inbox');
+    assert.deepEqual(await resolveQueueTurnCustodyWake(rebuilt, { getById: async () => afterTransition }), {
+      kind: 'unstructured',
+      source: 'repo_inbox',
     });
   });
 });

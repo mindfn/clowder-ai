@@ -1,11 +1,12 @@
 import {
-  type InvocationTrajectoryStatus,
   isProviderSemanticEvent,
+  type OutputMessageChannel,
   type ProviderSubexecutionSemanticEvent,
 } from '@cat-cafe/shared';
+import { appendNativeMessage, type NativeMessageCursor } from './invocation-native-messages';
 import { boundTimelineRows } from './invocation-trajectory-bounds';
 
-export { reconcileInvocationSummary } from './invocation-trajectory-summary';
+export { rankInvocationSummariesForRecall, reconcileInvocationSummary } from './invocation-trajectory-summary';
 
 export interface RawTranscriptEvent {
   v: number;
@@ -44,6 +45,7 @@ export type InvocationTimelineRow =
       fragmentCount?: number;
       appendCount?: number;
       replaceCount?: number;
+      channel?: OutputMessageChannel;
     })
   | (TimelineRowBase & { kind: 'error'; content: string })
   | (TimelineRowBase & { kind: 'terminal'; content: string })
@@ -67,6 +69,8 @@ interface TimelineBuildState {
   unmatchedTools: ToolTimelineRow[];
   foldedTypes: Record<string, number>;
   foldedTimestamp?: number;
+  nativeMessages?: boolean;
+  nativeMessageCursor?: NativeMessageCursor;
 }
 
 const FOLDED_TELEMETRY_TYPES = new Set(['status', 'agent_loop', 'provider_signal', 'liveness_signal']);
@@ -256,6 +260,10 @@ function projectSimpleEvent(envelope: RawTranscriptEvent, type: string): Invocat
 
 function appendMessageEvent(state: TimelineBuildState, envelope: RawTranscriptEvent, type: string): boolean {
   if (!MESSAGE_TYPES.has(type)) return false;
+  if (state.nativeMessages) {
+    appendNativeMessage(state, envelope, type);
+    return true;
+  }
   const row = projectMessageEvent(envelope, type);
   if (!row) return true;
   const previous = state.rows.at(-1);
@@ -273,6 +281,7 @@ function appendMessageEvent(state: TimelineBuildState, envelope: RawTranscriptEv
 
 function appendEnvelope(state: TimelineBuildState, envelope: RawTranscriptEvent): void {
   const type = eventType(envelope);
+  if (!MESSAGE_TYPES.has(type) && !FOLDED_TELEMETRY_TYPES.has(type)) state.nativeMessageCursor = undefined;
   if (PROVIDER_SEMANTIC_EVENT_CARRIERS.has(type) && isProviderSemanticEvent(envelope.event.semanticEvent)) {
     const semanticEvent = envelope.event.semanticEvent;
     if (semanticEvent.kind === 'subexecution') {
@@ -306,12 +315,14 @@ function appendEnvelope(state: TimelineBuildState, envelope: RawTranscriptEvent)
 export function buildInvocationTimelineRows(
   events: readonly RawTranscriptEvent[],
   maxVisibleRows = DEFAULT_MAX_VISIBLE_ROWS,
+  options: { nativeMessages?: boolean } = {},
 ): InvocationTimelineProjection {
   const state: TimelineBuildState = {
     rows: [],
     toolRowsById: new Map(),
     unmatchedTools: [],
     foldedTypes: {},
+    nativeMessages: options.nativeMessages,
   };
   for (const envelope of events) appendEnvelope(state, envelope);
 
@@ -333,17 +344,4 @@ export function buildInvocationTimelineRows(
     totalEffectiveRows: state.rows.length,
     hiddenRowCount,
   };
-}
-
-export function rankInvocationSummariesForRecall<
-  T extends { invocationId: string; status: InvocationTrajectoryStatus; startedAt: number },
->(summaries: readonly T[]): T[] {
-  const abnormal = (status: InvocationTrajectoryStatus) =>
-    status === 'error' || status === 'cancelled' || status === 'timeout';
-  return [...summaries]
-    .sort((left, right) => {
-      const abnormalDelta = Number(abnormal(right.status)) - Number(abnormal(left.status));
-      return abnormalDelta || right.startedAt - left.startedAt || left.invocationId.localeCompare(right.invocationId);
-    })
-    .slice(0, 3);
 }

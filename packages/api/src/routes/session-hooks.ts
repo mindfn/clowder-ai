@@ -14,6 +14,7 @@
 import type { FastifyInstance, FastifyPluginOptions, FastifyRequest } from 'fastify';
 import { z } from 'zod';
 import type { ISessionSealer } from '../domains/cats/services/session/SessionSealer.js';
+import { isHomeSession } from '../domains/cats/services/session/session-scope.js';
 import type { TranscriptReader } from '../domains/cats/services/session/TranscriptReader.js';
 import type { ISessionChainStore } from '../domains/cats/services/stores/ports/SessionChainStore.js';
 import {
@@ -81,7 +82,7 @@ export async function sessionHooksRoutes(app: FastifyInstance, opts: SessionHook
     if (!cliSessionId) return;
     const session = await sessionChainStore.getByCliSessionId(cliSessionId);
     if (!session) return;
-    if (!invocationOwnsSession(invocation, session)) {
+    if (!isHomeSession(session) || !invocationOwnsSession(invocation, session)) {
       reply.status(403).send({ error: 'session_hook_scope_mismatch' });
     }
   });

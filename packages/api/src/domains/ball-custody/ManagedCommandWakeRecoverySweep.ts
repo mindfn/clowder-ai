@@ -7,11 +7,13 @@ import {
 import { normalizeOwnerAuthProvenance } from '../cats/services/owner-auth-provenance.js';
 import type { InvocationRecord } from '../cats/services/stores/ports/InvocationRecordStore.js';
 import { classifyInvocationRecoveryStatus } from '../cats/services/stores/ports/invocation-state-machine.js';
+import { durableManagedGateConsumerLines, projectDurableManagedGateConsumer } from './durable-managed-gate-consumer.js';
 import {
   cancelDurableManagedGateJob,
   inspectDurableManagedGateJob,
   validateDurableManagedGateJob,
 } from './durable-managed-gate-job.js';
+import { settleNoSpawnDurableGate } from './managed-command-no-spawn-terminal.js';
 import { ManagedCommandWakeActionLeaseAdmissionError } from './managed-command-wake-action-lease-admission.js';
 import {
   buildAdmissionFactIdempotencyKey,
@@ -37,6 +39,7 @@ import {
   recordCancelledManagedCommandCompletion,
 } from './managed-command-wake-recovery-transitions.js';
 import {
+  parseNotStartedManagedCommandTask,
   parseRetiredManagedCommandWakeTask,
   readManagedCommandWakeProjection,
 } from './managed-command-wake-task-projection.js';
@@ -65,6 +68,7 @@ export {
 const log = createModuleLogger('ball-custody/managed-command-wake-recovery');
 
 export class ManagedCommandWakeRecoverySweep {
+  private inFlight: Promise<ManagedCommandWakeRecoveryStats> | undefined;
   private readonly now: () => number;
   private readonly dispatchedCarrierGraceMs: number;
   private readonly wakeSlaMs: number;
@@ -101,10 +105,13 @@ export class ManagedCommandWakeRecoverySweep {
     let pending = 0;
     const running = tasks.flatMap((task) => {
       const command = readManagedCommandWakeProjection(task);
-      const durableJob = command?.state === 'command_running' ? command.durableJob : undefined;
-      return durableJob?.kind === 'full_gate' ? [{ task, durableJob }] : [];
+      if (!command || command.state !== 'command_running') return [];
+      const durableJob = command.durableJob;
+      return durableJob?.kind === 'full_gate' || durableJob?.kind === 'resumable_full_gate_v2'
+        ? [{ task, durableJob, command }]
+        : [];
     });
-    for (const { task, durableJob } of running) {
+    for (const { task, durableJob, command } of running) {
       if (!validateDurableManagedGateJob(durableJob, task.id)) {
         pending += 1;
         continue;
@@ -129,9 +136,17 @@ export class ManagedCommandWakeRecoverySweep {
         pending += 1;
         continue;
       }
+      const consumerLines = durableManagedGateConsumerLines(
+        projectDurableManagedGateConsumer(durableJob, command.command, inspection.result, {
+          ...(command.cwd ? { candidateRoot: command.cwd } : {}),
+          controllerRoot: process.env.CAT_CAFE_RUNTIME_ROOT?.trim() || process.cwd(),
+        }),
+      );
       const completion = {
         taskId: task.id,
-        wakeContent: `持球唤醒（durable full gate 终态）：${inspection.result.tailOutput ?? inspection.state}`,
+        wakeContent:
+          `持球唤醒（durable full gate 终态）：${inspection.result.tailOutput ?? inspection.state}` +
+          (consumerLines.length > 0 ? `\n${consumerLines.join('\n')}` : ''),
         result: inspection.result,
       };
       const result = parseRetiredManagedCommandWakeTask(task)
@@ -146,13 +161,30 @@ export class ManagedCommandWakeRecoverySweep {
     let recovered = 0;
     let pending = 0;
     const undelivered = tasks.flatMap((task) => {
-      const parsed = parseWakeTask(task);
+      const parsed = parseWakeTask(task) ?? parseNotStartedManagedCommandTask(task);
       const admissionFact = parsed?.command.admissionFact;
       return parsed && admissionFact && !parsed.command.admissionFactAppended ? [{ task, parsed, admissionFact }] : [];
     });
     for (const { task, parsed, admissionFact } of undelivered) {
       const idempotencyKey = buildAdmissionFactIdempotencyKey(task.id);
       try {
+        if (parsed.command.state === 'not_started') {
+          // Recover the exact params-written / enabled-not-yet-written crash window.
+          // The explicit lifecycle fact is proof; pid=null is never used as proof.
+          if (
+            (parsed.command.durableJob &&
+              !settleNoSpawnDurableGate(
+                parsed.command.durableJob,
+                task.id,
+                parsed.command.notStartedDetail ?? 'admission_rejected',
+              )) ||
+            (task.enabled && !this.deps.dynamicTaskStore.setEnabled(task.id, false))
+          ) {
+            pending += 1;
+            continue;
+          }
+          this.deps.taskRunner.unregister(task.id);
+        }
         const existing = await this.deps.messageStore.getByIdempotencyKey('system', parsed.threadId, idempotencyKey);
         if (!existing) {
           const stored = await this.deps.messageStore.append({
@@ -198,8 +230,25 @@ export class ManagedCommandWakeRecoverySweep {
     }
     return { scanned: undelivered.length, recovered, pending };
   }
-  async runOnce(): Promise<ManagedCommandWakeRecoveryStats> {
-    const tasks = this.deps.dynamicTaskStore.getAll();
+  runOnce(): Promise<ManagedCommandWakeRecoveryStats> {
+    if (this.inFlight) return this.inFlight;
+    const cycle = this.runCycle().finally(() => {
+      if (this.inFlight === cycle) this.inFlight = undefined;
+    });
+    this.inFlight = cycle;
+    return cycle;
+  }
+
+  private async runCycle(): Promise<ManagedCommandWakeRecoveryStats> {
+    const tasks = this.deps.dynamicTaskStore.listManagedCommandCandidates?.() ?? this.deps.dynamicTaskStore.getAll();
+    // Retired ordinary commands can retain pre-rollback terminal evidence in a
+    // private column. Settle that exact proof without a completion wake or replay.
+    for (const task of tasks) {
+      if (task.enabled || readManagedCommandWakeProjection(task)?.state !== 'command_running') continue;
+      if (this.deps.dynamicTaskStore.reconcileRetainedManagedCommand?.(task) === 'not_started') {
+        this.deps.taskRunner.unregister(task.id);
+      }
+    }
     const admission = await this.recoverAdmissionFacts(tasks);
     const durable = await this.reconcileDurableGateJobs(tasks);
     let { recovered, pending } = admission;

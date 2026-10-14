@@ -9,9 +9,22 @@ import type {
 import { assertValidAppendMessageInput, DEFAULT_THREAD_ID, generateSortableId } from '../ports/MessageStore.js';
 import { assertQueueCustodyMessageBinding } from '../ports/queued-message-custody.js';
 import { MessageKeys } from '../redis-keys/message-keys.js';
+import { withOwnerUncertaintyIndex as withUncertaintyIndex } from './owner-uncertainty-lua.js';
 import { serializeExtra } from './redis-message-parsers.js';
+import { withUserMentionIndex } from './user-mention-index-lua.js';
 
-const APPEND_IF_THREAD_FRONTIER_LUA = `
+function withOwnerUncertaintyIndex(script: string, hashKey: number, indexExpression: string): string {
+  const fields = 'cjson.decode(ARGV[6])';
+  const prefix = `string.sub(KEYS[2], 1, #KEYS[2] - #${fields}.id - 4)`;
+  return withUserMentionIndex(
+    withUncertaintyIndex(script, hashKey, indexExpression),
+    hashKey,
+    `{${prefix} .. 'msg:user-requests:latest:' .. ${fields}.userId, ${prefix} .. 'msg:user-requests:pending:' .. ${fields}.userId, ${prefix} .. 'msg:user-requests:closed:' .. ${fields}.userId, ${prefix} .. 'msg:user-request-signals:' .. ${fields}.userId .. ':' .. ${fields}.threadId}`,
+  );
+}
+
+const APPEND_IF_THREAD_FRONTIER_LUA = withOwnerUncertaintyIndex(
+  `
 if ARGV[4] == '1' then
   local existing = redis.call('GET', KEYS[5])
   if existing then return {'existing', existing} end
@@ -37,9 +50,13 @@ if ttl and ttl > 0 then
   for index = 6, #KEYS do redis.call('EXPIRE', KEYS[index], ttl) end
 end
 return {'committed', ARGV[2]}
-`;
+`,
+  2,
+  "string.sub(KEYS[1], 1, #KEYS[1] - #cjson.decode(ARGV[6]).threadId - 11) .. 'msg:owner-uncertainty:' .. cjson.decode(ARGV[6]).threadId",
+);
 
-const APPEND_AND_OBSERVE_PRIOR_FRONTIER_LUA = `
+const APPEND_AND_OBSERVE_PRIOR_FRONTIER_LUA = withOwnerUncertaintyIndex(
+  `
 if ARGV[4] == '1' then
   local existing = redis.call('GET', KEYS[5])
   if existing then return {'existing', existing, ''} end
@@ -102,7 +119,10 @@ if ttl and ttl > 0 then
   for index = 8, #KEYS do redis.call('EXPIRE', KEYS[index], ttl) end
 end
 return {'committed', ARGV[1], prior}
-`;
+`,
+  2,
+  "string.sub(KEYS[1], 1, #KEYS[1] - #cjson.decode(ARGV[6]).threadId - 11) .. 'msg:owner-uncertainty:' .. cjson.decode(ARGV[6]).threadId",
+);
 
 const DELETE_IDEMPOTENCY_POINTER_IF_VALUE_LUA = `
 if redis.call('GET', KEYS[1]) == ARGV[1] then

@@ -166,8 +166,8 @@ describe('F287 memory cue shared contract', () => {
     ]).toEqual(['person_memory', 'evidence', 'taste', 'profile', 'event', 'evidence', 'evidence', 'owned_seed']);
   });
 
-  it('admits only the nine versioned producer/kind pairs after the Phase E vertical slice', () => {
-    expect(RECALL_OPPORTUNITY_CATALOG_VERSION).toBe(5);
+  it('admits only the ten versioned producer/kind pairs after the Phase E vertical slice', () => {
+    expect(RECALL_OPPORTUNITY_CATALOG_VERSION).toBe(6);
     expect(RECALL_OPPORTUNITY_V1_PAIRS).toEqual([
       { kind: 'subject_seen', producer: 'entity_nudge' },
       { kind: 'delivery_decision', producer: 'github_ci' },
@@ -178,6 +178,7 @@ describe('F287 memory cue shared contract', () => {
       { kind: 'accepted_decision_required', producer: 'owner_message' },
       { kind: 'project_source_required', producer: 'task_context' },
       { kind: 'owned_seed_available', producer: 'present_loop' },
+      { kind: 'thread_opened', producer: 'owner_message' },
     ]);
 
     for (const fixture of Object.values(fixtures)) {
@@ -257,7 +258,7 @@ describe('F287 memory cue shared contract', () => {
       v: 1,
       cueId: 'cue-1',
       opportunityId: fixtures.subject_seen.opportunityId,
-      catalogVersion: 5,
+      catalogVersion: 6,
       resolverFamily: 'person_entity',
       resolverVersion: 1,
       whyNow: 'A named subject is present in the current decision frame.',

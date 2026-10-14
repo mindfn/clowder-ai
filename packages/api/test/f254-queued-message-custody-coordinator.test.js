@@ -9,6 +9,7 @@ import {
   QueuedMessageCustodyCoordinator,
 } from '../dist/domains/cats/services/agents/invocation/QueuedMessageCustodyCoordinator.js';
 import { MessageStore } from '../dist/domains/cats/services/stores/ports/MessageStore.js';
+import { makeQueueCancellationFixture } from './helpers/queue-cancellation-fixture.js';
 
 const allowRetry = (store) => async (transitions) => {
   for (const transition of transitions) {
@@ -53,6 +54,46 @@ function appendCustodiedMessage(store, queue, entry) {
 }
 
 describe('F254 queued message custody coordinator', () => {
+  test('logical receipts and sibling carriers cannot withdraw another physical carrier', async () => {
+    const { store, message, entries, coordinator } = makeQueueCancellationFixture(['codex', 'opus']);
+    const before = store.getById(message.id).queueCustody;
+    assert.equal(await coordinator.withdrawEntry({ ...entries[0], id: before.entryId }), false);
+    assert.equal(await coordinator.withdrawEntry({ ...entries[0], targetCats: ['opus'] }), false);
+    assert.deepEqual(store.getById(message.id).queueCustody, before);
+    assert.equal(await coordinator.withdrawEntry(entries[0]), true);
+    assert.deepEqual(store.getById(message.id).queueCustody.pendingTargetCats, ['opus']);
+  });
+
+  test('an admitted failed sibling remains pending until its own carrier is withdrawn', async () => {
+    const { store, queue, message, entries, coordinator } = makeQueueCancellationFixture(
+      ['codex', 'opus'],
+      ['codex', 'opus', 'glm52'],
+    );
+    queue.markQueuedFailedForCatAcrossUsers('t1', 'opus', 'failed-invocation', new Set([entries[1].id]));
+    await coordinator.persistEntry(queue.getEntrySnapshot('t1', 'user-a', entries[1].id));
+    assert.equal(await coordinator.withdrawEntry(entries[0]), true);
+    const afterFirst = store.getById(message.id).queueCustody;
+    assert.equal(afterFirst.status, 'queued');
+    assert.deepEqual(afterFirst.pendingTargetCats, ['opus']);
+    assert.deepEqual(afterFirst.failedByCatIds, ['opus', 'glm52']);
+    assert.equal(await coordinator.withdrawEntry(entries[1]), true);
+    assert.equal(store.getById(message.id).queueCustody.status, 'terminal');
+    assert.deepEqual(store.getById(message.id).queueCustody.failedByCatIds, ['glm52']);
+  });
+
+  test('concurrent cancellation is idempotent and a stale carrier cannot revive cancelled custody', async () => {
+    const { store, message, entries, coordinator } = makeQueueCancellationFixture();
+    assert.deepEqual(
+      await Promise.all([coordinator.withdrawEntry(entries[0]), coordinator.withdrawEntry(entries[0])]),
+      [true, false],
+    );
+    const terminal = store.getById(message.id).queueCustody;
+    await coordinator.persistEntry(entries[0]);
+    assert.equal(await coordinator.withdrawEntry(entries[0]), false);
+    assert.deepEqual(store.getById(message.id).queueCustody, terminal);
+    assert.equal(store.getById(message.id).deliveryStatus, 'queued');
+  });
+
   test('PR7 refuses to persist an action fence under a different Queue idempotency identity', () => {
     const queue = new InvocationQueue();
     const entry = queue.enqueue({

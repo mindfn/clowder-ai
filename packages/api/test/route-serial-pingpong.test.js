@@ -89,6 +89,18 @@ function createMockDeps(services) {
       getByThreadAfter: () => [],
       getByThreadBefore: () => [],
     },
+    queueSourceCustodyAdmission: {
+      admitDeferred: async () => {},
+      admitDeferredBatch: async () => {},
+      discardDeferredBatch: () => {},
+    },
+  };
+}
+
+function captureDeferredEnqueue(entries) {
+  return (entry) => {
+    entries.push(entry);
+    return { outcome: 'enqueued', entry: { ...entry, id: `deferred-${entries.length}` } };
   };
 }
 
@@ -329,7 +341,7 @@ describe('F167 L1: route-serial ping-pong circuit breaker', { concurrency: false
             callCount++;
             return callCount >= 4;
           },
-          deferA2AEnqueue: (entry) => deferredEntries.push(entry),
+          deferA2AEnqueue: captureDeferredEnqueue(deferredEntries),
         }),
       )) {
         events.push(msg);
@@ -504,7 +516,7 @@ describe('F167 L1: route-serial ping-pong circuit breaker', { concurrency: false
             callCount++;
             return callCount >= 4; // rounds 0,1,2 inline (build streak); round 3 deferred (multi-mention)
           },
-          deferA2AEnqueue: (entry) => deferredEntries.push(entry),
+          deferA2AEnqueue: captureDeferredEnqueue(deferredEntries),
         }),
       )) {
         events.push(msg);

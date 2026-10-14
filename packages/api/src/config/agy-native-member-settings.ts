@@ -1,0 +1,76 @@
+import { isAbsolute } from 'node:path';
+import type { AgyProfileConfig, ClientId } from '@cat-cafe/shared';
+import { z } from 'zod';
+import { resolveByAccountRef } from './account-resolver.js';
+
+/** Member settings can select a read-only carrier; task write authority has a separate issuer. */
+export const agyNativeMemberSettingsSchema = z
+  .object({
+    enabled: z.boolean(),
+    carrier: z.literal('native'),
+    profileId: z
+      .string()
+      .trim()
+      .regex(/^[A-Za-z0-9][A-Za-z0-9._-]{0,79}$/),
+    homeRoot: z.string().trim().refine(isAbsolute, 'Profile root must be an absolute path').optional(),
+    model: z
+      .string()
+      .trim()
+      .regex(/^[A-Za-z0-9][A-Za-z0-9._:/-]*$/, 'Use the actual AGY model ID'),
+    autoApprove: z.literal(false),
+    trustedWorkspaces: z
+      .array(z.string().trim().refine(isAbsolute, 'Workspace must be an absolute path'))
+      .min(1)
+      .max(32),
+  })
+  .strict();
+
+type MemberSettings = z.infer<typeof agyNativeMemberSettingsSchema>;
+
+export function publicAgyProfile(profile?: AgyProfileConfig): Omit<AgyProfileConfig, 'nativeCodingGrant'> | undefined {
+  if (!profile) return undefined;
+  const { nativeCodingGrant: _grant, ...settings } = profile;
+  return settings;
+}
+
+export function resolveAgyNativeMemberPatch(input: {
+  projectRoot: string;
+  requested: MemberSettings | null | undefined;
+  current?: AgyProfileConfig;
+  clientId: ClientId;
+  acp: unknown;
+  model: string;
+  accountRef?: string;
+  previousAccountRef?: string;
+  cliConfigArgs?: readonly string[];
+}): AgyProfileConfig | null | undefined {
+  if (input.requested === null) return null;
+  const leavesNativeClient = input.clientId !== 'google' || input.acp != null;
+  if (leavesNativeClient && input.requested) throw new Error('AGY Native requires Gemini without ACP');
+  if (leavesNativeClient) return input.current?.carrier === 'native' ? null : undefined;
+  const next: AgyProfileConfig | undefined = input.requested ?? input.current;
+  if (next?.carrier !== 'native') return undefined;
+  const account = resolveByAccountRef(input.projectRoot, input.accountRef ?? 'gemini');
+  if (account?.client !== 'google' || account.authType !== 'oauth' || Object.keys(account.envVars ?? {}).length) {
+    throw new Error('AGY Native requires Gemini OAuth with no account environment overrides');
+  }
+  if (input.cliConfigArgs?.length) throw new Error('AGY Native does not accept CLI extension arguments');
+  if (next.model !== input.model) throw new Error('AGY Native profile model must match the member model ID');
+  if (!input.requested) {
+    if (input.accountRef === input.previousAccountRef || !next.nativeCodingGrant) return undefined;
+    const { nativeCodingGrant: _grant, ...readOnly } = next;
+    return readOnly;
+  }
+  // A profile/account/model/workspace change cannot carry old task write authority into a new binding.
+  const unchanged =
+    input.accountRef === input.previousAccountRef &&
+    ['profileId', 'homeRoot', 'model', 'enabled', 'autoApprove', 'trustedWorkspaces'].every(
+      (key) =>
+        JSON.stringify(input.current?.[key as keyof AgyProfileConfig]) ===
+        JSON.stringify(input.requested?.[key as keyof MemberSettings]),
+    );
+  return {
+    ...input.requested,
+    ...(unchanged && input.current?.nativeCodingGrant ? { nativeCodingGrant: input.current.nativeCodingGrant } : {}),
+  };
+}

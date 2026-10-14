@@ -1,0 +1,56 @@
+import { defineShellCopy } from './shell/shell-copy';
+
+export const messageDispositionCopy = defineShellCopy({
+  zh: {
+    menu: {
+      heading: '这条发出去后',
+      nextLabel: '作为下一件工作',
+      nextNote: '等这一轮做完',
+      continueLabel: '接着当前工作',
+      continueNote: '这一轮里读到；没读到会自动转成下一件工作',
+      unsupported: '当前接入不支持本轮读取',
+      undeclared: '能力未声明，按下一件工作处理',
+      saving: '正在保存这条对话的发送方式…',
+      saveFailed: '发送方式没有保存，请重试。',
+    },
+    settings: {
+      heading: '默认发送方式',
+      note: '猫正在工作时，新消息默认排到下一件工作，或尝试在当前一轮的安全断点读取。每条对话仍可在输入框的 + 菜单里单独选择。',
+      nextLabel: '下一件工作',
+      nextNote: '等当前一轮结束后自然开始',
+      continueLabel: '接着当前工作',
+      continueNote: '尝试让当前一轮在安全断点读取；未读到会转成下一件工作',
+      loading: '正在读取默认发送方式…',
+      loadFailed: '默认发送方式没读到。',
+      saving: '正在保存…',
+      saveFailed: '默认发送方式没有保存，请重试。',
+      retry: '重试',
+    },
+  },
+  en: {
+    menu: {
+      heading: 'After this message',
+      nextLabel: 'Start as the next work',
+      nextNote: 'Wait until the current work finishes',
+      continueLabel: 'Continue current work',
+      continueNote: 'Read in this turn; if it is not read, it becomes the next work',
+      unsupported: 'This connection cannot read it in the current turn',
+      undeclared: 'Capability is undeclared; this will become the next work',
+      saving: 'Saving this conversation’s send mode…',
+      saveFailed: 'The send mode could not be saved. Try again.',
+    },
+    settings: {
+      heading: 'Default send mode',
+      note: 'While a cat is working, new messages either wait as the next work or try to be read at a safe point in the current turn. Each conversation can still choose separately from the composer’s + menu.',
+      nextLabel: 'Next work',
+      nextNote: 'Start naturally after the current work finishes',
+      continueLabel: 'Continue current work',
+      continueNote: 'Try to read it at a safe point in the current turn; if it is not read, it becomes the next work',
+      loading: 'Loading the default send mode…',
+      loadFailed: 'The default send mode could not be loaded.',
+      saving: 'Saving…',
+      saveFailed: 'The default send mode could not be saved. Try again.',
+      retry: 'Try again',
+    },
+  },
+});

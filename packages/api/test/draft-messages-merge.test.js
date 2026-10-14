@@ -127,10 +127,10 @@ describe('GET /api/messages — draft merge (#80)', () => {
     return app;
   }
 
-  async function buildAppWithInvocationRecords(records) {
+  async function buildAppWithInvocationRecords(records, registry = makeStubRegistry()) {
     const app = Fastify({ logger: false });
     await app.register(messagesRoutes, {
-      registry: makeStubRegistry(),
+      registry,
       messageStore,
       socketManager: makeStubSocketManager(),
       router: makeStubRouter(),
@@ -367,6 +367,90 @@ describe('GET /api/messages — draft merge (#80)', () => {
     const formal = body.messages.find((m) => m.content === 'Completed message');
     assert(formal, 'Formal message should be present');
   });
+
+  for (const explicitPost of [true, false]) {
+    for (const offPage of [false, true]) {
+      for (const draftIdentity of ['parent', 'turn']) {
+        it(`${explicitPost ? 'independent post preserves' : 'replacement final deduplicates'} a running ${draftIdentity} draft with callback ${offPage ? 'off page' : 'on page'}`, async () => {
+          const ts = Date.now();
+          const parentId = 'inv-post-parent';
+          const turnId = 'inv-post-turn';
+          const draftId = draftIdentity === 'parent' ? parentId : turnId;
+          const post = messageStore.append({
+            userId: 'user-1',
+            catId: 'opus',
+            content: 'A separate posted update',
+            mentions: [],
+            timestamp: ts - 100,
+            threadId: 'thread-1',
+            origin: 'callback',
+            extra: {
+              ...(explicitPost ? { isExplicitPost: true } : {}),
+              stream: { invocationId: parentId, turnInvocationId: turnId },
+            },
+          });
+          if (offPage) {
+            for (let i = 0; i < 5; i++) {
+              messageStore.append({
+                userId: 'user-1',
+                catId: null,
+                content: `Later message ${i}`,
+                mentions: [],
+                timestamp: ts + i,
+                threadId: 'thread-1',
+              });
+            }
+          }
+          draftStore.upsert({
+            userId: 'user-1',
+            threadId: 'thread-1',
+            invocationId: draftId,
+            catId: 'opus',
+            content: 'Stream output before and after the post',
+            updatedAt: ts,
+          });
+          const app = await buildAppWithInvocationRecords(
+            { [parentId]: makeInvocationRecord(parentId, 'running', ts) },
+            {
+              ...makeStubRegistry(),
+              getRecord: async (id) =>
+                id === turnId
+                  ? {
+                      parentInvocationId: parentId,
+                      threadId: 'thread-1',
+                      userId: 'user-1',
+                      catId: 'opus',
+                      createdAt: ts,
+                    }
+                  : null,
+            },
+          );
+          try {
+            // A second cold hydration (reload/new tab) must retain the same independent identities.
+            for (let read = 0; read < 2; read++) {
+              const response = await app.inject({
+                method: 'GET',
+                url: '/api/messages?threadId=thread-1&limit=5',
+                headers: { 'x-cat-cafe-user': 'user-1' },
+              });
+              assert.equal(response.statusCode, 200);
+              const messages = response.json().messages;
+              assert.equal(
+                messages.some((message) => message.id === post.id),
+                !offPage,
+              );
+              const draft = messages.find((message) => message.id === `draft-${draftId}`);
+              assert.equal(Boolean(draft?.isDraft), explicitPost, 'only a stream final may shadow its running draft');
+              if (explicitPost) assert.equal(draft.content, 'Stream output before and after the post');
+              assert.equal(draftStore.getByThread('user-1', 'thread-1').length, 1);
+            }
+          } finally {
+            await app.close();
+          }
+        });
+      }
+    }
+  }
 
   it('keeps draft when invocation record is still running (F173 hotfix3)', async () => {
     const ts = Date.now();

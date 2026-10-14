@@ -33,7 +33,7 @@ function lighten(hex: string, ratio: number): string {
 const DIVIDER = 'var(--console-border-strong)';
 const CHAT_LAYOUT_CHANGED_EVENT = 'catcafe:chat-layout-changed';
 
-function usePublishLayoutAfterDisclosure(disclosed: boolean) {
+export function usePublishLayoutAfterDisclosure(disclosed: boolean) {
   const hasMounted = useRef(false);
   useLayoutEffect(() => {
     void disclosed;

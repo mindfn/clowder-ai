@@ -180,6 +180,8 @@ describe('POST /api/invocations/:id/retry (ADR-008 S2)', () => {
   it('retry claim loss preserves the queued pre-start reservation', async () => {
     const tracker = new InvocationTracker();
     const queueProcessor = new QueueProcessor({
+      queue: new InvocationQueue(),
+      messageStore: new MessageStore(),
       invocationTracker: tracker,
       log: { info() {}, warn() {}, error() {} },
     });

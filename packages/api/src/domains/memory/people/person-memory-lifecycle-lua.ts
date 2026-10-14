@@ -37,14 +37,22 @@ export const AMEND_EVENT_LUA = `
 local prior = redis.call('GET', KEYS[5])
 if prior then return 'REPLAYED:' .. prior end
 if redis.call('EXISTS', KEYS[7]) == 1 then return 'NOT_AVAILABLE' end
-if redis.call('EXISTS', KEYS[1]) == 0 then return 'NOT_AVAILABLE' end
+local original = redis.call('GET', KEYS[1])
+if not original then return 'NOT_AVAILABLE' end
+if original ~= ARGV[1] then return 'CONFLICT' end
+local relationship = redis.call('GET', KEYS[9])
+if not relationship then return 'NOT_AVAILABLE' end
+if relationship ~= ARGV[2] then return 'CONFLICT' end
+if redis.call('EXISTS', KEYS[8]) == 1 then return 'NOT_AVAILABLE' end
 if redis.call('EXISTS', KEYS[2]) == 1 then return 'CONFLICT' end
-redis.call('SET', KEYS[2], ARGV[1])
-redis.call('ZADD', KEYS[3], tonumber(ARGV[2]), ARGV[3])
-redis.call('ZADD', KEYS[4], tonumber(ARGV[2]), ARGV[3])
-redis.call('SET', KEYS[5], ARGV[1])
-redis.call('SADD', KEYS[6], KEYS[2], KEYS[5])
-return 'APPLIED:' .. ARGV[1]
+redis.call('SET', KEYS[1], ARGV[3])
+redis.call('SET', KEYS[2], ARGV[4])
+redis.call('SET', KEYS[8], ARGV[6])
+redis.call('ZADD', KEYS[3], tonumber(ARGV[5]), ARGV[6])
+redis.call('ZADD', KEYS[4], tonumber(ARGV[5]), ARGV[6])
+redis.call('SET', KEYS[5], ARGV[4])
+redis.call('SADD', KEYS[6], KEYS[1], KEYS[2], KEYS[5], KEYS[8])
+return 'APPLIED:' .. ARGV[4]
 `;
 
 export const REDACT_ITEM_LUA = `

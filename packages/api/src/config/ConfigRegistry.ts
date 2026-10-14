@@ -15,6 +15,8 @@ import { getCatModel } from './cat-models.js';
 import { getCodexApprovalPolicy, getCodexSandboxMode } from './codex-cli.js';
 import type { CodexAuthMode, ConfigSnapshot } from './config-snapshot.js';
 import { parseBoolean, parseEnum } from './parse-utils.js';
+import { readCurationPreference } from './user-preferences-curation.js';
+import { resolveCliOutputBubbleDefault } from './user-preferences-store.js';
 
 export type { CodexAuthMode, ConfigSnapshot } from './config-snapshot.js';
 
@@ -40,9 +42,9 @@ function formatTtl(raw: string | undefined, defaultSeconds: number): string {
 
 /**
  * Collect a snapshot of all runtime configuration values.
- * Sources: process.env + hardcoded defaults + catRegistry.
+ * Sources: process.env + hot overlay + persisted owner preferences + hardcoded defaults + catRegistry.
  */
-export function collectConfigSnapshot(): ConfigSnapshot {
+export function collectConfigSnapshot(projectRoot?: string): ConfigSnapshot {
   const env = process.env;
 
   const coCreator = getCoCreatorConfig();
@@ -92,9 +94,10 @@ export function collectConfigSnapshot(): ConfigSnapshot {
   const bubbleThinking = (configStore.get('ui.bubble.thinking') ?? env.UI_BUBBLE_THINKING_DEFAULT ?? 'collapsed') as
     | 'expanded'
     | 'collapsed';
-  const bubbleCli = (configStore.get('ui.bubble.cliOutput') ?? env.UI_BUBBLE_CLI_OUTPUT_DEFAULT ?? 'collapsed') as
-    | 'expanded'
-    | 'collapsed';
+  const bubbleCliFallback = (configStore.get('ui.bubble.cliOutput') ??
+    env.UI_BUBBLE_CLI_OUTPUT_DEFAULT ??
+    'collapsed') as 'expanded' | 'collapsed';
+  const bubbleCli = projectRoot ? resolveCliOutputBubbleDefault(projectRoot, bubbleCliFallback) : bubbleCliFallback;
 
   return {
     coCreator: {
@@ -115,7 +118,7 @@ export function collectConfigSnapshot(): ConfigSnapshot {
     memory: { enabled: true, maxKeysPerThread: 50 },
     f102: {
       embedMode: env.EMBED_MODE ?? 'off',
-      abstractiveEnabled: env.F102_ABSTRACTIVE === 'on',
+      abstractiveEnabled: projectRoot ? readCurationPreference(projectRoot).enabled : env.F102_ABSTRACTIVE === 'on',
     },
     governance: {
       degradationEnabled: true,

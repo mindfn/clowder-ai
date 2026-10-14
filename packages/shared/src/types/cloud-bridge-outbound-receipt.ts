@@ -3,7 +3,7 @@ export type CloudBridgeOutboundStatus = 'sent' | 'failed' | 'unknown';
  * `legacy-pinchtab` is read-only history: receipts written while the legacy PinchTab bridge existed
  * stay valid, but the Host no longer produces it (issue #1538).
  */
-export type CloudBridgeOutboundTransport = 'host' | 'legacy-pinchtab' | 'none';
+export type CloudBridgeOutboundTransport = 'host' | 'events' | 'legacy-pinchtab' | 'none';
 export type CloudBridgeIdempotencyDisposition = 'fresh' | 'replayed' | 'not_attempted' | 'unknown';
 const DIAGNOSTIC_FIELDS = new Set(['v', 'errorCode', 'nextAction', 'fingerprint']);
 const FINGERPRINT_FIELDS = new Set([
@@ -198,7 +198,7 @@ export function isCloudBridgeOutboundReceiptV1(value: unknown): value is CloudBr
   if (receipt.v !== 1 || !isBoundedReceiptRef(receipt.sourceMessageId)) return false;
   if (!isBoundedReceiptRef(receipt.dispatchInvocationId) || !isBoundedReceiptRef(receipt.targetCatId)) return false;
   if (!['sent', 'failed', 'unknown'].includes(String(receipt.status))) return false;
-  if (!['host', 'legacy-pinchtab', 'none'].includes(String(receipt.transport))) return false;
+  if (!['host', 'events', 'legacy-pinchtab', 'none'].includes(String(receipt.transport))) return false;
   if (receipt.hostMessageId !== undefined && !isBoundedReceiptRef(receipt.hostMessageId)) return false;
   if (receipt.failure !== undefined && !isCloudBridgeFailureDiagnosticV1(receipt.failure)) return false;
 

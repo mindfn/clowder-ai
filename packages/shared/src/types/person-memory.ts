@@ -196,10 +196,71 @@ const anchoredCorrectionAuthoritySchema = z
   })
   .strict();
 
-export const materializationAuthoritySchema = z.discriminatedUnion('kind', [
+export const PERSON_MEMORY_OWNER_ACTION_KINDS = [
+  'correct_claim',
+  'retire_claim',
+  'amend_event',
+  'hard_forget_person',
+] as const;
+
+const ownerActionDigestSchema = z.string().regex(/^sha256:[a-f0-9]{64}$/);
+
+export const ownerMemoryActionEvidenceSchema = z
+  .object({
+    kind: z.literal('owner_memory_action'),
+    actionId: boundedString(160),
+    action: z.enum(PERSON_MEMORY_OWNER_ACTION_KINDS),
+    ownerUserId: ownerUserIdSchema,
+    sessionBindingDigest: ownerActionDigestSchema,
+    csrfVerificationDigest: ownerActionDigestSchema,
+    target: z
+      .object({
+        personId: personIdSchema,
+        itemKind: z.enum(['claim', 'event', 'person']),
+        itemId: boundedString(200),
+        expectedRevision: ownerActionDigestSchema,
+      })
+      .strict(),
+    requestId: boundedString(200),
+    requestDigest: ownerActionDigestSchema,
+    statementDigest: ownerActionDigestSchema,
+    sourceState: z.enum(['live', 'unavailable_erasure_only']),
+    issuedAt: timestampSchema,
+    evidenceDigest: ownerActionDigestSchema,
+  })
+  .strict()
+  .superRefine((value, ctx) => {
+    const expectedItemKind =
+      value.action === 'correct_claim' || value.action === 'retire_claim'
+        ? 'claim'
+        : value.action === 'amend_event'
+          ? 'event'
+          : 'person';
+    if (value.target.itemKind !== expectedItemKind) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ['target', 'itemKind'],
+        message: 'owner action target kind must match the action',
+      });
+    }
+    if (
+      value.sourceState === 'unavailable_erasure_only' &&
+      value.action !== 'retire_claim' &&
+      value.action !== 'hard_forget_person'
+    ) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ['sourceState'],
+        message: 'unavailable source is only valid for monotonic erasure actions',
+      });
+    }
+  });
+
+export const materializationAuthoritySchema = z.union([
   cardApprovalAuthoritySchema,
   explicitMemoryCommandAuthoritySchema,
   anchoredCorrectionAuthoritySchema,
+  ownerMemoryActionEvidenceSchema,
 ]);
 
 export const workspaceEntityLinkSchema = z
@@ -274,11 +335,23 @@ export const personClaimVersionSchema = z
           message: 'redacted claims must purge payload and source refs',
         });
       }
-    } else if (value.payload.kind === 'redacted' || value.sourceRefs.length === 0) {
+    } else if (
+      value.payload.kind === 'redacted' ||
+      (value.sourceRefs.length === 0 && value.materializedBy.kind !== 'owner_memory_action')
+    ) {
       ctx.addIssue({
         code: z.ZodIssueCode.custom,
         path: ['sourceRefs'],
         message: 'non-redacted claims require materializable payload and provenance',
+      });
+    } else if (
+      value.materializedBy.kind === 'owner_memory_action' &&
+      (value.sourceRefs.length !== 0 || value.typedProvenance !== undefined)
+    ) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ['sourceRefs'],
+        message: 'owner action claims use action evidence instead of message provenance',
       });
     }
   });
@@ -346,11 +419,11 @@ export const interactionEventSchema = z
     headline: boundedString(240),
     importanceOrTopic: boundedString(400).optional(),
     uncertaintyNotes: z.array(boundedString(240)).max(4).optional(),
-    sourceRefs: z.array(personMemorySourceRefSchema).min(1).max(8),
+    sourceRefs: z.array(personMemorySourceRefSchema).max(8),
     typedProvenance: personMemoryResolvedSourceBundleSchema.optional(),
     materializedBy: materializationAuthoritySchema,
     amendsEventId: interactionEventIdSchema.optional(),
-    status: z.enum(['active', 'redacted']),
+    status: z.enum(['active', 'superseded', 'redacted']),
   })
   .strict()
   .superRefine((value, ctx) => {
@@ -368,11 +441,25 @@ export const interactionEventSchema = z
         message: 'redacted events must purge source refs',
       });
     }
-    if (value.status === 'active' && value.sourceRefs.length === 0) {
+    if (
+      value.status !== 'redacted' &&
+      value.sourceRefs.length === 0 &&
+      value.materializedBy.kind !== 'owner_memory_action'
+    ) {
       ctx.addIssue({
         code: z.ZodIssueCode.custom,
         path: ['sourceRefs'],
         message: 'active events require provenance',
+      });
+    } else if (
+      value.status !== 'redacted' &&
+      value.materializedBy.kind === 'owner_memory_action' &&
+      (value.sourceRefs.length !== 0 || value.typedProvenance !== undefined)
+    ) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ['sourceRefs'],
+        message: 'owner action events use action evidence instead of message provenance',
       });
     }
   });
@@ -744,14 +831,28 @@ export const captureCandidateSchema = captureCandidateBaseSchema.superRefine((va
   }
 });
 
-const relationshipCardFactSchema = z
-  .object({
-    claimId: personClaimIdSchema,
-    text: boundedString(320),
-    kind: z.enum(['reported_fact', 'user_assessment']),
-    provenanceRefs: z.array(personMemorySourceRefSchema).min(1).max(PERSON_MEMORY_LIMITS.maxProvenanceRefsPerCard),
-  })
-  .strict();
+const relationshipCardFactBase = {
+  claimId: personClaimIdSchema,
+  text: boundedString(320),
+  kind: z.enum(['reported_fact', 'user_assessment']),
+};
+
+const relationshipCardFactSchema = z.discriminatedUnion('provenanceKind', [
+  z
+    .object({
+      ...relationshipCardFactBase,
+      provenanceKind: z.literal('message'),
+      provenanceRefs: z.array(personMemorySourceRefSchema).min(1).max(PERSON_MEMORY_LIMITS.maxProvenanceRefsPerCard),
+    })
+    .strict(),
+  z
+    .object({
+      ...relationshipCardFactBase,
+      provenanceKind: z.literal('owner_memory_action'),
+      provenanceRefs: z.array(personMemorySourceRefSchema).length(0),
+    })
+    .strict(),
+]);
 
 const relationshipCardInteractionSchema = z
   .object({
@@ -820,6 +921,8 @@ export type JsonValue = z.infer<typeof jsonValueSchema>;
 export type TemporalValue = z.infer<typeof temporalValueSchema>;
 export type MaterializableClaimPayload = z.infer<typeof materializableClaimPayloadSchema>;
 export type MaterializationAuthority = z.infer<typeof materializationAuthoritySchema>;
+export type OwnerMemoryActionEvidence = z.infer<typeof ownerMemoryActionEvidenceSchema>;
+export type PersonMemoryOwnerActionKind = (typeof PERSON_MEMORY_OWNER_ACTION_KINDS)[number];
 export type WorkspaceEntityLink = z.infer<typeof workspaceEntityLinkSchema>;
 export type PersonIdentity = z.infer<typeof personIdentitySchema>;
 export type PersonClaimVersion = z.infer<typeof personClaimVersionSchema>;

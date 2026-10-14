@@ -508,6 +508,17 @@ describe('ThreadStore', () => {
     assert.equal(updated?.backlogItemId, 'blg_123');
   });
 
+  test('updateBacklogItem() can replace and clear the reverse backlog reference', async () => {
+    const { ThreadStore } = await import('../dist/domains/cats/services/stores/ports/ThreadStore.js');
+    const store = new ThreadStore();
+    const thread = store.create('user-1', 'Post-create feature');
+
+    store.updateBacklogItem(thread.id, 'blg_123');
+    assert.equal(store.get(thread.id)?.backlogItemId, 'blg_123');
+    store.updateBacklogItem(thread.id, null);
+    assert.equal(store.get(thread.id)?.backlogItemId, undefined);
+  });
+
   // ── F079: Voting State ──
 
   test('getVotingState() returns null when no vote', async () => {

@@ -4,6 +4,7 @@ import type {
   InvocationTrajectoryTokens,
   SessionRecord,
 } from '@cat-cafe/shared';
+import { FirstAssistantOutputAccumulator } from './FirstAssistantOutputAccumulator.js';
 import type { TranscriptEvent } from './TranscriptReader.js';
 
 type SessionProjection = Pick<SessionRecord, 'id' | 'threadId' | 'catId' | 'seq' | 'status' | 'sealReason'>;
@@ -160,7 +161,12 @@ function projectGroup(
     toolNames: new Set<string>(),
     keyMessages: [],
   };
-  for (const envelope of group) accumulateEvent(counters, envelope);
+  const output = new FirstAssistantOutputAccumulator();
+  for (const envelope of group) {
+    accumulateEvent(counters, envelope);
+    output.add(envelope);
+  }
+  const firstAssistantOutputEvidence = output.value();
 
   const startedAt = first?.t ?? 0;
   const observedEndAt = last?.t ?? startedAt;
@@ -186,6 +192,7 @@ function projectGroup(
     errorCount: counters.errorCount,
     toolNames: [...counters.toolNames],
     keyMessages: counters.keyMessages,
+    ...(firstAssistantOutputEvidence ? { firstAssistantOutputEvidence } : {}),
     ...(terminal.reason ? { terminalReason: terminal.reason } : {}),
     ...(tokens ? { tokens } : {}),
   };

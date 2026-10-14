@@ -2,6 +2,8 @@
 
 import { type ConnectorSource, isPersonMemoryProposalCardBlock } from '@cat-cafe/shared';
 import { useState } from 'react';
+import type { PublishedMessageCoordinate } from '@/components/content-review/usePublishedContent';
+import { useShellCopy } from '@/components/shell/shell-copy';
 import { TransferTargetPicker } from '@/components/TransferTargetPicker';
 import type { RichBlock, RichInteractiveBlock } from '@/stores/chat-types';
 import { AudioBlock } from './AudioBlock';
@@ -13,6 +15,8 @@ import { CommunityIssuePreviewCard, isCommunityIssuePreviewBlock } from './Commu
 import { DiffBlock } from './DiffBlock';
 import { FileBlock } from './FileBlock';
 import { FrustrationIssueCard, isFrustrationIssueCardBlock } from './FrustrationIssueCard';
+import { frustrationHistoryCopy } from './frustration-history.shell-copy';
+import { trustedFrustrationMeta, useFrustrationVisibility, visibleFrustrationBlocks } from './frustration-visibility';
 import { HandoffProposalCard, isHandoffProposalCardBlock } from './HandoffProposalCard';
 import { HtmlWidgetBlock } from './HtmlWidgetBlock';
 import { InteractiveBlock } from './InteractiveBlock';
@@ -93,6 +97,7 @@ function RichCardRenderer({
     return <ScheduleMutationProposalCard block={block} messageId={messageId} />;
   }
   if (isFrustrationIssueCardBlock(block, messageSource)) {
+    if (!trustedFrustrationMeta(block, messageSource?.connector)?.signal) return <UnknownFrustrationCard />;
     return <FrustrationIssueCard block={block} messageId={messageId} />;
   }
   if (isCommunityIssuePreviewBlock(block, messageSource)) {
@@ -107,18 +112,29 @@ function RichCardRenderer({
   return <CardBlock block={block} messageId={messageId} confirmations={confirmations} />;
 }
 
+function UnknownFrustrationCard() {
+  const t = useShellCopy(frustrationHistoryCopy);
+  return <p className="text-xs text-cafe-muted">{t.unknown}</p>;
+}
+
 function RichBlockRenderer({
   block,
+  publication,
   catId,
   messageId,
+  sourceThreadId,
+  sourceMessageIds,
   messageSource,
   confirmations,
   sendContext,
   htmlWidgetDisclosureKeys,
 }: {
   block: RichBlock;
+  publication?: PublishedMessageCoordinate;
   catId?: string;
   messageId?: string;
+  sourceThreadId?: string;
+  sourceMessageIds?: readonly string[];
   messageSource?: ConnectorSource;
   confirmations?: CardConfirmationEntry[];
   /** F229 Bug 2 fix: propagated to InteractiveBlock to tag interactive-send events */
@@ -140,7 +156,7 @@ function RichBlockRenderer({
     case 'checklist':
       return <ChecklistBlock block={block} />;
     case 'media_gallery':
-      return <MediaGalleryBlock block={block} />;
+      return <MediaGalleryBlock block={block} publication={publication} />;
     case 'audio':
       return <AudioBlock block={block} catId={catId} />;
     case 'interactive':
@@ -148,7 +164,15 @@ function RichBlockRenderer({
     case 'html_widget':
       return <HtmlWidgetBlock block={block} disclosureKey={htmlWidgetDisclosureKeys?.[block.id]} />;
     case 'file':
-      return <FileBlock block={block} />;
+      return (
+        <FileBlock
+          block={block}
+          publication={publication}
+          messageId={messageId}
+          sourceThreadId={sourceThreadId}
+          sourceMessageIds={sourceMessageIds}
+        />
+      );
     default:
       return (
         <div className="rounded-lg border border-cafe px-3 py-2 text-xs text-cafe-muted">
@@ -201,7 +225,7 @@ function findConsecutiveRuns(blocks: RichBlock[]): RichInteractiveBlock[][] {
   const runs: RichInteractiveBlock[][] = [];
   let current: RichInteractiveBlock[] = [];
   for (const block of blocks) {
-    if (block.kind === 'interactive' && !block.groupId) {
+    if (block.kind === 'interactive' && !block.groupId && block.autoGroup !== false) {
       current.push(block);
     } else {
       if (current.length > 0) {
@@ -274,6 +298,7 @@ function groupBlocks(blocks: RichBlock[]): ResultItem[] {
 
 export function RichBlocks({
   blocks,
+  publication,
   catId,
   messageId,
   sourceThreadId,
@@ -286,6 +311,7 @@ export function RichBlocks({
   forwardingEnabled = true,
 }: {
   blocks: RichBlock[];
+  publication?: PublishedMessageCoordinate;
   catId?: string;
   messageId?: string;
   sourceThreadId?: string;
@@ -308,9 +334,11 @@ export function RichBlocks({
   forwardingEnabled?: boolean;
 }) {
   const [forwardBlockId, setForwardBlockId] = useState<string | null>(null);
-  if (blocks.length === 0) return null;
-  const items = readOnly ? blocks : groupBlocks(blocks);
-  const forwardBlock = forwardBlockId ? blocks.find((block) => block.id === forwardBlockId) : undefined;
+  const visibility = useFrustrationVisibility(blocks, readOnly ? undefined : messageSource?.connector);
+  const shownBlocks = readOnly ? blocks : visibleFrustrationBlocks(visibility);
+  if (shownBlocks.length === 0) return null;
+  const items = readOnly ? shownBlocks : groupBlocks(shownBlocks);
+  const forwardBlock = forwardBlockId ? shownBlocks.find((block) => block.id === forwardBlockId) : undefined;
   return (
     <>
       <div className="mt-2 space-y-2">
@@ -329,8 +357,11 @@ export function RichBlocks({
               ) : (
                 <RichBlockRenderer
                   block={item}
+                  publication={publication}
                   catId={catId}
                   messageId={messageId}
+                  sourceThreadId={sourceThreadId}
+                  sourceMessageIds={sourceMessageIds}
                   messageSource={messageSource}
                   confirmations={confirmations}
                   sendContext={sendContext}

@@ -231,6 +231,13 @@ describe('routeSerial A2A tracker bridge', () => {
     const { routeSerial } = await import('../dist/domains/cats/services/agents/routing/route-serial.js');
     const { InvocationTracker } = await import('../dist/domains/cats/services/agents/invocation/InvocationTracker.js');
     const { InvocationQueue } = await import('../dist/domains/cats/services/agents/invocation/InvocationQueue.js');
+    const { QueuedMessageCustodyCoordinator } = await import(
+      '../dist/domains/cats/services/agents/invocation/QueuedMessageCustodyCoordinator.js'
+    );
+    const { QueueSourceCustodyAdmissionService } = await import(
+      '../dist/domains/cats/services/agents/invocation/QueueSourceCustodyAdmission.js'
+    );
+    const { MessageStore } = await import('../dist/domains/cats/services/stores/ports/MessageStore.js');
 
     const threadId = 'thread-a2a-active-external-owner';
     const userId = 'user-a';
@@ -239,6 +246,8 @@ describe('routeSerial A2A tracker bridge', () => {
     const routeBatch = tracker.startAll(threadId, ['opus'], userId, 'queued-opus');
     const directOwnerController = tracker.getController(threadId, 'codex');
     const queue = new InvocationQueue();
+    const messageStore = new MessageStore();
+    const queueCustodyCoordinator = new QueuedMessageCustodyCoordinator({ messageStore });
     let codexInvocations = 0;
 
     const deps = createMockDeps({
@@ -254,6 +263,12 @@ describe('routeSerial A2A tracker bridge', () => {
           yield { type: 'done', catId: 'codex', timestamp: Date.now() };
         },
       },
+    });
+    deps.messageStore = messageStore;
+    deps.queueSourceCustodyAdmission = new QueueSourceCustodyAdmissionService({
+      queue,
+      messageStore,
+      queueCustodyCoordinator,
     });
 
     for await (const msg of routeSerial(deps, ['opus'], 'review', userId, threadId, {
@@ -276,8 +291,18 @@ describe('routeSerial A2A tracker bridge', () => {
     assert.deepEqual(deferred[0].targetCats, ['codex']);
     assert.equal(deferred[0].sourceCategory, 'a2a');
     assert.equal(deferred[0].autoExecute, true);
-    assert.equal(deferred[0].messageId, 'msg-2', 'the persisted review reply must remain the queue trigger');
-    assert.equal(deferred[0].a2aTriggerMessageId, 'msg-2');
+    assert.equal(typeof deferred[0].messageId, 'string', 'the persisted review reply must remain the queue trigger');
+    assert.equal(deferred[0].a2aTriggerMessageId, deferred[0].messageId);
+
+    const readerInvocationId = 'invocation-reading-deferred-a2a';
+    assert.equal(queue.markQueuedSeen(threadId, userId, deferred[0].id, 'codex', readerInvocationId, Date.now()), true);
+    const exposed = queue.getEntrySnapshot(threadId, userId, deferred[0].id);
+    assert.ok(exposed);
+    assert.deepEqual(await queueCustodyCoordinator.persistEntry(exposed), [deferred[0].messageId]);
+    await queueCustodyCoordinator.assertPromptExposurePersisted([deferred[0].messageId], 'codex', readerInvocationId);
+    const persistedSource = messageStore.getById(deferred[0].messageId);
+    assert.equal(persistedSource?.deliveryStatus, 'queued');
+    assert.equal(persistedSource?.queueCustody?.carrierByTargetCatId?.codex?.entryId, deferred[0].id);
     assert.equal(
       tracker.getController(threadId, 'codex'),
       directOwnerController,
@@ -304,7 +329,6 @@ describe('routeSerial A2A tracker bridge', () => {
         },
       },
     });
-
     await assert.rejects(async () => {
       for await (const _ of routeSerial(deps, ['opus'], 'review', 'user-a', 'thread-a2a-bridge-missing', {})) {
         // drain
@@ -364,6 +388,15 @@ describe('routeSerial A2A tracker bridge', () => {
         },
       },
     });
+    deps.queueSourceCustodyAdmission = {
+      async admitDeferred() {
+        assert.fail('a full Queue must reject before durable source admission');
+      },
+      async admitDeferredBatch() {
+        assert.fail('a full Queue must reject before durable source admission');
+      },
+      discardDeferredBatch() {},
+    };
 
     await assert.rejects(async () => {
       for await (const _ of routeSerial(deps, ['opus'], 'review', 'user-a', 'thread-a2a-custody-full', {

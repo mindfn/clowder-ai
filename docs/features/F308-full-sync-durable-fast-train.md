@@ -8,7 +8,7 @@ description: "把 Clowder AI→开源 target 全量同步从一次性长脚本�
 description_source: human
 description_author: codex-terra
 description_updated_at: 2026-08-27T00:00:00-07:00
-tips_exempt: "维护者 CLI / CI 可靠性能力：F308 receipt recovery、no-write train 与 target CI evidence 不新增 Hub 可发现的终端用户功能；operator status 是命令输出，不是 capability tip surface。"
+tips_exempt: "Renewed 2026-10-04 for source-readiness admission and its documented stage-failure recovery limit, retaining the public-test resource-scope intake (clowder-ai#1483): these are maintainer CLI / CI reliability changes, with no Hub-discoverable end-user action; operator status stays command output rather than a capability tip surface."
 ---
 
 # F308: Full-Sync Durable Fast Train — Exact Cut、可恢复 Gate 与 CI Critical Path
@@ -49,7 +49,7 @@ F308 的终态是：维护者一次启动或恢复一个冻结 cut，就能看�
 | outbound writer | `scripts/sync-to-opensource.sh` 是唯一 export、F251、temp target gate 与 real target write 入口 | 继续由该脚本写入；F308 不另造 rsync writer |
 | community preservation | F251、reconciliation ledger、target-owned backup/restore | 所有 receipt 和 resume 都重新证明这三项；不得用 cache 越过 |
 | public CI workflow | 开源 target 的 `.github/workflows/ci.yml` 是 `sync-manifest.yaml` target-owned | 以独立 target-repo PR 维护；export 不覆盖它 |
-| public-test safety | `packages/api/scripts/run-public-tests.sh` 明确 `--test-concurrency=1` | 按 file classification 拆 stateful serial lane 与证明隔离的 pure shards；绝不全局升 concurrency |
+| public-test safety | `packages/api/scripts/run-public-tests.sh` 明确 `--test-concurrency=1` | 按 resource scope 拆分：有真实跨 VM 共享资源证据的文件留在 shared serial lane，其余进 count-balanced distributable pool；distributable lane 的隔离证据由 target CI 的 kernel network boundary 提供，不再依赖按文件名的 stateful classifier；绝不全局升 concurrency |
 
 ## User Journey — Operator
 
@@ -57,7 +57,7 @@ F308 的终态是：维护者一次启动或恢复一个冻结 cut，就能看�
 terminal receipt。
 
 1. operator 运行单一 `launch`，CLI 在任何 install/build/full gate 前完成 remote heads、cleanliness、
-worktree registration、dependency/link、manifest/artifact/hash、reconciliation coverage 和 target metadata
+worktree registration、fresh origin/main source reachability、dependency/link、manifest/artifact/hash、reconciliation coverage 和 target metadata
 检查；首个 hard failure 带 typed next action 终止。
 2. 通过 preflight 后，CLI 显示 immutable cut fingerprint、候选 tree hash、F251 / ledger 结果和
 `no_write` disposition。source、public 或 reconciliation 任一 drift 都会明确标为不同 invalidation。
@@ -99,8 +99,9 @@ runner minutes；它不把 GitHub queue、人类 review 或外部 intake 等待�
 
 ### Phase B — Safe orchestration
 
-- [x] **AC-B1**: The dependency DAG runs heads, clean tree, worktree registration, dependency/link readiness,
-  artifact/hash, reconciliation coverage and target metadata ahead of expensive install/build/full gate.
+- [x] **AC-B1**: The dependency DAG runs heads, clean tree, worktree registration, freshly fetched source-main
+  reachability, dependency/link readiness, artifact/hash, reconciliation coverage and target metadata ahead of
+  expensive install/build/full gate.
 - [x] **AC-B2**: A stage reports only its first hard failure and a typed next action; later stages never run after a
   hard predecessor failure.
 - [x] **AC-B3**: Gate admission occurs only after readiness; same cut + gate permits one in-flight holder and exposes
@@ -124,10 +125,15 @@ runner minutes；它不把 GitHub queue、人类 review 或外部 intake 等待�
 
 - [x] **AC-D1**: Resolver emits deterministic selected-file manifest, per-file timing, failure category and stable
   mapping fingerprint.
-- [x] **AC-D2**: A planner produces 4–6 deterministic, duration-balanced pure-test shards; every selected test
-  appears exactly once, no excluded test is silently reintroduced, and shard mapping is reproducible from the manifest.
-- [x] **AC-D3**: Redis, ports, fs.watch and other stateful classes remain in a serial lane; a test enters a parallel
-  lane only with explicit isolation proof.
+- [x] **AC-D2**: A planner produces 4–6 deterministic distributable shards plus one explicit shared-resource lane;
+  every selected test appears exactly once, no excluded test is silently reintroduced, and shard mapping is
+  reproducible from the manifest. Current CI uses six count-balanced distributable shards because no measured timing
+  artifact exists yet; duration balancing is an operator-side replay capability, not a claim about the CI-produced plan.
+- [x] **AC-D3**: Only tests with explicit evidence of a real cross-VM remote endpoint, shared account or shared quota
+  stay in one globally serial lane. Every other file runs in a count-balanced distributable pool across isolated VMs,
+  with a fresh process per file and `--test-concurrency=1` per lane. Each target-CI distributable lane executes inside
+  a loopback-only Linux network namespace, drops root, and seals privilege escalation (`no_new_privs`, every
+  capability set empty) before tests start, so isolation rests on a kernel boundary rather than a lexical classifier.
 - [x] **AC-D4**: CI shares install/build artifacts only when lockfile, toolchain and workspace inputs match; required
   checks remain required on Linux, Windows, macOS and public contract surfaces.
 - [x] **AC-D5**: PR/main duplicate reuse is accepted only with exact tested-tree provenance, never by branch name or
@@ -160,12 +166,22 @@ runner minutes；它不把 GitHub queue、人类 review 或外部 intake 等待�
 
 ## Risks
 
+Known recovery limit after #5106: initial source-main refresh or ancestry failures
+are run-level prerequisite failures, so they do not create immutable cut-level
+stage receipts. The wrapper still refreshes source and target refs inside the
+stage. A transient failure at either later I/O boundary can still create a failed
+stage terminal with no same-cut retry/supersession entry. Those failed receipts
+must remain failed and intact; changing the operator state root is not a recovery
+path (overrides are only for isolated tests). This repair does not claim generic
+failed-attempt recovery. An actual public-main advance correctly supersedes the
+old cut and is distinct from this transient-I/O limitation.
+
 | Risk | Guard |
 |---|---|
 | receipt becomes an unsafe cache | tuple + executable + output fingerprint are all mandatory; invalidation is durable and fail-closed |
 | restart conflates different terminals | distinct receipt kinds and transition validation; restart tests cover each boundary |
 | target CI change gets overwritten later | keep workflow target-owned and require its own Clowder PR / F251 preservation proof |
-| pure shard leaks shared state | classifier is deny-by-default; stateful lane remains serial; isolation proof is versioned/tested |
+| distributable shard leaks shared state | files with proved cross-VM shared-resource evidence stay globally serial; every target-CI distributable lane runs unprivileged inside a loopback-only kernel network namespace with root dropped. Before spawning any test the runner reproduces that seal rather than assuming it: empty IPv4 **and** IPv6 route tables are necessary but not sufficient (an offline host reads identically), so `verified` additionally requires a netns distinct from PID 1's, non-root, `NoNewPrivs:1` and every capability set empty — the same facts the target launcher asserts. Unverified or undetectable fails closed with no environment opt-out; the attestation is persisted per lane and the summary admits only `boundary=verified` distributable lanes, so a local report cannot be laundered into target-grade measurement history. Shard children additionally get `REDIS_URL` rewritten to a non-connectable deny endpoint as defense-in-depth, and the preload guard adds typed pre-I/O failures for recognized surfaces |
 | fast number loses coverage | exact-once manifest guard, selected count, exclusion registry validation and three-run report |
 | host variance yields false pressure decision | record host capacity and use ratios rather than a fixed-memory threshold |
 
@@ -195,4 +211,3 @@ runner minutes；它不把 GitHub queue、人类 review 或外部 intake 等待�
 | KD-2 | Receipts live in a durable local operator-state root, not in Git or target tree | They survive runtime/carrier restart without polluting exported/public content; their path is explicit in every receipt. |
 | KD-3 | `sync-to-opensource.sh` remains the only writer | Receipt orchestration wraps and proves the existing writer instead of creating a second rsync path. |
 | KD-4 | Clowder `ci.yml` stays target-owned | It must be changed by a dedicated target-repo PR, not smuggled through source export. |
-| KD-5 | Sharding starts with deterministic planning + serial stateful lane | The 2026-05 pollution incident proves global concurrency is not a valid optimization. |

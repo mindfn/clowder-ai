@@ -19,7 +19,14 @@ import type {
   ReviewPolicy,
   Roster,
 } from '@cat-cafe/shared';
-import { type ClientId, catRegistry, createCatId, normalizeCliEffortForProvider } from '@cat-cafe/shared';
+import {
+  type ClientId,
+  catRegistry,
+  createCatId,
+  developmentPlanRefSchema,
+  developmentRevisionSchema,
+  normalizeCliEffortForProvider,
+} from '@cat-cafe/shared';
 import { z } from 'zod';
 import { createModuleLogger } from '../infrastructure/logger.js';
 import { bootstrapCatCatalog, type CatCatalogReadOptions, readCatCatalogRaw } from './cat-catalog-store.js';
@@ -71,12 +78,26 @@ const cliConfigSchema = z.object({
 const agyProfileSchema = z
   .object({
     enabled: z.boolean().optional(),
+    carrier: z.enum(['legacy', 'native']).optional(),
     profileId: z.string().min(1).optional(),
     homeRoot: z.string().min(1).optional(),
     model: z.string().min(1).optional(),
     autoApprove: z.boolean().optional(),
     trustedWorkspaces: z.array(z.string().min(1)).optional(),
+    nativeCodingGrant: z
+      .object({
+        threadId: z.string().min(1).max(160),
+        taskId: z.string().min(1).max(160),
+        workUnitRef: developmentPlanRefSchema,
+        acceptedRevision: developmentRevisionSchema,
+        workspaceRoot: z.string().min(1),
+        writableFiles: z.array(z.string().min(1)).min(1).max(8),
+        testFile: z.string().min(1),
+      })
+      .strict()
+      .optional(),
   })
+  .nullable()
   .optional();
 
 /** F32-b: mentionPatterns must start with @ */
@@ -101,6 +122,7 @@ const catVariantSchema = z
     mentionPatterns: z.array(mentionPatternSchema).optional(), // F32-b: variant-level mentions
     source: z.string().optional(), // #441: legacy field, ignored — kept in schema for old catalog read compat
     accountRef: z.string().min(1).optional(), // F127: concrete account binding
+    accountBindingMode: z.enum(['follow', 'override']).optional(),
     clientId: z.string().min(1), // #252: accept unknown providers to avoid full config crash
 
     defaultModel: z.string(), // OAuth/subscription CLIs have built-in defaults; api_key validated at route level
@@ -120,6 +142,10 @@ const catVariantSchema = z
     sessionChain: z.boolean().optional(), // F127 review fix: allow variant-scoped sessionChain override
     // #1329: explicit member intent outranks breed policy and the legacy byte.
     sessionStrategy: z.lazy(() => sessionStrategySchema),
+    relationshipKey: z
+      .string()
+      .regex(/^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$/, 'relationshipKey must be a safe profile path segment')
+      .optional(),
     personality: z.string().optional(),
     strengths: z.array(z.string()).optional(),
     avatar: z.string().min(1).optional(), // F32-b P4c: override breed avatar
@@ -257,6 +283,7 @@ const coCreatorConfigSchema = z.object({
 const catCafeConfigSchemaV1 = z.object({
   version: z.literal(1),
   breeds: z.array(catBreedSchema),
+  selectedAccountRefs: z.record(z.string(), z.string().min(1)).optional(),
 });
 
 /** Version 2: breeds + roster + reviewPolicy (F032) + coCreator (F067) */
@@ -264,6 +291,7 @@ const catCafeConfigSchemaV2 = z
   .object({
     version: z.literal(2),
     breeds: z.array(catBreedSchema),
+    selectedAccountRefs: z.record(z.string(), z.string().min(1)).optional(),
     roster: z.record(z.string(), rosterEntrySchema),
     reviewPolicy: reviewPolicySchema,
     coCreator: coCreatorConfigSchema.optional(),
@@ -536,6 +564,12 @@ function parseCatConfig(raw: string): CatCafeConfig {
   return result.data as unknown as CatCafeConfig;
 }
 
+/** Validate member shape without dropping fields owned by raw catalog consumers (for example ACP). */
+export function parseRawCatConfig(raw: string): CatCafeConfig {
+  parseCatConfig(raw);
+  return JSON.parse(raw) as CatCafeConfig;
+}
+
 export function loadResolvedCatConfig(templatePath?: string, options: CatCatalogReadOptions = {}): CatCafeConfig {
   const resolvedTemplatePath = templatePath ?? process.env.CAT_TEMPLATE_PATH ?? DEFAULT_CAT_TEMPLATE_PATH;
   const raw = mergeTemplateWithCatalog(resolvedTemplatePath, options) ?? readTemplate(resolvedTemplatePath);
@@ -639,6 +673,7 @@ export function toAllCatConfigs(config: CatCafeConfig): Record<string, CatConfig
         color: variant.color ?? breed.color, // F32-b P4c: variant can override
         mentionPatterns,
         ...(variant.accountRef != null ? { accountRef: variant.accountRef } : {}),
+        ...(variant.accountBindingMode ? { accountBindingMode: variant.accountBindingMode } : {}),
         clientId: variant.clientId as ClientId, // #252: Zod now accepts any string; downstream switch/case has default branches
         defaultModel: variant.defaultModel,
         mcpSupport: variant.mcpSupport,
@@ -654,7 +689,7 @@ export function toAllCatConfigs(config: CatCafeConfig): Record<string, CatConfig
         roleDescription: variant.roleDescription ?? breed.roleDescription,
         personality: variant.personality ?? defaultVariant?.personality ?? '',
         breedId: breed.id,
-        relationshipKey: breed.relationshipKey ?? breed.id,
+        relationshipKey: variant.relationshipKey ?? breed.relationshipKey ?? breed.id,
         breedDisplayName: breed.displayName,
         ...(variant.variantLabel != null ? { variantLabel: variant.variantLabel } : {}),
         isDefaultVariant: isDefault,

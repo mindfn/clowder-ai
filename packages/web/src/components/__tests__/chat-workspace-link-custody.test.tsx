@@ -83,7 +83,7 @@ describe('MarkdownContent document resolution custody', () => {
     act(() => actions[1]?.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true })));
     await act(async () => {
       resolveSecond(
-        new Response(JSON.stringify({ worktreeId: 'second', path: 'docs/second.md', line: null }), {
+        new Response(JSON.stringify({ worktreeId: 'second', path: 'docs/second.md', line: null, kind: 'file' }), {
           status: 200,
           headers: { 'content-type': 'application/json' },
         }),
@@ -94,7 +94,7 @@ describe('MarkdownContent document resolution custody', () => {
 
     await act(async () => {
       resolveFirst(
-        new Response(JSON.stringify({ worktreeId: 'first', path: 'docs/first.md', line: null }), {
+        new Response(JSON.stringify({ worktreeId: 'first', path: 'docs/first.md', line: null, kind: 'file' }), {
           status: 200,
           headers: { 'content-type': 'application/json' },
         }),

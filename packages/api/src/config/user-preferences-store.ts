@@ -14,6 +14,9 @@ import type {
   UserPreferences,
 } from '@cat-cafe/shared';
 
+type BubbleDefaultPreferences = NonNullable<UserPreferences['bubbleDefaults']>;
+type BubbleDisplayDefaultPreference = NonNullable<BubbleDefaultPreferences['cliOutput']>;
+
 export const MESSAGE_DISPOSITION_PRODUCT_DEFAULT: MessageWorkDisposition = 'next_work';
 
 function preferencesPath(projectRoot: string): string {
@@ -49,6 +52,40 @@ export function updateUserPreferences(
     if (existsSync(tempPath)) unlinkSync(tempPath);
   }
   return next;
+}
+
+function isBubbleDisplayDefault(value: unknown): value is BubbleDisplayDefaultPreference {
+  return value === 'expanded' || value === 'collapsed';
+}
+
+function preservePreferenceRecord(value: unknown): Record<string, unknown> {
+  return typeof value === 'object' && value !== null && !Array.isArray(value) ? (value as Record<string, unknown>) : {};
+}
+
+function sanitizeBubbleDefaults(value: unknown): BubbleDefaultPreferences {
+  const candidate = preservePreferenceRecord(value);
+  return isBubbleDisplayDefault(candidate.cliOutput) ? { cliOutput: candidate.cliOutput } : {};
+}
+
+export function resolveCliOutputBubbleDefault(
+  projectRoot: string,
+  fallback: BubbleDisplayDefaultPreference,
+): BubbleDisplayDefaultPreference {
+  return sanitizeBubbleDefaults(readUserPreferences(projectRoot).bubbleDefaults).cliOutput ?? fallback;
+}
+
+export function saveCliOutputBubbleDefault(
+  projectRoot: string,
+  value: BubbleDisplayDefaultPreference,
+): BubbleDisplayDefaultPreference {
+  updateUserPreferences(projectRoot, (current) => ({
+    ...current,
+    bubbleDefaults: {
+      ...preservePreferenceRecord(current.bubbleDefaults),
+      cliOutput: value,
+    },
+  }));
+  return value;
 }
 
 function isDisposition(value: unknown): value is MessageWorkDisposition {

@@ -16,7 +16,6 @@ import type { IFrustrationIssueStore } from '../stores/ports/FrustrationIssueSto
 import type { IMessageStore } from '../stores/ports/MessageStore.js';
 
 import { buildFrustrationIssueCard } from './frustration-card-builder.js';
-import { TEXT_FRUSTRATION_THRESHOLD } from './text-frustration-keywords.js';
 
 // ── Constants ──────────────────────────────────────────────────
 
@@ -93,11 +92,7 @@ export interface A2ATimeoutSignal {
   elapsedMs: number;
 }
 
-/** Minimum retry matches to trigger. */
-export const RETRY_BURST_THRESHOLD = 3;
-/** Prefix length for similarity matching (first N chars). */
-export const RETRY_PREFIX_LENGTH = 30;
-
+/** Historical signal payload retained for persisted issue compatibility. */
 export interface RetryBurstSignal {
   type: 'retry_burst';
   /** Number of recent messages matching the current message */
@@ -144,18 +139,13 @@ export function shouldTrigger(signal: FrustrationSignal): boolean {
     return recentCount >= CANCEL_BURST_THRESHOLD;
   }
 
-  if (signal.type === 'text_frustration') {
-    return signal.matchCount >= TEXT_FRUSTRATION_THRESHOLD;
-  }
+  // Historical issue types remain readable; chat-content inference no longer creates issues.
+  if (signal.type === 'text_frustration' || signal.type === 'retry_burst') return false;
 
   if (signal.type === 'a2a_timeout') {
     // P1 fix: only trigger when elapsed >= threshold (spec: 60s).
     // Instant crashes/parse errors have low elapsedMs and should not be labeled "timeout".
     return signal.elapsedMs >= A2A_TIMEOUT_THRESHOLD_MS;
-  }
-
-  if (signal.type === 'retry_burst') {
-    return signal.matchCount >= RETRY_BURST_THRESHOLD;
   }
 
   // UX-3: user_report always triggers — user explicitly clicked "取消并反馈"

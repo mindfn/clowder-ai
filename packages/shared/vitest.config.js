@@ -1,11 +1,24 @@
 import { defineConfig } from 'vitest/config';
+import { vitestReporters } from '../../scripts/test-file-timing/vitest-file-timing-reporter.mjs';
 
 export default defineConfig({
   test: {
+    reporters: vitestReporters(),
     // Only vitest-runner tests. Most shared tests use node:test (import from 'node:test')
     // and run separately via `node --test`. Vitest tests import from 'vitest'.
     include: [
+      'src/__tests__/content-modification-project.test.ts',
+      'src/__tests__/video-project.test.ts',
+      'src/__tests__/video-project-references.test.ts',
+      'src/__tests__/video-project-editing.test.ts',
+      'src/__tests__/video-project-timebase.test.ts',
+      'src/__tests__/video-project-check-definition.test.ts',
+      'src/__tests__/video-project-screening.test.ts',
+      'src/__tests__/video-project-screening-frame.test.ts',
+      'src/__tests__/video-project-review-region.test.ts',
       'test/concierge-config.test.js',
+      'src/__tests__/companion-identity.test.ts',
+      'src/__tests__/message-output-layout.test.ts',
       'test/pet-skin-projection.test.js',
       'src/__tests__/capability-tips.test.ts',
       'src/__tests__/capability-evolution.test.ts',
@@ -15,17 +28,23 @@ export default defineConfig({
       'src/__tests__/capability-evolution-preparation.test.ts',
       'src/__tests__/capability-evolution-preparation-choice.test.ts',
       'src/__tests__/collective.test.ts',
+      'src/__tests__/collective-appearance-bridge.test.ts',
       'src/__tests__/action-successor-types.test.ts',
       'src/__tests__/cross-thread-coordination.test.ts',
       'src/__tests__/auto-dream.test.ts',
       'src/__tests__/human-disposition-feedback.test.ts',
+      'src/__tests__/memory-owner-lifecycle.test.ts',
       'src/__tests__/wait-termination.test.ts',
+      'src/__tests__/deployment-wait.test.ts',
       'src/__tests__/proactive-memory-opportunity.test.ts',
       'src/__tests__/memory-write-opportunity.test.ts',
       'src/__tests__/standing-reflex-episode.test.ts',
       'src/__tests__/growing-contract.test.ts',
+      'src/__tests__/entrusted-work-human-terminal.test.ts',
+      'src/__tests__/growing-development-contract.test.ts',
       'src/__tests__/memory-architecture-closure.test.ts',
       'src/__tests__/lesson-learning-closure.test.ts',
+      'src/__tests__/local-review.test.ts',
       'src/__tests__/subject-key.test.ts',
       'src/__tests__/agent-key-credentials.test.ts',
       'src/__tests__/cli-effort.test.ts',
@@ -53,6 +72,8 @@ export default defineConfig({
       'src/__tests__/request-generation-schema-delivery.test.ts',
       'src/__tests__/memory-cue.test.ts',
       'src/__tests__/context-attachment.test.ts',
+      'src/__tests__/media-context-attachment.test.ts',
+      'src/__tests__/content-modification-receipt.test.ts',
       'src/__tests__/runtime-interaction.test.ts',
       'src/__tests__/routing-context.test.ts',
       'src/__tests__/routing-context-api.test.ts',

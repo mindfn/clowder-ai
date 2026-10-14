@@ -6,13 +6,17 @@ import type { ChatMessage as ChatMessageData } from '@/stores/chat-types';
 import { ChatMessage } from './ChatMessage';
 import { MessageActions } from './MessageActions';
 import { MessageViewportBoundary } from './MessageViewportBoundary';
+import type { ReplyHandoffTimelineProjection } from './reply-layers/reply-handoff';
 import type { CardConfirmationEntry } from './rich/CardBlock';
 
 interface ChatMessageRowProps {
   message: ChatMessageData;
+  compact?: boolean;
   threadId: string;
   timelineMessages: readonly ChatMessageData[];
+  replyHandoffTimeline?: ReplyHandoffTimelineProjection;
   activeInvocationIds?: ReadonlySet<string>;
+  settlingInvocationIds?: ReadonlySet<string>;
   getCatById: (id: string) => CatData | undefined;
   onEditCat: (catId: string) => void;
   onEditCoCreator: () => void;
@@ -38,9 +42,12 @@ interface ChatMessageRowProps {
  */
 export const ChatMessageRow = memo(function ChatMessageRow({
   message,
+  compact = false,
   threadId,
   timelineMessages,
+  replyHandoffTimeline,
   activeInvocationIds,
+  settlingInvocationIds,
   getCatById,
   onEditCat,
   onEditCoCreator,
@@ -58,7 +65,12 @@ export const ChatMessageRow = memo(function ChatMessageRow({
   confirmations,
 }: ChatMessageRowProps) {
   return (
-    <MessageViewportBoundary messageId={message.id} eager={eager} backgroundMountDelayMs={backgroundMountDelayMs}>
+    <MessageViewportBoundary
+      messageId={message.id}
+      eager={eager}
+      backgroundMountDelayMs={backgroundMountDelayMs}
+      navigationError={message.variant === 'error'}
+    >
       <MessageActions
         message={message}
         threadId={threadId}
@@ -71,9 +83,12 @@ export const ChatMessageRow = memo(function ChatMessageRow({
       >
         <ChatMessage
           message={message}
+          compact={compact}
           threadId={threadId}
           timelineMessages={timelineMessages}
+          replyHandoffTimeline={replyHandoffTimeline}
           activeInvocationIds={activeInvocationIds}
+          settlingInvocationIds={settlingInvocationIds}
           getCatById={getCatById}
           onEditCat={onEditCat}
           onEditCoCreator={onEditCoCreator}

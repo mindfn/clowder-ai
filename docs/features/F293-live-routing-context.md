@@ -2,7 +2,7 @@
 feature_ids: [F293]
 related_features: [F051, F083, F127, F153, F154, F167, F190, F192, F203, F208, F216, F220, F233, F246, F248, F254, F264, F280, F284, F298, F299, F300, F307, F310, F311, F312, F313, F315]
 topics: [routing, availability, quota, provider-health, capability-profile, custody, cancellation, approval, workspace, settings, l0, freshness]
-tips_exempt: "Renewed 2026-09-07 for recording the accepted Team/profile-feedback design only; no product surface is changed by this documentation commit. Implementation must update the existing useful guidance for the real profile-recording/retry journey; AC-E4 remains open."
+tips_exempt: "Renewed 2026-09-18 for the typed preflight reason/context split; this is harness-internal routing evidence with no distinct user-invoked discovery action. Existing Team guidance remains the user surface; AC-E4 remains open."
 doc_kind: spec
 created: 2026-08-08
 description: "把能力、偏好与新鲜供给接入发送边界，并贯通可验证接责、失败回弹、用户取消与精确多方确认，使传球不再停在消息已发。"
@@ -13,7 +13,7 @@ description_updated_at: 2026-09-02T05:08:22Z
 
 # F293 — Live Routing Context
 
-> **Status**: Phases A–C baseline merged / Team UX M1 merged (AC-UX1–3; AC-UX6 evidence complete except Alpha) / profile feedback M2 (AC-UX4/5, AC-D4/D5) open / Phases D–E and expanded continuity remain open | **Owner**: 小太阳·Maine Coon (@codex-sol, GPT-5.6 Sol) | **Priority**: P1
+> **Status**: Phases A–C baseline merged / Phase O notification delivery merged + scoped Alpha verified (production dormant) / Team UX M1 merged (AC-UX1–3; AC-UX6 evidence complete except Alpha) / profile feedback M2 (AC-UX4/5, AC-D4/D5) open / Phases D–E and expanded continuity remain open | **Owner**: 小太阳·Maine Coon (@codex-sol, GPT-5.6 Sol) | **Priority**: P1
 
 > **Kickoff reviewer**: Ragdoll (@fable5)，一次 consolidated verdict
 
@@ -332,7 +332,7 @@ F293 不再把“F300 runtime 未启动”当成全局停止条件。当前按 c
 - **KD-1**: F293 是一个终态 feature；不另建 temp-status MVP。
 - **KD-2**: 不引入 Sol 私人/公司 `ExecutionSlot`；不可感知就不建模、不展示、不猜。
 - **KD-3**: 负面状态到期变 `unknown`，绝不自动 `available`。
-- **KD-4**: `scarce` / `degraded` 是 advisory；`unavailable` 拦截自动 dispatch。可信人工尝试可越过自动负面供给信号，不能越过 manual pause、成员停用或其他执行权限门禁。
+- **KD-4**: `scarce` / `degraded` 是 advisory；`unavailable` 拦截自动 dispatch。可信人工尝试可越过自动负面供给信号，不能越过 manual pause、成员停用或其他执行权限门禁。Preflight 的 `reasons` 只表达 disposition 的因果依据；F208 画像背景进入 `contextualSignals`，不得被消费成改派、追加 reviewer 或其他强制门禁。
 - **KD-5**: L0 只投影稀疏异常；实际发送前必须基于同一 resolver 重检。
 - **KD-6**: 给证据和 alternatives，不给 opaque score，不静默改派。
 - **KD-7**: signal 历史 TTL=0；时间字段只控制 active projection。

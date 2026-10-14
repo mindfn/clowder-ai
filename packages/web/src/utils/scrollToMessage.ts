@@ -6,6 +6,10 @@ export const MESSAGE_VIEWPORT_MOUNTED_EVENT = 'cat-cafe:message-viewport-mounted
 export interface MessageScrollAnchor {
   messageId: string;
   viewportOffsetPx: number;
+  /** Existing bubble-owner identity; temporary DOM ids may change on finalization. */
+  bubbleKey?: string;
+  /** Existing timeline-owner score bounds history lookup without retaining a body. */
+  timelineOrderAt?: number;
 }
 
 function messageBoundaries(root: ParentNode): HTMLElement[] {
@@ -68,14 +72,42 @@ export function resolveMessageElements(messageIds: Iterable<string>, root: Paren
   });
 }
 
+/** The existing scroll writer accepts the browser's one-pixel quantization; confirmation uses the same contract. */
+export function matchesMessageScrollAnchor(container: HTMLElement, anchor: MessageScrollAnchor): boolean {
+  const current = captureMessageScrollAnchorForMessage(container, anchor.messageId);
+  return current !== undefined && Math.abs(current.viewportOffsetPx - anchor.viewportOffsetPx) <= 1;
+}
+
 /** Reapply a saved message anchor after placeholder or content geometry changes. */
 export function restoreMessageScrollAnchor(container: HTMLElement, anchor: MessageScrollAnchor): boolean {
   const target = resolveMessageElements([anchor.messageId], container)[0];
   if (!target) return false;
   const boundary = target.closest<HTMLElement>('[data-message-viewport-id]') ?? target;
   const currentOffset = boundary.getBoundingClientRect().top - container.getBoundingClientRect().top;
-  container.scrollTop = Math.max(0, container.scrollTop + currentOffset - anchor.viewportOffsetPx);
-  return true;
+  const targetTop = Math.max(0, container.scrollTop + currentOffset - anchor.viewportOffsetPx);
+  container.scrollTop = targetTop;
+  // A mounted row can still sit behind a temporarily short layout. Do not
+  // declare restoration complete when the browser clamps the requested offset.
+  return Math.abs(container.scrollTop - targetTop) <= 1 && matchesMessageScrollAnchor(container, anchor);
+}
+
+const messageHighlights = new WeakMap<HTMLElement, () => void>();
+
+/** Start a complete highlight interval on the resolved target, scoped to this activation. */
+export function highlightMessage(messageId: string, root: ParentNode = document): (() => void) | undefined {
+  const el = resolveMessageElements([messageId], root)[0];
+  if (!el) return undefined;
+  messageHighlights.get(el)?.();
+  const clear = () => {
+    clearTimeout(timer);
+    if (messageHighlights.get(el) !== clear) return;
+    messageHighlights.delete(el);
+    el.classList.remove('ring-2', 'ring-blue-400');
+  };
+  el.classList.add('ring-2', 'ring-blue-400', 'transition-all');
+  const timer = setTimeout(clear, 1500);
+  messageHighlights.set(el, clear);
+  return clear;
 }
 
 /**
@@ -83,17 +115,32 @@ export function restoreMessageScrollAnchor(container: HTMLElement, anchor: Messa
  * Returns true when the target element was found (so callers can retry on a
  * raf loop until the message DOM has rendered after a thread switch).
  */
-export function scrollToMessage(messageId: string): boolean {
-  const el = resolveMessageElements([messageId])[0];
+export function scrollToMessage(
+  messageId: string,
+  root: ParentNode = document,
+  behavior: ScrollBehavior = 'smooth',
+  highlight = true,
+): boolean {
+  const el = resolveMessageElements([messageId], root)[0];
   if (!el) return false;
 
   revealFoldedSourceAnchor(el);
-  el.scrollIntoView({ behavior: 'smooth', block: 'center' });
+  // The owner passes its reading viewport. Default-document callers use the
+  // nearest scrolling ancestor, so a tall reply never hides its author header.
+  let viewport = root instanceof HTMLElement ? root : el.parentElement;
+  while (viewport && !(root instanceof HTMLElement) && !/(auto|scroll)/.test(getComputedStyle(viewport).overflowY))
+    viewport = viewport.parentElement;
+  const viewportHeight = viewport?.clientHeight ?? document.documentElement.clientHeight;
+  const block = el.getBoundingClientRect().height > viewportHeight && viewportHeight > 0 ? 'start' : 'center';
+  el.scrollIntoView({ behavior, block });
 
-  // Temporary blue ring highlight
-  el.classList.add('ring-2', 'ring-blue-400', 'transition-all');
-  setTimeout(() => {
-    el.classList.remove('ring-2', 'ring-blue-400');
-  }, 1500);
+  if (highlight) {
+    messageHighlights.get(el)?.();
+    el.classList.add('ring-2', 'ring-blue-400', 'transition-all');
+    setTimeout(() => {
+      // A later owner-settled activation must receive its own full interval.
+      if (!messageHighlights.has(el)) el.classList.remove('ring-2', 'ring-blue-400');
+    }, 1500);
+  }
   return true;
 }

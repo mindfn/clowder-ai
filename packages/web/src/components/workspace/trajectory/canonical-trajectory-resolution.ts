@@ -31,7 +31,13 @@ export function useCanonicalTrajectoryTarget(
 ) {
   const key = targetKey(target);
   const [reload, setReload] = useState(0);
-  const [resolved, setResolved] = useState<{ key: string; target: ResolvedTrajectoryTarget }>();
+  // A cached success belongs to the selection/request that obtained it. The
+  // same invocation reopened later must not expose actions before revalidation.
+  const request = useMemo(
+    () => ({ target, activeThreadId, reload, syncNavigation }),
+    [activeThreadId, reload, syncNavigation, target],
+  );
+  const [resolved, setResolved] = useState<{ request: typeof request; target: ResolvedTrajectoryTarget }>();
   const [failure, setFailure] = useState<{ key: string; error: TrajectoryResolutionError }>();
   const [loadingKey, setLoadingKey] = useState<string>();
 
@@ -65,7 +71,7 @@ export function useCanonicalTrajectoryTarget(
       })
       .then((canonical) => {
         if (cancelled) return;
-        setResolved({ key, target: canonical });
+        setResolved({ request, target: canonical });
         if (syncNavigation) {
           replaceInvocationTrajectoryTarget(canonical);
           if (canonical.threadId !== activeThreadId) {
@@ -91,15 +97,15 @@ export function useCanonicalTrajectoryTarget(
     return () => {
       cancelled = true;
     };
-  }, [activeThreadId, key, reload, syncNavigation, target]);
+  }, [activeThreadId, key, reload, request, syncNavigation, target]);
 
   return useMemo(
     () => ({
-      resolvedTarget: resolved && resolved.key === key ? resolved.target : undefined,
+      resolvedTarget: resolved?.request === request ? resolved.target : undefined,
       resolutionError: failure && failure.key === key ? failure.error : null,
       resolvingTarget: loadingKey === key,
       retryResolution: () => setReload((value) => value + 1),
     }),
-    [failure, key, loadingKey, resolved],
+    [failure, key, loadingKey, request, resolved],
   );
 }

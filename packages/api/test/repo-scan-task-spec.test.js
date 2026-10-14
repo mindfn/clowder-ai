@@ -401,6 +401,53 @@ describe('RepoScanTaskSpec', () => {
       assert.equal(triggerCalls[0][1], 'cat-maine-coon'); // catId
     });
 
+    it('declares the bounded repo_inbox wake category on the trigger (F167)', async () => {
+      const { opts, triggerCalls } = createOpts();
+      const spec = createRepoScanTaskSpec(opts);
+      const gateResult = await spec.admission.gate(gateCtx());
+      const workItem = gateResult.workItems[0];
+
+      await spec.run.execute(workItem.signal, workItem.subjectKey, { assignedCatId: null });
+
+      assert.equal(triggerCalls.length, 1);
+      const [, , , , messageId, contentBlocks, policy] = triggerCalls[0];
+      assert.equal(messageId, 'msg-1');
+      assert.equal(contentBlocks, undefined);
+      assert.deepEqual(policy, { sourceCategory: 'repo_inbox' });
+    });
+
+    it('re-resolves the repo inbox owner for every delivery and wake', async () => {
+      let currentOwner = 'codex-sol';
+      const resolverCalls = [];
+      const { opts, deliveredMessages, triggerCalls } = createOpts({
+        inboxCatId: 'stale-env-owner',
+        async resolveInboxCatId(repoFullName) {
+          resolverCalls.push(repoFullName);
+          return currentOwner;
+        },
+      });
+      const spec = createRepoScanTaskSpec(opts);
+      const gateResult = await spec.admission.gate(gateCtx());
+
+      await spec.run.execute(gateResult.workItems[0].signal, gateResult.workItems[0].subjectKey, {
+        assignedCatId: null,
+      });
+      currentOwner = 'codex61-sol';
+      await spec.run.execute(gateResult.workItems[1].signal, gateResult.workItems[1].subjectKey, {
+        assignedCatId: null,
+      });
+
+      assert.deepEqual(resolverCalls, ['owner/repo', 'owner/repo']);
+      assert.deepEqual(
+        deliveredMessages.map((message) => message.catId),
+        ['codex-sol', 'codex61-sol'],
+      );
+      assert.deepEqual(
+        triggerCalls.map((call) => call[1]),
+        ['codex-sol', 'codex61-sol'],
+      );
+    });
+
     it('skips delivery if no inbox thread exists for repo', async () => {
       const { opts, deliveredMessages } = createOpts();
       opts.bindingStore = createMockBindingStore(new Map()); // empty

@@ -3,17 +3,20 @@
  * Shared types, interfaces, and helper functions for route-serial and route-parallel.
  */
 
+import { randomUUID } from 'node:crypto';
 import type { CatId, MessageContent, RichBlock, RichBlockBase } from '@cat-cafe/shared';
 import { catRegistry, isCrossThreadProvenance } from '@cat-cafe/shared';
 import { resolveUnboundHistoryContextTokenCeiling } from '../../../../../config/context-capacity.js';
 import { DEFAULT_HIERARCHICAL_CONTEXT } from '../../../../../config/hierarchical-context-config.js';
 import { createModuleLogger } from '../../../../../infrastructure/logger.js';
 import { visibilityCursorDeferredBoundaryRejected } from '../../../../../infrastructure/telemetry/instruments.js';
+import { isHomeSession } from '../../session/session-scope.js';
 import {
   assertCanonicalVisibilityCursor,
   type CanonicalVisibilityCursor,
   compareCursors,
 } from '../../stores/cursor.js';
+import { createRoutedOutputTransform } from '../message-output-stream-transform.js';
 import {
   type AgentRegistrationFailure,
   AgentServiceUnavailableError,
@@ -32,24 +35,27 @@ import { BRIEFING_TIMEZONE } from '../../duty-briefing/constants.js';
 import { formatPromptTime } from '../../format-time.js';
 import { isSameUserWaveSiblingReply } from '../../freshness/FreshnessRelevancePolicy.js';
 import type { DegradationResult } from '../../orchestration/DegradationPolicy.js';
-import { mapToPresentation } from '../../session/context-presentation.js';
+import { mapToPresentation } from '../../session/context/context-presentation.js';
 import {
   type ContextModeProjection,
   type ContextSurfaceProjection,
   countPresentedTiers,
   projectContextMode,
   withSurfaceShape,
-} from '../../session/context-surface-projection.js';
+} from '../../session/context/context-surface-projection.js';
 import { cursorFor } from '../../stores/cursor.js';
+import { isDisplayOnlySystemMessage } from '../../stores/host-message-policy.js';
 import { DeliveryCursorStore } from '../../stores/ports/DeliveryCursorStore.js';
 import type { IDraftStore } from '../../stores/ports/DraftStore.js';
 import type { IMessageStore, StoredMessage, StoredToolEvent } from '../../stores/ports/MessageStore.js';
 import type { Thread } from '../../stores/ports/ThreadStore.js';
 import { canViewMessage, isTimelinePublished, resolveVisibleReplyParent } from '../../stores/visibility.js';
 import type { AgentMessage, AgentRouteIntent, AgentService, ToolExecutionPolicy } from '../../types.js';
+import type { EnqueueResult } from '../invocation/InvocationQueue.js';
 import type { InvocationTracker } from '../invocation/InvocationTracker.js';
 import type { InvocationDeps } from '../invocation/invoke-single-cat.js';
 import type { OwnerAuthProvenance } from '../invocation/owner-auth-provenance.js';
+import type { QueueSourceCustodyAdmissionService } from '../invocation/QueueSourceCustodyAdmission.js';
 import { extractRecentArtifacts, mergeLedger } from './artifact-tracking.js';
 import { appendContextAttachmentsToPrompt } from './context-attachment-prompt.js';
 import type { CoverageMap, ScoredMessage } from './context-transport.js';
@@ -110,6 +116,9 @@ export interface RouteStrategyDeps {
   invocationDeps: InvocationDeps;
   /** F293: fresh advisory/rejection decision at each actual child boundary. */
   routingDispatchPreflight?: import('../../../../routing-context/RoutingDispatchPreflightPort.js').RoutingDispatchPreflightPort;
+  dotReplyTarget?: (
+    source: import('../../cloud-bridge/dot/dot-reply-authority.js').DotReplyCandidate,
+  ) => Promise<boolean>;
   messageStore: IMessageStore;
   deliveryCursorStore?: DeliveryCursorStore;
   /** #80: Streaming draft persistence store */
@@ -150,6 +159,11 @@ export interface RouteStrategyDeps {
   freshnessOutputCommitCoordinator?: import('../../freshness/glass-box/FreshnessOutputCommitCoordinator.js').FreshnessOutputCommitCoordinator;
   /** F276: owner-scoped live proposal state injected before every model invocation. */
   personMemoryProposalStatusContextResolver?: import('../../../../memory/people/PersonMemoryProposalStatusContextResolver.js').PersonMemoryProposalStatusContextResolver;
+  /** Atomically bind a deferred Queue carrier to its persisted source before route continuation. */
+  queueSourceCustodyAdmission?: Pick<
+    QueueSourceCustodyAdmissionService,
+    'admitDeferred' | 'admitDeferredBatch' | 'discardDeferredBatch'
+  >;
 }
 
 /** Mutable context for tracking persistence failures across the generator boundary.
@@ -241,6 +255,7 @@ export function mergePersistedPromptMessages(
 
 /** Common options for both strategies */
 export interface RouteOptions {
+  liveCompanion?: import('../../types.js').AgentServiceOptions['liveCompanion'];
   /** Route-owned intent plus whether the user explicitly selected it. */
   routeIntent?: AgentRouteIntent;
   /** F293: deterministic scope used to resolve sparse routing cognition. */
@@ -336,7 +351,7 @@ export interface RouteOptions {
          *  route picked up by QueueProcessor reuses it as the parent — preserving cross-route
          *  causality through the fairness-gate deferred path. */
         callerTraceContext?: import('../../../../../infrastructure/telemetry/genai-semconv.js').CallerTraceContext;
-      }) => { outcome: 'enqueued' | 'full' | string } | undefined)
+      }) => EnqueueResult | undefined)
     | undefined;
   /** ADR-008 S3: When provided, cursor boundaries are collected here instead of acking immediately.
    *  Caller acks after invocation succeeds. If absent, legacy immediate ack behavior. */
@@ -966,7 +981,16 @@ export function truncateDetail(text: string, maxLength: number): string {
  * deferred per KD-41) still produce a valid StoredToolEvent that the hydrate path
  * skips for span synthesis but still surfaces in the Hub history view.
  */
-export function toStoredToolEvent(msg: AgentMessage): StoredToolEvent | null {
+export function toStoredToolEvent(
+  msg: AgentMessage,
+  executionRef = msg.turnInvocationId ?? msg.invocationId,
+): StoredToolEvent | null {
+  if (msg.type !== 'tool_use' && msg.type !== 'tool_result') return null;
+  // Event IDs are born once in the API and then carried unchanged through every consumer.
+  const prefix = msg.type === 'tool_use' ? 'tool-' : 'toolr-';
+  if (!msg.toolEventId?.startsWith(prefix)) msg.toolEventId = `${prefix}${randomUUID()}`;
+  if (executionRef) msg.toolExecutionRef = executionRef;
+  const instance = { id: msg.toolEventId, ...(msg.toolExecutionRef ? { executionRef: msg.toolExecutionRef } : {}) };
   if (msg.type === 'tool_use') {
     const toolName = msg.toolName ?? 'unknown';
     let detail: string | undefined;
@@ -978,7 +1002,7 @@ export function toStoredToolEvent(msg: AgentMessage): StoredToolEvent | null {
       }
     }
     return {
-      id: `tool-${msg.timestamp}-${Math.random().toString(36).slice(2, 6)}`,
+      ...instance,
       type: 'tool_use',
       label: `${msg.catId as string} → ${toolName}`,
       // R6 maintainer: persist native tool name as data field (decoupled from display label).
@@ -996,7 +1020,7 @@ export function toStoredToolEvent(msg: AgentMessage): StoredToolEvent | null {
     const raw = (msg.content ?? '').trimEnd();
     const detail = raw.length > 0 ? truncateDetail(raw, 1500) : '(no output)';
     return {
-      id: `toolr-${msg.timestamp}-${Math.random().toString(36).slice(2, 6)}`,
+      ...instance,
       type: 'tool_result',
       label: `${msg.catId as string} ← result`,
       detail,
@@ -1146,20 +1170,23 @@ export function stripLeakedToolCallPayload(content: string): string {
   return content;
 }
 
-export interface RoutedMessageTransform {
-  transform(msg: AgentMessage): AgentMessage[];
-}
+export type RoutedMessageTransform = import('../message-output-stream-transform.js').RoutedOutputTransform;
 
 export interface LeakedToolCallStreamStripper {
   push(content: string): string;
   flush(): string;
+  hasPendingContent(): boolean;
+  wasRewritten(): boolean;
 }
 
 export function createLeakedToolCallStreamStripper(): LeakedToolCallStreamStripper {
   let pending = '';
   let pendingEmittedLength = 0;
+  let rewritten = false;
 
   return {
+    hasPendingContent: () => pending.length > 0,
+    wasRewritten: () => rewritten,
     push(content: string): string {
       if (!content) return content;
 
@@ -1170,6 +1197,7 @@ export function createLeakedToolCallStreamStripper(): LeakedToolCallStreamStripp
 
       const stripped = stripLeakedToolCallPayload(combined);
       if (stripped !== combined) {
+        rewritten = true;
         return stripped.slice(alreadyEmittedLength);
       }
 
@@ -1190,39 +1218,15 @@ export function createLeakedToolCallStreamStripper(): LeakedToolCallStreamStripp
       const alreadyEmittedLength = pendingEmittedLength;
       pending = '';
       pendingEmittedLength = 0;
-      return stripLeakedToolCallPayload(remaining).slice(alreadyEmittedLength);
+      const stripped = stripLeakedToolCallPayload(remaining);
+      rewritten ||= stripped !== remaining;
+      return stripped.slice(alreadyEmittedLength);
     },
   };
 }
 
 export function createRoutingMessageTransform(explicitCatId?: CatId): RoutedMessageTransform {
-  const leakedPayloadStripper = createLeakedToolCallStreamStripper();
-
-  return {
-    transform(msg: AgentMessage): AgentMessage[] {
-      if (msg.type === 'text') {
-        const content = msg.content ? leakedPayloadStripper.push(msg.content) : msg.content;
-        return content ? [{ ...msg, content }] : [];
-      }
-
-      if (msg.type === 'done') {
-        const transformed: AgentMessage[] = [];
-        const flushedText = leakedPayloadStripper.flush();
-        if (flushedText) {
-          transformed.push({
-            type: 'text',
-            catId: msg.catId ?? explicitCatId,
-            content: flushedText,
-            timestamp: msg.timestamp,
-          });
-        }
-        transformed.push(msg);
-        return transformed;
-      }
-
-      return [msg];
-    },
-  };
+  return createRoutedOutputTransform(createLeakedToolCallStreamStripper, explicitCatId);
 }
 
 export function sanitizeInjectedContent(content: string): string {
@@ -1619,14 +1623,17 @@ async function resolveRecentFilesTouched(
 
   try {
     const activeSession = await Promise.resolve(sessionChainStore.getActive(catId, threadId, userId));
-    if (activeSession?.userId === userId) {
+    if (isHomeSession(activeSession) && activeSession.userId === userId) {
       return transcriptWriter.getFilesTouched(activeSession.id, { threadId, catId });
     }
 
     const threadSessions = await Promise.resolve(sessionChainStore.getChainByThread(threadId));
     const callerSession = [...threadSessions]
       .reverse()
-      .find((session) => session.status === 'active' && session.catId === catId && session.userId === userId);
+      .find(
+        (session) =>
+          isHomeSession(session) && session.status === 'active' && session.catId === catId && session.userId === userId,
+      );
     if (!callerSession) return [];
     return transcriptWriter.getFilesTouched(callerSession.id, { threadId, catId: callerSession.catId });
   } catch {
@@ -1797,8 +1804,8 @@ async function assembleIncrementalContextInternal(
   );
   const filteredReasons = new Map<string, ProjectionAuditCandidate['filteredReason']>();
   const relevant = unseen.filter((m) => {
-    // System-generated messages (persisted error badges) are display-only — never enter prompt
-    if (m.userId === 'system') {
+    // Generic system badges are display-only; validated Host records are durable Cat input.
+    if (isDisplayOnlySystemMessage(m)) {
       filteredReasons.set(m.id, 'system_display_only');
       return false;
     }
@@ -2661,4 +2668,22 @@ async function assembleSmartWindowContext(
         }
       : {}),
   };
+}
+
+/**
+ * F309: a publication names a message by its stored time, which the live bubble cannot know on its
+ * own clock. Read it back with the stored id; an unreadable time is left unknown, never guessed.
+ */
+export async function storedMessageTimestamp(
+  store: Pick<IMessageStore, 'getById'>,
+  messageId: string | undefined,
+): Promise<{ messageTimestamp: number } | Record<string, never>> {
+  if (!messageId) return {};
+  try {
+    const stored = await store.getById(messageId);
+    return stored?.id === messageId ? { messageTimestamp: stored.timestamp } : {};
+  } catch (err) {
+    log.warn({ err, messageId }, 'stored message time unreadable; done leaves it unknown');
+    return {};
+  }
 }

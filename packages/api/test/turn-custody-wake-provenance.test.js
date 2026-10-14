@@ -5,6 +5,7 @@ import {
   retargetTurnCustodyWake,
   turnCustodyWakeSourceCategory,
 } from '../dist/domains/ball-custody/turn-custody-wake-provenance.js';
+import { boundedTurnCustodySourceCategory } from '../dist/infrastructure/telemetry/turn-custody-shadow-telemetry.js';
 
 function entry(overrides = {}) {
   return {
@@ -283,7 +284,93 @@ describe('F167 Phase T queue wake provenance', () => {
     );
   });
 
+  it('classifies producer-return connector entries as unstructured (no stop-gate obligation)', async () => {
+    // Positive: connector with explicit producer_return sourceCategory → unstructured
+    assert.deepEqual(
+      await resolveQueueTurnCustodyWake(
+        entry({
+          source: 'connector',
+          sourceCategory: 'producer_return',
+          callerCatId: undefined,
+          a2aTriggerMessageId: undefined,
+        }),
+        noMessage,
+      ),
+      { kind: 'unstructured', source: 'producer_return' },
+    );
+
+    // Negative: connector WITHOUT sourceCategory still fails closed (legacy/carrier_missing)
+    assert.deepEqual(
+      await resolveQueueTurnCustodyWake(
+        entry({
+          source: 'connector',
+          sourceCategory: undefined,
+          callerCatId: undefined,
+          a2aTriggerMessageId: undefined,
+        }),
+        noMessage,
+      ),
+      { kind: 'legacy', reason: 'carrier_missing' },
+    );
+  });
+
+  it('classifies Repo Inbox connector entries as unstructured; carriers still win, look-alikes stay fail-closed', async () => {
+    // F167 ruling 0001790911847173-000222-db2d26fe: Repo Inbox obligations belong to the F168 domain.
+    const repoInbox = (overrides = {}) =>
+      entry({
+        source: 'connector',
+        sourceCategory: 'repo_inbox',
+        callerCatId: undefined,
+        a2aTriggerMessageId: undefined,
+        ...overrides,
+      });
+
+    assert.deepEqual(await resolveQueueTurnCustodyWake(repoInbox(), noMessage), {
+      kind: 'unstructured',
+      source: 'repo_inbox',
+    });
+
+    // An exact action carrier on the same entry still owns the turn.
+    assert.deepEqual(
+      await resolveQueueTurnCustodyWake(
+        repoInbox({ actionSuccessorFence: { leaseId: 'lease-ri', generation: 2 } }),
+        noMessage,
+      ),
+      { kind: 'action_successor', leaseId: 'lease-ri', generation: 2, holderCatId: 'codex-sol' },
+    );
+
+    // A stored event-wait carrier still owns the turn.
+    const waitContinuationCarrier = {
+      v: 1,
+      waitId: 'task-pr-7',
+      outcomeId: 'wait:pr:owner/repo#7:g4:matched',
+      ownerFence: { kind: 'action_successor', leaseId: 'lease-wait-4', generation: 4 },
+    };
+    const waitStore = {
+      getById: async () => ({
+        id: 'message-1',
+        source: { connector: 'github-wait', meta: { waitContinuationCarrier } },
+      }),
+    };
+    assert.deepEqual(await resolveQueueTurnCustodyWake(repoInbox({ waitContinuationCarrier }), waitStore), {
+      kind: 'structured',
+      protocol: 'event_wait',
+      subjectKey: 'ball:thread:thread-1',
+      holderCatId: 'codex-sol',
+      waitContinuationCarrier,
+    });
+
+    // Only the exact bounded category is accepted; a look-alike stays legacy fail-closed.
+    assert.deepEqual(await resolveQueueTurnCustodyWake(repoInbox({ sourceCategory: 'repo-inbox' }), noMessage), {
+      kind: 'legacy',
+      reason: 'carrier_missing',
+      sourceCategory: 'repo-inbox',
+    });
+  });
+
   it('maps wake carriers to bounded trace source categories', () => {
+    assert.equal(turnCustodyWakeSourceCategory({ kind: 'unstructured', source: 'repo_inbox' }), 'repo_inbox');
+    assert.equal(boundedTurnCustodySourceCategory('repo_inbox'), 'repo_inbox');
     assert.equal(
       turnCustodyWakeSourceCategory({ kind: 'legacy', reason: 'carrier_missing', sourceCategory: 'review' }),
       'review',

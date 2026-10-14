@@ -27,8 +27,9 @@ describe('ConciergeConfig ballSize (E3)', () => {
     expect(CONCIERGE_CONFIG_DEFAULTS.ballSize).toBe(72);
   });
 
-  it('exports BALL_SIZE_MIN = 48', () => {
-    expect(BALL_SIZE_MIN).toBe(48);
+  it('exports the approved compact desktop size', () => {
+    expect(BALL_SIZE_MIN).toBe(43);
+    expect(clampBallSize(42)).toBe(43);
   });
 
   it('exports BALL_SIZE_MAX = 192', () => {

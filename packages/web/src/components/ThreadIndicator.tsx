@@ -2,10 +2,14 @@
 
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { useIMEGuard } from '@/hooks/useIMEGuard';
+import { useThreadDisplayInfo } from '@/hooks/useThreadDisplayInfo';
 import { useChatStore } from '@/stores/chatStore';
-import { useSidebarProjectionStore } from '@/stores/sidebarProjectionStore';
 import { apiFetch } from '@/utils/api-client';
-import { invalidateSidebarProjection } from '@/utils/sidebar-thread-snapshot';
+import { executeSidebarFieldCommand } from '@/utils/sidebar-commands';
+import { AppTooltip } from './AppTooltip';
+import { useShellCopy } from './shell/shell-copy';
+import { useShellPresentation } from './shell/shell-presentation';
+import { threadIndicatorCopy } from './thread-indicator.shell-copy';
 
 /** Tail-preserving truncation for project chip labels.
  * The suffix usually carries the distinguishing worktree or nested directory name. */
@@ -18,14 +22,15 @@ const PROJECT_PATH_COPY_KEYS = new Set(['Enter', ' ']);
 
 /** Thread indicator: shows which thread you're currently chatting in.
  *  Double-click the title to enter inline edit mode for renaming. */
-export function ThreadIndicator({ threadId }: { threadId: string }) {
-  const threads = useChatStore((s) => s.threads);
-  const sidebarRows = useSidebarProjectionStore((state) => state.rows);
+export function ThreadIndicator({ threadId, showProject = true }: { threadId: string; showProject?: boolean }) {
+  const isV2 = useShellPresentation() === 'v2';
+  const localized = useShellCopy(threadIndicatorCopy);
+  const copy = isV2 ? localized : threadIndicatorCopy.zh;
   const updateThreadTitle = useChatStore((s) => s.updateThreadTitle);
-  const currentThread = sidebarRows.find((row) => row.id === threadId) ?? threads.find((t) => t.id === threadId);
+  const { currentThread, setExactThread, unavailable } = useThreadDisplayInfo(threadId);
   const [copied, setCopied] = useState(false);
   const copyResetTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const title = currentThread?.title ?? '未命名对话';
+  const title = currentThread ? (currentThread.title ?? copy.untitled) : unavailable ? copy.unavailable : copy.loading;
   const rawPath = currentThread?.projectPath ?? '';
 
   // Inline title editing state
@@ -71,15 +76,30 @@ export function ThreadIndicator({ threadId }: { threadId: string }) {
     const gen = editGenRef.current;
     setIsSaving(true);
     try {
-      const res = await apiFetch(`/api/threads/${threadId}`, {
-        method: 'PATCH',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ title: next }),
+      let savedTitle = next;
+      const ok = await executeSidebarFieldCommand({
+        threadId,
+        field: 'title',
+        value: next,
+        request: async (signal) => {
+          const res = await apiFetch(`/api/threads/${threadId}`, {
+            method: 'PATCH',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ title: next }),
+            signal,
+          });
+          if (res.ok) {
+            const updated = await res.json();
+            if (typeof updated.title === 'string') savedTitle = updated.title;
+          }
+          return res;
+        },
       });
-      if (res.ok) {
-        const updated = await res.json();
-        updateThreadTitle(threadId, updated.title ?? next);
-        void invalidateSidebarProjection();
+      if (ok) {
+        updateThreadTitle(threadId, savedTitle);
+        setExactThread((previous) =>
+          previous?.id === threadId && !('error' in previous) ? { ...previous, title: savedTitle } : previous,
+        );
       }
     } catch {
       // Silently ignore — title stays unchanged
@@ -91,7 +111,7 @@ export function ThreadIndicator({ threadId }: { threadId: string }) {
         setIsEditing(false);
       }
     }
-  }, [draftTitle, title, threadId, updateThreadTitle]);
+  }, [draftTitle, title, threadId, updateThreadTitle, setExactThread]);
 
   useEffect(() => {
     if (copyContextRef.current === copyContext) return;
@@ -110,7 +130,7 @@ export function ThreadIndicator({ threadId }: { threadId: string }) {
   }, []);
 
   if (threadId === 'default') {
-    return <p className="text-xs text-cafe-secondary">大厅 · Your AI team collaboration space</p>;
+    return <p className="text-xs text-cafe-secondary">{copy.lobby}</p>;
   }
 
   // 'default' is a sentinel for threads without a real projectPath — match exact value, not basename
@@ -148,6 +168,7 @@ export function ThreadIndicator({ threadId }: { threadId: string }) {
       {isEditing ? (
         <input
           ref={inputRef}
+          aria-label={isV2 ? copy.editTitle : undefined}
           value={draftTitle}
           onChange={(e) => setDraftTitle(e.target.value)}
           onCompositionStart={ime.onCompositionStart}
@@ -169,22 +190,26 @@ export function ThreadIndicator({ threadId }: { threadId: string }) {
           className="min-w-0 flex-1 truncate rounded border border-cafe-subtle bg-transparent px-1 py-0.5 text-xs font-medium text-cafe-secondary focus:border-cafe-accent focus:outline-none disabled:opacity-70"
         />
       ) : (
-        <button
-          type="button"
-          className="truncate min-w-0 text-left font-medium text-cafe-secondary cursor-text"
-          title={`${title}\n双击编辑标题`}
-          onDoubleClick={() => setIsEditing(true)}
-          onKeyDown={(e) => {
-            if (e.key === 'F2') {
-              e.preventDefault();
-              setIsEditing(true);
-            }
-          }}
-        >
-          {title}
-        </button>
+        <AppTooltip label={title} detail={copy.editHint} shortcut="F2" side="bottom" multiline disabled={!isV2}>
+          <button
+            type="button"
+            className="truncate min-w-0 text-left font-medium text-cafe-secondary cursor-text"
+            title={isV2 ? undefined : `${title}\n双击编辑标题`}
+            onDoubleClick={() => {
+              if (currentThread) setIsEditing(true);
+            }}
+            onKeyDown={(e) => {
+              if (e.key === 'F2' && currentThread) {
+                e.preventDefault();
+                setIsEditing(true);
+              }
+            }}
+          >
+            {title}
+          </button>
+        </AppTooltip>
       )}
-      {projectName && !isEditing && (
+      {showProject && projectName && !isEditing && (
         <button
           type="button"
           className="flex-shrink-0 max-w-[40%] sm:max-w-[200px] overflow-hidden whitespace-nowrap text-cafe-muted cursor-pointer hover:text-cafe-secondary transition-colors"

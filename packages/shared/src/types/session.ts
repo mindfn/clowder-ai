@@ -42,8 +42,33 @@ export interface AuthenticatedCompressionObservation {
 
 export interface SessionRecord {
   readonly id: string;
+  /** A one-shot scoped execution is traceable history, never a home resume candidate. */
+  readonly scopedInvocation?:
+    | {
+        readonly invocationId: string;
+        readonly executionScope: 'collective-participation';
+        readonly originMessageId: string;
+      }
+    | {
+        readonly invocationId: string;
+        readonly executionScope: 'collective-work';
+        readonly originMessageId: string;
+        readonly taskId: string;
+        readonly executionRef: string;
+        readonly executionRevision: number;
+        readonly authorityRef: string;
+      };
   /** CLI-reported session ID (from session_init event) */
   cliSessionId?: string;
+  /** User-requested adoption of an existing native history; persisted across reloads. */
+  externalImport?: {
+    cliSessionId: string;
+    clientId: 'openai' | 'anthropic';
+    firstPrompt: string;
+    projectPath: string;
+    lastActivityAt: number;
+    importedAt: number;
+  };
   /** Canonical workspace path associated with this CLI session, when provider-scoped. */
   workingDirectory?: string;
   /** Stable workspace identity used to decide whether a CLI session can be resumed. */

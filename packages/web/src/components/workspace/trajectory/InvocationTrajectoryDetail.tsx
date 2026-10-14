@@ -5,6 +5,8 @@ import type {
   RequestGenerationProjectionV1,
 } from '@cat-cafe/shared';
 import { useMemo, useState } from 'react';
+import { useShellPresentation } from '@/components/shell/shell-presentation';
+import { FirstOutputSource } from './FirstOutputSource';
 import { InvocationEvidenceLinks } from './InvocationEvidenceLinks';
 import {
   buildInvocationTimelineRows,
@@ -19,8 +21,12 @@ import {
   TRAJECTORY_STATUS_LABEL,
 } from './invocation-trajectory-ui';
 import { RequestGenerationSection } from './request-generation-card';
+import { TrajectoryCatIdentity } from './TrajectoryCatIdentity';
+import { TrajectoryId } from './TrajectoryId';
+import { trajectoryCopy } from './trajectory.shell-copy';
 import { PromptInputCard } from './trajectory-prompt-input-card';
 import { SemanticTimelineRow } from './trajectory-semantic-cards';
+import { useTrajectoryCopy } from './use-trajectory-copy';
 
 export interface InvocationDetailResponse {
   invocationId: string;
@@ -37,11 +43,20 @@ function formatTokens(summary: InvocationTrajectorySummary): string | undefined 
   return `${input ?? '—'} in · ${output ?? '—'} out`;
 }
 
-function Metric({ label, value }: { label: string; value: string }) {
+function Metric({ label, value }: { label: string; value: React.ReactNode }) {
+  const isV2 = useShellPresentation() === 'v2';
   return (
     <div className="rounded-lg bg-cafe-surface px-2.5 py-2">
       <div className="text-micro text-cafe-muted">{label}</div>
-      <div className="mt-0.5 truncate font-medium text-cafe-secondary">{value}</div>
+      <div
+        className={
+          isV2
+            ? 'mt-0.5 min-w-0 break-words font-medium text-cafe-secondary'
+            : 'mt-0.5 truncate font-medium text-cafe-secondary'
+        }
+      >
+        {value}
+      </div>
     </div>
   );
 }
@@ -89,24 +104,27 @@ function DetailBody({
   revealingGenerations: boolean;
   onRevealGenerations: () => void;
 }) {
-  if (loading) return <div className="text-sm text-cafe-muted">读取 canonical transcript…</div>;
+  const isV2 = useShellPresentation() === 'v2';
+  const t = useTrajectoryCopy(trajectoryCopy);
+  if (loading)
+    return <div className="text-sm text-cafe-muted">{isV2 ? t.rawLoading : '读取 canonical transcript…'}</div>;
   if (error) {
     return (
       <div className="rounded-lg bg-conn-red-bg p-3 text-sm text-conn-red-text">
-        <p>这轮轨迹暂时读取失败。</p>
+        <p>{t.detailFailed}</p>
         <button
           type="button"
           onClick={() => copyInvocationRef(summary.invocationId)}
           className="mt-2 block font-mono text-xs underline"
         >
-          复制 inv:{summary.invocationId}
+          {t.copyRef(summary.invocationId)}
         </button>
         <button
           type="button"
           onClick={onRetry}
           className="mt-2 rounded-lg border border-conn-red-ring px-2 py-1 text-xs font-semibold"
         >
-          重试
+          {t.retry}
         </button>
       </div>
     );
@@ -129,7 +147,7 @@ function DetailBody({
             onClick={onMoreRaw}
             className="w-full rounded-lg border border-cafe px-3 py-2 text-xs text-cafe-secondary"
           >
-            再显示 100 条
+            {t.moreRaw}
           </button>
         )}
       </div>
@@ -138,16 +156,18 @@ function DetailBody({
   return (
     <div className="space-y-2">
       <PromptInputCard promptInput={detail?.promptInput} onOpenMessage={onOpenPromptMessage} />
-      <RequestGenerationSection
-        generations={requestGenerations}
-        gaps={requestGenerationGaps}
-        loading={generationsLoading}
-        error={generationsError}
-        revealing={revealingGenerations}
-        onReveal={onRevealGenerations}
-      />
+      {!isV2 && (
+        <RequestGenerationSection
+          generations={requestGenerations}
+          gaps={requestGenerationGaps}
+          loading={generationsLoading}
+          error={generationsError}
+          revealing={revealingGenerations}
+          onReveal={onRevealGenerations}
+        />
+      )}
       {rows.map((row) => (
-        <SemanticTimelineRow key={row.id} row={row} />
+        <SemanticTimelineRow key={row.id} row={row} catId={isV2 ? summary.catId : undefined} />
       ))}
       {hiddenRowCount > 0 && (
         <button
@@ -155,8 +175,21 @@ function DetailBody({
           onClick={onToggleExpanded}
           className="w-full rounded-lg border border-cafe px-3 py-2 text-xs font-semibold text-cafe-secondary"
         >
-          {expanded ? '收起降噪视图' : `展开全部 ${totalEffectiveRows} 行`}
+          {expanded ? t.collapse : t.expandRows(totalEffectiveRows)}
         </button>
+      )}
+      {isV2 && (
+        <>
+          <FirstOutputSource summary={summary} />
+          <RequestGenerationSection
+            generations={requestGenerations}
+            gaps={requestGenerationGaps}
+            loading={generationsLoading}
+            error={generationsError}
+            revealing={revealingGenerations}
+            onReveal={onRevealGenerations}
+          />
+        </>
       )}
     </div>
   );
@@ -191,10 +224,15 @@ export function InvocationTrajectoryDetail({
   revealingGenerations?: boolean;
   onRevealGenerations?: () => void;
 }) {
+  const isV2 = useShellPresentation() === 'v2';
+  const t = useTrajectoryCopy(trajectoryCopy);
   const [view, setView] = useState<'timeline' | 'raw'>('timeline');
   const [expanded, setExpanded] = useState(false);
   const [rawLimit, setRawLimit] = useState(100);
-  const projection = useMemo(() => buildInvocationTimelineRows(detail?.events ?? []), [detail]);
+  const projection = useMemo(
+    () => buildInvocationTimelineRows(detail?.events ?? [], undefined, { nativeMessages: isV2 }),
+    [detail, isV2],
+  );
   const displayedSummary = useMemo(() => reconcileInvocationSummary(summary, detail?.summary), [detail, summary]);
   const rows = expanded ? projection.allRows : projection.visibleRows;
   return (
@@ -206,26 +244,58 @@ export function InvocationTrajectoryDetail({
             onClick={onBack}
             className="rounded-lg px-2 py-1 text-xs font-semibold text-cafe-secondary hover:bg-cafe-surface"
           >
-            ← 返回
+            {isV2 ? t.back : '← 返回'}
           </button>
           <span
             className={`rounded-full px-2 py-0.5 text-micro font-semibold ${TRAJECTORY_STATUS_CLASS[displayedSummary.status]}`}
           >
-            {TRAJECTORY_STATUS_LABEL[displayedSummary.status]}
+            {isV2 ? t[displayedSummary.status] : TRAJECTORY_STATUS_LABEL[displayedSummary.status]}
           </span>
-          <span className="min-w-0 truncate font-mono text-xs text-cafe-secondary">
-            {displayedSummary.invocationId}
-          </span>
+          {isV2 ? (
+            <div className="min-w-0 flex-1">
+              <TrajectoryId kind="调用" value={displayedSummary.invocationId} />
+            </div>
+          ) : (
+            <span className="min-w-0 truncate font-mono text-xs text-cafe-secondary">
+              {displayedSummary.invocationId}
+            </span>
+          )}
         </div>
-        <div className="mt-3 grid grid-cols-2 gap-2 text-xs sm:grid-cols-4">
-          <Metric label="猫 / Session" value={`${displayedSummary.catId} · #${displayedSummary.sessionSeq + 1}`} />
-          <Metric label="耗时" value={formatTrajectoryDuration(displayedSummary.durationMs)} />
-          <Metric label="工具 / 消息" value={`${displayedSummary.toolUseCount} / ${displayedSummary.messageCount}`} />
-          <Metric label="Tokens" value={formatTokens(displayedSummary) ?? '未报告'} />
+        <div
+          className="mt-3 grid grid-cols-2 gap-2 text-xs sm:grid-cols-4"
+          style={isV2 ? { gridTemplateColumns: 'repeat(auto-fit, minmax(min(100%, 130px), 1fr))' } : undefined}
+        >
+          <Metric
+            label={isV2 ? t.catSession : '猫 / Session'}
+            value={
+              isV2 ? (
+                <>
+                  <TrajectoryCatIdentity catId={displayedSummary.catId} />
+                  <span className="block text-micro">{t.segment(displayedSummary.sessionSeq + 1)}</span>
+                  <TrajectoryId kind="会话" value={displayedSummary.sessionId} />
+                </>
+              ) : (
+                `${displayedSummary.catId} · #${displayedSummary.sessionSeq + 1}`
+              )
+            }
+          />
+          <Metric label={t.duration} value={formatTrajectoryDuration(displayedSummary.durationMs)} />
+          <Metric
+            label={t.toolsMessages}
+            value={`${displayedSummary.toolUseCount} / ${displayedSummary.messageCount}`}
+          />
+          <Metric
+            label={isV2 ? 'Token' : 'Tokens'}
+            value={
+              isV2 && displayedSummary.tokens
+                ? t.tokens(displayedSummary.tokens.input ?? '—', displayedSummary.tokens.output ?? '—')
+                : (formatTokens(displayedSummary) ?? t.unreported)
+            }
+          />
         </div>
         {(displayedSummary.sealReason || displayedSummary.terminalReason) && (
           <p className="mt-2 text-micro text-cafe-muted">
-            {displayedSummary.sealReason ? `seal: ${displayedSummary.sealReason}` : ''}
+            {displayedSummary.sealReason ? `${isV2 ? t.sealed : 'seal'}: ${displayedSummary.sealReason}` : ''}
             {displayedSummary.sealReason && displayedSummary.terminalReason ? ' · ' : ''}
             {displayedSummary.terminalReason ?? ''}
           </p>
@@ -240,7 +310,7 @@ export function InvocationTrajectoryDetail({
             onClick={() => setView(mode)}
             className={`px-3 py-2 text-xs font-semibold ${view === mode ? 'border-b-2 border-cafe-accent text-cafe-accent' : 'text-cafe-muted'}`}
           >
-            {mode === 'timeline' ? '轨迹' : 'Raw'}
+            {mode === 'timeline' ? t.timeline : isV2 ? t.raw : 'Raw'}
           </button>
         ))}
       </div>

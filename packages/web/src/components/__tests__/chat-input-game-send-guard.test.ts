@@ -80,7 +80,7 @@ function openGameMenu() {
     addBtn.click();
   });
 
-  const gameBtn = container.querySelector('[data-testid="composer-game"]') as HTMLButtonElement;
+  const gameBtn = document.querySelector('[data-testid="composer-game"]') as HTMLButtonElement;
   expect(gameBtn).toBeTruthy();
   act(() => {
     gameBtn.click();
@@ -202,7 +202,7 @@ describe('progressive add menu coordinates with the game menu', () => {
       addBtn.click();
     });
     expect(container.querySelector('[data-testid="game-item-werewolf"]')).toBeNull();
-    expect(container.querySelector('[data-testid="composer-add-menu"]')).toBeTruthy();
+    expect(document.querySelector('[data-testid="composer-add-menu"]')).toBeTruthy();
   });
 });
 

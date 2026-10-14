@@ -6,6 +6,7 @@ import type {
   FreshnessSupplementProjection,
   MessageBundleCarrierV1,
   MessageContent,
+  MessageMediaPublicationSource,
   ProviderSemanticEvent,
   ProviderSubexecutionSemanticEvent,
   PublishedFreshnessAnnotation,
@@ -13,6 +14,7 @@ import type {
   QueueRecoveryAction,
   ReplyPreview,
   SchedulerMessageExtra,
+  ThreadArtifactDTO,
   TurnExecutionMessageProjection,
 } from '@cat-cafe/shared';
 import type { WorkspaceMode } from '@/lib/workspace-modes';
@@ -24,7 +26,7 @@ export type { A2ARoutingMode, A2ARoutingProjection, CliDiagnostics } from '@cat-
 
 import type { A2ARoutingProjection } from '@cat-cafe/shared';
 
-export type ThreadSystemKind = 'connector_hub' | 'eval_domain' | 'cat_bedroom' | 'memory_ops';
+export type ThreadSystemKind = 'connector_hub' | 'eval_domain' | 'cat_bedroom' | 'memory_ops' | 'collective_channel';
 
 export type { FileContent, ImageContent, MessageContent, TextContent } from '@cat-cafe/shared';
 
@@ -52,9 +54,22 @@ export interface TokenUsage {
 }
 
 export interface ChatMessageMetadata {
+  executionAccount?: import('@cat-cafe/shared').ExecutionAccountSnapshot;
   provider: string;
   model: string;
   sessionId?: string;
+  /** F319: model the upstream actually answered with; absent = not observed. */
+  servedModel?: string;
+  /** F319: upstream response id the served model was read from. */
+  servedResponseId?: string;
+  /** F319: how servedModel was observed. */
+  servedModelSource?: 'sse_response_object' | 'ws_response_object';
+  /** F319 Phase B.2: length of the upstream turn-state token (informational, not a reroute signal). */
+  upstreamTurnStateLength?: number;
+  /** F319 Phase B.2: upstream safety-buffering "faster model" header (account-level, informational). */
+  upstreamSafetyBufferingFasterModel?: string;
+  /** F319 Phase B.2: upstream `response.safety_buffering` flag. */
+  upstreamSafetyBuffering?: boolean;
   usage?: TokenUsage;
   /** Provider-neutral child lifecycle recovered with the owning root message. */
   subexecutionEvents?: readonly ProviderSubexecutionSemanticEvent[];
@@ -79,6 +94,7 @@ export interface EvidenceData {
 
 export interface ToolEvent {
   id: string;
+  executionRef?: string;
   type: 'tool_use' | 'tool_result';
   label: string;
   detail?: string;
@@ -200,6 +216,8 @@ export interface RichInteractiveBlock {
   messageTemplate?: string;
   disabled?: boolean;
   selectedIds?: string[];
+  /** Set false when adjacent blocks belong to separate producer items and must submit independently. */
+  autoGroup?: boolean;
   /** Phase C: blocks sharing the same groupId are submitted together */
   groupId?: string;
 }
@@ -263,10 +281,17 @@ export interface SystemInfoProjection {
   readonly fallbackCatId?: string;
 }
 
+export type MessagePublicationOrigin = Pick<
+  import('@cat-cafe/shared').MessageMediaPublicationSource,
+  'messageId' | 'messageRevision' | 'item'
+>;
+
 export interface ChatMessage {
   id: string;
   /** Client-only exact persisted records folded into this canonical bubble. */
   projectionSourceMessageIds?: string[];
+  /** Client projection coordinates only; the content owner still verifies each original persisted item. */
+  projectionPublicationOrigins?: Record<string, MessagePublicationOrigin>;
   type: 'user' | 'assistant' | 'system' | 'summary' | 'connector';
   /** Visual variant for system messages */
   variant?: 'error' | 'info' | 'tool' | 'evidence' | 'a2a_followup' | 'governance_blocked';
@@ -293,11 +318,20 @@ export interface ChatMessage {
   evidence?: EvidenceData;
   /** F22+F52+F098-C1: Rich blocks + cross-thread origin + explicit targets */
   extra?: {
+    outputLayout?: import('@cat-cafe/shared').MessageOutputLayoutV1;
+    /** F317: Host-saved identity for this Live turn; never infer old identity from today's config. */
+    liveCompanion?: {
+      modality: 'voice' | 'result';
+      identity?: import('@cat-cafe/shared').CompanionIdentitySnapshotV1;
+    };
     /** F306 durable projection input shared by live, hydration, callback and replay. */
     semanticEvent?: ProviderSemanticEvent;
     rich?: { v: 1; blocks: RichBlock[] };
     /** F310 source-owner projection; the card rehydrates canonical state before acting. */
     custodyOfferV1?: CustodyOfferV1;
+    contentModificationRequestV1?: import('@cat-cafe/shared').ContentModificationSourceMessageV1;
+    /** F309: Host receipt (candidate, rejection, write-back) for a content-modification request. */
+    contentModificationReceiptV1?: import('@cat-cafe/shared').ContentModificationReceiptV1;
     crossPost?: { sourceThreadId: string; sourceInvocationId?: string };
     /** F081: Stream identity for continuity / hydration reconcile.
      *  F194 Phase Z3: dual id —
@@ -396,7 +430,7 @@ export interface ChatMessage {
      * pipeline race; without marker it ends up visually after the bubble it
      * should precede.
      */
-    systemKind?: 'a2a_routing' | 'context_briefing' | 'freshness_closure';
+    systemKind?: 'a2a_routing' | 'context_briefing' | 'freshness_closure' | 'content_modification_receipt';
     /** Machine-readable A2A route metadata. The visible pill text is human-readable; this survives F5. */
     a2aRouting?: { fromCatId?: string; targetCatId?: string; invocationId?: string; routing?: A2ARoutingProjection };
     /** F254 incident salvage: durable provenance for a message restored at its original time. */
@@ -460,6 +494,7 @@ export interface Thread {
   id: string;
   projectPath: string;
   title: string | null;
+  sessionImport?: { sessionId: string; catId: string };
   createdBy: string;
   participants: string[];
   lastActiveAt: number;
@@ -675,6 +710,7 @@ export interface CompactBoundaryTelemetry {
 }
 
 export interface CatInvocationInfo {
+  settlement?: import('@cat-cafe/shared').QueueInvocationSettlement;
   /** Exact concrete provider carrier; absent only for legacy events and fails closed in consumers. */
   freshnessCarrierCapability?: import('@cat-cafe/shared').FreshnessCarrierCapability;
   sessionId?: string;
@@ -819,6 +855,8 @@ export interface QueueEntry {
   messagePreview?: {
     contentBlocks?: ReadonlyArray<MessageContent>;
     replyTo?: string;
+    /** Stored connector identity; lets the row reuse the timeline bubble's summary. */
+    connector?: string;
   };
   /** F264: same durable receipt projection used by the terminal timeline bubble. */
   queueReceipt?: QueueMessageReceipt;
@@ -846,6 +884,7 @@ export interface ComposerDraftInsert {
   /** Local editor snapshot captured immediately before the recall mutation. */
   clientSnapshot?: {
     text: string;
+    imageUrls?: string[];
     contextAttachments: ContextAttachment[];
     replyToId?: string;
   };
@@ -896,17 +935,85 @@ export type GameState = {
 
 export type TeamWorkspaceSubject = { type: 'cat'; id: string } | { type: 'provider'; id: string };
 
+/**
+ * User intent that opened a regular F063 file surface. This is navigation-only:
+ * the F063 owner target remains the source of file identity, bytes, and revision.
+ * It must never be repurposed as the Task-only entrusted-work return edge.
+ */
+export type WorkspaceFileNavigationOrigin =
+  | import('@/components/artifacts/artifact-list-state').ArtifactListOrigin
+  /** `worktreeId` is the tree the person browsed; absent on descriptors persisted before it was recorded. */
+  | { kind: 'file-tree'; worktreeId?: string; repoRoot?: string }
+  | { kind: 'workspace-changes'; worktreeId: string; threadId: string | null }
+  | { kind: 'settings'; href: string; anchorId: string; viewportOffsetPx: number }
+  | {
+      kind: 'workspace-card';
+      threadId: string;
+      destination: 'status' | 'eval';
+      anchorId: string;
+      viewportOffsetPx: number;
+    }
+  | { kind: 'workspace-document'; worktreeId: string; path: string; line: number }
+  | { kind: 'evolution-media'; programId: string; readingState: string; expanded: boolean }
+  | { kind: 'workspace-home-search'; query: string; viewportOffsetPx?: number }
+  | { kind: 'workspace-tools-search'; threadId: string; query: string; viewportOffsetPx: number }
+  | { kind: 'workspace-home-artifact'; threadId: string; artifactId: string; viewportOffsetPx: number }
+  | { kind: 'chat-file-link'; threadId: string; messageId: string }
+  /**
+   * C Release 3480 (F322 voice-meeting): the file came from the stopped result of this same thread's F195 docked
+   * meeting panel; returning restores that panel. The minimal contract promises only the same-thread stopped-result
+   * round trip — no cross-thread navigation or permission rules, and never a borrowed chat-file-link messageId.
+   */
+  | { kind: 'meeting-transcript'; threadId: string };
+
 /** Explicit navigation into an owner-backed F307 surface. This is deliberately
  * transient: durable Workspace selection stays per-thread, while this request
  * only bridges a fresh user action into an already-hydrated Workbench host. */
 export interface WorkspaceOpenRequest {
+  disposition?: 'preview' | 'permanent';
   revision: number;
   threadId: string;
   target:
+    | {
+        kind: 'message-publication';
+        source: MessageMediaPublicationSource;
+        title: string;
+        navigationOrigin?: WorkspaceFileNavigationOrigin;
+      }
+    | {
+        kind: 'publication';
+        contentRef: string;
+        ownerRevision: number;
+        /** The review a Host receipt is committed to: the work is entered in that review, or not at all. */
+        reviewId?: string;
+        title: string;
+        messagePublicationSource?: MessageMediaPublicationSource;
+        navigationOrigin?: WorkspaceFileNavigationOrigin;
+      }
     | { kind: 'mode'; mode: Exclude<WorkspaceMode, 'dev' | 'team'> }
     | { kind: 'evolution-program'; programId: string }
+    | { kind: 'artifact'; artifact: ThreadArtifactDTO; navigationOrigin?: WorkspaceFileNavigationOrigin }
+    | {
+        kind: 'file';
+        worktreeId: string;
+        path: string;
+        line?: number | null;
+        navigationOrigin?: WorkspaceFileNavigationOrigin;
+      }
+    /** Show a file or directory in its worktree's file tree without opening it. */
+    | {
+        kind: 'reveal';
+        worktreeId: string;
+        path: string;
+        navigationOrigin?: WorkspaceFileNavigationOrigin;
+        /** The listing coordinate that minted `worktreeId` when it is not the current chat's project (e.g. Settings). */
+        repoRoot?: string;
+      }
     | { kind: 'team'; subject: TeamWorkspaceSubject | null };
 }
+
+/** The workspace-path targets an ordinary entry can ask the Workbench to open. */
+export type WorkspacePathOpenTarget = Extract<WorkspaceOpenRequest['target'], { kind: 'file' | 'reveal' }>;
 
 /** Per-thread state — everything that varies by thread */
 export interface ThreadState {
@@ -953,6 +1060,8 @@ export interface ThreadState {
    * thread switches instead of leaking or vanishing). Optional for fixture
    * compatibility; restore falls back to 'home'. */
   workspaceSurface?: WorkspaceSurface;
+  /** Only the F307 owner reference; descriptors and renderer state stay with F307. */
+  workspaceForegroundSurfaceId?: string | null;
   /** F284 × F120: top-level Workspace renderer per thread. A Browser surface
    * is not visible while another mode (for example Approval history) owns the
    * viewport, so explicit preview delivery must restore both coordinates. */
@@ -986,13 +1095,27 @@ export interface PresentationLockSnapshot {
     filePath: string | null;
     line: number | null;
     tabs: string[];
+    workspaceForegroundSurfaceId?: string | null;
+    workspaceSurface?: WorkspaceSurface;
+    workspaceMode?: WorkspaceMode;
+    workspacePreview?: WorkspacePreviewState;
+    teamWorkspaceSubject?: TeamWorkspaceSubject | null;
+    rightPanelMode?: 'status' | 'workspace' | 'transcript';
+    rightPanelOpen?: boolean;
   };
+  /** Optional for legacy F063 snapshots. */
+  surfaceId?: string | null;
   worktreeId: string | null;
   filePath: string | null;
   line: number | null;
   tabs: string[];
   scrollTop: number | null;
 }
+
+export type PresentationLockView = Pick<
+  PresentationLockSnapshot,
+  'surfaceId' | 'worktreeId' | 'filePath' | 'line' | 'tabs' | 'scrollTop'
+>;
 
 /** F226: Presentation Surface — file/md tear-off floating window for demo mode */
 export interface PresentationSurfaceContent {
@@ -1057,6 +1180,7 @@ export const DEFAULT_THREAD_STATE: ThreadState = {
   workspaceMode: 'dev',
   teamWorkspaceSubject: null,
   workspaceSurface: 'home',
+  workspaceForegroundSurfaceId: null,
   workspacePreview: { port: undefined, path: '/' },
   rightPanelMode: 'status',
   rightPanelOpen: false,

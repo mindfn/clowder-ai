@@ -27,6 +27,7 @@ describe('GET /api/threads/:threadId/artifacts (F232)', () => {
     memory = null,
     sessionChainStore,
     transcriptWriter,
+    artifactWorkLineage,
   } = {}) {
     const threadStore = {
       get: async (id) => (thread && id === thread.id ? thread : null),
@@ -39,11 +40,136 @@ describe('GET /api/threads/:threadId/artifacts (F232)', () => {
       taskStore: { listByThread: async () => tasks },
       ...(sessionChainStore ? { sessionChainStore } : {}),
       ...(transcriptWriter ? { transcriptWriter } : {}),
+      ...(artifactWorkLineage ? { artifactWorkLineage } : {}),
     });
     return a;
   }
 
   const AUTH = { 'x-cat-cafe-user': 'alice' };
+
+  it('admits only formally bound PRs from owner-visible work Tasks, never prose or another owner', async () => {
+    const work = { kind: 'work', title: 'Delivered outcome', ownerCatId: 'codex61-sol', updatedAt: 200 };
+    const tasks = [
+      { ...work, subjectKey: 'pr:org/repo#12', userId: 'alice' },
+      {
+        ...work,
+        subjectKey: null,
+        entrustedWork: {
+          artifactRefs: [
+            'pr:org/repo#13',
+            'https://github.com/org/repo/pull/14',
+            'https://github.com/org/repo/issues/99',
+          ],
+        },
+      },
+      { ...work, subjectKey: null, why: 'I might open org/repo#15 later', entrustedWork: { artifactRefs: [] } },
+      { ...work, subjectKey: 'pr:org/repo#16', userId: 'bob' },
+    ];
+    app = await makeApp({ tasks });
+    const works = (
+      await app.inject({ method: 'GET', url: '/api/threads/T1/artifacts?view=works', headers: AUTH })
+    ).json();
+    assert.deepEqual(works.artifacts.map((item) => item.ref).sort(), ['org/repo#12', 'org/repo#13', 'org/repo#14']);
+    const classic = (await app.inject({ method: 'GET', url: '/api/threads/T1/artifacts', headers: AUTH })).json();
+    assert.equal(classic.artifacts.length, 0);
+    await app.close();
+    app = await makeApp({ thread: { id: 'T1', createdBy: 'system' }, tasks });
+    const shared = (
+      await app.inject({ method: 'GET', url: '/api/threads/T1/artifacts?view=works', headers: AUTH })
+    ).json();
+    assert.deepEqual(
+      shared.artifacts.map((item) => item.ref),
+      ['org/repo#12'],
+    );
+  });
+
+  it('the named works view keeps explicit publications and thread-bound PRs while excluding ledger-only updates', async () => {
+    app = await makeApp({
+      messages: [
+        {
+          id: 'published',
+          catId: 'codex61-sol',
+          timestamp: 100,
+          extra: {
+            rich: {
+              blocks: [
+                { kind: 'file', v: 1, id: 'published-file', url: '/uploads/published.md', fileName: 'published.md' },
+              ],
+            },
+          },
+        },
+      ],
+      tasks: [
+        {
+          kind: 'pr_tracking',
+          subjectKey: 'pr:org/repo#9',
+          title: 'Delivered PR',
+          ownerCatId: 'codex61-sol',
+          updatedAt: 200,
+          userId: 'alice',
+        },
+      ],
+      memory: {
+        recentArtifacts: [
+          { type: 'file', ref: 'DESIGN.md', label: 'DESIGN.md', updatedAt: 999, updatedBy: 'codex61-sol' },
+        ],
+      },
+    });
+    const works = await app.inject({ url: '/api/threads/T1/artifacts?view=works', headers: AUTH });
+    assert.equal(works.statusCode, 200, works.body);
+    assert.deepEqual(
+      works.json().artifacts.map((a) => a.name),
+      ['Delivered PR', 'published.md'],
+    );
+    assert.equal(works.json().view, 'works');
+    assert.equal(works.json().complete, true);
+    const original = await app.inject({ url: '/api/threads/T1/artifacts', headers: AUTH });
+    assert.equal(original.json().artifacts[0].name, 'DESIGN.md');
+    assert.equal(original.json().artifacts.length, 3);
+  });
+
+  it('does not silently reinterpret an unknown or repeated works view query as the complete original catalogue', async () => {
+    app = await makeApp();
+    for (const query of ['view=other', 'view=works&view=works', 'view=works&limit=3']) {
+      const response = await app.inject({ url: `/api/threads/T1/artifacts?${query}`, headers: AUTH });
+      assert.equal(response.statusCode, 400);
+    }
+  });
+
+  it('counts an owner-proven source once while retaining exact older publication DTOs for return', async () => {
+    app = await makeApp({
+      messages: [1, 3].map((version) => ({
+        id: `version-${version}`,
+        catId: 'codex61-sol',
+        timestamp: version * 100,
+        extra: {
+          rich: {
+            blocks: [
+              { kind: 'file', v: 1, id: `file-${version}`, url: `/uploads/v${version}.md`, fileName: `v${version}.md` },
+            ],
+          },
+        },
+      })),
+      artifactWorkLineage: {
+        current: {
+          resolve: async ({ artifacts }) =>
+            artifacts.map((a) => ({
+              contentRef: 'prepared-media:controlled-same-source',
+              ownerRevision: a.name === 'v3.md' ? 3 : 1,
+              currentOwnerRevision: 3,
+            })),
+        },
+      },
+    });
+    const response = await app.inject({ url: '/api/threads/T1/artifacts?view=works', headers: AUTH });
+    assert.equal(response.statusCode, 200);
+    assert.equal(response.json().total, 1);
+    assert.deepEqual(
+      response.json().artifacts.map((a) => a.name),
+      ['v3.md', 'v1.md'],
+    );
+    assert.equal(response.json().artifacts[1].work.ownerRevision, 1);
+  });
 
   it('401 when no identity', async () => {
     app = await makeApp();

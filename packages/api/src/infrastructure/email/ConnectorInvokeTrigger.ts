@@ -39,10 +39,13 @@ import {
 } from '../../domains/cats/services/agents/invocation/PerCatTerminalDispositionCollector.js';
 import {
   actionSuccessorCarrierKey,
-  createInitialQueuedMessageCustody,
   type QueuedMessageCustodyCoordinator,
 } from '../../domains/cats/services/agents/invocation/QueuedMessageCustodyCoordinator.js';
 import type { QueueProcessor } from '../../domains/cats/services/agents/invocation/QueueProcessor.js';
+import {
+  QueueSourceCustodyAdmissionService,
+  queueSourceCustodyAdmissionId,
+} from '../../domains/cats/services/agents/invocation/QueueSourceCustodyAdmission.js';
 import { requireInvocationRecordUpdate } from '../../domains/cats/services/agents/invocation/require-invocation-record-update.js';
 import { stampVisibleTurn } from '../../domains/cats/services/agents/invocation/visible-turn.js';
 import type { AgentRouter } from '../../domains/cats/services/agents/routing/AgentRouter.js';
@@ -66,6 +69,10 @@ import { type AgentMessage, mergeTokenUsage, type TokenUsage } from '../../domai
 import type { MemoryCueOpportunitySeed } from '../../domains/memory/cue/MemoryCueInvocationPromptService.js';
 import { readTrustedConnectorMemoryCueSeeds } from '../../domains/memory/cue/MemoryCueTrustedConnector.js';
 import { bindAsrPersonMemoryReentryFromSchedulerMessage } from '../../domains/memory/people/AsrPersonMemoryReentryCarrier.js';
+import {
+  checkDeploymentWaitStart,
+  type DeploymentWaitStartGuard,
+} from '../../domains/runtime-deployment/DeploymentWaitStartGuard.js';
 import type { SocketManager } from '../../infrastructure/websocket/index.js';
 import { emitQueueUpdated, enrichQueueEntries } from '../../utils/queue-enrichment.js';
 
@@ -161,6 +168,7 @@ export interface ConnectorInvokeTriggerOptions {
   readonly queueProcessor?: QueueProcessor;
   /** Gate 2: exact queued-source CAS used when recovery must replace an absent carrier. */
   readonly queueCustodyCoordinator?: QueuedMessageCustodyCoordinator;
+  readonly queueSourceCustodyAdmission?: QueueSourceCustodyAdmissionService;
   readonly outboundHook?: OutboundDeliveryHook;
   readonly streamingHook?: StreamingOutboundHook;
   readonly threadMetaLookup?: (threadId: string) => ThreadMeta | undefined | Promise<ThreadMeta | undefined>;
@@ -170,6 +178,7 @@ export interface ConnectorInvokeTriggerOptions {
   readonly messageStore?: IMessageStore;
   /** Canonical owner used to validate a managed-command wake's frozen action generation. */
   readonly actionSuccessorLeaseStore?: Pick<ActionSuccessorLeaseStore, 'get'>;
+  readonly deploymentWaitStartGuard?: Pick<DeploymentWaitStartGuard, 'check'>;
   readonly log: FastifyBaseLogger;
 }
 
@@ -178,8 +187,8 @@ export interface ConnectorTriggerPolicy {
   readonly priority?: 'urgent' | 'normal';
   /** optional reason for diagnostics */
   readonly reason?: string;
-  /** F175: origin category for visual grouping */
-  readonly sourceCategory?: 'ci' | 'review' | 'conflict' | 'scheduled' | 'a2a' | 'issue';
+  /** F175: origin category for visual grouping; F167 turn custody also reads it (repo_inbox = F168 community delivery). */
+  readonly sourceCategory?: 'ci' | 'review' | 'conflict' | 'scheduled' | 'a2a' | 'issue' | 'repo_inbox';
   /** F140 Phase C: hint which Skill to auto-load (not a hard constraint — cat can override) */
   readonly suggestedSkill?: string;
   /** Event carriers use the existing Queue/F254/F264 custody even when the thread is idle. */
@@ -212,6 +221,15 @@ function actionLeaseCarriersMatch(left: InvocationActionLeaseCarrier, right: Inv
   );
 }
 
+function sourceCustodyOwnsQueueEntry(sourceMessage: StoredMessage | null | undefined, entry: QueueEntry): boolean {
+  const custody = sourceMessage?.queueCustody;
+  if (sourceMessage?.deliveryStatus !== 'queued' || !custody || custody.status === 'terminal') return false;
+  const targetCarriers = custody.carrierByTargetCatId;
+  return targetCarriers
+    ? entry.targetCats.every((catId) => targetCarriers[catId]?.entryId === entry.id)
+    : custody.entryId === entry.id;
+}
+
 /**
  * Invocation trigger for connector messages. The executor continues in the
  * background, but admission does not resolve until router startup has durable
@@ -227,9 +245,37 @@ function actionLeaseCarriersMatch(left: InvocationActionLeaseCarrier, right: Inv
  */
 export class ConnectorInvokeTrigger {
   private readonly opts: ConnectorInvokeTriggerOptions;
+  private readonly queueSourceCustodyAdmission?: QueueSourceCustodyAdmissionService;
+  private readonly queueAdmissionLocks = new Map<string, Promise<void>>();
 
   constructor(opts: ConnectorInvokeTriggerOptions) {
     this.opts = opts;
+    this.queueSourceCustodyAdmission =
+      opts.queueSourceCustodyAdmission ??
+      (opts.messageStore
+        ? new QueueSourceCustodyAdmissionService({
+            queue: opts.invocationQueue,
+            messageStore: opts.messageStore,
+            queueCustodyCoordinator: opts.queueCustodyCoordinator,
+          })
+        : undefined);
+  }
+
+  private async withQueueAdmissionLock<T>(key: string, operation: () => Promise<T>): Promise<T> {
+    const previous = this.queueAdmissionLocks.get(key) ?? Promise.resolve();
+    let release!: () => void;
+    const current = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    const tail = previous.then(() => current);
+    this.queueAdmissionLocks.set(key, tail);
+    await previous;
+    try {
+      return await operation();
+    } finally {
+      release();
+      if (this.queueAdmissionLocks.get(key) === tail) this.queueAdmissionLocks.delete(key);
+    }
   }
 
   /** Late-bind outbound hook (set after gateway bootstrap) */
@@ -363,6 +409,11 @@ export class ConnectorInvokeTrigger {
 
     let admission: DirectInvocationAdmission;
     try {
+      const decision = await checkDeploymentWaitStart(
+        { messageId, threadId, userId, catId, expectedDeploymentWait: policy?.reason === 'deployment_wait_satisfied' },
+        { guard: this.opts.deploymentWaitStartGuard, messageStore: this.opts.messageStore },
+      );
+      if (!decision.ok) throw new Error(`deployment wait continuation ${decision.reason}`);
       admission = await this.admitDirectInvocation(threadId, catId, userId, messageId);
     } catch (err) {
       rejectDirectAdmission();
@@ -396,6 +447,7 @@ export class ConnectorInvokeTrigger {
       sender,
       controller,
       executionStartReceipt,
+      policy?.reason === 'deployment_wait_satisfied',
     ).catch((err) => {
       executionStartReceipt.reject(err);
       this.opts.log.error(`[ConnectorInvokeTrigger] Unhandled: ${err instanceof Error ? err.message : String(err)}`);
@@ -574,7 +626,7 @@ export class ConnectorInvokeTrigger {
     messageId: string,
     sender?: { id: string; name?: string },
     priority: 'urgent' | 'normal' = 'normal',
-    sourceCategory?: string,
+    sourceCategory?: ConnectorTriggerPolicy['sourceCategory'],
     suggestedSkill?: string,
     coalesceKey?: string,
     autoExecute = false,
@@ -584,15 +636,6 @@ export class ConnectorInvokeTrigger {
 
     const sourceMessage = await this.opts.messageStore?.getById(messageId);
     const waitContinuationCarrier = waitContinuationCarrierFromStoredMessage(sourceMessage);
-
-    if (invocationQueue.hasEntryWithMessageId(threadId, messageId)) {
-      log.info(
-        { threadId, messageId },
-        '[ConnectorInvokeTrigger] Duplicate connector message already queued, skipping',
-      );
-      return 'enqueued';
-    }
-
     const actionLeaseAdmission = hasManagedCommandWakeActionLeaseRef(sourceMessage)
       ? await resolveManagedCommandWakeActionLeaseAdmission(
           sourceMessage,
@@ -603,123 +646,130 @@ export class ConnectorInvokeTrigger {
     const actionLeaseQueueKey = actionLeaseAdmission.actionSuccessorFence
       ? actionSuccessorCarrierKey(actionLeaseAdmission.actionSuccessorFence, catId)
       : undefined;
+    const connectorQueueKey =
+      actionLeaseQueueKey ??
+      (coalesceKey
+        ? `connector:${sourceCategory ?? 'generic'}:${coalesceKey}${
+            waitContinuationCarrier
+              ? `:wait:${waitContinuationCarrier.waitId}:${waitContinuationCarrier.outcomeId}`
+              : ''
+          }`
+        : undefined);
+    const admissionLockKey = `${threadId}\0${userId}\0${connectorQueueKey ?? `message:${messageId}`}`;
 
-    // Once Queue custody exists it is canonical, including a legacy missing
-    // value that must stay unknown. The private producer carrier is used only
-    // for the first admission of a source message with no custody yet.
-    const ownerAuthProvenance = sourceMessage?.queueCustody
-      ? normalizeOwnerAuthProvenance(sourceMessage.queueCustody.ownerAuthProvenance)
-      : requestedOwnerAuthProvenance;
-    const result = invocationQueue.enqueue({
-      threadId,
-      userId,
-      ownerAuthProvenance,
-      content: message,
-      messageId,
-      ...(actionLeaseQueueKey
-        ? {
-            idempotencyKey: actionLeaseQueueKey,
-            dedupeProcessing: true,
-          }
-        : coalesceKey
+    return this.withQueueAdmissionLock(admissionLockKey, async () => {
+      const existingEntry = invocationQueue.findEntryWithMessageId(threadId, messageId);
+      if (existingEntry) {
+        const persistedProcessingReplay =
+          existingEntry.status === 'processing' && sourceCustodyOwnsQueueEntry(sourceMessage, existingEntry);
+        if (sourceMessage && this.queueSourceCustodyAdmission && !persistedProcessingReplay) {
+          await this.queueSourceCustodyAdmission.admitDeferred(existingEntry, messageId, true);
+        }
+        log.info(
+          { threadId, messageId },
+          '[ConnectorInvokeTrigger] Duplicate connector message already queued, skipping',
+        );
+        return 'enqueued';
+      }
+
+      // Once Queue custody exists it is canonical, including a legacy missing
+      // value that must stay unknown. The private producer carrier is used only
+      // for the first admission of a source message with no custody yet.
+      const ownerAuthProvenance = sourceMessage?.queueCustody
+        ? normalizeOwnerAuthProvenance(sourceMessage.queueCustody.ownerAuthProvenance)
+        : requestedOwnerAuthProvenance;
+      const provisionalAdmissionId =
+        sourceMessage && this.queueSourceCustodyAdmission ? queueSourceCustodyAdmissionId(messageId) : undefined;
+      const result = invocationQueue.enqueue({
+        threadId,
+        userId,
+        ownerAuthProvenance,
+        content: message,
+        messageId,
+        ...(connectorQueueKey
           ? {
-              idempotencyKey: `connector:${sourceCategory ?? 'generic'}:${coalesceKey}${
-                waitContinuationCarrier
-                  ? `:wait:${waitContinuationCarrier.waitId}:${waitContinuationCarrier.outcomeId}`
-                  : ''
-              }`,
-              dedupeProcessing: false,
+              idempotencyKey: connectorQueueKey,
+              dedupeProcessing: Boolean(actionLeaseQueueKey),
             }
           : {}),
-      source: 'connector',
-      targetCats: [catId],
-      intent: 'execute',
-      priority,
-      autoExecute,
-      ...(sourceCategory
-        ? { sourceCategory: sourceCategory as 'ci' | 'review' | 'conflict' | 'scheduled' | 'a2a' | 'issue' }
-        : {}),
-      ...(sender ? { senderMeta: sender } : {}),
-      ...(suggestedSkill ? { suggestedSkill } : {}),
-      ...(waitContinuationCarrier ? { waitContinuationCarrier } : {}),
-      ...(actionLeaseAdmission.actionSuccessorFence
-        ? { actionSuccessorFence: actionLeaseAdmission.actionSuccessorFence }
-        : {}),
-    });
-
-    if (result.outcome === 'full') {
-      const fullQueue = await enrichQueueEntries(
-        invocationQueue.list(threadId, userId),
-        this.opts.messageStore ?? null,
-      );
-      socketManager.emitToUser(userId, 'queue_full_warning', {
-        threadId,
         source: 'connector',
-        queueSize: invocationQueue.size(threadId, userId),
-        queue: fullQueue,
+        targetCats: [catId],
+        intent: 'execute',
+        priority,
+        autoExecute,
+        ...(provisionalAdmissionId ? { queueCustodyAdmissionId: provisionalAdmissionId } : {}),
+        ...(sourceCategory ? { sourceCategory } : {}),
+        ...(sender ? { senderMeta: sender } : {}),
+        ...(suggestedSkill ? { suggestedSkill } : {}),
+        ...(waitContinuationCarrier ? { waitContinuationCarrier } : {}),
+        ...(actionLeaseAdmission.actionSuccessorFence
+          ? { actionSuccessorFence: actionLeaseAdmission.actionSuccessorFence }
+          : {}),
       });
-      socketManager.broadcastAgentMessage(
-        {
-          type: 'system_info',
-          catId: getDefaultCatId(),
-          content: JSON.stringify({ type: 'connector_skip', reason: 'queue_full', threadId }),
-          timestamp: Date.now(),
-        },
-        threadId,
-      );
-      log.warn({ threadId, catId, userId }, '[ConnectorInvokeTrigger] Queue full, connector message not enqueued');
-      return 'full';
-    }
 
-    if (result.entry) {
-      // Initial admission stores the exact source atomically; coalesced replays
-      // still append their distinct message IDs to the canonical carrier.
-      invocationQueue.backfillMessageId(threadId, userId, result.entry.id, messageId);
-      const persistedEntry = invocationQueue.getEntrySnapshot(threadId, userId, result.entry.id);
-      if (persistedEntry && sourceMessage?.deliveryStatus === 'queued' && !sourceMessage.queueCustody) {
-        const initialized = await this.opts.messageStore?.initializeQueueCustody(
-          messageId,
-          createInitialQueuedMessageCustody(persistedEntry),
+      if (result.outcome === 'full') {
+        const fullQueue = await enrichQueueEntries(
+          invocationQueue.list(threadId, userId),
+          this.opts.messageStore ?? null,
         );
-        if (initialized?.kind !== 'initialized' && initialized?.kind !== 'existing') {
-          throw new Error(`connector Queue custody initialization failed for ${messageId}: ${initialized?.kind}`);
+        socketManager.emitToUser(userId, 'queue_full_warning', {
+          threadId,
+          source: 'connector',
+          queueSize: invocationQueue.size(threadId, userId),
+          queue: fullQueue,
+        });
+        socketManager.broadcastAgentMessage(
+          {
+            type: 'system_info',
+            catId: getDefaultCatId(),
+            content: JSON.stringify({ type: 'connector_skip', reason: 'queue_full', threadId }),
+            timestamp: Date.now(),
+          },
+          threadId,
+        );
+        log.warn({ threadId, catId, userId }, '[ConnectorInvokeTrigger] Queue full, connector message not enqueued');
+        return 'full';
+      }
+
+      if (result.entry) {
+        // Initial admission stores the exact source atomically; coalesced replays
+        // still append their distinct message IDs to the canonical carrier. The
+        // fence precedes backfill so no synchronous Queue listener can observe an
+        // unbound source between the in-memory mutation and its durable CAS.
+        const beforeBackfill =
+          result.dedupeRollbackSnapshot ?? invocationQueue.getEntrySnapshot(threadId, userId, result.entry.id);
+        if (
+          provisionalAdmissionId &&
+          !invocationQueue.stageQueueCustodyAdmission(threadId, userId, result.entry.id, provisionalAdmissionId)
+        ) {
+          throw new Error(`Queue source carrier could not be fenced before backfill: ${result.entry.id}`);
         }
-      } else if (
-        persistedEntry &&
-        sourceMessage?.deliveryStatus === 'queued' &&
-        sourceMessage.queueCustody &&
-        sourceMessage.queueCustody.entryId !== persistedEntry.id
-      ) {
-        try {
-          if (!this.opts.queueCustodyCoordinator) {
-            throw new Error('Queue custody coordinator unavailable for verified replacement');
-          }
-          await this.opts.queueCustodyCoordinator.transferEntryCustody(persistedEntry, {
-            kind: 'verified',
-            previousEntryId: sourceMessage.queueCustody.entryId,
-            replacementEntryId: persistedEntry.id,
-            sourceMessageId: messageId,
-          });
-        } catch (error) {
-          if (!result.deduped) invocationQueue.rollbackEnqueue(threadId, userId, persistedEntry.id);
-          throw error;
+        invocationQueue.backfillMessageId(threadId, userId, result.entry.id, messageId);
+        const persistedEntry = invocationQueue.getEntrySnapshot(threadId, userId, result.entry.id);
+        if (persistedEntry && sourceMessage && this.queueSourceCustodyAdmission) {
+          await this.queueSourceCustodyAdmission.admitDeferred(
+            persistedEntry,
+            messageId,
+            result.deduped ?? false,
+            result.deduped ? (beforeBackfill ?? undefined) : undefined,
+          );
         }
       }
-    }
 
-    await emitQueueUpdated(
-      socketManager,
-      userId,
-      threadId,
-      invocationQueue.list(threadId, userId),
-      this.opts.messageStore ?? null,
-      result.outcome,
-    );
-    log.info(
-      { threadId, catId, outcome: result.outcome },
-      '[ConnectorInvokeTrigger] Queued (active invocation running)',
-    );
-    return result.outcome;
+      await emitQueueUpdated(
+        socketManager,
+        userId,
+        threadId,
+        invocationQueue.list(threadId, userId),
+        this.opts.messageStore ?? null,
+        result.outcome,
+      );
+      log.info(
+        { threadId, catId, outcome: result.outcome },
+        '[ConnectorInvokeTrigger] Queued (active invocation running)',
+      );
+      return result.outcome;
+    });
   }
 
   /**
@@ -741,12 +791,7 @@ export class ConnectorInvokeTrigger {
       return false;
     }
     if (!sourceMessage?.queueCustody) return true;
-    if (sourceMessage.queueCustody.status === 'terminal') return false;
-
-    const targetCarriers = sourceMessage.queueCustody.carrierByTargetCatId;
-    return targetCarriers
-      ? entry.targetCats.every((catId) => targetCarriers[catId]?.entryId === entry.id)
-      : sourceMessage.queueCustody.entryId === entry.id;
+    return sourceCustodyOwnsQueueEntry(sourceMessage, entry);
   }
 
   private async executeInBackground(
@@ -763,6 +808,7 @@ export class ConnectorInvokeTrigger {
     sender?: { id: string; name?: string },
     preAcquiredController?: AbortController,
     executionStartReceipt?: ExecutionStartReceipt,
+    expectedDeploymentWait = false,
   ): Promise<void> {
     const { router, socketManager, invocationRecordStore, invocationTracker, invocationQueue, log } = this.opts;
     const targetCats: CatId[] = [catId];
@@ -920,6 +966,19 @@ export class ConnectorInvokeTrigger {
         } catch (err) {
           log.warn({ err, threadId, messageId }, '[F276] direct connector re-entry carrier read failed closed');
         }
+      }
+
+      const deploymentDecision = await checkDeploymentWaitStart(
+        { messageId, threadId, userId, catId, expectedDeploymentWait },
+        { guard: this.opts.deploymentWaitStartGuard, messageStore: this.opts.messageStore },
+      );
+      if (!deploymentDecision.ok) {
+        finalStatus = deploymentDecision.reason === 'evidence_stale' ? 'failed' : 'canceled';
+        await invocationRecordStore.update(invocationId, { status: finalStatus, expectedStatus: 'running' });
+        executionStartReceipt?.reject(
+          new Error(`deployment wait continuation ${deploymentDecision.reason} before execution`),
+        );
+        return;
       }
 
       for await (const msg of router.routeExecution(userId, message, threadId, messageId, targetCats, intent, {

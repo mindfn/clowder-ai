@@ -162,12 +162,44 @@ async function projectMessageIds(
   return idsByThread;
 }
 
-async function projectMessageFields(
+function foldUnreadFieldBatch(
+  batch: readonly string[],
+  results: PipelineResults,
+  userId: string,
+  threadIdsByMessage: ReadonlyMap<string, string[]>,
+  summaries: ReadonlyMap<string, ThreadUnreadMessageProjection>,
+): void {
+  for (let index = 0; index < batch.length; index += 1) {
+    const messageId = batch[index];
+    if (!messageId) throw new Error(`Unread hash batch missing message ${index}`);
+    const fields = readPipelineValue<Array<string | null>>(results, index, 'Unread hash');
+    const projected = isProjectedUnread(fields, userId);
+    if (!projected.unread) continue;
+    for (const threadId of threadIdsByMessage.get(messageId) ?? []) {
+      const summary = summaries.get(threadId);
+      if (!summary) throw new Error(`Unread summary missing thread ${threadId}`);
+      summary.unreadCount += 1;
+      if (projected.mentioned) summary.hasUserMention = true;
+    }
+  }
+}
+
+async function summarizeMessageFields(
   redis: RedisClient,
   idsByThread: ReadonlyMap<string, string[]>,
-): Promise<Map<string, Array<string | null>>> {
-  const uniqueIds = [...new Set([...idsByThread.values()].flat())];
-  const fieldsById = new Map<string, Array<string | null>>();
+  userId: string,
+): Promise<Map<string, ThreadUnreadMessageProjection>> {
+  const threadIdsByMessage = new Map<string, string[]>();
+  const summaries = new Map<string, ThreadUnreadMessageProjection>();
+  for (const [threadId, ids] of idsByThread) {
+    summaries.set(threadId, { threadId, unreadCount: 0, hasUserMention: false });
+    for (const id of ids) {
+      const targets = threadIdsByMessage.get(id) ?? [];
+      targets.push(threadId);
+      threadIdsByMessage.set(id, targets);
+    }
+  }
+  const uniqueIds = [...threadIdsByMessage.keys()];
   const batchSize = 1000;
   for (let offset = 0; offset < uniqueIds.length; offset += batchSize) {
     const batch = uniqueIds.slice(offset, offset + batchSize);
@@ -188,13 +220,10 @@ async function projectMessageFields(
       );
     }
     const results = (await pipeline.exec()) as PipelineResults;
-    for (let index = 0; index < batch.length; index += 1) {
-      const messageId = batch[index];
-      if (!messageId) throw new Error(`Unread hash batch missing message ${index}`);
-      fieldsById.set(messageId, readPipelineValue<Array<string | null>>(results, index, 'Unread hash'));
-    }
+    foldUnreadFieldBatch(batch, results, userId, threadIdsByMessage, summaries);
   }
-  return fieldsById;
+  // Keep only counts across awaits, releasing raw metadata before the next batch.
+  return summaries;
 }
 
 function isProjectedUnread(fields: Array<string | null>, userId: string): { unread: boolean; mentioned: boolean } {
@@ -246,19 +275,11 @@ export async function projectRedisUnreadSummaries(
   if (cursors.length === 0) return [];
   const viewerBoundCursors = await selectViewerBoundProjectionCursors(redis, cursors, userId);
   const idsByThread = await projectMessageIds(redis, viewerBoundCursors);
-  const fieldsById = await projectMessageFields(redis, idsByThread);
+  const summaries = await summarizeMessageFields(redis, idsByThread, userId);
 
   return viewerBoundCursors.map(({ threadId }) => {
-    let unreadCount = 0;
-    let hasUserMention = false;
-    for (const messageId of idsByThread.get(threadId) ?? []) {
-      const fields = fieldsById.get(messageId);
-      if (!fields) continue;
-      const projected = isProjectedUnread(fields, userId);
-      if (!projected.unread) continue;
-      unreadCount += 1;
-      if (projected.mentioned) hasUserMention = true;
-    }
-    return { threadId, unreadCount, hasUserMention };
+    const summary = summaries.get(threadId);
+    if (!summary) throw new Error(`Unread summary missing thread ${threadId}`);
+    return { ...summary };
   });
 }

@@ -1,5 +1,6 @@
 import {
   MESSAGE_BUNDLE_CLI_QUOTE_PROJECTION_VERSION_V2,
+  MESSAGE_BUNDLE_CLI_QUOTE_PROJECTION_VERSION_V3,
   MESSAGE_BUNDLE_QUOTE_PROJECTION_VERSION,
   MESSAGE_BUNDLE_QUOTE_PROJECTION_VERSION_V2,
   MESSAGE_BUNDLE_QUOTE_PROJECTION_VERSION_V3,
@@ -12,6 +13,7 @@ import type { IThreadStore } from '../stores/ports/ThreadStore.js';
 import {
   digestMessageBundleCliQuoteProjection,
   digestMessageBundleCliQuoteProjectionV2,
+  digestMessageBundleCliQuoteProjectionV3,
   digestMessageBundleQuoteProjection,
   digestMessageBundleQuoteProjectionV2,
   digestMessageBundleQuoteProjectionV3,
@@ -24,6 +26,7 @@ import {
   projectCliSegment,
   projectCliSegmentReadable,
   projectCliSegmentReadableSource,
+  projectCliSegmentV3,
   projectMessageBundleGroupQuoteSourceV3,
   projectMessageBundleGroupReadableContent,
   projectMessageBundleQuoteSourceV1,
@@ -55,14 +58,19 @@ function verifiedCliCarrierProjection(
   records: Parameters<typeof projectCliSegment>[0],
 ): string | null {
   const isReadableProjection = item.sourceProjectionVersion === MESSAGE_BUNDLE_CLI_QUOTE_PROJECTION_VERSION_V2;
+  const isKeyedToolProjection = item.sourceProjectionVersion === MESSAGE_BUNDLE_CLI_QUOTE_PROJECTION_VERSION_V3;
   const rawProjection = isReadableProjection
     ? projectCliSegmentReadableSource(records, item.segmentId)
-    : projectCliSegment(records, item.segmentId);
+    : isKeyedToolProjection
+      ? projectCliSegmentV3(records, item.segmentId)
+      : projectCliSegment(records, item.segmentId);
   if (rawProjection === null) return null;
   const projection = isReadableProjection ? projectCliSegmentReadable(rawProjection) : rawProjection;
   const expectedDigest = isReadableProjection
     ? digestMessageBundleCliQuoteProjectionV2(projection)
-    : digestMessageBundleCliQuoteProjection(projection);
+    : isKeyedToolProjection
+      ? digestMessageBundleCliQuoteProjectionV3(projection)
+      : digestMessageBundleCliQuoteProjection(projection);
   return expectedDigest === item.sourceProjectionSha256 ? projection : null;
 }
 

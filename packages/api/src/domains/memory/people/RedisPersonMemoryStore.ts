@@ -57,6 +57,8 @@ import {
   retirePersonClaim,
 } from './person-memory-lifecycle.js';
 import { UPDATE_CANDIDATE_STATE_LUA, WITHDRAW_CANDIDATE_LUA } from './person-memory-lua.js';
+import { executeOwnerMemoryAction, resolveOwnerActionReplay } from './person-memory-owner-action.js';
+import type { ExecuteOwnerMemoryActionInput, OwnerMemoryActionCommand } from './person-memory-owner-action-contract.js';
 import { hardForgetPersonMemoryProposal } from './person-memory-proposal-forget.js';
 import {
   parseClaim,
@@ -95,6 +97,10 @@ function candidatePersonId(candidate: StoredPersonMemoryCandidate): string | und
 function candidateForgetFence(candidate: StoredPersonMemoryCandidate): string {
   const personId = candidatePersonId(candidate);
   return personId ? PersonMemoryKeys.forgetFence(candidate.ownerUserId, personId) : '';
+}
+
+function redisGlobLiteral(value: string): string {
+  return value.replace(/[\\*?[\]]/gu, '\\$&');
 }
 
 export class RedisPersonMemoryStore implements PersonMemoryStore {
@@ -267,6 +273,33 @@ export class RedisPersonMemoryStore implements PersonMemoryStore {
     return parsePerson(await this.redis.get(PersonMemoryKeys.person(ownerUserId, personId)));
   }
 
+  async listPeople(ownerUserId: string): Promise<PersonIdentity[]> {
+    const keyPrefix = this.redis.options.keyPrefix ?? '';
+    const logicalPrefix = PersonMemoryKeys.person(ownerUserId, '');
+    const matchPattern = `${redisGlobLiteral(`${keyPrefix}${logicalPrefix}`)}*`;
+    const people = new Map<string, PersonIdentity>();
+    let cursor = '0';
+    do {
+      const [nextCursor, rawKeys] = await this.redis.scan(cursor, 'MATCH', matchPattern, 'COUNT', 100);
+      cursor = nextCursor;
+      const logicalKeys = [
+        ...new Set(
+          rawKeys
+            .map((key) => (keyPrefix && key.startsWith(keyPrefix) ? key.slice(keyPrefix.length) : key))
+            .filter((key) => key.startsWith(logicalPrefix)),
+        ),
+      ];
+      if (logicalKeys.length === 0) continue;
+      for (const raw of await this.redis.mget(...logicalKeys)) {
+        const person = parsePerson(raw);
+        if (person?.ownerUserId === ownerUserId) people.set(person.personId, person);
+      }
+    } while (cursor !== '0');
+    return [...people.values()].sort(
+      (left, right) => right.createdAt - left.createdAt || left.personId.localeCompare(right.personId),
+    );
+  }
+
   async resolveActivePersonByAlias(ownerUserId: string, alias: string): Promise<PersonAliasResolution> {
     const ids = await this.redis.smembers(PersonMemoryKeys.alias(ownerUserId, normalizePrivateAlias(alias)));
     const people = (await Promise.all(ids.slice(0, 4).map((id) => this.getPerson(ownerUserId, id)))).filter(
@@ -327,6 +360,14 @@ export class RedisPersonMemoryStore implements PersonMemoryStore {
 
   redactItem(input: RedactPersonMemoryItemInput): Promise<PersonMemoryRedactionResult> {
     return redactPersonMemoryItem(this.redis, input);
+  }
+
+  resolveOwnerActionReplay(input: { ownerUserId: string; command: OwnerMemoryActionCommand; requestDigest: string }) {
+    return resolveOwnerActionReplay(this.redis, input);
+  }
+
+  executeOwnerAction(input: ExecuteOwnerMemoryActionInput) {
+    return executeOwnerMemoryAction(this.redis, input);
   }
 
   async hardForget(input: HardForgetPersonInput) {

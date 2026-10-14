@@ -15,8 +15,14 @@ describe('runtime health routes', () => {
     assert.match(src, /app\.get\('\/api\/ready',\s*readyHandler\)/);
   });
 
-  it('publishes the common API/Web deployment revision for stale-page detection', () => {
-    assert.match(src, /resolveRuntimeDeploymentRevision/);
+  it('publishes only the owned boot revision for stale-page detection', () => {
+    assert.match(src, /let runtimeDeploymentRevision:\s*string\s*\|\s*null\s*=\s*null;/);
+    assert.match(src, /const context = await beginOwnedRuntimeDeployment\(/);
+    assert.match(
+      src,
+      /if \(context\) \{\s*runtimeDeploymentContext = context;\s*runtimeDeploymentRevision = context\.runningRevision;/,
+    );
+    assert.doesNotMatch(src, /resolveRuntimeDeploymentRevision\(/);
     assert.match(src, /deploymentRevision:\s*runtimeDeploymentRevision/);
   });
 

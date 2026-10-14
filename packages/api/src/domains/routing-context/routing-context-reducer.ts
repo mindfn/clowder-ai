@@ -131,27 +131,11 @@ function inactiveSignalReason(signal: AssertedSignal, closer?: ClosingSignal): R
       sourceRefs: [closer.eventId, signal.eventId, closer.evidenceRef],
     };
   }
-  if (closer?.eventType === 'retracted') {
-    return {
-      code: 'routing_signal_retracted',
-      summary: closer.note ?? closer.reasonCode,
-      sourceRefs: [closer.eventId, signal.eventId, closer.evidenceRef],
-    };
-  }
   return {
     code: 'routing_signal_expired',
     summary: `${signal.reasonCode} expired without recovery evidence`,
     sourceRefs: [signal.eventId, signal.evidenceRef],
   };
-}
-
-function profileReasons(profile?: CapabilityProfileRevisionRefV1): RoutingReasonV1[] {
-  if (profile === undefined) return [];
-  return profile.relevantSignals.map((signal) => ({
-    code: `capability_${signal.kind}`,
-    summary: signal.summary,
-    sourceRefs: [profile.dossierRevision, ...signal.evidenceRefs],
-  }));
 }
 
 function effectForAvailability(availability: Availability): CandidateProjection['effect'] {
@@ -176,7 +160,7 @@ function reduceCandidateSignals(input: {
     .filter((event) => subjectMatchesCandidate(event.subjectRef, input.candidate));
 
   const active: AssertedSignal[] = [];
-  const unknown: Array<{ signal: AssertedSignal; closer?: ClosingSignal }> = [];
+  const expired: AssertedSignal[] = [];
   const recovered: Array<{ signal: AssertedSignal; closer: ClosingSignal }> = [];
   for (const signal of matchingAssertions) {
     const closer = input.closures.get(signal.eventId);
@@ -185,14 +169,15 @@ function reduceCandidateSignals(input: {
       continue;
     }
     if (closer?.eventType === 'retracted') {
-      unknown.push({ signal, closer });
+      // Owner removal withdraws this assertion's influence, not evidence of recovery.
+      // The immutable assertion/closure remain in the read model's history.
       continue;
     }
     const boundary = Math.min(
       signal.validUntil ?? Number.POSITIVE_INFINITY,
       signal.resetAt ?? Number.POSITIVE_INFINITY,
     );
-    if (input.observedAt >= boundary) unknown.push({ signal });
+    if (input.observedAt >= boundary) expired.push(signal);
     else active.push(signal);
   }
 
@@ -222,12 +207,12 @@ function reduceCandidateSignals(input: {
         : {}),
     };
   }
-  if (unknown.length > 0) {
-    unknown.sort((left, right) => compareIdentity(left.closer ?? left.signal, right.closer ?? right.signal));
+  if (expired.length > 0) {
+    expired.sort(compareIdentity);
     return {
       availability: 'unknown',
       freshness: 'stale',
-      reasons: unknown.map(({ signal, closer }) => inactiveSignalReason(signal, closer)),
+      reasons: expired.map((signal) => inactiveSignalReason(signal)),
     };
   }
   if (recovered.length > 0) {
@@ -301,17 +286,14 @@ export function reduceRoutingContext(rawInput: ReduceRoutingContextInput): Routi
       const profile = profileHeads.get(binding.catId);
       const diagnostics = profileDiagnostics
         .filter((diagnostic) => diagnostic.catId === binding.catId)
-        .map((diagnostic) => diagnostic.reason);
+        .map((diagnostic) => diagnostic.reason)
+        .slice(0, 32);
       const signalState = reduceCandidateSignals({
         candidate: binding,
         events: signalEvents,
         closures,
         observedAt: rawInput.observedAt,
       });
-      const capabilityReasons = profileReasons(profile);
-      const boundedDiagnostics = diagnostics.slice(0, 32);
-      const boundedCapabilityReasons = capabilityReasons.slice(0, 32 - boundedDiagnostics.length);
-      const signalReasonLimit = 32 - boundedDiagnostics.length - boundedCapabilityReasons.length;
       return {
         binding,
         profile:
@@ -319,11 +301,7 @@ export function reduceRoutingContext(rawInput: ReduceRoutingContextInput): Routi
         availability: signalState.availability,
         freshness: signalState.freshness,
         ...(signalState.dispatch ? { dispatch: signalState.dispatch } : {}),
-        reasons: [
-          ...boundedDiagnostics,
-          ...signalState.reasons.slice(0, signalReasonLimit),
-          ...boundedCapabilityReasons,
-        ],
+        reasons: [...diagnostics, ...signalState.reasons.slice(0, 32 - diagnostics.length)],
         matchedPreferences: [],
         effect: effectForAvailability(signalState.availability),
       };

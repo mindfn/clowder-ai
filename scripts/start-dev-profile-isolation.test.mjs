@@ -91,6 +91,7 @@ function collectBuildChildEnvCallsMissingWorkingDirectory() {
   return findings.sort();
 }
 
+// Fixture commands must preserve the supplied environment and avoid host login/logout hooks.
 function runSourceOnly({ sandboxDir, env = {}, extraArgs = [], commands }) {
   const command = (
     commands ?? [
@@ -99,7 +100,7 @@ function runSourceOnly({ sandboxDir, env = {}, extraArgs = [], commands }) {
     ]
   ).join('; ');
 
-  return spawnSync('bash', ['-lc', command], {
+  return spawnSync('bash', ['-c', command], {
     cwd: sandboxDir,
     env: {
       PATH: process.env.PATH ?? '',
@@ -117,7 +118,7 @@ function runApiLaunchCommand({ sandboxDir, env = {}, extraArgs = [] }) {
     'printf "%s\\n" "$(api_launch_command)"',
   ].join('; ');
 
-  return spawnSync('bash', ['-lc', command], {
+  return spawnSync('bash', ['-c', command], {
     cwd: sandboxDir,
     env: {
       PATH: process.env.PATH ?? '',
@@ -129,7 +130,54 @@ function runApiLaunchCommand({ sandboxDir, env = {}, extraArgs = [] }) {
   });
 }
 
+function shellFailureDetails(result) {
+  return `shell exit=${result.status}, signal=${result.signal ?? 'none'}\nstdout:\n${result.stdout}\nstderr:\n${result.stderr}`;
+}
+
 describe('start-dev strict profile isolation', () => {
+  it('reuses wrapper-verified production artifacts without changing user start arguments', () => {
+    const sandboxDir = createSandbox();
+    try {
+      const result = runSourceOnly({
+        sandboxDir,
+        env: {
+          CAT_CAFE_RUNTIME_ARTIFACTS_VERIFIED: '1',
+          CAT_CAFE_DEPLOYMENT_ID: 'runtime',
+          CAT_CAFE_RUNTIME_ROOT: sandboxDir,
+        },
+        commands: [
+          'source scripts/start-dev.sh --source-only --prod-web',
+          'reuse_verified_runtime_artifacts',
+          'printf "QUICK=%s\\n" "$QUICK_MODE"',
+        ],
+      });
+      assert.equal(result.status, 0, shellFailureDetails(result));
+      assert.match(result.stdout, /QUICK=true/);
+    } finally {
+      rmSync(sandboxDir, { recursive: true, force: true });
+    }
+  });
+
+  it('waits for HTTP readiness after port listen before reporting startup complete', () => {
+    const sandboxDir = createSandbox();
+    const callsPath = join(sandboxDir, 'ready-calls');
+    try {
+      const result = runSourceOnly({
+        sandboxDir,
+        commands: [
+          'source scripts/start-dev.sh --source-only --quick',
+          `curl() { local n=0; [ ! -f '${callsPath}' ] || n=$(cat '${callsPath}'); n=$((n+1)); printf '%s' "$n" > '${callsPath}'; [ "$n" -lt 2 ] && printf 503 || printf 200; }`,
+          'sleep() { :; }',
+          'wait_for_api_readiness 3102 "$$" 5',
+        ],
+      });
+      assert.equal(result.status, 0, shellFailureDetails(result));
+      assert.equal(readFileSync(callsPath, 'utf8'), '2', '503 must not count as ready');
+    } finally {
+      rmSync(sandboxDir, { recursive: true, force: true });
+    }
+  });
+
   it('ignores inherited shell env for profile-controlled vars when strict mode is on', () => {
     const sandboxDir = createSandbox();
     try {
@@ -151,7 +199,7 @@ describe('start-dev strict profile isolation', () => {
         extraArgs: ['--', '--profile=opensource'],
       });
 
-      assert.equal(result.status, 0, result.stderr || result.stdout);
+      assert.equal(result.status, 0, shellFailureDetails(result));
       assert.match(result.stdout, /PROFILE=opensource/);
       assert.match(result.stdout, /ASR=0/);
       assert.match(result.stdout, /PROXY=0/);
@@ -176,7 +224,7 @@ describe('start-dev strict profile isolation', () => {
         extraArgs: ['--', '--profile=production'],
       });
 
-      assert.equal(result.status, 0, result.stderr || result.stdout);
+      assert.equal(result.status, 0, shellFailureDetails(result));
       assert.match(result.stdout, /PROFILE=production/);
       assert.match(result.stdout, /ASR=0/);
       assert.match(result.stdout, /PROXY=0/);
@@ -203,7 +251,7 @@ describe('start-dev strict profile isolation', () => {
         extraArgs: ['--', '--profile=opensource'],
       });
 
-      assert.equal(result.status, 0, result.stderr || result.stdout);
+      assert.equal(result.status, 0, shellFailureDetails(result));
       assert.match(result.stdout, /PROFILE=opensource/);
       assert.match(result.stdout, /ASR=0/);
       assert.match(result.stdout, /EMBED=0/);
@@ -221,7 +269,7 @@ describe('start-dev strict profile isolation', () => {
         'source scripts/start-dev.sh --source-only -- --profile=opensource',
         'printf "ASR=%s\\nTTS=%s\\nLEGACY_ASR=%s\\nLEGACY_TTS=%s\\n" "$ASR_ENABLED" "$TTS_ENABLED" "${CAT_CAFE_SERVICE_ASR_ENABLED:-}" "${CAT_CAFE_SERVICE_TTS_ENABLED:-}"',
       ].join('; ');
-      const result = spawnSync('bash', ['-lc', command], {
+      const result = spawnSync('bash', ['-c', command], {
         cwd: sandboxDir,
         env: {
           PATH: process.env.PATH ?? '',
@@ -232,7 +280,7 @@ describe('start-dev strict profile isolation', () => {
         encoding: 'utf8',
       });
 
-      assert.equal(result.status, 0, result.stderr || result.stdout);
+      assert.equal(result.status, 0, shellFailureDetails(result));
       assert.match(result.stdout, /ASR=0/);
       assert.match(result.stdout, /TTS=0/);
       assert.match(result.stdout, /LEGACY_ASR=1/);
@@ -257,7 +305,7 @@ describe('start-dev strict profile isolation', () => {
         extraArgs: ['--', '--profile=opensource'],
       });
 
-      assert.equal(result.status, 0, result.stderr || result.stdout);
+      assert.equal(result.status, 0, shellFailureDetails(result));
       assert.match(result.stdout, /PROFILE=opensource/);
       assert.match(result.stdout, /EMBED=0/);
     } finally {
@@ -277,7 +325,7 @@ describe('start-dev strict profile isolation', () => {
         'source scripts/start-dev.sh --source-only',
         'printf "SERVICE_EMBED=%s\\n" "${CAT_CAFE_SERVICE_EMBED_ENABLED:-unset}"',
       ].join('; ');
-      const result = spawnSync('bash', ['-lc', command], {
+      const result = spawnSync('bash', ['-c', command], {
         cwd: sandboxDir,
         env: {
           PATH: process.env.PATH ?? '',
@@ -286,7 +334,7 @@ describe('start-dev strict profile isolation', () => {
         },
         encoding: 'utf8',
       });
-      assert.equal(result.status, 0, result.stderr || result.stdout);
+      assert.equal(result.status, 0, shellFailureDetails(result));
       assert.match(
         result.stdout,
         /SERVICE_EMBED=1/,
@@ -308,7 +356,7 @@ describe('start-dev strict profile isolation', () => {
         extraArgs: ['--', '--profile=opensource'],
       });
 
-      assert.equal(result.status, 0, result.stderr || result.stdout);
+      assert.equal(result.status, 0, shellFailureDetails(result));
       assert.match(result.stdout, /PROFILE=opensource/);
       assert.match(result.stdout, /EMBED=0/);
     } finally {
@@ -320,7 +368,7 @@ describe('start-dev strict profile isolation', () => {
     const sandboxDir = createSandbox();
     try {
       const result = runApiLaunchCommand({ sandboxDir });
-      assert.equal(result.status, 0, result.stderr || result.stdout);
+      assert.equal(result.status, 0, shellFailureDetails(result));
       assert.match(result.stdout, /NODE_ENV=development/, result.stdout);
       assert.match(result.stdout, /pnpm run dev/, result.stdout);
     } finally {
@@ -358,7 +406,7 @@ describe('start-dev strict profile isolation', () => {
         env: { CAT_CAFE_STRICT_PROFILE_DEFAULTS: '1' },
         extraArgs: ['--', '--profile=opensource'],
       });
-      assert.equal(result.status, 0, result.stderr || result.stdout);
+      assert.equal(result.status, 0, shellFailureDetails(result));
       assert.match(result.stdout, /NODE_ENV=development/, result.stdout);
     } finally {
       rmSync(sandboxDir, { recursive: true, force: true });
@@ -373,7 +421,7 @@ describe('start-dev strict profile isolation', () => {
         env: { CAT_CAFE_STRICT_PROFILE_DEFAULTS: '1' },
         extraArgs: ['--prod-web', '--', '--profile=opensource'],
       });
-      assert.equal(result.status, 0, result.stderr || result.stdout);
+      assert.equal(result.status, 0, shellFailureDetails(result));
       assert.match(result.stdout, /NODE_ENV=production/, result.stdout);
     } finally {
       rmSync(sandboxDir, { recursive: true, force: true });
@@ -387,7 +435,7 @@ describe('start-dev strict profile isolation', () => {
         sandboxDir,
         extraArgs: ['--prod-web'],
       });
-      assert.equal(result.status, 0, result.stderr || result.stdout);
+      assert.equal(result.status, 0, shellFailureDetails(result));
       assert.match(result.stdout, /pnpm run start/, result.stdout);
       assert.doesNotMatch(result.stdout, /pnpm run dev/, result.stdout);
     } finally {
@@ -466,7 +514,7 @@ describe('cross-platform pnpm-start profile propagation (#421)', () => {
         ],
       });
 
-      assert.equal(result.status, 0, result.stderr);
+      assert.equal(result.status, 0, shellFailureDetails(result));
       assert.match(result.stdout, /CONTINUED=1/);
       assert.match(result.stdout, /OWNER=empty/);
       assert.match(result.stdout, /F247 cloud supporting services degraded/i);
@@ -490,7 +538,7 @@ describe('cross-platform pnpm-start profile propagation (#421)', () => {
         ],
       });
 
-      assert.equal(result.status, 0, result.stderr);
+      assert.equal(result.status, 0, shellFailureDetails(result));
       assert.match(result.stdout, /F247 cloud: degraded/i);
       assert.match(result.stdout, /NODE_ARGS=.*status --summary/);
       assert.match(result.stdout, /RESULT=0/);
@@ -555,12 +603,29 @@ describe('cross-platform pnpm-start profile propagation (#421)', () => {
       resolve(ROOT, 'packages/api/src/domains/cats/services/agents/providers/acp/AcpHttpStreamClient.ts'),
       'utf8',
     );
-    const tmuxGateway = readFileSync(resolve(ROOT, 'packages/api/src/domains/terminal/tmux-gateway.ts'), 'utf8');
+    const runtimeOnlyEnv = readFileSync(resolve(ROOT, 'packages/api/src/utils/runtime-only-env.ts'), 'utf8');
 
     assert.match(acpClient, /buildChildEnv\(this\.config\.env, \{ workingDirectory: this\.config\.cwd \}\)/);
     assert.match(acpHttpClient, /buildChildEnv\(this\.config\.env, \{ workingDirectory: this\.config\.cwd \}\)/);
-    assert.match(tmuxGateway, /'CONNECTOR_GATEWAY_AUTOSTART'/);
-    assert.match(tmuxGateway, /'CAT_CAFE_PROVISION_GLOBAL_SIDECAR'/);
+    // One list, owned by one module…
+    assert.match(
+      runtimeOnlyEnv,
+      /export const RUNTIME_ONLY_LIFECYCLE_ENV_KEYS = \[\s*'CONNECTOR_GATEWAY_AUTOSTART',\s*'CAT_CAFE_PROVISION_GLOBAL_SIDECAR',\s*'CAT_CAFE_RUNTIME_ARTIFACTS_VERIFIED',\s*'CAT_CAFE_ALPHA_COORDINATES',?\s*\] as const;/,
+    );
+    // …consumed by every spawn path that runs cat-authored commands, never re-copied.
+    for (const consumer of [
+      'packages/api/src/domains/terminal/tmux-gateway.ts',
+      'packages/api/src/utils/cli-spawn.ts',
+      'packages/api/src/infrastructure/managed-runner-environment.ts',
+    ]) {
+      const source = readFileSync(resolve(ROOT, consumer), 'utf8');
+      assert.match(
+        source,
+        /import \{ RUNTIME_ONLY_LIFECYCLE_ENV_KEYS \} from '[./]+(utils\/)?runtime-only-env\.js';/,
+        `${consumer} must consume the shared runtime-only list`,
+      );
+      assert.doesNotMatch(source, /'CONNECTOR_GATEWAY_AUTOSTART'|'CAT_CAFE_PROVISION_GLOBAL_SIDECAR'/, consumer);
+    }
   });
 
   it('requires every buildChildEnv caller to declare its intended working directory or a narrow exception', () => {
@@ -1087,7 +1152,7 @@ describe('Whisper sidecar startup guards', () => {
     const result = spawnSync(
       'bash',
       [
-        '-lc',
+        '-c',
         [
           `source "${helperPath}"`,
           'HTTP_PROXY=socks://127.0.0.1:7897/',
@@ -1100,7 +1165,7 @@ describe('Whisper sidecar startup guards', () => {
       { encoding: 'utf8' },
     );
 
-    assert.equal(result.status, 0, result.stderr);
+    assert.equal(result.status, 0, shellFailureDetails(result));
     assert.equal(
       result.stdout,
       ['socks5://127.0.0.1:7897/', 'socks5://127.0.0.1:7897/', 'socks5h://127.0.0.1:7897/'].join('\n') + '\n',

@@ -118,6 +118,11 @@ export const sendMessageSchema = z
     threadId: z.string().min(1).max(100).optional(),
     /** Client-provided idempotency key (UUID). Optional — server generates one if absent. */
     idempotencyKey: z.string().uuid().optional(),
+    /** The authenticated sender consumes only this mounted owner draft revision on acceptance. */
+    composerDraftRevision: z.preprocess(
+      (value) => (typeof value === 'string' && /^\d+$/.test(value) ? Number(value) : value),
+      z.number().int().min(0).max(Number.MAX_SAFE_INTEGER).optional(),
+    ),
     /** F35: Message visibility. Default 'public'. 'whisper' requires whisperTo. */
     visibility: z.enum(['public', 'whisper']).optional(),
     /** F35: Whisper recipients. Required when visibility='whisper'. */

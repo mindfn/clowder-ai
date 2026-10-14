@@ -210,11 +210,13 @@ export const DEVELOPMENT_SOP_DEFINITION = {
         {
           id: 'quality-gate-risk-matched-evidence',
           kind: 'pitfall',
-          text: '声称完成但没有与影响面匹配的验证证据（纯文档走文档校验；高风险加强独立审查，跨包影响无法由 targeted 覆盖才要求 full gate）',
+          text: '声称完成但没有与影响面匹配的验证证据（测试增量按 testing-standard 核真实失败、承接与成本；批量清理集中验证，高风险加强独立审查，targeted 无法覆盖才 full）',
           severity: 'blocker',
           owner: { type: 'stage_suggested_skill', skill: 'quality-gate' },
           predicate: {
             type: 'command_pattern',
+            reason:
+              'This predicate observes command execution only; the author and selected reviewer judge test value and sufficient coverage under docs/ops/testing-standard.md. It does not require a new test, a full gate, or another reviewer.',
             mustMatch: 'pnpm gate|pnpm (check|lint|test)|pnpm --filter .* test|node --test|git diff --check',
           },
         },
@@ -322,13 +324,13 @@ export const DEVELOPMENT_SOP_DEFINITION = {
         {
           id: 'merge-runtime-activation-truth',
           kind: 'hard_rule',
-          text: '触及 runtime 加载面的 PR 合入后必须分开声明 main 与 live runtime 状态；未获co-creator授权时记录 live=dormant，不得冒充已生效',
+          text: '触及 runtime 加载面的 PR 合入后必须分开声明 main 与 live runtime 状态；登记能力已加载时把普通 live=dormant 验收续办登记到原 work Task，能力未加载或登记失败时不得假报成功，且登记不授予停启权限',
           severity: 'blocker',
           owner: { type: 'stage_suggested_skill', skill: 'merge-gate' },
           predicate: {
             type: 'manual_only',
             reason:
-              'Runtime impact, current live-load state, and operator authorization are semantic and external truths; changed filenames alone cannot prove activation.',
+              'Runtime impact, durable Task ownership, current live-load state, and operator authorization are semantic and external truths; changed filenames alone cannot prove registration or activation.',
             futureCandidate: 'runtime_activation_receipt',
           },
         },

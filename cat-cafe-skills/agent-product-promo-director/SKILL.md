@@ -1,14 +1,15 @@
 ---
 name: agent-product-promo-director
-tips_exempt: "2026-09-15 narrative-method update: clarifies audience, causal scenes and handoff within the existing creative-direction workflow; no new filming tool or user entry."
+tips_exempt: "Renewed 2026-10-13: human agency, peer collaboration and transitions between worlds refine the existing promo directing method and cold-read questions; dramatization and review order remain unchanged. No new filming tool or user entry."
 description: >
   Agent/AI 产品宣传片的创意导演层：先锁产品主角、观众信念变化与影片格式，再把不可见的 Agent
   协作翻译成可拍的故事、镜头、运动、声音和 provenance contract。Use when: 用户问 Agent 产品宣传片
   如何导演/剪辑/叙事/配声音、要拆参考片、写 creative brief/beat sheet，或 video-forge 开机前仍未锁定
   主语与镜头语法。Not for: brief 已冻结后的录制/TTS/对齐/渲染（用 video-forge）、教程/功能 walkthrough、
-  纯动画生产（用 anime-forge）、只找时效性竞品（先用 deep-research）。Output: product-hero sentence +
+  目的就是讲角色自己故事的动画（用 anime-forge）、只找时效性竞品（先用 deep-research）。Output: product-hero sentence +
   audience belief change + format decision + claim/proof beat sheet + shot/motion/sound maps + provenance ledger +
-  operator acceptance questions。GOTCHA: 用户举的页面、thread 或成果只是候选证据，不自动成为影片主题；内部静态分镜不能冒充成片。
+  operator acceptance questions。GOTCHA: 用户举的页面、thread 或成果只是候选证据，不自动成为影片主题；内部静态分镜不能冒充成片；
+  宣传片的故事层默认可以虚构（§7 `dramatization`），不要写成纪录片。
 ---
 
 # Agent Product Promo Director
@@ -69,7 +70,7 @@ description: >
 - 权限请求、暂停、接管、纠正和恢复；
 - 记忆如何让下一步接上，而不是重新开始。
 
-禁止展示或伪造 chain-of-thought。不要用假进度条、假输入、假并发替代真实行为。
+禁止展示或伪造 chain-of-thought。demo film 里证明「产品真能这样做」的那一拍，不要用假进度条、假输入、假并发替代真实行为；宣传片里的戏剧化场景不受这条限制（见 §7 `dramatization`）。
 
 ## 4. 写成因果故事
 
@@ -128,8 +129,12 @@ description: >
 | `faithful_replay` | 真实状态/动作被重演以便看清 | 内部登记；不冒充未剪纪录片 |
 | `designed_explanation` | 用排版、图形或合成 UI 解释真实机制 | 视觉上标示设计感；不伪造隐藏推理 |
 | `future_vision` | 尚未实现的愿景 | 动画/未来时态/独立视觉 register |
+| `dramatization` | 故事本身：编出来的人物、场景、对白、梦想和结局，用来引起共鸣、讲清主张 | 宣传片故事层的默认素材；不要出处，不标「新写」「重演」。能力成立、只是这个项目因钱或优先级没做完，可以拍成做完，不算 `future_vision`；能力成不成立由 operator 判断 |
 
-Past 必须有证据，future 必须诚实。设计清晰度不能以伪造真实性换取。
+**先分片种，再定事实规矩。**
+- **宣传片**（brand hero、launch film）：故事层默认用 `dramatization`。要的是陌生人的共鸣，不是事实账本。别把纪录片纪律压到故事上：只敢用真事、给每句台词找出处、照实拍「还没做完」，都是错位。
+- **纪录、复盘、产品史和 demo film**：按 `real_capture` / `faithful_replay` 守事实。`video-forge` 的事实规矩是给这类片子的。
+- **宣传片里要守的是「当真实证明用的主张」**：片子拿来证明产品能力、业绩或作品归属的，要和事实一致。不能把别人的真作品说成家里做的，不能把编的增长数字当真实成绩；产品做不到的能力按 `future_vision` 拍。编出来的人物和场景（比如虚构仓库上的「12 颗星」）不用查。拿不准时先按戏剧化写，交稿时用一句话标出来，交 operator 定。
 
 ## 8. Director Brief 交付合同
 
@@ -141,9 +146,9 @@ Past 必须有证据，future 必须诚实。设计清晰度不能以伪造真�
 - motion reason、sound cue、source class、must show / must not imply；
 - operator 要回答的主语/情绪验收问题。
 
-**operator 先验收主语、关系和情绪，再进入昂贵生产。** 同行只能审事实、技术和证据纪律，不能替代创意 ground truth。静态分镜是内部 previsualization，只回答构图问题；它不能证明节奏、运镜或 motion 成立，也不能作为成片交付。
+**operator 先验收主语、关系和情绪，再进入昂贵生产。** 同行只能审事实、技术和证据纪律，不能替代创意 ground truth。静态分镜是内部 previsualization，只回答构图问题。按声音稿时间拼起来的静帧粗片可以验故事和节奏，但证明不了运镜或 motion 成立，也不能作为成片交付。
 
-brief 通过后交给 `video-forge`，由它负责素材、全局旁白、强制对齐、video-spec、渲染和技术审查。
+brief 通过后交给 `video-forge`，由它负责素材、全局旁白、强制对齐、video-spec、渲染和技术审查。贵素材之前，按 `../.cat-cafe-shared-refs/video-voice-and-timeline.md` §1 从便宜到贵给 operator 看：一句话、最危险那一段的最小样张、全片粗片（operator 报时间码改）。样张过之前只做那一段；声音稿只给猫自己查念错、量时长，不单独交 operator 听。
 
 ## Failure-history brakes
 
@@ -156,17 +161,24 @@ brief 通过后交给 `video-forge`，由它负责素材、全局旁白、强制
 | 功能逐条报菜名 | 没有因果任务 | 让功能在同一愿望里依次成为必要动作 |
 | 每个 click 都 ding/whoosh | 声音没有语义层级 | 只 cue 因果转折；给对白和静默留空间 |
 | 找同行说“通过”但 operator 不买账 | 验收者错位 | 创意直接回 operator，技术事实再找对应 gate |
+| 宣传片写成纪录片：只用真事、给台词标出处、照实写「还在练」 | 纪录片的事实纪律压到了宣传片的故事上（operator 2026-10-04 至 10-09 纠正 4 次：「我们又不是拍纪录片」「这是宣传片，不是历史纪录片」「这他妈是个宣传片啊」） | 故事层按 `dramatization` 编到能引起共鸣；只守当真实证明用的主张（§7） |
+| 人只出现在聊天框里：界面算人的世界，小楼算猫的世界 | 人的主动性没被演出来：同传、会议这类段落看不到「他想要什么、做了什么」，画面直接跳到结果（《AI-native builder 的一天》，operator 2026-10-12：「我只出现在聊天框里，至少到 2 分半之前」「这里的突兀本质上是缺少了我」） | 关键段落里要看得见：人的愿望或处境、人和猫各自做了什么、结果怎样改变人的下一步。人不必每镜出场，夜里猫自己干活、猫的特写、界面近景都可以成立，但离开人物的镜头要能接回这条关系。界面可以放进他手里的设备；人可以只出背影，方便观众代入 |
+| 把家里的猫编成「X 队」，一队一只猫 | You 觉得「队」听起来像 agent team 的主从结构；家里是住在同一个 thread 里的对等协作，「一队只有一只猫」看着也怪（同片，operator 2026-10-12） | 不编队，直接说那件事本身（「鸭鸭学踢球」）。对等不靠猫的数量或硬塞 review 台词证明：在有代表性的协作段落里，让观众看见不同的猫各自提出判断、接话或修订，一起改变同一件事 |
+| 冷读说看不懂，就加章节卡和注释 | 卡片越加越多，后半段像功能清单（同片第二次模拟冷读：「越来越像功能清单」） | 先把缺掉的那一步动作演出来，再考虑加字。必要的术语可以在第一次需要时用一句短注；标题若保留，用来帮观众追踪故事里的问题，不写成功能名（见 `../.cat-cafe-shared-refs/narrative-clarity.md` §3） |
+| 表里两个世界各拍各的，在两边来回硬切 | 观众每切一次都要重新找自己在哪，两个世界的关系没被演出来（《AI-native builder 的一天》早饭段第一版，10-12）。operator：「完全可以一个镜头我的背影然后拉进到屏幕进入屏幕里 看真实表世界，然后切里世界……人家大导演都是如何表现表里的」 | 给每个世界定一扇固定的门，每次进出都走它（笔记本屏幕、毛线球）。过门要有理由：这边一个动作引起那边一个动作。用形状或方向对上来过门（剪辑台上标红的那格 → 小楼显示器上的同一格；毛线球从右边滚出 → 从左边滚进来）。同一件东西在两边各有一个样子（演员表 ↔ 聊天里的一条消息）。人的身体可以当开关（往前凑就推进屏幕，往后靠就退出来）。可参照：《黑客帝国》的屏幕和电话线、《盗梦空间》的跨层因果、《头脑特工队》的总部与外面、今敏的匹配剪辑 |
 
 ## Pressure tests
 
 交付 brief 前逐题回答：
 
+0. 关键段落里，观众看得见人的愿望或处境、人和猫各自的行动，以及结果怎样改变人的下一步吗？离开人物的镜头能接回这条关系吗？
+
 1. 把案例页面/最终成果换掉，产品故事还成立吗？
 2. 观众能指出意图、holder、动作、纠正、结果和延续分别在哪里吗？
 3. 每个主要镜头里，世界内部发生了什么？若只剩 zoom，删掉会怎样？
-4. 每个剪切是因为意义变化，还是因为时间到了？
+4. 每个剪切是因为意义变化，还是因为时间到了？有没有一个东西（形状、方向、动作、声音）把观众带过去？
 5. 每个声音 cue 的语义工作是什么？删掉是否损失因果或情绪？
-6. 真实、重演、解释和未来愿景是否可区分？
+6. 这是宣传片还是纪录/demo？宣传片的故事层有没有被纪录片纪律捆住？当真实证明用的能力、业绩和作品归属，和事实一致吗？
 7. 若成果本来就是产品承诺，产品的控制与迭代仍清楚吗？
 8. 这是 brand hero、demo film、launch film 还是 tutorial？当前时长真的匹配吗？
 9. operator 验收的是主语/情绪，还是被迫审内部制作脚手架？
@@ -175,5 +187,6 @@ brief 通过后交给 `video-forge`，由它负责素材、全局旁白、强制
 
 - 时效性竞品与官方原片查证：`deep-research` + `source-audit`
 - 已冻结 brief 的视频生产：`video-forge`
-- 动画段落或角色短片生产：`anime-forge`
+- 主角是家里的猫、片里有剧情的产品宣传片，仍由本 skill 定方向、`video-forge` 生产；要画的角色段落，画稿照 `anime-forge` 的 `assets/art-brief-header.md`
+- 目的就是讲角色自己故事的短片：`anime-forge`
 - 本方法的证据与条件分支：*(internal reference removed)*

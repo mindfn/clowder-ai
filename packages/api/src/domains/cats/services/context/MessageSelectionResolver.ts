@@ -2,8 +2,10 @@ import {
   findGeneratedTextConstructs,
   MESSAGE_BUNDLE_CLI_QUOTE_DIGEST_DOMAIN,
   MESSAGE_BUNDLE_CLI_QUOTE_DIGEST_DOMAIN_V2,
+  MESSAGE_BUNDLE_CLI_QUOTE_DIGEST_DOMAIN_V3,
   MESSAGE_BUNDLE_CLI_QUOTE_PROJECTION_VERSION,
   MESSAGE_BUNDLE_CLI_QUOTE_PROJECTION_VERSION_V2,
+  MESSAGE_BUNDLE_CLI_QUOTE_PROJECTION_VERSION_V3,
   MESSAGE_BUNDLE_QUOTE_DIGEST_DOMAIN,
   MESSAGE_BUNDLE_QUOTE_DIGEST_DOMAIN_V2,
   MESSAGE_BUNDLE_QUOTE_DIGEST_DOMAIN_V3,
@@ -26,6 +28,7 @@ import { resolveMessageBundleCarrier } from './MessageBundleCarrierResolver.js';
 import {
   digestMessageBundleCliQuoteProjection,
   digestMessageBundleCliQuoteProjectionV2,
+  digestMessageBundleCliQuoteProjectionV3,
   digestMessageBundleQuoteProjection,
   digestMessageBundleQuoteProjectionV2,
   digestMessageBundleQuoteProjectionV3,
@@ -41,6 +44,7 @@ import {
   projectCliSegment,
   projectCliSegmentReadable,
   projectCliSegmentReadableSource,
+  projectCliSegmentV3,
   projectMessageBundleGroupQuoteSourceV3,
   projectMessageBundleGroupReadableContent,
   projectMessageBundleQuoteSourceV1,
@@ -63,12 +67,14 @@ import type {
 export {
   digestMessageBundleCliQuoteProjection,
   digestMessageBundleCliQuoteProjectionV2,
+  digestMessageBundleCliQuoteProjectionV3,
   digestMessageBundleQuoteProjection,
   digestMessageBundleQuoteProjectionV2,
   digestMessageBundleQuoteProjectionV3,
   digestMessageBundleRichBlockProjection,
   MESSAGE_BUNDLE_CLI_QUOTE_DIGEST_DOMAIN,
   MESSAGE_BUNDLE_CLI_QUOTE_DIGEST_DOMAIN_V2,
+  MESSAGE_BUNDLE_CLI_QUOTE_DIGEST_DOMAIN_V3,
   MESSAGE_BUNDLE_QUOTE_DIGEST_DOMAIN,
   MESSAGE_BUNDLE_QUOTE_DIGEST_DOMAIN_V2,
   MESSAGE_BUNDLE_QUOTE_DIGEST_DOMAIN_V3,
@@ -104,6 +110,43 @@ function invalid(reason: MessageSelectionInvalidReason, messageId?: string): Adm
 type MessageSelectionMessageItem = Extract<MessageBundleSelectionItem, { kind: 'message' }>;
 type AdmissionCandidateResult = AdmissionCandidate | AdmissionFailure;
 
+interface CliQuoteProjectionSemantics {
+  version:
+    | typeof MESSAGE_BUNDLE_CLI_QUOTE_PROJECTION_VERSION
+    | typeof MESSAGE_BUNDLE_CLI_QUOTE_PROJECTION_VERSION_V2
+    | typeof MESSAGE_BUNDLE_CLI_QUOTE_PROJECTION_VERSION_V3;
+  readable: boolean;
+  project: (records: Parameters<typeof projectCliSegment>[0], segmentId: string) => string | null;
+  digest: (projection: string) => string;
+}
+
+function cliQuoteProjectionSemantics(
+  requestedVersion: MessageBundleSelectionCliQuoteItem['sourceProjectionVersion'],
+): CliQuoteProjectionSemantics {
+  if (requestedVersion === MESSAGE_BUNDLE_CLI_QUOTE_PROJECTION_VERSION_V2) {
+    return {
+      version: MESSAGE_BUNDLE_CLI_QUOTE_PROJECTION_VERSION_V2,
+      readable: true,
+      project: projectCliSegmentReadableSource,
+      digest: digestMessageBundleCliQuoteProjectionV2,
+    };
+  }
+  if (requestedVersion === MESSAGE_BUNDLE_CLI_QUOTE_PROJECTION_VERSION_V3) {
+    return {
+      version: MESSAGE_BUNDLE_CLI_QUOTE_PROJECTION_VERSION_V3,
+      readable: false,
+      project: projectCliSegmentV3,
+      digest: digestMessageBundleCliQuoteProjectionV3,
+    };
+  }
+  return {
+    version: MESSAGE_BUNDLE_CLI_QUOTE_PROJECTION_VERSION,
+    readable: false,
+    project: projectCliSegment,
+    digest: digestMessageBundleCliQuoteProjection,
+  };
+}
+
 export class MessageSelectionResolver {
   constructor(private readonly deps: MessageSelectionResolverDeps) {}
 
@@ -113,10 +156,7 @@ export class MessageSelectionResolver {
     auth: MessageSelectionAuth,
     resolveBubbleGroup: BubbleGroupResolver,
   ): Promise<AdmissionCandidateResult> {
-    // A chat bubble is a projection over several stored rows, and the human selected the bubble.
-    // Resolving only the anchor row would silently drop the siblings' prose from what gets
-    // exported or forwarded, so the whole canonical group is always resolved — not just when the
-    // anchor happens to look unreadable on its own.
+    // Resolve the canonical bubble group so forwarding never drops sibling storage rows.
     const group = await resolveBubbleGroup(item.messageId, sourceThreadId, auth);
     if (group.status !== 'resolved') return invalid('source_unavailable', item.messageId);
     const readableContent = projectMessageBundleGroupReadableContent(group.records);
@@ -134,15 +174,10 @@ export class MessageSelectionResolver {
     auth: MessageSelectionAuth,
     resolveBubbleGroup: BubbleGroupResolver,
   ): Promise<AdmissionCandidateResult> {
-    // The human highlighted text inside one browser bubble. A visible range can cross storage-row
-    // boundaries, so new carriers use a bubble projection instead of guessing which row owns it.
-    // Historical v1/v2 row carriers remain readable in MessageBundleCarrierResolver.
+    // New selections bind the browser bubble; historical v1/v2 row carriers remain readable.
     const group = await resolveBubbleGroup(item.messageId, sourceThreadId, auth);
     if (group.status !== 'resolved') return invalid('source_unavailable', item.messageId);
-    // Only the browser can see the rendered plane. The renderer puts characters on screen with
-    // no source counterpart — footnote labels, KaTeX glyphs, component loading states — so a
-    // server-side projection can never prove that the human's selection was unique on screen.
-    // The selecting browser therefore asserts that count, and admission requires it to be 1.
+    // Only the browser can attest uniqueness in a rendered plane with generated characters.
     if (item.renderedOccurrences !== 1) {
       return invalid('ambiguous_quote', item.messageId);
     }
@@ -178,19 +213,17 @@ export class MessageSelectionResolver {
   ): Promise<AdmissionCandidateResult> {
     const source = await resolveSourceRecords(item.sourceMessageIds, item.messageId, sourceThreadId, auth);
     if (source.status !== 'resolved') return invalid('source_unavailable', item.messageId);
-    const isReadableProjection = item.sourceProjectionVersion === MESSAGE_BUNDLE_CLI_QUOTE_PROJECTION_VERSION_V2;
-    const projection = isReadableProjection
-      ? projectCliSegmentReadableSource(source.records, item.segmentId)
-      : projectCliSegment(source.records, item.segmentId);
+    const semantics = cliQuoteProjectionSemantics(item.sourceProjectionVersion);
+    const projection = semantics.project(source.records, item.segmentId);
     if (projection === null) return invalid('source_unavailable', item.messageId);
-    if (isReadableProjection && item.renderedOccurrences !== 1) {
+    if (semantics.readable && item.renderedOccurrences !== 1) {
       return invalid('ambiguous_quote', item.messageId);
     }
-    if (isReadableProjection && findGeneratedTextConstructs(projection).length > 0) {
+    if (semantics.readable && findGeneratedTextConstructs(projection).length > 0) {
       return invalid('unsupported_source', item.messageId);
     }
-    const canonicalProjection = isReadableProjection ? projectCliSegmentReadable(projection) : projection;
-    const offsets = isReadableProjection
+    const canonicalProjection = semantics.readable ? projectCliSegmentReadable(projection) : projection;
+    const offsets = semantics.readable
       ? resolveReadableQuoteAnchor(item, canonicalProjection)
       : resolveExactQuoteAnchor(item, canonicalProjection);
     if (typeof offsets === 'string') return invalid(offsets, item.messageId);
@@ -201,12 +234,8 @@ export class MessageSelectionResolver {
       sourceMessageIds: source.records.map((record) => record.id),
       segmentId: item.segmentId,
       ...offsets,
-      sourceProjectionVersion: isReadableProjection
-        ? MESSAGE_BUNDLE_CLI_QUOTE_PROJECTION_VERSION_V2
-        : MESSAGE_BUNDLE_CLI_QUOTE_PROJECTION_VERSION,
-      sourceProjectionSha256: isReadableProjection
-        ? digestMessageBundleCliQuoteProjectionV2(canonicalProjection)
-        : digestMessageBundleCliQuoteProjection(canonicalProjection),
+      sourceProjectionVersion: semantics.version,
+      sourceProjectionSha256: semantics.digest(canonicalProjection),
       ...(item.comment ? { comment: item.comment } : {}),
     };
     return {

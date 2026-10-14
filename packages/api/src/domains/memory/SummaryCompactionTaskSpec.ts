@@ -7,7 +7,8 @@
 import type Database from 'better-sqlite3';
 import type { ExecuteContext, TaskSpec_P1 } from '../../infrastructure/scheduler/types.js';
 import { processThread, type SummaryCompactionDeps } from './SummaryCompactionTask.js';
-import { hasHighValueSignal, SUMMARY_CONFIG } from './summary-config.js';
+import { SUMMARY_CONFIG } from './summary-config.js';
+import { dailyCurationDue, isSummaryEligible } from './summary-eligibility.js';
 
 interface SummaryStateRow {
   thread_id: string;
@@ -19,55 +20,11 @@ interface SummaryStateRow {
   last_abstractive_at: string | null;
   abstractive_token_count: number | null;
   carry_over: number;
+  daily?: boolean;
 }
 
-interface ThreadLastActivity {
-  threadId: string;
-  lastMessageAt: number;
-}
-
-/** Signal type for summary compaction — per-thread state row */
+/** Per-thread state includes the daily fallback disposition of this tick. */
 type SummarySignal = SummaryStateRow;
-
-function isEligible(
-  state: SummaryStateRow,
-  lastActivity: ThreadLastActivity | null,
-  config: typeof SUMMARY_CONFIG,
-): boolean {
-  const now = Date.now();
-  if (lastActivity) {
-    const quietMs = now - lastActivity.lastMessageAt;
-    if (quietMs < config.quietWindowMinutes * 60 * 1000) return false;
-  }
-  const highSignal = hasHighValueSignal(state.pending_signal_flags);
-  const isCarryOver = state.carry_over === 1;
-  const volumeOk =
-    isCarryOver ||
-    state.pending_message_count >= config.pendingMessageThreshold ||
-    state.pending_token_count >= config.pendingTokenThreshold ||
-    highSignal;
-  if (!volumeOk) return false;
-  const bypassCooldown = highSignal || isCarryOver;
-  if (!bypassCooldown && state.last_abstractive_at) {
-    const hoursSince = (now - new Date(state.last_abstractive_at).getTime()) / (1000 * 60 * 60);
-    if (hoursSince < config.cooldownHours) return false;
-  }
-  return true;
-}
-
-function backfillSummaryState(db: Database.Database): void {
-  try {
-    db.prepare(
-      `INSERT OR IGNORE INTO summary_state (thread_id, pending_message_count, pending_token_count, pending_signal_flags, summary_type)
-       SELECT REPLACE(anchor, 'thread-', ''), 100, 5000, 7, 'concat'
-       FROM evidence_docs
-       WHERE kind = 'thread' AND anchor LIKE 'thread-%'
-         AND REPLACE(anchor, 'thread-', '') NOT IN (SELECT thread_id FROM summary_state)`,
-    ).run();
-  } catch {
-    // fail-open
-  }
-}
 
 export function createSummaryCompactionTaskSpec(deps: SummaryCompactionDeps): TaskSpec_P1<SummarySignal> {
   const config = SUMMARY_CONFIG;
@@ -77,9 +34,8 @@ export function createSummaryCompactionTaskSpec(deps: SummaryCompactionDeps): Ta
     profile: 'awareness',
     trigger: { type: 'interval', ms: config.schedulerIntervalMs },
     admission: {
+      dependsOnThreadActivity: true,
       async gate() {
-        backfillSummaryState(deps.db);
-
         const candidates = deps.db
           .prepare('SELECT * FROM summary_state WHERE pending_message_count > 0')
           .all() as SummaryStateRow[];
@@ -90,10 +46,20 @@ export function createSummaryCompactionTaskSpec(deps: SummaryCompactionDeps): Ta
 
         // Async eligibility check per-thread
         const eligible: SummaryStateRow[] = [];
-        for (const state of candidates) {
+        for (let state of candidates) {
+          if (deps.curation?.shouldProcessThread && !(await deps.curation.shouldProcessThread(state.thread_id)))
+            continue;
+          if (deps.curation?.reconcilePendingInput) {
+            if (!(await deps.curation.reconcilePendingInput(state.thread_id))) continue;
+            state = deps.db
+              .prepare('SELECT * FROM summary_state WHERE thread_id=?')
+              .get(state.thread_id) as SummaryStateRow;
+            if (state.pending_message_count === 0) continue;
+          }
           const lastActivity = await deps.getThreadLastActivity(state.thread_id);
-          if (isEligible(state, lastActivity, config)) {
-            eligible.push(state);
+          const daily = deps.curation ? dailyCurationDue(state, deps.curation.timezone, deps.curation.now?.()) : false;
+          if (isSummaryEligible(state, lastActivity, config, { daily, ...deps.curation })) {
+            eligible.push({ ...state, daily });
           }
         }
 
@@ -101,16 +67,9 @@ export function createSummaryCompactionTaskSpec(deps: SummaryCompactionDeps): Ta
           return { run: false, reason: 'no eligible threads (quiet/volume/cooldown)' };
         }
 
-        // Budget: cold-start = all, normal = perTickBudget
-        const neverSummarized = deps.db
-          .prepare(
-            "SELECT count(*) as n FROM summary_state WHERE summary_type = 'concat' AND pending_message_count > 0",
-          )
-          .get() as { n: number };
-        const isColdStart = neverSummarized.n > 20;
-        const budget = isColdStart ? eligible.length : config.perTickBudget;
-
-        const workItems = eligible.slice(0, budget).map((state) => ({
+        // Keep the existing event budget; the one daily pass includes all small conversations.
+        const eventItems = eligible.filter((state) => !state.daily).slice(0, config.perTickBudget);
+        const workItems = [...eventItems, ...eligible.filter((state) => state.daily)].map((state) => ({
           signal: state,
           subjectKey: `thread-${state.thread_id}`,
         }));
@@ -128,11 +87,10 @@ export function createSummaryCompactionTaskSpec(deps: SummaryCompactionDeps): Ta
     state: { runLedger: 'sqlite' },
     outcome: { whenNoSignal: 'drop' },
     enabled: deps.enabled,
-    actor: { role: 'memory-curator', costTier: 'deep' },
     display: {
-      label: '记忆压缩',
+      label: '记忆整理',
       category: 'thread',
-      description: '自动压缩过长的对话记忆',
+      description: '整理判断的变化、值得回看的经历和可能相关的往事',
       subjectKind: 'thread',
     },
   };

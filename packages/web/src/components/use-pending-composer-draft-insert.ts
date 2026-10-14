@@ -7,9 +7,11 @@ import { useChatStore } from '@/stores/chatStore';
 import { composerDraftSignature } from './durable-composer-draft-helpers';
 import {
   applyContextAttachmentDelta,
-  mergeContextAttachments,
+  rebaseAuthoritativeContext,
+  rebaseAuthoritativeImageUrls,
   rebaseAuthoritativeText,
 } from './durable-composer-draft-merge';
+import type { DraftImageRestorationResult } from './use-durable-composer-draft-images';
 import type { PendingComposerSelection } from './use-pending-composer-selection';
 
 interface PendingComposerDraftRefs {
@@ -27,7 +29,11 @@ interface UsePendingComposerDraftInsertOptions extends PendingComposerDraftRefs 
   threadId?: string;
   setInput: Dispatch<SetStateAction<string>>;
   setContextAttachments: Dispatch<SetStateAction<ContextAttachment[]>>;
-  restoreDraftImages: (urls: readonly string[], targetThreadId: string, authoritative: boolean) => Promise<void>;
+  restoreDraftImages: (
+    urls: readonly string[],
+    targetThreadId: string,
+    authoritative: boolean,
+  ) => Promise<DraftImageRestorationResult>;
 }
 
 function applyPendingServerRevision(insert: ComposerDraftInsert, refs: PendingComposerDraftRefs): void {
@@ -61,7 +67,7 @@ function applyPendingContext(
   setContextAttachments((current) => {
     const removedIds = new Set(insert.removeContextAttachmentIds ?? []);
     const next = insert.authoritative
-      ? mergeContextAttachments(insert.contextAttachments ?? [], current)
+      ? rebaseAuthoritativeContext(insert.contextAttachments ?? [], insert.clientSnapshot?.contextAttachments, current)
       : applyContextAttachmentDelta(current, insert.contextAttachments ?? [], removedIds);
     contextAttachmentsRef.current = next;
     return next;
@@ -69,8 +75,15 @@ function applyPendingContext(
 }
 
 function applyPendingReply(insert: ComposerDraftInsert): void {
-  if (!insert.replyToId) return;
   const store = useChatStore.getState();
+  if (insert.authoritative && insert.clientSnapshot) {
+    if (store.replyToMessage?.id !== insert.clientSnapshot.replyToId) return;
+    if (!insert.replyToId) {
+      store.clearReplyTo();
+      return;
+    }
+  }
+  if (!insert.replyToId) return;
   const parent = store.messages.find((message) => message.id === insert.replyToId);
   store.setReplyTo({
     id: insert.replyToId,
@@ -110,6 +123,13 @@ export function usePendingComposerDraftInsert({
       contextAttachmentsRef,
       pendingSelectionRef,
     };
+    const imageUrls = pendingChatInsert.authoritative
+      ? rebaseAuthoritativeImageUrls(
+          pendingChatInsert.imageUrls ?? [],
+          pendingChatInsert.clientSnapshot?.imageUrls,
+          imageUrlsRef.current,
+        )
+      : (pendingChatInsert.imageUrls ?? []);
     applyPendingServerRevision(pendingChatInsert, refs);
     pendingSelectionRef.current = pendingChatInsert.selectionRange
       ? { text: pendingChatInsert.text, ...pendingChatInsert.selectionRange }
@@ -122,11 +142,7 @@ export function usePendingComposerDraftInsert({
       return next;
     });
     applyPendingContext(pendingChatInsert, setContextAttachments, contextAttachmentsRef);
-    void restoreDraftImages(
-      pendingChatInsert.imageUrls ?? [],
-      pendingChatInsert.threadId,
-      pendingChatInsert.authoritative ?? false,
-    );
+    void restoreDraftImages(imageUrls, pendingChatInsert.threadId, pendingChatInsert.authoritative ?? false);
     applyPendingReply(pendingChatInsert);
     setPendingChatInsert(null);
   }, [

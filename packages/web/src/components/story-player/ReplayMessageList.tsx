@@ -44,7 +44,7 @@ interface ReplayMessageListProps {
 // ---------------------------------------------------------------------------
 
 /** Map replay tool/stdout fields to CliEvent[] for CliOutputBlock */
-function toCliEvents(toolEvents: ReplayChatMessage['toolEvents'], cliStdout?: string): CliEvent[] {
+export function toCliEvents(toolEvents: ReplayChatMessage['toolEvents'], cliStdout?: string): CliEvent[] {
   const result: CliEvent[] = [];
   for (const te of toolEvents ?? []) {
     const baseTimestamp = Date.now(); // display-only, not used for replay ordering
@@ -76,7 +76,7 @@ function toCliEvents(toolEvents: ReplayChatMessage['toolEvents'], cliStdout?: st
 }
 
 /** Derive CliStatus from tool events */
-function toCliStatus(toolEvents: ReplayChatMessage['toolEvents']): CliStatus {
+export function toCliStatus(toolEvents: ReplayChatMessage['toolEvents']): CliStatus {
   if (toolEvents?.some((te) => te.status === 'error')) return 'failed';
   return 'done';
 }
@@ -135,7 +135,7 @@ function UserAvatar() {
 // ---------------------------------------------------------------------------
 
 /** Compute --msg-hue/--msg-chroma from a cat's primary color. */
-function catPersonaStyle(primary: string | undefined): CSSProperties {
+export function catPersonaStyle(primary: string | undefined): CSSProperties {
   let msgHue = 297; // fallback hue (purple)
   let msgChroma = 0.1;
   if (primary) {

@@ -22,6 +22,10 @@ description: >
 
 ## Codex 原生能力校准：不要低估 imagegen
 
+### 按交付物选择制作路径
+
+要好看、像终稿、无需编辑文字的图片，走低保真蓝图 + imagegen 整页；要可编辑 PPT、精确图表或原生文字的，走当前可用的 PPTX 技能或 HTML 排版。沿用用户已明确的交付要求，不重复确认。
+
 解释型漫画、信息图或“用一张图讲清某个机制”，在本轮生成前按[叙事清晰度](../.cat-cafe-shared-refs/narrative-clarity.md)把读者问题、各方动作与可见变化收成简短生成指引，随后直接出图。已给定分镜、纯装饰或局部修图不重新编故事；不新增确认回合，也不改变下方原生 imagegen 优先的制作路径。
 
 Codex `image_gen` 不只是“概念图/素材生成器”。当前实测能力可以直接生成**完整高保真 raster 页面**，包括：
@@ -88,8 +92,8 @@ Codex `image_gen` 不只是“概念图/素材生成器”。当前实测能力�
 |------|------|------|---------|-------------|
 | **原生** | **Codex CLI** | 内置 `image_gen` tool call | `~/.codex/generated_images/<sessionId>/` | ✅ scanner 自动拾取 |
 | **原生** | **Antigravity** | 内置 `generate_image` tool call | `~/.gemini/antigravity/brain/<cascadeId>/` | ✅ GENERATE_IMAGE step 自动拾取 |
-| 浏览器 | Gemini Web | Chrome MCP 自动化 | 本地下载目录 | 需手动 `publishGeneratedImage()` |
-| 浏览器 | ChatGPT Web | Chrome MCP 自动化 | 本地下载目录 | 需手动 `publishGeneratedImage()` |
+| 浏览器 | Gemini Web | Chrome MCP 自动化 | 本地下载目录 | 按 rich-messaging 的本地图片路径处理 |
+| 浏览器 | ChatGPT Web | Chrome MCP 自动化 | 本地下载目录 | 按 rich-messaging 的本地图片路径处理 |
 
 ## 原生路径（优先）
 
@@ -243,4 +247,4 @@ codex exec "生成一张猫咖全景图，手绘水彩风格"
 5. **ChatGPT 图片页面是独立入口**：`/images` 和普通对话 `/` 是分开的
 6. **两个平台都支持 execCommand 注入**
 7. **Gemini 图片更大**（~7MB PNG），ChatGPT 图片更小（~1MB PNG）
-8. **浏览器路径归档**：下载后的图片通过 `publishGeneratedImage()` 发布到 `/uploads/`（F172 共享发布合约）。发布后自动获得 `/uploads/...` 稳定 URL + `media_gallery` 富块
+8. **浏览器路径归档**：下载后的 PNG 用 `cat_cafe_publish_image({path, publicationKey, title?, alt?})` 持久发布，返回 URL、messageId 和真实 revision；不重复贴同一 URL。其他格式与限制按 [rich-messaging 发送方式](../rich-messaging/SKILL.md#发送方式)处理。`publishGeneratedImage()` 是内部函数，不是成员 MCP；Workspace 文件展示不等于 Task 的媒体版本发布。

@@ -1,4 +1,19 @@
-import { stripHarmlessRedirections, tokenizeSimpleShellCommand } from './native-effect-shell-tokenizer.mjs';
+export {
+  constrainedGhPullRequestOperation,
+  isConstrainedGhPullRequestRead,
+} from './native-effect-github-classifier.mjs';
+
+import { gitSubcommandArgs, isTemporaryWorktreePath, worktreeRemovalOperand } from './lib/git-invocation.mjs';
+import { executedInvocations } from './lib/shell-invocation.mjs';
+
+export { gitSubcommandArgs, worktreeRemovalOperand } from './lib/git-invocation.mjs';
+
+import { fetchRefRoles } from './native-effect-git-fetch.mjs';
+import {
+  shellInvocation,
+  stripHarmlessRedirections,
+  tokenizeSimpleShellCommand,
+} from './native-effect-shell-tokenizer.mjs';
 import { namesRuntimeBranch } from './native-effect-target-classifier.mjs';
 
 /**
@@ -19,7 +34,8 @@ export function explicitTemporaryWorktreeTarget(raw) {
     return isTemporaryWorktreePath(target) && (exactRevision || detachedTrackingRevision) ? target : null;
   }
 
-  if (args[1] === 'remove' && args.length === 3 && isTemporaryWorktreePath(args[2])) return args[2];
+  const removal = worktreeRemovalOperand(args);
+  if (args[1] === 'remove' && removal && isTemporaryWorktreePath(removal)) return removal;
   return null;
 }
 
@@ -46,11 +62,22 @@ export function isGitWriteOperation(raw) {
   );
 }
 
-export function isGitRepositoryObservation(raw) {
+export function isGitRepositoryObservation(raw, operandIsData = () => true) {
   const args = gitCommandArgs(tokenizeSimpleShellCommand(raw));
   if (!args) return false;
   if (['rev-parse', 'rev-list'].includes(args[0])) return true;
   if (['status', 'ls-tree'].includes(args[0])) return true;
+  if (args[0] === 'grep')
+    return knownReadOptions(
+      args.slice(1),
+      GREP_READ_FLAGS,
+      GREP_READ_VALUES,
+      'nHhilLcvoqwbFEGPIa',
+      'efABC',
+      operandIsData,
+    );
+  if (args[0] === 'cat-file')
+    return knownReadOptions(args.slice(1), CAT_FILE_READ_FLAGS, new Set(['--path']), 'tsep', '', operandIsData);
   if (args[0] === 'branch' && args.length === 2 && args[1] === '--show-current') return true;
   if (
     args[0] === 'merge-base' &&
@@ -69,36 +96,115 @@ export function isGitRepositoryObservation(raw) {
   );
 }
 
-export function isRepositoryRefresh(raw) {
-  return refreshesRepository(gitCommandArgs(tokenizeSimpleShellCommand(raw)));
-}
+const GREP_READ_FLAGS = new Set([
+  '--cached',
+  '--no-index',
+  '--untracked',
+  '--exclude-standard',
+  '--no-exclude-standard',
+  '--recurse-submodules',
+  '--ignore-case',
+  '--word-regexp',
+  '--invert-match',
+  '--full-name',
+  '--line-number',
+  '--column',
+  '--files-with-matches',
+  '--files-without-match',
+  '--count',
+  '--quiet',
+  '--all-match',
+  '--and',
+  '--or',
+  '--not',
+  '--extended-regexp',
+  '--basic-regexp',
+  '--fixed-strings',
+  '--perl-regexp',
+  '--text',
+  '--binary-files',
+  '--color',
+  '--no-color',
+  '--heading',
+  '--break',
+  '--null',
+]);
+const GREP_READ_VALUES = new Set([
+  '--regexp',
+  '--file',
+  '--max-count',
+  '--before-context',
+  '--after-context',
+  '--context',
+  '--threads',
+]);
+const CAT_FILE_READ_FLAGS = new Set([
+  '--batch',
+  '--batch-check',
+  '--batch-command',
+  '--batch-all-objects',
+  '--buffer',
+  '--unordered',
+  '--allow-unknown-type',
+  '--follow-symlinks',
+  '--use-mailmap',
+  '--no-use-mailmap',
+]);
 
-function refreshesRepository(args) {
-  if (!args || args[0] !== 'fetch') return false;
-  const fetchArgs = args.slice(1).filter((token) => !['--quiet', '-q', '--no-tags'].includes(token));
-  if (fetchArgs.length !== 2 || fetchArgs[0] !== 'origin') return false;
-  if (fetchArgs[1] === 'main') return true;
-  const pullRefspec = fetchArgs[1].match(/^(?:refs\/)?pull\/(\d+)\/head:refs\/remotes\/origin\/pr\/(\d+)$/);
-  return pullRefspec !== null && pullRefspec[1] === pullRefspec[2];
-}
-
-/** Git's own selectors, peeled off an operand list to reach the subcommand. */
-function gitSubcommandArgs(operands) {
-  let index = 0;
-  while (index < operands.length) {
-    const token = operands[index];
-    if (token === '-C' || token === '-c') {
-      if (operands[index + 1] === undefined) return null;
-      index += 2;
+/** Exact option grammar: abbreviations and short clusters cannot hide a pager/filter. */
+function knownReadOptions(args, flags, values, shortFlags, shortValues, operandIsData) {
+  for (let index = 0; index < args.length; index += 1) {
+    const token = args[index];
+    if (token === '--') return true;
+    // An opaque word here can become an option. Consumed option values and words
+    // after `--` are data positions regardless of their generated contents.
+    if (!token.startsWith('-') || token === '-') {
+      if (!operandIsData(token)) return false;
       continue;
     }
-    if (token.startsWith('-')) {
-      index += 1;
+    if (token.startsWith('--')) {
+      const option = token.split('=', 1)[0];
+      if (values.has(option)) {
+        if (!token.includes('=') && args[++index] === undefined) return false;
+      } else if (!flags.has(option)) return false;
       continue;
     }
-    break;
+    for (let cursor = 1; cursor < token.length; cursor += 1) {
+      if (shortValues.includes(token[cursor])) {
+        if (cursor === token.length - 1 && args[++index] === undefined) return false;
+        break;
+      }
+      if (!shortFlags.includes(token[cursor])) return false;
+    }
   }
-  return operands.slice(index);
+  return true;
+}
+
+export function isRepositoryRefresh(raw) {
+  const command = stripHarmlessRedirections(raw);
+  const parsed = shellInvocation(command);
+  // A stripped wrapper/assignment is not an execution-environment certificate.
+  // Git env variables can execute SSH/proxy/askpass helpers, including for fetch.
+  if (!parsed.complete || parsed.redirections.length || parsed.words[0]?.value !== 'git') return false;
+  const execution = executedInvocations(command);
+  const commands = execution.pipelines.flat();
+  return (
+    execution.complete &&
+    commands.length === 1 &&
+    commands[0].name === 'git' &&
+    refreshesRepository(gitCommandArgs(['git', ...commands[0].operands]))
+  );
+}
+
+/**
+ * Git's own rule, not a list of shapes: a fetch only rewrites a ref when it is forced
+ * (`--force`, a `+` refspec) or writes outside `refs/remotes/` (`src:refs/heads/main`).
+ * Everything else updates FETCH_HEAD and remote-tracking refs. Until 2026-09-27 only
+ * `fetch origin main` and one pull-refspec shape counted as a refresh, so
+ * `git fetch origin feat/x main` was denied as a rewrite of main.
+ */
+function refreshesRepository(args) {
+  return fetchRefRoles(args)?.refresh === true;
 }
 
 const BRANCH_REWRITE_FLAGS = new Set(['-d', '-D', '-m', '-M', '--delete', '--move']);
@@ -170,50 +276,6 @@ export function gitArgvRewritesRepository(operands) {
   return named.some((token) => namesRuntimeBranch(token));
 }
 
-export function isConstrainedGhPullRequestRead(raw) {
-  return constrainedGhPullRequestOperation(raw)?.effect === 'read';
-}
-
-/**
- * Parse GitHub PR operations whose effect and remote target are structurally known.
- * Matching this narrow shape assigns the remote coordinate; it is not a global
- * allow/deny list. Unmatched shapes retain normal cwd/target classification, while
- * task custody, review, merge-gate, and operator boundaries remain authoritative.
- */
-export function constrainedGhPullRequestOperation(raw) {
-  const tokens = tokenizeSimpleShellCommand(raw);
-  if (!tokens || tokens[0] !== 'gh' || tokens[1] !== 'pr') return null;
-  const invocation = parseGhPullRequestInvocation(tokens);
-  if (!invocation) return null;
-  const flags = parseConstrainedGhFlags(
-    tokens.slice(invocation.flagIndex),
-    ghPullRequestFlagContract(invocation.subcommand),
-  );
-  if (!flags || !hasResolvableGhPullRequestCoordinate(invocation.subcommand, flags)) return null;
-
-  const repo = flags.get('--repo');
-  const repository = typeof repo === 'string' ? repo : 'current';
-  return {
-    effect: ['merge', 'close'].includes(invocation.subcommand) ? 'remote_mutation' : 'read',
-    target: `github://${repository}/${invocation.pullNumber ? `pull/${invocation.pullNumber}` : 'pulls'}`,
-  };
-}
-
-function parseGhPullRequestInvocation(tokens) {
-  const subcommand = tokens[2];
-  if (!['view', 'checks', 'list', 'merge', 'close'].includes(subcommand)) return null;
-  if (subcommand === 'list') return { subcommand, flagIndex: 3 };
-  const pullNumber = tokens[3];
-  const hasValidPullNumber =
-    subcommand === 'close' ? /^[1-9]\d*$/.test(pullNumber ?? '') : /^\d+$/.test(pullNumber ?? '');
-  return hasValidPullNumber ? { subcommand, pullNumber, flagIndex: 4 } : null;
-}
-
-function hasResolvableGhPullRequestCoordinate(subcommand, flags) {
-  if (subcommand !== 'merge') return true;
-  return flags.has('--squash') && (!flags.has('--admin') || flags.has('--match-head-commit'));
-}
-
 function isGitFetchCommand(raw) {
   return gitCommandArgs(tokenizeSimpleShellCommand(raw))?.[0] === 'fetch';
 }
@@ -235,82 +297,4 @@ function isSafeGitObjectName(raw) {
 
 function isGitHubPullHeadRef(raw) {
   return /^(?:refs\/)?pull\/\d+\/head$/.test(raw);
-}
-
-function isTemporaryWorktreePath(raw) {
-  return /^\/(?:private\/)?tmp\/[A-Za-z0-9][A-Za-z0-9._-]*$/.test(raw);
-}
-
-function ghPullRequestFlagContract(subcommand) {
-  if (subcommand === 'view') {
-    return { booleans: new Set(['--comments']), values: new Set(['--repo', '-R', '--json', '--jq', '--template']) };
-  }
-  if (subcommand === 'list') {
-    return {
-      booleans: new Set(['--draft']),
-      values: new Set([
-        '--repo',
-        '-R',
-        '--app',
-        '--assignee',
-        '--author',
-        '--base',
-        '--head',
-        '--json',
-        '--jq',
-        '--label',
-        '--limit',
-        '--search',
-        '--state',
-        '--template',
-      ]),
-    };
-  }
-  if (subcommand === 'merge') {
-    return {
-      booleans: new Set(['--admin', '--delete-branch', '-d', '--squash', '-s']),
-      values: new Set(['--repo', '-R', '--match-head-commit']),
-    };
-  }
-  if (subcommand === 'close') {
-    return { booleans: new Set(), values: new Set(['--repo', '-R']) };
-  }
-  return {
-    booleans: new Set(['--required', '--watch', '--fail-fast']),
-    values: new Set(['--repo', '-R', '--json', '--jq', '--template', '--interval']),
-  };
-}
-
-function parseConstrainedGhFlags(tokens, contract) {
-  const parsed = new Map();
-  for (let index = 0; index < tokens.length; index += 1) {
-    const flag = tokens[index];
-    const normalized = normalizeGhFlag(flag);
-    if (parsed.has(normalized)) return null;
-    if (contract.booleans.has(flag)) {
-      parsed.set(normalized, true);
-      continue;
-    }
-    const value = tokens[index + 1];
-    if (!contract.values.has(flag) || value === undefined || !isValidGhFlagValue(normalized, value)) return null;
-    parsed.set(normalized, value);
-    index += 1;
-  }
-  return parsed;
-}
-
-function normalizeGhFlag(flag) {
-  if (flag === '-R') return '--repo';
-  if (flag === '-d') return '--delete-branch';
-  if (flag === '-s') return '--squash';
-  return flag;
-}
-
-function isValidGhFlagValue(flag, value) {
-  if (flag === '--repo') return /^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/.test(value);
-  if (flag === '--interval') return /^\d+$/.test(value);
-  if (flag === '--limit') return /^[1-9]\d*$/.test(value);
-  if (flag === '--state') return ['open', 'closed', 'merged', 'all'].includes(value);
-  if (flag === '--match-head-commit') return /^[0-9a-f]{40,64}$/i.test(value);
-  return true;
 }

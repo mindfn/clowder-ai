@@ -3,12 +3,14 @@ import type { ActionSuccessorLeaseStore } from './ActionSuccessorLeaseStore.js';
 import type { ActionSuccessorLease } from './action-successor-state-machine.js';
 import type { IBallCustodyEventLog } from './BallCustodyEventLog.js';
 import type { IBallCustodyProjectionStore } from './BallCustodyProjectionStore.js';
+import { findEventWaitTerminal } from './event-wait-wake-state.js';
 import {
   exactStructuredWakeIndex,
   findWakeTerminal,
   releasedStructuredWake,
   supersededBeforeAdoption,
 } from './managed-hold-supersession.js';
+import { waitOutcomeObligation } from './wait-state-machine.js';
 
 // Public vocabulary re-exported so the seven existing importers stay untouched.
 export type {
@@ -82,8 +84,70 @@ function dispatchTransitionObservation(
   };
 }
 
+/** The event-wait protocol's own completion terminal, fenced to the exact (wait, outcome) the carrier delivered. */
+function waitTransitionObservation(
+  event: BallCustodyEvent,
+  baseline: StructuredTransitionBaseline,
+): StructuredTransitionObservation | undefined {
+  return baseline.protocol === 'event_wait' &&
+    event.payload.catId === baseline.holderCatId &&
+    event.payload.waitId === baseline.waitId &&
+    event.payload.outcomeId === baseline.waitOutcomeId
+    ? { structuredTransitionKind: 'wait_dispositioned' }
+    : undefined;
+}
+
+/**
+ * A wake whose exact terminal is already on the log is settled, whichever invocation wrote it and whatever the
+ * subject has done since. Per-wake terminal truth is decided before any subject-level state, and by the same finder the
+ * producer used to write it, so the writer and the reader cannot diverge.
+ */
+function settledStructuredWake(
+  wake: Extract<TurnCustodyWakeProvenance, { kind: 'structured' }>,
+  events: readonly BallCustodyEvent[],
+): TurnCustodyProjection | undefined {
+  const settled =
+    wake.protocol === 'hold'
+      ? findWakeTerminal(events, {
+          catId: wake.holderCatId,
+          sourceMessageId: wake.sourceMessageId,
+          taskId: wake.taskId,
+        })
+      : wake.protocol === 'event_wait'
+        ? findEventWaitTerminal(events, {
+            catId: wake.holderCatId,
+            waitId: wake.waitContinuationCarrier.waitId,
+            outcomeId: wake.waitContinuationCarrier.outcomeId,
+          })
+        : undefined;
+  return settled
+    ? {
+        state: 'covered_empty',
+        evidenceRefs: [`${wake.protocol}:${wake.subjectKey}`, `settled:${settled.sourceEventId}`],
+      }
+    : undefined;
+}
+
 function unknown(reason: string): TurnCustodyProjection {
   return { state: 'unknown_legacy', evidenceRefs: [`unknown:${reason}`] };
+}
+
+/**
+ * An event-wait wake that only reports its wait already ended (subject closed, deadline passed)
+ * leaves nothing to continue, so no re-hold / handoff can ever satisfy a block. That is a property
+ * of the carrier itself, so it is decided before any store read: a custody-store failure, or a ball
+ * that has since moved on, cannot revive an obligation the wake never carried. An outcome this
+ * build cannot read fails closed. `undefined` = the carrier decides nothing; consult custody.
+ */
+function eventWaitCarrierVerdict(
+  wake: Extract<TurnCustodyWakeProvenance, { kind: 'structured' }>,
+): TurnCustodyProjection | undefined {
+  if (wake.protocol !== 'event_wait') return undefined;
+  const { outcomeId } = wake.waitContinuationCarrier;
+  const obligation = waitOutcomeObligation(outcomeId);
+  if (obligation === 'unrecognized') return unknown('event_wait_outcome_unrecognized');
+  if (obligation === 'continuation_owed') return undefined;
+  return { state: 'covered_empty', evidenceRefs: [`${wake.protocol}:${wake.subjectKey}`, `settled:${outcomeId}`] };
 }
 
 function decision(
@@ -107,10 +171,31 @@ export function compareTurnCustodyShadow(oldBlock: boolean, newBlock: boolean): 
   return oldBlock ? 'old_only_block' : 'new_only_block';
 }
 
+/** An event-wait wake that still owes something keeps its exact identity, so close can verify a terminal later. */
+function withEventWaitLocator(
+  wake: TurnCustodyWakeProvenance,
+  projection: TurnCustodyProjection,
+): TurnCustodyProjection {
+  if (wake.kind !== 'structured' || wake.protocol !== 'event_wait' || projection.state === 'covered_empty') {
+    return projection;
+  }
+  const { waitId, outcomeId } = wake.waitContinuationCarrier;
+  // An outcome this build cannot read fails closed for the whole turn: no terminal is ever recognised for it.
+  if (waitOutcomeObligation(outcomeId) !== 'continuation_owed') return projection;
+  return {
+    ...projection,
+    eventWaitLocator: { subjectKey: wake.subjectKey, catId: wake.holderCatId, waitId, outcomeId },
+  };
+}
+
 export class TurnCustodyProjectionService {
   constructor(private readonly deps: TurnCustodyProjectionDeps) {}
 
   async open(wake: TurnCustodyWakeProvenance): Promise<TurnCustodyProjection> {
+    return withEventWaitLocator(wake, await this.openUnlocated(wake));
+  }
+
+  private async openUnlocated(wake: TurnCustodyWakeProvenance): Promise<TurnCustodyProjection> {
     if (wake.kind === 'unstructured' || wake.kind === 'non_obligation') {
       return { state: 'covered_empty', evidenceRefs: [`wake:${wake.source}`] };
     }
@@ -122,7 +207,34 @@ export class TurnCustodyProjectionService {
     }
   }
 
+  /**
+   * The event-wait wake's own terminal on the log NOW settles the turn, whatever `open` concluded and whether or not it
+   * has a baseline. A read failure keeps the prior verdict (it fails closed), it never invents a settlement.
+   */
+  private async settledEventWaitDecision(
+    projection: TurnCustodyProjection,
+  ): Promise<TurnCustodyStopDecision | undefined> {
+    const locator = projection.eventWaitLocator;
+    if (!locator) return undefined;
+    try {
+      const events = await this.deps.ballCustodyEventLog?.read(locator.subjectKey);
+      const terminal = events ? findEventWaitTerminal(events, locator) : undefined;
+      if (!terminal) return undefined;
+      return {
+        state: 'covered_empty',
+        shouldBlock: false,
+        transitionObserved: true,
+        structuredTransitionKind: 'wait_dispositioned',
+        evidenceRefs: [...projection.evidenceRefs, `settled:${terminal.sourceEventId}`],
+      };
+    } catch {
+      return undefined;
+    }
+  }
+
   async close(projection: TurnCustodyProjection): Promise<TurnCustodyStopDecision> {
+    const settled = await this.settledEventWaitDecision(projection);
+    if (settled) return settled;
     // Blocking state and transition observation are orthogonal. A managed wake
     // superseded before adoption is non-blocking, but the exact adopting turn
     // must still observe a later re-hold/handoff for its predecessor receipt.
@@ -170,6 +282,8 @@ export class TurnCustodyProjectionService {
   private async openStructured(
     wake: Extract<TurnCustodyWakeProvenance, { kind: 'structured' }>,
   ): Promise<TurnCustodyProjection> {
+    const carrierVerdict = eventWaitCarrierVerdict(wake);
+    if (carrierVerdict) return carrierVerdict;
     if (!this.deps.ballCustodyProjectionStore || !this.deps.ballCustodyEventLog) {
       return unknown('structured_store_unavailable');
     }
@@ -177,36 +291,15 @@ export class TurnCustodyProjectionService {
       this.deps.ballCustodyProjectionStore.get(wake.subjectKey),
       this.deps.ballCustodyEventLog.read(wake.subjectKey),
     ]);
-    // Sol R3 P1: a non-retired terminal drives the subject to `resolved`. If the
-    // F264 receipt then fails and Queue re-exposes the same wake, the successor
-    // route would bail to unknown_legacy here and write
-    // `managed_hold_disposition_missing` even though the wake is already settled.
-    // Per-wake terminal truth is checked before subject-level state.
-    if (wake.protocol === 'hold') {
-      const settled = findWakeTerminal(events, {
-        catId: wake.holderCatId,
-        sourceMessageId: wake.sourceMessageId,
-        taskId: wake.taskId,
-      });
-      if (settled) {
-        return {
-          state: 'covered_empty',
-          evidenceRefs: [`${wake.protocol}:${wake.subjectKey}`, `settled:${settled.sourceEventId}`],
-        };
-      }
-    }
-    if (projection?.state !== 'active' && projection?.state !== 'blocked') {
-      return unknown('structured_projection_missing');
-    }
-    const exactWakeIndex = exactStructuredWakeIndex(wake, events);
-    if (wake.protocol === 'dispatch' && exactWakeIndex === -1) {
-      return unknown('dispatch_handoff_missing');
-    }
-    if (projection.holder !== wake.holderCatId) {
-      return releasedStructuredWake(wake, events, exactWakeIndex) ?? unknown('structured_holder_mismatch');
-    }
+    // Sol R3 P1: a non-retired terminal drives the subject to `resolved`. If the F264 receipt then fails and Queue
+    // re-exposes the same wake, the successor route would bail to unknown_legacy here even though the wake is already
+    // settled. Per-wake terminal truth (hold AND event wait) is checked before subject-level state.
+    const settled = settledStructuredWake(wake, events);
+    if (settled) return settled;
     // clowder-ai#1366: a wake superseded before this turn adopted it is not a
-    // live obligation; treating it as one blocked unrelated healthy turns.
+    // live obligation. A mid-turn read has no receiver-boundary handoff; prove
+    // retirement from the exact wake history before consulting today's holder.
+    // Keep its baseline so an explicit retired terminal can still be observed.
     if (wake.protocol === 'hold') {
       const superseded = supersededBeforeAdoption(
         events,
@@ -220,6 +313,16 @@ export class TurnCustodyProjectionService {
           evidenceRefs: [...superseded],
         };
       }
+    }
+    if (projection?.state !== 'active' && projection?.state !== 'blocked') {
+      return unknown('structured_projection_missing');
+    }
+    const exactWakeIndex = exactStructuredWakeIndex(wake, events);
+    if (wake.protocol === 'dispatch' && exactWakeIndex === -1) {
+      return unknown('dispatch_handoff_missing');
+    }
+    if (projection.holder !== wake.holderCatId) {
+      return releasedStructuredWake(wake, events, exactWakeIndex) ?? unknown('structured_holder_mismatch');
     }
     return this.coveredActiveProjection(wake, events);
   }
@@ -251,6 +354,12 @@ export class TurnCustodyProjectionService {
           ? {
               dispatchSourceMessageId: wake.handoff.messageId,
               dispatchFromCatId: wake.handoff.fromCatId,
+            }
+          : {}),
+        ...(wake.protocol === 'event_wait'
+          ? {
+              waitId: wake.waitContinuationCarrier.waitId,
+              waitOutcomeId: wake.waitContinuationCarrier.outcomeId,
             }
           : {}),
       },
@@ -290,6 +399,7 @@ export class TurnCustodyProjectionService {
     if (event.kind === 'ball.dispatch_dispositioned') {
       return dispatchTransitionObservation(event, baseline);
     }
+    if (event.kind === 'ball.wait_dispositioned') return waitTransitionObservation(event, baseline);
     if (event.kind === 'ball.handed' || event.kind === 'ball.handed_cvo') {
       return event.payload.fromCatId === holderCatId ? { structuredTransitionKind: 'handed' } : undefined;
     }

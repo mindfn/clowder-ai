@@ -20,6 +20,10 @@ describe('F156 D-1: LocalSessionStore', () => {
     assert.ok(typeof token === 'string');
     assert.ok(token.length >= 32, 'token must be at least 32 chars');
     assert.equal(store.validate(token), 'alice');
+    const record = store.resolve(token);
+    assert.equal(record.userId, 'alice');
+    assert.match(record.csrfToken, /^[A-Za-z0-9_-]{32,}$/);
+    assert.match(record.bindingId, /^[A-Za-z0-9_-]{32,}$/);
   });
 
   it('validate returns null for unknown token', () => {
@@ -116,6 +120,8 @@ describe('F156 D-1: GET /api/session — session establishment', () => {
     assert.ok(setCookie.includes('Path=/'), 'must have Path=/');
     const body = JSON.parse(res.body);
     assert.equal(body.userId, 'default-user');
+    assert.match(body.csrfToken, /^[A-Za-z0-9_-]{32,}$/);
+    assert.equal(res.headers['cache-control'], 'no-store');
   });
 
   it('sets Secure flag when request has X-Forwarded-Proto: https', async () => {
@@ -190,6 +196,7 @@ describe('F156 D-1: GET /api/session — session establishment', () => {
     assert.ok(!res.headers['set-cookie'], 'should not re-issue cookie for valid session');
     const body = JSON.parse(res.body);
     assert.equal(body.userId, 'default-user');
+    assert.match(body.csrfToken, /^[A-Za-z0-9_-]{32,}$/);
   });
 
   it('issues the configured private owner identity into the browser session', async () => {

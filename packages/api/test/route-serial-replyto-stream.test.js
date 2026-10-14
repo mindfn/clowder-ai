@@ -1,3 +1,4 @@
+import './helpers/setup-cat-registry.js';
 import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
 
@@ -56,6 +57,18 @@ function createMockDeps(services, appendCalls, initialMessages = []) {
       getByThreadAfter: () => [],
       getByThreadBefore: () => [],
     },
+    queueSourceCustodyAdmission: {
+      admitDeferred: async () => {},
+      admitDeferredBatch: async () => {},
+      discardDeferredBatch: () => {},
+    },
+  };
+}
+
+function captureDeferredEnqueue(entries) {
+  return (entry) => {
+    entries.push(entry);
+    return { outcome: 'enqueued', entry: { ...entry, id: `deferred-${entries.length}` } };
   };
 }
 
@@ -204,7 +217,7 @@ describe('routeSerial replyTo on stream messages', () => {
       'thread1',
       withClaimedA2ASlot({
         queueHasQueuedMessages: () => true,
-        deferA2AEnqueue: (entry) => deferred.push(entry),
+        deferA2AEnqueue: captureDeferredEnqueue(deferred),
       }),
     )) {
       yielded.push(msg);

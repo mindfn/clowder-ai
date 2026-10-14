@@ -5,7 +5,7 @@ import Database from 'better-sqlite3';
 import {
   InMemoryPresentationLedgerStore,
   PresentationLedger,
-} from '../../dist/domains/cats/services/session/PresentationLedger.js';
+} from '../../dist/domains/cats/services/session/context/PresentationLedger.js';
 
 const databases = [];
 
@@ -207,6 +207,7 @@ describe('F287 D1 Alden golden journey', { concurrency: false }, () => {
       new DecisionCueResolver({ resolve: async () => null }),
       new ProjectKnowledgeCueResolver({ resolve: async () => null }),
       new CatOwnedSeedCueResolver({ resolve: async () => null }),
+      { family: 'thread_overview', resolverVersion: 1, resolve: async () => [] },
     ]);
     const service = new MemoryCueInvocationPromptService({
       plane: new MemoryCuePlaneService(registry),

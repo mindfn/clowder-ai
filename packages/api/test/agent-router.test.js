@@ -236,6 +236,81 @@ function createMockAgentService(catId, responseText = 'Hello from mock') {
 
 const tempProjectRoots = [];
 
+describe('F322 J3 retired chat-content issue detection', () => {
+  for (const entry of ['route', 'routeExecution']) {
+    for (const sample of [
+      { name: 'keyword', messages: ['@opus 不对，请检查', '@opus 还是不行，请继续检查'] },
+      { name: 'retry', messages: Array(3).fill('@opus 请把原消息定位功能接完') },
+    ]) {
+      test(`${entry} routes ${sample.name} messages without creating a problem card`, async () => {
+        const { AgentRouter } = await import('../dist/domains/cats/services/agents/routing/AgentRouter.js');
+        const { InMemoryFrustrationIssueStore } = await import(
+          '../dist/domains/cats/services/stores/memory/InMemoryFrustrationIssueStore.js'
+        );
+        const { resetDedup } = await import('../dist/domains/cats/services/frustration/FrustrationDetector.js');
+        resetDedup();
+        const threadId = `j3-${entry}-${sample.name}`;
+        const messageStore = createMockMessageStore();
+        const issueStore = new InMemoryFrustrationIssueStore();
+        const create = mock.method(issueStore, 'create');
+        const service = createMockAgentService('opus');
+        const broadcastToRoom = mock.fn();
+        const router = new AgentRouter(
+          await migrateRouterOpts({
+            claudeService: service,
+            registry: createMockRegistry(),
+            messageStore,
+            threadStore: createMockThreadStore(),
+            frustrationIssueStore: issueStore,
+            socketManager: { broadcastToRoom },
+          }),
+        );
+        const inputs = entry === 'route' ? sample.messages.slice(0, -1) : sample.messages;
+        let source;
+        for (const [index, content] of inputs.entries())
+          source = messageStore.append({
+            userId: 'owner',
+            catId: null,
+            content,
+            mentions: ['opus'],
+            threadId,
+            timestamp: Date.now() + index,
+          });
+        const message = sample.messages.at(-1);
+        const { targetCats, intent } = await router.resolveTargetsAndIntent(message, threadId);
+        const stream =
+          entry === 'route'
+            ? router.route('owner', message, threadId)
+            : router.routeExecution('owner', message, threadId, source.id, targetCats, intent, {
+                ownerAuthProvenance: 'unknown',
+                humanDispositionInvocationOrigin: 'unknown',
+                onPromptMessagesExposed: async () => undefined,
+                frustrationAutoIssueEligible: true,
+              });
+        const output = [];
+        for await (const event of stream) output.push(event);
+        assert.equal(service.invoke.mock.callCount(), 1);
+        assert.ok(output.some((event) => event.type === 'text'));
+        assert.ok(output.some((event) => event.type === 'done'));
+        assert.equal(create.mock.callCount(), 0);
+        assert.deepEqual(await issueStore.listByThread(threadId), []);
+        assert.equal(
+          messageStore._rows.some((row) => row.source?.connector === 'frustration-auto-issue'),
+          false,
+        );
+        assert.equal(
+          broadcastToRoom.mock.calls.some(
+            (call) =>
+              call.arguments[1] === 'connector_message' &&
+              call.arguments[2]?.source?.connector === 'frustration-auto-issue',
+          ),
+          false,
+        );
+      });
+    }
+  }
+});
+
 function createAvailabilityConfigProject(availabilityOverrides = {}) {
   const projectRoot = mkdtempSync(resolve(tmpdir(), 'agent-router-availability-'));
   tempProjectRoots.push(projectRoot);

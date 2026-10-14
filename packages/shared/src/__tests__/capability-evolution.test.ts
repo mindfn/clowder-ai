@@ -19,6 +19,68 @@ import {
 } from './capability-evolution.fixtures.js';
 
 describe('capability evolution contracts', () => {
+  it('atomically rebinds measurement constitution only while active/instrumenting', () => {
+    const instrumenting = replayEvolutionProgramEvents(activeCycleEvents().slice(0, 2));
+    if (!instrumenting) throw new Error('expected instrumenting Program');
+    const before = structuredClone(instrumenting);
+    const rebound = reduceEvolutionProgramEvent(
+      instrumenting,
+      envelope(
+        2,
+        {
+          type: 'measurement_constitution_rebound',
+          sourceRef: ref('capability-evolution-measurement-source:program-1'),
+          decisionProofRef: ref('measurement-proof:proof-v2'),
+          measurementCertificateRef: ref('measurement-certificate:certificate-v2'),
+          measurementRoleRefs: {
+            observer: ref('measurement-role:proof-v2:observer'),
+            domainOwner: ref('measurement-role:proof-v2:domain_owner'),
+            consumer: ref('measurement-role:proof-v2:consumer'),
+            calibrator: ref('measurement-role:proof-v2:calibrator'),
+          },
+        },
+        'measurement-rebind',
+      ),
+    );
+
+    expect(rebound.program.certificates).toEqual({
+      ...before.program.certificates,
+      measurement: ref('measurement-certificate:certificate-v2'),
+    });
+    expect(rebound.program.measurementRoleRefs.consumer).toEqual(ref('measurement-role:proof-v2:consumer'));
+    expect(rebound.program.valueOwnerRef).toEqual(before.program.valueOwnerRef);
+    expect(rebound.program).toMatchObject({ stage: 'instrumenting', cycle: 1, lifecycle: 'active' });
+    expect(rebound.cycles[0].stage).toBe('instrumenting');
+    expect(rebound.cycles[0].lineageRefIds).toEqual(
+      expect.arrayContaining([
+        'capability-evolution-measurement-source:program-1',
+        'measurement-proof:proof-v2',
+        'measurement-certificate:certificate-v2',
+        'measurement-role:proof-v2:consumer',
+      ]),
+    );
+
+    expectReducerCode(
+      () =>
+        reduceEvolutionProgramEvent(
+          replayEvolutionProgramEvents(activeCycleEvents()),
+          envelope(7, {
+            type: 'measurement_constitution_rebound',
+            sourceRef: ref('capability-evolution-measurement-source:program-1'),
+            decisionProofRef: ref('measurement-proof:proof-v2'),
+            measurementCertificateRef: ref('measurement-certificate:certificate-v2'),
+            measurementRoleRefs: {
+              observer: ref('measurement-role:proof-v2:observer'),
+              domainOwner: ref('measurement-role:proof-v2:domain_owner'),
+              consumer: ref('measurement-role:proof-v2:consumer'),
+              calibrator: ref('measurement-role:proof-v2:calibrator'),
+            },
+          }),
+        ),
+      'invalid_transition',
+    );
+  });
+
   it('INV-1 keeps exactly one object and one claim for a Program', () => {
     const created = activeCycleEvents()[0];
     const state = replayEvolutionProgramEvents([created]);

@@ -5,6 +5,7 @@
  * Fetches once per session, caches module-level. All consumers share same data.
  */
 
+import type { AgyProfileConfig, BuiltinCloudIdentityProtection } from '@cat-cafe/shared';
 import { useEffect, useMemo, useState } from 'react';
 import { formatCatDisplayName } from '@/lib/cat-display-name';
 import { UNKNOWN_CAT_COLOR } from '@/lib/color-defaults';
@@ -22,6 +23,7 @@ export interface CatData {
   mentionPatterns: string[];
   breedId?: string;
   accountRef?: string;
+  accountBindingMode?: 'follow' | 'override';
   /** clowder-ai#340 P5: CLI client identity (renamed from provider). */
   clientId: string;
   defaultModel: string;
@@ -37,6 +39,8 @@ export interface CatData {
   };
   commandArgs?: string[];
   cliConfigArgs?: string[];
+  /** Public settings only; operator-issued task grants are never returned to this form. */
+  agyProfile?: Omit<AgyProfileConfig, 'nativeCodingGrant'>;
   /** F254 D2: effective carrier truth for openai cats (per-cat > env > default), resolved server-side. */
   codexCarrier?: {
     effective: 'exec_json' | 'app_server';
@@ -86,6 +90,8 @@ export interface CatData {
   sessionChain?: boolean;
   /** #712: MCP support toggle — when false, disables all MCP for this cat. */
   mcpSupport?: boolean;
+  /** F247: immutable transport identity for the built-in ChatGPT Pro cloud member. */
+  identityProtection?: BuiltinCloudIdentityProtection;
   /** F32-b P4: Human-readable variant label (e.g. "4.5", "Sonnet") */
   variantLabel?: string;
   /** F32-b P4: Whether this is the default variant for its breed */
@@ -102,7 +108,7 @@ export interface CatData {
     temperature?: number;
   };
   /** F149: Adapter mode for Google provider cats (ACP vs legacy CLI) */
-  adapterMode?: 'acp' | 'cli';
+  adapterMode?: 'acp' | 'cli' | 'agy-native';
   /** F127: Roster metadata used by Hub ownership/lead markers */
   roster?: {
     family: string;
@@ -201,6 +207,10 @@ async function refreshCatsNow(): Promise<FetchResult> {
   return { cats: effective, fromApi: result.fromApi };
 }
 
+function refreshCatsOnConfigChange(): void {
+  void refreshCatsNow();
+}
+
 // ── Hook ────────────────────────────────────────────────
 
 interface UseCatDataOptions {
@@ -226,8 +236,10 @@ export function useCatData({ fetch: shouldFetch = true }: UseCatDataOptions = {}
       setIsLoading(false);
     };
     _listeners.add(listener);
+    if (_listeners.size === 1) window.addEventListener('cat-config-changed', refreshCatsOnConfigChange);
     return () => {
       _listeners.delete(listener);
+      if (_listeners.size === 0) window.removeEventListener('cat-config-changed', refreshCatsOnConfigChange);
     };
   }, []);
 

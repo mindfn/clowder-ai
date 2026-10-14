@@ -354,4 +354,32 @@ describe('TranscriptPanel — full panel integration', () => {
       ],
     });
   });
+
+  it('classic control: a stopped result stays plain text with no Files return entry (origin contract is v2-only)', async () => {
+    // C 3480 positive control: the classic panel shows the stopped path as text and offers no open-in-Files
+    // button, so no navigation origin is ever carried from the classic surface.
+    setupFetchMocks([]);
+
+    const { TranscriptPanel } = await import('../TranscriptPanel');
+
+    await act(async () => {
+      root.render(<TranscriptPanel />);
+    });
+    await act(async () => {
+      await new Promise((r) => setTimeout(r, 50));
+    });
+    await act(async () => {
+      latestEventSource?.onmessage?.({
+        data: JSON.stringify({
+          type: 'status',
+          status: 'stopped',
+          transcript_path: '/tmp/meeting.md',
+          recording_paths: { app: '/tmp/meeting.mp3' },
+        }),
+      });
+    });
+
+    expect(container.textContent).toContain('/tmp/meeting.md');
+    expect(container.querySelector('[data-testid="saved-path-open"]')).toBeNull();
+  });
 });

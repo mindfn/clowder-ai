@@ -63,3 +63,7 @@ runtime candidate、drill、receipt 或 bounded outcome 可验；伪造一次 ap
 tips_exempt:
 
 - docs-only architecture census；不新增用户可操作入口或行为变更。
+
+## Codex managed account consumption
+
+F320 keeps Codex as the provider-local memory authority. Managed account metadata selects a private credential home and explicit common state/SQLite root. Only sessions, archives, writer locks, native memories and generated images are shared through the measured layout; auth/secrets/control/tmp/plugin credentials are excluded. Both carriers receive the accepted account snapshot, and Collective continues using isolated history/memory/configuration with only its explicitly selected native login projection. This adds neither a provider-memory replica nor a Clowder AI item revision/receipt.

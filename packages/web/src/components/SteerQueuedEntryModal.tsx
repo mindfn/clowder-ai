@@ -31,7 +31,13 @@ export function SteerQueuedEntryModal({
         if (modalRef.current && !modalRef.current.contains(e.target as Node)) onCancel();
       }}
     >
-      <div ref={modalRef} className="bg-cafe-surface rounded-2xl shadow-2xl w-full max-w-[520px] mx-4 overflow-hidden">
+      <div
+        ref={modalRef}
+        role="dialog"
+        aria-modal="true"
+        aria-label="Steer（强制停止并发送此消息）"
+        className="bg-cafe-surface rounded-2xl shadow-2xl w-full max-w-[520px] mx-4 overflow-hidden"
+      >
         <div className="px-6 pt-6 pb-4">
           <h2 className="text-lg font-semibold text-cafe-black">Steer（强制停止并发送此消息）</h2>
           <p className="text-sm text-cafe-secondary mt-1">

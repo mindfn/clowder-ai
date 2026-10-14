@@ -16,6 +16,8 @@ import {
 import { SectionCard, SelectField, TextField } from './hub-cat-editor-fields';
 import { TagEditor } from './hub-tag-editor';
 
+import { useEditorText, useMemberEditorPresentation } from './members/editor-presentation';
+
 type FormPatch = Partial<HubCatEditorFormState>;
 
 export function AdvancedRuntimeSection({
@@ -51,6 +53,8 @@ export function AdvancedRuntimeSection({
   onStrategyChange: (patch: Partial<StrategyFormState>) => void;
   onCodexChange: (patch: Partial<CodexRuntimeSettings>) => void;
 }) {
+  const page = useMemberEditorPresentation();
+  const t = useEditorText();
   const effectiveCodexSettings = codexSettings ?? {
     sandboxMode: 'workspace-write' as const,
     approvalPolicy: 'on-request' as const,
@@ -62,23 +66,31 @@ export function AdvancedRuntimeSection({
   return (
     <SectionCard
       title="高级运行时参数"
-      description="Context Window + Session 策略 + Client 特有参数。标有 (Codex) 的参数仅在选择对应 Client 时显示。"
+      description={
+        page
+          ? undefined
+          : 'Context Window + Session 策略 + Client 特有参数。标有 (Codex) 的参数仅在选择对应 Client 时显示。'
+      }
       tone="success"
     >
       <div className="space-y-2">
-        <TextField
-          label="Context Window"
-          value={form.contextWindow}
-          onChange={(value) => onChange({ contextWindow: value })}
-          inputMode="numeric"
-          tone="success"
-          placeholder="留空或 0 = Auto；正整数 = Manual"
-          ariaDescribedBy="context-window-compat-notice"
-        />
-        <p className="text-xs leading-5 text-[var(--console-runtime-hint)]">
-          填写正整数 = Manual 模式，作为该成员的上下文窗口大小。留空或填 0 = Auto，由运行时自动探测。
-        </p>
-        <ContextWindowCompatibilityNotice cat={cat} form={form} />
+        {!page && (
+          <>
+            <TextField
+              label="Context Window"
+              value={form.contextWindow}
+              onChange={(value) => onChange({ contextWindow: value })}
+              inputMode="numeric"
+              tone="success"
+              placeholder="留空或 0 = Auto；正整数 = Manual"
+              ariaDescribedBy="context-window-compat-notice"
+            />
+            <p className="text-xs leading-5 text-[var(--console-runtime-hint)]">
+              填写正整数 = Manual 模式，作为该成员的上下文窗口大小。留空或填 0 = Auto，由运行时自动探测。
+            </p>
+            <ContextWindowCompatibilityNotice cat={cat} form={form} />
+          </>
+        )}
         {cliExtensionsAvailable && cliEffortOptions ? (
           <>
             <TextField
@@ -90,8 +102,14 @@ export function AdvancedRuntimeSection({
               tone="success"
             />
             <p className="-mt-1 text-label leading-4 text-cafe-muted">
-              维护 preset：{cliEffortOptions.join(' / ')}。也可直接输入所选 CLI 支持的原生值；CLI
-              会返回其自身的校验错误。
+              {page ? (
+                t('思考深度使用客户端支持的原生值。')
+              ) : (
+                <>
+                  维护 preset：{cliEffortOptions.join(' / ')}。也可直接输入所选 CLI 支持的原生值；CLI
+                  会返回其自身的校验错误。
+                </>
+              )}
             </p>
           </>
         ) : null}
@@ -113,30 +131,33 @@ export function AdvancedRuntimeSection({
               tone="success"
             />
             <p className="text-label leading-4 text-cafe-muted">
-              仅 Codex OAuth 可用；这是请求档位，不代表上游最终实际服务档位。与 CLI Effort（思考深度）互不影响。
+              {page
+                ? t('速度档位和思考深度分别设置；上游可能调整实际速度。')
+                : '仅 Codex OAuth 可用；这是请求档位，不代表上游最终实际服务档位。与 CLI Effort（思考深度）互不影响。'}
             </p>
           </div>
         ) : null}
         {cliExtensionsAvailable ? (
           <div className="space-y-1">
-            <p className="text-sm font-medium text-cafe">额外 CLI 参数</p>
+            <p className="text-sm font-medium text-cafe">{t('额外 CLI 参数')}</p>
             <TagEditor
               tags={form.cliConfigArgs}
               onChange={(nextTags) => onChange({ cliConfigArgs: nextTags })}
-              addLabel="+ 添加参数"
-              placeholder="例如 --model xxx 或 --flag value"
-              emptyLabel="无额外参数"
+              addLabel={t('+ 添加参数')}
+              placeholder={t('例如 --model xxx 或 --flag value')}
+              emptyLabel={t('无额外参数')}
               tone="green"
             />
             <p className="text-label leading-4 text-cafe-muted">
-              每条直接追加到 CLI 命令。普通重复参数以用户参数为准；`CLI Effort`、`速度档位`
-              等结构化保留项始终以上方字段为准，对应 raw 参数会被忽略。
+              {page
+                ? t('启动时附加这些参数；与上方字段重复的保留参数以上方字段为准。')
+                : '每条直接追加到 CLI 命令。普通重复参数以用户参数为准；`CLI Effort`、`速度档位`等结构化保留项始终以上方字段为准，对应 raw 参数会被忽略。'}
             </p>
           </div>
         ) : null}
       </div>
 
-      {cat ? (
+      {cat && !page ? (
         <HubSessionStrategyEditor
           strategyForm={strategyForm}
           loading={loadingStrategy}
@@ -147,7 +168,7 @@ export function AdvancedRuntimeSection({
 
       {showCodexSettings ? (
         <div className="space-y-3 rounded-[14px] bg-[var(--console-runtime-group-bg)] p-[14px]">
-          {loadingCodexSettings ? <p className="text-sm text-cafe-secondary">Codex 运行参数加载中...</p> : null}
+          {loadingCodexSettings ? <p className="text-sm text-cafe-secondary">{t('Codex 运行参数加载中...')}</p> : null}
           {codexSettingsError ? (
             <p className="rounded-[20px] border border-conn-red-ring bg-conn-red-bg px-3 py-2 text-sm text-conn-red-text">
               {codexSettingsError}
@@ -155,12 +176,18 @@ export function AdvancedRuntimeSection({
           ) : null}
           {!loadingCodexSettings && !codexSettingsEditable ? (
             <p className="rounded-[10px] bg-[var(--console-field-bg)] px-3 py-2 text-xs leading-5 text-[var(--cafe-accent)]">
-              Codex 配置基线未加载成功，以下 3 项已禁用；请刷新后重试，避免保存时误以为已生效。
+              {page
+                ? t('全局设置读取失败，以下选项暂不能修改。请重开本页重试。')
+                : 'Codex 配置基线未加载成功，以下 3 项已禁用；请刷新后重试，避免保存时误以为已生效。'}
             </p>
           ) : null}
-          <p className="text-center text-xs font-semibold text-cafe-muted">── Codex 专属 (仅 Client=Codex 时显示) ──</p>
+          <p className="text-center text-xs font-semibold text-cafe-muted">
+            {t('── Codex 专属 (仅 Client=Codex 时显示) ──')}
+          </p>
           <p className="rounded-[10px] bg-[var(--console-runtime-field-bg)] px-3 py-2 text-xs leading-5 text-[var(--console-runtime-hint)]">
-            成员资料与 Codex 执行参数收敛到同一个入口保存。保存后会分别写入成员 overlay 与全局运行配置。
+            {page
+              ? t('以下是全局 Codex 执行参数，修改会影响所有本地 Codex 成员；与成员资料一起保存。')
+              : '成员资料与 Codex 执行参数收敛到同一个入口保存。保存后会分别写入成员 overlay 与全局运行配置。'}
           </p>
           <div className="space-y-2">
             <SelectField
@@ -212,7 +239,9 @@ function draftCannotResolveOrApplyContextWindow(form: HubCatEditorFormState): bo
   return null;
 }
 
-function ContextWindowCompatibilityNotice({ cat, form }: { cat?: CatData | null; form: HubCatEditorFormState }) {
+export function ContextWindowCompatibilityNotice({ cat, form }: { cat?: CatData | null; form: HubCatEditorFormState }) {
+  const page = useMemberEditorPresentation();
+  const t = useEditorText();
   const usesSavedContext = selectionMatchesSavedContext(cat, form);
   const capability = usesSavedContext ? cat?.resolvedContext : null;
   const projectedIncompatibility =
@@ -240,9 +269,15 @@ function ContextWindowCompatibilityNotice({ cat, form }: { cat?: CatData | null;
       id="context-window-compat-notice"
       className="block rounded-[10px] border border-conn-amber-ring bg-conn-amber-bg px-3 py-2 text-xs leading-5 text-conn-amber-text"
     >
-      {isManual
-        ? '当前 Client 无法校验或调整自身的上下文窗口；请确认 Manual 值不高于 Client 的实际上限。'
-        : '当前 Client 无法自动探测上下文窗口；请填写正整数使用 Manual 模式。'}
+      {page
+        ? t(
+            isManual
+              ? '此客户端无法校验或调整上下文窗口，请确认填写值不超过实际容量。'
+              : '此客户端无法自动探测上下文窗口，请填写正整数。',
+          )
+        : isManual
+          ? '当前 Client 无法校验或调整自身的上下文窗口；请确认 Manual 值不高于 Client 的实际上限。'
+          : '当前 Client 无法自动探测上下文窗口；请填写正整数使用 Manual 模式。'}
     </output>
   );
 }

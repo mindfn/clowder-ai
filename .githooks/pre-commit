@@ -51,11 +51,11 @@ run_biome_index_snapshot_staged() {
   (
     trap 'rm -rf "$snapshot_dir"' EXIT
     cd "$REPO_ROOT" &&
-      git checkout-index --all --ignore-skip-worktree-bits --prefix="$snapshot_dir/" &&
+      node "$(dirname "${BASH_SOURCE[0]}")/../scripts/materialize-biome-index-snapshot.mjs" "$snapshot_dir" &&
       pnpm run check:biome-version -- --lockfile "$snapshot_dir/pnpm-lock.yaml" &&
       cd "$snapshot_dir" &&
-      printf '%s\n' "$BIOME_LINTABLE_STAGED" \
-        | xargs "$BIOME_BINARY_PATH" check --files-ignore-unknown=true --no-errors-on-unmatched --diagnostic-level=error
+      printf '%s\0' "${BIOME_LINTABLE_STAGED[@]}" \
+        | xargs -0 "$BIOME_BINARY_PATH" check --files-ignore-unknown=true --no-errors-on-unmatched --diagnostic-level=error --
   )
 }
 
@@ -220,11 +220,26 @@ else
   # R2-P1 (Sol): biome config is GLOBAL-scope — changing it (e.g. a rule
   # warn→error) alters lint results for every file, so a per-file staged scan
   # of just the config proves nothing. Config staged ⇒ full-index risk tier.
-  BIOME_CONFIG_STAGED="$(git diff --cached --name-only --diff-filter=d | grep -E '(^|/)biome\.jsonc?$' || true)"
-  BIOME_LINTABLE_STAGED="$(git diff --cached --name-only --diff-filter=d | grep -E '\.(mjs|cjs|js|jsx|mts|cts|ts|tsx|json|jsonc|css|html|vue|svelte|astro|graphql|gql)$' || true)"
+  # Git's display names may be quoted/escaped. Preserve raw path boundaries
+  # through classification and Biome argv, including whitespace and Unicode.
+  BIOME_CONFIG_STAGED=""
+  BIOME_LINTABLE_STAGED=()
+  LOCKFILE_STAGED=""
+  while IFS= read -r -d '' biome_status && IFS= read -r -d '' biome_path; do
+    # Removing/renaming a config changes effective rules too; retain both sides.
+    case "${biome_path##*/}" in
+      biome.json|biome.jsonc|.biome.json|.biome.jsonc) BIOME_CONFIG_STAGED=true ;;
+    esac
+    if [ "$biome_path" = "pnpm-lock.yaml" ]; then LOCKFILE_STAGED=true; fi
+    if [ "$biome_status" != "D" ]; then
+      case "$biome_path" in
+        *.mjs|*.cjs|*.js|*.jsx|*.mts|*.cts|*.ts|*.tsx|*.json|*.jsonc|*.css|*.html|*.vue|*.svelte|*.astro|*.graphql|*.gql)
+          BIOME_LINTABLE_STAGED+=("$biome_path") ;;
+      esac
+    fi
+  done < <(git diff --cached --name-status --no-renames -z)
   # pnpm-lock.yaml staged = Biome version may drift via dependency change —
   # version check must run even when no lintable source file is staged.
-  LOCKFILE_STAGED="$(git diff --cached --name-only | grep -E '^pnpm-lock\.yaml$' || true)"
   if [ -n "$BIOME_CONFIG_STAGED" ]; then
     if [ ! -f "$BIOME_PACKAGE_PATH" ]; then
       echo "" >&2
@@ -238,7 +253,7 @@ else
       echo "🚫 BIOME GUARD failed! Staged biome config change breaks existing files — fix them in the same commit or split the config change." >&2
       exit 1
     fi
-  elif [ -z "$BIOME_LINTABLE_STAGED" ] && [ -n "$LOCKFILE_STAGED" ]; then
+  elif [ "${#BIOME_LINTABLE_STAGED[@]}" -eq 0 ] && [ -n "$LOCKFILE_STAGED" ]; then
     echo "🧭 BIOME GUARD: pnpm-lock.yaml staged — verifying Biome version pin from INDEX content (no lintable source staged)..." >&2
     if ! (
       cd "$REPO_ROOT" &&
@@ -252,7 +267,7 @@ else
       echo "🚫 BIOME GUARD failed! Staged lockfile changes the Biome pin (or whitespace/conflict issues) — refresh install or fix before committing." >&2
       exit 1
     fi
-  elif [ -z "$BIOME_LINTABLE_STAGED" ]; then
+  elif [ "${#BIOME_LINTABLE_STAGED[@]}" -eq 0 ]; then
     echo "🧭 BIOME GUARD: no Biome-lintable files staged — skipping Biome, whitespace/conflict sanity only..." >&2
     if ! (
       cd "$REPO_ROOT" &&
@@ -344,25 +359,22 @@ if [ -f "$REPO_ROOT/scripts/brand-dictionary-helper.mjs" ]; then
     BRAND_PROTECTED_REGEX="${BRAND_PROTECTED_REGEX}|^${re}$"
   done <<< "$DICT_PATTERNS"
 fi
-BRAND_PROTECTED_STAGED=$(git diff --cached --name-only | grep -E "$BRAND_PROTECTED_REGEX" || true)
-# Broad, cheap trigger only: the intake script remains the single authoritative
-# aggregate classifier. False positives here merely run that classifier; they
-# do not block. Keeping the trigger broad ensures a 1224-class staged change
-# cannot avoid the automatic guard just because none of its files are branded.
-STATEFUL_MIGRATION_CANDIDATE_STAGED=$(
-  printf '%s\n' "$STAGED_FILES" \
-    | grep -E '(^packages/api/src/.*/stores/|^packages/api/src/.*([Ss]tore|[Rr]edis|[Cc]ursor|freshness|read-state|unseen|briefing|closure|supplement).*\.ts$|^packages/shared/src/.*([Rr]edis|[Cc]ursor).*\.ts$|^packages/api/src/routes/.*\.ts$|^packages/api/scripts/.*([Cc]ursor|migrat|persist)|(^|/).*(lua|activation|feature-flag|migration|migrate|backfill|persist).*)' \
-    || true
-)
+BRAND_PROTECTED_STAGED=""
+STATEFUL_MIGRATION_CANDIDATE_STAGED=""
+STATE_MIGRATION_TRIGGER='(^packages/api/src/.*/stores/|^packages/api/src/.*([Ss]tore|[Rr]edis|[Cc]ursor|freshness|read-state|unseen|briefing|closure|supplement).*\.ts$|^packages/shared/src/.*([Rr]edis|[Cc]ursor).*\.ts$|^packages/api/src/routes/.*\.ts$|^packages/api/scripts/.*([Cc]ursor|migrat|persist)|(^|/).*(lua|activation|feature-flag|migration|migrate|backfill|persist).*)'
+while IFS= read -r -d '' staged_path; do
+  if [[ "$staged_path" =~ $BRAND_PROTECTED_REGEX ]]; then BRAND_PROTECTED_STAGED="yes"; fi
+  if [[ "$staged_path" =~ $STATE_MIGRATION_TRIGGER ]]; then STATEFUL_MIGRATION_CANDIDATE_STAGED="yes"; fi
+ done < <(git diff --cached --name-only -z --)
 
 if [ -n "$BRAND_PROTECTED_STAGED" ] || [ -n "$STATEFUL_MIGRATION_CANDIDATE_STAGED" ]; then
   echo "" >&2
   if [ -n "$BRAND_PROTECTED_STAGED" ]; then
     echo "🛡 INBOUND GUARD: brand-protected files staged, running brand + 1224-class validation..." >&2
-    echo "$BRAND_PROTECTED_STAGED" | sed 's/^/  - /' >&2
+    echo "  Brand-protected staged path(s) detected." >&2
   else
     echo "🛡 INBOUND GUARD: checking staged files for 1224-class state migration risk..." >&2
-    echo "$STATEFUL_MIGRATION_CANDIDATE_STAGED" | sed 's/^/  - /' >&2
+    echo "  State-migration candidate path(s) detected." >&2
   fi
   echo "" >&2
   if [ -f "scripts/intake-from-opensource.sh" ]; then

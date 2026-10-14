@@ -1,460 +1,314 @@
-/**
- * F102 Phase J: Hook + pure helpers for extracting search_evidence ToolEvents
- * from the current invocation's event stream.
- *
- * Production data shapes:
- * - tool_use.label = "${catId} → ${toolName}" (e.g. "opus → search_evidence")
- * - tool_result.label = "${catId} ← result" (generic, no tool name)
- * - tool_result.detail = complete visible text from evidence-tools.ts, with recall metadata separated
- */
-
-import {
-  parseRecallMetaFromText,
-  type RecallMatchRank,
-  type RecallMatchType,
-  type RecallPreviewItem,
-  type RecallResultStatus,
-} from '@cat-cafe/shared';
-import { useEffect, useMemo, useState } from 'react';
-import type { ToolEvent } from '@/stores/chat-types';
+import type { RecallResolverFamily } from '@cat-cafe/shared';
+import { useEffect, useMemo, useRef, useState } from 'react';
+import { getBubbleInvocationId } from '@/debug/bubbleIdentity';
+import type { ChatMessage } from '@/stores/chat-types';
 import { useChatStore } from '@/stores/chatStore';
 import { apiFetch } from '@/utils/api-client';
+import { deduplicateRecallEvents } from './recall-feed-model';
+import { lookupRecallReply, type RecallReplyCursor, recallReplyMessage } from './recall-reply-lookup';
+import { filterRecallEvents } from './recall-tool-events';
+import type { MemoryCueStatus, RecallEvent, RecallResultItem, RecallSourceView } from './recall-types';
 
-export interface RecallResultItem {
-  title: string;
-  matchRank?: RecallMatchRank;
-  matchType?: RecallMatchType;
-  authority?: string;
-  updatedAt?: string;
-  sourceType?: string;
-  anchor?: string;
-  snippet?: string;
-  /** F263 B.5: whether this specific candidate was consumed (used) by the cat */
-  consumed?: boolean;
+export {
+  deduplicateRecallEvents,
+  recallEventDisplayTitle,
+  recallEventResultLabel,
+} from './recall-feed-model';
+export { parseTextResults } from './recall-result-parser';
+export { filterRecallEvents } from './recall-tool-events';
+export type { RecallEvent, RecallResultItem } from './recall-types';
+
+type ReadStatus = 'loading' | 'ready' | 'error';
+function cueViewKey(input: { invocationId?: string; cueId?: string; sourceRevision?: string; anchor?: string }) {
+  return JSON.stringify([input.invocationId, input.cueId, input.sourceRevision, input.anchor]);
 }
-
-export interface RecallEvent {
-  id: string;
-  toolName?: string;
-  query: string;
-  mode?: string;
-  scope?: string;
-  timestamp: number;
-  resultCount?: number;
-  resultStatus?: RecallResultStatus;
-  results?: RecallResultItem[];
-  /** F263 B.5: 'push' (system-injected) or 'pull' (cat-initiated search) */
-  source?: 'push' | 'pull';
-  /** F263 B.5: for push events, which pipeline (e.g. 'session_bootstrap', 'cold_context') */
-  pushSurface?: string;
-  /** F263 B.5: whether the cat inspected the results */
-  inspected?: boolean;
-  /** F263 B.5: 'used' or 'ignored' */
-  outcome?: 'used' | 'ignored';
+interface CueEntry {
+  cueId: string;
+  consumerCatId: string;
+  sourceAnchor: string;
+  sourceRevision: string;
+  resolverFamily: RecallResolverFamily;
+  status: MemoryCueStatus;
+  presentedAt: number;
 }
-
-/**
- * Pure: map an evidence anchor identifier to a navigable URL.
- * Thread anchors → /thread/{id}; everything else → evidence search.
- */
-export function anchorToHref(anchor: string | undefined): string | null {
-  if (!anchor) return null;
-  if (anchor.startsWith('thread-')) {
-    return `/thread/${anchor.slice('thread-'.length)}`;
-  }
-  return `/memory/search?q=${encodeURIComponent(anchor)}`;
-}
-
-const SEARCH_TOOL_NAMES = ['search_evidence', 'cat_cafe_search_evidence'];
-const UNKNOWN_QUERY = '(unknown)';
-
-function scopeSuffix(scope: string | undefined): string {
-  return scope ? ` · ${scope}` : '';
-}
-
-export function recallEventDisplayTitle(event: RecallEvent): string {
-  const query = event.query.trim();
-  if (query) return query;
-
-  switch (event.toolName) {
-    case 'list_recent':
-      return `最近记忆${scopeSuffix(event.scope)}`;
-    case 'graph_resolve':
-      return `关系图${scopeSuffix(event.scope)}`;
-    case 'search_evidence':
-    case 'cat_cafe_search_evidence':
-      return '未知查询';
-    default:
-      return event.toolName ? `${event.toolName}${scopeSuffix(event.scope)}` : '未知查询';
-  }
-}
-
-export function recallEventResultLabel(event: RecallEvent): string | undefined {
-  if (event.resultCount != null) return `${event.resultCount} 条命中`;
-  switch (event.resultStatus) {
-    case 'overflow':
-      return '结果已存档';
-    case 'parser_miss':
-    case 'result_unmerged':
-      return '统计待解析';
-    case 'legacy_unknown':
-      return '历史统计缺失';
-    case 'error':
-      return '召回失败';
-    case 'no_results':
-      return '0 条命中';
-  }
-  return event.results != null ? '统计待解析' : undefined;
-}
-
-/**
- * Check if a tool_use label refers to search_evidence.
- * Handles both raw names and "${catId} → toolName" production format.
- */
-function isSearchEvidence(label: string): boolean {
-  // Strip catId prefix: "opus → search_evidence" → "search_evidence"
-  const toolName = label.includes(' → ') ? label.split(' → ').pop()! : label;
-  return SEARCH_TOOL_NAMES.some((name) => toolName === name || toolName.endsWith(name));
-}
-
-function parseDetail(detail?: string): { query?: string; q?: string; mode?: string; scope?: string } {
-  if (!detail) return {};
-  try {
-    return JSON.parse(detail) as { query?: string; q?: string; mode?: string; scope?: string };
-  } catch {
-    return {};
-  }
-}
-
-function parseResultCountFromText(text: string): number | undefined {
-  const match = text.match(/^(?:Evidence search results:\s*)?Found (\d+) result\(s\)(?::|\s|$)/m);
-  return match ? Number.parseInt(match[1], 10) : undefined;
-}
-
-function parseJsonStringLiteral(raw: string | undefined): string | undefined {
-  if (!raw) return undefined;
-  try {
-    const parsed = JSON.parse(raw);
-    return typeof parsed === 'string' ? parsed : undefined;
-  } catch {
-    return undefined;
-  }
-}
-
-function parseJsonStringPrefix(raw: string | undefined): string | undefined {
-  if (!raw) return undefined;
-  return parseJsonStringLiteral(`"${raw.replace(/…$/, '')}"`);
-}
-
-interface ResultQueryMatch {
-  query: string;
-  kind: 'exact' | 'prefix';
-}
-
-function parseResultQueryFromText(text: string): ResultQueryMatch | undefined {
-  const foundMatch = text.match(
-    /^(?:Evidence search results:\s*)?Found \d+ result\(s\) for ("(?:\\.|[^"\\])*")(?:\s+\[[^\]\n]+\])?:?/m,
-  );
-  const foundQuery = parseJsonStringLiteral(foundMatch?.[1]);
-  if (foundQuery != null) return { query: foundQuery, kind: 'exact' };
-
-  const foundPrefixMatch = text.match(/^(?:Evidence search results:\s*)?Found \d+ result\(s\) for "((?:\\.|[^"\\])*)/m);
-  const foundQueryPrefix = parseJsonStringPrefix(foundPrefixMatch?.[1]);
-  if (foundQueryPrefix) return { query: foundQueryPrefix, kind: 'prefix' };
-
-  const errorMatch = text.match(/(?:^|\n)Evidence search (?:request )?failed for ("(?:\\.|[^"\\])*")(?: \(\d+\))?:?/m);
-  const errorQuery = parseJsonStringLiteral(errorMatch?.[1]);
-  if (errorQuery != null) return { query: errorQuery, kind: 'exact' };
-
-  const errorPrefixMatch = text.match(/(?:^|\n)Evidence search (?:request )?failed for "((?:\\.|[^"\\])*)/m);
-  const errorQueryPrefix = parseJsonStringPrefix(errorPrefixMatch?.[1]);
-  if (errorQueryPrefix) return { query: errorQueryPrefix, kind: 'prefix' };
-
-  const noResultMatch = text.match(/(?:^|\n)(?:Evidence search results:\s*)?No results found for:\s*(.+)$/m);
-  const noResultQuery = noResultMatch?.[1]?.trim();
-  if (!noResultQuery) return undefined;
-  if (noResultQuery.endsWith('…')) {
-    return { query: noResultQuery.replace(/…$/, ''), kind: 'prefix' };
-  }
-  return { query: noResultQuery, kind: 'exact' };
-}
-
-function hasEvidenceResultMarker(text: string): boolean {
-  return /(?:^|\n)Evidence search results:/m.test(text);
-}
-
-function hasLegacyEvidenceMetadata(text: string): boolean {
-  return [/(?:^|\n)\s+(?:anchor|type):\s+.+/m, /(?:^|\n)📊 本轮第 /m].some((pattern) => pattern.test(text));
-}
-
-function isSearchEvidenceResultText(text: string): boolean {
-  const hasResultMarker = hasEvidenceResultMarker(text);
-  const hasResultCount = parseResultCountFromText(text) != null;
-  const hasNoResult = /(?:^|\n)(?:Evidence search results:\s*)?No results found for:/m.test(text);
-  const hasEvidenceError = [
-    /(?:^|\n)Evidence search (?:request )?failed(?: for "(?:\\.|[^"\\])*")?(?: \(\d+\))?:?/m,
-    /(?:^|\n)Evidence search (?:request )?failed for "(?:\\.|[^"\\])*/m,
-  ].some((pattern) => pattern.test(text));
-
-  if (hasEvidenceError) return true;
-  if (hasResultMarker) {
-    if (hasResultCount) return true;
-    return hasNoResult;
-  }
-  if (!hasResultCount) return false;
-  return hasLegacyEvidenceMetadata(text);
-}
-
-function isUnknownCountEvidenceFailure(text: string): boolean {
-  return /result exceeds maximum allowed tokens|maximum allowed tokens|Full result saved to|saved to .*\.txt/i.test(
-    text,
-  );
-}
-
-function findPendingSearchIndex(pendingSearches: RecallEvent[], resultQuery: ResultQueryMatch | undefined): number {
-  if (resultQuery == null) return 0;
-
-  let pendingIndex = -1;
-  if (resultQuery.kind === 'exact') {
-    pendingIndex = pendingSearches.findIndex((recall) => recall.query === resultQuery.query);
-  } else {
-    const prefixMatches = pendingSearches
-      .map((recall, index) => ({ recall, index }))
-      .filter(({ recall }) => recall.query.startsWith(resultQuery.query));
-    pendingIndex = prefixMatches.length === 1 ? prefixMatches[0].index : -1;
-  }
-
-  if (pendingIndex >= 0) return pendingIndex;
-
-  return pendingSearches.findIndex((recall) => recall.query === UNKNOWN_QUERY);
-}
-
-function applyResultToRecall(recall: RecallEvent, text: string, resultQuery?: ResultQueryMatch): void {
-  if (recall.query === UNKNOWN_QUERY && resultQuery?.kind === 'exact') {
-    recall.query = resultQuery.query;
-  }
-  const meta = parseRecallMetaFromText(text);
-  const hasStructuredMeta = meta != null;
-  if (meta) {
-    recall.resultStatus = meta.resultStatus;
-    if (typeof meta.resultCount === 'number') {
-      recall.resultCount = meta.resultCount;
-    }
-  }
-  const resultCount = parseResultCountFromText(text);
-  if (!hasStructuredMeta && recall.resultCount == null && resultCount != null) {
-    recall.resultCount = resultCount;
-  } else if (!hasStructuredMeta && recall.resultCount == null && !isUnknownCountEvidenceFailure(text)) {
-    recall.resultCount = 0;
-  }
-  const textResults = parseTextResults(text);
-  recall.results = textResults.length > 0 ? textResults : recallPreviewItemsToResults(meta?.previewItems);
-  if (!recall.resultStatus) {
-    recall.resultStatus =
-      recall.resultCount === 0 ? 'no_results' : recall.resultCount != null ? 'counted' : 'legacy_unknown';
-  }
-}
-
-function recallPreviewItemsToResults(items: RecallPreviewItem[] | undefined): RecallResultItem[] {
-  if (!items) return [];
-  return items.flatMap((item) => {
-    if (!item.title) return [];
-    return [
-      {
-        title: item.title,
-        ...(item.matchRank ? { matchRank: item.matchRank } : {}),
-        ...(item.matchType ? { matchType: item.matchType } : {}),
-        ...(item.authority ? { authority: item.authority } : {}),
-        ...(item.updatedAt ? { updatedAt: item.updatedAt } : {}),
-        ...(item.anchor ? { anchor: item.anchor } : {}),
-        ...(item.snippet ? { snippet: item.snippet } : {}),
-      },
-    ];
+export function useThreadRecall(options: { threadId?: string; messages?: readonly ChatMessage[] } = {}) {
+  const currentMessages = useChatStore((store) => store.messages);
+  const currentThreadId = useChatStore((store) => store.currentThreadId);
+  const messages = options.messages ?? currentMessages;
+  const threadId = options.threadId ?? currentThreadId;
+  const [generation, setGeneration] = useState(0);
+  const [cueViewGeneration, setCueViewGeneration] = useState(0);
+  const requestedCueViews = useRef({ threadId, keys: new Set<string>() });
+  const cueCache = useRef(new Map<string, { token: string; events: RecallEvent[]; failed: boolean }>());
+  const [history, setHistory] = useState<{
+    threadId: string | null;
+    events: RecallEvent[];
+    status: ReadStatus;
+    replies?: ChatMessage[];
+    replyCursor?: RecallReplyCursor | null;
+    cueInvocationIds?: string[];
+    sourceViews?: RecallSourceView[];
+    cueViewGeneration?: number;
+  }>({
+    threadId: null,
+    events: [],
+    status: 'loading',
   });
-}
-
-/**
- * Pure: parse structured results from plain text output of evidence-tools.ts.
- * Ranked format: "[match:<rank> · authority:<tier> · updated:<timestamp>] title".
- * Coverage format: "[matchType:<relation>] title". Historical bracket-only
- * rank and coverage lines remain readable through separate, closed unions.
- * Exported for testing.
- */
-export function parseTextResults(text: string): RecallResultItem[] {
-  if (!text) return [];
-  const results: RecallResultItem[] = [];
-  const lines = text.split('\n');
-
-  for (let i = 0; i < lines.length; i++) {
-    const current = lines[i].match(/^\[match:(high|mid|low) · authority:([^\]]+?) · updated:([^\]]+?)\]\s+(.+)$/);
-    const coverage = lines[i].match(/^\[matchType:(direct|alias|source-thread|convention)\]\s+(.+)$/);
-    const legacyRank = lines[i].match(/^\[(high|mid|low)\]\s+(.+)$/);
-    const legacyCoverage = lines[i].match(/^\[(direct|alias|source-thread|convention)\]\s+(.+)$/);
-    if (!current && !coverage && !legacyRank && !legacyCoverage) continue;
-
-    const item: RecallResultItem = {
-      ...(current || legacyRank ? { matchRank: (current?.[1] ?? legacyRank?.[1]) as RecallMatchRank } : {}),
-      ...(coverage || legacyCoverage ? { matchType: (coverage?.[1] ?? legacyCoverage?.[1]) as RecallMatchType } : {}),
-      title: current?.[4] ?? coverage?.[2] ?? legacyRank?.[2] ?? legacyCoverage?.[2] ?? '',
-      ...(current ? { authority: current[2], updatedAt: current[3] } : {}),
-    };
-
-    // Look ahead for metadata on subsequent indented lines
-    for (let j = i + 1; j < lines.length && lines[j].startsWith('  '); j++) {
-      const anchorMatch = lines[j].match(/^\s+anchor:\s+(.+)$/);
-      if (anchorMatch) {
-        item.anchor = anchorMatch[1];
-        continue;
-      }
-      const typeMatch = lines[j].match(/^\s+type:\s+(.+)$/);
-      if (typeMatch) {
-        item.sourceType = typeMatch[1];
-        continue;
-      }
-      const snippetMatch = lines[j].match(/^\s+>\s+(.+)$/);
-      if (snippetMatch) {
-        item.snippet = snippetMatch[1];
-      }
-    }
-
-    results.push(item);
-  }
-
-  return results;
-}
-
-/**
- * Pure: filter ToolEvents to extract search_evidence calls with paired results.
- *
- * Pairing logic: search_evidence tool_result labels are generic
- * "${catId} ← result", not the tool name. Providers may also emit several
- * tool_use events before their results. New evidence output includes the query,
- * so prefer query matching; legacy untagged output falls back to FIFO.
- */
-export function filterRecallEvents(events: ToolEvent[]): RecallEvent[] {
-  const recalls: RecallEvent[] = [];
-  const pendingSearches: RecallEvent[] = [];
-
-  for (let i = 0; i < events.length; i++) {
-    const evt = events[i];
-
-    if (evt.type === 'tool_use' && isSearchEvidence(evt.label)) {
-      const params = parseDetail(evt.detail);
-      const recall: RecallEvent = {
-        id: evt.id,
-        toolName: 'search_evidence',
-        query: params.query || params.q || UNKNOWN_QUERY,
-        mode: params.mode,
-        scope: params.scope,
-        timestamp: evt.timestamp,
-      };
-
-      recalls.push(recall);
-      pendingSearches.push(recall);
-      continue;
-    }
-
-    if (evt.type === 'tool_result' && pendingSearches.length > 0) {
-      const text = evt.detail ?? '';
-      const resultText = evt.resultMeta ? `${text}\n${evt.resultMeta}` : text;
-      if (isSearchEvidenceResultText(resultText)) {
-        const resultQuery = parseResultQueryFromText(resultText);
-        const pendingIndex = findPendingSearchIndex(pendingSearches, resultQuery);
-        if (pendingIndex >= 0) {
-          const pending = pendingSearches[pendingIndex];
-          if (!pending) continue;
-          applyResultToRecall(pending, resultText, resultQuery);
-          pendingSearches.splice(pendingIndex, 1);
-        }
-      }
-    }
-  }
-
-  return recalls;
-}
-
-/**
- * Deduplicate recall events: live toolEvents take precedence (richer detail)
- * over API history events. When a live event matches a history event,
- * merge consumption metadata (consumed, source, outcome) from history
- * into the live event — live events don't have consumed_json from the
- * correlation pipeline. Dedup key = timestamp + toolName + query.
- */
-export function deduplicateRecallEvents(live: RecallEvent[], history: RecallEvent[]): RecallEvent[] {
-  const eventKey = (e: RecallEvent) => `${e.timestamp}:${e.toolName ?? ''}:${e.query}`;
-  const historyByKey = new Map(history.map((e) => [eventKey(e), e]));
-
-  const merged = live.map((liveEvt) => {
-    const histEvt = historyByKey.get(eventKey(liveEvt));
-    if (!histEvt) return liveEvt;
-    // Merge consumption metadata from history into live event
-    const mergedResults = liveEvt.results?.map((r) => {
-      if (r.consumed != null) return r; // already has consumed info
-      const histResult = histEvt.results?.find((hr) => hr.anchor === r.anchor);
-      return histResult?.consumed != null ? { ...r, consumed: histResult.consumed } : r;
-    });
-    return {
-      ...liveEvt,
-      source: liveEvt.source ?? histEvt.source,
-      pushSurface: liveEvt.pushSurface ?? histEvt.pushSurface,
-      inspected: liveEvt.inspected ?? histEvt.inspected,
-      outcome: liveEvt.outcome ?? histEvt.outcome,
-      ...(mergedResults ? { results: mergedResults } : {}),
-    };
-  });
-
-  const liveKeys = new Set(live.map(eventKey));
-  const unique = history.filter((e) => !liveKeys.has(eventKey(e)));
-  return [...merged, ...unique].sort((a, b) => a.timestamp - b.timestamp);
-}
-
-/**
- * React hook: returns RecallEvents from both live ToolEvents (current session)
- * and persistent recall_events table (survives page refresh / thread switch).
- *
- * F102 bugfix: previously, RecallFeed only read from in-memory chat messages
- * (limited to HISTORY_PAGE_SIZE=50 per API fetch). Old recall events disappeared
- * after page refresh. Now queries the persistent recall_events table via API.
- */
-export function useRecallEvents(): RecallEvent[] {
-  const messages = useChatStore((s) => s.messages);
-  const threadId = useChatStore((s) => s.currentThreadId);
-  const [historyEvents, setHistoryEvents] = useState<RecallEvent[]>([]);
-
-  // Fetch historical recall events from SQLite via API
+  const [deliveries, setDeliveries] = useState<{
+    threadId: string | null;
+    events: RecallEvent[];
+    failed: boolean;
+    loading: boolean;
+  }>({ threadId: null, events: [], failed: false, loading: true });
+  const live = useMemo(
+    () =>
+      messages.flatMap((message) => {
+        const invocationId = getBubbleInvocationId(message);
+        return filterRecallEvents(message.toolEvents ?? []).map((event) => ({
+          ...event,
+          catId: message.catId,
+          invocationId,
+          messageId: message.id,
+          replyTimestamp: message.timestamp,
+          sourceEventId:
+            invocationId && message.catId && message.toolEvents?.find((tool) => tool.id === event.id)?.toolUseId
+              ? `${invocationId}:${message.catId}:${message.toolEvents.find((tool) => tool.id === event.id)?.toolUseId}`
+              : undefined,
+        }));
+      }),
+    [messages],
+  );
+  const finished = messages
+    .filter((message) => message.type === 'assistant' && !message.isStreaming)
+    .map((message) => `${message.id}:${message.toolEvents?.length ?? 0}`)
+    .join('|');
+  const historyRequest = useMemo(
+    () => ({ threadId, generation, finished, cueViewGeneration }),
+    [threadId, generation, finished, cueViewGeneration],
+  );
   useEffect(() => {
-    // Clear stale history immediately on thread switch / missing threadId
-    setHistoryEvents([]);
-    if (!threadId) return;
-    let cancelled = false;
-    apiFetch(`/api/recall/events?threadId=${encodeURIComponent(threadId)}&limit=100`)
-      .then((res) => {
-        if (!res.ok || cancelled) return;
-        return res.json();
-      })
-      .then((data: { events?: RecallEvent[] } | undefined) => {
-        if (cancelled || !data?.events) return;
-        setHistoryEvents(data.events);
+    const { threadId, cueViewGeneration } = historyRequest;
+    let active = true;
+    const controller = new AbortController();
+    setHistory((previous) => ({
+      threadId,
+      events: previous.threadId === threadId ? previous.events : [],
+      replies: previous.threadId === threadId ? previous.replies : [],
+      replyCursor: previous.threadId === threadId ? previous.replyCursor : null,
+      cueInvocationIds: previous.threadId === threadId ? previous.cueInvocationIds : [],
+      sourceViews: previous.threadId === threadId ? previous.sourceViews : [],
+      cueViewGeneration: previous.threadId === threadId ? previous.cueViewGeneration : 0,
+      status: 'loading',
+    }));
+    if (!threadId) {
+      setHistory({ threadId, events: [], status: 'ready' });
+      return;
+    }
+    apiFetch(`/api/recall/events?threadId=${encodeURIComponent(threadId)}&limit=100`, { signal: controller.signal })
+      .then(async (response) => {
+        if (!response.ok) throw new Error('History unavailable');
+        const body = (await response.json()) as {
+          events?: RecallEvent[];
+          sourceViews?: RecallSourceView[];
+          cueInvocationIds?: string[];
+          replyCursor?: RecallReplyCursor | null;
+          replies?: Array<{
+            messageId: string;
+            catId: string;
+            invocationId: string;
+            parentInvocationId?: string;
+            timestamp: number;
+          }>;
+        };
+        const replies: ChatMessage[] = (body.replies ?? []).map(recallReplyMessage);
+        if (!Array.isArray(body.events)) throw new Error('History response unavailable');
+        if (active)
+          setHistory({
+            threadId,
+            events: body.events,
+            sourceViews: body.sourceViews ?? [],
+            cueViewGeneration,
+            status: 'ready',
+            cueInvocationIds: body.cueInvocationIds ?? [],
+            replies,
+            replyCursor: body.replyCursor ?? null,
+          });
       })
       .catch(() => {
-        // Silently degrade — live toolEvents still work
+        if (active) setHistory((previous) => ({ ...previous, threadId, status: 'error' }));
       });
     return () => {
-      cancelled = true;
+      active = false;
+      controller.abort();
     };
-  }, [threadId]);
-
-  // Extract live recall events from in-memory chat messages
-  const liveEvents = useMemo(() => {
-    const allToolEvents: ToolEvent[] = [];
-    for (const msg of messages) {
-      if (msg.toolEvents) {
-        allToolEvents.push(...msg.toolEvents);
-      }
+  }, [historyRequest]);
+  const historyEvents = useMemo(() => (history.threadId === threadId ? history.events : []), [history, threadId]);
+  const replyMessages =
+    history.threadId === threadId
+      ? [
+          ...messages,
+          ...(history.replies ?? []).filter((reply) => !messages.some((message) => message.id === reply.id)),
+        ]
+      : messages;
+  const invocationKey = JSON.stringify(
+    [
+      ...new Set(
+        [
+          ...(history.threadId === threadId ? (history.cueInvocationIds ?? []) : []),
+          ...messages.map(getBubbleInvocationId),
+        ].filter((id): id is string => !!id),
+      ),
+    ]
+      .sort()
+      .map((id) => {
+        const message = messages.find((message) => getBubbleInvocationId(message) === id);
+        return {
+          id,
+          token: `${generation}:${message ? `${message.isStreaming}:${message.toolEvents?.length ?? 0}` : 'history'}`,
+        };
+      }),
+  );
+  useEffect(() => {
+    let active = true;
+    const controller = new AbortController();
+    setDeliveries((previous) => ({
+      threadId,
+      events: previous.threadId === threadId ? previous.events : [],
+      failed: false,
+      loading: true,
+    }));
+    const ids = JSON.parse(invocationKey) as Array<{ id: string; token: string }>;
+    if (!threadId || !ids.length) {
+      setDeliveries({ threadId, events: [], failed: false, loading: false });
+      return;
     }
-    return filterRecallEvents(allToolEvents);
-  }, [messages]);
-
-  // Merge: live events (richer detail) + history (persistence), deduplicated
-  return useMemo(() => deduplicateRecallEvents(liveEvents, historyEvents), [liveEvents, historyEvents]);
+    // Bounded concurrency; one unavailable cue source never discards the sources that succeeded.
+    (async () => {
+      const events: RecallEvent[] = [];
+      let failed = false;
+      for (let offset = 0; offset < ids.length && active; offset += 4) {
+        await Promise.all(
+          ids.slice(offset, offset + 4).map(async ({ id: invocationId, token }) => {
+            const cacheKey = `${threadId}:${invocationId}`;
+            const cached = cueCache.current.get(cacheKey);
+            if (cached?.token === token) {
+              events.push(...cached.events);
+              failed ||= cached.failed;
+              return;
+            }
+            try {
+              const response = await apiFetch(
+                `/api/threads/${encodeURIComponent(threadId)}/invocations/${encodeURIComponent(invocationId)}/memory-cues`,
+                { signal: controller.signal },
+              );
+              if (!response.ok) throw new Error('Cue source unavailable');
+              const body = (await response.json()) as { cues?: CueEntry[] };
+              if (!Array.isArray(body.cues)) throw new Error('Cue response unavailable');
+              const cueEvents = body.cues.map((cue) => ({
+                id: `cue:${invocationId}:${cue.cueId}`,
+                catId: cue.consumerCatId === 'legacy-unbound' ? undefined : cue.consumerCatId,
+                invocationId,
+                cueId: cue.cueId,
+                sourceRevision: cue.sourceRevision,
+                query: '',
+                resolverFamily: cue.resolverFamily,
+                timestamp: cue.presentedAt,
+                source: 'push' as const,
+                cueStatus: cue.status,
+                results: [{ title: '', anchor: cue.sourceAnchor, sourceType: cue.resolverFamily }],
+              }));
+              events.push(...cueEvents);
+              if (active) cueCache.current.set(cacheKey, { token, events: cueEvents, failed: false });
+            } catch {
+              if (active) {
+                failed = true;
+                cueCache.current.set(cacheKey, { token, events: [], failed: true });
+              }
+            }
+          }),
+        );
+      }
+      if (active) setDeliveries({ threadId, events, failed, loading: false });
+    })();
+    return () => {
+      active = false;
+      controller.abort();
+    };
+  }, [threadId, invocationKey]);
+  useEffect(() => {
+    if (requestedCueViews.current.threadId !== threadId) requestedCueViews.current = { threadId, keys: new Set() };
+    if (history.threadId !== threadId || history.status !== 'ready' || deliveries.threadId !== threadId) return;
+    const available = new Set((history.sourceViews ?? []).filter((view) => view.cueId).map(cueViewKey));
+    const missing = deliveries.events.filter((event) => {
+      const key = cueViewKey({ ...event, anchor: event.results?.[0]?.anchor });
+      return !available.has(key) && !requestedCueViews.current.keys.has(key);
+    });
+    if (!missing.length) return;
+    for (const event of missing)
+      requestedCueViews.current.keys.add(cueViewKey({ ...event, anchor: event.results?.[0]?.anchor }));
+    // One extra read per newly observed cue coordinate; omitted/failed views cannot form a refresh loop.
+    setCueViewGeneration((value) => value + 1);
+  }, [threadId, history, deliveries]);
+  const events = useMemo(() => {
+    const sourceViews = history.threadId === threadId ? (history.sourceViews ?? []) : [];
+    const views = new Map(sourceViews.filter((view) => !view.cueId).map((view) => [view.anchor, view]));
+    const cueViews = new Map(sourceViews.filter((view) => view.cueId).map((view) => [cueViewKey(view), view]));
+    return [
+      ...deduplicateRecallEvents(live, historyEvents),
+      ...(deliveries.threadId === threadId ? deliveries.events : []),
+    ].map((event) => ({
+      ...event,
+      results: event.results?.map((item): RecallResultItem => {
+        const key = cueViewKey({ ...event, anchor: item.anchor });
+        const view = event.cueId ? cueViews.get(key) : item.anchor ? views.get(item.anchor) : undefined;
+        if (view)
+          return {
+            ...item,
+            title: view.title ?? '',
+            titleStatus: view.titleStatus,
+            sourceType: view.kind ?? item.sourceType,
+            href: view.href,
+          };
+        if (!event.cueId) return item;
+        if (history.status === 'error') return { ...item, href: null, titleStatus: 'unavailable' };
+        const pending =
+          history.threadId !== threadId ||
+          history.status === 'loading' ||
+          (history.cueViewGeneration ?? 0) < cueViewGeneration ||
+          requestedCueViews.current.threadId !== threadId ||
+          !requestedCueViews.current.keys.has(key);
+        return { ...item, href: null, titleStatus: pending ? 'loading' : 'unavailable' };
+      }),
+    }));
+  }, [live, historyEvents, deliveries, history, threadId, cueViewGeneration]);
+  const findReply = async (event: RecallEvent, signal: AbortSignal) => {
+    if (!threadId) return undefined;
+    return lookupRecallReply({
+      threadId,
+      event,
+      messages: replyMessages,
+      cursor: history.threadId === threadId ? (history.replyCursor ?? null) : null,
+      signal,
+      isCurrent: () => useChatStore.getState().currentThreadId === threadId,
+      onPage: (replies, replyCursor) =>
+        setHistory((previous) => (previous.threadId === threadId ? { ...previous, replies, replyCursor } : previous)),
+    });
+  };
+  return {
+    events,
+    findReply,
+    messages: replyMessages,
+    threadId,
+    historyStatus: history.threadId === threadId ? history.status : ('loading' as ReadStatus),
+    historyCount: historyEvents.length,
+    hasOlderReplies: history.threadId === threadId && !!history.replyCursor,
+    retainedHistory:
+      history.threadId === threadId && (history.events.length > 0 || (history.cueInvocationIds?.length ?? 0) > 0),
+    cuesFailed: deliveries.threadId === threadId && deliveries.failed,
+    cuesLoading: deliveries.threadId !== threadId || deliveries.loading,
+    retry: () => setGeneration((value) => value + 1),
+  };
+}
+export function useRecallEvents(): RecallEvent[] {
+  return useThreadRecall().events;
 }

@@ -40,7 +40,7 @@ const questionOptionSchema = z
   })
   .strict();
 
-const runtimeQuestionSchema = z
+export const runtimeQuestionSchema = z
   .object({
     id: nonBlank,
     header: nonBlank,

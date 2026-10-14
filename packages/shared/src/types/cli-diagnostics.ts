@@ -22,6 +22,10 @@ export type CliErrorReasonCode =
   | 'auth_failed'
   | 'quota_exceeded'
   | 'network_error'
+  /** Provider explicitly reported failure while processing the request. */
+  | 'upstream_service_error'
+  /** Stream ended without evidence that identifies a network or provider cause. */
+  | 'stream_disconnected'
   | 'invalid_config'
   | 'spawn_failed'
   | 'context_window_exceeded'
@@ -94,6 +98,8 @@ export interface CliDiagnostics {
     exitCode?: number | null;
     signal: NodeJS.Signals | string | null;
     invocationId?: string;
+    /** Provider request correlation ID; admitted only as a UUID from an error event. */
+    upstreamRequestId?: string;
     /**
      * Provider-owned, path-safe spawn context. Values must be finite enum/hash
      * tokens only: no raw cwd/HOME/prompt/env values.

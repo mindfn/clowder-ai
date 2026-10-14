@@ -11,7 +11,12 @@ import {
 import { prepareCollectiveCodexHome } from '../../src/domains/cats/services/agents/providers/collective-codex-home.ts';
 
 const repo = resolve(dirname(fileURLToPath(import.meta.url)), '../../../..');
-export async function probeCollectiveCodex({ policyArgs = COLLECTIVE_CODEX_POLICY_ARGS, invokeTools = true } = {}) {
+export async function probeCollectiveCodex({
+  policyArgs = COLLECTIVE_CODEX_POLICY_ARGS,
+  invokeTools = true,
+  codeMode = false,
+  nativeSubtask = false,
+} = {}) {
   const root = await mkdtemp(join(tmpdir(), 'f290-native-policy-'));
   const privateCanary = 'F290_PRIVATE_NATIVE_CANARY';
   const marker = join(root, 'forbidden-native-effect');
@@ -25,6 +30,12 @@ export async function probeCollectiveCodex({ policyArgs = COLLECTIVE_CODEX_POLIC
   await writeFile(join(root, '.codex', 'config.toml'), 'developer_instructions="' + privateCanary + '"\n');
   const requests = [];
   const callbacks = [];
+  const startedAt = Date.now();
+  let firstRequestAt = null;
+  let firstCallbackAt = null;
+  let spawnIssued = false;
+  let waitIssued = false;
+  let childRequestCount = 0;
   const server = http.createServer(async (req, res) => {
     let body = '';
     for await (const chunk of req) body += chunk;
@@ -35,6 +46,7 @@ export async function probeCollectiveCodex({ policyArgs = COLLECTIVE_CODEX_POLIC
     }
     const parsed = JSON.parse(body);
     if (req.url.startsWith('/api/callbacks/')) {
+      firstCallbackAt ??= Date.now();
       callbacks.push({ path: req.url, body: parsed, headers: req.headers });
       res.writeHead(200, { 'content-type': 'application/json' });
       res.end(
@@ -50,9 +62,66 @@ export async function probeCollectiveCodex({ policyArgs = COLLECTIVE_CODEX_POLIC
       );
       return;
     }
+    firstRequestAt ??= Date.now();
     requests.push(parsed);
     let call;
-    if (invokeTools && requests.length === 1) {
+    let finalText;
+    if (nativeSubtask) {
+      const user = [...(parsed.input ?? [])].reverse().find((row) => row.role === 'user');
+      const child = JSON.stringify(user?.content ?? '').includes('F317_CHILD_FIXED_INPUT');
+      if (child) {
+        childRequestCount++;
+        finalText = 'F317_CHILD_SUMMARY';
+      } else if (!spawnIssued) {
+        spawnIssued = true;
+        call = {
+          type: 'function_call',
+          id: 'fc_spawn',
+          call_id: 'call_spawn',
+          namespace: 'multi_agent_v1',
+          name: 'spawn_agent',
+          arguments: JSON.stringify({
+            message:
+              'F317_CHILD_FIXED_INPUT: summarize only this supplied sentence; return F317_CHILD_SUMMARY. No tools or data reads.',
+            fork_context: false,
+          }),
+        };
+      } else if (!waitIssued) {
+        const output = parsed.input?.find((row) => row.type === 'function_call_output' && row.call_id === 'call_spawn');
+        let agent;
+        try {
+          agent = JSON.parse(output?.output ?? '{}').agent_id;
+        } catch {
+          /* recorded below as unavailable */
+        }
+        if (typeof agent === 'string') {
+          waitIssued = true;
+          call = {
+            type: 'function_call',
+            id: 'fc_wait',
+            call_id: 'call_wait',
+            namespace: 'multi_agent_v1',
+            name: 'wait_agent',
+            arguments: JSON.stringify({ targets: [agent], timeout_ms: 10000 }),
+          };
+        } else finalText = 'F317_SPAWN_RESULT_UNAVAILABLE';
+      } else finalText = 'F317_ROOT_ACK';
+    } else if (invokeTools && requests.length === 1 && codeMode) {
+      call = {
+        type: 'custom_tool_call',
+        id: 'fc_current',
+        call_id: 'call_current',
+        namespace: 'functions',
+        name: 'exec',
+        input: [
+          'text({shell:typeof tools.exec_command,patch:typeof tools.apply_patch,process:typeof process,require:typeof require,fetch:typeof fetch,WebSocket:typeof WebSocket,XMLHttpRequest:typeof XMLHttpRequest});',
+          'text({toolNames:Object.keys(tools).sort()});',
+          "let importResult;try{await import('node:fs');importResult='allowed'}catch(error){importResult=String(error)}text({importResult});",
+          'text({resourceResult:await tools.list_mcp_resources({})});',
+          'text(await tools.mcp__cat_cafe_collab__cat_cafe_collective_current_context({}));',
+        ].join(''),
+      };
+    } else if (invokeTools && requests.length === 1) {
       const namespace = parsed.tools?.find((tool) => tool.type === 'namespace' && tool.name === 'mcp__cat_cafe_collab');
       const current = namespace?.tools.find((tool) => tool.name === 'cat_cafe_collective_current_context');
       if (current)
@@ -64,7 +133,7 @@ export async function probeCollectiveCodex({ policyArgs = COLLECTIVE_CODEX_POLIC
           name: current.name,
           arguments: '{}',
         };
-    } else if (invokeTools && requests.length === 2) {
+    } else if (invokeTools && requests.length === 2 && !codeMode) {
       call = {
         type: 'function_call',
         id: 'fc_attack',
@@ -73,7 +142,16 @@ export async function probeCollectiveCodex({ policyArgs = COLLECTIVE_CODEX_POLIC
         arguments: JSON.stringify({ cmd: 'touch ' + marker }),
       };
     }
-    const output = call ? [call] : [];
+    const final = finalText
+      ? {
+          type: 'message',
+          id: `msg_probe_${requests.length}`,
+          role: 'assistant',
+          phase: 'final_answer',
+          content: [{ type: 'output_text', text: finalText, annotations: [] }],
+        }
+      : undefined;
+    const output = call ? [call] : final ? [final] : [];
     const events = [
       {
         type: 'response.created',
@@ -83,9 +161,44 @@ export async function probeCollectiveCodex({ policyArgs = COLLECTIVE_CODEX_POLIC
     if (call)
       events.push(
         { type: 'response.output_item.added', output_index: 0, item: { ...call, arguments: '' } },
-        { type: 'response.function_call_arguments.delta', output_index: 0, item_id: call.id, delta: call.arguments },
-        { type: 'response.function_call_arguments.done', output_index: 0, item_id: call.id, arguments: call.arguments },
+        ...(call.type === 'custom_tool_call'
+          ? [{ type: 'response.custom_tool_call_input.delta', output_index: 0, item_id: call.id, delta: call.input }]
+          : [
+              {
+                type: 'response.function_call_arguments.delta',
+                output_index: 0,
+                item_id: call.id,
+                delta: call.arguments,
+              },
+              {
+                type: 'response.function_call_arguments.done',
+                output_index: 0,
+                item_id: call.id,
+                arguments: call.arguments,
+              },
+            ]),
         { type: 'response.output_item.done', output_index: 0, item: call },
+      );
+    if (final)
+      events.push(
+        { type: 'response.output_item.added', output_index: 0, item: { ...final, content: [] } },
+        {
+          type: 'response.content_part.added',
+          output_index: 0,
+          item_id: final.id,
+          content_index: 0,
+          part: { type: 'output_text', text: '', annotations: [] },
+        },
+        { type: 'response.output_text.delta', output_index: 0, item_id: final.id, content_index: 0, delta: finalText },
+        { type: 'response.output_text.done', output_index: 0, item_id: final.id, content_index: 0, text: finalText },
+        {
+          type: 'response.content_part.done',
+          output_index: 0,
+          item_id: final.id,
+          content_index: 0,
+          part: final.content[0],
+        },
+        { type: 'response.output_item.done', output_index: 0, item: final },
       );
     events.push({
       type: 'response.completed',
@@ -134,6 +247,7 @@ export async function probeCollectiveCodex({ policyArgs = COLLECTIVE_CODEX_POLIC
     '--json',
     ...(policyArgs.includes('--skip-git-repo-check') ? [] : ['--skip-git-repo-check']),
     ...policyArgs,
+    ...(codeMode ? ['--enable', 'code_mode', '--enable', 'code_mode_only'] : []),
     ...mcp,
     '--config',
     'model="gpt-5"',
@@ -152,8 +266,14 @@ export async function probeCollectiveCodex({ policyArgs = COLLECTIVE_CODEX_POLIC
   ];
   let stdout = '';
   let stderr = '';
+  let timedOut = false;
+  let killSent = false;
+  let childExitAt = null;
   try {
     const child = spawn('codex', args, { cwd: root, env, stdio: ['pipe', 'pipe', 'pipe'] });
+    child.on('exit', () => {
+      childExitAt = Date.now();
+    });
     child.stdin.end('Read the current public context for PUBLIC_REQUEST_A.');
     child.stdout.on('data', (d) => {
       stdout += d;
@@ -161,9 +281,14 @@ export async function probeCollectiveCodex({ policyArgs = COLLECTIVE_CODEX_POLIC
     child.stderr.on('data', (d) => {
       stderr += d;
     });
-    const timer = setTimeout(() => child.kill(), 20000);
-    const exitCode = await new Promise((resolve, reject) => {
-      child.on('close', resolve);
+    // The fixture runs a real native CLI and local MCP child inside a parallel full gate.
+    // A cold process under load must finish its positive control before this guard fires.
+    const timer = setTimeout(() => {
+      timedOut = true;
+      killSent = child.kill();
+    }, 45000);
+    const closed = await new Promise((resolve, reject) => {
+      child.on('close', (code, signal) => resolve({ code, signal }));
       child.on('error', reject);
     });
     clearTimeout(timer);
@@ -171,7 +296,25 @@ export async function probeCollectiveCodex({ policyArgs = COLLECTIVE_CODEX_POLIC
       () => true,
       () => false,
     );
-    return { exitCode, requests, callbacks, stdout, stderr, forbiddenEffect, privateCanary };
+    return {
+      exitCode: closed.code,
+      exitSignal: closed.signal,
+      requests,
+      childRequestCount,
+      callbacks,
+      stdout,
+      stderr,
+      forbiddenEffect,
+      privateCanary,
+      timedOut,
+      timing: {
+        firstRequestMs: firstRequestAt === null ? null : firstRequestAt - startedAt,
+        firstCallbackMs: firstCallbackAt === null ? null : firstCallbackAt - startedAt,
+        childExitMs: childExitAt === null ? null : childExitAt - startedAt,
+        childCloseMs: Date.now() - startedAt,
+        killSent,
+      },
+    };
   } finally {
     server.closeAllConnections();
     await new Promise((resolve) => server.close(resolve));

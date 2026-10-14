@@ -6,12 +6,24 @@ import type { ApprovalFeatureId } from '@cat-cafe/shared';
 import { type ReactNode, useEffect, useState } from 'react';
 import { useApprovalHubStore } from '@/stores/approvalHubStore';
 import { type ApprovalHistoryOutcomeFilter, ApprovalHistoryPane } from './ApprovalHistoryPane';
-import { ApprovalPendingPane, type ApprovalStatusFilter } from './ApprovalPendingPane';
+import { type ApprovalPendingConsumer, ApprovalPendingPane, type ApprovalStatusFilter } from './ApprovalPendingPane';
 
 type ActiveTab = 'pending' | 'history';
 
-export function ApprovalPanel({ selectedProposalId = null }: { selectedProposalId?: string | null }) {
-  const [activeTab, setActiveTab] = useState<ActiveTab>('pending');
+export function ApprovalPanel({
+  selectedProposalId = null,
+  initialTab = 'pending',
+  showPendingCount = true,
+  consumer,
+  historyOwnerUserId,
+}: {
+  selectedProposalId?: string | null;
+  initialTab?: ActiveTab;
+  showPendingCount?: boolean;
+  consumer?: ApprovalPendingConsumer;
+  historyOwnerUserId?: string;
+}) {
+  const [activeTab, setActiveTab] = useState<ActiveTab>(initialTab);
   const [featureFilters, setFeatureFilters] = useState<Set<ApprovalFeatureId>>(() => new Set());
   const [statusFilter, setStatusFilter] = useState<ApprovalStatusFilter>('all');
   const [threadQuery, setThreadQuery] = useState('');
@@ -45,7 +57,7 @@ export function ApprovalPanel({ selectedProposalId = null }: { selectedProposalI
         <div className="flex items-center gap-0.5" data-testid="approval-tab-bar">
           <TabButton active={activeTab === 'pending'} onClick={() => setActiveTab('pending')} testId="pending">
             待我处理
-            {count > 0 && (
+            {showPendingCount && count > 0 && (
               <span
                 className="flex h-5 min-w-[18px] items-center justify-center rounded-full px-1 text-micro font-bold"
                 style={{ backgroundColor: 'var(--semantic-warning)', color: 'var(--cafe-accent-foreground)' }}
@@ -79,6 +91,7 @@ export function ApprovalPanel({ selectedProposalId = null }: { selectedProposalI
 
       {activeTab === 'pending' ? (
         <ApprovalPendingPane
+          consumer={consumer}
           selectedProposalId={selectedProposalId}
           featureFilters={featureFilters}
           onFeatureFiltersChange={setFeatureFilters}
@@ -89,6 +102,7 @@ export function ApprovalPanel({ selectedProposalId = null }: { selectedProposalI
         />
       ) : (
         <ApprovalHistoryPane
+          ownerUserId={historyOwnerUserId}
           featureFilters={historyFeatureFilters}
           onFeatureFiltersChange={setHistoryFeatureFilters}
           outcomeFilter={historyOutcomeFilter}

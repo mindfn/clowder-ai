@@ -94,6 +94,10 @@ export class InMemoryRuntimeInteractionStore implements RuntimeInteractionStore 
     return record ? clone(record) : null;
   }
 
+  async readPendingIndexByUser(userId: string) {
+    return { records: await this.listPendingByUser(userId), exhaustiveness: 'complete' as const };
+  }
+
   async listPendingByUser(userId: string): Promise<RuntimeInteractionRecord[]> {
     return [...this.records.values()]
       .filter((record) => record.status === 'pending' && record.request.owner.userId === userId)

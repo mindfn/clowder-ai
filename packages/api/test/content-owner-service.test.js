@@ -24,6 +24,108 @@ afterEach(async () => {
 });
 
 describe('ProjectContentOwnerService', () => {
+  it('resolves many source publication revisions with one batch result', async () => {
+    const { service } = await createService();
+    const contentRef = 'prepared-media:batch-versioned';
+    const publicationScope = {
+      ownerUserId: 'alice',
+      threadId: 'thread-batch',
+      taskId: 'task-batch',
+    };
+    await service.importContent({
+      contentRef,
+      bytes: Buffer.from('v1'),
+      mediaType: 'image/png',
+      operationId: 'batch-v1',
+      actor: { kind: 'human', actorId: 'alice' },
+      publicationScope,
+      sourcePublication: {
+        artifactRef: '/uploads/versioned.png',
+        sourceRef: 'message:thread-batch:version-1',
+        revision: 'exact-version-1',
+      },
+    });
+    await service.settle({
+      contentRef,
+      expectedOwnerRevision: 1,
+      bytes: Buffer.from('v2'),
+      operationId: 'batch-v2',
+      actor: { kind: 'cat', actorId: 'codex-sol' },
+      sourcePublication: {
+        artifactRef: '/uploads/versioned.png',
+        sourceRef: 'message:thread-batch:version-2',
+        revision: 'exact-version-2',
+      },
+    });
+
+    const matches = await service.findSourcePublicationsBatch([
+      {
+        lookupId: 'v1',
+        ownerUserId: 'alice',
+        sourceRef: 'message:thread-batch:version-1',
+        artifactRef: '/uploads/versioned.png',
+        revisions: ['exact-version-1'],
+      },
+      {
+        lookupId: 'v2',
+        ownerUserId: 'alice',
+        sourceRef: 'message:thread-batch:version-2',
+        artifactRef: '/uploads/versioned.png',
+        revisions: ['exact-version-2'],
+      },
+      {
+        lookupId: 'other-owner',
+        ownerUserId: 'bob',
+        sourceRef: 'message:thread-batch:version-1',
+        artifactRef: '/uploads/versioned.png',
+        revisions: ['exact-version-1'],
+      },
+    ]);
+
+    assert.deepEqual(matches.get('v1'), [{ contentRef, ownerRevision: 1, sourceRevision: 'exact-version-1' }]);
+    assert.deepEqual(matches.get('v2'), [{ contentRef, ownerRevision: 2, sourceRevision: 'exact-version-2' }]);
+    assert.deepEqual(matches.get('other-owner'), []);
+  });
+
+  it('rejects a batch when any owner manifest is unreadable instead of returning partial matches', async () => {
+    const { dataDir, service } = await createService();
+    const contentRef = 'prepared-media:corrupt-batch';
+    await service.importContent({
+      contentRef,
+      bytes: Buffer.from('v1'),
+      mediaType: 'image/png',
+      operationId: 'corrupt-v1',
+      actor: { kind: 'human', actorId: 'alice' },
+      publicationScope: { ownerUserId: 'alice', threadId: 'thread-batch', taskId: 'task-batch' },
+      sourcePublication: {
+        artifactRef: '/uploads/corrupt.png',
+        sourceRef: 'message:thread-batch:corrupt',
+        revision: 'exact-corrupt',
+      },
+    });
+    const statePath = join(
+      dataDir,
+      'projects',
+      'content-owner-v1',
+      createHash('sha256').update(contentRef).digest('hex'),
+      'state.json',
+    );
+    await rm(statePath);
+
+    await assert.rejects(
+      service.findSourcePublicationsBatch([
+        {
+          lookupId: 'corrupt',
+          ownerUserId: 'alice',
+          sourceRef: 'message:thread-batch:corrupt',
+          artifactRef: '/uploads/corrupt.png',
+          revisions: ['exact-corrupt'],
+        },
+      ]),
+      /Incomplete content owner manifest/,
+    );
+  });
+
   it('imports, loads, settles, and recovers the authoritative DOCX revision after restart', async () => {
     const clock = ['2026-09-04T08:00:00.000Z', '2026-09-04T08:01:00.000Z'];
     const { dataDir, service } = await createService(() => clock.shift() ?? '2026-09-04T08:02:00.000Z');

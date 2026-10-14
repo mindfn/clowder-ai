@@ -6,6 +6,10 @@ import type {
 import type { ActionSuccessorLeaseStore } from './ActionSuccessorLeaseStore.js';
 import type { CanonicalActionTerminalPredicate } from './ActionTerminalPredicateCatalog.js';
 import {
+  currentDelegateLineageGenerationHasExactEntry,
+  isTerminalDelegateLineageOutcome,
+} from './action-successor-delegate-lineage.js';
+import {
   type ActionSuccessorLease,
   isReturnedActionSuccessorHolderGeneration,
   type ReturnedActionSuccessorProof,
@@ -21,9 +25,15 @@ type ReturnedReplacementResolution =
 interface ReplacementAdmissionDeps {
   leaseStore: Pick<ActionSuccessorLeaseStore, 'get' | 'replace'>;
   resolveIssuerStanding(input: ActionSuccessorAdmissionInput, claimOrigin: ClaimOrigin): string;
-  resolveVerifiedPredicate(input: ActionSuccessorAdmissionInput): Promise<{
+  resolveVerifiedPredicate(
+    input: ActionSuccessorAdmissionInput,
+    current: ActionSuccessorLease,
+    delegateLineageReentry: boolean,
+  ): Promise<{
     terminalPredicate: CanonicalActionTerminalPredicate;
     freshnessEvidenceRef: string;
+    /** F167 × F322: delegate authority evidence for lease auditability. */
+    delegateEvidenceRef?: string;
   }>;
   admitted(
     outcome: 'replaced' | 'reattached',
@@ -89,6 +99,57 @@ function assertOrdinaryReplacementRoute(
   }
 }
 
+/** Server-derived interruption proof, passed on only when it names exactly the lease and generation being replaced. */
+function interruptedGenerationFor(
+  input: ActionSuccessorAdmissionInput,
+  replacement: { leaseId: string; expectedGeneration: number },
+): { generation: number; evidenceRef: string } | undefined {
+  const proof = input.interruptedGenerationEvidence;
+  if (proof?.leaseId !== replacement.leaseId || proof.generation !== replacement.expectedGeneration) return undefined;
+  return { generation: proof.generation, evidenceRef: proof.evidenceRef };
+}
+
+function isDelegateLineageReplacement(
+  current: ActionSuccessorLease,
+  input: ActionSuccessorAdmissionInput,
+  claimOrigin: ClaimOrigin,
+  returnedReplacement: ReturnedReplacementResolution,
+  interruptedGeneration: ReturnType<typeof interruptedGenerationFor>,
+): boolean {
+  if (returnedReplacement.kind === 'authorized') return true;
+  if (
+    claimOrigin !== 'structured_transfer' ||
+    current.mode !== 'single' ||
+    current.holderCatIds.length !== 1 ||
+    current.predecessorCatId !== input.actorCatId ||
+    current.predecessorThreadId !== input.sourceThreadId
+  ) {
+    return false;
+  }
+  const lineageRoute = {
+    ownerCatId: input.actorCatId,
+    ownerThreadId: input.sourceThreadId,
+    childThreadId: current.holderThreadId,
+  };
+  if (!currentDelegateLineageGenerationHasExactEntry(current, lineageRoute)) {
+    return false;
+  }
+  if (interruptedGeneration) {
+    return (
+      current.status === 'active' &&
+      Object.keys(current.holderOutcomes).length === 0 &&
+      Object.keys(current.completionCandidates).length === 0
+    );
+  }
+  const holderOutcome = current.holderOutcomes[current.holderCatIds[0] ?? ''];
+  return (
+    current.status === 'replaceable' &&
+    Object.keys(current.holderOutcomes).length === 1 &&
+    Object.keys(current.completionCandidates).length === 0 &&
+    isTerminalDelegateLineageOutcome(holderOutcome?.outcome)
+  );
+}
+
 export async function admitActionSuccessorReplacement(
   identityKey: string,
   input: ActionSuccessorAdmissionInput,
@@ -109,14 +170,29 @@ export async function admitActionSuccessorReplacement(
     return { admit: false, outcome: 'return_proof_required', lease: current };
   }
   if (returnedReplacement.kind === 'ordinary') assertOrdinaryReplacementRoute(current, input, claimOrigin);
-  const { terminalPredicate, freshnessEvidenceRef } = await deps.resolveVerifiedPredicate(input);
+  const interruptedGeneration = interruptedGenerationFor(input, replacement);
+  const delegateLineageReentry = isDelegateLineageReplacement(
+    current,
+    input,
+    claimOrigin,
+    returnedReplacement,
+    interruptedGeneration,
+  );
+  const { terminalPredicate, freshnessEvidenceRef, delegateEvidenceRef } = await deps.resolveVerifiedPredicate(
+    input,
+    current,
+    delegateLineageReentry,
+  );
   const replacementInput = {
     expectedGeneration: replacement.expectedGeneration,
+    ...(interruptedGeneration ? { interruptedGeneration } : {}),
     holderCatIds: input.holderCatIds,
     holderThreadId: input.targetThreadId,
     dispatchId: input.dispatchId,
     terminalPredicate,
     evidenceRef: input.evidenceRef,
+    freshnessEvidenceRef,
+    ...(delegateEvidenceRef ? { delegateEvidenceRef } : {}),
     now: input.now,
   };
   const result = await deps.leaseStore.replace(
@@ -134,7 +210,6 @@ export async function admitActionSuccessorReplacement(
                 returnedHolderCatId: input.actorCatId,
                 returnedHolderThreadId: input.sourceThreadId,
                 returnProof: returnedReplacement.proof,
-                freshnessEvidenceRef,
               }
             : {}),
         },

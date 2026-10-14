@@ -40,6 +40,7 @@ export class PerCatTerminalDispositionCollector {
   private readonly disqualifiedCatIds = new Set<string>();
   private readonly successfulCatIds = new Set<string>();
   private readonly preflightRejectedCatIds = new Set<string>();
+  private readonly canceledCatIds = new Set<string>();
   private readonly targetCatIds: Set<string>;
   private readonly isCanceled: (catId: string) => boolean;
   private primaryTerminalError: string | undefined;
@@ -55,6 +56,12 @@ export class PerCatTerminalDispositionCollector {
     this.observeCustody(event);
     const { catId } = event;
     if (!catId || !this.targetCatIds.has(catId)) return;
+
+    if (isTerminalDispositionEvent(event) && event.errorCode === 'INVOCATION_CANCELLED') {
+      this.canceledCatIds.add(catId);
+      this.disqualify(catId);
+      return;
+    }
 
     if (event.type === 'error') {
       if (event.errorDisposition === 'transient') return;
@@ -112,6 +119,14 @@ export class PerCatTerminalDispositionCollector {
 
   getPrimaryTerminalError(): string | undefined {
     return this.primaryTerminalError;
+  }
+
+  areAllTargetsCanceled(): boolean {
+    return (
+      !this.primaryTerminalError &&
+      this.targetCatIds.size > 0 &&
+      [...this.targetCatIds].every((catId) => this.canceledCatIds.has(catId) || this.isCanceled(catId))
+    );
   }
 
   getTerminalInvocationIdByCatId(): Record<string, string> {

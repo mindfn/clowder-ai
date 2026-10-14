@@ -14,7 +14,7 @@
  */
 
 import assert from 'node:assert/strict';
-import { mkdtempSync, readFileSync, rmSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, readFileSync, rmSync } from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { beforeEach, describe, test } from 'node:test';
@@ -63,6 +63,18 @@ describe('F167 Phase P: wakeWhen cancel/replace/delivery tests', () => {
     };
     const deps = {
       registry,
+      holdQuotaStore: {
+        async tryAdmit() {
+          return { admitted: true, count: 1, eventId: `stub-${Date.now()}` };
+        },
+        async releaseByEventId() {
+          return true;
+        },
+        async getCount() {
+          return 0;
+        },
+        async close() {},
+      },
       taskRunner: {
         registerDynamic(spec, taskId) {
           registeredDynamic.push({ spec, taskId });
@@ -177,7 +189,240 @@ describe('F167 Phase P: wakeWhen cancel/replace/delivery tests', () => {
     return app;
   }
 
+  test(
+    'readonly MCP → authenticated callback → native statistics → durable wake receipt',
+    {
+      skip: process.env.RUN_F306_READONLY_LIVE !== '1' || process.platform !== 'darwin',
+    },
+    async () => {
+      const { default: Database } = await import('better-sqlite3');
+      const { applyMigrations } = await import('../dist/domains/memory/schema.js');
+      const { DynamicTaskStore } = await import('../dist/infrastructure/scheduler/DynamicTaskStore.js');
+      const { createServer } = await import('../../mcp-server/dist/index.js');
+      const { handleHoldBall } = await import('../../mcp-server/dist/tools/callback-tools.js');
+      const root = mkdtempSync(path.join(os.tmpdir(), 'f306-readonly-entry-'));
+      const dbPath = path.join(root, 'scheduler.sqlite');
+      const db = new Database(dbPath);
+      applyMigrations(db);
+      const store = new DynamicTaskStore(db);
+      const deps = makeStubDeps({ dynamicTaskStore: store, threadStore });
+      const app = await createApp(deps);
+      const thread = await threadStore.create('readonly-entry-owner', 'readonly entry');
+      const auth = await registry.create('readonly-entry-owner', 'codex', thread.id);
+      const apiUrl = await app.listen({ port: 0, host: '127.0.0.1' });
+      const environment = {
+        CAT_CAFE_API_URL: apiUrl,
+        CAT_CAFE_INVOCATION_ID: auth.invocationId,
+        CAT_CAFE_CALLBACK_TOKEN: auth.callbackToken,
+        CAT_CAFE_CREDENTIAL_FILE: undefined,
+        CAT_CAFE_READONLY: 'false',
+        CAT_CAFE_DESKTOP_MODE: undefined,
+      };
+      const prior = Object.fromEntries(Object.keys(environment).map((key) => [key, process.env[key]]));
+      for (const [key, value] of Object.entries(environment)) {
+        if (value === undefined) delete process.env[key];
+        else process.env[key] = value;
+      }
+      const schema = createServer()._registeredTools.cat_cafe_hold_ball.inputSchema;
+      const input = (command) =>
+        schema.parse({
+          reason: 'readonly statistics',
+          nextStep: 'consume native result',
+          wakeWhen: { command, cwd: root, executionPolicy: 'read_only', timeoutMs: 5000 },
+        });
+      let heldId;
+      try {
+        const command = `python3 -c 'import sqlite3; c=sqlite3.connect("file:${dbPath}?mode=ro",uri=True);print(c.execute("select count(*) from schema_version").fetchone()[0])'`;
+        const expected = String(db.prepare('select count(*) as n from schema_version').get().n);
+        const denied = await fetch(`${apiUrl}/api/callbacks/hold-ball`, {
+          method: 'POST',
+          headers: {
+            'content-type': 'application/json',
+            'x-invocation-id': auth.invocationId,
+            'x-callback-token': 'wrong-token',
+          },
+          body: JSON.stringify(input(command)),
+        });
+        assert.equal(denied.status, 401);
+        assert.equal(store.getAll().length, 0);
+        const result = await handleHoldBall(input(command));
+        assert.notEqual(result.isError, true, JSON.stringify(result));
+        heldId = JSON.parse(result.content[0].text).taskId;
+        for (let attempt = 0; attempt < 100; attempt++) {
+          if (
+            deps._appendedMessages.some(
+              (message) => message.source?.meta?.taskId === heldId && message.content?.includes('持球唤醒（命令完成）'),
+            )
+          )
+            break;
+          await new Promise((resolve) => setTimeout(resolve, 50));
+        }
+        const receipt = store.getById(heldId);
+        assert.equal(receipt.params.triggerUserId, 'readonly-entry-owner');
+        assert.equal(receipt.deliveryThreadId, thread.id);
+        assert.equal(receipt.params.targetCatId, 'codex');
+        const completed = receipt.params.holdLifecycle.managedCommand;
+        assert.equal(completed.executionPolicy, 'read_only');
+        assert.equal(completed.command, command);
+        assert.equal(completed.result.exitCode, 0);
+        assert.equal(completed.result.tailOutput.trim(), expected);
+        assert.equal(
+          deps._appendedMessages.filter((message) => message.idempotencyKey === `hold-ball-completion:${heldId}`)
+            .length,
+          1,
+        );
+        const reopened = new Database(dbPath, { readonly: true });
+        try {
+          assert.deepEqual(new DynamicTaskStore(reopened).getById(heldId).params, receipt.params);
+        } finally {
+          reopened.close();
+        }
+        const sleeping = await handleHoldBall(input(`python3 -c 'import time;time.sleep(20)'`));
+        assert.notEqual(sleeping.isError, true, JSON.stringify(sleeping));
+        heldId = JSON.parse(sleeping.content[0].text).taskId;
+        assert.equal(cancelManagedWakeIfTaskMatches(heldId, thread.id, 'other-cat'), false);
+        assert.equal(cancelManagedWakeIfTaskMatches(heldId, thread.id, 'codex'), true);
+      } finally {
+        if (heldId) cancelManagedWakeIfTaskMatches(heldId, thread.id, 'codex');
+        await new Promise((resolve) => setTimeout(resolve, 2200));
+        await app.close();
+        db.close();
+        for (const [key, value] of Object.entries(prior)) {
+          if (value === undefined) delete process.env[key];
+          else process.env[key] = value;
+        }
+        rmSync(root, { recursive: true, force: true });
+      }
+    },
+  );
+
   // ─── T11: cancelWakeWhenRunner export works ──────────────────────────────
+  test('readonly setup failure returns a failed admission without hanging HTTP or unhandled completion', async () => {
+    const deps = makeStubDeps({ threadStore });
+    const app = await createApp(deps);
+    const thread = await threadStore.create('readonly-setup-owner', 'readonly failure');
+    const auth = await registry.create('readonly-setup-owner', 'codex', thread.id);
+    const prior = process.env.TMPDIR;
+    const unhandled = [];
+    const observeUnhandled = (reason) => unhandled.push(reason);
+    process.on('unhandledRejection', observeUnhandled);
+    process.env.TMPDIR = path.join(os.tmpdir(), 'f306-route-missing-home', 'missing');
+    try {
+      const response = await Promise.race([
+        app.inject({
+          method: 'POST',
+          url: '/api/callbacks/hold-ball',
+          headers: { 'x-invocation-id': auth.invocationId, 'x-callback-token': auth.callbackToken },
+          payload: {
+            reason: 'readonly setup refusal',
+            nextStep: 'consume failure',
+            wakeWhen: { command: 'printf UNEXPECTED', cwd: '/', executionPolicy: 'read_only', timeoutMs: 2000 },
+          },
+        }),
+        new Promise((resolve) => setTimeout(() => resolve('HANG'), 500)),
+      ]);
+      assert.notEqual(response, 'HANG');
+      assert.equal(response.statusCode, 200, response.body);
+      assert.equal(response.json().wakeWhen.pid, null);
+      const failed = deps.dynamicTaskStore.getById(response.json().taskId).params.holdLifecycle.managedCommand;
+      assert.equal(failed.executionPolicy, 'read_only');
+      assert.match(failed.admissionFact, /未启动.*ENOENT/);
+      assert.equal(failed.admissionFactAppended, true);
+      await new Promise((resolve) => setImmediate(resolve));
+      assert.equal(getActiveRunnerCount(), 0);
+      assert.deepEqual(unhandled, []);
+    } finally {
+      if (prior === undefined) delete process.env.TMPDIR;
+      else process.env.TMPDIR = prior;
+      process.removeListener('unhandledRejection', observeUnhandled);
+      await app.close();
+    }
+  });
+
+  test('readonly callback carries the policy through admission and durable completion', async () => {
+    const { ManagedRunner } = await import('../dist/infrastructure/managed-runner.js');
+    const originalStart = ManagedRunner.prototype.start;
+    let observed;
+    ManagedRunner.prototype.start = (command, options) => {
+      observed = { command, options };
+      return {
+        admission: Promise.resolve({ spawned: true, pid: 1234 }),
+        completion: Promise.resolve({ exitCode: 0, timedOut: false, durationMs: 2, tailOutput: 'STATISTICS=10' }),
+      };
+    };
+    const deps = makeStubDeps();
+    const app = await createApp(deps);
+    try {
+      const thread = await threadStore.create('readonly-owner', 'readonly statistics');
+      const { invocationId, callbackToken } = await registry.create('readonly-owner', 'codex', thread.id);
+      const response = await app.inject({
+        method: 'POST',
+        url: '/api/callbacks/hold-ball',
+        headers: { 'x-invocation-id': invocationId, 'x-callback-token': callbackToken },
+        payload: {
+          reason: 'readonly statistics',
+          nextStep: 'consume output',
+          wakeWhen: {
+            command: 'python3 -c "print(10)"',
+            cwd: '/tmp',
+            timeoutMs: 2000,
+            executionPolicy: 'read_only',
+          },
+        },
+      });
+      assert.equal(response.statusCode, 200, response.body);
+      assert.equal(observed.options.executionPolicy, 'read_only');
+      assert.equal(observed.options.cwd, '/tmp');
+      const task = deps._insertedTasks[0];
+      assert.equal(task.params.holdLifecycle.managedCommand.executionPolicy, 'read_only');
+      assert.equal(task.params.targetCatId, 'codex');
+      await new Promise((resolve) => setTimeout(resolve, 20));
+      assert.equal(task.params.holdLifecycle.managedCommand.executionPolicy, 'read_only');
+      assert.match(JSON.stringify(task.params), /STATISTICS=10/);
+    } finally {
+      ManagedRunner.prototype.start = originalStart;
+      await app.close();
+    }
+  });
+
+  test('readonly admission rejects caller policies, env, unbounded limits and gate execution', async () => {
+    const deps = makeStubDeps();
+    const app = await createApp(deps);
+    try {
+      const thread = await threadStore.create('readonly-validation', 'readonly validation');
+      const { invocationId, callbackToken } = await registry.create('readonly-validation', 'codex', thread.id);
+      for (const invalid of [
+        { executionPolicy: 'dangerFullAccess' },
+        { env: { OPENAI_API_KEY: 'synthetic' } },
+        { sandboxPolicy: { type: 'externalSandbox' } },
+        { outputBytesCap: 999999999 },
+        { timeoutMs: 60001 },
+        { executionSlaMs: 1000 },
+        { command: 'pnpm gate' },
+      ]) {
+        const response = await app.inject({
+          method: 'POST',
+          url: '/api/callbacks/hold-ball',
+          headers: { 'x-invocation-id': invocationId, 'x-callback-token': callbackToken },
+          payload: {
+            reason: 'invalid readonly',
+            nextStep: 'do not run',
+            wakeWhen: {
+              command: 'pwd',
+              cwd: '/tmp',
+              executionPolicy: 'read_only',
+              ...invalid,
+            },
+          },
+        });
+        assert.equal(response.statusCode, 400, response.body);
+      }
+      assert.equal(deps._insertedTasks.length, 0);
+    } finally {
+      await app.close();
+    }
+  });
+
   test('T11: cancelWakeWhenRunner is exported and callable', () => {
     assert.ok(typeof cancelWakeWhenRunner === 'function', 'cancelWakeWhenRunner should be a function');
     assert.ok(typeof getActiveRunnerCount === 'function', 'getActiveRunnerCount should be a function');
@@ -325,76 +570,109 @@ describe('F167 Phase P: wakeWhen cancel/replace/delivery tests', () => {
     );
   });
 
-  test('F261: canonical gate submission persists an independent job before admission and settles it once', async () => {
-    const { ManagedRunner } = await import('../dist/infrastructure/managed-runner.js');
-    const { recordDurableManagedGateProcess } = await import(
-      '../dist/domains/ball-custody/durable-managed-gate-job.js'
-    );
-    const originalStart = ManagedRunner.prototype.start;
-    let resolveCompletion;
-    ManagedRunner.prototype.start = (_command, options) => {
-      const processIdentity = { pid: 42, ppid: 1, pgid: 42, startedAt: 'birth-42' };
-      assert.ok(options.managedJob);
-      assert.equal(recordDurableManagedGateProcess(options.managedJob, processIdentity), true);
-      return {
-        admission: Promise.resolve({ spawned: true, pid: 42, processIdentity }),
-        completion: new Promise((resolve) => {
-          resolveCompletion = resolve;
-        }),
+  for (const [budgetName, wakeWhen, expectedExecutionSlaMs] of [
+    ['default budget', { command: 'pnpm gate', cwd: '/tmp/frozen-gate-candidate' }, 3_600_000],
+    ['isolated Redis prefix', { command: 'REDIS_URL=redis://127.0.0.1:6398 pnpm gate' }, 3_600_000],
+    [
+      'bounded env wrapper',
+      { command: 'env -u NODE_ENV -u REDIS_URL CAT_CAFE_DATA_DIR=/tmp/cat-cafe-gate pnpm gate' },
+      3_600_000,
+    ],
+    ['legacy timeout budget', { command: 'pnpm gate', timeoutMs: 2_000 }, 2_000],
+    ['explicit two-hour budget', { command: 'pnpm gate', timeoutMs: 2_000, executionSlaMs: 7_200_000 }, 7_200_000],
+    ['wall ceiling budget', { command: 'pnpm gate', executionSlaMs: 10_800_000 }, 10_800_000],
+  ]) {
+    test(`F261: canonical gate persists and settles its ${budgetName}`, async () => {
+      const { ManagedRunner } = await import('../dist/infrastructure/managed-runner.js');
+      const { recordDurableManagedGateProcess } = await import(
+        '../dist/domains/ball-custody/durable-managed-gate-job.js'
+      );
+      const originalStart = ManagedRunner.prototype.start;
+      let runnerOptions;
+      let resolveCompletion;
+      ManagedRunner.prototype.start = (_command, options) => {
+        runnerOptions = options;
+        const processIdentity = { pid: 42, ppid: 1, pgid: 42, startedAt: 'birth-42' };
+        assert.ok(options.managedJob);
+        assert.equal(recordDurableManagedGateProcess(options.managedJob, processIdentity), true);
+        return {
+          admission: Promise.resolve({ spawned: true, pid: 42, processIdentity }),
+          completion: new Promise((resolve) => {
+            resolveCompletion = resolve;
+          }),
+        };
       };
-    };
-    const tempDir = mkdtempSync(path.join(os.tmpdir(), 'hold-ball-durable-gate-route-'));
-    const previousDataDir = process.env.CAT_CAFE_DATA_DIR;
-    process.env.CAT_CAFE_DATA_DIR = tempDir;
+      const tempDir = mkdtempSync(path.join(os.tmpdir(), 'hold-ball-durable-gate-route-'));
+      const previousDataDir = process.env.CAT_CAFE_DATA_DIR;
+      process.env.CAT_CAFE_DATA_DIR = tempDir;
 
-    try {
-      const deps = makeStubDeps();
-      const app = await createApp(deps);
-      const ownerUserId = 'user-durable-gate';
-      const thread = await threadStore.create(ownerUserId, 'durable gate');
-      const { invocationId, callbackToken } = await registry.create(ownerUserId, 'codex', thread.id);
-      const response = await app.inject({
-        method: 'POST',
-        url: '/api/callbacks/hold-ball',
-        headers: { 'x-invocation-id': invocationId, 'x-callback-token': callbackToken },
-        payload: {
-          reason: 'canonical gate',
-          nextStep: 'consume terminal truth',
-          wakeWhen: { command: 'pnpm gate' },
-        },
-      });
+      try {
+        const deps = makeStubDeps();
+        const app = await createApp(deps);
+        const ownerUserId = 'user-durable-gate';
+        const thread = await threadStore.create(ownerUserId, 'durable gate');
+        const { invocationId, callbackToken } = await registry.create(ownerUserId, 'codex', thread.id);
+        const response = await app.inject({
+          method: 'POST',
+          url: '/api/callbacks/hold-ball',
+          headers: { 'x-invocation-id': invocationId, 'x-callback-token': callbackToken },
+          payload: {
+            reason: 'canonical gate',
+            nextStep: 'consume terminal truth',
+            wakeWhen,
+          },
+        });
 
-      assert.equal(response.statusCode, 200, response.body);
-      const body = JSON.parse(response.body);
-      assert.match(body.wakeWhen.jobId, /^managed-gate-/);
-      assert.notEqual(body.wakeWhen.jobId, body.taskId);
-      const task = deps.dynamicTaskStore.getById(body.taskId);
-      const job = task.params.holdLifecycle.managedCommand.durableJob;
-      assert.equal(job.jobId, body.wakeWhen.jobId);
-      assert.equal(job.originTaskId, body.taskId);
-      const running = JSON.parse(readFileSync(job.recordPath, 'utf8'));
-      assert.equal(running.state, 'running');
-      assert.equal(running.ownerIdentity.startedAt, 'birth-42');
+        assert.equal(response.statusCode, 200, response.body);
+        const body = JSON.parse(response.body);
+        assert.match(body.wakeWhen.jobId, /^managed-gate-/);
+        assert.notEqual(body.wakeWhen.jobId, body.taskId);
+        const task = deps.dynamicTaskStore.getById(body.taskId);
+        const job = task.params.holdLifecycle.managedCommand.durableJob;
+        assert.equal(task.params.holdLifecycle.managedCommand.cwd, wakeWhen.cwd);
+        assert.equal(job.jobId, body.wakeWhen.jobId);
+        assert.equal(job.originTaskId, body.taskId);
+        assert.equal(job.kind, 'resumable_full_gate_v2');
+        assert.deepEqual(job.recovery, {
+          protocolVersion: 2,
+          eventLoopGapMs: 30_000,
+          reconciliationBudgetMs: 30_000,
+          pollMs: 250,
+          powerEvidenceSource: { kind: 'mac_pmset' },
+        });
+        assert.equal(body.wakeWhen.recoveryProtocolVersion, 2);
+        assert.equal(job.executionSlaMs, expectedExecutionSlaMs);
+        assert.equal(body.wakeWhen.executionSlaMs, expectedExecutionSlaMs);
+        assert.equal(body.wakeWhen.wallSlaMs, job.wallSlaMs);
+        assert.equal(job.wallSlaMs, 10_800_000);
+        assert.equal(runnerOptions.managedJob.executionSlaMs, expectedExecutionSlaMs);
+        assert.equal(runnerOptions.timeoutMs, job.wallSlaMs);
+        assert.equal(runnerOptions.maximumTimeoutMs, job.wallSlaMs);
+        assert.equal(runnerOptions.cwd, wakeWhen.cwd);
+        const running = JSON.parse(readFileSync(job.recordPath, 'utf8'));
+        assert.equal(running.state, 'running');
+        assert.equal(running.ownerIdentity.startedAt, 'birth-42');
 
-      resolveCompletion({ exitCode: 0, timedOut: false, durationMs: 25, tailOutput: 'gate green' });
-      const deadline = Date.now() + 1_000;
-      while (JSON.parse(readFileSync(job.recordPath, 'utf8')).state !== 'terminal' && Date.now() < deadline) {
-        await new Promise((resolve) => setTimeout(resolve, 10));
+        resolveCompletion({ exitCode: 0, timedOut: false, durationMs: 25, tailOutput: 'gate green' });
+        const deadline = Date.now() + 1_000;
+        while (JSON.parse(readFileSync(job.recordPath, 'utf8')).state !== 'terminal' && Date.now() < deadline) {
+          await new Promise((resolve) => setTimeout(resolve, 10));
+        }
+        assert.equal(JSON.parse(readFileSync(job.recordPath, 'utf8')).terminalStatus, 'green');
+        assert.equal(JSON.parse(readFileSync(`${job.recordPath}.terminal`, 'utf8')).terminalStatus, 'green');
+        while (getActiveRunnerCount() > 0 && Date.now() < deadline) {
+          await new Promise((resolve) => setTimeout(resolve, 10));
+        }
+        assert.equal(getActiveRunnerCount(), 0, 'terminal fake worker must leave no active registry residue');
+        await app.close();
+      } finally {
+        ManagedRunner.prototype.start = originalStart;
+        if (previousDataDir === undefined) delete process.env.CAT_CAFE_DATA_DIR;
+        else process.env.CAT_CAFE_DATA_DIR = previousDataDir;
+        rmSync(tempDir, { recursive: true, force: true });
       }
-      assert.equal(JSON.parse(readFileSync(job.recordPath, 'utf8')).terminalStatus, 'green');
-      assert.equal(JSON.parse(readFileSync(`${job.recordPath}.terminal`, 'utf8')).terminalStatus, 'green');
-      while (getActiveRunnerCount() > 0 && Date.now() < deadline) {
-        await new Promise((resolve) => setTimeout(resolve, 10));
-      }
-      assert.equal(getActiveRunnerCount(), 0, 'terminal fake worker must leave no active registry residue');
-      await app.close();
-    } finally {
-      ManagedRunner.prototype.start = originalStart;
-      if (previousDataDir === undefined) delete process.env.CAT_CAFE_DATA_DIR;
-      else process.env.CAT_CAFE_DATA_DIR = previousDataDir;
-      rmSync(tempDir, { recursive: true, force: true });
-    }
-  });
+    });
+  }
 
   // ─── T8: wakeWhen hold with cancel → runner is cancelled ────────────────
   test('T8: wakeWhen hold registers active runner, cancel removes it', async () => {
@@ -435,6 +713,7 @@ describe('F167 Phase P: wakeWhen cancel/replace/delivery tests', () => {
         // biome-ignore lint/suspicious/noThenProperty: F280's frozen wait contract field.
         then: 'check result',
       },
+      autoRenew: false,
       expiresAt: commandTask.trigger.fireAt,
       createdAt: commandAwait.createdAt,
       provenance: 'explicit_registration',
@@ -745,6 +1024,9 @@ describe('F167 Phase P: wakeWhen cancel/replace/delivery tests', () => {
       assert.equal(response.statusCode, 200, 'route must terminate without hanging');
       const body = JSON.parse(response.body);
       assert.strictEqual(body.wakeWhen.pid, null, 'failed admission must report pid: null');
+      assert.equal(body.held, false, 'explicit no-spawn must not promise a future wake');
+      assert.equal(body.wakeWhen.state, 'not_started');
+      assert.equal(body.wakeWhen.notStartedReason, 'admission_rejected');
       assert.equal(getActiveRunnerCount(), 0, 'no active runner residue after pre-admission failure');
 
       // Durable admission-fact: a "未启动" message must be appended
@@ -757,12 +1039,313 @@ describe('F167 Phase P: wakeWhen cancel/replace/delivery tests', () => {
       const mc = task.params.holdLifecycle?.managedCommand;
       assert.ok(mc, 'managedCommand projection must exist');
       assert.strictEqual(mc.pid, null, 'spawn failure must persist pid=null in lifecycle projection');
+      assert.equal(mc.state, 'not_started');
+      assert.equal(mc.notStartedDetail, 'internal_error');
+      assert.equal(task.params.holdLifecycle.status, 'not_started');
+      assert.equal(task.enabled, false, 'no-spawn retires the fallback timer');
 
       await app.close();
     } finally {
       ManagedRunner.prototype.start = origStart;
     }
   });
+
+  test('explicit admission refusal, OS spawn failure and pid-null execution stay distinct', async () => {
+    const { ManagedRunner } = await import('../dist/infrastructure/managed-runner.js');
+    const origStart = ManagedRunner.prototype.start;
+    try {
+      for (const admission of [
+        {
+          spawned: false,
+          pid: null,
+          failureKind: 'admission_rejected',
+          error: 'provider_execution_refused:effect_closed_or_consumed',
+        },
+        { spawned: false, pid: null, failureKind: 'spawn_failed', error: 'spawn /bin/sh ENOENT' },
+        { spawned: true, pid: null },
+      ]) {
+        ManagedRunner.prototype.start = () => ({
+          admission: Promise.resolve(admission),
+          completion: new Promise(() => {}),
+        });
+        const heldEvents = [];
+        const deps = makeStubDeps({
+          ballCustody: {
+            async record(event) {
+              heldEvents.push(event);
+            },
+          },
+        });
+        const app = await createApp(deps);
+        const thread = await threadStore.create('u-admission', 'admission');
+        const { invocationId, callbackToken } = await registry.create('u-admission', 'codex', thread.id);
+        const response = await app.inject({
+          method: 'POST',
+          url: '/api/callbacks/hold-ball',
+          headers: { 'x-invocation-id': invocationId, 'x-callback-token': callbackToken },
+          payload: { reason: 'admission truth', nextStep: 'read receipt', wakeWhen: { command: 'echo fixture-only' } },
+        });
+        const body = response.json();
+        assert.equal(response.statusCode, 200);
+        assert.equal(body.held, admission.spawned);
+        assert.equal(body.wakeWhen.state, admission.spawned ? 'command_running' : 'not_started');
+        if (!admission.spawned) {
+          assert.equal(body.wakeWhen.notStartedReason, admission.failureKind);
+          assert.equal(body.wakeWhen.notStartedDetail, admission.error);
+          assert.equal(deps.dynamicTaskStore.getById(body.taskId).enabled, false);
+          assert.equal(heldEvents.length, 0, 'no-spawn cannot become a ball.held fact');
+          assert.equal(Object.hasOwn(body, 'wakeAt'), false);
+        } else {
+          assert.equal(heldEvents.filter((event) => event.kind === 'ball.held').length, 1);
+          cancelWakeWhenRunner(thread.id, 'codex');
+        }
+        await app.close();
+      }
+    } finally {
+      ManagedRunner.prototype.start = origStart;
+    }
+  });
+
+  test('no-spawn must not return durable success when terminal disable fails', async () => {
+    const { ManagedRunner } = await import('../dist/infrastructure/managed-runner.js');
+    const origStart = ManagedRunner.prototype.start;
+    ManagedRunner.prototype.start = () => ({
+      admission: Promise.resolve({ spawned: false, pid: null, error: 'refused', failureKind: 'admission_rejected' }),
+      completion: Promise.resolve({ exitCode: null, timedOut: false, durationMs: 0, tailOutput: 'refused' }),
+    });
+    try {
+      const deps = makeStubDeps();
+      deps.dynamicTaskStore.setEnabled = () => false;
+      const app = await createApp(deps);
+      const thread = await threadStore.create('u-disable', 'disable failure');
+      const { invocationId, callbackToken } = await registry.create('u-disable', 'codex', thread.id);
+      const response = await app.inject({
+        method: 'POST',
+        url: '/api/callbacks/hold-ball',
+        headers: { 'x-invocation-id': invocationId, 'x-callback-token': callbackToken },
+        payload: {
+          reason: 'disable failure',
+          nextStep: 'read failed receipt',
+          wakeWhen: { command: 'echo never-ran' },
+        },
+      });
+      assert.equal(response.statusCode, 503, response.body);
+      assert.equal(response.json().held, false);
+      assert.equal(response.json().code, 'NO_SPAWN_RECEIPT_UNAVAILABLE');
+      assert.equal(deps.dynamicTaskStore.getById(response.json().taskId).enabled, true);
+      assert.equal(deps._unregisteredIds.includes(response.json().taskId), true);
+      await app.close();
+    } finally {
+      ManagedRunner.prototype.start = origStart;
+    }
+  });
+
+  for (const failingStep of ['settle', 'disable']) {
+    test(`no-spawn persistence ${failingStep} throw returns 503 and remains recoverable`, async () => {
+      const { ManagedRunner } = await import('../dist/infrastructure/managed-runner.js');
+      const { ManagedCommandWakeRecoverySweep } = await import(
+        '../dist/domains/ball-custody/ManagedCommandWakeRecoverySweep.js'
+      );
+      const originalStart = ManagedRunner.prototype.start;
+      const root = mkdtempSync(path.join(os.tmpdir(), 'f306-terminal-throw-'));
+      const previous = process.env.CAT_CAFE_DATA_DIR;
+      process.env.CAT_CAFE_DATA_DIR = root;
+      let job;
+      ManagedRunner.prototype.start = (_command, options) => {
+        job = options.managedJob;
+        if (failingStep === 'settle') mkdirSync(`${job.recordPath}.terminal`);
+        return {
+          admission: Promise.resolve({
+            spawned: false,
+            pid: null,
+            error: 'explicit_refusal',
+            failureKind: 'admission_rejected',
+          }),
+          completion: Promise.resolve({ exitCode: null, timedOut: false, durationMs: 0, tailOutput: 'not started' }),
+        };
+      };
+      let app;
+      try {
+        const deps = makeStubDeps();
+        const originalDisable = deps.dynamicTaskStore.setEnabled;
+        if (failingStep === 'disable')
+          deps.dynamicTaskStore.setEnabled = () => {
+            throw new Error('injected disable failure');
+          };
+        app = await createApp(deps);
+        const thread = await threadStore.create('u-terminal-throw', 'terminal throw');
+        const { invocationId, callbackToken } = await registry.create('u-terminal-throw', 'codex', thread.id);
+        const response = await app.inject({
+          method: 'POST',
+          url: '/api/callbacks/hold-ball',
+          headers: { 'x-invocation-id': invocationId, 'x-callback-token': callbackToken },
+          payload: { reason: 'terminal throw', nextStep: 'retry receipt', wakeWhen: { command: 'pnpm gate' } },
+        });
+        assert.equal(response.statusCode, 503, response.body);
+        const body = response.json();
+        assert.equal(body.code, 'NO_SPAWN_RECEIPT_UNAVAILABLE');
+        assert.equal(body.held, false);
+        assert.ok(
+          deps._unregisteredIds.includes(body.taskId),
+          'remove runnable fallback despite persistence exception',
+        );
+        assert.equal(deps.dynamicTaskStore.getById(body.taskId).enabled, failingStep === 'disable');
+        assert.equal(
+          deps._appendedMessages.some((message) => message.idempotencyKey?.startsWith('hold-ball-admission-fact:')),
+          false,
+        );
+        deps.dynamicTaskStore.setEnabled = originalDisable;
+        if (failingStep === 'settle') rmSync(`${job.recordPath}.terminal`, { recursive: true });
+        let triggers = 0;
+        const recovery = new ManagedCommandWakeRecoverySweep({
+          ...deps,
+          getInvokeTrigger: () => ({
+            trigger: async () => {
+              triggers += 1;
+              return 'enqueued';
+            },
+          }),
+        });
+        await recovery.runOnce();
+        await recovery.runOnce();
+        assert.equal(deps.dynamicTaskStore.getById(body.taskId).enabled, false);
+        assert.equal(JSON.parse(readFileSync(job.recordPath, 'utf8')).state, 'terminal');
+        assert.equal(
+          deps._appendedMessages.filter((message) => message.idempotencyKey?.startsWith('hold-ball-admission-fact:'))
+            .length,
+          1,
+        );
+        assert.equal(triggers, 0);
+      } finally {
+        if (app) await app.close();
+        ManagedRunner.prototype.start = originalStart;
+        if (previous === undefined) delete process.env.CAT_CAFE_DATA_DIR;
+        else process.env.CAT_CAFE_DATA_DIR = previous;
+        rmSync(root, { recursive: true, force: true });
+      }
+    });
+  }
+
+  test('operational receipt logs consume the same no-spawn state and post-release count', async () => {
+    const { default: pino } = await import('pino');
+    const { logger } = await import('../dist/infrastructure/logger.js');
+    const stream = logger[pino.symbols.streamSym];
+    const originalWrite = stream.write;
+    const entries = [];
+    stream.write = function (line) {
+      try {
+        entries.push(JSON.parse(String(line)));
+      } catch {}
+      return originalWrite.call(this, line);
+    };
+    const { ManagedRunner } = await import('../dist/infrastructure/managed-runner.js');
+    const origStart = ManagedRunner.prototype.start;
+    ManagedRunner.prototype.start = () => ({
+      admission: Promise.resolve({ spawned: false, pid: null, error: 'refused', failureKind: 'admission_rejected' }),
+      completion: Promise.resolve({ exitCode: null, timedOut: false, durationMs: 0, tailOutput: 'refused' }),
+    });
+    try {
+      const deps = makeStubDeps();
+      const app = await createApp(deps);
+      const thread = await threadStore.create('u-log', 'log truth');
+      const { invocationId, callbackToken } = await registry.create('u-log', 'codex', thread.id);
+      const response = await app.inject({
+        method: 'POST',
+        url: '/api/callbacks/hold-ball',
+        headers: { 'x-invocation-id': invocationId, 'x-callback-token': callbackToken },
+        payload: { reason: 'log truth', nextStep: 'read receipt', wakeWhen: { command: 'echo never-ran' } },
+      });
+      assert.equal(response.statusCode, 200, response.body);
+      const entry = entries.find((entry) => entry.taskId === response.json().taskId && entry.wakeWhen);
+      assert.ok(entry);
+      assert.equal(entry.held, false);
+      assert.equal(entry.wakeWhen.state, 'not_started');
+      assert.equal(entry.holdsInWindow, response.json().holdsInWindow);
+      assert.doesNotMatch(entry.msg, /wake-up scheduled/);
+      await app.close();
+    } finally {
+      ManagedRunner.prototype.start = origStart;
+      stream.write = originalWrite;
+    }
+  });
+
+  for (const mode of ['spawn_failed', 'start_throw', 'pre_cancel', 'params_before_terminal']) {
+    test(`proven no-spawn settles the existing durable gate owner: ${mode}`, async () => {
+      const { ManagedRunner } = await import('../dist/infrastructure/managed-runner.js');
+      const originalStart = ManagedRunner.prototype.start;
+      let descriptor;
+      ManagedRunner.prototype.start = (_command, options) => {
+        descriptor = options.managedJob;
+        if (mode === 'start_throw') throw new Error('explicit before-spawn failure');
+        return {
+          admission: Promise.resolve({ spawned: false, pid: null, error: 'spawn ENOENT', failureKind: 'spawn_failed' }),
+          completion: Promise.resolve({ exitCode: null, timedOut: false, durationMs: 0, tailOutput: 'spawn ENOENT' }),
+        };
+      };
+      const root = mkdtempSync(path.join(os.tmpdir(), 'f306-no-spawn-gate-'));
+      const previousDataDir = process.env.CAT_CAFE_DATA_DIR;
+      process.env.CAT_CAFE_DATA_DIR = root;
+      try {
+        const deps = makeStubDeps();
+        if (mode === 'params_before_terminal') {
+          const originalUpdate = deps.dynamicTaskStore.updateParams;
+          deps.dynamicTaskStore.updateParams = (id, params) => {
+            if (
+              params.holdLifecycle.managedCommand.state === 'not_started' &&
+              params.holdLifecycle.managedCommand.admissionFactAppended === false
+            ) {
+              assert.equal(
+                JSON.parse(readFileSync(descriptor.recordPath, 'utf8')).state,
+                'queued',
+                'persist explicit no-spawn before the gate terminal can be recovered as completion',
+              );
+            }
+            return originalUpdate(id, params);
+          };
+        }
+        if (mode === 'pre_cancel') {
+          const originalAppend = deps.messageStore.append;
+          deps.messageStore.append = async (message) => {
+            if (message.content.includes('待启动')) {
+              const taskId = message.source.meta.taskId;
+              descriptor = deps.dynamicTaskStore.getById(taskId).params.holdLifecycle.managedCommand.durableJob;
+              cancelManagedWakeIfTaskMatches(taskId, message.threadId, 'codex');
+              deps.dynamicTaskStore.remove(taskId);
+            }
+            return originalAppend(message);
+          };
+        }
+        const app = await createApp(deps);
+        const thread = await threadStore.create('u-gate-refusal', 'gate refusal');
+        const { invocationId, callbackToken } = await registry.create('u-gate-refusal', 'codex', thread.id);
+        const response = await app.inject({
+          method: 'POST',
+          url: '/api/callbacks/hold-ball',
+          headers: { 'x-invocation-id': invocationId, 'x-callback-token': callbackToken },
+          payload: { reason: 'gate refusal', nextStep: 'read terminal', wakeWhen: { command: 'pnpm gate' } },
+        });
+        assert.equal(response.statusCode, 200, response.body);
+        assert.equal(response.json().held, false);
+        const record = JSON.parse(readFileSync(descriptor.recordPath, 'utf8'));
+        assert.equal(record.state, 'terminal');
+        assert.equal(record.terminalStatus, mode === 'pre_cancel' ? 'cancelled' : 'failed');
+        assert.equal(
+          JSON.parse(readFileSync(`${descriptor.recordPath}.terminal`, 'utf8')).terminalStatus,
+          record.terminalStatus,
+        );
+        assert.equal(
+          deps._appendedMessages.some((message) => message.content.includes('持球唤醒（命令完成）')),
+          false,
+        );
+        await app.close();
+      } finally {
+        ManagedRunner.prototype.start = originalStart;
+        if (previousDataDir === undefined) delete process.env.CAT_CAFE_DATA_DIR;
+        else process.env.CAT_CAFE_DATA_DIR = previousDataDir;
+        rmSync(root, { recursive: true, force: true });
+      }
+    });
+  }
 
   test('T8d: failed persistence releases a pre-launch reservation and starts the original command', async () => {
     let markVisibilityAppendStarted;

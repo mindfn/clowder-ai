@@ -5,6 +5,7 @@ import {
   routingContextReadModelV1Schema,
 } from '@cat-cafe/shared';
 import { CAPABILITY_PROFILE_INVALID_REASON } from './CapabilityProfileRevisionSource.js';
+import type { EngagementPolicyReader } from './ScarceSeatNotificationPolicy.js';
 
 export const ROUTING_CONTEXT_PROMPT_MAX_CHARS = 3_200;
 const MAX_ANOMALIES = 12;
@@ -68,6 +69,15 @@ function truncate(value: string, maxChars: number): string {
   return value.length <= maxChars ? value : `${value.slice(0, Math.max(0, maxChars - 1))}…`;
 }
 
+function isHistoricalExpiryOnly(candidate: Candidate): boolean {
+  return (
+    candidate.availability === 'unknown' &&
+    candidate.freshness === 'stale' &&
+    candidate.reasons.length > 0 &&
+    candidate.reasons.every((reason) => reason.code === 'routing_signal_expired')
+  );
+}
+
 function candidateTemporalSemantics(model: RoutingContextReadModelV1, candidate: Candidate) {
   const sourceRefs = new Set(candidate.reasons.flatMap((reason) => reason.sourceRefs));
   const assertions = model.signalEvents.filter(
@@ -99,6 +109,8 @@ function renderProjection(payload: object): string {
 
 /** Projects only decision-relevant exceptions; immutable ledgers never enter prompt bytes. */
 export class RoutingContextPromptProjector {
+  constructor(private readonly options: { getEngagementPolicy?: EngagementPolicyReader } = {}) {}
+
   project(input: RoutingContextReadModelV1): string {
     const parsed = routingContextReadModelV1Schema.safeParse(input);
     if (!parsed.success) {
@@ -107,12 +119,25 @@ export class RoutingContextPromptProjector {
     const model = parsed.data;
     if (model.resolution.state === 'degraded') return '';
     const candidates = model.resolution.snapshot.candidates;
+    const scarceSeats = candidates
+      .flatMap((candidate) => {
+        const catId = candidate.binding.catId;
+        const policy = this.options.getEngagementPolicy?.(catId);
+        return policy?.quota === 'weekly_subscription_scarce' ? [{ catId, quotaPoolType: policy.quota }] : [];
+      })
+      .slice(0, MAX_ANOMALIES);
     const anomalies = [...candidates]
       .filter(
         (candidate) =>
-          candidate.availability !== 'available' ||
+          (candidate.availability !== 'available' && !isHistoricalExpiryOnly(candidate)) ||
           candidate.reasons.some((reason) => reason.code === CAPABILITY_PROFILE_INVALID_REASON),
       )
+      // Expiry stays unknown in UI/preflight (KD-3). It is history, not a fresh
+      // routing instruction to repeat in every invocation; diagnostics still surface.
+      .map((candidate) => ({
+        ...candidate,
+        reasons: candidate.reasons.filter((reason) => reason.code !== 'routing_signal_expired'),
+      }))
       .sort((left, right) => Number(right.effect === 'blocked') - Number(left.effect === 'blocked'))
       .slice(0, MAX_ANOMALIES)
       .map((candidate) => ({
@@ -134,7 +159,7 @@ export class RoutingContextPromptProjector {
       overCatIds: matchingCatIds(revision.over, candidates),
       evidenceRefs: revision.evidenceRefs.slice(0, MAX_SOURCE_REFS),
     }));
-    if (anomalies.length === 0 && activePreferences.length === 0) return '';
+    if (anomalies.length === 0 && activePreferences.length === 0 && scarceSeats.length === 0) return '';
 
     const payloadBase = {
       v: 1,
@@ -142,6 +167,16 @@ export class RoutingContextPromptProjector {
       observedAt: model.observedAt,
       catalogRevision: model.catalogRevision,
       constraints: ['preserve_explicit_targets', 'no_silent_reroute', 'preflight_again_at_actual_send'],
+      ...(scarceSeats.length > 0
+        ? {
+            scarceSeats,
+            scarceSeatColdStartObservation: {
+              catId: 'fable-5',
+              note: '长线程冷启动约占周额度 2%（operator 10-06 观测）',
+              sourceRef: 'thread:thread_msl9i0iius52mpkh#0001791331785089-000433-e8ec2e5b',
+            },
+          }
+        : {}),
     };
     let keptAnomalies = anomalies;
     let keptPreferences = activePreferences;

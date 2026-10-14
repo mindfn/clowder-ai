@@ -7,9 +7,11 @@ import { scrollToMessage } from '@/utils/scrollToMessage';
 import { kickTeleportResolve, planTeleport } from '@/utils/teleport';
 import { HubIcon } from './hub-icons';
 import { type BundleItem, MessageBundleItemView } from './MessageBundleItemView';
+import { MessageBundlePaperCard } from './message-v2/MessageBundlePaperCard';
+import { useShellPresentation } from './shell/shell-presentation';
 import { pushThreadRouteWithHistory } from './ThreadSidebar/thread-navigation';
 
-interface HydratedMessageBundle {
+export interface HydratedMessageBundle {
   messageBundleId: string;
   targetThreadId: string;
   createdBy: string;
@@ -26,6 +28,7 @@ interface MessageBundleCardProps {
 }
 
 export function MessageBundleCard({ messageId, forwarderName, getCatLabel }: MessageBundleCardProps) {
+  const presentation = useShellPresentation();
   const currentThreadId = useChatStore((state) => state.currentThreadId);
   const [data, setData] = useState<HydratedMessageBundle | null>(null);
   const [error, setError] = useState(false);
@@ -43,7 +46,7 @@ export function MessageBundleCard({ messageId, forwarderName, getCatLabel }: Mes
         if (!body || body.messageBundleId !== messageId || !Array.isArray(body.items)) {
           throw new Error('Invalid Message Bundle response');
         }
-        setData(body);
+        if (!controller.signal.aborted) setData(body);
       })
       .catch((cause) => {
         if ((cause as { name?: string }).name !== 'AbortError') setError(true);
@@ -67,6 +70,28 @@ export function MessageBundleCard({ messageId, forwarderName, getCatLabel }: Mes
     },
     [currentThreadId],
   );
+
+  if (presentation === 'v2')
+    return (
+      <MessageBundlePaperCard
+        messageId={messageId}
+        data={data?.messageBundleId === messageId ? data : null}
+        error={error}
+        expanded={expanded}
+        forwarderName={forwarderName}
+        getCatLabel={getCatLabel}
+        onJump={jumpToSource}
+        onRetry={() => setRequestVersion((version) => version + 1)}
+        onToggle={() => {
+          setExpanded(!expanded);
+          if (!expanded) {
+            // Expansion reads the authorized source again, never displays the old compact read as a full snapshot.
+            setData(null);
+            setRequestVersion((version) => version + 1);
+          }
+        }}
+      />
+    );
 
   if (error) {
     return (

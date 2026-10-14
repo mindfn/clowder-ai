@@ -6,7 +6,7 @@ description: >
   Not for: 普通资料搜索（用 deep-research）、社区 issue/PR 运营（用 opensource-ops）、只需要架构头脑风暴（用 collaborative-thinking）。
   Output: feature-discussions/YYYY-MM-DD-{project}-deep-dive/ 下的代码证据报告 + 对比结论 + 候选 lesson/skill。
   GOTCHA: 不许只看 README 下判断；每个明星特性必须追到代码路径、状态突变点、反馈闭环和算法输入输出。
-tips_exempt: Existing teardown quality contract refinement; no new user-facing capability or discovery moment.
+tips_exempt: "Renewed 2026-10-10: the non-author review default changes from cross-family-first to one risk-routed reviewer; the teardown entry, outputs and execution authority are unchanged."
 triggers:
   - "拆解明星开源项目"
   - "拆解开源项目"
@@ -57,7 +57,7 @@ triggers:
 
 - **分次推进**：每只猫每次只做 1-2 份产物，commit 后传球，不一气呵成。
 - **双视角交叉**：架构/明星特性/合流/skill draft 至少跨两只猫完成。
-- **对口 review**：最终报告或 skill draft 必须由非作者猫 review，跨族优先。
+- **对口 review**：最终报告或 skill draft 必须由非作者猫 review，按风险默认选一只，同族也行。
 
 ### Step 0 — 定边界和真相源
 

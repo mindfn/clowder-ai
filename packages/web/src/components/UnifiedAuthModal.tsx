@@ -3,33 +3,17 @@
 import { useEffect, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { apiFetch } from '@/utils/api-client';
-import type { BuiltinAccountClient, ProfileAuthType } from './hub-accounts.types';
+import { AccountConnectionFields, isValidAccountEnvKey } from './AccountConnectionFields';
+import { accountFormCopy } from './accounts/account-form.shell-copy';
+import { accountMessage } from './accounts/account-message';
+import { startCreatedCodexAccountLogin } from './codex-accounts/account-request';
+import type { BuiltinAccountClient, ProfileAuthType, ProfileItem } from './hub-accounts.types';
 import { builtinClientLabel } from './hub-accounts.view';
-import { HubIcon } from './hub-icons';
-import { TagEditor } from './hub-tag-editor';
 import { formInputClass } from './mcp-form-helpers';
+import { useShellCopy } from './shell/shell-copy';
+import { useShellLanguage } from './shell/shell-language';
 
 const CLIENT_OPTIONS: BuiltinAccountClient[] = ['anthropic', 'openai', 'google', 'kimi', 'opencode', 'acp'];
-
-/** Suggested models per client — kept in sync with cat-template.json clientDefaults. */
-const MODEL_SUGGESTIONS: Partial<Record<BuiltinAccountClient, string[]>> = {
-  anthropic: [
-    'claude-sonnet-4-6',
-    'claude-opus-4-6',
-    'claude-opus-4-6[1m]',
-    'claude-sonnet-4-5-20250929',
-    'claude-opus-4-5-20251101',
-  ],
-  openai: ['gpt-5.4', 'gpt-5.3-codex', 'gpt-5.3-codex-spark'],
-  google: [
-    'Gemini 3.1 Pro (High)',
-    'Gemini 3.1 Pro (Low)',
-    'Gemini 3.6 Flash (High)',
-    'Gemini 3.5 Flash (High)',
-    'Claude Opus 4.6 (Thinking)',
-  ],
-  opencode: ['claude-sonnet-4-6', 'claude-opus-4-6'],
-};
 
 export interface UnifiedAuthEditData {
   id: string;
@@ -46,17 +30,27 @@ type AuthMode = ProfileAuthType;
 interface UnifiedAuthModalProps {
   open: boolean;
   onClose: () => void;
-  onCreated: (profileId: string) => void;
+  onCreated: (profileId: string, loginError?: string, profile?: ProfileItem) => void;
   editProfile?: UnifiedAuthEditData;
   /** When provided, locks client to this value (wizard context). */
   initialClientId?: BuiltinAccountClient;
+  initialAuthType?: ProfileAuthType;
 }
 
-export function UnifiedAuthModal({ open, onClose, onCreated, editProfile, initialClientId }: UnifiedAuthModalProps) {
+export function UnifiedAuthModal({
+  open,
+  onClose,
+  onCreated,
+  editProfile,
+  initialClientId,
+  initialAuthType,
+}: UnifiedAuthModalProps) {
+  const t = useShellCopy(accountFormCopy);
+  const language = useShellLanguage();
   const isEdit = Boolean(editProfile);
   const defaultClientId =
-    editProfile?.clientId ?? initialClientId ?? (editProfile?.authType === 'api_key' ? undefined : 'anthropic');
-  const [authMode, setAuthMode] = useState<AuthMode>(editProfile?.authType === 'api_key' ? 'api_key' : 'oauth');
+    editProfile?.clientId ?? initialClientId ?? (editProfile?.authType === 'api_key' ? undefined : 'openai');
+  const [authMode, setAuthMode] = useState<AuthMode>(editProfile?.authType ?? initialAuthType ?? 'oauth');
   const [clientId, setClientId] = useState<BuiltinAccountClient | undefined>(defaultClientId);
   const [displayName, setDisplayName] = useState(editProfile?.displayName ?? '');
   const [baseUrl, setBaseUrl] = useState(editProfile?.baseUrl ?? '');
@@ -76,9 +70,9 @@ export function UnifiedAuthModal({ open, onClose, onCreated, editProfile, initia
   useEffect(() => {
     if (open && !prevOpenRef.current) {
       const cid =
-        editProfile?.clientId ?? initialClientId ?? (editProfile?.authType === 'api_key' ? undefined : 'anthropic');
+        editProfile?.clientId ?? initialClientId ?? (editProfile?.authType === 'api_key' ? undefined : 'openai');
       setClientId(cid);
-      setAuthMode(editProfile?.authType === 'api_key' ? 'api_key' : 'oauth');
+      setAuthMode(editProfile?.authType ?? initialAuthType ?? 'oauth');
       setDisplayName(editProfile?.displayName ?? '');
       setBaseUrl(editProfile?.baseUrl ?? '');
       setModels(editProfile?.models ?? []);
@@ -90,22 +84,19 @@ export function UnifiedAuthModal({ open, onClose, onCreated, editProfile, initia
       setAdvancedOpen(Boolean(editProfile?.envVars && Object.keys(editProfile.envVars).length > 0));
     }
     prevOpenRef.current = open;
-  }, [open, editProfile, initialClientId]);
+  }, [open, editProfile, initialClientId, initialAuthType]);
 
   if (!open) return null;
 
   const isOAuth = authMode === 'oauth';
-
-  /** POSIX env var key: must start with uppercase or _, rest alphanumeric + _. */
-  const ENV_KEY_RE = /^[A-Z_][A-Za-z0-9_]*$/;
-  const isValidEnvKey = (k: string) => ENV_KEY_RE.test(k) && !k.startsWith('CAT_CAFE_');
+  const isCodexLogin = isOAuth && (initialClientId ?? clientId) === 'openai';
 
   /** Build envVars Record from entries, filtering empty/invalid/reserved keys. */
   const buildEnvVars = (): Record<string, string> | undefined => {
     const vars: Record<string, string> = {};
     for (const { key, value } of envEntries) {
       const k = key.trim();
-      if (!k || !isValidEnvKey(k)) continue;
+      if (!k || !isValidAccountEnvKey(k)) continue;
       vars[k] = value;
     }
     return Object.keys(vars).length > 0 ? vars : undefined;
@@ -131,7 +122,7 @@ export function UnifiedAuthModal({ open, onClose, onCreated, editProfile, initia
   const canSubmit =
     Boolean(clientId) &&
     (isOAuth
-      ? Boolean(displayName.trim())
+      ? isCodexLogin || Boolean(displayName.trim())
       : Boolean(displayName.trim()) && models.length > 0 && (isEdit || Boolean(baseUrl.trim() && apiKey.trim())));
 
   const handleSubmit = async () => {
@@ -166,21 +157,24 @@ export function UnifiedAuthModal({ open, onClose, onCreated, editProfile, initia
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
-            displayName: displayName.trim(),
+            displayName: displayName.trim() || (isCodexLogin ? t.codexDefaultName : ''),
             authType: 'oauth',
             clientId: effectiveClientId,
-            ...(models.length > 0 ? { models } : {}),
+            ...(!isCodexLogin && models.length > 0 ? { models } : {}),
             ...(() => {
+              if (isCodexLogin) return {};
               const ev = buildEnvVars();
               return ev ? { envVars: ev } : {};
             })(),
           }),
         });
-        const body = (await res.json()) as { profile?: { id?: string }; error?: string };
+        const body = (await res.json()) as { profile?: ProfileItem; error?: string };
         if (!res.ok) throw new Error(body.error ?? `创建失败 (${res.status})`);
         if (body.profile?.id) {
+          const login = isCodexLogin ? await startCreatedCodexAccountLogin(body.profile) : undefined;
           resetForm();
-          onCreated(body.profile.id);
+          if (isCodexLogin) onCreated(body.profile.id, login?.loginError, login?.profile);
+          else onCreated(body.profile.id);
           onClose();
         }
       } else {
@@ -225,12 +219,13 @@ export function UnifiedAuthModal({ open, onClose, onCreated, editProfile, initia
         onClick={(e) => e.stopPropagation()}
       >
         {/* Header */}
-        <div className="mb-1 flex justify-end">
+        <div className="mb-1 flex items-center justify-between">
+          <h3 className="font-semibold text-cafe-primary">{isEdit ? t.edit : t.add}</h3>
           <button
             type="button"
             onClick={handleClose}
             className="rounded-full p-1 text-cafe-muted hover:bg-[var(--console-hover-bg)] hover:text-cafe-secondary"
-            aria-label="关闭"
+            aria-label={t.close}
           >
             <svg className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
               <path strokeLinecap="round" strokeLinejoin="round" d="M6 18L18 6M6 6l12 12" />
@@ -238,22 +233,24 @@ export function UnifiedAuthModal({ open, onClose, onCreated, editProfile, initia
           </button>
         </div>
 
-        <p className="mb-1 text-xs text-cafe-muted">{isEdit ? '编辑账户' : '系统配置 > 账户配置 > 添加认证'}</p>
-        <h4 className="mb-4 text-base font-semibold text-cafe">{isEdit ? '编辑账户认证' : '添加账户认证'}</h4>
-
         {/* Mode toggle */}
         <div
           className={`mb-4 flex rounded-lg border border-[var(--console-border-soft)] p-0.5 ${isEdit ? 'opacity-50' : ''}`}
         >
           <button
             type="button"
-            onClick={() => !isEdit && setAuthMode('oauth')}
+            onClick={() => {
+              if (!isEdit) {
+                setAuthMode('oauth');
+                setClientId('openai');
+              }
+            }}
             className={`flex-1 rounded-md py-1.5 text-xs font-medium transition ${
               isOAuth ? 'bg-cafe-accent text-[var(--cafe-surface)] shadow-sm' : 'text-cafe-secondary'
             } ${isEdit ? 'cursor-not-allowed' : !isOAuth ? 'hover:bg-[var(--console-hover-bg)]' : ''}`}
             disabled={isEdit}
           >
-            OAuth
+            {t.login}
           </button>
           <button
             type="button"
@@ -270,11 +267,14 @@ export function UnifiedAuthModal({ open, onClose, onCreated, editProfile, initia
         <div className="space-y-3" data-guide-id="accounts.create-details">
           {/* 账号名称 — always shown */}
           <div>
-            <label className="mb-1 block text-xs font-medium text-cafe-secondary">账号名称</label>
+            <label className="mb-1 block text-xs font-medium text-cafe-secondary">
+              {isCodexLogin && !isEdit ? t.noteOptional : t.name}
+            </label>
             <input
+              aria-label={isCodexLogin ? t.note : t.name}
               value={displayName}
               onChange={(e) => setDisplayName(e.target.value)}
-              placeholder="例如: my-claude-account"
+              placeholder={isCodexLogin ? t.noteHint : t.nameHint}
               className={formInputClass}
             />
           </div>
@@ -282,23 +282,23 @@ export function UnifiedAuthModal({ open, onClose, onCreated, editProfile, initia
           {/* Authentication mode does not erase account identity. */}
           <div>
             <label className="mb-1 block text-xs font-medium text-cafe-secondary">
-              {isOAuth ? 'Client' : 'API Key 归属'}
+              {isOAuth ? t.provider : t.keyOwner}
             </label>
             {initialClientId ? (
               <p className={formInputClass}>{builtinClientLabel(initialClientId)}</p>
             ) : (
               <select
-                aria-label={isOAuth ? 'Client' : 'API Key 归属'}
+                aria-label={isOAuth ? t.provider : t.keyOwner}
                 value={clientId ?? ''}
                 onChange={(e) => setClientId(e.target.value as BuiltinAccountClient)}
                 className={formInputClass}
               >
                 {!clientId && (
                   <option value="" disabled>
-                    请选择账户归属
+                    {t.chooseProvider}
                   </option>
                 )}
-                {CLIENT_OPTIONS.map((c) => (
+                {(isOAuth && !isEdit ? ['openai' as const] : CLIENT_OPTIONS).map((c) => (
                   <option key={c} value={c}>
                     {builtinClientLabel(c)}
                   </option>
@@ -307,148 +307,30 @@ export function UnifiedAuthModal({ open, onClose, onCreated, editProfile, initia
             )}
           </div>
 
-          {/* API Key mode: Base URL + API Key */}
-          {!isOAuth && (
-            <>
-              <div>
-                <label className="mb-1 block text-xs font-medium text-cafe-secondary">API 服务地址 (Base URL)</label>
-                <input
-                  value={baseUrl}
-                  onChange={(e) => setBaseUrl(e.target.value)}
-                  placeholder="https://api.openai.com/v1"
-                  className={formInputClass}
-                />
-              </div>
-              <div>
-                <label className="mb-1 block text-xs font-medium text-cafe-secondary">
-                  API Key{isEdit && '（留空保持不变）'}
-                </label>
-                <input
-                  type="password"
-                  autoComplete="off"
-                  value={apiKey}
-                  onChange={(e) => {
-                    setApiKey(e.target.value);
-                    setError(null);
-                  }}
-                  placeholder={isEdit ? '••••••••••••' : 'sk-...'}
-                  className={formInputClass}
-                />
-              </div>
-            </>
-          )}
+          {isCodexLogin && !isEdit && <p className="text-sm text-cafe-muted">{t.loginHint}</p>}
 
-          {/* 可用模型 */}
-          <div>
-            <label className="mb-1 block text-xs font-medium text-cafe-secondary">可用模型</label>
-            <TagEditor
-              tags={models}
-              tone="purple"
-              addLabel="+ 添加"
-              placeholder="输入模型名"
-              emptyLabel={isOAuth ? '(可选，留空使用默认模型)' : '(至少添加 1 个模型)'}
-              onChange={setModels}
-              minCount={0}
-            />
-            {/* Model suggestions for builtin clients */}
-            {isOAuth &&
-              clientId &&
-              (MODEL_SUGGESTIONS[initialClientId ?? clientId] ?? []).filter((m) => !models.includes(m)).length > 0 && (
-                <div className="mt-1.5 flex flex-wrap items-center gap-1">
-                  <span className="text-micro text-cafe-muted">推荐</span>
-                  {(MODEL_SUGGESTIONS[initialClientId ?? clientId] ?? [])
-                    .filter((m) => !models.includes(m))
-                    .map((m) => (
-                      <button
-                        key={m}
-                        type="button"
-                        onClick={() => setModels([...models, m])}
-                        className="rounded-full border border-dashed border-[var(--console-border-soft)] px-2 py-0.5 text-micro text-cafe-secondary transition hover:border-cafe-accent hover:text-cafe-accent"
-                      >
-                        + {m}
-                      </button>
-                    ))}
-                </div>
-              )}
-          </div>
-
-          {/* F171: 高级配置 — collapsible env var injection */}
-          <div className="rounded-lg border border-[var(--console-border-soft)]">
-            <button
-              type="button"
-              onClick={() => setAdvancedOpen((v) => !v)}
-              className="flex w-full items-center gap-1 px-3 py-2 text-xs font-medium text-cafe-secondary hover:bg-[var(--console-card-bg)]"
-            >
-              <span className="text-micro">{advancedOpen ? '\u25BE' : '\u25B8'}</span>
-              高级配置 (可选)
-            </button>
-            {advancedOpen && (
-              <div className="console-divider-t px-3 pb-3 pt-2">
-                <p className="mb-2 text-micro text-cafe-muted">
-                  自定义环境变量，启动 agent 时注入子进程 (CAT_CAFE_ 前缀为保留变量)
-                </p>
-                <div className="space-y-1.5">
-                  {envEntries.map((entry, i) => (
-                    <div key={i} className="flex items-center gap-1.5">
-                      <div className="w-[38%] shrink-0">
-                        <input
-                          value={entry.key}
-                          onChange={(e) => {
-                            const next = [...envEntries];
-                            next[i] = { ...next[i], key: e.target.value };
-                            setEnvEntries(next);
-                          }}
-                          placeholder="KEY"
-                          className={`font-mono ${
-                            entry.key.trim() && !isValidEnvKey(entry.key.trim())
-                              ? `${formInputClass} !border-semantic-critical !bg-semantic-critical-surface !text-semantic-critical`
-                              : formInputClass
-                          }`}
-                        />
-                      </div>
-                      <span className="text-micro text-cafe-muted">=</span>
-                      <div className="min-w-0 flex-1">
-                        <input
-                          value={entry.value}
-                          onChange={(e) => {
-                            const next = [...envEntries];
-                            next[i] = { ...next[i], value: e.target.value };
-                            setEnvEntries(next);
-                          }}
-                          placeholder="value"
-                          className={`font-mono ${formInputClass}`}
-                        />
-                      </div>
-                      <button
-                        type="button"
-                        onClick={() => setEnvEntries(envEntries.filter((_, j) => j !== i))}
-                        className="text-xs text-cafe-muted hover:text-semantic-critical"
-                        title="删除"
-                      >
-                        <HubIcon name="trash" className="h-3.5 w-3.5" />
-                      </button>
-                    </div>
-                  ))}
-                  {envEntries.some((e) => e.key.trim() && !isValidEnvKey(e.key.trim())) && (
-                    <p className="text-micro text-semantic-critical">
-                      {envEntries.some((e) => e.key.trim().startsWith('CAT_CAFE_')) ? 'CAT_CAFE_ 前缀为系统保留；' : ''}
-                      变量名须以大写字母或下划线开头，仅含 A-Z、0-9、_
-                    </p>
-                  )}
-                </div>
-                <button
-                  type="button"
-                  onClick={() => setEnvEntries([...envEntries, { key: '', value: '' }])}
-                  className="mt-2 text-micro font-medium text-cafe-accent hover:text-cafe-accent-hover"
-                >
-                  + 添加变量
-                </button>
-              </div>
-            )}
-          </div>
+          {!isEdit && <p className="text-sm text-cafe-muted">{t.bindingsHint}</p>}
+          <AccountConnectionFields
+            isOAuth={isOAuth}
+            isCodexLogin={isCodexLogin}
+            isEdit={isEdit}
+            clientId={clientId}
+            initialClientId={initialClientId}
+            baseUrl={baseUrl}
+            setBaseUrl={setBaseUrl}
+            apiKey={apiKey}
+            setApiKey={setApiKey}
+            models={models}
+            setModels={setModels}
+            envEntries={envEntries}
+            setEnvEntries={setEnvEntries}
+            advancedOpen={advancedOpen}
+            setAdvancedOpen={setAdvancedOpen}
+            clearError={() => setError(null)}
+          />
         </div>
 
-        {error && <p className="mt-3 text-xs text-semantic-critical">{error}</p>}
+        {error && <p className="mt-3 text-xs text-semantic-critical">{accountMessage(error, language)}</p>}
 
         {/* Save button — bottom right */}
         <div className="mt-4 flex justify-end">
@@ -459,7 +341,7 @@ export function UnifiedAuthModal({ open, onClose, onCreated, editProfile, initia
             disabled={saving || !canSubmit}
             className="rounded-lg bg-cafe-accent px-5 py-2 text-sm font-semibold text-[var(--cafe-surface)] transition hover:bg-cafe-accent-hover disabled:opacity-50"
           >
-            {saving ? '保存中...' : '保存'}
+            {saving ? t.processing : isCodexLogin && !isEdit ? t.createLogin : t.save}
           </button>
         </div>
       </div>

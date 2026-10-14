@@ -16,6 +16,7 @@ import { estimateTokens } from '../../../../utils/token-counter.js';
 import { formatPromptTimeRange } from '../format-time.js';
 import type { ThreadMemorySourceRef, ThreadMemoryV1 } from '../stores/ports/ThreadStore.js';
 import type { DecisionSignals } from './extractDecisionSignals.js';
+import type { HomeSessionPosition } from './session-scope.js';
 import type { ExtractiveDigestV1 } from './TranscriptWriter.js';
 
 const MAX_FILES_PER_CATEGORY = 10;
@@ -123,12 +124,13 @@ function mergeReferencedSignals(
 export function buildThreadMemory(
   existing: ThreadMemoryV1 | null,
   newDigest: ExtractiveDigestV1,
-  maxTokens: number,
+  options: { maxTokens: number; homePosition: HomeSessionPosition },
   signals?: DecisionSignals,
   recentArtifacts?: ThreadMemoryV1['recentArtifacts'],
 ): ThreadMemoryV1 {
-  // R1 P1-1: session number comes from digest.seq (1-based display), not merge count
-  const sessionNumber = newDigest.seq + 1;
+  const { maxTokens, homePosition } = options;
+  // The producer must supply home coordinates; digest.seq is an archive reference.
+  const sessionNumber = homePosition.ordinal;
   const mergeCount = (existing?.sessionsIncorporated ?? 0) + 1;
   const newLine = formatSessionLine(newDigest, sessionNumber);
 

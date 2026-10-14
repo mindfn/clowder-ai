@@ -19,6 +19,18 @@ export const CODEX_APPS_WRITE_APPROVAL_ARGS = [
   'apps._default.default_tools_approval_mode="writes"',
 ] as const;
 
+/** Raw member preferences cannot grant Apps write approval, including through inline parent tables. */
+export function isReservedCodexAppApprovalConfigKey(key: string): boolean {
+  const path = key.split('.');
+  if (path[0] !== 'apps') return false;
+  return (
+    path.length <= 2 ||
+    path.at(-1) === 'default_tools_approval_mode' ||
+    path.at(-1) === 'approval_mode' ||
+    ((path[2] === 'tools' || path[2] === 'links') && path.length <= 4)
+  );
+}
+
 export const CAT_CAFE_GITHUB_ROUTING_INSTRUCTIONS = `# Clowder AI GitHub routing
 
 - GitHub MCP and GitHub App tools are retired for repository operations in Clowder AI. Do not install or invoke them.

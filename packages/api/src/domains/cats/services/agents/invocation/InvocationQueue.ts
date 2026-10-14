@@ -110,7 +110,17 @@ export interface QueueEntry {
   /** F175: queue-internal priority — urgent entries sort before normal in dequeue */
   priority: 'urgent' | 'normal';
   /** F175: origin category for visual grouping */
-  sourceCategory?: 'ci' | 'review' | 'conflict' | 'scheduled' | 'a2a' | 'continuation' | 'issue' | 'freshness';
+  sourceCategory?:
+    | 'ci'
+    | 'review'
+    | 'conflict'
+    | 'scheduled'
+    | 'a2a'
+    | 'continuation'
+    | 'issue'
+    | 'freshness'
+    | 'producer_return'
+    | 'repo_inbox';
   /** Queue-internal dedup key for agent control-flow work. */
   continuationKey?: string;
   /** F254 Phase E: typed custody carrier for one persistent catch closure. */
@@ -158,6 +168,8 @@ export interface EnqueueResult {
   queuePosition?: number;
   /** True when enqueue returned an existing active entry by idempotency key. */
   deduped?: boolean;
+  /** Exact pre-dedupe state for a producer whose later durable admission must roll back. */
+  dedupeRollbackSnapshot?: QueueEntry;
 }
 
 export interface ExactSteerBatchReservation {
@@ -192,7 +204,9 @@ export interface QueuedHandledResult {
   remainingTargetCats: string[];
   fullyConsumed: boolean;
   /** F254 D1.2b: rollback payload used when delivery persistence fails after tentative consume. */
-  entrySnapshot?: QueueEntry;
+  entrySnapshot: QueueEntry;
+  /** Exact in-memory state immediately after tentative consume; rollback must CAS against it. */
+  postMutationSnapshot: QueueEntry;
   queueIndex?: number;
   originalContent?: string;
 }
@@ -241,6 +255,23 @@ function isQueueTargetPending(entry: Pick<QueueEntry, 'targetCats' | 'queuedFail
 export class InvocationQueue {
   private readonly log = createModuleLogger('invocation-queue');
   private queues = new Map<string, QueueEntry[]>();
+  private readonly sourceListeners = new Set<(threadId: string, userId: string) => void>();
+
+  /** Notification only. Message/Queue custody remains the source of truth. */
+  onSourceChanged(listener: (threadId: string, userId: string) => void): () => void {
+    this.sourceListeners.add(listener);
+    return () => this.sourceListeners.delete(listener);
+  }
+
+  private signalSourceChanged(threadId: string, userId: string): void {
+    for (const listener of this.sourceListeners) {
+      try {
+        listener(threadId, userId);
+      } catch {
+        // A disposable consumer cannot reverse a committed Queue mutation.
+      }
+    }
+  }
 
   /** Original content per entryId at enqueue time, for rollbackEnqueue */
   private originalContents = new Map<string, string>();
@@ -310,7 +341,7 @@ export class InvocationQueue {
   /** F175: set explicit dequeue position for drag-reorder. */
   setPosition(threadId: string, userId: string, entryId: string, position: number): boolean {
     const e = this.findEntry(threadId, userId, entryId);
-    if (!e || e.status !== 'queued') return false;
+    if (!e || e.status !== 'queued' || e.queueCustodyAdmissionId) return false;
     if (e.exactSteerBatch) return false;
     if (isSystemPinnedQueueEntry(e)) return false;
     e.position = position;
@@ -354,7 +385,7 @@ export class InvocationQueue {
         input.targetCats.length !== 1 ||
         (input.executionScope === 'collective-participation'
           ? ownerAuthProvenance !== 'unknown'
-          : input.executionScope !== 'collective-work' || ownerAuthProvenance !== 'strict'))
+          : input.executionScope !== 'collective-work' || ownerAuthProvenance !== 'unknown'))
     ) {
       throw new Error('Collective execution scope requires one exact cat and its matching owner provenance');
     }
@@ -379,6 +410,7 @@ export class InvocationQueue {
           (entry.status === 'queued' || (dedupeProcessing && entry.status === 'processing')),
       );
       if (existing) {
+        const dedupeRollbackSnapshot = InvocationQueue.cloneEntry(existing);
         if (
           (input.executionScope || existing.executionScope) &&
           (input.executionScope !== existing.executionScope ||
@@ -406,6 +438,7 @@ export class InvocationQueue {
           entry: { ...existing },
           queuePosition: position >= 0 ? position + 1 : undefined,
           deduped: true,
+          dedupeRollbackSnapshot,
         };
       }
     }
@@ -462,6 +495,7 @@ export class InvocationQueue {
     };
     q.push(entry);
     this.originalContents.set(entry.id, input.content);
+    if (entry.messageId && !entry.queueCustodyAdmissionId) this.signalSourceChanged(input.threadId, input.userId);
     return { outcome: 'enqueued', entry: { ...entry }, queuePosition: q.length };
   }
 
@@ -486,17 +520,50 @@ export class InvocationQueue {
     if (!e) return;
     if (!e.messageId) {
       e.messageId = messageId;
+      if (!e.queueCustodyAdmissionId) this.signalSourceChanged(threadId, userId);
       return;
     }
     if (e.messageId !== messageId && !e.mergedMessageIds.includes(messageId)) {
       e.mergedMessageIds.push(messageId);
+      // A body appended after an earlier read has not been exposed by that read.
+      // Keep the carrier identity, but require a fresh per-source exposure before
+      // any newly merged source can inherit seen/handled evidence.
+      e.queuedNotifiedByCatIds = undefined;
+      e.queuedSeenByCatIds = undefined;
+      e.queuedSeenInvocationIdByCatId = undefined;
+      e.queuedBodyExposures = undefined;
+      if (!e.queueCustodyAdmissionId) this.signalSourceChanged(threadId, userId);
     }
   }
 
   /** Rollback an enqueued entry — remove entirely. */
   rollbackEnqueue(threadId: string, userId: string, entryId: string): void {
-    this.remove(threadId, userId, entryId);
-    this.originalContents.delete(entryId);
+    if (this.remove(threadId, userId, entryId)) this.originalContents.delete(entryId);
+  }
+
+  /**
+   * Fence one exact queued carrier before its source custody crosses an async
+   * persistence boundary. This mutation is synchronous: once enqueue returns,
+   * the producer can stage the carrier before yielding to any selector/reader.
+   */
+  stageQueueCustodyAdmission(
+    threadId: string,
+    userId: string,
+    entryId: string,
+    admissionId: string,
+    replaceAdmissionId?: string,
+  ): QueueEntry | null {
+    if (!admissionId) throw new Error('Queue custody admission id is required');
+    const entry = this.findEntry(threadId, userId, entryId);
+    if (!entry || entry.status !== 'queued') return null;
+    if (
+      entry.queueCustodyAdmissionId &&
+      entry.queueCustodyAdmissionId !== admissionId &&
+      entry.queueCustodyAdmissionId !== replaceAdmissionId
+    )
+      return null;
+    entry.queueCustodyAdmissionId = admissionId;
+    return InvocationQueue.cloneEntry(entry);
   }
 
   /**
@@ -525,6 +592,7 @@ export class InvocationQueue {
     const ownsAdmission = entries.every((entry) => entry?.queueCustodyAdmissionId === admissionId);
     if (!alreadyCommitted && !ownsAdmission) return false;
     for (const entry of entries as QueueEntry[]) delete entry.queueCustodyAdmissionId;
+    if (ownsAdmission && entries.some((entry) => entry?.messageId)) this.signalSourceChanged(threadId, userId);
     return true;
   }
 
@@ -532,13 +600,15 @@ export class InvocationQueue {
   dequeue(threadId: string, userId: string): QueueEntry | null {
     const q = this.queues.get(this.scopeKey(threadId, userId));
     if (!q || q.length === 0) return null;
-    return q.shift()!;
+    const index = q.findIndex((entry) => !entry.queueCustodyAdmissionId);
+    if (index < 0) return null;
+    return q.splice(index, 1)[0] ?? null;
   }
 
   /** Look at the first entry without removing. */
   peek(threadId: string, userId: string): QueueEntry | null {
     const q = this.queues.get(this.scopeKey(threadId, userId));
-    return q?.[0] ?? null;
+    return q?.find((entry) => !entry.queueCustodyAdmissionId) ?? null;
   }
 
   /** Remove a specific entry by id. Returns null if not found. */
@@ -547,6 +617,7 @@ export class InvocationQueue {
     if (!q) return null;
     let idx = q.findIndex((e) => e.id === entryId);
     if (idx === -1) return null;
+    if (q[idx]?.queueCustodyAdmissionId) return null;
     const batch = q[idx]?.exactSteerBatch;
     if (batch) {
       this.releaseExactUserBatch(threadId, userId, batch.reservationId);
@@ -566,7 +637,8 @@ export class InvocationQueue {
     for (const [scope, queue] of this.queues) {
       for (let index = queue.length - 1; index >= 0; index -= 1) {
         const entry = queue[index];
-        if (!entry || !actionSuccessorFencesMatch(entry.actionSuccessorFence, fence)) continue;
+        if (!entry || entry.queueCustodyAdmissionId || !actionSuccessorFencesMatch(entry.actionSuccessorFence, fence))
+          continue;
         queue.splice(index, 1);
         this.originalContents.delete(entry.id);
         retired.push({
@@ -625,7 +697,7 @@ export class InvocationQueue {
    * still current. This CAS boundary prevents a failed durable side effect from
    * rolling back a later concurrent Queue update.
    */
-  restoreEntrySnapshotIfUnchanged(expectedCurrent: QueueEntry, replacement: QueueEntry): boolean {
+  restoreEntrySnapshotIfUnchanged(expectedCurrent: QueueEntry, replacement: QueueEntry, admissionId?: string): boolean {
     if (
       expectedCurrent.id !== replacement.id ||
       expectedCurrent.threadId !== replacement.threadId ||
@@ -637,17 +709,21 @@ export class InvocationQueue {
     const index = q?.findIndex((entry) => entry.id === expectedCurrent.id) ?? -1;
     if (!q || index < 0) return false;
     const current = q[index];
+    if (admissionId ? current?.queueCustodyAdmissionId !== admissionId : current?.queueCustodyAdmissionId !== undefined)
+      return false;
     if (JSON.stringify(current) !== JSON.stringify(expectedCurrent)) return false;
     q[index] = InvocationQueue.cloneEntry(replacement);
     return true;
   }
 
   /** Remove one exact Queue snapshot while it is still current. */
-  removeEntrySnapshotIfUnchanged(expectedCurrent: QueueEntry): boolean {
+  removeEntrySnapshotIfUnchanged(expectedCurrent: QueueEntry, admissionId?: string): boolean {
     const q = this.queues.get(this.scopeKey(expectedCurrent.threadId, expectedCurrent.userId));
     const index = q?.findIndex((entry) => entry.id === expectedCurrent.id) ?? -1;
     if (!q || index < 0) return false;
     const current = q[index];
+    if (admissionId ? current?.queueCustodyAdmissionId !== admissionId : current?.queueCustodyAdmissionId !== undefined)
+      return false;
     if (JSON.stringify(current) !== JSON.stringify(expectedCurrent)) return false;
     q.splice(index, 1);
     this.originalContents.delete(expectedCurrent.id);
@@ -691,7 +767,7 @@ export class InvocationQueue {
   }> {
     return this.list(threadId, userId)
       .filter((entry) => entry.id !== opts?.excludeEntryId)
-      .filter((entry) => entry.status === 'queued' && entry.targetCats.includes(catId))
+      .filter((entry) => entry.status === 'queued' && isOrdinaryQueueTargetEligible(entry, catId))
       .filter((entry) => InvocationQueue.canExposeToCurrentParent(entry, catId, opts?.parentInvocationId))
       .filter((entry) => !entry.queuedSeenByCatIds?.includes(catId))
       .map((entry) => ({
@@ -711,24 +787,35 @@ export class InvocationQueue {
     userId: string,
     catId: string,
     parentInvocationId?: string,
+    readingInvocationId?: string,
   ): Array<{
     entryId: string;
+    createdAt: number;
     source: string;
     content: string;
     callerCatId?: string;
     messageId?: string | null;
     mergedMessageIds?: string[];
+    alreadyExposedToInvocation: boolean;
   }> {
     return this.list(threadId, userId)
-      .filter((entry) => entry.status === 'queued' && entry.targetCats.includes(catId))
+      .filter((entry) => entry.status === 'queued' && isOrdinaryQueueTargetEligible(entry, catId))
       .filter((entry) => InvocationQueue.canExposeToCurrentParent(entry, catId, parentInvocationId))
       .map((entry) => ({
         entryId: entry.id,
+        createdAt: entry.createdAt,
         source: entry.source,
         content: entry.content,
         ...(entry.callerCatId ? { callerCatId: entry.callerCatId } : {}),
         ...(entry.messageId !== undefined ? { messageId: entry.messageId } : {}),
         ...(entry.mergedMessageIds.length > 0 ? { mergedMessageIds: [...entry.mergedMessageIds] } : {}),
+        alreadyExposedToInvocation: Boolean(
+          entry.source === 'user' &&
+            readingInvocationId &&
+            entry.queuedBodyExposures?.some(
+              (exposure) => exposure.targetCatId === catId && exposure.invocationId === readingInvocationId,
+            ),
+        ),
       }));
   }
 
@@ -970,6 +1057,7 @@ export class InvocationQueue {
       for (const entry of q) {
         if (
           entry.status !== 'queued' ||
+          entry.queueCustodyAdmissionId !== undefined ||
           !entry.targetCats.includes(catId) ||
           (entry.queuedSeenInvocationIdByCatId?.[catId] !== invocationId && !attemptedEntryIds.has(entry.id))
         ) {
@@ -1012,6 +1100,7 @@ export class InvocationQueue {
     if (
       !entry ||
       entry.status !== 'queued' ||
+      entry.queueCustodyAdmissionId !== undefined ||
       !entry.targetCats.includes(catId) ||
       !entry.queuedFailedByCatIds?.includes(catId)
     ) {
@@ -1049,7 +1138,14 @@ export class InvocationQueue {
     attemptId: string,
   ): QueueEntry | null {
     const entry = this.findEntry(threadId, userId, entryId);
-    if (!entry || entry.status !== 'queued' || !entry.targetCats.includes(catId) || !attemptId) return null;
+    if (
+      !entry ||
+      entry.status !== 'queued' ||
+      entry.queueCustodyAdmissionId !== undefined ||
+      !entry.targetCats.includes(catId) ||
+      !attemptId
+    )
+      return null;
     entry.queuedAttemptIdByCatId = { ...(entry.queuedAttemptIdByCatId ?? {}), [catId]: attemptId };
     return InvocationQueue.cloneEntry(entry);
   }
@@ -1067,6 +1163,7 @@ export class InvocationQueue {
         if (
           !entry ||
           entry.status !== 'queued' ||
+          entry.queueCustodyAdmissionId !== undefined ||
           (!entry.queuedSeenInvocationIdByCatId && !entry.queuedAwakenedInvocationIdByCatId)
         ) {
           continue;
@@ -1143,7 +1240,11 @@ export class InvocationQueue {
       if (!this.queueMatchesThread(q, threadId)) continue;
       if (
         q.some(
-          (entry) => entry.status === 'queued' && attemptedEntryIds.has(entry.id) && entry.targetCats.includes(catId),
+          (entry) =>
+            entry.status === 'queued' &&
+            entry.queueCustodyAdmissionId === undefined &&
+            attemptedEntryIds.has(entry.id) &&
+            entry.targetCats.includes(catId),
         )
       ) {
         return true;
@@ -1155,25 +1256,69 @@ export class InvocationQueue {
   private static isQueuedHandledCandidate(entry: QueueEntry, catId: string, invocationId: string): boolean {
     return (
       entry.status === 'queued' &&
+      entry.queueCustodyAdmissionId === undefined &&
       entry.targetCats.includes(catId) &&
       entry.queuedSeenInvocationIdByCatId?.[catId] === invocationId
     );
   }
 
-  restoreQueuedHandledResult(result: QueuedHandledResult): boolean {
-    if (!result.entrySnapshot) return false;
+  restoreQueuedHandledResult(result: QueuedHandledResult, replacement = result.entrySnapshot): boolean {
+    InvocationQueue.assertQueuedHandledRollbackIdentity(result, replacement);
     const key = this.scopeKey(result.threadId, result.userId);
-    const q = this.getOrCreate(key);
-    const restored = InvocationQueue.cloneEntry(result.entrySnapshot);
-    const existingIndex = q.findIndex((entry) => entry.id === result.entryId);
-    if (existingIndex >= 0) {
-      q[existingIndex] = restored;
+    const q = this.queues.get(key);
+    const existingIndex = q?.findIndex((entry) => entry.id === result.entryId) ?? -1;
+    if (!InvocationQueue.isQueuedHandledRollbackStateCurrent(result, q, existingIndex)) return false;
+    if (this.hasConflictingSourceTargetCarrier(result.entryId, replacement)) return false;
+
+    const restored = InvocationQueue.cloneEntry(replacement);
+    if (result.fullyConsumed) {
+      const destination = this.getOrCreate(key);
+      const index = Math.max(0, Math.min(result.queueIndex ?? destination.length, destination.length));
+      destination.splice(index, 0, restored);
     } else {
-      const index = Math.max(0, Math.min(result.queueIndex ?? q.length, q.length));
-      q.splice(index, 0, restored);
+      if (!q) return false;
+      q[existingIndex] = restored;
     }
     this.originalContents.set(restored.id, result.originalContent ?? restored.content);
     return true;
+  }
+
+  private static assertQueuedHandledRollbackIdentity(result: QueuedHandledResult, replacement: QueueEntry): void {
+    if (
+      replacement.id !== result.entryId ||
+      replacement.threadId !== result.threadId ||
+      replacement.userId !== result.userId
+    ) {
+      throw new Error('Queued handled rollback identity mismatch');
+    }
+  }
+
+  private static isQueuedHandledRollbackStateCurrent(
+    result: QueuedHandledResult,
+    queue: QueueEntry[] | undefined,
+    existingIndex: number,
+  ): boolean {
+    if (result.fullyConsumed) return existingIndex < 0;
+    if (!queue || existingIndex < 0) return false;
+    const current = queue[existingIndex];
+    return (
+      current?.queueCustodyAdmissionId === undefined &&
+      JSON.stringify(current) === JSON.stringify(result.postMutationSnapshot)
+    );
+  }
+
+  private hasConflictingSourceTargetCarrier(entryId: string, replacement: QueueEntry): boolean {
+    const sourceMessageIds = new Set(exactA2ASourceMessageIds(replacement));
+    if (sourceMessageIds.size === 0) return false;
+    for (const queue of this.queues.values()) {
+      for (const candidate of queue) {
+        if (candidate.id === entryId) continue;
+        const overlapsSource = exactA2ASourceMessageIds(candidate).some((messageId) => sourceMessageIds.has(messageId));
+        const overlapsTarget = replacement.targetCats.some((catId) => candidate.targetCats.includes(catId));
+        if (overlapsSource && overlapsTarget) return true;
+      }
+    }
+    return false;
   }
 
   private static markQueuedHandledEntry(
@@ -1228,6 +1373,7 @@ export class InvocationQueue {
       remainingTargetCats: [...remainingTargetCats],
       fullyConsumed: remainingTargetCats.length === 0,
       entrySnapshot,
+      postMutationSnapshot: InvocationQueue.cloneEntry(entry),
       queueIndex,
       originalContent,
     };
@@ -1310,12 +1456,15 @@ export class InvocationQueue {
     const key = this.scopeKey(threadId, userId);
     const q = this.queues.get(key);
     if (!q) return [];
-    for (const e of q) {
+    const retained = q.filter((entry) => entry.queueCustodyAdmissionId);
+    const removed = q.filter((entry) => !entry.queueCustodyAdmissionId);
+    for (const e of removed) {
       this.originalContents.delete(e.id);
       if (e.exactSteerBatch) this.exactSteerReservations.delete(e.exactSteerBatch.reservationId);
     }
-    this.queues.delete(key);
-    return q;
+    if (retained.length > 0) this.queues.set(key, retained);
+    else this.queues.delete(key);
+    return removed;
   }
 
   /**
@@ -1326,7 +1475,7 @@ export class InvocationQueue {
     const q = this.queues.get(this.scopeKey(threadId, userId));
     if (!q) return false;
     const target = q.find((e) => e.id === entryId);
-    if (!target || target.status === 'processing') return false;
+    if (!target || target.status === 'processing' || target.queueCustodyAdmissionId) return false;
     if (target.exactSteerBatch) return false;
     if (isSystemPinnedQueueEntry(target)) return false;
 
@@ -1356,7 +1505,7 @@ export class InvocationQueue {
     const q = this.queues.get(this.scopeKey(threadId, userId));
     if (!q) return false;
     const entry = q.find((e) => e.id === entryId);
-    if (!entry || entry.status === 'processing') return false;
+    if (!entry || entry.status === 'processing' || entry.queueCustodyAdmissionId) return false;
     if (entry.exactSteerBatch) return false;
     if (isSystemPinnedQueueEntry(entry)) return false;
 
@@ -2182,6 +2331,7 @@ export class InvocationQueue {
     e.queuedNotifiedByCatIds = undefined;
     e.queuedSeenByCatIds = undefined;
     e.queuedSeenInvocationIdByCatId = undefined;
+    e.queuedBodyExposures = undefined;
     e.queueCustodyAdmissionId = queueCustodyAdmissionId;
     return true;
   }
@@ -2496,7 +2646,7 @@ export class InvocationQueue {
     const consumed: QueueEntry[] = [];
     for (const q of this.queues.values()) {
       for (let i = q.length - 1; i >= 0; i--) {
-        if (entryIds.has(q[i]!.id)) {
+        if (entryIds.has(q[i]!.id) && !q[i]!.queueCustodyAdmissionId) {
           this.originalContents.delete(q[i]!.id);
           consumed.push(q.splice(i, 1)[0]!);
         }

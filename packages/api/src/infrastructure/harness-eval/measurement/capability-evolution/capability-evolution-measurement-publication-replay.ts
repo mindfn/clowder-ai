@@ -98,7 +98,7 @@ export async function resolveCapabilityEvolutionMeasurementPublication(input: {
   return { ...published, proofStatus };
 }
 
-function capabilityEvolutionMeasurementRoleRefs(
+export function capabilityEvolutionMeasurementRoleRefs(
   proofId: string,
   roles: Roles,
 ): Record<CapabilityEvolutionMeasurementRoleName, OwnerTruthRefV1> {

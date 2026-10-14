@@ -56,6 +56,30 @@ export function openMessageInvocationTrajectory(message: ChatMessage, threadId: 
   });
 }
 
+/**
+ * The default open of a message's trajectory: the run's surface in the Workspace right panel. Shared by the classic anchor on the
+ * name row and by the new shell's last line of a reply, so both land on the same place.
+ */
+export function openMessageTrajectoryInWorkspace(
+  message: ChatMessage,
+  threadId: string,
+  descriptor: MessageInvocationTrajectoryDescriptor,
+): void {
+  useF307ExperienceWorkbenchStore.getState().dispatch({
+    type: 'open-surface',
+    surface: createAgentRunSurface({
+      invocationId: descriptor.invocationId,
+      threadId,
+      catId: message.catId ?? undefined,
+      sourceMessageId: message.id,
+    }),
+    entitlement: { kind: 'user', reason: 'open-from-chat' },
+  });
+  const store = useChatStore.getState();
+  store.setRightPanelMode('workspace');
+  store.setRightPanelOpen(true);
+}
+
 const STATUS_LABEL: Record<InvocationTrajectoryStatus, string> = {
   running: '运行中',
   done: '轨迹',
@@ -94,19 +118,7 @@ export function InvocationTrajectoryAnchor({
         if (onOpen) {
           onOpen(descriptor);
         } else {
-          useF307ExperienceWorkbenchStore.getState().dispatch({
-            type: 'open-surface',
-            surface: createAgentRunSurface({
-              invocationId: descriptor.invocationId,
-              threadId,
-              catId: message.catId ?? undefined,
-              sourceMessageId: message.id,
-            }),
-            entitlement: { kind: 'user', reason: 'open-from-chat' },
-          });
-          const store = useChatStore.getState();
-          store.setRightPanelMode('workspace');
-          store.setRightPanelOpen(true);
+          openMessageTrajectoryInWorkspace(message, threadId, descriptor);
         }
       }}
       className={`inline-flex h-5 shrink-0 items-center gap-1 rounded-full border px-1.5 text-micro font-semibold transition-[opacity,color,background-color] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-cafe-accent ${

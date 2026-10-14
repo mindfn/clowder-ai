@@ -5,15 +5,15 @@
 
 import { type CatId, isSelectableManagedHoldConnectorSource } from '@cat-cafe/shared';
 import type { IMessageStore, StoredMessage, ThreadMessageReadOptions } from './ports/MessageStore.js';
-
-/** Fields required to reproduce a persisted message's timeline order without hydrating its history payload. */
-type TimelineOrderMessage = Pick<
-  StoredMessage,
-  'userId' | 'catId' | 'timestamp' | 'deliveredAt' | 'timelineOrderAt' | 'deliveryStatus' | 'origin'
-> & {
-  source?: unknown;
-  queueCustody?: unknown;
-};
+import {
+  isDeliveredMessage,
+  isOwnerVisibleRecalledUserMessage,
+  isQueuedCatTimelineMessage,
+  isQueuedOwnerConnectorTimelineMessage,
+  isQueuedUserTimelineMessage,
+  isRealCatSpeech,
+  type TimelineOrderMessage,
+} from './thread-publication-predicates.js';
 
 /**
  * System-level userIds whose messages are visible to ALL thread participants
@@ -127,11 +127,22 @@ export function resolveThreadMessageVisibility(
   viewerUserId?: string,
 ): (message: StoredMessage) => boolean {
   return (message) => {
+    if (
+      options?.onlyUnpositionedOwnerMessages === true &&
+      (!viewerUserId ||
+        message.userId !== viewerUserId ||
+        message.catId !== null ||
+        (message.deliveryStatus !== 'queued' &&
+          (message.recall === undefined || message.recall.recalledAt < (options.ownerUncertaintySinceMs ?? 0))))
+    )
+      return false;
     if (!passesManagedHoldViewerBoundary(message, viewerUserId)) return false;
     if (viewerUserId !== undefined && isManagedHoldConnectorMessage(message)) {
       return (
         isDeliveredMessage(message) ||
-        (options?.includeQueuedUserMessages === true && message.deliveryStatus === 'queued')
+        (options?.includeQueuedUserMessages === true && message.deliveryStatus === 'queued') ||
+        (options?.includeExposedQueuedUserMessagesForCatId !== undefined &&
+          hasDurableQueueBodyExposure(message, options.includeExposedQueuedUserMessagesForCatId))
       );
     }
 
@@ -169,71 +180,6 @@ export function getTimelineOrderTime(message: TimelineOrderMessage): number {
   )
     return message.timestamp;
   return message.deliveredAt ?? message.timestamp;
-}
-
-function isDeliveredMessage(message: StoredMessage): boolean {
-  return !message.deliveryStatus || message.deliveryStatus === 'delivered';
-}
-
-function isRealCatSpeech(message: TimelineOrderMessage): boolean {
-  return (
-    message.catId !== null &&
-    message.catId !== 'system' &&
-    message.userId !== 'system' &&
-    message.userId !== 'scheduler' &&
-    message.origin !== 'briefing'
-  );
-}
-
-function isQueuedCatTimelineMessage(message: TimelineOrderMessage): boolean {
-  return message.deliveryStatus === 'queued' && isRealCatSpeech(message);
-}
-
-/**
- * Owner-facing timeline publication for durable queued user work. This is kept
- * separate from `isTimelinePublished`: callback/context/prompt readers must not
- * learn an undelivered body merely because the browser can render its receipt.
- */
-function isQueuedUserTimelineMessage(message: TimelineOrderMessage): boolean {
-  if (
-    message.deliveryStatus !== 'queued' ||
-    message.catId !== null ||
-    message.source !== undefined ||
-    message.userId === 'system' ||
-    message.userId === 'scheduler' ||
-    message.origin === 'briefing'
-  ) {
-    return false;
-  }
-  return message.queueCustody !== undefined;
-}
-
-/**
- * Host-attributed connector ingress is already an owner-visible receipt at
- * admission. Keep it browser-only until delivery just like queued user work:
- * prompt/context readers must not learn it through `isTimelinePublished`, but
- * the owner must see the source bubble before the target cat starts replying.
- * System/scheduler connectors remain behind their dedicated visibility gates.
- */
-function isQueuedOwnerConnectorTimelineMessage(message: TimelineOrderMessage): boolean {
-  return (
-    message.deliveryStatus === 'queued' &&
-    message.catId === null &&
-    message.source !== undefined &&
-    message.userId !== 'system' &&
-    message.userId !== 'scheduler' &&
-    message.origin !== 'briefing' &&
-    message.queueCustody !== undefined
-  );
-}
-
-function isOwnerVisibleRecalledUserMessage(message: StoredMessage): boolean {
-  return (
-    message.deliveryStatus === 'canceled' &&
-    message.catId === null &&
-    message._tombstone === true &&
-    message.recall?.exposure === 'seen'
-  );
 }
 
 /** Who is viewing */

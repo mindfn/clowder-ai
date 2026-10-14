@@ -202,6 +202,9 @@ export async function resolveQueueTurnCustodyWake(
   if (entry.sourceCategory === 'scheduled') return resolveScheduledWake(entry, messageStore);
   if (entry.sourceCategory === 'freshness') return { kind: 'unstructured', source: 'protocol_decline' };
   if (entry.sourceCategory === 'a2a') return resolveA2AWake(entry, messageStore);
+  if (entry.sourceCategory === 'producer_return') return { kind: 'unstructured', source: 'producer_return' };
+  // F168 community delivery: its obligations live in the community ledger, not in an F167 ball.
+  if (entry.sourceCategory === 'repo_inbox') return { kind: 'unstructured', source: 'repo_inbox' };
   return {
     kind: 'legacy',
     reason: entry.messageId ? 'carrier_missing' : 'source_missing',
@@ -228,5 +231,6 @@ export function turnCustodyWakeSourceCategory(wake: TurnCustodyWakeProvenance): 
   if (wake.source === 'user_chat') return 'user';
   if (wake.source === 'cron') return 'scheduled';
   if (wake.source === 'protocol_decline') return 'freshness';
+  if (wake.source === 'repo_inbox') return 'repo_inbox';
   return 'unknown';
 }

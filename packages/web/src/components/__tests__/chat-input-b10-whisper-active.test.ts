@@ -88,7 +88,7 @@ function getWhisperChips() {
 function enterWhisperMode() {
   const addBtn = container.querySelector<HTMLButtonElement>('[aria-label="添加"]');
   act(() => addBtn?.click());
-  const btn = container.querySelector<HTMLButtonElement>('[data-testid="composer-whisper"]');
+  const btn = document.querySelector<HTMLButtonElement>('[data-testid="composer-whisper"]');
   act(() => btn?.click());
 }
 

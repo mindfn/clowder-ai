@@ -22,6 +22,8 @@
 | `guide-interaction` | 判断是否需要交互引导，并按 Guide Matched/Pending/Active 等状态驱动回复 | — |
 | `custody-recognition` | 普通对话中的明确托付/隐式未来义务/原消息澄清重试分流 | — |
 | `collaborative-thinking` | brainstorm/多猫讨论/收敛 | — |
+| `plain-language` | 向未跟进的人讲清工作、取舍与结果；按用途选文字、图、HTML、口播、视频或原型 | — |
+| `learning-companion` | 围绕材料共读/听读、观点挑战、共同发散与按需同步学习稿 | — |
 | `expert-panel` | 专家辩论团/竞品分析/技术趋势/showcase | — |
 | `writing-plans` | 写实施计划 | ① impl |
 | `co-creation-docs` | 共创型 docs-only 落盘：按冲突/治理/可逆性选择 direct push 或 PR | — |
@@ -68,8 +70,8 @@
 | `co-creation-storytelling` | 长期真实经历讲清楚、成长故事压成一页、人和 AI 各做了什么 | — |
 | `concept-demo-design` | 参考产品设计借鉴、交互叙事；授权后制作可讲解、可验证的 Demo | — |
 | `agent-product-promo-director` | Agent/AI 产品宣传片的主角、信念变化、格式、故事、镜头、运动、声音与 provenance creative brief | — |
-| `video-forge` | 做视频/showcase/教程视频/视频审查 | — |
-| `anime-forge` | 做动画短剧/角色 IP 短片/图生视频管线（素材是生成的不是录的） | — |
+| `video-forge` | 做视频（一句话 brief 起步）：产品/讲解/宣传片（主角是猫、有剧情也算）/Remotion 合成/动态排版/视频审查 | — |
+| `anime-forge` | 做讲角色自己故事的动画短片（醋醋喵这类）：考证 → 剧本 → 声音稿 → 动态分镜 → 精绘 → 后期；推产品的片子即使主角是猫也走 video-forge | — |
 | `sprite-forge` | 做桌宠皮肤/atlas 状态动画行/角色小循环动态素材（母图→首帧→视频→截帧；禁 imagegen 逐帧直出） | — |
 
 ### 参考文件（refs/，按需读取）

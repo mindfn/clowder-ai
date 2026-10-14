@@ -34,6 +34,7 @@ interface MutationStatements {
   activeEntities: Database.Statement;
   activeAliases: Database.Statement;
   revision: Database.Statement;
+  forgetTombstone?: Database.Statement;
 }
 
 export type EntitySurfaceConflictReason = 'existing-entity-change' | 'surface-collision';
@@ -59,6 +60,15 @@ export class EntitySurfaceConflictError extends Error {
     this.conflictingEntityIds = [...details.conflictingEntityIds].sort();
     this.conflictingSurfaces = [...details.conflictingSurfaces].sort();
     this.reason = details.reason;
+  }
+}
+
+export class EntityHardForgottenError extends Error {
+  readonly code = 'ENTITY_HARD_FORGOTTEN' as const;
+
+  constructor(readonly entityId: string) {
+    super(`Entity ${entityId} was hard-forgotten and cannot be recreated implicitly`);
+    this.name = 'EntityHardForgottenError';
   }
 }
 
@@ -119,11 +129,22 @@ export class EntityRegistryMutationWriter {
       (entity_id, operation, before_json, after_json, source, actor_id, proposal_id, reason, created_at)
       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
     `),
+      ...(tableExists(this.db, 'entity_memory_forget_tombstones')
+        ? {
+            forgetTombstone: this.db.prepare(
+              'SELECT 1 FROM entity_memory_forget_tombstones WHERE entity_id = ? LIMIT 1',
+            ),
+          }
+        : {}),
     };
   }
 }
 
 function mutateEntity(statements: MutationStatements, entity: EntityRecord, context: EntityMutationContext): boolean {
+  if (statements.forgetTombstone?.get(entity.entityId)) {
+    if (context.source === 'proposal-approval') throw new EntityHardForgottenError(entity.entityId);
+    return false;
+  }
   const existing = statements.existingEntity.get(entity.entityId) as EntityRow | undefined;
   const aliases = uniqueAliases(entity.aliases);
   const after = incomingStoredRecord(entity, aliases, resolveCreatedAt(existing, entity));
@@ -131,7 +152,7 @@ function mutateEntity(statements: MutationStatements, entity: EntityRecord, cont
   const existingAliases = statements.existingAliases.all(entity.entityId) as ExistingAliasRow[];
   if (entityUnchanged(existing, existingAliases, after, provenanceJson)) return false;
 
-  if (context.conflictPolicy === 'reject-conflict') {
+  if (context.conflictPolicy === 'reject-conflict' || context.conflictPolicy === 'owner-correction') {
     assertNoRejectedConflict(
       entity,
       after.aliases,
@@ -139,6 +160,7 @@ function mutateEntity(statements: MutationStatements, entity: EntityRecord, cont
       existingAliases,
       statements.activeEntities.all(entity.entityId) as Array<{ entity_id: string; canonical_name: string }>,
       statements.activeAliases.all(entity.entityId) as Array<{ entity_id: string; alias: string }>,
+      context.conflictPolicy,
     );
   }
 
@@ -151,6 +173,10 @@ function mutateEntity(statements: MutationStatements, entity: EntityRecord, cont
   writeProjection(statements, after, provenanceJson);
   writeRevision(statements.revision, entity, before, after, context);
   return true;
+}
+
+function tableExists(db: Database.Database, tableName: string): boolean {
+  return Boolean(db.prepare("SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = ?").get(tableName));
 }
 
 function writeProjection(statements: MutationStatements, entity: StoredEntityRecord, provenanceJson: string): void {
@@ -214,9 +240,10 @@ function assertNoRejectedConflict(
   existingAliases: Array<{ alias: string; alias_norm: string }>,
   activeEntities: Array<{ entity_id: string; canonical_name: string }>,
   activeAliases: Array<{ entity_id: string; alias: string }>,
+  policy: 'reject-conflict' | 'owner-correction',
 ): void {
   const incomingSurfaces = entitySurfaceMap({ canonicalName: entity.canonicalName, aliases });
-  if (existing) {
+  if (existing && policy === 'reject-conflict') {
     const existingSurfaces = entitySurfaceMap({
       canonicalName: existing.canonical_name,
       aliases: existingAliases.map((row) => row.alias),

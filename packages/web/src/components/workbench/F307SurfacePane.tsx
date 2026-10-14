@@ -1,5 +1,12 @@
 import type { ReactNode } from 'react';
+import { useShellCopy } from '@/components/shell/shell-copy';
+import { useShellPresentation } from '@/components/shell/shell-presentation';
 import type { WorkspaceSurfaceDescriptor } from '@/components/workbench/workbench-contract';
+import { FocusModeButton } from '@/components/workspace/FocusModeButton';
+import { WorkspaceFocusExitButton } from '@/components/workspace/WorkspaceFocusShell';
+import { isVoiceDestinationSurface } from './real-surface-adapters';
+import { promoteWorkspacePreview } from './WorkspacePreviewIntent';
+import { workspaceChromeCopy } from './workspace-chrome.shell-copy';
 
 function SurfaceGlyph({ type }: { type: WorkspaceSurfaceDescriptor['type'] }) {
   if (type === 'browser') {
@@ -35,35 +42,99 @@ function SurfaceGlyph({ type }: { type: WorkspaceSurfaceDescriptor['type'] }) {
   );
 }
 
-export function F307SurfacePane({
-  surface,
-  visible = true,
-  children,
-}: {
+interface F307SurfacePaneProps {
   surface: WorkspaceSurfaceDescriptor;
   visible?: boolean;
+  focusMode?: boolean;
+  artifactWorkFullWindow?: boolean;
+  onEnterFocusMode?: () => void;
+  onExitFocusMode?: () => void;
+  onToggleArtifactWorkFullWindow?: () => void;
   children: ReactNode;
-}) {
+}
+
+export function F307SurfacePane(props: F307SurfacePaneProps) {
+  // Audit row44 (review R2): the voice pane's accessible name is a v2 display projection — the real
+  // consumption point is the article's aria-label, and only the v2 voice surface gets a localized one.
+  // Classic and every other surface keep the stored title and read nothing new.
+  if (useShellPresentation() === 'v2' && isVoiceDestinationSurface(props.surface)) {
+    return <V2VoiceSurfacePane {...props} />;
+  }
+  return <SurfacePaneBody {...props} />;
+}
+
+function V2VoiceSurfacePane(props: F307SurfacePaneProps) {
+  const t = useShellCopy(workspaceChromeCopy);
+  return <SurfacePaneBody {...props} accessibleName={t.voiceSurface.label} />;
+}
+
+function SurfacePaneBody({
+  surface,
+  visible = true,
+  focusMode = false,
+  artifactWorkFullWindow = false,
+  onEnterFocusMode,
+  onExitFocusMode,
+  onToggleArtifactWorkFullWindow,
+  children,
+  accessibleName,
+}: F307SurfacePaneProps & { accessibleName?: string }) {
+  const chromeOwnedByTool =
+    useShellPresentation() === 'v2' && ['file', 'code', 'browser', 'terminal', 'workspace'].includes(surface.type);
   return (
     <article
       className={`${visible ? 'flex' : 'hidden'} min-h-0 min-w-0 flex-1 flex-col overflow-auto bg-[var(--console-panel-bg)]`}
       data-surface-id={surface.id}
       data-surface-mounted="true"
-      aria-label={surface.title}
+      aria-label={accessibleName ?? surface.title}
       aria-hidden={!visible}
+      // Promote in the owner's input batch. Updating the external store during capture
+      // can restore a controlled field's old value before its change handler receives it.
+      onInput={(event) => {
+        if (!(event.target instanceof HTMLElement) || !event.target.matches('textarea, [contenteditable="true"]'))
+          return;
+        promoteWorkspacePreview(surface.id);
+      }}
     >
-      <header className="flex h-10 shrink-0 items-center gap-2 border-b border-cafe-subtle bg-cafe-surface/70 px-3">
-        <span className="h-4 w-4 shrink-0 text-cafe-muted">
-          <SurfaceGlyph type={surface.type} />
-        </span>
-        <span className="min-w-0 flex-1 truncate text-xs font-semibold text-cafe">{surface.title}</span>
-        <span className="truncate text-micro text-cafe-muted">{surface.context}</span>
-      </header>
+      {!focusMode && !chromeOwnedByTool && (
+        <header
+          className="flex h-10 shrink-0 items-center gap-2 border-b border-cafe-subtle bg-cafe-surface/70 px-3"
+          data-testid="f307-surface-chrome"
+        >
+          <span className="h-4 w-4 shrink-0 text-cafe-muted">
+            <SurfaceGlyph type={surface.type} />
+          </span>
+          <span className="min-w-0 flex-1 truncate text-xs font-semibold text-cafe">{surface.title}</span>
+          <span className="truncate text-micro text-cafe-muted">{surface.context}</span>
+          {onToggleArtifactWorkFullWindow ? (
+            <button
+              type="button"
+              className="shrink-0 whitespace-nowrap rounded-lg border border-cafe-subtle bg-cafe-surface-sunken px-2.5 py-1 text-micro font-semibold text-cafe-secondary transition-colors hover:text-cafe"
+              onClick={onToggleArtifactWorkFullWindow}
+              aria-label={artifactWorkFullWindow ? '展开聊天' : '整窗查看作品'}
+              data-testid={
+                artifactWorkFullWindow ? 'f307-artifact-exit-full-window' : 'f307-artifact-enter-full-window'
+              }
+            >
+              {artifactWorkFullWindow ? '展开聊天' : '整窗'}
+            </button>
+          ) : (
+            onEnterFocusMode && <FocusModeButton onClick={onEnterFocusMode} />
+          )}
+        </header>
+      )}
       <div
-        className="flex min-h-0 min-w-0 flex-1 flex-col overflow-auto [&>*]:min-h-0 [&>*]:w-full [&>*]:flex-1"
+        className="relative flex min-h-0 min-w-0 flex-1 flex-col overflow-auto [&>*]:min-h-0 [&>*]:w-full [&>*]:flex-1"
         data-testid="f307-owner-surface-host"
       >
         {children}
+        {focusMode && onExitFocusMode && (
+          <WorkspaceFocusExitButton
+            onExit={onExitFocusMode}
+            onFullWindow={onToggleArtifactWorkFullWindow}
+            fullWindow={artifactWorkFullWindow}
+          />
+        )}
       </div>
     </article>
   );

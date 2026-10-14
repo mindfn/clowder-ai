@@ -1,3 +1,4 @@
+import { evalWorkspaceCopy } from './eval-workspace/eval-workspace.shell-copy';
 export interface EvalHubFrictionProjection {
   projectionStatus: 'available' | 'unavailable';
   actionableCandidates: Array<{
@@ -220,53 +221,55 @@ export interface EvalHubSummary {
   items: EvalHubItem[];
 }
 
-export const VERDICT_LABELS: Record<EvalHubItem['verdict'] | 'stale', string> = {
-  keep_observe: '持续观察',
-  fix: '需修复',
-  // F248 Phase A: "需新建" was ambiguous — operators read it as "this domain
-  // needs to be created" when it actually means "the eval recommends building
-  // a NEW capability to fix the observed problem". Spelled out to disambiguate.
-  build: '建议新建能力',
-  delete_sunset: '可下线',
-  stale: '已过期',
-};
+export const VERDICT_LABELS: Record<EvalHubItem['verdict'] | 'stale', string> = evalWorkspaceCopy.zh.verdicts;
 
 export type DomainScheduleLine =
   | { kind: 'sunset'; text: string }
   | { kind: 'next-eval'; text: string }
   | { kind: 'none' };
 
-export function deriveDomainScheduleLine(domain: {
-  enabled: boolean;
-  nextCronFireAt?: string;
-  frequency?: string;
-}): DomainScheduleLine {
+export function deriveDomainScheduleLine(
+  domain: {
+    enabled: boolean;
+    nextCronFireAt?: string;
+    frequency?: string;
+  },
+  language: 'zh' | 'en' = 'zh',
+): DomainScheduleLine {
+  const t = evalWorkspaceCopy[language];
   if (domain.enabled === false) {
-    return { kind: 'sunset', text: '🌙 Sunset · 自动调度已停 (yaml: enabled: false)' };
+    return { kind: 'sunset', text: t.sunset };
   }
   if (domain.nextCronFireAt) {
     const isNDay = domain.frequency ? /^every-\d+d$/.test(domain.frequency) : false;
-    const label = isNDay ? `下次探测 (${domain.frequency})` : '下次评估';
+    const label = isNDay ? `${t.nextProbe} (${domain.frequency})` : t.nextEval;
     return {
       kind: 'next-eval',
-      text: `${label}: ${new Date(domain.nextCronFireAt).toLocaleString()}`,
+      text: `${label}: ${new Date(domain.nextCronFireAt).toLocaleString(language === 'en' ? 'en-US' : 'zh-CN')}`,
     };
   }
   return { kind: 'none' };
 }
 
-export function deriveDomainStateBadge(domain: { enabled: boolean; hasVerdict: boolean }): string {
+export function deriveDomainStateBadge(
+  domain: { enabled: boolean; hasVerdict: boolean },
+  language: 'zh' | 'en' = 'zh',
+): string {
+  const t = evalWorkspaceCopy[language];
   if (domain.enabled === false) return 'Sunset';
-  if (domain.hasVerdict) return '运行中';
-  return '待首次评估';
+  if (domain.hasVerdict) return t.active;
+  return t.firstEval;
 }
 
-export function deriveDomainVerdictLabel(domain: {
-  hasVerdict: boolean;
-  latestVerdict?: EvalHubItem['verdict'];
-}): string | undefined {
+export function deriveDomainVerdictLabel(
+  domain: {
+    hasVerdict: boolean;
+    latestVerdict?: EvalHubItem['verdict'];
+  },
+  language: 'zh' | 'en' = 'zh',
+): string | undefined {
   if (domain.hasVerdict && domain.latestVerdict) {
-    return VERDICT_LABELS[domain.latestVerdict];
+    return evalWorkspaceCopy[language].verdicts[domain.latestVerdict];
   }
   return undefined;
 }

@@ -61,6 +61,49 @@ describe('MessageViewportBoundary', () => {
     expect(boundary?.className).toContain('hover:[content-visibility:visible]');
     expect(boundary?.className).toContain('focus-within:[content-visibility:visible]');
     expect(boundary?.style.containIntrinsicSize).toBe('auto 240px');
+    expect(boundary?.className).toContain('flow-root');
+  });
+
+  describe('room for the nameplate face (F322 B §1.16)', () => {
+    // `content-visibility: auto` paint-contains the row, so anything that hangs above the row box is cut off, and comes back
+    // on hover when the containment is lifted. The 32px face (4px above its plate) with its 2px ring needs 6px of room
+    // beyond the paint clip. The new shell extends only that clip; it does not change row or deferred-placeholder geometry.
+    // Classic retains its original paint clip; both shells need a stable formatting context.
+    const classNameFor = (presentation: 'classic' | 'v2' | null) => {
+      if (presentation) window.localStorage.setItem('cat-cafe:shell-presentation', presentation);
+      act(() => {
+        root.render(
+          <MessageViewportBoundary>
+            <p>message</p>
+          </MessageViewportBoundary>,
+        );
+      });
+      return container.querySelector<HTMLElement>('[data-message-viewport-boundary]')?.className ?? '';
+    };
+    afterEach(() => window.localStorage.removeItem('cat-cafe:shell-presentation'));
+
+    it('classic: stable flow preserves content visibility and the original paint clip', () => {
+      expect(classNameFor('classic')).toBe(
+        '[content-visibility:auto] hover:[content-visibility:visible] focus-within:[content-visibility:visible] flow-root',
+      );
+    });
+
+    it('with no stored presentation it is classic', () => {
+      const className = classNameFor(null);
+      expect(className).not.toContain('[overflow-clip-margin:6px]');
+      expect(className).toContain('flow-root');
+    });
+
+    it('new shell: the paint clip grows by 6px without padding or negative margin', () => {
+      const className = classNameFor('v2');
+      expect(className).toContain('[overflow-clip-margin:6px]');
+      expect(className).not.toContain('pt-1.5');
+      expect(className).not.toContain('-mt-1.5');
+      expect(className).toContain('flow-root');
+      expect(className).toContain('[content-visibility:auto]');
+      expect(className).toContain('hover:[content-visibility:visible]');
+      expect(className).toContain('focus-within:[content-visibility:visible]');
+    });
   });
 
   it('defers an old message subtree until its placeholder approaches the viewport', () => {
@@ -73,7 +116,11 @@ describe('MessageViewportBoundary', () => {
     });
 
     expect(container.textContent).not.toContain('expensive old message');
-    expect(container.querySelector('[data-deferred-message-id="old-message"]')).not.toBeNull();
+    const placeholder = container.querySelector<HTMLElement>('[data-deferred-message-id="old-message"]');
+    expect(placeholder).not.toBeNull();
+    expect(placeholder?.style.minHeight).toBe('240px');
+    expect(placeholder?.style.containIntrinsicSize).toBe('auto 240px');
+    expect(placeholder?.className).toContain('flow-root');
     expect(container.querySelector('[data-message-id="old-message"]')).toBeNull();
 
     act(() => {

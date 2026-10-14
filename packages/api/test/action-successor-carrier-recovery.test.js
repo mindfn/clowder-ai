@@ -192,6 +192,75 @@ describe('direct action successor carrier recovery', () => {
     });
   });
 
+  // The restart rule interrupts a target either because its body was already exposed (the provider may have acted)
+  // or because it was only awakened. Only the second is safe to run again without anyone deciding to.
+  test('an interrupted holder that already read the action is not replayed implicitly', () => {
+    const current = lease();
+    const message = messageForTarget('opus5', 'interrupted');
+    message.queueCustody.bodyExposures = [{ targetCatId: 'opus5', invocationId: 'invocation-opus5', seenAt: 115 }];
+    assert.deepEqual(classifyDirectActionSuccessorCarrier(current, [message]), {
+      disposition: 'unavailable',
+      reason: 'interrupted_after_read',
+      interruptedReads: [{ catId: 'opus5', invocationId: 'invocation-opus5', seenAt: 115 }],
+    });
+  });
+
+  test('a full-read witness also counts as having read the action', () => {
+    const current = lease();
+    const message = messageForTarget('opus5', 'interrupted');
+    message.queueCustody.readEvidenceWitnesses = [
+      {
+        targetCatId: 'opus5',
+        invocationId: 'invocation-opus5',
+        seenAt: 116,
+        evidenceKind: 'full_contiguous_thread_context',
+      },
+    ];
+    assert.deepEqual(classifyDirectActionSuccessorCarrier(current, [message]), {
+      disposition: 'unavailable',
+      reason: 'interrupted_after_read',
+      interruptedReads: [{ catId: 'opus5', invocationId: 'invocation-opus5', seenAt: 116 }],
+    });
+  });
+
+  test('a parallel carrier is held back when any holder read it, and names only the readers', () => {
+    const parallel = lease({
+      mode: 'parallel',
+      holderCatIds: ['opus5', 'kimi'],
+      parallelIntent: 'independent implementation',
+    });
+    const reader = messageForTarget('kimi', 'interrupted', { lease: parallel });
+    reader.queueCustody.bodyExposures = [{ targetCatId: 'kimi', invocationId: 'invocation-kimi', seenAt: 130 }];
+    assert.deepEqual(
+      classifyDirectActionSuccessorCarrier(parallel, [
+        messageForTarget('opus5', 'interrupted', { lease: parallel }),
+        reader,
+      ]),
+      {
+        disposition: 'unavailable',
+        reason: 'interrupted_after_read',
+        interruptedReads: [{ catId: 'kimi', invocationId: 'invocation-kimi', seenAt: 130 }],
+      },
+    );
+  });
+
+  test("another cat's read, or a read on a different generation, does not hold this carrier back", () => {
+    const current = lease();
+    const foreignRead = messageForTarget('opus5', 'interrupted');
+    foreignRead.queueCustody.bodyExposures = [{ targetCatId: 'kimi', invocationId: 'invocation-kimi', seenAt: 115 }];
+    const otherGeneration = messageForTarget('opus5', 'interrupted', {
+      id: 'message-opus5-gen2',
+      fence: { ...buildActionSuccessorFence(current, current.dispatchId), generation: 2 },
+    });
+    otherGeneration.queueCustody.bodyExposures = [
+      { targetCatId: 'opus5', invocationId: 'invocation-opus5-gen2', seenAt: 140 },
+    ];
+    assert.deepEqual(classifyDirectActionSuccessorCarrier(current, [foreignRead, otherGeneration]), {
+      disposition: 'restart_interrupted',
+      fence: buildActionSuccessorFence(current, current.dispatchId),
+    });
+  });
+
   test('fails closed for missing, terminal, failed, mixed, or wrong-fence custody', () => {
     const single = lease();
     assert.equal(classifyDirectActionSuccessorCarrier(single, []).disposition, 'unavailable');

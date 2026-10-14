@@ -7,6 +7,7 @@ import React, { act } from 'react';
 import { createRoot, type Root } from 'react-dom/client';
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import { DirectoryBrowser } from '../DirectoryBrowser';
+import { defaultDirectoryBrowserCopy } from '../directory-browser-copy';
 
 // ── Mock apiFetch ──────────────────────────────────────────────
 const mockApiFetch = vi.fn();
@@ -23,6 +24,30 @@ function jsonFail(status = 500, error = 'fail') {
 }
 
 const HOME = '/home/user';
+const englishDirectoryCopy = {
+  configuredPathUnavailable: 'That folder is unavailable. Showing your home folder.',
+  browseFailed: 'Unable to browse this folder',
+  connectFailed: 'Unable to connect to the server',
+  createFailed: 'Unable to create the folder',
+  folderNamePlaceholder: 'Folder name…',
+  create: 'Create',
+  cancel: 'Cancel',
+  loading: 'Loading…',
+  noSubdirectories: 'No subfolders',
+  currentProject: 'Current project',
+  pathPlaceholder: 'Enter a path…',
+  goToPath: 'Go to path',
+  thisPc: 'This PC',
+  collapseBrowser: 'Hide browser',
+  newFolderTitle: 'Create folder',
+  newFolder: 'New folder',
+  drivesLoading: 'Loading drives…',
+  drivesFailed: 'Unable to load drives',
+  retry: 'Retry',
+  noDrives: 'No drives found',
+  viewAllDrives: 'View all drives',
+  switchDrive: 'Switch drive',
+};
 
 function makeBrowseResult(current: string, entries: { name: string; path: string }[], parent: string | null = HOME) {
   return {
@@ -234,6 +259,16 @@ describe('DirectoryBrowser', () => {
     });
 
     expect(fns.onCancel).toHaveBeenCalledTimes(1);
+  });
+
+  it('offers the loaded folder to a host that owns project selection', async () => {
+    mockApiFetch.mockReturnValueOnce(jsonOk(makeBrowseResult(`${HOME}/projects`, [], HOME)));
+    const onSelectCurrent = vi.fn();
+    render({ initialPath: `${HOME}/projects`, onSelectCurrent, selectCurrentLabel: '使用这个文件夹' });
+    await flush();
+
+    act(() => findButtonByText('使用这个文件夹')?.click());
+    expect(onSelectCurrent).toHaveBeenCalledWith(`${HOME}/projects`);
   });
 
   // ── Active project highlight ──────────────────────────
@@ -825,5 +860,69 @@ describe('DirectoryBrowser', () => {
     expect(container.textContent).toContain('未发现可用磁盘');
     expect(container.textContent).not.toContain('正在加载磁盘列表');
     expect(container.textContent).not.toContain('磁盘列表加载失败');
+  });
+
+  it('lets a v2 host supply one coherent English browser vocabulary without changing classic defaults', async () => {
+    const projectPath = `${HOME}/project`;
+    mockApiFetch.mockReturnValueOnce(jsonOk(makeBrowseResult(HOME, [{ name: 'project', path: projectPath }], null)));
+    const localizedProps = {
+      initialPath: HOME,
+      activeProjectPath: projectPath,
+      copy: englishDirectoryCopy,
+    };
+
+    render(localizedProps);
+    await flush();
+
+    expect(container.textContent).toContain('New folder');
+    expect(container.textContent).toContain('Current project');
+    expect(container.querySelector('input[placeholder="Enter a path…"]')).not.toBeNull();
+    expect(findButtonByText('Hide browser')).toBeTruthy();
+    expect(container.textContent).not.toContain('当前项目');
+    expect(container.textContent).not.toContain('收起浏览');
+  });
+
+  it('changes browser vocabulary in place without refetching or resetting the browsed folder', async () => {
+    const onCancel = vi.fn();
+    const onCurrentPathChange = vi.fn();
+    mockApiFetch
+      .mockReturnValueOnce(jsonOk(makeBrowseResult(HOME, [{ name: 'projects', path: `${HOME}/projects` }], null)))
+      .mockReturnValueOnce(
+        jsonOk(makeBrowseResult(`${HOME}/projects`, [{ name: 'cafe', path: `${HOME}/projects/cafe` }])),
+      );
+
+    act(() =>
+      root.render(
+        React.createElement(DirectoryBrowser, {
+          initialPath: HOME,
+          onCancel,
+          onCurrentPathChange,
+          copy: defaultDirectoryBrowserCopy,
+        }),
+      ),
+    );
+    await flush();
+    await act(async () => {
+      findButtonByText('projects')?.click();
+      await new Promise((resolve) => setTimeout(resolve, 0));
+    });
+    expect(container.textContent).toContain('cafe');
+    const callsBeforeLanguageChange = mockApiFetch.mock.calls.length;
+
+    act(() =>
+      root.render(
+        React.createElement(DirectoryBrowser, {
+          initialPath: HOME,
+          onCancel,
+          onCurrentPathChange,
+          copy: englishDirectoryCopy,
+        }),
+      ),
+    );
+    await flush();
+
+    expect(mockApiFetch).toHaveBeenCalledTimes(callsBeforeLanguageChange);
+    expect(container.textContent).toContain('cafe');
+    expect(container.textContent).toContain('New folder');
   });
 });

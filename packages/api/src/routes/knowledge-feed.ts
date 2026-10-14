@@ -14,12 +14,15 @@ import type {
   IMarkerQueue,
   IMaterializationService,
   MaterializeOptions,
+  MaterializeResult,
 } from '../domains/memory/interfaces.js';
 import type { LibraryCatalog } from '../domains/memory/LibraryCatalog.js';
 import type { SqliteEvidenceStore } from '../domains/memory/SqliteEvidenceStore.js';
 import { resolveCollectionScanner } from '../domains/memory/scanner-resolver.js';
+import { knowledgeWriteOwner } from './memory-write-owner.js';
 
 interface KnowledgeFeedDeps {
+  ownerUserId?: string;
   markerQueue: IMarkerQueue;
   db: Database.Database;
   materializationService?: IMaterializationService;
@@ -29,6 +32,7 @@ interface KnowledgeFeedDeps {
 
 export async function knowledgeFeedRoutes(app: FastifyInstance, deps: KnowledgeFeedDeps) {
   const { markerQueue, db, materializationService, catalog } = deps;
+  const requireOwner = { preHandler: knowledgeWriteOwner(deps) };
 
   // GET /api/knowledge/feed — List candidates grouped by status
   app.get('/api/knowledge/feed', async (_req, reply) => {
@@ -88,7 +92,7 @@ export async function knowledgeFeedRoutes(app: FastifyInstance, deps: KnowledgeF
       targetCollectionId?: string;
       confirmVisibilityWidening?: boolean;
     };
-  }>('/api/knowledge/approve', async (req, reply) => {
+  }>('/api/knowledge/approve', requireOwner, async (req, reply) => {
     try {
       const { markerId, targetCollectionId, confirmVisibilityWidening } = req.body;
       if (!markerId) return reply.status(400).send({ error: 'markerId required' });
@@ -144,19 +148,22 @@ export async function knowledgeFeedRoutes(app: FastifyInstance, deps: KnowledgeF
 
       await markerQueue.transition(markerId, 'approved', targetCollectionId ? { targetCollectionId } : undefined);
 
-      let materialized;
+      let materialized: MaterializeResult | undefined;
       if (materializationService) {
         try {
           const opts: MaterializeOptions = {};
           if (targetCollectionId && catalog) {
             const manifest = catalog.get(targetCollectionId);
-            if (manifest) opts.targetRoot = manifest.root;
-            const targetStore = deps.collectionStores?.get(targetCollectionId);
-            if (targetStore && manifest) {
-              const scanner = resolveCollectionScanner(manifest);
-              opts.indexBuilder = new CollectionIndexBuilder(targetStore as SqliteEvidenceStore, manifest, scanner);
-            } else {
-              opts.indexBuilder = null;
+            // Explicitly selecting the existing parent must preserve its anchor/kind/authority contract.
+            if (manifest && !materializationService.isDefaultTargetRoot?.(manifest.root)) {
+              opts.targetRoot = manifest.root;
+              const targetStore = deps.collectionStores?.get(targetCollectionId);
+              if (targetStore) {
+                const scanner = resolveCollectionScanner(manifest);
+                opts.indexBuilder = new CollectionIndexBuilder(targetStore as SqliteEvidenceStore, manifest, scanner);
+              } else {
+                opts.indexBuilder = null;
+              }
             }
           }
           materialized = await materializationService.materialize(markerId, opts);
@@ -172,7 +179,7 @@ export async function knowledgeFeedRoutes(app: FastifyInstance, deps: KnowledgeF
   });
 
   // POST /api/knowledge/reject — Reject a candidate
-  app.post<{ Body: { markerId: string } }>('/api/knowledge/reject', async (req, reply) => {
+  app.post<{ Body: { markerId: string } }>('/api/knowledge/reject', requireOwner, async (req, reply) => {
     try {
       const { markerId } = req.body;
       if (!markerId) return reply.status(400).send({ error: 'markerId required' });
@@ -185,7 +192,7 @@ export async function knowledgeFeedRoutes(app: FastifyInstance, deps: KnowledgeF
   });
 
   // POST /api/knowledge/undo — Undo (revert approved to needs_review)
-  app.post<{ Body: { markerId: string } }>('/api/knowledge/undo', async (req, reply) => {
+  app.post<{ Body: { markerId: string } }>('/api/knowledge/undo', requireOwner, async (req, reply) => {
     try {
       const { markerId } = req.body;
       if (!markerId) return reply.status(400).send({ error: 'markerId required' });

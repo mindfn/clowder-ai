@@ -386,6 +386,42 @@ describe('MessageActions Add to chat selection', () => {
     });
   });
 
+  it('retains a reopened annotation draft when scrolling removes its visible marker', () => {
+    Object.defineProperty(Range.prototype, 'getBoundingClientRect', { configurable: true, value: rect });
+    syncContextAttachmentDraftToStorage('thread-1', [
+      {
+        v: 1,
+        id: 'ctx-reopened',
+        kind: 'quote',
+        text: 'selected',
+        comment: 'original comment',
+        selectionStart: 0,
+        selectionEnd: 8,
+        source: { kind: 'message', threadId: 'thread-1', messageId: 'msg-1', senderCatId: 'opus' },
+      },
+    ]);
+    renderMessage(<span>selected message text</span>);
+    act(() =>
+      document.body.querySelector<HTMLButtonElement>('[data-testid="context-annotation-marker-ctx-reopened"]')!.click(),
+    );
+    const textarea = document.body.querySelector<HTMLTextAreaElement>('[data-testid="context-annotation-comment"]')!;
+    act(() => setTextareaValue(textarea, 'Half-written updated annotation'));
+    top = -500;
+    act(() => document.dispatchEvent(new Event('scroll')));
+    expect(document.body.querySelector('[data-testid="context-annotation-comment"]')).toBe(textarea);
+    expect(textarea.value).toBe('Half-written updated annotation');
+    expect(document.activeElement).toBe(textarea);
+    act(() => document.body.querySelector<HTMLButtonElement>('[data-testid="context-annotation-save"]')!.click());
+    expect(useChatStore.getState().pendingChatInsert).toMatchObject({
+      removeContextAttachmentIds: ['ctx-reopened'],
+      contextAttachments: [
+        expect.objectContaining({ id: 'ctx-reopened', text: 'selected', comment: 'Half-written updated annotation' }),
+      ],
+    });
+    expect(document.body.querySelector('[data-testid="context-annotation-comment"]')).toBeNull();
+    expect(document.body.querySelector('[data-testid="context-annotation-marker-ctx-reopened"]')).toBeNull();
+  });
+
   it('reconstructs a numbered marker from the composer draft and edits the same annotation', () => {
     const boundingRect = vi.fn(() => rect());
     Object.defineProperty(Range.prototype, 'getBoundingClientRect', {

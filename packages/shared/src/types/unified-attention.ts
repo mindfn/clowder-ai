@@ -1,0 +1,200 @@
+import { z } from 'zod';
+import { APPROVAL_PRODUCER_IDS } from '../approval-producer-catalog.js';
+import { type ApprovalHubItem, type ApprovalNavigation, validateApprovalNavigation } from './approval-hub.js';
+import {
+  approvalLifecycleProjectionSchema,
+  approvalMaterializationSchema,
+  approvalResolutionSchema,
+} from './approval-lifecycle.js';
+import { preparedArtifactSnapshotV1Schema } from './growing-artifact.js';
+import { runtimeQuestionSchema } from './runtime-interaction.js';
+
+export type UnifiedAttentionApproval = ApprovalHubItem;
+/** Canonical renderer fields; bind the read's verified identity.ownerUserId when rendering ApprovalItemCard. */
+export type UnifiedAttentionVisibleApproval = Omit<ApprovalHubItem, 'ownerUserId'>;
+
+const approvalNavigationSchema = z.custom<ApprovalNavigation>((value) => {
+  try {
+    validateApprovalNavigation(value as ApprovalNavigation);
+    return true;
+  } catch {
+    return false;
+  }
+});
+
+const sourceCoverageSchema = z.object({ state: z.enum(['complete', 'partial', 'unknown']) });
+
+export const unifiedAttentionDecisionCoordinateSchema = z
+  .object({
+    producerId: z.enum(['f292.repair', 'f306.runtime_interaction']),
+    subjectRef: z.string().min(1),
+    revision: z.number().int().positive(),
+  })
+  .strict();
+
+const approvalSourceItemSchema: z.ZodType<UnifiedAttentionApproval> = z
+  .object({
+    proposalId: z.string(),
+    sourceFeatureId: z.enum(APPROVAL_PRODUCER_IDS),
+    requesterCatId: z.string().refine((value) => value.trim().length > 0),
+    ownerUserId: z.string(),
+    summary: z.string(),
+    detail: z.record(z.string(), z.unknown()),
+    navigation: approvalNavigationSchema,
+    inlineApprovable: z.boolean(),
+    decisionMode: z.enum(['approve-reject', 'claim-select', 'meeting-intake']).optional(),
+    resolution: approvalResolutionSchema,
+    materialization: approvalMaterializationSchema,
+    createdAt: z.number(),
+    expiresAt: z.number().optional(),
+    entrustedWorkTaskRef: z.object({ subjectRef: z.string(), observedRevision: z.number() }).optional(),
+    needsMeDecisionRefs: z.array(unifiedAttentionDecisionCoordinateSchema).optional(),
+  })
+  .passthrough()
+  .superRefine((item, ctx) => {
+    const lifecycle = approvalLifecycleProjectionSchema.safeParse({
+      resolution: item.resolution,
+      materialization: item.materialization,
+    });
+    if (!lifecycle.success) for (const issue of lifecycle.error.issues) ctx.addIssue(issue);
+  });
+
+export const unifiedAttentionApprovalsSourceSchema = z.object({
+  coverage: sourceCoverageSchema.optional(),
+  items: z.array(approvalSourceItemSchema),
+});
+
+export const unifiedAttentionWorkSourceSchema = z.object({
+  coverage: sourceCoverageSchema.optional(),
+  ownerReads: z.array(
+    z
+      .object({
+        envelope: z
+          .object({
+            subjectRef: z.string(),
+            revision: z.number(),
+            visibility: z.object({ ownerUserId: z.string() }).passthrough(),
+            freshness: z.object({ state: z.enum(['current', 'stale']), observedRevision: z.number() }).optional(),
+          })
+          .passthrough(),
+        brief: z
+          .object({ current: z.object({ state: z.string() }).passthrough().optional() })
+          .passthrough()
+          .optional(),
+        preparedArtifact: preparedArtifactSnapshotV1Schema.optional(),
+        attentionReceipts: z.array(
+          z
+            .object({
+              eligible: z.boolean(),
+              producer: z
+                .object({ producerId: z.string(), subjectRef: z.string(), revision: z.number() })
+                .passthrough(),
+              taskRef: z.object({ subjectRef: z.string(), observedRevision: z.number() }).passthrough(),
+              kind: z.enum(['judgment', 'repair']).optional(),
+              recommendation: z.string().optional(),
+              action: z.object({ actionRef: z.string(), expectedProducerRevision: z.number() }).optional(),
+            })
+            .passthrough(),
+        ),
+      })
+      .passthrough(),
+  ),
+});
+
+export type UnifiedAttentionWork = z.infer<typeof unifiedAttentionWorkSourceSchema>['ownerReads'][number];
+export type UnifiedAttentionReceipt = UnifiedAttentionWork['attentionReceipts'][number];
+export type UnifiedAttentionSourceStatus = 'available' | 'unavailable' | 'unauthenticated' | 'forbidden' | 'invalid';
+export type UnifiedAttentionSourceRead = {
+  status: UnifiedAttentionSourceStatus;
+  startedAt: number;
+  observedAt: number;
+  coverage:
+    | 'all_registered_F246_producers'
+    | 'current_linked_F310_five_producers'
+    | 'pending_f306_structured_choices'
+    | 'explicit_user_mentions';
+  exhaustiveness: 'complete' | 'partial' | 'unknown';
+};
+
+/** Read-only coordinates for one canonical, still-pending provider-native question. */
+export const unifiedAttentionChoiceRequestSchema = z
+  .object({
+    interactionId: z.string().trim().min(1),
+    revision: z.number().int().nonnegative(),
+    requesterCatId: z.string().trim().min(1),
+    createdAt: z.number().int().nonnegative(),
+    title: z.string().trim().min(1),
+    questions: z.array(runtimeQuestionSchema).min(1),
+    cardRef: z
+      .object({
+        threadId: z.string().trim().min(1),
+        messageId: z.string().trim().min(1),
+        blockId: z.string().trim().min(1),
+      })
+      .strict(),
+  })
+  .strict();
+
+export type UnifiedAttentionChoiceRequest = z.infer<typeof unifiedAttentionChoiceRequestSchema>;
+
+/** Host-only source DTO. Packaged renderers receive their separately fenced presentation. */
+export interface UnifiedAttentionItemV1 {
+  decisionRef: string;
+  kind: 'approval' | 'judgment' | 'repair' | 'user_mention';
+  summary: string;
+  /** Latest explicitly addressed public cat message in one conversation; no inferred category or urgency. */
+  userMention?: {
+    threadId: string;
+    threadTitle?: string;
+    expectedRevision?: number;
+    handled?: boolean;
+    messageId: string;
+    catId: string;
+    content: string;
+    timestamp: number;
+  };
+  /** Present only for a canonical pending F306 question; ordinary rich interactive blocks never project here. */
+  choiceRequest?: UnifiedAttentionChoiceRequest;
+  approval?: UnifiedAttentionVisibleApproval;
+  linkedNeedsMe: { ownerRead: UnifiedAttentionWork; receipt: UnifiedAttentionReceipt }[];
+}
+
+export interface UnifiedAttentionReadV1 {
+  version: 1;
+  status: 'available' | 'partial' | 'unavailable';
+  scope: 'owner_all_projects';
+  identity: { ownerUserId: string };
+  observedAt: number;
+  sources: {
+    approvals: UnifiedAttentionSourceRead;
+    needsMe: UnifiedAttentionSourceRead;
+    structuredChoices?: UnifiedAttentionSourceRead;
+    userMentions?: UnifiedAttentionSourceRead;
+  };
+  readWindow: { startedAt: number; endedAt: number; consistency: 'independent_source_reads' };
+  consistency: { state: 'verified' | 'uncertain'; reasons: string[] };
+  items: UnifiedAttentionItemV1[];
+  /** Present only for complete coverage with verified source identity and version deduplication, before paging. */
+  totalCount?: number;
+  /** Exact open approvals + canonical pending structured choice requests; mentions, repairs and ordinary interactive are excluded. */
+  attentionCount?: number;
+  mentionCounts?: { today: number; week: number; earlier: number; handled: number };
+  mentionPeriod?: 'recent' | 'today' | 'week' | 'earlier' | 'handled';
+  /** hasMore describes only the known rows from this independent-source read. */
+  page: {
+    offset: number;
+    limit: number;
+    scope: 'known_rows';
+    hasMore: boolean;
+    hasMoreApprovals?: boolean;
+    hasMoreNeedsMe?: boolean;
+  };
+  /** Transitional legacy groups; consumers must not sum these counts into totalCount. */
+  approvalCoverage?: 'all_registered_F246_producers';
+  needsMeCoverage?: 'current_linked_F310_five_producers';
+  approvalCount?: number;
+  needsMeCount?: number;
+  otherNeedsMeCount?: number;
+  approvals?: (UnifiedAttentionVisibleApproval & { linkedNeedsMe?: UnifiedAttentionWork })[];
+  otherNeedsMe?: UnifiedAttentionWork[];
+}

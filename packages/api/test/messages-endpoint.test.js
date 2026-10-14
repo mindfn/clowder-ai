@@ -45,6 +45,63 @@ describe('GET /api/messages', () => {
     assert.equal(body.hasMore, false);
   });
 
+  it('projects the modification source carrier in real history without requiring another extra field', async () => {
+    const metadata = {
+      v: 1,
+      requestId: 'f309-modification-' + 'a'.repeat(64),
+      requestFingerprint: 'sha256:' + 'b'.repeat(64),
+      contentTitle: '晨光封面',
+      targetCatId: 'codex-astra',
+      targetName: '小星星',
+      executionThreadTitle: '封面共创',
+      completionRule: 'file-writeback-applied',
+    };
+    messageStore.append({
+      userId: 'default-user',
+      catId: null,
+      content: '请保留手写文字',
+      mentions: [],
+      timestamp: 1000,
+      extra: { contentModificationRequestV1: metadata },
+    });
+    const res = await app.inject({ method: 'GET', url: '/api/messages' });
+    assert.equal(res.statusCode, 200);
+    assert.equal(res.json().messages[0].type, 'user');
+    assert.deepEqual(res.json().messages[0].extra?.contentModificationRequestV1, metadata);
+    assert.equal(res.json().messages[0].content, '请保留手写文字');
+  });
+
+  it('projects an immutable modification receipt as a system message through real history hydration', async () => {
+    const receipt = {
+      v: 1,
+      requestId: 'f309-modification-' + 'a'.repeat(64),
+      sourceMessageId: 'human-source-1',
+      targetCatId: 'codex-astra',
+      taskId: 'task-1',
+      state: 'conflict',
+      candidateRef: 'content-patch:request:1',
+      receiptRef: 'workspace-writeback:1',
+      observedAt: 2000,
+      followUp: { kind: 'none', reason: 'task_closed' },
+    };
+    messageStore.append({
+      userId: 'system',
+      catId: null,
+      content: '[Host 作品修改回执]',
+      mentions: [],
+      timestamp: 2000,
+      threadId: 'thread-receipt',
+      replyTo: 'human-source-1',
+      extra: { systemKind: 'content_modification_receipt', contentModificationReceiptV1: receipt },
+    });
+    const res = await app.inject({ method: 'GET', url: '/api/messages?threadId=thread-receipt' });
+    assert.equal(res.statusCode, 200);
+    assert.equal(res.json().messages[0].type, 'system');
+    assert.equal(res.json().messages[0].replyTo, 'human-source-1');
+    assert.equal(res.json().messages[0].extra.systemKind, 'content_modification_receipt');
+    assert.deepEqual(res.json().messages[0].extra.contentModificationReceiptV1, receipt);
+  });
+
   it('returns messages with correct format', async () => {
     messageStore.append({
       userId: 'default-user',

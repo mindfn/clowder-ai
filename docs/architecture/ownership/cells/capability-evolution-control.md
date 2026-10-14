@@ -118,6 +118,13 @@ Program identity and its own lifecycle are durable user-visible coordination tru
 The value owner is accountable for the Program decision; the named asset/domain owner remains accountable for mutations and their receipts. F311 may coordinate the sequence, but it cannot turn a missing source-owner receipt into a positive Program outcome.
 
 Architecture cell: `capability-evolution-control`
+Map delta: add one refs-only measurement constitution rebind event and callback/MCP producer; no store, owner payload, stage transition, Cycle transition, or value-owner mutation is added.
+Why: a versioned F267 publication can legitimately replace a Program's measurement certificate and four role records after initial constitution, while immutable history and authority separation require that this happen atomically rather than by overwriting the old event or re-running constitution.
+Canonical source: `program-lifecycle-linker.ts#rebindEvolutionProgramMeasurementConstitution` + `capability-evolution-measurement-binding-resolver.ts` + `capability-evolution-program-routes.ts` + `capability-evolution-round-tools.ts`.
+Consumer evidence: `capability-evolution-measurement-rebind.test.js`, `capability-evolution-measurement-issuer.test.js`, `capability-evolution-evaluation-routes.test.js`, and `capability-evolution-round-tools.test.ts`.
+Claim guard: caller supplies only exact Program/proof identity and sequence; wrong workspace/value owner, untrusted or hash-drifted publication, caller-authored refs, non-instrumenting stage, stale CAS, duplicate-current binding, or reused client id with different proof fails closed before Program truth changes.
+
+Architecture cell: `capability-evolution-control`
 Map delta: register the F100 request-review owner ledger, exact Program/cycle/case-action binding input, and federation join as an external owner boundary; no F311 store or lifecycle is added.
 Why: Git, F266 and F167 prove source bytes, approval and custody respectively, but none can derive the Cycle-1 semantic version, authorize an arbitrary callback, select a case action by target alone, or prove F100 load/rollback and exact request-review consumption; F100 retains only those exact refs and F311 consumes them without copying truth.
 Canonical source: `request-review-owner-ledger.ts` + `request-review-eval-repair-owner-binding.ts` + `request-review-owner-fact-authority.ts` + `request-review-eval-repair-owner-provider.ts` + `request-review-owner-adapter.ts`.

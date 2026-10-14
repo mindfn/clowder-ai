@@ -5,6 +5,7 @@ import { InvocationQueue } from '../dist/domains/cats/services/agents/invocation
 import { InvocationTracker } from '../dist/domains/cats/services/agents/invocation/InvocationTracker.js';
 import {
   projectUnconsumedQueueCarrier,
+  queueSourceTargetState,
   readQueueCarrierMessages,
 } from '../dist/domains/cats/services/agents/invocation/QueueCarrierSourceProjection.js';
 import { QueuedMessageCustodyCoordinator } from '../dist/domains/cats/services/agents/invocation/QueuedMessageCustodyCoordinator.js';
@@ -70,6 +71,29 @@ function appendSource(store, queue, { state = 'handled', crossThread = false, ta
   );
   return { message: store.getById(message.id), entry };
 }
+
+test('#1371: explicit terminal delivery outranks missing custody while a legacy source stays unmanaged', () => {
+  const store = new MessageStore();
+  const append = (content, queued = false) =>
+    store.append({
+      userId: 'user-1',
+      catId: null,
+      content,
+      mentions: ['opus'],
+      timestamp: Date.now(),
+      threadId: 'thread-1',
+      ...(queued ? { deliveryStatus: 'queued' } : {}),
+    });
+  const legacy = append('legacy source');
+  const canceled = append('canceled source', true);
+  const delivered = append('delivered source', true);
+  assert.equal(store.markCanceled(canceled.id).deliveryTransitioned, true);
+  assert.equal(store.markDelivered(delivered.id, Date.now()).deliveryTransitioned, true);
+
+  assert.equal(queueSourceTargetState(store.getById(legacy.id), 'entry-1', 'opus'), 'unmanaged');
+  assert.equal(queueSourceTargetState(store.getById(canceled.id), 'entry-1', 'opus'), 'retired');
+  assert.equal(queueSourceTargetState(store.getById(delivered.id), 'entry-1', 'opus'), 'retired');
+});
 
 for (const crossThread of [false, true]) {
   test(`#1371: publication removes consumed sources and retains failed targets (crossThread=${crossThread})`, async () => {

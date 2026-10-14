@@ -3,8 +3,16 @@ feature_ids: [F168]
 related_features: [F141, F116, F140, F055, F122, F167, F192, F220, F233, F280]
 topics: [community, orchestration, opensource]
 doc_kind: spec
+mcp_admission_status: accepted
+mcp_admission_ref: "file:docs/features/F168-community-ops-board.md"
+mcp_admission_claims:
+  - ref: "file:docs/features/F168-community-ops-board.md"
+    toolName: cat_cafe_transfer_external_review
+    resourceFamily: tracking-review
+    boundaryKind: authority-boundary
+    decision: accepted
 created: 2026-04-18
-tips_exempt: "2026-09-02 public identity and provenance projection only; the Community Board, reconciler, and External Case closure remain cat/operator operations with no new user-invokable surface."
+tips_exempt: "Renewed 2026-10-10 for revision-fenced reviewer transfer and stale-verdict rejection: these maintainer authority repairs add no public end-user entry and do not claim runtime activation."
 ---
 
 # F168: Community Operations Board — 社区事务编排引擎
@@ -598,3 +606,6 @@ TTL=0（铁律 #5），用户数据默认持久化
 - Phase C: Pencil 设计稿 → operator UX 审核 → 实现。图标 SVG 不用 emoji
 - Phase D: 跨家族 review + operator确认门禁策略
 - Phase F-Step3: operator 方向确认 + 非作者内容 review；实现必须由非作者跨个体 review，并在真实 external case 上完成 dogfood/eval
+
+## Reviewer transfer repair (2026-10-06)
+

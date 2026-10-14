@@ -2,6 +2,8 @@
 
 import { type ReactNode, useCallback, useState } from 'react';
 import { apiFetch } from '@/utils/api-client';
+import { MessageSelectionBar } from './message-v2/MessageSelectionBar';
+import { useShellPresentation } from './shell/shell-presentation';
 
 type SelectionExportFormat = 'md' | 'txt' | 'png';
 
@@ -72,6 +74,7 @@ export function MessageSelectionToolbar({
   forwardingDisabled,
   onForward,
 }: MessageSelectionToolbarProps) {
+  const presentation = useShellPresentation();
   const [pendingFormat, setPendingFormat] = useState<SelectionExportFormat | null>(null);
   const [error, setError] = useState<string | null>(null);
   const hasSelection = selectedMessageIds.length > 0;
@@ -109,6 +112,19 @@ export function MessageSelectionToolbar({
     },
     [hasSelection, onExportSuccess, pendingFormat, selectedMessageIds, threadId],
   );
+
+  if (presentation === 'v2')
+    return (
+      <MessageSelectionBar
+        count={selectedMessageIds.length}
+        pendingFormat={pendingFormat}
+        error={error}
+        forwardingDisabled={forwardingDisabled}
+        onExport={exportSelection}
+        onForward={onForward}
+        onCancel={onCancel}
+      />
+    );
 
   return (
     <section

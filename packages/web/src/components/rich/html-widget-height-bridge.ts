@@ -1,3 +1,4 @@
+import { WIDGET_INPUT_FENCE_ACK, WIDGET_INPUT_FENCE_REQUEST } from './html-widget-input-fence';
 import { WIDGET_PROOF_REQUEST_MESSAGE, WIDGET_SIZE_MESSAGE } from './html-widget-layout-machine';
 
 export { WIDGET_SIZE_MESSAGE } from './html-widget-layout-machine';
@@ -14,21 +15,29 @@ export function addHtmlWidgetHeightBridge(html: string, blockId: string, instanc
 <script data-cat-cafe-widget-bridge>(() => {
   const messageType = ${escapeInlineScriptValue(WIDGET_SIZE_MESSAGE)};
   const proofRequestType = ${escapeInlineScriptValue(WIDGET_PROOF_REQUEST_MESSAGE)};
+  const inputFenceRequestType = ${escapeInlineScriptValue(WIDGET_INPUT_FENCE_REQUEST)};
+  const inputFenceAckType = ${escapeInlineScriptValue(WIDGET_INPUT_FENCE_ACK)};
   const blockId = ${escapeInlineScriptValue(blockId)};
   const instanceId = ${escapeInlineScriptValue(instanceId)};
   let scheduled = false;
+  let scheduleToken = 0;
   let lastSample = '';
   let pendingCause = null;
   let lastMeasuredViewportHeight = null;
   let lastMeasuredViewportWidth = null;
   let pendingProofRequestId = null;
   let preserveViewportUntil = 0;
+  let inputOccurredAt;
   const observedElements = new WeakSet();
   let resizeObserver = null;
-  const postPending = (cause) => {
-    if (pendingCause === 'content' || pendingCause === cause) return;
+  const postPending = (cause, preserveViewport = false) => {
+    if (!preserveViewport && (pendingCause === 'content' || pendingCause === cause)) return;
     pendingCause = cause;
-    parent.postMessage({ type: messageType, v: 6, phase: 'pending', cause, blockId, instanceId }, '*');
+    parent.postMessage({
+      type: messageType, v: 6, phase: 'pending', cause, blockId, instanceId,
+      ...(preserveViewport ? { preserveViewport: true } : {}),
+      ...(preserveViewport && inputOccurredAt !== undefined ? { inputOccurredAt } : {})
+    }, '*');
   };
   const hasPendingResources = () => {
     const imagePending = Array.from(document.images).some((image) => !image.complete);
@@ -128,23 +137,45 @@ export function addHtmlWidgetHeightBridge(html: string, blockId: string, instanc
         viewportHeight,
         viewportWidth,
         ...(preserveViewport ? { preserveViewport: true } : {}),
+        ...(preserveViewport && inputOccurredAt !== undefined ? { inputOccurredAt } : {}),
         ...(proofRequestId === null ? {} : { proofRequestId })
       }, '*');
     }
   };
-  const schedule = (cause) => {
-    postPending(cause);
+  const scheduleMeasurement = () => {
     if (scheduled) return;
     scheduled = true;
-    requestAnimationFrame(() => requestAnimationFrame(measure));
+    const token = ++scheduleToken;
+    const runMeasurement = () => {
+      if (!scheduled || token !== scheduleToken) return;
+      scheduled = false;
+      measure();
+    };
+    requestAnimationFrame(() => requestAnimationFrame(runMeasurement));
+    // Chromium may suspend RAF callbacks for sandboxed iframes outside the
+    // viewport (the export page starts at scrollY=0). Keep readiness bounded
+    // without making export depend on the widget being visible.
+    window.setTimeout(runMeasurement, 100);
+  };
+  const schedule = (cause) => {
+    postPending(cause);
+    scheduleMeasurement();
   };
   const scheduleContent = () => schedule('content');
   const scheduleViewport = () => schedule('viewport');
-  document.addEventListener('click', (event) => {
+  const captureReadingInput = (event) => {
     if (!event.isTrusted) return;
+    inputOccurredAt = performance.timeOrigin + performance.now();
     preserveViewportUntil = performance.now() + 1000;
-    scheduleContent();
-  }, true);
+    // The parent receives this through asynchronous IPC. Notify on input start
+    // before a disclosure click; retain click for assistive activation. Passive
+    // content invalidation must not deduplicate an explicit input signal.
+    postPending('content', true);
+    scheduleMeasurement();
+  };
+  document.addEventListener('pointerdown', captureReadingInput, true);
+  document.addEventListener('keydown', captureReadingInput, true);
+  document.addEventListener('click', captureReadingInput, true);
   const resizeCause = () =>
     lastMeasuredViewportHeight !== null &&
     (Math.abs(window.innerHeight - lastMeasuredViewportHeight) > 0 ||
@@ -158,6 +189,14 @@ export function addHtmlWidgetHeightBridge(html: string, blockId: string, instanc
   window.addEventListener('message', (event) => {
     if (event.source !== parent || !event.data || typeof event.data !== 'object') return;
     const request = event.data;
+    if (request.type === inputFenceRequestType) {
+      if (request.v !== 6 || request.blockId !== blockId || request.instanceId !== instanceId ||
+          typeof request.requestId !== 'string' || request.requestId.length < 1 || request.requestId.length > 128 ||
+          !/^[A-Za-z0-9:_-]+$/.test(request.requestId)) return;
+      parent.postMessage({ type: inputFenceAckType, v: 6, blockId, instanceId, requestId: request.requestId,
+        ...(inputOccurredAt === undefined ? {} : { inputOccurredAt }) }, '*');
+      return;
+    }
     const proofRequestId = request.proofRequestId;
     if (
       request.type !== proofRequestType ||
@@ -170,9 +209,7 @@ export function addHtmlWidgetHeightBridge(html: string, blockId: string, instanc
       !/^[A-Za-z0-9:_-]+$/.test(proofRequestId)
     ) return;
     pendingProofRequestId = proofRequestId;
-    if (scheduled) return;
-    scheduled = true;
-    requestAnimationFrame(() => requestAnimationFrame(measure));
+    scheduleMeasurement();
   });
   document.addEventListener('load', scheduleContent, true);
   document.addEventListener('error', scheduleContent, true);

@@ -1,6 +1,7 @@
 import {
   cleanCliToolLabel,
   type MessageContent,
+  projectCliToolEventRows,
   projectCliToolUseLabel,
   projectMarkdownReadableText,
   type RichBlock,
@@ -73,6 +74,23 @@ export function projectCliSegment(records: readonly StoredMessage[], segmentId: 
   const kind = segmentId.slice(0, separator);
   const eventId = segmentId.slice(separator + 1);
   const tool = projectCliTools(records).find((candidate) => candidate.id === eventId);
+  if (!tool) return null;
+  if (kind === 'tool-label') return tool.label;
+  if (kind === 'tool-detail') return tool.detail?.length ? tool.detail : null;
+  return null;
+}
+
+/**
+ * Tool-label/detail plane for the new reply record. Keep it separate from the
+ * historical v1 CLI plane so already persisted carrier digests never change.
+ */
+export function projectCliSegmentV3(records: readonly StoredMessage[], segmentId: string): string | null {
+  const separator = segmentId.indexOf(':');
+  if (separator <= 0) return null;
+  const kind = segmentId.slice(0, separator);
+  const eventId = segmentId.slice(separator + 1);
+  const rows = projectCliToolEventRows(records.flatMap((record) => record.toolEvents ?? []));
+  const tool = rows.find((candidate) => candidate.id === eventId);
   if (!tool) return null;
   if (kind === 'tool-label') return tool.label;
   if (kind === 'tool-detail') return tool.detail?.length ? tool.detail : null;
@@ -156,6 +174,9 @@ function readContentBlockFallback(block: MessageContent): string | null {
       const attachment = block.attachment;
       if (attachment.kind === 'quote') return `[引用]\n${attachment.text}`;
       if (attachment.kind === 'thread') return `[对话: ${attachment.title}]`;
+      if (attachment.kind === 'media') return `[作品: ${attachment.title}]`;
+      if (attachment.kind === 'project-screening')
+        return `[审片: ${attachment.title} · 输入 v${attachment.input.ownerRevision}]`;
       return `[文件: ${attachment.path}]`;
     }
     case 'tool_call':
@@ -254,10 +275,7 @@ export function projectMessageBundleQuoteSourceV1(
   return projectMessageBundleReadableContent(message);
 }
 
-/**
- * v2 quote plane: the visible characters a reader sees, not the raw Markdown.
- * A selection made in the browser can only be validated in the plane it was made in.
- */
+/** v2 quote plane: visible browser characters, validated in the plane the human selected. */
 export function projectMessageBundleQuoteSourceV2(
   message: Pick<StoredMessage, 'content' | 'contentBlocks' | 'extra'>,
 ): string {

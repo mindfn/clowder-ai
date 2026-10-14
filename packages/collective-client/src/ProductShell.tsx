@@ -1,20 +1,73 @@
-import type { ReactNode } from 'react';
-
+import type { MouseEvent, ReactNode } from 'react';
+import { CollectiveWorldRail } from './CollectiveWorldRail.js';
 import type { CollectiveMembership } from './client-types.js';
 
-function HomeIcon() {
+function DestinationTitle({
+  collective,
+  onHome,
+  meta,
+  canSteward,
+  canLeave,
+  onInvite,
+  onCafe,
+  onReplayGuide,
+  onLeave,
+}: {
+  readonly collective?: CollectiveMembership;
+  readonly onHome?: () => void;
+  readonly meta?: ReactNode;
+  readonly canSteward: boolean;
+  readonly canLeave: boolean;
+  readonly onInvite: () => void;
+  readonly onCafe?: () => void;
+  readonly onReplayGuide?: () => void;
+  readonly onLeave?: () => void;
+}) {
+  if (!collective) return <h1>共同家园</h1>;
+  const hasMenu = Boolean(onHome || canSteward || onCafe || onReplayGuide || (canLeave && onLeave));
+  if (!hasMenu) return <h1>{collective.name}</h1>;
+  const action = (callback: () => void) => (event: MouseEvent<HTMLButtonElement>) => {
+    event.currentTarget.closest('details')?.removeAttribute('open');
+    callback();
+  };
   return (
-    <svg viewBox="0 0 24 24" aria-hidden="true">
-      <path d="m4 11 8-7 8 7v8a1 1 0 0 1-1 1h-5v-6h-4v6H5a1 1 0 0 1-1-1Z" />
-    </svg>
-  );
-}
-
-function BellIcon() {
-  return (
-    <svg viewBox="0 0 24 24" aria-hidden="true">
-      <path d="M18 8a6 6 0 0 0-12 0c0 7-3 7-3 9h18c0-2-3-2-3-9M10 21h4" />
-    </svg>
+    <details className="collective-menu">
+      <summary aria-label={`${collective.name}菜单`}>
+        <h1>{collective.name}</h1>
+        <span aria-hidden="true">⌄</span>
+      </summary>
+      <div className="collective-menu-popover">
+        <button
+          type="button"
+          className="collective-menu-heading"
+          aria-label={onHome ? `打开${collective.name}首页` : undefined}
+          onClick={onHome ? action(onHome) : undefined}
+        >
+          <strong>{collective.name}</strong>
+          {meta && <span>{meta}</span>}
+        </button>
+        {canSteward && (
+          <button type="button" onClick={action(onInvite)}>
+            邀请成员
+          </button>
+        )}
+        {onCafe && (
+          <button type="button" onClick={action(onCafe)}>
+            我的猫… <small>仅自己可见</small>
+          </button>
+        )}
+        {onReplayGuide && (
+          <button type="button" onClick={action(onReplayGuide)}>
+            再看一遍介绍
+          </button>
+        )}
+        {canLeave && onLeave && (
+          <button type="button" className="collective-menu-muted" onClick={action(onLeave)}>
+            离开共同体…
+          </button>
+        )}
+      </div>
+    </details>
   );
 }
 
@@ -23,122 +76,95 @@ export function ProductShell({
   collective,
   collectives,
   onSelectCollective,
+  onHome,
   connection,
   canSteward,
   canPair,
+  pairNudge = false,
+  canLeave = false,
   notice,
   onInvite,
   onPair,
+  onLeave,
+  onCafe,
+  onReplayGuide,
   destinations,
-  experienceGate,
+  headerMeta,
   children,
+  navigationOpen = false,
+  onCloseNavigation,
 }: {
   readonly embedded: boolean;
   readonly collective?: CollectiveMembership;
   readonly collectives?: readonly CollectiveMembership[];
   readonly onSelectCollective?: (collectiveId: string) => void;
+  readonly onHome?: () => void;
   readonly connection: 'online' | 'offline';
   readonly canSteward: boolean;
   readonly canPair: boolean;
+  readonly pairNudge?: boolean;
+  readonly canLeave?: boolean;
   readonly notice?: string;
   readonly onInvite: () => void;
   readonly onPair: () => void;
+  readonly onLeave?: () => void;
+  readonly onCafe?: () => void;
+  readonly onReplayGuide?: () => void;
   readonly destinations?: ReactNode;
-  readonly experienceGate?: 'f290-assembly';
+  readonly headerMeta?: ReactNode;
+  readonly navigationOpen?: boolean;
+  readonly onCloseNavigation?: () => void;
   readonly children: ReactNode;
 }) {
+  const hasWorldRail = !embedded && Boolean(collectives?.length);
   return (
     <main
       className="collective-shell"
-      data-embedded={embedded ? 'true' : 'false'}
-      data-experience-gate={experienceGate}
+      data-testid="collective-product-shell"
+      data-embedded={embedded}
+      data-world-rail={hasWorldRail}
+      data-navigation-open={navigationOpen}
     >
-      {!embedded && (
-        <aside className="global-rail" data-spatial-role="global-rail" aria-label="世界切换">
-          <div className="brand-mark" role="img" aria-label="Clowder AI Collective">
-            C
-          </div>
-          <nav>
-            <button type="button" className="rail-button" disabled title="回到我的 Café 需要从 Clowder AI 打开">
-              <HomeIcon />
-              <span>我的 Café</span>
-            </button>
-            <button type="button" className="rail-button rail-button-active" aria-current="page">
-              <span className="world-mark">共</span>
-              <span>Collective</span>
-            </button>
-          </nav>
-          <button type="button" className="rail-button rail-tail" disabled>
-            <BellIcon />
-            <span>Needs Me</span>
-          </button>
-        </aside>
+      <CollectiveWorldRail
+        activeCollective={collective}
+        collectives={collectives}
+        onHome={onHome}
+        onSelectCollective={onSelectCollective}
+        visible={!embedded}
+      />
+      {navigationOpen && (
+        <button type="button" className="navigation-scrim" aria-label="关闭频道导航" onClick={onCloseNavigation} />
       )}
-
-      <aside className="destination-pane" data-spatial-role="destination-pane">
+      <aside className="destination-pane" data-spatial-role="destination-pane" aria-label="共同家园导航">
         <header className="destination-header">
-          <span>COLLECTIVE</span>
-          <h1>{collective?.name ?? '共同家园'}</h1>
-          {collectives && collectives.length > 1 && (
-            <label className="world-selector">
-              共同家园
-              <select
-                aria-label="选择 Collective"
-                value={collective?.collectiveId ?? ''}
-                onChange={(event) => onSelectCollective?.(event.target.value)}
-              >
-                <option value="" disabled>
-                  选择要进入的家园
-                </option>
-                {collectives.map((item) => (
-                  <option key={item.collectiveId} value={item.collectiveId}>
-                    {item.name}
-                  </option>
-                ))}
-              </select>
-            </label>
-          )}
-          <p>{connection === 'online' ? '共同现场已连接' : '暂时离线，正在等待恢复'}</p>
+          <DestinationTitle
+            collective={collective}
+            onHome={onHome}
+            meta={headerMeta}
+            canSteward={canSteward}
+            canLeave={canLeave}
+            onInvite={onInvite}
+            onCafe={onCafe}
+            onReplayGuide={onReplayGuide}
+            onLeave={onLeave}
+          />
+          <button type="button" className="navigation-close" aria-label="收起频道导航" onClick={onCloseNavigation}>
+            ×
+          </button>
         </header>
-        <label className="destination-search">
-          <span aria-hidden="true">⌕</span>
-          <input type="search" placeholder="搜索这个 Collective" disabled />
-        </label>
-        {destinations ?? (
-          <nav className="destination-list" aria-label="Collective 目的地">
-            <p>频道</p>
-            <button type="button" className="destination-item destination-item-active" aria-current="page">
-              <span className="destination-symbol">#</span>
-              <span>
-                <strong>general</strong>
-                <small>共同讨论与回应</small>
-              </span>
-            </button>
-          </nav>
-        )}
+        {destinations}
         <footer className="destination-footer">
-          {(canSteward || (embedded && canPair)) && (
+          {embedded && canPair && (
             <div className="steward-actions">
-              {canSteward && (
-                <button type="button" onClick={onInvite}>
-                  邀请成员
-                </button>
-              )}
-              {embedded && canPair && (
-                <button type="button" onClick={onPair}>
-                  连接此 Café
-                </button>
-              )}
+              <button type="button" className={pairNudge ? 'pair-nudge' : undefined} data-guide-pair onClick={onPair}>
+                连接此 Café
+              </button>
             </div>
           )}
           {notice && <p className="destination-notice">{notice}</p>}
-          <p className="connection-line">
-            <span data-status={connection} />
-            {connection === 'online' ? '消息来自同一共同现场' : '离线期间不会冒充已送达'}
-          </p>
+          {connection === 'offline' && <p className="connection-line">暂时离线 · 发送失败后可以重试</p>}
         </footer>
       </aside>
-
       <section className="primary-scene" data-spatial-role="primary-scene">
         {children}
       </section>

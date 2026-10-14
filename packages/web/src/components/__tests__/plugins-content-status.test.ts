@@ -177,6 +177,12 @@ describe('PluginsContent GitHub configuration', () => {
     });
     await flushEffects();
 
+    const entry = [...container.querySelectorAll<HTMLButtonElement>('button')].find((button) =>
+      button.textContent?.includes('微信公众号'),
+    );
+    expect(entry).toBeDefined();
+    await act(async () => entry?.click());
+    await flushEffects();
     const disableToggle = container.querySelector('button[title="禁用"]');
     expect(disableToggle).toBeTruthy();
     expect(disableToggle?.parentElement?.closest('button')).toBeNull();

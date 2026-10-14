@@ -3,8 +3,13 @@
 import { useEffect, useId, useMemo, useRef, useState, useSyncExternalStore } from 'react';
 import { useMessageDisclosureState } from '@/components/message-disclosure-state';
 import type { RichHtmlWidgetBlock } from '@/stores/chat-types';
-import { type ChatLayoutViewportAnchor, dispatchChatLayoutChanged } from '@/utils/chat-layout-change';
+import {
+  type ChatLayoutViewportAnchor,
+  captureChatReadingBeforeLayoutChange,
+  dispatchChatLayoutChanged,
+} from '@/utils/chat-layout-change';
 import { addHtmlWidgetHeightBridge } from './html-widget-height-bridge';
+import { useHtmlWidgetInputFence } from './html-widget-input-fence';
 import {
   createInitialWidgetLayoutState,
   isValidWidgetProofRequestId,
@@ -29,6 +34,16 @@ function readExportMode(): boolean {
   return typeof window !== 'undefined' && isExportSearch(window.location.search);
 }
 
+function captureWidgetReadingBeforeInput(
+  widget: HTMLElement | null,
+  isExport: boolean,
+  preserveViewport: boolean,
+  inputOccurredAt?: number,
+): void {
+  if (!preserveViewport || isExport || !widget?.closest('[data-chat-container]')) return;
+  captureChatReadingBeforeLayoutChange(inputOccurredAt);
+}
+
 function resolveMeasuredViewportAnchor({
   block,
   expanded,
@@ -36,6 +51,7 @@ function resolveMeasuredViewportAnchor({
   nextHeight,
   preserveViewport,
   previousHeight,
+  inputOccurredAt,
   widget,
 }: {
   block: RichHtmlWidgetBlock;
@@ -43,6 +59,7 @@ function resolveMeasuredViewportAnchor({
   isExport: boolean;
   nextHeight: number | null;
   preserveViewport: boolean;
+  inputOccurredAt?: number;
   previousHeight: number | null;
   widget: HTMLElement | null;
 }): ChatLayoutViewportAnchor | null {
@@ -66,6 +83,7 @@ function resolveMeasuredViewportAnchor({
     element: widget,
     viewportTop: widget.getBoundingClientRect().top,
     fallbackScrollTop: chat.scrollTop,
+    ...(inputOccurredAt === undefined ? {} : { inputOccurredAt }),
   };
 }
 
@@ -84,6 +102,7 @@ export function HtmlWidgetBlock({ block, disclosureKey }: { block: RichHtmlWidge
   const { expanded, setExpanded } = useMessageDisclosureState(disclosureKey, false);
   const [browserReady, setBrowserReady] = useState(false);
   const isExport = useSyncExternalStore(subscribeToLocation, readExportMode, () => false);
+  useHtmlWidgetInputFence(widgetRef, iframeRef, block.id, instanceId, block.html, isExport);
   const safeHtml = useMemo(() => (browserReady ? sanitizeWidgetHtml(block.html) : null), [block.html, browserReady]);
   const bridgedHtml = useMemo(
     () => (safeHtml === null ? null : addHtmlWidgetHeightBridge(safeHtml, block.id, instanceId)),
@@ -111,6 +130,7 @@ export function HtmlWidgetBlock({ block, disclosureKey }: { block: RichHtmlWidge
         case 'ignored':
           return;
         case 'pending':
+          captureWidgetReadingBeforeInput(widgetRef.current, isExport, result.preserveViewport, result.inputOccurredAt);
           if (result.cause === 'content') setAcknowledgedProofId(null);
           setLayout((previous) => reduceWidgetLayout(previous, { type: 'pending', cause: result.cause }, isExport));
           return;
@@ -128,12 +148,13 @@ export function HtmlWidgetBlock({ block, disclosureKey }: { block: RichHtmlWidge
             isExport,
             nextHeight: next.acceptedHeight,
             preserveViewport: result.preserveViewport,
+            inputOccurredAt: result.inputOccurredAt,
             previousHeight: previous.acceptedHeight,
             widget: widgetRef.current,
           }) ?? pendingViewportAnchorRef.current;
         return next;
       });
-      if (result.proofRequestId === requestedProofIdRef.current) {
+      if (result.proofRequestId !== null && result.proofRequestId === requestedProofIdRef.current) {
         requestedProofIdRef.current = null;
         setAcknowledgedProofId(result.proofRequestId);
       }

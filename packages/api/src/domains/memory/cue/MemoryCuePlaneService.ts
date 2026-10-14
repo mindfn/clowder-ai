@@ -7,8 +7,8 @@ import {
   type RecallResolverFamily,
   type RecallScopeV1,
 } from '@cat-cafe/shared';
-import type { ContextPresentationEnvelope } from '../../cats/services/session/context-presentation.js';
-import { formatMemoryCues, renderMemoryCuePointer } from './format-memory-cues.js';
+import type { ContextPresentationEnvelope } from '../../cats/services/session/context/context-presentation.js';
+import { formatMemoryCues, renderMemoryCuePointer, renderThreadOpeningClue } from './format-memory-cues.js';
 import type { MemoryCueEventInput } from './MemoryCueEpisodeStore.js';
 import type { CreateMemoryCueDrillHandleInput, MemoryCueResolverRegistry } from './MemoryCueResolverRegistry.js';
 import { RECALL_RESOLVER_ADMISSION_V5 } from './MemoryCueResolverRegistry.js';
@@ -52,6 +52,7 @@ export interface ResolveMemoryCueInput {
   invocationState: MemoryCueInvocationState;
   now: number;
   consumerCatId?: string;
+  signal?: AbortSignal;
   createDrillHandle(input: CreateMemoryCueDrillHandleInput): string;
 }
 
@@ -78,6 +79,7 @@ export class MemoryCuePlaneService {
   ) {}
 
   async resolve(input: ResolveMemoryCueInput): Promise<MemoryCueResolution> {
+    input.signal?.throwIfAborted();
     const opportunity = admitRecallOpportunity(input.candidate, input.serverScope);
     if (!opportunity) return { status: 'not_admitted', ...ZERO_RESULT };
 
@@ -92,6 +94,7 @@ export class MemoryCuePlaneService {
     input.invocationState.seenDedupeKeys.add(dedupeKey);
 
     const candidates = await this.collectCandidates(opportunity, entry, expiresAt, input);
+    input.signal?.throwIfAborted();
     const formatted = formatMemoryCues(candidates, { maxTokens: entry.maxPromptTokens });
     const deliveryReceipts = formatted.cues.map((cue) =>
       this.createDeliveryReceipt(opportunity.occurredAt, cue, input.consumerCatId),
@@ -104,32 +107,53 @@ export class MemoryCuePlaneService {
       deliveryReceipts,
       presentationEnvelopes: formatted.cues.map((cue, index) => {
         const subjectKey = `memory-cue:${cue.resolverFamily}:${cue.source.anchor}`;
+        const isOpeningClue = opportunity.kind === 'thread_opened' && cue.resolverFamily === 'thread_overview';
+        const entryVersion = `recall-catalog:${RECALL_OPPORTUNITY_CATALOG_VERSION}:${entry.kind}:${entry.producer}`;
         const asOf = { kind: 'version' as const, value: cue.source.revision };
         return {
           candidate: {
             subjectKey,
             asOf,
             sourceTier: 'T2' as const,
-            requested: 'pointer' as const,
-            epistemicCeiling: 'pointer' as const,
+            requested: isOpeningClue ? ('clue' as const) : ('pointer' as const),
+            epistemicCeiling: isOpeningClue ? ('historical_clue' as const) : ('pointer' as const),
+            ...(isOpeningClue
+              ? {
+                  historicalClueAdmission: {
+                    entryVersion,
+                    policyRef: 'F321.ThreadOpeningClue',
+                    sourceAnchor: cue.source.anchor,
+                    sourceRevision: cue.source.revision,
+                  },
+                  invalidator: { owner: 'thread_overview', ref: `${cue.source.anchor}@${cue.source.revision}` },
+                }
+              : {}),
           },
-          segments: { pointer: renderMemoryCuePointer(cue) },
+          segments: {
+            pointer: renderMemoryCuePointer(cue),
+            ...(isOpeningClue ? { clue: renderThreadOpeningClue(cue) } : {}),
+          },
           admission: {
             opportunityId: opportunity.opportunityId,
             opportunityKind: 'recall' as const,
             producerOwner: opportunity.producer,
             consumerScope: { kind: 'invocation' as const, ...opportunity.scope },
-            entryVersion: `recall-catalog:${RECALL_OPPORTUNITY_CATALOG_VERSION}:${entry.kind}:${entry.producer}`,
+            entryVersion,
             subjectKey,
             asOf,
             sourceRefs: [cue.source.anchor],
             eligibleSurfaces: ['dynamic_context', 'pointer'] as const,
-            presentationPolicyRef: 'F296.OpportunityPresentation',
+            presentationPolicyRef: isOpeningClue ? 'F321.ThreadOpeningClue' : 'F296.OpportunityPresentation',
             tokenBudget: entry.maxPromptTokens,
             dedupeKey,
             expiresAt,
-            invalidators: cue.invalidators.map((ref) => ({ owner: opportunity.producer, ref })),
-            epistemicCeiling: 'pointer' as const,
+            invalidators: [
+              ...cue.invalidators.map((ref) => ({ owner: opportunity.producer, ref })),
+              ...(isOpeningClue
+                ? [{ owner: 'thread_overview', ref: `${cue.source.anchor}@${cue.source.revision}` }]
+                : []),
+            ],
+            epistemicCeiling: isOpeningClue ? ('historical_clue' as const) : ('pointer' as const),
           },
           receipt: deliveryReceipts[index] as MemoryCueDeliveryReceipt,
         };
@@ -173,6 +197,7 @@ export class MemoryCuePlaneService {
   ): Promise<CueEnvelopeV1[]> {
     const candidates: CueEnvelopeV1[] = [];
     for (const family of entry.resolverFamilies) {
+      input.signal?.throwIfAborted();
       if (RECALL_RESOLVER_ADMISSION_V5[family] !== 'catalog') continue;
       candidates.push(...(await this.resolveFamily(opportunity, family, expiresAt, input)));
     }
@@ -190,6 +215,7 @@ export class MemoryCuePlaneService {
       resolved = await this.registry.get(family).resolve(opportunity, {
         now: input.now,
         expiresAt,
+        signal: input.signal,
         ...(input.consumerCatId ? { consumerCatId: input.consumerCatId } : {}),
         createDrillHandle: input.createDrillHandle,
       });

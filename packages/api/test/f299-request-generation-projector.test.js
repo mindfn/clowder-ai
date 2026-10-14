@@ -12,7 +12,7 @@ const GENERATION_ID_2 = '00000000-0000-4000-8000-000000000002';
 
 before(async () => {
   ({ projectRequestGenerationGaps, projectRequestGenerations } = await import(
-    '../dist/domains/cats/services/session/RequestGenerationProjector.js'
+    '../dist/domains/cats/services/session/transcript-index/RequestGenerationProjector.js'
   ));
   ({ requestGenerationEnvelopeV1Schema } = await import('../../shared/dist/index.js'));
 });

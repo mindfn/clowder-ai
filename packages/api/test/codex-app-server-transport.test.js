@@ -654,74 +654,80 @@ test('post-accept stream end transitions through failed before cleanup', async (
   assert.match(lifecycle.find((snapshot) => snapshot.stage === 'failed').failureReason, /stream ended/);
 });
 
-test('pre-turn transport recovery preserves thread identity and typed capability policy without replaying a card', async () => {
-  const first = new ProtocolWire();
-  first.read = () => ({
-    [Symbol.asyncIterator]() {
-      return { next: async () => Promise.reject(new Error('startup transport failed')) };
-    },
-  });
-  const second = new ProtocolWire();
-  const wires = [first, second];
-  let factoryCalls = 0;
-  const interactionRequests = [];
-  const run = collect(
-    runCodexAppServerWithRecovery({
-      sessionFactory: async () => wires[factoryCalls++],
-      sessionOptions: { command: 'codex', args: ['app-server', '--stdio'], invocationId: 'inv-retry' },
-      runInput: {
-        prompt: frozenPrompt('continue'),
-        thread: { kind: 'resume', threadId: 'thread-existing' },
-        runtimeInteraction: {
-          owner: {
-            userId: 'user-1',
-            threadId: 'cat-thread-1',
-            catId: 'codex-sol',
-            invocationId: 'inv-retry',
-          },
-          declaredMcpServerNames: ['pencil'],
-          port: {
-            request: async (request) => {
-              interactionRequests.push(request);
-              return { kind: 'decision', decisionId: 'decline' };
+for (const requireExactResume of [false, true]) {
+  test(`pre-turn transport recovery preserves thread identity and typed capability policy (exact=${requireExactResume})`, async () => {
+    const first = new ProtocolWire();
+    first.read = () => ({
+      [Symbol.asyncIterator]() {
+        return { next: async () => Promise.reject(new Error('startup transport failed')) };
+      },
+    });
+    const second = new ProtocolWire();
+    const wires = [first, second];
+    let factoryCalls = 0;
+    const interactionRequests = [];
+    const run = collect(
+      runCodexAppServerWithRecovery({
+        sessionFactory: async () => wires[factoryCalls++],
+        sessionOptions: { command: 'codex', args: ['app-server', '--stdio'], invocationId: 'inv-retry' },
+        runInput: {
+          prompt: frozenPrompt('continue'),
+          thread: { kind: 'resume', threadId: 'thread-existing' },
+          requireExactResume,
+          runtimeInteraction: {
+            owner: {
+              userId: 'user-1',
+              threadId: 'cat-thread-1',
+              catId: 'codex-sol',
+              invocationId: 'inv-retry',
+            },
+            declaredMcpServerNames: ['pencil'],
+            port: {
+              request: async (request) => {
+                interactionRequests.push(request);
+                return { kind: 'decision', decisionId: 'decline' };
+              },
             },
           },
         },
+        retryBudget: 1,
+      }),
+    );
+    await waitFor(() => second.writes.some((message) => message.method === 'turn/start'));
+    second.inbox.push({
+      id: 91,
+      method: 'mcpServer/elicitation/request',
+      params: {
+        serverName: 'cua_repl',
+        threadId: 'thread-existing',
+        turnId: 'turn-1',
+        mode: 'form',
+        message: 'Allow Computer Use to use "Pencil"?',
+        requestedSchema: { type: 'object', properties: {}, additionalProperties: false },
+        _meta: {
+          codex_approval_kind: 'mcp_tool_call',
+          connector_id: 'computer-use',
+          tool_name: 'snapshot',
+          tool_params: { app: 'dev.pencil.desktop' },
+        },
       },
-      retryBudget: 1,
-    }),
-  );
-  await waitFor(() => second.writes.some((message) => message.method === 'turn/start'));
-  second.inbox.push({
-    id: 91,
-    method: 'mcpServer/elicitation/request',
-    params: {
-      serverName: 'cua_repl',
-      threadId: 'thread-existing',
-      turnId: 'turn-1',
-      mode: 'form',
-      message: 'Allow Computer Use to use "Pencil"?',
-      requestedSchema: { type: 'object', properties: {}, additionalProperties: false },
-      _meta: {
-        codex_approval_kind: 'mcp_tool_call',
-        connector_id: 'computer-use',
-        tool_name: 'snapshot',
-        tool_params: { app: 'dev.pencil.desktop' },
-      },
-    },
+    });
+    await waitFor(() => second.writes.some((message) => message.id === 91));
+    assert.equal(interactionRequests.length, 0);
+    assert.equal(second.writes.find((message) => message.id === 91)?.result?.action, 'accept');
+    second.inbox.push({
+      method: 'turn/completed',
+      params: { threadId: 'thread-existing', turn: { id: 'turn-1', status: 'completed' } },
+    });
+    const output = await run;
+    assert.equal(factoryCalls, 2);
+    assert.equal(
+      second.writes.find((message) => message.method === 'thread/resume').params.threadId,
+      'thread-existing',
+    );
+    assert.equal(output.filter((event) => event.type === 'app_server.recovery').length, 1);
   });
-  await waitFor(() => second.writes.some((message) => message.id === 91));
-  assert.equal(interactionRequests.length, 0);
-  assert.equal(second.writes.find((message) => message.id === 91)?.result?.action, 'accept');
-  second.inbox.push({
-    method: 'turn/completed',
-    params: { threadId: 'thread-existing', turn: { id: 'turn-1', status: 'completed' } },
-  });
-  const output = await run;
-  assert.equal(factoryCalls, 2);
-  assert.equal(second.writes.find((message) => message.method === 'thread/resume').params.threadId, 'thread-existing');
-  assert.equal(output.filter((event) => event.type === 'app_server.recovery').length, 1);
-});
+}
 
 test('exact active-writer resume failure backs off once and preserves the native session identity', async () => {
   const first = new ProtocolWire();

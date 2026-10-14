@@ -2,9 +2,11 @@
 
 import { useEffect, useState } from 'react';
 import { ExpandableProse } from '@/components/content-overflow';
+import { useShellPresentation } from '@/components/shell/shell-presentation';
 import { isRowPrimaryActionTarget } from '@/utils/row-primary-action';
 import type { GitCommit } from '../../hooks/useGitPanel';
 import { useGitPanel } from '../../hooks/useGitPanel';
+import { GitPanelV2 } from './GitPanelV2';
 import { HealthDashboard } from './HealthDashboard';
 
 function StatusBadge({ status, variant }: { status: string; variant: 'staged' | 'unstaged' | 'untracked' }) {
@@ -88,7 +90,7 @@ function formatRelativeDate(isoDate: string): string {
   return new Date(isoDate).toLocaleDateString();
 }
 
-export function GitPanel() {
+function GitPanelClassic() {
   const { commits, status, commitDetail, loading, error, fetchCommitDetail, refresh } = useGitPanel();
   const [expandedHash, setExpandedHash] = useState<string | null>(null);
   const [statusCollapsed, setStatusCollapsed] = useState(false);
@@ -201,4 +203,9 @@ export function GitPanel() {
       </div>
     </div>
   );
+}
+
+export function GitPanel() {
+  const presentation = useShellPresentation();
+  return presentation === 'v2' ? <GitPanelV2 /> : <GitPanelClassic />;
 }

@@ -49,6 +49,48 @@ describe('InvocationTracker userId auth (slot-aware)', () => {
   });
 });
 
+describe('InvocationTracker exact execution cancellation', () => {
+  it('atomically refuses a replaced execution without aborting the replacement', () => {
+    const tracker = new InvocationTracker();
+    tracker.start('thread-1', 'opus', 'alice', ['opus'], 'inv-old');
+    const replacement = tracker.start('thread-1', 'opus', 'alice', ['opus'], 'inv-new');
+
+    const stale = tracker.cancelExact('thread-1', 'opus', 'inv-old', 'alice', 'task_cancelled');
+
+    assert.equal(stale.state, 'execution_mismatch');
+    assert.equal(stale.cancelled, false);
+    assert.equal(replacement.signal.aborted, false);
+    assert.equal(tracker.getExecutionId('thread-1', 'opus'), 'inv-new');
+  });
+
+  it('replays only the same exact cancellation without aborting twice or borrowing another reason', () => {
+    const tracker = new InvocationTracker();
+    const controller = tracker.start('thread-1', 'opus', 'alice', ['opus'], 'inv-opus');
+
+    const first = tracker.cancelExact('thread-1', 'opus', 'inv-opus', 'alice', 'task_cancelled');
+    const replay = tracker.cancelExact('thread-1', 'opus', 'inv-opus', 'alice', 'task_cancelled');
+    const conflicting = tracker.cancelExact('thread-1', 'opus', 'inv-opus', 'alice', 'other_reason');
+
+    assert.equal(first.state, 'cancelled');
+    assert.equal(replay.state, 'already_cancelled');
+    assert.equal(conflicting.state, 'cancellation_conflict');
+    assert.deepEqual(replay.executionIds, ['inv-opus']);
+    assert.equal(controller.signal.aborted, true);
+    assert.equal(controller.signal.reason, 'task_cancelled');
+  });
+
+  it('keeps user ownership inside the same atomic exact-cancel decision', () => {
+    const tracker = new InvocationTracker();
+    const controller = tracker.start('thread-1', 'opus', 'alice', ['opus'], 'inv-opus');
+
+    const result = tracker.cancelExact('thread-1', 'opus', 'inv-opus', 'bob', 'task_cancelled');
+
+    assert.equal(result.state, 'user_mismatch');
+    assert.equal(result.cancelled, false);
+    assert.equal(controller.signal.aborted, false);
+  });
+});
+
 describe('InvocationTracker catId tracking (slot-aware)', () => {
   it('start with catIds stores them, cancel returns them', () => {
     const tracker = new InvocationTracker();

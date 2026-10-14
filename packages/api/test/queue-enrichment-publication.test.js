@@ -66,6 +66,15 @@ describe('F220 intake: queue snapshot publication ordering', () => {
     assert.equal(projectPublicQueueEntry(afterRestart).recoveryActions[0]?.kind, 'retry_target');
   });
 
+  it('does not publish a carrier while its durable source custody admission is pending', async () => {
+    const pending = makeEntry({
+      source: 'connector',
+      queueCustodyAdmissionId: 'queue-source:msg-entry:operation:test',
+    });
+
+    assert.deepEqual(await enrichQueueEntries([pending], null), []);
+  });
+
   it('does not project Retry when durable receipt truth says the failed target has no carrier', async () => {
     const entry = makeEntry({
       queuedFailedByCatIds: ['opus'],

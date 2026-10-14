@@ -182,7 +182,7 @@ describe('F227 PR-2: runCorpusBackfill (resumable thread+message iteration)', ()
         storedMsg({ id: 'b', threadId: 't1', content: '补锅匠 @codex', timestamp: 200, mentions: ['codex'] }),
         storedMsg({ id: 'c', threadId: 't1', content: '今天天气不错', timestamp: 300 }),
       ],
-      t2: [storedMsg({ id: 'd', threadId: 't2', content: '我能猜出来 @opus', timestamp: 400, mentions: ['opus'] })],
+      t2: [storedMsg({ id: 'd', threadId: 't2', content: 'unknown-first @opus', timestamp: 400, mentions: ['opus'] })],
     };
     const threadSource = { list: () => [{ id: 't1' }, { id: 't2' }] };
     const messageSource = {
@@ -195,14 +195,14 @@ describe('F227 PR-2: runCorpusBackfill (resumable thread+message iteration)', ()
 
     const res = await runCorpusBackfill(threadSource, messageSource, store, { userId: 'default-user' });
     assert.equal(res.scanned, 4);
-    assert.equal(res.marked, 3); // 脚手架 + 补锅匠 + 我能猜出来 (天气 has none)
+    assert.equal(res.marked, 3); // 脚手架 + 补锅匠 + unknown-first (天气 has none)
 
     const events = store.listEvents();
     assert.equal(events.length, 3);
     assert.equal(events[0].timestamp, 400); // newest-first
     assert.deepEqual(
       events.map((e) => e.type),
-      ['我能猜出来', '补锅匠', '脚手架'],
+      ['unknown-first', '补锅匠', '脚手架'],
     );
   });
 

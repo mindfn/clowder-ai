@@ -212,6 +212,439 @@ describe('MessageStore', () => {
     assert.deepEqual(store.prepareQueueAdmission(canceled.id), { kind: 'conflict' });
   });
 
+  test('admitQueueCustody atomically binds an ordinary persisted source to its exact Queue carrier', async () => {
+    const { InvocationQueue } = await import('../dist/domains/cats/services/agents/invocation/InvocationQueue.js');
+    const { createInitialQueuedMessageCustody } = await import(
+      '../dist/domains/cats/services/agents/invocation/QueuedMessageCustodyCoordinator.js'
+    );
+    const { MessageStore } = await import('../dist/domains/cats/services/stores/ports/MessageStore.js');
+    const store = new MessageStore();
+    const queue = new InvocationQueue();
+    const source = store.append({
+      userId: null,
+      catId: 'codex-astra',
+      content: 'ordinary A2A reply persisted before occupied-slot defer',
+      mentions: [],
+      timestamp: 150,
+      threadId: 'thread-atomic-admission',
+    });
+    const admitted = queue.enqueue({
+      threadId: source.threadId,
+      userId: 'user-1',
+      ownerAuthProvenance: 'strict',
+      content: source.content,
+      messageId: source.id,
+      source: 'agent',
+      sourceCategory: 'a2a',
+      targetCats: ['codex61-sol'],
+      callerCatId: 'codex-astra',
+      autoExecute: true,
+      priority: 'normal',
+      intent: 'execute',
+    });
+    assert.equal(admitted.outcome, 'enqueued');
+    assert.ok(admitted.entry);
+    assert.equal(
+      queue.markQueuedSeen(source.threadId, 'user-1', admitted.entry.id, 'codex61-sol', 'memory-exposure', 151),
+      true,
+    );
+    const exposed = queue.getEntrySnapshot(source.threadId, 'user-1', admitted.entry.id);
+    assert.ok(exposed);
+    const custody = createInitialQueuedMessageCustody(exposed);
+
+    const first = store.admitQueueCustody(source.id, custody);
+    assert.equal(first.kind, 'initialized');
+    assert.equal(first.message.deliveryStatus, 'queued');
+    assert.equal(first.message.queueCustody?.entryId, admitted.entry.id);
+    assert.deepEqual(
+      store.getByQueueExposure(source.threadId, 'codex61-sol', 'memory-exposure').map((message) => message.id),
+      [source.id],
+    );
+    assert.equal(store.admitQueueCustody(source.id, structuredClone(custody)).kind, 'existing');
+    assert.deepEqual(
+      store.getByQueueExposure(source.threadId, 'codex61-sol', 'memory-exposure').map((message) => message.id),
+      [source.id],
+    );
+    assert.deepEqual(store.admitQueueCustody(source.id, { ...custody, entryId: 'foreign-entry' }), {
+      kind: 'conflict',
+    });
+
+    const delivered = store.append({
+      userId: null,
+      catId: 'codex-astra',
+      content: 'already delivered source',
+      mentions: [],
+      timestamp: 151,
+      threadId: source.threadId,
+      deliveryStatus: 'queued',
+    });
+    assert.equal(store.markDelivered(delivered.id, 152)?.deliveryTransitioned, true);
+    assert.deepEqual(store.admitQueueCustody(delivered.id, custody), { kind: 'conflict' });
+    assert.equal(store.getById(delivered.id)?.deliveryStatus, 'delivered');
+    assert.equal(store.getById(delivered.id)?.queueCustody, undefined);
+  });
+
+  test('Queue source admission removes a newly staged carrier when the atomic source CAS refuses it', async () => {
+    const { InvocationQueue } = await import('../dist/domains/cats/services/agents/invocation/InvocationQueue.js');
+    const { QueueSourceCustodyAdmissionService } = await import(
+      '../dist/domains/cats/services/agents/invocation/QueueSourceCustodyAdmission.js'
+    );
+    const { MessageStore } = await import('../dist/domains/cats/services/stores/ports/MessageStore.js');
+    const store = new MessageStore();
+    const queue = new InvocationQueue();
+    const source = store.append({
+      userId: null,
+      catId: 'codex-astra',
+      content: 'deferred A2A source',
+      mentions: [],
+      timestamp: 160,
+      threadId: 'thread-source-admission-rollback',
+    });
+    const admitted = queue.enqueue({
+      threadId: source.threadId,
+      userId: 'user-1',
+      ownerAuthProvenance: 'strict',
+      content: source.content,
+      messageId: source.id,
+      source: 'agent',
+      sourceCategory: 'a2a',
+      targetCats: ['codex61-sol'],
+      callerCatId: 'codex-astra',
+      autoExecute: true,
+      priority: 'normal',
+      intent: 'execute',
+    });
+    assert.equal(admitted.outcome, 'enqueued');
+    assert.ok(admitted.entry);
+    store.admitQueueCustody = () => ({ kind: 'conflict' });
+
+    const service = new QueueSourceCustodyAdmissionService({ queue, messageStore: store });
+    await assert.rejects(
+      service.admitDeferred(admitted.entry, source.id),
+      /Queue source custody admission failed .*: conflict/,
+    );
+    assert.deepEqual(queue.list(source.threadId, 'user-1'), []);
+    assert.equal(store.getById(source.id)?.deliveryStatus, undefined);
+    assert.equal(store.getById(source.id)?.queueCustody, undefined);
+  });
+
+  test('Queue source admission never replaces a live carrier and recovers only after the old carrier is absent', async () => {
+    const { InvocationQueue } = await import('../dist/domains/cats/services/agents/invocation/InvocationQueue.js');
+    const { QueuedMessageCustodyCoordinator } = await import(
+      '../dist/domains/cats/services/agents/invocation/QueuedMessageCustodyCoordinator.js'
+    );
+    const { QueueSourceCustodyAdmissionService } = await import(
+      '../dist/domains/cats/services/agents/invocation/QueueSourceCustodyAdmission.js'
+    );
+    const { MessageStore } = await import('../dist/domains/cats/services/stores/ports/MessageStore.js');
+    const store = new MessageStore();
+    const queue = new InvocationQueue();
+    const source = store.append({
+      userId: 'user-1',
+      catId: null,
+      content: 'ordinary connector source',
+      mentions: ['codex-sol'],
+      timestamp: 170,
+      threadId: 'thread-source-live-carrier',
+    });
+    const enqueue = () =>
+      queue.enqueue({
+        threadId: source.threadId,
+        userId: source.userId,
+        ownerAuthProvenance: 'strict',
+        content: source.content,
+        messageId: source.id,
+        source: 'connector',
+        targetCats: ['codex-sol'],
+        autoExecute: true,
+        priority: 'normal',
+        intent: 'execute',
+      }).entry;
+    const coordinator = new QueuedMessageCustodyCoordinator({ messageStore: store });
+    const service = new QueueSourceCustodyAdmissionService({
+      queue,
+      messageStore: store,
+      queueCustodyCoordinator: coordinator,
+    });
+
+    const first = enqueue();
+    assert.ok(first);
+    await service.admitDeferred(first, source.id);
+    const second = enqueue();
+    assert.ok(second);
+    await assert.rejects(service.admitDeferred(second, source.id), /live Queue source carrier|foreign custody/);
+    assert.equal(store.getById(source.id)?.queueCustody?.entryId, first.id);
+    assert.deepEqual(
+      queue.list(source.threadId, source.userId).map((entry) => entry.id),
+      [first.id],
+    );
+
+    const firstSnapshot = queue.getEntrySnapshot(source.threadId, source.userId, first.id);
+    assert.ok(firstSnapshot);
+    assert.equal(queue.removeEntrySnapshotIfUnchanged(firstSnapshot), true);
+    const recovered = enqueue();
+    assert.ok(recovered);
+    await service.admitDeferred(recovered, source.id);
+    assert.equal(store.getById(source.id)?.queueCustody?.entryId, recovered.id);
+    assert.deepEqual(
+      queue.list(source.threadId, source.userId).map((entry) => entry.id),
+      [recovered.id],
+    );
+  });
+
+  test('concurrent recovery from one absent Queue carrier commits exactly one replacement', async () => {
+    const { InvocationQueue } = await import('../dist/domains/cats/services/agents/invocation/InvocationQueue.js');
+    const { QueuedMessageCustodyCoordinator } = await import(
+      '../dist/domains/cats/services/agents/invocation/QueuedMessageCustodyCoordinator.js'
+    );
+    const { QueueSourceCustodyAdmissionService } = await import(
+      '../dist/domains/cats/services/agents/invocation/QueueSourceCustodyAdmission.js'
+    );
+    const { MessageStore } = await import('../dist/domains/cats/services/stores/ports/MessageStore.js');
+    const store = new MessageStore();
+    const queue = new InvocationQueue();
+    const source = store.append({
+      userId: 'user-1',
+      catId: null,
+      content: 'replayed connector source',
+      mentions: ['codex-sol'],
+      timestamp: 180,
+      threadId: 'thread-source-concurrent-recovery',
+    });
+    const enqueue = () =>
+      queue.enqueue({
+        threadId: source.threadId,
+        userId: source.userId,
+        ownerAuthProvenance: 'strict',
+        content: source.content,
+        messageId: source.id,
+        source: 'connector',
+        targetCats: ['codex-sol'],
+        autoExecute: true,
+        priority: 'normal',
+        intent: 'execute',
+      }).entry;
+    const coordinator = new QueuedMessageCustodyCoordinator({ messageStore: store });
+    const service = new QueueSourceCustodyAdmissionService({
+      queue,
+      messageStore: store,
+      queueCustodyCoordinator: coordinator,
+    });
+    const original = enqueue();
+    assert.ok(original);
+    await service.admitDeferred(original, source.id);
+    const originalSnapshot = queue.getEntrySnapshot(source.threadId, source.userId, original.id);
+    assert.ok(originalSnapshot);
+    assert.equal(queue.removeEntrySnapshotIfUnchanged(originalSnapshot), true);
+
+    const candidates = [enqueue(), enqueue()];
+    assert.ok(candidates[0]);
+    assert.ok(candidates[1]);
+    const results = await Promise.allSettled(candidates.map((entry) => service.admitDeferred(entry, source.id)));
+    assert.equal(results.filter((result) => result.status === 'fulfilled').length, 1);
+    assert.equal(results.filter((result) => result.status === 'rejected').length, 1);
+    const durableEntryId = store.getById(source.id)?.queueCustody?.entryId;
+    assert.ok(candidates.some((entry) => entry.id === durableEntryId));
+    assert.deepEqual(
+      queue.list(source.threadId, source.userId).map((entry) => entry.id),
+      [durableEntryId],
+    );
+  });
+
+  test('concurrent admission of the same unpublished carrier shares one refusal without creating durable ghost custody', async () => {
+    const { InvocationQueue } = await import('../dist/domains/cats/services/agents/invocation/InvocationQueue.js');
+    const { QueuedMessageCustodyCoordinator } = await import(
+      '../dist/domains/cats/services/agents/invocation/QueuedMessageCustodyCoordinator.js'
+    );
+    const { QueueSourceCustodyAdmissionService } = await import(
+      '../dist/domains/cats/services/agents/invocation/QueueSourceCustodyAdmission.js'
+    );
+    const { MessageStore } = await import('../dist/domains/cats/services/stores/ports/MessageStore.js');
+    const store = new MessageStore();
+    const queue = new InvocationQueue();
+    const source = store.append({
+      userId: 'user-1',
+      catId: null,
+      content: 'one unpublished carrier',
+      mentions: ['codex-sol'],
+      timestamp: 185,
+      threadId: 'thread-source-concurrent-same-carrier',
+    });
+    const entry = queue.enqueue({
+      threadId: source.threadId,
+      userId: source.userId,
+      ownerAuthProvenance: 'strict',
+      content: source.content,
+      messageId: source.id,
+      source: 'connector',
+      targetCats: ['codex-sol'],
+      autoExecute: true,
+      priority: 'normal',
+      intent: 'execute',
+    }).entry;
+    assert.ok(entry);
+    let enteredAdmission;
+    const entered = new Promise((resolve) => {
+      enteredAdmission = resolve;
+    });
+    let releaseAdmission;
+    const released = new Promise((resolve) => {
+      releaseAdmission = resolve;
+    });
+    let admissionCalls = 0;
+    store.admitQueueCustody = async () => {
+      admissionCalls += 1;
+      enteredAdmission();
+      await released;
+      return { kind: 'conflict' };
+    };
+    const service = new QueueSourceCustodyAdmissionService({
+      queue,
+      messageStore: store,
+      queueCustodyCoordinator: new QueuedMessageCustodyCoordinator({ messageStore: store }),
+    });
+
+    const first = service.admitDeferred(entry, source.id);
+    await entered;
+    const replay = service.admitDeferred(entry, source.id, true);
+    releaseAdmission();
+    const results = await Promise.allSettled([first, replay]);
+
+    assert.equal(admissionCalls, 1, 'the replay must join the exact in-flight admission');
+    assert.equal(results.filter((result) => result.status === 'rejected').length, 2);
+    assert.deepEqual(queue.list(source.threadId, source.userId), []);
+    assert.equal(store.getById(source.id)?.deliveryStatus, undefined);
+    assert.equal(store.getById(source.id)?.queueCustody, undefined);
+  });
+
+  test('a pending source admission cannot be removed by stale Queue controls before its durable CAS publishes', async () => {
+    const { InvocationQueue } = await import('../dist/domains/cats/services/agents/invocation/InvocationQueue.js');
+    const { QueueSourceCustodyAdmissionService } = await import(
+      '../dist/domains/cats/services/agents/invocation/QueueSourceCustodyAdmission.js'
+    );
+    const { MessageStore } = await import('../dist/domains/cats/services/stores/ports/MessageStore.js');
+
+    for (const removalKind of ['direct', 'snapshot']) {
+      const store = new MessageStore();
+      const queue = new InvocationQueue();
+      const source = store.append({
+        userId: 'user-1',
+        catId: null,
+        content: `pending ${removalKind} admission`,
+        mentions: ['codex-sol'],
+        timestamp: removalKind === 'direct' ? 186 : 187,
+        threadId: `thread-source-pending-${removalKind}-removal`,
+      });
+      const entry = queue.enqueue({
+        threadId: source.threadId,
+        userId: source.userId,
+        ownerAuthProvenance: 'strict',
+        content: source.content,
+        messageId: source.id,
+        source: 'connector',
+        targetCats: ['codex-sol'],
+        autoExecute: true,
+        priority: 'normal',
+        intent: 'execute',
+      }).entry;
+      assert.ok(entry);
+
+      const admitQueueCustody = store.admitQueueCustody.bind(store);
+      let enteredAdmission;
+      const entered = new Promise((resolve) => {
+        enteredAdmission = resolve;
+      });
+      let releaseAdmission;
+      const released = new Promise((resolve) => {
+        releaseAdmission = resolve;
+      });
+      store.admitQueueCustody = async (messageId, custody) => {
+        enteredAdmission();
+        await released;
+        return admitQueueCustody(messageId, custody);
+      };
+      const service = new QueueSourceCustodyAdmissionService({ queue, messageStore: store });
+
+      const admission = service.admitDeferred(entry, source.id);
+      await entered;
+      const pending = queue.getEntrySnapshot(source.threadId, source.userId, entry.id);
+      assert.ok(pending?.queueCustodyAdmissionId);
+      const removal =
+        removalKind === 'direct'
+          ? queue.remove(source.threadId, source.userId, entry.id)
+          : queue.removeEntrySnapshotIfUnchanged(pending);
+      releaseAdmission();
+      const [settled] = await Promise.allSettled([admission]);
+
+      if (removalKind === 'direct') assert.equal(removal, null);
+      else assert.equal(removal, false);
+      assert.equal(settled.status, 'fulfilled');
+      assert.equal(store.getById(source.id)?.queueCustody?.entryId, entry.id);
+      assert.deepEqual(
+        queue.list(source.threadId, source.userId).map((candidate) => candidate.id),
+        [entry.id],
+      );
+    }
+  });
+
+  test('per-target A2A recovery restores the durable carrier identity instead of minting a replacement', async () => {
+    const { InvocationQueue } = await import('../dist/domains/cats/services/agents/invocation/InvocationQueue.js');
+    const { QueuedMessageCustodyCoordinator } = await import(
+      '../dist/domains/cats/services/agents/invocation/QueuedMessageCustodyCoordinator.js'
+    );
+    const { QueueSourceCustodyAdmissionService } = await import(
+      '../dist/domains/cats/services/agents/invocation/QueueSourceCustodyAdmission.js'
+    );
+    const { MessageStore } = await import('../dist/domains/cats/services/stores/ports/MessageStore.js');
+    const store = new MessageStore();
+    const queue = new InvocationQueue();
+    const source = store.append({
+      userId: 'user-1',
+      catId: 'opus',
+      content: '@codex please continue',
+      mentions: ['codex'],
+      timestamp: 190,
+      threadId: 'thread-fanout-carrier-recovery',
+    });
+    const enqueue = () =>
+      queue.enqueue({
+        threadId: source.threadId,
+        userId: source.userId,
+        ownerAuthProvenance: 'strict',
+        content: source.content,
+        messageId: source.id,
+        source: 'agent',
+        sourceCategory: 'a2a',
+        targetCats: ['codex'],
+        callerCatId: 'opus',
+        a2aTriggerMessageId: source.id,
+        autoExecute: true,
+        priority: 'normal',
+        intent: 'execute',
+      }).entry;
+    const service = new QueueSourceCustodyAdmissionService({
+      queue,
+      messageStore: store,
+      queueCustodyCoordinator: new QueuedMessageCustodyCoordinator({ messageStore: store }),
+    });
+    const original = enqueue();
+    assert.ok(original);
+    await service.admitDeferred(original, source.id);
+    assert.equal(store.getById(source.id)?.queueCustody?.carrierByTargetCatId?.codex?.entryId, original.id);
+    const originalSnapshot = queue.getEntrySnapshot(source.threadId, source.userId, original.id);
+    assert.ok(originalSnapshot);
+    assert.equal(queue.removeEntrySnapshotIfUnchanged(originalSnapshot), true);
+
+    const replay = enqueue();
+    assert.ok(replay);
+    await service.admitDeferred(replay, source.id);
+    assert.equal(store.getById(source.id)?.queueCustody?.carrierByTargetCatId?.codex?.entryId, original.id);
+    assert.deepEqual(
+      queue.list(source.threadId, source.userId).map((entry) => entry.id),
+      [original.id],
+    );
+  });
+
   test('fan-out admission intent is idempotent, blocks legacy delivery, and is replaced by full custody', async () => {
     const { MessageStore } = await import('../dist/domains/cats/services/stores/ports/MessageStore.js');
     const store = new MessageStore();

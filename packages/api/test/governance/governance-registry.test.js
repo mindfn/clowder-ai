@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import { mkdtemp, rm } from 'node:fs/promises';
+import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, beforeEach, describe, it } from 'node:test';
@@ -94,5 +94,81 @@ describe('GovernanceRegistry', () => {
     const matches = all.filter((e) => e.projectPath === '/projects/alpha');
     assert.strictEqual(matches.length, 1, 'should have exactly 1 entry, not duplicate');
     assert.strictEqual(matches[0].packVersion, '2.0.0');
+  });
+
+  it('lists all 1001 project health results with one fresh registry read', async (t) => {
+    const entries = Array.from({ length: 1001 }, (_, index) => ({
+      ...makeMeta(index % 2 ? 'old' : 'current'),
+      projectPath: `/projects/project-${index}`,
+      syncedAt: index,
+    }));
+    await mkdir(join(tmpDir, '.cat-cafe'));
+    await writeFile(join(tmpDir, '.cat-cafe/governance-registry.json'), JSON.stringify({ entries }));
+    const read = t.mock.method(registry, 'read');
+    const health = await registry.listHealth('current');
+    assert.equal(read.mock.callCount(), 1);
+    assert.deepEqual(
+      health,
+      entries.map((entry, index) => ({
+        projectPath: entry.projectPath,
+        status: index % 2 ? 'stale' : 'healthy',
+        packVersion: entry.packVersion,
+        lastSyncedAt: entry.syncedAt,
+        findings: [],
+      })),
+    );
+  });
+
+  it('refreshes snapshots and single-project checks after registration changes', async () => {
+    await registry.register('/a', makeMeta('1.0.0'));
+    const first = await registry.listHealth('1.0.0');
+    await registry.register('/a', makeMeta('2.0.0'));
+    await registry.register('/b', makeMeta('1.0.0'));
+    assert.equal((await registry.checkHealth('/a', '1.0.0')).status, 'stale');
+    assert.deepEqual(
+      (await registry.listHealth('1.0.0')).map((entry) => entry.status),
+      ['stale', 'healthy'],
+    );
+    assert.equal(first[0].status, 'healthy', 'the previous snapshot remains unchanged');
+    assert.equal((await registry.checkHealth('/b', '1.0.0')).status, 'healthy');
+  });
+
+  it('uses the current governance version when listing health by default', async () => {
+    const { GOVERNANCE_PACK_VERSION } = await import('../../dist/config/governance/governance-pack.js');
+    await registry.register('/a', makeMeta(GOVERNANCE_PACK_VERSION));
+    assert.equal((await registry.listHealth())[0].status, 'healthy');
+    assert.deepEqual((await registry.listHealth())[0], await registry.checkHealth('/a'));
+  });
+
+  it('keeps first-match health results for legacy duplicate entries', async () => {
+    await mkdir(join(tmpDir, '.cat-cafe'));
+    await writeFile(
+      join(tmpDir, '.cat-cafe/governance-registry.json'),
+      JSON.stringify({
+        entries: [
+          { ...makeMeta('1.0.0'), projectPath: '/a' },
+          { ...makeMeta('2.0.0'), projectPath: '/a' },
+        ],
+      }),
+    );
+    const health = await registry.listHealth('1.0.0');
+    assert.equal(health.length, 2);
+    assert.deepEqual(health, [await registry.checkHealth('/a', '1.0.0'), await registry.checkHealth('/a', '1.0.0')]);
+  });
+
+  it('retains empty and never-synced results for missing or unreadable registries', async () => {
+    assert.deepEqual(await registry.listHealth(), []);
+    await mkdir(join(tmpDir, '.cat-cafe'));
+    for (const raw of ['malformed json', '{"entries":{}}']) {
+      await writeFile(join(tmpDir, '.cat-cafe/governance-registry.json'), raw);
+      assert.deepEqual(await registry.listHealth(), []);
+      assert.deepEqual(await registry.checkHealth('/unknown'), {
+        projectPath: '/unknown',
+        status: 'never-synced',
+        packVersion: null,
+        lastSyncedAt: null,
+        findings: [],
+      });
+    }
   });
 });

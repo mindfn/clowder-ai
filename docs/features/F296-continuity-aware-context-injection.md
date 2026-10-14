@@ -8,7 +8,7 @@ description: "按真实 runtime continuity 区分冷启动与热续，并让上�
 description_source: human
 description_author: codex-sol
 description_updated_at: 2026-08-31T16:45:00-07:00
-tips_exempt: "续租 2026-09-28 / PR #1543：spawn-time --settings 注入与 launch-plan readiness 只修复 #1542 的 carrier 契约真相源（AC-B8 措辞同步），不新增用户可操作入口。"
+tips_exempt: "Renewed 2026-10-08 for F321's one automatic first-owner-message historical clue. Source navigation and consumption remain in existing reply cue controls; discovery belongs to F321 and the existing memory-curation setting, with no separate F296 user action."
 ---
 
 # F296: Continuity-Aware Context Injection — 冷启动可信定向包 + 热续增量
@@ -38,6 +38,14 @@ Owner split: `identity-session` owns continuity / epoch；`memory` owns recall s
 Why: “猫是否仍有连续工作记忆”属于 identity/session continuity；“历史候选是否存在、来自哪里”
 属于 memory。F296 只在 route/bootstrap 组装边界决定本轮该呈现什么、以什么权威语气呈现，以及
 什么时候必须失效或重发。
+
+## F321 唯一的 historical clue 准入
+
+operator 已接受 `2026-10-08-f321-luna-thread-recall.md#luna-thread-recall` 的一次具体合同扩展：catalog v6 的 `thread_opened / owner_message` 可以把当前权限内的线程概况作为历史线索呈现。新增 `PresentationKind=clue`、`OpportunityEpistemicCeiling=historical_clue`，强度低于 state，高于通用 content-free pointer。
+
+T2 只在这一 closed entry、`F321.ThreadOpeningClue` policy、`thread-overview:` source anchor、对应版本和 source invalidator 一致时映射到 clue。最终 provider 边界还核 admission 的 producer、policy、entryVersion、scope、expiry、sourceRefs 和 invalidator；任一不一致便省略。它只能携带相关原因、历史背景与原文坐标，消费者须 drill 原文、核今天的 canonical 约定及 Task/PR，不能把概况升级为已批准事实。旧 T2 候选入口和泛化的 cold-start 摘要继续只允许 pointer/omit。
+
+下文的 v1/T2 pointer 限制是原基线，仍约束所有未获上述显式准入的来源。`f321-opening-presentation.test.ts` 与既有 F296 mapper/provider/ledger 测试共同守住扩展和负例；cue 的呈现仍只由 provider receipt 消耗本 epoch 的 ledger reservation。
 
 ## Why
 
@@ -211,7 +219,7 @@ unrecognized 各自的 count/bytes、delivery latency ms 与 bounded ledger outc
 也禁止把这些字段放进 metric labels。
 
 代码唯一可导入字段合同是
-`packages/api/src/domains/cats/services/session/context-projection-telemetry-contract.ts`。当前 producer 与后续
+`packages/api/src/domains/cats/services/session/context/context-projection-telemetry-contract.ts`。当前 producer 与后续
 Alpha consumer 必须共同导入它；plan、discussion 与 BACKLOG 只导航本节，不再复制字段清单。
 
 ## Current State / 现状基线

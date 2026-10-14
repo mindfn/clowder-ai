@@ -42,6 +42,11 @@ function createMockDeps(services) {
   let counter = 0;
   return {
     services,
+    queueSourceCustodyAdmission: {
+      admitDeferred: async () => {},
+      admitDeferredBatch: async () => {},
+      discardDeferredBatch: () => {},
+    },
     invocationDeps: {
       registry: {
         create: () => ({ invocationId: `inv-${++counter}`, callbackToken: `tok-${counter}` }),

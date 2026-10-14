@@ -1,0 +1,58 @@
+{
+  "resource": {
+    "kind": "family",
+    "resourceFamily": "tracking-review"
+  },
+  "retiredNames": [],
+  "canonicalNames": ["cat_cafe_transfer_external_review"],
+  "expectedProfiles": {
+    "cat_cafe_transfer_external_review": ["full"]
+  },
+  "rollbackRevision": "e511896dc26ce771911c716fe3009e19de04f080",
+  "layers": {
+    "mcp-definition": {
+      "status": "covered",
+      "consumers": [
+        "packages/mcp-server/src/tools/external-review-verdict-tool.ts",
+        "packages/api/src/routes/callback-external-review-transfer-route.ts"
+      ]
+    },
+    "runtime-catalog-profile": {
+      "status": "covered",
+      "consumers": [
+        "packages/mcp-server/src/canonical-server-tools.ts",
+        "packages/mcp-server/governance/mcp-surface-baseline.json"
+      ]
+    },
+    "prompt-l0": {
+      "status": "not-applicable",
+      "rationale": "Tool discovery exposes this scoped cat-only handover; no new constant L0 injection.",
+      "absenceEvidence": ["cat_cafe_transfer_external_review"]
+    },
+    "skill-convention": {
+      "status": "covered",
+      "consumers": ["docs/features/F168-community-ops-board.md", "docs/plans/2026-10-06-f168-reviewer-transfer.md"]
+    },
+    "fixture-test": {
+      "status": "covered",
+      "consumers": [
+        "packages/api/test/f168-reviewer-transfer.test.ts",
+        "packages/api/test/f168-reviewer-transfer-routes.test.ts",
+        "packages/api/test/redis-community-event-log.test.js",
+        "packages/mcp-server/test/external-review-verdict-tool.test.js"
+      ]
+    },
+    "eval": {
+      "status": "not-applicable",
+      "rationale": "Deterministic authority, replay and CAS contracts use regression tests; there is no uncertain utility claim.",
+      "absenceEvidence": ["cat_cafe_transfer_external_review"]
+    },
+    "observability": {
+      "status": "covered",
+      "consumers": [
+        "packages/api/src/domains/community/CommunityEventLog.ts",
+        "packages/api/src/domains/community/community-projector.ts"
+      ]
+    }
+  }
+}

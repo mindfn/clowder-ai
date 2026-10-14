@@ -2,6 +2,8 @@ import type { PawFeelInboxItem, PawFeelInboxPage } from '@cat-cafe/shared';
 import { act } from 'react';
 import { createRoot, type Root } from 'react-dom/client';
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
+import { writeShellLanguage } from '@/components/shell/shell-language';
+import { writeShellPresentation } from '@/components/shell/shell-presentation';
 
 const mocks = vi.hoisted(() => ({
   apiFetch: vi.fn(),
@@ -149,15 +151,72 @@ describe('PawFeelInboxSection', () => {
     document.body.appendChild(container);
     root = createRoot(container);
     mocks.apiFetch.mockReset();
+    act(() => {
+      writeShellPresentation('classic');
+      writeShellLanguage('zh');
+    });
   });
 
   afterEach(() => {
-    act(() => root.unmount());
+    act(() => {
+      root.unmount();
+      writeShellPresentation('classic');
+      writeShellLanguage('zh');
+    });
     container.remove();
   });
 
   afterAll(() => {
     delete (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT;
+  });
+
+  it.each([
+    { ok: false, expected: 'Friction inbox request failed (503)' },
+    { ok: true, expected: 'The friction inbox returned invalid data' },
+  ])('rewords a local inbox failure in place without rereading ($ok)', async ({ ok, expected }) => {
+    act(() => writeShellPresentation('v2'));
+    mocks.apiFetch.mockImplementation(async (path: string) =>
+      path.startsWith('/api/paw-feel/duty')
+        ? { ok: true, json: async () => ({ config: null }) }
+        : { ok, status: 503, json: async () => ({ invalid: true }) },
+    );
+    await act(async () => root.render(<PawFeelInboxSection pollMs={0} />));
+    expect(container.querySelector('[role="alert"]')?.textContent).toMatch(/爪感差收件箱/);
+    const requests = mocks.apiFetch.mock.calls.length;
+    await act(async () => writeShellLanguage('en'));
+    expect(container.querySelector('[role="alert"]')?.textContent).toBe(expected);
+    expect(mocks.apiFetch.mock.calls.length).toBe(requests);
+  });
+
+  it('localizes a populated English inbox without translating its source or refetching on language switch', async () => {
+    act(() => {
+      writeShellPresentation('v2');
+      writeShellLanguage('en');
+    });
+    const item = buildItem('locale', 'routed', {
+      disposition: { ...buildItem('locale', 'routed').disposition, targetThreadId: 'thread-original' },
+    });
+    const page = buildPage({ items: [item] });
+    mocks.apiFetch.mockImplementation(async (path: string) => ({
+      ok: true,
+      json: async () => (path.startsWith('/api/paw-feel/duty') ? { config: null } : page),
+    }));
+    await act(async () => root.render(<PawFeelInboxSection pollMs={0} />));
+    expect(container.textContent).toContain('Friction responsibility inbox');
+    expect(container.textContent).toContain('Issue open');
+    expect(container.textContent).toContain('Show 1 original reports');
+    expect(container.textContent).toContain(item.source.availability === 'available' ? item.source.preview : '');
+    const expand = Array.from(container.querySelectorAll('button')).find((button) =>
+      button.textContent?.includes('Show 1 original reports'),
+    );
+    await act(async () => expand?.click());
+    expect(container.textContent).toContain('Transferred to thread-original; repair is not yet proven');
+    expect(container.textContent).not.toContain('已移交至');
+    const requests = mocks.apiFetch.mock.calls.length;
+    await act(async () => writeShellLanguage('zh'));
+    expect(mocks.apiFetch.mock.calls.length).toBe(requests);
+    expect(container.textContent).toContain('已移交至 thread-original，不代表已经修复');
+    expect(container.querySelector('[data-testid="paw-feel-inbox-row"]')).not.toBeNull();
   });
 
   it('keeps every ledger row visible when semantic grouping is degraded', async () => {

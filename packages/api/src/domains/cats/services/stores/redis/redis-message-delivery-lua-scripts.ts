@@ -1,3 +1,4 @@
+import { withOwnerUncertaintyIndex } from './owner-uncertainty-lua.js';
 /**
  * Lua scripts for atomic delivery-order transitions (PR #1193).
  *
@@ -34,7 +35,8 @@
  * {1, HGETALL} on a CAS win. Returning the canonical hash with the outcome
  * preserves Clowder AI's deliveryTransitioned receipt without a post-EVAL read gap.
  */
-export const DELIVER_LUA = `
+export const DELIVER_LUA = withOwnerUncertaintyIndex(
+  `
 local hash = KEYS[1]
 local msgId = ARGV[1]
 local deliveredAt = ARGV[2]
@@ -92,7 +94,9 @@ redis.call('ZADD', kp .. 'msg:timeline', tonumber(timelineScore), msgId)
 redis.call('ZADD', kp .. 'msg:user:' .. userId, tonumber(timelineScore), msgId)
 
 return {1, redis.call('HGETALL', hash)}
-`;
+`,
+  1,
+);
 
 /**
  * CANCEL: CAS transition queued → canceled.
@@ -102,7 +106,8 @@ return {1, redis.call('HGETALL', hash)}
  * Returns: {-1, {}} when missing, {0, HGETALL} on a state no-op, or
  * {1, HGETALL} on a CAS win.
  */
-export const CANCEL_LUA = `
+export const CANCEL_LUA = withOwnerUncertaintyIndex(
+  `
 local hash = KEYS[1]
 if redis.call('EXISTS', hash) == 0 then
   return {-1, {}}
@@ -114,7 +119,9 @@ end
 redis.call('HSET', hash, 'deliveryStatus', 'canceled')
 redis.call('HDEL', hash, 'queueCustody', 'queueCustodyRevision', 'queueCustodyAdmission')
 return {1, redis.call('HGETALL', hash)}
-`;
+`,
+  1,
+);
 
 /**
  * REASSIGN: move message ownership atomically.

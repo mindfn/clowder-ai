@@ -1,3 +1,4 @@
+import type { FirstAssistantOutputEvidence } from './output-message.js';
 import type { SessionStatus } from './session.js';
 
 export type InvocationTrajectoryStatus = 'running' | 'done' | 'error' | 'cancelled' | 'timeout';
@@ -30,6 +31,8 @@ export interface InvocationTrajectorySummary {
   errorCount: number;
   toolNames: string[];
   keyMessages: string[];
+  /** Absent only when no assistant candidate has been observed. Legacy candidates are explicit unknown. */
+  firstAssistantOutputEvidence?: FirstAssistantOutputEvidence;
   terminalReason?: string;
   tokens?: InvocationTrajectoryTokens;
 }

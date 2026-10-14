@@ -20,6 +20,11 @@
 
 import type { CatId, CatRoutingError, MessageContent } from '@cat-cafe/shared';
 import { catRegistry, escapeRegExp } from '@cat-cafe/shared';
+import type {
+  RoutingPreviewReason,
+  RoutingPreviewReasonKind,
+  RoutingPreviewResponse,
+} from '@cat-cafe/shared/routing-preview';
 import type { SessionStore } from '@cat-cafe/shared/utils';
 import { context as ctxApi, SpanStatusCode, trace } from '@opentelemetry/api';
 import { getDefaultCatId, isCatAvailable } from '../../../../../config/cat-config-loader.js';
@@ -34,8 +39,8 @@ import { inferRoutingContextIntent } from '../../../../routing-context/RoutingDi
 import type { IntentResult } from '../../context/IntentParser.js';
 import { parseIntent, ROUTE_CONTROL_TAGS, stripIntentTags } from '../../context/IntentParser.js';
 import type { IRuntimeSessionStore } from '../../runtime-session/RuntimeSessionStore.js';
-import type { ContextEpochOwner } from '../../session/ContextEpochOwner.js';
-import type { PresentationLedger } from '../../session/PresentationLedger.js';
+import type { ContextEpochOwner } from '../../session/context/ContextEpochOwner.js';
+import type { PresentationLedger } from '../../session/context/PresentationLedger.js';
 import { SessionManager } from '../../session/SessionManager.js';
 import type { ISessionSealer } from '../../session/SessionSealer.js';
 import type { TranscriptReader } from '../../session/TranscriptReader.js';
@@ -499,6 +504,9 @@ export interface AgentRouterOptions {
   collectiveContext?: import('../invocation/invoke-single-cat.js').InvocationDeps['collectiveContext'];
   agentRegistry: AgentRegistry;
   registry: InvocationRegistry;
+  dotReplyTarget?: (
+    source: import('../../cloud-bridge/dot/dot-reply-authority.js').DotReplyCandidate,
+  ) => Promise<boolean>;
   messageStore: IMessageStore;
   /** F045 Gap #4: Redis-backed task progress snapshots */
   taskProgressStore?: TaskProgressStore;
@@ -619,9 +627,12 @@ export interface AgentRouterOptions {
   /** F287: invocation-bound Cue Plane adapter. */
   memoryCuePromptService?: import('../../../../memory/cue/MemoryCueInvocationPromptService.js').MemoryCueInvocationPromptResolver;
   profileCueOpportunitySource?: import('../../../../memory/cue/sources/ProfileMemoryCueSource.js').ProfileMemoryCueSource;
+  threadOverviewOpportunitySource?: import('../../../../memory/cue/sources/ThreadOverviewMemoryCueSource.js').ThreadOverviewMemoryCueSource;
   eventCueOpportunitySource?: import('../../../../memory/cue/sources/EventMemoryCueSource.js').EventMemoryCueSource;
   /** F231 canonical profile owner for F299 source-lifecycle binding. */
   profileRepository?: import('../../profile/ProfileRepository.js').FileProfileRepository;
+  /** Durable source admission for route-serial occupied-slot Queue fallback. */
+  queueSourceCustodyAdmission?: import('../invocation/QueueSourceCustodyAdmission.js').QueueSourceCustodyAdmissionService;
 }
 
 /**
@@ -697,6 +708,7 @@ export class AgentRouter {
   /** F229 Phase B */
   private conciergeTriagePlanStore?: import('../../../../concierge/ConciergeTriagePlanStore.js').IConciergeTriagePlanStore;
   /** F247 AC-B1c-3 PR-C */
+  private dotReplyTarget?: AgentRouterOptions['dotReplyTarget'];
   private cloudInvokeBridge?: import('../../cloud-bridge/types.js').ICloudInvokeBridge;
   private cloudReturnGrantStore?: import('../../cloud-bridge/cloud-return-grant.js').CloudReturnGrantStore;
   private a2aDispatchDispositionService?: Pick<
@@ -723,64 +735,11 @@ export class AgentRouter {
   /** F287 */
   private memoryCuePromptService?: import('../../../../memory/cue/MemoryCueInvocationPromptService.js').MemoryCueInvocationPromptResolver;
   private profileCueOpportunitySource?: import('../../../../memory/cue/sources/ProfileMemoryCueSource.js').ProfileMemoryCueSource;
+  private threadOverviewOpportunitySource?: import('../../../../memory/cue/sources/ThreadOverviewMemoryCueSource.js').ThreadOverviewMemoryCueSource;
   private eventCueOpportunitySource?: import('../../../../memory/cue/sources/EventMemoryCueSource.js').EventMemoryCueSource;
   private profileRepository?: import('../../profile/ProfileRepository.js').FileProfileRepository;
+  private queueSourceCustodyAdmission?: import('../invocation/QueueSourceCustodyAdmission.js').QueueSourceCustodyAdmissionService;
   private speechMentionRe: RegExp;
-
-  /**
-   * F222 Phase B: Collect the most recent TEXT_FRUSTRATION_WINDOW user messages
-   * from a thread using Z5-style reverse-iterate paging, then run keyword detection.
-   * Shared by both route() and routeExecution() (cloud P1 fix).
-   *
-   * Uses SYSTEM_USER_IDS (not just 'system') to exclude scheduler/connector noise (cloud P2 fix).
-   */
-  private async collectAndDetectTextFrustration(
-    threadId: string,
-    detectTextFrustration: (msgs: string[]) => { matched: boolean; matchedKeywords: string[]; matchCount: number },
-  ): Promise<{ matched: boolean; matchedKeywords: string[]; matchCount: number; recentUserMessages: string[] }> {
-    const { TEXT_FRUSTRATION_WINDOW } = await import('../../frustration/text-frustration-keywords.js');
-    const PAGE_SIZE = 50;
-    const MAX_PAGES = 10;
-    const userMsgs: string[] = [];
-    type MsgLike = {
-      catId?: string | null;
-      userId?: string;
-      content?: string;
-      id?: string;
-      timestamp?: number;
-      deliveredAt?: number;
-    };
-    let cursorScore = Infinity;
-    let cursorId: string | undefined;
-    let isFirstPage = true;
-    for (let page = 0; page < MAX_PAGES && userMsgs.length < TEXT_FRUSTRATION_WINDOW; page++) {
-      const batch: MsgLike[] = isFirstPage
-        ? ((await this.messageStore.getByThread(threadId, PAGE_SIZE)) as MsgLike[])
-        : ((await this.messageStore.getByThreadBefore(threadId, cursorScore, PAGE_SIZE, cursorId)) as MsgLike[]);
-      isFirstPage = false;
-      if (batch.length === 0) break;
-      const first = batch[0]!;
-      const dAt = typeof first.deliveredAt === 'number' ? first.deliveredAt : 0;
-      const ts = typeof first.timestamp === 'number' ? first.timestamp : 0;
-      const firstScore = dAt > 0 ? dAt : ts;
-      if (firstScore > 0 && firstScore < cursorScore) {
-        cursorScore = firstScore;
-        cursorId = first.id;
-      }
-      for (let i = batch.length - 1; i >= 0 && userMsgs.length < TEXT_FRUSTRATION_WINDOW; i--) {
-        const m = batch[i]!;
-        // Cloud P2 fix: exclude all system users (scheduler, system, etc.), not just 'system'
-        if (!m.catId && !SYSTEM_USER_IDS.has(m.userId ?? '')) {
-          userMsgs.push(typeof m.content === 'string' ? m.content : '');
-        }
-      }
-    }
-    const detection = detectTextFrustration(userMsgs);
-    return {
-      ...detection,
-      recentUserMessages: userMsgs.slice(0, 3).map((m) => m.slice(0, 200)),
-    };
-  }
 
   private rebuildRuntimeCaches(agentRegistry: AgentRegistry): void {
     this.unavailableServices = agentRegistry.getAllUnavailableEntries();
@@ -847,6 +806,7 @@ export class AgentRouter {
     this.frustrationIssueStore = options.frustrationIssueStore;
     this.conciergeConfigStore = options.conciergeConfigStore;
     this.conciergeTriagePlanStore = options.conciergeTriagePlanStore;
+    this.dotReplyTarget = options.dotReplyTarget;
     this.cloudInvokeBridge = options.cloudInvokeBridge;
     this.cloudReturnGrantStore = options.cloudReturnGrantStore;
     this.a2aDispatchDispositionService = options.a2aDispatchDispositionService;
@@ -862,7 +822,9 @@ export class AgentRouter {
     this.memoryCuePromptService = options.memoryCuePromptService;
     this.profileCueOpportunitySource = options.profileCueOpportunitySource;
     this.eventCueOpportunitySource = options.eventCueOpportunitySource;
+    this.threadOverviewOpportunitySource = options.threadOverviewOpportunitySource;
     this.profileRepository = options.profileRepository;
+    this.queueSourceCustodyAdmission = options.queueSourceCustodyAdmission;
   }
 
   refreshFromRegistry(agentRegistry: AgentRegistry): void {
@@ -1330,146 +1292,128 @@ export class AgentRouter {
     return this.parseMentions(message);
   }
 
-  /**
-   * Read-only target resolution: mentions → last-replier (scoped to preferredCats) → default cat.
-   * F32-b Phase 2 + #58: preferredCats is a candidate scope, not a dispatch list.
-   * Does NOT mutate thread participants.
-   */
-  private async peekTargets(message: string, threadId: string): Promise<CatId[]> {
-    const { mentions: mentionedCats } = await this.parseAllMentions(message, threadId);
-    if (mentionedCats.length > 0) return mentionedCats;
-
-    if (this.threadStore) {
-      const thread = await this.threadStore.get(threadId);
-
-      // F32-b Phase 2 + #58: preferredCats = candidate scope, not dispatch list
-      // R5: Object.hasOwn + dedupe; Cloud P1: Array.isArray guard for corrupted data
-      const rawPref = Array.isArray(thread?.preferredCats) ? thread.preferredCats : [];
-      const validPreferred = this.filterRoutableCats(rawPref);
-      const preferredSet = new Set(validPreferred.map(String));
-
-      // #58: explicit #ideate with multiple preferred cats → dispatch all (user requested parallel)
-      const hasExplicitIdeate = /#ideate\b/i.test(message);
-      if (hasExplicitIdeate && validPreferred.length > 1) {
-        return this.applyThreadRoutingPolicy(thread, message, validPreferred);
-      }
-
-      // F229: Concierge threads always route to the configured duty cat (preferredCats).
-      // Placed BEFORE findRecentUserMentionFallback: a previous @mention in the concierge
-      // thread must not re-route follow-up messages to a non-duty cat. The front-desk duty
-      // cat is the always-on responder; explicit @mentions in the current message (parsed
-      // above) still override this, but implicit mention carry-over does not.
-      if (thread?.threadKind === 'concierge' && validPreferred.length > 0) {
-        return this.applyThreadRoutingPolicy(thread, message, validPreferred);
-      }
-
-      // F194 Phase Z5 AC-Z16: 优先用上一条 user message 的 mentions 作 fallback 候选集，
-      // 不让 thread 里其他猫的发言（vision guard / cross-post）抢路由。
-      // co-creator原话："明明 at 的最后一只猫是 47 or 55 但是召唤出来的却是 46"
-      const userMentionFallback = await this.findRecentUserMentionFallback(threadId);
-      if (userMentionFallback && userMentionFallback.length > 0) {
-        return this.applyThreadRoutingPolicy(thread, message, userMentionFallback);
-      }
-
-      // F078: last-replier takes absolute priority over preferredCats.
-      // User mental model: "no @ = continue with whoever I was talking to".
-      // preferredCats only kicks in when there's no conversation history at all.
-      // #267: three-tier fallback — (1) any healthy replier (unscoped),
-      //   (2) preferred non-errored participant, (3) any non-errored participant.
-      const participantsWithActivity = await this.threadStore.getParticipantsWithActivity(threadId);
-      const isRoutable = (p: { catId: CatId }) => this.isRoutableCat(p.catId);
-      const isHealthy = (p: { lastResponseHealthy?: boolean }) => p.lastResponseHealthy !== false;
-      const healthyReplier = participantsWithActivity.find((p) => p.messageCount > 0 && isHealthy(p) && isRoutable(p));
-      if (healthyReplier) {
-        return this.applyThreadRoutingPolicy(thread, message, [healthyReplier.catId]);
-      }
-      const preferredFallback = participantsWithActivity.find(
-        (p) => isHealthy(p) && isRoutable(p) && preferredSet.has(p.catId as string),
-      );
-      const anyFallback = participantsWithActivity.find((p) => isHealthy(p) && isRoutable(p));
-      const fallbackParticipant = preferredFallback ?? anyFallback;
-      if (fallbackParticipant) {
-        return this.applyThreadRoutingPolicy(thread, message, [fallbackParticipant.catId]);
-      }
-
-      // No healthy participant at all: use first preferred cat
-      if (validPreferred.length > 0) {
-        return this.applyThreadRoutingPolicy(thread, message, [validPreferred[0]]);
-      }
-
-      return this.applyThreadRoutingPolicy(thread, message, [getDefaultCatId()]);
-    }
-
-    return [getDefaultCatId()];
+  private applyRoutingPolicyForPreview(
+    thread: { routingPolicy?: ThreadRoutingPolicyV1 } | null | undefined,
+    message: string,
+    candidates: CatId[],
+    reasonKind: Exclude<RoutingPreviewReasonKind, 'thread_policy'>,
+  ): RoutingPreviewResponse {
+    const targetCats = this.applyThreadRoutingPolicy(thread, message, candidates);
+    const unchanged =
+      targetCats.length === candidates.length && targetCats.every((catId, index) => catId === candidates[index]);
+    const reason: RoutingPreviewReason = unchanged
+      ? { kind: reasonKind }
+      : { kind: 'thread_policy', baseKind: reasonKind };
+    return { targetCats, reason };
   }
 
-  /** Resolve target cats and persist new mentions as thread participants */
-  private async resolveTargets(message: string, threadId: string): Promise<CatId[]> {
+  /**
+   * One read-only resolver shared by the composer preview and the real send path.
+   * A prospective preference represents a not-yet-created conversation: it has no
+   * prior mentions or repliers and never writes a synthetic thread.
+   */
+  private async resolveTargetPreview(
+    message: string,
+    threadId: string,
+    options?: { prospectivePreferredCats?: readonly CatId[] },
+  ): Promise<RoutingPreviewResponse> {
     const { mentions: mentionedCats } = await this.parseAllMentions(message, threadId);
-
     if (mentionedCats.length > 0) {
-      if (this.threadStore) {
-        await this.threadStore.addParticipants(threadId, mentionedCats);
-      }
-      return mentionedCats;
+      return { targetCats: mentionedCats, reason: { kind: 'current_message_mentions' } };
     }
 
-    if (this.threadStore) {
-      const thread = await this.threadStore.get(threadId);
+    const prospective = options?.prospectivePreferredCats !== undefined;
+    if (!prospective && !this.threadStore) {
+      // Preserve the pre-existing no-store fallback used by narrow tests and
+      // compatibility callers; production routing always has a ThreadStore.
+      return { targetCats: [getDefaultCatId()], reason: { kind: 'default_cat' } };
+    }
+    const thread:
+      | {
+          preferredCats?: readonly CatId[];
+          routingPolicy?: ThreadRoutingPolicyV1;
+          threadKind?: string;
+        }
+      | null
+      | undefined = prospective
+      ? { preferredCats: [...(options?.prospectivePreferredCats ?? [])] }
+      : await this.threadStore?.get(threadId);
+    const rawPref = Array.isArray(thread?.preferredCats) ? thread.preferredCats : [];
+    const validPreferred = this.filterRoutableCats(rawPref);
+    const preferredSet = new Set(validPreferred.map(String));
 
-      // F32-b Phase 2 + #58: preferredCats = candidate scope, not dispatch list
-      // R5: Object.hasOwn + dedupe; Cloud P1: Array.isArray guard for corrupted data
-      const rawPref = Array.isArray(thread?.preferredCats) ? thread.preferredCats : [];
-      const validPreferred = this.filterRoutableCats(rawPref);
-      const preferredSet = new Set(validPreferred.map(String));
+    // #58: explicit #ideate with multiple preferred cats → dispatch all.
+    if (/#ideate\b/i.test(message) && validPreferred.length > 1) {
+      return this.applyRoutingPolicyForPreview(thread, message, validPreferred, 'preferred_parallel');
+    }
 
-      // #58: explicit #ideate with multiple preferred cats → dispatch all (user requested parallel)
-      const hasExplicitIdeate = /#ideate\b/i.test(message);
-      if (hasExplicitIdeate && validPreferred.length > 1) {
-        return this.applyThreadRoutingPolicy(thread, message, validPreferred);
-      }
+    // F229: a concierge duty cat overrides implicit history, while an explicit
+    // mention in the current message still won above.
+    if (!prospective && thread?.threadKind === 'concierge' && validPreferred.length > 0) {
+      return this.applyRoutingPolicyForPreview(thread, message, validPreferred, 'concierge_preferred');
+    }
 
-      // F229: Concierge threads always route to the configured duty cat (preferredCats).
-      // Placed BEFORE findRecentUserMentionFallback — see matching comment in peekTargets.
-      if (thread?.threadKind === 'concierge' && validPreferred.length > 0) {
-        return this.applyThreadRoutingPolicy(thread, message, validPreferred);
-      }
-
-      // F194 Phase Z5 AC-Z16: 优先用上一条 user message 的 mentions 作 fallback 候选集，
-      // 不让 thread 里其他猫的发言（vision guard / cross-post）抢路由。
-      // co-creator原话："明明 at 的最后一只猫是 47 or 55 但是召唤出来的却是 46"
+    if (!prospective && this.threadStore) {
       const userMentionFallback = await this.findRecentUserMentionFallback(threadId);
       if (userMentionFallback && userMentionFallback.length > 0) {
-        return this.applyThreadRoutingPolicy(thread, message, userMentionFallback);
+        return this.applyRoutingPolicyForPreview(thread, message, userMentionFallback, 'previous_user_mentions');
       }
 
-      // F078 + #58: last-replier takes priority over preferred cats (user mental model)
-      // #267: three-tier fallback (same as peekTargets)
       const participantsWithActivity = await this.threadStore.getParticipantsWithActivity(threadId);
-      const isRoutable = (p: { catId: CatId }) => this.isRoutableCat(p.catId);
-      const isHealthy = (p: { lastResponseHealthy?: boolean }) => p.lastResponseHealthy !== false;
-      const healthyReplier = participantsWithActivity.find((p) => p.messageCount > 0 && isHealthy(p) && isRoutable(p));
+      const isRoutable = (participant: { catId: CatId }) => this.isRoutableCat(participant.catId);
+      const isHealthy = (participant: { lastResponseHealthy?: boolean }) => participant.lastResponseHealthy !== false;
+      const healthyReplier = participantsWithActivity.find(
+        (participant) => participant.messageCount > 0 && isHealthy(participant) && isRoutable(participant),
+      );
       if (healthyReplier) {
-        return this.applyThreadRoutingPolicy(thread, message, [healthyReplier.catId]);
+        return this.applyRoutingPolicyForPreview(thread, message, [healthyReplier.catId], 'recent_replier');
       }
       const preferredFallback = participantsWithActivity.find(
-        (p) => isHealthy(p) && isRoutable(p) && preferredSet.has(p.catId as string),
+        (participant) =>
+          isHealthy(participant) && isRoutable(participant) && preferredSet.has(participant.catId as string),
       );
-      const anyFallback = participantsWithActivity.find((p) => isHealthy(p) && isRoutable(p));
-      const fallbackParticipant = preferredFallback ?? anyFallback;
-      if (fallbackParticipant) {
-        return this.applyThreadRoutingPolicy(thread, message, [fallbackParticipant.catId]);
+      if (preferredFallback) {
+        return this.applyRoutingPolicyForPreview(thread, message, [preferredFallback.catId], 'preferred_cat');
       }
-
-      // No healthy participant at all: use first preferred cat
-      if (validPreferred.length > 0) {
-        return this.applyThreadRoutingPolicy(thread, message, [validPreferred[0]]);
+      const anyFallback = participantsWithActivity.find(
+        (participant) => isHealthy(participant) && isRoutable(participant),
+      );
+      if (anyFallback) {
+        return this.applyRoutingPolicyForPreview(thread, message, [anyFallback.catId], 'available_participant');
       }
-
-      return this.applyThreadRoutingPolicy(thread, message, [getDefaultCatId()]);
     }
 
-    return [getDefaultCatId()];
+    if (validPreferred.length > 0) {
+      return this.applyRoutingPolicyForPreview(thread, message, [validPreferred[0]], 'preferred_cat');
+    }
+
+    return this.applyRoutingPolicyForPreview(thread, message, [getDefaultCatId()], 'default_cat');
+  }
+
+  /** Read-only projection for the v2 composer; never mutates participants. */
+  async previewTargets(
+    message: string,
+    options: { threadId: string; prospectivePreferredCats?: readonly CatId[] },
+  ): Promise<RoutingPreviewResponse> {
+    return this.resolveTargetPreview(message, options.threadId, {
+      ...(options.prospectivePreferredCats === undefined
+        ? {}
+        : { prospectivePreferredCats: options.prospectivePreferredCats }),
+    });
+  }
+
+  /** Read-only target resolution used before route admission. */
+  private async peekTargets(message: string, threadId: string): Promise<CatId[]> {
+    return (await this.resolveTargetPreview(message, threadId)).targetCats;
+  }
+
+  /** Resolve target cats and persist only explicit mentions as thread participants. */
+  private async resolveTargets(message: string, threadId: string): Promise<CatId[]> {
+    const preview = await this.resolveTargetPreview(message, threadId);
+    if (preview.reason.kind === 'current_message_mentions' && this.threadStore) {
+      await this.threadStore.addParticipants(threadId, preview.targetCats);
+    }
+    return preview.targetCats;
   }
 
   /** Build shared strategy dependencies (public for ModeOrchestrator) */
@@ -1518,6 +1462,7 @@ export class AgentRouter {
         ...(this.dismissTracker ? { dismissTracker: this.dismissTracker } : {}),
         ...(this.conciergeConfigStore ? { conciergeConfigStore: this.conciergeConfigStore } : {}),
         ...(this.conciergeTriagePlanStore ? { conciergeTriagePlanStore: this.conciergeTriagePlanStore } : {}),
+        ...(this.dotReplyTarget ? { dotReplyTarget: this.dotReplyTarget } : {}),
         ...(this.cloudInvokeBridge ? { cloudInvokeBridge: this.cloudInvokeBridge } : {}),
         ...(this.cloudReturnGrantStore ? { cloudReturnGrantStore: this.cloudReturnGrantStore } : {}),
         ...(this.a2aDispatchDispositionService
@@ -1531,6 +1476,9 @@ export class AgentRouter {
         ...(this.runtimeInteractionPort ? { runtimeInteractionPort: this.runtimeInteractionPort } : {}),
         ...(this.memoryCuePromptService ? { memoryCuePromptService: this.memoryCuePromptService } : {}),
         ...(this.profileCueOpportunitySource ? { profileCueOpportunitySource: this.profileCueOpportunitySource } : {}),
+        ...(this.threadOverviewOpportunitySource
+          ? { threadOverviewOpportunitySource: this.threadOverviewOpportunitySource }
+          : {}),
         ...(this.eventCueOpportunitySource ? { eventCueOpportunitySource: this.eventCueOpportunitySource } : {}),
         ...(this.profileRepository ? { profileRepository: this.profileRepository } : {}),
       },
@@ -1561,6 +1509,7 @@ export class AgentRouter {
       ...(this.personMemoryProposalStatusContextResolver
         ? { personMemoryProposalStatusContextResolver: this.personMemoryProposalStatusContextResolver }
         : {}),
+      ...(this.queueSourceCustodyAdmission ? { queueSourceCustodyAdmission: this.queueSourceCustodyAdmission } : {}),
     };
   }
 
@@ -1636,58 +1585,6 @@ export class AgentRouter {
       ...(contentBlocks ? { contentBlocks } : {}),
     });
 
-    // F222 Phase B+C: Text frustration + retry burst detection
-    if (this.frustrationIssueStore) {
-      try {
-        const { detectTextFrustration } = await import('../../frustration/text-frustration-keywords.js');
-        const detection = await this.collectAndDetectTextFrustration(resolvedThreadId, detectTextFrustration);
-        const { evaluate } = await import('../../frustration/FrustrationDetector.js');
-        const frustDeps = {
-          frustrationIssueStore: this.frustrationIssueStore,
-          messageStore: this.messageStore,
-          socketManager: this.socketManager as
-            | import('../../../../../infrastructure/websocket/index.js').SocketManager
-            | undefined,
-        };
-        const baseSigCtx = { threadId: resolvedThreadId, userId, catId: (targetCats[0] ?? 'unknown') as string };
-
-        // Signal: text_frustration (Phase B)
-        if (detection.matched) {
-          await evaluate(
-            {
-              signal: {
-                type: 'text_frustration' as const,
-                matchedKeywords: detection.matchedKeywords,
-                matchCount: detection.matchCount,
-                recentUserMessages: detection.recentUserMessages,
-              },
-              ...baseSigCtx,
-            },
-            frustDeps,
-          );
-        }
-
-        // Signal: retry_burst (Phase C AC-C2) — same message sent ≥3 times
-        const { detectRetryBurst } = await import('../../frustration/retry-burst-detector.js');
-        const retryResult = detectRetryBurst(message, detection.recentUserMessages);
-        if (retryResult.matched) {
-          await evaluate(
-            {
-              signal: {
-                type: 'retry_burst' as const,
-                matchCount: retryResult.matchCount,
-                repeatedPrefix: retryResult.repeatedPrefix,
-              },
-              ...baseSigCtx,
-            },
-            frustDeps,
-          );
-        }
-      } catch {
-        // Non-blocking
-      }
-    }
-
     const strategyDeps = this.getStrategyDeps();
     const routingContextIntent = inferRoutingContextIntent(cleanMessage);
     const routeOptions = {
@@ -1734,6 +1631,7 @@ export class AgentRouter {
     targetCats: CatId[],
     intent: IntentResult,
     options: A2ASlotTrackingOptions & {
+      liveCompanion?: RouteOptions['liveCompanion'];
       /** Authentication-grade owner provenance; legacy/system producers pass unknown. */
       ownerAuthProvenance: NonNullable<RouteOptions['ownerAuthProvenance']>;
       /** F167 Phase T: turn-scoped protocol carrier for the structured stop gate. */
@@ -1831,61 +1729,10 @@ export class AgentRouter {
       await this.threadStore.updateLastActive(threadId);
     }
 
-    // F222 Phase B+C: Text frustration + retry burst detection (production path)
-    // F222 P1: Skip for A2A/connector origins — only detect frustration on user-driven routes
-    if (this.frustrationIssueStore && options?.frustrationAutoIssueEligible !== false) {
-      try {
-        const { detectTextFrustration } = await import('../../frustration/text-frustration-keywords.js');
-        const detection = await this.collectAndDetectTextFrustration(threadId, detectTextFrustration);
-        const { evaluate } = await import('../../frustration/FrustrationDetector.js');
-        const frustDeps = {
-          frustrationIssueStore: this.frustrationIssueStore,
-          messageStore: this.messageStore,
-          socketManager: this.socketManager as
-            | import('../../../../../infrastructure/websocket/index.js').SocketManager
-            | undefined,
-        };
-        const baseSigCtx = { threadId, userId, catId: (targetCats[0] ?? 'unknown') as string };
-
-        if (detection.matched) {
-          await evaluate(
-            {
-              signal: {
-                type: 'text_frustration' as const,
-                matchedKeywords: detection.matchedKeywords,
-                matchCount: detection.matchCount,
-                recentUserMessages: detection.recentUserMessages,
-              },
-              ...baseSigCtx,
-            },
-            frustDeps,
-          );
-        }
-
-        // Signal: retry_burst (Phase C AC-C2)
-        const { detectRetryBurst } = await import('../../frustration/retry-burst-detector.js');
-        const retryResult = detectRetryBurst(message, detection.recentUserMessages);
-        if (retryResult.matched) {
-          await evaluate(
-            {
-              signal: {
-                type: 'retry_burst' as const,
-                matchCount: retryResult.matchCount,
-                repeatedPrefix: retryResult.repeatedPrefix,
-              },
-              ...baseSigCtx,
-            },
-            frustDeps,
-          );
-        }
-      } catch {
-        // Non-blocking
-      }
-    }
-
     const strategyDeps = this.getStrategyDeps();
     const routingContextIntent = inferRoutingContextIntent(cleanMessage);
     const routeOptions = {
+      ...(options.liveCompanion ? { liveCompanion: options.liveCompanion } : {}),
       routeIntent: projectAgentRouteIntent(intent),
       ...(routingContextIntent ? { routingContextIntent } : {}),
       ownerAuthProvenance: options.ownerAuthProvenance,

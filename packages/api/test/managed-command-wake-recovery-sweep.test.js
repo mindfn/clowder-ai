@@ -9,7 +9,7 @@
  */
 
 import assert from 'node:assert/strict';
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { describe, test } from 'node:test';
@@ -43,6 +43,194 @@ function makeTask(overrides = {}) {
     ...overrides,
   };
 }
+
+test('not_started receipt recovers visibility once, with no wake or active execution', async () => {
+  const { ManagedCommandWakeRecoverySweep } = await import(
+    '../dist/domains/ball-custody/ManagedCommandWakeRecoverySweep.js'
+  );
+  const { listManagedCommandExecutions } = await import(
+    '../dist/domains/cats/services/agents/invocation/active-execution-service.js'
+  );
+  const task = makeTask({ enabled: false });
+  task.params.holdLifecycle.status = 'not_started';
+  task.params.holdLifecycle.managedCommand = {
+    state: 'not_started',
+    command: 'echo never-ran',
+    startedAt: 1000,
+    pid: null,
+    notStartedReason: 'admission_rejected',
+    notStartedDetail: 'provider_execution_refused:effect_closed_or_consumed',
+    admissionFact: '命令未启动（provider_execution_refused:effect_closed_or_consumed）',
+    admissionFactAppended: false,
+  };
+  const h = makeHarness({ task });
+  const sweep = new ManagedCommandWakeRecoverySweep(h.deps);
+  await sweep.runOnce();
+  await sweep.runOnce();
+  assert.equal(h.appended.length, 1);
+  assert.equal(h.triggerCalls.length, 0);
+  assert.deepEqual(listManagedCommandExecutions([task]), []);
+  assert.equal(task.params.holdLifecycle.managedCommand.state, 'not_started');
+});
+
+test('enabled no-spawn crash window is repaired before redelivering admission visibility', async () => {
+  const { ManagedCommandWakeRecoverySweep } = await import(
+    '../dist/domains/ball-custody/ManagedCommandWakeRecoverySweep.js'
+  );
+  const { parseNotStartedManagedCommandTask } = await import(
+    '../dist/domains/ball-custody/managed-command-wake-task-projection.js'
+  );
+  const task = makeTask({ enabled: true });
+  task.params.holdLifecycle.status = 'not_started';
+  task.params.holdLifecycle.managedCommand = {
+    state: 'not_started',
+    command: 'echo never-ran',
+    startedAt: 1000,
+    pid: null,
+    notStartedReason: 'admission_rejected',
+    notStartedDetail: 'explicit_refusal',
+    admissionFact: 'command not started',
+    admissionFactAppended: false,
+  };
+  assert.equal(parseNotStartedManagedCommandTask(task)?.command.state, 'not_started');
+  const h = makeHarness({ task });
+  const disable = h.deps.dynamicTaskStore.setEnabled;
+  h.deps.dynamicTaskStore.setEnabled = () => false;
+  const sweep = new ManagedCommandWakeRecoverySweep(h.deps);
+  assert.equal((await sweep.runOnce()).pending, 1);
+  assert.equal(h.appended.length, 0, 'partial terminal cannot publish durable success');
+  h.deps.dynamicTaskStore.setEnabled = disable;
+  await sweep.runOnce();
+  await sweep.runOnce();
+  assert.equal(h.tasks.get(task.id).enabled, false);
+  assert.equal(h.appended.length, 1);
+  assert.equal(h.triggerCalls.length, 0);
+});
+
+for (const invalid of ['origin', 'path', 'recovery-config']) {
+  test(`not_started recovery rejects invalid ${invalid} with no gate write or visibility`, async () => {
+    const { createDurableManagedGateJob, validateDurableManagedGateJob } = await import(
+      '../dist/domains/ball-custody/durable-managed-gate-job.js'
+    );
+    const { ManagedCommandWakeRecoverySweep } = await loadSweep();
+    const root = mkdtempSync(path.join(os.tmpdir(), 'f306-recovery-validation-'));
+    const outside = mkdtempSync(path.join(os.tmpdir(), 'f306-recovery-outside-'));
+    const previous = process.env.CAT_CAFE_DATA_DIR;
+    process.env.CAT_CAFE_DATA_DIR = root;
+    try {
+      const task = makeTask();
+      const job = createDurableManagedGateJob(task.id, 60_000, {
+        threadId: 'thread-1',
+        catId: 'codex-sol',
+        userId: 'user-1',
+      });
+      if (invalid === 'origin') job.originTaskId = 'forged-task';
+      if (invalid === 'path') {
+        job.recordPath = path.join(outside, 'forged.json');
+        job.gateReceiptPath = path.join(outside, 'forged.gate.json');
+        job.logPath = path.join(outside, 'forged.log');
+      }
+      if (invalid === 'recovery-config') {
+        job.kind = 'resumable_full_gate_v2';
+        job.recovery = {
+          protocolVersion: 2,
+          eventLoopGapMs: 100,
+          reconciliationBudgetMs: 100,
+          pollMs: 10,
+          powerEvidenceSource: { kind: 'json_file', path: path.join(outside, 'power.json') },
+        };
+      }
+      assert.equal(validateDurableManagedGateJob(job, task.id), false);
+      task.params.holdLifecycle.status = 'not_started';
+      task.params.holdLifecycle.managedCommand = {
+        state: 'not_started',
+        command: 'pnpm gate',
+        startedAt: 1000,
+        pid: null,
+        durableJob: job,
+        admissionFact: 'command not started',
+        admissionFactAppended: false,
+        notStartedReason: 'admission_rejected',
+        notStartedDetail: 'refused',
+      };
+      const h = makeHarness({ task });
+      const result = await new ManagedCommandWakeRecoverySweep(h.deps).runOnce();
+      assert.equal(h.appended.length, 0);
+      assert.equal(result.pending, 1);
+      assert.equal(h.triggerCalls.length, 0);
+      assert.deepEqual(readdirSync(root), []);
+      assert.deepEqual(readdirSync(outside), []);
+    } finally {
+      if (previous === undefined) delete process.env.CAT_CAFE_DATA_DIR;
+      else process.env.CAT_CAFE_DATA_DIR = previous;
+      rmSync(root, { recursive: true, force: true });
+      rmSync(outside, { recursive: true, force: true });
+    }
+  });
+}
+
+test('SQLite restart repairs enabled not_started and the existing queued gate owner without completion wake', async () => {
+  const { default: Database } = await import('better-sqlite3');
+  const { applyMigrations } = await import('../dist/domains/memory/schema.js');
+  const { DynamicTaskStore } = await import('../dist/infrastructure/scheduler/DynamicTaskStore.js');
+  const { createDurableManagedGateJob, initializeDurableManagedGateJob } = await import(
+    '../dist/domains/ball-custody/durable-managed-gate-job.js'
+  );
+  const { ManagedCommandWakeRecoverySweep } = await loadSweep();
+  const root = mkdtempSync(path.join(os.tmpdir(), 'f306-no-spawn-restart-'));
+  const previousDataRoot = process.env.CAT_CAFE_DATA_DIR;
+  process.env.CAT_CAFE_DATA_DIR = root;
+  const dbPath = path.join(root, 'fixture.sqlite');
+  let db = new Database(dbPath);
+  try {
+    applyMigrations(db);
+    const task = makeTask();
+    const job = createDurableManagedGateJob(
+      task.id,
+      60_000,
+      { threadId: 'thread-1', catId: 'codex-sol', userId: 'user-1' },
+      root,
+    );
+    initializeDurableManagedGateJob(job);
+    task.params.holdLifecycle.status = 'not_started';
+    task.params.holdLifecycle.managedCommand = {
+      state: 'not_started',
+      command: 'pnpm gate',
+      startedAt: 1000,
+      pid: null,
+      durableJob: job,
+      notStartedReason: 'admission_rejected',
+      notStartedDetail: 'explicit_refusal',
+      admissionFact: 'command not started',
+      admissionFactAppended: false,
+    };
+    new DynamicTaskStore(db).insert(task);
+    db.close();
+    db = new Database(dbPath);
+    const store = new DynamicTaskStore(db);
+    assert.equal(store.listManagedCommandCandidates()[0].enabled, true);
+    const h = makeHarness({ task });
+    h.deps.dynamicTaskStore = store;
+    await new ManagedCommandWakeRecoverySweep(h.deps).runOnce();
+    db.close();
+    db = new Database(dbPath);
+    h.deps.dynamicTaskStore = new DynamicTaskStore(db);
+    await new ManagedCommandWakeRecoverySweep(h.deps).runOnce();
+    assert.equal(h.deps.dynamicTaskStore.getById(task.id).enabled, false);
+    assert.equal(
+      h.deps.dynamicTaskStore.getById(task.id).params.holdLifecycle.managedCommand.admissionFactAppended,
+      true,
+    );
+    assert.equal(JSON.parse(readFileSync(job.recordPath, 'utf8')).state, 'terminal');
+    assert.equal(h.appended.length, 1);
+    assert.equal(h.triggerCalls.length, 0);
+  } finally {
+    db.close();
+    if (previousDataRoot === undefined) delete process.env.CAT_CAFE_DATA_DIR;
+    else process.env.CAT_CAFE_DATA_DIR = previousDataRoot;
+    rmSync(root, { recursive: true, force: true });
+  }
+});
 
 function makeHarness(options = {}) {
   let now = 10_000;
@@ -153,7 +341,209 @@ async function loadSweep() {
   return import('../dist/domains/ball-custody/ManagedCommandWakeRecoverySweep.js');
 }
 
+test('malformed persisted cwd is rejected before recovery projection', async () => {
+  const { parseManagedCommandWakeTask, readManagedCommandWakeProjection } = await import(
+    '../dist/domains/ball-custody/managed-command-wake-task-projection.js'
+  );
+  const task = makeTask();
+  task.params.holdLifecycle.managedCommand.cwd = ['/tmp/frozen-candidate'];
+  assert.equal(readManagedCommandWakeProjection(task), null);
+  assert.equal(parseManagedCommandWakeTask(task), null);
+});
+
 describe('F167 S.1-c ManagedCommandWakeRecoverySweep', () => {
+  test('startup recovery consumes a resumable gate terminal with its executable continuation', async () => {
+    const { ManagedCommandWakeRecoverySweep } = await loadSweep();
+    const { createResumableDurableManagedGateJob } = await import(
+      '../dist/domains/ball-custody/durable-managed-gate-consumer.js'
+    );
+    const { initializeDurableManagedGateJob, settleDurableManagedGateJobFromRunner } = await import(
+      '../dist/domains/ball-custody/durable-managed-gate-job.js'
+    );
+    const { initializeDurableGateRecovery, synchronizeDurableGateFrozenIdentity } = await import(
+      '../dist/domains/ball-custody/durable-managed-gate-recovery.js'
+    );
+    const root = mkdtempSync(path.join(os.tmpdir(), 'managed-command-resumable-sweep-'));
+    const runId = '11111111-2222-4333-8444-555555555555';
+    const frozenIdentity = {
+      headSha: '1'.repeat(40),
+      treeSha: '2'.repeat(40),
+      baseSha: '3'.repeat(40),
+      route: 'full',
+      risk: 'contract',
+      mode: 'full',
+      fingerprint: '4'.repeat(64),
+      runnerFingerprint: '5'.repeat(64),
+      toolchainFingerprint: '6'.repeat(64),
+    };
+    const previousDataRoot = process.env.CAT_CAFE_DATA_DIR;
+    process.env.CAT_CAFE_DATA_DIR = root;
+    try {
+      const job = createResumableDurableManagedGateJob(
+        'hold-ball-task-1',
+        60_000,
+        { threadId: 'thread-1', catId: 'codex-sol', userId: 'user-1' },
+        root,
+      );
+      initializeDurableManagedGateJob(job, 1_000);
+      initializeDurableGateRecovery(job, { pid: 41, ppid: 1, pgid: 41, startedAt: 'birth-41' }, 1_000);
+      writeFileSync(
+        job.gateReceiptPath,
+        `${JSON.stringify({
+          version: 1,
+          jobId: job.jobId,
+          runId,
+          state: 'terminal',
+          terminalStatus: 'failed',
+          result: { exitCode: 1, timedOut: false, durationMs: 500 },
+          recovery: { protocolVersion: 2, frozenIdentity },
+        })}\n`,
+      );
+      synchronizeDurableGateFrozenIdentity(job, 1_001);
+      settleDurableManagedGateJobFromRunner(job, { exitCode: 1, timedOut: false, durationMs: 500 }, 1_500);
+      const task = makeTask({
+        params: {
+          message: 'fallback',
+          targetCatId: 'codex-sol',
+          triggerUserId: 'user-1',
+          holdLifecycle: {
+            mode: 'wake_when',
+            status: 'active',
+            wakeAt: 99_000,
+            createdBy: 'hold-ball:codex-sol',
+            managedCommand: {
+              state: 'command_running',
+              command: 'pnpm gate --risk contract',
+              startedAt: 1_000,
+              durableJob: job,
+            },
+          },
+        },
+      });
+      const h = makeHarness({ task });
+      const stats = await new ManagedCommandWakeRecoverySweep(h.deps).runOnce();
+      assert.equal(stats.scanned, 1);
+      assert.equal(stats.pending, 1, 'an enqueued invocation remains pending until its managed disposition');
+      assert.equal(
+        h.appended.some((message) => message.content.includes(`pnpm gate --risk contract --resume ${runId}`)),
+        true,
+        'restart delivery must preserve one executable continuation instead of a generic lost-gate message',
+      );
+      assert.equal(
+        h.appended.some((message) => message.content.includes(`pnpm gate --risk contract -- --resume ${runId}`)),
+        false,
+        'restart delivery must not invent a pnpm separator that changes the frozen invocation identity',
+      );
+    } finally {
+      if (previousDataRoot === undefined) delete process.env.CAT_CAFE_DATA_DIR;
+      else process.env.CAT_CAFE_DATA_DIR = previousDataRoot;
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  test('startup recovery preserves candidate cwd while routing cancelled timeout through the runtime controller', async () => {
+    const { ManagedCommandWakeRecoverySweep } = await loadSweep();
+    const { createResumableDurableManagedGateJob } = await import(
+      '../dist/domains/ball-custody/durable-managed-gate-consumer.js'
+    );
+    const { initializeDurableManagedGateJob, settleDurableManagedGateJobFromRunner } = await import(
+      '../dist/domains/ball-custody/durable-managed-gate-job.js'
+    );
+    const { evaluateDurableGateMutation, initializeDurableGateRecovery, synchronizeDurableGateFrozenIdentity } =
+      await import('../dist/domains/ball-custody/durable-managed-gate-recovery.js');
+    const root = mkdtempSync(path.join(os.tmpdir(), 'managed-command-cancelled-timeout-sweep-'));
+    const runId = '11111111-2222-4333-8444-555555555555';
+    const frozenIdentity = {
+      headSha: '1'.repeat(40),
+      treeSha: '2'.repeat(40),
+      baseSha: '3'.repeat(40),
+      route: 'full',
+      risk: 'security',
+      mode: 'full',
+      fingerprint: '4'.repeat(64),
+      runnerFingerprint: '5'.repeat(64),
+      toolchainFingerprint: '6'.repeat(64),
+    };
+    const previousDataRoot = process.env.CAT_CAFE_DATA_DIR;
+    const previousRuntimeRoot = process.env.CAT_CAFE_RUNTIME_ROOT;
+    process.env.CAT_CAFE_DATA_DIR = root;
+    process.env.CAT_CAFE_RUNTIME_ROOT = '/tmp/trusted-runtime';
+    try {
+      const created = createResumableDurableManagedGateJob(
+        'hold-ball-task-1',
+        60_000,
+        { threadId: 'thread-1', catId: 'codex-sol', userId: 'user-1' },
+        root,
+      );
+      const job = { ...created, wallSlaMs: 25 };
+      const owner = { pid: 41, ppid: 1, pgid: 41, startedAt: 'birth-41' };
+      initializeDurableManagedGateJob(job, 1_000);
+      initializeDurableGateRecovery(job, owner, 1_000);
+      writeFileSync(
+        job.gateReceiptPath,
+        `${JSON.stringify({
+          version: 1,
+          jobId: job.jobId,
+          runId,
+          state: 'terminal',
+          terminalStatus: 'cancelled',
+          recovery: { protocolVersion: 2, frozenIdentity },
+        })}\n`,
+      );
+      synchronizeDurableGateFrozenIdentity(job, 1_001);
+      assert.deepEqual(
+        evaluateDurableGateMutation(job, {
+          ownerIdentity: owner,
+          mutation: 'heartbeat',
+          now: 1_026,
+          readPowerEvidence: () => ({ status: 'unavailable', reason: 'offline' }),
+        }),
+        { action: 'terminal_intent', pauseEpoch: 0, intent: 'timed_out' },
+      );
+      settleDurableManagedGateJobFromRunner(
+        job,
+        { exitCode: null, timedOut: true, cancelled: false, durationMs: 60_000 },
+        1_500,
+      );
+      const task = makeTask({
+        params: {
+          message: 'fallback',
+          targetCatId: 'codex-sol',
+          triggerUserId: 'user-1',
+          holdLifecycle: {
+            mode: 'wake_when',
+            status: 'active',
+            wakeAt: 99_000,
+            createdBy: 'hold-ball:codex-sol',
+            managedCommand: {
+              state: 'command_running',
+              command: 'pnpm gate --risk security',
+              cwd: '/tmp/missing-historical-candidate',
+              startedAt: 1_000,
+              durableJob: job,
+            },
+          },
+        },
+      });
+      const h = makeHarness({ task });
+      await new ManagedCommandWakeRecoverySweep(h.deps).runOnce();
+      const content = h.appended.map((message) => message.content).join('\n');
+      assert.match(content, /cwd=\/tmp\/trusted-runtime/);
+      assert.match(
+        content,
+        new RegExp(
+          `pnpm gate --resume-controller ${runId} --candidate-root /tmp/missing-historical-candidate -- --risk security`,
+        ),
+      );
+    } finally {
+      if (previousDataRoot === undefined) delete process.env.CAT_CAFE_DATA_DIR;
+      else process.env.CAT_CAFE_DATA_DIR = previousDataRoot;
+      if (previousRuntimeRoot === undefined) delete process.env.CAT_CAFE_RUNTIME_ROOT;
+      else process.env.CAT_CAFE_RUNTIME_ROOT = previousRuntimeRoot;
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
   test('dispatch restores strict owner auth from the durable private hold carrier', async () => {
     const { ManagedCommandWakeRecoverySweep } = await loadSweep();
     const h = makeHarness({ ownerAuthProvenance: 'strict' });
@@ -834,6 +1224,38 @@ describe('F167 S.1-c ManagedCommandWakeRecoverySweep', () => {
     const second = await sweep.runOnce();
     assert.deepEqual(second, { scanned: 1, recovered: 1, pending: 0 });
     assert.equal(h.tasks.get(task.id).params.holdLifecycle.managedCommand.state, 'consumed');
+  });
+
+  test('readonly completion recovery preserves policy and re-delivers only its wake, never the command', async () => {
+    const { ManagedCommandWakeRecoverySweep } = await import(
+      '../dist/domains/ball-custody/ManagedCommandWakeRecoverySweep.js'
+    );
+    const task = makeTask();
+    task.params.holdLifecycle.managedCommand = {
+      state: 'condition_met',
+      command: 'python3 -c "print(10)"',
+      executionPolicy: 'read_only',
+      startedAt: 1000,
+      conditionMetAt: 8000,
+      wakeContent: 'readonly statistics finished',
+      result: { exitCode: 0, timedOut: false, durationMs: 7, tailOutput: '10' },
+    };
+    const h = makeHarness({ task, triggerOutcomes: ['enqueued', 'enqueued'] });
+    await new ManagedCommandWakeRecoverySweep(h.deps).runOnce();
+    const messageId = h.tasks.get(task.id).params.holdLifecycle.managedCommand.messageId;
+    const invocation = { id: 'readonly-wake-after-restart', userMessageId: messageId, status: 'running' };
+    h.invocationRecords.set(`connector-${messageId}`, invocation);
+    await new ManagedCommandWakeRecoverySweep(h.deps).runOnce();
+    assert.equal(h.appended.length, 1);
+    assert.equal(h.tasks.get(task.id).params.holdLifecycle.managedCommand.executionPolicy, 'read_only');
+    invocation.status = 'succeeded';
+    assert.equal((await new ManagedCommandWakeRecoverySweep(h.deps).runOnce()).recovered, 1);
+    const settled = h.tasks.get(task.id).params.holdLifecycle.managedCommand;
+    assert.equal(settled.state, 'consumed');
+    assert.equal(settled.executionPolicy, 'read_only');
+    assert.equal(settled.result.tailOutput, '10');
+    assert.equal(h.appended.length, 1);
+    assert.equal((await new ManagedCommandWakeRecoverySweep(h.deps).runOnce()).scanned, 0);
   });
 
   test('API restart consumes one durable full-gate terminal receipt exactly once', async () => {

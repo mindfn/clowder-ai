@@ -1553,4 +1553,48 @@ describe('assembleIncrementalContext — system error exclusion', () => {
     assert.ok(!result.contextText.includes('stream_idle_stall'), 'system error should NOT enter incremental context');
     assert.ok(!result.contextText.includes('co-creator] Error:'), 'system error must not appear as co-creator message');
   });
+
+  test('includes a typed Host modification receipt without presenting it as the Human', async () => {
+    const messageStore = new MessageStore();
+    const cursorStore = new DeliveryCursorStore();
+    messageStore.append(
+      mockMsg({
+        userId: 'system',
+        catId: null,
+        content: '[Host 作品修改回执]\n候选修改已返回',
+        timestamp: Date.now() - 1000,
+        extra: {
+          systemKind: 'content_modification_receipt',
+          contentModificationReceiptV1: {
+            v: 1,
+            requestId: `f309-modification-${'a'.repeat(64)}`,
+            sourceMessageId: 'human-message-1',
+            targetCatId: 'codex',
+            taskId: 'task-1',
+            state: 'candidate',
+            candidateRef: 'candidate-1',
+            receiptRef: 'receipt-1',
+            observedAt: 1,
+            followUp: { kind: 'none', reason: 'not_applicable' },
+          },
+        },
+      }),
+    );
+    const result = await assembleIncrementalContext(
+      {
+        messageStore,
+        deliveryCursorStore: cursorStore,
+        invocationDeps: { threadStore: mockThreadStore() },
+        evidenceStore: null,
+      },
+      'user-1',
+      'thread-1',
+      'codex',
+      undefined,
+      'play',
+    );
+    assert.match(result.contextText, /Host 作品修改回执/);
+    assert.match(result.contextText, /候选修改已返回/);
+    assert.doesNotMatch(result.contextText, /co-creator.*候选修改已返回/);
+  });
 });

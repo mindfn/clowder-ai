@@ -9,6 +9,7 @@ import type { RedisClient } from '@cat-cafe/shared/utils';
 import type {
   CreateRuntimeInteractionInput,
   InvalidateRuntimeInteractionInput,
+  RuntimeInteractionPendingIndexRead,
   RuntimeInteractionStore,
   SettleRuntimeInteractionInput,
 } from '../ports/RuntimeInteractionStore.js';
@@ -164,11 +165,17 @@ export class RedisRuntimeInteractionStore implements RuntimeInteractionStore {
     return parseRecord(await this.redis.hgetall(RuntimeInteractionKeys.detail(interactionId)));
   }
 
-  async listPendingByUser(userId: string): Promise<RuntimeInteractionRecord[]> {
+  async readPendingIndexByUser(userId: string): Promise<RuntimeInteractionPendingIndexRead> {
     const ids = await this.redis.zrevrange(RuntimeInteractionKeys.pendingByUser(userId), 0, -1);
-    return (await this.readMany(ids)).filter(
-      (record) => record.status === 'pending' && record.request.owner.userId === userId,
-    );
+    return this.readManyWithCoverage(ids);
+  }
+
+  async listPendingByUser(userId: string): Promise<RuntimeInteractionRecord[]> {
+    const read = await this.readPendingIndexByUser(userId);
+    if (read.exhaustiveness !== 'complete') {
+      throw new Error('runtime interaction pending index read was incomplete');
+    }
+    return read.records.filter((record) => record.status === 'pending' && record.request.owner.userId === userId);
   }
 
   private async invalidateRecords(
@@ -202,16 +209,41 @@ export class RedisRuntimeInteractionStore implements RuntimeInteractionStore {
   }
 
   private async readMany(ids: string[]): Promise<RuntimeInteractionRecord[]> {
-    if (ids.length === 0) return [];
+    const read = await this.readManyWithCoverage(ids);
+    if (read.exhaustiveness !== 'complete') {
+      throw new Error('runtime interaction detail read was incomplete');
+    }
+    return read.records;
+  }
+
+  private async readManyWithCoverage(ids: string[]): Promise<RuntimeInteractionPendingIndexRead> {
+    if (ids.length === 0) return { records: [], exhaustiveness: 'complete' };
     const pipeline = this.redis.multi();
     for (const id of ids) pipeline.hgetall(RuntimeInteractionKeys.detail(id));
     const results = await pipeline.exec();
-    if (!results) return [];
-    return results.flatMap((result) => {
-      const raw = result?.[1];
-      const record = raw && typeof raw === 'object' ? parseRecord(raw as Record<string, string>) : null;
-      return record ? [record] : [];
-    });
+    if (!results) return { records: [], exhaustiveness: 'partial' };
+    let complete = results.length === ids.length;
+    const records: RuntimeInteractionRecord[] = [];
+    for (const [index, id] of ids.entries()) {
+      const record = parseBatchRecord(id, results[index]);
+      if (!record) {
+        complete = false;
+        continue;
+      }
+      records.push(record);
+    }
+    return { records, exhaustiveness: complete ? 'complete' : 'partial' };
+  }
+}
+
+function parseBatchRecord(interactionId: string, result: unknown): RuntimeInteractionRecord | null {
+  const raw = Array.isArray(result) && result[0] === null ? result[1] : undefined;
+  try {
+    const record =
+      raw && typeof raw === 'object' && !Array.isArray(raw) ? parseRecord(raw as Record<string, string>) : null;
+    return record?.request.interactionId === interactionId ? record : null;
+  } catch {
+    return null;
   }
 }
 

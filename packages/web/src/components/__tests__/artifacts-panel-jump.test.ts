@@ -9,7 +9,10 @@ import { createRoot } from 'react-dom/client';
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import { __resetPendingTeleportForTest, peekPendingTeleport } from '@/utils/teleport';
 
-vi.mock('@/utils/api-client', () => ({ API_URL: 'http://test.local' }));
+vi.mock('@/utils/api-client', () => ({
+  API_URL: 'http://test.local',
+  apiFetch: vi.fn(async () => Response.json({ artifacts: [] })),
+}));
 vi.mock('@/utils/scrollToMessage', () => ({ scrollToMessage: vi.fn(() => false) }));
 vi.mock('@/hooks/useThreadArtifacts', () => ({
   useThreadArtifacts: () => ({
@@ -36,6 +39,7 @@ import { ArtifactsPanel } from '../ArtifactsPanel';
 
 describe('F232 ArtifactsPanel jump (P2 cloud review round 3)', () => {
   let container: HTMLDivElement;
+  let root: ReturnType<typeof createRoot>;
 
   beforeAll(() => {
     (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
@@ -53,12 +57,13 @@ describe('F232 ArtifactsPanel jump (P2 cloud review round 3)', () => {
   });
 
   afterEach(() => {
+    act(() => root.unmount());
     container.remove();
     vi.clearAllMocks();
   });
 
   it('clicking 跳转 records a pending teleport so an out-of-window source auto-loads (not a bare no-op scroll)', () => {
-    const root = createRoot(container);
+    root = createRoot(container);
     act(() => {
       root.render(createElement(ArtifactsPanel, { threadId: 'T' }));
     });
@@ -80,7 +85,7 @@ describe('F232 ArtifactsPanel jump (P2 cloud review round 3)', () => {
     useChatStore.setState({ currentThreadId: 'other-thread' });
     window.history.replaceState(null, '', '/');
     const pushStateSpy = vi.spyOn(window.history, 'pushState');
-    const root = createRoot(container);
+    root = createRoot(container);
     act(() => {
       root.render(createElement(ArtifactsPanel, { threadId: 'T' }));
     });

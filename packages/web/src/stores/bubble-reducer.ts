@@ -85,6 +85,9 @@ function mergeEventExtra(event: BubbleEvent, existing: ChatMessage['extra']): Ch
     ...(buildStreamExtraFromEvent(event) ?? {}),
     ...(eventExtra ?? {}),
   };
+  // Layout snapshots describe the full API content, never a partially changed body.
+  if (event.type === 'callback_final') delete merged.outputLayout;
+  else if (event.type === 'stream_chunk' && eventExtra?.outputLayout === undefined) delete merged.outputLayout;
   return Object.keys(merged).length > 0 ? merged : undefined;
 }
 

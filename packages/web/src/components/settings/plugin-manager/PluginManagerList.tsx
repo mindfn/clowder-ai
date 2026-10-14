@@ -63,10 +63,11 @@ function PluginListActions({
   onBlockedToggle: (() => void) | undefined;
   onUninstall: (() => void) | undefined;
 }) {
+  const actionSubject = plugin.id === 'official.chatgpt-dot' ? 'dot协作' : plugin.displayName;
   if (canInstall) {
     return (
       <SettingsPrimaryButton onClick={() => onInstall?.()} disabled={busy}>
-        安装
+        {plugin.id === 'official.chatgpt-dot' ? '开启 dot 协作' : '安装'}
       </SettingsPrimaryButton>
     );
   }
@@ -85,7 +86,7 @@ function PluginListActions({
             }
             onBlockedToggle?.();
           }}
-          ariaLabel={`${plugin.intent === 'enabled' ? '禁用' : '启用'}${plugin.displayName}`}
+          ariaLabel={`${plugin.intent === 'enabled' ? '禁用' : '启用'}${actionSubject}`}
           ariaPressed={plugin.intent === 'enabled'}
         />
       )}
@@ -93,7 +94,7 @@ function PluginListActions({
         <SettingsDeleteButton
           onClick={() => onUninstall?.()}
           disabled={busy}
-          aria-label={`${plugin.artifact === 'quarantined' ? '移除' : '卸载'}${plugin.displayName}`}
+          aria-label={`${plugin.artifact === 'quarantined' ? '移除' : '卸载'}${actionSubject}`}
         />
       )}
     </>

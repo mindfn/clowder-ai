@@ -44,6 +44,7 @@ describe('MermaidDiagram', () => {
       expect.objectContaining({
         startOnLoad: false,
         securityLevel: 'strict',
+        suppressErrorRendering: false,
       }),
     );
     expect(mermaidMock.render).toHaveBeenCalledWith(expect.stringMatching(/^mermaid-/), 'flowchart TD\n  A --> B');

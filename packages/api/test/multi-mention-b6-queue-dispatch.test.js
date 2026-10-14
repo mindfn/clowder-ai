@@ -1420,127 +1420,134 @@ describe('B6: QueueProcessor entryCompleteHook integration', () => {
     assert.equal(hookResult.responseText, 'Hello from hook');
   });
 
-  test('dispatches one exact cloud child on Queue replay and returns its typed failure notice', async () => {
-    const { InvocationQueue: IQ } = await import('../dist/domains/cats/services/agents/invocation/InvocationQueue.js');
-    const { QueueProcessor: QP } = await import('../dist/domains/cats/services/agents/invocation/QueueProcessor.js');
+  test(
+    'dispatches one exact cloud child on Queue replay and returns its typed failure notice',
+    { timeout: 5000 },
+    async () => {
+      const { InvocationQueue: IQ } = await import(
+        '../dist/domains/cats/services/agents/invocation/InvocationQueue.js'
+      );
+      const { QueueProcessor: QP } = await import('../dist/domains/cats/services/agents/invocation/QueueProcessor.js');
 
-    const queue = new IQ();
-    const recordsByIdempotencyKey = new Map();
-    const recordsById = new Map();
-    let invocationCounter = 0;
-    const routeCalls = [];
-    const hookResults = [];
-    const stubDeps = {
-      queue,
-      invocationTracker: {
-        start: () => new AbortController(),
-        startAll: () => new AbortController(),
-        tryStartThreadAll: () => new AbortController(),
-        complete: () => {},
-        completeAll: () => {},
-        has: () => false,
-        getController: () => undefined,
-      },
-      invocationRecordStore: {
-        create(input) {
-          const prior = recordsByIdempotencyKey.get(input.idempotencyKey);
-          if (prior) return { outcome: 'duplicate', invocationId: prior.invocationId };
-          const invocationId = `inv-cloud-${invocationCounter++}`;
-          const record = { ...input, invocationId, status: 'queued' };
-          recordsByIdempotencyKey.set(input.idempotencyKey, record);
-          recordsById.set(invocationId, record);
-          return { outcome: 'created', invocationId };
+      const { InvocationTracker } = await import(
+        '../dist/domains/cats/services/agents/invocation/InvocationTracker.js'
+      );
+      const queue = new IQ();
+      const recordsByIdempotencyKey = new Map();
+      const recordsById = new Map();
+      let invocationCounter = 0;
+      const routeCalls = [];
+      const hookResults = [];
+      const stubDeps = {
+        queue,
+        invocationTracker: new InvocationTracker(),
+        invocationRecordStore: {
+          create(input) {
+            const prior = recordsByIdempotencyKey.get(input.idempotencyKey);
+            if (prior) return { outcome: 'duplicate', invocationId: prior.invocationId };
+            const invocationId = `inv-cloud-${invocationCounter++}`;
+            const record = { ...input, invocationId, status: 'queued' };
+            recordsByIdempotencyKey.set(input.idempotencyKey, record);
+            recordsById.set(invocationId, record);
+            return { outcome: 'created', invocationId };
+          },
+          update(invocationId, patch) {
+            Object.assign(recordsById.get(invocationId), patch);
+          },
+          get(invocationId) {
+            return recordsById.get(invocationId) ?? null;
+          },
         },
-        update(invocationId, patch) {
-          Object.assign(recordsById.get(invocationId), patch);
+        router: {
+          async *routeExecution(userId, message, threadId, sourceMessageId, targetCats, intent, options) {
+            routeCalls.push({ userId, message, threadId, sourceMessageId, targetCats, intent, options });
+            yield {
+              type: 'system_info',
+              catId: targetCats[0],
+              content: JSON.stringify({
+                type: 'cloud_bridge_status',
+                status: 'unavailable',
+                reason: 'incomplete-dispatch-provenance',
+                message: '未发送给 @gpt-pro：投递来源或回程绑定不完整。',
+              }),
+              timestamp: Date.now(),
+            };
+            yield { type: 'done', catId: targetCats[0], isFinal: true, timestamp: Date.now() };
+          },
+          ackCollectedCursors: () => Promise.resolve(),
         },
-        get(invocationId) {
-          return recordsById.get(invocationId) ?? null;
+        socketManager: {
+          broadcastAgentMessage: () => {},
+          broadcastToRoom: () => {},
+          emitToUser: () => {},
         },
-      },
-      router: {
-        async *routeExecution(userId, message, threadId, sourceMessageId, targetCats, intent, options) {
-          routeCalls.push({ userId, message, threadId, sourceMessageId, targetCats, intent, options });
-          yield {
-            type: 'system_info',
-            catId: targetCats[0],
-            content: JSON.stringify({
-              type: 'cloud_bridge_status',
-              status: 'unavailable',
-              reason: 'incomplete-dispatch-provenance',
-              message: '未发送给 @gpt-pro：投递来源或回程绑定不完整。',
-            }),
-            timestamp: Date.now(),
-          };
-          yield { type: 'done', catId: targetCats[0], isFinal: true, timestamp: Date.now() };
+        messageStore: {
+          markDelivered: () => null,
+          getById: () => null,
         },
-        ackCollectedCursors: () => Promise.resolve(),
-      },
-      socketManager: {
-        broadcastAgentMessage: () => {},
-        broadcastToRoom: () => {},
-        emitToUser: () => {},
-      },
-      messageStore: {
-        markDelivered: () => null,
-        getById: () => null,
-      },
-      log: { info: () => {}, warn: () => {}, error: () => {} },
-    };
+        log: { info: () => {}, warn: () => {}, error: () => {} },
+      };
 
-    const qp = new QP(stubDeps);
-    const carrier = {
-      sourceMessageId: 'msg-exact-source',
-      sourceSender: { kind: 'user', id: 'user-1' },
-      calledByCatId: 'opus',
-      intent: 'Original raw intent',
-    };
-    const enqueue = () =>
-      queue.enqueue({
-        ownerAuthProvenance: 'strict',
-        threadId: 'thread-1',
-        userId: 'user-1',
-        content: '[Multi-Mention from opus]\n\nOriginal raw intent',
-        source: 'agent',
-        targetCats: ['gpt-pro'],
-        intent: 'execute',
-        autoExecute: true,
-        callerCatId: 'opus',
-        a2aParentInvocationId: 'inv-parent',
-        idempotencyKey: 'multi-mention:req-1:gpt-pro',
-        cloudDispatchProvenance: carrier,
-        requiresExactCloudDispatchProvenance: true,
+      const qp = new QP(stubDeps);
+      const carrier = {
+        sourceMessageId: 'msg-exact-source',
+        sourceSender: { kind: 'user', id: 'user-1' },
+        calledByCatId: 'opus',
+        intent: 'Original raw intent',
+      };
+      const enqueue = () =>
+        queue.enqueue({
+          ownerAuthProvenance: 'strict',
+          threadId: 'thread-1',
+          userId: 'user-1',
+          content: '[Multi-Mention from opus]\n\nOriginal raw intent',
+          source: 'agent',
+          targetCats: ['gpt-pro'],
+          intent: 'execute',
+          autoExecute: true,
+          callerCatId: 'opus',
+          a2aParentInvocationId: 'inv-parent',
+          idempotencyKey: 'multi-mention:req-1:gpt-pro',
+          cloudDispatchProvenance: carrier,
+          requiresExactCloudDispatchProvenance: true,
+        });
+
+      const first = enqueue();
+      const firstDone = new Promise((resolve) => {
+        qp.registerEntryCompleteHook(first.entry.id, (_entryId, status, responseText) => {
+          hookResults.push({ status, responseText });
+          resolve();
+        });
       });
+      await qp.tryAutoExecute('thread-1');
+      await firstDone;
 
-    const first = enqueue();
-    qp.registerEntryCompleteHook(first.entry.id, (_entryId, status, responseText) => {
-      hookResults.push({ status, responseText });
-    });
-    await qp.tryAutoExecute('thread-1');
-    await new Promise((resolve) => setTimeout(resolve, 200));
+      assert.equal(routeCalls.length, 1);
+      assert.equal(routeCalls[0].sourceMessageId, carrier.sourceMessageId);
+      assert.deepEqual(routeCalls[0].options.cloudDispatchProvenance, carrier);
+      assert.equal(routeCalls[0].options.requiresExactCloudDispatchProvenance, true);
+      assert.deepEqual(hookResults, [
+        {
+          status: 'succeeded',
+          responseText: '未发送给 @gpt-pro：投递来源或回程绑定不完整。',
+        },
+      ]);
 
-    assert.equal(routeCalls.length, 1);
-    assert.equal(routeCalls[0].sourceMessageId, carrier.sourceMessageId);
-    assert.deepEqual(routeCalls[0].options.cloudDispatchProvenance, carrier);
-    assert.equal(routeCalls[0].options.requiresExactCloudDispatchProvenance, true);
-    assert.deepEqual(hookResults, [
-      {
-        status: 'succeeded',
-        responseText: '未发送给 @gpt-pro：投递来源或回程绑定不完整。',
-      },
-    ]);
+      const replay = enqueue();
+      const replayDone = new Promise((resolve) => {
+        qp.registerEntryCompleteHook(replay.entry.id, (_entryId, status, responseText) => {
+          hookResults.push({ status, responseText });
+          resolve();
+        });
+      });
+      await qp.tryAutoExecute('thread-1');
+      await replayDone;
 
-    const replay = enqueue();
-    qp.registerEntryCompleteHook(replay.entry.id, (_entryId, status, responseText) => {
-      hookResults.push({ status, responseText });
-    });
-    await qp.tryAutoExecute('thread-1');
-    await new Promise((resolve) => setTimeout(resolve, 200));
-
-    assert.equal(routeCalls.length, 1, 'stable replay must not dispatch the exact child twice');
-    assert.equal(hookResults.length, 2);
-    assert.equal(hookResults[1].status, 'succeeded');
-  });
+      assert.equal(routeCalls.length, 1, 'stable replay must not dispatch the exact child twice');
+      assert.equal(hookResults.length, 2);
+      assert.equal(hookResults[1].status, 'succeeded');
+    },
+  );
 
   test('hook is auto-removed after firing (one-shot)', async () => {
     const { InvocationQueue: IQ } = await import('../dist/domains/cats/services/agents/invocation/InvocationQueue.js');

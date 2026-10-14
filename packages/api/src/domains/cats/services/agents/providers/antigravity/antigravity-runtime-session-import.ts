@@ -2,6 +2,7 @@ import { existsSync, readFileSync } from 'node:fs';
 import type { CatId, SessionRecord } from '@cat-cafe/shared';
 import type { RuntimeSessionMetadata } from '../../../runtime-session/RuntimeSessionMetadata.js';
 import type { IRuntimeSessionStore } from '../../../runtime-session/RuntimeSessionStore.js';
+import { isHomeSession } from '../../../session/session-scope.js';
 import type { ISessionChainStore } from '../../../stores/ports/SessionChainStore.js';
 
 export type LegacyAntigravitySessionDiagnosticCode =
@@ -117,12 +118,12 @@ export async function importLegacyAntigravitySessions(
     }
 
     const hostSession = await input.sessionChainStore.getByCliSessionId(entry.cascadeId);
-    if (!hostSession) {
+    if (!isHomeSession(hostSession)) {
       diagnostics.push({
         code: 'missing_host_session',
         key: entry.key,
         cascadeId: entry.cascadeId,
-        message: 'legacy cascade id does not resolve to an existing SessionRecord',
+        message: 'legacy cascade id does not resolve to an ordinary home SessionRecord',
       });
       continue;
     }

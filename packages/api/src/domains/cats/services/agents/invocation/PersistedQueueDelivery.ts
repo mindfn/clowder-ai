@@ -1,5 +1,6 @@
 import { isDeepStrictEqual } from 'node:util';
-import { createCatId } from '@cat-cafe/shared';
+import { type CatId, createCatId } from '@cat-cafe/shared';
+import { type OwnerAuthProvenance, requireOwnerAuthProvenance } from '../../owner-auth-provenance.js';
 import type { IMessageStore, StoredMessage } from '../../stores/ports/MessageStore.js';
 import type { InvocationQueue } from './InvocationQueue.js';
 import {
@@ -10,14 +11,32 @@ import {
 import { carrierEntryId } from './QueuedMessageCustodyCarrierProjection.js';
 import { createInitialQueuedMessageCustody } from './QueuedMessageCustodyCoordinator.js';
 
-export interface PersistedQueueDeliveryInput {
+interface PersistedQueueDeliveryBaseInput {
+  ownerAuthProvenance: OwnerAuthProvenance;
   ownerUserId: string;
   threadId: string;
   targetCatId: string;
   idempotencyKey: string;
   content: string;
   source: NonNullable<StoredMessage['source']>;
+  /** Each producer explicitly declares its stop-gate classification. */
+  sourceCategory?: 'producer_return';
 }
+
+export type PersistedQueueDeliveryInput = PersistedQueueDeliveryBaseInput &
+  (
+    | {
+        visibility?: 'public';
+        whisperTo?: never;
+        /** Exact source versions emitted by older deployments. Read only for an existing idempotency winner. */
+        compatibleExistingSources?: readonly NonNullable<StoredMessage['source']>[];
+      }
+    | {
+        visibility: 'whisper';
+        whisperTo: readonly string[];
+        compatibleExistingSources?: never;
+      }
+  );
 
 export interface PersistedQueueDeliveryPort {
   deliver(input: PersistedQueueDeliveryInput): Promise<PersistedCarrierResult & { message?: StoredMessage }>;
@@ -32,7 +51,7 @@ export class PersistedQueueDelivery implements PersistedQueueDeliveryPort {
         InvocationQueue,
         | 'enqueue'
         | 'backfillMessageId'
-        | 'rollbackEnqueue'
+        | 'removeEntrySnapshotIfUnchanged'
         | 'getEntrySnapshot'
         | 'restoreDurableEntry'
         | 'commitQueueCustodyAdmission'
@@ -42,16 +61,23 @@ export class PersistedQueueDelivery implements PersistedQueueDeliveryPort {
   ) {}
 
   async deliver(input: PersistedQueueDeliveryInput) {
+    requireOwnerAuthProvenance(input.ownerAuthProvenance);
+    const audience = deliveryAudience(input);
     let message = await this.deps.messages.getByIdempotencyKey(input.ownerUserId, input.threadId, input.idempotencyKey);
-    if (!message) message = await this.admit(input);
+    if (!message) message = await this.admit(input, audience);
+    const sourceMatches =
+      isDeepStrictEqual(message.source, input.source) ||
+      (input.visibility !== 'whisper' &&
+        input.compatibleExistingSources?.some((source) => isDeepStrictEqual(message.source, source)) === true);
     if (
       message.userId !== input.ownerUserId ||
       message.threadId !== input.threadId ||
       message.catId !== null ||
       message.content !== input.content ||
-      message.source?.connector !== input.source.connector ||
-      !isDeepStrictEqual(message.source.meta, input.source.meta) ||
-      !message.mentions.some((cat) => cat === input.targetCatId)
+      !sourceMatches ||
+      !message.mentions.some((cat) => cat === input.targetCatId) ||
+      (message.visibility ?? 'public') !== audience.visibility ||
+      !isDeepStrictEqual(message.whisperTo ?? [], audience.whisperTo)
     ) {
       return { state: 'conflict' as const, reason: 'Persisted producer envelope does not match', message };
     }
@@ -77,20 +103,26 @@ export class PersistedQueueDelivery implements PersistedQueueDeliveryPort {
     return { ...result, message };
   }
 
-  private async admit(input: PersistedQueueDeliveryInput): Promise<StoredMessage> {
+  private async admit(input: PersistedQueueDeliveryInput, audience: DeliveryAudience): Promise<StoredMessage> {
     const targetCat = createCatId(input.targetCatId);
     const queued = this.deps.queue.enqueue({
       threadId: input.threadId,
       userId: input.ownerUserId,
-      ownerAuthProvenance: 'strict',
+      ownerAuthProvenance: input.ownerAuthProvenance,
       idempotencyKey: input.idempotencyKey,
       queueCustodyAdmissionId: `producer:${input.idempotencyKey}`,
       content: input.content,
       source: 'connector',
+      ...(input.sourceCategory ? { sourceCategory: input.sourceCategory } : {}),
       targetCats: [targetCat],
       intent: 'execute',
     });
     if (queued.outcome === 'full' || !queued.entry) throw new Error('Producer return queue is full');
+    const rollbackSnapshot = this.deps.queue.getEntrySnapshot(input.threadId, input.ownerUserId, queued.entry.id);
+    const rollbackAdmission = () => {
+      if (!queued.deduped && rollbackSnapshot)
+        this.deps.queue.removeEntrySnapshotIfUnchanged(rollbackSnapshot, rollbackSnapshot.queueCustodyAdmissionId);
+    };
     try {
       const message = await this.deps.messages.append({
         userId: input.ownerUserId,
@@ -103,19 +135,45 @@ export class PersistedQueueDelivery implements PersistedQueueDeliveryPort {
         deliveryStatus: 'queued',
         queueCustody: createInitialQueuedMessageCustody(queued.entry),
         source: input.source,
+        ...(audience.visibility === 'whisper'
+          ? { visibility: audience.visibility, whisperTo: audience.whisperTo }
+          : {}),
         extra: { targetCats: [targetCat] },
       });
       const durableEntryId = message.queueCustody && carrierEntryId(message.queueCustody, input.targetCatId);
       if (durableEntryId !== queued.entry.id) {
         // append's atomic idempotency check may find an older durable owner after our initial lookup.
-        if (!queued.deduped) this.deps.queue.rollbackEnqueue(input.threadId, input.ownerUserId, queued.entry.id);
+        rollbackAdmission();
         return message;
       }
       this.deps.queue.backfillMessageId(input.threadId, input.ownerUserId, queued.entry.id, message.id);
       return message;
     } catch (error) {
-      if (!queued.deduped) this.deps.queue.rollbackEnqueue(input.threadId, input.ownerUserId, queued.entry.id);
+      rollbackAdmission();
       throw error;
     }
   }
+}
+
+interface DeliveryAudience {
+  readonly visibility: 'public' | 'whisper';
+  readonly whisperTo: readonly CatId[];
+}
+
+function deliveryAudience(input: PersistedQueueDeliveryInput): DeliveryAudience {
+  if (input.visibility !== 'whisper') {
+    if (input.whisperTo !== undefined) throw new Error('Public producer delivery cannot carry whisper recipients');
+    return { visibility: 'public', whisperTo: [] };
+  }
+  if (input.compatibleExistingSources !== undefined) {
+    throw new Error('Private producer delivery cannot accept public replay source versions');
+  }
+  const whisperTo = input.whisperTo.map(createCatId);
+  if (whisperTo.length === 0 || !whisperTo.includes(createCatId(input.targetCatId))) {
+    throw new Error('Private producer delivery must include its target Cat in the frozen audience');
+  }
+  if (new Set(whisperTo).size !== whisperTo.length) {
+    throw new Error('Private producer delivery audience must not contain duplicate Cats');
+  }
+  return { visibility: 'whisper', whisperTo };
 }

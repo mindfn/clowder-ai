@@ -2,6 +2,7 @@
 
 import { useEffect, useRef, useState } from 'react';
 import { useVoiceInput } from '@/hooks/useVoiceInput';
+import { ChatComposerActions } from './ChatComposerActions';
 import { ExpandableProse } from './content-overflow';
 import { LoadingIcon } from './icons/LoadingIcon';
 import { MicIcon } from './icons/MicIcon';
@@ -25,6 +26,8 @@ interface ChatInputActionButtonProps {
   /** Stable key derived from active execution IDs; changes when the execution set changes. */
   activeExecutionKey?: string;
   hasText: boolean;
+  /** Which shell draws this. Only the new shell (v2) changes where the stop button sits; classic is the default. */
+  presentation?: 'classic' | 'v2';
 }
 
 /** Queue send icon — arrow into a stack/list */
@@ -59,6 +62,7 @@ export function ChatInputActionButton({
   hasActiveInvocation,
   activeExecutionKey,
   hasText,
+  presentation = 'classic',
 }: ChatInputActionButtonProps) {
   const voice = useVoiceInput();
   const [confirmSteer, setConfirmSteer] = useState(false);
@@ -124,6 +128,27 @@ export function ChatInputActionButton({
   // F39: Whether we're in queue mode (cat running + user has typed)
   const isQueueMode = Boolean(hasActiveInvocation && hasText && !disabled);
 
+  // Stop button: visible alongside queue send (primary stop covers disabled state).
+  // New shell (v2) only: with an empty draft it is the last control (the design's "send key becomes ■"); with text, an
+  // attachment or a quote the send controls own that spot and stopping lives on the one execution row. The classic
+  // interface keeps the button beside the send controls, exactly as it always was.
+  const isV2 = presentation === 'v2';
+  const sideStop =
+    showStop && !disabled && !(isV2 && hasText) ? (
+      <button
+        type="button"
+        onClick={() => onStop?.()}
+        disabled={stopDisabled}
+        className="flex h-11 w-11 shrink-0 items-center justify-center rounded-xl bg-conn-red-text text-[var(--cafe-surface)] transition-colors hover:bg-conn-red-hover focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-conn-red-text/40 disabled:cursor-wait disabled:opacity-50"
+        title={stopTitle}
+        aria-label="Stop generation"
+      >
+        <svg className="w-4 h-4" viewBox="0 0 20 20" fill="currentColor">
+          <rect x="4" y="4" width="12" height="12" rx="2" />
+        </svg>
+      </button>
+    ) : null;
+
   return (
     <>
       {/* Voice recording status (absolute, attaches to ancestor .relative) */}
@@ -148,24 +173,30 @@ export function ChatInputActionButton({
         </div>
       )}
 
-      {/* Stop button: visible alongside queue send (primary stop covers disabled state) */}
-      {showStop && !disabled && (
-        <button
-          type="button"
-          onClick={() => onStop?.()}
-          disabled={stopDisabled}
-          className="flex h-11 w-11 shrink-0 items-center justify-center rounded-xl bg-conn-red-text text-[var(--cafe-surface)] transition-colors hover:bg-conn-red-hover focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-conn-red-text/40 disabled:cursor-wait disabled:opacity-50"
-          title={stopTitle}
-          aria-label="Stop generation"
-        >
-          <svg className="w-4 h-4" viewBox="0 0 20 20" fill="currentColor">
-            <rect x="4" y="4" width="12" height="12" rx="2" />
-          </svg>
-        </button>
-      )}
+      {!isV2 && sideStop}
 
       {/* Primary action button priority chain */}
-      {disabled && showStop ? (
+      {isV2 ? (
+        <ChatComposerActions
+          voice={voice}
+          hasText={hasText}
+          disabled={disabled}
+          sendDisabled={sendDisabled}
+          showStop={showStop}
+          stopState={resolvedStopState}
+          onStop={onStop}
+          onSend={onSend}
+          onQueueSend={isQueueMode ? onQueueSend : undefined}
+          onRequestSteer={
+            isQueueMode && onForceSend && activeExecutionKey !== undefined
+              ? () => {
+                  steerBoundKeyRef.current = activeExecutionKey;
+                  setConfirmSteer(true);
+                }
+              : undefined
+          }
+        />
+      ) : disabled && showStop ? (
         /* Backward compat: when explicitly disabled during active invocation, Stop is the only primary action */
         <button
           type="button"

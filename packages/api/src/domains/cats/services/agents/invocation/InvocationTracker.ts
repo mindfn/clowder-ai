@@ -73,6 +73,16 @@ export interface CancelResult {
   executionIds?: string[];
 }
 
+export interface ExactCancelResult extends CancelResult {
+  state:
+    | 'cancelled'
+    | 'already_cancelled'
+    | 'not_found'
+    | 'user_mismatch'
+    | 'execution_mismatch'
+    | 'cancellation_conflict';
+}
+
 export interface CancelAllResult {
   catIds: string[];
   /** Deduplicated InvocationRecord identities aborted by this action. */
@@ -377,6 +387,59 @@ export class InvocationTracker {
     // layer grabbed its own signal (pre-invoke cancel must not be lost / fall back to the batch
     // gate). Purged at the next start-family or complete-family call for this slot.
     return { cancelled: true, catIds, executionIds: inv.executionId ? [inv.executionId] : [] };
+  }
+
+  /**
+   * Atomically cancel one exact execution owner. A replacement cannot enter between
+   * an ownership read and the abort, and replay of the same reason observes the
+   * retained tombstone without aborting a second time.
+   */
+  cancelExact(
+    threadId: string,
+    catId: string,
+    executionId: string,
+    requestUserId: string,
+    abortReason: string,
+  ): ExactCancelResult {
+    const inv = this.active.get(this.slotKey(threadId, catId));
+    const rejected = (
+      state: Extract<
+        ExactCancelResult['state'],
+        'not_found' | 'user_mismatch' | 'execution_mismatch' | 'cancellation_conflict'
+      >,
+    ): ExactCancelResult => ({ state, cancelled: false, catIds: [], executionIds: [] });
+    if (!inv) return rejected('not_found');
+    if (inv.userId !== requestUserId) return rejected('user_mismatch');
+    if (inv.executionId !== executionId) return rejected('execution_mismatch');
+    if (inv.state === 'canceled') {
+      if (inv.cancelReason !== abortReason) return rejected('cancellation_conflict');
+      return {
+        state: 'already_cancelled',
+        cancelled: true,
+        catIds: inv.catIds,
+        executionIds: [executionId],
+      };
+    }
+
+    this.tombstoneCanceledInvocation(inv, abortReason);
+    log.info(
+      {
+        event: 'f211_reg6_invocation_abort',
+        method: 'cancelExact',
+        threadId,
+        catId,
+        executionId,
+        abortReason,
+        msSinceStart: Date.now() - inv.startedAt,
+      },
+      'F211-REG6: exact invocation aborted (cancel funnel) — abortReason provenance',
+    );
+    return {
+      state: 'cancelled',
+      cancelled: true,
+      catIds: inv.catIds,
+      executionIds: [executionId],
+    };
   }
 
   /**

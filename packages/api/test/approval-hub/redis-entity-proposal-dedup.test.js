@@ -175,5 +175,34 @@ describe(
         'abort must atomically release its persistent retry identity',
       );
     });
+
+    it('finds only proposals bound to the exact owner and entity across settled state', async () => {
+      if (!connected) return;
+      const input = (ownerUserId, entityId) => ({
+        entityId,
+        entityType: 'concept',
+        canonicalName: entityId,
+        aliases: [],
+        stance: 'unknown',
+        visibilityScope: 'workspace',
+        provenance: [{ source: 'redis-contract' }],
+        rationale: 'Original-memory target binding.',
+        sourceThreadId: 'thread-target-binding',
+        sourceCatId: 'codex-sol',
+        ownerUserId,
+      });
+      const target = await store.create(input('user-target', 'concept:target'));
+      await store.create(input('user-target', 'concept:other'));
+      await store.create(input('other-owner', 'concept:target'));
+      await store.markApproved(target.proposalId, 'user-target');
+
+      assert.deepEqual(
+        (await store.listByTarget('user-target', 'concept:target')).map(({ proposalId, status }) => ({
+          proposalId,
+          status,
+        })),
+        [{ proposalId: target.proposalId, status: 'approved' }],
+      );
+    });
   },
 );

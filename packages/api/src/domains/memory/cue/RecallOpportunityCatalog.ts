@@ -13,6 +13,7 @@ import {
   recallOpportunityV1Schema,
   recentEventAvailableOpportunityV1Schema,
   subjectSeenOpportunityV1Schema,
+  threadOpenedOpportunityV1Schema,
 } from '@cat-cafe/shared';
 import type { z } from 'zod';
 
@@ -202,9 +203,23 @@ const entries: readonly RecallOpportunityCatalogEntry[] = Object.freeze([
         : 'invalid';
     },
   }),
+  Object.freeze({
+    kind: 'thread_opened',
+    producer: 'owner_message',
+    consumer: 'agent_route',
+    payloadSchema: threadOpenedOpportunityV1Schema.shape.payload,
+    scopeBinding: 'server_exact',
+    resolverFamilies: Object.freeze(['thread_overview'] as const),
+    maxCues: 6,
+    maxPromptTokens: 6000,
+    expiresAfterMs: 5 * 60_000,
+    dedupeKey(opportunity: RecallOpportunityV1): string {
+      return opportunity.kind === 'thread_opened' ? `thread_opened\0${opportunity.payload.sourceMessageId}` : 'invalid';
+    },
+  }),
 ]);
 
-export const RECALL_OPPORTUNITY_CATALOG_V5 = Object.freeze({
+export const RECALL_OPPORTUNITY_CATALOG_V6 = Object.freeze({
   version: RECALL_OPPORTUNITY_CATALOG_VERSION,
   entries,
 });
@@ -229,6 +244,9 @@ export function getRecallOpportunityCatalogEntry(opportunity: RecallOpportunityV
   const entry = entries.find(
     (candidate) => candidate.kind === opportunity.kind && candidate.producer === opportunity.producer,
   );
-  if (!entry) throw new Error('Recall opportunity is not admitted by catalog v5');
+  if (!entry) throw new Error('Recall opportunity is not admitted by catalog v6');
   return entry;
 }
+
+/** Compatibility name for callers; contents always follow the current catalog. */
+export const RECALL_OPPORTUNITY_CATALOG_V5 = RECALL_OPPORTUNITY_CATALOG_V6;

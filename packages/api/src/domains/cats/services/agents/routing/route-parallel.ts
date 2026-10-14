@@ -22,6 +22,7 @@ import {
 } from '../../../../../infrastructure/telemetry/instruments.js';
 import { estimateTokens } from '../../../../../utils/token-counter.js';
 import { conciergeContextForCat, prepareConciergeContext } from '../../../../concierge/ConciergeRoutingInterceptor.js';
+import { createConciergeMessageSearch } from '../../../../concierge/concierge-message-search.js';
 import {
   buildConciergeActions,
   extractTriagePlanIdsFromActions,
@@ -66,8 +67,9 @@ import { mayDeleteDraft } from '../../freshness/FreshnessDraftCustody.js';
 import type { FreshnessEvaluation } from '../../freshness/glass-box/FreshnessOutputCommitCoordinator.js';
 import { findReplayUnsafeToolNames } from '../../freshness/tool-replay-safety.js';
 import { formatDegradationMessage } from '../../orchestration/DegradationPolicy.js';
-import { mergePresentationCounts, type PresentationCounts } from '../../session/context-surface-projection.js';
+import { mergePresentationCounts, type PresentationCounts } from '../../session/context/context-surface-projection.js';
 import { buildSessionBootstrap, MAX_SESSION_BOOTSTRAP_TOKENS } from '../../session/SessionBootstrap.js';
+import { isDisplayOnlySystemMessage } from '../../stores/host-message-policy.js';
 import { createMessageDeliveryBoundary } from '../../stores/message-delivery-boundary.js';
 import type { AppendMessageInput, StoredToolEvent } from '../../stores/ports/MessageStore.js';
 import type { Thread, ThreadRoutingPolicyV1 } from '../../stores/ports/ThreadStore.js';
@@ -107,6 +109,7 @@ import { accumulateTextAggregate } from '../text-aggregation.js';
 import { type ContextEvalInput, extractContextEvalSignals } from './context-eval.js';
 import { buildBriefingMessage } from './format-briefing.js';
 import { isDirectOwnerDispositionOrigin } from './human-disposition-invocation-origin.js';
+import { outputLayoutExtra, RoutingMessageOutputProjection } from './message-output-projection.js';
 import { persistUserFacingSystemInfoNotices } from './persist-system-info-warnings.js';
 import { extractRichFromText, isValidRichBlock } from './rich-block-extract.js';
 import type { RouteOptions, RouteStrategyDeps } from './route-helpers.js';
@@ -116,7 +119,7 @@ import {
   computeContextBudget,
   contextProjectionFromEpochDecision,
   createIdempotentPendingProjectionQueue,
-  createLeakedToolCallStreamStripper,
+  createRoutingMessageTransform,
   detectContextDegradation,
   explicitApprovedTasteCueSeeds,
   explicitPromptForIncrementalContext,
@@ -131,6 +134,7 @@ import {
   routeContentBlocksForCat,
   sanitizeInjectedContent,
   shouldPersistContextBriefing,
+  storedMessageTimestamp,
   subjectSeenCueSeeds,
   toStoredToolEvent,
   upsertMaxBoundary,
@@ -261,7 +265,7 @@ export async function* routeParallel(
       cursorStore: deps.deliveryCursorStore!,
       messageStore: deps.messageStore,
       messageFilter: (raw: Record<string, unknown>) => {
-        if (raw.userId === 'system' || raw.origin === 'briefing') return false;
+        if (isDisplayOnlySystemMessage(raw) || raw.origin === 'briefing') return false;
         const viewer =
           thinkingMode === 'play' ? ({ type: 'cat' as const, catId } as const) : ({ type: 'user' as const } as const);
         if (
@@ -419,6 +423,13 @@ export async function* routeParallel(
         userMessage: message,
         threadId,
         evidenceStore: deps.evidenceStore,
+        messageSearch: createConciergeMessageSearch({
+          evidenceStore: deps.evidenceStore,
+          threadStore: deps.invocationDeps.threadStore,
+          messageStore: deps.messageStore,
+          userId,
+          ...(currentUserMessageId ? { source: { threadId, messageId: currentUserMessageId } } : {}),
+        }),
       });
       conciergeSearchContextString = searchResult.contextString;
       conciergeHandles = searchResult.handles;
@@ -1250,7 +1261,8 @@ export async function* routeParallel(
     };
   };
   const completedCatInvocationIds: Array<[string, string]> = [];
-  const catPayloadStrippers = new Map<string, ReturnType<typeof createLeakedToolCallStreamStripper>>();
+  const catOutputTransforms = new Map<string, ReturnType<typeof createRoutingMessageTransform>>();
+  const catOutputProjections = new Map<string, RoutingMessageOutputProjection>();
   let completedCount = 0;
   let yieldedFinalDone = false;
   // F153: Accumulate total tokens across all parallel streams for route aggregate
@@ -1270,11 +1282,11 @@ export async function* routeParallel(
   // Track which cats have had their keepalive started
   let keepaliveStarted = false;
 
-  function getPayloadStripper(catId: string) {
-    let stripper = catPayloadStrippers.get(catId);
+  function getOutputTransform(catId: string) {
+    let stripper = catOutputTransforms.get(catId);
     if (!stripper) {
-      stripper = createLeakedToolCallStreamStripper();
-      catPayloadStrippers.set(catId, stripper);
+      stripper = createRoutingMessageTransform(catId as CatId);
+      catOutputTransforms.set(catId, stripper);
     }
     return stripper;
   }
@@ -1311,27 +1323,14 @@ export async function* routeParallel(
     },
   );
   for await (const msg of mergedStreams) {
-    const effectiveMsgs: AgentMessage[] = [];
-    if (msg.type === 'text' && msg.content && msg.catId) {
-      effectiveMsgs.push({ ...msg, content: getPayloadStripper(msg.catId).push(msg.content) });
-    } else if (msg.type === 'done' && msg.catId) {
-      if (msg.metadata) {
-        catMeta.set(msg.catId, mergeMessageMetadataSnapshots(catMeta.get(msg.catId), msg.metadata));
-      }
-      const flushedText = getPayloadStripper(msg.catId).flush();
-      if (flushedText) {
-        effectiveMsgs.push({
-          type: 'text',
-          catId: msg.catId,
-          content: flushedText,
-          timestamp: msg.timestamp,
-        });
-      }
-    } else {
-      effectiveMsgs.push(msg);
+    const transform = msg.catId ? getOutputTransform(msg.catId) : undefined;
+    if (msg.type === 'done' && msg.catId && msg.metadata) {
+      catMeta.set(msg.catId, mergeMessageMetadataSnapshots(catMeta.get(msg.catId), msg.metadata));
     }
-
-    for (const effectiveMsg of effectiveMsgs) {
+    const effectiveMsgs = (transform?.transform(msg) ?? [msg]).filter(
+      (event) => msg.type !== 'done' || event.type !== 'done',
+    );
+    for (let effectiveMsg of effectiveMsgs) {
       // F22 R2 P1-1: Capture invocationId from the initial system_info per cat.
       // Keep forwarding this boundary event so frontend can reset stale task progress.
       if (
@@ -1348,6 +1347,14 @@ export async function* routeParallel(
             parsed.invocationId.length > 0
           ) {
             catInvocationId.set(effectiveMsg.catId, parsed.invocationId);
+            catOutputProjections.set(
+              effectiveMsg.catId,
+              new RoutingMessageOutputProjection({
+                threadId,
+                catId: effectiveMsg.catId,
+                turnInvocationId: parsed.invocationId,
+              }),
+            );
             if (deps.invocationDeps.turnExecutionStore) {
               turnExecutionProjectionByInvocation.set(parsed.invocationId, {
                 invocationId: parsed.invocationId,
@@ -1371,15 +1378,18 @@ export async function* routeParallel(
           /* ignore parse errors */
         }
       }
-      if (effectiveMsg.type === 'text' && effectiveMsg.content && effectiveMsg.catId) {
-        catText.set(
-          effectiveMsg.catId,
-          accumulateTextAggregate(
-            catText.get(effectiveMsg.catId) ?? '',
-            effectiveMsg.content,
-            (effectiveMsg as { textMode?: 'append' | 'replace' }).textMode,
-          ),
-        );
+      if (effectiveMsg.type === 'text' && effectiveMsg.catId) {
+        const cat = effectiveMsg.catId;
+        const projection = catOutputProjections.get(cat);
+        if (projection) {
+          effectiveMsg = projection.text(effectiveMsg, transform?.outputFactsFor(effectiveMsg));
+          catText.set(cat, projection.snapshot().content);
+        } else if (effectiveMsg.content) {
+          catText.set(
+            cat,
+            accumulateTextAggregate(catText.get(cat) ?? '', effectiveMsg.content, effectiveMsg.textMode),
+          );
+        }
       }
       // F045: Accumulate thinking blocks per cat for persistence (F5 recovery)
       if (effectiveMsg.type === 'system_info' && effectiveMsg.content && effectiveMsg.catId) {
@@ -1443,11 +1453,15 @@ export async function* routeParallel(
         }
       }
       // Accumulate tool events per cat
-      const toolEvt = toStoredToolEvent(effectiveMsg);
+      const toolEvt = toStoredToolEvent(
+        effectiveMsg,
+        effectiveMsg.catId ? catInvocationId.get(effectiveMsg.catId) : undefined,
+      );
       if (toolEvt && effectiveMsg.catId) {
         const arr = catToolEvents.get(effectiveMsg.catId) ?? [];
         arr.push(toolEvt);
         catToolEvents.set(effectiveMsg.catId, arr);
+        catOutputProjections.get(effectiveMsg.catId)?.tool(toolEvt);
       }
       if (effectiveMsg.catId) {
         let collector = catVerifiedConciergeToolTargets.get(effectiveMsg.catId);
@@ -1635,9 +1649,10 @@ export async function* routeParallel(
 
         const neverFlushedCat = lastLen === 0 && lastToolLen === 0;
         if (
-          effectiveMsg.type === 'text' &&
-          charDelta !== 0 &&
-          (neverFlushedCat || isReplaceText || now - lastFlush >= FLUSH_INTERVAL_MS || charDelta >= FLUSH_CHAR_DELTA)
+          effectiveMsg.semanticEvent?.kind === 'subexecution' ||
+          (effectiveMsg.type === 'text' &&
+            charDelta !== 0 &&
+            (neverFlushedCat || isReplaceText || now - lastFlush >= FLUSH_INTERVAL_MS || charDelta >= FLUSH_CHAR_DELTA))
         ) {
           const curThinking = catThinking.get(effectiveMsg.catId);
           deps.draftStore
@@ -1647,6 +1662,8 @@ export async function* routeParallel(
               invocationId: invId,
               catId: effectiveMsg.catId as CatId,
               content: curText,
+              ...(catMeta.get(effectiveMsg.catId) ? { metadata: catMeta.get(effectiveMsg.catId) } : {}),
+              extra: outputLayoutExtra(catOutputProjections.get(effectiveMsg.catId), curText),
               ...(curTools && curToolLen > 0 ? { toolEvents: curTools } : {}),
               ...(curThinking && curThinking.length > 0 ? { thinking: renderThinkingChunks(curThinking) } : {}),
               updatedAt: now,
@@ -1672,6 +1689,8 @@ export async function* routeParallel(
                 invocationId: invId,
                 catId: effectiveMsg.catId as CatId,
                 content: curText,
+                ...(catMeta.get(effectiveMsg.catId) ? { metadata: catMeta.get(effectiveMsg.catId) } : {}),
+                extra: outputLayoutExtra(catOutputProjections.get(effectiveMsg.catId), curText),
                 ...(curTools && curToolLen > 0 ? { toolEvents: curTools } : {}),
                 ...(curThinkingTool && curThinkingTool.length > 0
                   ? { thinking: renderThinkingChunks(curThinkingTool) }
@@ -1817,9 +1836,7 @@ export async function* routeParallel(
         const persistedContent = conciergeActionSourceContent
           ? projectConciergeStoredContent(storedContent)
           : storedContent;
-        if (conciergeActionSourceContent !== undefined) {
-          persistedDoneContent = persistedContent;
-        }
+        persistedDoneContent = persistedContent;
         // F167 L2 AC-A5: parallel mode has no routing semantics, so persist mentions=[]
         // to keep parallel @ mentions out of MessageStore.getMentionsFor() / pending-mentions flow.
         // L2 suppression log below still surfaces visible @ tokens from the text for observability.
@@ -1979,6 +1996,7 @@ export async function* routeParallel(
             ...(meta ? { metadata: meta } : {}),
             ...(catTools && catTools.length > 0 ? { toolEvents: catTools } : {}),
             extra: {
+              ...outputLayoutExtra(catOutputProjections.get(msg.catId), persistedContent),
               ...(allRichBlocks.length > 0 ? { rich: { v: 1 as const, blocks: allRichBlocks } } : {}),
               ...(deliveryBoundary ? { deliveryBoundary } : {}),
               // F194 Phase Z9 AC-Z25 (KD-28): always stamp turnInvocationId
@@ -2110,8 +2128,13 @@ export async function* routeParallel(
           (catTools?.length ?? 0) > 0 ||
           Boolean(thinking && renderThinkingChunks(thinking).trim().length > 0);
         const isFreshnessClosureSuccessor = Boolean(options.freshnessClosureRequiredMessageIds?.length);
+        const wasCanceled = (signalForCat?.(msg.catId) ?? signal)?.aborted ?? false;
         const shouldEmitSilentCompletion =
-          (catTools?.length ?? 0) > 0 && !hasRichBlocks && !sawUserFacingSystemInfo && !isFreshnessClosureSuccessor;
+          !wasCanceled &&
+          (catTools?.length ?? 0) > 0 &&
+          !hasRichBlocks &&
+          !sawUserFacingSystemInfo &&
+          !isFreshnessClosureSuccessor;
 
         // Diagnostic: if cat ran tools but produced no text, emit a system_info so the
         // user sees *something* instead of a silent vanish (bugfix: silent-exit P1).
@@ -2264,7 +2287,7 @@ export async function* routeParallel(
               });
             }
           }
-        } else if (!sawUserFacingSystemInfo && !isFreshnessClosureSuccessor) {
+        } else if (!wasCanceled && !sawUserFacingSystemInfo && !isFreshnessClosureSuccessor) {
           yield {
             type: 'system_info' as AgentMessageType,
             catId: msg.catId,
@@ -2491,8 +2514,16 @@ export async function* routeParallel(
       yield projectLiveTurnExecution(
         {
           ...stampedDone,
+          extra: {
+            ...stampedDone.extra,
+            ...outputLayoutExtra(
+              catOutputProjections.get(msg.catId),
+              persistedDoneContent ?? catText.get(msg.catId) ?? '',
+            ),
+          },
           ...(persistedDoneContent !== undefined ? { content: persistedDoneContent } : {}),
           ...(turnStoredMessageId ? { messageId: turnStoredMessageId } : {}),
+          ...(await storedMessageTimestamp(deps.messageStore, turnStoredMessageId)),
           isFinal,
         },
         ownInvId,

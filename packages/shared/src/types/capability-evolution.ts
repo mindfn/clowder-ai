@@ -174,6 +174,13 @@ const evolutionProgramEventV1Union = z.discriminatedUnion('type', [
     dependencies: z.array(evolutionPreparationSubmissionRefV1Schema).max(3),
   }),
   strictEvent({ type: z.literal('certificates_linked'), certificates: completeCertificatesSchema, valueOwnerRef: ownerTruthRefV1Schema, measurementRoleRefs: completeMeasurementRoleRefsSchema }),
+  strictEvent({
+    type: z.literal('measurement_constitution_rebound'),
+    sourceRef: ownerTruthRefV1Schema,
+    decisionProofRef: ownerTruthRefV1Schema,
+    measurementCertificateRef: ownerTruthRefV1Schema,
+    measurementRoleRefs: completeMeasurementRoleRefsSchema,
+  }),
   strictEvent({ type: z.literal('sources_and_triggers_linked'), sourceRefs: z.array(ownerTruthRefV1Schema).min(1).max(128), triggerRef: ownerTruthRefV1Schema, namedConsumerRef: ownerTruthRefV1Schema }),
   strictEvent({ type: z.literal('observation_setup_linked'), setup: evolutionObservationSetupV1Schema }),
   strictEvent({ type: z.literal('evaluation_triggered'), triggerReceiptRef: ownerTruthRefV1Schema, exposureProofRef: ownerTruthRefV1Schema }),

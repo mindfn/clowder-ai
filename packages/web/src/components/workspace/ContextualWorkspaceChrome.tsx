@@ -1,6 +1,13 @@
 'use client';
 
-import type { ReactNode } from 'react';
+import { createContext, type ReactNode, useContext, useMemo } from 'react';
+import { useShellPresentation } from '../shell/shell-presentation';
+
+const WorkspaceHostChromeActions = createContext<{ onFold: () => void; showFold: boolean } | null>(null);
+
+export function useWorkspaceHostChromeActions() {
+  return useContext(WorkspaceHostChromeActions);
+}
 
 export type WorkspaceHostMode = 'workspace' | 'status' | 'transcript';
 
@@ -28,6 +35,9 @@ export function ContextualWorkspaceChrome({
   children,
 }: ContextualWorkspaceChromeProps) {
   const host = HOST_LABELS[mode];
+  const isV2 = useShellPresentation() === 'v2';
+  const chromeHidden = isV2 && mode === 'workspace';
+  const hostActions = useMemo(() => ({ onFold, showFold }), [onFold, showFold]);
 
   return (
     <section
@@ -35,7 +45,8 @@ export function ContextualWorkspaceChrome({
       data-testid="contextual-workspace-shell"
     >
       <header
-        className="flex h-11 shrink-0 items-center border-b border-cafe-subtle/70 bg-cafe-surface/60 px-3.5"
+        hidden={chromeHidden}
+        className={`${chromeHidden ? 'hidden' : 'flex'} h-11 shrink-0 items-center border-b border-cafe-subtle/70 bg-cafe-surface/60 px-3.5`}
         data-workspace-chrome-layer="shell"
       >
         <div className="flex min-w-0 flex-1 items-center gap-2.5">
@@ -97,7 +108,9 @@ export function ContextualWorkspaceChrome({
           </button>
         )}
       </header>
-      <div className="flex min-h-0 flex-1 overflow-hidden">{children}</div>
+      <WorkspaceHostChromeActions.Provider value={hostActions}>
+        <div className="flex min-h-0 flex-1 overflow-hidden">{children}</div>
+      </WorkspaceHostChromeActions.Provider>
     </section>
   );
 }

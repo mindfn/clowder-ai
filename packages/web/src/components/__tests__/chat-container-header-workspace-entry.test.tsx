@@ -9,12 +9,14 @@ vi.mock('../ThreadCatPill', () => ({ ThreadCatPill: () => null }));
 vi.mock('../ThreadIndicator', () => ({ ThreadIndicator: () => null, tailTruncate: (value: string) => value }));
 
 import { ChatContainerHeader, PanelToggle } from '../ChatContainerHeader';
+import { writeShellPresentation } from '../shell/shell-presentation';
 
 describe('F284 Workspace entry', () => {
   let container: HTMLDivElement;
   let root: Root;
 
   beforeEach(() => {
+    localStorage.clear();
     (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
     container = document.createElement('div');
     document.body.appendChild(container);
@@ -65,5 +67,50 @@ describe('F284 Workspace entry', () => {
     expect(container.querySelector('button[aria-label="导出对话"]')).toBeNull();
     expect(container.querySelector('button[aria-label="语音陪伴"]')).toBeNull();
     expect(container.querySelector('button[aria-label="会议伴随"]')).toBeNull();
+  });
+
+  it('opens message search through its named Host callback without opening Workspace', async () => {
+    writeShellPresentation('v2');
+    const search = vi.fn();
+    const workspace = vi.fn();
+    await act(async () =>
+      root.render(
+        <ChatContainerHeader
+          sidebarOpen={false}
+          onToggleSidebar={vi.fn()}
+          threadId="origin"
+          viewMode="single"
+          onToggleViewMode={vi.fn()}
+          statusPanelOpen={false}
+          onToggleStatusPanel={workspace}
+          onOpenMessageSearch={search}
+          messageSearchOpen
+        />,
+      ),
+    );
+    const button = container.querySelector<HTMLButtonElement>('button[aria-label="查找消息"]');
+    expect(button).not.toBeNull();
+    expect(button?.getAttribute('aria-expanded')).toBe('true');
+    act(() => button?.click());
+    expect(search).toHaveBeenCalledOnce();
+    expect(workspace).not.toHaveBeenCalled();
+  });
+  it('keeps classic free of the new message-search entry even when the callback is supplied', async () => {
+    await act(async () =>
+      root.render(
+        <ChatContainerHeader
+          sidebarOpen={false}
+          onToggleSidebar={vi.fn()}
+          threadId="origin"
+          viewMode="single"
+          onToggleViewMode={vi.fn()}
+          statusPanelOpen={false}
+          onToggleStatusPanel={vi.fn()}
+          onOpenMessageSearch={vi.fn()}
+        />,
+      ),
+    );
+    expect(container.querySelector('[data-testid="message-search-entry"]')).toBeNull();
+    expect(container.querySelector('[data-testid="workspace-panel-toggle"]')).not.toBeNull();
   });
 });

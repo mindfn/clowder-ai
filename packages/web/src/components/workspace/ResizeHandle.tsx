@@ -72,6 +72,7 @@ export function ResizeHandle({
     (e: KeyboardEvent) => {
       if (COLLAPSE_KEYS.has(e.key) && onCollapse) {
         e.preventDefault();
+        e.stopPropagation();
         onCollapse();
         return;
       }
@@ -79,6 +80,7 @@ export function ResizeHandle({
       const delta = KEYBOARD_DELTAS[direction][e.key];
       if (delta !== undefined) {
         e.preventDefault();
+        e.stopPropagation();
         onResize(delta);
       }
     },

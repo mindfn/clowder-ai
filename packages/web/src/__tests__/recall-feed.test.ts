@@ -165,7 +165,8 @@ describe('filterRecallEvents', () => {
     const recall = filterRecallEvents(events);
     expect(recall).toHaveLength(2);
     expect(recall[0].query).toBe('first');
-    expect(recall[0].resultCount).toBe(0);
+    expect(recall[0].resultCount).toBeUndefined();
+    expect(recall[0].resultStatus).toBe('error');
     expect(recall[0].results).toEqual([]);
     expect(recall[1].query).toBe('second');
     expect(recall[1].resultCount).toBe(1);
@@ -341,7 +342,9 @@ describe('filterRecallEvents', () => {
     ];
 
     const recall = filterRecallEvents(events);
-    expect(recall).toHaveLength(1);
+    expect(recall).toHaveLength(2);
+    expect(recall[1].toolName).toBe('graph_resolve');
+    expect(recall[1].resultCount).toBe(2);
     expect(recall[0].query).toBe('stale search');
     expect(recall[0].resultStatus).toBe('counted');
     expect(recall[0].resultCount).toBe(1);

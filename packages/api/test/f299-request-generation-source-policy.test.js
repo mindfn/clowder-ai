@@ -14,7 +14,7 @@ before(async () => {
     encodeProfileSourceRef,
     requestGenerationSourceKey,
     resolveRequestGenerationSourceStates,
-  } = await import('../dist/domains/cats/services/session/request-generation-source-policy.js'));
+  } = await import('../dist/domains/cats/services/session/transcript-index/request-generation-source-policy.js'));
   ({ requestGenerationMessageSourceRefs, requestGenerationPresentations } = await import(
     '../dist/domains/cats/services/agents/invocation/invoke-single-cat.js'
   ));

@@ -8,6 +8,7 @@ import {
 
 const EXTERNAL_REVIEW_EVENT_KINDS = new Set<CommunityEvent['kind']>([
   'case.external_review_assigned',
+  'case.external_review_reassigned',
   'case.head_observed',
   'case.ci_observed',
   'case.cloud_review_observed',
@@ -69,9 +70,78 @@ export function applyExternalReviewProjectionEvent(
   current: ExternalReviewAggregate | null,
   event: CommunityEvent,
 ): ExternalReviewApplyResult | { readonly ok: false; readonly reason: 'aggregate_missing' | 'invalid_assignment' } {
+  if (
+    current &&
+    (current.reviewerAssignmentRevision ?? 0) > 0 &&
+    (event.kind === 'case.review_verdict_recorded' || event.kind === 'case.review_verdict_submitted')
+  ) {
+    const principal = event.payload.principal;
+    if (
+      event.payload.reviewerAssignmentRevision !== current.reviewerAssignmentRevision ||
+      !isReviewer(principal) ||
+      principal.catId !== current.reviewerCatId ||
+      principal.threadId !== current.reviewerThreadId
+    ) {
+      return { ok: false, reason: 'invalid_assignment' };
+    }
+  }
+  if (event.kind === 'case.external_review_reassigned') {
+    const { expectedAssignmentRevision, from, to } = event.payload;
+    const authority = event.payload.authority;
+    const fields = authority && typeof authority === 'object' ? (authority as Record<string, unknown>) : null;
+    const grantId = fields?.kind === 'approved_proposal' ? fields.proposalId : null;
+    if (grantId !== null && (typeof grantId !== 'string' || !grantId))
+      return { ok: false, reason: 'invalid_assignment' };
+    if (typeof grantId === 'string' && current?.consumedDelegations?.some((grant) => grant.proposalId === grantId))
+      return { ok: false, reason: 'invalid_assignment' };
+    const revision = current?.reviewerAssignmentRevision ?? 0;
+    if (
+      !current ||
+      current.lifecycle === 'terminal' ||
+      current.actionLeaseRef ||
+      expectedAssignmentRevision !== revision ||
+      !isReviewer(from) ||
+      !isReviewer(to) ||
+      from.catId !== current.reviewerCatId ||
+      from.threadId !== current.reviewerThreadId ||
+      (from.catId === to.catId && from.threadId === to.threadId)
+    )
+      return { ok: false, reason: 'invalid_assignment' };
+    return {
+      ok: true,
+      value: {
+        ...current,
+        reviewerCatId: to.catId,
+        reviewerThreadId: to.threadId,
+        reviewerAssignmentRevision: revision + 1,
+        ...(typeof grantId === 'string'
+          ? {
+              consumedDelegations: [
+                ...(current.consumedDelegations ?? []),
+                { proposalId: grantId, sourceEventId: event.sourceEventId },
+              ],
+            }
+          : {}),
+        verdictSubmissionEpoch: currentVerdictSubmissionEpoch(current) + 1,
+        pendingVerdict: null,
+        wake: null,
+      },
+    };
+  }
   if (event.kind === 'case.external_review_assigned') {
     const { mode, cloudPolicy, reviewerCatId, reviewerThreadId, actionLeaseRef } = event.payload;
     const parsedLease = readActionLeaseRef(actionLeaseRef);
+    // Historical assignments retain replay semantics until the first explicit transfer.
+    // Thereafter an old collector/config event cannot reclaim the predecessor principal.
+    if (
+      current &&
+      (current.reviewerAssignmentRevision ?? 0) > 0 &&
+      (event.payload.expectedAssignmentRevision !== current.reviewerAssignmentRevision ||
+        reviewerCatId !== current.reviewerCatId ||
+        reviewerThreadId !== current.reviewerThreadId ||
+        (parsedLease && !sameActionLeaseRef(current.actionLeaseRef, parsedLease)))
+    )
+      return { ok: false, reason: 'invalid_assignment' };
     if (
       (mode !== 'observe_only' && mode !== 'maintainer_review') ||
       (cloudPolicy !== 'optional' && cloudPolicy !== 'required') ||
@@ -115,4 +185,15 @@ export function applyExternalReviewProjectionEvent(
 
   if (!current) return { ok: false, reason: 'aggregate_missing' };
   return applyExternalReviewEvent(current, event);
+}
+
+function isReviewer(value: unknown): value is { catId: string; threadId: string } {
+  if (!value || typeof value !== 'object') return false;
+  const reviewer = value as Record<string, unknown>;
+  return (
+    typeof reviewer.catId === 'string' &&
+    reviewer.catId.length > 0 &&
+    typeof reviewer.threadId === 'string' &&
+    reviewer.threadId.length > 0
+  );
 }

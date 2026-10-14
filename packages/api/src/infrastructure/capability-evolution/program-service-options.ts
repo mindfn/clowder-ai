@@ -1,6 +1,6 @@
 import { createHash } from 'node:crypto';
 import type { EvolutionChangeOwnerPort } from './change/program-change-owner-contract.js';
-import type { EvaluationOwnerResolver } from './program-evaluation-contract.js';
+import type { EvaluationOwnerResolver, MeasurementConstitutionResolver } from './program-evaluation-contract.js';
 import type { IEvolutionProgramEventLog } from './program-event-log.js';
 import type { ProgramJoinValidator } from './program-join-validator.js';
 import type { EvolutionTriggerDispatch } from './program-lifecycle-linker.js';
@@ -21,6 +21,8 @@ export interface EvolutionProgramServiceOptions {
   triggerRegistration?: () => EvolutionTriggerRegistrationProjection | undefined;
   /** F267 measurement owner contract. Absent = the Phase 3 ingress fails closed. */
   evaluationOwnerResolver?: EvaluationOwnerResolver;
+  /** F267 trusted-main publication resolver. Absent = measurement constitution cannot be rebound. */
+  measurementConstitutionResolver?: MeasurementConstitutionResolver;
   /** F266/F313 canonical change lifecycle. Absent = Phase 4 actions fail closed. */
   changeOwner?: EvolutionChangeOwnerPort;
   /**

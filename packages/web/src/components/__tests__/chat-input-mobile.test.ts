@@ -61,17 +61,18 @@ describe('ChatInput progressive add menu', () => {
 
   it('reveals secondary actions only after + is clicked', () => {
     render();
-    expect(container.querySelector('[data-testid="composer-add-menu"]')).toBeNull();
+    expect(document.querySelector('[data-testid="composer-add-menu"]')).toBeNull();
 
     const plusBtn = container.querySelector('button[aria-label="添加"]') as HTMLButtonElement;
     act(() => {
       plusBtn.click();
     });
 
-    expect(container.textContent).toContain('引用 Thread 或文件');
-    expect(container.textContent).toContain('上传附件');
-    expect(container.textContent).toContain('悄悄话');
-    expect(container.textContent).toContain('游戏');
+    const menu = document.querySelector('[data-testid="composer-add-menu"]');
+    expect(menu?.textContent).toContain('引用 Thread 或文件');
+    expect(menu?.textContent).toContain('上传附件');
+    expect(menu?.textContent).toContain('悄悄话');
+    expect(menu?.textContent).toContain('游戏');
   });
 
   it('collapses the secondary menu when + is clicked again', () => {
@@ -81,19 +82,19 @@ describe('ChatInput progressive add menu', () => {
     act(() => {
       plusBtn.click();
     });
-    expect(container.querySelector('[data-testid="composer-add-menu"]')).toBeTruthy();
+    expect(document.querySelector('[data-testid="composer-add-menu"]')).toBeTruthy();
     // Close
     act(() => {
       plusBtn.click();
     });
-    expect(container.querySelector('[data-testid="composer-add-menu"]')).toBeNull();
+    expect(document.querySelector('[data-testid="composer-add-menu"]')).toBeNull();
   });
 
   it('collapses on a real pointer click without the outside-click handler reopening it', () => {
     render();
     const plusBtn = container.querySelector('button[aria-label="添加"]') as HTMLButtonElement;
     act(() => plusBtn.click());
-    expect(container.querySelector('[data-testid="composer-add-menu"]')).toBeTruthy();
+    expect(document.querySelector('[data-testid="composer-add-menu"]')).toBeTruthy();
 
     act(() => {
       plusBtn.dispatchEvent(new MouseEvent('mousedown', { bubbles: true }));
@@ -101,17 +102,7 @@ describe('ChatInput progressive add menu', () => {
       plusBtn.dispatchEvent(new MouseEvent('click', { bubbles: true }));
     });
 
-    expect(container.querySelector('[data-testid="composer-add-menu"]')).toBeNull();
-  });
-
-  it('+ button has rotate-45 class when its menu is open', () => {
-    render();
-    const plusBtn = container.querySelector('button[aria-label="添加"]') as HTMLButtonElement;
-    expect(plusBtn.className).not.toContain('rotate-45');
-    act(() => {
-      plusBtn.click();
-    });
-    expect(plusBtn.className).toContain('rotate-45');
+    expect(document.querySelector('[data-testid="composer-add-menu"]')).toBeNull();
   });
 });
 
@@ -156,14 +147,6 @@ describe('ChatInput textarea auto-grow', () => {
 });
 
 describe('ChatInput composer layout', () => {
-  it('vertically centers the right-side controls with the textarea', () => {
-    render();
-
-    const row = container.querySelector('[data-testid="chat-input-composer-row"]');
-    expect(row?.className).toContain('items-center');
-    expect(row?.className).not.toContain('items-end');
-  });
-
   it('keeps the active invocation stop affordance visible while preserving hover and keyboard focus styling', () => {
     render({ hasActiveInvocation: true });
 

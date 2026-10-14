@@ -86,6 +86,14 @@ const REASON_TEXT: Record<CliErrorReasonCode, { summary: string; hint: string }>
     summary: '网络连接失败',
     hint: '检查代理 / VPN / 防火墙；provider 上游也可能短暂不可用。',
   },
+  upstream_service_error: {
+    summary: '上游服务处理请求失败',
+    hint: '上游服务明确报告请求处理失败。请稍后重试；若持续出现，可携带下方 request ID 向对应服务商反馈。',
+  },
+  stream_disconnected: {
+    summary: '响应流中断，原因未确定',
+    hint: '响应在完成前中断，现有证据无法确定原因。请稍后重试；若反复出现，保留下方诊断信息以便追查。',
+  },
   invalid_config: {
     summary: 'CLI 配置文件无效',
     hint: '检查 config.toml / settings.json 语法和字段名（被外部工具改坏过？）。',
@@ -109,11 +117,11 @@ const REASON_TEXT: Record<CliErrorReasonCode, { summary: string; hint: string }>
     // generic 529 Overloaded / "Server is busy" patterns from any upstream. Hard-coding
     // "Anthropic" misdiagnoses non-Claude provider failures + sends users to the wrong
     // status page. Keep regex broad (correct cross-provider coverage), make text neutral.
-    summary: '上游 CLI provider 服务临时限流',
+    summary: '上游服务繁忙或暂时过载',
     // Plain text only — CliDiagnosticsPanel renders publicHint inside a <span> verbatim
     // (no markdown parser). @gpt52 R1 BLOCKED + cloud codex R1 P2 both caught the earlier
     // Markdown version. Provider-neutral phrasing per cloud codex R2 P2.
-    hint: '不是你的额度问题——是 CLI 上游 provider 服务器侧临时限流（provider 错误里通常会明示如 "not your usage limit" / "529 Overloaded"）。等 30-60 秒重试或换一只猫（不同 provider）；反复出现去你用的 provider 状态页（Anthropic / OpenAI / Google / DeepSeek 各有 status 页）。',
+    hint: '上游服务报告高负载、容量不足或临时限流。请稍后重试；若持续出现，可查看对应服务商的状态页。',
   },
   cli_response_timeout: {
     summary: 'CLI 响应超时',
@@ -356,6 +364,11 @@ export interface CliTimeoutTerminalContext {
   finalStage: CliTimeoutTerminationStage;
 }
 
+/** Only the witnessed UUID-shaped provider correlation token is public metadata. */
+export function extractUpstreamRequestId(text: string): string | undefined {
+  return /\brequest ID\s+([a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12})\b/i.exec(text)?.[1];
+}
+
 export function buildCliDiagnostics(args: {
   rawText: string;
   debugRef: CliDiagnostics['debugRef'];
@@ -397,6 +410,8 @@ export function buildCliDiagnostics(args: {
     };
   }
 
+  const upstreamRequestId = extractUpstreamRequestId(args.safeExcerptRawText ?? args.rawText);
+  const debugRef = { ...args.debugRef, ...(upstreamRequestId ? { upstreamRequestId } : {}) };
   const classificationContext: CliErrorClassificationContext = {
     ...(args.managedArgvFlags ? { managedArgvFlags: args.managedArgvFlags } : {}),
   };
@@ -424,7 +439,7 @@ export function buildCliDiagnostics(args: {
     return {
       publicSummary: panicHeadline ? `CLI panic — ${panicHeadline}` : baseText.summary,
       publicHint: baseText.hint,
-      debugRef: args.debugRef,
+      debugRef,
       reasonCode,
       ...(classifierSafeExcerpt ? { safeExcerpt: classifierSafeExcerpt, excerptSource: 'classifier' as const } : {}),
     };
@@ -451,7 +466,7 @@ export function buildCliDiagnostics(args: {
       return {
         publicSummary: panicHeadline ? `CLI panic — ${panicHeadline}` : `Claude Code 报告：${headline}`,
         publicHint: '这是 Claude Code / 模型侧报告的错误，不是猫咖问题。展开看完整原因；可换一只猫或刷新对话重试。',
-        debugRef: args.debugRef,
+        debugRef,
         safeExcerpt: sanitized.slice(0, MAX_CHARS),
         excerptSource: 'cc_structured',
       };
@@ -485,7 +500,7 @@ export function buildCliDiagnostics(args: {
   return {
     publicSummary: panicHeadline ? `CLI panic — ${panicHeadline}` : UNKNOWN_TEXT.summary,
     publicHint: unknownHint,
-    debugRef: args.debugRef,
+    debugRef,
     ...(safeExcerpt && { safeExcerpt, excerptSource }),
   };
 }

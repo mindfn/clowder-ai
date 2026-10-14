@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import { spawn } from 'node:child_process';
+import { execFileSync, spawn } from 'node:child_process';
 import { once } from 'node:events';
 import { createServer } from 'node:net';
 import path from 'node:path';
@@ -78,7 +78,8 @@ function apiBody(pathname) {
   return staticBodies[pathname] ?? {};
 }
 
-export function createContinuityHarness() {
+export function createContinuityHarness({ shellPresentation = 'classic' } = {}) {
+  assert.ok(['classic', 'v2'].includes(shellPresentation), 'fixture presentation must be explicit');
   let server;
   let browser;
   let context;
@@ -101,14 +102,19 @@ export function createContinuityHarness() {
     throw new Error(`Timed out waiting for ${url}:\n${serverOutput.join('')}`);
   }
 
-  async function stubApis(page) {
+  async function stubApis(page, historyGate) {
     await page.route('**/api/**', async (route) => {
-      const body = apiBody(new URL(route.request().url()).pathname);
+      const pathname = new URL(route.request().url()).pathname;
+      if (pathname === '/api/messages' && historyGate) {
+        historyGate.requested = true;
+        await historyGate.promise;
+      }
+      const body = apiBody(pathname);
       await route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify(body) });
     });
   }
 
-  async function openFixture() {
+  async function openFixture({ query = '', historyGate = null } = {}) {
     const page = await context.newPage();
     const clientErrors = [];
     page.on('console', (message) => {
@@ -118,8 +124,8 @@ export function createContinuityHarness() {
     page.on('requestfailed', (request) =>
       clientErrors.push(`requestfailed: ${request.url()} (${request.failure()?.errorText ?? 'unknown'})`),
     );
-    await stubApis(page);
-    await page.goto(`${baseUrl}${FIXTURE_PATH}`, { waitUntil: 'domcontentloaded', timeout: 60_000 });
+    await stubApis(page, historyGate);
+    await page.goto(`${baseUrl}${FIXTURE_PATH}${query}`, { waitUntil: 'domcontentloaded', timeout: 60_000 });
     try {
       await page
         .locator('[data-testid="rich-html-interaction-continuity-fixture"][data-hydrated="true"]')
@@ -156,6 +162,8 @@ export function createContinuityHarness() {
   }
 
   async function start() {
+    // Direct Next startup must prepare the same assets as the normal predev entry.
+    execFileSync(process.execPath, ['scripts/sync-vendor-assets.mjs'], { cwd: WEB_ROOT });
     const port = await findFreePort();
     baseUrl = `http://127.0.0.1:${port}`;
     nextDev = await createNextDevTestEnvironment('rich-html-continuity', { NEXT_PUBLIC_API_URL: baseUrl });
@@ -169,6 +177,10 @@ export function createContinuityHarness() {
     await waitForPage(`${baseUrl}${FIXTURE_PATH}`);
     browser = await chromium.launch({ headless: true });
     context = await browser.newContext({ viewport: { width: 1280, height: 900 } });
+    await context.addInitScript((presentation) => {
+      if (window !== window.top) return;
+      window.localStorage.setItem('cat-cafe:shell-presentation', presentation);
+    }, shellPresentation);
     await context.grantPermissions(['clipboard-read', 'clipboard-write'], { origin: baseUrl });
   }
 

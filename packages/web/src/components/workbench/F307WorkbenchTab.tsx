@@ -25,6 +25,7 @@ function PinIcon({ pinned }: { pinned: boolean }) {
 
 export function F307WorkbenchTab({
   surface,
+  displayTitle = surface.title,
   index,
   layout,
   active,
@@ -34,6 +35,7 @@ export function F307WorkbenchTab({
   onExitMainAreaAttention,
 }: {
   surface: WorkspaceSurfaceDescriptor;
+  displayTitle?: string;
   index: number;
   layout: WorkbenchLayoutState;
   active: boolean;
@@ -70,6 +72,7 @@ export function F307WorkbenchTab({
       <button
         type="button"
         role="tab"
+        data-workbench-tab-control="activate"
         aria-selected={active}
         onClick={() => {
           onActivateSurface();
@@ -97,7 +100,9 @@ export function F307WorkbenchTab({
             运行
           </span>
         )}
-        <span className="truncate">{surface.title}</span>
+        <span className="truncate" title={displayTitle}>
+          {displayTitle}
+        </span>
       </button>
       <button
         type="button"
@@ -110,9 +115,10 @@ export function F307WorkbenchTab({
           })
         }
         className={`flex h-7 w-7 shrink-0 items-center justify-center rounded-md transition-colors hover:bg-cafe-surface-sunken ${pinned ? 'text-cafe-accent' : 'text-cafe-muted'}`}
-        aria-label={`${pinned ? '取消固定' : '固定'} ${surface.title}`}
+        aria-label={`${pinned ? '取消固定' : '固定'} ${displayTitle}`}
         aria-pressed={pinned}
         data-testid={`f307-pin-${surface.type}`}
+        data-workbench-tab-control="pin"
       >
         <span className="h-3 w-3">
           <PinIcon pinned={pinned} />
@@ -130,8 +136,9 @@ export function F307WorkbenchTab({
             })
           }
           className="flex h-7 w-6 shrink-0 items-center justify-center rounded-md text-cafe-muted hover:bg-cafe-surface-sunken"
-          aria-label={`向左移动 ${surface.title}`}
+          aria-label={`向左移动 ${displayTitle}`}
           data-testid={`f307-move-left-${surface.type}`}
+          data-workbench-tab-control="move-left"
         >
           <svg
             className="h-3 w-3"
@@ -161,10 +168,10 @@ export function F307WorkbenchTab({
         className="flex h-7 w-7 shrink-0 items-center justify-center rounded-md text-cafe-muted transition-colors hover:bg-cafe-surface-sunken hover:text-cafe"
         aria-label={
           returnsFromMainArea
-            ? `返回侧栏 ${surface.title}`
+            ? `返回侧栏 ${displayTitle}`
             : surface.type === 'agent-run'
-              ? `从工作台收起 ${surface.title}（不会停止任务）`
-              : `关闭 ${surface.title}`
+              ? `从工作台收起 ${displayTitle}（不会停止任务）`
+              : `关闭 ${displayTitle}`
         }
         title={
           returnsFromMainArea
@@ -174,6 +181,7 @@ export function F307WorkbenchTab({
               : undefined
         }
         data-testid={`f307-close-${surface.type}`}
+        data-workbench-tab-control="close"
       >
         <span className="h-3.5 w-3.5">
           <CloseIcon />

@@ -10,7 +10,8 @@
  * - TTL-based auto-cleanup (300s) with explicit delete on completion
  */
 
-import type { CatId } from '@cat-cafe/shared';
+import type { CatId, MessageOutputLayoutV1 } from '@cat-cafe/shared';
+import type { MessageMetadata } from '../../types.js';
 
 export interface DraftRecord {
   userId: string;
@@ -20,6 +21,10 @@ export interface DraftRecord {
   content: string;
   toolEvents?: unknown[];
   thinking?: string;
+  /** Same optional provider carrier as the formal message, for active F5 recovery. */
+  metadata?: MessageMetadata;
+  /** Optional message-owned references; content remains the one full body. */
+  extra?: { outputLayout?: MessageOutputLayoutV1 };
   /** First time this draft was created. Stable across touch/upsert updates. */
   createdAt?: number;
   updatedAt: number;

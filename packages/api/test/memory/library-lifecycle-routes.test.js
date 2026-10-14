@@ -31,6 +31,10 @@ describe('library lifecycle routes', () => {
     catalog = new LibraryCatalog();
     dataDir = mkdtempSync(join(tmpdir(), 'lib-lifecycle-'));
     app = Fastify();
+    // Exercise lifecycle behavior as the configured owner; auth rejection has its own suite.
+    app.addHook('onRequest', async (request) => {
+      request.sessionUserId = 'owner-1';
+    });
     await app.register(libraryRoutes, { catalog, stores: new Map(), dataDir, privateOwnerUserId: 'owner-1' });
     await app.ready();
   });

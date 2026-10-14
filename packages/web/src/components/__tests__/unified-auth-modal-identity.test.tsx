@@ -16,7 +16,7 @@ beforeEach(() => {
   root = createRoot(container);
   vi.mocked(apiFetch)
     .mockReset()
-    .mockResolvedValue(new Response(JSON.stringify({ profile: { id: 'fixture' } })));
+    .mockImplementation(async () => Response.json({ profile: { id: 'fixture' } }));
   created.mockClear();
   close.mockClear();
 });
@@ -123,4 +123,62 @@ it('a wizard identity stays locked and a rejected save retains input', async () 
   expect(JSON.parse(String(vi.mocked(apiFetch).mock.calls[0]?.[1]?.body)).clientId).toBe('openai');
   expect(created).not.toHaveBeenCalled();
   expect(close).not.toHaveBeenCalled();
+});
+
+it('Codex OAuth creates one noted account then starts official terminal login', async () => {
+  await act(async () =>
+    root.render(<UnifiedAuthModal open initialClientId="openai" onClose={close} onCreated={created} />),
+  );
+  await fill('例如：公司、私人', '工作');
+  await click('创建并开始登录');
+  expect(vi.mocked(apiFetch).mock.calls.map((c) => c[0])).toEqual([
+    '/api/accounts',
+    '/api/accounts/fixture/codex/login/start',
+  ]);
+  expect(JSON.parse(String(vi.mocked(apiFetch).mock.calls[0][1]?.body))).toEqual({
+    displayName: '工作',
+    authType: 'oauth',
+    clientId: 'openai',
+  });
+  expect(created).toHaveBeenCalledWith('fixture', undefined, expect.objectContaining({ id: 'fixture' }));
+});
+it('failed terminal admission returns the created account instead of asking to create another', async () => {
+  vi.mocked(apiFetch)
+    .mockResolvedValueOnce(Response.json({ profile: { id: 'fixture' } }))
+    .mockRejectedValueOnce(new Error('网络请求超时'));
+  await act(async () =>
+    root.render(<UnifiedAuthModal open initialClientId="openai" onClose={close} onCreated={created} />),
+  );
+  await click('创建并开始登录');
+  expect(created).toHaveBeenCalledWith(
+    'fixture',
+    expect.stringContaining('网络请求超时'),
+    expect.objectContaining({ id: 'fixture' }),
+  );
+  expect(close).toHaveBeenCalled();
+});
+
+it('editing an API Key note preserves server-valid mixed-case environment keys', async () => {
+  await act(async () =>
+    root.render(
+      <UnifiedAuthModal
+        open
+        onClose={close}
+        onCreated={created}
+        editProfile={{
+          id: 'kimi-key',
+          displayName: 'old note',
+          clientId: 'kimi',
+          authType: 'api_key',
+          models: ['fixture'],
+          envVars: { FOO_bar: 'keep-me', _Mixed2: 'also-keep' },
+        }}
+      />,
+    ),
+  );
+  await fill('例如: my-claude-account', 'new note');
+  await click('保存');
+  const body = JSON.parse(String(vi.mocked(apiFetch).mock.calls[0]?.[1]?.body));
+  expect(body).toMatchObject({ displayName: 'new note', envVars: { FOO_bar: 'keep-me', _Mixed2: 'also-keep' } });
+  expect(body).not.toHaveProperty('apiKey');
 });

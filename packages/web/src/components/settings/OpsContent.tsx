@@ -12,6 +12,7 @@ import { HubObservabilityTab } from '../HubObservabilityTab';
 import { HubRoutingPolicyTab } from '../HubRoutingPolicyTab';
 import { HubRuntimeSessionsTab } from '../HubRuntimeSessionsTab';
 import { HubToolUsageTab } from '../HubToolUsageTab';
+import { MemorySettingsContent } from './MemorySettingsContent';
 import { DEFAULT_OPS_SUBSECTION, OPS_SUBSECTIONS } from './ops-nav-config';
 
 const OPS_TABS = OPS_SUBSECTIONS.map((s) => ({ key: s.id, label: s.label }));
@@ -40,13 +41,14 @@ export function OpsContent() {
 
   return (
     <div>
-      <nav className="flex console-divider-b mb-5">
+      <nav className="flex flex-wrap console-divider-b mb-5" aria-label="运维分区">
         {OPS_TABS.map((tab) => {
           const isActive = tab.key === activeTab;
           return (
             <button
               key={tab.key}
               type="button"
+              aria-pressed={isActive}
               onClick={() => setActiveTab(tab.key)}
               className={`inline-flex items-center px-5 py-2.5 text-sm font-semibold transition-colors ${
                 isActive
@@ -76,6 +78,8 @@ function OpsSubsectionContent({
   invocationId?: string;
 }) {
   switch (subsection) {
+    case 'memory':
+      return <MemorySettingsContent />;
     case 'usage':
       return (
         <div className="space-y-6">

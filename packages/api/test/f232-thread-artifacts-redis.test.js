@@ -20,6 +20,7 @@ describe('F232 thread artifacts — Redis-backed (AC-A6)', { skip: redisIsolatio
   let createRedisClient;
   let aggregateThreadArtifacts;
   let collectAllThreadMessages;
+  let collectRecentGlobalWorkCandidates;
   let redis;
   let store;
   let connected = false;
@@ -31,6 +32,9 @@ describe('F232 thread artifacts — Redis-backed (AC-A6)', { skip: redisIsolatio
     const aggMod = await import('../dist/domains/cats/services/agents/routing/thread-artifacts-aggregator.js');
     aggregateThreadArtifacts = aggMod.aggregateThreadArtifacts;
     collectAllThreadMessages = aggMod.collectAllThreadMessages;
+    collectRecentGlobalWorkCandidates = (
+      await import('../dist/domains/cats/services/agents/routing/recent-global-work-reader.js')
+    ).collectRecentGlobalWorkCandidates;
     createRedisClient = (await import('@cat-cafe/shared/utils')).createRedisClient;
     redis = createRedisClient({ url: REDIS_URL });
     try {
@@ -198,5 +202,73 @@ describe('F232 thread artifacts — Redis-backed (AC-A6)', { skip: redisIsolatio
     const other = await store.getByThread('thread-B', 100);
     assert.equal(other.length, 0);
     assert.equal(aggregateThreadArtifacts({ messages: other, prTasks: [], fileLedger: [] }).length, 0);
+  });
+
+  it('bounded recent-work reader pages the real owner-global timeline and reports an incomplete partial result', async () => {
+    const threadId = 'thread-f232-recent-bounded';
+    const base = Date.now();
+    for (let index = 0; index < 70; index += 1) {
+      await store.append({
+        userId: 'u',
+        catId: 'codex-sol',
+        content: `non-work-${index}`,
+        mentions: [],
+        timestamp: base + index,
+        threadId,
+        extra: {
+          rich: { v: 1, blocks: [{ id: `diff-${index}`, kind: 'diff', v: 1, filePath: `src/${index}.ts` }] },
+        },
+      });
+    }
+    for (const [offset, fileName] of [
+      [100, 'one.pdf'],
+      [101, 'two.pdf'],
+    ]) {
+      await store.append({
+        userId: 'u',
+        catId: 'opus-48',
+        content: fileName,
+        mentions: [],
+        timestamp: base + offset,
+        threadId,
+        extra: {
+          rich: {
+            v: 1,
+            blocks: [{ id: fileName, kind: 'file', v: 1, url: `/uploads/${fileName}`, fileName }],
+          },
+        },
+      });
+    }
+    await store.append({
+      userId: 'other-owner',
+      catId: 'opus-48',
+      content: 'private work',
+      mentions: [],
+      timestamp: base + 102,
+      threadId,
+      extra: {
+        rich: {
+          v: 1,
+          blocks: [{ id: 'private', kind: 'file', v: 1, url: '/uploads/private.pdf', fileName: 'private.pdf' }],
+        },
+      },
+    });
+
+    const result = await collectRecentGlobalWorkCandidates({
+      store,
+      userId: 'u',
+      threadTitles: new Map([[threadId, 'Bounded works']]),
+      limit: 3,
+      pageSize: 8,
+      messageLimit: 64,
+    });
+
+    assert.deepEqual(
+      result.artifacts.map((artifact) => artifact.name),
+      ['two.pdf', 'one.pdf'],
+    );
+    assert.equal(result.complete, false);
+    assert.equal(result.scannedMessages, 64);
+    assert.ok(result.artifacts.every((artifact) => artifact.threadId === threadId));
   });
 });

@@ -1,8 +1,22 @@
+import { randomUUID } from 'node:crypto';
 import {
   assertTypedWaitCustodyBindings,
   rejectTypedWaitCustody,
 } from '../../../../ball-custody/TypedWaitCustodyGuard.js';
+import type { UserMentionHandlingRef } from '../ports/MessageStore.js';
+import { messageIdempotencyScope } from '../ports/MessageStore.js';
+import { userMentionEvent } from '../user-mention-index.js';
+import { withOwnerUncertaintyIndex } from './owner-uncertainty-lua.js';
+import { readOwnerUncertainty } from './owner-uncertainty-read.js';
 import { ASSERT_TYPED_WAIT_CUSTODY_LUA, readRedisTypedWaitCustodyGuards } from './RedisTypedWaitCustodyGuard.js';
+import {
+  HANDLE_USER_MENTIONS_LUA,
+  MIGRATE_HANDLED_USER_MENTIONS_LUA,
+  READ_LAST_USER_MENTION_HANDLING_LUA,
+  RESTORE_USER_MENTION_LUA,
+  UNDO_USER_MENTIONS_LUA,
+} from './user-mention-handling-lua.js';
+import { READ_USER_MENTIONS_LUA, RESOLVE_USER_MENTION_LUA, withUserMentionIndex } from './user-mention-index-lua.js';
 /**
  * Redis Message Store
  * Redis-backed message storage with same interface as in-memory MessageStore.
@@ -21,10 +35,17 @@ import type { CatId, CustodyOfferV1 } from '@cat-cafe/shared';
 import { custodyOfferV1Schema } from '@cat-cafe/shared';
 import type { RedisClient } from '@cat-cafe/shared/utils';
 import { createModuleLogger } from '../../../../../infrastructure/logger.js';
+import {
+  type MessageReadObserver,
+  type MessageReadSpan,
+  measureMessageReadParser,
+} from '../../../../../infrastructure/message-read-diagnostics.js';
 import { normalizeJsonUnicode } from '../../../../../utils/json-unicode.js';
 import { cursorFor, parseCursor } from '../cursor.js';
+import { notifyMessageTimelineChange } from '../notify-message-timeline-change.js';
 import type {
   AppendMessageInput,
+  BoundedOwnerMessagePage,
   BoundedThreadMessagePage,
   ClearOwnerComposerDraftResult,
   CustodyOfferTransitionInput,
@@ -44,6 +65,7 @@ import type {
   QueueAdmissionPrepareResult,
   QueueCustodyAdmissionInitializeResult,
   QueueCustodyAdmissionIntent,
+  QueueCustodyAdmissionResult,
   QueueCustodyInitializeResult,
   QueueCustodyLifecycleRecord,
   QueueCustodyTransitionInput,
@@ -57,6 +79,7 @@ import type {
   ThreadFrontierAppendResult,
   ThreadMessageReadOptions,
   ThreadObservedAppendResult,
+  ThreadReplyProjection,
   ThreadUnreadMessageProjection,
   ThreadUnreadProjectionCursor,
 } from '../ports/MessageStore.js';
@@ -72,10 +95,12 @@ import {
   isValidCustodyOfferTransition,
 } from '../ports/MessageStore.js';
 import {
+  assertCollectivePublicReplyBindings,
   assertQueueCustodyMessageBinding,
   assertQueueCustodyTransition,
   terminalizeRecalledQueueCustody,
 } from '../ports/queued-message-custody.js';
+import { type QueueSourceMutationWatch, QueueSourceMutationWatchRegistry } from '../queue-source-mutation-watch.js';
 import { MessageKeys } from '../redis-keys/message-keys.js';
 import {
   isDurableOwnerReadEvidence,
@@ -105,6 +130,9 @@ import {
   safeParseToolEvents,
   serializeExtra,
 } from './redis-message-parsers.js';
+import { parseRedisNumber } from './redis-number.js';
+import { readRecentMentionIds } from './redis-recent-mentions.js';
+import { readThreadReplyProjection } from './redis-thread-reply-projection.js';
 import { projectRedisUnreadSummaries } from './redis-unread-summary-projection.js';
 import {
   APPEND_WITH_VISIBILITY_LUA,
@@ -136,17 +164,17 @@ const PAW_FEEL_SOURCE_FIELDS = [
 ] as const;
 type PawFeelSourcePipelineResult = [Error | null, Array<string | null> | null];
 
-const REDIS_NUMBER_ALIASES = new Map<string, number>([
-  ['', Number.NaN],
-  ['inf', Number.POSITIVE_INFINITY],
-  ['+inf', Number.POSITIVE_INFINITY],
-  ['-inf', Number.NEGATIVE_INFINITY],
-]);
-
-/** Decode both Redis ZSCORE spellings and JavaScript number spellings without truncation. */
-function parseRedisNumber(raw: string): number {
-  const value = raw.trim();
-  return REDIS_NUMBER_ALIASES.get(value) ?? Number(value);
+function parseRedisScoredIds(raw: readonly string[]): { ids: string[]; oldestTimestamp?: number } {
+  const ids: string[] = [];
+  let oldestTimestamp: number | undefined;
+  for (let offset = 0; offset + 1 < raw.length; offset += 2) {
+    const id = raw[offset];
+    const score = raw[offset + 1];
+    if (id === undefined || score === undefined) break;
+    ids.push(id);
+    oldestTimestamp = parseRedisNumber(score);
+  }
+  return { ids, oldestTimestamp };
 }
 
 function parseStoredMessageTimestamp(raw: string | undefined): number {
@@ -221,7 +249,8 @@ function hydratePawFeelSourceProjection(fields: readonly (string | null)[]): Paw
     ...(parsedExtra ? { extra: parsedExtra } : {}),
   };
 }
-const INITIALIZE_QUEUE_CUSTODY_LUA = `
+const INITIALIZE_QUEUE_CUSTODY_LUA = withOwnerUncertaintyIndex(
+  `
 local messageId = redis.call('HGET', KEYS[1], 'id')
 if not messageId then
   return -1
@@ -237,9 +266,74 @@ end
 redis.call('HSET', KEYS[1], 'queueCustody', ARGV[1], 'queueCustodyRevision', ARGV[2])
 redis.call('HDEL', KEYS[1], 'queueCustodyAdmission')
 return 1
-`;
+`,
+  1,
+);
 
-const INITIALIZE_QUEUE_CUSTODY_ADMISSION_LUA = `
+const ADMIT_QUEUE_CUSTODY_LUA = withOwnerUncertaintyIndex(
+  `
+local messageId = redis.call('HGET', KEYS[1], 'id')
+if not messageId then
+  return -1
+end
+local okCustody, nextCustody = pcall(cjson.decode, ARGV[1])
+if not okCustody or type(nextCustody) ~= 'table' then
+  return redis.error_reply('INVALID_QUEUE_CUSTODY')
+end
+-- Derived exposure membership must be validated before the canonical hash is
+-- changed: Redis script errors do not roll back earlier writes.
+local exposureWrites = {}
+for _, exposure in ipairs(nextCustody.bodyExposures or cjson.decode('[]')) do
+  local field = tostring(exposure.targetCatId) .. string.char(0) .. tostring(exposure.invocationId)
+  local existingRaw = redis.call('HGET', KEYS[2], field)
+  local ids = cjson.decode('[]')
+  if existingRaw and existingRaw ~= '' then
+    local okExisting, existing = pcall(cjson.decode, existingRaw)
+    if not okExisting or type(existing) ~= 'table' then
+      return redis.error_reply('QUEUE_EXPOSURE_INDEX_INVALID')
+    end
+    ids = existing
+  end
+  local found = false
+  for _, existingId in ipairs(ids) do
+    if existingId == messageId then found = true end
+  end
+  if not found then table.insert(ids, messageId) end
+  table.insert(exposureWrites, { field = field, ids = ids })
+end
+local deliveryStatus = redis.call('HGET', KEYS[1], 'deliveryStatus')
+local existing = redis.call('HGET', KEYS[1], 'queueCustody')
+local outcome = 1
+if existing and existing ~= '' then
+  if deliveryStatus ~= 'queued' or existing ~= ARGV[1] then return -2 end
+  outcome = 0
+end
+local admission = redis.call('HGET', KEYS[1], 'queueCustodyAdmission')
+if outcome == 1 and ((deliveryStatus and deliveryStatus ~= 'queued') or (admission and admission ~= '')) then
+  return -2
+end
+if outcome == 1 then
+  redis.call(
+    'HSET',
+    KEYS[1],
+    'deliveryStatus',
+    'queued',
+    'queueCustody',
+    ARGV[1],
+    'queueCustodyRevision',
+    ARGV[2]
+  )
+end
+for _, write in ipairs(exposureWrites) do
+  redis.call('HSET', KEYS[2], write.field, cjson.encode(write.ids))
+end
+return outcome
+`,
+  1,
+);
+
+const INITIALIZE_QUEUE_CUSTODY_ADMISSION_LUA = withOwnerUncertaintyIndex(
+  `
 local messageId = redis.call('HGET', KEYS[1], 'id')
 if not messageId then
   return -1
@@ -258,9 +352,12 @@ if existing and existing ~= '' then
 end
 redis.call('HSET', KEYS[1], 'queueCustodyAdmission', ARGV[1])
 return 1
-`;
+`,
+  1,
+);
 
-const PREPARE_QUEUE_ADMISSION_LUA = `
+const PREPARE_QUEUE_ADMISSION_LUA = withOwnerUncertaintyIndex(
+  `
 local messageId = redis.call('HGET', KEYS[1], 'id')
 if not messageId then
   return -1
@@ -275,9 +372,12 @@ if deliveryStatus or (custody and custody ~= '') then
 end
 redis.call('HSET', KEYS[1], 'deliveryStatus', 'queued')
 return 1
-`;
+`,
+  1,
+);
 
-const TRANSITION_QUEUE_CUSTODY_LUA = `
+const TRANSITION_QUEUE_CUSTODY_LUA = withOwnerUncertaintyIndex(
+  `
 local messageId = redis.call('HGET', KEYS[1], 'id')
 local custody = redis.call('HGET', KEYS[1], 'queueCustody')
 if not messageId or not custody then
@@ -373,7 +473,9 @@ if ARGV[4] ~= '' then
   return {2, nextRevision}
 end
 return {1, nextRevision}
-`;
+`,
+  1,
+);
 
 const UPDATE_PLUGIN_MESSAGE_LUA = `
 if redis.call('EXISTS', KEYS[1]) == 0 then return 0 end
@@ -436,7 +538,8 @@ return {1, nextRevision}
  * canonical identity/order row while its body moves exactly once into the
  * owner+thread TTL=0 draft hash.
  */
-const RECALL_MESSAGE_TO_COMPOSER_DRAFT_LUA = `
+const RECALL_MESSAGE_TO_COMPOSER_DRAFT_LUA = withOwnerUncertaintyIndex(
+  `
 if redis.call('EXISTS', KEYS[1]) == 0 then return {-1, 0} end
 if redis.call('HGET', KEYS[1], 'recall') then return {2, 0} end
 if redis.call('HGET', KEYS[1], 'userId') ~= ARGV[1] or redis.call('HGET', KEYS[1], 'threadId') ~= ARGV[2] then
@@ -539,7 +642,19 @@ if not exposed then
 end
 
 return {1, exposed and 1 or 0, sourceText, existingText, nextDraftRevision}
-`;
+`,
+  1,
+);
+
+const RESTORE_SOFT_DELETED_LUA = withOwnerUncertaintyIndex(
+  `
+if not redis.call('HGET', KEYS[1], 'id') or not redis.call('HGET', KEYS[1], 'deletedAt') then return 0 end
+if redis.call('HGET', KEYS[1], '_tombstone') then return 0 end
+redis.call('HDEL', KEYS[1], 'deletedAt', 'deletedBy')
+return redis.call('HGETALL', KEYS[1])
+`,
+  1,
+);
 
 const UPDATE_EXTRA_IF_NOT_RECALLED_LUA = `
 if redis.call('EXISTS', KEYS[1]) == 0 then return 0 end
@@ -703,7 +818,186 @@ function parseCustodyOfferCasReceipt(result: unknown): CustodyOfferCasReceipt {
 }
 
 export class RedisMessageStore {
+  async getLastUserMentionHandling(userId: string) {
+    const result = (await this.redis.eval(
+      READ_LAST_USER_MENTION_HANDLING_LUA,
+      4,
+      `msg:user-requests:latest:${userId}`,
+      `msg:user-requests:pending:${userId}`,
+      `msg:user-requests:closed:${userId}`,
+      'msg:user-requests:last-handling',
+      userId,
+      this.keyPrefix,
+    )) as [string, number, number] | null;
+    return result ? { undoId: result[0], handled: Number(result[1]), remaining: Number(result[2]) } : null;
+  }
+
+  async getUserMentionStateRevisions(userId: string): Promise<Record<string, number>> {
+    const rows = await this.redis.hgetall(`msg:user-requests:revision:${userId}`);
+    return Object.fromEntries(
+      Object.entries(rows).map(([thread, raw]) => {
+        const revision = Number(raw);
+        if (!/^(0|[1-9]\d*)$/u.test(raw) || !Number.isSafeInteger(revision) || revision < 0)
+          throw new Error('Invalid mention revision');
+        return [thread, revision];
+      }),
+    );
+  }
+
+  async restoreUserMentionRequest(userId: string, threadId: string, messageId: string, expectedRevision: number) {
+    await this.listUserMentionRequests(userId);
+    await this.migrateHandledMentions(userId);
+    return (
+      Number(
+        await this.redis.eval(
+          RESTORE_USER_MENTION_LUA,
+          5,
+          `msg:user-requests:latest:${userId}`,
+          `msg:user-requests:pending:${userId}`,
+          `msg:user-requests:closed:${userId}`,
+          `msg:user-request-signals:${userId}:${threadId}`,
+          `msg:user-requests:handled:${userId}`,
+          this.keyPrefix,
+          userId,
+          threadId,
+          messageId,
+          String(expectedRevision),
+        ),
+      ) === 1
+    );
+  }
+
+  async initializeUserMentionInbox(startedAt: number): Promise<number> {
+    if (!Number.isSafeInteger(startedAt) || startedAt < 0) throw new Error('Invalid mention cutover');
+    await this.redis.set('msg:user-requests:cutover', String(startedAt), 'NX');
+    const saved = await this.redis.get('msg:user-requests:cutover');
+    const value = Number(saved);
+    if (saved === null || !Number.isSafeInteger(value) || value < 0) throw new Error('Invalid saved mention cutover');
+    let cursor = '0';
+    const prefix = `${this.keyPrefix}msg:user-requests:closed:`;
+    do {
+      const [next, keys] = await this.redis.scan(cursor, 'MATCH', `${prefix}*`, 'COUNT', 1000);
+      cursor = next;
+      for (const key of keys) {
+        if ((await this.redis.type(this.stripPrefix(key))) !== 'hash') continue;
+        const userId = key.slice(prefix.length);
+        await this.migrateHandledMentions(userId);
+      }
+    } while (cursor !== '0');
+    return value;
+  }
+
+  private async migrateHandledMentions(userId: string) {
+    await this.redis.eval(
+      MIGRATE_HANDLED_USER_MENTIONS_LUA,
+      3,
+      `msg:user-requests:closed:${userId}`,
+      `msg:user-requests:handled:${userId}`,
+      'msg:user-requests:handled-migrated',
+      this.keyPrefix,
+      userId,
+    );
+  }
+
+  async listHandledUserMentions(userId: string): Promise<StoredMessage[]> {
+    await this.migrateHandledMentions(userId);
+    const history = await this.redis.hgetall(`msg:user-requests:handled:${userId}`);
+    const messages = await Promise.all(Object.keys(history).map((id) => this.getById(id)));
+    return messages
+      .filter(
+        (m): m is StoredMessage =>
+          m !== null && m.userId === userId && m.threadId === history[m.id] && userMentionEvent(m) === 'request',
+      )
+      .sort((a, b) => b.id.localeCompare(a.id));
+  }
+
+  async handleUserMentionRequests(userId: string, refs: UserMentionHandlingRef[]) {
+    const undoId = randomUUID();
+    const handled = await this.redis.eval(
+      HANDLE_USER_MENTIONS_LUA,
+      6,
+      `msg:user-requests:latest:${userId}`,
+      `msg:user-requests:pending:${userId}`,
+      `msg:user-requests:closed:${userId}`,
+      `msg:user-requests:undo:${userId}:${undoId}`,
+      `msg:user-requests:handled:${userId}`,
+      `msg:user-requests:last-handling`,
+      JSON.stringify(refs),
+      this.keyPrefix,
+      userId,
+      undoId,
+    );
+    return handled === null ? null : { handled: Number(handled), undoId };
+  }
+
+  async undoUserMentionHandling(userId: string, undoId: string) {
+    const restored = await this.redis.eval(
+      UNDO_USER_MENTIONS_LUA,
+      6,
+      `msg:user-requests:latest:${userId}`,
+      `msg:user-requests:pending:${userId}`,
+      `msg:user-requests:closed:${userId}`,
+      `msg:user-requests:undo:${userId}:${undoId}`,
+      `msg:user-requests:handled:${userId}`,
+      `msg:user-requests:last-handling`,
+      this.keyPrefix,
+      userId,
+    );
+    return restored === null ? null : { restored: Number(restored) };
+  }
+
+  async listUserMentionRequests(userId: string): Promise<StoredMessage[]> {
+    let result: string[];
+    do {
+      result = (await this.redis.eval(
+        READ_USER_MENTIONS_LUA,
+        5,
+        MessageKeys.user(userId),
+        `msg:user-requests:latest:${userId}`,
+        `msg:user-requests:pending:${userId}`,
+        `msg:user-requests:version:${userId}`,
+        `msg:user-requests:closed:${userId}`,
+        this.keyPrefix,
+        userId,
+      )) as string[];
+    } while (result[0] === 'more');
+    const ids = result.slice(1);
+    const messages = await Promise.all(ids.map((id) => this.getById(id)));
+    return messages
+      .filter((message): message is StoredMessage => message !== null && message.userId === userId)
+      .sort((a, b) => b.id.localeCompare(a.id));
+  }
+
+  async resolveUserMentionRequest(
+    userId: string,
+    threadId: string,
+    expectedMessageId: string,
+    expectedRevision?: number,
+  ): Promise<boolean> {
+    return (
+      Number(
+        await this.redis.eval(
+          RESOLVE_USER_MENTION_LUA,
+          6,
+          `msg:user-requests:latest:${userId}`,
+          `msg:user-requests:pending:${userId}`,
+          `msg:user-requests:closed:${userId}`,
+          `msg:user-request-signals:${userId}:${threadId}`,
+          `msg:user-requests:handled:${userId}`,
+          MessageKeys.detail(expectedMessageId),
+          threadId,
+          expectedMessageId,
+          expectedRevision === undefined ? '' : String(expectedRevision),
+          userId,
+        ),
+      ) === 1
+    );
+  }
+
+  onTimelineChanged?: MessageAppendListener;
   private readonly redis: RedisClient;
+  private readonly readDiagnostics?: MessageReadObserver;
+  private readonly queueSourceMutationWatches = new QueueSourceMutationWatchRegistry();
   /** null means no expiration/pruning (persistent retention). */
   private readonly ttlSeconds: number | null;
   /** F102 KD-34: Listener called after every successful append (fire-and-forget) */
@@ -714,9 +1008,11 @@ export class RedisMessageStore {
     options?: {
       ttlSeconds?: number;
       onAppend?: MessageAppendListener;
+      readDiagnostics?: MessageReadObserver;
     },
   ) {
     this.redis = redis;
+    this.readDiagnostics = options?.readDiagnostics;
     this.onAppend = options?.onAppend;
     const raw = options?.ttlSeconds ?? DEFAULT_TTL_SECONDS;
     if (!Number.isFinite(raw) || raw <= 0) {
@@ -737,6 +1033,19 @@ export class RedisMessageStore {
     return p && rawKey.startsWith(p) ? rawKey.slice(p.length) : rawKey;
   }
 
+  watchQueueSourceMutations(messageIds: readonly string[]): QueueSourceMutationWatch {
+    return this.queueSourceMutationWatches.watch(messageIds);
+  }
+
+  private async withQueueSourceMutation<T>(messageId: string, mutation: () => Promise<T>): Promise<T> {
+    const finish = this.queueSourceMutationWatches.beginMutation(messageId);
+    try {
+      return await mutation();
+    } finally {
+      finish();
+    }
+  }
+
   async append(input: AppendMessageInput): Promise<StoredMessage> {
     return (await this.appendIdempotent(input)).message;
   }
@@ -746,7 +1055,7 @@ export class RedisMessageStore {
     assertValidAppendMessageInput(msg);
     const threadId = msg.threadId ?? DEFAULT_THREAD_ID;
     const idempotencyIndexKey = msg.idempotencyKey
-      ? MessageKeys.idempotency(msg.userId, threadId, msg.idempotencyKey)
+      ? MessageKeys.idempotency(msg.userId, messageIdempotencyScope(msg), msg.idempotencyKey)
       : null;
 
     // Keep the common replay path ahead of ID generation; the Lua check below
@@ -1069,61 +1378,64 @@ export class RedisMessageStore {
     id: string,
     input: RecallMessageToComposerDraftInput,
   ): Promise<RecallMessageToComposerDraftResult> {
-    assertValidStoredMessageTimestamp(input.recalledAt);
-    if (!Number.isInteger(input.expectedDraftRevision) || input.expectedDraftRevision < 0) {
-      throw new RangeError('expected draft revision must be a non-negative integer');
-    }
-    for (let attempt = 0; attempt < 3; attempt++) {
-      const beforeRecall = await this.getById(id);
-      const currentCustody = beforeRecall?.queueCustody;
-      const nextCustody = currentCustody
-        ? terminalizeRecalledQueueCustody(currentCustody, input.recalledAt)
-        : undefined;
-      const mentionKeys = [...new Set(beforeRecall?.mentions ?? [])].map((catId) => MessageKeys.mentions(catId));
-      const result = (await this.redis.eval(
-        RECALL_MESSAGE_TO_COMPOSER_DRAFT_LUA,
-        4 + mentionKeys.length,
-        MessageKeys.detail(id),
-        MessageKeys.ownerComposerDraft(input.ownerUserId, input.threadId),
-        MessageKeys.threadVisibility(input.threadId),
-        MessageKeys.queueExposureIndex(input.threadId),
-        ...mentionKeys,
-        input.ownerUserId,
-        input.threadId,
-        String(input.expectedDraftRevision),
-        input.merge,
-        String(input.recalledAt),
-        String(currentCustody?.revision ?? -1),
-        nextCustody ? JSON.stringify(nextCustody) : '',
-      )) as [number, number, string?, string?, number?];
-      const outcome = Number(result[0]);
-      if (outcome === 3) continue;
-      if (outcome === -1) return { kind: 'not_found' };
-      if (outcome === -2) return { kind: 'unauthorized' };
-      if (outcome === -3) return { kind: 'not_recallable' };
-      if (outcome === 0) return { kind: 'draft_revision_mismatch', actualRevision: Number(result[1]) };
-      if (outcome === 2) {
-        const message = await this.getById(id);
-        return message ? { kind: 'already_recalled', message } : { kind: 'not_found' };
+    return this.withQueueSourceMutation(id, async () => {
+      assertValidStoredMessageTimestamp(input.recalledAt);
+      if (!Number.isInteger(input.expectedDraftRevision) || input.expectedDraftRevision < 0) {
+        throw new RangeError('expected draft revision must be a non-negative integer');
       }
+      for (let attempt = 0; attempt < 3; attempt++) {
+        const beforeRecall = await this.getById(id);
+        const currentCustody = beforeRecall?.queueCustody;
+        const nextCustody = currentCustody
+          ? terminalizeRecalledQueueCustody(currentCustody, input.recalledAt)
+          : undefined;
+        const mentionKeys = [...new Set(beforeRecall?.mentions ?? [])].map((catId) => MessageKeys.mentions(catId));
+        const result = (await this.redis.eval(
+          RECALL_MESSAGE_TO_COMPOSER_DRAFT_LUA,
+          4 + mentionKeys.length,
+          MessageKeys.detail(id),
+          MessageKeys.ownerComposerDraft(input.ownerUserId, input.threadId),
+          MessageKeys.threadVisibility(input.threadId),
+          MessageKeys.queueExposureIndex(input.threadId),
+          ...mentionKeys,
+          input.ownerUserId,
+          input.threadId,
+          String(input.expectedDraftRevision),
+          input.merge,
+          String(input.recalledAt),
+          String(currentCustody?.revision ?? -1),
+          nextCustody ? JSON.stringify(nextCustody) : '',
+        )) as [number, number, string?, string?, number?];
+        const outcome = Number(result[0]);
+        if (outcome === 3) continue;
+        if (outcome === -1) return { kind: 'not_found' };
+        if (outcome === -2) return { kind: 'unauthorized' };
+        if (outcome === -3) return { kind: 'not_recallable' };
+        if (outcome === 0) return { kind: 'draft_revision_mismatch', actualRevision: Number(result[1]) };
+        if (outcome === 2) {
+          const message = await this.getById(id);
+          return message ? { kind: 'already_recalled', message } : { kind: 'not_found' };
+        }
 
-      const [message, draft] = await Promise.all([
-        this.getById(id),
-        this.getOwnerComposerDraft(input.ownerUserId, input.threadId),
-      ]);
-      if (!message || !draft) throw new Error('true recall CAS committed but terminal hydration failed');
-      const sourceText = result[2] ?? '';
-      const previousText = result[3] ?? '';
-      const insertedStart = input.merge === 'append' && previousText ? previousText.length + 2 : 0;
-      return {
-        kind: 'recalled',
-        verdict: Number(result[1]) === 1 ? 'exposed' : 'zero_exposure',
-        message,
-        draft,
-        insertedRange: { start: insertedStart, end: insertedStart + sourceText.length },
-      };
-    }
-    throw new Error('true recall custody CAS retry exhausted');
+        const [message, draft] = await Promise.all([
+          this.getById(id),
+          this.getOwnerComposerDraft(input.ownerUserId, input.threadId),
+        ]);
+        if (!message || !draft) throw new Error('true recall CAS committed but terminal hydration failed');
+        notifyMessageTimelineChange(this, message);
+        const sourceText = result[2] ?? '';
+        const previousText = result[3] ?? '';
+        const insertedStart = input.merge === 'append' && previousText ? previousText.length + 2 : 0;
+        return {
+          kind: 'recalled',
+          verdict: Number(result[1]) === 1 ? 'exposed' : 'zero_exposure',
+          message,
+          draft,
+          insertedRange: { start: insertedStart, end: insertedStart + sourceText.length },
+        };
+      }
+      throw new Error('true recall custody CAS retry exhausted');
+    });
   }
 
   /**
@@ -1508,40 +1820,23 @@ export class RedisMessageStore {
     threadId?: string,
   ): Promise<StoredMessage[]> {
     const n = limit ?? DEFAULT_LIMIT;
-    const mentionKey = MessageKeys.mentions(catId);
-
-    const CHUNK = 50;
-    const ids: string[] = [];
-    let offset = 0;
-
-    // Scan backward (descending) in chunks and filter down to the most recent N matches.
-    while (ids.length < n) {
-      const chunk = await this.redis.zrevrange(mentionKey, offset, offset + CHUNK - 1);
-      if (chunk.length === 0) break;
-      for (const id of chunk) {
-        if (ids.length >= n) break;
-        if (userId) {
-          const score = await this.redis.zscore(MessageKeys.user(userId), id);
-          if (score === null) continue;
-        }
-        if (threadId) {
-          const score = await this.redis.zscore(MessageKeys.thread(threadId), id);
-          if (score === null) continue;
-        }
-        ids.push(id);
-      }
-      offset += CHUNK;
-    }
-
+    const ids = await readRecentMentionIds(this.redis, catId, n, userId, threadId);
     if (ids.length === 0) return [];
-    const messages = await this.hydrateMessages(ids.reverse());
+    const messages = await this.hydrateMessages(ids);
     // #1269: isTimelinePublished — timeline-published = visible everywhere.
     return messages.filter(isTimelinePublished);
   }
 
-  async getBefore(timestamp: number, limit?: number, userId?: string, beforeId?: string): Promise<StoredMessage[]> {
+  async getBefore(
+    timestamp: number,
+    limit?: number,
+    userId?: string,
+    beforeId?: string,
+    options?: Pick<ThreadMessageReadOptions, 'includeQueuedCatMessages'>,
+  ): Promise<StoredMessage[]> {
     const n = limit ?? DEFAULT_LIMIT;
     const key = userId ? MessageKeys.user(userId) : MessageKeys.TIMELINE;
+    const isVisible = options?.includeQueuedCatMessages ? isTimelinePublished : isDelivered;
 
     if (!beforeId) {
       // F117: Chunked scan (desc) to collect N delivered messages
@@ -1554,7 +1849,7 @@ export class RedisMessageStore {
         // Keep desc order — don't reverse
         const messages = await this.hydrateMessages(ids);
         for (const msg of messages) {
-          if (isDelivered(msg)) result.push(msg);
+          if (isVisible(msg)) result.push(msg);
           if (result.length >= n) break;
         }
         if (ids.length < CHUNK) break;
@@ -1565,8 +1860,84 @@ export class RedisMessageStore {
     }
 
     // F117: Scan cursor path with integrated isDelivered filtering
-    const result = await this.fetchVisibleBeforeCursor(key, timestamp, beforeId, n);
+    const result = await this.fetchVisibleBeforeCursor(key, timestamp, beforeId, n, undefined, isVisible);
     return result.reverse();
+  }
+
+  async getOwnerBeforeBounded(
+    ownerUserId: string,
+    timestamp: number,
+    limit: number,
+    beforeId: string | undefined,
+    scanLimit: number,
+    options?: Pick<ThreadMessageReadOptions, 'includeQueuedCatMessages'>,
+  ): Promise<BoundedOwnerMessagePage> {
+    const pageLimit = Math.min(Math.max(0, Math.floor(limit)), Math.max(0, Math.floor(scanLimit)));
+    if (pageLimit === 0) {
+      return {
+        messages: [],
+        scannedCount: 0,
+        storageRoundTrips: 0,
+        exhausted: false,
+        oldestTimelineGroupComplete: false,
+      };
+    }
+
+    const key = MessageKeys.user(ownerUserId);
+    let storageRoundTrips = 0;
+    let raw: string[];
+    if (beforeId) {
+      const [cursorRank, cursorScore] = await Promise.all([
+        this.redis.zrevrank(key, beforeId),
+        this.redis.zscore(key, beforeId),
+      ]);
+      storageRoundTrips += 2;
+      if (cursorRank === null || cursorScore === null || parseRedisNumber(cursorScore) !== timestamp) {
+        return {
+          messages: [],
+          scannedCount: 0,
+          storageRoundTrips,
+          exhausted: false,
+          oldestTimelineGroupComplete: false,
+        };
+      }
+      raw = await this.redis.zrevrange(key, cursorRank + 1, cursorRank + pageLimit, 'WITHSCORES');
+    } else {
+      raw = await this.redis.zrevrangebyscore(key, `(${timestamp}`, '-inf', 'WITHSCORES', 'LIMIT', 0, pageLimit);
+    }
+    storageRoundTrips += 1;
+
+    const { ids, oldestTimestamp } = parseRedisScoredIds(raw);
+    const scannedCount = ids.length;
+    const isVisible = options?.includeQueuedCatMessages ? isTimelinePublished : isDelivered;
+    const messages = ids.length > 0 ? await this.hydrateMessages(ids) : [];
+    if (ids.length > 0) storageRoundTrips += 1;
+    const visibleMessages = messages.filter((message) => message.userId === ownerUserId && isVisible(message));
+    const oldestId = ids.at(-1);
+    let exhausted = scannedCount < pageLimit;
+    let oldestTimelineGroupComplete = exhausted;
+    if (!exhausted && oldestId && oldestTimestamp !== undefined) {
+      const [ascendingRank, olderScoreCount] = await Promise.all([
+        this.redis.zrank(key, oldestId),
+        this.redis.zcount(key, '-inf', `(${oldestTimestamp}`),
+      ]);
+      storageRoundTrips += 2;
+      if (ascendingRank !== null) {
+        exhausted = ascendingRank === 0;
+        oldestTimelineGroupComplete = ascendingRank === olderScoreCount;
+      }
+    }
+
+    return {
+      messages: visibleMessages.reverse(),
+      scannedCount,
+      storageRoundTrips,
+      exhausted,
+      oldestTimelineGroupComplete,
+      ...(oldestId && oldestTimestamp !== undefined
+        ? { nextCursor: { timestamp: oldestTimestamp, id: oldestId } }
+        : {}),
+    };
   }
 
   async getByThread(
@@ -1576,6 +1947,15 @@ export class RedisMessageStore {
     options?: ThreadMessageReadOptions,
   ): Promise<StoredMessage[]> {
     const n = limit ?? DEFAULT_LIMIT;
+    if (options?.onlyUnpositionedOwnerMessages)
+      return readOwnerUncertainty({
+        redis: this.redis,
+        threadId,
+        userId,
+        limit: n,
+        options,
+        hydrate: (ids) => this.hydrateMessages(ids, { strict: true }),
+      });
     const key = MessageKeys.thread(threadId);
     return this.fetchVisibleDesc(
       key,
@@ -1583,6 +1963,15 @@ export class RedisMessageStore {
       userId ? (m) => m.userId === userId || isSystemUserMessage(m) : undefined,
       resolveThreadMessageVisibility(options, userId),
     );
+  }
+
+  getThreadReplyProjection(
+    threadId: string,
+    userId: string,
+    limit = 500,
+    before?: { timestamp: number; messageId: string },
+  ): Promise<ThreadReplyProjection[]> {
+    return readThreadReplyProjection(this.redis, threadId, userId, limit, before);
   }
 
   async getByThreadIncludingQueued(threadId: string, limit?: number, userId?: string): Promise<StoredMessage[]> {
@@ -2329,6 +2718,7 @@ export class RedisMessageStore {
     pipeline.del(MessageKeys.threadVisibility(threadId));
     pipeline.del(MessageKeys.threadVisibilityMeta(threadId));
     pipeline.del(MessageKeys.queueExposureIndex(threadId));
+    pipeline.del(`msg:owner-uncertainty:${threadId}`, `msg:owner-uncertainty:${threadId}:version`);
 
     // Note: We don't clean up global timeline, user timeline, or mention sets
     // as those will auto-expire via TTL. Cleaning them would be O(n) expensive.
@@ -2350,6 +2740,7 @@ export class RedisMessageStore {
     });
     msg.deletedAt = now;
     msg.deletedBy = deletedBy;
+    notifyMessageTimelineChange(this, msg);
     return msg;
   }
 
@@ -2384,6 +2775,7 @@ export class RedisMessageStore {
     msg.deletedAt = now;
     msg.deletedBy = deletedBy;
     msg._tombstone = true;
+    notifyMessageTimelineChange(this, msg);
     return msg;
   }
 
@@ -2394,10 +2786,10 @@ export class RedisMessageStore {
   async restore(id: string): Promise<StoredMessage | null> {
     const msg = await this.getById(id);
     if (!msg || !msg.deletedAt || msg._tombstone) return null;
-    await this.redis.hdel(MessageKeys.detail(id), 'deletedAt', 'deletedBy');
-    delete msg.deletedAt;
-    delete msg.deletedBy;
-    return msg;
+    const result = await this.redis.eval(withUserMentionIndex(RESTORE_SOFT_DELETED_LUA), 1, MessageKeys.detail(id));
+    const restored = result === 0 ? null : this.parseLuaHgetall(result);
+    if (restored) notifyMessageTimelineChange(this, restored);
+    return restored;
   }
 
   /**
@@ -2429,10 +2821,13 @@ export class RedisMessageStore {
     const {
       pluginMessage: _stripPlugin,
       custodyOfferV1: _stripCustody,
+      entrustedWorkHumanTerminalReceiptV1: _stripEntrustedWorkTerminal,
       evolutionPreparationSubmissionV1: _stripPreparation,
+      dotAsk: _stripDotAsk,
       deliveryBoundary: _stripBoundary,
       collectiveOwnerAdmissionV1: _stripCollectiveAdmission,
       collectiveWorkInvocationV1: _stripCollectiveInvocation,
+      collectiveWorkDelegationV1: _stripCollectiveDelegation,
       collectiveAuthorizationInvalid: _stripCollectiveInvalid,
       ...hostPatch
     } = extra as Record<string, unknown>;
@@ -2517,14 +2912,22 @@ export class RedisMessageStore {
     const { pluginMessage } = splitMessageExtra(augmented.extra);
     if (patch.extra && augmented.extra) fields.extra = serializeHostExtra(augmented.extra);
     if (Object.keys(fields).length > 0) {
-      const pipeline = this.redis.multi();
-      pipeline.hset(MessageKeys.detail(id), fields);
-      if (pluginMessage) {
-        pipeline.hsetnx(MessageKeys.detail(id), 'pluginMessage', JSON.stringify(pluginMessage));
-      }
-      await pipeline.exec();
+      await this.redis.eval(
+        withUserMentionIndex(`
+        local fields = cjson.decode(ARGV[1])
+        for field, value in pairs(fields) do redis.call('HSET', KEYS[1], field, value) end
+        if ARGV[2] ~= '' then redis.call('HSETNX', KEYS[1], 'pluginMessage', ARGV[2]) end
+        return 1
+      `),
+        1,
+        MessageKeys.detail(id),
+        JSON.stringify(fields),
+        pluginMessage ? JSON.stringify(pluginMessage) : '',
+      );
     }
-    return (await this.getById(id)) ?? augmented;
+    const updated = (await this.getById(id)) ?? augmented;
+    if (patch.mentionsUser) notifyMessageTimelineChange(this, updated);
+    return updated;
   }
 
   /**
@@ -2532,155 +2935,194 @@ export class RedisMessageStore {
    * Clowder AI publication score and returning an applied/no-op receipt.
    */
   async markDelivered(id: string, deliveredAt: number): Promise<MarkDeliveredResult | null> {
-    assertValidStoredMessageTimestamp(deliveredAt);
-    const hashKey = MessageKeys.detail(id);
+    return this.withQueueSourceMutation(id, async () => {
+      assertValidStoredMessageTimestamp(deliveredAt);
+      const hashKey = MessageKeys.detail(id);
 
-    // #1200 codex P1: ensure visibility migration before DELIVER Lua marks migrated.
-    // We need threadId for ensureVisibilityMigrated — get it from the hash.
-    // The extra HGET is acceptable: delivery is a one-time operation per message.
-    const threadId = await this.redis.hget(hashKey, 'threadId');
-    if (threadId) {
-      await this.ensureVisibilityMigrated(threadId);
-    }
+      // #1200 codex P1: ensure visibility migration before DELIVER Lua marks migrated.
+      // We need threadId for ensureVisibilityMigrated — get it from the hash.
+      // The extra HGET is acceptable: delivery is a one-time operation per message.
+      const threadId = await this.redis.hget(hashKey, 'threadId');
+      if (threadId) {
+        await this.ensureVisibilityMigrated(threadId);
+      }
 
-    // Atomic CAS: queued → delivered + visibilitySeq allocation.
-    // #1200: DELIVER_WITH_VISIBILITY_LUA extends the original to atomically allocate
-    // a visibilitySeq and ZADD into the visibility index upon delivery.
-    // Lua returns HGETALL on CAS win (no separate getById round-trip needed).
-    const result = await this.redis.eval(
-      DELIVER_WITH_VISIBILITY_LUA,
-      1,
-      hashKey,
-      id,
-      String(deliveredAt),
-      this.keyPrefix,
-    );
-    if (result === 0) {
-      // CAS no-op: message was not queued (already delivered or not found)
-      const existing = await this.getById(id);
-      if (!existing) return null;
-      return { ...existing, deliveryTransitioned: false };
-    }
-    const message = this.parseLuaHgetall(result);
-    if (!message) throw new Error(`Redis delivery transition lost canonical message: ${id}`);
-    return { ...message, deliveryTransitioned: true };
+      // Atomic CAS: queued → delivered + visibilitySeq allocation.
+      // #1200: DELIVER_WITH_VISIBILITY_LUA extends the original to atomically allocate
+      // a visibilitySeq and ZADD into the visibility index upon delivery.
+      // Lua returns HGETALL on CAS win (no separate getById round-trip needed).
+      const result = await this.redis.eval(
+        DELIVER_WITH_VISIBILITY_LUA,
+        1,
+        hashKey,
+        id,
+        String(deliveredAt),
+        this.keyPrefix,
+      );
+      if (result === 0) {
+        // CAS no-op: message was not queued (already delivered or not found)
+        const existing = await this.getById(id);
+        if (!existing) return null;
+        return { ...existing, deliveryTransitioned: false };
+      }
+      const message = this.parseLuaHgetall(result);
+      if (!message) throw new Error(`Redis delivery transition lost canonical message: ${id}`);
+      notifyMessageTimelineChange(this, message);
+      return { ...message, deliveryTransitioned: true };
+    });
   }
 
   async prepareQueueAdmission(id: string): Promise<QueueAdmissionPrepareResult> {
-    const outcome = Number(await this.redis.eval(PREPARE_QUEUE_ADMISSION_LUA, 1, MessageKeys.detail(id)));
-    if (outcome === -1) return { kind: 'not_found' };
-    if (outcome === -2) return { kind: 'conflict' };
-    const message = await this.getById(id);
-    if (!message) return { kind: 'not_found' };
-    if (outcome === 0) return { kind: 'existing', message };
-    if (outcome !== 1) throw new Error(`unexpected queue admission prepare result: ${outcome}`);
-    return { kind: 'prepared', message };
+    return this.withQueueSourceMutation(id, async () => {
+      const outcome = Number(await this.redis.eval(PREPARE_QUEUE_ADMISSION_LUA, 1, MessageKeys.detail(id)));
+      if (outcome === -1) return { kind: 'not_found' };
+      if (outcome === -2) return { kind: 'conflict' };
+      const message = await this.getById(id);
+      if (!message) return { kind: 'not_found' };
+      if (outcome === 0) return { kind: 'existing', message };
+      if (outcome !== 1) throw new Error(`unexpected queue admission prepare result: ${outcome}`);
+      return { kind: 'prepared', message };
+    });
+  }
+
+  async admitQueueCustody(id: string, custody: QueuedMessageCustody): Promise<QueueCustodyAdmissionResult> {
+    return this.withQueueSourceMutation(id, async () => {
+      assertQueueCustodyMessageBinding({ deliveryStatus: 'queued', queueCustody: custody });
+      const hashKey = MessageKeys.detail(id);
+      const threadId = await this.redis.hget(hashKey, 'threadId');
+      if (!threadId) return { kind: 'not_found' };
+      const outcome = Number(
+        await this.redis.eval(
+          ADMIT_QUEUE_CUSTODY_LUA,
+          2,
+          hashKey,
+          MessageKeys.queueExposureIndex(threadId),
+          JSON.stringify(custody),
+          String(custody.revision),
+        ),
+      );
+      if (outcome === -1) return { kind: 'not_found' };
+      if (outcome === -2) return { kind: 'conflict' };
+      const message = await this.getById(id);
+      if (!message) return { kind: 'not_found' };
+      if (outcome === 0) return { kind: 'existing', message };
+      if (outcome !== 1) throw new Error(`unexpected Queue custody admission result: ${outcome}`);
+      return { kind: 'initialized', message };
+    });
   }
 
   async initializeQueueCustodyAdmission(
     id: string,
     admission: QueueCustodyAdmissionIntent,
   ): Promise<QueueCustodyAdmissionInitializeResult> {
-    assertQueueCustodyMessageBinding({ deliveryStatus: 'queued', queueCustodyAdmission: admission });
-    const outcome = Number(
-      await this.redis.eval(
-        INITIALIZE_QUEUE_CUSTODY_ADMISSION_LUA,
-        1,
-        MessageKeys.detail(id),
-        JSON.stringify(admission),
-      ),
-    );
-    if (outcome === -1) return { kind: 'not_found' };
-    if (outcome === -2) return { kind: 'not_queued' };
-    if (outcome === -3) return { kind: 'conflict' };
-    const message = await this.getById(id);
-    if (!message) return { kind: 'not_found' };
-    if (outcome === 0) return { kind: 'existing', message };
-    if (outcome !== 1) throw new Error(`unexpected queue custody admission initialize result: ${outcome}`);
-    return { kind: 'initialized', message };
+    return this.withQueueSourceMutation(id, async () => {
+      assertQueueCustodyMessageBinding({ deliveryStatus: 'queued', queueCustodyAdmission: admission });
+      const outcome = Number(
+        await this.redis.eval(
+          INITIALIZE_QUEUE_CUSTODY_ADMISSION_LUA,
+          1,
+          MessageKeys.detail(id),
+          JSON.stringify(admission),
+        ),
+      );
+      if (outcome === -1) return { kind: 'not_found' };
+      if (outcome === -2) return { kind: 'not_queued' };
+      if (outcome === -3) return { kind: 'conflict' };
+      const message = await this.getById(id);
+      if (!message) return { kind: 'not_found' };
+      if (outcome === 0) return { kind: 'existing', message };
+      if (outcome !== 1) throw new Error(`unexpected queue custody admission initialize result: ${outcome}`);
+      return { kind: 'initialized', message };
+    });
   }
 
   async initializeQueueCustody(id: string, custody: QueuedMessageCustody): Promise<QueueCustodyInitializeResult> {
-    assertQueueCustodyMessageBinding({ deliveryStatus: 'queued', queueCustody: custody });
-    const outcome = Number(
-      await this.redis.eval(
-        INITIALIZE_QUEUE_CUSTODY_LUA,
-        1,
-        MessageKeys.detail(id),
-        JSON.stringify(custody),
-        String(custody.revision),
-      ),
-    );
-    if (outcome === -1) return { kind: 'not_found' };
-    if (outcome === -2) return { kind: 'not_queued' };
-    const message = await this.getById(id);
-    if (!message) return { kind: 'not_found' };
-    if (outcome === 0) return { kind: 'existing', message };
-    if (outcome !== 1) throw new Error(`unexpected queue custody initialize result: ${outcome}`);
-    return { kind: 'initialized', message };
+    return this.withQueueSourceMutation(id, async () => {
+      assertQueueCustodyMessageBinding({ deliveryStatus: 'queued', queueCustody: custody });
+      const outcome = Number(
+        await this.redis.eval(
+          INITIALIZE_QUEUE_CUSTODY_LUA,
+          1,
+          MessageKeys.detail(id),
+          JSON.stringify(custody),
+          String(custody.revision),
+        ),
+      );
+      if (outcome === -1) return { kind: 'not_found' };
+      if (outcome === -2) return { kind: 'not_queued' };
+      const message = await this.getById(id);
+      if (!message) return { kind: 'not_found' };
+      if (outcome === 0) return { kind: 'existing', message };
+      if (outcome !== 1) throw new Error(`unexpected queue custody initialize result: ${outcome}`);
+      return { kind: 'initialized', message };
+    });
   }
 
   async transitionQueueCustody(id: string, input: QueueCustodyTransitionInput): Promise<QueueCustodyTransitionResult> {
-    if (input.deliveredAt !== undefined) assertValidStoredMessageTimestamp(input.deliveredAt);
-    const current = await this.getById(id);
-    if (!current?.queueCustody) return { kind: 'not_found' };
-    if (current.queueCustody.revision !== input.expectedRevision) {
-      return { kind: 'revision_mismatch', actualRevision: current.queueCustody.revision };
-    }
-    const isExposedRecallSettlement =
-      current.deliveryStatus === 'canceled' &&
-      current.recall?.exposure === 'seen' &&
-      current.queueCustody.status === 'terminal' &&
-      input.next.status === 'terminal' &&
-      input.deliveredAt === undefined;
-    if (current.deliveryStatus !== 'queued' && !isExposedRecallSettlement) {
-      throw new Error('queue custody transition requires a queued message or exposed recall tombstone');
-    }
-    if (input.replacement && input.replacement.sourceMessageId !== id) {
-      throw new Error('queue custody replacement proof source message mismatch');
-    }
-    assertQueueCustodyTransition(current.queueCustody, input);
-    assertTypedWaitCustodyBindings(current, input.next, input.waitContinuationGuards);
-    const timelineScore =
-      input.deliveredAt === undefined ? undefined : resolveDeliveryTimelineScore(current, input.deliveredAt);
+    return this.withQueueSourceMutation(id, async () => {
+      if (input.deliveredAt !== undefined) assertValidStoredMessageTimestamp(input.deliveredAt);
+      const current = await this.getById(id);
+      if (!current?.queueCustody) return { kind: 'not_found' };
+      if (current.queueCustody.revision !== input.expectedRevision) {
+        return { kind: 'revision_mismatch', actualRevision: current.queueCustody.revision };
+      }
+      const isExposedRecallSettlement =
+        current.deliveryStatus === 'canceled' &&
+        current.recall?.exposure === 'seen' &&
+        current.queueCustody.status === 'terminal' &&
+        input.next.status === 'terminal' &&
+        input.deliveredAt === undefined;
+      if (current.deliveryStatus !== 'queued' && !isExposedRecallSettlement) {
+        throw new Error('queue custody transition requires a queued message or exposed recall tombstone');
+      }
+      if (input.replacement && input.replacement.sourceMessageId !== id) {
+        throw new Error('queue custody replacement proof source message mismatch');
+      }
+      assertQueueCustodyTransition(current.queueCustody, input);
+      assertCollectivePublicReplyBindings(current, input.next);
+      assertTypedWaitCustodyBindings(current, input.next, input.waitContinuationGuards);
+      const timelineScore =
+        input.deliveredAt === undefined ? undefined : resolveDeliveryTimelineScore(current, input.deliveredAt);
 
-    // #1269 P1-2: ensure visibility migration before delivery (same as markDelivered).
-    // Custody transitions without delivery skip this (no visibility allocation needed).
-    if (input.deliveredAt !== undefined) {
-      await this.ensureVisibilityMigrated(current.threadId);
-    }
+      // #1269 P1-2: ensure visibility migration before delivery (same as markDelivered).
+      // Custody transitions without delivery skip this (no visibility allocation needed).
+      if (input.deliveredAt !== undefined) {
+        await this.ensureVisibilityMigrated(current.threadId);
+      }
 
-    const waitGuards = await readRedisTypedWaitCustodyGuards(this.redis, input.waitContinuationGuards);
-    const rawResult = (await this.redis.eval(
-      TRANSITION_QUEUE_CUSTODY_LUA,
-      5 + waitGuards.keys.length,
-      MessageKeys.detail(id),
-      MessageKeys.thread(current.threadId),
-      MessageKeys.TIMELINE,
-      MessageKeys.user(current.userId),
-      MessageKeys.queueExposureIndex(current.threadId),
-      ...waitGuards.keys,
-      String(input.expectedRevision),
-      JSON.stringify(input.next),
-      String(input.next.revision),
-      input.deliveredAt === undefined ? '' : String(input.deliveredAt),
-      timelineScore === undefined ? '' : String(timelineScore),
-      this.keyPrefix, // [6] keyPrefix for visibility key construction inside Lua
-      JSON.stringify(waitGuards.witnesses),
-    )) as [number | string, number | string];
-    const outcome = Number(rawResult[0]);
-    const actualRevision = Number(rawResult[1]);
-    if (outcome === -1) return { kind: 'not_found' };
-    if (outcome === 0) return { kind: 'revision_mismatch', actualRevision };
-    if (outcome === -2) {
-      throw new Error('queue custody transition requires a queued message or exposed recall tombstone');
-    }
-    if (outcome === -3) rejectTypedWaitCustody('authority_changed');
-    if (outcome !== 1 && outcome !== 2) throw new Error(`unexpected queue custody transition result: ${outcome}`);
+      const waitGuards = await readRedisTypedWaitCustodyGuards(this.redis, input.waitContinuationGuards);
+      const rawResult = (await this.redis.eval(
+        TRANSITION_QUEUE_CUSTODY_LUA,
+        5 + waitGuards.keys.length,
+        MessageKeys.detail(id),
+        MessageKeys.thread(current.threadId),
+        MessageKeys.TIMELINE,
+        MessageKeys.user(current.userId),
+        MessageKeys.queueExposureIndex(current.threadId),
+        ...waitGuards.keys,
+        String(input.expectedRevision),
+        JSON.stringify(input.next),
+        String(input.next.revision),
+        input.deliveredAt === undefined ? '' : String(input.deliveredAt),
+        timelineScore === undefined ? '' : String(timelineScore),
+        this.keyPrefix, // [6] keyPrefix for visibility key construction inside Lua
+        JSON.stringify(waitGuards.witnesses),
+      )) as [number | string, number | string];
+      const outcome = Number(rawResult[0]);
+      const actualRevision = Number(rawResult[1]);
+      if (outcome === -1) return { kind: 'not_found' };
+      if (outcome === 0) return { kind: 'revision_mismatch', actualRevision };
+      if (outcome === -2) {
+        throw new Error('queue custody transition requires a queued message or exposed recall tombstone');
+      }
+      if (outcome === -3) rejectTypedWaitCustody('authority_changed');
+      if (outcome !== 1 && outcome !== 2) throw new Error(`unexpected queue custody transition result: ${outcome}`);
 
-    const updated = await this.getById(id);
-    if (!updated) throw new Error(`queue custody transition lost stored message: ${id}`);
-    return { kind: 'updated', message: updated, deliveryTransitioned: outcome === 2 };
+      const updated = await this.getById(id);
+      if (!updated) throw new Error(`queue custody transition lost stored message: ${id}`);
+      if (outcome === 2) notifyMessageTimelineChange(this, updated);
+      return { kind: 'updated', message: updated, deliveryTransitioned: outcome === 2 };
+    });
   }
 
   /**
@@ -2689,17 +3131,20 @@ export class RedisMessageStore {
    * visibility index (handles backfilled legacy queued members).
    */
   async markCanceled(id: string): Promise<MarkCanceledResult | null> {
-    const hashKey = MessageKeys.detail(id);
-    // Atomic CAS: queued → canceled + visibility ZREM.
-    const result = await this.redis.eval(CANCEL_WITH_VISIBILITY_LUA, 1, hashKey, this.keyPrefix);
-    if (result === 0) {
-      const existing = await this.getById(id);
-      if (!existing) return null;
-      return { ...existing, deliveryTransitioned: false };
-    }
-    const message = this.parseLuaHgetall(result);
-    if (!message) throw new Error(`Redis cancellation transition lost canonical message: ${id}`);
-    return { ...message, deliveryTransitioned: true };
+    return this.withQueueSourceMutation(id, async () => {
+      const hashKey = MessageKeys.detail(id);
+      // Atomic CAS: queued → canceled + visibility ZREM.
+      const result = await this.redis.eval(CANCEL_WITH_VISIBILITY_LUA, 1, hashKey, this.keyPrefix);
+      if (result === 0) {
+        const existing = await this.getById(id);
+        if (!existing) return null;
+        return { ...existing, deliveryTransitioned: false };
+      }
+      const message = this.parseLuaHgetall(result);
+      if (!message) throw new Error(`Redis cancellation transition lost canonical message: ${id}`);
+      notifyMessageTimelineChange(this, message);
+      return { ...message, deliveryTransitioned: true };
+    });
   }
 
   /**
@@ -2770,72 +3215,121 @@ export class RedisMessageStore {
   }
 
   /** Hydrate message IDs into full StoredMessage objects */
-  private async hydrateMessages(ids: string[], options?: { includeDeleted?: boolean }): Promise<StoredMessage[]> {
+  private async hydrateMessages(
+    ids: string[],
+    options?: { includeDeleted?: boolean; strict?: boolean },
+  ): Promise<StoredMessage[]> {
     const pipeline = this.redis.multi();
     for (const id of ids) {
       pipeline.hgetall(MessageKeys.detail(id));
     }
-    const results = await pipeline.exec();
-    if (!results) return [];
-
-    const messages: StoredMessage[] = [];
-    for (const [err, data] of results) {
-      if (err || !data || typeof data !== 'object') continue;
-      const d = data as Record<string, string>;
-      if (!d.id) continue;
-
-      const deletedAt = d.deletedAt ? parseInt(d.deletedAt, 10) : undefined;
-
-      // ADR-008 D3: skip soft-deleted messages unless includeDeleted
-      if (deletedAt && !options?.includeDeleted) continue;
-
-      const contentBlocks = safeParseContentBlocks(d.contentBlocks);
-      const toolEvents = safeParseToolEvents(d.toolEvents);
-      const parsedMetadata = safeParseMetadata(d.metadata);
-      const extraHydration = hydrateExtra(d.extra, d.pluginMessage, d.custodyOfferV1);
-      const sourceField = parseConnectorSourceField(d.source);
-      const parsedSource = sourceField.kind === 'valid' ? sourceField.source : undefined;
-      const parsedQueueCustody = safeParseQueueCustody(d.queueCustody);
-      const parsedQueueCustodyAdmission = safeParseQueueCustodyAdmission(d.queueCustodyAdmission);
-      const parsedRecall = safeParseMessageRecall(d.recall);
-      messages.push({
-        id: d.id,
-        threadId: d.threadId || DEFAULT_THREAD_ID,
-        userId: d.userId ?? 'unknown',
-        catId: (d.catId || null) as CatId | null,
-        content: d.content ?? '',
-        ...(contentBlocks ? { contentBlocks } : {}),
-        ...(toolEvents ? { toolEvents } : {}),
-        ...(parsedMetadata ? { metadata: parsedMetadata } : {}),
-        ...(extraHydration.extra ? { extra: extraHydration.extra } : {}),
-        ...(extraHydration.custodyOfferParseFailure ? { custodyOfferParseFailure: true as const } : {}),
-        mentions: safeParseMentions(d.mentions),
-        timestamp: parseStoredMessageTimestamp(d.timestamp),
-        ...(deletedAt ? { deletedAt, deletedBy: d.deletedBy ?? '' } : {}),
-        ...(d._tombstone === '1' ? { _tombstone: true as const } : {}),
-        ...(d.thinking ? { thinking: d.thinking } : {}),
-        ...(d.origin === 'stream' || d.origin === 'callback' || d.origin === 'briefing'
-          ? { origin: d.origin as 'stream' | 'callback' | 'briefing' }
-          : {}),
-        ...(d.visibility === 'whisper' ? { visibility: 'whisper' as const } : {}),
-        ...(d.whisperTo ? { whisperTo: safeParseMentions(d.whisperTo) } : {}),
-        ...(d.revealedAt ? { revealedAt: parseInt(d.revealedAt, 10) } : {}),
-        ...(d.deliveredAt ? { deliveredAt: parseRedisNumber(d.deliveredAt) } : {}),
-        ...(d.timelineOrderAt !== undefined ? { timelineOrderAt: parseRedisNumber(d.timelineOrderAt) } : {}),
-        ...(d.deliveryStatus ? { deliveryStatus: d.deliveryStatus as StoredMessage['deliveryStatus'] } : {}),
-        ...(parsedQueueCustody ? { queueCustody: parsedQueueCustody } : {}),
-        ...(parsedQueueCustodyAdmission ? { queueCustodyAdmission: parsedQueueCustodyAdmission } : {}),
-        ...(parsedRecall ? { recall: parsedRecall } : {}),
-        ...(parsedSource ? { source: parsedSource } : {}),
-        ...(sourceField.kind === 'invalid' ? { sourceParseFailure: true as const } : {}),
-        ...(d.mentionsUser === '1' ? { mentionsUser: true } : {}),
-        ...(d.replyTo ? { replyTo: d.replyTo } : {}),
-        // #1200 Sol R6 P2-1: Inject visibilitySeq from hash (parity with hydrateHash).
-        // Without this, getRecentMentionsFor returns items without visibilitySeq,
-        // causing cursorFor to emit v1 while getter cursors are v2 → cross-format.
-        ...(d.visibilitySeq ? { visibilitySeq: parseInt(d.visibilitySeq, 10) } : {}),
-      });
+    let span: MessageReadSpan | undefined;
+    try {
+      span = this.readDiagnostics?.beginBatch(ids.length);
+    } catch {
+      /* optional diagnostics */
     }
-    return messages;
+    let hydratedRows = 0;
+    let readStatus: 'ok' | 'unavailable' | 'failed' = 'failed';
+    try {
+      const results = await pipeline.exec();
+      try {
+        span?.decodeStarted();
+      } catch {
+        /* optional diagnostics */
+      }
+      if (!results) {
+        if (options?.strict) throw new Error('Owner uncertainty hydration unavailable');
+        readStatus = 'unavailable';
+        return [];
+      }
+
+      if (options?.strict && results.length !== ids.length) throw new Error('Owner uncertainty hydration incomplete');
+      const messages: StoredMessage[] = [];
+      for (const [err, data] of results) {
+        if (err || !data || typeof data !== 'object' || (options?.strict && Array.isArray(data))) {
+          if (options?.strict) throw new Error('Owner uncertainty hydration failed');
+          continue;
+        }
+        const d = data as Record<string, string>;
+        if (!d.id) continue;
+
+        const deletedAt = d.deletedAt ? parseInt(d.deletedAt, 10) : undefined;
+
+        // ADR-008 D3: skip soft-deleted messages unless includeDeleted
+        if (deletedAt && !options?.includeDeleted) continue;
+
+        const contentBlocks = span
+          ? measureMessageReadParser(span, 'contentBlocks', d.contentBlocks?.length ?? 0, () =>
+              safeParseContentBlocks(d.contentBlocks),
+            )
+          : safeParseContentBlocks(d.contentBlocks);
+        const toolEvents = span
+          ? measureMessageReadParser(span, 'toolEvents', d.toolEvents?.length ?? 0, () =>
+              safeParseToolEvents(d.toolEvents),
+            )
+          : safeParseToolEvents(d.toolEvents);
+        const parsedMetadata = safeParseMetadata(d.metadata);
+        const extraHydration = span
+          ? measureMessageReadParser(
+              span,
+              'extraHydration',
+              (d.extra?.length ?? 0) + (d.pluginMessage?.length ?? 0) + (d.custodyOfferV1?.length ?? 0),
+              () => hydrateExtra(d.extra, d.pluginMessage, d.custodyOfferV1),
+            )
+          : hydrateExtra(d.extra, d.pluginMessage, d.custodyOfferV1);
+        const sourceField = parseConnectorSourceField(d.source);
+        const parsedSource = sourceField.kind === 'valid' ? sourceField.source : undefined;
+        const parsedQueueCustody = safeParseQueueCustody(d.queueCustody);
+        const parsedQueueCustodyAdmission = safeParseQueueCustodyAdmission(d.queueCustodyAdmission);
+        const parsedRecall = safeParseMessageRecall(d.recall);
+        messages.push({
+          id: d.id,
+          threadId: d.threadId || DEFAULT_THREAD_ID,
+          userId: d.userId ?? 'unknown',
+          catId: (d.catId || null) as CatId | null,
+          content: d.content ?? '',
+          ...(contentBlocks ? { contentBlocks } : {}),
+          ...(toolEvents ? { toolEvents } : {}),
+          ...(parsedMetadata ? { metadata: parsedMetadata } : {}),
+          ...(extraHydration.extra ? { extra: extraHydration.extra } : {}),
+          ...(extraHydration.custodyOfferParseFailure ? { custodyOfferParseFailure: true as const } : {}),
+          mentions: safeParseMentions(d.mentions),
+          timestamp: parseStoredMessageTimestamp(d.timestamp),
+          ...(deletedAt ? { deletedAt, deletedBy: d.deletedBy ?? '' } : {}),
+          ...(d._tombstone === '1' ? { _tombstone: true as const } : {}),
+          ...(d.thinking ? { thinking: d.thinking } : {}),
+          ...(d.origin === 'stream' || d.origin === 'callback' || d.origin === 'briefing'
+            ? { origin: d.origin as 'stream' | 'callback' | 'briefing' }
+            : {}),
+          ...(d.visibility === 'whisper' ? { visibility: 'whisper' as const } : {}),
+          ...(d.whisperTo ? { whisperTo: safeParseMentions(d.whisperTo) } : {}),
+          ...(d.revealedAt ? { revealedAt: parseInt(d.revealedAt, 10) } : {}),
+          ...(d.deliveredAt ? { deliveredAt: parseRedisNumber(d.deliveredAt) } : {}),
+          ...(d.timelineOrderAt !== undefined ? { timelineOrderAt: parseRedisNumber(d.timelineOrderAt) } : {}),
+          ...(d.deliveryStatus ? { deliveryStatus: d.deliveryStatus as StoredMessage['deliveryStatus'] } : {}),
+          ...(parsedQueueCustody ? { queueCustody: parsedQueueCustody } : {}),
+          ...(parsedQueueCustodyAdmission ? { queueCustodyAdmission: parsedQueueCustodyAdmission } : {}),
+          ...(parsedRecall ? { recall: parsedRecall } : {}),
+          ...(parsedSource ? { source: parsedSource } : {}),
+          ...(sourceField.kind === 'invalid' ? { sourceParseFailure: true as const } : {}),
+          ...(d.mentionsUser === '1' ? { mentionsUser: true } : {}),
+          ...(d.replyTo ? { replyTo: d.replyTo } : {}),
+          // #1200 Sol R6 P2-1: Inject visibilitySeq from hash (parity with hydrateHash).
+          // Without this, getRecentMentionsFor returns items without visibilitySeq,
+          // causing cursorFor to emit v1 while getter cursors are v2 → cross-format.
+          ...(d.visibilitySeq ? { visibilitySeq: parseInt(d.visibilitySeq, 10) } : {}),
+        });
+      }
+      hydratedRows = messages.length;
+      readStatus = 'ok';
+      return messages;
+    } finally {
+      try {
+        span?.end(hydratedRows, readStatus);
+      } catch {
+        /* original read result/error wins */
+      }
+    }
   }
 }

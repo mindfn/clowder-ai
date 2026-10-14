@@ -283,12 +283,48 @@ describe('ball-custody transition — 虚空 + 唤醒', () => {
       { ok: false, reason: 'invalid_transition' },
     );
   });
+
+  it('ball.wait_dispositioned 终结被 matched event-wait 唤醒的持球者的原球；非持球者只能 retired，且 resolved 不复活', () => {
+    const completion = (payload = {}) =>
+      ev('ball.wait_dispositioned', {
+        payload: {
+          catId: 'codex-sol',
+          invocationId: 'inv-1',
+          sourceMessageId: 'wake-message-1',
+          waitId: 'wait-1',
+          outcomeId: 'wait:deployment:x:runtime:g2:matched',
+          disposition: 'completed',
+          ...payload,
+        },
+      });
+    for (const from of ['active', 'blocked']) {
+      assert.deepStrictEqual(transition(from, completion(), snap()), { ok: true, next: 'resolved' });
+    }
+    assert.deepStrictEqual(transition('resolved', completion(), snap()), { ok: false, reason: 'invalid_transition' });
+    // Somebody else holds the ball: a live completion is refused...
+    assert.deepStrictEqual(transition('active', completion(), snap({ holder: 'opus' })), {
+      ok: false,
+      reason: 'invalid_transition',
+    });
+    // ...but the retired form closes only this exact obligation and leaves the other holder's ball untouched,
+    // including after the thread subject has already resolved.
+    for (const from of ['active', 'resolved']) {
+      assert.deepStrictEqual(transition(from, completion({ retired: true }), snap({ holder: 'opus' })), {
+        ok: true,
+        next: from,
+      });
+    }
+    assert.deepStrictEqual(transition('active', completion({ catId: 42 }), snap()), {
+      ok: false,
+      reason: 'bad_payload',
+    });
+  });
 });
 
 describe('INV-10 完整性穷举：全 state × event 无未定义', () => {
   it('每个 (state, event) transition 返回 well-formed result，不 throw', () => {
     assert.strictEqual(ALL_BALL_STATES.length, 8); // new + 7
-    assert.strictEqual(ALL_BALL_EVENT_KINDS.length, 19); // + exact managed-hold and ordinary A2A dispositions
+    assert.strictEqual(ALL_BALL_EVENT_KINDS.length, 20); // + exact managed-hold, A2A dispatch and event-wait dispositions
     for (const state of ALL_BALL_STATES) {
       for (const kind of ALL_BALL_EVENT_KINDS) {
         const r = transition(

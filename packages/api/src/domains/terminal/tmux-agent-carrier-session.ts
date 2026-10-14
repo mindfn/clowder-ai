@@ -151,6 +151,8 @@ export function createTmuxAgentCarrierSessionFactory(input: {
   userId: string;
   tmuxGateway: TmuxGateway;
   agentPaneRegistry?: AgentPaneRegistry;
+  /** F322: owning cat, recorded into the pane registry so done/crashed panes keep identity. */
+  catId?: string;
 }): AgentCarrierSessionFactory {
   return async (options) => {
     options.signal?.throwIfAborted();
@@ -174,7 +176,13 @@ export function createTmuxAgentCarrierSessionFactory(input: {
       });
       options.signal?.throwIfAborted();
       if (!input.tmuxGateway.setAgentPaneReadOnly(lease)) throw new Error('Agent pane was replaced during setup');
-      input.agentPaneRegistry?.register(options.invocationId, input.worktreeId, lease.paneId, input.userId);
+      input.agentPaneRegistry?.register(
+        options.invocationId,
+        input.worktreeId,
+        lease.paneId,
+        input.userId,
+        input.catId,
+      );
       const session = new TmuxAgentCarrierSession(options, {
         worktreeId: input.worktreeId,
         userId: input.userId,

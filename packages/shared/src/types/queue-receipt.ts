@@ -9,26 +9,44 @@ export type QueueReceiptTargetState =
   | 'withdrawn'
   | 'handled';
 
-export type QueueHandledDisposition = 'responded' | 'completed_with_turn' | 'managed_hold_disposition';
+/** Ephemeral server projection of completed children while an exact auxiliary child finishes. */
+export interface QueueInvocationSettlement {
+  activeTurnInvocationId: string;
+  completedTurnInvocationIds: string[];
+}
+
+export type QueueHandledDisposition =
+  | 'responded'
+  | 'completed_with_turn'
+  | 'managed_hold_disposition'
+  | 'dispatch_disposition';
 
 export type MessageWorkDisposition = 'continue_current' | 'next_work';
 
 /** Exact provider + concrete transport truth used by composer, Queue and receipts. */
-export type FreshnessCarrierProvider = 'openai_codex' | 'anthropic' | 'kimi' | 'other';
-export type FreshnessCarrier =
-  | 'codex_app_server'
-  | 'codex_exec_json'
-  | 'claude_print_sdk'
-  | 'claude_stream_json'
-  | 'kimi_stream_json'
-  | 'mcp_result_piggyback'
-  | 'other';
-export type FreshnessCarrierDeliverySemantics =
-  | 'exact_active_turn'
-  | 'queued_internal_turn'
-  | 'mcp_result_piggyback'
-  | 'unsupported'
-  | 'undeclared';
+export const FRESHNESS_CARRIER_PROVIDERS = ['openai_codex', 'anthropic', 'kimi', 'google', 'other'] as const;
+export const FRESHNESS_CARRIERS = [
+  'codex_app_server',
+  'codex_exec_json',
+  'claude_print_sdk',
+  'claude_agent_sdk',
+  'claude_stream_json',
+  'kimi_stream_json',
+  'agy_stream_json',
+  'mcp_result_piggyback',
+  'other',
+] as const;
+export const FRESHNESS_CARRIER_DELIVERY_SEMANTICS = [
+  'exact_active_turn',
+  'queued_internal_turn',
+  'mcp_result_piggyback',
+  'unsupported',
+  'undeclared',
+] as const;
+
+export type FreshnessCarrierProvider = (typeof FRESHNESS_CARRIER_PROVIDERS)[number];
+export type FreshnessCarrier = (typeof FRESHNESS_CARRIERS)[number];
+export type FreshnessCarrierDeliverySemantics = (typeof FRESHNESS_CARRIER_DELIVERY_SEMANTICS)[number];
 
 export interface FreshnessCarrierCapability {
   provider: FreshnessCarrierProvider;
@@ -71,7 +89,36 @@ export interface QueueTurnExecutionEvidenceRef {
   invocationId: string;
 }
 
-export type QueueTargetOutcomeEvidenceRef = QueueLineageEvidenceRef | QueueTurnExecutionEvidenceRef;
+/** Exact durable dispatch terminal; independent of the carrier's eventual execution outcome. */
+export interface QueueDispatchDispositionEvidenceRef {
+  kind: 'dispatch_disposition';
+  invocationId: string;
+  sourceMessageId: string;
+  handoffEventId: string;
+  dispositionEventId: string;
+  disposition: 'handled' | 'completed';
+  dispositionAt: number;
+}
+
+export function isQueueDispatchDispositionEvidence(value: unknown): value is QueueDispatchDispositionEvidenceRef {
+  if (!value || typeof value !== 'object') return false;
+  const item = value as Record<string, unknown>;
+  return (
+    item.kind === 'dispatch_disposition' &&
+    ['invocationId', 'sourceMessageId', 'handoffEventId', 'dispositionEventId'].every(
+      (key) => typeof item[key] === 'string' && item[key].length > 0,
+    ) &&
+    (item.disposition === 'handled' || item.disposition === 'completed') &&
+    typeof item.dispositionAt === 'number' &&
+    Number.isFinite(item.dispositionAt) &&
+    item.dispositionAt >= 0
+  );
+}
+
+export type QueueTargetOutcomeEvidenceRef =
+  | QueueLineageEvidenceRef
+  | QueueTurnExecutionEvidenceRef
+  | QueueDispatchDispositionEvidenceRef;
 
 export interface QueueTerminalSilentConsumptionWitness {
   kind: 'terminal_silent';
@@ -86,6 +133,14 @@ export interface QueueTerminalSilentConsumptionWitness {
 export interface QueueSourceResponseConsumptionWitness {
   kind: 'source_response';
   outputMessageIds: string[];
+}
+
+/** A Service event accepted for this exact public source; never a local MessageStore output. */
+export interface QueueCollectivePublicReplyWitness {
+  kind: 'collective_public_reply';
+  sourceMessageId: string;
+  sourceEventId: string;
+  acceptedEventId: string;
 }
 
 /** Existing structured tools consumed one managed wake by establishing its successor condition. */
@@ -112,6 +167,7 @@ export interface QueueDispatchHandledContinuationWitness {
 export type QueueTerminalConsumptionWitness =
   | QueueTerminalSilentConsumptionWitness
   | QueueSourceResponseConsumptionWitness
+  | QueueCollectivePublicReplyWitness
   | QueueManagedHoldContinuationWitness
   | QueueDispatchHandledContinuationWitness;
 

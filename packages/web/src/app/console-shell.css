@@ -314,6 +314,14 @@
   background-color: var(--cafe-text-muted);
 }
 
+/* The measured, operable piano is this viewport's position indicator. */
+[data-chat-container][data-message-piano-ready="true"] {
+  scrollbar-width: none;
+}
+[data-chat-container][data-message-piano-ready="true"]::-webkit-scrollbar {
+  width: 0;
+}
+
 /* ── Divider primitives — single source of truth for section separators ── */
 .console-divider-t {
   border-top: 1px solid var(--console-border-soft);

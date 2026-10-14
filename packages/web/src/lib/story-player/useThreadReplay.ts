@@ -18,6 +18,7 @@ import type { DensityBucket } from './event-density';
 import { computeEventDensity } from './event-density';
 import type { ReplayChatMessage } from './replay-chat-bridge';
 import { buildReplayChatMessages } from './replay-chat-bridge';
+import type { ReplayEvent } from './types';
 import { useReplayEngine } from './useReplayEngine';
 
 // ---------------------------------------------------------------------------
@@ -30,6 +31,8 @@ export interface UseThreadReplayOptions {
 }
 
 export interface UseThreadReplayResult {
+  /** Read-only original engine events for speaker/idle timeline presentation. */
+  events: readonly ReplayEvent[];
   /** Bridged visible messages (ready for ReplayMessageList) */
   messages: ReplayChatMessage[];
   /** Loading state */
@@ -84,6 +87,7 @@ export function useThreadReplay({ threadId }: UseThreadReplayOptions): UseThread
   const densityBuckets = useMemo(() => computeEventDensity(events, 50), [events]);
 
   return {
+    events,
     messages,
     isLoading,
     error,

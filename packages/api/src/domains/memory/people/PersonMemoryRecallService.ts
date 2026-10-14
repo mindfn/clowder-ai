@@ -52,7 +52,8 @@ export type PersonMemoryDrillResult =
       };
       estimatedTokens: number;
     }
-  | { status: 'not_available' | 'budget_exceeded' };
+  | { status: 'not_available'; reason?: 'owner_action_has_no_message_source' }
+  | { status: 'budget_exceeded' };
 
 interface TurnBudget {
   aggregateTokens: number;
@@ -151,6 +152,7 @@ function boundedRelationshipCard(input: {
       claimId: claim.claimId,
       text: claimText(claim),
       kind: claim.payload.kind,
+      provenanceKind: claim.materializedBy.kind === 'owner_memory_action' ? 'owner_memory_action' : 'message',
       provenanceRefs: claim.sourceRefs.slice(0, PERSON_MEMORY_LIMITS.maxProvenanceRefsPerCard),
     })),
     relationshipLine: relationshipText(input.relationship),
@@ -289,6 +291,9 @@ export class PersonMemoryRecallService {
     if (item.recordedAt < input.timeWindow.from || item.recordedAt > input.timeWindow.to) {
       return { status: 'not_available' };
     }
+    if (item.source.kind === 'owner_memory_action') {
+      return { status: 'not_available', reason: 'owner_action_has_no_message_source' };
+    }
 
     const turnKey = `${input.ownerUserId}\0${input.turnId}`;
     const budget = this.budgets.get(turnKey) ?? { aggregateTokens: 0, callsByPerson: new Map<string, number>() };
@@ -307,7 +312,7 @@ export class PersonMemoryRecallService {
         kind: input.item.kind,
         itemId: input.item.id,
         text: bounded.text,
-        sourceRef: item.sourceRef,
+        sourceRef: item.source.sourceRef,
       },
       estimatedTokens: bounded.estimatedTokens,
     };
@@ -324,14 +329,22 @@ export class PersonMemoryRecallService {
   private async findItem(input: PersonMemoryDrillInput): Promise<{
     recordedAt: number;
     text: string;
-    sourceRef: { kind: 'message'; threadId: string; messageId: string };
+    source:
+      | { kind: 'message'; sourceRef: { kind: 'message'; threadId: string; messageId: string } }
+      | { kind: 'owner_memory_action' };
   } | null> {
     if (input.item.kind === 'claim') {
       const claim = (await this.store.listClaims(input.ownerUserId, personIdSchema.parse(input.personId))).find(
         (candidate) => candidate.claimId === input.item.id && candidate.status !== 'redacted',
       );
-      const sourceRef = claim?.sourceRefs[0];
-      return claim && sourceRef ? { recordedAt: claim.recordedAt, text: claimText(claim), sourceRef } : null;
+      if (!claim) return null;
+      if (claim.materializedBy.kind === 'owner_memory_action') {
+        return { recordedAt: claim.recordedAt, text: claimText(claim), source: { kind: 'owner_memory_action' } };
+      }
+      const sourceRef = claim.sourceRefs[0];
+      return sourceRef
+        ? { recordedAt: claim.recordedAt, text: claimText(claim), source: { kind: 'message', sourceRef } }
+        : null;
     }
     if (input.item.kind === 'relationship') {
       const relationship = (
@@ -342,14 +355,20 @@ export class PersonMemoryRecallService {
         ? {
             recordedAt: relationship.transitions.at(-1)?.recordedAt ?? relationship.createdAt,
             text: relationshipText(relationship),
-            sourceRef,
+            source: { kind: 'message', sourceRef },
           }
         : null;
     }
     const event = (
       await this.store.listInteractionEvents(input.ownerUserId, personIdSchema.parse(input.personId))
     ).find((candidate) => candidate.eventId === input.item.id && candidate.status !== 'redacted');
-    const sourceRef = event?.sourceRefs[0];
-    return event && sourceRef ? { recordedAt: event.recordedAt, text: eventText(event), sourceRef } : null;
+    if (!event) return null;
+    if (event.materializedBy.kind === 'owner_memory_action') {
+      return { recordedAt: event.recordedAt, text: eventText(event), source: { kind: 'owner_memory_action' } };
+    }
+    const sourceRef = event.sourceRefs[0];
+    return sourceRef
+      ? { recordedAt: event.recordedAt, text: eventText(event), source: { kind: 'message', sourceRef } }
+      : null;
   }
 }

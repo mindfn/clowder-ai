@@ -4,6 +4,9 @@
  */
 
 import assert from 'node:assert/strict';
+import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import { afterEach, describe, it } from 'node:test';
 import Fastify from 'fastify';
 import { configStore } from '../dist/config/ConfigStore.js';
@@ -19,6 +22,12 @@ describe('PATCH /api/config (F4 hot-reload)', () => {
 
   async function setup(routeOptions = {}, options = {}) {
     app = Fastify();
+    if (typeof options.sessionUserId === 'string') {
+      app.addHook('onRequest', (request, _reply, done) => {
+        request.sessionUserId = options.sessionUserId;
+        done();
+      });
+    }
     const warnSink = Array.isArray(options.warnSink) ? options.warnSink : null;
     if (warnSink) {
       app.addHook('onRequest', (request, _reply, done) => {
@@ -99,6 +108,86 @@ describe('PATCH /api/config (F4 hot-reload)', () => {
     assert.equal(body.config.codexExecution.model, 'gpt-5.3-codex');
     assert.equal(body.config.codexExecution.passModelArg, false);
     assert.equal(body.config.codexExecution.authMode, 'oauth');
+  });
+
+  it('persists the personal execution-record default across API recreation without clobbering other preferences', async () => {
+    const projectRoot = await mkdtemp(join(tmpdir(), 'bubble-default-restart-'));
+    const previousOwner = process.env.DEFAULT_OWNER_USER_ID;
+    process.env.DEFAULT_OWNER_USER_ID = 'preference-owner';
+    const auditCalls = [];
+    try {
+      await mkdir(join(projectRoot, '.cat-cafe'), { recursive: true });
+      await writeFile(
+        join(projectRoot, '.cat-cafe', 'user-preferences.json'),
+        `${JSON.stringify({ catOrder: ['opus'], bubbleDefaults: { futureDisplay: 'preserve-me' } }, null, 2)}\n`,
+        'utf-8',
+      );
+      await setup(
+        {
+          projectRoot,
+          auditLog: {
+            append: async (input) => {
+              auditCalls.push(input);
+              return input;
+            },
+          },
+        },
+        { sessionUserId: 'preference-owner' },
+      );
+      assert.deepEqual(
+        JSON.parse(await readFile(join(projectRoot, '.cat-cafe', 'user-preferences.json'), 'utf-8')).bubbleDefaults,
+        { futureDisplay: 'preserve-me' },
+      );
+      const write = await app.inject({
+        method: 'PATCH',
+        url: '/api/config',
+        headers: { origin: 'http://localhost:3003' },
+        payload: { key: 'ui.bubble.cliOutput', value: 'expanded' },
+      });
+      assert.equal(write.statusCode, 200, write.payload);
+      assert.equal(write.json().config.ui.bubbleDefaults.cliOutput, 'expanded');
+      assert.equal(auditCalls.at(-1)?.data.source, 'user-preferences');
+
+      await app.close();
+      app = undefined;
+      configStore.reset();
+      await setup({ projectRoot });
+
+      const read = await app.inject({ method: 'GET', url: '/api/config' });
+      assert.equal(read.statusCode, 200, read.payload);
+      assert.equal(read.json().config.ui.bubbleDefaults.cliOutput, 'expanded');
+      const persisted = JSON.parse(await readFile(join(projectRoot, '.cat-cafe', 'user-preferences.json'), 'utf-8'));
+      assert.deepEqual(persisted.catOrder, ['opus']);
+      assert.deepEqual(persisted.bubbleDefaults, { futureDisplay: 'preserve-me', cliOutput: 'expanded' });
+    } finally {
+      if (previousOwner === undefined) delete process.env.DEFAULT_OWNER_USER_ID;
+      else process.env.DEFAULT_OWNER_USER_ID = previousOwner;
+      await rm(projectRoot, { recursive: true, force: true });
+    }
+  });
+
+  it('requires strict owner identity before writing the persistent execution-record default', async () => {
+    const previousOwner = process.env.DEFAULT_OWNER_USER_ID;
+    process.env.DEFAULT_OWNER_USER_ID = 'preference-owner';
+    try {
+      await setup();
+      const browserWithoutSession = await app.inject({
+        method: 'PATCH',
+        url: '/api/config',
+        headers: { origin: 'http://localhost:3003' },
+        payload: { key: 'ui.bubble.cliOutput', value: 'expanded' },
+      });
+      assert.equal(browserWithoutSession.statusCode, 401, browserWithoutSession.payload);
+
+      const guest = await patchConfig(
+        { key: 'ui.bubble.cliOutput', value: 'expanded' },
+        { 'x-cat-cafe-user': 'guest' },
+      );
+      assert.equal(guest.statusCode, 403, guest.payload);
+    } finally {
+      if (previousOwner === undefined) delete process.env.DEFAULT_OWNER_USER_ID;
+      else process.env.DEFAULT_OWNER_USER_ID = previousOwner;
+    }
   });
 
   it('writes config patch audit event with old/new/operator', async () => {

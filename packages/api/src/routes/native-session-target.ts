@@ -1,4 +1,5 @@
 import type { AgentRegistry } from '../domains/cats/services/agents/registry/AgentRegistry.js';
+import { isHomeSession } from '../domains/cats/services/session/session-scope.js';
 import type { ISessionChainStore } from '../domains/cats/services/stores/ports/SessionChainStore.js';
 
 export interface NativeSessionTarget {
@@ -30,6 +31,7 @@ export async function listNativeSessionTargets(input: {
   const sessions = await input.sessionChainStore.getChainByThread(input.threadId);
   const candidates = sessions.filter(
     (session) =>
+      isHomeSession(session) &&
       session.status === 'active' &&
       session.userId === input.userId &&
       !!session.cliSessionId &&

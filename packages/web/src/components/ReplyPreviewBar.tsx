@@ -1,7 +1,9 @@
 'use client';
 
+import { useShellPresentation } from '@/components/shell/shell-presentation';
 import type { CatData } from '@/hooks/useCatData';
 import { useCoCreatorConfig } from '@/hooks/useCoCreatorConfig';
+import { tintOf } from '@/lib/hex-color';
 import { resolveSender } from '@/lib/resolve-sender';
 import { scrollToMessage } from '@/utils/scrollToMessage';
 
@@ -14,14 +16,16 @@ interface ReplyPreviewBarProps {
 /**
  * #699: Input-area reply preview — shows who you're replying to with their theme color.
  * Click scrolls to original message; ✕ dismisses the quote.
- * Styled to match ReplyPill in the chat timeline.
+ * Styled to match ReplyPill in the chat timeline. F322 B: in the new shell the text (arrow, line, close) is the cat's readable
+ * name role, as on the pill; the tint stays the identity colour, and classic keeps the hex (frozen).
  */
 export function ReplyPreviewBar({ replyToMessage, cats, onClear }: ReplyPreviewBarProps) {
   const coCreator = useCoCreatorConfig();
+  const nameRole = useShellPresentation() === 'v2';
   const { senderCatId, content, id: replyToId } = replyToMessage;
 
   const getCatById = (id: string) => cats.find((c) => c.id === id);
-  const sender = resolveSender(senderCatId, getCatById, coCreator);
+  const sender = resolveSender(senderCatId, getCatById, coCreator, { nameRole });
 
   const handleClick = () => {
     scrollToMessage(replyToId);
@@ -30,16 +34,16 @@ export function ReplyPreviewBar({ replyToMessage, cats, onClear }: ReplyPreviewB
   return (
     <div
       className="flex items-center gap-2 px-3 py-1.5 rounded-t-lg cursor-pointer"
-      style={{ backgroundColor: `${sender.color}18` }}
+      style={{ backgroundColor: tintOf(sender.color, '18') }}
       onClick={handleClick}
       role="button"
       tabIndex={0}
       onKeyDown={(e) => e.key === 'Enter' && handleClick()}
     >
-      <span className="shrink-0 text-sm" style={{ color: sender.color }}>
+      <span className="shrink-0 text-sm" style={{ color: sender.textColor }}>
         ↩
       </span>
-      <span className="truncate flex-1 text-xs font-medium" style={{ color: sender.color }}>
+      <span className="truncate flex-1 text-xs font-medium" style={{ color: sender.textColor }}>
         {sender.label}: {content.slice(0, 80)}
         {content.length > 80 ? '…' : ''}
       </span>
@@ -50,7 +54,7 @@ export function ReplyPreviewBar({ replyToMessage, cats, onClear }: ReplyPreviewB
           onClear();
         }}
         className="shrink-0 p-1 rounded hover:bg-[var(--console-hover-bg)] transition-colors"
-        style={{ color: sender.color }}
+        style={{ color: sender.textColor }}
         title="取消引用"
       >
         <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">

@@ -196,39 +196,7 @@ describe('F293 pure routing-context reducer', () => {
     );
   });
 
-  it('keeps dossier diagnostics and capability evidence when signal reasons fill the snapshot budget', () => {
-    const events = Array.from({ length: 40 }, (_, index) =>
-      asserted({
-        eventId: `signal:budget:${index}`,
-        subjectRef: { type: 'cat', catId: 'sol' },
-        state: 'scarce',
-        reasonCode: `budget_${index}`,
-      }),
-    );
-    const sol = byCat(
-      reduce({
-        profiles: [profile('sol', 'dossier:v1')],
-        profileDiagnostics: [
-          {
-            catId: 'sol',
-            reason: {
-              code: 'capability_profile_invalid',
-              summary: 'Dossier line 7 has invalid YAML',
-              sourceRefs: ['docs/team/cat-dossier.md#L7'],
-            },
-          },
-        ],
-        signalEvents: events,
-      }),
-      'sol',
-    );
-    assert.equal(sol.reasons.length, 32);
-    assert.equal(sol.reasons[0].code, 'capability_profile_invalid');
-    assert.equal(sol.reasons.at(-1).code, 'capability_strength');
-    assert.equal(sol.reasons.filter((reason) => reason.code === 'routing_signal_scarce').length, 30);
-  });
-
-  it('turns expired or retracted negative evidence into unknown, never synthetic available', () => {
+  it('keeps expired evidence unknown but removes explicitly retracted assertions from current influence', () => {
     const expiring = asserted({
       eventId: 'signal:expired',
       subjectRef: { type: 'cat', catId: 'sol' },
@@ -244,9 +212,7 @@ describe('F293 pure routing-context reducer', () => {
       reduce({ signalEvents: [expiring, closed('retracted', 'signal:retracted', ['signal:expired'])] }),
       'sol',
     );
-    assert.equal(retracted.availability, 'unknown');
-    assert.equal(retracted.effect, 'advisory');
-    assert.match(retracted.reasons[0].code, /retracted/);
+    assert.deepEqual(retracted, byCat(reduce(), 'sol'));
   });
 
   it('accepts explicit causal recovery as available without clearing unrelated signals', () => {
@@ -363,5 +329,20 @@ describe('F293 pure routing-context reducer', () => {
       revisionOne.candidates.map((entry) => [entry.binding.catId, entry.effect]),
       revisionTwoWithPending.candidates.map((entry) => [entry.binding.catId, entry.effect]),
     );
+  });
+
+  it('keeps capability context out of availability decision reasons', () => {
+    const snapshot = reduce({
+      profiles: [profile('sol', 'dossier:v1', 0), profile('terra', 'dossier:terra-v1', 0)],
+    });
+
+    assert.deepEqual(byCat(snapshot, 'sol').reasons, []);
+    assert.deepEqual(byCat(snapshot, 'sol').profile.revision.relevantSignals, [
+      {
+        kind: 'strength',
+        summary: 'sol is strong at architecture',
+        evidenceRefs: ['dossier:dossier:v1'],
+      },
+    ]);
   });
 });

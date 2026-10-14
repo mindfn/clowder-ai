@@ -23,7 +23,6 @@ import { resolveDirectLocalAuthorizationUserId } from '../utils/request-identity
 import { requireCallbackPrincipal } from './callback-auth-prehandler.js';
 import { cancelManagedWakeIfTaskMatches } from './callback-hold-ball-routes.js';
 import {
-  findCancelableHoldBallTask,
   findHoldBallTask,
   isCancelableHoldBallTask,
   isHoldBallTask,
@@ -179,9 +178,10 @@ function persistHoldCancellation(
   deps: HoldBallCancelRouteDeps,
   task: DynamicTaskDef,
   audit: ScheduleMutationAuditEntry,
+  retain = false,
 ) {
   const durableJob = readManagedCommandWakeProjection(task)?.durableJob;
-  if (!durableJob) {
+  if (!durableJob && !retain) {
     return { applied: deps.scheduleMutationAuditStore.deleteTaskWithAudit(task.id, audit), durableJob };
   }
   const cancellationRequestedAt = Date.now();
@@ -190,8 +190,10 @@ function persistHoldCancellation(
     holdLifecycle: {
       ...(task.params.holdLifecycle as Record<string, unknown>),
       status: 'cancel_requested',
-      cancellationRequestedAt,
-      cancelledBy: `${audit.actorKind}:${audit.actorId}`,
+      cancellationRequestedAt:
+        (task.params.holdLifecycle as Record<string, unknown>).cancellationRequestedAt ?? cancellationRequestedAt,
+      cancelledBy:
+        (task.params.holdLifecycle as Record<string, unknown>).cancelledBy ?? `${audit.actorKind}:${audit.actorId}`,
     },
   };
   const pauseAudit: ScheduleMutationAuditEntry = { ...audit, action: 'pause' };
@@ -217,7 +219,12 @@ function cancelDurableGateIfPresent(
   });
 }
 
-type DurableHoldCancellationState = 'ordinary_cancelled' | 'durable_pending' | 'durable_cancelled' | 'durable_conflict';
+type DurableHoldCancellationState =
+  | 'ordinary_cancelled'
+  | 'retained_pending'
+  | 'durable_pending'
+  | 'durable_cancelled'
+  | 'durable_conflict';
 
 function resolveDurableHoldCancellationState(
   durableJob: DurableManagedGateJob | undefined,
@@ -230,6 +237,7 @@ function resolveDurableHoldCancellationState(
 }
 
 function cancellationVisibilityMessage(catId: string, state: DurableHoldCancellationState): string {
+  if (state === 'retained_pending') return `🏓 ${catId} 持球取消已受理，原命令终态仍待核实`;
   if (state === 'ordinary_cancelled') return `🏓 ${catId} 持球已取消`;
   if (state === 'durable_pending') return `🏓 ${catId} 持球取消已受理，等待 durable gate 终止`;
   if (state === 'durable_cancelled') return `🏓 ${catId} 持球已取消`;
@@ -341,7 +349,7 @@ export function registerHoldBallCancelRoutes(app: FastifyInstance, deps: HoldBal
     async (request, reply) => {
       const { taskId } = request.params;
       const withFeedback = request.query.withFeedback === '1' || request.query.withFeedback === 'true';
-      const task = findCancelableHoldBallTask(taskId, dynamicTaskStore);
+      let task = findHoldBallTask(taskId, dynamicTaskStore);
       if (!task) {
         reply.status(404);
         return { error: 'Hold task not found or not a hold-ball task' };
@@ -353,8 +361,35 @@ export function registerHoldBallCancelRoutes(app: FastifyInstance, deps: HoldBal
       }
 
       const { threadId, access } = authorization;
+      const priorState = readManagedCommandWakeProjection(task)?.state;
+      const retained = dynamicTaskStore.reconcileRetainedManagedCommand?.(task) ?? 'absent';
+      if (retained === 'conflict') {
+        reply.status(409);
+        return { error: 'Hold task was replaced or already completed', code: 'HOLD_TASK_REPLACED' };
+      }
+      if (retained === 'not_started') {
+        const reconciled = dynamicTaskStore.getById(taskId);
+        if (!reconciled) {
+          reply.status(409);
+          return { error: 'Hold task was replaced or already completed', code: 'HOLD_TASK_REPLACED' };
+        }
+        task = reconciled;
+        // A repeated click on a stale bubble must not duplicate visibility or
+        // reach a newer runner occupying the same thread/cat slot.
+        if (priorState === 'not_started')
+          return {
+            status: 'ok',
+            cancelled: true,
+            taskId,
+            owner: projectHoldOwner(access.owner, access.lifecycleVisibility),
+            actor: { kind: access.actor.kind, id: access.actor.id, role: access.actor.role },
+          };
+      } else if (!isCancelableHoldBallTask(task)) {
+        reply.status(404);
+        return { error: 'Hold task not found or not a hold-ball task' };
+      }
       const audit = createHoldCancelAudit(deps, taskId, threadId, access);
-      const mutation = persistHoldCancellation(deps, task, audit);
+      const mutation = persistHoldCancellation(deps, task, audit, retained !== 'absent');
       if (!mutation.applied) {
         reply.status(409);
         return { error: 'Hold task was replaced or already completed', code: 'HOLD_TASK_REPLACED' };
@@ -363,10 +398,13 @@ export function registerHoldBallCancelRoutes(app: FastifyInstance, deps: HoldBal
       const catId = access.owner.catId;
       // F295: the deleted task may already have been replaced in the same thread+cat slot.
       // Fence by taskId so a stale bubble cannot terminate the replacement command.
-      cancelExactManagedRunner(deps, taskId, threadId, catId);
+      if (retained !== 'not_started') cancelExactManagedRunner(deps, taskId, threadId, catId);
       const durableCancellation = cancelDurableGateIfPresent(mutation.durableJob, taskId, access);
       const durableDescriptorInvalid = Boolean(mutation.durableJob && !durableCancellation);
-      const cancellationState = resolveDurableHoldCancellationState(mutation.durableJob, durableCancellation);
+      const cancellationState =
+        retained === 'pending' && !mutation.durableJob
+          ? 'retained_pending'
+          : resolveDurableHoldCancellationState(mutation.durableJob, durableCancellation);
       const isDurableCancellation = cancellationState !== 'ordinary_cancelled';
       const durableCancelled = cancellationState === 'durable_cancelled';
       const durableConflict = cancellationState === 'durable_conflict';
@@ -413,9 +451,14 @@ export function registerHoldBallCancelRoutes(app: FastifyInstance, deps: HoldBal
       }
 
       if (durableConflict) reply.status(409);
-      else if (durableCancellation && !durableCancelled) reply.status(202);
+      else if (cancellationState === 'retained_pending' || (durableCancellation && !durableCancelled))
+        reply.status(202);
       return {
-        status: durableConflict ? 'conflict' : durableCancellation && !durableCancelled ? 'pending' : 'ok',
+        status: durableConflict
+          ? 'conflict'
+          : cancellationState === 'retained_pending' || (durableCancellation && !durableCancelled)
+            ? 'pending'
+            : 'ok',
         cancelled: isDurableCancellation ? durableCancelled : true,
         ...(isDurableCancellation && !durableConflict ? { cancellationRequested: true } : {}),
         taskId,

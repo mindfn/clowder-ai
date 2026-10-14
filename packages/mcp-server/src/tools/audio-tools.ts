@@ -9,6 +9,8 @@ import { defineMcpCanonicalFactory, defineMcpMigrationFactory } from '../tool-go
 
 import { createMeetingContextBlock } from '@cat-cafe/shared';
 import { z } from 'zod';
+import { audioHttpError } from './audio-http-error.js';
+import { type AudioInputSignal, formatAudioInputSignal } from './audio-signal-format.js';
 import type { ToolResult } from './file-tools.js';
 import { errorResult, successResult } from './file-tools.js';
 
@@ -28,6 +30,7 @@ const AUDIO_INPUT_ID_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$/;
 async function audioFetch(path: string, init?: RequestInit): Promise<Response> {
   return fetch(`${API_URL}/api/audio${path}`, {
     ...init,
+    signal: init?.signal ?? AbortSignal.timeout(path === '/start' || path === '/stop' ? 130_000 : 10_000),
     headers: {
       'Content-Type': 'application/json',
       'x-cat-cafe-user': USER_ID,
@@ -256,7 +259,9 @@ export async function handleAudioCaptureStop(): Promise<ToolResult> {
   try {
     const resp = await audioFetch('/stop', {
       method: 'POST',
+      body: JSON.stringify({}),
     });
+    if (!resp.ok) return errorResult(await audioHttpError(resp, 'Stop'));
     const data = (await resp.json()) as {
       summary?: {
         chunks?: number;
@@ -268,7 +273,6 @@ export async function handleAudioCaptureStop(): Promise<ToolResult> {
         error?: string;
       };
     };
-    if (!resp.ok) return errorResult(`Stop failed: ${resp.status}`);
     const s = data.summary;
     if (!s || s.error) return successResult(s?.error ?? 'No active session.');
     const txLine = s.transcript_path ? `\n  Transcript: ${s.transcript_path}` : '';
@@ -289,6 +293,8 @@ export async function handleAudioCaptureStop(): Promise<ToolResult> {
 
 type StatusResp = {
   running: boolean;
+  lifecycle_state?: string;
+  controller_start?: { phase?: string; meeting_id?: string };
   source?: string;
   app_name?: string;
   duration_s?: number;
@@ -317,6 +323,7 @@ type StatusResp = {
     reason?: string | null;
     chunk_count?: number;
     deduplicated_chunks?: number;
+    signal?: AudioInputSignal;
   }>;
 };
 
@@ -330,6 +337,14 @@ export async function handleAudioCaptureStatus(): Promise<ToolResult> {
     const resp = await audioFetch('/status');
     if (!resp.ok) return errorResult(`Audio service error: ${resp.status}`);
     const s = (await resp.json()) as StatusResp;
+    if (s.controller_start)
+      return successResult(
+        `Audio start ${s.controller_start.phase ?? 'unconfirmed'} [meeting=${s.controller_start.meeting_id ?? 'unknown'}]. The original request is not confirmed terminal; do not start another capture.`,
+      );
+    if (!s.running && s.lifecycle_state && s.lifecycle_state !== 'stopped')
+      return successResult(
+        `PCM is stopped; audio lifecycle is ${s.lifecycle_state}. Original capture cleanup is not confirmed.`,
+      );
     if (!s.running) return successResult('Not currently capturing audio.');
     const label = s.inputs?.length
       ? s.inputs.map((item) => `${item.label ?? item.id} [${item.source}/${item.state ?? 'unknown'}]`).join(', ')
@@ -347,7 +362,7 @@ export async function handleAudioCaptureStatus(): Promise<ToolResult> {
       ? `\n  Inputs:\n${s.inputs
           .map(
             (item) =>
-              `    ${item.label ?? item.id}: ${item.state ?? 'unknown'}; chunks=${item.chunk_count ?? 0}; dedup=${item.deduplicated_chunks ?? 0}${item.reason ? `; reason=${item.reason}` : ''}`,
+              `    ${item.label ?? item.id}: ${item.state ?? 'unknown'}; chunks=${item.chunk_count ?? 0}; dedup=${item.deduplicated_chunks ?? 0}${item.reason ? `; reason=${item.reason}` : ''}${formatAudioInputSignal(item.signal)}`,
           )
           .join('\n')}`
       : '';

@@ -145,7 +145,7 @@ The vectorcleanuptoken appears only in this markdown passage.
     assert.equal(passageVectorStore.count(), 0, 'deleting a markdown doc must remove its stale passage vectors');
   });
 
-  it('deleteByAnchor fails open when persisted passage vectors exist but sqlite-vec is not loaded', async () => {
+  it('deleteByAnchor registers existing vec0 on a cold/off connection and deletes persisted passage vectors', async () => {
     const { SqliteEvidenceStore } = await import('../../dist/domains/memory/SqliteEvidenceStore.js');
     const { passageVectorKey } = await import('../../dist/domains/memory/PassageVectorStore.js');
     const { ensurePassageVectorTable } = await import('../../dist/domains/memory/schema.js');
@@ -187,12 +187,21 @@ The vectorcleanuptoken appears only in this markdown passage.
       .run(passageVectorKey(anchor, passageId), new Float32Array([1, 0, 0, 0]));
     seedStore.close();
 
-    const lexicalOnlyStore = new SqliteEvidenceStore(dbPath);
-    await lexicalOnlyStore.initialize();
-    await assert.doesNotReject(() => lexicalOnlyStore.deleteByAnchor(anchor));
-    assert.equal(await lexicalOnlyStore.getByAnchor(anchor), null);
-    assert.equal(lexicalOnlyStore.searchPassages('unavailablevectortoken').length, 0);
-    lexicalOnlyStore.close();
+    const coldStore = new SqliteEvidenceStore(dbPath);
+    await coldStore.initialize();
+    assert.equal(coldStore.getDb().prepare("SELECT 1 FROM pragma_module_list WHERE name = 'vec0'").get(), undefined);
+    await assert.doesNotReject(() => coldStore.deleteByAnchor(anchor));
+    assert.equal(
+      coldStore
+        .getDb()
+        .prepare('SELECT 1 FROM passage_vectors WHERE passage_key = ?')
+        .get(passageVectorKey(anchor, passageId)),
+      undefined,
+      'cold/off source deletion must remove its exact persisted passage vector',
+    );
+    assert.equal(await coldStore.getByAnchor(anchor), null);
+    assert.equal(coldStore.searchPassages('unavailablevectortoken').length, 0);
+    coldStore.close();
   });
 
   it('does not churn unchanged markdown passage vectors on rebuild', async () => {

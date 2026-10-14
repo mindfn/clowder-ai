@@ -1,6 +1,7 @@
 /** Shared pure format boundary for read-only account snapshots and explicit legacy migration. */
 import type { AccountConfig, CredentialEntry } from '@cat-cafe/shared';
 import { z } from 'zod';
+import { codexManagedAccountSchema } from './codex-account-schema.js';
 
 export class AccountStoreVerdictError extends Error {}
 
@@ -18,6 +19,28 @@ const accountSchema = z
     models: z.array(z.string()).optional(),
     modelAliases: stringRecord.optional(),
     envVars: stringRecord.optional(),
+    codex: codexManagedAccountSchema.optional(),
+    quota: z
+      .object({
+        owner: z.object({ accountRef: z.string(), userId: z.string(), workspaceId: z.string() }).optional(),
+        observedAt: z.number(),
+        status: z.enum(['ok', 'unavailable', 'unsupported']),
+        source: z.literal('codex_official_readonly'),
+        items: z.array(
+          z
+            .object({
+              label: z.string(),
+              usedPercent: z.number().min(0).max(100),
+              percentKind: z.enum(['used', 'remaining']).optional(),
+              poolId: z.string().optional(),
+              resetsAt: z.string().optional(),
+              resetsText: z.string().optional(),
+            })
+            .passthrough(),
+        ),
+        error: z.string().optional(),
+      })
+      .optional(),
   })
   .passthrough();
 const credentialSchema = z
@@ -78,6 +101,8 @@ export function canonicalizeAccount(account: AccountConfig) {
     ...(models.length ? { models } : {}),
     ...(Object.keys(aliases).length ? { modelAliases: aliases } : {}),
     ...(Object.keys(account.envVars ?? {}).length ? { envVars: account.envVars } : {}),
+    ...(account.codex ? { codex: account.codex } : {}),
+    ...(account.quota ? { quota: account.quota } : {}),
   };
 }
 

@@ -12,6 +12,7 @@ describe('workspace state write-through persistence', () => {
       presentationLock: null,
       workspaceWorktreeId: 'wt-persist',
       workspaceSurface: 'home',
+      workspaceForegroundSurfaceId: null,
       workspacePreview: { port: undefined, path: '/' },
       rightPanelMode: 'status',
       rightPanelOpen: false,
@@ -28,6 +29,23 @@ describe('workspace state write-through persistence', () => {
         workspacePreview: { port: 5196, path: '/dev/monthly-cat-atlas' },
         rightPanelMode: 'workspace',
         rightPanelOpen: true,
+      });
+    });
+  });
+
+  it('persists the canonical foreground owner reference without copying its renderer state', async () => {
+    useChatStore.setState({
+      workspaceForegroundSurfaceId: 'file-owner:wt-persist',
+      workspaceOpenFilePath: 'B.md',
+      workspaceOpenFileLine: 42,
+      workspaceOpenTabs: ['A.md', 'B.md'],
+    });
+    await vi.waitFor(async () => {
+      await expect(loadThreadWorkspaceState('thread-persist-preview')).resolves.toMatchObject({
+        workspaceForegroundSurfaceId: 'file-owner:wt-persist',
+        workspaceOpenFilePath: 'B.md',
+        workspaceOpenFileLine: 42,
+        workspaceOpenTabs: ['A.md', 'B.md'],
       });
     });
   });

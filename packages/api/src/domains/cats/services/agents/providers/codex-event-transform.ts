@@ -22,6 +22,8 @@ export function parseCodexReconnectNotice(event: unknown): CodexReconnectNotice 
 
 import { normalizeTaskStatus } from '../invocation/invoke-helpers.js';
 import { type CodexApprovalSurface, classifyCodexGithubAppApprovalFailure } from './codex-app-approval-routing.js';
+import { buildCodexAsyncQuestionMessages } from './codex-async-question.js';
+import { codexOutputMessage } from './codex-output-message.js';
 
 // F060: Allowed image MIME types and max base64 payload size (5 MB encoded ≈ 3.75 MB decoded)
 const IMAGE_MIME_WHITELIST = new Set(['image/png', 'image/jpeg', 'image/gif', 'image/webp', 'image/svg+xml']);
@@ -220,6 +222,13 @@ export function finalizeCodexStream(state: CodexStreamState, catId: CatId): Agen
     type: 'text',
     catId,
     content: `\n\n${signature}`,
+    hostOutput: {
+      v: 1,
+      kind: 'cat_signature',
+      producer: 'codex_stream_finalizer',
+      role: 'answer_suffix',
+      basis: state.canonicalSignature !== undefined ? 'runtime_canonical' : 'provider_observed_fallback',
+    },
     timestamp: Date.now(),
   };
 }
@@ -514,18 +523,26 @@ export function transformCodexEvent(
     };
   }
 
-  if (item?.type === 'agent_message' && typeof item.text === 'string' && item.text.trim().length > 0) {
+  if (item?.type === 'agent_message') {
+    const asyncQuestionMessages = buildCodexAsyncQuestionMessages(item, catId);
+    if (typeof item.text !== 'string' || item.text.trim().length === 0) {
+      return asyncQuestionMessages.length > 0 ? asyncQuestionMessages : null;
+    }
     const stripped = stripOwnTrailingTurnSignature(item.text, state?.signatureIdentity, state?.canonicalSignature);
     if (state && stripped.signature) state.observedSignature = stripped.signature;
-    if (stripped.content.trim().length === 0) return null;
+    if (stripped.content.trim().length === 0) {
+      return asyncQuestionMessages.length > 0 ? asyncQuestionMessages : null;
+    }
     const prefix = state?.hadPriorTextTurn ? '\n\n' : '';
     if (state) state.hadPriorTextTurn = true;
-    return {
+    const textMessage: AgentMessage = {
       type: 'text',
       catId,
       content: prefix + stripped.content,
+      outputMessage: codexOutputMessage(e, item, Boolean(prefix)),
       timestamp: Date.now(),
     };
+    return asyncQuestionMessages.length > 0 ? [textMessage, ...asyncQuestionMessages] : textMessage;
   }
 
   if (item?.type === 'command_execution') {

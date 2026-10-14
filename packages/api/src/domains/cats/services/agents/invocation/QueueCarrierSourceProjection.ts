@@ -9,6 +9,8 @@ export function queueSourceTargetState(
   entryId: string,
   catId: string,
 ): 'unmanaged' | 'pending' | 'failed' | 'retired' | 'unknown' {
+  // Explicit delivery terminal truth outranks custody absence; only an absent lifecycle is legacy-unmanaged.
+  if (message.deliveryStatus === 'canceled' || message.deliveryStatus === 'delivered') return 'retired';
   const custody = message.queueCustody;
   if (!custody) return 'unmanaged';
   if (

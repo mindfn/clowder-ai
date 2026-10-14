@@ -1,6 +1,7 @@
 import type { CatId, SessionRecord } from '@cat-cafe/shared';
 import type { AppendMessageInput, IMessageStore } from '../stores/ports/MessageStore.js';
 import type { ISessionChainStore } from '../stores/ports/SessionChainStore.js';
+import { isHomeSession } from './session-scope.js';
 import type { TranscriptEvent, TranscriptReader } from './TranscriptReader.js';
 
 export interface HistoryImportResult {
@@ -40,7 +41,7 @@ export async function backfillBoundSessionHistory(
 
   try {
     const chain = await sessionChainStore.getChain(catId, threadId, userId);
-    const sealedSessions = chain.filter((session) => session.status === 'sealed');
+    const sealedSessions = chain.filter((session) => isHomeSession(session) && session.status === 'sealed');
     const countMessages = async (): Promise<number> => (await messageStore.getByThread(threadId, 10000)).length;
 
     let foundTranscript = false;

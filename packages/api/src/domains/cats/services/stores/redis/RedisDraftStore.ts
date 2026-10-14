@@ -8,10 +8,11 @@
  * TTL 默认 300s (5 分钟), 每次 upsert/touch 时重置。
  */
 
-import type { CatId } from '@cat-cafe/shared';
+import { type CatId, readMessageOutputLayout } from '@cat-cafe/shared';
 import type { RedisClient } from '@cat-cafe/shared/utils';
 import type { DraftRecord, IDraftStore } from '../ports/DraftStore.js';
 import { DraftKeys } from '../redis-keys/draft-keys.js';
+import { safeParseMetadata } from './redis-message-parsers.js';
 
 const DEFAULT_TTL = 300; // 5 minutes
 
@@ -53,7 +54,11 @@ export class RedisDraftStore implements IDraftStore {
       fields.thinking = draft.thinking;
     }
 
+    if (draft.metadata) fields.metadata = JSON.stringify(draft.metadata);
+    if (draft.extra?.outputLayout) fields.extra = JSON.stringify({ outputLayout: draft.extra.outputLayout });
     const pipeline = this.redis.multi();
+    if (!fields.extra) pipeline.hdel(detailKey, 'extra');
+    if (!fields.metadata) pipeline.hdel(detailKey, 'metadata');
     pipeline.hsetnx(detailKey, 'createdAt', createdAtForMissing);
     pipeline.hset(detailKey, fields);
     pipeline.sadd(indexKey, draft.invocationId);
@@ -159,6 +164,8 @@ export class RedisDraftStore implements IDraftStore {
         /* ignore parse errors */
       }
     }
+    const outputLayout = this.parseOutputLayout(d.extra);
+    const metadata = safeParseMetadata(d.metadata);
     return {
       userId: d.userId ?? '',
       threadId: d.threadId ?? '',
@@ -169,6 +176,17 @@ export class RedisDraftStore implements IDraftStore {
       updatedAt: parseInt(d.updatedAt ?? '0', 10),
       ...(toolEvents ? { toolEvents } : {}),
       ...(d.thinking ? { thinking: d.thinking } : {}),
+      ...(metadata ? { metadata } : {}),
+      ...(outputLayout ? { extra: { outputLayout } } : {}),
     };
+  }
+
+  private parseOutputLayout(raw: string | undefined) {
+    if (!raw) return undefined;
+    try {
+      return readMessageOutputLayout(JSON.parse(raw)?.outputLayout);
+    } catch {
+      return undefined;
+    }
   }
 }

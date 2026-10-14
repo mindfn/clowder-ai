@@ -10,6 +10,7 @@ export const OPS_SUBSECTIONS: OpsSubsection[] = [
   { id: 'agent-sessions', label: '后台会话' },
   { id: 'runtime-sessions', label: 'Runtime 会话' },
   { id: 'health', label: '治理与刹车' },
+  { id: 'memory', label: '索引与召回' },
   { id: 'commands', label: '命令速查' },
   { id: 'rescue', label: '紧急救援' },
 ];

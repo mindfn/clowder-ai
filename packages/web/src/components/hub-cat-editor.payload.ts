@@ -1,4 +1,5 @@
 import type { CatData } from '@/hooks/useCatData';
+import { buildAgyProfilePatch } from './hub-cat-editor.agy';
 import {
   type ClientId,
   DEFAULT_ANTIGRAVITY_COMMAND_ARGS,
@@ -224,6 +225,7 @@ export function buildCatPayload(form: HubCatEditorFormState, cat?: CatData | nul
     ...contextWindowPatch,
     ...voiceConfigPatch,
     ...buildAcpPatch(form, cat),
+    ...buildAgyProfilePatch(form, cat, context.accountAuthType),
   };
 
   if (form.clientId === 'antigravity') {
@@ -259,6 +261,8 @@ function normalizeOptionalText(value: unknown): string | null {
 
 export function buildCatPatchPayload(form: HubCatEditorFormState, cat: CatData, context: CatPayloadContext = {}) {
   const payload = buildCatPayload(form, cat, context) as Record<string, unknown>;
+  if (form.accountBindingMode && form.accountBindingMode !== cat.accountBindingMode)
+    payload.accountBindingMode = form.accountBindingMode;
 
   if (form.clientId === cat.clientId) {
     delete payload.clientId;
@@ -283,6 +287,20 @@ export function buildCatPatchPayload(form: HubCatEditorFormState, cat: CatData, 
   // #712: skip mcpSupport when it hasn't changed
   if (form.mcpSupport === (cat.mcpSupport ?? true)) {
     delete payload.mcpSupport;
+  }
+
+  // Built-in cloud members expose profile fields through this editor, but their
+  // transport identity is a product invariant. Do not let generic form defaults
+  // turn an innocent nickname/avatar save into a provider or CLI mutation.
+  if (cat.identityProtection?.kind === 'builtin-cloud') {
+    for (const field of cat.identityProtection.lockedFields) {
+      delete payload[field];
+    }
+    const nextMentions = Array.isArray(payload.mentionPatterns) ? payload.mentionPatterns : [];
+    const currentMentions = Array.from(new Set(cat.mentionPatterns.map(normalizeMentionPattern).filter(Boolean)));
+    if (JSON.stringify(nextMentions) === JSON.stringify(currentMentions)) {
+      delete payload.mentionPatterns;
+    }
   }
 
   return payload;

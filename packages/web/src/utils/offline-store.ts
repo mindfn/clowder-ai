@@ -40,6 +40,12 @@ export interface PersistedThreadWorkspaceState {
   /** Optional for snapshots written before F293 Phase B. */
   teamWorkspaceSubject?: TeamWorkspaceSubject | null;
   workspaceSurface: WorkspaceSurface;
+  /** Optional for legacy records; F307 owns the referenced descriptor and live renderer. */
+  workspaceForegroundSurfaceId?: string | null;
+  /** Original file coordinates; optional on older records. */
+  workspaceOpenFilePath?: string | null;
+  workspaceOpenFileLine?: number | null;
+  workspaceOpenTabs?: string[];
   workspacePreview: WorkspacePreviewState;
   rightPanelMode: 'status' | 'workspace' | 'transcript';
   rightPanelOpen: boolean;
@@ -281,6 +287,12 @@ export async function loadThreadWorkspaceState(threadId: string): Promise<Persis
     workspaceWorktreeId: record.workspaceWorktreeId,
     workspaceMode: record.workspaceMode,
     workspaceSurface: record.workspaceSurface,
+    workspaceForegroundSurfaceId: record.workspaceForegroundSurfaceId,
+    ...(record.workspaceOpenFilePath !== undefined && {
+      workspaceOpenFilePath: record.workspaceOpenFilePath,
+      workspaceOpenFileLine: record.workspaceOpenFileLine ?? null,
+      workspaceOpenTabs: record.workspaceOpenTabs ?? [],
+    }),
     workspacePreview: { ...record.workspacePreview },
     rightPanelMode: record.rightPanelMode,
     rightPanelOpen: record.rightPanelOpen,

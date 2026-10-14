@@ -12,6 +12,11 @@ export interface ActionSuccessorAdmissionInput {
   evidenceRef: string;
   now: number;
   incomingActionLeaseRef?: { leaseId: string; generation: number };
+  /**
+   * Server-derived only (never copied from a request body): the replaced generation's direct carrier was interrupted
+   * after a holder read the action. Consumed solely by an explicit replace of exactly that lease and generation.
+   */
+  interruptedGenerationEvidence?: { leaseId: string; generation: number; evidenceRef: string };
   action: ActionSuccessorRequestMetadata;
 }
 

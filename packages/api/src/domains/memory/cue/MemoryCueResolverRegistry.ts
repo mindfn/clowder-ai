@@ -37,6 +37,7 @@ export interface MemoryCueResolverContext {
   now: number;
   expiresAt: number;
   consumerCatId?: string;
+  signal?: AbortSignal;
   createDrillHandle(input: CreateMemoryCueDrillHandleInput): string;
 }
 
@@ -55,6 +56,7 @@ export const RECALL_RESOLVER_ADMISSION_V5 = Object.freeze({
   decision: 'catalog' as const,
   project_knowledge: 'catalog' as const,
   cat_owned_seed: 'catalog' as const,
+  thread_overview: 'catalog' as const,
 });
 
 export function buildCueEnvelope(input: {

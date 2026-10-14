@@ -2,8 +2,10 @@
 
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
+import { useShellPresentation } from '@/components/shell/shell-presentation';
 import { useChatStore } from '@/stores/chatStore';
 import { API_URL, apiFetch } from '@/utils/api-client';
+import type { AudioPanelError } from './audio-panel-error';
 import type {
   AudioInputRequest,
   AudioSources,
@@ -12,6 +14,12 @@ import type {
   TranscriptLine,
 } from './audio-transcript-contract';
 import { FloatingTranscriptWindow } from './FloatingTranscriptWindow';
+import {
+  clearMeetingSessionSummary,
+  retainFromStopEvent,
+  useRestoreMeetingSessionSummary,
+} from './meeting-session-summary';
+import { revokeMeetingShareBeforeCapture } from './revokeMeetingShareBeforeCapture';
 
 interface InterventionAdvisory {
   type: 'intervention_advisory';
@@ -38,28 +46,111 @@ export function FloatingTranscriptContainer() {
   const [savedRecordingPath, setSavedRecordingPath] = useState<string | null>(null);
   const [savedRecordingPaths, setSavedRecordingPaths] = useState<Record<string, string>>({});
   const [sources, setSources] = useState<AudioSources | null>(null);
-  const [startError, setStartError] = useState<string | null>(null);
+  const [startError, setStartError] = useState<AudioPanelError | null>(null);
+  const [statusResolved, setStatusResolved] = useState(false);
+  const [savedResultOwner, setSavedResultOwner] = useState<string | null>(null);
   const advisoryTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const linesRef = useRef<TranscriptLine[]>([]);
+  linesRef.current = lines;
+  const elapsedRef = useRef(0);
+  elapsedRef.current = elapsed;
+  const presentation = useShellPresentation();
+  const presentationRef = useRef(presentation);
+  presentationRef.current = presentation;
+  const currentThreadIdRef = useRef(currentThreadId);
+  currentThreadIdRef.current = currentThreadId;
+  // R3-P1: the active capture session's owning thread, latched from the producer's contract (same rule as the docked panel).
+  const captureThreadRef = useRef<string | null>(null);
+  // R5: every new-capture transition bumps this epoch, invalidating the previous round's pending stop and any
+  // in-flight request responses (same lifecycle rule as the docked panel).
+  const sessionEpochRef = useRef(0);
+  const invalidateSessionRound = useCallback(() => {
+    sessionEpochRef.current += 1;
+    pendingStopRef.current = null;
+  }, []);
+  // R4-P1b: a stop arriving before the owner is known is queued, never guessed from the current chat thread.
+  const pendingStopRef = useRef<{
+    event: {
+      transcript_path?: string;
+      recording_path?: string;
+      recording_paths?: Record<string, string>;
+      duration_s?: number;
+    };
+    lines: TranscriptLine[];
+    elapsed: number;
+  } | null>(null);
+
+  const retainStoppedResult = useCallback(
+    (
+      event: {
+        transcript_path?: string;
+        recording_path?: string;
+        recording_paths?: Record<string, string>;
+        duration_s?: number;
+      },
+      eventLines: TranscriptLine[],
+      eventElapsed: number,
+    ) => {
+      if (presentationRef.current !== 'v2') return;
+      const owner = captureThreadRef.current;
+      if (!owner) {
+        pendingStopRef.current = { event, lines: eventLines, elapsed: eventElapsed };
+        return;
+      }
+      retainFromStopEvent(event, eventLines, eventElapsed, owner);
+      setSavedResultOwner(owner);
+    },
+    [],
+  );
+
+  const flushPendingStop = useCallback(() => {
+    const pending = pendingStopRef.current;
+    if (!pending || !captureThreadRef.current) return;
+    pendingStopRef.current = null;
+    retainStoppedResult(pending.event, pending.lines, pending.elapsed);
+  }, [retainStoppedResult]);
+
+  // Same restore rule as the docked panel (review P1-2), with the R2 fences: v2 lifecycle only, after the current
+  // status was read, and only into the owning thread.
+  useRestoreMeetingSessionSummary(
+    !visible ||
+      status.running ||
+      Boolean(savedPath || savedRecordingPath || Object.keys(savedRecordingPaths).length > 0),
+    { setSavedPath, setSavedRecordingPath, setSavedRecordingPaths, setElapsed, setLines, setSavedResultOwner },
+    { enabled: visible && presentation === 'v2', statusResolved, currentThreadId },
+  );
 
   useEffect(() => {
     if (!visible) return;
     const fetchCritical = async () => {
+      const epoch = sessionEpochRef.current;
       try {
         const [statusResp, transcriptResp] = await Promise.all([
           apiFetch('/api/audio/status'),
           apiFetch('/api/audio/transcript'),
         ]);
-        if (statusResp.ok) {
-          const data = (await statusResp.json()) as AudioStatus & { advisory_mode?: string };
-          setStatus(data);
-          if (data.running && data.duration_s) setElapsed(data.duration_s);
-          if (data.advisory_mode === 'active' || data.advisory_mode === 'passive') {
-            setAdvisoryMode(data.advisory_mode);
+        const statusData = statusResp.ok
+          ? ((await statusResp.json()) as AudioStatus & { advisory_mode?: string })
+          : null;
+        const transcriptData = transcriptResp.ok
+          ? ((await transcriptResp.json()) as { lines: TranscriptLine[] })
+          : null;
+        // R6: epoch is judged after the last await — a body completing in the next round writes nothing.
+        if (sessionEpochRef.current !== epoch) return;
+        if (statusData) {
+          setStatus(statusData);
+          if (statusData.running && statusData.duration_s) setElapsed(statusData.duration_s);
+          if (statusData.thread_id) {
+            captureThreadRef.current = statusData.thread_id;
+            flushPendingStop();
           }
+          if (statusData.advisory_mode === 'active' || statusData.advisory_mode === 'passive') {
+            setAdvisoryMode(statusData.advisory_mode);
+          }
+          setStatusResolved(true);
         }
-        if (transcriptResp.ok) {
-          const data = (await transcriptResp.json()) as { lines: TranscriptLine[] };
-          setLines(data.lines ?? []);
+        if (transcriptData) {
+          setLines(transcriptData.lines ?? []);
         }
       } catch {}
     };
@@ -126,6 +217,10 @@ export function FloatingTranscriptContainer() {
           advisoryTimer.current = setTimeout(() => setAdvisory(null), 10_000);
         } else if (data.type === 'status') {
           if (data.status === 'started') {
+            invalidateSessionRound();
+            clearMeetingSessionSummary();
+            captureThreadRef.current = data.thread_id ?? currentThreadIdRef.current;
+            setSavedResultOwner(null);
             setStatus((previous) => ({
               ...previous,
               running: true,
@@ -144,15 +239,21 @@ export function FloatingTranscriptContainer() {
             if (data.transcript_path) setSavedPath(data.transcript_path);
             if (data.recording_path) setSavedRecordingPath(data.recording_path);
             setSavedRecordingPaths(data.recording_paths ?? {});
+            retainStoppedResult(data, linesRef.current, elapsedRef.current);
           } else if (data.status === 'paused') {
             setStatus((prev) => ({ ...prev, paused: true }));
           } else if (data.status === 'resumed') {
             setStatus((prev) => ({ ...prev, paused: false }));
           }
         } else if (data.type === 'input_status') {
+          // R6: the refresh joins the same epoch rule — a response completing in the next round writes nothing.
+          const epoch = sessionEpochRef.current;
           void apiFetch('/api/audio/status')
             .then(async (response) => {
-              if (response.ok) setStatus((await response.json()) as AudioStatus);
+              if (!response.ok) return;
+              const next = (await response.json()) as AudioStatus;
+              if (sessionEpochRef.current !== epoch) return;
+              setStatus(next);
             })
             .catch(() => undefined);
         }
@@ -168,26 +269,35 @@ export function FloatingTranscriptContainer() {
   }, [visible, status.running, status.paused]);
 
   const handleStop = useCallback(async () => {
+    const epoch = sessionEpochRef.current;
     try {
+      await revokeMeetingShareBeforeCapture();
+      // R6 (same rule as the docked panel): the revoke wait can span a full stop+start elsewhere — never
+      // send the old round's control POST, and never write a body that completes in the next round.
+      if (sessionEpochRef.current !== epoch) return;
       const resp = await apiFetch('/api/audio/stop', { method: 'POST' });
-      if (resp.ok) {
-        const data = (await resp.json()) as {
-          summary?: {
-            transcript_path?: string;
-            recording_path?: string;
-            recording_paths?: Record<string, string>;
-          };
+      if (!resp.ok) return;
+      const data = (await resp.json()) as {
+        summary?: {
+          transcript_path?: string;
+          recording_path?: string;
+          recording_paths?: Record<string, string>;
         };
-        setStatus((prev) => ({ ...prev, running: false }));
-        setSavedPath(data.summary?.transcript_path ?? null);
-        setSavedRecordingPath(data.summary?.recording_path ?? null);
-        setSavedRecordingPaths(data.summary?.recording_paths ?? {});
+      };
+      if (sessionEpochRef.current !== epoch) return;
+      setStatus((prev) => ({ ...prev, running: false }));
+      setSavedPath(data.summary?.transcript_path ?? null);
+      setSavedRecordingPath(data.summary?.recording_path ?? null);
+      setSavedRecordingPaths(data.summary?.recording_paths ?? {});
+      if (data.summary) {
+        retainStoppedResult(data.summary, linesRef.current, elapsedRef.current);
       }
     } catch {}
   }, []);
 
   const handlePause = useCallback(async () => {
     try {
+      await revokeMeetingShareBeforeCapture();
       const resp = await apiFetch('/api/audio/pause', { method: 'POST' });
       if (resp.ok) setStatus((prev) => ({ ...prev, paused: true }));
     } catch {}
@@ -203,7 +313,7 @@ export function FloatingTranscriptContainer() {
   const handleStart = useCallback(
     async (inputs: AudioInputRequest[]) => {
       if (!currentThreadId) {
-        setStartError('Open a thread before starting companion audio.');
+        setStartError({ kind: 'open-thread-first' });
         return;
       }
       try {
@@ -215,6 +325,10 @@ export function FloatingTranscriptContainer() {
         });
         if (resp.ok) {
           const data = (await resp.json()) as { status: AudioStatus };
+          invalidateSessionRound();
+          clearMeetingSessionSummary();
+          captureThreadRef.current = data.status.thread_id ?? currentThreadId;
+          setSavedResultOwner(null);
           setStatus(data.status);
           setLines([]);
           setElapsed(0);
@@ -223,10 +337,10 @@ export function FloatingTranscriptContainer() {
           setSavedRecordingPaths({});
         } else {
           const data = (await resp.json()) as { error?: string };
-          setStartError(data.error ?? 'Audio capture could not start.');
+          setStartError({ kind: 'start-failed', reason: data.error });
         }
       } catch {
-        setStartError('Audio service is offline.');
+        setStartError({ kind: 'service-offline' });
       }
     },
     [currentThreadId],
@@ -301,6 +415,7 @@ export function FloatingTranscriptContainer() {
       savedPath={savedPath ?? undefined}
       savedRecordingPath={savedRecordingPath ?? undefined}
       savedRecordingPaths={savedRecordingPaths}
+      savedResultOwner={savedResultOwner}
       sources={sources ?? undefined}
       startError={startError ?? undefined}
       onClose={handleClose}

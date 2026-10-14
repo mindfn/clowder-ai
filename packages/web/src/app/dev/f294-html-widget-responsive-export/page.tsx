@@ -2,7 +2,12 @@
 
 import { useEffect, useState, useSyncExternalStore } from 'react';
 import { HtmlWidgetBlock } from '@/components/rich/HtmlWidgetBlock';
-import { CSSOM_FINAL_PROOF_RACE_WIDGET_HTML } from './html-widget-fixtures';
+import {
+  CSSOM_FINAL_PROOF_RACE_WIDGET_HTML,
+  CSSOM_FIXED_ROOT_PSEUDO_WIDGET_HTML,
+  CSSOM_ROOT_PSEUDO_WIDGET_HTML,
+  DELAYED_PROOF_WIDGET_HTML,
+} from './html-widget-fixtures';
 
 const HTML_WIDGET_EXPORT_FIXTURE_MESSAGE_ID = 'html-widget-export-fixture-message';
 
@@ -171,97 +176,102 @@ const FIXED_ROOT_PSEUDO_WIDGET_HTML = `<!doctype html>
   <body><p>Fixed generated paint outside scroll extent must fail closed.</p></body>
 </html>`;
 
-const CSSOM_FIXED_ROOT_PSEUDO_WIDGET_HTML = `<!doctype html>
-<html lang="zh-CN">
-  <head>
-    <meta charset="utf-8">
-    <style>
-      html, body { height: 100%; margin: 0; overflow: hidden; }
-      p { margin: 8px; }
-    </style>
-    <style id="late-cssom-paint"></style>
-  </head>
-  <body>
-    <p>CSSOM-generated fixed paint must revoke export readiness.</p>
-    <script>
-      setTimeout(() => {
-        document.querySelector('#late-cssom-paint').sheet.insertRule(
-          'html::after { content: "CSSOM_FIXED_ROOT_PSEUDO_SENTINEL"; position: fixed; top: 1000px; height: 1000px; width: 100%; background: #ff00ff; }'
-        );
-      }, 450);
-    </script>
-  </body>
-</html>`;
+interface HtmlWidgetFixture {
+  id: string;
+  title: string;
+  height: number;
+  html: string;
+}
 
-const CSSOM_ROOT_PSEUDO_WIDGET_HTML = `<!doctype html>
-<html lang="zh-CN">
-  <head>
-    <meta charset="utf-8">
-    <style>
-      html, body { margin: 0; overflow: hidden; }
-      p { margin: 8px; }
-    </style>
-    <style id="late-cssom-flow"></style>
-    <script>
-      // Delay only the first exporter challenge so this journey deterministically
-      // covers a valid proof that outlives the historical 2-second sub-deadline.
-      const nativeRequestAnimationFrame = window.requestAnimationFrame.bind(window);
-      let delayNextProof = true;
-      window.addEventListener('message', (event) => {
-        if (
-          !delayNextProof ||
-          event.source !== parent ||
-          !event.data ||
-          event.data.type !== 'cat-cafe:html-widget-proof-request'
-        ) return;
-        delayNextProof = false;
-        let delayedFrames = 2;
-        window.requestAnimationFrame = (callback) => {
-          if (delayedFrames === 0) return nativeRequestAnimationFrame(callback);
-          delayedFrames -= 1;
-          return window.setTimeout(() => nativeRequestAnimationFrame(callback), 1_100);
-        };
-        window.setTimeout(() => {
-          window.requestAnimationFrame = nativeRequestAnimationFrame;
-        }, 2_500);
-      });
-    </script>
-  </head>
-  <body>
-    <p>Measurable CSSOM-generated flow must refresh and remain exportable.</p>
-    <script>
-      setTimeout(() => {
-        document.querySelector('#late-cssom-flow').sheet.insertRule(
-          'html::after { content: "CSSOM_ROOT_PSEUDO_SENTINEL"; display: block; height: 1000px; background: #ff00ff; }'
-        );
-      }, 450);
-    </script>
-  </body>
-</html>`;
+const RESPONSIVE_FIXTURE: HtmlWidgetFixture = {
+  id: 'responsive-export-widget',
+  title: 'Responsive export widget',
+  height: 1_250,
+  html: RESPONSIVE_WIDGET_HTML,
+};
+
+const FIXTURES: Record<string, HtmlWidgetFixture> = {
+  short: { id: 'short-widget', title: 'Short widget', height: 500, html: SHORT_WIDGET_HTML },
+  'viewport-relative': {
+    id: 'viewport-relative-widget',
+    title: 'Viewport-relative widget',
+    height: 300,
+    html: VIEWPORT_RELATIVE_WIDGET_HTML,
+  },
+  'viewport-feedback': {
+    id: 'viewport-feedback-widget',
+    title: 'Viewport feedback widget',
+    height: 300,
+    html: VIEWPORT_FEEDBACK_WIDGET_HTML,
+  },
+  'async-image': { id: 'async-image-widget', title: 'Async image widget', height: 300, html: ASYNC_IMAGE_WIDGET_HTML },
+  'pseudo-content': {
+    id: 'pseudo-content-widget',
+    title: 'Pseudo content widget',
+    height: 300,
+    html: PSEUDO_CONTENT_WIDGET_HTML,
+  },
+  'root-pseudo-content': {
+    id: 'root-pseudo-content-widget',
+    title: 'Root pseudo content widget',
+    height: 300,
+    html: ROOT_PSEUDO_CONTENT_WIDGET_HTML,
+  },
+  'root-pseudo-feedback': {
+    id: 'root-pseudo-feedback-widget',
+    title: 'Root pseudo feedback widget',
+    height: 300,
+    html: ROOT_PSEUDO_FEEDBACK_WIDGET_HTML,
+  },
+  'fixed-root-pseudo': {
+    id: 'fixed-root-pseudo-widget',
+    title: 'Fixed root pseudo widget',
+    height: 300,
+    html: FIXED_ROOT_PSEUDO_WIDGET_HTML,
+  },
+  'cssom-fixed-root-pseudo': {
+    id: 'cssom-fixed-root-pseudo-widget',
+    title: 'CSSOM fixed root pseudo widget',
+    height: 300,
+    html: CSSOM_FIXED_ROOT_PSEUDO_WIDGET_HTML,
+  },
+  'cssom-final-proof-race': {
+    id: 'cssom-final-proof-race-widget',
+    title: 'CSSOM final proof race widget',
+    height: 300,
+    html: CSSOM_FINAL_PROOF_RACE_WIDGET_HTML,
+  },
+  'delayed-proof': {
+    id: 'delayed-proof-widget',
+    title: 'Delayed proof widget',
+    height: 300,
+    html: DELAYED_PROOF_WIDGET_HTML,
+  },
+  'cssom-root-pseudo-content': {
+    id: 'cssom-root-pseudo-content-widget',
+    title: 'CSSOM root pseudo content widget',
+    height: 300,
+    html: CSSOM_ROOT_PSEUDO_WIDGET_HTML,
+  },
+};
 
 function subscribeToLocation(): () => void {
   return () => {};
 }
 
-function isFixtureSelected(): boolean {
-  if (typeof window === 'undefined') return true;
-  const selectedMessageIds = new URLSearchParams(window.location.search).getAll('messageId');
-  return selectedMessageIds.length === 0 || selectedMessageIds.includes(HTML_WIDGET_EXPORT_FIXTURE_MESSAGE_ID);
-}
-
-function readFixtureMode(): string {
-  if (typeof window === 'undefined') return 'responsive';
-  return new URLSearchParams(window.location.search).get('fixture') ?? 'responsive';
-}
-
-function readUnstableExport(): boolean {
-  return typeof window !== 'undefined' && new URLSearchParams(window.location.search).get('unstable') === '1';
+function readLocationSearch(): string {
+  return window.location.search;
 }
 
 export default function HtmlWidgetResponsiveExportFixture() {
-  const selected = useSyncExternalStore(subscribeToLocation, isFixtureSelected, () => true);
-  const fixtureMode = useSyncExternalStore(subscribeToLocation, readFixtureMode, () => 'responsive');
-  const unstableExport = useSyncExternalStore(subscribeToLocation, readUnstableExport, () => false);
+  const search = useSyncExternalStore(subscribeToLocation, readLocationSearch, () => null);
+  const hydrated = search !== null;
+  const searchParams = new URLSearchParams(search ?? '');
+  const selectedMessageIds = searchParams.getAll('messageId');
+  const selected =
+    hydrated && (selectedMessageIds.length === 0 || selectedMessageIds.includes(HTML_WIDGET_EXPORT_FIXTURE_MESSAGE_ID));
+  const fixtureMode = searchParams.get('fixture') ?? 'responsive';
+  const unstableExport = hydrated && searchParams.get('unstable') === '1';
   const [unstableHeight, setUnstableHeight] = useState(900);
 
   useEffect(() => {
@@ -270,103 +280,35 @@ export default function HtmlWidgetResponsiveExportFixture() {
     return () => window.clearInterval(timer);
   }, [unstableExport]);
 
-  const fixture =
-    fixtureMode === 'short'
-      ? { id: 'short-widget', title: 'Short widget', height: 500, html: SHORT_WIDGET_HTML }
-      : fixtureMode === 'viewport-relative'
-        ? {
-            id: 'viewport-relative-widget',
-            title: 'Viewport-relative widget',
-            height: 300,
-            html: VIEWPORT_RELATIVE_WIDGET_HTML,
-          }
-        : fixtureMode === 'viewport-feedback'
-          ? {
-              id: 'viewport-feedback-widget',
-              title: 'Viewport feedback widget',
-              height: 300,
-              html: VIEWPORT_FEEDBACK_WIDGET_HTML,
-            }
-          : fixtureMode === 'async-image'
-            ? {
-                id: 'async-image-widget',
-                title: 'Async image widget',
-                height: 300,
-                html: ASYNC_IMAGE_WIDGET_HTML,
-              }
-            : fixtureMode === 'pseudo-content'
-              ? {
-                  id: 'pseudo-content-widget',
-                  title: 'Pseudo content widget',
-                  height: 300,
-                  html: PSEUDO_CONTENT_WIDGET_HTML,
-                }
-              : fixtureMode === 'root-pseudo-content'
-                ? {
-                    id: 'root-pseudo-content-widget',
-                    title: 'Root pseudo content widget',
-                    height: 300,
-                    html: ROOT_PSEUDO_CONTENT_WIDGET_HTML,
-                  }
-                : fixtureMode === 'root-pseudo-feedback'
-                  ? {
-                      id: 'root-pseudo-feedback-widget',
-                      title: 'Root pseudo feedback widget',
-                      height: 300,
-                      html: ROOT_PSEUDO_FEEDBACK_WIDGET_HTML,
-                    }
-                  : fixtureMode === 'fixed-root-pseudo'
-                    ? {
-                        id: 'fixed-root-pseudo-widget',
-                        title: 'Fixed root pseudo widget',
-                        height: 300,
-                        html: FIXED_ROOT_PSEUDO_WIDGET_HTML,
-                      }
-                    : fixtureMode === 'cssom-fixed-root-pseudo'
-                      ? {
-                          id: 'cssom-fixed-root-pseudo-widget',
-                          title: 'CSSOM fixed root pseudo widget',
-                          height: 300,
-                          html: CSSOM_FIXED_ROOT_PSEUDO_WIDGET_HTML,
-                        }
-                      : fixtureMode === 'cssom-final-proof-race'
-                        ? {
-                            id: 'cssom-final-proof-race-widget',
-                            title: 'CSSOM final proof race widget',
-                            height: 300,
-                            html: CSSOM_FINAL_PROOF_RACE_WIDGET_HTML,
-                          }
-                        : fixtureMode === 'cssom-root-pseudo-content'
-                          ? {
-                              id: 'cssom-root-pseudo-content-widget',
-                              title: 'CSSOM root pseudo content widget',
-                              height: 300,
-                              html: CSSOM_ROOT_PSEUDO_WIDGET_HTML,
-                            }
-                          : {
-                              id: 'responsive-export-widget',
-                              title: 'Responsive export widget',
-                              height: 1_250,
-                              html: RESPONSIVE_WIDGET_HTML,
-                            };
+  const fixture = Object.hasOwn(FIXTURES, fixtureMode) ? FIXTURES[fixtureMode] : RESPONSIVE_FIXTURE;
 
   return (
-    <main data-export-root data-export-ready="true" className="mx-auto min-h-screen max-w-4xl p-4">
+    <main
+      data-export-root
+      data-export-ready={hydrated ? 'true' : undefined}
+      data-export-fixture-mode={hydrated ? fixtureMode : undefined}
+      data-export-message-id={hydrated ? HTML_WIDGET_EXPORT_FIXTURE_MESSAGE_ID : undefined}
+      data-export-widget-id={hydrated ? fixture.id : undefined}
+      className="mx-auto min-h-screen max-w-4xl p-4"
+    >
       <h1 className="mb-4 text-lg font-semibold text-cafe-primary">F294 HTML widget responsive export fixture</h1>
       {selected ? (
-        <article data-message-id={HTML_WIDGET_EXPORT_FIXTURE_MESSAGE_ID}>
-          <HtmlWidgetBlock
-            block={{
-              id: fixture.id,
-              kind: 'html_widget',
-              v: 1,
-              title: fixture.title,
-              height: fixture.height,
-              html: fixture.html,
-            }}
-          />
-          {unstableExport ? <div data-unstable-export-spacer style={{ height: `${unstableHeight}px` }} /> : null}
-        </article>
+        <>
+          {fixtureMode === 'offscreen' ? <div data-offscreen-export-spacer style={{ height: '5000px' }} /> : null}
+          <article data-message-id={HTML_WIDGET_EXPORT_FIXTURE_MESSAGE_ID}>
+            <HtmlWidgetBlock
+              block={{
+                id: fixture.id,
+                kind: 'html_widget',
+                v: 1,
+                title: fixture.title,
+                height: fixture.height,
+                html: fixture.html,
+              }}
+            />
+            {unstableExport ? <div data-unstable-export-spacer style={{ height: `${unstableHeight}px` }} /> : null}
+          </article>
+        </>
       ) : null}
     </main>
   );

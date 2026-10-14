@@ -3,6 +3,7 @@ import { createRoot, type Root } from 'react-dom/client';
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import { ChatInput, threadDrafts, threadImageDrafts } from '@/components/ChatInput';
 import { ThreadItem } from '@/components/ThreadSidebar/ThreadItem';
+import { syncDraftToStorage } from '@/components/thread-drafts';
 import type { WhisperOptions } from '@/hooks/useSendMessage';
 import type { DeliveryMode, Thread } from '@/stores/chat-types';
 import { DEFAULT_THREAD_STATE, useChatStore } from '@/stores/chatStore';
@@ -247,5 +248,45 @@ describe('ThreadItem draft badge', () => {
     expect(getThreadRow('thread-1').textContent).toContain('[草稿]');
     expect(getThreadRow('thread-2').textContent).not.toContain('[草稿]');
     expect(getTextarea().value).toBe('');
+  });
+
+  describe('after a reload (no composer has been mounted for the thread in this page load)', () => {
+    function renderOffscreenRow() {
+      act(() => {
+        root.render(
+          React.createElement(ThreadItem, {
+            id: 'thread-1',
+            title: 'Thread 1',
+            participants: [],
+            lastActiveAt: 1,
+            isActive: false,
+            onSelect: vi.fn(),
+            presence: { status: 'idle' },
+            unreadCount: 0,
+            hasUserMention: false,
+          }),
+        );
+      });
+    }
+
+    it('shows the badge for a draft that survived in storage, with no composer flag ever set', () => {
+      // What the module does at load: the owner is hydrated from sessionStorage, nothing wrote the store flag.
+      threadDrafts.set('thread-1', 'a draft the reload kept');
+      expect(useChatStore.getState().threadStates['thread-1']?.hasDraft).toBe(false);
+
+      renderOffscreenRow();
+
+      expect(container.textContent).toContain('[草稿]');
+    });
+
+    it('drops the badge when the owner clears that draft, still without a composer', () => {
+      threadDrafts.set('thread-1', 'a draft the reload kept');
+      renderOffscreenRow();
+      expect(container.textContent).toContain('[草稿]');
+
+      act(() => syncDraftToStorage('thread-1', undefined));
+
+      expect(container.textContent).not.toContain('[草稿]');
+    });
   });
 });

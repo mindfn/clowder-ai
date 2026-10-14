@@ -111,6 +111,41 @@ describe('F212 Phase B — cold hydration restores cliDiagnostics (云端 codex 
     expect(messages[0].extra?.cliDiagnostics).toEqual(STORED_DIAGNOSTICS);
   });
 
+  it('cold history preserves upstream classification, hint and request ID from the backend payload', async () => {
+    const { buildCliDiagnostics } = await import('../../../../api/src/utils/cli-diagnostics');
+    const requestId = '7ab62694-a1b3-4ef6-977e-7edb76b44640';
+    const diag = buildCliDiagnostics({
+      rawText: `stream disconnected before completion: An error occurred while processing your request. Please include the request ID ${requestId} in your message.`,
+      debugRef: { command: 'codex app-server', signal: null, invocationId: 'inv-upstream' },
+    });
+    apiFetchMock.mockResolvedValue({
+      ok: true,
+      json: async () => ({
+        messages: [
+          {
+            id: 'upstream-stored',
+            type: 'system',
+            variant: 'error',
+            catId: 'codex',
+            content: 'Error: upstream',
+            metadata: JSON.parse(JSON.stringify({ provider: 'openai', cliDiagnostics: diag })),
+            timestamp: 1700000000000,
+          },
+        ],
+        tasks: [],
+        hasMore: false,
+      }),
+    } as Response);
+    await act(async () => root.render(React.createElement(HookHost, { threadId: 'thread-cli-diag' })));
+    await act(async () => {
+      await Promise.resolve();
+    });
+    const hydrated = useChatStore.getState().messages[0].extra?.cliDiagnostics;
+    expect(hydrated?.reasonCode).toBe('upstream_service_error');
+    expect(hydrated?.debugRef.upstreamRequestId).toBe(requestId);
+    expect(hydrated).toEqual(diag);
+  });
+
   it('F293 restores the exact durable routing receipt and retry source on cold history hydration', async () => {
     const systemInfo = {
       v: 1,

@@ -127,18 +127,20 @@ describe('background thread socket handling', () => {
       expect(toast.message).toBe('缅因猫（sol） 已完成处理');
     });
 
-    it('text with isFinal also transitions to done', () => {
+    it('text with isFinal completes and preserves the whole answer in its recovery toast', () => {
+      const fullAnswer = '完整内容。'.repeat(80) + 'TAIL';
       simulateBackgroundMessage({
         type: 'text',
         catId: 'opus',
         threadId: 'thread-bg',
-        content: 'final answer',
+        content: fullAnswer,
         isFinal: true,
         timestamp: Date.now(),
       });
 
       const ts = useChatStore.getState().getThreadState('thread-bg');
       expect(ts.catStatuses.opus).toBe('done');
+      expect(useToastStore.getState().toasts.at(-1)?.message).toBe(fullAnswer);
     });
 
     it('done rekeys a background live bubble to its persisted message ID', () => {
@@ -1697,6 +1699,38 @@ describe('background thread socket handling', () => {
         outputTokens: 1042,
         cacheReadTokens: 55932,
       });
+    });
+
+    it('F319 Phase E.1: served facts on invocation_usage land on the bg bubble live, merged into existing metadata', () => {
+      const now = Date.now();
+      simulateBackgroundMessage({
+        type: 'text',
+        catId: 'codex-sol',
+        threadId: 'thread-bg',
+        content: 'OK',
+        metadata: { provider: 'openai', model: 'gpt-5.6-sol' },
+        timestamp: now,
+      });
+      simulateBackgroundMessage({
+        type: 'system_info',
+        catId: 'codex-sol',
+        threadId: 'thread-bg',
+        content: JSON.stringify({
+          type: 'invocation_usage',
+          catId: 'codex-sol',
+          usage: { inputTokens: 10, outputTokens: 2 },
+          model: 'gpt-5.6-sol',
+          provider: 'openai',
+          served: { servedModel: 'gpt-5.6-sol', servedModelSource: 'ws_response_object', upstreamTurnStateLength: 312 },
+        }),
+        timestamp: now + 1000,
+      });
+      const meta = useChatStore.getState().getThreadState('thread-bg').messages[0]?.metadata;
+      expect(meta?.model).toBe('gpt-5.6-sol');
+      expect(meta?.servedModel).toBe('gpt-5.6-sol');
+      expect(meta?.servedModelSource).toBe('ws_response_object');
+      expect(meta?.upstreamTurnStateLength).toBe(312);
+      expect(meta?.usage).toMatchObject({ outputTokens: 2 });
     });
 
     it('bg-carrier regression: existing metadata model/provider not corrupted by invocation_usage (F230)', () => {

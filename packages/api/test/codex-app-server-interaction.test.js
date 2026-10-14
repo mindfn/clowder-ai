@@ -66,6 +66,12 @@ class InteractionWire {
   async write(message) {
     this.writes.push(message);
     if (message.method === 'initialize') this.inbox.push({ id: message.id, result: {} });
+    if (message.method === 'config/read')
+      this.inbox.push({ id: message.id, result: { config: { model_provider: 'openai' } } });
+    if (message.method === 'configRequirements/read')
+      this.inbox.push({ id: message.id, result: { requirements: null } });
+    if (message.method === 'account/read')
+      this.inbox.push({ id: message.id, result: { account: { type: 'chatgpt' } } });
     if (message.method === 'thread/start') {
       this.inbox.push({ id: message.id, result: { thread: { id: 'provider-thread' } } });
     }
@@ -572,17 +578,8 @@ test('F306 keeps child output typed and waits for the exact root terminal', asyn
     emittedAtMs: 104,
   });
 
-  await delay(20);
+  await waitFor(() => wire.writes.some((message) => message.method === 'thread/read'));
   assert.equal(settled, false, 'a linked child terminal must not end the root run');
-  assert.deepEqual(wire.writes.find((message) => message.method === 'thread/read')?.params, {
-    threadId: childThreadId,
-    includeTurns: false,
-  });
-  assert.equal(
-    wire.writes.filter((message) => message.method === 'thread/read').length,
-    1,
-    'replaying an identical activity must not rehydrate or re-register the child',
-  );
 
   wire.inbox.push({
     id: 214,
@@ -596,6 +593,15 @@ test('F306 keeps child output typed and waits for the exact root terminal', asyn
     },
   });
   await waitFor(() => wire.writes.some((message) => message.id === 214));
+  assert.deepEqual(wire.writes.find((message) => message.method === 'thread/read')?.params, {
+    threadId: childThreadId,
+    includeTurns: false,
+  });
+  assert.equal(
+    wire.writes.filter((message) => message.method === 'thread/read').length,
+    1,
+    'replaying an identical activity must not rehydrate or re-register the child',
+  );
   assert.equal(requests.length, 1, 'root interaction remains live after child completion');
 
   wire.inbox.push({

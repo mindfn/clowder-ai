@@ -1,7 +1,18 @@
 import assert from 'node:assert/strict';
 import { describe, test } from 'node:test';
+import {
+  FRESHNESS_CARRIER_DELIVERY_SEMANTICS,
+  FRESHNESS_CARRIER_PROVIDERS,
+  FRESHNESS_CARRIERS,
+} from '@cat-cafe/shared';
 
 import { MessageStore } from '../dist/domains/cats/services/stores/ports/MessageStore.js';
+import {
+  assertQueueCustodyTransition,
+  parseQueuedMessageCustody,
+  settleQueueCustodyWithdrawal,
+} from '../dist/domains/cats/services/stores/ports/queued-message-custody.js';
+import { makeQueueCancellationFixture } from './helpers/queue-cancellation-fixture.js';
 import { makeQueuedMessageCustody as makeCustody } from './helpers/queued-message-custody.js';
 
 function appendQueued(store, custody = makeCustody()) {
@@ -18,6 +29,123 @@ function appendQueued(store, custody = makeCustody()) {
 }
 
 describe('F254 queued message custody store', () => {
+  test('terminal withdrawal needs existing nonpending failure and explicit proof of no carrier', () => {
+    const { store, message } = makeQueueCancellationFixture();
+    const current = store.getById(message.id).queueCustody;
+    const next = settleQueueCustodyWithdrawal(current, ['codex'], Date.now());
+    assert.doesNotThrow(() => assertQueueCustodyTransition(current, { next }));
+    const negativeCases = [
+      [
+        'legacy_without_map',
+        (before, after) => {
+          for (const custody of [before, after]) {
+            delete custody.receiptScope;
+            delete custody.carrierByTargetCatId;
+            delete custody.carrierStateByTargetCatId;
+          }
+        },
+      ],
+      [
+        'admitted_failure',
+        (before, after) => {
+          for (const custody of [before, after]) {
+            custody.carrierByTargetCatId.opus = {
+              ...custody.carrierByTargetCatId.codex,
+              entryId: 'actual-opus-carrier',
+            };
+          }
+        },
+      ],
+      [
+        'new_failure',
+        (before) => {
+          before.failedByCatIds = [];
+        },
+      ],
+      [
+        'pending_failure',
+        (before) => {
+          before.pendingTargetCats.push('opus');
+        },
+      ],
+      [
+        'erased_failure',
+        (_before, after) => {
+          after.failedByCatIds = [];
+        },
+      ],
+    ];
+    for (const [variant, mutate] of negativeCases) {
+      const before = structuredClone(current);
+      const after = structuredClone(next);
+      mutate(before, after);
+      assert.throws(
+        () => assertQueueCustodyTransition(before, { next: after }),
+        /terminal custody without delivery requires exact author-withdrawal settlement/,
+        variant,
+      );
+    }
+  });
+
+  test('round-trips every shared carrier enum through durable JSON custody', () => {
+    const capability = { provider: 'google', carrier: 'agy_stream_json', deliverySemantics: 'queued_internal_turn' };
+    for (const carrierCapability of [
+      ...FRESHNESS_CARRIER_PROVIDERS.map((provider) => ({ ...capability, provider })),
+      ...FRESHNESS_CARRIERS.map((carrier) => ({ ...capability, carrier })),
+      ...FRESHNESS_CARRIER_DELIVERY_SEMANTICS.map((deliverySemantics) => ({ ...capability, deliverySemantics })),
+    ]) {
+      const custody = makeCustody({
+        allTargetCats: ['gemini38'],
+        pendingTargetCats: ['gemini38'],
+        authorIntentByCatId: { gemini38: { requested: 'next_work', carrierCapability } },
+      });
+      assert.deepEqual(parseQueuedMessageCustody(JSON.stringify(custody)), custody);
+    }
+  });
+
+  test('round-trips the native AGY author intent without accepting unknown carriers', async () => {
+    const { AgyNativeAgentService } = await import(
+      '../dist/domains/cats/services/agents/providers/agy-native/AgyNativeAgentService.js'
+    );
+    const service = new AgyNativeAgentService({
+      catId: 'gemini38',
+      profile: { enabled: true, profileId: 'gemini38', model: 'gemini-3.8-flash-high' },
+    });
+    const carrierCapability = service.freshnessCarrierCapability();
+    for (const requested of ['continue_current', 'next_work']) {
+      const custody = makeCustody({
+        allTargetCats: ['gemini38'],
+        pendingTargetCats: ['gemini38'],
+        authorIntentByCatId: {
+          gemini38: {
+            requested,
+            carrierCapability,
+            ...(requested === 'continue_current' ? { boundParentInvocationId: 'exact-parent' } : {}),
+          },
+        },
+      });
+      assert.deepEqual(parseQueuedMessageCustody(JSON.stringify(custody)), custody);
+      for (const invalid of [
+        { ...carrierCapability, provider: 'unregistered-provider' },
+        { ...carrierCapability, carrier: 'unregistered-carrier' },
+        { ...carrierCapability, deliverySemantics: 'unregistered-delivery' },
+      ]) {
+        assert.throws(
+          () =>
+            parseQueuedMessageCustody(
+              JSON.stringify({
+                ...custody,
+                authorIntentByCatId: {
+                  gemini38: { ...custody.authorIntentByCatId.gemini38, carrierCapability: invalid },
+                },
+              }),
+            ),
+          /invalid queue author intent carrier/,
+        );
+      }
+    }
+  });
+
   test('persists one revisioned custody projection on the exact queued message', () => {
     const store = new MessageStore();
     const message = appendQueued(store);

@@ -2,6 +2,17 @@ import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
 import { buildThreadMemory } from '../dist/domains/cats/services/session/buildThreadMemory.js';
 
+// These legacy fixtures describe pure home chains; supply their known home position explicitly.
+function buildHomeMemoryFixture(existing, digest, maxTokens, signals, recentArtifacts) {
+  return buildThreadMemory(
+    existing,
+    digest,
+    { maxTokens, homePosition: { ordinal: digest.seq + 1, count: digest.seq + 1 } },
+    signals,
+    recentArtifacts,
+  );
+}
+
 describe('buildThreadMemory', () => {
   const baseDigest = {
     v: 1,
@@ -16,7 +27,7 @@ describe('buildThreadMemory', () => {
   };
 
   it('creates new memory from null + digest', () => {
-    const result = buildThreadMemory(null, baseDigest, 1500);
+    const result = buildHomeMemoryFixture(null, baseDigest, 1500);
     assert.equal(result.v, 1);
     assert.equal(result.sessionsIncorporated, 1);
     assert.ok(result.summary.includes('Session #1'));
@@ -31,7 +42,7 @@ describe('buildThreadMemory', () => {
       updatedAt: 1000,
     };
     const digest2 = { ...baseDigest, seq: 1, sessionId: 's2' };
-    const result = buildThreadMemory(existing, digest2, 1500);
+    const result = buildHomeMemoryFixture(existing, digest2, 1500);
     assert.equal(result.sessionsIncorporated, 2);
     assert.ok(result.summary.includes('Session #2'));
     assert.ok(result.summary.includes('Session #1'));
@@ -54,7 +65,7 @@ describe('buildThreadMemory', () => {
           ops: ['edit'],
         })),
       };
-      mem = buildThreadMemory(mem, d, 500); // low cap to force trimming
+      mem = buildHomeMemoryFixture(mem, d, 500); // low cap to force trimming
     }
     assert.ok(mem);
     assert.ok(mem.summary.includes('Session #20')); // newest kept
@@ -66,7 +77,7 @@ describe('buildThreadMemory', () => {
       ...baseDigest,
       errors: [{ at: 1050000, message: 'TypeError: foo' }],
     };
-    const result = buildThreadMemory(null, digestWithErrors, 1500);
+    const result = buildHomeMemoryFixture(null, digestWithErrors, 1500);
     assert.ok(result.summary.includes('1 error'));
   });
 
@@ -79,14 +90,14 @@ describe('buildThreadMemory', () => {
         ops: ['edit'],
       })),
     };
-    const result = buildThreadMemory(null, bigDigest, 1500);
+    const result = buildHomeMemoryFixture(null, bigDigest, 1500);
     // Should mention "+N more" for overflow
     assert.ok(result.summary.includes('+'));
   });
 
   it('returns v:1 with correct updatedAt', () => {
     const before = Date.now();
-    const result = buildThreadMemory(null, baseDigest, 1500);
+    const result = buildHomeMemoryFixture(null, baseDigest, 1500);
     assert.ok(result.updatedAt >= before);
   });
 
@@ -95,7 +106,7 @@ describe('buildThreadMemory', () => {
       ...baseDigest,
       invocations: [{ invocationId: 'inv1' }], // no toolNames
     };
-    const result = buildThreadMemory(null, noToolsDigest, 1500);
+    const result = buildHomeMemoryFixture(null, noToolsDigest, 1500);
     assert.equal(result.v, 1);
     assert.ok(result.summary.includes('Session #1'));
   });
@@ -114,16 +125,16 @@ describe('buildThreadMemory', () => {
       })),
     };
     // Very low cap — single line will exceed it
-    const result = buildThreadMemory(null, hugeDigest, 50);
+    const result = buildHomeMemoryFixture(null, hugeDigest, 50);
     assert.equal(result.v, 1);
     assert.ok(result.summary.endsWith('...'));
   });
 
-  // R1 P1-1: session number must use digest.seq, not sessionsIncorporated
-  it('uses digest.seq for session number (late-start thread)', () => {
+  // Late-start home numbering remains independent from the memory merge count.
+  it('uses declared home ordinal for a late-start thread', () => {
     // Thread already on session #5 (seq=4), but no ThreadMemory yet
     const lateDigest = { ...baseDigest, seq: 4, sessionId: 's5' };
-    const result = buildThreadMemory(null, lateDigest, 1500);
+    const result = buildHomeMemoryFixture(null, lateDigest, 1500);
     // Should show "Session #5" (seq 4 → 1-based = 5), NOT "Session #1"
     assert.ok(result.summary.includes('Session #5'), `Expected "Session #5" but got: ${result.summary}`);
     assert.equal(result.summary.includes('Session #1'), false);
@@ -131,7 +142,7 @@ describe('buildThreadMemory', () => {
     assert.equal(result.sessionsIncorporated, 1);
   });
 
-  it('uses digest.seq for accumulated sessions', () => {
+  it('uses declared home ordinal for accumulated sessions', () => {
     // Existing memory from session #3, now sealing session #5 (seq=4)
     const existing = {
       v: 1,
@@ -140,7 +151,7 @@ describe('buildThreadMemory', () => {
       updatedAt: 1000,
     };
     const digest5 = { ...baseDigest, seq: 4, sessionId: 's5' };
-    const result = buildThreadMemory(existing, digest5, 1500);
+    const result = buildHomeMemoryFixture(existing, digest5, 1500);
     assert.ok(result.summary.includes('Session #5'), `Expected "Session #5" but got: ${result.summary}`);
     assert.equal(result.sessionsIncorporated, 2); // 2 digests merged
   });
@@ -164,31 +175,31 @@ describe('Phase D: product-oriented formatSessionLine (AC-D1)', () => {
 
   it('groups files under "Created" for create ops', () => {
     const digest = mkDigest([{ path: 'src/new.ts', ops: ['create'] }]);
-    const result = buildThreadMemory(null, digest, 1500);
+    const result = buildHomeMemoryFixture(null, digest, 1500);
     assert.ok(result.summary.includes('Created: src/new.ts'), `Expected "Created: src/new.ts" in: ${result.summary}`);
   });
 
   it('groups files under "Modified" for edit ops', () => {
     const digest = mkDigest([{ path: 'routes.ts', ops: ['edit'] }]);
-    const result = buildThreadMemory(null, digest, 1500);
+    const result = buildHomeMemoryFixture(null, digest, 1500);
     assert.ok(result.summary.includes('Modified: routes.ts'), `Expected "Modified: routes.ts" in: ${result.summary}`);
   });
 
   it('groups files under "Read" for read ops', () => {
     const digest = mkDigest([{ path: 'index.ts', ops: ['read'] }]);
-    const result = buildThreadMemory(null, digest, 1500);
+    const result = buildHomeMemoryFixture(null, digest, 1500);
     assert.ok(result.summary.includes('Read: index.ts'), `Expected "Read: index.ts" in: ${result.summary}`);
   });
 
   it('groups files under "Deleted" for delete ops', () => {
     const digest = mkDigest([{ path: 'old.ts', ops: ['delete'] }]);
-    const result = buildThreadMemory(null, digest, 1500);
+    const result = buildHomeMemoryFixture(null, digest, 1500);
     assert.ok(result.summary.includes('Deleted: old.ts'), `Expected "Deleted: old.ts" in: ${result.summary}`);
   });
 
   it('file with multiple ops goes under highest-priority (create > edit > delete > read)', () => {
     const digest = mkDigest([{ path: 'src/config.ts', ops: ['read', 'edit'] }]);
-    const result = buildThreadMemory(null, digest, 1500);
+    const result = buildHomeMemoryFixture(null, digest, 1500);
     // Should show under Modified (edit > read)
     assert.ok(result.summary.includes('Modified: src/config.ts'), `Expected under Modified: ${result.summary}`);
     // Should NOT duplicate under Read
@@ -201,7 +212,7 @@ describe('Phase D: product-oriented formatSessionLine (AC-D1)', () => {
       { path: 'routes.ts', ops: ['edit'] },
       { path: 'index.ts', ops: ['read'] },
     ]);
-    const result = buildThreadMemory(null, digest, 1500);
+    const result = buildHomeMemoryFixture(null, digest, 1500);
     assert.ok(result.summary.includes('Created: src/new.ts'), `Missing Created: ${result.summary}`);
     assert.ok(result.summary.includes('Modified: routes.ts'), `Missing Modified: ${result.summary}`);
     assert.ok(result.summary.includes('Read: index.ts'), `Missing Read: ${result.summary}`);
@@ -211,7 +222,7 @@ describe('Phase D: product-oriented formatSessionLine (AC-D1)', () => {
     const digest = mkDigest([{ path: 'src/index.ts', ops: ['edit'] }], {
       invocations: [{ toolNames: ['Edit', 'Read', 'Grep'] }],
     });
-    const result = buildThreadMemory(null, digest, 1500);
+    const result = buildHomeMemoryFixture(null, digest, 1500);
     // Old format had "Edit, Read, Grep. Files:" — new format should not have this
     assert.ok(!result.summary.includes('Edit, Read'), `Should not contain tools list: ${result.summary}`);
     assert.ok(!result.summary.includes('Files:'), `Should not contain "Files:": ${result.summary}`);
@@ -219,7 +230,7 @@ describe('Phase D: product-oriented formatSessionLine (AC-D1)', () => {
 
   it('files with empty ops are omitted from output', () => {
     const digest = mkDigest([{ path: 'src/unknown.ts', ops: [] }]);
-    const result = buildThreadMemory(null, digest, 1500);
+    const result = buildHomeMemoryFixture(null, digest, 1500);
     // File with no ops shouldn't appear (no category to put it in)
     assert.ok(!result.summary.includes('src/unknown.ts'), `Empty-ops file should be omitted: ${result.summary}`);
   });
@@ -230,7 +241,7 @@ describe('Phase D: product-oriented formatSessionLine (AC-D1)', () => {
       ops: ['edit'],
     }));
     const digest = mkDigest(files);
-    const result = buildThreadMemory(null, digest, 1500);
+    const result = buildHomeMemoryFixture(null, digest, 1500);
     assert.ok(result.summary.includes('+'), `Should show overflow indicator: ${result.summary}`);
   });
 });
@@ -258,7 +269,7 @@ describe('VG-3: buildThreadMemory with DecisionSignals', () => {
       decisionRefs: [{ threadId: 't1', sessionId: 's1', eventNo: 3, invocationId: 'inv-1' }],
       openQuestionRefs: [{ threadId: 't1', sessionId: 's1', eventNo: 5 }],
     };
-    const result = buildThreadMemory(null, baseDigest, 3000, signals);
+    const result = buildHomeMemoryFixture(null, baseDigest, 3000, signals);
     assert.deepStrictEqual(result.decisions, ['用方案B']);
     assert.deepStrictEqual(result.openQuestions, ['gap阈值?']);
     assert.deepStrictEqual(result.artifacts, ['ADR-011']);
@@ -286,7 +297,7 @@ describe('VG-3: buildThreadMemory with DecisionSignals', () => {
       openQuestionRefs: [{ threadId: 't1', sessionId: 's1', eventNo: 8 }],
     };
     const digest2 = { ...baseDigest, seq: 1 };
-    const result = buildThreadMemory(existing, digest2, 3000, signals);
+    const result = buildHomeMemoryFixture(existing, digest2, 3000, signals);
     assert.ok(result.decisions?.includes('改用方案B'), 'new decisions appear');
     assert.ok(result.decisions?.includes('用方案A'), 'old decisions preserved');
     assert.ok(result.openQuestions?.includes('gap阈值?'));
@@ -305,7 +316,7 @@ describe('VG-3: buildThreadMemory with DecisionSignals', () => {
   });
 
   it('backward compatible — no signals = no decision fields', () => {
-    const result = buildThreadMemory(null, baseDigest, 3000);
+    const result = buildHomeMemoryFixture(null, baseDigest, 3000);
     assert.strictEqual(result.decisions, undefined);
     assert.strictEqual(result.openQuestions, undefined);
     assert.strictEqual(result.artifacts, undefined);
@@ -317,7 +328,7 @@ describe('VG-3: buildThreadMemory with DecisionSignals', () => {
       openQuestions: Array.from({ length: 8 }, (_, i) => `问题${i}`),
       artifacts: Array.from({ length: 12 }, (_, i) => `ADR-${i}`),
     };
-    const result = buildThreadMemory(null, baseDigest, 3000, signals);
+    const result = buildHomeMemoryFixture(null, baseDigest, 3000, signals);
     assert.ok((result.decisions?.length ?? 0) <= 8);
     assert.ok((result.openQuestions?.length ?? 0) <= 5);
     assert.ok((result.artifacts?.length ?? 0) <= 8);
@@ -334,7 +345,7 @@ describe('VG-3: buildThreadMemory with DecisionSignals', () => {
       artifacts: 42, // number, no .length
     };
     // Must not throw — malformed fields should be ignored
-    const result = buildThreadMemory(existing, { ...baseDigest, seq: 1 }, 3000, undefined);
+    const result = buildHomeMemoryFixture(existing, { ...baseDigest, seq: 1 }, 3000, undefined);
     assert.strictEqual(result.decisions, undefined, 'non-array decisions must be ignored');
     assert.strictEqual(result.openQuestions, undefined, 'non-array openQuestions must be ignored');
     assert.strictEqual(result.artifacts, undefined, 'non-array artifacts must be ignored');
@@ -350,7 +361,7 @@ describe('VG-3: buildThreadMemory with DecisionSignals', () => {
       openQuestions: Array.from({ length: 20 }, (_, i) => `问题${i}`),
       artifacts: Array.from({ length: 30 }, (_, i) => `ADR-${i}`),
     };
-    const result = buildThreadMemory(existing, { ...baseDigest, seq: 1 }, 3000, undefined);
+    const result = buildHomeMemoryFixture(existing, { ...baseDigest, seq: 1 }, 3000, undefined);
     assert.ok((result.decisions?.length ?? 0) <= 8, `decisions should be capped at 8, got ${result.decisions?.length}`);
     assert.ok(
       (result.openQuestions?.length ?? 0) <= 5,
@@ -370,7 +381,7 @@ describe('VG-3: buildThreadMemory with DecisionSignals', () => {
       artifacts: ['F148'],
     };
     // signals=undefined simulates extractSignals failure
-    const result = buildThreadMemory(existing, { ...baseDigest, seq: 1 }, 3000, undefined);
+    const result = buildHomeMemoryFixture(existing, { ...baseDigest, seq: 1 }, 3000, undefined);
     assert.deepStrictEqual(result.decisions, ['用方案A', '确定端口6398'], 'must preserve existing decisions');
     assert.deepStrictEqual(result.openQuestions, ['阈值待定'], 'must preserve existing openQuestions');
     assert.deepStrictEqual(result.artifacts, ['F148'], 'must preserve existing artifacts');
@@ -389,7 +400,7 @@ describe('VG-3: buildThreadMemory with DecisionSignals', () => {
         ops: ['edit'],
       },
     ];
-    const result = buildThreadMemory(null, baseDigest, 3000, undefined, artifacts);
+    const result = buildHomeMemoryFixture(null, baseDigest, 3000, undefined, artifacts);
     assert.equal(result.recentArtifacts?.length, 2);
     assert.equal(result.recentArtifacts[0].ref, 'docs/features/F148.md', 'newest first');
     assert.equal(result.recentArtifacts[1].ref, 'src/index.ts', 'oldest second');
@@ -406,7 +417,7 @@ describe('VG-3: buildThreadMemory with DecisionSignals', () => {
     const newArtifacts = [
       { type: 'file', ref: 'new.ts', label: 'new.ts', updatedAt: 2000, updatedBy: 'opus', ops: ['create'] },
     ];
-    const result = buildThreadMemory(existing, { ...baseDigest, seq: 1 }, 3000, undefined, newArtifacts);
+    const result = buildHomeMemoryFixture(existing, { ...baseDigest, seq: 1 }, 3000, undefined, newArtifacts);
     assert.equal(result.recentArtifacts?.length, 2, 'should accumulate both entries');
     assert.equal(result.recentArtifacts?.[0].ref, 'new.ts', 'newest first');
     assert.equal(result.recentArtifacts?.[1].ref, 'old.ts', 'oldest second');
@@ -420,7 +431,7 @@ describe('VG-3: buildThreadMemory with DecisionSignals', () => {
       updatedAt: Date.now(),
       recentArtifacts: [{ type: 'pr', ref: 'cat-cafe#1293', label: 'PR #1293', updatedAt: 3000, updatedBy: 'codex' }],
     };
-    const result = buildThreadMemory(existing, { ...baseDigest, seq: 1 }, 3000);
+    const result = buildHomeMemoryFixture(existing, { ...baseDigest, seq: 1 }, 3000);
     assert.equal(result.recentArtifacts?.length, 1);
     assert.equal(result.recentArtifacts?.[0].ref, 'cat-cafe#1293');
   });
@@ -432,7 +443,25 @@ describe('VG-3: buildThreadMemory with DecisionSignals', () => {
       sessionsIncorporated: 1,
       updatedAt: Date.now(),
     };
-    const result = buildThreadMemory(existing, { ...baseDigest, seq: 1 }, 3000);
+    const result = buildHomeMemoryFixture(existing, { ...baseDigest, seq: 1 }, 3000);
     assert.equal(result.recentArtifacts, undefined);
   });
+});
+
+it('uses explicit home coordinates when a digest has a different raw trace sequence', () => {
+  const digest = {
+    v: 1,
+    sessionId: 'home-2',
+    threadId: 'mixed-thread',
+    catId: 'opus',
+    seq: 8,
+    time: { createdAt: 1000, sealedAt: 2000 },
+    invocations: [],
+    filesTouched: [],
+    errors: [],
+  };
+  const memory = buildThreadMemory(null, digest, { maxTokens: 1500, homePosition: { ordinal: 2, count: 3 } });
+  assert.match(memory.summary, /^Session #2 /);
+  assert.doesNotMatch(memory.summary, /Session #9/);
+  assert.equal(memory.sessionsIncorporated, 1);
 });

@@ -27,14 +27,15 @@ function productionSources(directory: string): string[] {
 }
 
 describe('ThreadChatSurface ownership', () => {
-  it('makes the canonical surface the only full and compact conversation core', () => {
+  it('keeps the companion conversation in canonical full Chat after retiring its compact web shell', () => {
     expect(existsSync(resolve(threadChatRoot, 'ThreadChatSurface.tsx'))).toBe(true);
 
     const fullAdapter = readFileSync(resolve(sourceRoot, 'components/ChatContainer.tsx'), 'utf8');
-    const compactAdapter = readFileSync(resolve(conciergeRoot, 'ConciergePanel.tsx'), 'utf8');
     expect(fullAdapter).toMatch(/<ThreadChatSurface\b/);
-    expect(compactAdapter).toMatch(/<ThreadChatSurface\b/);
-    expect(compactAdapter).toMatch(/density=["']compact["']/);
+    expect(existsSync(resolve(conciergeRoot, 'ConciergePanel.tsx'))).toBe(false);
+    expect(readFileSync(resolve(threadChatRoot, 'ThreadChatSurface.tsx'), 'utf8')).toContain(
+      'useCompanionConversation',
+    );
   });
 
   it('deletes the legacy mini-chat core instead of retaining a fallback', () => {
@@ -64,8 +65,8 @@ describe('ThreadChatSurface ownership', () => {
 
     expect(offenders).toEqual([]);
 
-    const compactAdapter = readFileSync(resolve(conciergeRoot, 'ConciergePanel.tsx'), 'utf8');
-    expect(compactAdapter).not.toMatch(/\bapiFetch\b|\bRichBlocks\b|\bChatMessage\b|\buseChatStore\b/);
+    const companionPresentation = readFileSync(resolve(conciergeRoot, 'useCompanionConversation.tsx'), 'utf8');
+    expect(companionPresentation).not.toMatch(/\buseSocket\b|\buseChatHistory\b|\buseSendMessage\b/);
   });
 
   it('keeps the normal full and compact send lifecycle inside ThreadChatSurface', () => {
@@ -77,6 +78,9 @@ describe('ThreadChatSurface ownership', () => {
     expect(sendHookConsumers).toEqual([
       'components/PlanBoardPanel.tsx',
       'components/SplitPaneView.tsx',
+      // The root landing owns a pre-thread, idempotent create+first-message
+      // transaction; it cannot enter ThreadChatSurface before a thread exists.
+      'components/new-conversation/useNewConversationAdmission.ts',
       'components/thread-chat/ThreadChatSurface.tsx',
       'hooks/useSendMessage.ts',
     ]);

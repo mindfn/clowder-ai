@@ -1,6 +1,7 @@
 import { mkdirSync, readFileSync, renameSync, unlinkSync, writeFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import type {
+  AgyProfileConfig,
   CatBreed,
   CatCafeConfig,
   CatColor,
@@ -14,8 +15,14 @@ import { createCatId } from '@cat-cafe/shared';
 import { clearBudgetCache } from './cat-budgets.js';
 import { bootstrapCatCatalog, readCatCatalog, resolveCatCatalogPath } from './cat-catalog-store.js';
 import type { AcpVariantConfig } from './cat-config-loader.js';
-import { _resetCachedConfig, loadCatConfig, toAllCatConfigs } from './cat-config-loader.js';
+import { _resetCachedConfig, loadCatConfig, parseRawCatConfig, toAllCatConfigs } from './cat-config-loader.js';
 import { clearVoiceCache } from './cat-voices.js';
+import {
+  assertCodexMemberMutationReady,
+  type CodexBindingSelection,
+  planCodexAccountBinding,
+} from './codex-account-binding.js';
+import { readLocalAccountSelection } from './local-account-selection.js';
 import { resolveProjectTemplatePath } from './project-template-path.js';
 import { addTemplateVariantTombstone, type TemplateVariantTombstoneInput } from './template-variant-tombstones.js';
 
@@ -51,9 +58,12 @@ export interface RuntimeCatInput {
   provider?: string;
   /** F161: ACP transport config — presence triggers ACP transport instead of CLI. */
   acp?: AcpVariantConfig;
+  agyProfile?: AgyProfileConfig;
 }
 
 export interface RuntimeCatUpdate {
+  /** Move this member into an existing breed without changing its catId. */
+  breedId?: string;
   name?: string;
   displayName?: string;
   variantLabel?: string | null;
@@ -62,6 +72,7 @@ export interface RuntimeCatUpdate {
   color?: CatColor;
   mentionPatterns?: string[];
   accountRef?: string | null;
+  accountBindingMode?: 'follow' | 'override';
   roleDescription?: string;
   personality?: string;
   teamStrengths?: string;
@@ -83,6 +94,7 @@ export interface RuntimeCatUpdate {
   available?: boolean;
   /** F161: ACP transport config — null to remove, undefined to skip. */
   acp?: AcpVariantConfig | null;
+  agyProfile?: AgyProfileConfig | null;
 }
 
 export interface RuntimeCoCreatorUpdate {
@@ -287,6 +299,7 @@ function createBreedFromInput(input: RuntimeCatInput): CatBreed {
           : {}),
         ...(input.strengths ? { strengths: input.strengths } : {}),
         ...(input.acp ? { acp: input.acp } : {}),
+        ...(input.agyProfile ? { agyProfile: input.agyProfile } : {}),
       },
     ],
   } as unknown as CatBreed;
@@ -315,29 +328,107 @@ export function readRuntimeCatCatalog(projectRoot: string): CatCafeConfig {
   return readOrBootstrapCatalog(projectRoot);
 }
 
+/** Account previews must not bootstrap or normalize the member owner as a read side effect. */
+export function readRuntimeAccountMembers(projectRoot: string): CatCafeConfig {
+  return parseRawCatConfig(readFileSync(resolveCatCatalogPath(projectRoot), 'utf8'));
+}
+
+/** One synchronous catalog commit for the complete confirmed selection, never a per-member PATCH loop. */
+export function bindRuntimeCodexAccounts(
+  projectRoot: string,
+  selection: CodexBindingSelection,
+  previewToken: string,
+  accountProjectRoot = projectRoot,
+): CatCafeConfig {
+  const current = readRuntimeAccountMembers(projectRoot);
+  const plan = planCodexAccountBinding(accountProjectRoot, current, selection);
+  if (plan.previewToken !== previewToken) throw new Error('Binding preview changed; please review it again');
+  const targets = new Set(plan.targets.map((target) => target.catId));
+  const previous = readLocalAccountSelection(current, 'openai');
+  const selectedRef =
+    selection.scope === 'local' ? selection.accountRef : readLocalAccountSelection(current, 'openai').accountRef;
+  const next = {
+    ...current,
+    ...(selectedRef
+      ? {
+          selectedAccountRefs: { ...current.selectedAccountRefs, openai: selectedRef },
+        }
+      : {}),
+    breeds: current.breeds.map((breed) => ({
+      ...breed,
+      variants: breed.variants.map((variant) => {
+        const id = variant.catId ?? breed.catId ?? '';
+        if (targets.has(id))
+          return {
+            ...variant,
+            accountRef: selection.accountRef,
+            accountBindingMode: selection.accountRef === selectedRef ? ('follow' as const) : ('override' as const),
+          };
+        if (selection.scope === 'local') {
+          const member = previous.members.find((m) => m.id === id);
+          if (member)
+            return {
+              ...variant,
+              // Inactive members keep their effective ref but retain explicit intent for re-enable.
+              accountBindingMode: member.bindingMode === 'follow' ? ('follow' as const) : ('override' as const),
+            };
+        }
+        return variant;
+      }),
+    })),
+  };
+  return writeAndValidateCatalog(projectRoot, next);
+}
+
 export function createRuntimeCat(projectRoot: string, input: RuntimeCatInput): CatCafeConfig {
   const catalog = cloneCatalog(readOrBootstrapCatalog(projectRoot));
   if (findBreedVariant(catalog as unknown as CatCafeConfig, input.catId)) {
     throw new Error(`Cat "${input.catId}" already exists in runtime catalog`);
   }
   const nextBreed = createBreedFromInput(input) as unknown as Record<string, any>;
-  catalog.breeds = [...catalog.breeds, nextBreed];
+  const targetBreedId = input.breedId?.trim();
+  if (targetBreedId && targetBreedId !== input.catId) {
+    const targetBreed = catalog.breeds.find((breed: { id: string }) => breed.id === targetBreedId);
+    if (!targetBreed) throw new Error(`Unknown breedId "${targetBreedId}"; choose an existing breed`);
+    const variant = nextBreed.variants[0];
+    if (targetBreed.variants.some((member: { id: string }) => member.id === variant.id)) {
+      throw new Error(`Variant "${variant.id}" already exists in breed "${targetBreedId}"`);
+    }
+    targetBreed.variants.push({
+      ...variant,
+      catId: input.catId,
+      relationshipKey: input.catId,
+      name: input.name,
+      displayName: input.displayName,
+      nickname: input.nickname?.trim() || null,
+      avatar: input.avatar,
+      color: input.color,
+      mentionPatterns: normalizeMentionPatterns(input.catId, input.mentionPatterns),
+      roleDescription: input.roleDescription,
+      ...(input.sessionChain !== undefined ? { sessionChain: input.sessionChain } : {}),
+    });
+  } else {
+    if (catalog.breeds.some((breed: { id: string }) => breed.id === nextBreed.id)) {
+      throw new Error(`Breed "${nextBreed.id}" already exists in runtime catalog`);
+    }
+    catalog.breeds = [...catalog.breeds, nextBreed];
+  }
   if (catalog.version === 2) {
     catalog.roster = {
       ...catalog.roster,
-      [input.catId]: buildDefaultRuntimeRosterEntry(
-        input.catId,
-        String(nextBreed.id ?? input.catId),
-        String(nextBreed.displayName ?? nextBreed.name ?? input.catId),
-        true,
-      ),
+      [input.catId]: buildDefaultRuntimeRosterEntry(input.catId, targetBreedId || input.catId, input.displayName, true),
     };
   }
+  assertCodexMemberMutationReady(projectRoot, catalog as unknown as CatCafeConfig, input.catId);
   return writeAndValidateCatalog(projectRoot, catalog);
 }
 
 export function updateRuntimeCat(projectRoot: string, catId: string, patch: RuntimeCatUpdate): CatCafeConfig {
   const catalog = cloneCatalog(readOrBootstrapCatalog(projectRoot));
+  const previous = {
+    cat: toAllCatConfigs(catalog as unknown as CatCafeConfig)[catId],
+    available: catalog.version !== 2 || catalog.roster[catId]?.available !== false,
+  };
   const located = findBreedVariant(catalog as unknown as CatCafeConfig, catId);
   if (!located) {
     throw new Error(`Cat "${catId}" not found in runtime catalog`);
@@ -346,6 +437,7 @@ export function updateRuntimeCat(projectRoot: string, catId: string, patch: Runt
   const breed = catalog.breeds[located.breedIndex] as Record<string, any>;
   const variant = breed.variants[located.variantIndex] as Record<string, any>;
   const shouldWriteBreedIdentity = located.isDefaultVariant && breed.variants.length === 1;
+  const selectedAccountRef = readLocalAccountSelection(catalog as unknown as CatCafeConfig, 'openai').accountRef;
 
   if (patch.name !== undefined) {
     if (shouldWriteBreedIdentity) {
@@ -434,13 +526,6 @@ export function updateRuntimeCat(projectRoot: string, catId: string, patch: Runt
     }
   }
 
-  if (patch.accountRef !== undefined) {
-    if (patch.accountRef && patch.accountRef.trim().length > 0) {
-      variant.accountRef = patch.accountRef.trim();
-    } else {
-      delete variant.accountRef;
-    }
-  }
   if (patch.personality !== undefined) {
     if (patch.personality && patch.personality.trim().length > 0) {
       variant.personality = patch.personality;
@@ -472,7 +557,10 @@ export function updateRuntimeCat(projectRoot: string, catId: string, patch: Runt
       variant.sessionChain = patch.sessionChain;
     }
   }
-  if (patch.clientId !== undefined) variant.clientId = patch.clientId;
+  if (patch.clientId !== undefined) {
+    if (patch.clientId !== variant.clientId) delete variant.accountBindingMode;
+    variant.clientId = patch.clientId;
+  }
   if (patch.defaultModel !== undefined) variant.defaultModel = patch.defaultModel;
   if (patch.mcpSupport !== undefined) variant.mcpSupport = patch.mcpSupport;
   // F247 KD-17: patch.cli === null means remove (cloud-only mode); object means update.
@@ -483,6 +571,41 @@ export function updateRuntimeCat(projectRoot: string, catId: string, patch: Runt
       variant.cli = patch.cli;
     }
   }
+  if (variant.clientId !== 'openai' || !variant.cli || catId === 'gpt-pro') delete variant.accountBindingMode;
+  if (patch.accountRef !== undefined) {
+    if (patch.accountRef && patch.accountRef.trim().length > 0) {
+      variant.accountRef = patch.accountRef.trim();
+      if (variant.clientId === 'openai' && variant.cli && catId !== 'gpt-pro')
+        variant.accountBindingMode = selectedAccountRef === variant.accountRef ? 'follow' : 'override';
+    } else {
+      delete variant.accountRef;
+      delete variant.accountBindingMode;
+    }
+  }
+  if (patch.accountBindingMode !== undefined) {
+    if (variant.clientId !== 'openai' || !variant.cli || catId === 'gpt-pro')
+      throw new Error('跟随账号仅适用于本地 Codex');
+    const selected = selectedAccountRef;
+    if (patch.accountBindingMode === 'follow') {
+      if (!selected || (patch.accountRef ?? variant.accountRef ?? 'codex') !== selected)
+        throw new Error('请先在账号页选定正在用的账号，再恢复跟随');
+      catalog.selectedAccountRefs = { ...catalog.selectedAccountRefs, openai: selected };
+      variant.accountRef = selected;
+    }
+    variant.accountBindingMode =
+      (patch.accountRef ?? variant.accountRef ?? 'codex') === selected ? 'follow' : patch.accountBindingMode;
+  }
+  if (
+    patch.available === true &&
+    patch.accountRef === undefined &&
+    patch.accountBindingMode === undefined &&
+    variant.accountBindingMode === 'follow' &&
+    variant.clientId === 'openai' &&
+    variant.cli &&
+    catId !== 'gpt-pro' &&
+    selectedAccountRef
+  )
+    variant.accountRef = selectedAccountRef;
   if (patch.contextWindow !== undefined) {
     if (patch.contextWindow != null) {
       variant.contextWindow = patch.contextWindow;
@@ -519,6 +642,7 @@ export function updateRuntimeCat(projectRoot: string, catId: string, patch: Runt
     }
   }
   // F161: ACP transport config — null removes it (revert to CLI transport).
+  if (patch.agyProfile !== undefined) variant.agyProfile = patch.agyProfile;
   if (patch.acp !== undefined) {
     if (patch.acp) {
       (variant as Record<string, unknown>).acp = patch.acp;
@@ -541,6 +665,63 @@ export function updateRuntimeCat(projectRoot: string, catId: string, patch: Runt
     };
   }
 
+  if (patch.breedId !== undefined && patch.breedId !== breed.id) {
+    const targetBreed = catalog.breeds.find((candidate: { id: string }) => candidate.id === patch.breedId);
+    if (!targetBreed) throw new Error(`Unknown breedId "${patch.breedId}"; choose an existing breed`);
+    if (located.isDefaultVariant && breed.variants.length > 1) {
+      throw new Error(`Cannot move default member "${catId}" from a multi-member breed`);
+    }
+    if (targetBreed.variants.some((member: { id: string }) => member.id === variant.id)) {
+      throw new Error(`Variant "${variant.id}" already exists in breed "${patch.breedId}"`);
+    }
+
+    // A standalone cat stores its identity at breed level. Snapshot the resolved
+    // member before moving so target-breed defaults cannot silently rename it or
+    // replace its avatar, aliases, role, or session behavior.
+    const resolved = toAllCatConfigs(catalog as unknown as CatCafeConfig)[catId];
+    if (!resolved.relationshipKey) {
+      throw new Error(`Cat "${catId}" has no relationshipKey; refusing breed move`);
+    }
+    const movingVariant = {
+      ...variant,
+      catId,
+      relationshipKey: resolved.relationshipKey,
+      name: resolved.name,
+      displayName: resolved.displayName,
+      nickname: resolved.nickname ?? null,
+      avatar: resolved.avatar,
+      color: resolved.color,
+      mentionPatterns: [...resolved.mentionPatterns],
+      roleDescription: resolved.roleDescription,
+      personality: resolved.personality,
+      teamStrengths: resolved.teamStrengths ?? '',
+      caution: resolved.caution ?? null,
+      restrictions: resolved.restrictions ?? [],
+      sessionChain: resolved.sessionChain ?? true,
+      ...((variant.sessionStrategy ?? breed.features?.sessionStrategy)
+        ? { sessionStrategy: variant.sessionStrategy ?? breed.features.sessionStrategy }
+        : {}),
+    };
+    breed.variants.splice(located.variantIndex, 1);
+    if (breed.variants.length === 0) {
+      catalog.breeds.splice(located.breedIndex, 1);
+    }
+    targetBreed.variants.push(movingVariant);
+    if (catalog.version === 2) {
+      const existingEntry = catalog.roster[catId];
+      catalog.roster[catId] = existingEntry
+        ? { ...existingEntry, family: patch.breedId }
+        : buildDefaultRuntimeRosterEntry(catId, patch.breedId, resolved.displayName, true);
+    }
+  }
+
+  assertCodexMemberMutationReady(
+    projectRoot,
+    catalog as unknown as CatCafeConfig,
+    catId,
+    previous,
+    patch.available === true || patch.accountBindingMode !== undefined,
+  );
   return writeAndValidateCatalog(projectRoot, catalog);
 }
 

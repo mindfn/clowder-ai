@@ -5,14 +5,19 @@ import { useCallback, useEffect, useState } from 'react';
 import { tintedLight } from '@/lib/color-utils';
 import { connectorThemeToken } from '@/lib/connector-theme-token';
 import { useActiveExecutionStore } from '@/stores/activeExecutionStore';
-import type { ChatMessage as ChatMessageType, MessageContent } from '@/stores/chatStore';
-import { API_URL, apiFetch } from '@/utils/api-client';
+import type { ChatMessage as ChatMessageType } from '@/stores/chatStore';
+import { apiFetch } from '@/utils/api-client';
+import { ContentBlocks } from './ContentBlocks';
+import { HOST_CONTENT_REVIEW_CONNECTOR, hostReturnHeadline } from './content-review/host-return-headline';
+import { DevelopmentReturnBody } from './development-return/DevelopmentReturnBody';
 import { ExecutionCancelButton } from './ExecutionCancelButton';
 import {
   AuthKeyIcon,
   ConnectorImage,
   GitHubIcon,
   HoldBallIcon,
+  RefreshCwIcon,
+  ReturnArrowIcon,
   RobotIcon,
   SchedulerIcon,
   SearchIcon,
@@ -22,7 +27,10 @@ import {
 import { BallotIcon } from './icons/VoteIcons';
 import { MarkdownContent } from './MarkdownContent';
 import { MessageBubble } from './MessageBubble';
+import { frustrationHistoryCopy } from './rich/frustration-history.shell-copy';
+import { trustedFrustrationMeta, useFrustrationVisibility } from './rich/frustration-visibility';
 import { RichBlocks } from './rich/RichBlocks';
+import { useShellCopy } from './shell/shell-copy';
 
 /** SVG icon component lookup — maps definition `iconId` to React component.
  *  Single source of truth: add new SVG icons here + in ConnectorIcons.tsx. */
@@ -36,34 +44,13 @@ const SVG_ICON_MAP: Record<string, React.ComponentType<{ className?: string }>> 
   'auth-key': AuthKeyIcon,
   search: SearchIcon,
   robot: RobotIcon,
+  'return-arrow': ReturnArrowIcon,
+  'refresh-cw': RefreshCwIcon,
 };
 
 function formatTime(ts: number): string {
   const d = new Date(ts);
   return d.toLocaleString('zh-CN', { month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit' });
-}
-
-function renderContentBlocks(blocks: MessageContent[]) {
-  return blocks.map((block, i) => {
-    if (block.type === 'text') {
-      return <MarkdownContent key={i} content={block.text} />;
-    }
-    if (block.type === 'image') {
-      const src = block.url.startsWith('/uploads/') ? `${API_URL}${block.url}` : block.url;
-      const isSafeUrl = src.startsWith('/') || src.startsWith('http://') || src.startsWith('https://');
-      return (
-        // eslint-disable-next-line @next/next/no-img-element
-        <img
-          key={i}
-          src={src}
-          alt="attachment"
-          className="max-w-full sm:max-w-sm rounded-lg mt-2 border border-cafe cursor-pointer hover:opacity-90 transition-opacity"
-          onClick={() => isSafeUrl && window.open(src, '_blank', 'noopener')}
-        />
-      );
-    }
-    return null;
-  });
 }
 
 /** Data-driven icon rendering from ConnectorDefinition.icon spec.
@@ -86,6 +73,22 @@ function ConnectorIcon({ iconSpec, fallbackIcon }: { iconSpec?: ConnectorIconSpe
     return <ConnectorImage src={fallbackIcon} alt="connector" className="w-5 h-5" />;
   }
   return <span>{fallbackIcon}</span>;
+}
+
+/**
+ * Host content-review returns are addressed to the cat (coordinates + tool
+ * instructions). The human sees the headline; the machine text stays one click away.
+ */
+function HostReturnBody({ content }: { content: string }) {
+  const headline = hostReturnHeadline(content);
+  return (
+    <details className="text-sm">
+      <summary className="cursor-pointer select-none">{headline} · 已交给猫继续处理</summary>
+      <div className="mt-2 text-xs text-cafe-secondary">
+        <MarkdownContent content={content} />
+      </div>
+    </details>
+  );
 }
 
 type HoldTerminalStatus = 'retired_by_event' | 'fired' | 'escalated' | 'ended' | null;
@@ -228,6 +231,15 @@ interface ConnectorBubbleProps {
  */
 export function ConnectorBubble({ message, threadId, timelineMessages }: ConnectorBubbleProps) {
   const source = message.source;
+  const t = useShellCopy(frustrationHistoryCopy);
+  const visibility = useFrustrationVisibility(message.extra?.rich?.blocks ?? [], source?.connector);
+  const feedbackOnly =
+    visibility.length > 0 && visibility.every(({ block }) => trustedFrustrationMeta(block, source?.connector));
+  const retiredOnly = feedbackOnly && visibility.every((entry) => entry.visibility === 'retired');
+  const unknownFeedback = visibility.some((entry) => entry.visibility === 'unknown');
+  const withdrawnFeedback = visibility.some((entry) => entry.visibility !== 'allowed');
+  if (retiredOnly && !message.contentBlocks?.length)
+    return <div data-message-id={message.id} aria-hidden="true" className="h-0" />;
   if (!source) return null;
   if (message.extra?.scheduler?.hiddenTrigger) return null;
 
@@ -236,10 +248,18 @@ export function ConnectorBubble({ message, threadId, timelineMessages }: Connect
   const connDef = getConnectorDefinition(connId);
   const themeHex = connDef?.themeColor;
   const hasBlocks = message.contentBlocks && message.contentBlocks.length > 0;
-  const richBlocks = message.extra?.rich?.blocks;
+  const richBlocks = visibility
+    .filter((entry) => entry.visibility === 'allowed')
+    .map(({ block, signal }) =>
+      signal && block.kind === 'card' ? { ...block, meta: { ...block.meta, signalType: signal } } : block,
+    );
   const rawUrl = source.url;
   const srcUrl = rawUrl && /^https?:\/\//.test(rawUrl) ? rawUrl : undefined;
   const sourceCatId = typeof source.meta?.catId === 'string' ? source.meta.catId : undefined;
+  const publication =
+    threadId && !message.isStreaming
+      ? { threadId, messageId: message.id, messageRevision: String(message.timestamp) }
+      : undefined;
   const holdStatusRefreshKey = getHoldStatusRefreshKey(message, timelineMessages);
 
   const avatar = (
@@ -264,14 +284,14 @@ export function ConnectorBubble({ message, threadId, timelineMessages }: Connect
           className="text-xs font-semibold hover:underline"
           style={{ color: `var(--color-${themeToken}-bubble, var(--cafe-text))` }}
         >
-          {source.label}
+          {withdrawnFeedback ? t.title : source.label}
         </a>
       ) : (
         <span
           className="text-xs font-semibold"
           style={{ color: `var(--color-${themeToken}-bubble, var(--cafe-text))` }}
         >
-          {source.label}
+          {withdrawnFeedback ? t.title : source.label}
         </span>
       )}
       {source.sender && (
@@ -291,8 +311,23 @@ export function ConnectorBubble({ message, threadId, timelineMessages }: Connect
         color: 'var(--cat-msg-text, var(--cafe-text))',
       }}
     >
-      {hasBlocks ? renderContentBlocks(message.contentBlocks!) : <MarkdownContent content={message.content} />}
-      {richBlocks && richBlocks.length > 0 && <RichBlocks blocks={richBlocks} messageSource={message.source} />}
+      {hasBlocks ? (
+        <ContentBlocks blocks={message.contentBlocks!} publication={publication} />
+      ) : unknownFeedback ? (
+        <p className="text-xs text-cafe-muted">{t.unknown}</p>
+      ) : withdrawnFeedback ? null : source.connector === HOST_CONTENT_REVIEW_CONNECTOR ? (
+        <HostReturnBody content={message.content} />
+      ) : source.connector === 'development-return' ? (
+        <DevelopmentReturnBody
+          content={message.content}
+          reason={typeof source.meta?.reason === 'string' ? source.meta.reason : undefined}
+        />
+      ) : (
+        <MarkdownContent content={message.content} />
+      )}
+      {richBlocks && richBlocks.length > 0 && (
+        <RichBlocks blocks={richBlocks} messageSource={message.source} publication={publication} />
+      )}
       {source.connector === 'hold-ball' && typeof source.meta?.taskId === 'string' && (
         <div className="mt-2 pt-2 border-t border-cafe-border">
           <HoldBallCancelButton

@@ -4,9 +4,22 @@ import type { AppendMessageInput, MessageAppendListener, StoredMessage } from '.
 import { assertValidAppendMessageInput, DEFAULT_THREAD_ID, generateSortableId } from '../ports/MessageStore.js';
 import { assertQueueCustodyMessageBinding } from '../ports/queued-message-custody.js';
 import { MessageKeys } from '../redis-keys/message-keys.js';
+import { withOwnerUncertaintyIndex as withUncertaintyIndex } from './owner-uncertainty-lua.js';
 import { serializeExtra } from './redis-message-parsers.js';
+import { withUserMentionIndex } from './user-mention-index-lua.js';
 
-const APPEND_MESSAGE_LUA = `
+function withOwnerUncertaintyIndex(script: string, hashKey: number, indexExpression: string): string {
+  const fields = 'cjson.decode(ARGV[2])';
+  const prefix = `string.sub(KEYS[1], 1, #KEYS[1] - #${fields}.id - 4)`;
+  return withUserMentionIndex(
+    withUncertaintyIndex(script, hashKey, indexExpression),
+    hashKey,
+    `{${prefix} .. 'msg:user-requests:latest:' .. ${fields}.userId, ${prefix} .. 'msg:user-requests:pending:' .. ${fields}.userId, ${prefix} .. 'msg:user-requests:closed:' .. ${fields}.userId, ${prefix} .. 'msg:user-request-signals:' .. ${fields}.userId .. ':' .. ${fields}.threadId}`,
+  );
+}
+
+const APPEND_MESSAGE_LUA = withOwnerUncertaintyIndex(
+  `
 redis.replicate_commands()
 
 local hash = KEYS[1]
@@ -66,7 +79,10 @@ if ttl and ttl > 0 then
 end
 
 return {'committed', messageId}
-`;
+`,
+  1,
+  "string.sub(KEYS[4], 1, #KEYS[4] - #cjson.decode(ARGV[2]).threadId - 11) .. 'msg:owner-uncertainty:' .. cjson.decode(ARGV[2]).threadId",
+);
 
 function serializeMessage(message: AppendMessageInput, id: string, threadId: string): Record<string, string> {
   // F288: split pluginMessage from host extra — stored as independent hash field

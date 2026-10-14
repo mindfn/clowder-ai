@@ -39,7 +39,9 @@
 
 ## Provenance ledger
 
-| Asset / shot | real_capture / faithful_replay / designed_explanation / future_vision | Source | Claim permitted | Disclosure / visual register |
+宣传片的故事层默认填 `dramatization`，不用写 Source。只有当真实证明用的产品能力、业绩、作品归属才要逐条登记（SKILL §7）。纪录、复盘、demo 片按前四类登记。
+
+| Asset / shot | real_capture / faithful_replay / designed_explanation / future_vision / dramatization | Source | Claim permitted | Disclosure / visual register |
 |---|---|---|---|---|
 | | | | | |
 

@@ -16,8 +16,10 @@ import { recordDebugEvent } from '@/debug/invocationEventDebug';
 import { adaptIncomingToBubbleEvent } from '@/hooks/bubble-event-adapter';
 import { useCatNameResolver } from '@/hooks/useCatNameResolver';
 import { resolveProviderSemanticMessage } from '@/lib/provider-semantic-registry';
+import { servedFactsFromUsagePayload } from '@/lib/served-model-facts';
 import { deriveBubbleKindFromMessage } from '@/stores/bubble-invariants';
 import { projectCanonicalBubbles } from '@/stores/bubble-projection';
+import { storedRevisionPatch } from '@/stores/bubble-publication-origins';
 import { applyBubbleEvent, type BubbleReducerInput, type BubbleReducerOutput } from '@/stores/bubble-reducer';
 import type {
   AppServerLifecycleSnapshot,
@@ -34,7 +36,7 @@ import type {
   TokenUsage,
   ToolEvent,
 } from '@/stores/chat-types';
-import { useChatStore } from '@/stores/chatStore';
+import { type DefinitiveRichBlockOwner, useChatStore } from '@/stores/chatStore';
 import { useToastStore } from '@/stores/toastStore';
 import { extractRecallMetaDetail, toolResultDetail } from '@/utils/toolPreview';
 import {
@@ -286,6 +288,7 @@ interface AgentMsg {
   errorCode?: string;
   isFinal?: boolean;
   metadata?: {
+    executionAccount?: import('@cat-cafe/shared').ExecutionAccountSnapshot;
     provider: string;
     model: string;
     sessionId?: string;
@@ -296,6 +299,9 @@ interface AgentMsg {
     cliDiagnostics?: CliDiagnostics;
   };
   /** Tool name (for 'tool_use' events from backend) */
+  toolEventId?: string;
+  toolUseId?: string;
+  toolExecutionRef?: string;
   toolName?: string;
   /** Tool input params (for 'tool_use' events from backend) */
   toolInput?: Record<string, unknown>;
@@ -303,6 +309,8 @@ interface AgentMsg {
   origin?: 'stream' | 'callback';
   /** Backend stored-message ID (set for callback post-message, used for rich_block correlation) */
   messageId?: string;
+  /** F309: the stored message's own timestamp, sent with done once persistence completed. */
+  messageTimestamp?: number;
   /** F173 a2a-handoff bug fix: server-side timestamp (epoch ms). Required for
    *  timestamp-ordered insert of a2a_handoff system messages. */
   timestamp?: number;
@@ -314,6 +322,7 @@ interface AgentMsg {
   mentionsUser?: boolean;
   /** F52: Cross-thread origin metadata */
   extra?: {
+    outputLayout?: import('@cat-cafe/shared').MessageOutputLayoutV1;
     crossPost?: { sourceThreadId: string; sourceInvocationId?: string };
     a2aRouting?: { fromCatId?: string; targetCatId?: string; invocationId?: string; routing?: A2ARoutingProjection };
     /** #814: True when message originated from an explicit post_message callback */
@@ -516,7 +525,12 @@ export interface BackgroundAgentMessage {
   content?: string;
   textMode?: 'append' | 'replace';
   messageId?: string;
+  /** F309: the stored message's own timestamp, sent with done once persistence completed. */
+  messageTimestamp?: number;
   origin?: 'stream' | 'callback';
+  toolEventId?: string;
+  toolUseId?: string;
+  toolExecutionRef?: string;
   toolName?: string;
   toolInput?: Record<string, unknown>;
   error?: string;
@@ -524,6 +538,7 @@ export interface BackgroundAgentMessage {
   errorCode?: string;
   isFinal?: boolean;
   metadata?: {
+    executionAccount?: import('@cat-cafe/shared').ExecutionAccountSnapshot;
     provider: string;
     model: string;
     sessionId?: string;
@@ -536,6 +551,7 @@ export interface BackgroundAgentMessage {
   };
   /** F52: Cross-thread origin metadata */
   extra?: {
+    outputLayout?: import('@cat-cafe/shared').MessageOutputLayoutV1;
     crossPost?: { sourceThreadId: string; sourceInvocationId?: string };
     /** #814: True when message originated from an explicit post_message callback */
     isExplicitPost?: boolean;
@@ -606,7 +622,12 @@ export interface BackgroundStoreLike {
   appendToThreadMessage: (threadId: string, messageId: string, content: string) => void;
   appendToolEventToThread: (threadId: string, messageId: string, event: ToolEvent) => void;
   /** F22: Append a rich block to a message in a specific thread */
-  appendRichBlockToThread: (threadId: string, messageId: string, block: RichBlock) => void;
+  appendRichBlockToThread: (
+    threadId: string,
+    messageId: string,
+    block: RichBlock,
+    owner?: DefinitiveRichBlockOwner,
+  ) => void;
   setThreadCatInvocation: (threadId: string, catId: string, info: Partial<CatInvocationInfo>) => void;
   setThreadMessageMetadata: (threadId: string, messageId: string, metadata: ChatMessageMetadata) => void;
   setThreadMessageUsage: (threadId: string, messageId: string, usage: TokenUsage) => void;
@@ -1480,9 +1501,20 @@ export function consumeBackgroundSystemInfo(
           options.store.setThreadMessageMetadata(msg.threadId, existingRef.id, {
             model: parsed.model as string,
             provider: parsed.provider as string,
+            ...(parsed.executionAccount
+              ? { executionAccount: parsed.executionAccount as import('@cat-cafe/shared').ExecutionAccountSnapshot }
+              : {}),
           });
         }
         options.store.setThreadMessageUsage(msg.threadId, existingRef.id, parsed.usage);
+        // F319 Phase E.1: setThreadMessageMetadata merges, so served facts land live here too.
+        const servedFacts = servedFactsFromUsagePayload(parsed);
+        const existingMeta = options.store
+          .getThreadState(msg.threadId)
+          .messages.find((m) => m.id === existingRef.id)?.metadata;
+        if (servedFacts && existingMeta) {
+          options.store.setThreadMessageMetadata(msg.threadId, existingRef.id, { ...existingMeta, ...servedFacts });
+        }
       }
       options.store.setThreadCatInvocation(msg.threadId, msg.catId, {
         usage: parsed.usage,
@@ -1594,13 +1626,17 @@ export function consumeBackgroundSystemInfo(
     } else if (parsed?.type === 'rich_block') {
       // F22: Append rich block — mirror foreground path (useAgentMessages.ts)
       let targetId: string | undefined;
+      let definitiveCallbackTarget = false;
 
       // Prefer messageId correlation from callback post-message path
       if (parsed.messageId) {
         const found = options.store
           .getThreadState(msg.threadId)
           .messages.find((m: { id: string }) => m.id === parsed.messageId);
-        if (found) targetId = found.id;
+        if (found) {
+          targetId = found.id;
+          definitiveCallbackTarget = found.origin === 'callback';
+        }
       }
 
       const richBlockHasExplicitInvocation = Boolean(
@@ -1687,7 +1723,17 @@ export function consumeBackgroundSystemInfo(
       }
 
       if (parsed.block) {
-        options.store.appendRichBlockToThread(msg.threadId, targetId, parsed.block);
+        const invocationId = msg.invocationId ?? parsed.invocationId;
+        const turnInvocationId = msg.turnInvocationId ?? parsed.turnInvocationId;
+        if (definitiveCallbackTarget && (turnInvocationId || invocationId)) {
+          options.store.appendRichBlockToThread(msg.threadId, targetId, parsed.block, {
+            catId: msg.catId,
+            invocationId,
+            turnInvocationId,
+          });
+        } else {
+          options.store.appendRichBlockToThread(msg.threadId, targetId, parsed.block);
+        }
       }
       consumed = true;
     } else if (parsed?.type === 'app_server_lifecycle') {
@@ -2154,6 +2200,11 @@ function resolveSemanticSystemMessage(
   msg: Pick<BackgroundAgentMessage, 'catId' | 'semanticEvent' | 'timestamp'>,
 ): { action: 'replace'; message: ChatMessage } | { action: 'augment' } | { action: 'suppress' } {
   if (!msg.semanticEvent) return { action: 'augment' };
+  // F319 Phase F: a model reroute is shown on the reply's own MetadataBadge (amber pill, from
+  // persisted metadata.servedModel — survives reload). The detached live-only banner is dropped.
+  if (msg.semanticEvent.kind === 'warning' && msg.semanticEvent.category === 'model_reroute') {
+    return { action: 'suppress' };
+  }
   const result = resolveProviderSemanticMessage(msg.semanticEvent);
   if (result.action !== 'replace') return { action: result.action };
   return {
@@ -3078,6 +3129,15 @@ export function handleBackgroundAgentMessage(
     if (finalizedMessageId && msg.content !== undefined) {
       options.store.patchThreadMessage(msg.threadId, finalizedMessageId, { content: msg.content });
     }
+    if (typeof msg.messageTimestamp === 'number' && finalizedMessageId && finalizedMessageId === msg.messageId) {
+      const settled = options.store.getThreadState(msg.threadId).messages.find((m) => m.id === finalizedMessageId);
+      if (settled)
+        options.store.patchThreadMessage(
+          msg.threadId,
+          finalizedMessageId,
+          storedRevisionPatch(settled, msg.messageTimestamp),
+        );
+    }
     const currentStatus = options.store.getThreadState(msg.threadId).catStatuses[msg.catId];
     if (currentStatus !== 'error') {
       options.store.updateThreadCatStatus(msg.threadId, msg.catId, 'done');
@@ -3129,7 +3189,9 @@ export function handleBackgroundAgentMessage(
       bgActiveRef?.id === messageId &&
       isCurrentFreshParentSeed(bgActiveRef, msg.timestamp, msg.seq);
     const toolUseEventData: ToolEvent = {
-      id: `bg-tool-use-${msg.timestamp}-${options.nextBgSeq()}`,
+      id: msg.toolEventId ?? `bg-tool-use-${msg.timestamp}-${options.nextBgSeq()}`,
+      ...(msg.toolUseId ? { toolUseId: msg.toolUseId } : {}),
+      ...(msg.toolExecutionRef ? { executionRef: msg.toolExecutionRef } : {}),
       type: 'tool_use',
       label: `${msg.catId} → ${toolName}`,
       ...(detail ? { detail } : {}),
@@ -3187,7 +3249,9 @@ export function handleBackgroundAgentMessage(
       bgActiveRef?.id === messageId &&
       isCurrentFreshParentSeed(bgActiveRef, msg.timestamp, msg.seq);
     const toolResultEventData: ToolEvent = {
-      id: `bg-tool-result-${msg.timestamp}-${options.nextBgSeq()}`,
+      id: msg.toolEventId ?? `bg-tool-result-${msg.timestamp}-${options.nextBgSeq()}`,
+      ...(msg.toolUseId ? { toolUseId: msg.toolUseId } : {}),
+      ...(msg.toolExecutionRef ? { executionRef: msg.toolExecutionRef } : {}),
       type: 'tool_result',
       label: `${msg.catId} ← result`,
       detail,
@@ -3289,6 +3353,7 @@ export function useAgentMessages() {
     clearCatStatuses,
     setCatInvocation,
     setMessageUsage,
+    mergeMessageServedFacts,
     setMessageMetadata,
     setMessageThinking,
     setMessageStreamInvocation,
@@ -3315,6 +3380,7 @@ export function useAgentMessages() {
       setCatInvocation: s.setCatInvocation,
       setMessageUsage: s.setMessageUsage,
       setMessageMetadata: s.setMessageMetadata,
+      mergeMessageServedFacts: s.mergeMessageServedFacts,
       setMessageThinking: s.setMessageThinking,
       setMessageStreamInvocation: s.setMessageStreamInvocation,
       requestStreamCatchUp: s.requestStreamCatchUp,
@@ -5146,7 +5212,9 @@ export function useAgentMessages() {
         // 跟 ensureActiveAssistantMessage 创建的 id 无关）。recoveryAction !== 'none'
         // 或 invocationless 回退 legacy appendToolEvent。
         const toolUseEventData: ToolEvent = {
-          id: `tool-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
+          id: msg.toolEventId ?? `tool-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
+          ...(msg.toolUseId ? { toolUseId: msg.toolUseId } : {}),
+          ...(msg.toolExecutionRef ? { executionRef: msg.toolExecutionRef } : {}),
           type: 'tool_use',
           label: `${msg.catId} → ${toolName}`,
           ...(detail ? { detail } : {}),
@@ -5228,7 +5296,9 @@ export function useAgentMessages() {
         const resultMeta = extractRecallMetaDetail(rawContent);
         // F183 Phase B1.6 — tool_result wire-up via reducer (same pattern as tool_use).
         const toolResultEventData: ToolEvent = {
-          id: `toolr-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
+          id: msg.toolEventId ?? `toolr-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
+          ...(msg.toolUseId ? { toolUseId: msg.toolUseId } : {}),
+          ...(msg.toolExecutionRef ? { executionRef: msg.toolExecutionRef } : {}),
           type: 'tool_result',
           label: `${msg.catId} ← result`,
           detail,
@@ -5360,6 +5430,10 @@ export function useAgentMessages() {
             }
             if (msg.content !== undefined) {
               patchMessage(messageId, { content: msg.content });
+            }
+            if (typeof msg.messageTimestamp === 'number' && msg.messageId === messageId) {
+              const settled = useChatStore.getState().messages.find((m) => m.id === messageId);
+              if (settled) patchMessage(messageId, storedRevisionPatch(settled, msg.messageTimestamp));
             }
             setStreaming(messageId, false);
             // Bug-G: back-fill invocationId on bubbles that somehow missed the
@@ -5939,9 +6013,19 @@ export function useAgentMessages() {
                 setMessageMetadata(ref.id, {
                   model: parsed.model as string,
                   provider: parsed.provider as string,
+                  ...(parsed.executionAccount
+                    ? {
+                        executionAccount:
+                          parsed.executionAccount as import('@cat-cafe/shared').ExecutionAccountSnapshot,
+                      }
+                    : {}),
                 });
               }
               setMessageUsage(ref.id, parsed.usage);
+              // F319 Phase E.1: served facts exist only at done; merge them so the live
+              // bubble shows ✓ / A → B / turn-state without waiting for a history reload.
+              const servedFacts = servedFactsFromUsagePayload(parsed);
+              if (servedFacts) mergeMessageServedFacts(ref.id, servedFacts);
             }
             setCatInvocation(msg.catId, {
               usage: parsed.usage,
@@ -6189,11 +6273,15 @@ export function useAgentMessages() {
             // explicit messageId correlation still wins (callback may be a re-emission
             // of a known message), so only the bubble-creation fallback path is gated.
             let targetId: string | undefined;
+            let definitiveCallbackTarget = false;
 
             // P2 fix: use messageId from callback post-message path for precise correlation
             if (parsed.messageId) {
               const found = useChatStore.getState().messages.find((m) => m.id === parsed.messageId);
-              if (found) targetId = found.id;
+              if (found) {
+                targetId = found.id;
+                definitiveCallbackTarget = found.origin === 'callback';
+              }
             }
 
             const richBlockHasExplicitInvocation = Boolean(msg.turnInvocationId ?? effectiveInv);
@@ -6241,7 +6329,16 @@ export function useAgentMessages() {
             }
 
             if (targetId && parsed.block) {
-              appendRichBlock(targetId, parsed.block);
+              const turnInvocationId = msg.turnInvocationId ?? parsed.turnInvocationId;
+              if (definitiveCallbackTarget && (turnInvocationId || effectiveInv)) {
+                appendRichBlock(targetId, parsed.block, {
+                  catId: msg.catId,
+                  invocationId: effectiveInv,
+                  turnInvocationId,
+                });
+              } else {
+                appendRichBlock(targetId, parsed.block);
+              }
             }
             consumed = true;
           } else if (parsed?.type === 'session_seal_requested') {
@@ -6592,6 +6689,7 @@ export function useAgentMessages() {
       setFinalized,
       setPendingTimeoutDiag,
       setMessageMetadata,
+      mergeMessageServedFacts,
     ],
   );
 

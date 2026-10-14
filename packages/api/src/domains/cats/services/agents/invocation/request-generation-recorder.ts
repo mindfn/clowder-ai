@@ -6,6 +6,7 @@ import type {
   RequestGenerationRetryReason,
   RequestGenerationSourceRef,
   RequestGenerationTerminalEvent,
+  SessionRecord,
 } from '@cat-cafe/shared';
 import {
   requestGenerationEnvelopeV1Schema,
@@ -14,8 +15,8 @@ import {
 } from '@cat-cafe/shared';
 import { CURRENT_RELATIONSHIP_PROFILE_URI, renderUserCapsuleSection } from '@cat-cafe/shared/profile-contract';
 import type { FileProfileRepository } from '../../profile/ProfileRepository.js';
-import { encodeProfileSourceRef } from '../../session/request-generation-source-policy.js';
 import type { TranscriptSessionInfo, TranscriptWriter } from '../../session/TranscriptWriter.js';
+import { encodeProfileSourceRef } from '../../session/transcript-index/request-generation-source-policy.js';
 import type { ISessionChainStore } from '../../stores/ports/SessionChainStore.js';
 import type { PreparedProviderRequestV1, ProviderRequestGenerationCommitV1 } from '../../types.js';
 
@@ -212,6 +213,8 @@ export function createRequestGenerationRecorder(input: {
   readonly catId: CatId;
   readonly transcriptWriter: Pick<TranscriptWriter, 'appendDurableEvent' | 'keyedContentDigest'>;
   readonly sessionChainStore: Pick<ISessionChainStore, 'getActive'>;
+  /** Scoped one-shot nodes have an explicit owner and never enter the home active index. */
+  readonly resolveSession?: () => SessionRecord | null | Promise<SessionRecord | null>;
   readonly profileRepository?: ProfileSourceRepository;
   readonly snapshot: () => RequestGenerationRecorderSnapshot;
   readonly now?: () => number;
@@ -229,7 +232,9 @@ export function createRequestGenerationRecorder(input: {
   };
 
   const lifecycleSession = async (state: GenerationState): Promise<TranscriptSessionInfo> => {
-    const active = await input.sessionChainStore.getActive(input.catId, input.threadId, input.userId);
+    const active = await (input.resolveSession
+      ? input.resolveSession()
+      : input.sessionChainStore.getActive(input.catId, input.threadId, input.userId));
     return active ? transcriptSession(active) : state.session;
   };
 
@@ -270,7 +275,9 @@ export function createRequestGenerationRecorder(input: {
 
   return {
     async recordPrepared(prepared, boundary) {
-      const active = await input.sessionChainStore.getActive(input.catId, input.threadId, input.userId);
+      const active = await (input.resolveSession
+        ? input.resolveSession()
+        : input.sessionChainStore.getActive(input.catId, input.threadId, input.userId));
       if (!active) throw new Error('request_generation_active_session_unavailable');
       generationOrdinal += 1;
       const snapshot = input.snapshot();

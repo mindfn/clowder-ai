@@ -45,6 +45,9 @@ describe('Collective Service HTTP process boundary', () => {
     expect(clientHtml).not.toContain('backed by the Service event log');
     expect((await fetch(`${server.url}/collective-client/app.js`)).status).toBe(200);
     expect((await fetch(`${server.url}/collective-client/app.css`)).status).toBe(200);
+    const landingArt = await fetch(`${server.url}/collective-client/collective-landing-A.png`);
+    expect(landingArt.status).toBe(200);
+    expect(landingArt.headers.get('content-type')).toBe('image/png');
 
     const owner = await post(server.url, '/api/bootstrap', {
       secret: opened.bootstrapSecret,
@@ -123,6 +126,25 @@ describe('Collective Service HTTP process boundary', () => {
       member.sessionToken,
     );
     expect(events.events).toMatchObject([{ eventId: ownerEvent.eventId, sequence: 1 }]);
+    const proposedWork = await post(
+      server.url,
+      '/api/collaboration/work/propose',
+      {
+        serviceInstanceId: opened.store.serviceInstanceId,
+        collectiveId: collective.collectiveId,
+        sourceEventId: ownerEvent.eventId,
+        requestId: 'http-work-proposal',
+      },
+      owner.sessionToken,
+    );
+    expect(proposedWork).toMatchObject({ sourceEventId: ownerEvent.eventId, status: 'proposed' });
+    const collaboration = await get(
+      server.url,
+      `/api/collaboration?collectiveId=${collective.collectiveId}`,
+      member.sessionToken,
+    );
+    expect(collaboration.works).toMatchObject([{ workId: proposedWork.workId, sourceEventId: ownerEvent.eventId }]);
+    expect((await fetch(`${server.url}/api/collaboration?collectiveId=${collective.collectiveId}`)).status).toBe(401);
 
     const pairing = await post(
       server.url,

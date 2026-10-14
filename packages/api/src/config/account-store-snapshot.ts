@@ -154,6 +154,30 @@ export function readAccountSnapshot(projectRoot: string, ref: string): AccountEn
   return readAccountStoreSnapshot(projectRoot).resolve(ref);
 }
 
+/** Strict deployment admission, including physical sources shadowed by a canonical map. */
+export function assertAccountStoreReady(projectRoot: string, credentialFreeRefs: string[] = []): void {
+  const topology = resolveAccountStoreTopology(projectRoot);
+  for (const root of [topology.primaryRoot, topology.legacyRoot]) {
+    if (root) assertPhysicalCredentialSources(root, credentialFreeRefs);
+  }
+  const store = readAccountStoreSnapshot(projectRoot);
+  for (const ref of store.refs) store.resolve(ref);
+}
+function assertPhysicalCredentialSources(root: string, credentialFreeRefs: string[]): void {
+  const path = (name: string) => resolve(root, '.cat-cafe', name);
+  const sources = [
+    readMap(path('credentials.json')),
+    parseLegacyProviderSecrets(readMap(path('provider-profiles.secrets.local.json')), true),
+  ];
+  for (const source of sources)
+    for (const [ref, value] of Object.entries(source)) {
+      if (value instanceof AccountStoreVerdictError) throw value;
+      parseStoredCredential(value, `${root}/.cat-cafe credential ${ref}`);
+      if (credentialFreeRefs.includes(ref))
+        throw new AccountStoreVerdictError('promoted native account has conflicting credential material');
+    }
+}
+
 /** Root cutover is an explicit operation, never a side effect of editing one account. */
 export function assertAccountWritable(projectRoot: string, ref: string): void {
   const entry = readAccountSnapshot(projectRoot, ref);

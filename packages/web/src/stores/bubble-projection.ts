@@ -46,6 +46,8 @@
  */
 
 import { getBubbleInvocationId } from '@/debug/bubbleIdentity';
+import { outputLayoutForCanonicalBubble, withoutUnprovenOutputLayout } from './bubble-output-layout';
+import { retainPublicationOrigin, retainRichPublicationOrigins } from './bubble-publication-origins';
 import type { ChatMessage } from './chat-types';
 
 interface ProjectionInput {
@@ -169,6 +171,7 @@ function projectGroup(records: ChatMessage[]): ChatMessage {
   // cloud R2 P2 (codex): merge contentBlocks across records — stream may have
   // image/structured blocks that callback doesn't, dropping them = data loss.
   const contentBlocks: NonNullable<ChatMessage['contentBlocks']> = [];
+  const publicationOrigins: NonNullable<ChatMessage['projectionPublicationOrigins']> = {};
   let mentionsUser = false;
 
   for (const r of sorted) {
@@ -190,8 +193,13 @@ function projectGroup(records: ChatMessage[]): ChatMessage {
       if (seenBlockIds.has(b.id)) continue;
       seenBlockIds.add(b.id);
       richBlocks.push(b);
+      retainRichPublicationOrigins(publicationOrigins, r, b);
     }
-    for (const block of r.contentBlocks ?? []) {
+    for (const [index, block] of (r.contentBlocks ?? []).entries()) {
+      retainPublicationOrigin(publicationOrigins, { kind: 'content-block', index: contentBlocks.length }, r, {
+        kind: 'content-block',
+        index,
+      });
       contentBlocks.push(block);
     }
   }
@@ -239,6 +247,7 @@ function projectGroup(records: ChatMessage[]): ChatMessage {
     ...base,
     id: canonicalId,
     projectionSourceMessageIds,
+    ...(Object.keys(publicationOrigins).length ? { projectionPublicationOrigins: publicationOrigins } : {}),
     type: 'assistant',
     catId: first.catId,
     content: projectedContent,
@@ -279,6 +288,9 @@ function projectGroup(records: ChatMessage[]): ChatMessage {
     projected.extra = extra;
   }
 
+  const outputLayout = outputLayoutForCanonicalBubble(sorted, projected);
+  if (outputLayout) projected.extra = { ...projected.extra, outputLayout };
+  else if (projected.extra?.outputLayout) delete projected.extra.outputLayout;
   return projected;
 }
 
@@ -297,14 +309,15 @@ export function projectCanonicalBubbles({ records }: ProjectionInput): Projectio
 
   for (const r of records) {
     const k = bubbleGroupKey(r, streamSegmentsByBaseKey, turnSegmentByRecord);
+    const safeRecord = withoutUnprovenOutputLayout(r);
     if (!k) {
-      passthrough.push(r);
+      passthrough.push(safeRecord);
       continue;
     }
     const keyStr = `${k.originBucket}::${k.catId}::${k.invocationId}`;
     const list = groupedKeys.get(keyStr);
-    if (list) list.push(r);
-    else groupedKeys.set(keyStr, [r]);
+    if (list) list.push(safeRecord);
+    else groupedKeys.set(keyStr, [safeRecord]);
   }
 
   const projected: ChatMessage[] = [];

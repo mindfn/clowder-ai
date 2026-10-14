@@ -497,7 +497,15 @@ describe('F247 source-bound Remote MCP return contract', () => {
       url: '/api/callbacks/post-message',
       headers: { 'x-agent-key-secret': secret },
       payload: {
-        content: 'regenerated retry body with no routing',
+        content:
+          'regenerated retry body with no routing\n```cc_rich\n' +
+          JSON.stringify({
+            v: 1,
+            blocks: [
+              { id: 'gone-image', kind: 'media_gallery', v: 1, items: [{ url: '/unregistered/removed-image.png' }] },
+            ],
+          }) +
+          '\n```',
         threadId: thread.id,
         replyTo: source.id,
       },

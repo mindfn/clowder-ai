@@ -1,9 +1,11 @@
 'use client';
 
 import { useState } from 'react';
+import { useShellPresentation } from '@/components/shell/shell-presentation';
+import { AudioInputPickerV2 } from './AudioInputPickerV2';
 import type { AudioInputRequest, AudioSources } from './audio-transcript-contract';
 
-export function AudioInputPicker({
+function AudioInputPickerClassic({
   sources,
   onStart,
   disabled = false,
@@ -75,4 +77,13 @@ export function AudioInputPicker({
       </button>
     </div>
   );
+}
+
+export function AudioInputPicker(props: {
+  sources: AudioSources;
+  onStart: (inputs: AudioInputRequest[]) => void;
+  disabled?: boolean;
+}) {
+  const presentation = useShellPresentation();
+  return presentation === 'v2' ? <AudioInputPickerV2 {...props} /> : <AudioInputPickerClassic {...props} />;
 }

@@ -69,6 +69,7 @@ F168 owns the community operations event-sourcing infrastructure: append-only Ev
 
 - Append new `CommunityEventKind` values to the shared type and add transition rules to the state machine's explicit table.
 - Implement new projection side-effects as pure functions inside `community-projector.ts`.
+- Reviewer handover uses `ExternalReviewTransferService`: the existing reviewer or an exact approved Task-bound delegate transfers one PR through conditional canonical append. Tracker registration alone never reassigns formal rights; transfer revision fences predecessor callbacks, pending verdicts, replay and ABA. Active action leases must be settled by their owner first.
 - Extend external-review lifecycle facts through `CommunityEventKind` plus the pure `external-review-projector.ts` / `external-review-aggregate.ts` reducers. `ExternalReviewCoordinator` may orchestrate IO, while verdict custody and eval adapters consume the same projection.
 - Request waits through the F280 typed contract only after the workflow is actually blocked.
   Workflow defaults may fill typed predicates, but actor/repo role must not become a hidden wake mode.

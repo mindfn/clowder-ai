@@ -11,6 +11,7 @@ import {
   inspectArtifactReviewSchema,
 } from '../domains/collaborative-content/artifact-review/inspection.js';
 import type { ArtifactReviewService } from '../domains/collaborative-content/artifact-review/service.js';
+import type { ModificationSourceDiscussions } from '../domains/collaborative-content/modification/source-discussions.js';
 import type { MediaReviewPrincipal } from '../domains/video-studio/content-owner/published-media-access.js';
 import { replyArtifactReviewError } from './artifact-review-route-errors.js';
 import {
@@ -23,6 +24,7 @@ import { resolvePrincipalThread } from './callback-scope-helpers.js';
 
 export interface CallbackArtifactReviewRoutesDeps {
   reviews: ArtifactReviewService;
+  sourceDiscussions?: Pick<ModificationSourceDiscussions, 'forReview'>;
   threads: Pick<IThreadStore, 'get' | 'list'>;
   registry: CallbackAuthRegistry;
   agentKeyRegistry?: AgentKeyAuthRegistry;
@@ -62,9 +64,11 @@ export async function registerCallbackArtifactReviewRoutes(
               userId: authenticated.userId,
               threadId: thread.threadId,
               actor: { kind: 'cat', actorId: authenticated.catId },
+              ...(authenticated.kind === 'invocation' ? { invocationId: authenticated.invocationId } : {}),
             };
             const { threadId: _threadId, ...body } = parsed;
-            if (operation === 'read') return await inspectArtifactReview(deps.reviews, body, principal);
+            if (operation === 'read')
+              return await inspectArtifactReview(deps.reviews, body, principal, deps.sourceDiscussions);
             if (operation === 'prepare') {
               const view = await deps.reviews.prepare(body, principal);
               await deps.changed(principal.userId, view.review.reviewId);

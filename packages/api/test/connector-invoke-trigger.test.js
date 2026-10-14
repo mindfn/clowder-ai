@@ -430,6 +430,11 @@ describe('ConnectorInvokeTrigger', () => {
     };
   }
 
+  function persistConnectorMessage(messageStore, message) {
+    const { id: _requestedId, ...input } = message;
+    return messageStore.append(input);
+  }
+
   function activeManagedReviewLease(overrides = {}) {
     const terminalPredicate = canonicalizeActionTerminalPredicate({
       actionFamily: 'review',
@@ -479,6 +484,109 @@ describe('ConnectorInvokeTrigger', () => {
     assert.strictEqual(routerMock.calls[0].threadId, 'thread-1');
     assert.strictEqual(routerMock.calls[0].userMessageId, 'msg-1');
     assert.deepStrictEqual(routerMock.calls[0].targetCats, ['opus']);
+  });
+
+  it('rejects a stale deployment continuation before direct invocation admission', async () => {
+    const trigger = createTrigger({
+      deploymentWaitStartGuard: { check: async () => ({ ok: false, reason: 'authority_stale' }) },
+    });
+    await assert.rejects(
+      trigger.trigger('thread-1', /** @type {any} */ ('opus'), 'user-1', 'old wait', 'msg-stale'),
+      /deployment wait continuation authority_stale/,
+    );
+    assert.equal(recordMock.creates.length, 0);
+    assert.equal(routerMock.calls.length, 0);
+  });
+
+  it('rejects a deployment continuation when the runtime authority guard is absent', async () => {
+    const trigger = createTrigger();
+    await assert.rejects(
+      trigger.trigger(
+        'thread-1',
+        /** @type {any} */ ('opus'),
+        'user-1',
+        'deployment wait',
+        'msg-deployment',
+        undefined,
+        {
+          reason: 'deployment_wait_satisfied',
+        },
+      ),
+      /deployment wait continuation evidence_stale/,
+    );
+    assert.equal(recordMock.creates.length, 0);
+    assert.equal(routerMock.calls.length, 0);
+  });
+
+  it('rechecks deployment authority after direct admission and before starting the child', async () => {
+    let reads = 0;
+    const trigger = createTrigger({
+      deploymentWaitStartGuard: {
+        check: async () => (++reads === 1 ? { ok: true } : { ok: false, reason: 'authority_stale' }),
+      },
+    });
+    await assert.rejects(
+      trigger.trigger('thread-1', /** @type {any} */ ('opus'), 'user-1', 'old wait', 'msg-stale-late'),
+      /deployment wait continuation authority_stale before execution/,
+    );
+    assert.equal(reads, 2);
+    assert.equal(recordMock.creates.length, 1);
+    assert.equal(routerMock.calls.length, 0);
+  });
+
+  it('keeps a failed direct admission retryable when deployment readiness disappears', async () => {
+    let reads = 0;
+    const trigger = createTrigger({
+      deploymentWaitStartGuard: {
+        check: async () => (++reads === 1 ? { ok: true } : { ok: false, reason: 'evidence_stale' }),
+      },
+    });
+    await assert.rejects(
+      trigger.trigger('thread-1', /** @type {any} */ ('opus'), 'user-1', 'wait', 'msg-not-ready'),
+      /deployment wait continuation evidence_stale before execution/,
+    );
+    assert.equal(
+      recordMock.updates.some(({ data }) => data.status === 'failed'),
+      true,
+    );
+    assert.equal(routerMock.calls.length, 0);
+  });
+
+  it('resolves a direct Repo Inbox wake as unstructured only when the producer declares repo_inbox (F167)', async () => {
+    const repoInboxMessage = {
+      id: 'msg-repo-inbox',
+      threadId: 'thread-1',
+      userId: 'user-1',
+      catId: null,
+      content: 'New issue #1576',
+      source: { connector: 'github-repo-event', label: 'GitHub', meta: {} },
+    };
+    const messageStore = { getById: async (id) => (id === repoInboxMessage.id ? repoInboxMessage : null) };
+
+    const declared = createTrigger({ messageStore });
+    await declared.trigger(
+      'thread-1',
+      /** @type {any} */ ('opus'),
+      'user-1',
+      repoInboxMessage.content,
+      repoInboxMessage.id,
+      undefined,
+      { sourceCategory: 'repo_inbox' },
+    );
+    await waitForTrigger();
+    assert.deepStrictEqual(routerMock.calls[0].options.turnCustodyWake, { kind: 'unstructured', source: 'repo_inbox' });
+
+    // Same message without the declaration stays legacy fail-closed.
+    const undeclared = createTrigger({ messageStore });
+    await undeclared.trigger(
+      'thread-2',
+      /** @type {any} */ ('opus'),
+      'user-1',
+      repoInboxMessage.content,
+      repoInboxMessage.id,
+    );
+    await waitForTrigger();
+    assert.deepStrictEqual(routerMock.calls[1].options.turnCustodyWake, { kind: 'legacy', reason: 'carrier_missing' });
   });
 
   it('copies the exact stored wait carrier into a direct Invocation and event-wait turn provenance', async () => {
@@ -2276,10 +2384,12 @@ describe('ConnectorInvokeTrigger', () => {
 
     it('projects the exact stored wait carrier into Queue while the thread is busy', async () => {
       trackerMock.setActive('thread-1');
-      const storedMessage = waitConnectorMessage('msg-wait-queued', 'wait:pr:owner/repo#7:g3:matched');
-      const trigger = createTrigger({
-        messageStore: { getById: async (id) => (id === storedMessage.id ? storedMessage : null) },
-      });
+      const messageStore = new MessageStore();
+      const storedMessage = persistConnectorMessage(
+        messageStore,
+        waitConnectorMessage('msg-wait-queued', 'wait:pr:owner/repo#7:g3:matched'),
+      );
+      const trigger = createTrigger({ messageStore });
 
       await trigger.trigger(
         storedMessage.threadId,
@@ -2375,6 +2485,26 @@ describe('ConnectorInvokeTrigger', () => {
       assert.strictEqual(entries[0].priority, 'urgent');
     });
 
+    it('a busy-thread Repo Inbox wake keeps its repo_inbox category on the queue entry (F167)', async () => {
+      trackerMock.setActive('thread-1', 'user-1');
+      const trigger = createTrigger();
+      trigger.trigger(
+        'thread-1',
+        /** @type {any} */ ('opus'),
+        'user-1',
+        'New issue while busy',
+        'msg-repo-inbox-busy',
+        undefined,
+        { sourceCategory: 'repo_inbox' },
+      );
+      await waitForTrigger();
+
+      assert.strictEqual(routerMock.calls.length, 0);
+      const entries = queue.list('thread-1', 'user-1');
+      assert.strictEqual(entries.length, 1);
+      assert.strictEqual(entries[0].sourceCategory, 'repo_inbox');
+    });
+
     it('urgent connector with owner mismatch still enqueues without cancel (F175)', async () => {
       trackerMock.setActive('thread-1', 'owner-user');
       const trigger = createTrigger();
@@ -2464,13 +2594,16 @@ describe('ConnectorInvokeTrigger', () => {
 
     it('does not coalesce different wait generations under the same adapter key', async () => {
       trackerMock.setActive('thread-1');
-      const first = waitConnectorMessage('msg-wait-g3', 'wait:pr:owner/repo#7:g3:matched', 3);
-      const second = waitConnectorMessage('msg-wait-g4', 'wait:pr:owner/repo#7:g4:matched', 4);
-      const messages = new Map([
-        [first.id, first],
-        [second.id, second],
-      ]);
-      const trigger = createTrigger({ messageStore: { getById: async (id) => messages.get(id) ?? null } });
+      const messageStore = new MessageStore();
+      const first = persistConnectorMessage(
+        messageStore,
+        waitConnectorMessage('msg-wait-g3', 'wait:pr:owner/repo#7:g3:matched', 3),
+      );
+      const second = persistConnectorMessage(
+        messageStore,
+        waitConnectorMessage('msg-wait-g4', 'wait:pr:owner/repo#7:g4:matched', 4),
+      );
+      const trigger = createTrigger({ messageStore });
       const policy = {
         priority: 'normal',
         sourceCategory: 'review',
@@ -3066,7 +3199,9 @@ describe('ConnectorInvokeTrigger', () => {
           getById: async (messageId) => (messageId === legacySource.id ? legacySource : null),
         },
         queueCustodyCoordinator: {
-          async transferEntryCustody() {},
+          async transferEntryCustody(entry) {
+            legacySource.queueCustody.entryId = entry.id;
+          },
         },
       });
 
@@ -3217,6 +3352,7 @@ describe('ConnectorInvokeTrigger', () => {
     it('R2-P1-A: queue full emits system_info via broadcastAgentMessage', async () => {
       const mockFullQueue = /** @type {any} */ ({
         hasEntryWithMessageId: () => false,
+        findEntryWithMessageId: () => null,
         enqueue: () => ({ outcome: 'full' }),
         size: () => 5,
         list: () => [],

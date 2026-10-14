@@ -58,6 +58,31 @@ describe('apiFetch 401 retry', () => {
     expect(messageCalls.length).toBe(2);
   });
 
+  it('replaces the CSRF header with the refreshed session token on a mutation retry', async () => {
+    let sessionAttempt = 0;
+    let dataAttempt = 0;
+    const observedCsrf: Array<string | null> = [];
+    const mockFetch = vi.fn().mockImplementation((url: string, init?: RequestInit) => {
+      if (url.includes('/api/session')) {
+        sessionAttempt += 1;
+        return Promise.resolve(Response.json({ csrfToken: `csrf-${sessionAttempt}` }));
+      }
+      dataAttempt += 1;
+      observedCsrf.push(new Headers(init?.headers).get('x-csrf-token'));
+      return Promise.resolve(new Response('{}', { status: dataAttempt === 1 ? 401 : 200 }));
+    });
+    globalThis.fetch = mockFetch;
+
+    const { apiFetch } = await loadApiModules();
+    const response = await apiFetch('/api/memory/people/person_1/actions', {
+      method: 'POST',
+      body: '{}',
+    });
+
+    expect(response.status).toBe(200);
+    expect(observedCsrf).toEqual(['csrf-1', 'csrf-2']);
+  });
+
   it('does not retry on non-401 errors', async () => {
     const calls: string[] = [];
     const mockFetch = vi.fn().mockImplementation((url: string) => {

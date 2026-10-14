@@ -203,7 +203,7 @@ function globToRegex(pattern) {
     .replace(/\*\*/g, '<<<GLOBSTAR>>>')
     .replace(/\*/g, '[^/]*')
     .replace(/<<<GLOBSTAR>>>/g, '.*');
-  return new RegExp(`^${re}$`);
+  return new RegExp(`^${re}$(?!.)`, 's');
 }
 
 /**

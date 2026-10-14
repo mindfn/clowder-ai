@@ -3,12 +3,14 @@
 import { type ReactNode, type RefObject, useEffect, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { CafeIcon } from '@/components/rich/CafeIcons';
+import { useShellCopy } from '../shell/shell-copy';
 import { ThreadCatSettingsContent } from './ThreadCatSettings';
 import { ThreadEffortSettingsContent } from './ThreadEffortSettings';
 import { ThreadGoalSettingsContent } from './ThreadGoalSettings';
 import { ThreadLabelSettingsContent } from './ThreadLabelPicker';
 import { ThreadNativeStatusSettingsContent } from './ThreadNativeStatusSettings';
 import { ThreadSpeedSettingsContent } from './ThreadSpeedSettings';
+import { threadSignalsCopy } from './thread-signals.shell-copy';
 
 type SettingsSectionId = 'goal' | 'status' | 'cats' | 'effort' | 'speed' | 'labels';
 
@@ -16,6 +18,7 @@ interface ThreadSettingsPanelProps {
   open: boolean;
   threadId: string;
   threadTitle: string;
+  projectPath?: string;
   currentCats: string[];
   currentLabels: string[];
   onSavePreferredCats?: (threadId: string, cats: string[]) => void | Promise<void>;
@@ -28,6 +31,7 @@ export function ThreadSettingsPanel({
   open,
   threadId,
   threadTitle,
+  projectPath,
   currentCats,
   currentLabels,
   onSavePreferredCats,
@@ -35,6 +39,7 @@ export function ThreadSettingsPanel({
   onClose,
   returnFocusRef,
 }: ThreadSettingsPanelProps) {
+  const copy = useShellCopy(threadSignalsCopy);
   const panelRef = useRef<HTMLElement>(null);
   const [activeSection, setActiveSection] = useState<SettingsSectionId | null>(null);
 
@@ -100,6 +105,12 @@ export function ThreadSettingsPanel({
       </header>
 
       <div className="min-h-0 flex-1 overflow-y-auto p-2">
+        {projectPath && projectPath !== 'default' && (
+          <div data-testid="thread-project-path" className="mb-2 rounded-xl border border-cafe-subtle px-3 py-2">
+            <p className="text-micro text-cafe-muted">{copy.projectPath}</p>
+            <p className="mt-1 break-all text-xs text-cafe-secondary">{projectPath}</p>
+          </div>
+        )}
         <SettingsSection
           id="goal"
           title="对话目标"

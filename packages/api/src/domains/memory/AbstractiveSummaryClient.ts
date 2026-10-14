@@ -1,279 +1,27 @@
-/**
- * Phase G: Opus API client for generating abstractive summaries + durable candidates.
- *
- * Design: Opus outputs NATURAL LANGUAGE (what it's good at).
- * Program parses the output into structured segments (what code is good at).
- *
- * co-creator原话："我们就不能让他返回自然语言直接帮他加格式吗？格式就是程序加。"
- */
-
+/** Abstractive summary transport; coverage comes from the actual prepared input. */
 import { buildProviderEndpoint } from '../../config/provider-endpoint.js';
+import { prepareAbstractiveBatch } from './abstractive-summary-input.js';
+import { MAX_CANDIDATES_PER_SEGMENT, parseNaturalLanguageOutput } from './abstractive-summary-output.js';
+import { SYSTEM_PROMPT } from './abstractive-summary-prompt.js';
+import type { AbstractiveInput, AbstractiveResult } from './abstractive-summary-types.js';
 
-export interface AbstractiveInput {
-  previousSummary: string | null;
-  messages: Array<{ id: string; content: string; catId?: string; timestamp: number }>;
-  threadId: string;
-}
-
-export interface TopicSegment {
-  summary: string;
-  topicKey: string;
-  topicLabel: string;
-  boundaryReason: string;
-  boundaryConfidence: 'high' | 'medium' | 'low';
-  fromMessageId: string;
-  toMessageId: string;
-  messageCount: number;
-  relatedSegmentIds?: string[];
-  candidates?: DurableCandidate[];
-}
-
-export interface DurableCandidate {
-  kind: 'decision' | 'lesson' | 'method';
-  title: string;
-  claim: string;
-  why_durable: string;
-  evidence: Array<{ threadId: string; messageId: string; span: string }>;
-  relatedAnchors: string[];
-  confidence: 'explicit' | 'inferred';
-}
-
-export interface AbstractiveResult {
-  segments: TopicSegment[];
-}
+export {
+  isImplementationNoise,
+  MAX_CANDIDATES_PER_SEGMENT,
+  parseNaturalLanguageOutput,
+} from './abstractive-summary-output.js';
+export type {
+  AbstractiveInput,
+  AbstractiveMessage,
+  AbstractiveResult,
+  DurableCandidate,
+  TopicSegment,
+} from './abstractive-summary-types.js';
 
 interface ProviderProfile {
   mode: 'api_key' | 'subscription';
   baseUrl: string;
   apiKey: string;
-}
-
-// ─── System Prompt: natural language output ──────────────────────
-const SYSTEM_PROMPT = `You are a thread summarizer for Clowder AI, an AI-collaborative project management system.
-
-IMPORTANT: You are a SUMMARIZER, not a conversation participant. Do NOT respond to the messages — summarize them.
-
-Given a batch of thread messages, write a summary using this format:
-
-# Title of what was discussed
-
-A 200-400 character summary of what was discussed, what was decided, risks, and next steps.
-
-## Durable Knowledge (if any)
-
-[decision!] Short title — Use ! when the human explicitly confirmed or multiple cats reached consensus
-[decision] Short title — Use plain tag when you infer this is durable but it was not explicitly confirmed
-[lesson!] / [lesson] — Same convention: ! = human confirmed, plain = inferred
-[method!] / [method] — Same convention
-
-Rules:
-- The # title line is REQUIRED
-- The summary paragraph is REQUIRED (200-400 chars, after the title)
-- [decision], [lesson], [method] tags are OPTIONAL — only include if there's genuinely durable knowledge
-- Add ! suffix (e.g. [decision!]) ONLY when the human/operator explicitly confirmed the decision or lesson in the conversation
-- Do NOT extract brainstorm branches, temporary TODOs, or session-local context
-- Keep it concise — this is a summary, not a transcript
-- Write in the same language as the messages (Chinese/English/mixed)
-- Maximum 2 candidates per summary — if you find more, keep only the most durable ones
-
-## Knowledge Admission Standards
-
-Before tagging anything as [decision], [lesson], or [method], ask yourself these 3 questions.
-If ANY answer is "no", do NOT extract it:
-1. Would a new team member benefit from knowing this 3 months from now?
-2. Does this hold true independent of the specific code/file/PR being discussed?
-3. Can this prevent future repeated debates or repeated mistakes?
-
-General rule: if it loses meaning outside the current file/PR/bug, it is NOT durable knowledge.
-
-| Kind | MUST contain | MUST NOT be |
-|------|-------------|-------------|
-| decision | Choice rationale, tradeoffs, long-term constraint | A code change, debug step, or implementation detail |
-| lesson | Recurrence risk, avoidance strategy | A one-time error, single incident symptom |
-| method | Reusable principle applicable to other features | A one-off implementation technique |
-
-BAD (do NOT extract these):
-- [decision] Rewrote JSON parser to use parseNaturalLanguageOutput
-- [decision] Added mkdirSync before writeFileSync to fix ENOENT
-- [lesson] writeFileSync throws ENOENT when directory does not exist
-- [lesson] regex needs !? suffix for optional exclamation mark
-- [method] Used JSON.parse to extract candidates from summary_segments
-
-GOOD (these ARE durable knowledge):
-- [decision] Knowledge Feed uses YAML files as truth source, not SQLite — for git-trackability
-- [decision!] Entry point hierarchy follows usage frequency: high-freq exposed, low-freq nested
-- [lesson!] Fail-open catch blocks must log errors, not silently swallow — silent failures cause "looks OK but actually empty" bugs
-- [method] Let the model output natural language; program adds structural fields afterward`;
-
-// ─── Build user prompt ──────────────────────────────────────────
-function buildUserPrompt(input: AbstractiveInput): string {
-  const parts: string[] = [];
-
-  parts.push('Summarize the following thread messages.\n');
-
-  if (input.previousSummary) {
-    parts.push(`## Previous Summary\n${input.previousSummary}\n`);
-  }
-
-  parts.push(`## Messages\n`);
-  const MAX_MSG_CHARS = 1000;
-  const MAX_TOTAL_CHARS = 80000;
-  let totalChars = 0;
-  for (const msg of input.messages) {
-    const speaker = msg.catId ?? 'user';
-    const time = new Date(msg.timestamp).toISOString().slice(0, 19);
-    const content = msg.content.length > MAX_MSG_CHARS ? `${msg.content.slice(0, MAX_MSG_CHARS)}...` : msg.content;
-    const line = `[${time}] [${speaker}]: ${content}`;
-    totalChars += line.length;
-    if (totalChars > MAX_TOTAL_CHARS) {
-      parts.push(`[... ${input.messages.length} total messages, truncated]`);
-      break;
-    }
-    parts.push(line);
-  }
-
-  return parts.join('\n');
-}
-
-// ─── Parse natural language output into structured segments ─────
-/** @internal Exported for testing only */
-export function parseNaturalLanguageOutput(text: string, input: AbstractiveInput): AbstractiveResult | null {
-  if (!text || text.trim().length < 10) return null;
-
-  // Extract title: first line starting with # or ## or ### or **bold title**
-  const titleMatch = text.match(/^#{1,3}\s+(.+)$/m) || text.match(/^\*\*(.+?)\*\*/m);
-  let topicLabel: string;
-  let titleEnd: number;
-
-  if (titleMatch) {
-    topicLabel = titleMatch[1].trim();
-    titleEnd = text.indexOf(titleMatch[0]) + titleMatch[0].length;
-  } else {
-    // Fallback: use first non-empty line as title, or generate from thread ID
-    const firstLine = text.trim().split('\n')[0]?.trim();
-    topicLabel =
-      firstLine && firstLine.length > 5 && firstLine.length < 200
-        ? firstLine.replace(/^[-*>\s]+/, '').slice(0, 80)
-        : `Thread ${input.threadId.slice(7, 19)} Summary`;
-    titleEnd = firstLine ? text.indexOf(firstLine) + firstLine.length : 0;
-  }
-
-  const topicKey = topicLabel
-    .toLowerCase()
-    .replace(/[^a-z0-9\u4e00-\u9fff]+/g, '-')
-    .replace(/^-|-$/g, '')
-    .slice(0, 60);
-
-  // Extract summary: text between title and [decision!?]/[lesson!?]/[method!?] or end
-  const candidateStart = text.search(/\n##\s+Durable|\n\[(decision|lesson|method)!?\]/i);
-  const summaryText =
-    candidateStart > titleEnd ? text.slice(titleEnd, candidateStart).trim() : text.slice(titleEnd).trim();
-
-  // Clean up summary: remove markdown headers, keep plain text
-  const summary = summaryText
-    .split('\n')
-    .filter((l) => !l.startsWith('#'))
-    .join(' ')
-    .replace(/\s+/g, ' ')
-    .trim()
-    .slice(0, 800);
-
-  // If no summary extracted, use the whole text as summary
-  if (!summary) {
-    const fallback = text
-      .replace(/^#{1,3}\s+.+$/m, '')
-      .replace(/\s+/g, ' ')
-      .trim()
-      .slice(0, 800);
-    if (!fallback) return null;
-    return buildSingleSegment(topicLabel, topicKey, fallback, [], input);
-  }
-
-  // Extract candidates: [decision], [lesson], [method] tags
-  const candidates = extractCandidates(text, input);
-  return buildSingleSegment(topicLabel, topicKey, summary, candidates, input);
-}
-
-// Reject gate: candidates that are implementation details, not durable knowledge
-const CODE_ACTION_RE =
-  /^(加了?|改了?|删除?了?|重写|修复|调整|更新|移除|添加|replaced|rewrote|added|removed|changed|fixed|updated|moved)[\s\u4e00-\u9fff]/i;
-const CODE_ARTIFACT_RE =
-  /\b(regex|parser|schema|route|component|endpoint|middleware|handler|migration|refactor|writeFile|readFile|mkdir|JSON\.parse|tsc|lint)\b/i;
-const FILE_EXT_RE = /\w+\.(tsx?|jsx?|mjs|cjs)\b/;
-const CODE_IDENT_RE = /\b[a-z]+[A-Z]\w*/;
-const MIN_TITLE_LENGTH = 8;
-
-/** @internal Exported for testing only */
-export function isImplementationNoise(title: string, claim: string): boolean {
-  const text = `${title} ${claim}`;
-  if (title.length < MIN_TITLE_LENGTH) return true;
-  if (CODE_ACTION_RE.test(title)) return true;
-  if (FILE_EXT_RE.test(title)) return true;
-  if (CODE_IDENT_RE.test(title)) return true;
-  // If title+claim contain multiple code artifacts, reject
-  const artifactHits = (text.match(new RegExp(CODE_ARTIFACT_RE.source, 'gi')) || []).length;
-  return artifactHits >= 2;
-}
-
-/** @internal Exported for testing only */
-export const MAX_CANDIDATES_PER_SEGMENT = 2;
-
-function extractCandidates(text: string, input: AbstractiveInput): DurableCandidate[] {
-  const candidates: DurableCandidate[] = [];
-  // Match [decision!] (explicit) or [decision] (inferred) — the ! suffix signals human confirmation
-  const candidateRegex = /\[(decision|lesson|method)(!?)\]\s*(.+?)(?:\s*[—–-]\s*(.+))?$/gim;
-  let match;
-  while ((match = candidateRegex.exec(text)) !== null) {
-    const kind = match[1].toLowerCase() as 'decision' | 'lesson' | 'method';
-    const isExplicit = match[2] === '!';
-    const title = match[3].trim();
-    const claim = match[4]?.trim() || title;
-    // Lightweight reject gate: skip implementation noise
-    if (isImplementationNoise(title, claim)) continue;
-    candidates.push({
-      kind,
-      title,
-      claim,
-      why_durable: 'Extracted from thread summary',
-      evidence: [{ threadId: input.threadId, messageId: input.messages[0]?.id ?? '', span: '' }],
-      relatedAnchors: [],
-      confidence: isExplicit ? 'explicit' : 'inferred',
-    });
-  }
-  // Cap: keep only the most confident candidates (explicit first, then by order)
-  if (candidates.length > MAX_CANDIDATES_PER_SEGMENT) {
-    candidates.sort((a, b) => (a.confidence === 'explicit' ? 0 : 1) - (b.confidence === 'explicit' ? 0 : 1));
-    candidates.length = MAX_CANDIDATES_PER_SEGMENT;
-  }
-  return candidates;
-}
-
-function buildSingleSegment(
-  topicLabel: string,
-  topicKey: string,
-  summary: string,
-  candidates: DurableCandidate[],
-  input: AbstractiveInput,
-): AbstractiveResult | null {
-  const firstMsg = input.messages[0];
-  const lastMsg = input.messages[input.messages.length - 1];
-  if (!firstMsg || !lastMsg) return null;
-
-  return {
-    segments: [
-      {
-        summary,
-        topicKey,
-        topicLabel,
-        boundaryReason: 'single batch',
-        boundaryConfidence: 'high',
-        fromMessageId: firstMsg.id,
-        toMessageId: lastMsg.id,
-        messageCount: input.messages.length,
-        candidates: candidates.length > 0 ? candidates : undefined,
-      },
-    ],
-  };
 }
 
 // ─── Client factory ─────────────────────────────────────────────
@@ -288,50 +36,91 @@ export function createAbstractiveClient(
         logger.info('[abstractive-client] no API key profile, skipping');
         return null;
       }
-      const userContent = buildUserPrompt(input);
-      const res = await fetch(buildProviderEndpoint({ protocol: 'anthropic', baseUrl: profile.baseUrl }), {
-        method: 'POST',
-        redirect: 'error',
-        headers: {
-          'x-api-key': profile.apiKey,
-          'anthropic-version': '2023-06-01',
-          'content-type': 'application/json',
-        },
-        body: JSON.stringify({
-          model: 'claude-opus-4-6',
-          max_tokens: 8192,
-          system: SYSTEM_PROMPT,
-          messages: [{ role: 'user', content: userContent }],
-        }),
-      });
-
-      if (!res.ok) {
-        logger.error(`[abstractive-client] API error ${res.status}: ${res.statusText}`);
-        return null;
+      const prepared = prepareAbstractiveBatch(input);
+      if (!prepared) return null;
+      const results: AbstractiveResult[] = [];
+      for (const userContent of prepared.prompts) {
+        const result = await generateSummaryFragment(profile, userContent, prepared.input, logger);
+        if (!result) return null;
+        results.push(result);
       }
-
-      const body = (await res.json()) as { content: Array<{ type: string; text?: string }> };
-      const text = body.content?.find((c) => c.type === 'text')?.text;
-      if (!text) {
-        logger.error('[abstractive-client] no text in response');
-        return null;
-      }
-
-      // Parse natural language output into structured segments
-      const result = parseNaturalLanguageOutput(text, input);
-      if (!result) {
-        logger.error(`[abstractive-client] failed to parse output: ${text.slice(0, 150)}`);
-        return null;
-      }
-
-      logger.info(
-        `[abstractive-client] parsed: "${result.segments[0]?.topicLabel}" (${result.segments[0]?.summary.length} chars, ${result.segments[0]?.candidates?.length ?? 0} candidates)`,
-      );
-      return result;
+      return mergeSummaryFragments(results);
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
       logger.error(`[abstractive-client] fetch/parse error: ${msg}`);
       return null;
     }
+  };
+}
+
+async function generateSummaryFragment(
+  profile: ProviderProfile,
+  userContent: string,
+  input: AbstractiveInput,
+  logger: { info: (msg: string) => void; error: (msg: string, err?: unknown) => void },
+): Promise<AbstractiveResult | null> {
+  const res = await fetch(buildProviderEndpoint({ protocol: 'anthropic', baseUrl: profile.baseUrl }), {
+    method: 'POST',
+    redirect: 'error',
+    headers: {
+      'x-api-key': profile.apiKey,
+      'anthropic-version': '2023-06-01',
+      'content-type': 'application/json',
+    },
+    body: JSON.stringify({
+      model: 'claude-opus-4-6',
+      max_tokens: 8192,
+      system: SYSTEM_PROMPT,
+      messages: [{ role: 'user', content: userContent }],
+    }),
+  });
+
+  if (!res.ok) {
+    logger.error(`[abstractive-client] API error ${res.status}: ${res.statusText}`);
+    return null;
+  }
+
+  const body = (await res.json()) as { content: Array<{ type: string; text?: string }>; stop_reason?: string };
+  if (body.stop_reason === 'max_tokens') {
+    logger.error('[abstractive-client] incomplete model output; keeping watermark unchanged');
+    return null;
+  }
+  const text = body.content
+    ?.filter((c) => c.type === 'text')
+    .map((c) => c.text ?? '')
+    .join('\n');
+  if (!text) {
+    logger.error('[abstractive-client] no text in response');
+    return null;
+  }
+
+  // Parse natural language output into structured segments
+  const result = parseNaturalLanguageOutput(text, input);
+  if (!result) {
+    logger.error(`[abstractive-client] failed to parse output: ${text.slice(0, 150)}`);
+    return null;
+  }
+
+  logger.info(
+    `[abstractive-client] parsed: "${result.segments[0]?.topicLabel}" (${result.segments[0]?.summary.length} chars, ${result.segments[0]?.candidates?.length ?? 0} candidates)`,
+  );
+  return result;
+}
+
+function mergeSummaryFragments(results: AbstractiveResult[]): AbstractiveResult | null {
+  const first = results[0]?.segments[0];
+  if (!first) return null;
+  // Preserve the existing per-segment candidate cap when fragment results combine.
+  const candidates = results.flatMap((result) => result.segments[0].candidates ?? []);
+  candidates.sort((a, b) => (a.confidence === 'explicit' ? 0 : 1) - (b.confidence === 'explicit' ? 0 : 1));
+  // A fragmented message is acknowledged once, after every fragment succeeded.
+  return {
+    segments: [
+      {
+        ...first,
+        summary: results.map((result) => result.segments[0].summary).join('\n\n'),
+        candidates: candidates.slice(0, MAX_CANDIDATES_PER_SEGMENT),
+      },
+    ],
   };
 }

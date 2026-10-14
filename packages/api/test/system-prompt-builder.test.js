@@ -417,7 +417,7 @@ describe('SystemPromptBuilder', () => {
 
   // --- Phase 3.6: honesty rule ---
 
-  test('contains "不确定" honesty rule', async () => {
+  test('requires evidence for conclusions and honest incomplete status', async () => {
     const build = await getBuilder();
     const prompt = build({
       catId: 'opus',
@@ -425,7 +425,8 @@ describe('SystemPromptBuilder', () => {
       teammates: [],
       mcpAvailable: false,
     });
-    assert.ok(prompt.includes('不确定'), 'Prompt should tell cats to say "I\'m not sure"');
+    assert.ok(prompt.includes('结论必须基于多源证据'), 'Prompt should require evidence before conclusions');
+    assert.ok(prompt.includes('没查完就说还没查完'), 'Prompt should disclose an incomplete investigation');
   });
 
   test('contains "不要编造" anti-fabrication rule', async () => {
@@ -462,7 +463,8 @@ describe('SystemPromptBuilder', () => {
     const { buildStaticIdentity } = await import('../dist/domains/cats/services/context/SystemPromptBuilder.js');
     const opusId = buildStaticIdentity('opus');
     assert.ok(opusId.includes('工作流'), 'Opus should have workflow triggers');
-    assert.ok(opusId.includes('@缅因猫'), 'Opus workflow should mention review with 缅因猫');
+    assert.ok(opusId.includes('先判断要不要独立 review'));
+    assert.ok(opusId.includes('只找一只非作者的常规 reviewer'));
     assert.ok(
       opusId.includes('MG provenance override'),
       'Opus workflow should avoid local-reviewer ping after external merge-gate feedback',
@@ -470,12 +472,13 @@ describe('SystemPromptBuilder', () => {
 
     const codexId = buildStaticIdentity('codex');
     assert.ok(codexId.includes('工作流'), 'Codex should have workflow triggers');
-    assert.ok(codexId.includes('@布偶猫'), 'Codex workflow should mention notifying 布偶猫');
+    assert.ok(codexId.includes('完成 review → @作者'), 'Codex workflow should notify the author');
+    assert.ok(codexId.includes('### 执行纪律'));
+    assert.ok(codexId.includes('出口一问'));
     assert.ok(
       codexId.includes('MG provenance override'),
       'Codex workflow should avoid local-reviewer ping after external merge-gate feedback',
     );
-    assert.ok(codexId.includes('出口一问'), 'Codex workflow should include exit check (出口一问)');
 
     const opencodeId = buildStaticIdentity('opencode');
     assert.ok(opencodeId.includes('工作流'), 'OpenCode should have workflow triggers');
@@ -1309,38 +1312,7 @@ describe('SystemPromptBuilder', () => {
     );
   });
 
-  // F032 Phase D2: Reviewer section tests
-  test('buildReviewerSection returns reviewer list for opus (different family reviewers)', async () => {
-    const { buildReviewerSection } = await import('../dist/domains/cats/services/context/SystemPromptBuilder.js');
-    const section = buildReviewerSection('opus');
-    assert.ok(section, 'Should return section for opus');
-    assert.ok(section.includes('## 你当前的 Reviewers'), 'Should have reviewer header');
-    assert.ok(section.includes('@codex'), 'Should list codex as reviewer (different family)');
-    // Should NOT list same-family cats (opus-45 is ragdoll, same as opus)
-    assert.ok(!section.includes('@opus-45'), 'Should not list same-family opus-45');
-  });
-
-  test('buildReviewerSection returns null for unknown cat', async () => {
-    const { buildReviewerSection } = await import('../dist/domains/cats/services/context/SystemPromptBuilder.js');
-    const section = buildReviewerSection('unknown-cat');
-    assert.equal(section, null, 'Should return null for unknown cat');
-  });
-
-  // Cloud Codex R5 P2: Verify same-family fallback behavior is documented
-  // When requireDifferentFamily is enabled but no cross-family reviewers are available,
-  // same-family reviewers should be shown with a fallback note.
-  // This test verifies the cross-family-available case works correctly;
-  // the fallback case requires mocking roster/availability (out of scope for unit test).
-  test('buildReviewerSection shows cross-family when available (R5 P2 prerequisite)', async () => {
-    const { buildReviewerSection } = await import('../dist/domains/cats/services/context/SystemPromptBuilder.js');
-    const section = buildReviewerSection('opus');
-    assert.ok(section, 'Should return section');
-    // Cross-family available, so should NOT show fallback note
-    assert.ok(!section.includes('fallback'), 'Should not show fallback note when cross-family available');
-    assert.ok(section.includes('@codex'), 'Should show cross-family reviewer');
-  });
-
-  test('buildSystemPrompt includes reviewer section', async () => {
+  test('buildSystemPrompt does not inject legacy reviewer recommendations', async () => {
     const build = await getBuilder();
     const prompt = build({
       catId: 'opus',
@@ -1348,7 +1320,7 @@ describe('SystemPromptBuilder', () => {
       teammates: [],
       mcpAvailable: true,
     });
-    assert.ok(prompt.includes('## 你当前的 Reviewers'), 'System prompt should include reviewer section');
+    assert.ok(!prompt.includes('## 你当前的 Reviewers'), 'Reviewer choice belongs to risk routing and dossier');
   });
 
   // --- F042 Wave 3: Active participant hint tests ---
@@ -1950,6 +1922,17 @@ describe('SystemPromptBuilder', () => {
     assert.ok(!ctx.includes('Bootcamp Mode'), 'Should not include bootcamp header');
   });
 
+  test('maine-coon prompt uses risk-based review and a separate creative draft', async () => {
+    const { buildStaticIdentity } = await import('../dist/domains/cats/services/context/SystemPromptBuilder.js');
+    const prompt = buildStaticIdentity('codex');
+    assert.ok(prompt.includes('先判断要不要独立 review'));
+    assert.ok(prompt.includes('一只非作者的常规 reviewer'));
+    assert.ok(prompt.includes('动手前先请「创作位」出稿'));
+    assert.ok(prompt.includes('做完不再请他逐轮复审'));
+    assert.ok(prompt.includes('写进 feature doc 或 Task，不叫醒 owner'));
+    assert.ok(!prompt.includes('修完 bug/feature → @布偶猫 请 review'));
+  });
+
   // --- 回归测试：maine-coon prompt 必须包含 A2A 执行纪律 ---
 
   test('maine-coon prompt contains execution discipline keywords', async () => {
@@ -2101,8 +2084,8 @@ describe('SystemPromptBuilder', () => {
     const magicWordPattern = /\|.*?「(.+?)」/g;
     const rulesMagicWords = [...rulesText.matchAll(magicWordPattern)].map((m) => m[1]);
     assert.ok(
-      rulesMagicWords.length >= 7,
-      `Expected >=7 magic words in shared-rules.md, got ${rulesMagicWords.length}`,
+      rulesMagicWords.length === 6,
+      `Expected six current magic-word definitions in shared-rules.md, got ${rulesMagicWords.length}`,
     );
     const build = await getBuilder();
     const prompt = build({

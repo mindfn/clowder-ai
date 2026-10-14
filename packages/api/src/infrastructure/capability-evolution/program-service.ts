@@ -29,9 +29,11 @@ import {
   linkEvolutionProgramAttribution,
   linkEvolutionProgramIntervention,
   linkEvolutionProgramMeasurement,
+  type MeasurementConstitutionResolver,
   type ProgramAttributionLinkInput,
   type ProgramEvaluationDependencies,
   type ProgramInterventionLinkInput,
+  type ProgramMeasurementConstitutionRebindInput,
   type ProgramMeasurementLinkInput,
 } from './program-evaluation-linker.js';
 import { EvolutionProgramEventAppender } from './program-event-appender.js';
@@ -46,6 +48,7 @@ import {
   linkEvolutionProgramCertificates,
   type ProgramCertificatesLinkInput,
   type ProgramEvaluationTriggerInput,
+  rebindEvolutionProgramMeasurementConstitution,
   triggerEvolutionProgramEvaluation,
 } from './program-lifecycle-linker.js';
 import {
@@ -63,6 +66,7 @@ export class EvolutionProgramService {
   private readonly joinValidator?: Pick<ProgramJoinValidator, 'validate'>;
   private readonly triggerRegistration?: () => EvolutionTriggerRegistrationProjection | undefined;
   private readonly evaluationOwnerResolver?: EvaluationOwnerResolver;
+  private readonly measurementConstitutionResolver?: MeasurementConstitutionResolver;
   private readonly dispatchObservationTrigger?: EvolutionProgramServiceOptions['dispatchObservationTrigger'];
   private readonly dispatchEvaluationTrigger?: EvolutionProgramServiceOptions['dispatchEvaluationTrigger'];
   private readonly resolveChangeOwner: () => EvolutionChangeOwnerPort | undefined;
@@ -74,6 +78,7 @@ export class EvolutionProgramService {
     this.joinValidator = options.joinValidator;
     this.triggerRegistration = options.triggerRegistration;
     this.evaluationOwnerResolver = options.evaluationOwnerResolver;
+    this.measurementConstitutionResolver = options.measurementConstitutionResolver;
     this.dispatchObservationTrigger = options.dispatchObservationTrigger;
     this.dispatchEvaluationTrigger = options.dispatchEvaluationTrigger;
     this.resolveChangeOwner =
@@ -172,14 +177,13 @@ export class EvolutionProgramService {
     });
   }
 
-  /**
-   * F311 Phase 3 ingress. The Program — not the caller — runs the measurement join, the four-layer
-   * diagnosis and the intervention gate, then appends the canonical event. Callers pass identities
-   * only; every owner verdict is resolved from F267, and a missing owner contract fails closed.
-   */
   /** Constitutes a Program: the transition out of `constituting` that had no public producer. */
   async linkCertificates(input: ProgramCertificatesLinkInput): Promise<EvolutionProgramServiceResult> {
     return linkEvolutionProgramCertificates(input, this.evaluationDependencies());
+  }
+
+  async rebindMeasurementConstitution(input: ProgramMeasurementConstitutionRebindInput) {
+    return rebindEvolutionProgramMeasurementConstitution(input, this.evaluationDependencies());
   }
 
   /** Opens an evaluation round, but only if F192's dispatch says one opened. */
@@ -266,6 +270,9 @@ export class EvolutionProgramService {
         ),
       append: (envelope) => this.appender.appendValidated(envelope),
       ...(this.evaluationOwnerResolver === undefined ? {} : { ownerResolver: this.evaluationOwnerResolver }),
+      ...(this.measurementConstitutionResolver === undefined
+        ? {}
+        : { measurementConstitutionResolver: this.measurementConstitutionResolver }),
     };
   }
 

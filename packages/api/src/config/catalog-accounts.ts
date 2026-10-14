@@ -20,6 +20,7 @@ import {
 } from './account-store-format.js';
 import { assertAccountWritable, readAccountCatalogSnapshot } from './account-store-snapshot.js';
 import { resolveAccountStoreTopology, resolveAccountWriteRoot } from './account-store-topology.js';
+import { assertCodexSharedStateRoots, codexStateMutationChangesRoots } from './codex-shared-state.js';
 import { assertSafeTestConfigRoot } from './test-config-write-guard.js';
 
 const CONFIG_SUBDIR = '.cat-cafe';
@@ -97,6 +98,7 @@ function describeAccountConflict(existing: AccountConfig, incoming: AccountConfi
   if (current.authType !== next.authType) diffs.push(`authType ${current.authType} vs ${next.authType}`);
   if (current.clientId !== next.clientId) diffs.push('clientId differs');
   if (canonicalJson(current.envVars) !== canonicalJson(next.envVars)) diffs.push('envVars differ');
+  if (canonicalJson(current.codex) !== canonicalJson(next.codex)) diffs.push('Codex account metadata differs');
   if ((current.baseUrl ?? '(none)') !== (next.baseUrl ?? '(none)')) {
     diffs.push(`baseUrl ${current.baseUrl ?? '(none)'} vs ${next.baseUrl ?? '(none)'}`);
   }
@@ -469,6 +471,11 @@ export function readCatalogAccounts(projectRoot: string): Record<string, Account
 
 export function writeCatalogAccount(projectRoot: string, ref: string, account: AccountConfig): void {
   assertAccountWritable(projectRoot, ref);
+  if (ref === 'codex' || account.codex) {
+    const current = readAccountCatalogSnapshot(projectRoot);
+    if (codexStateMutationChangesRoots(ref, current[ref], account))
+      assertCodexSharedStateRoots(projectRoot, { accounts: { ...current, [ref]: account } });
+  }
   migrateCatalogAccounts(projectRoot);
   const accounts = readAllGlobal(projectRoot);
   accounts[ref] = account;
@@ -477,6 +484,11 @@ export function writeCatalogAccount(projectRoot: string, ref: string, account: A
 
 export function deleteCatalogAccount(projectRoot: string, ref: string): void {
   assertAccountWritable(projectRoot, ref);
+  if (ref === 'codex') {
+    const prospective = { ...readAccountCatalogSnapshot(projectRoot) };
+    delete prospective[ref];
+    assertCodexSharedStateRoots(projectRoot, { accounts: prospective });
+  }
   migrateCatalogAccounts(projectRoot);
   const accounts = readAllGlobal(projectRoot);
   if (!(ref in accounts)) return;

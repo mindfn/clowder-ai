@@ -1593,7 +1593,7 @@ describe('HubCatEditor', () => {
     });
     await flushEffects();
 
-    expect(document.body.textContent).toContain('认证信息');
+    expect(document.body.textContent).toContain('用哪个号');
     expect(document.body.textContent).not.toContain('CLI Command');
 
     await changeField(queryField(container, 'input[aria-label="Name"]'), '火花猫');
@@ -1602,7 +1602,7 @@ describe('HubCatEditor', () => {
     await changeField(queryField(container, 'textarea[aria-label="Aliases"]'), '@runtime-spark, @火花猫');
     await changeField(queryField(container, 'select[aria-label="Client"]'), 'openai', 'change');
     await flushEffects();
-    await changeField(queryField(container, 'select[aria-label="认证信息"]'), 'codex-sponsor', 'change');
+    await changeField(queryField(container, 'select[aria-label="用哪个号"]'), 'codex-sponsor', 'change');
     await changeField(queryField(container, 'input[aria-label="Model"]'), 'gpt-5.4-mini');
 
     const saveButton = Array.from(document.body.querySelectorAll('button')).find(
@@ -2237,7 +2237,7 @@ describe('HubCatEditor', () => {
     await changeField(queryField<HTMLSelectElement>(container, 'select[aria-label="Client"]'), 'google', 'change');
     await flushEffects();
     await changeField(
-      queryField<HTMLSelectElement>(container, 'select[aria-label="认证信息"]'),
+      queryField<HTMLSelectElement>(container, 'select[aria-label="用哪个号"]'),
       'gemini-oauth',
       'change',
     );
@@ -2332,7 +2332,7 @@ describe('HubCatEditor', () => {
     expect(modelInput.value).toBe('claude-opus-4-6');
 
     // Switch Provider to codex-sponsor (API Key)
-    await changeField(queryField(container, 'select[aria-label="认证信息"]'), 'codex-sponsor', 'change');
+    await changeField(queryField(container, 'select[aria-label="用哪个号"]'), 'codex-sponsor', 'change');
     await flushEffects();
 
     // defaultModel should have been reset (not still 'claude-opus-4-6')
@@ -2405,7 +2405,7 @@ describe('HubCatEditor', () => {
     expect(providerInput.value).toBe('maas');
 
     // Switch account to deepseek-key
-    await changeField(queryField(container, 'select[aria-label="认证信息"]'), 'deepseek-key', 'change');
+    await changeField(queryField(container, 'select[aria-label="用哪个号"]'), 'deepseek-key', 'change');
     await flushEffects();
 
     // provider should have been cleared (not still 'maas')
@@ -2429,7 +2429,7 @@ describe('HubCatEditor', () => {
 
     await changeField(queryField(container, 'select[aria-label="Client"]'), 'antigravity', 'change');
     expect(document.body.textContent).toContain('CLI Command');
-    expect(document.body.querySelector('select[aria-label="认证信息"]')).toBeNull();
+    expect(document.body.querySelector('select[aria-label="用哪个号"]')).toBeNull();
   });
 
   it('shows the selected client builtin account together with all API key accounts', async () => {
@@ -2483,7 +2483,7 @@ describe('HubCatEditor', () => {
 
     await changeField(queryField(container, 'select[aria-label="Client"]'), 'openai', 'change');
     await flushEffects();
-    const providerSelect = queryField<HTMLSelectElement>(container, 'select[aria-label="认证信息"]');
+    const providerSelect = queryField<HTMLSelectElement>(container, 'select[aria-label="用哪个号"]');
     const optionLabels = Array.from(providerSelect.options).map((option) => option.textContent ?? '');
     expect(optionLabels).toContain('Codex (OAuth)（OAuth）');
     expect(optionLabels).toContain('Claude Sponsor（API Key）');
@@ -2710,7 +2710,7 @@ describe('HubCatEditor', () => {
     });
     await flushEffects();
 
-    const providerSelect = queryField<HTMLSelectElement>(container, 'select[aria-label="认证信息"]');
+    const providerSelect = queryField<HTMLSelectElement>(container, 'select[aria-label="用哪个号"]');
     const optionLabels = Array.from(providerSelect.options).map((option) => option.textContent ?? '');
     expect(optionLabels).toContain('Gemini (OAuth)（内置）');
     // #470: api_key profiles WITH baseUrl (third-party proxy) now show;
@@ -3035,7 +3035,7 @@ describe('HubCatEditor', () => {
     });
     await flushEffects();
 
-    expect(queryField<HTMLSelectElement>(container, 'select[aria-label="认证信息"]').value).toBe('');
+    expect(queryField<HTMLSelectElement>(container, 'select[aria-label="用哪个号"]').value).toBe('');
 
     const saveButton = Array.from(document.body.querySelectorAll('button')).find(
       (button) => button.textContent === '保存',
@@ -3122,7 +3122,7 @@ describe('HubCatEditor', () => {
     });
     await flushEffects();
 
-    expect(queryField<HTMLSelectElement>(container, 'select[aria-label="认证信息"]').value).toBe('');
+    expect(queryField<HTMLSelectElement>(container, 'select[aria-label="用哪个号"]').value).toBe('');
 
     const saveButton = Array.from(document.body.querySelectorAll('button')).find(
       (button) => button.textContent === '保存',
@@ -3232,7 +3232,7 @@ describe('HubCatEditor', () => {
     await flushEffects();
     await flushEffects();
 
-    expect(queryField<HTMLSelectElement>(container, 'select[aria-label="认证信息"]').value).toBe('');
+    expect(queryField<HTMLSelectElement>(container, 'select[aria-label="用哪个号"]').value).toBe('');
     expect((saveButton as HTMLButtonElement).disabled).toBe(false);
   });
 
@@ -3296,7 +3296,7 @@ describe('HubCatEditor', () => {
     });
     await flushEffects();
 
-    await changeField(queryField(container, 'select[aria-label="认证信息"]'), '', 'change');
+    await changeField(queryField(container, 'select[aria-label="用哪个号"]'), '', 'change');
 
     const saveButton = Array.from(document.body.querySelectorAll('button')).find(
       (button) => button.textContent === '保存',
@@ -3521,7 +3521,7 @@ describe('HubCatEditor', () => {
     await changeField(queryField(container, 'textarea[aria-label="Aliases"]'), '@runtime-spark, @火花猫');
     await changeField(queryField(container, 'select[aria-label="Client"]'), 'openai', 'change');
     await flushEffects();
-    await changeField(queryField(container, 'select[aria-label="认证信息"]'), 'codex-sponsor', 'change');
+    await changeField(queryField(container, 'select[aria-label="用哪个号"]'), 'codex-sponsor', 'change');
     await changeField(queryField(container, 'input[aria-label="Model"]'), 'gpt-5.4-mini');
     await changeField(queryField(container, 'input[aria-label="Context Window"]'), '-1');
 
@@ -4157,7 +4157,7 @@ describe('HubCatEditor', () => {
       removeAliasButton.dispatchEvent(new MouseEvent('click', { bubbles: true }));
     });
 
-    await changeField(queryField(container, 'select[aria-label="认证信息"]'), 'codex-sponsor', 'change');
+    await changeField(queryField(container, 'select[aria-label="用哪个号"]'), 'codex-sponsor', 'change');
     await changeField(queryField(container, 'input[aria-label="Model"]'), 'gpt-5.4');
     await changeField(queryField(container, 'select[aria-label^="Codex Sandbox"]'), 'workspace-write', 'change');
     await changeField(queryField(container, 'select[aria-label^="Codex Approval"]'), 'on-request', 'change');
@@ -4799,5 +4799,270 @@ describe('HubCatEditor', () => {
     });
     await flushEffects();
     expect(document.body.textContent).not.toContain('擅长领域由画像驱动');
+  });
+
+  it('protects the built-in gpt-pro transport identity while keeping profile fields editable', async () => {
+    const protectedCat = {
+      id: 'gpt-pro',
+      name: '缅因猫Pro (云端)',
+      displayName: '缅因猫Pro',
+      nickname: '砚砚Pro',
+      clientId: 'openai',
+      accountRef: 'codex',
+      defaultModel: 'gpt-pro',
+      provider: 'openai-chatgpt-pro',
+      mcpSupport: true,
+      color: { primary: '#2196F3', secondary: '#90CAF9' },
+      mentionPatterns: ['@gpt-pro', '@yanyan-pro'],
+      avatar: '/avatars/gpt-pro.png',
+      roleDescription: '云端 ChatGPT Pro 砚砚',
+      personality: '温柔、较真',
+      identityProtection: {
+        kind: 'builtin-cloud' as const,
+        state: 'healthy' as const,
+        lockedFields: [
+          'breedId',
+          'clientId',
+          'defaultModel',
+          'provider',
+          'mcpSupport',
+          'accountRef',
+          'cli',
+          'commandArgs',
+          'cliConfigArgs',
+          'acp',
+        ],
+        driftedFields: [],
+      },
+    } satisfies CatData & { identityProtection: Record<string, unknown> };
+    const onSaved = vi.fn(() => Promise.resolve());
+    mockApiFetch.mockImplementation((path: string, init?: RequestInit) => {
+      if (path === '/api/accounts') {
+        return Promise.resolve(
+          jsonResponse({
+            projectPath: '/tmp/project',
+            activeProfileId: 'codex',
+            providers: [
+              profileItem({
+                id: 'codex',
+                name: 'Codex',
+                displayName: 'Codex',
+                clientId: 'openai',
+                authType: 'oauth',
+                mode: 'subscription',
+                hasApiKey: false,
+                createdAt: '2026-09-25T00:00:00.000Z',
+                updatedAt: '2026-09-25T00:00:00.000Z',
+                models: ['gpt-pro'],
+              }),
+            ],
+          }),
+        );
+      }
+      if (path === '/api/config/session-strategy') return Promise.resolve(jsonResponse({ cats: [] }));
+      if (path === '/api/cats/gpt-pro' && init?.method === 'PATCH') {
+        return Promise.resolve(jsonResponse({ cat: protectedCat }));
+      }
+      throw new Error(`Unexpected apiFetch path: ${path}`);
+    });
+
+    await act(async () => {
+      root.render(
+        React.createElement(HubCatEditor, {
+          open: true,
+          cat: protectedCat,
+          onClose: vi.fn(),
+          onSaved,
+        }),
+      );
+    });
+    await flushEffects();
+
+    expect(document.body.textContent).toContain('云端身份已保护');
+    expect(document.body.textContent).toContain('固定云端入口');
+    expect(document.body.textContent).toContain('需要本地 Codex，请新建另一位成员');
+    expect(document.body.textContent).toContain('主句柄 @gpt-pro 固定');
+    expect(document.body.querySelector('button[aria-label="移除 @gpt-pro"]')).toBeNull();
+    expect(document.body.querySelector('button[aria-label="移除 @yanyan-pro"]')).not.toBeNull();
+    expect(document.body.querySelector('select[aria-label="Client"]')).toBeNull();
+    expect(document.body.querySelector('input[aria-label="Model"]')).toBeNull();
+    expect(document.body.querySelector('select[aria-label="MCP Support"]')).toBeNull();
+    expect(document.body.textContent).not.toContain('高级运行时参数');
+
+    await changeField(queryField(container, 'input[aria-label="Name"]'), '缅因猫Pro · 云端');
+    const saveButton = Array.from(document.body.querySelectorAll('button')).find(
+      (button) => button.textContent === '保存',
+    );
+    await act(async () => {
+      saveButton?.dispatchEvent(new MouseEvent('click', { bubbles: true }));
+    });
+    await flushEffects();
+
+    const patchCall = mockApiFetch.mock.calls.find(
+      ([path, init]) => path === '/api/cats/gpt-pro' && init?.method === 'PATCH',
+    );
+    expect(patchCall).toBeDefined();
+    const payload = JSON.parse(String(patchCall?.[1]?.body)) as Record<string, unknown>;
+    expect(payload.name).toBe('缅因猫Pro · 云端');
+    expect(payload).not.toHaveProperty('mentionPatterns');
+    for (const field of protectedCat.identityProtection.lockedFields) {
+      expect(payload).not.toHaveProperty(field);
+    }
+    expect(onSaved).toHaveBeenCalledTimes(1);
+  });
+
+  it('rolls back a protected gpt-pro profile save without replaying locked identity fields', async () => {
+    const protectedCat = {
+      id: 'gpt-pro',
+      name: '缅因猫Pro (云端)',
+      displayName: '缅因猫Pro',
+      nickname: '旧昵称',
+      clientId: 'openai',
+      accountRef: 'codex',
+      defaultModel: 'gpt-pro',
+      provider: 'openai-chatgpt-pro',
+      mcpSupport: true,
+      color: { primary: '#2196F3', secondary: '#90CAF9' },
+      mentionPatterns: ['@gpt-pro', '@yanyan-pro'],
+      avatar: '/avatars/gpt-pro.png',
+      roleDescription: '云端 ChatGPT Pro 砚砚',
+      personality: '温柔、较真',
+      identityProtection: {
+        kind: 'builtin-cloud' as const,
+        state: 'healthy' as const,
+        lockedFields: [
+          'breedId',
+          'clientId',
+          'defaultModel',
+          'provider',
+          'mcpSupport',
+          'accountRef',
+          'cli',
+          'commandArgs',
+          'cliConfigArgs',
+          'acp',
+        ],
+        driftedFields: [],
+      },
+    } satisfies CatData & { identityProtection: Record<string, unknown> };
+    const onSaved = vi.fn(() => Promise.reject(new Error('refresh failed after save')));
+    mockApiFetch.mockImplementation((path: string, init?: RequestInit) => {
+      if (path === '/api/accounts') {
+        return Promise.resolve(jsonResponse({ projectPath: '/tmp/project', activeProfileId: null, providers: [] }));
+      }
+      if (path === '/api/config/session-strategy') return Promise.resolve(jsonResponse({ cats: [] }));
+      if (path === '/api/cats/gpt-pro' && init?.method === 'PATCH') {
+        return Promise.resolve(jsonResponse({ cat: protectedCat }));
+      }
+      throw new Error(`Unexpected apiFetch path: ${path}`);
+    });
+
+    await act(async () => {
+      root.render(
+        React.createElement(HubCatEditor, {
+          open: true,
+          cat: protectedCat,
+          onClose: vi.fn(),
+          onSaved,
+        }),
+      );
+    });
+    await flushEffects();
+    await changeField(queryField(container, 'input[aria-label="Nickname"]'), '新昵称');
+
+    const saveButton = Array.from(document.body.querySelectorAll('button')).find(
+      (button) => button.textContent === '保存',
+    );
+    await act(async () => {
+      saveButton?.dispatchEvent(new MouseEvent('click', { bubbles: true }));
+    });
+    await flushEffects();
+
+    const catPatches = mockApiFetch.mock.calls.filter(
+      ([path, init]) => path === '/api/cats/gpt-pro' && init?.method === 'PATCH',
+    );
+    expect(catPatches).toHaveLength(2);
+    const rollbackPayload = JSON.parse(String(catPatches[1]?.[1]?.body)) as Record<string, unknown>;
+    expect(rollbackPayload.nickname).toBe('旧昵称');
+    expect(rollbackPayload).not.toHaveProperty('mentionPatterns');
+    for (const field of protectedCat.identityProtection.lockedFields) {
+      expect(rollbackPayload).not.toHaveProperty(field);
+    }
+    expect(document.body.textContent).toContain('refresh failed after save');
+  });
+
+  it('offers one explicit recovery action when the built-in gpt-pro identity has drifted', async () => {
+    const driftedCat = {
+      id: 'gpt-pro',
+      name: '缅因猫Pro (云端)',
+      displayName: '缅因猫Pro',
+      clientId: 'openai',
+      accountRef: 'codex',
+      defaultModel: 'gpt-5.6-sol',
+      provider: undefined,
+      mcpSupport: false,
+      cli: { command: 'codex', outputFormat: 'json' },
+      color: { primary: '#2196F3', secondary: '#90CAF9' },
+      mentionPatterns: ['@gpt-pro'],
+      avatar: '/avatars/gpt-pro.png',
+      roleDescription: '云端 ChatGPT Pro 砚砚',
+      personality: '温柔、较真',
+      identityProtection: {
+        kind: 'builtin-cloud' as const,
+        state: 'drifted' as const,
+        lockedFields: [
+          'breedId',
+          'clientId',
+          'defaultModel',
+          'provider',
+          'mcpSupport',
+          'accountRef',
+          'cli',
+          'commandArgs',
+          'cliConfigArgs',
+          'acp',
+        ],
+        driftedFields: ['defaultModel', 'provider', 'mcpSupport', 'cli'],
+      },
+    } satisfies CatData & { identityProtection: Record<string, unknown> };
+    const onSaved = vi.fn(() => Promise.resolve());
+    mockApiFetch.mockImplementation((path: string, init?: RequestInit) => {
+      if (path === '/api/accounts') {
+        return Promise.resolve(jsonResponse({ projectPath: '/tmp/project', activeProfileId: null, providers: [] }));
+      }
+      if (path === '/api/config/session-strategy') return Promise.resolve(jsonResponse({ cats: [] }));
+      if (path === '/api/cats/gpt-pro' && init?.method === 'PATCH') {
+        return Promise.resolve(jsonResponse({ cat: driftedCat }));
+      }
+      throw new Error(`Unexpected apiFetch path: ${path}`);
+    });
+
+    await act(async () => {
+      root.render(
+        React.createElement(HubCatEditor, {
+          open: true,
+          cat: driftedCat,
+          onClose: vi.fn(),
+          onSaved,
+        }),
+      );
+    });
+    await flushEffects();
+
+    expect(document.body.textContent).toContain('检测到云端身份配置异常');
+    const restoreButton = Array.from(document.body.querySelectorAll('button')).find(
+      (button) => button.textContent === '恢复云端身份',
+    );
+    expect(restoreButton).toBeDefined();
+    await act(async () => {
+      restoreButton?.dispatchEvent(new MouseEvent('click', { bubbles: true }));
+    });
+    await flushEffects();
+
+    const restoreCall = mockApiFetch.mock.calls.find(
+      ([path, init]) => path === '/api/cats/gpt-pro' && init?.method === 'PATCH',
+    );
+    expect(JSON.parse(String(restoreCall?.[1]?.body))).toEqual({ restoreBuiltinCloudIdentity: true });
+    expect(onSaved).toHaveBeenCalledTimes(1);
   });
 });

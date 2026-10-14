@@ -37,6 +37,11 @@ mcp_admission_claims:
     boundaryKind: resource-entry
     decision: accepted
   - ref: "file:docs/features/F311-capability-evolution-workspace.md"
+    toolName: cat_cafe_rebind_evolution_program_measurement
+    resourceFamily: evolution-program
+    boundaryKind: resource-entry
+    decision: accepted
+  - ref: "file:docs/features/F311-capability-evolution-workspace.md"
     toolName: cat_cafe_open_evolution_round
     resourceFamily: evolution-program
     boundaryKind: resource-entry
@@ -72,6 +77,7 @@ mcp_admission_claims:
 
 > **Status**: in-progress (v6 product-experience contract; v5 final-vision phases; Gate 0A + Phase 1–3 landed; Phase 4 implementation landed; roadshow retained as Phase 1 regression; operator-selected F314/F100 full-loop AC-41–44 and AC-UX4 remain open on owner-backed asset/evidence/outcome truth) | **Product phase owner**: Maine Coon (@codex-sol, gpt-5.6-sol)（本轮 operator 指定执行） | **Architecture co-creator/reviewer**: Ragdoll (@fable5, claude-fable-5) | **Priority**: P0
 >
+>
 > **operator signoff**: 2026-08-28 [thread-id] `0001787926983474`（今年双旗舰之一，与 F310 Growing 并列）。
 > **v1 修订**: 2026-08-28 owner review by @codex-sol（`0001787928166311` 后续 verdict，CHANGES_REQUESTED 六 P1）——核心纠偏：**引用不是所有权**；F311 是薄联邦控制面，不私藏任何领域真相。
 > **v2 修订**: 2026-08-28 operator 授权 @codex-sol 接管修复（`0001787930692641`）——补齐 decision-surface census、证据消费归属、代理 claim 隔离、ADR-045 持久性与 F309/content-owner 边界；Phase 0 仍保持暂停，等待独立方法论复核与最终愿景审核。
@@ -102,7 +108,7 @@ mcp_admission_claims:
 > **F100 owner loop landed (2026-09-12)**: 原 reader Task `private-source-id` 已由 PR #4435 / `fce8043d0e16b90fe6f94b2e2757b785832378ec` 完成；接口 child Task `private-source-id` 随 PR #4517 merge 与重启前后 Alpha 同源消费验收转为 done。Terra 对 exact implementation HEAD `b8994347eaf2e083d008f8c87c6fb3c0c2f8a94e` 批准且无 P1/P2。该交付只证明 F100 owner 的版本、受治理动作、证据/use/fresh-outcome/rollback 与恢复接口及 F307 consumer；生产 runtime 未重启，`adoption_proof_unavailable`、`applied_use_proof_unavailable` 和六项 observation gap 保持可见。F314 parent Task `private-source-id` 与 observation Task `private-source-id` 继续持有业务闭环，旧 guardian 的 `accepted_then_retired` 不变。
 
 Architecture cell: capability-evolution-control
-Map delta: new cell landed via Gate 0A（薄控制面）——它**只拥有**：Program identity/lifecycle、Goal/claim/经济页、各领域资产的 **owner refs**、调度与阶段投影、keep/tune/rollback/sunset 编排状态。上述用户可见生命周期是 **TTL=0、跨重启恢复的 canonical Program truth**；瞬时 scheduler/cache 只能重建投影，不能决定生命周期。**不拥有**：rubric 内容、原始轨迹、verdict lifecycle、资产版本、写回结果、通用 feedback/证据消费账本。
+Map delta: new cell landed via Gate 0A（薄控制面）——它**只拥有**：Program identity/lifecycle、Goal/claim/经济页、各领域资产的 **owner refs**、调度与阶段投影、keep/tune/rollback/sunset 编排状态；版本化量具只新增一个由 F267 trusted-main truth 驱动的原子 refs-only rebind event。上述用户可见生命周期是 **TTL=0、跨重启恢复的 canonical Program truth**；瞬时 scheduler/cache 只能重建投影，不能决定生命周期。**不拥有**：rubric 内容、原始轨迹、verdict lifecycle、资产版本、写回结果、通用 feedback/证据消费账本。
 Why: "一个被进化对象的完整进化回合"这个绑定当前无 cell 拥有；但绑定的实现是引用与编排，禁止在 F311 内私造 TraceStore/Queue/审批状态机/第二套版本系统。
 
 F311 复用 `harness-eval`（F192 registry/trigger/verdict + F266 closure + F267 validity）。**纠正 v0 错误：`memory` 不是 trace owner**（memory 只负责索引/检索；invocation trajectory 归 F299 所在链路）。
@@ -305,6 +311,8 @@ F311：keep / tune / rollback / sunset；不接管 OfficeAce 真相
 
 交付用户从第一天就会使用、以后不会拆掉的正式入口：用户在任意聊天页说“我们来进化 X”，猫自动起草一个 durable Evolution Program。Program 持有对象身份、单 Goal/claim、经济页、双证/四角色/owner refs、生命周期与当前阶段；F307 Workbench 同时显示 Program 列表、建制进度、阻塞原因和下一步。正常路径零表单，只有价值歧义、必要角色缺失或治理边界才浮出最小确认。
 
+量具或四角色发布新版本时，不覆盖旧建制事件，也不重新创建 Program：只有 `active/instrumenting` 可凭一个 F267 decision-proof identity 追加原子 rebind 事件。证书与四角色 refs 必须由 F267 trusted-main resolver 推导，value owner、Goal/economic certificate、stage 与 Cycle 原样保留；调用方自报 owner refs、在 observing/evaluating 中途换尺或把 `insufficient` 当可用结果均 fail closed。
+
 Program canonical truth 从第一次创建起 active/terminal 均 `TTL=0`、跨重启恢复；pause/resume/needs_expert/withdraw/retention 选择可审计。UI、MCP/猫动作与 API 读取同一 truth，不允许先做一张静态卡片再重写后台。
 
 ### Phase 2: 开眼与取证（Observe & Gather）
@@ -445,15 +453,15 @@ Meta Evolution 的正式定义为：**能力对象与改进机制的协同演进
 - [ ] AC-UX4: 下一次同类任务在原任务现场显示已沿用的上轮学习、来源与撤销；路演技术剖面与 canonical 产品 UI 分离，并对演示数据 / 未实证效用显式披露
 - [ ] AC-UX5: 准备与探索正式页面有清楚的视觉重点、有角色分工的颜色与语义 SVG；主动作、内容类别 / 对照系列、真实状态可辨识，颜色不独自承担含义；真实宿主默认态、窄屏与主题的渲染及 operator 体验验收通过，灰阶交互稿不能代替视觉完成
 
-### Preparation Experience（09-09 收准；PREP1–4 Alpha 已验，PREP5 待 operator）
+### Preparation Experience（09-09 收准；PREP1–4 Alpha 已验，09-19 PREP5 已验）
 
-> 实现证据：PR #4474 已合入 strict schema、refs-only Program events、F117 protected body、event-first crash recovery、invocation-only MCP、F167 live join 与 F307 四块读面；PR #4475 merge `8f313228a3` 关闭 direct PM 目标 admission、认知入口和 AC-UX5 视觉层级缺口，Terra 对 exact `8ccd536043` 批准，canonical contract gate 通过。R1–R15 证伪的 regex 语义 classifier 已撤出，136 条暴露样本只作 calibration seed；命令式目标由语义 rubric judge 判断，不污染机械纵向分母。operator source `private-source-id` 选择的 B「柔和色块」以四类独立 token + 文字 + 语义 SVG 表达内容类别，主动作与状态继续分权。post-merge Alpha build `dbfb047b73` 在新 thread `[thread-id]` 以 source `private-source-id` 的 exact PM 原话完成正式 start/read/begin/submit/read，Program `evolution-program:c0cdd2f96310c9ce8acb690d7b391a96` 持四块 submitted refs；真实 F307 读到 5 个候选、6 条量尺与 4 个 GT 来源，1360/416/320、深色、刷新、零读取写入均通过，停服后 Redis 6398 保留且新进程完整恢复。PREP1–4 的运行与恢复证据已成立；visible-page 投递仍为 `unconfirmed / no_matching_client`，operator 尚未确认看到实际宿主，因此 PREP5 不关闭。
+> 2026-09-10历史实现证据（PREP5后续结论见下方9月19日记录）：PR #4474 已合入 strict schema、refs-only Program events、F117 protected body、event-first crash recovery、invocation-only MCP、F167 live join 与 F307 四块读面；PR #4475 merge `8f313228a3` 关闭 direct PM 目标 admission、认知入口和 AC-UX5 视觉层级缺口，Terra 对 exact `8ccd536043` 批准，canonical contract gate 通过。R1–R15 证伪的 regex 语义 classifier 已撤出，136 条暴露样本只作 calibration seed；命令式目标由语义 rubric judge 判断，不污染机械纵向分母。operator source `private-source-id` 选择的 B「柔和色块」以四类独立 token + 文字 + 语义 SVG 表达内容类别，主动作与状态继续分权。post-merge Alpha build `dbfb047b73` 在新 thread `[thread-id]` 以 source `private-source-id` 的 exact PM 原话完成正式 start/read/begin/submit/read，Program `evolution-program:c0cdd2f96310c9ce8acb690d7b391a96` 持四块 submitted refs；真实 F307 读到 5 个候选、6 条量尺与 4 个 GT 来源，1360/416/320、深色、刷新、零读取写入均通过，停服后 Redis 6398 保留且新进程完整恢复。PREP1–4 的运行与恢复证据已成立；visible-page 投递仍为 `unconfirmed / no_matching_client`，operator 尚未确认看到实际宿主，因此 PREP5 不关闭。
 
 - [x] AC-PREP1: 只给业务愿望的新 thread 能应用专业方法，生成可检查的候选范围、判断草案与条件安排；普通讨论零 Program 写入，正式绑定和 owner 权限不由候选地图推导
 - [x] AC-PREP2: 每条量尺可下钻 GT 域、裁判、付薪方及来源/采集/可信性；采集待接通、已采待核、可用于明确范围分别可见，缺失/分歧/沉默与未成熟后果不被藏掉
 - [x] AC-PREP3: 同屏可区分数据准备中、环境已核查且本轮不可改、记录待接手；每项可展开真实依据/修订/下一步，无工作证据不转圈，运行结束停止假忙
 - [x] AC-PREP4: 陌生输入经正式猫动作提交、读回同源结果；刷新/返回/重启和新猫续办均恢复，过期修订确认、来源删除、跨 workspace 与重复/中断写入按 owner 契约拒收或诚实恢复，用户原输入不丢
-- [ ] AC-PREP5: 在真实 F307 窄栏与按需主区完成四块阅读、量尺到 GT 跳转和回读提交；移动窄宽不溢出、reduced-motion 有效，operator 看过实际宿主再验收，不以 standalone HTML 代替正式产品完成；同时满足 AC-UX5 的颜色、图标与视觉重点要求，灰阶稿不作为正式风格验收
+- [x] AC-PREP5: 在真实 F307 窄栏与按需主区完成四块阅读、量尺到 GT 跳转和回读提交；移动窄宽不溢出、reduced-motion 有效，operator 看过实际宿主再验收，不以 standalone HTML 代替正式产品完成；同时满足 AC-UX5 的颜色、图标与视觉重点要求，灰阶稿不作为正式风格验收
 
 ### Exploration Experience（对应 Exploration Focus；正式宿主验收）
 

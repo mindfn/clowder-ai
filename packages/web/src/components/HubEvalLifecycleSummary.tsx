@@ -10,6 +10,8 @@ import {
   reevalStatusLabel,
   repairDebtLabel,
 } from './eval-lifecycle-display';
+import { evalDetailCopy, useEvalDetailCopy } from './eval-workspace/eval-detail.shell-copy';
+import { useEvalCopy, useEvalLanguage } from './eval-workspace/eval-workspace.shell-copy';
 import type { EvalHubLifecycleView, EvalLifecycleRef } from './HubEvalTypes';
 
 export function HubEvalLifecycleSummary({
@@ -19,12 +21,14 @@ export function HubEvalLifecycleSummary({
   lifecycle: EvalHubLifecycleView;
   openWorkspaceFile?: (path: string) => void;
 }) {
+  const detail = useEvalDetailCopy();
+  const language = useEvalLanguage();
   return (
-    <section className="mt-4 rounded-lg border border-cafe bg-cafe-surface px-3 py-3" aria-label="处置进度">
+    <section className="mt-4 rounded-lg border border-cafe bg-cafe-surface px-3 py-3" aria-label={detail.progress}>
       <div className="flex flex-wrap items-center justify-between gap-2">
-        <h4 className="text-xs font-semibold text-cafe">处置进度</h4>
+        <h4 className="text-xs font-semibold text-cafe">{detail.progress}</h4>
         <span className={`rounded-md px-2 py-1 text-xs font-semibold ${statusBadgeClass(lifecycle)}`}>
-          {lifecycleStatusLabel(lifecycle.closureStatus)}
+          {lifecycleStatusLabel(lifecycle.closureStatus, language)}
         </span>
       </div>
 
@@ -40,20 +44,17 @@ function LifecycleBody({
   lifecycle: EvalHubLifecycleView;
   openWorkspaceFile?: (path: string) => void;
 }) {
+  const detail = useEvalDetailCopy();
   if (lifecycle.availability === 'unavailable') {
     return (
       <div className="mt-3 rounded-md border border-conn-amber-ring bg-conn-amber-bg px-3 py-2">
-        <p className="text-xs font-medium text-conn-amber-text">处置记录暂不可用</p>
-        <p className="mt-1 text-xs leading-relaxed text-conn-amber-text">
-          结论和证据仍可查看；恢复 canonical lifecycle 存储后再补齐处置进度。
-        </p>
+        <p className="text-xs font-medium text-conn-amber-text">{detail.unavailable}</p>
+        <p className="mt-1 text-xs leading-relaxed text-conn-amber-text">{detail.unavailableHint}</p>
       </div>
     );
   }
   if (lifecycle.availability === 'not_required') {
-    return (
-      <p className="mt-2 text-xs leading-relaxed text-cafe-secondary">这条结论无需进入处置链，按现有节奏持续观察。</p>
-    );
+    return <p className="mt-2 text-xs leading-relaxed text-cafe-secondary">{detail.notRequired}</p>;
   }
   return <AvailableLifecycleDetails lifecycle={lifecycle} openWorkspaceFile={openWorkspaceFile} />;
 }
@@ -65,74 +66,80 @@ function AvailableLifecycleDetails({
   lifecycle: EvalHubLifecycleView;
   openWorkspaceFile?: (path: string) => void;
 }) {
+  const detail = useEvalDetailCopy();
+  const t = useEvalCopy();
+  const language = useEvalLanguage();
   const unavailableRefs = lifecycle.unavailableRefs ?? [];
   return (
     <>
       <dl className="mt-3 grid gap-3 text-xs sm:grid-cols-2">
         {lifecycle.diagnosisTarget ? (
-          <LifecycleTerm label="问题指向" value={formatDiagnosisTarget(lifecycle.diagnosisTarget)} />
+          <LifecycleTerm label={t.diagnosisTarget} value={formatDiagnosisTarget(lifecycle.diagnosisTarget)} />
         ) : null}
         {lifecycle.targetOwnerCatId ? (
-          <LifecycleTerm label="负责处理" value={formatLifecycleOwner(lifecycle.targetOwnerCatId)} />
+          <LifecycleTerm label={t.owner} value={formatLifecycleOwner(lifecycle.targetOwnerCatId)} />
         ) : null}
-        {lifecycle.taskId ? <LifecycleTerm label="责任任务" value={lifecycle.taskId} /> : null}
+        {lifecycle.taskId ? <LifecycleTerm label={t.task} value={lifecycle.taskId} /> : null}
         {lifecycle.leaseId ? (
           <LifecycleTerm
-            label="责任租约"
+            label={t.lease}
             value={`${lifecycle.leaseId}${lifecycle.leaseGeneration ? ` · generation ${lifecycle.leaseGeneration}` : ''}`}
           />
         ) : null}
         {lifecycle.mainCommitSha ? (
-          <LifecycleTerm label="主干状态" value={`main · ${lifecycle.mainCommitSha}`} />
+          <LifecycleTerm label={t.mainStatus} value={`main · ${lifecycle.mainCommitSha}`} />
         ) : null}
         {lifecycle.liveCommitSha ? (
-          <LifecycleTerm label="运行状态" value={`live · ${lifecycle.liveCommitSha}`} />
+          <LifecycleTerm label={t.liveStatus} value={`live · ${lifecycle.liveCommitSha}`} />
         ) : null}
         {lifecycle.caseId ? (
           <LifecycleTerm
-            label="稳定工单"
-            value={`${lifecycle.caseId} · ${lifecycle.observedVerdictIds?.length ?? 1} 个周期`}
+            label={detail.case}
+            value={t.caseCycles(lifecycle.caseId, lifecycle.observedVerdictIds?.length ?? 1)}
           />
         ) : null}
-        <LifecycleTerm label="接单状态" value={ownerResponseLabel(lifecycle.ownerResponseStatus)} />
+        <LifecycleTerm label={detail.acceptance} value={ownerResponseLabel(lifecycle.ownerResponseStatus, language)} />
         {lifecycle.repairDebtStatus ? (
-          <LifecycleTerm label="修复债务" value={repairDebtLabel(lifecycle.repairDebtStatus)} />
+          <LifecycleTerm label={t.repairDebt} value={repairDebtLabel(lifecycle.repairDebtStatus, language)} />
         ) : null}
         {lifecycle.reevalDebtStatus ? (
-          <LifecycleTerm label="节奏 / 复评债务" value={reevalDebtLabel(lifecycle.reevalDebtStatus)} />
+          <LifecycleTerm label={t.reevalDebt} value={reevalDebtLabel(lifecycle.reevalDebtStatus, language)} />
         ) : null}
-        {lifecycle.reevalTaskId ? <LifecycleTerm label="复评任务" value={lifecycle.reevalTaskId} /> : null}
+        {lifecycle.reevalTaskId ? <LifecycleTerm label={t.reevalTask} value={lifecycle.reevalTaskId} /> : null}
         {lifecycle.reevalLeaseId ? (
           <LifecycleTerm
-            label="复评租约"
+            label={detail.reevalLease}
             value={`${lifecycle.reevalLeaseId}${lifecycle.reevalLeaseGeneration ? ` · generation ${lifecycle.reevalLeaseGeneration}` : ''}`}
           />
         ) : null}
-        <LifecycleTerm label="复评状态" value={formatReevalStatus(lifecycle)} />
+        <LifecycleTerm label={t.reevalStatus} value={formatReevalStatus(lifecycle, language)} />
       </dl>
       {lifecycle.responsibilityBlocker ? (
         <div className="mt-3 rounded-md border border-conn-amber-ring bg-conn-amber-bg px-3 py-2 text-xs text-conn-amber-text">
-          <div className="font-medium">责任路由待恢复 · {lifecycle.responsibilityBlocker.featureId}</div>
+          <div className="font-medium">
+            {detail.routingRestore} · {lifecycle.responsibilityBlocker.featureId}
+          </div>
           <p className="mt-1 leading-relaxed">
             {lifecycle.responsibilityBlocker.reasonCode === 'feature_thread_not_found'
-              ? '尚未找到唯一归属 thread；系统会在路由真相补齐后原位重试。'
-              : `发现多个归属 thread（${lifecycle.responsibilityBlocker.candidateThreadIds.join('、')}）；明确唯一归属后系统会原位重试。`}
+              ? detail.threadMissing
+              : t.multipleThreads(lifecycle.responsibilityBlocker.candidateThreadIds.join(', '))}
           </p>
         </div>
       ) : null}
       {lifecycle.custodyDispatchBlocker ? (
         <div className="mt-3 rounded-md border border-conn-amber-ring bg-conn-amber-bg px-3 py-2 text-xs text-conn-amber-text">
           <div className="font-medium">
-            执行载体待恢复 · {lifecycle.custodyDispatchBlocker.stage === 'reevaluation' ? '复评' : '责任接单'}
+            {detail.carrierRestore} ·{' '}
+            {lifecycle.custodyDispatchBlocker.stage === 'reevaluation' ? detail.reeval : detail.responsibility}
           </div>
           <p className="mt-1 leading-relaxed">
-            {lifecycle.custodyDispatchBlocker.stage === 'reevaluation' ? '复评' : '责任'}任务已经建立并持有有效租约；
+            {t.carrierTask(lifecycle.custodyDispatchBlocker.stage)}
             {lifecycle.custodyDispatchBlocker.reasonCode === 'carrier_persist_failed'
-              ? '执行载体尚未持久化'
+              ? detail.carrierPersistFailed
               : lifecycle.custodyDispatchBlocker.reasonCode === 'carrier_delivery_failed'
-                ? '执行载体已经持久化，但投递过程失败'
-                : '执行载体已经持久化，但尚未被队列接受'}
-            ；系统会原位重试。
+                ? detail.carrierDeliveryFailed
+                : detail.carrierQueueFailed}
+            · {detail.retry}
           </p>
           <div className="mt-1">
             task · {lifecycle.custodyDispatchBlocker.taskId}
@@ -143,26 +150,33 @@ function AvailableLifecycleDetails({
       ) : null}
       {lifecycle.escalation ? (
         <div className="mt-3 rounded-md border border-conn-red-ring bg-conn-red-bg px-3 py-2 text-xs text-conn-red-text">
-          <span className="font-medium">{escalationLabel(lifecycle.escalation)}</span>
-          <span> · 原截止 {formatLifecycleDate(lifecycle.escalation.dueAt)}</span>
+          <span className="font-medium">{escalationLabel(lifecycle.escalation, language)}</span>
+          <span>
+            {' '}
+            · {t.originalDeadline} {formatLifecycleDate(lifecycle.escalation.dueAt, language)}
+          </span>
         </div>
       ) : null}
       {lifecycle.closureReason ? (
         <div className="mt-3 text-xs">
-          <div className="text-cafe-muted">闭环说明</div>
+          <div className="text-cafe-muted">{t.closureReason}</div>
           <p className="mt-1 leading-relaxed text-cafe-secondary">{lifecycle.closureReason}</p>
         </div>
       ) : null}
       <div className="mt-3 space-y-2">
-        <ReferenceGroup label="接单证据" refs={lifecycle.ownerResponseRefs} openWorkspaceFile={openWorkspaceFile} />
-        <ReferenceGroup label="行动计划" refs={lifecycle.planRefs} openWorkspaceFile={openWorkspaceFile} />
-        <ReferenceGroup label="修复证据" refs={lifecycle.actionRefs} openWorkspaceFile={openWorkspaceFile} />
-        <ReferenceGroup label="复评证据" refs={lifecycle.reevalRefs} openWorkspaceFile={openWorkspaceFile} />
+        <ReferenceGroup
+          label={detail.acceptanceEvidence}
+          refs={lifecycle.ownerResponseRefs}
+          openWorkspaceFile={openWorkspaceFile}
+        />
+        <ReferenceGroup label={detail.plan} refs={lifecycle.planRefs} openWorkspaceFile={openWorkspaceFile} />
+        <ReferenceGroup label={t.repairEvidence} refs={lifecycle.actionRefs} openWorkspaceFile={openWorkspaceFile} />
+        <ReferenceGroup label={t.reevalEvidence} refs={lifecycle.reevalRefs} openWorkspaceFile={openWorkspaceFile} />
       </div>
       {unavailableRefs.length > 0 ? (
         <details className="mt-3 rounded-md border border-conn-amber-ring px-3 py-2">
           <summary className="cursor-pointer text-xs font-medium text-conn-amber-text">
-            历史证据缺失 {unavailableRefs.length} 段
+            {t.missingHistoryCount(unavailableRefs.length)}
           </summary>
           <ReferenceList refs={unavailableRefs} />
         </details>
@@ -205,10 +219,14 @@ function ReferenceList({
   refs: EvalLifecycleRef[];
   openWorkspaceFile?: (path: string) => void;
 }) {
+  const language = useEvalLanguage();
   return (
     <ul className="mt-1 space-y-1">
       {refs.map((ref, index) => (
-        <li key={`${ref.kind}-${lifecycleRefText(ref)}-${index}`} className="break-all text-xs text-cafe-secondary">
+        <li
+          key={`${ref.kind}-${lifecycleRefText(ref, language)}-${index}`}
+          className="break-all text-xs text-cafe-secondary"
+        >
           {ref.availability === 'available' && /^https?:\/\//.test(ref.value) ? (
             <a
               href={ref.value}
@@ -227,7 +245,7 @@ function ReferenceList({
               {ref.value}
             </button>
           ) : (
-            <code>{lifecycleRefText(ref)}</code>
+            <code>{lifecycleRefText(ref, language)}</code>
           )}
         </li>
       ))}
@@ -235,9 +253,12 @@ function ReferenceList({
   );
 }
 
-function formatReevalStatus(lifecycle: EvalHubLifecycleView): string {
-  const label = reevalStatusLabel(lifecycle.reevalStatus);
-  return lifecycle.reevalDueAt ? `${label} · 截止 ${formatLifecycleDate(lifecycle.reevalDueAt)}` : label;
+function formatReevalStatus(lifecycle: EvalHubLifecycleView, language: 'zh' | 'en'): string {
+  const detail = evalDetailCopy[language];
+  const label = reevalStatusLabel(lifecycle.reevalStatus, language);
+  return lifecycle.reevalDueAt
+    ? `${label} · ${detail.deadline} ${formatLifecycleDate(lifecycle.reevalDueAt, language)}`
+    : label;
 }
 
 function statusBadgeClass(lifecycle: EvalHubLifecycleView): string {

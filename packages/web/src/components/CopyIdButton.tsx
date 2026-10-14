@@ -3,7 +3,7 @@
 import { useCallback, useRef, useState } from 'react';
 
 /** Hover-visible button that copies messageId to clipboard. */
-export function CopyIdButton({ messageId }: { messageId: string }) {
+export function CopyIdButton({ messageId, label }: { messageId: string; label?: string }) {
   const [copied, setCopied] = useState(false);
   const timerRef = useRef<ReturnType<typeof setTimeout>>();
 
@@ -17,6 +17,20 @@ export function CopyIdButton({ messageId }: { messageId: string }) {
       // Clipboard unavailable (insecure context / permission denied) — no-op
     }
   }, [messageId]);
+
+  if (label)
+    return (
+      <button
+        type="button"
+        role="menuitem"
+        aria-label={label}
+        onClick={handleClick}
+        className="min-h-11 w-full px-3 py-2 text-left text-sm text-cafe-secondary hover:bg-cafe-surface-elevated"
+      >
+        {copied ? '✓ ' : ''}
+        {label}
+      </button>
+    );
 
   return (
     <button

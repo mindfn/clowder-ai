@@ -1,4 +1,10 @@
-import type { BubbleEventType, BubbleKind, BubbleOriginPhase, BubbleSourcePath } from '@cat-cafe/shared';
+import {
+  type BubbleEventType,
+  type BubbleKind,
+  type BubbleOriginPhase,
+  type BubbleSourcePath,
+  readMessageOutputLayout,
+} from '@cat-cafe/shared';
 import type { BubbleEvent } from '@/stores/bubble-reducer';
 import type { BackgroundAgentMessage } from './useAgentMessages';
 
@@ -58,6 +64,42 @@ function derivePhase(msg: BackgroundAgentMessage): BubbleOriginPhase {
   return 'stream';
 }
 
+function outputEventExtra(msg: BackgroundAgentMessage): BackgroundAgentMessage['extra'] {
+  const outputLayout =
+    msg.origin !== 'callback' && !msg.extra?.isExplicitPost
+      ? readMessageOutputLayout(msg.extra?.outputLayout)
+      : undefined;
+  if (outputLayout || msg.extra?.turnExecution || msg.extra?.auxiliaryTurnExecutions) {
+    return {
+      ...(outputLayout ? { outputLayout } : {}),
+      ...(msg.extra?.turnExecution ? { turnExecution: msg.extra.turnExecution } : {}),
+      ...(msg.extra?.auxiliaryTurnExecutions ? { auxiliaryTurnExecutions: msg.extra.auxiliaryTurnExecutions } : {}),
+    };
+  }
+  return undefined;
+}
+
+function eventPayload(msg: BackgroundAgentMessage): Record<string, unknown> {
+  const payload: Record<string, unknown> = {};
+  if (msg.content !== undefined) payload.content = msg.content;
+  if (msg.toolName) payload.toolName = msg.toolName;
+  if (msg.toolInput) payload.toolInput = msg.toolInput;
+  if (msg.error) payload.error = msg.error;
+  if (msg.errorCode) payload.errorCode = msg.errorCode;
+  // Round 5 P1 (云端 codex): 透传 textMode='replace' — useAgentMessages.ts:991 真实
+  // 用 replace 走 patchThreadMessage 重写 bubble，不是 append。adapter 不传 textMode
+  // + reducer 不识别 → B1.2.2 wire 进 active stream 后 replace 会被当 append（content
+  // 累加 = 重复显示）。
+  if (msg.textMode) payload.textMode = msg.textMode;
+  // #814: Propagate isExplicitPost so chatStore findAssistantDuplicate can
+  // skip merge for live socket events (not just hydration).
+  if (msg.extra?.isExplicitPost) payload.isExplicitPost = true;
+  const extra = outputEventExtra(msg);
+  if (extra) payload.extra = extra;
+
+  return payload;
+}
+
 /**
  * F183 Phase B1.2 adapter: map incoming `BackgroundAgentMessage` to `BubbleEvent`
  * for `applyBubbleEvent` consumption. Pure function; reducer- and UI-agnostic.
@@ -86,26 +128,7 @@ export function adaptIncomingToBubbleEvent(
   if (!eventType) return undefined;
   const phase = derivePhase(msg);
 
-  const payload: Record<string, unknown> = {};
-  if (msg.content !== undefined) payload.content = msg.content;
-  if (msg.toolName) payload.toolName = msg.toolName;
-  if (msg.toolInput) payload.toolInput = msg.toolInput;
-  if (msg.error) payload.error = msg.error;
-  if (msg.errorCode) payload.errorCode = msg.errorCode;
-  // Round 5 P1 (云端 codex): 透传 textMode='replace' — useAgentMessages.ts:991 真实
-  // 用 replace 走 patchThreadMessage 重写 bubble，不是 append。adapter 不传 textMode
-  // + reducer 不识别 → B1.2.2 wire 进 active stream 后 replace 会被当 append（content
-  // 累加 = 重复显示）。
-  if (msg.textMode) payload.textMode = msg.textMode;
-  // #814: Propagate isExplicitPost so chatStore findAssistantDuplicate can
-  // skip merge for live socket events (not just hydration).
-  if (msg.extra?.isExplicitPost) payload.isExplicitPost = true;
-  if (msg.extra?.turnExecution || msg.extra?.auxiliaryTurnExecutions) {
-    payload.extra = {
-      ...(msg.extra.turnExecution ? { turnExecution: msg.extra.turnExecution } : {}),
-      ...(msg.extra.auxiliaryTurnExecutions ? { auxiliaryTurnExecutions: msg.extra.auxiliaryTurnExecutions } : {}),
-    };
-  }
+  const payload = eventPayload(msg);
 
   // F194 Phase Z3 (砚砚 R2 P1-1): bubble identity SoT = per-cat-turn id (msg.turnInvocationId);
   // chain/parent id (msg.invocationId) lives alongside as `chainInvocationId` for liveness/queue/cancel.

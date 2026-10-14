@@ -82,9 +82,9 @@ function toAnchorMetric(row: Record<string, unknown>): AnchorMetric {
 export class RecallMetricsComputer {
   constructor(private readonly db: Database.Database) {}
 
-  computeMetrics(opts: { days?: number; catId?: string; toolName?: string } = {}): RecallMetricsReport {
+  computeMetrics(opts: { days?: number; catId?: string; toolName?: string; toMs?: number } = {}): RecallMetricsReport {
     const days = opts.days ?? 30;
-    const toMs = Date.now();
+    const toMs = opts.toMs ?? Date.now();
     const fromMs = toMs - days * 86_400_000;
 
     const rows = this.fetchRows(fromMs, opts.catId, opts.toolName);

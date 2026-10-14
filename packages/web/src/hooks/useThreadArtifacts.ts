@@ -4,15 +4,19 @@
  * AbortController + apiFetch + refetch shape.
  */
 
-import type { ThreadArtifactDTO } from '@cat-cafe/shared';
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { projectThreadWorks, type ThreadArtifactDTO, type ThreadArtifactsResponse } from '@cat-cafe/shared';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { apiFetch } from '../utils/api-client';
+import { useThreadLiveness, useThreadMessages } from './useThreadScopedSelectors';
 
-async function fetchArtifacts(tid: string, signal: AbortSignal): Promise<ThreadArtifactDTO[]> {
-  const res = await apiFetch(`/api/threads/${encodeURIComponent(tid)}/artifacts`, { signal });
+async function fetchArtifacts(tid: string, signal: AbortSignal, view?: 'works'): Promise<ThreadArtifactsResponse> {
+  const res = await apiFetch(`/api/threads/${encodeURIComponent(tid)}/artifacts${view ? '?view=works' : ''}`, {
+    signal,
+  });
   if (!res.ok) throw new Error(`artifacts fetch failed: ${res.status}`);
   const body = await res.json();
-  return Array.isArray(body.artifacts) ? body.artifacts : [];
+  if (view && (body.view !== 'works' || !Array.isArray(body.artifacts))) throw new Error('Works view unavailable');
+  return { ...body, artifacts: Array.isArray(body.artifacts) ? body.artifacts : [] };
 }
 
 interface UseThreadArtifactsResult {
@@ -20,12 +24,65 @@ interface UseThreadArtifactsResult {
   loading: boolean;
   error: boolean;
   refetch: () => void;
+  works: ThreadArtifactDTO[];
+  total: number | null;
+  complete: boolean;
 }
 
-export function useThreadArtifacts(threadId: string | undefined): UseThreadArtifactsResult {
+function sourceCoverage(result: ThreadArtifactsResponse, view?: 'works') {
+  const validTotal = Number.isSafeInteger(result.total) && (result.total ?? -1) >= 0;
+  return {
+    total: validTotal ? (result.total ?? null) : view ? null : result.artifacts.length,
+    complete: view ? result.complete === true && result.workLineage === 'resolved' && validTotal : true,
+    lineageResolved: result.workLineage === 'resolved',
+  };
+}
+
+/** Refresh original source projections on material/completion and owner changes, never streamed text tokens. */
+export function useWorksSourceRefresh(threadId: string | undefined, enabled: boolean, refetch: () => void) {
+  const messages = useThreadMessages(enabled ? (threadId ?? null) : null);
+  const { hasActive } = useThreadLiveness(enabled ? (threadId ?? null) : null);
+  const materialKey = useMemo(
+    () =>
+      JSON.stringify([
+        hasActive,
+        messages.map((message) => [
+          message.id,
+          message.timestamp,
+          message.isStreaming,
+          message.extra?.rich,
+          message.contentBlocks?.filter((block) => block.type !== 'text'),
+        ]),
+      ]),
+    [messages, hasActive],
+  );
+  const previous = useRef({ threadId, materialKey, enabled });
+  useEffect(() => {
+    const changed =
+      previous.current.enabled &&
+      previous.current.threadId === threadId &&
+      previous.current.materialKey !== materialKey;
+    previous.current = { threadId, materialKey, enabled };
+    if (enabled && changed) refetch();
+  }, [enabled, materialKey, threadId, refetch]);
+  useEffect(() => {
+    if (!enabled) return;
+    window.addEventListener('cat-cafe:entrusted-work-projection-invalidated', refetch);
+    return () => window.removeEventListener('cat-cafe:entrusted-work-projection-invalidated', refetch);
+  }, [enabled, refetch]);
+}
+
+export function useThreadArtifacts(threadId: string | undefined, view?: 'works'): UseThreadArtifactsResult {
   const [artifacts, setArtifacts] = useState<ThreadArtifactDTO[]>([]);
-  const [loading, setLoading] = useState(false);
+  const [loading, setLoading] = useState(Boolean(threadId));
   const [error, setError] = useState(false);
+  const [coverage, setCoverage] = useState<{ total: number | null; complete: boolean; lineageResolved: boolean }>({
+    total: null,
+    complete: false,
+    lineageResolved: false,
+  });
+  const viewRef = useRef(view);
+  viewRef.current = view;
   const threadIdRef = useRef(threadId);
   threadIdRef.current = threadId;
   const abortRef = useRef<AbortController | null>(null);
@@ -44,8 +101,11 @@ export function useThreadArtifacts(threadId: string | undefined): UseThreadArtif
     setLoading(true);
     setError(false);
     try {
-      const result = await fetchArtifacts(tid, ac.signal);
-      if (!ac.signal.aborted) setArtifacts(result);
+      const result = await fetchArtifacts(tid, ac.signal, viewRef.current);
+      if (!ac.signal.aborted) {
+        setArtifacts(result.artifacts);
+        setCoverage(sourceCoverage(result, viewRef.current));
+      }
     } catch (err: unknown) {
       if (ac.signal.aborted || (err instanceof DOMException && err.name === 'AbortError')) return;
       setError(true);
@@ -59,7 +119,21 @@ export function useThreadArtifacts(threadId: string | undefined): UseThreadArtif
   useEffect(() => {
     refetch();
     return () => abortRef.current?.abort();
-  }, [threadId, refetch]);
+  }, [threadId, view, refetch]);
 
-  return { artifacts, loading, error, refetch };
+  useWorksSourceRefresh(threadId, view === 'works', refetch);
+
+  const works = useMemo(
+    () => projectThreadWorks(artifacts, coverage.lineageResolved),
+    [artifacts, coverage.lineageResolved],
+  );
+  return {
+    artifacts,
+    loading,
+    error,
+    refetch,
+    works,
+    total: coverage.total,
+    complete: coverage.complete,
+  };
 }

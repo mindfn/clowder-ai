@@ -106,6 +106,34 @@ describe('F221ApprovalAdapter', () => {
     assert.deepEqual(item.detail.tags, ['authentic-expression', '活人感']);
   });
 
+  it('shows the takeaway hypothesis in the approval item before the owner decides', async () => {
+    const proposal = createAnchored({ takeaway: '我们以为 You 喜欢带情景的手账。' });
+    const [item] = await adapter.listPending('user-1');
+    assert.equal(item.detail.takeaway, '我们以为 You 喜欢带情景的手账。');
+    assert.match(item.summary, /我们以为 You 喜欢带情景的手账/);
+    const { buildTasteProposalCardBlock } = await import('../../dist/routes/taste-proposal-card-block.js');
+    assert.match(buildTasteProposalCardBlock(proposal).bodyMarkdown, /猫的判断（假设）：/);
+  });
+
+  it('labels a source-bound correction distinctly and exposes its revision-bound patch', async () => {
+    const correctionTarget = {
+      sourceAnchor: 'taste-vignette:docs/taste/vignettes/example.md',
+      expectedRevision: `sha256:${'a'.repeat(64)}`,
+      reason: 'outdated',
+      suggestedPatch: { takeaway: '更新后的判断。' },
+    };
+    const proposal = createAnchored({ correctionTarget });
+    const [item] = await adapter.listPending('user-1');
+    assert.match(item.summary, /^Taste correction/u);
+    assert.deepEqual(item.detail.correction, {
+      expectedRevision: correctionTarget.expectedRevision,
+      reason: correctionTarget.reason,
+      suggestedPatch: correctionTarget.suggestedPatch,
+    });
+    const { buildTasteProposalCardBlock } = await import('../../dist/routes/taste-proposal-card-block.js');
+    assert.equal(buildTasteProposalCardBlock(proposal).title, '提议更正品味记忆');
+  });
+
   it('summary includes dimension and truncated quote', async () => {
     createAnchored();
     const [item] = await adapter.listPending('user-1');

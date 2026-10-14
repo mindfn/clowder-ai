@@ -1,7 +1,7 @@
 ---
 name: co-creation-docs
-tips_exempt: Developer delivery routing is triggered by explicit co-creation intent and repository state; no end-user discovery moment.
-description: 共创型 docs-only 交付：区分只审阅与授权落盘，再按冲突、治理风险、可逆性决定 direct push、PR、cloud 与 full gate。
+tips_exempt: "Renewed 2026-10-10: document and selected-avatar delivery classification refines author authorization and repository routing; explicit co-creation requests retain the same entry, with no distinct user discovery action."
+description: 共创文档与已选头像原图归档交付：区分只审阅与授权落盘，再按冲突、治理风险、可逆性决定 direct push、PR 和验证。
 triggers:
   - "共创文档"
   - "改 MD"
@@ -72,14 +72,20 @@ pnpm classify:co-creation-docs -- \
 
 1. 用独立分支避免争用；仍只跑 classifier 返回的 docs validation。
 2. 新实质内容才找非作者猫做内容 review；已有 verdict 或可证明机械合并用 continuityProof 复用，不因 SHA 变化重审。
-3. `cloudReview=required` 才触发 cloud；`fullGate=required` 才跑 full gate。
+3. docs 的 `cloudReview=skip` / `fullGate=skip` 保持轻量；regular 的 `risk_based` 回五轴判断，不当作必跑或豁免。
 4. evidence 闭合后由在场 merge owner 使用 squash merge，不额外召唤一只猫只为按按钮。
 
-PR、cloud、full gate 是三个独立结论。冲突或治理风险可要求 PR，但不自动把 docs 变成代码；家规 / SOP / skill 语境由本地跨族猫覆盖治理语义，context-blind cloud 没有独立风险面时不选择。代码、测试、安全边界或外部契约才升级 cloud / full gate。
+PR、cloud、full gate 是三个独立结论。冲突或治理风险可要求 PR，但不自动把 docs 变成代码；家规 / SOP / skill 语境按风险选一只非作者本地猫覆盖治理语义，同族也行，SOP 的元风险强制升档仍适用。context-blind cloud 没有独立风险面时不选择。代码与测试按受影响行为选验证；安全边界或外部契约按实际风险加强审查，不把 cloud 与 full 捆绑。
 
 ### `lane=regular_development`
 
 切到 `docs/SOP.md` 的五轴风险路由。脚本、skill、SOP definition 或第一方执行面不能伪装成“也是 Markdown”，但 regular 只决定载体进入开发车道，**不自动串联** planning / TDD / local + cloud / full gate；由行为、数据、安全、契约、不可逆风险分别触发。
+
+### `lane=static_asset_archive`（H 头像原图归档）
+
+用户已选定、只把原图纳入版本控制时，核来源、解码与视觉内容、完整 staged diff 后直接 commit/push main；不为已有选择另开 PR 或请审。当前机器证明只覆盖 `assets/avatars/` 直属目录中新增的普通非可执行 PNG，完整变更集不能混入绑定、代码或生成输入；已有素材替换、SVG、实际网页的 `packages/web/public/avatars/` 及其他目录回风险判断。不能用任意 `assets/` 前缀或图片后缀当作豁免。
+
+分类器与真实 push hook 共用内容/模式证明；hook 核的是将推送的 Git 对象，不读未提交图片来替代。格式结构检查不等于图片解码，也不能证明用户已经选定；这两项由原任务来源和作者轻检查负责，不新增批准表单。unknown 冲突/可逆性仍走 PR 载体，验证不因此自动升级 full/cloud。
 
 ## 正反灰例
 
@@ -89,7 +95,7 @@ PR、cloud、full gate 是三个独立结论。冲突或治理风险可要求 PR
 - 正例：`docs/ROADMAP.md` 的机械登记 + 安全 feature doc → main-only direct push；BACKLOG 不进入 PR。
 - 反例：只请 review 思想纲领 → review-only，不落盘。
 - 反例：改 `cat-cafe-skills/*/SKILL.md` 或 `scripts/*.mjs` → regular development。
-- 灰例：只修改 `docs/SOP.md` → PR + 本地跨族治理 review，cloud/full gate 都 skip。
+- 灰例：只修改 `docs/SOP.md` → PR + 按风险选一只非作者本地治理 reviewer，同族也行；元风险仍按 SOP 升档，cloud/full gate 分别判断。
 
 ## Common Mistakes
 

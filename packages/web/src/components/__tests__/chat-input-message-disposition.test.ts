@@ -3,6 +3,7 @@ import React, { act } from 'react';
 import { createRoot, type Root } from 'react-dom/client';
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import { ChatInput } from '@/components/ChatInput';
+import { writeShellLanguage } from '@/components/shell/shell-language';
 import { activeExecutionKey, useActiveExecutionStore } from '@/stores/activeExecutionStore';
 import { useChatStore } from '@/stores/chatStore';
 
@@ -94,6 +95,7 @@ describe('F264 author message disposition selector', () => {
   });
 
   beforeEach(() => {
+    writeShellLanguage('zh');
     container = document.createElement('div');
     document.body.appendChild(container);
     root = createRoot(container);
@@ -133,6 +135,7 @@ describe('F264 author message disposition selector', () => {
   afterEach(() => {
     act(() => root.unmount());
     container.remove();
+    writeShellLanguage('zh');
     vi.restoreAllMocks();
   });
 
@@ -168,6 +171,19 @@ describe('F264 author message disposition selector', () => {
       await Promise.resolve();
       await Promise.resolve();
     });
+  }
+
+  async function openAddMenu() {
+    const existing = document.querySelector('[data-testid="composer-add-menu"]') as HTMLElement | null;
+    if (existing) return existing;
+    const trigger = container.querySelector('[aria-controls="composer-add-menu"]') as HTMLButtonElement;
+    await act(async () => {
+      trigger.click();
+      await Promise.resolve();
+    });
+    const opened = document.querySelector('[data-testid="composer-add-menu"]') as HTMLElement | null;
+    if (!opened) throw new Error('add menu did not open');
+    return opened;
   }
 
   it('appears only for live work and consumes a one-shot override after successful admission', async () => {
@@ -416,5 +432,95 @@ describe('F264 author message disposition selector', () => {
     });
     expect(triggerB.textContent).toContain('全局默认');
     expect(triggerB.textContent).not.toContain('本 Thread');
+  });
+
+  it('moves the v2 thread choice into the top of + and leaves only the current mode in the placeholder', async () => {
+    const onSend = vi.fn(async () => true);
+    await renderThreadInput({
+      presentation: 'v2',
+      threadId: 'thread-v2',
+      onSend,
+      hasActiveInvocation: true,
+    });
+
+    expect(container.querySelector('[data-testid="message-disposition-trigger"]')).toBeNull();
+    expect((container.querySelector('textarea') as HTMLTextAreaElement).placeholder).toContain('下一件工作');
+
+    const menu = await openAddMenu();
+    const section = menu.querySelector('[data-testid="message-disposition-menu-section"]') as HTMLElement;
+    expect(menu.firstElementChild).toBe(section);
+    expect(section.textContent).toContain('这条发出去后');
+    expect(section.textContent).toContain('作为下一件工作');
+    expect(section.textContent).toContain('接着当前工作');
+    expect(section.compareDocumentPosition(menu.querySelector('[data-testid="composer-add-context"]') as Node)).toBe(
+      Node.DOCUMENT_POSITION_FOLLOWING,
+    );
+
+    await act(async () => {
+      (section.querySelector('[data-disposition-option="continue_current"]') as HTMLButtonElement).click();
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    const write = mockApiFetch.mock.calls.find((call) => call[0] === '/api/config/message-disposition');
+    expect(JSON.parse(String(write?.[1]?.body))).toEqual({
+      scope: 'thread',
+      threadId: 'thread-v2',
+      disposition: 'continue_current',
+    });
+    expect(document.querySelector('[data-testid="composer-add-menu"]')).toBeNull();
+    expect((container.querySelector('textarea') as HTMLTextAreaElement).placeholder).toContain('接着当前工作');
+
+    await typeAndSend('继续这轮');
+    expect(onSend).toHaveBeenCalledWith('继续这轮', undefined, undefined, 'queue', undefined, undefined);
+  });
+
+  it('shows no v2 send-mode section without live work and explains a disabled carrier instead of guessing', async () => {
+    await renderThreadInput({ presentation: 'v2', threadId: 'thread-idle', onSend: vi.fn() });
+    expect((await openAddMenu()).querySelector('[data-testid="message-disposition-menu-section"]')).toBeNull();
+
+    act(() => {
+      useChatStore.setState({
+        catInvocations: {
+          opus: {
+            invocationId: 'inv-active',
+            freshnessCarrierCapability: {
+              provider: 'anthropic',
+              carrier: 'claude_print_sdk',
+              deliverySemantics: 'unsupported',
+            },
+          },
+        },
+      });
+    });
+    await renderThreadInput({
+      presentation: 'v2',
+      threadId: 'thread-unsupported',
+      onSend: vi.fn(),
+      hasActiveInvocation: true,
+    });
+    const section = (await openAddMenu()).querySelector(
+      '[data-testid="message-disposition-menu-section"]',
+    ) as HTMLElement;
+    const continueOption = section.querySelector('[data-disposition-option="continue_current"]') as HTMLButtonElement;
+    expect(continueOption.disabled).toBe(true);
+    expect(continueOption.textContent).toContain('当前接入不支持本轮读取');
+  });
+
+  it('switches every word in the v2 send-mode section without remounting the menu', async () => {
+    await renderThreadInput({
+      presentation: 'v2',
+      threadId: 'thread-language',
+      onSend: vi.fn(),
+      hasActiveInvocation: true,
+    });
+    const menu = await openAddMenu();
+    const section = menu.querySelector('[data-testid="message-disposition-menu-section"]') as HTMLElement;
+
+    act(() => writeShellLanguage('en'));
+    expect(document.querySelector('[data-testid="composer-add-menu"]')).toBe(menu);
+    expect(section.textContent).toContain('After this message');
+    expect(section.textContent).toContain('Start as the next work');
+    expect(section.textContent).toContain('Continue current work');
   });
 });

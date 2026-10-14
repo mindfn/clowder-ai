@@ -43,10 +43,10 @@ export function usePresentedVideoFrame(videoRef: RefObject<HTMLVideoElement>, sr
     if (video) setSeeking(video.seeking);
   }, [videoRef]);
   const seekTo = useCallback(
-    (position: number) => {
+    (position: number, options?: { pause?: boolean }) => {
       const video = videoRef.current;
       if (!video) return;
-      video.pause();
+      if (options?.pause !== false) video.pause();
       if (video.currentTime === position) return;
       setSeeking(true);
       setFrame((current) => (matchesPosition(current, position) ? current : null));

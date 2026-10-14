@@ -3,7 +3,7 @@ import { createRoot, type Root } from 'react-dom/client';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { NavigateEvent } from '@/hooks/useWorkspaceNavigate';
 import { useWorkspaceNavigate } from '@/hooks/useWorkspaceNavigate';
-import type { WorkspaceNavigationReceipt } from '@/hooks/workspace-navigation-pending';
+import { getPendingWorkspaceNavigation, type WorkspaceNavigationReceipt } from '@/hooks/workspace-navigation-pending';
 import { useChatStore } from '@/stores/chatStore';
 
 Object.assign(globalThis as Record<string, unknown>, { React, IS_REACT_ACT_ENVIRONMENT: true });
@@ -210,7 +210,12 @@ describe('useWorkspaceNavigate delivery lifecycle', () => {
     getStateSpy.mockRestore();
 
     expect(useChatStore.getState().workspaceOpenFilePath).toBeNull();
-    expect(acknowledge).toHaveBeenCalledWith({ status: 'blocked', eventId: 'event-lock-race' });
+    expect(acknowledge).toHaveBeenCalledWith({
+      status: 'blocked',
+      eventId: 'event-lock-race',
+      reason: 'presentation_lock',
+    });
+    expect(getPendingWorkspaceNavigation(window.sessionStorage, 'thread-target')?.eventId).toBe('event-lock-race');
   });
 
   it('keeps one app-scoped socket while live delivery state changes', async () => {
@@ -255,5 +260,40 @@ describe('useWorkspaceNavigate delivery lifecycle', () => {
 
     expect(useChatStore.getState().workspaceOpenFilePath).toBe('docs/live-state.md');
     expect(acknowledge).toHaveBeenCalledWith({ status: 'applied', eventId: 'event-live-state' });
+  });
+
+  it('retains a blocked request without stealing the locked file or the unlocked origin', async () => {
+    useChatStore.setState({
+      currentThreadId: 'thread-target',
+      workspaceOpenFilePath: 'docs/original.md',
+      workspaceOpenTabs: ['docs/original.md'],
+      workspaceOpenFileLine: 7,
+    });
+    act(() => {
+      useChatStore.getState().enablePresentationLock();
+      root.render(<Probe threadId="thread-target" isChatRoute />);
+    });
+    await vi.waitFor(() => expect(socketState.handlers.has('workspace:navigate')).toBe(true));
+    const data: NavigateEvent = {
+      action: 'open',
+      path: 'docs/requested.md',
+      line: 42,
+      worktreeId: 'cat-cafe',
+      threadId: 'thread-target',
+      eventId: 'event-locked-request',
+    };
+    const acknowledge = vi.fn<(receipt: WorkspaceNavigationReceipt) => void>();
+    act(() => socketState.handlers.get('workspace:navigate')?.(data, acknowledge));
+
+    expect(acknowledge).toHaveBeenCalledWith({
+      status: 'blocked',
+      eventId: data.eventId,
+      reason: 'presentation_lock',
+    });
+    expect(useChatStore.getState().workspaceOpenFilePath).toBe('docs/original.md');
+    expect(getPendingWorkspaceNavigation(window.sessionStorage, 'thread-target')).toEqual(data);
+    act(() => useChatStore.getState().disablePresentationLock());
+    expect(useChatStore.getState().workspaceOpenFilePath).toBe('docs/original.md');
+    expect(getPendingWorkspaceNavigation(window.sessionStorage, 'thread-target')).toEqual(data);
   });
 });

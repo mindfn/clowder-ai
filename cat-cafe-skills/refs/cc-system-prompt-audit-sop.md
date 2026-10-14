@@ -23,7 +23,7 @@ CLI 每次版本升级可能**新增功能性指令**——不重拆 = L0 §2 �
 | Phase E cron（weekly `--check`）报 `drift=true` | 命中的猫跑本 SOP |
 | patch 升级（x.y.**Z**） | 可选；cron drift 会提示，按 diff 大小判断 |
 
-命中升级的猫 = 负责猫（不甩锅、不攒着）。改 L0 走正常 SOP（跨族 review）。
+命中升级的猫 = 负责猫（不甩锅、不攒着）。改 L0 走正常 SOP（按风险选一只非作者 reviewer）。
 
 ## 步骤
 
@@ -47,7 +47,7 @@ node scripts/audit-claude-code-system-prompt.mjs --cli codex \
    `assets/system-prompts/system-prompt-l0.md` §2，把新功能性指令的**语义**
    补进去（不是逐字抄 CC 原文——L0 是重写版；抓"删了猫会丢什么能力"）。
    跑 `compile-system-prompt-l0.test.mjs` 守护 → quality-gate →
-   request-review（跨族）→ merge-gate。
+   request-review（按风险选一只非作者 reviewer）→ merge-gate。
 4. **归档新版本**（每次升级必做，无论有无 diff——留漂移痕迹）：
    ```bash
    node scripts/audit-claude-code-system-prompt.mjs --cli claude \

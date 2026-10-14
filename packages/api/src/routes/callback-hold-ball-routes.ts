@@ -2,15 +2,16 @@
  * F167 Phase C1: Hold Ball Callback Routes
  * POST /api/callbacks/hold-ball — register ball hold + schedule wake-up via reminder template
  *
- * Semantic note (gpt52 review on PR #1289):
- * The hold counter is a SLIDING WINDOW counter (single-bucket, lastAt-anchored).
- * A cat can hold up to MAX_HOLDS_PER_WINDOW times within HOLD_WINDOW_MS per
- * (threadId, catId); each successful hold advances lastAt to now, so the 1h
- * expiry slides forward from the most recent success — not per-item. Rejected
- * 429 calls do NOT advance the window. State is process-local
- * (in-memory Map) — best-effort only. API restart or multi-instance deployments
- * will reset the counter. Durable enforcement would require sharing state with the
- * reminder scheduler; that is intentionally deferred.
+ * Semantic note (gpt52 review on PR #1289, updated #1449 Slice 2):
+ * The hold counter is a TRUE SLIDING WINDOW: each hold is stored as an individual
+ * event with its own timestamp. Window count = number of events within
+ * [now - HOLD_WINDOW_MS, now). A cat can hold up to MAX_HOLDS_PER_WINDOW times
+ * within HOLD_WINDOW_MS per (threadId, catId). Rejected 429 calls do NOT record
+ * an event.
+ *
+ * Quota admission is atomic: tryAdmit() serializes check+insert via Lua script
+ * (Redis) or IMMEDIATE transaction (SQLite), preventing TOCTOU races.
+ * holdQuotaStore is a required dependency (no in-memory fallback).
  */
 
 import type { SchedulerAwaitStateV1, WaitOwnerFence } from '@cat-cafe/shared';
@@ -20,16 +21,23 @@ import {
   A2ADispatchDispositionError,
   type A2ADispatchDispositionService,
 } from '../domains/ball-custody/A2ADispatchDispositionService.js';
+import { describeDispatchReplayMismatch } from '../domains/ball-custody/a2a-dispatch-disposition-error.js';
 import type { IBallCustodyIngest } from '../domains/ball-custody/BallCustodyIngest.js';
 import { buildHeldEvent, buildWakeConditionMetEvent } from '../domains/ball-custody/ball-custody-events.js';
 import {
-  createDurableManagedGateJob,
+  createResumableDurableManagedGateJob,
+  durableManagedGateConsumerLines,
+  isResumableDurableManagedGateCommand,
+  projectDurableManagedGateConsumer,
+} from '../domains/ball-custody/durable-managed-gate-consumer.js';
+import {
   DURABLE_GATE_WALL_SLA_MS,
   type DurableManagedGateJob,
   initializeDurableManagedGateJob,
   isDurableManagedGateCommand,
   settleDurableManagedGateJobFromRunner,
 } from '../domains/ball-custody/durable-managed-gate-job.js';
+import type { IHoldQuotaStore } from '../domains/ball-custody/hold-quota-store.js';
 import {
   buildAdmissionFactIdempotencyKey,
   createInitialManagedCommandWakeProjection,
@@ -40,6 +48,9 @@ import {
   ManagedHoldDispositionError,
   type ManagedHoldDispositionService,
 } from '../domains/ball-custody/ManagedHoldDispositionService.js';
+import { settleNoSpawnDurableGate } from '../domains/ball-custody/managed-command-no-spawn-terminal.js';
+import { readDeclaredManagedTerminalState } from '../domains/ball-custody/managed-command-terminal-declaration.js';
+import { describeManagedHoldReplayMismatch } from '../domains/ball-custody/managed-hold-replay-mismatch.js';
 import type {
   InvocationRecord as CallbackInvocationRecord,
   InvocationRegistry,
@@ -52,13 +63,23 @@ import { extractHoldBallClaims } from '../infrastructure/grounding/claim-extract
 import { checkGrounding } from '../infrastructure/grounding/grounding-checker.js';
 import { groundingSampleStore } from '../infrastructure/grounding/grounding-sample-singleton.js';
 import { createModuleLogger } from '../infrastructure/logger.js';
-import { KILL_GRACE_MS, ManagedRunner, type WakeWhenResult } from '../infrastructure/managed-runner.js';
+import { READONLY_MAX_TIMEOUT_MS } from '../infrastructure/managed-readonly-plan.js';
+import {
+  KILL_GRACE_MS,
+  ManagedRunner,
+  type SpawnAdmission,
+  type WakeWhenResult,
+} from '../infrastructure/managed-runner.js';
 import type { DynamicTaskStore } from '../infrastructure/scheduler/DynamicTaskStore.js';
 import type { TaskRunnerV2 } from '../infrastructure/scheduler/TaskRunnerV2.js';
 import type { TaskTemplate } from '../infrastructure/scheduler/templates/types.js';
 import { holdBallPendingInputReject, holdBallUngroundedTimerReject } from '../infrastructure/telemetry/instruments.js';
 import type { SocketManager } from '../infrastructure/websocket/index.js';
 import { requireCallbackAuth } from './callback-auth-prehandler.js';
+import type { CustodyEventRouteDeps } from './callback-custody-events-routes.js';
+import { registerCustodyEventRoutes } from './callback-custody-events-routes.js';
+import type { EventWaitDispositionRouteDeps } from './callback-event-wait-routes.js';
+import { registerEventWaitDispositionRoutes } from './callback-event-wait-routes.js';
 import { emitC1HoldCancellation } from './callback-hold-ball-c1-emit.js';
 import { registerHoldBallCancelRoutes } from './callback-hold-ball-cancel-routes.js';
 import { deriveCallbackActor, getDeletedCallbackThreadGuard } from './callback-scope-helpers.js';
@@ -77,31 +98,6 @@ const log = createModuleLogger('routes/callback-hold-ball');
 
 export const MAX_HOLDS_PER_WINDOW = 3;
 export const HOLD_WINDOW_MS = 3_600_000;
-
-const holdCounts = new Map<string, { count: number; lastAt: number }>();
-
-export function getHoldCount(threadId: string, catId: string, now: number = Date.now()): number {
-  const key = `${threadId}:${catId}`;
-  const entry = holdCounts.get(key);
-  if (!entry) return 0;
-  if (now - entry.lastAt > HOLD_WINDOW_MS) {
-    holdCounts.delete(key);
-    return 0;
-  }
-  return entry.count;
-}
-
-export function incrementHoldCount(threadId: string, catId: string, now: number = Date.now()): number {
-  const key = `${threadId}:${catId}`;
-  const entry = holdCounts.get(key);
-  if (!entry || now - entry.lastAt > HOLD_WINDOW_MS) {
-    holdCounts.set(key, { count: 1, lastAt: now });
-    return 1;
-  }
-  entry.count++;
-  entry.lastAt = now;
-  return entry.count;
-}
 
 /**
  * F167 Phase P review P1-1 fix: active wakeWhen runner registry.
@@ -273,11 +269,27 @@ const waitSourceRefSchema = z
     { message: 'anchorRef is required for reporter_handle kind' },
   );
 
-const wakeWhenSchema = z.object({
-  command: z.string().min(1),
-  cwd: z.string().optional(),
-  timeoutMs: z.number().int().min(1_000).max(3_600_000).optional(),
-});
+const wakeWhenSchema = z
+  .object({
+    command: z.string().min(1),
+    executionPolicy: z.literal('read_only').optional(),
+    cwd: z.string().optional(),
+    timeoutMs: z.number().int().min(1_000).max(3_600_000).optional(),
+    executionSlaMs: z.number().int().min(1_000).max(DURABLE_GATE_WALL_SLA_MS).optional(),
+  })
+  .strict()
+  .refine(
+    (data) =>
+      data.executionPolicy === undefined ||
+      (data.executionSlaMs === undefined &&
+        !isDurableManagedGateCommand(data.command) &&
+        (data.timeoutMs === undefined || data.timeoutMs <= READONLY_MAX_TIMEOUT_MS)),
+    { message: 'readonly commands require bounded native execution, not a durable gate or execution SLA' },
+  )
+  .refine((data) => data.executionSlaMs === undefined || isDurableManagedGateCommand(data.command), {
+    message: 'executionSlaMs is only supported for canonical durable full-gate commands',
+    path: ['executionSlaMs'],
+  });
 
 const holdBallSchema = z
   .object({
@@ -320,7 +332,7 @@ const holdBallSchema = z
     },
   );
 
-export interface HoldBallRouteDeps {
+export interface HoldBallRouteDeps extends CustodyEventRouteDeps, EventWaitDispositionRouteDeps {
   registry: InvocationRegistry;
   taskRunner: TaskRunnerV2;
   templateRegistry: { get(id: string): TaskTemplate | undefined };
@@ -380,7 +392,42 @@ export interface HoldBallRouteDeps {
   managedHoldDispositionService?: Pick<ManagedHoldDispositionService, 'complete'> &
     Partial<Pick<ManagedHoldDispositionService, 'describe'>>;
   /** F167: exact ordinary A2A dispatch terminal producer. */
-  a2aDispatchDispositionService?: Pick<A2ADispatchDispositionService, 'complete'>;
+  a2aDispatchDispositionService?: Pick<A2ADispatchDispositionService, 'complete' | 'completeAdopted'> &
+    Partial<Pick<A2ADispatchDispositionService, 'describe'>>;
+  /**
+   * F167 #1449 Slice 2: durable hold quota store (REQUIRED).
+   * Redis-backed (primary) or SQLite-backed (MEMORY_STORE=1 degraded).
+   * True sliding window with atomic admission (tryAdmit).
+   * Redis mode: shared authority across API nodes; survives process replacement.
+   * SQLite mode: per-node, in-memory only (:memory:); does NOT survive process restart.
+   */
+  holdQuotaStore: IHoldQuotaStore;
+}
+
+/**
+ * Why the canonical hold owner fence could not be resolved. Only the cause is named: the response carries this
+ * code and nothing from the record it was read from.
+ */
+export type HoldOwnerFenceUnavailableReason =
+  | 'parent_missing'
+  | 'thread_mismatch'
+  | 'user_mismatch'
+  | 'target_cat_missing'
+  | 'store_read_failed';
+
+export class HoldOwnerFenceUnavailableError extends Error {
+  constructor(
+    readonly reason: HoldOwnerFenceUnavailableReason,
+    options?: { cause?: unknown },
+  ) {
+    super(
+      reason === 'store_read_failed'
+        ? 'callback parent invocation record could not be read for the hold owner fence'
+        : 'callback parent invocation is outside the authenticated hold owner scope',
+      options,
+    );
+    this.name = 'HoldOwnerFenceUnavailableError';
+  }
 }
 
 export async function resolveHoldWaitOwnerFence(
@@ -390,15 +437,17 @@ export async function resolveHoldWaitOwnerFence(
   const containingTaskFence = Object.freeze({ kind: 'containing_task' as const, generation: 1 });
   if (!record.parentInvocationId) return containingTaskFence;
 
-  const stored = await invocationRecordStore.get(record.parentInvocationId);
-  if (
-    !stored ||
-    stored.threadId !== record.threadId ||
-    stored.userId !== record.userId ||
-    !stored.targetCats.includes(record.catId)
-  ) {
-    throw new Error('callback parent invocation is outside the authenticated hold owner scope');
+  let stored: Awaited<ReturnType<Pick<IInvocationRecordStore, 'get'>['get']>>;
+  try {
+    stored = await invocationRecordStore.get(record.parentInvocationId);
+  } catch (cause) {
+    throw new HoldOwnerFenceUnavailableError('store_read_failed', { cause });
   }
+  // The first predicate that fails names the cause, in this order. Every one of them still refuses.
+  if (!stored) throw new HoldOwnerFenceUnavailableError('parent_missing');
+  if (stored.threadId !== record.threadId) throw new HoldOwnerFenceUnavailableError('thread_mismatch');
+  if (stored.userId !== record.userId) throw new HoldOwnerFenceUnavailableError('user_mismatch');
+  if (!stored.targetCats.includes(record.catId)) throw new HoldOwnerFenceUnavailableError('target_cat_missing');
   if (stored.actionLeaseCarrier.kind === 'none') return containingTaskFence;
   return Object.freeze({
     kind: 'action_successor',
@@ -420,8 +469,19 @@ export async function resolveHoldWaitOwnerFence(
  * only transitions to 'running' after spawn succeeds, and the caller receives
  * the real pid for truthful visibility messages and HTTP responses.
  */
+type ManagedWakeAdmission = SpawnAdmission & { durableTerminalPersisted?: boolean };
+
+function persistManagedAdmissionStep(taskId: string, step: string, persist: () => boolean): boolean {
+  try {
+    return persist();
+  } catch (err) {
+    log.error({ taskId, step, err }, 'Managed command admission persistence step failed');
+    return false;
+  }
+}
+
 function launchWakeWhenRunner(opts: {
-  wakeWhen: { command: string; cwd?: string; timeoutMs?: number };
+  wakeWhen: { command: string; cwd?: string; timeoutMs?: number; executionPolicy?: 'read_only' };
   reason: string;
   nextStep: string;
   threadId: string;
@@ -430,39 +490,62 @@ function launchWakeWhenRunner(opts: {
   deps: HoldBallRouteDeps;
   prepared: PreparedManagedWakeRunner;
   durableJob?: DurableManagedGateJob;
-}): { admissionPromise: Promise<import('../infrastructure/managed-runner.js').SpawnAdmission> } {
-  const { wakeWhen, reason, nextStep, threadId, catId, taskId, deps, prepared, durableJob } = opts;
+  fireAt: number;
+}): { admissionPromise: Promise<ManagedWakeAdmission> } {
+  const { wakeWhen, reason, nextStep, threadId, catId, taskId, deps, prepared, durableJob, fireAt } = opts;
   const { registryKey, entry: activeEntry } = prepared;
   const { runner } = activeEntry;
 
-  let resolveExternalAdmission!: (result: import('../infrastructure/managed-runner.js').SpawnAdmission) => void;
-  const admissionPromise = new Promise<import('../infrastructure/managed-runner.js').SpawnAdmission>((resolve) => {
+  let resolveExternalAdmission!: (result: ManagedWakeAdmission) => void;
+  const admissionPromise = new Promise<ManagedWakeAdmission>((resolve) => {
     resolveExternalAdmission = resolve;
   });
+  const resolveNoSpawn = (result: SpawnAdmission) => {
+    const cancelled = result.error === 'registry_mismatch' || result.error === 'cancellation_reserved';
+    let durableTerminalPersisted: boolean | undefined;
+    // Cancelled carriers may already be removed. Other no-spawn cases persist
+    // the task fact first, so startup cannot mistake the gate terminal for execution.
+    if (durableJob && cancelled) {
+      try {
+        durableTerminalPersisted = settleNoSpawnDurableGate(
+          durableJob,
+          taskId,
+          result.error ?? 'admission_rejected',
+          cancelled,
+        );
+      } catch (err) {
+        durableTerminalPersisted = false;
+        log.error({ threadId, catId, taskId, err }, 'No-spawn durable gate terminal persistence failed');
+      }
+    }
+    resolveExternalAdmission({ ...result, durableTerminalPersisted });
+  };
+  let spawnConfirmed = false;
 
   void (async () => {
     try {
       const pending = activeRunners.get(registryKey);
       if (pending !== activeEntry || pending.taskId !== taskId) {
-        resolveExternalAdmission({ spawned: false, pid: null, error: 'registry_mismatch' });
+        resolveNoSpawn({ spawned: false, pid: null, error: 'registry_mismatch' });
         return;
       }
       if (pending.phase === 'cancellation_reserved') {
         const decision = await pending.reservationDecision?.promise;
         if (decision !== 'resume') {
-          resolveExternalAdmission({ spawned: false, pid: null, error: 'cancellation_reserved' });
+          resolveNoSpawn({ spawned: false, pid: null, error: 'cancellation_reserved' });
           return;
         }
       }
       const admitted = activeRunners.get(registryKey);
       if (admitted !== activeEntry || admitted.taskId !== taskId || admitted.phase !== 'pending_launch') {
-        resolveExternalAdmission({ spawned: false, pid: null, error: 'phase_mismatch' });
+        resolveNoSpawn({ spawned: false, pid: null, error: 'phase_mismatch' });
         return;
       }
 
       // Two-phase start: admission resolves on spawn, commandDone on exit.
       const { admission: spawnAdmission, completion: commandDone } = runner.start(wakeWhen.command, {
         cwd: wakeWhen.cwd,
+        ...(wakeWhen.executionPolicy ? { executionPolicy: wakeWhen.executionPolicy } : {}),
         timeoutMs: durableJob?.wallSlaMs ?? wakeWhen.timeoutMs,
         ...(durableJob
           ? {
@@ -481,33 +564,46 @@ function launchWakeWhenRunner(opts: {
         if (activeRunners.get(registryKey) === activeEntry) activeRunners.delete(registryKey);
         log.warn(
           { threadId, catId, command: wakeWhen.command, error: spawnResult.error },
-          'F167 Phase P: wakeWhen spawn failed — cleaning up, fallback reminder will fire',
+          'F167 Phase P: explicit command admission failure — no completion wake',
         );
-        resolveExternalAdmission(spawnResult);
+        resolveNoSpawn(spawnResult);
         // Still await commandDone to drain resources
         await commandDone;
         return;
       }
 
       // Spawn succeeded — NOW transition to 'running'.
+      spawnConfirmed = true;
       admitted.phase = 'running';
       resolveExternalAdmission(spawnResult);
+      await deps.ballCustody
+        ?.record(buildHeldEvent({ threadId, catId, fireAt, at: Date.now() }))
+        .catch((err) => log.warn({ threadId, catId, taskId, err }, 'Failed to record spawned managed hold'));
 
       const result = await commandDone;
 
-      const wakeContent = buildManagedCommandWakeContent(result, reason, wakeWhen.command, nextStep);
-      const completion: RecordManagedCommandCompletionInput = {
-        taskId,
-        wakeContent,
-        result: {
-          exitCode: result.exitCode,
-          timedOut: result.timedOut,
-          cancelled: runner.state === 'cancelled',
-          durationMs: result.durationMs,
-          ...(result.tailOutput ? { tailOutput: result.tailOutput } : {}),
-        },
+      const terminalResult = {
+        exitCode: result.exitCode,
+        timedOut: result.timedOut,
+        cancelled: runner.state === 'cancelled',
+        durationMs: result.durationMs,
+        ...(result.tailOutput ? { tailOutput: result.tailOutput } : {}),
       };
-      if (durableJob) settleDurableManagedGateJobFromRunner(durableJob, completion.result);
+      if (durableJob) settleDurableManagedGateJobFromRunner(durableJob, terminalResult);
+      const consumerProjection = durableJob
+        ? projectDurableManagedGateConsumer(durableJob, wakeWhen.command, terminalResult, {
+            ...(wakeWhen.cwd ? { candidateRoot: wakeWhen.cwd } : {}),
+            controllerRoot: process.env.CAT_CAFE_RUNTIME_ROOT?.trim() || process.cwd(),
+          })
+        : null;
+      const wakeContent = buildManagedCommandWakeContent(
+        result,
+        reason,
+        wakeWhen.command,
+        nextStep,
+        durableManagedGateConsumerLines(consumerProjection),
+      );
+      const completion: RecordManagedCommandCompletionInput = { taskId, wakeContent, result: terminalResult };
       const recovery =
         deps.managedCommandWakeRecovery ??
         new ManagedCommandWakeRecoverySweep({
@@ -591,14 +687,20 @@ function launchWakeWhenRunner(opts: {
       // P1-2 fix: always settle the admission promise so the route handler
       // never hangs on `await admissionPromise`. Calling resolve multiple
       // times is a no-op — only the first call wins.
-      resolveExternalAdmission({ spawned: false, pid: null, error: 'internal_error' });
+      if (!spawnConfirmed)
+        resolveNoSpawn({
+          spawned: false,
+          pid: null,
+          error: 'internal_error',
+          failureKind: 'admission_rejected',
+        });
       // Clean up registry on unexpected failure too
       if (activeRunners.get(registryKey)?.runner === runner) {
         activeRunners.delete(registryKey);
       }
       log.error(
-        { threadId, catId, command: wakeWhen.command, err },
-        'F167 Phase P: wakeWhen runner failed — fallback reminder will still fire',
+        { threadId, catId, command: wakeWhen.command, err, spawnConfirmed },
+        'F167 Phase P: managed runner failed',
       );
     }
   })();
@@ -606,18 +708,28 @@ function launchWakeWhenRunner(opts: {
   return { admissionPromise };
 }
 
-function buildManagedCommandWakeContent(
+export function buildManagedCommandWakeContent(
   result: WakeWhenResult,
   reason: string,
   command: string,
   nextStep: string,
+  consumerLines: readonly string[] = [],
 ): string {
-  const statusLabel = result.timedOut ? '⏰ 超时' : result.exitCode === 0 ? '✅ 成功' : `❌ 退出码 ${result.exitCode}`;
+  const declaredState = readDeclaredManagedTerminalState(result.tailOutput, result.exitCode);
+  const statusLabel = result.timedOut
+    ? '⏰ 超时'
+    : declaredState === 'unverified'
+      ? `⚠️ 未验证（退出码 ${result.exitCode}）— 命令已完成分类，但未产出验证证据`
+      : result.exitCode === 0
+        ? '✅ 成功'
+        : `❌ 退出码 ${result.exitCode}`;
   const tail = result.tailOutput ? `输出尾部：\n\`\`\`\n${result.tailOutput}\n\`\`\`\n` : '';
+  const consumer = consumerLines.length > 0 ? `${consumerLines.join('\n')}\n` : '';
   return (
     `持球唤醒（命令完成）：你之前因为「${reason}」持球，运行了「${command}」。\n` +
     `结果：${statusLabel}（耗时 ${Math.round(result.durationMs / 1000)}s）\n` +
     tail +
+    consumer +
     `下一步：${nextStep}`
   );
 }
@@ -656,7 +768,19 @@ export function registerCallbackHoldBallRoutes(app: FastifyInstance, deps: HoldB
     const { reason, nextStep, wakeWhen } = parsed.data;
     // wakeAfterMs: explicit timed wake, OR derived from wakeWhen timeout (for single-slot/visibility)
     const durableGateRequested = !!wakeWhen && isDurableManagedGateCommand(wakeWhen.command);
-    const executionSlaMs = durableGateRequested ? (wakeWhen?.timeoutMs ?? 3_600_000) : undefined;
+    const resumableGateRequested = !!wakeWhen && isResumableDurableManagedGateCommand(wakeWhen.command);
+    if (durableGateRequested && !resumableGateRequested) {
+      reply.status(400);
+      return {
+        error: 'Full gate command is recognized but is not eligible for durable recovery.',
+        code: 'durable_gate_recovery_command_unsupported',
+        action:
+          'Use `pnpm gate` directly, or a supported local Redis/data-root prefix; remove shell composition and arbitrary environment changes.',
+      };
+    }
+    const executionSlaMs = durableGateRequested
+      ? (wakeWhen?.executionSlaMs ?? wakeWhen?.timeoutMs ?? 3_600_000)
+      : undefined;
     const wakeAfterMs = durableGateRequested
       ? DURABLE_GATE_WALL_SLA_MS
       : (parsed.data.wakeAfterMs ?? wakeWhen?.timeoutMs ?? 600_000);
@@ -705,17 +829,21 @@ export function registerCallbackHoldBallRoutes(app: FastifyInstance, deps: HoldB
       return guardResult.blockedResponse;
     }
 
-    const currentCount = getHoldCount(threadId, catIdStr);
-    if (currentCount >= MAX_HOLDS_PER_WINDOW) {
-      const holdKey = `${threadId}:${catIdStr}`;
-      const holdEntry = holdCounts.get(holdKey);
-      const rejectNow = Date.now();
-      // +1: getHoldCount clears at strict `>` (now - lastAt > HOLD_WINDOW_MS),
-      // so lastAt + HOLD_WINDOW_MS is the last rejecting moment; +1 is the first admit.
-      const retryAtMs = holdEntry ? holdEntry.lastAt + HOLD_WINDOW_MS + 1 : rejectNow;
-      const retryAfterMs = Math.max(0, retryAtMs - rejectNow);
+    // Atomic admission: check+reserve in a single operation.
+    // Redis: Lua script uses Redis TIME as the authority clock — all API nodes
+    // share the same time reference, preventing clock-skew window divergence.
+    // SQLite: IMMEDIATE transaction with local Date.now().
+    // Both prevent the TOCTOU race where concurrent requests overcommit.
+    const admission = await deps.holdQuotaStore.tryAdmit(threadId, catIdStr, MAX_HOLDS_PER_WINDOW, HOLD_WINDOW_MS);
+    if (!admission.admitted) {
+      // Both retryAtMs and retryAfterMs come from the same authority clock
+      // (Redis TIME for Redis mode, local now for SQLite). Route must NOT
+      // recompute retryAfterMs from Date.now() — cross-clock subtraction
+      // produces self-contradictory 429 responses under node clock skew.
+      const retryAtMs = admission.retryAtMs ?? Date.now();
+      const retryAfterMs = admission.retryAfterMs ?? 0;
       log.warn(
-        { threadId, catId: catIdStr, currentCount, windowMs: HOLD_WINDOW_MS, retryAtMs },
+        { threadId, catId: catIdStr, currentCount: admission.count, windowMs: HOLD_WINDOW_MS, retryAtMs },
         'F167 C1: hold_ball rejected — maxHoldsPerWindow reached',
       );
       reply.status(429);
@@ -723,7 +851,7 @@ export function registerCallbackHoldBallRoutes(app: FastifyInstance, deps: HoldB
         error:
           `maxHoldsPerWindow (${MAX_HOLDS_PER_WINDOW} per ~1h sliding window) reached. ` +
           'You MUST pass the ball now: @ another cat or @co-creator.',
-        holdsInWindow: currentCount,
+        holdsInWindow: admission.count,
         maxHoldsPerWindow: MAX_HOLDS_PER_WINDOW,
         windowMs: HOLD_WINDOW_MS,
         retryAt: new Date(retryAtMs).toISOString(),
@@ -731,9 +859,16 @@ export function registerCallbackHoldBallRoutes(app: FastifyInstance, deps: HoldB
       };
     }
 
+    // Event ID for exact compensation on any post-admission failure.
+    // Using the rowid ensures interleaving A/B admissions are correctly compensated:
+    // A's eventId targets only A's reservation, never B's.
+    const eventId = admission.eventId!;
+
     const template = templateRegistry.get('reminder');
     if (!template) {
       log.error('F167 C1: reminder template not found');
+      // Compensate the exact quota reservation by eventId.
+      await deps.holdQuotaStore.releaseByEventId(eventId, threadId, catIdStr);
       reply.status(500);
       return { error: 'Internal error: reminder template not found' };
     }
@@ -754,20 +889,18 @@ export function registerCallbackHoldBallRoutes(app: FastifyInstance, deps: HoldB
     // route; `/api/schedule/tasks` mints `dyn-*`. Combine with templateId +
     // createdBy + deliveryThreadId for defense in depth.
     const pendingHoldCreatedBy = `hold-ball:${catIdStr}`;
-    const pendingHolds = dynamicTaskStore
-      .getAll()
-      .filter(
-        (t) => isPendingHoldBallTask(t) && t.createdBy === pendingHoldCreatedBy && t.deliveryThreadId === threadId,
-      );
+    // Native stores select before decoding history; legacy adapters retain their read port.
+    const holdCandidates =
+      dynamicTaskStore.findByDeliveryThreadAndCreatedBy?.(threadId, pendingHoldCreatedBy) ?? dynamicTaskStore.getAll();
+    const pendingHolds = holdCandidates.filter(
+      (t) => isPendingHoldBallTask(t) && t.createdBy === pendingHoldCreatedBy && t.deliveryThreadId === threadId,
+    );
 
     const createdAt = Date.now();
     const taskId = `hold-ball-${createdAt}-${Math.random().toString(36).slice(2, 8)}`;
+    const wakeTarget = { threadId, catId: catIdStr, userId: triggerUserId };
     const durableJob = durableGateRequested
-      ? createDurableManagedGateJob(taskId, executionSlaMs ?? 3_600_000, {
-          threadId,
-          catId: catIdStr,
-          userId: triggerUserId,
-        })
+      ? createResumableDurableManagedGateJob(taskId, executionSlaMs ?? 3_600_000, wakeTarget)
       : undefined;
     // P2-2 cloud review fix: for wakeWhen, the fallback reminder must fire AFTER the
     // runner's timeout + grace period, not at the same time. Otherwise both the runner
@@ -787,12 +920,20 @@ export function registerCallbackHoldBallRoutes(app: FastifyInstance, deps: HoldB
     try {
       ownerFence = await resolveHoldWaitOwnerFence(record, deps.invocationRecordStore);
     } catch (err) {
+      const reason = err instanceof HoldOwnerFenceUnavailableError ? err.reason : undefined;
       log.error(
-        { err, invocationId: record.invocationId, parentInvocationId: record.parentInvocationId },
+        { err, reason, invocationId: record.invocationId, parentInvocationId: record.parentInvocationId },
         'F280 Phase D: canonical hold owner fence is unavailable',
       );
+      // Compensate the exact quota reservation by eventId.
+      await deps.holdQuotaStore.releaseByEventId(eventId, threadId, catIdStr);
       reply.status(503);
-      return { error: 'Canonical hold owner fence is unavailable', code: 'HOLD_OWNER_FENCE_UNAVAILABLE' };
+      // An error that is none of the five stays unnamed: it is not folded into one of them.
+      return {
+        error: 'Canonical hold owner fence is unavailable',
+        code: 'HOLD_OWNER_FENCE_UNAVAILABLE',
+        ...(reason ? { reason } : {}),
+      };
     }
     const schedulerAwait: SchedulerAwaitStateV1 = wakeWhen
       ? {
@@ -810,6 +951,7 @@ export function registerCallbackHoldBallRoutes(app: FastifyInstance, deps: HoldB
             // biome-ignore lint/suspicious/noThenProperty: F280's frozen wait contract field.
             then: nextStep,
           },
+          autoRenew: false,
           expiresAt: fireAt,
           createdAt,
           provenance: 'explicit_registration',
@@ -825,7 +967,8 @@ export function registerCallbackHoldBallRoutes(app: FastifyInstance, deps: HoldB
             // biome-ignore lint/suspicious/noThenProperty: F280's frozen wait contract field.
             then: nextStep,
           },
-          expiresAt: fireAt,
+          autoRenew: false,
+          expiresAt: parsed.data.waitSourceRef?.slaUntilMs ?? fireAt,
           createdAt,
           provenance: 'explicit_registration',
         };
@@ -841,7 +984,12 @@ export function registerCallbackHoldBallRoutes(app: FastifyInstance, deps: HoldB
             wakeAt: fireAt,
             createdBy: `hold-ball:${catIdStr}`,
             ...(wakeWhen
-              ? { managedCommand: createInitialManagedCommandWakeProjection(wakeWhen.command, createdAt, durableJob) }
+              ? {
+                  managedCommand: {
+                    ...createInitialManagedCommandWakeProjection(wakeWhen.command, createdAt, durableJob, wakeWhen.cwd),
+                    ...(wakeWhen.executionPolicy ? { executionPolicy: wakeWhen.executionPolicy } : {}),
+                  },
+                }
               : {}),
           }
         : undefined;
@@ -862,40 +1010,49 @@ export function registerCallbackHoldBallRoutes(app: FastifyInstance, deps: HoldB
       ownerAuthProvenance: record.ownerAuthProvenance,
     };
 
-    const spec = template.createSpec(taskId, taskParams);
-
-    dynamicTaskStore.insert(
-      {
-        id: taskId,
-        templateId: 'reminder',
-        trigger: { type: 'once', fireAt },
-        params: taskParams.params,
-        display: {
-          label: `持球唤醒 (${catIdStr})`,
-          category: 'system',
-          description: wakeMessage.slice(0, 100),
-        },
-        deliveryThreadId: threadId,
-        enabled: true,
-        createdBy: `hold-ball:${catIdStr}`,
-        createdAt: new Date().toISOString(),
-      },
-      record.ownerAuthProvenance,
-    );
-    // Atomic swap: try register; on failure, remove the just-inserted row so
-    // prior hold stays authoritative (caller gets 500; prior wake still fires).
+    // Wrap spec creation + store insertion + scheduler registration in a single
+    // try/catch. Any failure at any step compensates the exact quota reservation
+    // by event rowid and rolls back any partial state. This covers:
+    //  - template.createSpec() throw
+    //  - dynamicTaskStore.insert() throw
+    //  - taskRunner.registerDynamic() throw
+    // All three previously had gaps (createSpec/insert were uncompensated).
     try {
+      const spec = template.createSpec(taskId, taskParams);
+
+      dynamicTaskStore.insert(
+        {
+          id: taskId,
+          templateId: 'reminder',
+          trigger: { type: 'once', fireAt },
+          params: taskParams.params,
+          display: {
+            label: `持球唤醒 (${catIdStr})`,
+            category: 'system',
+            description: wakeMessage.slice(0, 100),
+          },
+          deliveryThreadId: threadId,
+          enabled: true,
+          createdBy: `hold-ball:${catIdStr}`,
+          createdAt: new Date().toISOString(),
+        },
+        record.ownerAuthProvenance,
+      );
+
       taskRunner.registerDynamic(spec, taskId);
       if (durableJob) initializeDurableManagedGateJob(durableJob, createdAt);
     } catch (err) {
+      // Best-effort cleanup: unregister + remove are no-ops if those steps weren't reached.
       taskRunner.unregister(taskId);
       dynamicTaskStore.remove(taskId);
+      // Compensate the exact quota reservation by eventId.
+      await deps.holdQuotaStore.releaseByEventId(eventId, threadId, catIdStr);
       log.error(
         { threadId, catId: catIdStr, taskId, err },
-        'F167 Phase G P1: taskRunner.registerDynamic failed — rolled back insert; prior hold (if any) retained',
+        'F167 Phase G: hold materialization failed — rolled back store + quota; prior hold retained',
       );
       reply.status(500);
-      return { error: 'Failed to register hold wake with scheduler' };
+      return { error: 'Failed to schedule hold wake' };
     }
 
     // F280: establish managed-command cancellation admission in the same
@@ -903,9 +1060,10 @@ export function registerCallbackHoldBallRoutes(app: FastifyInstance, deps: HoldB
     // visibility persistence) can now race only through this canonical slot.
     const preparedWakeRunner = wakeWhen ? prepareWakeWhenRunner(threadId, catIdStr, taskId) : undefined;
 
-    deps.ballCustody
-      ?.record(buildHeldEvent({ threadId, catId: catIdStr, fireAt, at: Date.now() }))
-      .catch((err) => log.warn({ threadId, catId: catIdStr, taskId, err }, 'F233 PR3: failed to record ball.held'));
+    if (!wakeWhen)
+      deps.ballCustody
+        ?.record(buildHeldEvent({ threadId, catId: catIdStr, fireAt, at: Date.now() }))
+        .catch((err) => log.warn({ threadId, catId: catIdStr, taskId, err }, 'F233 PR3: failed to record ball.held'));
 
     // Cancel prior pending holds (best-effort — failure here leaves an extra
     // stale wake, not zero wakes, the milder failure mode). Telemetry: F192
@@ -933,11 +1091,7 @@ export function registerCallbackHoldBallRoutes(app: FastifyInstance, deps: HoldB
       let wakeBucket: string | undefined;
       try {
         const priorLifecycle = readHoldLifecycle(prior);
-        const priorCommand =
-          priorLifecycle?.mode === 'wake_when'
-            ? (prior.params.holdLifecycle as Record<string, unknown>).managedCommand
-            : undefined;
-        if (priorCommand) {
+        if (priorLifecycle) {
           const retiredParams = {
             ...prior.params,
             holdLifecycle: {
@@ -979,7 +1133,9 @@ export function registerCallbackHoldBallRoutes(app: FastifyInstance, deps: HoldB
       }
     }
 
-    const newCount = incrementHoldCount(threadId, catIdStr);
+    // Quota already reserved atomically by tryAdmit() above (line ~716).
+    // admission.count is the post-admission count.
+    const newCount = admission.count;
 
     // ── Visibility message — F280 cancellation window ──
     // Post BEFORE launch to preserve F280 pre-launch cancellation fence (lines 834–837):
@@ -1020,6 +1176,13 @@ export function registerCallbackHoldBallRoutes(app: FastifyInstance, deps: HoldB
     // window. launchWakeWhenRunner's IIFE checks cancellation_reserved before
     // spawning, so any cancellation admitted during the append wins.
     let spawnedPid: number | null = null;
+    let commandAdmission:
+      | {
+          state: 'command_running' | 'cancelled' | 'not_started';
+          notStartedReason?: 'admission_rejected' | 'spawn_failed';
+          notStartedDetail?: string;
+        }
+      | undefined;
     if (wakeWhen && preparedWakeRunner) {
       const { admissionPromise } = launchWakeWhenRunner({
         wakeWhen,
@@ -1031,6 +1194,7 @@ export function registerCallbackHoldBallRoutes(app: FastifyInstance, deps: HoldB
         deps,
         prepared: preparedWakeRunner,
         durableJob,
+        fireAt,
       });
       const spawnResult = await admissionPromise;
       if (spawnResult.spawned) {
@@ -1048,6 +1212,15 @@ export function registerCallbackHoldBallRoutes(app: FastifyInstance, deps: HoldB
       const isCancellationOutcome =
         !spawnResult.spawned &&
         (spawnResult.error === 'registry_mismatch' || spawnResult.error === 'cancellation_reserved');
+      commandAdmission = spawnResult.spawned
+        ? { state: 'command_running' }
+        : isCancellationOutcome
+          ? { state: 'cancelled' }
+          : {
+              state: 'not_started',
+              notStartedReason: spawnResult.failureKind ?? 'admission_rejected',
+              notStartedDetail: spawnResult.error ?? 'unspecified_admission_failure',
+            };
 
       // ── Admission-fact: build the three-way text ──
       // Three terminal states (P1-1 fix: cancellation distinct from spawn failure):
@@ -1070,6 +1243,7 @@ export function registerCallbackHoldBallRoutes(app: FastifyInstance, deps: HoldB
       // `await admissionPromise` — synchronous updateParams completes before
       // any concurrent HTTP handler (cancel, next hold_ball) can interleave.
       let admissionDurable = isCancellationOutcome; // cancelled = terminal, no task to write
+      if (commandAdmission.state === 'not_started') taskRunner.unregister(taskId);
       if (!isCancellationOutcome) {
         try {
           const task = deps.dynamicTaskStore.getById(taskId);
@@ -1081,8 +1255,10 @@ export function registerCallbackHoldBallRoutes(app: FastifyInstance, deps: HoldB
                 ...task.params,
                 holdLifecycle: {
                   ...lifecycle,
+                  ...(commandAdmission.state === 'not_started' ? { status: 'not_started', retiredAt: Date.now() } : {}),
                   managedCommand: {
                     ...mc,
+                    ...(commandAdmission.state === 'not_started' ? commandAdmission : {}),
                     pid: spawnResult.pid,
                     ...(spawnResult.processIdentity && durableJob
                       ? { durableJob: { ...durableJob, processIdentity: spawnResult.processIdentity } }
@@ -1092,11 +1268,42 @@ export function registerCallbackHoldBallRoutes(app: FastifyInstance, deps: HoldB
                   },
                 },
               };
-              admissionDurable = deps.dynamicTaskStore.updateParams(taskId, updatedParams);
+              const paramsPersisted = persistManagedAdmissionStep(taskId, 'task_params', () =>
+                deps.dynamicTaskStore.updateParams(taskId, updatedParams),
+              );
+              admissionDurable = commandAdmission.state === 'not_started' ? false : paramsPersisted;
+              let terminalDisabled: boolean | undefined;
+              let durableTerminalPersisted = true;
+              if (commandAdmission.state === 'not_started') {
+                if (durableJob) {
+                  durableTerminalPersisted =
+                    paramsPersisted &&
+                    persistManagedAdmissionStep(taskId, 'gate_terminal', () =>
+                      settleNoSpawnDurableGate(
+                        durableJob,
+                        taskId,
+                        commandAdmission?.notStartedDetail ?? 'admission_rejected',
+                      ),
+                    );
+                }
+                terminalDisabled = persistManagedAdmissionStep(taskId, 'task_disable', () =>
+                  deps.dynamicTaskStore.setEnabled(taskId, false),
+                );
+                admissionDurable = paramsPersisted && terminalDisabled && durableTerminalPersisted;
+              }
               if (!admissionDurable) {
                 log.error(
-                  { threadId, catId: catIdStr, taskId },
-                  'F167 Phase P: updateParams returned false — admission intent not durable; startup recovery cannot re-deliver',
+                  {
+                    threadId,
+                    catId: catIdStr,
+                    taskId,
+                    paramsPersisted,
+                    terminalDisabled,
+                    durableTerminalPersisted,
+                  },
+                  paramsPersisted
+                    ? 'Admission receipt incomplete — persisted intent remains retryable by startup recovery'
+                    : 'Admission intent persistence failed — no durable admission fact to recover',
                 );
               }
             }
@@ -1107,10 +1314,26 @@ export function registerCallbackHoldBallRoutes(app: FastifyInstance, deps: HoldB
             );
           }
         } catch (err) {
+          admissionDurable = false;
           log.error(
             { threadId, catId: catIdStr, taskId, err },
-            'F167 Phase P: failed to persist admission intent — startup recovery cannot re-deliver',
+            'F167 Phase P: failed to persist complete admission receipt',
           );
+        }
+      }
+
+      if (!spawnResult.spawned && spawnResult.durableTerminalPersisted === false) admissionDurable = false;
+      if (!spawnResult.spawned) {
+        await deps.holdQuotaStore.releaseByEventId(eventId, threadId, catIdStr);
+        if (!admissionDurable) {
+          reply.status(503);
+          return {
+            error: 'Command did not start; admission receipt persistence failed',
+            code: 'NO_SPAWN_RECEIPT_UNAVAILABLE',
+            held: false,
+            taskId,
+            wakeWhen: { ...commandAdmission, pid: null, command: wakeWhen.command },
+          };
         }
       }
 
@@ -1172,6 +1395,8 @@ export function registerCallbackHoldBallRoutes(app: FastifyInstance, deps: HoldB
       }
     }
 
+    const held = !commandAdmission || commandAdmission.state === 'command_running';
+    const holdsInWindow = held ? newCount : await deps.holdQuotaStore.getCount(threadId, catIdStr, HOLD_WINDOW_MS);
     log.info(
       {
         threadId,
@@ -1181,33 +1406,52 @@ export function registerCallbackHoldBallRoutes(app: FastifyInstance, deps: HoldB
         wakeAfterMs,
         wakeWhen: wakeWhen
           ? {
+              ...commandAdmission,
               command: wakeWhen.command,
               timeoutMs: wakeWhen.timeoutMs,
               pid: spawnedPid,
-              ...(durableJob ? { jobId: durableJob.jobId } : {}),
+              ...(durableJob
+                ? {
+                    jobId: durableJob.jobId,
+                    executionSlaMs: durableJob.executionSlaMs,
+                    wallSlaMs: durableJob.wallSlaMs,
+                    ...(durableJob.recovery ? { recoveryProtocolVersion: durableJob.recovery.protocolVersion } : {}),
+                  }
+                : {}),
             }
           : undefined,
         taskId,
-        holdsInWindow: newCount,
+        held,
+        holdsInWindow,
         windowMs: HOLD_WINDOW_MS,
       },
-      'F167 C1: hold_ball registered — wake-up scheduled',
+      held ? 'F167 C1: hold_ball registered — wake-up scheduled' : 'F167 C1: command not started — no wake scheduled',
     );
 
     return {
       status: 'ok',
-      held: true,
+      held,
       taskId,
-      holdsInWindow: newCount,
+      holdsInWindow,
       maxHoldsPerWindow: MAX_HOLDS_PER_WINDOW,
       windowMs: HOLD_WINDOW_MS,
-      wakeAt: new Date(fireAt).toISOString(),
+      ...(commandAdmission && commandAdmission.state !== 'command_running'
+        ? {}
+        : { wakeAt: new Date(fireAt).toISOString() }),
       ...(wakeWhen
         ? {
             wakeWhen: {
+              ...commandAdmission,
               command: wakeWhen.command,
               pid: spawnedPid,
-              ...(durableJob ? { jobId: durableJob.jobId } : {}),
+              ...(durableJob
+                ? {
+                    jobId: durableJob.jobId,
+                    executionSlaMs: durableJob.executionSlaMs,
+                    wallSlaMs: durableJob.wallSlaMs,
+                    ...(durableJob.recovery ? { recoveryProtocolVersion: durableJob.recovery.protocolVersion } : {}),
+                  }
+                : {}),
             },
           }
         : {}),
@@ -1234,7 +1478,20 @@ export function registerCallbackHoldBallRoutes(app: FastifyInstance, deps: HoldB
     } catch (error) {
       if (error instanceof ManagedHoldDispositionError) {
         reply.status(409);
-        return { error: 'Managed hold disposition rejected', code: error.code };
+        return {
+          error: 'Managed hold disposition rejected',
+          code: error.code,
+          ...(error.branch ? { branch: error.branch } : {}),
+          ...(error.existingTerminal ? { existingTerminal: error.existingTerminal } : {}),
+          ...(error.branch
+            ? {
+                message: describeManagedHoldReplayMismatch({
+                  branch: error.branch,
+                  existingTerminal: error.existingTerminal,
+                }),
+              }
+            : {}),
+        };
       }
       throw error;
     }
@@ -1248,7 +1505,12 @@ export function registerCallbackHoldBallRoutes(app: FastifyInstance, deps: HoldB
       return { error: 'A2A dispatch disposition unavailable', code: 'A2A_DISPATCH_DISPOSITION_UNAVAILABLE' };
     }
     const parsed = z
-      .object({ disposition: z.enum(['handled', 'completed']) })
+      .object({
+        disposition: z.enum(['handled', 'completed']),
+        // F317 Live dispatch adoption: when present, bypasses trigger identity
+        // fence and validates via Live carrier credential instead.
+        adoptSourceMessageId: z.string().min(1).optional(),
+      })
       .strict()
       .safeParse(request.body);
     if (!parsed.success) {
@@ -1256,14 +1518,33 @@ export function registerCallbackHoldBallRoutes(app: FastifyInstance, deps: HoldB
       return { error: 'Invalid request body', details: parsed.error.issues };
     }
     try {
+      if (parsed.data.adoptSourceMessageId) {
+        return await deps.a2aDispatchDispositionService.completeAdopted(
+          record,
+          parsed.data.adoptSourceMessageId,
+          parsed.data.disposition,
+        );
+      }
       return await deps.a2aDispatchDispositionService.complete(record, parsed.data.disposition);
     } catch (error) {
       if (error instanceof A2ADispatchDispositionError) {
-        reply.status(409);
+        const status =
+          error.code === 'adopted_dispatch_unavailable'
+            ? 503
+            : error.code === 'adopted_dispatch_not_read' ||
+                error.code === 'adopted_dispatch_evidence_kind_rejected' ||
+                error.code === 'adopted_dispatch_evidence_before_handoff'
+              ? 412
+              : 409;
+        reply.status(status);
+        const mismatch = describeDispatchReplayMismatch(error);
         return {
           error: 'A2A dispatch disposition rejected',
           code: error.code,
           ...(error.replacement ? { replacement: error.replacement } : {}),
+          ...(error.branch ? { branch: error.branch } : {}),
+          ...(error.existingTerminal ? { existingTerminal: error.existingTerminal } : {}),
+          ...(mismatch ? { message: mismatch } : {}),
         };
       }
       throw error;
@@ -1271,4 +1552,6 @@ export function registerCallbackHoldBallRoutes(app: FastifyInstance, deps: HoldB
   });
 
   registerHoldBallCancelRoutes(app, deps);
+  registerCustodyEventRoutes(app, deps);
+  registerEventWaitDispositionRoutes(app, deps);
 }

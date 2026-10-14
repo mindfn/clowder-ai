@@ -1231,4 +1231,215 @@ describe('F299 active and sealed invocation routes', () => {
     });
     assert.equal(result.statusCode, 403);
   });
+
+  it('F322 typed first output reaches the authorized list and exact drill without changing Raw or access', async () => {
+    const { sessionChainStore, transcriptWriter } = await setup();
+    const record = await sessionChainStore.create({
+      threadId: 'thread-f299',
+      catId: 'codex-sol',
+      userId: 'user-f299',
+      cliSessionId: 'cli-evidence',
+    });
+    const info = {
+      sessionId: record.id,
+      threadId: record.threadId,
+      catId: record.catId,
+      cliSessionId: record.cliSessionId,
+      seq: record.seq,
+    };
+    const native = {
+      provider: 'codex',
+      runtimeSessionId: 'native',
+      turnId: 'turn',
+      nativeId: 'first',
+      channel: 'commentary',
+      complete: true,
+      textMode: 'replace',
+    };
+    const { mapCodexAppServerNotification } = await import(
+      '../dist/domains/cats/services/agents/providers/CodexAppServerEventMapper.js'
+    );
+    const { transformCodexEvent } = await import(
+      '../dist/domains/cats/services/agents/providers/codex-event-transform.js'
+    );
+    const first = transformCodexEvent(
+      mapCodexAppServerNotification({
+        method: 'item/completed',
+        params: {
+          threadId: 'native',
+          turnId: 'turn',
+          item: { type: 'agentMessage', id: 'first', phase: 'commentary', text: 'You，' },
+        },
+      }),
+      'codex-sol',
+    );
+    transcriptWriter.appendEvent(info, first, 'inv-evidence');
+    transcriptWriter.appendEvent(
+      info,
+      { type: 'text', content: 'later final', outputMessage: { ...native, nativeId: 'second', channel: 'final' } },
+      'inv-evidence',
+    );
+    transcriptWriter.appendEvent(info, { type: 'done' }, 'inv-evidence');
+    const read = (url, user = 'user-f299') => app.inject({ method: 'GET', url, headers: { 'x-cat-cafe-user': user } });
+    const url = '/api/threads/thread-f299/invocations';
+    const list = await read(url);
+    assert.equal(list.statusCode, 200);
+    const evidence = list.json().invocations[0].firstAssistantOutputEvidence;
+    assert.equal(evidence.status, 'available');
+    assert.equal(evidence.content, 'You，');
+    assert.equal(evidence.identity.nativeId, 'first');
+    const detailUrl = `/api/sessions/${evidence.source.sessionId}/invocations/${evidence.source.invocationId}`;
+    const detail = await read(`${detailUrl}?cursor=${evidence.source.firstEventNo}&limit=1`);
+    assert.equal(detail.statusCode, 200);
+    assert.deepEqual(detail.json().events[0].event, first);
+    assert.ok(detail.json().nextCursor);
+    for (const deniedUrl of [url, detailUrl, `/api/sessions/${record.id}/events?view=raw&cursor=0&limit=1`]) {
+      const denied = await read(deniedUrl, 'other-user');
+      assert.equal(denied.statusCode, 403);
+      assert.equal(JSON.stringify(denied.json()).includes('You'), false);
+    }
+    await transcriptWriter.flush(info);
+    await sessionChainStore.update(record.id, { status: 'sealed', sealedAt: Date.now(), sealReason: 'threshold' });
+    assert.deepEqual((await read(url)).json().invocations[0].firstAssistantOutputEvidence, evidence);
+  });
+
+  it('F322 oversized first output stays unavailable and its exact original payload is reachable in bounded Raw slices', async () => {
+    const { sessionChainStore, transcriptWriter } = await setup();
+    const record = await sessionChainStore.create({
+      threadId: 'thread-f299',
+      catId: 'codex-sol',
+      userId: 'user-f299',
+      cliSessionId: 'cli-oversized-evidence',
+    });
+    const info = {
+      sessionId: record.id,
+      threadId: record.threadId,
+      catId: record.catId,
+      cliSessionId: record.cliSessionId,
+      seq: record.seq,
+    };
+    const payload = {
+      type: 'text',
+      content: '猫🙂'.repeat(10000),
+      outputMessage: {
+        provider: 'codex',
+        runtimeSessionId: 'native',
+        turnId: 'turn',
+        nativeId: 'first',
+        channel: 'commentary',
+        complete: true,
+        textMode: 'replace',
+      },
+    };
+    transcriptWriter.appendEvent(info, payload, 'inv-big-evidence');
+    const read = (url) => app.inject({ method: 'GET', url, headers: { 'x-cat-cafe-user': 'user-f299' } });
+    const list = await read('/api/threads/thread-f299/invocations');
+    const evidence = list.json().invocations[0].firstAssistantOutputEvidence;
+    assert.equal(evidence.status, 'oversized');
+    assert.equal(evidence.complete, true);
+    assert.equal(evidence.content, undefined);
+    assert.equal(evidence.byteLength, Buffer.byteLength(payload.content));
+    // The existing session Raw reader reads the published transcript, while the
+    // invocation reader can also observe the live writer buffer. Keep that boundary.
+    await transcriptWriter.flush(info);
+    await sessionChainStore.update(record.id, { status: 'sealed', sealedAt: Date.now(), sealReason: 'threshold' });
+    const cursor = evidence.source.firstEventNo;
+    const rawUrl = `/api/sessions/${record.id}/events?view=raw&cursor=${cursor}&limit=1`;
+    const page = await read(rawUrl);
+    assert.equal(page.statusCode, 200);
+    assert.ok(page.body.length <= 24000);
+    assert.equal(page.json().events[0].oversized, true);
+    assert.equal(page.json().events[0].drillDown.args.cursor, cursor);
+    let offset = 0;
+    let serialized = '';
+    do {
+      const slice = await read(`${rawUrl}&charOffset=${offset}`);
+      assert.equal(slice.statusCode, 200);
+      const body = slice.json();
+      assert.equal(body.eventNo, cursor);
+      assert.ok(body.eventSlice.length <= 8000);
+      serialized += body.eventSlice;
+      offset = body.nextCharOffset;
+    } while (offset !== undefined);
+    assert.deepEqual(JSON.parse(serialized), payload);
+  });
+
+  it('F322 undefined modes have identical evidence in live buffer, published JSONL and a restarted reader', async () => {
+    const { sessionChainStore, transcriptWriter } = await setup();
+    const { projectInvocationTrajectories } = await import(
+      '../dist/domains/cats/services/session/InvocationTrajectoryProjector.js'
+    );
+    const { TranscriptInvocationReader } = await import(
+      '../dist/domains/cats/services/session/transcript-index/TranscriptInvocationReader.js'
+    );
+    const { TranscriptReader } = await import('../dist/domains/cats/services/session/TranscriptReader.js');
+    const record = await sessionChainStore.create({
+      threadId: 'thread-f299',
+      catId: 'codex-sol',
+      userId: 'user-f299',
+      cliSessionId: 'cli-undefined-mode',
+    });
+    const info = {
+      sessionId: record.id,
+      threadId: record.threadId,
+      catId: record.catId,
+      cliSessionId: record.cliSessionId,
+      seq: record.seq,
+    };
+    const native = {
+      provider: 'codex',
+      runtimeSessionId: 'native',
+      turnId: 'turn',
+      nativeId: 'first',
+      channel: 'commentary',
+      textMode: 'append',
+      complete: false,
+    };
+    const cases = [
+      { mode: undefined, outer: 'replace', expected: 'full snapshot' },
+      { mode: undefined, outer: undefined, expected: 'prefixfull snapshot' },
+      { mode: 'append', outer: undefined, expected: 'prefixfull snapshot' },
+      { mode: 'replace', outer: undefined, expected: 'full snapshot' },
+      { mode: undefined, outer: null, expected: undefined },
+    ];
+    const before = new Map();
+    for (const [index, value] of cases.entries()) {
+      const id = `inv-undefined-${index}`;
+      const events = [
+        { type: 'text', content: 'prefix', outputMessage: native },
+        {
+          type: 'text',
+          content: 'full snapshot',
+          textMode: value.outer,
+          outputMessage: { ...native, textMode: value.mode, complete: true },
+        },
+      ];
+      const direct = projectInvocationTrajectories(
+        events.map((payload, eventNo) => envelope(record, id, eventNo, payload)),
+        record,
+      )[0].firstAssistantOutputEvidence;
+      assert.equal(direct.content, value.expected);
+      assert.equal(direct.status, value.expected === undefined ? 'conflict' : 'available');
+      for (const payload of events) transcriptWriter.appendEvent(info, payload, id);
+    }
+    const read = () =>
+      app.inject({
+        method: 'GET',
+        url: '/api/threads/thread-f299/invocations',
+        headers: { 'x-cat-cafe-user': 'user-f299' },
+      });
+    const active = await read();
+    assert.equal(active.statusCode, 200);
+    for (const item of active.json().invocations) before.set(item.invocationId, item.firstAssistantOutputEvidence);
+    for (const [index, value] of cases.entries())
+      assert.equal(before.get(`inv-undefined-${index}`).content, value.expected);
+    await transcriptWriter.flush(info);
+    await sessionChainStore.update(record.id, { status: 'sealed', sealedAt: Date.now(), sealReason: 'threshold' });
+    for (const item of (await read()).json().invocations)
+      assert.deepEqual(item.firstAssistantOutputEvidence, before.get(item.invocationId));
+    const restarted = new TranscriptInvocationReader(new TranscriptReader({ dataDir }));
+    const summaries = await restarted.list([{ ...record, status: 'sealed' }], 200);
+    for (const item of summaries.invocations)
+      assert.deepEqual(item.firstAssistantOutputEvidence, before.get(item.invocationId));
+  });
 });

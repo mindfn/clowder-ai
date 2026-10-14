@@ -483,7 +483,11 @@ describe('cancelAll must NOT auto-resume queued entries', () => {
     // terminalizes them instead of silently requeueing either one.
     const remaining = deps.queue.list('t1', 'u1');
     assert.deepEqual(remaining, []);
-    assert.equal(deps.router.routeExecution.mock.callCount(), 1, 'cleanup must not spawn a second attempt');
+    assert.equal(
+      deps.router.routeExecution.mock.callCount(),
+      0,
+      'a pre-canceled attempted batch must enter neither the initial route nor a cleanup retry',
+    );
   });
 
   it('suppressAutoResume is consumed after one use (single-shot)', async () => {

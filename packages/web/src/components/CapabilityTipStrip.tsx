@@ -21,6 +21,9 @@ import {
   resetExposureScope,
 } from '@/lib/capabilityTipExposure';
 import { useConciergeStore } from '@/stores/conciergeStore';
+import { replyBodyCopy } from './reply-body.shell-copy';
+import { useShellCopy } from './shell/shell-copy';
+import { useShellPresentation } from './shell/shell-presentation';
 
 const parsedInventory = validateCapabilityTipInventory(rawTips);
 if (!parsedInventory.success) {
@@ -34,6 +37,7 @@ const DEFAULT_ROTATE_MS = 30000;
 const INVENTORY_TIP_IDS: readonly string[] = CAPABILITY_TIPS.map((t) => t.id);
 const CAPABILITY_SURFACE_ROUTES: Readonly<Record<string, string>> = {
   collective: '/collective',
+  'new-conversation': '/',
   'settings.plugins': '/settings?s=plugins',
 };
 
@@ -60,6 +64,8 @@ function TipContent({
   surface: CapabilityTipSurface;
   setSurfaceState: (state: 'collapsed' | 'toolbar' | 'bubble', prompt?: string) => void;
 }) {
+  const isV2 = useShellPresentation() === 'v2';
+  const t = useShellCopy(replyBodyCopy);
   const surfaceHref = capabilitySurfaceHref(tip);
   const recordAction = (actionType: 'open_concierge_draft' | 'open_capability_surface') => {
     recordCapabilityTipEvent({
@@ -79,7 +85,7 @@ function TipContent({
 
   return (
     <>
-      <span className="shrink-0 font-medium text-cafe-secondary">Tip</span>
+      <span className="shrink-0 font-medium text-cafe-secondary">{isV2 ? t.tip : 'Tip'}</span>
       <span className="min-w-0 flex-1 break-words">{tip.body}</span>
       {surfaceHref ? (
         <a
