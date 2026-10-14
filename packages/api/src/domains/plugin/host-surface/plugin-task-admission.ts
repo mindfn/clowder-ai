@@ -154,8 +154,8 @@ export async function preparePluginEntrustedTask(
     selection: value,
   });
   const mode = owner || operation ? 'owner_request' : native ? 'native_request' : 'plugin_policy';
-  if (value.destination.kind === 'existing_thread' && mode !== 'owner_request')
-    refuse('Only an authenticated owner write may select the destination thread');
+  // The package selects the execution site; read() validates its canonical
+  // owner/participant and keeps continuation on the admitted Task thread.
   const current = async () => {
     await deps.assertCurrent?.();
     await services.assertCurrent();

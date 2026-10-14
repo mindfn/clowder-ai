@@ -11,6 +11,8 @@ import {
 } from '../src/domains/plugin/carrier/plugin-owner-request-context.ts';
 import { createPluginTaskAdmissionServices } from '../src/domains/plugin/host-surface/plugin-task-admission.ts';
 import { createPluginTaskHost } from '../src/domains/plugin/host-surface/plugin-task-host.ts';
+import { createPluginThreadHost } from '../src/domains/plugin/host-surface/plugin-thread-host.ts';
+import { MemoryConnectorThreadBindingStore } from '../src/infrastructure/connectors/ConnectorThreadBindingStore.ts';
 
 async function fixture(grants = ['task.admitEntrusted']) {
   const messages = new MessageStore();
@@ -126,17 +128,110 @@ test('only the explicit admission grant admits; task.read and task.write alone d
   }
 });
 
-test('owner HTTP write preserves manual destination selection; read and background cannot select it', async () => {
+test('owner HTTP write preserves destination selection while read-only calls remain refused', async () => {
   const f = await fixture();
   const target = f.threads.create('owner', 'Chosen destination');
   f.threads.addParticipants(target.id, ['codex']);
   const input = { ...f.input, destination: { kind: 'existing_thread', threadId: target.id } };
-  await assert.rejects(() => f.host.prepareEntrusted(input));
   await assert.rejects(() => f.owner('read', () => f.host.prepareEntrusted(input)));
   const admitted = await f.owner('write', () => f.host.prepareEntrusted(input));
   assert.equal(admitted.threadId, target.id);
   assert.match(f.messages.getById(admitted.admissionRef.slice(8)).content, /owner_request/);
 });
+
+async function packageSelectedThread(f) {
+  const host = createPluginThreadHost({
+    pluginId: 'neutral',
+    pluginInstanceId: 'instance',
+    ownerUserId: 'owner',
+    effectiveGrants: ['thread.write'],
+    threadStore: f.threads,
+    bindingStore: new MemoryConnectorThreadBindingStore(),
+    threadDeepLinkUrl: (id) => `https://example.test/thread/${id}`,
+    cats: {
+      getAllCatIds: () => ['codex'],
+      getRegisteredServices: () => new Map([['codex', {}]]),
+      isCatAvailable: () => true,
+    },
+  });
+  return host.ensureByKey('package-selected-site', {
+    title: 'Package selected work',
+    parentThreadId: f.thread.id,
+    participants: ['codex'],
+  });
+}
+
+function prepareAtSelectedThread(f, caller, input) {
+  const run = () => f.host.prepareEntrusted(input);
+  return caller === 'background'
+    ? run()
+    : withPluginCallContext(
+        'instance',
+        {
+          userId: 'owner',
+          threadId: f.thread.id,
+          catId: 'codex',
+          invocationId: 'inv',
+          originTriggerMessageId: f.source.id,
+          toolExecutionPolicy: {
+            mode: 'plugin_native',
+            pluginInstanceId: 'instance',
+            contributionId: 'native',
+            actionMethods: ['accept'],
+          },
+          assertCurrent: async () => {},
+          assertInvocationCurrent: async () => {},
+        },
+        run,
+      );
+}
+
+for (const caller of ['background', 'native']) {
+  test(`${caller} can admit into the package-selected generic child and replay it`, async () => {
+    const f = await fixture();
+    const target = await packageSelectedThread(f);
+    const input = { ...f.input, destination: { kind: 'existing_thread', threadId: target.id } };
+    f.threads.ensureOwnedThread = () => assert.fail('Task admission must not derive another thread');
+    const first = await prepareAtSelectedThread(f, caller, input);
+    assert.equal(first.result, 'admitted');
+    assert.equal(first.threadId, target.id);
+    assert.notEqual(target.id, f.source.threadId);
+    assert.equal(f.threads.get(target.id).parentThreadId, f.source.threadId);
+    const again = await prepareAtSelectedThread(f, caller, input);
+    assert.equal(again.taskRef, first.taskRef);
+    assert.equal(again.executionRef, first.executionRef);
+    assert.equal(f.tasks.listByKind('work').length, 1);
+    const next = f.messages.append({ ...structuredClone(f.source), id: undefined, timestamp: 3 });
+    const continuation = {
+      ...input,
+      sourceMessageId: next.id,
+      subject: { kind: 'continue', taskRef: first.taskRef, expectedRevision: first.taskRevision },
+    };
+    const resumed = await f.host.prepareEntrusted(continuation);
+    assert.equal(resumed.threadId, target.id);
+    assert.equal(resumed.taskRef, first.taskRef);
+    await assert.rejects(
+      () =>
+        f.host.prepareEntrusted({
+          ...continuation,
+          destination: { kind: 'existing_thread', threadId: f.thread.id },
+        }),
+      /Continuation cannot move/,
+    );
+  });
+
+  test(`${caller} selected destination still requires canonical owner and participant`, async () => {
+    for (const mutation of [{ createdBy: 'foreign' }, { deletedAt: 1 }, { participants: [] }, { id: 'wrong' }]) {
+      const f = await fixture();
+      const target = await packageSelectedThread(f);
+      const input = { ...f.input, destination: { kind: 'existing_thread', threadId: target.id } };
+      Object.assign(f.threads.get(target.id), mutation);
+      await assert.rejects(() => prepareAtSelectedThread(f, caller, input), /destination or participant/);
+      assert.equal(f.tasks.listByKind('work').length, 0);
+      assert.equal(f.messages.getByThread(f.thread.id).length, 1);
+    }
+  });
+}
 
 test('source and caller identity selectors cannot forge Host authority', async () => {
   for (const change of [{ userId: 'foreign' }, { extra: {} }, { deletedAt: 1 }, { recall: { recalledAt: 1 } }]) {
