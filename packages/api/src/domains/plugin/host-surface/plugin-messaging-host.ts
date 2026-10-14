@@ -1,7 +1,13 @@
 import { type MessageContent, MessageContentsSchema } from '@cat-cafe/shared';
 import type { MessageDraft, PluginManifest, SendReceipt } from '@clowder-ai/plugin-contract';
 import type { IConnectorThreadBindingStore } from '../../../infrastructure/connectors/ConnectorThreadBindingStore.js';
+import {
+  deriveGrowingSourceMessageRevision,
+  type IMessageStore,
+  type StoredMessage,
+} from '../../cats/services/stores/ports/MessageStore.js';
 import type { IThreadStore } from '../../cats/services/stores/ports/ThreadStore.js';
+import { isSystemUserMessage, resolveThreadMessageVisibility } from '../../cats/services/stores/visibility.js';
 import { MessagingError } from '../../messaging/contract/host-types.js';
 import { validateDraft } from '../../messaging/contract/validate.js';
 import type { MessagingService } from '../../messaging/messaging-service.js';
@@ -36,7 +42,35 @@ export type PluginMessagingSendInput = Omit<MessageDraft, 'address'> & {
   readonly meta?: Readonly<Record<string, unknown>>;
 };
 
+/** Public message facts; private execution/custody records are never projected. */
+export type PluginMessage = Pick<
+  StoredMessage,
+  | 'id'
+  | 'threadId'
+  | 'userId'
+  | 'catId'
+  | 'content'
+  | 'contentBlocks'
+  | 'mentions'
+  | 'timestamp'
+  | 'source'
+  | 'origin'
+  | 'replyTo'
+  | 'deliveryStatus'
+> & {
+  readonly sourceRevision: string;
+  readonly extra?: {
+    readonly rich?: NonNullable<StoredMessage['extra']>['rich'];
+    readonly stream?: Pick<
+      NonNullable<NonNullable<StoredMessage['extra']>['stream']>,
+      'invocationId' | 'turnInvocationId'
+    >;
+    readonly causal?: NonNullable<StoredMessage['extra']>['causal'];
+  };
+};
+
 export interface PluginMessagingHost extends PluginMessagingSubscriptionHost {
+  get(messageId: string): Promise<PluginMessage | null>;
   send(input: PluginMessagingSendInput): Promise<SendReceipt>;
 }
 
@@ -47,6 +81,7 @@ export interface PluginMessagingHostDeps {
   readonly effectiveGrants: readonly string[];
   readonly manifest: PluginManifest;
   readonly threadStore: IThreadStore;
+  readonly messageStore?: Pick<IMessageStore, 'getById'>;
   readonly bindingStore: IConnectorThreadBindingStore;
   readonly messaging: MessagingService;
   readonly subscriptions?: PluginMessagingSubscriptionHost;
@@ -56,6 +91,9 @@ export function createUnavailablePluginMessagingHost(): PluginMessagingHost {
   const subscriptions = createUnavailablePluginMessagingSubscriptionHost().host;
   return {
     ...subscriptions,
+    async get() {
+      throw new MessagingError('PERMISSION', 'Host message read service is unavailable');
+    },
     async send() {
       throw new MessagingError('PERMISSION', 'Host messaging services are unavailable');
     },
@@ -95,6 +133,37 @@ function recordOf(input: PluginMessagingSendInput): Record<string, unknown> {
 export function createPluginMessagingHost(input: PluginMessagingHostDeps): PluginMessagingHost {
   return {
     ...(input.subscriptions ?? createUnavailablePluginMessagingSubscriptionHost().host),
+    async get(value) {
+      if (!input.effectiveGrants.includes('thread.readContent')) {
+        throw hostCapabilityRefusal(
+          new MessagingError('PERMISSION', `${input.pluginId} lacks thread.readContent`),
+          'thread.readContent',
+        );
+      }
+      const id = boundedString(value, 'messageId', 500);
+      if (!input.messageStore) throw new MessagingError('NOT_FOUND', 'Host message read service is unavailable');
+      const message = structuredClone(await input.messageStore.getById(id));
+      if (
+        !message ||
+        message.deletedAt ||
+        message._tombstone ||
+        message.recall ||
+        message.sourceParseFailure ||
+        !resolveThreadMessageVisibility(undefined, input.ownerUserId)(message) ||
+        (message.userId !== input.ownerUserId && !isSystemUserMessage(message))
+      )
+        return null;
+      const thread = await input.threadStore.get(message.threadId);
+      if (!thread || thread.deletedAt) return null;
+      const bindings = await input.bindingStore.getByThread(thread.id);
+      if (
+        thread.createdBy !== input.ownerUserId &&
+        thread.pluginOwnership?.pluginInstanceId !== input.pluginInstanceId &&
+        !bindings.some((binding) => binding.connectorId === input.pluginId && binding.userId === input.ownerUserId)
+      )
+        return null;
+      return projectMessage(message);
+    },
     async send(value) {
       if (!input.effectiveGrants.includes('messaging.send')) {
         throw hostCapabilityRefusal(
@@ -203,5 +272,37 @@ export function createPluginMessagingHost(input: PluginMessagingHostDeps): Plugi
       });
       return receipt;
     },
+  };
+}
+
+function projectMessage(message: StoredMessage): PluginMessage {
+  const stream = message.extra?.stream;
+  const extra: NonNullable<PluginMessage['extra']> = {
+    ...(message.extra?.rich ? { rich: message.extra.rich } : {}),
+    ...(stream
+      ? {
+          stream: {
+            ...(stream.invocationId ? { invocationId: stream.invocationId } : {}),
+            ...(stream.turnInvocationId ? { turnInvocationId: stream.turnInvocationId } : {}),
+          },
+        }
+      : {}),
+    ...(message.extra?.causal ? { causal: message.extra.causal } : {}),
+  };
+  return {
+    id: message.id,
+    threadId: message.threadId,
+    userId: message.userId,
+    catId: message.catId,
+    content: message.content,
+    mentions: message.mentions,
+    timestamp: message.timestamp,
+    sourceRevision: deriveGrowingSourceMessageRevision(message),
+    ...(message.contentBlocks ? { contentBlocks: message.contentBlocks } : {}),
+    ...(message.source ? { source: message.source } : {}),
+    ...(message.origin ? { origin: message.origin } : {}),
+    ...(message.replyTo ? { replyTo: message.replyTo } : {}),
+    ...(message.deliveryStatus ? { deliveryStatus: message.deliveryStatus } : {}),
+    ...(Object.keys(extra).length ? { extra } : {}),
   };
 }

@@ -114,9 +114,10 @@ async function fixture(options = {}) {
     pluginId: PLUGIN_ID,
     pluginInstanceId: INSTANCE_ID,
     ownerUserId: OWNER,
-    effectiveGrants: ['messaging.send'],
+    effectiveGrants: options.grants ?? ['messaging.send'],
     manifest: options.manifest ?? manifest(),
     threadStore: threads,
+    messageStore: messages,
     bindingStore: bindings,
     messaging,
   });
@@ -376,5 +377,107 @@ describe('F202 C1 — plugin Host messaging.send', () => {
       () => host.send(draft(thread.id, { idempotencyKey: 'oversized-meta', meta: { text: 'x'.repeat(17_000) } })),
       (error) => error?.code === 'VALIDATION' && /at most/.test(error.message),
     );
+  });
+});
+
+describe('F202 C1 — generic messaging.get', () => {
+  test('reads body revision and persisted publication facts without private extra', async () => {
+    const f = await fixture({ grants: ['thread.readContent'] });
+    const thread = await f.threads.create(OWNER, 'Source');
+    const message = await f.messages.append({
+      timestamp: Date.now(),
+      userId: OWNER,
+      threadId: thread.id,
+      catId: 'codex',
+      content: 'result',
+      mentions: [],
+      origin: 'callback',
+      contentBlocks: [{ type: 'text', text: 'result' }],
+      extra: {
+        stream: { invocationId: 'parent', turnInvocationId: 'turn', cliStdout: 'private' },
+        causal: { kind: 'invocation_reply', triggerMessageId: 'source' },
+        privateAuthority: 'never-return',
+      },
+    });
+    const value = await f.host.get(message.id);
+    assert.equal(value.threadId, thread.id);
+    assert.equal(value.catId, 'codex');
+    assert.equal(value.origin, 'callback');
+    assert.deepEqual(value.extra.stream, { invocationId: 'parent', turnInvocationId: 'turn' });
+    assert.equal(value.extra.causal.triggerMessageId, 'source');
+    assert.match(value.sourceRevision, /^sha256:[0-9a-f]{64}$/);
+    assert.equal(JSON.stringify(value).includes('private'), false);
+    value.contentBlocks[0].text = 'local change';
+    assert.equal((await f.host.get(message.id)).contentBlocks[0].text, 'result');
+    message.content = 'edited';
+    assert.notEqual((await f.host.get(message.id)).sourceRevision, value.sourceRevision);
+  });
+
+  test('uses existing content grant, owner and thread readability', async () => {
+    const noGrant = await fixture();
+    await assert.rejects(() => noGrant.host.get('unknown'), /thread.readContent/);
+    const f = await fixture({ grants: ['thread.readContent'] });
+    const foreign = await f.threads.create('foreign', 'Foreign');
+    const message = await f.messages.append({
+      timestamp: Date.now(),
+      userId: OWNER,
+      threadId: foreign.id,
+      catId: null,
+      content: 'owned source',
+      mentions: [],
+    });
+    assert.equal(await f.host.get(message.id), null);
+    await f.bindings.bind(PLUGIN_ID, 'readable', foreign.id, OWNER);
+    assert.equal((await f.host.get(message.id)).content, 'owned source');
+    message.userId = 'foreign';
+    assert.equal(await f.host.get(message.id), null);
+    message.userId = OWNER;
+    foreign.deletedAt = 1;
+    assert.equal(await f.host.get(message.id), null);
+  });
+
+  test('missing, deleted, recalled, tombstoned and undelivered sources are unavailable', async () => {
+    const f = await fixture({ grants: ['thread.readContent'] });
+    const thread = await f.threads.create(OWNER, 'Source');
+    assert.equal(await f.host.get('missing'), null);
+    for (const state of [
+      { deletedAt: 1 },
+      { _tombstone: true },
+      { recall: { recalledAt: 1 } },
+      { deliveryStatus: 'queued' },
+      { deliveryStatus: 'canceled' },
+      { sourceParseFailure: true },
+    ]) {
+      const message = await f.messages.append({
+        timestamp: Date.now(),
+        userId: OWNER,
+        threadId: thread.id,
+        catId: null,
+        content: 'body',
+        mentions: [],
+      });
+      Object.assign(message, state);
+      assert.equal(await f.host.get(message.id), null);
+    }
+    await assert.rejects(() => f.host.get({ id: 'missing' }), /messageId/);
+  });
+
+  test('works with asynchronous stores inside the existing verifier context', async () => {
+    const { withPluginTransportPurpose } = await import('../dist/domains/plugin/carrier/plugin-transport-context.js');
+    const f = await fixture({ grants: ['thread.readContent'] });
+    const thread = await f.threads.create(OWNER, 'Source');
+    const message = await f.messages.append({
+      timestamp: Date.now(),
+      userId: OWNER,
+      threadId: thread.id,
+      catId: null,
+      content: 'original source',
+      mentions: [],
+    });
+    const get = f.messages.getById.bind(f.messages);
+    f.messages.getById = async (id) => get(id);
+    const value = await withPluginTransportPurpose('verifier', () => f.host.get(message.id));
+    assert.equal(value.content, 'original source');
+    assert.equal(f.wakes.length, 0);
   });
 });

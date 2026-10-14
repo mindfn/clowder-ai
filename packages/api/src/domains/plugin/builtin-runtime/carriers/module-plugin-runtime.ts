@@ -2,6 +2,7 @@ import { pathToFileURL } from 'node:url';
 
 import type { PluginManifest } from '@clowder-ai/plugin-contract';
 import type { IConnectorThreadBindingStore } from '../../../../infrastructure/connectors/ConnectorThreadBindingStore.js';
+import type { IMessageStore } from '../../../cats/services/stores/ports/MessageStore.js';
 import type { ITaskStore } from '../../../cats/services/stores/ports/TaskStore.js';
 import type { IThreadStore } from '../../../cats/services/stores/ports/ThreadStore.js';
 import type { MessagingService } from '../../../messaging/messaging-service.js';
@@ -166,6 +167,7 @@ export interface ModulePluginRuntimeOptions {
     readonly projectPath: string;
   };
   readonly messaging?: {
+    readonly messageStore?: Pick<IMessageStore, 'getById'>;
     readonly service: MessagingService;
     readonly delivery: Pick<SubscriptionDelivery, 'register' | 'unregister'>;
     readonly threadStore: IThreadStore;
@@ -346,6 +348,7 @@ export class ModulePluginRuntime implements BundledPluginRuntime {
         : createUnavailablePluginMessagingSubscriptionHost();
       const messaging = this.options.messaging
         ? createPluginMessagingHost({
+            messageStore: this.options.messaging.messageStore,
             pluginId: packageRecord.pluginId,
             pluginInstanceId,
             ownerUserId: this.options.messaging.ownerUserId,

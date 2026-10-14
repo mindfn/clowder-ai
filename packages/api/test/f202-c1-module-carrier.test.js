@@ -163,7 +163,7 @@ export default {
             elements: [{ elementId: 'text-1', kind: 'text', payload: { text: 'module hello' } }],
           },
         });
-        log.push({ call: 'messaging', receipt });
+        log.push({ call: 'messaging', receipt, read: await host.messaging.get(receipt.messageId) });
         return { actions: {}, stop() {} };
       },
     };
@@ -785,15 +785,18 @@ test('start receives the caller-bound Host messaging surface', async () => {
         name: 'Main',
         resources: [],
         contributions: [{ type: 'identity', id: 'fixture' }],
-        capabilities: ['messaging.send', 'thread.write'],
+        capabilities: ['messaging.send', 'thread.write', 'thread.readContent'],
       },
     ],
   });
   const shared = { threadStore, bindingStore, ownerUserId: 'owner-1' };
-  const host = hostOf([{ manifest: pluginManifest, rootDir, effectiveGrants: ['messaging.send', 'thread.write'] }], {
-    threads: shared,
-    messaging: { ...shared, service: messaging },
-  });
+  const host = hostOf(
+    [{ manifest: pluginManifest, rootDir, effectiveGrants: ['messaging.send', 'thread.write', 'thread.readContent'] }],
+    {
+      threads: shared,
+      messaging: { ...shared, service: messaging, messageStore },
+    },
+  );
 
   await host.router.start('instance-0');
 
@@ -801,6 +804,8 @@ test('start receives the caller-bound Host messaging surface', async () => {
   assert.equal(entry.call, 'messaging');
   const stored = await messageStore.getById(entry.receipt.messageId);
   assert.equal(stored.content, 'module hello');
+  assert.equal(entry.read.id, stored.id);
+  assert.equal(entry.read.content, stored.content);
   assert.equal(stored.source.label, 'Fixture');
 });
 

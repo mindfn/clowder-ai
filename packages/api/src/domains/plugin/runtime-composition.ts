@@ -541,6 +541,7 @@ export function createDormantPluginRuntimeComposition(
       ? {}
       : {
           messaging: {
+            messageStore: options.messageStore,
             service: messaging,
             delivery: subscriptionDelivery,
             threadStore: options.threadStore,
