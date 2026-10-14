@@ -5,8 +5,10 @@ import {
   type EvolutionPreparationSection as PreparationSection,
 } from '@cat-cafe/shared';
 import { useEffect, useMemo, useRef } from 'react';
+import { useShellPresentation } from '@/components/shell/shell-presentation';
 import type { EvolutionProgramProjection } from '../evolution-program-projection';
 import { DEFAULT_READING, useEvolutionReading } from '../evolution-reading-state';
+import { EvolutionPreparationActivityStatus } from './EvolutionPreparationOverview';
 import { EvolutionPreparationSection } from './EvolutionPreparationSection';
 import { EvolutionPreparationSectionIcon } from './EvolutionPreparationSectionIcon';
 import { isVisiblePreparationSubmission } from './evolution-preparation-resource';
@@ -29,6 +31,7 @@ function readableTarget(ownerStateRef: string): string {
 }
 
 export function EvolutionPreparationWorkspace({ projection }: { projection: EvolutionProgramProjection }) {
+  const v2 = useShellPresentation() === 'v2';
   const workspace = useRef<HTMLElement>(null);
   const programId = projection.program.programId;
   const reading = useEvolutionReading((state) => state.programs[programId] ?? DEFAULT_READING);
@@ -113,7 +116,7 @@ export function EvolutionPreparationWorkspace({ projection }: { projection: Evol
     >
       <header className="evolution-preparation-heading">
         <h2 className="sr-only">准备</h2>
-        <p>先看改进方向与选择理由，再核对判断标准和证据。</p>
+        {!v2 && <p>先看改进方向与选择理由，再核对判断标准和证据。</p>}
       </header>
       <div role="tablist" aria-label="准备阅读入口" className="evolution-preparation-tabs">
         {EVOLUTION_PREPARATION_SECTIONS.map((section) => {
@@ -148,10 +151,14 @@ export function EvolutionPreparationWorkspace({ projection }: { projection: Evol
                 <small data-preparation-section-state="working">猫正在准备</small>
               )}
               <small data-preparation-section-state={state.key}>{state.label}</small>
+              {v2 && isVisiblePreparationSubmission(preparation?.sections[section].current) && (
+                <small>草案 · 不等于验证</small>
+              )}
             </button>
           );
         })}
       </div>
+      {v2 && <EvolutionPreparationActivityStatus projection={projection} />}
       {selected === 'measurement_plan' && reading.preparationReturn && (
         <div className="evolution-preparation-return">
           <button type="button" className="evolution-link" onClick={() => selectSection('success_contract')}>

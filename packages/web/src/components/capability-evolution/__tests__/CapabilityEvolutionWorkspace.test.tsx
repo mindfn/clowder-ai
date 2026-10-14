@@ -35,6 +35,13 @@ vi.mock('@/stores/chatStore', () => ({
       setPendingChatInsert,
     }),
 }));
+vi.mock('@/hooks/useCatData', () => ({
+  useCatData: () => ({
+    getCatById: (id: string) =>
+      id === 'codex61-sol' ? { displayName: '缅因猫 Sol', nickname: '砚砚', color: { primary: '#b05f45' } } : undefined,
+  }),
+}));
+
 vi.mock('@/components/eval-workspace/EvalWorkspacePanel', () => ({
   EvalWorkspacePanel: () => <div data-testid="eval-workspace-panel">评估读面</div>,
 }));
@@ -136,6 +143,52 @@ describe('F311 Capability Evolution Workspace', () => {
     expect(container.querySelector('[aria-label="当前关注项目"]')).toBeNull();
     expect(container.querySelectorAll('[data-testid^="capability-evolution-program-"]')).toHaveLength(1);
     expect(container.textContent).not.toContain('bcc336788');
+  });
+
+  it('offers a v2 new goal as an unsent draft in the bound conversation, including an empty directory', async () => {
+    localStorage.setItem('cat-cafe:shell-presentation', 'v2');
+    apiFetchMock.mockResolvedValue(new Response(JSON.stringify({ programs: [] })));
+    await renderWorkspace();
+    const start = [...container.querySelectorAll('button')].find((button) => button.textContent?.includes('新建目标'));
+    expect(start).toBeDefined();
+    expect(container.textContent).not.toContain('在下方');
+    await act(async () => start?.click());
+    const input = container.querySelector<HTMLInputElement>('[data-testid="capability-evolution-start-input"]');
+    expect(input).not.toBeNull();
+    await act(async () => {
+      Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')?.set?.call(input, '减少审阅返工');
+      input?.dispatchEvent(new Event('input', { bubbles: true }));
+    });
+    await act(async () =>
+      container.querySelector<HTMLButtonElement>('[data-testid="capability-evolution-start"]')?.click(),
+    );
+    expect(setPendingChatInsert).toHaveBeenCalledWith({ threadId: 'thread-f311', text: '我们来进化 减少审阅返工' });
+    expect(container.textContent).toContain('原有草稿已保留');
+    expect(apiFetchMock.mock.calls.every(([, init]) => !init || init.method === 'GET')).toBe(true);
+  });
+
+  it('distinguishes the known initiating cat from unknown current work and uses the Program update time', async () => {
+    localStorage.setItem('cat-cafe:shell-presentation', 'v2');
+    const initiated = {
+      ...projection,
+      origin: { threadId: 'thread-f311', title: '研发改进', createdByCatId: 'codex61-sol' },
+    };
+    apiFetchMock.mockResolvedValue(new Response(JSON.stringify({ programs: [initiated] })));
+    await renderWorkspace();
+    expect(container.textContent).toContain('谁在做');
+    expect(container.textContent).toContain('砚砚');
+    expect(container.textContent).toContain('发起猫');
+    expect(container.textContent).toContain('当前活动未知');
+    expect(container.querySelector('time')?.dateTime).toBe(projection.program.updatedAt);
+    expect(container.textContent).not.toContain('正在准备');
+  });
+
+  it('does not invent a cat for a project without readable origin', async () => {
+    localStorage.setItem('cat-cafe:shell-presentation', 'v2');
+    apiFetchMock.mockResolvedValue(new Response(JSON.stringify({ programs: [projection] })));
+    await renderWorkspace();
+    expect(container.textContent).toContain('谁在做未知');
+    expect(container.textContent).not.toContain('砚砚');
   });
 
   it('keeps the v2 evaluation selection when the returning route remounts its owner', async () => {

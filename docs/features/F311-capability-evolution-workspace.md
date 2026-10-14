@@ -77,7 +77,7 @@ mcp_admission_claims:
 
 > **Status**: in-progress (v6 product-experience contract; v5 final-vision phases; Gate 0A + Phase 1–3 landed; Phase 4 implementation landed; roadshow retained as Phase 1 regression; operator-selected F314/F100 full-loop AC-41–44 and AC-UX4 remain open on owner-backed asset/evidence/outcome truth) | **Product phase owner**: Maine Coon (@codex-sol, gpt-5.6-sol)（本轮 operator 指定执行） | **Architecture co-creator/reviewer**: Ragdoll (@fable5, claude-fable-5) | **Priority**: P0
 >
-> **2026-10-14 v2 用户旅程**：operator 要求在新版界面尽快走通 F311 旅程，并用 F314 事故档案建立第一条真实进化谱系。计划见 [v2 用户旅程开发计划](#v2-用户旅程开发计划2026-10-14-起)，新增 AC-UX6；执行线程已启动，S1 实现已合入 #5532，Alpha 与北极星设计验收待完成。
+> **2026-10-14 v2 用户旅程**：operator 要求在新版界面尽快走通 F311 旅程，并用 F314 事故档案建立第一条真实进化谱系。计划见 [v2 用户旅程开发计划](#v2-用户旅程开发计划2026-10-14-起)，新增 AC-UX6；S1 已合入 #5532，独立 Alpha 样本复验通过，设计确认形状并要求在 S2 补首页内容。消费者登记补丁 #5537 已独立审合；S2 准备主区及首页遗漏已合入 #5541，Alpha 与设计验收待完成，S3–S6 与 AC-UX6 仍开放。
 >
 >
 > **operator signoff**: 2026-08-28 [thread-id] `0001787926983474`（今年双旗舰之一，与 F310 Growing 并列）。
@@ -449,6 +449,8 @@ Meta Evolution 的正式定义为：**能力对象与改进机制的协同演进
 设置与管理 › 能力进化 → 项目页 → 准备四块 → 探索进化（真实谱系与真实证据）→ 有候选时拍板 → 后续任务里看到来源。
 
 衡量标准是他从入口走一遍，不是切片 PASS、合入或作者样本。依据见 F314 事故档案 10-08 / 10-12 两案。
+
+**S1 设计反馈并入 S2**（执行线程 `…000532-1942018f`）：恢复首页「新建目标」与聊天图标，沿用 `StartEvolution` 把目标草稿带到原对话、不自动发送，并修正不存在的「下方」指向；标题旁「?」收纳概念说明。项目行补「谁在做」的头像与小名（只消费可靠的 origin / 准备活动事实，无法核实则未知，不编当前执行猫）和来自 Program `updatedAt` 的「最近」。首页只显示待判断件数并跳待办的接线仍归 S5。北极星整页首页改为右侧 Workspace、聊天留左的偏差已由设计接受，不重画这项。
 
 **两个真实对象，不新造 Program**
 - **F314 开发流程**：`evolution-program:ba0f4524e49cc879279164d5b272cf8c`，被进化对象是 F100 的 `capability:development-process-harness-effectiveness`。证书和四角色已绑定，处于 `instrumenting`。这一条承担本轮要求：用事故档案建立谱系。

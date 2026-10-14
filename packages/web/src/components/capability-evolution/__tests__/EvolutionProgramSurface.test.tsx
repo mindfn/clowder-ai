@@ -1,10 +1,13 @@
 import { act } from 'react';
 import { createRoot, type Root } from 'react-dom/client';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { useF307ExperienceWorkbenchStore } from '@/components/workbench/experience-workbench-store';
+import { createEvolutionProgramSurface } from '@/components/workbench/real-surface-adapters';
 import { WorkspaceSurfaceVisibilityProvider } from '@/components/workbench/WorkspaceSurfaceVisibility';
 import { EvolutionProgramList, EvolutionProgramSurface } from '../EvolutionProgramSurface';
 import { useEvolutionReading } from '../evolution-reading-state';
 import { programFixture } from './evolution-fixtures';
+import { evolutionPreparationFixture } from './evolution-preparation-fixtures';
 
 const apiFetchMock = vi.fn();
 const assetFetchMock = vi.fn();
@@ -141,6 +144,38 @@ describe('F311 Evolution Program Workbench surface', () => {
   async function renderView(view: React.ReactNode) {
     await act(async () => root.render(view));
   }
+
+  it('keeps the complete v2 preparation in main reading with the original source and project actions', async () => {
+    localStorage.setItem('cat-cafe:shell-presentation', 'v2');
+    const prepared = {
+      ...programFixture('instrumenting'),
+      preparation: evolutionPreparationFixture(),
+      origin: { threadId: 'thread-origin', title: '原始准备对话', createdByCatId: 'codex61-sol' },
+    };
+    const programId = prepared.program.programId;
+    const priorAttention = useF307ExperienceWorkbenchStore.getState().mainAreaAttentionSurfaceId;
+    useF307ExperienceWorkbenchStore.setState({
+      mainAreaAttentionSurfaceId: createEvolutionProgramSurface(programId).id,
+    });
+    apiFetchMock.mockResolvedValue(new Response(JSON.stringify(prepared)));
+    try {
+      await renderView(<EvolutionProgramSurface programId={programId} />);
+      const workspace = container.querySelector('[data-testid="evolution-preparation-workspace"]');
+      expect(workspace).not.toBeNull();
+      expect(workspace?.querySelectorAll('[data-preparation-section]')).toHaveLength(4);
+      expect(workspace?.textContent).toContain('草案 · 不等于验证');
+      expect(container.querySelector('a[href="/thread/thread-origin"]')).not.toBeNull();
+      const progress = [...container.querySelectorAll('details')].find(
+        (node) => node.querySelector('summary')?.textContent === '项目推进',
+      );
+      expect(progress).toBeDefined();
+      expect(progress?.textContent).toContain('请猫猫推进');
+      expect(container.querySelector('[aria-label="阅读版本"]')).toBeNull();
+    } finally {
+      await act(async () => useF307ExperienceWorkbenchStore.setState({ mainAreaAttentionSurfaceId: priorAttention }));
+      localStorage.removeItem('cat-cafe:shell-presentation');
+    }
+  });
 
   it('reads the canonical projection and shows lifecycle, refs, blocker, and next action', async () => {
     apiFetchMock.mockResolvedValue(new Response(JSON.stringify(projection), { status: 200 }));

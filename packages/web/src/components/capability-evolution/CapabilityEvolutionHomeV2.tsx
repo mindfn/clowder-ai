@@ -1,10 +1,13 @@
 import { refIdentity } from '@cat-cafe/shared';
+import { CatAvatar } from '@/components/CatAvatar';
+import { useCatData } from '@/hooks/useCatData';
 import {
   blockerLabel,
   type EvolutionProgramPresentationProjection,
   preparationGaps,
   productStatus,
 } from './capability-evolution-presentation';
+import { EvolutionHomeActionsV2 } from './EvolutionHomeActionsV2';
 import { journeyMoment, MOMENTS } from './EvolutionJourney';
 import { useEvolutionAssetReview } from './evolution-asset-resource';
 
@@ -15,6 +18,30 @@ export function EvolutionPhaseGaps({ projection }: { projection: EvolutionProgra
       {gaps.length
         ? gaps.map((gap) => blockerLabel(gap.code)).join('；')
         : '未记录阶段缺项；是否可推进仍以本轮证据为准。'}
+    </span>
+  );
+}
+
+function ProjectActor({ projection }: { projection: EvolutionProgramPresentationProjection }) {
+  const { origin } = projection;
+  const { getCatById } = useCatData();
+  const activity = Object.values(projection.preparation?.sections ?? {})
+    .flatMap((section) => section.activities)
+    .find((entry) => entry.state === 'active' && entry.catId);
+  const catId = activity?.catId ?? origin?.createdByCatId;
+  const cat = catId ? getCatById(catId) : undefined;
+  return (
+    <span className="evolution-v2-actor">
+      <small>谁在做</small>
+      {cat && catId ? (
+        <span className="evolution-v2-cat">
+          <CatAvatar catId={catId} size={24} ring="none" />
+          {cat.nickname?.trim() || cat.displayName}
+        </span>
+      ) : (
+        '未知'
+      )}
+      <small>{activity ? '正在准备' : cat ? '发起猫 · 当前活动未知' : '当前活动未知'}</small>
     </span>
   );
 }
@@ -65,6 +92,18 @@ function ProjectRow({
         <small>当前采用</small>
         {adopted}
       </span>
+      <ProjectActor projection={projection} />
+      <span className="evolution-v2-recent">
+        <small>最近</small>
+        <time dateTime={program.updatedAt}>
+          {new Date(program.updatedAt).toLocaleString('zh-CN', {
+            month: '2-digit',
+            day: '2-digit',
+            hour: '2-digit',
+            minute: '2-digit',
+          })}
+        </time>
+      </span>
       <span aria-hidden="true">›</span>
     </button>
   );
@@ -78,6 +117,7 @@ export function CapabilityEvolutionHomeV2({
   rejected,
   reload,
   onSelect,
+  targetThreadId,
 }: {
   programs: EvolutionProgramPresentationProjection[];
   loading: boolean;
@@ -85,18 +125,14 @@ export function CapabilityEvolutionHomeV2({
   rejected: number;
   reload: () => Promise<void>;
   onSelect: (id: string) => void;
+  targetThreadId: string | null;
 }) {
   const active = programs.filter((item) => item.program.lifecycle !== 'terminal');
   const completed = programs.filter((item) => item.program.lifecycle === 'terminal');
   const uncertain = loading || Boolean(error) || rejected > 0;
   return (
     <>
-      <header className="evolution-v2-home-heading">
-        <h1 className="evolution-title">能力进化</h1>
-        <button type="button" className="evolution-link" onClick={() => void reload()}>
-          刷新
-        </button>
-      </header>
+      <EvolutionHomeActionsV2 targetThreadId={targetThreadId} reload={reload} />
       <section aria-label="正在进行的进化项目">
         <h2 className="evolution-v2-section-title">
           正在进行 <small>{uncertain ? `已读 ${active.length}` : active.length}</small>
@@ -112,7 +148,7 @@ export function CapabilityEvolutionHomeV2({
           </p>
         )}
         {!loading && !error && !programs.length && !rejected && (
-          <p className="evolution-empty">还没有进化记录。在下方提出想改进的目标。</p>
+          <p className="evolution-empty">还没有进化记录。点「新建目标」，把想改进的目标带到当前对话。</p>
         )}
         {rejected > 0 && (
           <p role="status" className="evolution-empty">

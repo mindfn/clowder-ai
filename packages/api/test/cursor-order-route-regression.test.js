@@ -670,7 +670,7 @@ describe('#1200 R14 route: PATCH /read cross-format', () => {
       payload: { upToMessageId: stream.id },
     });
     assert.equal(beforeFinal.statusCode, 200);
-    assert.deepEqual(JSON.parse(beforeFinal.body), { advanced: false, caughtUp: false });
+    assert.deepEqual(JSON.parse(beforeFinal.body), { advanced: false, caughtUp: false, handledMention: false });
     assert.equal(readStateStore._raw('alice', thread.id), undefined, 'partial stream must not advance read state');
 
     messageStore.markDelivered(stream.id, Date.now() + 1);
@@ -701,7 +701,7 @@ describe('#1200 R14 route: PATCH /read cross-format', () => {
     });
 
     assert.equal(res.statusCode, 200);
-    assert.deepEqual(JSON.parse(res.body), { advanced: false, caughtUp: false });
+    assert.deepEqual(JSON.parse(res.body), { advanced: false, caughtUp: false, handledMention: false });
     assert.equal(readStateStore._raw('alice', thread.id), undefined);
   });
 
@@ -721,7 +721,7 @@ describe('#1200 R14 route: PATCH /read cross-format', () => {
     });
 
     assert.equal(res.statusCode, 200);
-    assert.deepEqual(JSON.parse(res.body), { advanced: false, caughtUp: false });
+    assert.deepEqual(JSON.parse(res.body), { advanced: false, caughtUp: false, handledMention: false });
     assert.equal(readStateStore._raw('alice', thread.id), undefined);
   });
 
@@ -740,7 +740,7 @@ describe('#1200 R14 route: PATCH /read cross-format', () => {
     });
 
     assert.equal(res.statusCode, 200);
-    assert.deepEqual(JSON.parse(res.body), { advanced: false, caughtUp: false });
+    assert.deepEqual(JSON.parse(res.body), { advanced: false, caughtUp: false, handledMention: false });
     assert.equal(readStateStore._raw('alice', thread.id), undefined);
   });
 

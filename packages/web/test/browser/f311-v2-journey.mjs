@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
+import { verifyV2PreparationPages } from './f311-v2-preparation.journey.mjs';
 import { CONTRACT_THREAD_ID } from './f311-workspace-browser.harness.mjs';
 
 // Settings-to-Workspace was not covered by classic/deep-link or empty-list journeys.
@@ -23,6 +24,11 @@ export async function verifyV2EvolutionJourney({ fixture, browser, capture }) {
   );
 
   const writes = [];
+  await context.route('**/api/messages', (route) => {
+    if (route.request().method() === 'GET') return route.continue();
+    writes.push({ method: route.request().method(), path: '/api/messages' });
+    return route.fulfill({ status: 405, json: { error: 'unsent_goal_contract' } });
+  });
   await context.route('**/api/capability-evolution/programs**', (route) => {
     const request = route.request();
     const url = new URL(request.url());
@@ -62,6 +68,17 @@ export async function verifyV2EvolutionJourney({ fixture, browser, capture }) {
     assert.ok((await home.innerText()).includes('尚未命名'));
     assert.ok((await home.innerText()).includes(f314.origin.title));
     assert.ok((await home.innerText()).includes('这一阶段还缺'));
+    assert.ok((await home.innerText()).includes('谁在做'));
+    assert.ok((await home.innerText()).includes('当前活动未知'));
+    const composer = page.getByTestId('chat-input-composer-row').locator('textarea');
+    await composer.fill('原有未发送草稿');
+    await home.getByRole('button', { name: '新建目标', exact: true }).click();
+    await home.getByTestId('capability-evolution-start-input').fill('F311 新版目标草稿');
+    await home.getByTestId('capability-evolution-start').click();
+    await home.getByText(/原有草稿已保留/).waitFor();
+    assert.ok((await composer.inputValue()).includes('原有未发送草稿'));
+    assert.ok((await composer.inputValue()).includes('我们来进化 F311 新版目标草稿'));
+    await home.getByRole('button', { name: '新建目标', exact: true }).click();
     await capture(page, 's1-home');
     await home.getByRole('tab', { name: '评估', exact: true }).click();
     await page.getByTestId('eval-workspace-panel').waitFor();
@@ -99,6 +116,7 @@ export async function verifyV2EvolutionJourney({ fixture, browser, capture }) {
       const objects = projection.preparation.sections.object_map.current.submission.body.items;
       assert.equal(await reading.locator('[data-preparation-item]').count(), objects.length);
       await capture(page, `s1-${label}-main`);
+      await verifyV2PreparationPages({ page, main, projection, capture, label });
       await main.getByRole('button', { name: '← 返回侧栏', exact: true }).click();
       // An explicit Settings home intent overrides restored detail selection.
       await settingsHome(page);
@@ -113,7 +131,18 @@ export async function verifyV2EvolutionJourney({ fixture, browser, capture }) {
       const overflow = await home.evaluate((element) => element.scrollWidth > element.clientWidth + 1);
       assert.equal(overflow, false, `v2 project page must fit ${width}px`);
       await capture(page, `s1-duck-${width}`);
-      await detail.getByRole('button', { name: '← 全部项目', exact: true }).click();
+      await detail.locator('[data-preparation-overview="object_map"]').click();
+      const main = page.locator('[data-testid="evolution-program-surface"]:visible');
+      await main.getByTestId('evolution-preparation-workspace').waitFor();
+      assert.equal(
+        await main.evaluate((node) => node.scrollWidth > node.clientWidth + 1),
+        false,
+        `preparation must fit ${width}px`,
+      );
+      await main.locator('.evolution-preparation-submission').scrollIntoViewIfNeeded();
+      await capture(page, `s2-duck-main-${width}`);
+      await main.getByRole('button', { name: /← 返回侧栏|← 返回详情/ }).click();
+      await main.getByRole('button', { name: '← 全部项目', exact: true }).click();
     }
     await page.emulateMedia({ colorScheme: 'dark', reducedMotion: 'reduce' });
     await page.evaluate(() => {
@@ -123,6 +152,18 @@ export async function verifyV2EvolutionJourney({ fixture, browser, capture }) {
     await page.waitForFunction(() => document.documentElement.dataset.theme === 'dark');
     await home.getByTestId(`capability-evolution-program-${duck.program.programId}`).waitFor();
     await capture(page, 's1-dark');
+    await home.getByTestId(`capability-evolution-program-${duck.program.programId}`).click();
+    const darkDetail = home.getByTestId('capability-evolution-program-detail');
+    await darkDetail.getByRole('button', { name: '准备', exact: true }).click();
+    await darkDetail.locator('[data-preparation-overview="object_map"]').click();
+    await page
+      .locator('[data-testid="evolution-program-surface"]:visible')
+      .getByTestId('evolution-preparation-workspace')
+      .waitFor();
+    await page
+      .locator('[data-testid="evolution-program-surface"]:visible .evolution-preparation-submission')
+      .scrollIntoViewIfNeeded();
+    await capture(page, 's2-dark-main');
     assert.deepEqual(errors, []);
   } catch (error) {
     await capture(page, 's1-failure');

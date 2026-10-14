@@ -17,9 +17,6 @@ export function EvolutionPreparationOverview({
   onOpen: (section: EvolutionPreparationSection) => void;
 }) {
   const sections = projection.preparation?.sections;
-  const active =
-    sections &&
-    Object.values(sections).some((section) => section.activities.some((activity) => activity.state === 'active'));
   return (
     <section className="evolution-v2-preparation" aria-label="准备四块总览">
       <div className="evolution-v2-preparation-grid">
@@ -57,10 +54,20 @@ export function EvolutionPreparationOverview({
           );
         })}
       </div>
-      <p className="evolution-v2-activity" role="status">
-        <strong>{active ? '猫正在准备' : '活动状态待核实'}</strong>{' '}
-        {active ? '已看到本轮活动记录；工作进展与可改边界分别阅读。' : '未见可核验的进行中活动，已有提交仍可阅读。'}
-      </p>
+      <EvolutionPreparationActivityStatus projection={projection} />
     </section>
+  );
+}
+
+export function EvolutionPreparationActivityStatus({ projection }: { projection: EvolutionProgramProjection }) {
+  const sections = projection.preparation?.sections;
+  const active =
+    sections &&
+    Object.values(sections).some((section) => section.activities.some((activity) => activity.state === 'active'));
+  return (
+    <p className="evolution-v2-activity" role="status">
+      <strong>{active ? '猫正在准备' : '活动状态待核实'}</strong>{' '}
+      {active ? '已看到本轮活动记录；工作进展与可改边界分别阅读。' : '未见可核验的进行中活动，已有提交仍可阅读。'}
+    </p>
   );
 }

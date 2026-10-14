@@ -184,6 +184,7 @@ export function CapabilityEvolutionWorkspace({
                   rejected={rejected}
                   reload={reload}
                   onSelect={select}
+                  targetThreadId={targetThreadId}
                 />
               ) : (
                 <>
@@ -249,12 +250,14 @@ export function CapabilityEvolutionWorkspace({
                   </section>
                 </>
               )}
-              <details open={!programs.length} className="border-t border-cafe-subtle pt-5">
-                <summary className="cursor-pointer text-sm font-semibold text-cafe">提出新目标</summary>
-                <div className="mt-4">
-                  <StartEvolution key={targetThreadId ?? 'unbound'} targetThreadId={targetThreadId} />
-                </div>
-              </details>
+              {!v2 && (
+                <details open={!programs.length} className="border-t border-cafe-subtle pt-5">
+                  <summary className="cursor-pointer text-sm font-semibold text-cafe">提出新目标</summary>
+                  <div className="mt-4">
+                    <StartEvolution key={targetThreadId ?? 'unbound'} targetThreadId={targetThreadId} />
+                  </div>
+                </details>
+              )}
             </>
           )}
           {error && programs.length > 0 && (

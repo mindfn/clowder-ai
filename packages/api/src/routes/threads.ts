@@ -1831,13 +1831,13 @@ export const threadsRoutes: FastifyPluginAsync<ThreadsRoutesOptions> = async (ap
       // same managed-hold owner/hidden boundary as timeline and latest-cursor
       // reads before canonicalization or legacy cursor repair can advance it.
       if (!passesManagedHoldViewerBoundary(msg, userId)) {
-        return { advanced: false, caughtUp: false };
+        return { advanced: false, caughtUp: false, handledMention: false };
       }
       // F297 AC-D4: direct message-id ACK is still owner-read evidence.
       // Mutable stream speech may paint while queued, but cannot advance the
       // durable cursor until the same message reaches final delivery.
       if (!isDurableOwnerReadEvidence(msg)) {
-        return { advanced: false, caughtUp: false };
+        return { advanced: false, caughtUp: false, handledMention: false };
       }
       targetMessageId = msg.id;
       if (messageStore.canonicalizeCursor) {

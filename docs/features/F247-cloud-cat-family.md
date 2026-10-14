@@ -647,6 +647,8 @@ gpt-pro（以及未来 claude-cloud / gemini-cloud 等其他 cloud cats），不
 
 **Status**: in-progress；Astra 负责设计/范围，Sol61 实现。operator 于本 thread `[thread-id]#private-source-id` 接受概念并要求直接开发、在真实代码里打磨。
 
+**2026-10-14 召唤权限校准（待实现）**：You 在本 thread `private-source-id` 明确要求去掉「获准召唤的家猫」逐猫勾选。安装并启用 dot 后，同账号家猫可在原对话召唤，无须第二次名单授权；已有空名单或部分名单不再限制协作。移除该设置及其写入接口，旧持久记录须兼容读取而不恢复拦截。保留账号/来源对话可见性、插件启停、有效订阅、exact-source 回程与 dot 询问的真实执行来源检查；不授予家猫 operator 实施批准权，不触碰正式服务或网络设置。沿原 Task936 实现、独立审查和 Alpha 验证，G1 仍待真实 provider 验收。
+
 **2026-10-11 实现状态**：首版 #5336 已合入 `7c6ef410e4`，browser admission #5343 已合入 `fad12058a8`。
 已有 MCP 复用纠正 #5381 已合入 `9c04cba87becb03b44ca71962f7d9d9d5425c95c`：保留原 `/mcp` 与 Pro 口令/工具，
 固定共享入口新增 dot Events/三工具；Host 保持 owner、配对与 exact-source 回程/图片权限。界面统一为「ChatGPT 云端」，
@@ -666,7 +668,7 @@ Alpha 交付与完整 G1 的真实 provider 验收仍分别按实物留痕，阶
 
 **G1-6 主动询问回程已合入**：[#5397](https://github.com/zts212653/clowder-ai/pull/5397) 的 landed revision 为 `05343af4bb24b1df6336bfdb68f5178a24f1371f`。
 同一 MCP 增加有界 `cat_cafe_dot_ask`，Host 固定 dot 作者，家猫正式 callback/stream 按真实执行来源自动回送原订阅；
-一次受询回信不扩大永久召唤白名单。多猫部分失败如实可重试，保留原消息与幂等 key；本人回复 dot 提问保留普通召唤权限。
+受询回信依赖真实 root、实际接收者和执行来源；逐猫永久召唤名单按上述 2026-10-14 校准退役。多猫部分失败如实可重试，保留原消息与幂等 key；本人回复 dot 提问保留普通召唤权限。
 Sonnet 已对最终 `c6d3f953` 给出 typed approved（本 thread `private-source-id`），独立接受第四轮假阳性 pushback；
 作者最后选择 21/21 与 API build/types 通过，独立最终选择 42/42、隔离 Redis 1/1 通过。原生 browser merge plan 17 条 backend/MCP/shared unmapped 仍为 blocked，未声称 full 或 browser 绿。
 
