@@ -19,6 +19,10 @@ import type {
   DevelopmentWorkResult,
   DevelopmentWorkTransition,
 } from './DevelopmentWorkTransition.js';
+import type {
+  AttachEntrustedWorkArtifactInput,
+  AttachEntrustedWorkArtifactResult,
+} from './EntrustedWorkArtifactEvidence.js';
 
 export const ENTRUSTED_WORK_TERMINAL_ACTION_REQUIRED = 'ENTRUSTED_WORK_TERMINAL_ACTION_REQUIRED' as const;
 export const ENTRUSTED_WORK_ADMISSION_CONFLICT = 'ENTRUSTED_WORK_ADMISSION_CONFLICT' as const;
@@ -227,6 +231,11 @@ export interface ITaskStore {
     taskId: string,
     input: UpdateEntrustedWorkStoreInput,
   ): UpdateEntrustedWorkStoreResult | Promise<UpdateEntrustedWorkStoreResult>;
+  /** Internal verified-publication append; never the generic callback artifactRefs replacement. */
+  attachEntrustedWorkArtifactEvidence(
+    taskId: string,
+    input: AttachEntrustedWorkArtifactInput,
+  ): AttachEntrustedWorkArtifactResult | Promise<AttachEntrustedWorkArtifactResult>;
   /** Replace complete state only while the observed wait generation/task revision is still current. */
   replaceAutomationStateIfGeneration(
     taskId: string,

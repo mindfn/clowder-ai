@@ -33,6 +33,7 @@ import {
   type TypedWaitRegistrationSnapshot,
 } from '../../../../ball-custody/TypedWaitRegistration.js';
 import type { DevelopmentWorkTransition } from '../ports/DevelopmentWorkTransition.js';
+import type { AttachEntrustedWorkArtifactInput } from '../ports/EntrustedWorkArtifactEvidence.js';
 import { automationGeneration, mergeTaskAutomationState } from '../ports/TaskAutomationState.js';
 import {
   buildTaskDeploymentWaitReplacement,
@@ -410,6 +411,10 @@ export class RedisTaskStore implements ITaskStore {
     input: CloseEntrustedWorkStoreInput,
   ): Promise<CloseEntrustedWorkStoreResult> {
     return this.entrustedWorkMutations.close(taskId, input);
+  }
+
+  attachEntrustedWorkArtifactEvidence(taskId: string, input: AttachEntrustedWorkArtifactInput) {
+    return this.entrustedWorkMutations.attachArtifact(taskId, input);
   }
 
   async updateEntrustedWork(

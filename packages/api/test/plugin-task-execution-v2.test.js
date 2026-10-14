@@ -276,11 +276,19 @@ test('v2 passes actual dispatch, Queue read/child CAS and Registry currentness',
 });
 test('v2 evidence-only projection does not relax ordinary artifact mutation or continuation expected revision', async () => {
   const f = await executionFixture();
-  // Only projection semantics: verified attach is not implemented and no Service receipt is invented here.
-  f.task.entrustedWork.artifactRefs = ['artifact:fixture'];
-  f.task.entrustedWork.revision++;
-  f.task.updatedAt++;
+  // Task-owner CAS is real; upstream publication verification remains a declared fixture, not a Service receipt.
+  const attached = f.tasks.attachEntrustedWorkArtifactEvidence(f.task.id, {
+    expectedRevision: 1,
+    executionAuthorityRevision: f.binding.executionAuthorityRevision,
+    ownerUserId: f.binding.ownerUserId,
+    ownerCatId: f.binding.targetCatId,
+    threadId: f.binding.threadId,
+    admissionRef: f.binding.admissionRef,
+    artifactRef: 'artifact:fixture',
+  });
+  assert.equal(attached.kind, 'attached');
   await f.check(f.record);
+  assert.equal((await f.registry.verifyLatest(f.creds.invocationId, f.creds.callbackToken)).ok, true);
   await assert.rejects(() => f.owner('write', () => f.host.prepareEntrusted(continuation(f, f.first))));
   assert.equal(
     f.tasks.updateEntrustedWork(f.task.id, { expectedRevision: 2, artifactRefs: ['artifact:ordinary'] }).kind,

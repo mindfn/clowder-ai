@@ -11,6 +11,7 @@ import type {
   DevelopmentSourceQuery,
   DevelopmentWorkTransition,
 } from '../cats/services/stores/ports/DevelopmentWorkTransition.js';
+import type { AttachEntrustedWorkArtifactInput } from '../cats/services/stores/ports/EntrustedWorkArtifactEvidence.js';
 import type { ITaskStore } from '../cats/services/stores/ports/TaskStore.js';
 import type {
   AdmitEntrustedWorkStoreInput,
@@ -204,6 +205,11 @@ class BallCustodyTaskStore implements ITaskStore {
       return isPromiseLike(closedResult) ? closedResult.then(finish) : finish(closedResult);
     };
     return isPromiseLike(beforeResult) ? beforeResult.then(closeAfterBefore) : closeAfterBefore(beforeResult);
+  }
+
+  // Evidence append changes no status/custody and must not complete an action lifecycle.
+  attachEntrustedWorkArtifactEvidence(taskId: string, input: AttachEntrustedWorkArtifactInput) {
+    return this.inner.attachEntrustedWorkArtifactEvidence(taskId, input);
   }
 
   updateEntrustedWork(

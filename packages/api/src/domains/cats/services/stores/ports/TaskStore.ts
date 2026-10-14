@@ -1,3 +1,4 @@
+import type { AttachEntrustedWorkArtifactInput } from './EntrustedWorkArtifactEvidence.js';
 import { advanceEntrustedTaskAuthority } from './EntrustedWorkRevision.js';
 import { reconcilePluginWaitTaskMutation, replaceTaskPluginWait } from './TaskPluginWait.js';
 import type { ReplacePluginWaitInput } from './TaskStoreContract.js';
@@ -243,6 +244,10 @@ export class TaskStore implements ITaskStore {
 
   updateEntrustedWork(taskId: string, input: UpdateEntrustedWorkStoreInput): UpdateEntrustedWorkStoreResult {
     return this.entrustedWorkMutations.update(taskId, input);
+  }
+
+  attachEntrustedWorkArtifactEvidence(taskId: string, input: AttachEntrustedWorkArtifactInput) {
+    return this.entrustedWorkMutations.attachArtifact(taskId, input);
   }
 
   replaceAutomationStateIfGeneration(taskId: string, input: ReplaceAutomationStateIfGenerationInput): TaskItem | null {
