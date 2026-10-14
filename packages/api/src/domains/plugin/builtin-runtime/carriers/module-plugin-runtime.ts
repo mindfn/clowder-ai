@@ -100,6 +100,8 @@ export interface PluginModuleEntrypointShape {
 export type ModulePluginLogLevel = 'debug' | 'info' | 'warn' | 'error';
 
 export interface ModulePluginHostShape {
+  /** Installation identity for attribution; Host operations retain their own grant and lifecycle checks. */
+  readonly pluginInstanceId: string;
   readonly config: { get(key: string): Promise<unknown> };
   readonly secrets: { get(key: string): Promise<string | undefined> };
   readonly storage: PluginStorageHost;
@@ -394,6 +396,7 @@ export class ModulePluginRuntime implements BundledPluginRuntime {
       const taskDispatch = this.options.taskDispatch?.(pluginInstanceId);
       const candidate = await plugin.start({
         ...neutral,
+        pluginInstanceId,
         ...(browserServices ? { browserServices: browserServices.host } : {}),
         config: { get: async (key) => config.get(key) },
         secrets: { get: async (key) => secrets.get(key) },

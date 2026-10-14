@@ -159,7 +159,7 @@ export default {
           threadId: thread.id,
           idempotencyKey: 'module-send-1',
           payload: {
-            provenance: { epistemicStatus: 'observation' },
+            provenance: { epistemicStatus: 'observation', origin: { kind: 'plugin', instanceId: host.pluginInstanceId } },
             elements: [{ elementId: 'text-1', kind: 'text', payload: { text: 'module hello' } }],
           },
         });
@@ -521,6 +521,32 @@ test('start receives only the admitted config, secrets and log Host surface', as
   assert.deepEqual(logs, [
     ['info', 'module started', { pluginId: 'dev.clowder.module-fixture', pluginInstanceId: 'instance-0' }],
   ]);
+});
+
+test('module start receives the actual installation id for each instance of the same package', async () => {
+  resetModuleLog();
+  const rootDir = await writePackage(`
+export default { create() { return { async start(host) {
+  globalThis[${JSON.stringify(MODULE_LOG)}].push(host.pluginInstanceId);
+  return { actions: {}, stop() {} };
+} }; } };
+`);
+  const record = { manifest: manifest(), rootDir };
+  const host = hostOf([record, record]);
+  try {
+    await host.router.start('instance-0');
+    assert.deepEqual(moduleLog(), ['instance-0']);
+    await host.router.stop('instance-0', 'reload');
+    await host.router.start('instance-0');
+    assert.deepEqual(moduleLog(), ['instance-0', 'instance-0']);
+    await host.router.stop('instance-0', 'uninstall');
+    host.inventory.live.get('instance-0').lifecycleState = 'uninstalled';
+    await host.router.start('instance-1');
+    assert.deepEqual(moduleLog(), ['instance-0', 'instance-0', 'instance-1']);
+  } finally {
+    await host.moduleRuntime.stop('instance-0', 'test_finished');
+    await host.moduleRuntime.stop('instance-1', 'test_finished');
+  }
 });
 
 test('module config preserves declared scalar types while secrets remain strings', async () => {
