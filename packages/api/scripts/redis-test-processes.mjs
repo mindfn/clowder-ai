@@ -80,6 +80,7 @@ export async function runTestCommand(command, { cwd, env, signal }) {
   });
   if (!proof.tokenZeroMatches || proof.killedPids.length > 0) {
     console.error(`[redis-test] command descendants cleanup=${proof.status} killed=${proof.killedPids.length}`);
+    if (proof.failure) console.error(`[redis-test] cleanup scan failure=${JSON.stringify(proof.failure)}`);
     if (!proof.tokenZeroMatches) tracked.child.unref();
     return 1;
   }
