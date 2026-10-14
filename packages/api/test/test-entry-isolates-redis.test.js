@@ -2,12 +2,13 @@
 // cat's shell inherited the instance's REDIS_URL, and five suites that trusted any address but 6399 wrote
 // their test keys into live Redis. Two guards keep that from coming back:
 // 1. the test entry (with-test-home.sh) drops inherited Redis settings unless the caller set up an
-//    isolated test Redis and said so with CAT_CAFE_REDIS_TEST_ISOLATED=1;
+//    isolated test Redis with a matching manifest, live process and runner lease;
 // 2. every test file that reads REDIS_URL gates on that isolation (or is one of the listed exceptions),
 //    and none falls back to a fixed address.
 import assert from 'node:assert/strict';
 import { execFileSync } from 'node:child_process';
-import { readdirSync, readFileSync, statSync } from 'node:fs';
+import { mkdtempSync, readdirSync, readFileSync, statSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
 import { dirname, join, relative } from 'node:path';
 import { describe, it } from 'node:test';
 import { fileURLToPath } from 'node:url';
@@ -15,8 +16,14 @@ import { fileURLToPath } from 'node:url';
 const TEST_DIR = dirname(fileURLToPath(import.meta.url));
 const API_DIR = dirname(TEST_DIR);
 
+function cleanRedisEnv() {
+  return Object.fromEntries(
+    Object.entries(process.env).filter(([key]) => !key.startsWith('REDIS_') && !key.startsWith('CAT_CAFE_REDIS_TEST_')),
+  );
+}
+
 function childRedisEnv(extraEnv) {
-  const env = { ...process.env, ...extraEnv };
+  const env = { ...cleanRedisEnv(), ...extraEnv };
   for (const key of Object.keys(env)) if (env[key] === undefined) delete env[key];
   const out = execFileSync(
     'bash',
@@ -42,9 +49,61 @@ describe('test entry Redis isolation', () => {
     assert.deepEqual(seen, { REDIS_URL: 'redis://127.0.0.1:0', REDIS_PORT: null, REDIS_KEY_PREFIX: null });
   });
 
-  it('passes an isolated test Redis through when the caller vouches for it', () => {
-    const seen = childRedisEnv({ REDIS_URL: 'redis://127.0.0.1:6583/15', CAT_CAFE_REDIS_TEST_ISOLATED: '1' });
-    assert.equal(seen.REDIS_URL, 'redis://127.0.0.1:6583/15');
+  it('passes only the endpoint allocated by a live isolated runner and its manifest lease', () => {
+    const probe = `
+      const { execFileSync } = require('node:child_process');
+      const endpoint = process.env.REDIS_URL;
+      const seen = execFileSync('bash', [${JSON.stringify(join(API_DIR, 'scripts/with-test-home.sh'))},
+        process.execPath, '-p', 'process.env.REDIS_URL'], { env: process.env, encoding: 'utf8' }).trim();
+      console.log(JSON.stringify({ endpoint, seen }));
+    `;
+    const out = execFileSync(
+      process.execPath,
+      [join(API_DIR, 'scripts/run-isolated-redis-tests.mjs'), '--', process.execPath, '-e', probe],
+      {
+        cwd: API_DIR,
+        env: {
+          ...cleanRedisEnv(),
+          CAT_CAFE_REDIS_TEST_REGISTRY_DIR: mkdtempSync(join(tmpdir(), 'redis-entry-owned-')),
+        },
+        encoding: 'utf8',
+        timeout: 30_000,
+      },
+    );
+    const { endpoint, seen } = JSON.parse(
+      out
+        .trim()
+        .split('\n')
+        .find((line) => line.startsWith('{')),
+    );
+    assert.equal(seen, endpoint);
+    const url = new URL(seen);
+    assert.equal(url.hostname, '127.0.0.1');
+    assert.ok(Number(url.port) > 0);
+    assert.ok(Number(url.pathname.slice(1)) >= 15);
+  });
+
+  it('rejects a flag and URL without a manifest lease before executing the child', () => {
+    assert.throws(
+      () => childRedisEnv({ REDIS_URL: 'redis://127.0.0.1:6583/15', CAT_CAFE_REDIS_TEST_ISOLATED: '1' }),
+      /refusing sandbox reentry/,
+    );
+  });
+
+  it('rejects a forged manifest with no owned runner lease', () => {
+    const root = mkdtempSync(join(tmpdir(), 'redis-entry-forged-'));
+    const manifest = join(root, 'test-files.txt');
+    writeFileSync(manifest, join(TEST_DIR, 'test-entry-isolates-redis.test.js') + '\n');
+    assert.throws(
+      () =>
+        childRedisEnv({
+          REDIS_URL: 'redis://127.0.0.1:6583/15',
+          CAT_CAFE_REDIS_TEST_ISOLATED: '1',
+          CAT_CAFE_REDIS_TEST_DB_MANIFEST: manifest,
+          CAT_CAFE_REDIS_TEST_REGISTRY_DIR: root,
+        }),
+      /no unique matching manifest lease/,
+    );
   });
 });
 
