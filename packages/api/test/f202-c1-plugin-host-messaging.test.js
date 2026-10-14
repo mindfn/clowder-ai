@@ -436,7 +436,7 @@ describe('F202 C1 — generic messaging.get', () => {
     assert.equal(await f.host.get(message.id), null);
   });
 
-  test('missing, deleted, recalled, tombstoned and undelivered sources are unavailable', async () => {
+  test('missing, deleted, recalled, tombstoned and canceled sources are unavailable', async () => {
     const f = await fixture({ grants: ['thread.readContent'] });
     const thread = await f.threads.create(OWNER, 'Source');
     assert.equal(await f.host.get('missing'), null);
@@ -444,7 +444,6 @@ describe('F202 C1 — generic messaging.get', () => {
       { deletedAt: 1 },
       { _tombstone: true },
       { recall: { recalledAt: 1 } },
-      { deliveryStatus: 'queued' },
       { deliveryStatus: 'canceled' },
       { sourceParseFailure: true },
     ]) {
@@ -460,6 +459,61 @@ describe('F202 C1 — generic messaging.get', () => {
       assert.equal(await f.host.get(message.id), null);
     }
     await assert.rejects(() => f.host.get({ id: 'missing' }), /messageId/);
+  });
+
+  test('direct reads retain owner input and its revision across Queue admission', async () => {
+    const f = await fixture({ grants: ['thread.readContent'] });
+    const thread = await f.threads.create(OWNER, 'Source');
+    for (const source of [undefined, { connector: 'example', label: 'Example' }]) {
+      const message = await f.messages.append({
+        timestamp: Date.now(),
+        userId: OWNER,
+        threadId: thread.id,
+        catId: null,
+        content: 'original input',
+        mentions: [],
+        ...(source ? { source } : {}),
+      });
+      const original = await f.host.get(message.id);
+      assert.equal(f.messages.prepareQueueAdmission(message.id).kind, 'prepared');
+      const queued = await f.host.get(message.id);
+      assert.equal(queued?.content, original.content);
+      assert.equal(queued.sourceRevision, original.sourceRevision);
+      assert.equal(queued.deliveryStatus, 'queued');
+      assert.equal('queueCustody' in queued, false);
+      message.recall = { recalledAt: 1 };
+      assert.equal(await f.host.get(message.id), null);
+    }
+    assert.equal(f.wakes.length, 0);
+  });
+
+  test('queued reads retain owner, thread and non-input visibility boundaries', async () => {
+    const f = await fixture({ grants: ['thread.readContent'] });
+    const thread = await f.threads.create(OWNER, 'Source');
+    const foreign = await f.threads.create('foreign', 'Foreign');
+    for (const overrides of [
+      { userId: 'foreign' },
+      { threadId: foreign.id },
+      { origin: 'briefing' },
+      { catId: 'codex' },
+      { userId: 'scheduler' },
+      { userId: 'system' },
+      { deletedAt: 1 },
+      { _tombstone: true },
+      { sourceParseFailure: true },
+    ]) {
+      const message = await f.messages.append({
+        timestamp: Date.now(),
+        userId: OWNER,
+        threadId: thread.id,
+        catId: null,
+        content: 'hidden input',
+        mentions: [],
+      });
+      assert.equal(f.messages.prepareQueueAdmission(message.id).kind, 'prepared');
+      Object.assign(message, overrides);
+      assert.equal(await f.host.get(message.id), null, JSON.stringify(overrides));
+    }
   });
 
   test('works with asynchronous stores inside the existing verifier context', async () => {

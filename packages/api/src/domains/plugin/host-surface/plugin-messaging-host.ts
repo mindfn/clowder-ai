@@ -130,6 +130,19 @@ function recordOf(input: PluginMessagingSendInput): Record<string, unknown> {
   return record;
 }
 
+// Direct owner reads retain original input while Queue admission changes its
+// delivery state. This does not publish it to timelines or model context.
+function isReadablePluginMessage(message: StoredMessage, ownerUserId: string): boolean {
+  return (
+    resolveThreadMessageVisibility(undefined, ownerUserId)(message) ||
+    (message.deliveryStatus === 'queued' &&
+      message.userId === ownerUserId &&
+      message.catId === null &&
+      message.origin !== 'briefing' &&
+      !isSystemUserMessage(message))
+  );
+}
+
 export function createPluginMessagingHost(input: PluginMessagingHostDeps): PluginMessagingHost {
   return {
     ...(input.subscriptions ?? createUnavailablePluginMessagingSubscriptionHost().host),
@@ -149,7 +162,7 @@ export function createPluginMessagingHost(input: PluginMessagingHostDeps): Plugi
         message._tombstone ||
         message.recall ||
         message.sourceParseFailure ||
-        !resolveThreadMessageVisibility(undefined, input.ownerUserId)(message) ||
+        !isReadablePluginMessage(message, input.ownerUserId) ||
         (message.userId !== input.ownerUserId && !isSystemUserMessage(message))
       )
         return null;
