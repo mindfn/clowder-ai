@@ -47,7 +47,7 @@ for (const transport of ['http', 'mcp']) {
             new StdioClientTransport({ command: server.command, args: server.args, env: server.env, stderr: 'pipe' }),
           );
           const tools = new Set((await mcp.listTools()).tools.map((tool) => tool.name));
-          assert.equal(tools.has('cat_cafe_complete_a2a_dispatch'), false);
+          assert.equal(tools.has('cat_cafe_complete_a2a_dispatch'), false); // mcp-cutover-negative-reference: absence
           const anchor = await mcp.callTool({ name: 'cat_cafe_get_thread_context', arguments: {}, _meta: meta });
           assert.notEqual(anchor.isError, true, JSON.stringify(anchor));
           await pendingSingle(f);

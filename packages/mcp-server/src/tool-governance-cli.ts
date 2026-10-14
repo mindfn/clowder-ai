@@ -3,14 +3,19 @@ import { access, mkdir, readdir, readFile, writeFile } from 'node:fs/promises';
 import { dirname, resolve } from 'node:path';
 import { promisify } from 'node:util';
 import { CANONICAL_TOOL_REGISTRY } from './canonical-server-tools.js';
-import { type AtomicCutoverManifest, FIXED_CUTOVER_CONSUMER_ROOTS, validateAtomicCutovers } from './tool-cutover.js';
+import { type AtomicCutoverManifest, validateAtomicCutovers } from './tool-cutover.js';
+import { scanRetiredNames } from './tool-cutover-consumer-scan.js';
 import {
   createBootstrapAttestation,
+  digestGovernanceValue,
   MCP_SURFACE_ATTESTATION_PATH,
   MCP_SURFACE_BASELINE_PATH,
+  parseBootstrapAttestation,
   resolveGovernanceTarget,
+  useAttestedExportedBaselineProjection,
   validateBootstrapAttestation,
 } from './tool-governance-bootstrap.js';
+import { resolveBootstrapTargetProof } from './tool-governance-bootstrap-git.js';
 import { resolveToolGovernanceEvidence } from './tool-governance-evidence.js';
 import { resolveMcpImplementationCatalog } from './tool-governance-implementation.js';
 import { createProtectedSnapshotFromWorktree } from './tool-governance-protected-worktree.js';
@@ -149,28 +154,6 @@ async function readManifests(repoRoot: string): Promise<readonly AtomicCutoverMa
   return Promise.all(names.map((name) => readJson<AtomicCutoverManifest>(resolve(directory, name))));
 }
 
-async function scanRetiredNames(repoRoot: string, names: readonly string[]) {
-  return Promise.all(
-    names.map(async (retiredName) => {
-      const matches: { root: string; path: string; line: number }[] = [];
-      for (const root of FIXED_CUTOVER_CONSUMER_ROOTS) {
-        const absoluteRoot = resolve(repoRoot, root);
-        if (!(await exists(absoluteRoot))) continue;
-        const entries = await readdir(absoluteRoot, { recursive: true, withFileTypes: true });
-        for (const entry of entries) {
-          if (!entry.isFile()) continue;
-          const path = resolve(entry.parentPath, entry.name);
-          const content = await readFile(path, 'utf8').catch(() => '');
-          content.split(/\r?\n/).forEach((line, index) => {
-            if (line.includes(retiredName)) matches.push({ root, path, line: index + 1 });
-          });
-        }
-      }
-      return { retiredName, scannedRoots: FIXED_CUTOVER_CONSUMER_ROOTS, matches, resolvedConsumers: [] };
-    }),
-  );
-}
-
 function report(before: McpSurfaceSnapshot, after: McpSurfaceSnapshot): string {
   const delta = compareMcpSurfaceRegistry(before, after);
   const descriptionDelta =
@@ -249,29 +232,38 @@ async function main(): Promise<void> {
     return;
   }
   const attestation = await readJson<unknown>(attestationPath);
+  const parsedAttestation = parseBootstrapAttestation(attestation);
   const previous = await targetBaseline(repoRoot, resolvedTargetSha);
-  const parsed = validateBootstrapAttestation(attestation, {
+  const currentBaselineExists = await exists(baselinePath);
+  const currentBaseline = currentBaselineExists ? await readJson<McpSurfaceSnapshot>(baselinePath) : undefined;
+  const targetProof = hasTargetBaseline
+    ? await resolveBootstrapTargetProof({
+        readGit: (args, allowFailure) => git(repoRoot, args, allowFailure),
+        resolvedTargetSha,
+        attestation: parsedAttestation,
+      })
+    : undefined;
+  const parsed = validateBootstrapAttestation(parsedAttestation, {
     mode: command,
     resolvedTargetSha,
     targetHasBaseline: hasTargetBaseline,
-    currentHasBaseline: !hasTargetBaseline && command === 'write' ? true : await exists(baselinePath),
+    currentHasBaseline: !hasTargetBaseline && command === 'write' ? true : currentBaselineExists,
     targetBaselineProtectedBaseSha: previous?.protectedBaseSha,
-    bootstrapIsTargetAncestor: hasTargetBaseline
-      ? (await git(
-          repoRoot,
-          [
-            'merge-base',
-            '--is-ancestor',
-            (attestation as { bootstrapFrom?: string }).bootstrapFrom ?? '',
-            resolvedTargetSha,
-          ],
-          true,
-        )) !== null
-      : undefined,
+    targetProof,
   });
   const current = await currentSnapshot(repoRoot, parsed.bootstrapFrom);
+  const projectionCandidate = command === 'write' ? current.snapshot : currentBaseline;
+  const useProjectedBaseline =
+    previous !== undefined &&
+    projectionCandidate !== undefined &&
+    targetProof?.kind === 'exported' &&
+    useAttestedExportedBaselineProjection(
+      targetProof.target,
+      digestGovernanceValue(previous),
+      digestGovernanceValue(projectionCandidate),
+    );
   const protectedSnapshot =
-    previous ??
+    (useProjectedBaseline ? projectionCandidate : previous) ??
     (await createProtectedSnapshotFromWorktree({
       repoRoot,
       protectedBaseSha: parsed.bootstrapFrom,
