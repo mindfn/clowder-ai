@@ -1,5 +1,6 @@
 import type { UnifiedAttentionItemV1, UnifiedAttentionSourceRead } from '@cat-cafe/shared';
 import type { IMessageStore, StoredMessage } from '../domains/cats/services/stores/ports/MessageStore.js';
+import type { UserMentionHandlingMetadata } from '../domains/cats/services/stores/user-mention-index.js';
 
 export interface UserMentionTodoRead {
   items: UnifiedAttentionItemV1[];
@@ -42,6 +43,7 @@ export function projectUserMentionTodoItem(
   userId: string,
   expectedRevision: number,
   handled = false,
+  handling?: UserMentionHandlingMetadata,
 ): UnifiedAttentionItemV1 {
   if (message.userId !== userId) throw new Error('Invalid request owner');
   if (!message.catId) throw new Error('Invalid request author');
@@ -63,14 +65,43 @@ export function projectUserMentionTodoItem(
       catId: message.catId,
       content: message.content,
       timestamp: message.timestamp,
+      ...(handled && handling ? { handledReason: handling.reason, handledAt: handling.handledAt } : {}),
     },
     linkedNeedsMe: [],
   };
 }
 
+function mentionPeriodFor(message: StoredMessage, options?: MentionReadOptions) {
+  return classifyUserMentionPeriod(message.timestamp, options?.cutover ?? 0, options?.now ?? Date.now());
+}
+
+function countMentionPeriods(source: StoredMessage[], handled: StoredMessage[], options?: MentionReadOptions) {
+  const counts = { today: 0, week: 0, earlier: 0, handled: handled.length };
+  for (const message of source) {
+    const period = mentionPeriodFor(message, options);
+    if (period === 'earlier') counts.earlier++;
+    else {
+      counts.week++;
+      if (period === 'today') counts.today++;
+    }
+  }
+  return counts;
+}
+
+function selectMentionRows(source: StoredMessage[], handled: StoredMessage[], options?: MentionReadOptions) {
+  if (!options) return source;
+  if (options.period === 'handled') return handled;
+  return source.filter((message) => {
+    const period = mentionPeriodFor(message, options);
+    return options.period === 'recent' || options.period === 'week' ? period !== 'earlier' : period === options.period;
+  });
+}
+
 export async function readUserMentionTodos(
   messages: Pick<IMessageStore, 'listUserMentionRequests'> &
-    Partial<Pick<IMessageStore, 'listHandledUserMentions' | 'getUserMentionStateRevisions'>>,
+    Partial<
+      Pick<IMessageStore, 'listHandledUserMentions' | 'getUserMentionStateRevisions' | 'getUserMentionHandlingMetadata'>
+    >,
   userId: string,
   options?: MentionReadOptions,
 ): Promise<UserMentionTodoRead> {
@@ -78,29 +109,21 @@ export async function readUserMentionTodos(
   try {
     const source = await messages.listUserMentionRequests(userId);
     const handled = options && messages.listHandledUserMentions ? await messages.listHandledUserMentions(userId) : [];
+    const handlingMetadata =
+      options?.period === 'handled' && messages.getUserMentionHandlingMetadata
+        ? await messages.getUserMentionHandlingMetadata(userId)
+        : {};
     const revisions = messages.getUserMentionStateRevisions ? await messages.getUserMentionStateRevisions(userId) : {};
-    const group = (m: (typeof source)[number]) =>
-      classifyUserMentionPeriod(m.timestamp, options?.cutover ?? 0, options?.now ?? Date.now());
-    const counts = { today: 0, week: 0, earlier: 0, handled: handled.length };
-    for (const m of source) {
-      const value = group(m);
-      if (value === 'earlier') counts.earlier++;
-      else {
-        counts.week++;
-        if (value === 'today') counts.today++;
-      }
-    }
-    const selected = !options
-      ? source
-      : options.period === 'handled'
-        ? handled
-        : source.filter((m) =>
-            options.period === 'recent' || options.period === 'week'
-              ? group(m) !== 'earlier'
-              : group(m) === options.period,
-          );
+    const counts = countMentionPeriods(source, handled, options);
+    const selected = selectMentionRows(source, handled, options);
     const items: UnifiedAttentionItemV1[] = selected.map((message) =>
-      projectUserMentionTodoItem(message, userId, revisions[message.threadId] ?? 0, options?.period === 'handled'),
+      projectUserMentionTodoItem(
+        message,
+        userId,
+        revisions[message.threadId] ?? 0,
+        options?.period === 'handled',
+        handlingMetadata[message.id],
+      ),
     );
     return {
       items,

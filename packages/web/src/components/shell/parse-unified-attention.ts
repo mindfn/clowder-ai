@@ -41,8 +41,16 @@ function isChoiceRequest(value: unknown): boolean {
 }
 
 function isUserMention(value: unknown): boolean {
+  if (!isRecord(value)) return false;
+  const handlingProvenanceValid =
+    value.handledReason === undefined && value.handledAt === undefined
+      ? true
+      : value.handled === true &&
+        ['viewed', 'replied', 'ignored'].includes(String(value.handledReason)) &&
+        typeof value.handledAt === 'number' &&
+        Number.isSafeInteger(value.handledAt) &&
+        value.handledAt >= 0;
   return (
-    isRecord(value) &&
     isNonBlankString(value.threadId) &&
     isNonBlankString(value.messageId) &&
     isNonBlankString(value.catId) &&
@@ -53,6 +61,7 @@ function isUserMention(value: unknown): boolean {
         Number.isSafeInteger(value.expectedRevision) &&
         value.expectedRevision >= 0)) &&
     (value.handled === undefined || typeof value.handled === 'boolean') &&
+    handlingProvenanceValid &&
     typeof value.timestamp === 'number' &&
     Number.isFinite(value.timestamp)
   );

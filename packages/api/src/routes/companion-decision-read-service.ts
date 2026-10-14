@@ -27,7 +27,9 @@ export async function readCompanionDecisionProjection(
   userId: string,
   page: { offset: number; limit: number },
   messageStore?: Pick<IMessageStore, 'listUserMentionRequests'> &
-    Partial<Pick<IMessageStore, 'listHandledUserMentions' | 'getUserMentionStateRevisions'>>,
+    Partial<
+      Pick<IMessageStore, 'listHandledUserMentions' | 'getUserMentionStateRevisions' | 'getUserMentionHandlingMetadata'>
+    >,
   mentionOptions?: MentionReadOptions,
   runtimeInteractionStore?: RuntimeInteractionPendingReadSource,
   personalPreferences?: DecisionPersonalPreferenceReadOptions,

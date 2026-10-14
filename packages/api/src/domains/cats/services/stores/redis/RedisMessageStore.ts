@@ -1,7 +1,11 @@
 import { randomUUID } from 'node:crypto';
 import type { UserMentionHandlingRef } from '../ports/MessageStore.js';
 import { messageIdempotencyScope } from '../ports/MessageStore.js';
-import { userMentionEvent } from '../user-mention-index.js';
+import {
+  type UserMentionHandlingMetadata,
+  type UserMentionHandlingReason,
+  userMentionEvent,
+} from '../user-mention-index.js';
 import { withOwnerUncertaintyIndex } from './owner-uncertainty-lua.js';
 import { readOwnerUncertainty } from './owner-uncertainty-read.js';
 import {
@@ -11,7 +15,12 @@ import {
   RESTORE_USER_MENTION_LUA,
   UNDO_USER_MENTIONS_LUA,
 } from './user-mention-handling-lua.js';
-import { READ_USER_MENTIONS_LUA, RESOLVE_USER_MENTION_LUA, withUserMentionIndex } from './user-mention-index-lua.js';
+import {
+  READ_USER_MENTIONS_LUA,
+  RESOLVE_USER_MENTION_FROM_READ_LUA,
+  RESOLVE_USER_MENTION_LUA,
+  withUserMentionIndex,
+} from './user-mention-index-lua.js';
 /**
  * Redis Message Store
  * Redis-backed message storage with same interface as in-memory MessageStore.
@@ -1198,7 +1207,22 @@ function parseCustodyOfferCasReceipt(result: unknown): CustodyOfferCasReceipt {
   };
 }
 
-/** Redis-backed canonical message and lifecycle store. */
+const USER_MENTION_HANDLING_REASONS = new Set<UserMentionHandlingReason>(['viewed', 'replied', 'ignored']);
+
+function parseUserMentionHandlingMetadata(raw: string): UserMentionHandlingMetadata {
+  const parsed = JSON.parse(raw) as { reason?: unknown; handledAt?: unknown };
+  if (
+    typeof parsed.reason !== 'string' ||
+    !USER_MENTION_HANDLING_REASONS.has(parsed.reason as UserMentionHandlingReason) ||
+    typeof parsed.handledAt !== 'number' ||
+    !Number.isSafeInteger(parsed.handledAt) ||
+    parsed.handledAt < 0
+  ) {
+    throw new Error('Invalid user mention handling metadata');
+  }
+  return { reason: parsed.reason as UserMentionHandlingReason, handledAt: parsed.handledAt };
+}
+
 export class RedisMessageStore {
   async getLastUserMentionHandling(userId: string) {
     const result = (await this.redis.eval(
@@ -1293,6 +1317,12 @@ export class RedisMessageStore {
       .sort((a, b) => b.id.localeCompare(a.id));
   }
 
+  async getUserMentionHandlingMetadata(userId: string): Promise<Record<string, UserMentionHandlingMetadata>> {
+    await this.migrateHandledMentions(userId);
+    const rows = await this.redis.hgetall(`msg:user-requests:handled-meta:${userId}`);
+    return Object.fromEntries(Object.entries(rows).map(([id, raw]) => [id, parseUserMentionHandlingMetadata(raw)]));
+  }
+
   async handleUserMentionRequests(userId: string, refs: UserMentionHandlingRef[]) {
     const undoId = randomUUID();
     const handled = await this.redis.eval(
@@ -1308,6 +1338,7 @@ export class RedisMessageStore {
       this.keyPrefix,
       userId,
       undoId,
+      String(Date.now()),
     );
     return handled === null ? null : { handled: Number(handled), undoId };
   }
@@ -1371,6 +1402,46 @@ export class RedisMessageStore {
           expectedMessageId,
           expectedRevision === undefined ? '' : String(expectedRevision),
           userId,
+          String(Date.now()),
+        ),
+      ) === 1
+    );
+  }
+
+  async resolveUserMentionRequestFromRead(
+    userId: string,
+    threadId: string,
+    upToMessageId: string,
+    handledAt: number,
+  ): Promise<boolean> {
+    if (!Number.isSafeInteger(handledAt) || handledAt < 0) return false;
+    const target = await this.getById(upToMessageId);
+    if (
+      !target ||
+      target.threadId !== threadId ||
+      !isDurableOwnerReadEvidence(target) ||
+      !passesManagedHoldViewerBoundary(target, userId)
+    )
+      return false;
+    await this.ensureVisibilityMigrated(threadId);
+    return (
+      Number(
+        await this.redis.eval(
+          RESOLVE_USER_MENTION_FROM_READ_LUA,
+          8,
+          `msg:user-requests:latest:${userId}`,
+          `msg:user-requests:pending:${userId}`,
+          `msg:user-requests:closed:${userId}`,
+          `msg:user-request-signals:${userId}:${threadId}`,
+          `msg:user-requests:handled:${userId}`,
+          `msg:user-requests:handled-meta:${userId}`,
+          MessageKeys.detail(upToMessageId),
+          MessageKeys.threadVisibility(threadId),
+          threadId,
+          this.keyPrefix,
+          userId,
+          upToMessageId,
+          String(handledAt),
         ),
       ) === 1
     );

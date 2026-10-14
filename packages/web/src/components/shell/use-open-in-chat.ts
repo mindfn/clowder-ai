@@ -2,6 +2,7 @@
 
 import { usePathname, useRouter } from 'next/navigation';
 import { useCallback } from 'react';
+import { useChatStore } from '@/stores/chatStore';
 import { getThreadIdFromPathname } from '../ThreadSidebar/thread-navigation';
 
 export function isChatPath(pathname: string): boolean {
@@ -25,8 +26,13 @@ export function useOpenInChat(): (open: () => void) => void {
   const router = useRouter();
   return useCallback(
     (open: () => void) => {
+      const returning = !isChatPath(pathname);
+      const targetPath = lastThreadPath(pathname);
+      // Global routes park Chat at default. The explicit return target must own
+      // the request before a parked Workbench can consume it.
+      if (returning) useChatStore.getState().setCurrentThread(getThreadIdFromPathname(targetPath));
       open();
-      if (!isChatPath(pathname)) router.push(lastThreadPath(pathname));
+      if (returning) router.push(targetPath);
     },
     [pathname, router],
   );

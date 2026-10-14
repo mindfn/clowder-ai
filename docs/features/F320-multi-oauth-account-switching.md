@@ -20,9 +20,13 @@ description_updated_at: 2026-09-24T09:38:50Z
 
 ## Codex 当前闭环状态（2026-10-14 UTC）
 
-本线 human164（`private-source-id`）报告从 A 切至 B，并指定 suce 号为目标。作者 source174（`private-source-id`）同时核到本次实际 CODEX_HOME、本轮 executionAccount 快照及成员绑定均为 `suce6923@gmail.com`；五只启用的本地 Codex 成员均绑定该号。这是普通会话一次切号后的真实调用证据，不是服务端压缩后的完整 A→B→A 验收。human184 的在途 A 解释是启动快照契约；未逐个核实剩余 A 调用，不能把它当作 human164 所报 A 继续扣费的已证原因。
+仍开放的 Codex 验收：真实每账号额度与实际消耗归属（含上述 A 消耗对应调用）、完整 A→B→A 返程及具体服务端压缩路径的未观测边界、正式账号页错误/恢复与中英文的原线真页回读。登录/持久化已有实现、隔离检查与用户使用证据，完整真人旅程仍由 Astra 按原约定协调归并；优先归并正常使用记录，不为了验收强行打断用户会话、反复真实换号或新增长轮 Alpha。未标 Codex 全部 AC 已满足，整项 Feature 保持 in-progress；Claude 与 Phase C 不并入本 Codex 结论。
 
-仍开放的 Codex 验收：真实每账号额度与实际消耗归属（含上述 A 消耗对应调用）、普通及服务端已压缩会话的完整 A→B→A、正式账号页错误/恢复与中英文的原线真页回读。登录/持久化已有实现、隔离检查与用户使用证据，完整真人旅程仍由 Astra 按原约定协调归并，不新增长轮 Alpha、代用户换号或授权。未标 Codex 全部 AC 已满足，整项 Feature 保持 in-progress；Claude 与 Phase C 不并入本 Codex 结论。
+**额度功能入口**：设置 → 猫猫团队 → 账户与登录 → 展开已登录的 Codex 账号行 →「查询此账号额度」。现有 `CodexQuotaControl` 展示该身份的剩余百分比、重置时间和观测时间；未查询不代表额度为零。额度查询不是逐次现金扣费账单，A 的实际消耗仍须与调用启动快照和实际额度变化对齐。
+
+**Claude 接续提案（human537）**：You 要求独立 thread 看Ragdoll多账号如何开发，并偏好长效 token。本线已查标题清单，当前 F320 与 F318 原线程存在，未发现同标题 Claude 多账号执行 thread；据此发出 `proposal_mv81q3gh5yiwzup8`「F320 Ragdoll多账号｜长效 token 与一键切换」，提案返回 pending，不把 proposalId 冒充 threadId 或已开工。首位候选为原 Sol6.1，父 F320/Codex 责任保持。接续包优先核当前官方 CLI 的账号隔离、会话共享/续聊、现有 credential authority 与后续/在途边界，不自动激活 F318 carrier。
+
+2026-10-14 核 [Claude 官方认证文档](https://code.claude.com/docs/en/authentication#generate-a-long-lived-token)：`claude setup-token` 生成一年 OAuth token，供 `CLAUDE_CODE_OAUTH_TOKEN`；仅模型请求，不能读取 claude.ai connectors 或建立 Remote Control，本地 MCP 仍可用。文档的独立 `CLAUDE_CONFIG_DIR` 同时隔离设置、登录和历史，不能推断跨账号 resume 自然成立。本机 `claude --version` 为 2.1.296；文档承诺未折算为本 carrier/token 路径已验证。新接续先用 fake fixture，不让用户在聊天交 token、不替用户登录、不复制真实凭据或迁移默认 HOME；具体产品方案及适用能力由新 thread 取证后落实。
 
 ## 当前账号页返修（2026-10-13 UTC）
 

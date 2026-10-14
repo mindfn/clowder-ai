@@ -15,6 +15,7 @@ export type UserMentionInboxStore = Pick<
   | 'resolveUserMentionRequest'
   | 'initializeUserMentionInbox'
   | 'listHandledUserMentions'
+  | 'getUserMentionHandlingMetadata'
   | 'handleUserMentionRequests'
   | 'undoUserMentionHandling'
 >;

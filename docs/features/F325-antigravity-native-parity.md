@@ -25,11 +25,9 @@ description_updated_at: 2026-09-29T06:01:16Z
 
 **我们要的结果**：You 从家里正常入口叫出Siamese，便能对话、创作、查记忆、用工具、读改代码与测试、接 review、接住插话、停止和续接；长任务独立持久、重启可恢复，历史与身份保留，过时入口退役。以家里 Codex app-server / Claude 已落地的实际能力为参照，在相同授权与受保护目标边界下可用。普通工作不能要求人为维护 Native 专属的短工具清单或只为验收准备的空目录。任何真实上游限制须有当前证据和可用替代；本地尚未接线不能冒充不支持。
 
-**实现与验收进展（2026-10-14 09:10 UTC）**：[同一个 Draft PR #5510](https://github.com/zts212653/clowder-ai/pull/5510) 已推至 `872d186a03`。Astra 已实现普通 MCP/原生工具、共享 guard、流式输出/工具错误恢复、按当前回合计量、持久 Native 会话与显式配置变更接力、skills 挂载；原受限 Task/file grant 与旧 Gemini CLI/IDE execution 已从 PR 分支退役，历史 reader 保留。Action Plane 的通用 job 从既有 gate 底座提升，沿用 worker、lease、取消、日志和 wake owner；普通长命令已持久化。代码尚未合入，下面的旧 P1 定位仍是 main 基线，不能解释为新的产品限制。
+**实现与验收进展（2026-10-14 11:30 UTC）**：[同一个 PR #5510](https://github.com/zts212653/clowder-ai/pull/5510) 的最终作者 cut 为 `c6a93c161b`。正常 MCP/原生工具、共享 guard、流式/工具错误恢复、skills/媒体、当轮用量、持久 session 与发送正文前的 verified init 已接通；Native 压缩沿既有 F296 控制与 epoch owner 接线。Action Plane 单一持久 job 包含独立 worker、lease/fencing、principal 幂等/显式 retry lineage、取消/恢复、日志与 metrics/trace。旧 Gemini CLI/IDE execution、专用 Task/file grant 和 task-test 旁路已在 PR 中退役，历史 reader 保留。代码尚未合入；后文旧 P1 描述是历史基线，不是新的产品限制。
 
-真实 worktree 使用已完成 Settings 保存/刷新、Gemini 本人写测试并消费 review、同一原生 session 续接、真实图片读取、原生 skill 读取、MCP 提交测试 job 及准确消费 managed-hold。真实 12B 下载在 API 停止/恢复后由同一 worker 运行约 28 分钟，最后远端断流（curl 18）；失败原样保留，未假称两片下载完成。20 轮真实进程故障注入记录了 20/20 终态投递、零重复执行、零用户消息误取消及零未交代后代。
-
-**当前真实缺口**：第 7 个主动实际回合及其第 8 个唤醒回合已产出有用回复，并完成图片、skills、真实测试与回执；官方 CLI 的唯一 `result` 仍报告 `ERROR: The stream was interrupted`，父 invocation 因而失败。保持 stdin 到 result 的修复虽过定向检查，尚未消除这一真实失败；Astra 已暂停新的真实模型复验，正用固定官方 CLI 与回环端点区分当前错误和恢复会话状态。不能把有文字/工具成功算作正常终态已通过。独立 review、最终观测/迁移材料、真实压缩后身份、实际 served-model、合入后 Alpha 与受权运行激活仍未结算。
+**尚未结算**：非作者独立审查、合入后 Alpha 全旅程与获准 runtime 激活。协议只证明配置与 CLI init/request 选择的模型，没有独立 backend served-model 证明，保持 `modelVerified=false`，AC-A2 不提前签字；Linux/Windows 未认证。所有剩余项仍在原 Task2347，由 Astra 继续完成，不以本次作者报告关闭 Feature。
 
 原 A–E、F261 有效需求与迁移/历史边界继续被同一 Task 承接；未以部分进度关闭 Feature，也未重启正式 runtime。
 
@@ -174,10 +172,10 @@ provider background task、模型说“做完了”、进程退出均不替代 d
 ## Acceptance Criteria
 
 ### Phase A（官方契约）
-- [ ] AC-A1: 固定版本与来源的已认证 ACP new→prompt→MCP/tool→final 原始 fixture 可重跑；含正常、错误、denied、partial 和 active interruption。
+- [ ] AC-A1: 固定版本与来源的已认证官方载体 new→prompt→MCP/tool→final（source470 允许在 ACP 不满足原生 L0 时选官方 Native CLI） 原始 fixture 可重跑；含正常、错误、denied、partial 和 active interruption。
 - [ ] AC-A2: 个人 OAuth 订阅、实际 served model、双 profile 的凭据/目录/模型隔离有实测；未走 API key 偷换计费；所有仍受支持的现役 AGY 猫有迁移结果，不硬保已下线型号。
 - [ ] AC-A3: L0 主 agent 原生传递及压缩后保持得到注入证据与行为验证；Rules/prepend 不算同等完成；不可达则给明确 blocker 与替代路径，不能自行降级承诺。
-- [ ] AC-A4: ACP load/resume/cancel/permission/MCP 配置、媒体输入、用量范围、并发与中途输入逐 claim 给 native/adapted/delegated/unsupported 及实测边界；没有证据的项标 unknown。
+- [ ] AC-A4: 已选官方载体的 load/resume/cancel/permission/MCP 配置、媒体输入、用量范围、并发与中途输入逐 claim 给 native/adapted/delegated/unsupported 及实测边界；没有证据的项标 unknown。
 
 ### Phase B（原生平权）
 - [ ] AC-B1: 编译后的每猫 L0 走已验证主 agent 通道，保留 F203 单源与可见 provenance；两猫/两 session 及压缩负例通过。

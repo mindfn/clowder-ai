@@ -32,6 +32,7 @@ export function useOpenDestination(): {
   );
   const openInChat = useOpenInChat();
   const setWorkspaceMode = useChatStore((s) => s.setWorkspaceMode);
+  const openEvolutionWorkspace = useChatStore((s) => s.openEvolutionWorkspace);
   const openTeamSubject = useChatStore((s) => s.openTeamSubject);
 
   const openEntry = useCallback(
@@ -44,9 +45,8 @@ export function useOpenDestination(): {
         case 'workspace-mode':
           openInChat(() => setWorkspaceMode(destination.mode));
           return;
-        case 'workspace-launcher':
-          // The evolution home has no typed open request yet (F307); the Workspace launcher is where it lives.
-          openInChat(() => setWorkspaceMode('dev'));
+        case 'evolution-home':
+          openInChat(openEvolutionWorkspace);
           return;
         default: {
           const path = defaultSettingsSectionPath(entry);
@@ -54,7 +54,7 @@ export function useOpenDestination(): {
         }
       }
     },
-    [openInChat, openRoute, setWorkspaceMode],
+    [openInChat, openRoute, setWorkspaceMode, openEvolutionWorkspace],
   );
 
   const openTeam = useCallback(() => openInChat(() => openTeamSubject(null)), [openInChat, openTeamSubject]);

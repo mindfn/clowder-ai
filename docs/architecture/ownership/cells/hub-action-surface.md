@@ -58,11 +58,12 @@ cited_by:
   - {feature: F307, date: 2026-10-02, delta: update — generation-fenced Artifact split/full-window presentation and owner-scoped opaque return references remain transient inside the single F307 store}
   - {feature: F306, date: 2026-08-27, delta: "Phase B in-context runtime interaction card — approval/question/elicitation share one canonical thread surface; Approval Hub is navigation-only and stale controls are inert."}
   - {feature: F310, date: 2026-08-31, delta: "Phase A boundary — global Needs Me and product Schedule are sibling read projections over producer-owned truth; this cell owns projection/dedupe/exact-return only, never custody lifecycle, business eligibility, or a second store."}
+  - {feature: F310, date: 2026-10-14, delta: "Mention lifecycle consumes F069/F072 durable visibility reads and records viewed/replied handling provenance; F322 retains personal Ignore/UI custody."}
 ---
 
 # Hub Action Surface
 
-F322 的显式 `@你` 请求通过现有小信箱的统一读取进入「需要我处理」。请求、回复关闭和已处理的事实属于 MessageStore；小信箱只读其最新消息引用并原样展示，不推断类别或紧急程度，不创建第二份 Task/待办。每个 owner/thread 一件，用户回复或精确版本的「已处理」关闭；后来的 @ 更新或重开。旧 Live 插件契约保留，只有小信箱显式采用这项来源。
+F322 的显式 `@你` 请求通过现有小信箱的统一读取进入「需要我处理」。请求、回复关闭、看过关闭和已处理的事实属于 MessageStore；小信箱只读其最新消息引用并原样展示，不推断类别或紧急程度，不创建第二份 Task/待办。每个 owner/thread 一件：用户回复、F069/F072 已确认追到该消息或之后的 durable visibility read、或精确版本的「已处理」关闭；后来的 @ 更新或重开。处理历史保留 `viewed | replied | ignored` provenance。F322 的 owner-private Ignore 仍是独立 presentation partition，不伪装成 canonical read。旧 Live 插件契约保留，只有小信箱显式采用这项来源。
 
 ## Canonical Owner
 

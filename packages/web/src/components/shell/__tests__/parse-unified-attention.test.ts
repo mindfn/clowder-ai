@@ -120,6 +120,36 @@ describe('parseUnifiedAttentionRead — a body is a read only if it is a version
     expect(parsed?.items[0]?.choiceRequest?.cardRef.blockId).toBe('card-1');
   });
 
+  it('accepts typed @you handling provenance and rejects invented reasons', () => {
+    const mention = {
+      decisionRef: 'user-mention-handled:thread-1:message-1',
+      kind: 'user_mention',
+      summary: '对话中的请求',
+      linkedNeedsMe: [],
+      userMention: {
+        threadId: 'thread-1',
+        messageId: 'message-1',
+        catId: 'codex-sol',
+        content: '@you',
+        timestamp: 10,
+        handled: true,
+        handledReason: 'viewed',
+        handledAt: 20,
+      },
+    };
+    expect(parseUnifiedAttentionRead(body({ items: [mention] }))?.items[0]?.userMention?.handledReason).toBe('viewed');
+    expect(
+      parseUnifiedAttentionRead(
+        body({ items: [{ ...mention, userMention: { ...mention.userMention, handledReason: 'opened' } }] }),
+      ),
+    ).toBeNull();
+    expect(
+      parseUnifiedAttentionRead(
+        body({ items: [{ ...mention, userMention: { ...mention.userMention, handledAt: undefined } }] }),
+      ),
+    ).toBeNull();
+  });
+
   it('accepts an exact owner-personal view and keeps its mailbox coordinate and full-set counts', () => {
     const parsed = parseUnifiedAttentionRead(personalBody());
     expect(parsed?.personalView?.ignoredTotalCount).toBe(1);

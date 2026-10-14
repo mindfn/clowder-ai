@@ -156,6 +156,9 @@ export interface UnifiedAttentionItemV1 {
     catId: string;
     content: string;
     timestamp: number;
+    /** Why this request entered handled history. Absent only for legacy/manual records without typed provenance. */
+    handledReason?: 'viewed' | 'replied' | 'ignored';
+    handledAt?: number;
   };
   /** Present only for a canonical pending F306 question; ordinary rich interactive blocks never project here. */
   choiceRequest?: UnifiedAttentionChoiceRequest;

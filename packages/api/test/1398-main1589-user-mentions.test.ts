@@ -37,9 +37,66 @@ for (const backend of ['memory', 'redis'] as const) {
     );
   });
 
+  test(`${backend}: non-human senders and cross-posts cannot produce replied history`, async () => {
+    const messages = store('sender-history');
+    const request = await messages.append(source);
+    for (const sender of [
+      { kind: 'system', service: 'host' },
+      { kind: 'external', connectorId: 'test-connector' },
+      { kind: 'agent', catId: 'codex' },
+    ] as const) {
+      await messages.append({ ...source, from: sender as never, mentionsUser: false, timestamp: 110 });
+    }
+    await messages.append({
+      ...source,
+      from: { kind: 'user', userId: 'owner' },
+      mentionsUser: false,
+      timestamp: 111,
+      extra: { crossPost: { sourceThreadId: 'other' } } as never,
+    });
+    assert.deepEqual(
+      (await messages.listUserMentionRequests('owner')).map((m) => m.id),
+      [request.id],
+    );
+    assert.deepEqual(await messages.getUserMentionHandlingMetadata('owner'), {});
+    await messages.append({ ...source, from: { kind: 'user', userId: 'owner' }, mentionsUser: false, timestamp: 112 });
+    assert.deepEqual(await messages.listUserMentionRequests('owner'), []);
+    assert.deepEqual((await messages.getUserMentionHandlingMetadata('owner'))[request.id], {
+      reason: 'replied',
+      handledAt: 112,
+    });
+  });
+
+  test(`${backend}: viewed history preserves source and rejects foreign boundaries and replay`, async () => {
+    const messages = store('read-history');
+    const request = await messages.append(source);
+    const original = structuredClone(await messages.getById(request.id));
+    assert.equal(await messages.resolveUserMentionRequestFromRead('stranger', 'thread', request.id, 200), false);
+    assert.equal(await messages.resolveUserMentionRequestFromRead('owner', 'other', request.id, 200), false);
+    assert.equal(await messages.resolveUserMentionRequestFromRead('owner', 'thread', request.id, 200), true);
+    const revision = await messages.getUserMentionStateRevisions('owner');
+    assert.equal(await messages.resolveUserMentionRequestFromRead('owner', 'thread', request.id, 201), false);
+    assert.deepEqual(await messages.getUserMentionStateRevisions('owner'), revision);
+    assert.deepEqual((await messages.getUserMentionHandlingMetadata('owner'))[request.id], {
+      reason: 'viewed',
+      handledAt: 200,
+    });
+    assert.deepEqual(
+      await messages.getById(request.id),
+      original,
+      'human inbox handling must not mutate native response/input receipts',
+    );
+    const next = await messages.append({ ...source, timestamp: 90 });
+    assert.equal(await messages.resolveUserMentionRequestFromRead('owner', 'thread', request.id, 202), false);
+    assert.deepEqual(
+      (await messages.listUserMentionRequests('owner')).map((m) => m.id),
+      [next.id],
+    );
+  });
+
   test(`${backend}: the existing terminal response commit publishes an owner mention once`, async () => {
     const messages = store('terminal');
-    const response = await messages.append({
+    const { message: response } = await messages.appendAndObservePriorFrontier({
       ...source,
       content: '',
       mentionsUser: false,
@@ -78,7 +135,7 @@ for (const backend of ['memory', 'redis'] as const) {
     const messages = client ? new RedisMessageStore(client) : new MessageStore();
     const ledger = client ? new RedisQueueLedgerStore(client) : new InMemoryQueueLedgerStore();
     const queue = new InvocationQueue(ledger);
-    const response = await messages.append({
+    const { message: response } = await messages.appendAndObservePriorFrontier({
       ...source,
       content: '',
       mentionsUser: false,

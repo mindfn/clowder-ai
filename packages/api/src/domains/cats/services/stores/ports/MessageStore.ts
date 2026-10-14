@@ -49,11 +49,11 @@ import {
   queueLedgerAdmissionsMatch,
 } from '../../agents/invocation/queue-ledger/QueueLedger.js';
 import type { MessageMetadata } from '../../types.js';
-import { cursorFor, parseCursor } from '../cursor.js';
+import { compareCursors, cursorFor, parseCursor } from '../cursor.js';
 import type { MessageDeliveryBoundary } from '../message-delivery-boundary.js';
 import { messageFrom } from '../message-from.js';
 import { notifyMessageTimelineChange } from '../notify-message-timeline-change.js';
-import { UserMentionIndex } from '../user-mention-index.js';
+import { type UserMentionHandlingMetadata, UserMentionIndex } from '../user-mention-index.js';
 import {
   getTimelineOrderTime,
   isDurableOwnerReadEvidence,
@@ -1994,6 +1994,9 @@ export interface IMessageStore {
   ): boolean | Promise<boolean>;
   initializeUserMentionInbox(startedAt: number): number | Promise<number>;
   listHandledUserMentions(userId: string): StoredMessage[] | Promise<StoredMessage[]>;
+  getUserMentionHandlingMetadata(
+    userId: string,
+  ): Record<string, UserMentionHandlingMetadata> | Promise<Record<string, UserMentionHandlingMetadata>>;
   handleUserMentionRequests(
     userId: string,
     refs: UserMentionHandlingRef[],
@@ -2009,6 +2012,13 @@ export interface IMessageStore {
     threadId: string,
     expectedMessageId: string,
     expectedRevision?: number,
+  ): boolean | Promise<boolean>;
+  /** Close only the current request proven at/before this durable visibility read boundary. */
+  resolveUserMentionRequestFromRead(
+    userId: string,
+    threadId: string,
+    upToMessageId: string,
+    handledAt: number,
   ): boolean | Promise<boolean>;
   /** F102 KD-34: Listener called after every successful append (fire-and-forget) */
   onAppend?: MessageAppendListener;
@@ -2454,6 +2464,10 @@ export class MessageStore {
     return this.userMentionIndex.handled(userId, (id) => this.getById(id));
   }
 
+  getUserMentionHandlingMetadata(userId: string): Record<string, UserMentionHandlingMetadata> {
+    return this.userMentionIndex.handlingMetadata(userId);
+  }
+
   handleUserMentionRequests(userId: string, refs: UserMentionHandlingRef[]) {
     this.listUserMentionRequests(userId);
     return this.userMentionIndex.handle(userId, refs);
@@ -2475,6 +2489,39 @@ export class MessageStore {
   ): boolean {
     this.listUserMentionRequests(userId);
     return this.userMentionIndex.resolve(userId, threadId, expectedMessageId, expectedRevision);
+  }
+
+  resolveUserMentionRequestFromRead(
+    userId: string,
+    threadId: string,
+    upToMessageId: string,
+    handledAt: number,
+  ): boolean {
+    if (!Number.isSafeInteger(handledAt) || handledAt < 0) return false;
+    const target = this.getById(upToMessageId);
+    if (
+      !target ||
+      target.threadId !== threadId ||
+      !isDurableOwnerReadEvidence(target) ||
+      !passesManagedHoldViewerBoundary(target, userId)
+    )
+      return false;
+    const current = this.listUserMentionRequests(userId).find((message) => message.threadId === threadId);
+    if (!current) return false;
+    const sourceCursor = this.canonicalizeCursor(current.id, threadId);
+    const targetCursor = this.canonicalizeCursor(target.id, threadId);
+    const parsedSource = parseCursor(sourceCursor);
+    const parsedTarget = parseCursor(targetCursor);
+    if (parsedSource?.version !== 2 || parsedTarget?.version !== 2 || compareCursors(sourceCursor, targetCursor) > 0) {
+      return false;
+    }
+    return this.userMentionIndex.resolveRead(
+      userId,
+      threadId,
+      current.id,
+      { id: parsedTarget.id, position: parsedTarget.seq },
+      handledAt,
+    );
   }
 
   onTimelineChanged?: MessageAppendListener;
@@ -2533,11 +2580,12 @@ export class MessageStore {
 
   /** Publish a bodyless processing placeholder only when its final body is durable. */
   private publishLifecycleResponse(message: StoredMessage): void {
+    if (!this.visibilitySeq.has(message.id)) {
+      this.visibilitySeqCounter = Math.max(this.visibilitySeqCounter + 1, Date.now());
+      this.visibilitySeq.set(message.id, this.visibilitySeqCounter);
+    }
+    message.visibilitySeq = this.visibilitySeq.get(message.id);
     this.userMentionIndex.observe(message);
-    if (this.visibilitySeq.has(message.id)) return;
-    this.visibilitySeqCounter = Math.max(this.visibilitySeqCounter + 1, Date.now());
-    this.visibilitySeq.set(message.id, this.visibilitySeqCounter);
-    message.visibilitySeq = this.visibilitySeqCounter;
   }
 
   /**
@@ -2755,7 +2803,6 @@ export class MessageStore {
       threadId,
     };
     this.messages.push(stored);
-    this.userMentionIndex.observe(stored);
     if (idempotencyIndexKey) {
       this.idempotencyIndex.set(idempotencyIndexKey, stored.id);
     }
@@ -2773,6 +2820,7 @@ export class MessageStore {
       // get the canonical position without a re-read.
       stored.visibilitySeq = this.visibilitySeqCounter;
     }
+    this.userMentionIndex.observe(stored);
 
     // Trim oldest if over capacity
     if (this.messages.length > this.maxMessages) {
@@ -3856,7 +3904,6 @@ export class MessageStore {
     msg.timelineOrderAt = resolveDeliveryTimelineScore(msg, deliveredAt);
     msg.deliveredAt = deliveredAt;
     msg.deliveryStatus = 'delivered';
-    this.userMentionIndex.observe(msg);
     // #1269: Preserve existing visibility position for already-published speech.
     // Timeline-published queued cat speech gets visibilitySeq at append — delivery
     // must NOT reallocate or it would move the message after later arrivals and
@@ -3866,6 +3913,8 @@ export class MessageStore {
       this.visibilitySeqCounter = Math.max(this.visibilitySeqCounter + 1, Date.now());
       this.visibilitySeq.set(id, this.visibilitySeqCounter);
     }
+    msg.visibilitySeq = this.visibilitySeq.get(id);
+    this.userMentionIndex.observe(msg);
     notifyMessageTimelineChange(this, msg);
     return { ...msg, deliveryTransitioned: true };
   }
@@ -3889,6 +3938,8 @@ export class MessageStore {
     // work remains hidden, but removing a response from the visibility index
     // would make it disappear on history reload for every other participant.
     if (msg.lifecycle?.kind !== 'response') this.visibilitySeq.delete(id);
+    msg.visibilitySeq = this.visibilitySeq.get(id);
+    this.userMentionIndex.observe(msg);
     notifyMessageTimelineChange(this, msg);
     return { ...msg, deliveryTransitioned: true };
   }

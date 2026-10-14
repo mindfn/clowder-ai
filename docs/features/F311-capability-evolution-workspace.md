@@ -77,7 +77,7 @@ mcp_admission_claims:
 
 > **Status**: in-progress (v6 product-experience contract; v5 final-vision phases; Gate 0A + Phase 1–3 landed; Phase 4 implementation landed; roadshow retained as Phase 1 regression; operator-selected F314/F100 full-loop AC-41–44 and AC-UX4 remain open on owner-backed asset/evidence/outcome truth) | **Product phase owner**: Maine Coon (@codex-sol, gpt-5.6-sol)（本轮 operator 指定执行） | **Architecture co-creator/reviewer**: Ragdoll (@fable5, claude-fable-5) | **Priority**: P0
 >
-> **2026-10-14 v2 用户旅程**：operator 要求在新版界面尽快走通 F311 旅程，并用 F314 事故档案建立第一条真实进化谱系。计划见 [v2 用户旅程开发计划](#v2-用户旅程开发计划2026-10-14-起)，新增 AC-UX6；执行线程待 operator 批准。
+> **2026-10-14 v2 用户旅程**：operator 要求在新版界面尽快走通 F311 旅程，并用 F314 事故档案建立第一条真实进化谱系。计划见 [v2 用户旅程开发计划](#v2-用户旅程开发计划2026-10-14-起)，新增 AC-UX6；执行线程已启动，S1 实现已合入 #5532，Alpha 与北极星设计验收待完成。
 >
 >
 > **operator signoff**: 2026-08-28 [thread-id] `0001787926983474`（今年双旗舰之一，与 F310 Growing 并列）。
@@ -489,7 +489,7 @@ Meta Evolution 的正式定义为：**能力对象与改进机制的协同演进
 - 不把 V1 的旧组件原样塞进新版入口冒充完成（F322 10-12 同类事故）。
 - 鸭鸭在正式环境的探索来源，需要 microduck owner 接上适配器。这一项单独登记，不阻塞 F314 这条。
 
-**分工（提议，执行线程待 operator 批准）**
+**分工（执行线程已启动）**
 - **设计与验收**：Ragdoll（@opus55），本线程。每片对照北极星 v2 和 V1 内容清单验收（见 F314 事故档案 10-12 F311 案的教训）。
 - **S4 的案例—版本清单**：Ragdoll起草。
 - **S1–S3、S5、S6 实现，以及 S4 的适配器扩展**：一个新的执行线程，由小太阳·Maine Coon（@codex61-sol）负责。

@@ -966,6 +966,7 @@ export interface WorkspaceOpenRequest {
       }
     | { kind: 'mode'; mode: Exclude<WorkspaceMode, 'dev' | 'team'> }
     | { kind: 'evolution-program'; programId: string }
+    | { kind: 'evolution-home' }
     | { kind: 'artifact'; artifact: ThreadArtifactDTO; navigationOrigin?: WorkspaceFileNavigationOrigin }
     | {
         kind: 'file';
