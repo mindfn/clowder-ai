@@ -334,3 +334,61 @@ test('request descriptor distinguishes raw payload and query bytes and exact HTT
   assert.equal(captured[2].method, 'GET');
   assert.equal(captured[2].bodyDigest, digest(''));
 });
+
+test('actual owner HTTP module handler receives captured facts and the existing request lifetime', async (t) => {
+  const { createModuleHostInvocation } = await import(
+    '../dist/domains/plugin/builtin-runtime/carriers/module-host-invocation.js'
+  );
+  let seen, native;
+  const actions = {
+    'owner.call': async (input, invocation, context) => {
+      native = invocation;
+      seen = context;
+      input.request.body.requestId = 'package-rewrite';
+      if (context) await context.assertCurrent();
+      return { status: 200, body: { ok: true } };
+    },
+  };
+  const module = createModuleHostInvocation({ runtime: { actions: () => actions } });
+  const f = await fixture(t, (id, method, params) => module.invoke(id, method, params));
+  assert.equal((await f.request('POST', { requestId: 'package-value' })).statusCode, 200);
+  assert.ok(seen, 'owner HTTP context is not projected to package');
+  assert.equal(seen.kind, 'owner-http-request');
+  assert.equal(seen.userId, owner);
+  assert.equal(seen.pluginInstanceId, 'instance');
+  assert.equal(seen.operation, 'write');
+  assert.equal(seen.requestIdentity.method, 'POST');
+  assert.equal(seen.requestIdentity.contributionId, 'owner');
+  assert.notEqual(seen.requestIdentity.requestId, 'package-value');
+  assert.notEqual(seen.requestIdentity.requestId, 'package-rewrite');
+  assert.ok(Object.isFrozen(seen));
+  assert.ok(Object.isFrozen(seen.requestIdentity));
+  assert.equal(native, undefined);
+  await assert.rejects(() => seen.assertCurrent(), /no longer current/);
+});
+
+test('HTTP read keeps its operation and untrusted dispatch cannot manufacture owner context', async (t) => {
+  const { createModuleHostInvocation } = await import(
+    '../dist/domains/plugin/builtin-runtime/carriers/module-host-invocation.js'
+  );
+  const seen = [];
+  const actions = {
+    'owner.call': async (_input, _native, context) => {
+      seen.push(context);
+      return { status: 200, body: {} };
+    },
+  };
+  const module = createModuleHostInvocation({ runtime: { actions: () => actions } });
+  const dispatch = (id, method, params) => module.invoke(id, method, params);
+  const f = await fixture(t, dispatch);
+  assert.equal((await f.request()).statusCode, 200);
+  assert.equal(seen[0]?.operation, 'read');
+  await f.webhooks.callPluginWebhook('dev.clowder.owner-context', 'owner', {
+    principal: { kind: 'owner', id: owner },
+    requestIdentity: seen[0]?.requestIdentity,
+  });
+  assert.equal(seen[1], undefined);
+  const anonymous = await fixture(t, dispatch, { anonymous: true });
+  assert.equal((await anonymous.request('POST', { principal: { kind: 'owner', id: owner } })).statusCode, 200);
+  assert.equal(seen[2], undefined);
+});

@@ -28,6 +28,7 @@ import {
 } from '../../carrier/host-invocation.js';
 import {
   currentPluginCallContext,
+  currentPluginOwnerRequestContext,
   type PluginCallContext,
   withoutPluginCallContext,
 } from '../../carrier/plugin-call-context.js';
@@ -84,6 +85,22 @@ function projectNativeContext(caller: PluginCallContext | undefined) {
     : undefined;
 }
 
+/** Reuse the HTTP route's captured facts and lifetime; no package-supplied identity. */
+function projectOwnerHttpContext(instanceId: string) {
+  const caller = currentPluginOwnerRequestContext(instanceId);
+  return caller
+    ? Object.freeze({
+        kind: 'owner-http-request' as const,
+        userId: caller.userId,
+        pluginInstanceId: instanceId,
+        operation: caller.operation,
+        ...(caller.requestIdentity ? { requestIdentity: caller.requestIdentity } : {}),
+        signal: caller.signal,
+        assertCurrent: () => caller.assertCurrent(),
+      })
+    : undefined;
+}
+
 export function createModuleHostInvocation(deps: ModuleHostInvocationDeps): ModuleHostInvocation {
   const attempt = async (targetId: string, method: string, params: unknown): Promise<PluginInvocationOutcome> => {
     const actions = deps.runtime.actions(targetId);
@@ -101,6 +118,7 @@ export function createModuleHostInvocation(deps: ModuleHostInvocationDeps): Modu
     // The boundary: from here the package's own code runs.
     const caller = currentPluginCallContext(targetId);
     const publicContext = projectNativeContext(caller);
+    const ownerHttpContext = projectOwnerHttpContext(targetId);
     return attemptPluginAction(() =>
       consumeOwnerOperationInvocation(
         targetId,
@@ -115,7 +133,7 @@ export function createModuleHostInvocation(deps: ModuleHostInvocationDeps): Modu
             ? withoutPluginCallContext(() =>
                 withCurrentOwnerOperation(owner, async () => candidate.call(actions, params, undefined, owner)),
               )
-            : candidate.call(actions, params, publicContext),
+            : candidate.call(actions, params, publicContext, ownerHttpContext),
       ),
     );
   };
