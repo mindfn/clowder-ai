@@ -19,7 +19,10 @@ if [[ "${1:-}" == "--verify-process-domain" ]]; then
   init_pidns="$(stat -Lc '%d:%i' /proc/1/ns/pid)" || die "cannot observe procfs process domain"
   [[ "$parent_pidns" =~ ^[0-9]+:[0-9]+$ && "$current_pidns" =~ ^[0-9]+:[0-9]+$ ]] || die "invalid process namespace identity"
   [[ "$$" == "1" && "$current_pidns" != "$parent_pidns" && "$current_pidns" == "$init_pidns" ]] || die "procfs is not bound to a fresh process namespace"
+  # UID/GID changes clear unshare's parent-death signal. Restore it after
+  # dropping credentials, or a killed monitor could leave PID 1 alive.
   exec setpriv \
+    --pdeathsig keep \
     --reuid "$runner_uid" \
     --regid "$runner_gid" \
     --clear-groups \

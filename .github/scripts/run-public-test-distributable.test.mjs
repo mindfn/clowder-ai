@@ -17,28 +17,24 @@ const requiresRootLinux = process.platform !== 'linux' || process.getuid() !== 0
 // traverse runner-private parent directories after setpriv.
 const runnerUid = process.env.SUDO_UID ?? '1000';
 const runnerGid = process.env.SUDO_GID ?? '1000';
-const args = (code) => [
-  launcher,
-  runnerUid,
-  runnerGid,
-  process.env.PATH,
-  process.execPath,
-  '--import',
-  resourceGuard,
-  '-e',
-  code,
-];
-const run = (code, { isolated = true } = {}) =>
-  spawnSync(isolated ? 'unshare' : launcher, isolated ? ['--net', '--', ...args(code)] : args(code).slice(1), {
-    encoding: 'utf8',
-    timeout: 15_000,
-    killSignal: 'SIGKILL',
-    env: {
-      ...process.env,
-      CAT_CAFE_PUBLIC_TEST_NETNS_PROOF: '/forged/path',
-      CAT_CAFE_PUBLIC_TEST_RESOURCE_SCOPE: 'distributable',
+const commandArgs = (command) => [launcher, runnerUid, runnerGid, process.env.PATH, ...command];
+const nodeCommand = (code) => [process.execPath, '--import', resourceGuard, '-e', code];
+const runCommand = (command, { isolated = true } = {}) =>
+  spawnSync(
+    isolated ? 'unshare' : launcher,
+    isolated ? ['--net', '--', ...commandArgs(command)] : commandArgs(command).slice(1),
+    {
+      encoding: 'utf8',
+      timeout: 15_000,
+      killSignal: 'SIGKILL',
+      env: {
+        ...process.env,
+        CAT_CAFE_PUBLIC_TEST_NETNS_PROOF: '/forged/path',
+        CAT_CAFE_PUBLIC_TEST_RESOURCE_SCOPE: 'distributable',
+      },
     },
-  });
+  );
+const run = (code, options) => runCommand(nodeCommand(code), options);
 
 const nondumpablePython = `
 import ctypes, os, time
@@ -64,6 +60,41 @@ async function ready(child) {
   } finally {
     clearTimeout(timer);
   }
+}
+
+function processIdentity(pid) {
+  try {
+    const text = readFileSync(`/proc/${pid}/stat`, 'utf8');
+    const fields = text.slice(text.lastIndexOf(')') + 2).split(' ');
+    return { state: fields[0], parent: Number(fields[1]), birth: fields[19] };
+  } catch (error) {
+    if (error.code === 'ENOENT' || error.code === 'ESRCH') return null;
+    throw error;
+  }
+}
+
+function stillOwned(owned) {
+  if (!owned) return false;
+  const current = processIdentity(owned.pid);
+  return current && current.birth === owned.birth && current.state !== 'Z';
+}
+
+async function waitForOwnedExit(owned, message) {
+  const deadline = Date.now() + 5000;
+  while (stillOwned(owned)) {
+    assert.ok(Date.now() < deadline, message);
+    await delay(25);
+  }
+}
+
+async function reclaimOwnedInit(owned) {
+  if (!stillOwned(owned)) return;
+  try {
+    process.kill(owned.pid, 'SIGKILL');
+  } catch (error) {
+    if (error.code !== 'ESRCH') throw error;
+  }
+  await waitForOwnedExit(owned, 'failed to reclaim owned namespace init');
 }
 
 describe(
@@ -110,6 +141,27 @@ describe(
     it('preserves the command exit status through the privilege boundary', () => {
       const child = run('process.exit(37)');
       assert.equal(child.status, 37, child.stdout + child.stderr);
+    });
+
+    it('preserves SIGKILL parent-death handling in the actual unprivileged namespace init', () => {
+      // PR_GET_PDEATHSIG describes the caller. A subprocess probe would see a
+      // cleared signal after fork, so exec Python as the shard command/PID 1.
+      const child = runCommand([
+        '/usr/bin/python3',
+        '-c',
+        `
+import ctypes, os, signal
+assert os.getpid() == 1
+assert os.getuid() == ${Number(runnerUid)} and os.getuid() != 0
+assert os.getgid() == ${Number(runnerGid)}
+death_signal = ctypes.c_int()
+assert ctypes.CDLL(None, use_errno=True).prctl(2, ctypes.byref(death_signal), 0, 0, 0) == 0
+assert death_signal.value == signal.SIGKILL, death_signal.value
+print('pdeathsig-verified')
+`,
+      ]);
+      assert.equal(child.status, 0, child.stdout + child.stderr);
+      assert.equal(child.stdout.trim(), 'pdeathsig-verified');
     });
 
     it('refuses the process-domain stage without a fresh namespace and matching procfs', () => {
@@ -216,11 +268,12 @@ describe(
       assert.match(child.stderr, /cleanup=proven killed=1/);
     });
 
-    it('tears down namespace init when its owned root monitor is killed', async () => {
-      const monitor = spawn('unshare', ['--net', '--', ...args("console.log('ready'); setInterval(() => {}, 1000)")], {
+    const checkMonitorDeath = async (command) => {
+      const monitor = spawn('unshare', ['--net', '--', ...commandArgs(command)], {
         stdio: ['ignore', 'pipe', 'inherit'],
       });
       const exited = once(monitor, 'exit');
+      let ownedInit;
       try {
         await ready(monitor);
         const children = spawnSync('ps', ['--ppid', String(monitor.pid), '-o', 'pid='], {
@@ -232,31 +285,47 @@ describe(
         assert.equal(pids.length, 1, 'unshare must own one namespace init');
         const pid = pids[0];
         assert.ok(Number.isSafeInteger(pid) && pid > 1);
-        const identity = () => {
-          try {
-            const text = readFileSync(`/proc/${pid}/stat`, 'utf8');
-            const fields = text.slice(text.lastIndexOf(')') + 2).split(' ');
-            return { state: fields[0], birth: fields[19] };
-          } catch (error) {
-            if (error.code === 'ENOENT' || error.code === 'ESRCH') return null;
-            throw error;
-          }
-        };
-        const original = identity();
+        const original = processIdentity(pid);
         assert.ok(original?.birth);
+        assert.equal(original.parent, monitor.pid, 'init must belong to this test monitor');
+        ownedInit = { pid, birth: original.birth };
         monitor.kill('SIGKILL');
         await exited;
-        const deadline = Date.now() + 5000;
-        while (true) {
-          const current = identity();
-          if (!current || current.birth !== original.birth || current.state === 'Z') break;
-          assert.ok(Date.now() < deadline, 'namespace init survived its monitor');
-          await delay(25);
-        }
+        await waitForOwnedExit(ownedInit, 'namespace init survived its monitor');
       } finally {
         if (monitor.exitCode === null && monitor.signalCode === null) monitor.kill('SIGKILL');
         await exited;
+        // A failed teardown assertion must not leave the fixture/domain alive.
+        // Recheck birth identity before signalling only our captured init.
+        try {
+          await reclaimOwnedInit(ownedInit);
+        } finally {
+          monitor.stdout.destroy();
+        }
       }
+    };
+
+    it('tears down namespace init when its owned root monitor is killed', async () => {
+      await checkMonitorDeath(nodeCommand("console.log('ready'); setInterval(() => {}, 1000)"));
+    });
+
+    it('reclaims its owned init even when the monitor-death assertion fails', async () => {
+      // Model the rejected launcher: deliberately clear the signal in PID 1.
+      // The original assertion must fail, and finally must reclaim this domain.
+      await assert.rejects(
+        checkMonitorDeath([
+          '/usr/bin/python3',
+          '-c',
+          `
+import ctypes, os, time
+assert os.getpid() == 1
+assert ctypes.CDLL(None, use_errno=True).prctl(1, 0, 0, 0, 0) == 0
+print('ready', flush=True)
+time.sleep(60)
+`,
+        ]),
+        /namespace init survived its monitor/,
+      );
     });
   },
 );
