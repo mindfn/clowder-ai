@@ -212,7 +212,7 @@ test('Live full drill does not advertise or invoke a retired disposition service
         a2aDispatchDispositionService: {
           describe: async () => {
             staleCalls++;
-            return { tool: 'cat_cafe_complete_a2a_dispatch' };
+            return { tool: 'cat_cafe_complete_a2a_dispatch' }; // mcp-cutover-negative-reference: rejection
           },
         },
       },

@@ -3,7 +3,10 @@ import { test } from 'node:test';
 import * as callback from '../dist/tools/callback-tools.js';
 
 test('compiled MCP does not advertise a second ordinary or managed-wake terminal authority', () => {
-  for (const name of ['cat_cafe_complete_managed_hold', 'cat_cafe_complete_a2a_dispatch']) {
+  for (const name of [
+    'cat_cafe_complete_managed_hold', // mcp-cutover-negative-reference: absence
+    'cat_cafe_complete_a2a_dispatch', // mcp-cutover-negative-reference: absence
+  ]) {
     assert.equal(
       callback.callbackTools.some((tool) => tool.name === name),
       false,

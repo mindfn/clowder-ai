@@ -7,6 +7,7 @@ import { promisify } from 'node:util';
 import { type PluginManifest } from '@clowder-ai/plugin-contract';
 import { parse as parseYaml } from 'yaml';
 import { validateHostPluginManifest as validateManifest } from '../desktop-window-runtime/presentation-manifest.js';
+import { recordPackageStagingPhase } from './package-staging-diagnostics.js';
 import { sealStaticPackage } from './static-package-seal.js';
 import type { VerifiedPluginPackage } from './types.js';
 import { ExternalPluginRuntimeError } from './types.js';
@@ -192,30 +193,41 @@ export async function stageVerifiedPackageArchive(
     released = true;
     await rm(stageParent, { recursive: true, force: true });
   };
+  let phase = 'copy';
   try {
     await copyFile(archivePath, sealedArchivePath, constants.COPYFILE_EXCL);
+    phase = 'digest';
     await verifyArchiveDigest(sealedArchivePath, input.packageDigest);
+    phase = 'list';
     const archiveEnvironment = { PATH: process.env.PATH ?? '/usr/bin:/bin', LC_ALL: 'C' };
     const [list, verboseList] = await Promise.all([
-      execFileAsync(input.tarBin, ['-tzf', sealedArchivePath], {
+      // GNU tar interprets the colon in Windows drive paths as host:file.
+      // Resolve the sealed archive within this Host-owned staging directory.
+      execFileAsync(input.tarBin, ['-tzf', PACKAGE_ARCHIVE_FILENAME], {
+        cwd: stageParent,
         env: archiveEnvironment,
         maxBuffer: 8 * 1024 * 1024,
       }),
-      execFileAsync(input.tarBin, ['-tvzf', sealedArchivePath], {
+      execFileAsync(input.tarBin, ['-tvzf', PACKAGE_ARCHIVE_FILENAME], {
+        cwd: stageParent,
         env: archiveEnvironment,
         maxBuffer: 8 * 1024 * 1024,
       }),
     ]);
     const members = archiveMembers(list.stdout);
     validateArchiveMemberTypes(verboseList.stdout, members.length);
+    phase = 'extract';
     await mkdir(partialRoot);
-    await execFileAsync(input.tarBin, ['-xzf', sealedArchivePath, '-C', partialRoot, '--strip-components=1'], {
+    await execFileAsync(input.tarBin, ['-xzf', PACKAGE_ARCHIVE_FILENAME, '-C', 'partial', '--strip-components=1'], {
+      cwd: stageParent,
       env: { PATH: process.env.PATH ?? '/usr/bin:/bin' },
       maxBuffer: 8 * 1024 * 1024,
     });
+    phase = 'tree';
     const admittedSnapshot = await snapshotPackageTree(partialRoot);
     await rename(partialRoot, readyRoot);
 
+    phase = 'manifest';
     const value = await readPackageManifest(readyRoot);
     const validation = (input.validateManifest ?? validateManifest)(value);
     if (!validation.valid) throw runtimeError('installed package manifest fails the published contract');
@@ -227,6 +239,7 @@ export async function stageVerifiedPackageArchive(
         throw runtimeError('launchable package bytes changed after verified staging');
       }
     };
+    phase = 'seal';
     const verifySeal = await sealStaticPackage(readyRoot, verifyIntegrity);
     const verifyStaticIntegrity = async () => {
       if (released) throw runtimeError('staged package was released');
@@ -236,7 +249,10 @@ export async function stageVerifiedPackageArchive(
     return { rootDir: readyRoot, manifest: validation.manifest, verifyIntegrity, verifyStaticIntegrity, release };
   } catch (error) {
     await release().catch(() => undefined);
-    if (error instanceof ExternalPluginRuntimeError) throw error;
-    throw runtimeError(`installed package ${input.packageDigest} could not be verified and staged`, error);
+    const failure =
+      error instanceof ExternalPluginRuntimeError
+        ? error
+        : runtimeError(`installed package ${input.packageDigest} could not be verified and staged`, error);
+    throw recordPackageStagingPhase(failure, phase);
   }
 }

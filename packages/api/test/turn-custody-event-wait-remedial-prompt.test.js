@@ -5,7 +5,11 @@ import { buildTurnCustodyStopGateRemedialPrompt } from '../dist/domains/cats/ser
 import { realWaitWake } from './helpers/event-wait-terminal-fixture.js';
 
 const ids = { holderCatId: 'codex-astra', subjectKey: 'ball:thread:thread-x' };
-const COMPLETERS = ['cat_cafe_complete_event_wait', 'cat_cafe_complete_managed_hold', 'cat_cafe_complete_a2a_dispatch'];
+const COMPLETERS = [
+  'cat_cafe_complete_event_wait', // mcp-cutover-negative-reference: absence
+  'cat_cafe_complete_managed_hold', // mcp-cutover-negative-reference: absence
+  'cat_cafe_complete_a2a_dispatch', // mcp-cutover-negative-reference: absence
+];
 
 const named = (prompt) => COMPLETERS.filter((tool) => prompt.includes(tool));
 

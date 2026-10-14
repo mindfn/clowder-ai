@@ -26,6 +26,7 @@ function cleanScan(retiredName = oldEntry.name): CutoverConsumerScan {
     retiredName,
     scannedRoots: FIXED_CUTOVER_CONSUMER_ROOTS,
     matches: [],
+    negativeReferences: [],
     resolvedConsumers: [],
   };
 }
@@ -177,6 +178,125 @@ describe('F286 atomic cutover guard', () => {
     });
 
     assert.ok(result.findings.some((finding) => finding.code === 'stale-retired-reference'));
+  });
+
+  it('accepts an exact manifest-bound negative test reference without hiding the retired name', () => {
+    const path = 'packages/api/test/retired-tool-absence.test.js';
+    const match = { root: 'packages/api/test', path, line: 12 };
+    const layers = {
+      ...manifest().layers,
+      'fixture-test': { status: 'covered' as const, consumers: [path] },
+    };
+    const scan = {
+      ...cleanScan(),
+      matches: [match],
+      negativeReferences: [{ ...match, kind: 'absence' }],
+    } as CutoverConsumerScan;
+
+    const result = validateAtomicCutovers({
+      before: [oldEntry],
+      after: [newEntry],
+      manifests: [manifest({ layers })],
+      scans: [scan],
+    });
+
+    assert.deepEqual(result.findings, []);
+  });
+
+  it('rejects negative-reference evidence outside test roots or outside the fixture-test manifest', () => {
+    const cases = [
+      {
+        match: { root: 'packages/api/src', path: 'packages/api/src/stale.ts', line: 4 },
+        consumers: ['packages/api/src/stale.ts'],
+      },
+      {
+        match: { root: 'packages/api/test', path: 'packages/api/test/stale.test.js', line: 5 },
+        consumers: [],
+      },
+    ];
+
+    for (const { match, consumers } of cases) {
+      const layers = {
+        ...manifest().layers,
+        'fixture-test': { status: 'covered' as const, consumers },
+      };
+      const scan = {
+        ...cleanScan(),
+        matches: [match],
+        negativeReferences: [{ ...match, kind: 'absence' }],
+      } as CutoverConsumerScan;
+      const result = validateAtomicCutovers({
+        before: [oldEntry],
+        after: [newEntry],
+        manifests: [manifest({ layers })],
+        scans: [scan],
+      });
+
+      assert.ok(result.findings.some((finding) => finding.code === 'invalid-negative-reference-evidence'));
+      assert.ok(result.findings.some((finding) => finding.code === 'stale-retired-reference'));
+    }
+  });
+
+  it('rejects negative-reference evidence without the same fixed-root occurrence', () => {
+    const path = 'packages/api/test/retired-tool-absence.test.js';
+    const layers = {
+      ...manifest().layers,
+      'fixture-test': { status: 'covered' as const, consumers: [path] },
+    };
+    const scan = {
+      ...cleanScan(),
+      negativeReferences: [{ root: 'packages/api/test', path, line: 12, kind: 'absence' }],
+    } as CutoverConsumerScan;
+    const result = validateAtomicCutovers({
+      before: [oldEntry],
+      after: [newEntry],
+      manifests: [manifest({ layers })],
+      scans: [scan],
+    });
+
+    assert.ok(result.findings.some((finding) => finding.code === 'invalid-negative-reference-evidence'));
+  });
+
+  it('rejects duplicate, path-mismatched, or unknown negative-reference evidence', () => {
+    const validMatch = { root: 'packages/api/test', path: 'packages/api/test/retired.test.js', line: 8 };
+    const cases: CutoverConsumerScan[] = [
+      {
+        ...cleanScan(),
+        matches: [validMatch],
+        negativeReferences: [
+          { ...validMatch, kind: 'absence' },
+          { ...validMatch, kind: 'absence' },
+        ],
+      },
+      {
+        ...cleanScan(),
+        matches: [{ ...validMatch, path: 'packages/mcp-server/test/retired.test.js' }],
+        negativeReferences: [{ ...validMatch, path: 'packages/mcp-server/test/retired.test.js', kind: 'absence' }],
+      },
+      {
+        ...cleanScan(),
+        matches: [validMatch],
+        negativeReferences: [{ ...validMatch, kind: 'unknown' as never }],
+      },
+    ];
+
+    for (const scan of cases) {
+      const path = scan.matches[0]?.path;
+      assert.ok(path);
+      const layers = {
+        ...manifest().layers,
+        'fixture-test': { status: 'covered' as const, consumers: [path] },
+      };
+      const result = validateAtomicCutovers({
+        before: [oldEntry],
+        after: [newEntry],
+        manifests: [manifest({ layers })],
+        scans: [scan],
+      });
+
+      assert.ok(result.findings.some((finding) => finding.code === 'invalid-negative-reference-evidence'));
+      assert.ok(result.findings.some((finding) => finding.code === 'stale-retired-reference'));
+    }
   });
 
   it('rejects unrelated families unless an evidenced tightly-coupled group is declared', () => {
