@@ -35,6 +35,113 @@ function checkRun(name, conclusion) {
 }
 
 describe('fetchPrCiStatuses batch failure isolation', () => {
+  it('keeps paginated context completion out of tick admission without inventing a pass', async () => {
+    let requests = 0;
+    const result = await fetchPrCiStatuses(
+      [{ repoFullName: 'owner/repo', prNumber: 7 }],
+      { warn() {} },
+      {
+        deferFailureDetails: true,
+        async execFileAsync() {
+          requests++;
+          return {
+            stdout: JSON.stringify({
+              data: {
+                r0: { p0: graphQlPr({ sha: 'head-long', contexts: [checkRun('gate', 'SUCCESS')], hasNextPage: true }) },
+              },
+            }),
+          };
+        },
+      },
+    );
+    assert.equal(requests, 1);
+    assert.equal(result.get('owner/repo#7')?.aggregateBucket, 'pending');
+    assert.equal(result.get('owner/repo#7')?.fullRollupPending, true);
+  });
+  it('collects a later healthy batch after the first request exhausts its queue and I/O deadline', async () => {
+    let requests = 0;
+    const results = await fetchPrCiStatuses(
+      Array.from({ length: 21 }, (_, i) => ({ repoFullName: 'owner/repo', prNumber: i + 1 })),
+      { warn() {} },
+      {
+        ghToken: 'ci-stalled-first-batch',
+        timeoutMs: 20,
+        async execFileAsync(_file, _args, options) {
+          if (++requests === 1)
+            return new Promise((_resolve, reject) =>
+              options.signal.addEventListener('abort', () => reject(options.signal.reason), { once: true }),
+            );
+          return {
+            stdout: JSON.stringify({
+              data: { r0: { p0: graphQlPr({ sha: 'head-21', contexts: [checkRun('gate', 'SUCCESS')] }) } },
+            }),
+          };
+        },
+      },
+    );
+    assert.equal(requests, 2);
+    assert.equal(results.get('owner/repo#1'), null);
+    assert.equal(results.get('owner/repo#21')?.aggregateBucket, 'pass');
+  });
+
+  it('defers failure detail reads while preserving the raw failure snapshot', async () => {
+    const commands = [];
+    const result = await fetchPrCiStatuses(
+      [{ repoFullName: 'owner/repo', prNumber: 7 }],
+      { warn() {} },
+      {
+        deferFailureDetails: true,
+        async execFileAsync(_file, args) {
+          commands.push(args);
+          return {
+            stdout: JSON.stringify({
+              data: { r0: { p0: graphQlPr({ sha: 'head-fail', contexts: [checkRun('gate', 'FAILURE')] }) } },
+            }),
+          };
+        },
+      },
+    );
+    assert.equal(commands.length, 1);
+    assert.equal(result.get('owner/repo#7')?.aggregateBucket, 'fail');
+    assert.equal(result.get('owner/repo#7')?.failureDetailsPending, true);
+  });
+  it('bounds requests and preserves healthy batches when another batch returns HTTP 504', async () => {
+    const targets = Array.from({ length: 45 }, (_, i) => ({ repoFullName: 'owner/repo', prNumber: i + 1 }));
+    const requestSizes = [];
+    const results = await fetchPrCiStatuses(
+      targets,
+      { warn() {} },
+      {
+        ghToken: 'ci-batch-504-isolation',
+        async execFileAsync(_file, args) {
+          const query = args.find((arg) => arg.startsWith('query='));
+          const refs = [...query.matchAll(/(p\d+): pullRequest\(number: (\d+)\)/g)];
+          requestSizes.push(refs.length);
+          if (requestSizes.length === 1) throw new Error('HTTP 504');
+          return {
+            stdout: JSON.stringify({
+              data: {
+                r0: Object.fromEntries(
+                  refs.map(([, alias, number]) => [
+                    alias,
+                    graphQlPr({ sha: `head-${number}`, contexts: [checkRun('gate', 'SUCCESS')] }),
+                  ]),
+                ),
+              },
+            }),
+          };
+        },
+      },
+    );
+    assert.ok(
+      requestSizes.every((size) => size <= 20),
+      'one request cannot contain hundreds of PRs',
+    );
+    assert.equal(results.get('owner/repo#1'), null);
+    assert.equal(results.get('owner/repo#45')?.aggregateBucket, 'pass');
+    assert.equal(results.get('owner/repo#45')?.headSha, 'head-45');
+  });
+
   it('binds each rollup and HEAD to its own repo-plus-PR key', async () => {
     const results = await fetchPrCiStatuses(
       [

@@ -161,7 +161,7 @@ export function WorkspaceModificationEntry({
             target?.kind === 'text_quote' ? target.quote : undefined,
           );
           if (currentThreadId && (outcome === 'added' || outcome === 'existing')) revealChat?.(currentThreadId);
-          setChatNotice(copy[outcome] || null);
+          setChatNotice(outcome === 'existing' ? null : copy[outcome]);
           return;
         }
         setIntent({ sourceVersion, value: next });

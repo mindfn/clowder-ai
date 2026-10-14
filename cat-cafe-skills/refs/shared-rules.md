@@ -593,7 +593,7 @@ commit body 补一行 `Why:` 说明决策理由。
 | 2 | **SHA** | `基于 abc1234` |
 | 3 | **是否 rebase 到最新 main** | `已 rebase origin/main` 或 `未 rebase（基于 3 天前的 main）` |
 
-**merge 前的 canonical gate 入口**：`pnpm gate`（= `scripts/pre-merge-check.sh`）先从 diff、冻结 base 与既有 receipts 机器选择 targeted/full；只有 classifier 或 `--risk <axis>` 加严为 full 时才运行全量 build/test/lint/check。targeted 仍须记录受影响检查、全仓跨包 typecheck、SHA 与 base。路由细节只由 `merge-gate` skill 维护，禁止在家规另建路径清单或手调内部 classifier。
+**merge 前的 canonical gate 入口**：`pnpm gate`（= `scripts/pre-merge-check.sh`）从 diff、冻结 base 与既有 receipts 给出 targeted/full 覆盖建议；`--risk <axis>` 声明审查强度，不改变覆盖范围。作者按 [SOP 风险入口](../../docs/SOP.md#入口五轴风险判断) 和 `merge-gate`「Gate 选择」判断受影响检查是否足够，可带实际 targeted 证据与理由调整 full 建议，无需逐次豁免。记录真实命令、SHA、base 与缺口；分类本身不是测试通过。不要手调内部 classifier、改写旧失败或以裁量省略适用的独立审查及硬授权边界。
 
 ## 14b. Rebase 冲突三屏规则
 
@@ -634,7 +634,7 @@ git show :3:<path>   # THEIRS（main 上的版本）
 
 ## 14c. 共享契约风险
 
-共享 schema、store、MCP tool 与跨包入口的改动必须按**真实契约影响**选择证据，不能只跑单文件测试，也不能再靠一份手写路径表无条件升级 full gate。统一入口是 `pnpm gate`：机器 route 为 full 就执行 full；机器看不见但存在外部契约风险时用 `pnpm gate -- --risk contract` 加严；可证明只影响局部实现时跑受影响测试 + 全仓跨包 typecheck，并把 consumer census 与命令写入 evidence manifest。说“不是我的 scope”不能免除已证明受影响的下游，但目录名本身也不是 full 的徽章。
+共享 schema、store、MCP tool 与跨包入口的改动按**真实契约影响**选择证据，不能只跑单文件就声称覆盖下游，也不靠目录名无条件升级 full。审查强度与覆盖范围按上面的 §14a 及 `merge-gate` 单一规则处理；机器看不见的契约风险用 `pnpm gate -- --risk contract` 声明。作者给出受影响 consumer、相关测试与必要的跨包类型检查；targeted 不足以覆盖合流风险时才跑 full，并说明具体缺口。已证明受影响的下游不能以“不是我的 scope”免验。
 
 ## 14d. 安装器测试的副作用边界
 

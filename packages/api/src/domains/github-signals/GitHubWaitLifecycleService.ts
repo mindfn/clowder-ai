@@ -45,6 +45,8 @@ export interface GitHubCollectorPatch {
 
 export interface GitHubWaitObservation {
   readonly taskId: string;
+  /** Source query start; stale buffered HEADs cannot rewind a newer wait. */
+  readonly sourceObservedAt?: number;
   readonly facts: GitHubWaitFacts;
   readonly collectorPatch?: GitHubCollectorPatch;
   readonly subjectState?: 'merged' | 'closed';
@@ -92,7 +94,7 @@ export type GitHubWaitLifecycleResult =
        * collector state, not its match. Its source must collect it again — a cursor moved past it loses it.
        */
       readonly kind: 'unrecorded';
-      readonly reason: 'generation_changed_concurrently' | 'queue_admission_unavailable';
+      readonly reason: 'generation_changed_concurrently' | 'queue_admission_unavailable' | 'stale_source_observation';
     };
 
 /**
@@ -262,7 +264,7 @@ export class GitHubWaitLifecycleService {
     if (!pending || outbox.ids.has(pending.outcomeId)) return 'empty';
     const raced = outbox.ids.size > 0;
     outbox.ids.add(pending.outcomeId);
-    const published = await this.publishPending(task, pending, input.deliveryExtra, input.deliveryPriority);
+    const published = await this.publishPending(task, pending, input.deliveryExtra);
     if (published.kind === 'unrecorded' && published.reason === 'queue_admission_unavailable') return 'refused';
     await this.wakeForFlushedOutcome(published);
     return raced ? 'raced' : 'drained';
@@ -287,6 +289,16 @@ export class GitHubWaitLifecycleService {
   ): Promise<GitHubWaitLifecycleResult | GitHubWaitPendingDelivery | typeof LOST_RACE> {
     const state = task.automationState;
     const active = state?.await;
+    if (
+      !input.subjectState &&
+      active &&
+      input.sourceObservedAt !== undefined &&
+      'headSha' in active.baseline &&
+      input.facts.headSha !== active.baseline.headSha &&
+      input.sourceObservedAt < active.baseline.capturedAt
+    ) {
+      return { kind: 'unrecorded', reason: 'stale_source_observation' };
+    }
     const collectorState = mergeCollectorState(task.kind, state, input.collectorPatch);
     if (!active) {
       if (input.subjectState) {
@@ -376,7 +388,13 @@ export class GitHubWaitLifecycleService {
     if (!transitioned.applied) {
       return { kind: 'deduped', reason: transitioned.reason };
     }
-    const replacement = transitioned.state as AutomationState;
+    const transitionedState = transitioned.state as AutomationState;
+    const replacement: AutomationState = {
+      ...transitionedState,
+      ...(transitionedState.waitOutcome && input.deliveryPriority
+        ? { waitOutcome: { ...transitionedState.waitOutcome, deliveryPriority: input.deliveryPriority } }
+        : {}),
+    };
     const installed = await this.opts.taskStore.replaceAutomationStateIfGeneration(task.id, {
       expectedGeneration: active.generation,
       expectedUpdatedAt: task.updatedAt,
@@ -557,7 +575,9 @@ export class GitHubWaitLifecycleService {
         meta: { waitContinuationCarrier },
       },
       ...(deliveryExtra ? { extra: deliveryExtra } : {}),
-      ...(deliveryPriority ? { priority: deliveryPriority } : {}),
+      ...((outcome.deliveryPriority ?? deliveryPriority)
+        ? { priority: outcome.deliveryPriority ?? deliveryPriority }
+        : {}),
       // Derived last so a matched conflict is urgent even when the producer stated nothing, and
       // filed as `conflict` on the Queue row rather than inheriting the generic scheduled category.
       ...conflictDeliveryLabel(outcome),

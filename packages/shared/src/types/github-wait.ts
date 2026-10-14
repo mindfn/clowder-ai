@@ -536,6 +536,8 @@ export interface GitHubWaitOutcomeV1 extends WaitOutcomeBaseV1<GitHubWaitSubject
    * the worst a mixed-version window can produce is the owner being told — the safe direction.
    */
   readonly publishClaimedAt?: number;
+  /** Producer urgency belongs to this persisted outcome, including cross-collector recovery. */
+  readonly deliveryPriority?: 'urgent' | 'normal';
   readonly matched?: readonly GitHubWaitMatchedDelta[];
   readonly terminalSubjectState?: 'merged' | 'closed';
   readonly deploymentMatch?: never;

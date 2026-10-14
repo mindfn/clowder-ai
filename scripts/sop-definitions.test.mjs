@@ -29,6 +29,7 @@ const EXPECTED_PORTED_RULE_IDS = [
   'impl-post-compact-recall-loss',
   'impl-convention-graph-before-convention-edit',
   'quality-gate-vision-coverage',
+  'quality-gate-confirmed-test-value',
   'quality-gate-risk-matched-evidence',
   'fresh-context-not-approval',
   'review-no-self-review',
@@ -72,7 +73,7 @@ describe('SOP definition catalog', () => {
     );
   });
 
-  it('ports all 25 development SOP rules into development.yaml with predicates', () => {
+  it('preserves development rule identities and their evidence predicates', () => {
     const { runtimeDefinitions } = loadSopDefinitionCatalog();
     const development = runtimeDefinitions[0];
 
@@ -86,7 +87,6 @@ describe('SOP definition catalog', () => {
     assert.equal(development.stages.find((stage) => stage.id === 'impl')?.suggestedSkill, 'worktree');
 
     const rules = development.stages.flatMap((stage) => [...stage.hardRules, ...stage.pitfalls]);
-    assert.equal(rules.length, 25);
     assert.deepEqual(
       rules.map((rule) => rule.id),
       EXPECTED_PORTED_RULE_IDS,
@@ -98,6 +98,9 @@ describe('SOP definition catalog', () => {
       assert.ok(rule.predicate, `rule missing predicate: ${rule.text}`);
       assert.ok(EXPECTED_PREDICATE_TYPES.has(rule.predicate.type), `invalid predicate type: ${rule.text}`);
     }
+
+    const testValueRule = rules.find((rule) => rule.id === 'quality-gate-confirmed-test-value');
+    assert.equal(testValueRule?.predicate.type, 'manual_only', 'command success cannot certify test detection power');
 
     const compressionPitfall = rules.find((rule) => rule.id === 'impl-post-compact-recall-loss');
     assert.equal(compressionPitfall?.predicate.type, 'manual_only');

@@ -572,6 +572,9 @@ export function applyExternalReviewEvent(
   state: ExternalReviewAggregate,
   event: ExternalReviewAggregateEvent,
 ): ExternalReviewApplyResult {
+  // Source observations are not a reopen operation. Late collectors must not
+  // revive a PR after its authoritative merged/closed/declined event.
+  if (state.lifecycle === 'terminal') return { ok: true, value: state };
   switch (event.kind) {
     case 'case.head_observed':
       return applyHeadObserved(state, event);

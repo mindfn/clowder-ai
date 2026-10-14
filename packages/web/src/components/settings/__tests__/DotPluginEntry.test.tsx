@@ -146,11 +146,144 @@ describe('F247 default plugin owner and recovery entry', () => {
     expect(toggle).not.toBeNull();
     await act(async () => toggle?.click());
     await flushEffects();
+    const row = toggle?.closest('[data-plugin-list-row]');
+    expect(row?.querySelector('output')?.textContent ?? '').toContain('订阅');
+    expect(row?.querySelector('output')?.textContent ?? '').toContain('往返');
     expect(container.querySelector('[role="alert"]')?.textContent).toContain('验证通过后才能启用 dot 协作');
+    expect(document.activeElement).toBe(container.querySelector('[role="alert"]'));
     const link = container.querySelector<HTMLAnchorElement>('a[href="https://chatgpt.com/plugins"]');
     expect(link?.textContent).toContain('打开 ChatGPT 插件页面');
     expect(link?.target).toBe('_blank');
     expect(mockApiFetch.mock.calls.some(([, init]) => init?.method === 'POST')).toBe(false);
+  });
+
+  it('rechecks a blocked enable click and uses the latest Host revision once round trips are ready', async () => {
+    let ready = false;
+    let enabled = false;
+    const current = () => ({
+      ...managerPlugin(),
+      auth: 'connected',
+      config: ready ? 'ready' : 'incomplete',
+      intent: enabled ? 'enabled' : 'disabled',
+      live: enabled ? 'running' : 'stopped',
+      lifecycleRevision: ready ? 9 : 1,
+      actions: {
+        install: false,
+        setEnabled: ready,
+        uninstall: true,
+        blockingReasons: ready ? [] : ['config-incomplete'],
+      },
+    });
+    mockApiFetch.mockImplementation(async (url, init) => {
+      if (url === '/api/plugin-manager/plugins/official.chatgpt-dot/set-enabled' && init?.method === 'POST') {
+        enabled = true;
+        return json({ pluginId: 'official.chatgpt-dot', pluginInstanceId: 'pi_dot' });
+      }
+      const bodies: Record<string, unknown> = {
+        '/api/plugin-manager/plugins': response(current()),
+        '/api/plugin-manager/plugins/official.chatgpt-dot': detail(current()),
+        '/api/plugins': { plugins: [] },
+        '/api/plugins/official': { plugins: [] },
+        '/api/cats': { cats: [] },
+        '/api/plugins/chatgpt-dot/connection': {
+          installed: true,
+          paired: true,
+          subscription: 'active',
+          endpointUrl: 'https://mcp.example/mcp',
+          replyAt: ready ? 100 : null,
+          imageAt: null,
+          revoked: false,
+        },
+        '/api/plugins/chatgpt-dot/test': {
+          tests: [
+            { eventId: 'test-a', receivedAt: 1, readAt: 1, replyMessageId: 'reply-a' },
+            { eventId: 'test-b', receivedAt: 1, readAt: ready ? 1 : null, replyMessageId: ready ? 'reply-b' : null },
+          ],
+        },
+      };
+      return json(bodies[url] ?? {}, url in bodies ? 200 : 404);
+    });
+    await act(async () => root.render(<PluginsContent />));
+    await flushEffects();
+    const readsBefore = mockApiFetch.mock.calls.filter(([url]) => url === '/api/plugin-manager/plugins').length;
+    const toggle = container.querySelector<HTMLButtonElement>('[aria-label="启用dot协作"]');
+    await act(async () => toggle?.click());
+    await flushEffects();
+    expect(mockApiFetch.mock.calls.filter(([url]) => url === '/api/plugin-manager/plugins').length).toBeGreaterThan(
+      readsBefore,
+    );
+    expect(mockApiFetch.mock.calls.some(([, init]) => init?.method === 'POST')).toBe(false);
+    expect(toggle?.closest('[data-plugin-list-row]')?.querySelector('output')?.textContent).toContain('回帖');
+    expect(container.querySelector('[aria-label="dot 连接"] [role="alert"]')?.textContent).toContain('测试 B');
+
+    ready = true;
+    await act(async () => toggle?.click());
+    await flushEffects();
+    const mutations = mockApiFetch.mock.calls.filter(([, init]) => init?.method === 'POST');
+    expect(mutations).toHaveLength(1);
+    expect(mutations[0]).toEqual([
+      '/api/plugin-manager/plugins/official.chatgpt-dot/set-enabled',
+      {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ enabled: true, expectedRevision: 9 }),
+      },
+    ]);
+    expect(container.querySelector('[aria-label="禁用dot协作"]')?.getAttribute('aria-pressed')).toBe('true');
+    expect(container.querySelector('[data-plugin-list-row] output')).toBeNull();
+    expect(container.textContent).not.toContain('验证通过后才能启用 dot 协作');
+  });
+
+  it('honors the explicit enable read even when a later poll owns the UI snapshot', async () => {
+    vi.useFakeTimers();
+    try {
+      let ready = false;
+      let enabled = false;
+      let listReads = 0;
+      let releaseClickRead!: (response: Response) => void;
+      const clickRead = new Promise<Response>((resolve) => {
+        releaseClickRead = resolve;
+      });
+      const current = () => ({
+        ...managerPlugin(),
+        config: ready ? 'ready' : 'incomplete',
+        auth: 'connected',
+        intent: enabled ? 'enabled' : 'disabled',
+        live: enabled ? 'running' : 'stopped',
+        lifecycleRevision: ready ? 9 : 1,
+        actions: { install: false, setEnabled: ready, uninstall: true, blockingReasons: [] },
+      });
+      mockApiFetch.mockImplementation(async (url, init) => {
+        if (url === '/api/plugin-manager/plugins') {
+          listReads += 1;
+          return listReads === 2 ? clickRead : json(response(current()));
+        }
+        if (url === '/api/plugin-manager/plugins/official.chatgpt-dot') return json(detail(current()));
+        if (url === '/api/plugin-manager/plugins/official.chatgpt-dot/set-enabled' && init?.method === 'POST') {
+          enabled = true;
+          return json({ pluginId: 'official.chatgpt-dot', pluginInstanceId: 'pi_dot' });
+        }
+        if (url === '/api/plugins' || url === '/api/plugins/official') return json({ plugins: [] });
+        return json({}, 404);
+      });
+      await act(async () => root.render(<PluginsContent />));
+      await flushEffects();
+      await act(async () => container.querySelector<HTMLButtonElement>('[aria-label="启用dot协作"]')?.click());
+      expect(listReads).toBe(2);
+      ready = true;
+      await act(async () => vi.advanceTimersByTime(5000));
+      await flushEffects();
+      expect(listReads).toBe(3);
+      expect(mockApiFetch.mock.calls.filter(([, init]) => init?.method === 'POST')).toHaveLength(0);
+      await act(async () => releaseClickRead(json(response(current()))));
+      await flushEffects();
+      const posts = mockApiFetch.mock.calls.filter(([, init]) => init?.method === 'POST');
+      expect(posts).toHaveLength(1);
+      expect(JSON.parse(String(posts[0]?.[1]?.body))).toEqual({ enabled: true, expectedRevision: 9 });
+      expect(container.querySelector('[aria-label="禁用dot协作"]')?.getAttribute('aria-pressed')).toBe('true');
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it('uses the installed ChatGPT connection and only asks the target dot to subscribe', async () => {

@@ -13,6 +13,13 @@ import type { PluginManagerDesignFixture } from './plugin-manager-fixtures';
 
 const DEFAULT_RECOMMENDATION_LIMIT = 3;
 
+function blockedEnableReason(plugin: PluginManagerDesignFixture) {
+  if (plugin.id !== 'official.chatgpt-dot') return '请先完成右侧配置或连接，再启用。';
+  return plugin.auth === 'connected'
+    ? '还在等待 dot 读原文并回帖；两处都完成后才能开启。'
+    : '请先完成订阅和两处往返验证，再启用 dot。';
+}
+
 function PluginManagerError({ message }: { message: string | null | undefined }) {
   if (!message) return null;
   return (
@@ -72,6 +79,7 @@ export function PluginManagerContent({
   onSearchChange,
   onInstall,
   onSetEnabled,
+  onRequestEnable,
   onUninstall,
   onConfigure,
   configurationSavedPluginId = null,
@@ -91,6 +99,7 @@ export function PluginManagerContent({
   onSearchChange?: (query: string) => void;
   onInstall?: (pluginId: string) => void;
   onSetEnabled?: (pluginId: string, enabled: boolean) => void;
+  onRequestEnable?: (pluginId: string) => void | Promise<void>;
   onUninstall?: (pluginId: string) => void;
   onConfigure?: (pluginId: string, updates: readonly { key: string; value: string | null }[]) => void;
   configurationSavedPluginId?: string | null;
@@ -133,9 +142,16 @@ export function PluginManagerContent({
           selection.select(plugin.id);
           setMobileDetailOpen(true);
           setConfigurationValidation((current) => ({ pluginId: plugin.id, request: current.request + 1 }));
+          if (onRequestEnable) void onRequestEnable(plugin.id);
+          else void onStateChanged?.();
         }}
         onUninstall={() => onUninstall?.(plugin.id)}
         busy={busyPluginId === plugin.id}
+        enableBlockedReason={
+          configurationValidation.pluginId === plugin.id && plugin.actions?.setEnabled === false
+            ? blockedEnableReason(plugin)
+            : undefined
+        }
       />
     ));
 

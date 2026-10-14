@@ -181,21 +181,66 @@ test('DNS total address count is bounded across both families and empty answers 
   }
 });
 
-test('A and AAAA share one five-second DNS budget and cancellation closes both requests', async () => {
+// Advance only the production timers; real loopback TLS/HTTP still reaches both DNS consumers.
+async function waitForIo(predicate: () => boolean) {
+  const until = performance.now() + 2000;
+  while (!predicate()) {
+    assert.ok(performance.now() < until, 'loopback I/O did not reach its observation barrier');
+    await new Promise<void>((resolve) => setImmediate(resolve));
+  }
+}
+
+test('A and AAAA remain pending before the shared five-second deadline, then both close', async (t) => {
   const f = await dotProxyFixture();
+  t.mock.timers.enable({ apis: ['setTimeout'] });
   try {
-    f.settings.dnsDelayMs = 4500;
-    f.settings.aaaaDelayMs = 5200;
-    const started = performance.now();
-    await assert.rejects(
-      () => createDotWebhookSender(f.proxyUrl)('https://callback.example.com/events', {}, '{}'),
+    f.settings.dnsDelayMs = 20_000;
+    let settled = false;
+    const request = createDotWebhookSender(f.proxyUrl)('https://callback.example.com/events', {}, '{}');
+    const rejected = assert.rejects(
+      request.finally(() => {
+        settled = true;
+      }),
       /callback_dns_timeout/,
     );
-    assert.ok(performance.now() - started < 5600);
-    await new Promise((r) => setTimeout(r, 30));
-    assert.equal(f.clientSockets.size, 0);
+    await waitForIo(() => f.queries.length === 2);
+    assert.ok(f.queries.some((q) => q.includes('type=1&')));
+    assert.ok(f.queries.some((q) => q.includes('type=28&')));
+    t.mock.timers.tick(4999);
+    await new Promise<void>((resolve) => setImmediate(resolve));
+    assert.equal(settled, false, 'the complete five-second budget must be available');
+    assert.ok(f.clientSockets.size > 0);
+    t.mock.timers.tick(1);
+    await rejected;
+    await waitForIo(() => f.clientSockets.size === 0);
     assert.equal(f.callbacks.length, 0);
   } finally {
+    t.mock.timers.reset();
+    await f.close();
+  }
+});
+
+test('both DNS families can finish after four seconds and still deliver within the DNS budget', async (t) => {
+  const f = await dotProxyFixture();
+  t.mock.timers.enable({ apis: ['setTimeout'] });
+  try {
+    f.settings.dnsDelayMs = 4000;
+    let failure: unknown;
+    const request = createDotWebhookSender(f.proxyUrl)('https://callback.example.com/events', {}, '{}');
+    // Attach the rejection observer before advancing timers, including on a broken early deadline.
+    const result = request.catch((error: unknown) => {
+      failure = error;
+      return null;
+    });
+    await waitForIo(() => f.queries.length === 2);
+    t.mock.timers.tick(4000);
+    const response = await result;
+    assert.equal(failure, undefined, 'valid DNS replies within five seconds must not be cancelled early');
+    assert.equal(response?.status, 200);
+    assert.equal(f.callbacks.length, 1);
+    assert.equal(f.connects.filter((target) => target !== 'dns.google:443').length, 1);
+  } finally {
+    t.mock.timers.reset();
     await f.close();
   }
 });
