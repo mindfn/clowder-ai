@@ -6,6 +6,30 @@ die() {
   exit 1
 }
 
+if [[ "${1:-}" == "--verify-process-domain" ]]; then
+  shift
+  [[ $# -ge 5 ]] || die "missing process namespace identity or runner command"
+  [[ "$(id -u)" == "0" ]] || die "process namespace must be configured before dropping privileges"
+  parent_pidns="$1"
+  runner_uid="$2"
+  runner_gid="$3"
+  runner_path="$4"
+  shift 4
+  current_pidns="$(stat -Lc '%d:%i' /proc/self/ns/pid)" || die "cannot observe process namespace"
+  init_pidns="$(stat -Lc '%d:%i' /proc/1/ns/pid)" || die "cannot observe procfs process domain"
+  [[ "$parent_pidns" =~ ^[0-9]+:[0-9]+$ && "$current_pidns" =~ ^[0-9]+:[0-9]+$ ]] || die "invalid process namespace identity"
+  [[ "$$" == "1" && "$current_pidns" != "$parent_pidns" && "$current_pidns" == "$init_pidns" ]] || die "procfs is not bound to a fresh process namespace"
+  exec setpriv \
+    --reuid "$runner_uid" \
+    --regid "$runner_gid" \
+    --clear-groups \
+    --inh-caps=-all \
+    --ambient-caps=-all \
+    --bounding-set=-all \
+    --no-new-privs \
+    -- "$(readlink -f "$0")" --verify-dropped "$runner_path" "$@"
+fi
+
 if [[ "${1:-}" == "--verify-dropped" ]]; then
   shift
   [[ $# -ge 2 ]] || die "missing runner PATH or shard command"
@@ -56,16 +80,13 @@ export CAT_CAFE_PUBLIC_TEST_NETNS_PROOF="$proof_dir/proof.json"
     "$proof_nonce" "$proof_boot_id" "$host_netns" "$isolated_netns" > "$CAT_CAFE_PUBLIC_TEST_NETNS_PROOF"
 )
 chmod 0444 "$CAT_CAFE_PUBLIC_TEST_NETNS_PROOF"
-# This non-secret receipt lives only in the ephemeral runner/container. Keep
-# exec so signal/exit ownership is unchanged; runner teardown reclaims it.
+# This non-secret receipt lives only in the ephemeral runner/container.
 
 ip link set lo up
-exec setpriv \
-  --reuid "$runner_uid" \
-  --regid "$runner_gid" \
-  --clear-groups \
-  --inh-caps=-all \
-  --ambient-caps=-all \
-  --bounding-set=-all \
-  --no-new-privs \
-  -- "$script_path" --verify-dropped "$runner_path" "$@"
+parent_pidns="$(stat -Lc '%d:%i' /proc/self/ns/pid)" || die "cannot observe parent process namespace"
+# Network isolation alone leaves host same-UID processes visible to cleanup.
+# A private procfs must reflect the new PID domain; do not waive EACCES scans.
+# The root monitor stays outside, while the command drops all privileges inside.
+# On monitor death, kill-child tears down namespace init and all its descendants.
+exec unshare --pid --fork --mount-proc --kill-child=SIGKILL -- \
+  "$script_path" --verify-process-domain "$parent_pidns" "$runner_uid" "$runner_gid" "$runner_path" "$@"
