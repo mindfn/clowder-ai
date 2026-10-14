@@ -13,6 +13,7 @@ import type { ITaskStore } from '../../domains/cats/services/stores/ports/TaskSt
 import type { ExecuteContext, TaskSpec_P1 } from '../scheduler/types.js';
 import type { CiCdRouter, CiPollResult, CiRouteResult } from './CiCdRouter.js';
 import { isStaleCiSnapshot } from './ci-cd-contract.js';
+import { FailureDetailMemo } from './ci-failure-detail-memo.js';
 import { ciStatusTargetKey, createCiCollectionReaders, type PrCiStatusTarget } from './ci-status-batch-fetcher.js';
 import { enrichPrCiFailure } from './ci-status-fetcher.js';
 
@@ -108,7 +109,12 @@ async function listCollectablePrs(opts: CiCdCheckTaskSpecOptions, signal?: Abort
   return candidates;
 }
 
-async function resolvePollResult(opts: CiCdCheckTaskSpecOptions, item: CiCdCheckSignal, signal?: AbortSignal) {
+async function resolvePollResult(
+  opts: CiCdCheckTaskSpecOptions,
+  item: CiCdCheckSignal,
+  failureDetails: FailureDetailMemo,
+  signal?: AbortSignal,
+) {
   signal?.throwIfAborted();
   const poll = opts.fetchPrStatus
     ? await opts.fetchPrStatus(item.repoFullName, item.prNumber, signal)
@@ -119,7 +125,13 @@ async function resolvePollResult(opts: CiCdCheckTaskSpecOptions, item: CiCdCheck
   if (isStaleCiSnapshot(poll, currentWait)) {
     throw new Error(`Stale CI snapshot for ${item.repoFullName}#${item.prNumber}; retry current HEAD`);
   }
-  if (!poll.failureDetailsPending && !poll.fullRollupPending) return poll;
+  const key = ciStatusTargetKey(item.repoFullName, item.prNumber);
+  if (!poll.failureDetailsPending && !poll.fullRollupPending) {
+    failureDetails.forget(key);
+    return poll;
+  }
+  const remembered = failureDetails.recall(key, poll);
+  if (remembered) return remembered;
   // Admission is one batched request; details can need several typed GitHub
   // reads. Keep their combined budget below the existing 30-second work item.
   const timeoutSignal = AbortSignal.timeout(20_000);
@@ -132,6 +144,7 @@ async function resolvePollResult(opts: CiCdCheckTaskSpecOptions, item: CiCdCheck
   if (isStaleCiSnapshot(result, afterDetails)) {
     throw new Error(`Stale CI snapshot for ${item.repoFullName}#${item.prNumber}; retry current HEAD`);
   }
+  failureDetails.remember(key, poll, result);
   return result;
 }
 
@@ -149,6 +162,7 @@ function collectionCycleLength(candidateCount: number, windowSize: number): numb
 
 export function createCiCdCheckTaskSpec(opts: CiCdCheckTaskSpecOptions): TaskSpec_P1<CiCdCheckSignal> {
   const defaultReaders = createCiCollectionReaders(opts.log, () => undefined);
+  const failureDetails = new FailureDetailMemo();
   const fetchPrStatuses = opts.fetchPrStatuses ?? defaultReaders.fetchPrStatuses;
   let lastCollectedSubject: string | undefined;
   let firstBatchOffset = 0;
@@ -222,7 +236,7 @@ export function createCiCdCheckTaskSpec(opts: CiCdCheckTaskSpecOptions): TaskSpe
       overlap: 'skip',
       timeoutMs: 30_000,
       async execute(signal: CiCdCheckSignal, _subjectKey: string, ctx: ExecuteContext) {
-        const pollResult = await resolvePollResult(opts, signal, ctx.signal);
+        const pollResult = await resolvePollResult(opts, signal, failureDetails, ctx.signal);
 
         const routeResult = await opts.cicdRouter.route(pollResult);
         if (isStaleCiRoute(routeResult))
