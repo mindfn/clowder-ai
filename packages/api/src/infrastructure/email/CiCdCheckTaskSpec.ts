@@ -13,9 +13,8 @@ import type { ITaskStore } from '../../domains/cats/services/stores/ports/TaskSt
 import type { ExecuteContext, TaskSpec_P1 } from '../scheduler/types.js';
 import type { CiCdRouter, CiPollResult, CiRouteResult } from './CiCdRouter.js';
 import { isStaleCiSnapshot } from './ci-cd-contract.js';
-import { FailureDetailMemo } from './ci-failure-detail-memo.js';
 import { ciStatusTargetKey, createCiCollectionReaders, type PrCiStatusTarget } from './ci-status-batch-fetcher.js';
-import { enrichPrCiFailure } from './ci-status-fetcher.js';
+import { enrichPrCiFailure, FailureDetailMemo } from './ci-status-fetcher.js';
 
 /** Signal carries the TaskItem so execute can access threadId/catId/userId */
 export interface CiCdCheckSignal {
