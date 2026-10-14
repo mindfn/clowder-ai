@@ -35,6 +35,58 @@ jobs:
       - run: pnpm install --frozen-lockfile
       - run: pnpm --filter @cat-cafe/shared build
       - run: pnpm --filter @cat-cafe/api build
+      - name: Windows web build and duplicate Trusted Types regression
+        run: >-
+          node --test
+          scripts/run-preserving-signal-exit.test.mjs
+          packages/web/test/sanitize-widget-types.test.mjs
+      - name: Build the actual web application
+        run: pnpm --filter @cat-cafe/web build
+      - name: Widget sanitization behavior
+        run: pnpm --filter @cat-cafe/web exec vitest run src/components/rich/__tests__/sanitize-widget-html.test.ts
+      - name: Identify the default tar implementation
+        shell: pwsh
+        run: |
+          where.exe tar
+          tar --version
+      - name: Real tar package authority and published Companion installation
+        run: >-
+          node --test
+          packages/api/test/plugin-package-staging-diagnostics.test.js
+          packages/api/test/plugin-external-runtime-package.test.js
+          packages/api/test/plugin-official-package-installer.test.js
+          packages/api/test/plugin-companion-registry.smoke.mjs
+        env:
+          NODE_ENV: test
+          LOG_DIR: ${{ runner.temp }}/plugin-staging-logs
+      - name: Companion and diagnostics with Windows BSD tar and Git GNU tar
+        shell: pwsh
+        env:
+          NODE_ENV: test
+          LOG_DIR: ${{ runner.temp }}/plugin-tar-variant-logs
+        run: |
+          $originalPath = $env:PATH
+          $failed = @()
+          $variants = @(
+            @{ Name = 'Windows BSD tar'; Path = "$env:SystemRoot\System32\tar.exe" },
+            @{ Name = 'Git GNU tar'; Path = "$env:ProgramFiles\Git\usr\bin\tar.exe" }
+          )
+          try {
+            foreach ($variant in $variants) {
+              if (-not (Test-Path -LiteralPath $variant.Path)) {
+                throw "Required tar implementation is missing: $($variant.Name)"
+              }
+              $env:PATH = "$([System.IO.Path]::GetDirectoryName($variant.Path));$originalPath"
+              Write-Host "tar-case=$($variant.Name)"
+              where.exe tar
+              & $variant.Path --version
+              node --test packages/api/test/plugin-package-staging-diagnostics.test.js packages/api/test/plugin-companion-registry.smoke.mjs
+              if ($LASTEXITCODE -ne 0) { $failed += $variant.Name }
+            }
+          } finally {
+            $env:PATH = $originalPath
+          }
+          if ($failed.Count -gt 0) { throw "Tar validation failed: $($failed -join ', ')" }
       - name: Install OpenCode behavior baseline
         run: npm install --global opencode-ai@1.18.9
       - name: Verify OpenCode model ID routing
