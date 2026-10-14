@@ -3,25 +3,9 @@ import { projectCompanionDecisions } from '../../../api/dist/routes/companion-de
 import { readUserMentionTodos } from '../../../api/dist/routes/user-mention-todo-projection.js';
 
 /** Controlled inputs, projected by the original F310 producers; never represents real cat work. */
-export async function readJ3Attention(url, now) {
+export async function readJ3Attention(url, now, snapshot, messageStore) {
   const period = url.searchParams.get('mentionPeriod') ?? 'week';
-  const mentions = await readUserMentionTodos(
-    {
-      async listUserMentionRequests() {
-        return Array.from({ length: 3 }, (_, index) => ({
-          id: `j3-controlled-mention-${index}`,
-          threadId: `thread-j3-controlled-mention-${index}`,
-          userId: 'default-user',
-          catId: 'codex',
-          mentionsUser: true,
-          timestamp: now - 1000,
-          content: `受控 @你 请求 ${index + 1}，不代表真实猫执行`,
-        }));
-      },
-    },
-    'default-user',
-    { cutover: 0, now, period },
-  );
+  const mentions = await readUserMentionTodos(messageStore, 'default-user', { cutover: 0, now, period });
   const source = (coverage) => ({
     status: 'available',
     exhaustiveness: 'complete',
@@ -54,25 +38,59 @@ export async function readJ3Attention(url, now) {
       structuredChoices: source('pending_f306_structured_choices'),
     },
     mentions,
+    [],
+    url.searchParams.has('personalView')
+      ? {
+          mode: url.searchParams.get('personalView'),
+          snapshot,
+          state: source('owner_personal_ignored_items'),
+        }
+      : undefined,
   );
 }
 
-export async function assertQualifiedMailboxCounts(page) {
+export async function assertQualifiedMailboxCounts(page, language, mentionCount) {
+  const expected = '1';
+  const countLabel = language === 'en' ? /1 items/ : /1 件/;
   const button = page.getByTestId('mailbox-button');
   const count = page.getByTestId('mailbox-tab-count');
   await page.waitForFunction(() => {
     const panel = document.querySelector('[data-testid="mailbox-panel"]');
     return panel && getComputedStyle(panel).backgroundColor !== 'rgba(0, 0, 0, 0)';
   });
-  await page.waitForFunction(() => document.querySelector('[data-testid="mailbox-tab-count"]')?.textContent === '4');
-  assert.match(await button.getAttribute('aria-label'), /1 件/);
-  assert.equal(await count.innerText(), '4');
+  await page.waitForFunction(
+    (value) => document.querySelector('[data-testid="mailbox-tab-count"]')?.textContent === value,
+    expected,
+  );
+  assert.match(await button.getAttribute('aria-label'), countLabel);
+  assert.equal(await count.innerText(), expected);
   const filters = page.getByTestId('mailbox-mention-controls');
-  await filters.getByRole('button', { name: /^更早/ }).press('Enter');
-  await page.getByTestId('mailbox-empty').waitFor();
-  assert.equal(await count.count(), 0, 'the empty original panel displays its empty message instead of a count pill');
-  assert.match(await button.getAttribute('aria-label'), /1 件/);
-  await filters.getByRole('button', { name: '这周', exact: true }).press('Enter');
-  await page.waitForFunction(() => document.querySelector('[data-testid="mailbox-tab-count"]')?.textContent === '4');
-  assert.match(await button.getAttribute('aria-label'), /1 件/);
+  const period = filters.getByRole('combobox', { name: language === 'en' ? 'Request date filter' : '请求时间筛选' });
+  await period.selectOption('earlier');
+  await page.waitForFunction(() =>
+    document
+      .querySelector('[data-testid="mailbox-group-mentions"]')
+      ?.textContent?.match(/暂无 @你 请求|No @you requests/),
+  );
+  assert.match(await page.getByTestId('mailbox-group-mentions').innerText(), /暂无 @你 请求|No @you requests/);
+  assert.equal(
+    await count.innerText(),
+    '1',
+    'the identically named Needs me tab keeps the global qualified decision count across request periods',
+  );
+  assert.match(await button.getAttribute('aria-label'), countLabel);
+  await period.selectOption('week');
+  await page.waitForFunction(
+    (value) => document.querySelector('[data-testid="mailbox-tab-count"]')?.textContent === value,
+    expected,
+  );
+  assert.match(await button.getAttribute('aria-label'), countLabel);
+  await page.getByTestId('mailbox-has-more').waitFor();
+  assert.match(await filters.locator('h3').innerText(), new RegExp(String(mentionCount)));
+  assert.doesNotMatch(
+    await filters.locator('h3').innerText(),
+    /本页|on this page/,
+    'the group uses the original full-vector count',
+  );
+  assert.ok(mentionCount > 20, 'this original journey must keep crossing the mailbox page boundary');
 }

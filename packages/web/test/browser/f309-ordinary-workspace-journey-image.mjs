@@ -4,7 +4,6 @@ import { test } from 'node:test';
 import { ensureWorkspaceOpen } from './f307-workspace-open.mjs';
 import { fulfillFixtureApi } from './f309-ordinary-workspace-journey-actions.mjs';
 import { createReviewState } from './f309-ordinary-workspace-journey-fixture.mjs';
-import { openAnnotationSave } from './fixtures/f309-artwork-controls.mjs';
 
 export function registerOrdinaryImageJourney(suite) {
   test(
@@ -12,6 +11,17 @@ export function registerOrdinaryImageJourney(suite) {
     { timeout: 90_000 },
     async () => {
       const state = createReviewState();
+      // A persisted discussion remains reachable after the new Chat-primary canvas replaces its old comment form.
+      state.annotations.push({
+        id: 'ordinary-annotation',
+        anchor: { baseRevision: state.fixture.revision, anchor: { kind: 'image-point', x: 45, y: 40 } },
+        body: '这处在普通文件里需要保留讨论。',
+        author: { kind: 'human', actorId: 'operator' },
+        createdAt: '2026-09-18T00:00:00.000Z',
+        updatedAt: '2026-09-18T00:00:00.000Z',
+        state: 'open',
+        replies: [],
+      });
       const actionKinds = [];
       const { browser, baseUrl } = suite();
       const context = await browser.newContext({ viewport: { width: 1280, height: 900 } });
@@ -38,7 +48,7 @@ export function registerOrdinaryImageJourney(suite) {
         await page.getByTestId('workspace-content-review-media').waitFor();
         await assertArtworkLayout(page, 'desktop');
 
-        await page.getByRole('button', { name: '标注', exact: true }).click();
+        await page.getByRole('button', { name: '画笔', exact: true }).click();
         await page.getByRole('button', { name: '形状', exact: true }).click();
         await page.getByRole('button', { name: '矩形', exact: true }).click();
         const canvas = page.getByTestId('review-markup-layer');
@@ -55,25 +65,32 @@ export function registerOrdinaryImageJourney(suite) {
         await page.getByRole('button', { name: '完成并保存', exact: true }).click();
         await page.getByTestId('review-saved-markup-layer').waitFor();
 
-        await page.getByRole('button', { name: '评论', exact: true }).click();
-        const media = page.getByTestId('workspace-content-review-media');
-        const mediaBox = await media.boundingBox();
-        assert.ok(mediaBox);
-        await page.mouse.click(mediaBox.x + mediaBox.width * 0.45, mediaBox.y + mediaBox.height * 0.4);
-        await page.getByPlaceholder('写下这条批注…').fill('这处在普通文件里需要保留讨论。');
+        await page.getByRole('button', { name: '圈选', exact: true }).click();
+        assert.equal(await page.getByPlaceholder('写下这条批注…').count(), 0);
+        const selectedStage = await page.getByTestId('review-media-stage').boundingBox();
+        assert.ok(selectedStage);
+        await page.mouse.move(
+          selectedStage.x + selectedStage.width * 0.2,
+          selectedStage.y + selectedStage.height * 0.2,
+        );
+        await page.mouse.down();
+        await page.mouse.move(
+          selectedStage.x + selectedStage.width * 0.4,
+          selectedStage.y + selectedStage.height * 0.4,
+        );
+        await page.mouse.up();
+        await page.getByTestId('review-pending-chat-mark').waitFor();
         await page
           .getByTestId('workspace-content-review-surface')
           .screenshot({ path: '/tmp/cat-cafe-evidence/f309-artwork-integration/desktop-comment.png' });
-        // Alpha 2026-09-24 A1: the bottom discussion button opens the drawer without ending comment mode.
+        await page.getByLabel('图片更多操作', { exact: true }).click();
         await page.getByRole('button', { name: '打开作品讨论', exact: true }).click();
         await page.getByRole('complementary', { name: '作品讨论', exact: true }).waitFor();
         assert.equal(
           await page.getByRole('region', { name: '作品画布工具' }).getAttribute('data-review-mode'),
           'comment',
         );
-        assert.equal(await page.getByPlaceholder('写下这条批注…').inputValue(), '这处在普通文件里需要保留讨论。');
         await page.getByRole('button', { name: '关闭讨论', exact: true }).click();
-        await (await openAnnotationSave(page)).click();
         await page.getByTestId('review-canvas-annotation-mark').waitFor();
         assert.equal(await page.getByRole('dialog', { name: '评论这处画面' }).count(), 0);
         const annotationMark = page.getByTestId('review-canvas-annotation-mark');
@@ -104,7 +121,7 @@ export function registerOrdinaryImageJourney(suite) {
         assert.deepEqual(actionKinds, ['add_visual_marks', 'reply', 'set_annotation_state']);
 
         await page.getByRole('button', { name: '关闭讨论', exact: true }).click();
-        await page.getByRole('button', { name: '退出评论', exact: true }).click();
+        await page.getByRole('button', { name: '圈选', exact: true }).click();
         await page.setViewportSize({ width: 390, height: 844 });
         await assertArtworkLayout(page, 'mobile');
         assert.equal(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth), true);

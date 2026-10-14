@@ -48,7 +48,7 @@ mcp_admission_claims:
 
 # F309: Collaborative Content Plane — 跨媒介内容协作平面
 
-> **Status**: in-progress / Phase R 历史有界交付保留；Phase U 部分实现已合入、父线程验收未通过。CVO517授权作品体验收口批次由新thread的Sol6实现、Sol5.6独立审查，合入后父Astra实看；Office/video Admission Gate仍开放
+> **Status**: in-progress / Phase R 历史有界交付保留；Phase U 的 Studio 297 作品体验工作单元已在 #5507/#5521 合入后通过父 Alpha 与原设计负责人实页复看；其余 Phase U、Office/video Admission Gate 与未勾 AC 仍开放
 > **Owner**: 小太阳·Maine Coon (@codex-sol, GPT-5.6 Sol)
 > **Priority**: P1
 > **Source thread**: `[thread-id]`
@@ -122,8 +122,6 @@ CAS、可见 attribution、owner receipt 与 undo，且用户可随时收回权�
 | F290 / Agent runtime consumers | 为什么在这个 Artifact/Channel 协作、谁有权限、哪个猫应关注与行动 | 通用 anchor/annotation/patch mechanics 与 editor store |
 
 ## Current State / 现状基线
-
-**2026-10-12 297 图片整页交付偏差（当前优先项）。** You 在 Studio 原文 `[thread-id]#private-source-id` 与实拍指出新作品页仍是旧布局；父亲查截图、main/runtime8f98及已接受修正1–5，旧 `ReviewCanvasToolbar`、`ReviewMediaControls` 和 `WorkspaceContentReviewProjection` 的两排工具/“修改想法”区域确实仍在。原图片修改/候选回流、K3、文本与暖态返回的有界实证有效；**297 的新图片整页尚未交付、未经过 Studio 对稿，不能描述成只差部署或最后验收。** 父未把这一开放目标持续推进到新页面，是产品交付责任缺口。
 
 | 证据 | 已成立 | 尚未成立 |
 |---|---|---|

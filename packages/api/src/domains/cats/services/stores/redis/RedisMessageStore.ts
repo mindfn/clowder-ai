@@ -131,6 +131,7 @@ import {
   resolveDeliveryTimelineScore,
   resolveThreadMessageVisibility,
 } from '../visibility.js';
+import { HUMAN_SOURCE_HASH_LUA, humanSourceHash } from './redis-human-source-hash.js';
 import { appendMessage } from './redis-message-append.js';
 import { CANCEL_LUA, REASSIGN_LUA } from './redis-message-delivery-lua-scripts.js';
 import { appendMessageAndObservePriorFrontier } from './redis-message-frontier-append.js';
@@ -2308,6 +2309,7 @@ export class RedisMessageStore {
     ownerUserId: string,
     sinceInclusive: number,
     untilInclusive: number,
+    options?: { humanOnly?: true },
   ): Promise<StoredMessage[]> {
     assertValidStoredMessageTimestamp(sinceInclusive);
     assertValidStoredMessageTimestamp(untilInclusive);
@@ -2318,7 +2320,7 @@ export class RedisMessageStore {
       String(sinceInclusive),
       String(untilInclusive),
     );
-    const messages = await this.hydrateMessages(ids);
+    const messages = await this.hydrateMessages(ids, options);
     return messages.filter((message) => message.userId === ownerUserId && isDelivered(message));
   }
 
@@ -2327,6 +2329,7 @@ export class RedisMessageStore {
     sinceInclusive: number,
     untilInclusive: number,
     limit: number,
+    options?: { humanOnly?: true },
   ) {
     assertValidStoredMessageTimestamp(sinceInclusive);
     assertValidStoredMessageTimestamp(untilInclusive);
@@ -2340,7 +2343,7 @@ export class RedisMessageStore {
       0,
       limit + 1,
     );
-    const messages = await this.hydrateMessages(ids.slice(0, limit));
+    const messages = await this.hydrateMessages(ids.slice(0, limit), options);
     return {
       messages: messages.filter((message) => message.userId === ownerUserId && isDelivered(message)),
       hasMore: ids.length > limit,
@@ -4032,11 +4035,12 @@ export class RedisMessageStore {
   /** Hydrate message IDs into full StoredMessage objects */
   private async hydrateMessages(
     ids: string[],
-    options?: { includeDeleted?: boolean; strict?: boolean },
+    options?: { includeDeleted?: boolean; strict?: boolean; humanOnly?: true },
   ): Promise<StoredMessage[]> {
     const pipeline = this.redis.multi();
     for (const id of ids) {
-      pipeline.hgetall(MessageKeys.detail(id));
+      if (options?.humanOnly) pipeline.eval(HUMAN_SOURCE_HASH_LUA, 1, MessageKeys.detail(id));
+      else pipeline.hgetall(MessageKeys.detail(id));
     }
     let span: MessageReadSpan | undefined;
     try {
@@ -4066,11 +4070,13 @@ export class RedisMessageStore {
           if (options?.strict) throw new Error('Owner uncertainty hydration failed');
           continue;
         }
-        const d = data as Record<string, string>;
+        const d = options?.humanOnly ? humanSourceHash(data) : (data as Record<string, string>);
+        if (!d) continue;
         if (!d.id) continue;
 
         const message = this.hydrateHash(d, span);
         if (!message) continue;
+        if (options?.humanOnly && messageFrom(message).kind !== 'user') continue;
 
         // ADR-008 D3: skip soft-deleted messages unless includeDeleted
         if (message.deletedAt && !options?.includeDeleted) continue;

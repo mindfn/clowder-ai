@@ -66,6 +66,7 @@ import { useComposerKeyboardFocus } from './use-composer-keyboard-focus';
 import { useDurableComposerDraft } from './useDurableComposerDraft';
 import { useTextareaAutosize } from './useTextareaAutosize';
 import { WhisperCatSelector } from './WhisperCatSelector';
+import { useWorkspaceChatWorkScope } from './workbench/WorkspaceChatWorkScope';
 
 /** Module-level draft storage — survives component unmount/remount across thread switches */
 export {
@@ -253,6 +254,7 @@ export function ChatInput({
     ? projectedCancelState
     : 'hidden';
   const shellV2 = presentation === 'v2';
+  const workScope = useWorkspaceChatWorkScope();
   const activeCatIds = useMemo(() => {
     const ids = new Set<string>();
     for (const execution of canonicalExecutions) {
@@ -426,6 +428,11 @@ export function ChatInput({
     }
     const trimmed = input.trim();
     if ((trimmed || contextAttachments.length > 0) && !disabled) {
+      const visibleWork =
+        shellV2 && contextAttachments.length === 0 && images.length === 0 && effectiveThreadId
+          ? workScope?.read(effectiveThreadId)
+          : null;
+      const sendContexts = visibleWork ? [visibleWork] : contextAttachments;
       const draftSnapshot = {
         text: input,
         images: [...images],
@@ -441,8 +448,8 @@ export function ChatInput({
       let admission: ReturnType<ChatInputProps['onSend']>;
       try {
         admission =
-          contextAttachments.length > 0
-            ? onSend(trimmed, images.length > 0 ? images : undefined, whisper, replyToMessage?.id, contextAttachments)
+          sendContexts.length > 0
+            ? onSend(trimmed, images.length > 0 ? images : undefined, whisper, replyToMessage?.id, sendContexts)
             : onSend(trimmed, images.length > 0 ? images : undefined, whisper, replyToMessage?.id);
       } catch {
         settleAdmission(false);
@@ -469,6 +476,8 @@ export function ChatInput({
     onSend,
     images,
     contextAttachments,
+    workScope,
+    shellV2,
     sendTemporarilyDisabled,
     whisperMode,
     whisperTargets,

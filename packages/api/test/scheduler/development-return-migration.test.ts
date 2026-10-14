@@ -29,12 +29,21 @@ test('V46 preserves existing execution rows and rolls back its private column if
   const after = db
     .prepare('SELECT * FROM dynamic_task_defs')
     .all()
-    .map(({ development_return_json, reviewed_development_return_json, successor_development_return_json, ...row }) => {
-      assert.equal(development_return_json, null);
-      assert.equal(reviewed_development_return_json, null);
-      assert.equal(successor_development_return_json, null);
-      return row;
-    });
+    .map(
+      ({
+        development_return_json,
+        reviewed_development_return_json,
+        successor_development_return_json,
+        parent_bound_development_return_json,
+        ...row
+      }) => {
+        assert.equal(development_return_json, null);
+        assert.equal(reviewed_development_return_json, null);
+        assert.equal(successor_development_return_json, null);
+        assert.equal(parent_bound_development_return_json, null);
+        return row;
+      },
+    );
   assert.deepEqual(after, before);
   const store = new DynamicTaskStore(db);
   assert.equal(store.getPrivateExecutionReturn('existing'), null);
@@ -47,7 +56,7 @@ test('V47 storage fence and schema version commit atomically without rewriting l
   const db = new Database(':memory:');
   applyMigrations(db);
   db.exec(
-    'DROP TRIGGER successor_development_return_no_delete; ALTER TABLE dynamic_task_defs DROP COLUMN successor_development_return_json; DROP TRIGGER reviewed_development_return_no_delete; ALTER TABLE dynamic_task_defs DROP COLUMN reviewed_development_return_json; DELETE FROM schema_version WHERE version >= 47',
+    'DROP TRIGGER parent_bound_development_return_no_delete; ALTER TABLE dynamic_task_defs DROP COLUMN parent_bound_development_return_json; DROP TRIGGER successor_development_return_no_delete; ALTER TABLE dynamic_task_defs DROP COLUMN successor_development_return_json; DROP TRIGGER reviewed_development_return_no_delete; ALTER TABLE dynamic_task_defs DROP COLUMN reviewed_development_return_json; DELETE FROM schema_version WHERE version >= 47',
   );
   db.exec(
     "CREATE TRIGGER reject_v47 BEFORE INSERT ON schema_version WHEN NEW.version = 47 BEGIN SELECT RAISE(ABORT, 'injected V47 failure'); END",
@@ -103,7 +112,7 @@ test('V59 storage fence and version marker roll back atomically, then reenter id
   try {
     applyMigrations(db);
     db.exec(
-      'DROP TRIGGER successor_development_return_no_delete; ALTER TABLE dynamic_task_defs DROP COLUMN successor_development_return_json; DELETE FROM schema_version WHERE version >= 59',
+      'DROP TRIGGER parent_bound_development_return_no_delete; ALTER TABLE dynamic_task_defs DROP COLUMN parent_bound_development_return_json; DROP TRIGGER successor_development_return_no_delete; ALTER TABLE dynamic_task_defs DROP COLUMN successor_development_return_json; DELETE FROM schema_version WHERE version >= 59',
     );
     db.exec(
       "CREATE TRIGGER reject_v59 BEFORE INSERT ON schema_version WHEN NEW.version = 59 BEGIN SELECT RAISE(ABORT, 'injected V59 failure'); END",
@@ -133,7 +142,7 @@ test('V59 repairs the successor fence when reverted V53-V57 markers outlive thei
   try {
     applyMigrations(db);
     db.exec(
-      'DROP TRIGGER successor_development_return_no_delete; ALTER TABLE dynamic_task_defs DROP COLUMN successor_development_return_json; DELETE FROM schema_version WHERE version >= 53',
+      'DROP TRIGGER parent_bound_development_return_no_delete; ALTER TABLE dynamic_task_defs DROP COLUMN parent_bound_development_return_json; DROP TRIGGER successor_development_return_no_delete; ALTER TABLE dynamic_task_defs DROP COLUMN successor_development_return_json; DELETE FROM schema_version WHERE version >= 53',
     );
     for (const version of [53, 54, 55, 56, 57]) {
       db.prepare('INSERT INTO schema_version (version, applied_at) VALUES (?, ?)').run(
@@ -180,6 +189,62 @@ test('V59 restores a missing successor trigger even when its version marker alre
 
     assert.equal(db.prepare('SELECT COUNT(*) AS n FROM schema_version WHERE version = 59').get().n, 1);
     assert.ok(db.prepare("SELECT name FROM sqlite_master WHERE name = 'successor_development_return_no_delete'").get());
+  } finally {
+    db.close();
+  }
+});
+
+test('V67 fences parent-bound returns from every earlier executable projection', () => {
+  const db = new Database(':memory:');
+  try {
+    applyMigrations(db);
+    const columns = db.prepare('PRAGMA table_info(dynamic_task_defs)').all() as { name: string }[];
+    assert.ok(columns.some((column) => column.name === 'parent_bound_development_return_json'));
+    assert.equal(db.prepare('SELECT COUNT(*) AS n FROM schema_version WHERE version = 67').get().n, 1);
+    db.prepare(`INSERT INTO dynamic_task_defs
+      (id, template_id, trigger_json, params_json, display_json, enabled, created_by, created_at,
+        parent_bound_development_return_json)
+      VALUES ('parent-bound', 'development-terminal-return', '{"type":"once","fireAt":42}', '{}',
+        '{"label":"Parent bound","category":"system"}', 0, 'codex-sol', '2026-10-13', '{}')`).run();
+    const legacyProjection = db
+      .prepare(`SELECT id FROM dynamic_task_defs WHERE id = 'parent-bound' AND
+        (enabled = 1 OR reviewed_development_return_json IS NOT NULL
+          OR successor_development_return_json IS NOT NULL)`)
+      .get();
+    assert.equal(legacyProjection, undefined);
+    assert.throws(() => db.exec("DELETE FROM dynamic_task_defs WHERE id = 'parent-bound'"), /typed owner transition/);
+  } finally {
+    db.close();
+  }
+});
+
+test('V67 storage fence and version marker roll back atomically, then reenter idempotently', () => {
+  const db = new Database(':memory:');
+  try {
+    applyMigrations(db);
+    db.exec(
+      'DROP TRIGGER parent_bound_development_return_no_delete; ALTER TABLE dynamic_task_defs DROP COLUMN parent_bound_development_return_json; DELETE FROM schema_version WHERE version >= 67',
+    );
+    db.exec(
+      "CREATE TRIGGER reject_v67 BEFORE INSERT ON schema_version WHEN NEW.version = 67 BEGIN SELECT RAISE(ABORT, 'injected V67 failure'); END",
+    );
+    assert.throws(() => applyMigrations(db), /injected V67 failure/);
+    const columns = db.prepare('PRAGMA table_info(dynamic_task_defs)').all() as { name: string }[];
+    assert.equal(
+      columns.some((column) => column.name === 'parent_bound_development_return_json'),
+      false,
+    );
+    assert.equal(
+      db.prepare("SELECT name FROM sqlite_master WHERE name = 'parent_bound_development_return_no_delete'").get(),
+      undefined,
+    );
+    db.exec('DROP TRIGGER reject_v67');
+    applyMigrations(db);
+    applyMigrations(db);
+    assert.equal(db.prepare('SELECT COUNT(*) AS n FROM schema_version WHERE version = 67').get().n, 1);
+    assert.ok(
+      db.prepare("SELECT name FROM sqlite_master WHERE name = 'parent_bound_development_return_no_delete'").get(),
+    );
   } finally {
     db.close();
   }

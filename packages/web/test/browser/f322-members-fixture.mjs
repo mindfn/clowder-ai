@@ -164,6 +164,17 @@ export async function scene(width = 1440, dark = false, classic = false, protect
     if (p.startsWith('/api/')) {
       if (request.method() !== 'GET')
         state.writes.push({ path: p, method: request.method(), body: request.postDataJSON() });
+      if (options.catsProducer && (p === '/api/cats' || p.startsWith('/api/cats/'))) {
+        if (request.method() === 'PATCH' && state.rejectSave)
+          return json(route, { error: 'Fixture save rejected' }, 403);
+        const response = await options.catsProducer.app.inject({
+          method: request.method(),
+          url: p,
+          headers: { 'x-cat-cafe-user': 'default-user', 'content-type': 'application/json' },
+          ...(request.postData() ? { payload: request.postData() } : {}),
+        });
+        return route.fulfill({ status: response.statusCode, contentType: 'application/json', body: response.body });
+      }
       if (p === '/api/auth/session') return json(route, { userId: 'fixture-owner' });
       if (p === '/api/cats' && request.method() === 'GET') return json(route, { cats: state.cats });
       if (p === '/api/config' && request.method() === 'GET')

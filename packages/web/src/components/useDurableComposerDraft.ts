@@ -31,7 +31,7 @@ import { useComposerDraftAutosave } from './use-composer-draft-autosave';
 import { useComposerDraftObservation } from './use-composer-draft-observation';
 import { useDurableComposerDraftImageState } from './use-durable-composer-draft-images';
 import { usePendingComposerDraftInsert } from './use-pending-composer-draft-insert';
-import { usePendingComposerSelection } from './use-pending-composer-selection';
+import { type PendingComposerSelection, usePendingComposerSelection } from './use-pending-composer-selection';
 import { useThreadDraftSelection } from './use-thread-draft-selection';
 
 interface UseDurableComposerDraftOptions {
@@ -74,7 +74,7 @@ export function useDurableComposerDraft({
   const canonicalDraftRef = useRef<DurableDraftSnapshot | null>(null);
   const recoveredDraftAwaitingConfirmationRef = useRef(false);
   const clearFallbackRef = useRef<(ComposerAdmissionSnapshot & { imageUrls: string[] }) | null>(null);
-  const pendingSelectionRef = useRef<{ text: string; start: number; end: number } | null>(null);
+  const pendingSelectionRef = useRef<PendingComposerSelection | null>(null);
   const [admissionEpoch, setAdmissionEpoch] = useState(0);
   useComposerDraftConsumption(threadId, revisionRef, canonicalDraftRef, lastSavedSignatureRef);
   const saveCurrentDraftForImagesRef = useRef<() => Promise<boolean>>(async () => false);
@@ -101,6 +101,8 @@ export function useDurableComposerDraft({
     setContextAttachments,
     restoreDraftImages,
     hydrationGenerationRef,
+    hydrationSettledRef,
+    textareaRef,
     imageUrlsRef,
     revisionRef,
     hydratedRef,

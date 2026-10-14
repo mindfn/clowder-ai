@@ -58,7 +58,7 @@ describe('F167 R3-P1-1 — subjectTaskId production persistence (create→list�
 
     // Wire through ThreadDelegateBindingProvider — the production consumer
     const bindingProvider = new ThreadDelegateBindingProvider({
-      listAllByThread: async (threadId) => store.listAllByThread(threadId),
+      listAllByTaskThread: async (threadId) => store.listAllByThread(threadId),
     });
     const bindings = await bindingProvider.getBindingsForTask(TASK_ID, OWNER_THREAD, TENANT);
     assert.equal(bindings.length, 1, 'binding must resolve from persisted proposal with subjectTaskId');
@@ -86,7 +86,7 @@ describe('F167 R3-P1-1 — subjectTaskId production persistence (create→list�
     store.finalizeApproval({ proposalId: proposal.proposalId, createdThreadId: CHILD_THREAD });
 
     const bindingProvider = new ThreadDelegateBindingProvider({
-      listAllByThread: async (threadId) => store.listAllByThread(threadId),
+      listAllByTaskThread: async (threadId) => store.listAllByThread(threadId),
     });
     const bindings = await bindingProvider.getBindingsForTask(TASK_ID, OWNER_THREAD, TENANT);
     assert.deepEqual(bindings, [], 'legacy proposal without subjectTaskId → fail closed');
@@ -124,7 +124,7 @@ describe('F167 R3-P1-1 — subjectTaskId production persistence (create→list�
 
     assert.equal(store.listByThread(OWNER_THREAD).length, 100, 'default product listing remains bounded');
     const bindingProvider = new ThreadDelegateBindingProvider({
-      listAllByThread: async (threadId) => store.listAllByThread(threadId),
+      listAllByTaskThread: async (threadId) => store.listAllByThread(threadId),
     });
     const bindings = await bindingProvider.getBindingsForTask(TASK_ID, OWNER_THREAD, TENANT);
     assert.deepEqual(

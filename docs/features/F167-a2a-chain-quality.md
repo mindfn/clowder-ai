@@ -4,8 +4,8 @@ related_features: [F064, F027, F055, F122, F168, F246, F280]
 topics: [a2a, collaboration, harness-engineering, agent-readiness]
 doc_kind: spec
 created: 2026-04-17
-updated: 2026-10-12
-tips_exempt: "Renewed 2026-10-12: returned-delegate succession repairs the existing cat-side A2A custody path without adding an end-user action; exact approved-child action-lease continuation guidance lives in the existing development-return MCP description. KD-33 event-wait completion likewise remains an internal completion-protocol member taught by its existing tool surface."
+updated: 2026-10-13
+tips_exempt: "Renewed 2026-10-13 for the parent-bound approved-child repair: it corrects the existing cat-side structured-transfer, Task execution, and development-return authority path without adding an end-user action or a new tool; usage remains described by the existing entrusted-work, structured-transfer, and development-return surfaces. Returned-delegate succession, exact-source read authority, and KD-33 event-wait completion remain internal protocol behavior taught by their existing tool surfaces."
 user_journey_exempt: protocol behavior has no direct UI surface; end-to-end custody is dogfooded through the real MCP/task path
 mcp_admission_status: accepted
 mcp_admission_ref: "file:docs/features/F167-a2a-chain-quality.md"

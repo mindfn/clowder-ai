@@ -1,11 +1,15 @@
 import type { WorkspaceContentReviewAction } from '@cat-cafe/shared';
 import { useRef, useState } from 'react';
+import { ImageWorkProgress } from '@/components/content-review/ImageWorkProgress';
+import { modificationStorageKey } from '@/components/content-review/modification-draft';
+import { modificationFocusStanding, usePendingModificationFocus } from '@/components/content-review/modification-focus';
 import { ReviewToolbarIcon } from '@/components/content-review/ReviewToolbarIcon';
 import commentStyles from '@/components/content-review/review-comment.module.css';
 import toolbarStyles from '@/components/content-review/review-toolbar.module.css';
 import styles from '@/components/content-review/review-workspace.module.css';
 import { useChatStore } from '@/stores/chatStore';
 import { API_URL } from '@/utils/api-client';
+import { isChatWorkElementVisible } from '../WorkspaceChatWorkScope';
 import type { ContentLandingCapabilities, ContentReviewView, ContentReviewWorkflow } from './content-review-contract';
 import type { WorkspaceAnnotationTarget } from './useWorkspaceContentReview';
 import { useWorkspaceMediaChat } from './useWorkspaceMediaChat';
@@ -16,6 +20,7 @@ import { WorkspaceContentReviewText } from './WorkspaceContentReviewText';
 import { WorkspaceLegacyTextNotes } from './WorkspaceLegacyTextNotes';
 import { AddToChatButton, AddToChatNotice, WholeWorkChatButton } from './WorkspaceMediaChatControls';
 import { WorkspaceModificationEntry } from './WorkspaceModificationEntry';
+import { workspaceReviewRequestSource } from './workspace-modification-source';
 import type { LegacyTextNotes } from './workspace-review-legacy-text';
 
 type Act = (action: WorkspaceContentReviewAction) => Promise<boolean>;
@@ -79,6 +84,14 @@ export function WorkspaceContentReviewProjection({
   const [comparingAt, setComparingAt] = useState<number | null>(null);
   const openRevision = useChatStore((state) => state.workspaceOpenRevision);
   const comparing = comparingAt !== null && comparingAt === openRevision;
+  const threadId = useChatStore((state) => state.currentThreadId);
+  const pendingFocus = usePendingModificationFocus();
+  const openingComparison =
+    !!pendingFocus?.candidateRef &&
+    view.review.source.kind !== 'video-project' &&
+    modificationFocusStanding(pendingFocus, { threadId: threadId ?? null, revision: openRevision }) === 'ours' &&
+    modificationStorageKey(view.review.ownerUserId, workspaceReviewRequestSource(view)) ===
+      modificationStorageKey(pendingFocus.record.ownerUserId, pendingFocus.record.payload.source);
   // A text selection is live, like the card built on it: it targets "请猫修改" but is never stored as a draft,
   // so it cannot overwrite the quote of an old unsubmitted text draft.
   const [textSelection, setTextSelection] = useState<{ revision: string; quote: string } | null>(null);
@@ -102,10 +115,21 @@ export function WorkspaceContentReviewProjection({
   const source = view.currentSource ?? view.review.source;
   const canAuthor = view.canWrite && view.sourceState === 'current' && capabilities.annotate.state === 'available';
   const canWrite = canAuthor && !busy;
-  const mediaChat = useWorkspaceMediaChat({ view, path, workflow, target, draft, setDraft, setTarget });
+  const imageChatPrimary = source.kind !== 'text' && source.kind !== 'video-project' && source.mime === 'image/png';
+  const mediaRoot = useRef<HTMLDivElement>(null);
+  const mediaChat = useWorkspaceMediaChat({
+    view,
+    path,
+    workflow,
+    target,
+    draft,
+    setDraft,
+    setTarget,
+    referenceOnOpen: imageChatPrimary && !comparing && !openingComparison,
+    isWorkVisible: () => isChatWorkElementVisible(mediaRoot.current),
+  });
   if (source.kind === 'video-project')
     return <p className="p-3 text-sm text-cafe-muted">当前文件视图尚不支持视频项目审阅。</p>;
-  const imageChatPrimary = source.kind !== 'text' && source.mime === 'image/png';
   const saveAnnotation = (
     <button
       type="submit"
@@ -189,12 +213,17 @@ export function WorkspaceContentReviewProjection({
               : null
             : target
         }
-        allowNewRequest={!imageChatPrimary}
+        allowNewRequest={!imageChatPrimary && source.kind !== 'text'}
+        chatRequest={source.kind === 'text' ? { content: sourceText, revision: sourceTextRevision } : undefined}
         disabled={
-          !canWrite || capabilities.requestModification.state !== 'available' || !!fileReader?.modificationDisabled
+          !canWrite ||
+          capabilities.requestModification.state !== 'available' ||
+          !!fileReader?.modificationDisabled ||
+          (source.kind === 'text' && sourceTextRevision !== source.revision)
         }
         openRequest={fileReader?.openRequest}
         hideTrigger={!!fileReader}
+        compact={imageChatPrimary}
         onApplied={onApplied}
         onExpanded={() => setModificationOpenRequest((request) => request + 1)}
         onComparing={setComparingAt}
@@ -224,7 +253,7 @@ export function WorkspaceContentReviewProjection({
               locator={source.locator}
               scrollToLine={scrollToLine}
               markdown={/.mdx?$/i.test(path)}
-              onQuoteSelected={(quote) => setTextSelection({ revision: source.revision, quote })}
+              onQuoteSelected={(quote) => setTextSelection(quote ? { revision: source.revision, quote } : null)}
             />
           ) : (
             <p className="p-3 text-sm text-cafe-muted">文件预览版本已过期；返回文件重新加载后再批注。</p>
@@ -236,8 +265,19 @@ export function WorkspaceContentReviewProjection({
       </>
     );
   return (
-    <div className={styles.workspace} data-comparing={comparing ? 'true' : undefined}>
+    <div
+      ref={mediaRoot}
+      className={`${styles.workspace} ${imageChatPrimary ? styles.imageWorkspace : ''}`}
+      data-comparing={comparing ? 'true' : undefined}
+    >
       {sourceState}
+      {imageChatPrimary ? <ImageWorkProgress target={mediaChat.target} /> : null}
+      {imageChatPrimary && draft.trim() ? (
+        <div className="flex shrink-0 items-center gap-2 px-3 py-2 text-xs text-cafe-muted">
+          <span className="whitespace-pre-wrap">未发送的批注：{draft}</span>
+          <AddToChatButton chat={mediaChat} />
+        </div>
+      ) : null}
       {view.sourceState === 'current' ? (
         <WorkspaceContentReviewMedia
           draftKey={workflow?.canvasDraftKey}
@@ -264,13 +304,17 @@ export function WorkspaceContentReviewProjection({
           selected={target?.kind === 'media_anchor' ? target.anchor : null}
           restoreComment={canWrite && draft.trim() !== ''}
           composer={composer}
+          imageChatPrimary={imageChatPrimary}
+          wholeWorkAction={!comparing && !openingComparison ? <WholeWorkChatButton chat={mediaChat} /> : undefined}
           onOpenDiscussion={() => {
             setDiscussionOpen(true);
           }}
           onAnchorSelected={(anchor) => {
             setDiscussionOpen(false);
             mediaChat.clearNotice();
-            setTarget({ kind: 'media_anchor', anchor });
+            if (imageChatPrimary && mediaChat.wholeWorkOffered) {
+              if (!mediaChat.addSelection(anchor)) setTarget({ kind: 'media_anchor', anchor });
+            } else setTarget({ kind: 'media_anchor', anchor });
           }}
           pendingChatMarks={mediaChat.marks}
           onAnnotationActive={openDiscussion}
@@ -295,17 +339,17 @@ export function WorkspaceContentReviewProjection({
             回到作品画面
           </button>
         </div>
-      ) : (
+      ) : !imageChatPrimary ? (
         <p className="shrink-0 border-t border-cafe-subtle px-3 pt-2 text-xs text-cafe-muted">
           修改想法 · {target?.kind === 'media_anchor' ? '当前选区' : '整图'}
         </p>
-      )}
-      {!comparing ? (
+      ) : null}
+      {!comparing && !imageChatPrimary ? (
         <div className="flex shrink-0 justify-end px-3 py-2">
           <WholeWorkChatButton chat={mediaChat} />
         </div>
       ) : null}
-      {!mediaChat.offered ? <AddToChatNotice chat={mediaChat} /> : null}
+      {imageChatPrimary || !mediaChat.offered ? <AddToChatNotice chat={mediaChat} /> : null}
       <div className={styles.modificationRegion}>{modification}</div>
       {discussionOpen || view.sourceState !== 'current' ? (
         <aside className={styles.drawer} aria-label="作品讨论">

@@ -78,7 +78,7 @@ END`,
 
 // Versions 53-57 were deployed by reverted F323 migrations and remain in live
 // schema_version ledgers. They must never be reused even though main returned to V52.
-export const CURRENT_SCHEMA_VERSION = 66;
+export const CURRENT_SCHEMA_VERSION = 67;
 
 function memoryCueLedgerHasConsumerBinding(db: Database.Database): boolean {
   return (db.prepare('PRAGMA table_info(memory_cue_events)').all() as Array<{ name: string }>).some(
@@ -1741,6 +1741,26 @@ export function applyMigrations(db: Database.Database): void {
       if (!columns.some((row) => row.name === 'pending_input_revision'))
         db.exec('ALTER TABLE summary_state ADD COLUMN pending_input_revision INTEGER NOT NULL DEFAULT 0');
       db.prepare('INSERT INTO schema_version(version,applied_at) VALUES (?,?)').run(66, new Date().toISOString());
+    })();
+  }
+  // V67: parent-bound proposal sources require a reader that understands the
+  // cross-thread Task/proposal/source relation. Keep these returns invisible
+  // and disabled for every earlier binary instead of letting it retire a live
+  // registration as invalid.
+  if (currentVersion < 67) {
+    db.transaction(() => {
+      const columns = db.prepare('PRAGMA table_info(dynamic_task_defs)').all() as Array<{ name: string }>;
+      if (!columns.some((row) => row.name === 'parent_bound_development_return_json')) {
+        db.exec(`ALTER TABLE dynamic_task_defs ADD COLUMN parent_bound_development_return_json TEXT
+        CHECK (parent_bound_development_return_json IS NULL OR
+          (development_return_json IS NULL AND reviewed_development_return_json IS NULL
+            AND successor_development_return_json IS NULL AND enabled = 0
+            AND template_id = 'development-terminal-return'))`);
+      }
+      db.exec(`CREATE TRIGGER IF NOT EXISTS parent_bound_development_return_no_delete
+        BEFORE DELETE ON dynamic_task_defs WHEN OLD.parent_bound_development_return_json IS NOT NULL
+        BEGIN SELECT RAISE(ABORT, 'Parent-bound execution return requires its typed owner transition'); END`);
+      db.prepare('INSERT INTO schema_version(version,applied_at) VALUES (?,?)').run(67, new Date().toISOString());
     })();
   }
   // A rolled-back pre-F321 writer can see the upgraded schema version and still

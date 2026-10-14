@@ -124,7 +124,6 @@ test('Native profile mutation rejects unsafe or conflicting settings before pers
     const before = JSON.stringify(f.persisted());
     for (const body of [
       { agyProfile: { ...profile, nativeCodingGrant: { taskId: 'arbitrary' } } },
-      { agyProfile: { ...profile, autoApprove: true } },
       { agyProfile: { ...profile, model: 'Human Model Label' } },
       { agyProfile: { ...profile, trustedWorkspaces: ['relative'] } },
       { agyProfile: { ...profile, model: 'another-model' } },
@@ -199,6 +198,23 @@ test('creation supports Native and client/ACP transitions mask template Native s
     assert.equal(switched.statusCode, 200, switched.body);
     assert.equal(switched.json().cat.agyProfile, undefined);
     assert.equal(f.persisted().agyProfile, null);
+  } finally {
+    await f.close();
+  }
+});
+
+test('member PATCH explicitly opts into AGY automatic approval and reads the choice back', async () => {
+  const f = await fixture();
+  try {
+    const automatic = { ...profile, autoApprove: true, trustedWorkspaces: [] };
+    const response = await f.patch({ defaultModel: profile.model, agyProfile: automatic });
+    assert.equal(response.statusCode, 200, response.body);
+    assert.deepEqual(f.persisted().agyProfile, automatic);
+    const read = await f.app.inject({ method: 'GET', url: '/api/cats' });
+    assert.deepEqual(read.json().cats.find((cat) => cat.id === 'gemini38').agyProfile, automatic);
+    const restricted = await f.patch({ agyProfile: profile });
+    assert.equal(restricted.statusCode, 200, restricted.body);
+    assert.equal(f.persisted().agyProfile.autoApprove, false);
   } finally {
     await f.close();
   }

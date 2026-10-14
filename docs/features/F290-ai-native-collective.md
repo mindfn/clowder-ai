@@ -1212,7 +1212,7 @@ Markdown，而不伪造成当时就在资产页发生的批注 → 后续参与�
 ## Open Questions / Design Gate
 
 2. **Resolved to F310**：全局 Needs Me / Judgment 入口的 eligibility、去重、显著度与 exact-return
-   归 F310；F290 只提供 Collective-owned canonical items 与当前
+   归 [F310](F310-growing-real-delegation.md)；F290 只提供 Collective-owned canonical items 与当前
    predicate。准入红线保持：**只收等待人类判断或修复的事项，FYI / 热闹永不进入。**
 3. 双向望窗的摘要密度与“走进去”动作如何表达，同时不泄露私人 Thread；sidecar/tab/split 的
    通用宿主策略转交 F307。

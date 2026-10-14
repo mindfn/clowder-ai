@@ -1,8 +1,8 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
-import { InvocationQueue } from '../src/domains/cats/services/agents/invocation/InvocationQueue.ts';
-import { InMemoryQueueLedgerStore } from '../src/domains/cats/services/agents/invocation/queue-ledger/InMemoryQueueLedgerStore.ts';
-import { settleLifecycleResponseInputs } from '../src/domains/cats/services/stores/ports/MessageStore.ts';
+import { InvocationQueue } from '../dist/domains/cats/services/agents/invocation/InvocationQueue.js';
+import { InMemoryQueueLedgerStore } from '../dist/domains/cats/services/agents/invocation/queue-ledger/InMemoryQueueLedgerStore.js';
+import { settleLifecycleResponseInputs } from '../dist/domains/cats/services/stores/ports/MessageStore.js';
 import {
   assertDeliveredLiveSource as delivered,
   createCanonicalLiveSourceFixture as fixture,

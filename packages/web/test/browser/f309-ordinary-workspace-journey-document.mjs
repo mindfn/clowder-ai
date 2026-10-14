@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import { mkdir, readFile, writeFile } from 'node:fs/promises';
 import { test } from 'node:test';
-import { ensureWorkspaceOpen } from './f307-workspace-open.mjs';
+import { openWorkspaceTools } from './f307-workspace-open.mjs';
 import {
   assertCandidateTextContrast,
   assertDocumentGroupFocus,
@@ -22,8 +22,7 @@ import {
 } from './f309-ordinary-workspace-journey-chat-progress.mjs';
 
 async function openFile(page, filename) {
-  await ensureWorkspaceOpen(page);
-  const home = page.getByTestId('workspace-launcher-home');
+  const home = await openWorkspaceTools(page);
   await home.getByTestId('workspace-launcher-search').fill(filename);
   await home
     .getByTestId('workspace-launcher-file-result')
@@ -115,6 +114,79 @@ async function decideDocument(f, page, decision, candidate) {
 /** Production history/owner + sealed callback + actual CAS. Config/session/provider are declared test boundaries. */
 export function registerOrdinaryDocumentJourney(suite) {
   const contrast = { values: {}, file: `${EVIDENCE}/contrast-document-owner.json` };
+  test(
+    'document work progress: active A survives later untaken B and cancels exact A',
+    { timeout: 90000 },
+    async () => {
+      const f = await createDocumentRequest();
+      let session;
+      try {
+        const later = f.owner.messages.append({
+          userId: 'operator',
+          threadId: f.owner.thread.id,
+          catId: null,
+          mentions: [],
+          timestamp: Date.now(),
+          content: '同一文件的另一个尚未接手的想法',
+          contentBlocks: structuredClone(f.message.contentBlocks),
+        });
+        const untaken = await f.owner.app.inject({ url: `/api/content-modifications/by-message/${later.id}` });
+        assert.equal(untaken.statusCode, 404);
+        session = await openDocumentSession(suite, f.owner, { shell: 'v2' });
+        const { page, calls, errors } = session;
+        await page.locator('[data-testid="workspace-panel-toggle"][data-client-interactive="true"]').waitFor();
+        const composer = page.getByLabel('消息输入框');
+        await composer.fill('另一个未发送的文档想法');
+        await openFile(page, f.filename);
+        const work = page.getByTestId('text-work-progress').getByTestId('modification-progress');
+        await work.waitFor();
+        assert.equal(await work.count(), 1);
+        assert.equal(await work.getAttribute('data-state'), 'working');
+        assert.ok((await work.textContent()).includes(f.filename));
+        await work.getByRole('button', { name: '取消修改', exact: true }).click();
+        await page.getByTestId('text-work-progress').locator('[data-state="cancelled_still_running"]').waitFor();
+        const actual = await f.owner.integration.requests.read(f.record.requestId, f.owner.human);
+        assert.equal(actual.record.control.state, 'cancelled');
+        assert.equal(actual.record.progress.sourceMessageId, f.message.id);
+        assert.deepEqual(
+          calls.filter((call) => call.method === 'POST' && call.path.endsWith('/cancel')).map((call) => call.path),
+          [`/api/content-modifications/${f.record.requestId}/cancel`],
+        );
+        assert.equal(await composer.inputValue(), '另一个未发送的文档想法');
+        assert.equal(
+          (await f.owner.app.inject({ url: `/api/content-modifications/by-message/${later.id}` })).statusCode,
+          404,
+        );
+        await page.screenshot({ path: `${EVIDENCE}/r1-document-work-progress.png` });
+        await writeFile(
+          `${EVIDENCE}/r1-document-work-progress.json`,
+          JSON.stringify(
+            {
+              url: page.url(),
+              ownerApi: f.owner.api,
+              requestId: f.record.requestId,
+              activeMessageId: f.message.id,
+              untakenMessageId: later.id,
+              errors,
+            },
+            null,
+            2,
+          ),
+        );
+        assert.deepEqual(errors, []);
+      } finally {
+        try {
+          if (session) {
+            // Drain callbacks while their page and request context are still usable.
+            await session.context.unrouteAll({ behavior: 'wait' });
+            await session.context.close();
+          }
+        } finally {
+          await f.close();
+        }
+      }
+    },
+  );
   for (const [slug, width, dark] of [
     ['desktop-light', 1440, false],
     ['desktop-dark', 1440, true],

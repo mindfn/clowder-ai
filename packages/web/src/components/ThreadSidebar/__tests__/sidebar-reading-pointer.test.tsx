@@ -4,7 +4,7 @@ import { expect, it, vi } from 'vitest';
 import type { SidebarSnapshotRow } from '@/stores/sidebarProjectionStore';
 import { writeShellPresentation } from '../../shell/shell-presentation';
 import { arrangeAttentionRows, buildAttentionClusters } from '../attention-clusters';
-import { useAttentionListOrder } from '../use-attention-list-order';
+import { useAttentionListOrder, useSidebarReadingSession } from '../use-attention-list-order';
 
 it('holds row placement under the pointer, projects fresh facts, and recomputes recent members after leaving', () => {
   vi.stubGlobal('IS_REACT_ACT_ENVIRONMENT', true);
@@ -17,11 +17,13 @@ it('holds row placement under the pointer, projects fresh facts, and recomputes 
     const rows = [
       { id: 'a', pinned: false, lastActiveAt: activity, unreadCount: activity, presence: { status: 'done' } },
       { id: 'b', pinned: false, lastActiveAt: 20, unreadCount: 0, presence: { status: 'idle' } },
-      { id: 'outside', pinned: false, lastActiveAt: 30, unreadCount: 0, presence: { status: 'idle' } },
+      { id: 'outside', pinned: false, lastActiveAt: 30, unreadCount: 10, presence: { status: 'idle' } },
     ] as SidebarSnapshotRow[];
     const groups = group ? [{ id: 'g', threadIds: ['a', 'b'] }] : [];
     const lists = { flat: arrangeAttentionRows(rows, rows, buildAttentionClusters(rows, groups), 'recent') };
-    const ordered = useAttentionListOrder(lists, () => true, {}, group ? 'group' : 'plain', '', false, surface).flat!;
+    const scope = group ? 'group' : 'plain';
+    const reading = useSidebarReadingSession(surface, true, scope);
+    const ordered = useAttentionListOrder(lists, () => true, {}, scope, '', false, reading.held).flat!;
     return (
       <div ref={surface} data-surface>
         {ordered.map((row) => (

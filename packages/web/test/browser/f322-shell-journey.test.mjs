@@ -8,6 +8,7 @@ import { chromium } from '../../../ppt-forge/node_modules/playwright/index.mjs';
 import { runChatRealPageJourney } from './f322-chat-real-page.mjs';
 import { runGroupPeekJourney } from './f322-group-peek.journey.mjs';
 import { runPianoJourneys } from './f322-piano.journey.mjs';
+import { runNativeSidebarReadingJourney, runSidebarReadingJourney } from './f322-sidebar-reading.journey.mjs';
 import { runSidebarV2Journey } from './f322-sidebar-v2.journey.mjs';
 import { registerMentionCutoverJourney } from './f322-user-mention-cutover.journey.mjs';
 import { registerUserMentionJourney } from './f322-user-mention-todo.journey.mjs';
@@ -1669,6 +1670,14 @@ test('v2 decides a complete F128 proposal in its mailbox and retains the canonic
 
 test('accepted sidebar v2: groups, cats, attention, labels and measured layout', async (t) => {
   await runSidebarV2Journey(t, browser);
+});
+
+test('sidebar green reply click preserves reading placement', async (t) => {
+  await runSidebarReadingJourney(t, browser);
+});
+
+test('native Next sidebar read click keeps the following thread reachable', async () => {
+  await runNativeSidebarReadingJourney(browser);
 });
 
 test('collapsed Group attention shortcuts preserve layout and per-Group preferences', async (t) => {

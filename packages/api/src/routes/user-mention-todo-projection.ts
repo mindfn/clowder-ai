@@ -1,5 +1,5 @@
 import type { UnifiedAttentionItemV1, UnifiedAttentionSourceRead } from '@cat-cafe/shared';
-import type { IMessageStore } from '../domains/cats/services/stores/ports/MessageStore.js';
+import type { IMessageStore, StoredMessage } from '../domains/cats/services/stores/ports/MessageStore.js';
 
 export interface UserMentionTodoRead {
   items: UnifiedAttentionItemV1[];
@@ -36,6 +36,38 @@ export function classifyUserMentionPeriod(
   return timestamp >= today.getTime() ? 'today' : 'week';
 }
 
+/** One canonical pending/handled mention row; personal reads reuse this exact-version producer. */
+export function projectUserMentionTodoItem(
+  message: StoredMessage,
+  userId: string,
+  expectedRevision: number,
+  handled = false,
+): UnifiedAttentionItemV1 {
+  if (message.userId !== userId) throw new Error('Invalid request owner');
+  if (!message.catId) throw new Error('Invalid request author');
+  if (!message.mentionsUser) throw new Error('Invalid request signal');
+  if (!Number.isSafeInteger(expectedRevision)) throw new Error('Invalid request revision');
+  if (expectedRevision < 0) throw new Error('Invalid request revision');
+  return {
+    decisionRef: handled
+      ? `user-mention-handled:${message.threadId}:${message.id}`
+      : `user-mention:${message.threadId}`,
+    kind: 'user_mention',
+    summary: '对话中的请求',
+    userMention: {
+      threadId: message.threadId,
+      threadTitle: message.threadId,
+      ...(handled ? { handled: true } : {}),
+      expectedRevision,
+      messageId: message.id,
+      catId: message.catId,
+      content: message.content,
+      timestamp: message.timestamp,
+    },
+    linkedNeedsMe: [],
+  };
+}
+
 export async function readUserMentionTodos(
   messages: Pick<IMessageStore, 'listUserMentionRequests'> &
     Partial<Pick<IMessageStore, 'listHandledUserMentions' | 'getUserMentionStateRevisions'>>,
@@ -67,29 +99,9 @@ export async function readUserMentionTodos(
               ? group(m) !== 'earlier'
               : group(m) === options.period,
           );
-    const items: UnifiedAttentionItemV1[] = selected.map((message) => {
-      if (message.userId !== userId || !message.catId || !message.mentionsUser)
-        throw new Error('Invalid request owner');
-      return {
-        decisionRef:
-          options?.period === 'handled'
-            ? `user-mention-handled:${message.threadId}:${message.id}`
-            : `user-mention:${message.threadId}`,
-        kind: 'user_mention',
-        summary: '对话中的请求',
-        userMention: {
-          threadId: message.threadId,
-          threadTitle: message.threadId,
-          ...(options?.period === 'handled' ? { handled: true } : {}),
-          expectedRevision: revisions[message.threadId] ?? 0,
-          messageId: message.id,
-          catId: message.catId,
-          content: message.content,
-          timestamp: message.timestamp,
-        },
-        linkedNeedsMe: [],
-      };
-    });
+    const items: UnifiedAttentionItemV1[] = selected.map((message) =>
+      projectUserMentionTodoItem(message, userId, revisions[message.threadId] ?? 0, options?.period === 'handled'),
+    );
     return {
       items,
       ...(options ? { counts, recentCount: counts.week, period: options.period } : {}),

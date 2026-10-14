@@ -4,6 +4,7 @@ import {
   custodyOfferV1Schema,
   type TaskItem,
 } from '@cat-cafe/shared';
+import { messageFrom } from '../cats/services/stores/message-from.js';
 import { deriveGrowingSourceMessageRevision, type StoredMessage } from '../cats/services/stores/ports/MessageStore.js';
 import { isDurableOwnerReadEvidence, isSystemUserMessage } from '../cats/services/stores/visibility.js';
 import {
@@ -104,7 +105,7 @@ export function projectCustodyOpportunity(
 function belongsToProspectiveCohort(source: StoredMessage, cohort: CustodyOpportunityCohort): boolean {
   return !(
     source.userId !== cohort.ownerUserId ||
-    source.catId !== null ||
+    messageFrom(source).kind !== 'user' ||
     isSystemUserMessage(source) ||
     source.source ||
     source.sourceParseFailure ||

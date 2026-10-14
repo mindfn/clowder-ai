@@ -11,16 +11,27 @@ export const AGY_NATIVE_FILE_TOOLS = [
   'replace_file_content',
 ] as const;
 
+export const AGY_NATIVE_AUTO_APPROVE_TOOLS = [...AGY_NATIVE_FILE_TOOLS, 'run_command', 'manage_task'] as const;
+export type AgyNativePermissionMode = 'request-review' | 'always-proceed';
+
 export const AGY_NATIVE_HOST_MCP_SERVERS = ['cat-cafe-collab', 'cat-cafe-memory', 'cat-cafe-signals'] as const;
+/** Default host tools; Queue/History owns delivery completion, so no separate completion grant is exposed. */
+export const AGY_NATIVE_DEFAULT_MCP_TOOLS = [
+  'cat-cafe-collab/cat_cafe_get_thread_context',
+  'cat-cafe-collab/cat_cafe_capture_paw_feel',
+] as const;
 const P1_HOST_MCP_SERVERS = new Set<string>(AGY_NATIVE_HOST_MCP_SERVERS);
 const P1_MCP_CALLBACK_ROUTES = new Map<string, string>([
   ['cat-cafe-collab/cat_cafe_get_thread_context', 'GET /api/callbacks/thread-context'],
+  ['cat-cafe-collab/cat_cafe_capture_paw_feel', 'POST /api/callbacks/paw-feel-capture-intent'],
   ['cat-cafe-collab/cat_cafe_post_message', 'POST /api/callbacks/post-message'],
   ['cat-cafe-collab/cat_cafe_run_task_test', 'GET /api/callbacks/native-test-grant'],
 ]);
 
 export interface AgyNativePolicyInput {
   workspaceRoot: string;
+  /** Explicit operator choice; absent/false retains task-scoped sandbox grants. */
+  autoApprove?: boolean;
   /** Exact files approved for this task; a directory grant would include executable .agents aliases. */
   writableFiles: readonly string[];
   /** Exact requested pairs. The caller must also verify each server's executable is host-owned. */
@@ -129,6 +140,8 @@ export function callbackPolicyForAgyNativeMcpTools(mcpTools: readonly string[]) 
 
 /** Build task-scoped grants. Spawn wiring must enforce these settings and validate MCP bindings. */
 export function buildAgyNativePolicy(input: AgyNativePolicyInput) {
+  const autoApprove = input.autoApprove === true;
+  const permissionMode: AgyNativePermissionMode = autoApprove ? 'always-proceed' : 'request-review';
   const root = realpathSync(input.workspaceRoot);
   if (!lstatSync(root).isDirectory()) throw new Error('AGY workspace root must be a directory');
   const files = [...new Set(input.writableFiles.map((file) => exactWritableFile(root, file)))];
@@ -136,15 +149,21 @@ export function buildAgyNativePolicy(input: AgyNativePolicyInput) {
   return {
     workspaceRoot: root,
     grantedMcpTools: mcpTools,
-    agentTools: AGY_NATIVE_FILE_TOOLS,
-    cliArgs: ['--sandbox'] as const,
+    permissionMode,
+    agentTools: autoApprove ? AGY_NATIVE_AUTO_APPROVE_TOOLS : AGY_NATIVE_FILE_TOOLS,
+    cliArgs: autoApprove ? ['--dangerously-skip-permissions'] : ['--sandbox'],
     settings: {
-      enableTerminalSandbox: true,
-      toolPermission: 'request-review' as const,
-      allowNonWorkspaceAccess: false,
+      enableTerminalSandbox: !autoApprove,
+      toolPermission: permissionMode,
+      allowNonWorkspaceAccess: autoApprove,
       permissions: {
-        allow: [...files.map((file) => `write_file(${file})`), ...mcpTools.map((tool) => `mcp(${tool})`)],
-        deny: ['command(*)', 'unsandboxed(*)', 'write_file(.agents/)', 'write_file(.git/)'],
+        allow: [
+          ...(autoApprove
+            ? ['write_file(*)', 'command(*)', 'unsandboxed(*)']
+            : files.map((file) => `write_file(${file})`)),
+          ...mcpTools.map((tool) => `mcp(${tool})`),
+        ],
+        deny: autoApprove ? [] : ['command(*)', 'unsandboxed(*)', 'write_file(.agents/)', 'write_file(.git/)'],
       },
     },
   };
@@ -162,15 +181,8 @@ export type AgyNativeWorkspacePreflight =
 export function preflightAgyNativeWorkspace(workspaceRoot: string): AgyNativeWorkspacePreflight {
   const root = realpathSync(workspaceRoot);
   const entries = readdirSync(root);
-  const safeEnvTemplates = new Set(['.env.example', '.env.local.example', '.env.example.opensource']);
-  const sensitive = entries.find((entry) => {
-    const name = entry.toLowerCase();
-    return (
-      ((name === '.env' || name.startsWith('.env.')) && !safeEnvTemplates.has(name)) ||
-      ['.netrc', '.pypirc', '.ssh', '.aws'].includes(name)
-    );
-  });
-  if (sensitive) return { ok: false, reason: 'workspace_sensitive_content', path: join(root, sensitive) };
+  // Executable customization takes precedence: accepting sensitive content must
+  // never hide a hook, agent, plugin, skill registry, or workspace MCP binding.
   // Match names explicitly: the rejection policy must not depend on the host
   // filesystem folding case, and Linux can contain several aliases at once.
   for (const entry of entries.filter((name) => name.toLowerCase() === '.agents')) {
@@ -185,5 +197,14 @@ export function preflightAgyNativeWorkspace(workspaceRoot: string): AgyNativeWor
       return { ok: false, reason: 'workspace_executable_customization', path: join(agentsDir, unsafe) };
     }
   }
+  const safeEnvTemplates = new Set(['.env.example', '.env.local.example', '.env.example.opensource']);
+  const sensitive = entries.find((entry) => {
+    const name = entry.toLowerCase();
+    return (
+      ((name === '.env' || name.startsWith('.env.')) && !safeEnvTemplates.has(name)) ||
+      ['.netrc', '.pypirc', '.ssh', '.aws'].includes(name)
+    );
+  });
+  if (sensitive) return { ok: false, reason: 'workspace_sensitive_content', path: join(root, sensitive) };
   return { ok: true };
 }

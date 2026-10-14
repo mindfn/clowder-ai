@@ -1,5 +1,7 @@
 import { useEffect, useState } from 'react';
 import { apiFetch } from '@/utils/api-client';
+import { useShellCopy } from '../shell-copy';
+import { mailboxEntryCopy } from './mailbox-entry.shell-copy';
 
 /** Message owner holds the last receipt; navigation, reload and browser storage do not own its lifetime. */
 export function MailboxMentionUndo({
@@ -11,6 +13,7 @@ export function MailboxMentionUndo({
   disabled?: boolean;
   visible?: boolean;
 }) {
+  const t = useShellCopy(mailboxEntryCopy);
   const [receipt, setReceipt] = useState<{ undoId: string; handled: number; remaining: number } | null>(null);
   const [busy, setBusy] = useState(false);
   const [notice, setNotice] = useState<string | null>(null);
@@ -24,10 +27,10 @@ export function MailboxMentionUndo({
       const current = ++generation;
       try {
         const response = await apiFetch('/api/concierge/work/mentions/last-handling');
-        if (!response.ok) throw new Error('无法读取撤销记录，请重试。');
+        if (!response.ok) throw new Error(t.undoReadFailed);
         const body = await response.json();
         if (!live || current !== generation) return;
-        if (body.ownerUserId !== owner) throw new Error('撤销记录归属未确认。');
+        if (body.ownerUserId !== owner) throw new Error(t.undoOwnerUnknown);
         const value = body.receipt;
         if (
           value !== null &&
@@ -38,12 +41,12 @@ export function MailboxMentionUndo({
             value.remaining < 0 ||
             value.remaining > value.handled)
         )
-          throw new Error('撤销记录不可用。');
+          throw new Error(t.undoRecordUnavailable);
         setReceipt(value);
       } catch (e) {
         if (live && current === generation) {
           setReceipt(null);
-          setNotice(e instanceof Error ? e.message : '无法读取撤销记录。');
+          setNotice(e instanceof Error ? e.message : t.undoReadFailed);
         }
       }
     };
@@ -53,7 +56,7 @@ export function MailboxMentionUndo({
       live = false;
       window.removeEventListener('cat-cafe:user-mention-updated', load);
     };
-  }, [owner]);
+  }, [owner, t]);
   async function undo() {
     if (!receipt) return;
     setBusy(true);
@@ -63,15 +66,13 @@ export function MailboxMentionUndo({
         headers: { 'content-type': 'application/json' },
         body: JSON.stringify({ undoId: receipt.undoId }),
       });
-      if (!response.ok) throw new Error('撤销已不可用，请重新读取记录。');
+      if (!response.ok) throw new Error(t.undoExpired);
       const result = await response.json();
-      setNotice(
-        `已撤销 ${result.restored} 件。${result.restored < receipt.remaining ? '有后续变化的对话保留当前状态。' : ''}`,
-      );
+      setNotice(t.undoResult(result.restored) + (result.restored < receipt.remaining ? t.undoNewerChanges : ''));
       setReceipt(null);
       window.dispatchEvent(new Event('cat-cafe:user-mention-updated'));
     } catch (e) {
-      setNotice(e instanceof Error ? e.message : '未能撤销，请重试。');
+      setNotice(e instanceof Error ? e.message : t.undoFailed);
     } finally {
       setBusy(false);
     }
@@ -87,8 +88,7 @@ export function MailboxMentionUndo({
           onClick={() => void undo()}
           data-testid="mailbox-mentions-undo"
         >
-          撤销刚才的批量处理（{receipt.remaining < receipt.handled ? '剩 ' : ''}
-          {receipt.remaining} 件）
+          {t.undoBatchLabel(receipt.remaining, receipt.handled)}
         </button>
       ) : null}
       {notice ? (

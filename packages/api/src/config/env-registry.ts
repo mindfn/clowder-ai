@@ -115,6 +115,17 @@ export const ENV_CATEGORIES: Record<EnvCategory, string> = {
 export const ENV_VARS: EnvDefinition[] = [
   // --- server ---
   {
+    name: 'CAT_CAFE_DOT_WEBHOOK_PROXY_URL',
+    defaultValue: '(未配置；使用系统 DNS)',
+    description: 'dot webhook 专用可选本机 HTTP 代理；通过 Google DoH 解析并固定公网 IP，需本人同意后重启启用',
+    category: 'server',
+    sensitive: false,
+    maskMode: 'url',
+    runtimeEditable: false,
+    restartRequired: true,
+    exampleRecommended: true,
+  },
+  {
     name: 'CAT_CAFE_REMOTE_PUBLIC_BASE_URL',
     defaultValue: '(未配置)',
     description: '当前部署受管 Remote MCP 的 HTTPS 地址；dot 协作据此准备订阅说明，必须指向本部署',

@@ -2,8 +2,12 @@ import { type MediaContextAttachment, MediaContextAttachmentSchema } from '@cat-
 import { act } from 'react';
 import { createRoot, type Root } from 'react-dom/client';
 import { afterEach, beforeEach, expect, it, vi } from 'vitest';
+import { imageArtworkCopy } from '@/components/content-review/image-artwork.shell-copy';
+import { checkShellCopyParity } from '@/components/shell/__tests__/shell-copy-parity-check';
+import { writeShellPresentation } from '@/components/shell/shell-presentation';
 import { getContextAttachmentDraft, syncContextAttachmentDraftToStorage } from '@/components/thread-drafts';
 import { useChatStore } from '@/stores/chatStore';
+import { WorkspaceSurfaceVisibilityProvider } from '../../WorkspaceSurfaceVisibility';
 import { WorkspaceContentReviewSurface } from '../WorkspaceContentReviewSurface';
 import { mediaView, reviewId, revision, view as textView } from './WorkspaceContentReviewSurface.fixture';
 
@@ -19,6 +23,10 @@ vi.mock('@/components/MarkdownContent', () => ({
 const threadId = 'thread-image-chat-primary';
 let container: HTMLDivElement;
 let root: Root;
+
+it('keeps the new image actions complete in both shell languages', () => {
+  expect(checkShellCopyParity(imageArtworkCopy)).toEqual([]);
+});
 
 beforeEach(() => {
   localStorage.clear();
@@ -40,25 +48,81 @@ afterEach(() => {
   vi.restoreAllMocks();
 });
 
-async function openImage(current = mediaView()) {
+async function openImage(current = mediaView(), visible = true) {
   mocks.apiFetch.mockImplementation(async (url: string) => {
     if (url === '/api/workspace/content-reviews/prepare') return new Response(JSON.stringify(current));
     throw new Error(`unexpected write or read: ${url}`);
   });
   await act(async () => {
     root.render(
-      <WorkspaceContentReviewSurface
-        worktreeId="worktree-a"
-        path="cover.png"
-        sourceText=""
-        sourceTextRevision=""
-        onBack={vi.fn()}
-      />,
+      <WorkspaceSurfaceVisibilityProvider visible={visible}>
+        <WorkspaceContentReviewSurface
+          worktreeId="worktree-a"
+          path="cover.png"
+          sourceText=""
+          sourceTextRevision=""
+          onBack={vi.fn()}
+        />
+      </WorkspaceSurfaceVisibilityProvider>,
     );
     await Promise.resolve();
     await Promise.resolve();
   });
 }
+
+it('does not insert an image reference when a retained hidden owner restores beside the active document', async () => {
+  await openImage(mediaView(), false);
+  expect(container.querySelector('[data-testid="workspace-review-artwork"]')).not.toBeNull();
+  expect(useChatStore.getState().pendingChatInsert).toBeNull();
+  expect(getContextAttachmentDraft(threadId)).toEqual([]);
+});
+
+it('opening a visible image leaves the explicit composer and saved attachment draft untouched', async () => {
+  writeShellPresentation('v2');
+  await openImage();
+  expect(useChatStore.getState().pendingChatInsert).toBeNull();
+  expect(getContextAttachmentDraft(threadId)).toEqual([]);
+});
+
+it('a readable historical image can be circled for Chat while drawing and saving remain unavailable', async () => {
+  writeShellPresentation('v2');
+  await openImage({ ...mediaView(), canWrite: false });
+  const actions = [...container.querySelectorAll<HTMLButtonElement>('[aria-label="作品操作模式"] button')];
+  expect(actions[0]?.disabled).toBe(false);
+  expect(actions[1]?.disabled).toBe(true);
+  await act(async () => actions[0]?.click());
+  expect(actions[0]?.getAttribute('aria-pressed')).toBe('true');
+  expect(container.querySelector('textarea')).toBeNull();
+  expect(mocks.apiFetch).toHaveBeenCalledTimes(1);
+});
+
+it('keeps an acknowledged removal cleared when the image owner remounts hidden', async () => {
+  await openImage();
+  const original = useChatStore.getState().pendingChatInsert?.contextAttachments;
+  expect(original?.[0].kind).toBe('media');
+  await act(async () => {
+    syncContextAttachmentDraftToStorage(threadId, []);
+    useChatStore.setState({ pendingChatInsert: null });
+    root.unmount();
+  });
+  root = createRoot(container);
+  await openImage(mediaView(), false);
+  expect(useChatStore.getState().pendingChatInsert).toBeNull();
+  expect(getContextAttachmentDraft(threadId)).toEqual([]);
+});
+
+it('references the original work once when its hidden surface is explicitly shown', async () => {
+  await openImage(mediaView(), false);
+  useChatStore.setState({ pendingChatInsert: null });
+  await openImage();
+  const insert = useChatStore.getState().pendingChatInsert;
+  expect(insert?.contextAttachments).toHaveLength(1);
+  expect(insert?.contextAttachments?.[0]).toMatchObject({
+    kind: 'media',
+    source: { kind: 'workspace', locator: { worktreeId: 'worktree-a', path: 'cover.png' } },
+    selections: [],
+  });
+});
 
 it('offers a whole-image Chat action before selecting, preserving the same draft and exact source without sending', async () => {
   await openImage();
@@ -88,6 +152,16 @@ it('does not offer a separate modification sender beside the image Chat path', a
   await openImage();
   expect(container.querySelector('[data-testid="content-modification-entry"]')).toBeNull();
   expect(container.querySelector('[data-testid="workspace-review-artwork"]')).not.toBeNull();
+});
+
+it('opens the accepted image tools directly without the old annotation and enlarged-view action row', async () => {
+  await openImage();
+  const actions = [...container.querySelectorAll<HTMLButtonElement>('[aria-label="作品操作模式"] button')];
+  expect(actions.map((button) => button.textContent?.trim())).toEqual(['圈选', '画笔']);
+  expect(container.textContent).not.toContain('修改想法 ·');
+  expect(container.textContent).not.toContain('放大查看');
+  await act(async () => actions[0]?.click());
+  expect(container.querySelector('textarea')).toBeNull();
 });
 
 it('keeps an original PNG draft readable through records without a second sender or a request write', async () => {

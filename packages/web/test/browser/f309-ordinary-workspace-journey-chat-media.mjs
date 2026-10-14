@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
 import { writeFile } from 'node:fs/promises';
 import { test } from 'node:test';
+import { canonicalWorktreeId } from './f307-real-surface-fixtures.mjs';
 import { openWorkspaceTools } from './f307-workspace-open.mjs';
 import { registerWholeImageChatJourney } from './f309-image-chat-primary.mjs';
 import {
@@ -10,7 +11,7 @@ import {
   measureContrast,
   openChatPage,
 } from './f309-ordinary-workspace-journey-chat-progress.mjs';
-import { REVIEW_ID, SOURCE_REVISION, THREAD_ID } from './f309-ordinary-workspace-journey-fixture.mjs';
+import { REVIEW_ID, SOURCE_REVISION, THREAD_ID, WORKTREE_ID } from './f309-ordinary-workspace-journey-fixture.mjs';
 import { modelProjection } from './f309-ordinary-workspace-journey-text-quote.mjs';
 
 // Real Next shell, production CSS, the real composer and the real artwork surface; the network is the journey
@@ -174,10 +175,107 @@ export function registerOrdinaryChatMediaJourney(suite) {
   }
   registerWholeImageChatJourney(openWork);
 
-  const addPlace = async (page, words) => {
-    if (words) await page.getByPlaceholder('写下这条批注…').fill(words);
-    await page.getByTestId('workspace-content-review-media-add-to-chat').click();
-  };
+  test(
+    'image canvas: exact sent work shows its original request and cancels without changing the composer',
+    { timeout: 90_000 },
+    async () => {
+      let cancelled = false;
+      const message = sentMessage();
+      message.contentBlocks[1].attachment.source = {
+        kind: 'workspace',
+        locator: { worktreeId: canonicalWorktreeId(WORKTREE_ID), path: 'art/cover.png' },
+        expectedSourceRevision: SOURCE_REVISION,
+        reviewId: REVIEW_ID,
+        expectedReviewRevision: 1,
+      };
+      const untaken = {
+        ...structuredClone(message),
+        id: 'human-media-untaken-later',
+        timestamp: message.timestamp + 1,
+      };
+      const { context, page, calls, errors } = await openChatPage(
+        () => ({ ...suite(), baseUrl: `${suite().baseUrl}?shell=v2` }),
+        {
+          messages: [message, untaken],
+          handleApi: ownerApi({
+            respond: (method, path) => {
+              if (method === 'POST' && path.endsWith('/cancel')) cancelled = true;
+              return { body: requestDetail({ revision: cancelled ? 2 : 1, execution: 'running', cancelled }) };
+            },
+          }),
+        },
+      );
+      try {
+        await page.locator('[data-testid="workspace-panel-toggle"][data-client-interactive="true"]').waitFor();
+        const composer = page.getByLabel('消息输入框');
+        await composer.fill('另一个尚未发送的想法\n不要替我发送');
+        await page.waitForFunction(
+          (id) =>
+            new Map(JSON.parse(sessionStorage.getItem('cat-cafe:thread-drafts') ?? '[]')).get(id) ===
+            '另一个尚未发送的想法\n不要替我发送',
+          THREAD_ID,
+        );
+        const home = await openWorkspaceTools(page);
+        await home.getByTestId('workspace-launcher-search').fill('cover');
+        await home.getByTestId('workspace-launcher-file-result').filter({ hasText: '文件名' }).click();
+        const progress = page.getByTestId('image-work-progress').getByTestId('modification-progress');
+        await progress.waitFor();
+        assert.equal(await progress.getAttribute('data-state'), 'working');
+        assert.equal(await progress.count(), 1, 'later untaken same-work B cannot conceal real request A');
+        await page.getByRole('button', { name: '画笔', exact: true }).click();
+        await page.getByRole('button', { name: '形状', exact: true }).click();
+        await page.getByRole('button', { name: '矩形', exact: true }).click();
+        const stage = await page.getByTestId('review-markup-layer').boundingBox();
+        assert.ok(stage);
+        await page.mouse.move(stage.x + stage.width * 0.2, stage.y + stage.height * 0.2);
+        await page.mouse.down();
+        await page.mouse.move(stage.x + stage.width * 0.35, stage.y + stage.height * 0.35, { steps: 4 });
+        await page.mouse.up();
+        await page.getByTestId('review-local-mark').waitFor();
+        const refreshed = page.waitForResponse(
+          (response) =>
+            new URL(response.url()).pathname === '/api/content-modifications/context' &&
+            response.request().postDataJSON().source.expectedReviewRevision === 2,
+        );
+        await page.getByRole('button', { name: '完成并保存', exact: true }).click();
+        await page.getByTestId('review-saved-markup-layer').waitFor();
+        await refreshed;
+        assert.equal(
+          await progress.getAttribute('data-state'),
+          'working',
+          'review-only advance retains the original executing request',
+        );
+        await page.screenshot({ path: `${EVIDENCE}/r1-image-work-progress.png` });
+        await writeFile(
+          `${EVIDENCE}/r1-image-work-progress.json`,
+          JSON.stringify(
+            {
+              url: page.url(),
+              activeMessageId: message.id,
+              untakenMessageId: untaken.id,
+              requestId: REQUEST_ID,
+              source: message.contentBlocks[1].attachment.source,
+              contextReads: calls.filter((call) => call.startsWith('context ')),
+              errors,
+            },
+            null,
+            2,
+          ),
+        );
+        assert.ok(!calls.some((call) => call.startsWith('DECOY')), 'another Human request is never read');
+        assert.equal(await page.getByTestId('workspace-content-review-surface').locator('textarea').count(), 0);
+        await progress.getByRole('button', { name: '取消修改', exact: true }).click();
+        await page.getByTestId('image-work-progress').locator('[data-state="cancelled_still_running"]').waitFor();
+        assert.equal(calls.filter((call) => call.startsWith('POST')).length, 1);
+        assert.equal(await composer.inputValue(), '另一个尚未发送的想法\n不要替我发送');
+        await page.screenshot({ path: `${EVIDENCE}/studio297-canvas-request-cancelled.png` });
+        assert.deepEqual(errors, []);
+      } finally {
+        await context.close();
+      }
+    },
+  );
+
   const numbers = (locator) => locator.evaluateAll((nodes) => nodes.map((node) => node.textContent?.trim()));
 
   test(
@@ -186,38 +284,27 @@ export function registerOrdinaryChatMediaJourney(suite) {
     async () => {
       const { context, page, errors, sent } = await openWork();
       try {
-        // The whole image, with words for that place.
-        await page.getByRole('button', { name: '标注整张图片', exact: true }).click();
-        const save = page.getByRole('button', { name: '保存批注', exact: true });
-        assert.equal(await save.isVisible(), false, 'saving is an explicit editing action, not another primary send');
-        const editing = page.getByLabel('批注操作', { exact: true });
-        await editing.click();
-        assert.equal(await save.isVisible(), true, 'the original save remains reachable');
-        await page.screenshot({ path: `${EVIDENCE}/media-chat-annotation-actions-1440.png` });
-        await editing.click();
-        await addPlace(page, '移除角落的标志');
+        // The accepted canvas sends regions straight into the one existing Chat composer.
+        await page.getByRole('button', { name: '圈选', exact: true }).click();
+        const box = await page.getByTestId('review-media-stage').boundingBox();
+        assert.ok(box);
+        for (const [x, y] of [
+          [0.15, 0.2],
+          [0.5, 0.6],
+        ]) {
+          await page.mouse.move(box.x + box.width * x, box.y + box.height * y);
+          await page.mouse.down();
+          await page.mouse.move(box.x + box.width * (x + 0.2), box.y + box.height * (y + 0.15));
+          await page.mouse.up();
+        }
         const chip = page.locator(CHIP);
         await chip.waitFor({ timeout: 15_000 });
         assert.equal(sent.length, 0, 'adding is not sending');
-
-        // A second place, circled by hand on the picture. After an add the canvas stays ready to circle again
-        // ("取消圈选" is showing); only when it is not does the person have to ask for it.
-        const startCircling = page.getByRole('button', { name: '圈选区域', exact: true });
-        if ((await startCircling.count()) > 0) await startCircling.click();
-        await page.getByRole('button', { name: '取消圈选', exact: true }).waitFor();
-        const box = await page.getByTestId('review-media-stage').boundingBox();
-        assert.ok(box);
-        await page.mouse.move(box.x + box.width * 0.15, box.y + box.height * 0.2);
-        await page.mouse.down();
-        await page.mouse.move(box.x + box.width * 0.4, box.y + box.height * 0.5);
-        await page.mouse.up();
-        await addPlace(page);
+        assert.equal(await page.getByTestId('workspace-content-review-surface').locator('textarea').count(), 0);
 
         // One chip, two numbered places in the order they were added, and the same numbers on the picture.
         assert.equal(await page.locator(CHIP).count(), 1, 'one media attachment for one work');
-        const tags = page.locator(`${CHIP} [data-selection-id]`);
         assert.deepEqual(await numbers(page.locator(`${CHIP} [data-testid="media-selection-number"]`)), ['1', '2']);
-        assert.equal(await tags.first().getAttribute('title'), '移除角落的标志');
         assert.deepEqual(await numbers(page.locator(`${MARKS} text`)), ['1', '2']);
         await page.screenshot({ path: `${EVIDENCE}/media-chat-composer-1440.png` });
 

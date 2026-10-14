@@ -4,6 +4,7 @@ import { useCoCreatorConfig } from '@/hooks/useCoCreatorConfig';
 import { formatCatDisplayName } from '@/lib/cat-display-name';
 import type { ChatMessage } from '@/stores/chat-types';
 import { useChatStore } from '@/stores/chatStore';
+import { artworkTitle } from './content-review/artwork-title';
 import { replyBodyCopy } from './reply-body.shell-copy';
 import { useShellCopy } from './shell/shell-copy';
 
@@ -78,9 +79,14 @@ export function useContextAttachmentPresentation(attachment: ContextAttachment, 
   const original = originalPresentation(attachment);
   const title = isV2 && source ? quoteTitle(source, loadedSource, getCatById, coCreator.name, t) : original.title;
   return {
-    title,
+    title: isV2 && attachment.kind === 'media' ? artworkTitle(title, t.media) : title,
     detail: original.detail,
-    kindLabel: isV2 && attachment.kind === 'quote' ? t.quote : KIND_LABELS[attachment.kind],
+    kindLabel:
+      isV2 && attachment.kind === 'quote'
+        ? t.quote
+        : isV2 && attachment.kind === 'media'
+          ? t.media
+          : KIND_LABELS[attachment.kind],
     commentLabel: isV2 ? t.comment : 'Comment',
     removeLabel: isV2 ? t.remove(title) : `移除上下文 ${original.title}`,
   };

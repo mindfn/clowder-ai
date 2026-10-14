@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
 import { createHash } from 'node:crypto';
 import { after, before, test } from 'node:test';
+import puppeteer from 'puppeteer-core';
 import { loadChromium } from '../../../scripts/f317-page-action/browser-binary.mjs';
 import { createBrowserPort } from '../../../scripts/f317-page-action/browser-port.mjs';
 import { startFixtureServer } from '../../../scripts/f317-page-action/serve.mjs';
@@ -12,7 +13,7 @@ let url;
 before(async () => {
   ({ server, url } = await startFixtureServer());
   const chromium = await loadChromium();
-  browser = await chromium.launch({ headless: true });
+  browser = await puppeteer.launch({ headless: true, executablePath: chromium.executablePath() });
 });
 after(async () => {
   await browser?.close();
@@ -93,7 +94,7 @@ async function liveEpisode(beforeCommit) {
         },
       },
     });
-    const readback = JSON.parse(await page.locator('#readback').textContent());
+    const readback = JSON.parse(await page.$eval('#readback', (element) => element.textContent));
     return { result, readback };
   } finally {
     await page.close();

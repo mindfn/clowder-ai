@@ -404,13 +404,24 @@ export function F307ExperienceWorkbench({
   onOpenAppRoute: (href: string) => void;
 }) {
   const isDesktop = useIsDesktop();
+  const isV2 = useShellPresentation() === 'v2';
   const t = useShellCopy(workspaceChromeCopy);
   const [homeOpen, setHomeOpen] = useState(false);
   const [homeSearchQuery, setHomeSearchQuery] = useState('');
   const [toolsReturnRequest, setToolsReturnRequest] = useState<ToolsReturnRequest>();
   const toolsReturnSequence = useRef(0);
   const captureSettingsOrigin = useSettingsReadingEntry();
-  const toolsScopeKey = JSON.stringify([threadId, worktreeId]);
+  const [toolsScope, setToolsScope] = useState({ threadId, worktreeId, generation: 0 });
+  if (toolsScope.threadId !== threadId || toolsScope.worktreeId !== worktreeId) {
+    // First discovery binds an unbound menu; it must not dismiss or remount the user's search.
+    // A known root changing or disappearing, or a different thread, still resets the UI lifetime.
+    const bindsInitialRoot = isV2 && toolsScope.threadId === threadId && toolsScope.worktreeId === null;
+    setToolsScope({ threadId, worktreeId, generation: toolsScope.generation + (bindsInitialRoot ? 0 : 1) });
+  }
+  // This is a presentation lifetime, not a file/return authorization coordinate.
+  const toolsScopeKey = isV2
+    ? JSON.stringify([threadId, toolsScope.generation])
+    : JSON.stringify([threadId, worktreeId]);
   const previousToolsScope = useRef(toolsScopeKey);
   useEffect(() => {
     if (previousToolsScope.current === toolsScopeKey) return;
@@ -475,7 +486,6 @@ export function F307ExperienceWorkbench({
     threadId,
   });
 
-  const isV2 = useShellPresentation() === 'v2';
   const controlCopy = isV2 ? t : workspaceChromeCopy.zh;
   const projection = projectWorkbench(layout, isDesktop ? 1024 : 390);
   const zeroTopology = projection.visibleSurfaceIds.length === 0;
@@ -611,6 +621,21 @@ export function F307ExperienceWorkbench({
     <F307OwnerSurfaceRenderer
       surface={surface}
       surfaceVisible={surfaceVisible}
+      fullWindowAction={
+        artifactWorkHostAvailable &&
+        isDesktop &&
+        threadId &&
+        surface.id === activeWorkspaceSurface?.id &&
+        isWorkspaceFullWindowSurface(surface, 'v2')
+          ? {
+              active:
+                artifactWorkPresentation.session?.threadId === threadId &&
+                artifactWorkPresentation.session?.surfaceId === surface.id &&
+                artifactWorkPresentation.session?.mode === 'full-window',
+              onToggle: () => toggleArtifactWorkFullWindow(threadId, surface),
+            }
+          : undefined
+      }
       hostWorktreeId={canonicalWorktreeId ?? worktreeId}
       hostThreadId={threadId}
       focusMode={focusSurfaceId === surface.id}

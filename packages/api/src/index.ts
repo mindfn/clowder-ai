@@ -1121,6 +1121,9 @@ async function main(): Promise<void> {
   let actionSubjectTruthResolver:
     | import('./domains/ball-custody/ActionSubjectTruthResolver.js').ActionSubjectTruthResolver
     | undefined;
+  let taskApprovedDelegateProvider:
+    | import('./domains/ball-custody/action-subject-delegate-contract.js').TaskApprovedDelegateProvider
+    | undefined;
   // The action services initialize before the GitHub runtime configuration. The
   // provider stays fail-closed until this late-bound server observer is ready.
   let observeLivePrFreshness:
@@ -1179,6 +1182,7 @@ async function main(): Promise<void> {
       import('./domains/ball-custody/ProposalStoreDelegateProvider.js'),
     ]);
     actionSuccessorLeaseStore = new actionStoreMod.RedisActionSuccessorLeaseStore(redis);
+    taskApprovedDelegateProvider = proposalDelegateMod.createTaskApprovedDelegateProvider(proposalStore, threadStore);
     actionSubjectTruthResolver = new actionTruthMod.ActionSubjectTruthResolver(
       actionSuccessorLeaseStore,
       communityObjectStore,
@@ -1213,33 +1217,7 @@ async function main(): Promise<void> {
           return (await observeLivePrFreshness?.(input)) ?? null;
         },
       },
-      // F167 × F322: approved-child delegation provider.
-      // Uses the authoritative proposal store with a real thread-based
-      // binding provider. Authorized delegate catIds come from
-      // proposal.preferredCats (the explicit execution target at
-      // proposal/approval time), not the current thread roster.
-      //
-      // Product contract: approved proposals are irrevocable
-      // (ProposalStatus has no approved→revoked transition). The provider
-      // still verifies current status from the authoritative store on
-      // every call.
-      new proposalDelegateMod.ProposalStoreDelegateProvider(
-        // Adapt IProposalStore.get() which may return synchronous null
-        // to the async-only shape expected by ProposalStoreDelegateProvider.
-        {
-          async get(id: string) {
-            return proposalStore.get(id);
-          },
-        },
-        // ThreadDelegateBindingProvider: resolves task→proposal bindings
-        // via the complete thread→proposal authority chain. Product list
-        // windows must not silently revoke older approved children.
-        new proposalDelegateMod.ThreadDelegateBindingProvider({
-          async listAllByThread(threadId: string) {
-            return proposalStore.listAllByThread(threadId);
-          },
-        }),
-      ),
+      taskApprovedDelegateProvider,
     );
     actionSuccessorAdmissionService = new actionAdmissionMod.ActionSuccessorAdmissionService(
       actionSuccessorLeaseStore,
@@ -4345,11 +4323,15 @@ async function main(): Promise<void> {
     isLiveConfigChangePending: (userId) => liveCompanionSessions.isChangingPreferences(userId),
   });
   const { companionDecisionRoutes } = await import('./routes/companion-decision-routes.js');
+  const { readIgnoredItemPreferences } = await import('./config/user-preferences-ignored-items.js');
+  const ignoredItemPreferenceProjectRoot = resolveActiveProjectRoot();
   await app.register(companionDecisionRoutes, {
     ownerUserId: privateUserId,
     messageStore,
     threadStore,
     runtimeInteractionStore: runtimeInteractionRuntime.store,
+    readIgnoredItemPreferences: (ownerUserId) =>
+      readIgnoredItemPreferences(ignoredItemPreferenceProjectRoot, ownerUserId),
     onResolved: (ownerUserId) =>
       socketManager?.emitToUser(ownerUserId, 'entrusted_work_projection_invalidated', { ownerUserId }),
   });
@@ -6070,7 +6052,10 @@ async function main(): Promise<void> {
   const { DotConnectionStore } = await import('./domains/cats/services/cloud-bridge/dot/DotConnectionStore.js');
   const { ensureDotIdentity } = await import('./domains/cats/services/cloud-bridge/dot/dot-identity.js');
   const { registerDotConnectionRoutes } = await import('./routes/chatgpt-dot-connection-routes.js');
+  const { createDotWebhookSender } = await import('./domains/cats/services/cloud-bridge/dot/dot-webhook.js');
+  const dotWebhookSender = createDotWebhookSender(process.env.CAT_CAFE_DOT_WEBHOOK_PROXY_URL);
   dotConnectionService = new DotConnectionService({
+    sendWebhook: dotWebhookSender,
     store: new DotConnectionStore(resolve(pluginProjectRoot, '.cat-cafe', 'plugin-host', 'dot-connection.json')),
     keys: agentKeyRegistry,
     ensureIdentity: async () => {
@@ -6146,6 +6131,7 @@ async function main(): Promise<void> {
     },
   });
   dotEventsBridge = new DotEventsBridge({
+    sendWebhook: dotWebhookSender,
     connection: dotConnectionService,
     dispatches: dotDispatches,
     messageStore,
@@ -6629,6 +6615,7 @@ async function main(): Promise<void> {
     invocationRecords: invocationRecordStore,
     turnExecutions: turnExecutionStore,
     tracker: invocationTracker,
+    ...(taskApprovedDelegateProvider ? { taskApprovedDelegateProvider } : {}),
   });
   const invalidateEntrustedWorkProjection = (ownerUserId: string) =>
     socketManager?.emitToUser(ownerUserId, 'entrusted_work_projection_invalidated', { ownerUserId });

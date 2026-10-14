@@ -4,6 +4,7 @@ export async function ensureWorkspaceOpen(
 ) {
   const toggle = page.getByTestId('workspace-panel-toggle');
   const workbench = page.getByTestId('f307-experience-workbench');
+  if (await workbench.isVisible()) return;
   await toggle.waitFor();
   const interactiveToggle = page.locator('[data-testid="workspace-panel-toggle"][data-client-interactive="true"]');
   await interactiveToggle.waitFor({ state: 'attached', timeout: readinessTimeoutMs }).catch(async () => {

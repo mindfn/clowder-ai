@@ -62,6 +62,7 @@ import {
   ActionSuccessorStandingError,
   buildActionSuccessorFence,
 } from '../domains/ball-custody/ActionSuccessorAdmissionService.js';
+import { resolveActionSuccessorHumanReassignmentEvidence } from '../domains/ball-custody/ActionSuccessorHumanReassignmentEvidence.js';
 import {
   ActionTerminalPredicateError,
   getActionTerminalCapabilityForPredicateKind,
@@ -3033,6 +3034,16 @@ export const callbacksRoutes: FastifyPluginAsync<CallbackRoutesOptions> = async 
         const incomingActionLeaseRef = action.replace
           ? await resolveCallbackActionLeaseRef(record, invocationRecordStore)
           : undefined;
+        const admissionNow = Date.now();
+        const humanReassignmentEvidence = action.replace
+          ? await resolveActionSuccessorHumanReassignmentEvidence({
+              messageStore,
+              groundingEvidenceRef: action.groundingEvidenceRef,
+              userId: actor.userId,
+              childThreadId: effectiveThreadId,
+              now: admissionNow,
+            })
+          : undefined;
         const admissionInput = {
           tenantScope: actor.userId,
           actorCatId: actor.catId,
@@ -3041,7 +3052,8 @@ export const callbacksRoutes: FastifyPluginAsync<CallbackRoutesOptions> = async 
           holderCatIds: actionHolderCatIds,
           dispatchId,
           evidenceRef: `callback:${invocationId}:${clientMessageId}`,
-          now: Date.now(),
+          now: admissionNow,
+          ...(humanReassignmentEvidence ? { humanReassignmentEvidence } : {}),
           ...(incomingActionLeaseRef ? { incomingActionLeaseRef } : {}),
           action,
         };
@@ -4362,13 +4374,10 @@ export const callbacksRoutes: FastifyPluginAsync<CallbackRoutesOptions> = async 
     // history read must not expose or acknowledge another thread's queued receipt custody.
     const canExposeQueuedBodies = principal.kind === 'invocation' && effectiveThreadId === principal.threadId;
     const queuedFullEntries =
-      isFullMode && isContiguousRead && canExposeQueuedBodies && opts.invocationQueue
-        ? opts.invocationQueue.getQueuedBodyMessagesForCat(
-            effectiveThreadId,
-            principalUserId,
-            principalCatId,
-            expectedParentInvocationId,
-          )
+      isFullMode && (isContiguousRead || messageId !== undefined) && canExposeQueuedBodies && opts.invocationQueue
+        ? opts.invocationQueue
+            .getQueuedBodyMessagesForCat(effectiveThreadId, principalUserId, principalCatId, expectedParentInvocationId)
+            .filter((entry) => isContiguousRead || entry.messageId === messageId)
         : [];
     let contextSelection: ThreadContextSelection = decodedCursor?.selection ?? { kind: 'history' };
     let unreadTailContinuationSelection: ThreadContextSelection | undefined;

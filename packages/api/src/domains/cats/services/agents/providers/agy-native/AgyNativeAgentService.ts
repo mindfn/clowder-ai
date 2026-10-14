@@ -45,7 +45,7 @@ function rememberSuccessfulSession(
   if (terminal?.type === 'done' && !terminal.errorCode) sessions.set(sessionId, binding);
 }
 
-/** One CLI process per turn; no native shell or unvalidated MCP process is exposed. */
+/** One CLI process per turn; operator-approved native execution and separately scoped host MCP. */
 export class AgyNativeAgentService implements AgentService {
   readonly catId: CatId;
   private readonly model: string;
@@ -130,8 +130,9 @@ export class AgyNativeAgentService implements AgentService {
       }
       if (!options?.workingDirectory) throw new Error('AGY native requires an explicit workingDirectory');
       const workspace = resolve(options.workingDirectory);
+      const autoApprove = this.profile.autoApprove === true && options?.toolExecutionPolicy?.mode !== 'read_only';
       const preflight = preflightAgyNativeWorkspace(workspace);
-      if (!preflight.ok) {
+      if (!preflight.ok && !(autoApprove && preflight.reason === 'workspace_sensitive_content')) {
         const code =
           preflight.reason === 'workspace_sensitive_content'
             ? 'AGY_WORKSPACE_SENSITIVE_CONTENT'
@@ -170,6 +171,7 @@ export class AgyNativeAgentService implements AgentService {
           agentName: launch.agentName,
           spawnCwd: launch.cliOptions.cwd,
           model: this.model,
+          permissionMode: launch.permissionMode,
         },
         options?.signal,
       );
@@ -179,6 +181,7 @@ export class AgyNativeAgentService implements AgentService {
         observed,
         observed.cancelledBeforeTerminal === true,
         launch.grantedMcpTools,
+        launch.agentTools,
       );
       if (preparedNotice) {
         const terminal = messages.at(-1);

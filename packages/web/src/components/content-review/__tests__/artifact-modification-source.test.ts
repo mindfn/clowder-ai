@@ -1,6 +1,7 @@
 import type { ArtifactReviewRound, ArtifactReviewView } from '@cat-cafe/shared';
 import { describe, expect, it } from 'vitest';
 import { artifactRoundChatTarget, artifactRoundRequestSource } from '../artifact-modification-source';
+import { sameMediaContentWithAdvancedReview } from '../media-work-identity';
 
 const view = {
   review: {
@@ -80,5 +81,20 @@ describe('artifactRoundRequestSource — the source and Task a media round is mo
 
   it('says nothing is known yet while the ledger version of a published round is unverified', () => {
     expect(artifactRoundRequestSource(view, round({ ledgerRef: 'ledger-1' }))).toBeNull();
+  });
+
+  it('identifies the same published Task content when its canonical ledger and bound review advance together', () => {
+    const original = artifactRoundChatTarget(view, round({ ledgerRef: 'ledger-1', ledgerRevision: 3 }));
+    const advanced = artifactRoundChatTarget(
+      { ...view, review: { ...view.review, revision: 6 } },
+      round({ ledgerRef: 'ledger-1', ledgerRevision: 4 }),
+    );
+    if (!original || !advanced) throw new Error('published Task fixture');
+    expect(
+      sameMediaContentWithAdvancedReview(
+        { ...original, v: 1, id: 'published-whole', kind: 'media', selections: [] },
+        advanced,
+      ),
+    ).toBe(true);
   });
 });

@@ -10,13 +10,18 @@ import { encodeAgyStreamJsonUserMessage } from '../agy-stream-json-parser.js';
 import { materializeAgyNativeAgentFile } from './agy-native-agent-file.js';
 import { prepareAgyNativeCredentialFile } from './agy-native-credential-file.js';
 import { materializeAgyNativeMcpConfig } from './agy-native-mcp-config.js';
-import { buildAgyNativePolicy, callbackPolicyForAgyNativeMcpTools } from './agy-native-policy.js';
+import {
+  type AgyNativePermissionMode,
+  buildAgyNativePolicy,
+  callbackPolicyForAgyNativeMcpTools,
+} from './agy-native-policy.js';
 import { materializeAgyNativeSettings } from './agy-native-settings.js';
 
 export interface AgyNativeSessionBinding {
   readonly body: string;
   readonly l0Hash: string;
   readonly workspaceRoot: string;
+  readonly permissionMode: AgyNativePermissionMode;
 }
 
 export interface AgyNativeLaunchInput {
@@ -36,6 +41,8 @@ export interface AgyNativeLaunchPlan {
   readonly preparedRequest: PreparedProviderRequestV1;
   readonly agentName: string;
   readonly grantedMcpTools: readonly string[];
+  readonly permissionMode: AgyNativePermissionMode;
+  readonly agentTools: readonly string[];
   readonly binding: AgyNativeSessionBinding;
   readonly disposeCredentials?: () => void;
 }
@@ -87,6 +94,7 @@ function validatedTaskPolicy(input: AgyNativeLaunchInput): ReturnType<typeof bui
   const scope = input.options?.agyNativeScope ?? { writableFiles: [], mcpTools: [] };
   const policy = buildAgyNativePolicy({
     workspaceRoot: input.workspace,
+    autoApprove: input.profileConfig.autoApprove === true && input.options?.toolExecutionPolicy?.mode !== 'read_only',
     writableFiles: input.options?.toolExecutionPolicy?.mode === 'read_only' ? [] : scope.writableFiles,
     mcpTools: scope.mcpTools,
   });
@@ -150,7 +158,8 @@ function materializeTaskMcp(
 export function prepareAgyNativeLaunch(input: AgyNativeLaunchInput): AgyNativeLaunchPlan {
   const options = input.options;
   const policy = validatedTaskPolicy(input);
-  assertOperatorTrustedWorkspace(input.profileConfig, policy.workspaceRoot);
+  if (policy.permissionMode !== 'always-proceed')
+    assertOperatorTrustedWorkspace(input.profileConfig, policy.workspaceRoot);
   const profile = resolveAgyProfile({
     catId: input.catId,
     expectedModel: input.model,
@@ -163,7 +172,12 @@ export function prepareAgyNativeLaunch(input: AgyNativeLaunchInput): AgyNativeLa
     throw new Error('AGY native profile HOME overlaps the model-readable workspace');
   }
   assertNoUntrustedProfilePrograms(home);
-  const agent = materializeAgyNativeAgentFile({ profileHome: home, catId: input.catId, systemPrompt: input.body });
+  const agent = materializeAgyNativeAgentFile({
+    profileHome: home,
+    catId: input.catId,
+    systemPrompt: input.body,
+    autoApprove: policy.permissionMode === 'always-proceed',
+  });
   materializeAgyNativeSettings({ profileHome: home, model: input.model, policy });
   const command = input.command ?? resolveCliCommand('agy');
   if (!command) throw new Error('AGY native CLI binary was not found');
@@ -172,7 +186,10 @@ export function prepareAgyNativeLaunch(input: AgyNativeLaunchInput): AgyNativeLa
     workingDirectory: policy.workspaceRoot,
   });
   if (!profilePreflight.ok) throw new Error(profilePreflight.message);
-  const resume = input.prior?.l0Hash === agent.l0Hash && input.prior.workspaceRoot === policy.workspaceRoot;
+  const resume =
+    input.prior?.l0Hash === agent.l0Hash &&
+    input.prior.workspaceRoot === policy.workspaceRoot &&
+    input.prior.permissionMode === policy.permissionMode;
   const args = [
     '--add-dir',
     policy.workspaceRoot,
@@ -220,7 +237,14 @@ export function prepareAgyNativeLaunch(input: AgyNativeLaunchInput): AgyNativeLa
     preparedRequest,
     agentName: agent.agentName,
     grantedMcpTools: policy.grantedMcpTools,
-    binding: { body: input.body, l0Hash: agent.l0Hash, workspaceRoot: policy.workspaceRoot },
+    permissionMode: policy.permissionMode,
+    agentTools: policy.agentTools,
+    binding: {
+      body: input.body,
+      l0Hash: agent.l0Hash,
+      workspaceRoot: policy.workspaceRoot,
+      permissionMode: policy.permissionMode,
+    },
     ...(disposeCredentials ? { disposeCredentials } : {}),
   };
 }

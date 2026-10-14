@@ -343,9 +343,15 @@ describe('the 待办 panel and the approvals it can host', () => {
 
     it('is not counted in the number: the rail and the tab say what the read proved', async () => {
       data.sessions = fakeSessions([sessionIn(decided)]);
-      show(okRead([row], { totalCount: 4 }));
+      const result = okRead([row], { totalCount: 4, attentionCount: 1 });
+      if (result.kind !== 'ok') throw new Error('Expected complete fixture');
+      result.read.sources.structuredChoices = {
+        ...result.read.sources.approvals,
+        coverage: 'pending_f306_structured_choices',
+      };
+      show(result);
       await openPanel();
-      expect(text('mailbox-tab-count')).toBe('4');
+      expect(text('mailbox-tab-count')).toBe('1');
     });
   });
 

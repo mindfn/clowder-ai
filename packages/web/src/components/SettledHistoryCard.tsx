@@ -14,20 +14,25 @@ import { type ApprovalCardDetails, ApprovalCardShell } from './ApprovalCardShell
 import { ApprovalFeatureBadge } from './ApprovalFeatureBadge';
 import { ApprovalProvenanceLinks } from './ApprovalProvenanceLinks';
 import { ApprovalTechnicalDetailContent } from './ApprovalTechnicalDetails';
+import { approvalHistoryCopy } from './approval-history.shell-copy';
 import { CompactLabel } from './content-overflow';
+import { useShellCopy } from './shell/shell-copy';
+import { useShellLanguage } from './shell/shell-language';
 
 interface SettledHistoryCardProps {
   item: SettledApprovalHubItem;
 }
 
 export function SettledHistoryCard({ item }: SettledHistoryCardProps) {
+  const t = useShellCopy(approvalHistoryCopy);
+  const language = useShellLanguage();
   const resolveCatName = useCatNameResolver();
   const status = approvalLifecyclePresentation(item);
   const details: ApprovalCardDetails | undefined =
     Object.keys(item.detail).length > 0
       ? {
-          label: '查看技术详情',
-          expandedLabel: '收起技术详情',
+          label: t.details,
+          expandedLabel: t.collapseDetails,
           testId: 'settled-card-technical-details',
           content: <ApprovalTechnicalDetailContent detail={item.detail} />,
         }
@@ -41,40 +46,46 @@ export function SettledHistoryCard({ item }: SettledHistoryCardProps) {
         <div className="flex min-w-0 items-center gap-1.5">
           <ApprovalFeatureBadge featureId={item.sourceFeatureId} testId="settled-card-feature-badge" />
           <span
-            className={`text-micro font-medium ${
-              status.tone === 'success'
-                ? 'text-[var(--semantic-success)]'
-                : status.tone === 'critical'
-                  ? 'text-[var(--semantic-critical)]'
-                  : 'text-cafe-secondary'
-            }`}
+            className="inline-flex items-center gap-1.5 text-micro font-medium text-cafe-interactive"
             data-testid="settled-card-status"
           >
-            {status.label}
+            <span
+              aria-hidden="true"
+              className="h-2 w-2 flex-none rounded-full"
+              style={{
+                backgroundColor:
+                  status.tone === 'success'
+                    ? 'var(--semantic-success)'
+                    : status.tone === 'critical'
+                      ? 'var(--semantic-critical)'
+                      : 'var(--cafe-secondary)',
+              }}
+            />
+            {t.lifecycle[item.resolution === 'accepted' ? item.materialization.state : item.resolution]}
           </span>
           <span
             className="ml-auto shrink-0 text-micro text-cafe-interactive/40"
             data-testid="settled-card-time"
-            title={`处理于 ${formatApprovalAbsoluteTime(item.decidedAt)}`}
+            title={t.decidedAt(formatApprovalAbsoluteTime(item.decidedAt, language))}
           >
-            处理于 {formatApprovalRelativeTime(item.decidedAt)}
+            {t.decidedAt(formatApprovalRelativeTime(item.decidedAt, Date.now(), language))}
           </span>
         </div>
       }
-      title={approvalDisplayTitle(item, { resolveCatName })}
+      title={approvalDisplayTitle(item, { resolveCatName, language })}
       titleLines={2}
       titleTestId="settled-card-summary"
       context={
         <div className="flex min-w-0 flex-wrap gap-x-3 gap-y-1" data-testid="settled-card-actors">
           <CompactLabel
-            label="发起人"
-            value={`发起人：${resolveCatName(item.requesterCatId)}`}
+            label={t.requester}
+            value={`${t.requester}${language === 'zh' ? '：' : ': '}${resolveCatName(item.requesterCatId)}`}
             density="compact"
             className="min-w-0 flex-1 basis-48 text-micro text-cafe-secondary"
           />
           <CompactLabel
-            label="决定人"
-            value={`决定人：${resolveCatName(item.decidedBy)}`}
+            label={t.decider}
+            value={`${t.decider}${language === 'zh' ? '：' : ': '}${resolveCatName(item.decidedBy)}`}
             density="compact"
             className="min-w-0 flex-1 basis-48 text-micro text-cafe-secondary"
           />

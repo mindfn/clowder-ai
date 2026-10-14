@@ -1,9 +1,12 @@
+import { imageArtworkCopy } from '@/components/content-review/image-artwork.shell-copy';
 import { ADD_TO_CHAT_LABEL } from '@/components/SelectionAnnotationAction';
+import { useShellCopy } from '@/components/shell/shell-copy';
 import type { useWorkspaceMediaChat } from './useWorkspaceMediaChat';
 
 type MediaChat = ReturnType<typeof useWorkspaceMediaChat>;
 
 export function WholeWorkChatButton({ chat }: { readonly chat: Pick<MediaChat, 'wholeWorkOffered' | 'addWork'> }) {
+  const t = useShellCopy(imageArtworkCopy);
   if (!chat.wholeWorkOffered) return null;
   return (
     <button
@@ -12,7 +15,7 @@ export function WholeWorkChatButton({ chat }: { readonly chat: Pick<MediaChat, '
       onClick={chat.addWork}
       className="rounded-md border border-cafe-subtle px-3 py-1.5 text-xs font-semibold text-cafe-accent"
     >
-      在 Chat 中修改整图
+      {t.wholeWork}
     </button>
   );
 }

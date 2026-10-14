@@ -48,6 +48,7 @@ import { resolveHeaderUserId, resolveStrictUserId } from '../utils/request-ident
 import { getDefaultUploadDir } from '../utils/upload-paths.js';
 import { configCatOrderRoutes } from './config-cat-order.js';
 import { configConversationViewRoutes } from './config-conversation-view.js';
+import { configIgnoredItemRoutes } from './config-ignored-items.js';
 import { configMessageDispositionRoutes } from './config-message-disposition.js';
 import { configThreadAttentionRoutes } from './config-thread-attention.js';
 
@@ -196,6 +197,7 @@ export async function configRoutes(app: FastifyInstance, opts: ConfigRoutesOptio
 
   await app.register(configCatOrderRoutes, { projectRoot });
   await app.register(configConversationViewRoutes, { projectRoot, threadStore: opts.threadStore });
+  await app.register(configIgnoredItemRoutes, { projectRoot });
   await app.register(configMessageDispositionRoutes, { projectRoot });
   await app.register(configThreadAttentionRoutes, { projectRoot, threadStore: opts.threadStore });
 

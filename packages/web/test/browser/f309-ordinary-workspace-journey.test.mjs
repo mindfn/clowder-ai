@@ -25,6 +25,8 @@ import { registerOrdinaryTextQuoteJourney } from './f309-ordinary-workspace-jour
 import { registerOrdinaryVideoJourney } from './f309-ordinary-workspace-journey-video.mjs';
 import { registerOrdinaryVideoModificationJourney } from './f309-ordinary-workspace-journey-video-modification.mjs';
 import { registerPublishedTextJourneys } from './f309-published-text-journey.mjs';
+import { registerStudio297LongImageJourneys } from './f309-studio297-long-image.mjs';
+import { registerTaskPublicationHeaderJourneys } from './f309-task-publication-header.mjs';
 
 let suite;
 
@@ -43,6 +45,8 @@ registerOrdinaryVideoModificationJourney(() => suite);
 registerOrdinaryOwnerJourney(() => suite);
 registerOrdinaryEntryJourneys(() => suite);
 registerArtworkEntryJourneys(() => suite);
+registerStudio297LongImageJourneys(() => suite);
+registerTaskPublicationHeaderJourneys(() => suite);
 registerOrdinaryTextQuoteJourney(() => suite);
 registerOrdinaryChatProgressJourney(() => suite);
 registerOrdinaryChatReceiptJourney(() => suite);

@@ -2,6 +2,7 @@ import type { ArtifactReviewView } from '@cat-cafe/shared';
 import { act, type ReactNode } from 'react';
 import { createRoot, type Root } from 'react-dom/client';
 import { afterEach, beforeEach, expect, it, vi } from 'vitest';
+import { writeShellPresentation } from '@/components/shell/shell-presentation';
 import { ArtifactMediaCompare } from '../media-compare/ArtifactMediaCompare';
 import { compareAsset } from './media-compare.fixture';
 
@@ -12,6 +13,7 @@ vi.mock('../ReviewRoundDecision', () => ({ ReviewRoundDecision: () => <p>原决�
 let root: Root, container: HTMLDivElement;
 beforeEach(() => {
   vi.stubGlobal('IS_REACT_ACT_ENVIRONMENT', true);
+  localStorage.clear();
   container = document.createElement('div');
   document.body.append(container);
   root = createRoot(container);
@@ -20,6 +22,28 @@ afterEach(() => {
   act(() => root.unmount());
   container.remove();
   vi.unstubAllGlobals();
+});
+
+it('uses the same readable work title in v2 comparison without renaming its source', async () => {
+  writeShellPresentation('v2');
+  const current = view();
+  current.review.title = '修改《codex-aaaaaaaaaaaaaaaa.png》';
+  await act(async () =>
+    root.render(
+      <ArtifactMediaCompare
+        view={current}
+        round={current.review.rounds[1]}
+        controller={controller(current)}
+        prefix="review:"
+        canWrite
+        onBack={vi.fn()}
+        onClose={vi.fn()}
+      />,
+    ),
+  );
+  expect(container.textContent).not.toContain('codex-');
+  expect(container.textContent).toContain('图片');
+  expect(current.review.title).toBe('修改《codex-aaaaaaaaaaaaaaaa.png》');
 });
 function view(state: ArtifactReviewView['authority']['state'] = 'current'): ArtifactReviewView {
   const stamp = '2026-10-02T19:00:00Z';

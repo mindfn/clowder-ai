@@ -31,7 +31,7 @@ export function useMediaMessageRequests(input: {
   messageId: string;
   /** When the message was sent; bounds how long a fresh message keeps looking for a cat to take it over. */
   sentAt: number;
-  attachment: MediaContextAttachment | null;
+  attachment: Pick<MediaContextAttachment, 'source'> | null;
 }) {
   const source = input.attachment?.source;
   const sourceKey = source ? `${input.messageId}:${JSON.stringify(source)}` : null;

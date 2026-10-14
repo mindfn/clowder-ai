@@ -499,3 +499,37 @@ it('goes back to being an ordinary entry when the target stops being bound: the 
   expect(container.textContent).not.toContain('没有改去打开这件作品的其他任务审阅');
   expect(resolveArtifactReviewTarget(resolved.mock.calls.at(-1)?.[0])?.reviewId).toBe(context('c').reviewId);
 });
+
+it.each([
+  'pending',
+  'error',
+  'choice',
+])('keeps the header switch reachable in the %s resolver fallback without mounting the owner', async (state) => {
+  const switched = vi.fn();
+  if (state === 'pending') mock.apiFetch.mockImplementation(() => new Promise<Response>(() => {}));
+  else
+    mock.apiFetch.mockImplementation(async () =>
+      state === 'error'
+        ? new Response(JSON.stringify({ error: 'denied' }), { status: 403 })
+        : new Response(JSON.stringify({ ownerUserId: 'operator', contexts: [context('b'), context('c')] })),
+    );
+  await act(async () => {
+    root.render(
+      <PublicationLandingResolver
+        sourceSurface={canonical}
+        target={target}
+        onResolved={() => {}}
+        onBack={() => {}}
+        leadingAction={<button onClick={switched}>切换原作品</button>}
+      >
+        <Editor />
+      </PublicationLandingResolver>,
+    );
+    for (let n = 0; n < 12; n++) await Promise.resolve();
+  });
+  const action = [...container.querySelectorAll('button')].find((item) => item.textContent === '切换原作品');
+  expect(action).toBeDefined();
+  await act(async () => action!.click());
+  expect(switched).toHaveBeenCalledTimes(1);
+  expect(mock.mount).not.toHaveBeenCalled();
+});

@@ -7,6 +7,7 @@ export default defineConfig({
     // Only vitest-runner tests. Most shared tests use node:test (import from 'node:test')
     // and run separately via `node --test`. Vitest tests import from 'vitest'.
     include: [
+      'src/__tests__/artifact-review-reasonless-approval.test.ts',
       'src/__tests__/content-modification-project.test.ts',
       'src/__tests__/video-project.test.ts',
       'src/__tests__/video-project-references.test.ts',

@@ -3,7 +3,7 @@ import type { AgyProfileConfig, ClientId } from '@cat-cafe/shared';
 import { z } from 'zod';
 import { resolveByAccountRef } from './account-resolver.js';
 
-/** Member settings can select a read-only carrier; task write authority has a separate issuer. */
+/** Member settings select the carrier and explicit automatic approval; task grants have a separate issuer. */
 export const agyNativeMemberSettingsSchema = z
   .object({
     enabled: z.boolean(),
@@ -17,13 +17,14 @@ export const agyNativeMemberSettingsSchema = z
       .string()
       .trim()
       .regex(/^[A-Za-z0-9][A-Za-z0-9._:/-]*$/, 'Use the actual AGY model ID'),
-    autoApprove: z.literal(false),
-    trustedWorkspaces: z
-      .array(z.string().trim().refine(isAbsolute, 'Workspace must be an absolute path'))
-      .min(1)
-      .max(32),
+    autoApprove: z.boolean(),
+    trustedWorkspaces: z.array(z.string().trim().refine(isAbsolute, 'Workspace must be an absolute path')).max(32),
   })
-  .strict();
+  .strict()
+  .refine((profile) => profile.autoApprove || profile.trustedWorkspaces.length > 0, {
+    message: 'Restricted AGY Native requires an approved workspace',
+    path: ['trustedWorkspaces'],
+  });
 
 type MemberSettings = z.infer<typeof agyNativeMemberSettingsSchema>;
 
@@ -58,8 +59,8 @@ export function resolveAgyNativeMemberPatch(input: {
   if (next.model !== input.model) throw new Error('AGY Native profile model must match the member model ID');
   if (!input.requested) {
     if (input.accountRef === input.previousAccountRef || !next.nativeCodingGrant) return undefined;
-    const { nativeCodingGrant: _grant, ...readOnly } = next;
-    return readOnly;
+    const { nativeCodingGrant: _grant, ...unboundProfile } = next;
+    return unboundProfile;
   }
   // A profile/account/model/workspace change cannot carry old task write authority into a new binding.
   const unchanged =

@@ -2,6 +2,20 @@ import type { ActionSuccessorRequestMetadata } from '@cat-cafe/shared';
 import type { ActionSubjectTerminalTruth, ActionSuccessorClaimStoreResult } from './ActionSuccessorLeaseStore.js';
 import type { ActionSuccessorLease, ClaimActionSuccessorInput } from './action-successor-state-machine.js';
 
+/**
+ * Server-derived proof of one direct human correction in the current execution
+ * child. Request bodies may name the source message, but cannot construct this
+ * proof; callback admission re-reads the persisted message and revision.
+ */
+export interface ActionSuccessorHumanReassignmentEvidence {
+  sourceMessageId: string;
+  sourceMessageRevision: string;
+  evidenceRef: string;
+  userId: string;
+  threadId: string;
+  authoredAt: number;
+}
+
 export interface ActionSuccessorAdmissionInput {
   tenantScope: string;
   actorCatId: string;
@@ -12,6 +26,8 @@ export interface ActionSuccessorAdmissionInput {
   evidenceRef: string;
   now: number;
   incomingActionLeaseRef?: { leaseId: string; generation: number };
+  /** Server-derived exact human correction; never accepted from a request body. */
+  humanReassignmentEvidence?: ActionSuccessorHumanReassignmentEvidence;
   action: ActionSuccessorRequestMetadata;
 }
 

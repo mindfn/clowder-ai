@@ -1,13 +1,20 @@
 'use client';
 
-import { type PointerEvent, type RefObject, useEffect, useRef, useState, type WheelEvent } from 'react';
+import {
+  type PointerEvent,
+  type WheelEvent as ReactWheelEvent,
+  type RefObject,
+  useEffect,
+  useRef,
+  useState,
+} from 'react';
 
 type Size = { width: number; height: number };
 type Offset = { x: number; y: number };
 
-export function fitArtworkScale(viewport: Size, media: Size): number {
+export function fitArtworkScale(viewport: Size, media: Size, maximum = Number.POSITIVE_INFINITY): number {
   if (!viewport.width || !viewport.height || !media.width || !media.height) return 1;
-  return Math.min(viewport.width / media.width, viewport.height / media.height);
+  return Math.min(maximum, viewport.width / media.width, viewport.height / media.height);
 }
 
 export function mediaPixelsForScreenPixels(screenPixels: number, renderedScale: number): number {
@@ -15,8 +22,13 @@ export function mediaPixelsForScreenPixels(screenPixels: number, renderedScale: 
 }
 
 /** The image, video and every SVG layer live in one measured media rectangle. */
-export function useArtworkViewport(viewport: RefObject<HTMLElement | null>, media: Size) {
-  const [size, setSize] = useState<Size>({ width: 0, height: 0 });
+export function useArtworkViewport(
+  viewport: RefObject<HTMLElement | null>,
+  media: Size,
+  maximumFitScale = Number.POSITIVE_INFINITY,
+  scrollZoomedImage = false,
+) {
+  const [size, setSize] = useState<Size & { top: number }>({ width: 0, height: 0, top: 0 });
   const [scale, setScale] = useState<number | null>(null);
   const [offset, setOffset] = useState<Offset>({ x: 0, y: 0 });
   const [panMode, setPanMode] = useState(false);
@@ -27,9 +39,10 @@ export function useArtworkViewport(viewport: RefObject<HTMLElement | null>, medi
   useEffect(() => {
     const element = viewport.current;
     if (!element || typeof ResizeObserver === 'undefined') return;
-    const observer = new ResizeObserver(() => setSize({ width: element.clientWidth, height: element.clientHeight }));
+    const measure = () => setSize({ width: element.clientWidth, height: element.clientHeight, top: element.offsetTop });
+    const observer = new ResizeObserver(measure);
     observer.observe(element);
-    setSize({ width: element.clientWidth, height: element.clientHeight });
+    measure();
     return () => observer.disconnect();
   }, [viewport]);
   useEffect(() => {
@@ -55,19 +68,45 @@ export function useArtworkViewport(viewport: RefObject<HTMLElement | null>, medi
     };
   }, [hovered]);
 
-  const fit = fitArtworkScale(size, media);
+  const fit = fitArtworkScale(size, media, maximumFitScale);
   const renderedScale = scale ?? fit;
+  const fitsVertically = media.height * renderedScale <= size.height;
   const canPan = panMode || spaceHeld;
-  const changeScale = (next: number) => {
-    setScale(Math.min(8, Math.max(0.05, next)));
-    setOffset({ x: 0, y: 0 });
+  const overflow = (nextScale: number) => ({
+    x: Math.max(0, (media.width * nextScale - size.width) / 2),
+    y: Math.max(0, (media.height * nextScale - size.height) / 2),
+  });
+  const constrain = (next: Offset) => {
+    if (!scrollZoomedImage) return next;
+    const bounds = overflow(renderedScale);
+    return { x: Math.min(bounds.x, Math.max(-bounds.x, next.x)), y: Math.min(bounds.y, Math.max(-bounds.y, next.y)) };
   };
-  const onWheel = (event: WheelEvent<HTMLElement>) => {
+  const changeScale = (next: number) => {
+    const nextScale = Math.min(8, Math.max(0.05, next));
+    setScale(nextScale);
+    setOffset(scrollZoomedImage ? overflow(nextScale) : { x: 0, y: 0 });
+  };
+  const onWheel = (event: ReactWheelEvent<HTMLElement> | WheelEvent) => {
     if (event.target instanceof HTMLElement && event.target.closest('input, textarea, [contenteditable="true"]'))
       return;
     event.preventDefault();
-    changeScale(renderedScale * Math.exp(-event.deltaY * 0.001));
+    if (scrollZoomedImage && !event.ctrlKey && !event.metaKey) {
+      const factor = event.deltaMode === 1 ? 16 : event.deltaMode === 2 ? size.height : 1;
+      setOffset((current) => constrain({ x: current.x - event.deltaX * factor, y: current.y - event.deltaY * factor }));
+    } else changeScale(renderedScale * Math.exp(-event.deltaY * 0.001));
   };
+  const wheelHandler = useRef(onWheel);
+  wheelHandler.current = onWheel;
+  useEffect(() => {
+    if (!scrollZoomedImage) return;
+    const element = viewport.current;
+    if (!element) return;
+    // React's delegated wheel listener is passive. The image owns this wheel gesture and must cancel
+    // native scroll before translating its one media rectangle, including at either image boundary.
+    const wheel = (event: WheelEvent) => wheelHandler.current(event);
+    element.addEventListener('wheel', wheel, { passive: false });
+    return () => element.removeEventListener('wheel', wheel);
+  }, [viewport, scrollZoomedImage]);
   const onPointerDownCapture = (event: PointerEvent<HTMLElement>) => {
     if (!canPan || event.button !== 0 || !Number.isInteger(event.pointerId) || gesture.current) return;
     if (event.target instanceof HTMLElement && event.target.closest('input, textarea, [contenteditable="true"]'))
@@ -80,7 +119,9 @@ export function useArtworkViewport(viewport: RefObject<HTMLElement | null>, medi
   const onPointerMove = (event: PointerEvent<HTMLElement>) => {
     const current = gesture.current;
     if (!current || current.id !== event.pointerId) return;
-    setOffset({ x: current.offset.x + event.clientX - current.x, y: current.offset.y + event.clientY - current.y });
+    setOffset(
+      constrain({ x: current.offset.x + event.clientX - current.x, y: current.offset.y + event.clientY - current.y }),
+    );
   };
   const onPointerEnd = (event: PointerEvent<HTMLElement>) => {
     if (!Number.isInteger(event.pointerId) || gesture.current?.id !== event.pointerId) return;
@@ -91,6 +132,13 @@ export function useArtworkViewport(viewport: RefObject<HTMLElement | null>, medi
 
   return {
     renderedScale,
+    mediaBottom:
+      size.top +
+      (scrollZoomedImage && fitsVertically
+        ? media.height * renderedScale
+        : (size.height + media.height * renderedScale) / 2) +
+      offset.y,
+    fitsVertically,
     offset,
     panMode,
     canPan,
@@ -103,7 +151,7 @@ export function useArtworkViewport(viewport: RefObject<HTMLElement | null>, medi
     zoomIn: () => changeScale(renderedScale * 1.25),
     zoomOut: () => changeScale(renderedScale / 1.25),
     handlers: {
-      onWheel,
+      onWheel: scrollZoomedImage ? undefined : onWheel,
       onPointerDownCapture,
       onPointerMove,
       onPointerUp: onPointerEnd,

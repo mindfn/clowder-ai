@@ -18,16 +18,46 @@ function redisRefusal(expected, current, dataDirectory, mismatchMessage) {
   });
 }
 
-function listenerPids(port) {
+function listenerPids(port, timeout = 2_000) {
   const output = execFileSync('lsof', ['-nP', `-iTCP:${port}`, '-sTCP:LISTEN', '-t'], {
     encoding: 'utf8',
-    timeout: 2_000,
+    timeout,
     stdio: ['ignore', 'pipe', 'pipe'],
   }).trim();
   const values = output.split('\n');
   if (!values.length || values.some((value) => !/^[1-9]\d*$/.test(value)))
     throw new Error('Redis listener identity is unreadable');
   return [...new Set(values.map(Number))];
+}
+
+// A timed-out listener read supplies no identity evidence. Reobserve the whole
+// scope once, with one fixed extra second; never replay a Redis command or reuse
+// partial identity fields. A conclusive mismatch or any other failure stops.
+function withListenerReobservation(
+  observe,
+  { readListeners = listenerPids, observationNow = () => performance.now() } = {},
+) {
+  let deadline = Number.POSITIVE_INFINITY;
+  for (let attempt = 0; attempt < 2; attempt += 1) {
+    let listenerFailure;
+    try {
+      const value = observe((port) => {
+        const remaining = Math.min(2_000, deadline - observationNow());
+        if (remaining <= 0) throw new Error('Alpha Redis listener observation budget exhausted');
+        try {
+          return readListeners(port, Math.max(1, Math.floor(remaining)));
+        } catch (error) {
+          listenerFailure = error;
+          throw error;
+        }
+      });
+      if (observationNow() >= deadline) throw new Error('Alpha Redis listener observation budget exhausted');
+      return value;
+    } catch (error) {
+      if (attempt !== 0 || error !== listenerFailure || error?.code !== 'ETIMEDOUT') throw error;
+      deadline = observationNow() + 1_000;
+    }
+  }
 }
 
 function redisScope(raw) {
@@ -51,10 +81,7 @@ function validRedisIdentity(identity, dataDirectory) {
 }
 
 /** Capture only the actual listener spawned into the selected new directory; never sends a Redis command. */
-export function captureNamedAlphaRedisIdentity(
-  raw,
-  { readListeners = listenerPids, capture = captureReadableIdentity } = {},
-) {
+function captureRedisIdentityOnce(raw, { readListeners = listenerPids, capture = captureReadableIdentity } = {}) {
   const scope = redisScope(raw);
   const pidFile = join(scope.dataDirectory, `redis-${scope.port}.pid`);
   const before = lstatSync(pidFile);
@@ -84,12 +111,12 @@ export function captureNamedAlphaRedisIdentity(
   return { v: 1, ...scope, pid, process: identity };
 }
 
+export function captureNamedAlphaRedisIdentity(raw, deps = {}) {
+  return withListenerReobservation((readListeners) => captureRedisIdentityOnce(raw, { ...deps, readListeners }), deps);
+}
+
 /** OS metadata must prove the same incarnation before PING, CONFIG, BGSAVE or shutdown is considered. */
-export function verifyNamedAlphaRedisIdentity(
-  raw,
-  proof,
-  { readListeners = listenerPids, capture = captureProcessIdentity } = {},
-) {
+function verifyRedisIdentityOnce(raw, proof, { readListeners = listenerPids, capture = captureProcessIdentity } = {}) {
   const scope = redisScope(raw);
   if (
     !proof ||
@@ -115,6 +142,13 @@ export function verifyNamedAlphaRedisIdentity(
   )
     throw redisRefusal(proof.process, current, scope.dataDirectory, 'Alpha Redis process incarnation changed');
   return true;
+}
+
+export function verifyNamedAlphaRedisIdentity(raw, proof, deps = {}) {
+  return withListenerReobservation(
+    (readListeners) => verifyRedisIdentityOnce(raw, proof, { ...deps, readListeners }),
+    deps,
+  );
 }
 
 function sendVerifiedRedisPing(port, run) {

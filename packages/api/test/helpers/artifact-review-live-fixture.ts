@@ -29,6 +29,7 @@ export async function createLiveReviewFixture(
       ...base,
       id: createCatId('codex-astra'),
       displayName: '小星星·砚砚',
+      mentionPatterns: ['@codex-astra'],
       defaultModel: 'gpt-6-astra',
     });
   }

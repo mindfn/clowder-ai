@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict';
 import { after, before, test } from 'node:test';
+import puppeteer from 'puppeteer-core';
 import { loadChromium } from '../../../scripts/f317-page-action/browser-binary.mjs';
 import { createBrowserPort } from '../../../scripts/f317-page-action/browser-port.mjs';
 import { startFixtureServer } from '../../../scripts/f317-page-action/serve.mjs';
@@ -11,7 +12,7 @@ let url;
 before(async () => {
   ({ server, url } = await startFixtureServer());
   const chromium = await loadChromium();
-  browser = await chromium.launch({ headless: true });
+  browser = await puppeteer.launch({ headless: true, executablePath: chromium.executablePath() });
 });
 after(async () => {
   await browser?.close();
@@ -100,7 +101,7 @@ test('a replaced live target is stale before the click', async () => {
   const { result, actual } = await scenario({
     targetId: 'open-note',
     beforePerform: async (page) => {
-      await page.locator('#open-note').evaluate((button) => button.setAttribute('data-revision', '2'));
+      await page.$eval('#open-note', (button) => button.setAttribute('data-revision', '2'));
     },
   });
   assert.equal(result.status, 'stale');
@@ -133,7 +134,7 @@ test('a target replaced before first inspect cannot reuse the grant', async () =
   const { result, actual } = await scenario({
     targetId: 'open-note',
     beforeRun: async (page) => {
-      await page.locator('#open-note').evaluate((button) => button.setAttribute('data-revision', '2'));
+      await page.$eval('#open-note', (button) => button.setAttribute('data-revision', '2'));
     },
   });
   assert.equal(result.status, 'stale');
@@ -163,7 +164,7 @@ test('missing canonical readback after action reports unknown', async () => {
   const { result, actual } = await scenario({
     targetId: 'open-note',
     beforeAtomicPerform: async (page) => {
-      await page.locator('#readback').evaluate((element) => element.remove());
+      await page.$eval('#readback', (element) => element.remove());
     },
   });
   assert.equal(result.status, 'unknown');
@@ -187,7 +188,7 @@ test('unrelated page readback movement cannot prove a no-op action', async () =>
   const { result } = await scenario({
     targetId: 'no-op',
     beforeAtomicPerform: async (page) => {
-      await page.locator('#readback').evaluate((element) => {
+      await page.$eval('#readback', (element) => {
         element.textContent = '{"open":false,"note":"","deleted":false,"ticker":1}';
       });
     },

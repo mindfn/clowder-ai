@@ -128,7 +128,8 @@ it.each([
   'standalone',
 ])('shows the original resolver default for %s with no explicit reporting mode', async (declaredWorkMode) => {
   const { container } = await mountOriginalProposal({ declaredWorkMode, reportingMode: undefined });
-  expect(container.textContent).toContain('autonomous（下游自治，无强制回报）');
+  expect(container.textContent).toContain('回报：不回报');
+  expect(container.textContent).not.toContain('autonomous');
 });
 it('cannot submit a partially readable development scope without its exact accepted source', async () => {
   const { featureRef, phaseKey, workUnitRef, acceptedRevision } = fullScope;

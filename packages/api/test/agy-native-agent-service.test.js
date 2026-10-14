@@ -8,7 +8,7 @@ const { AgyNativeAgentService } = await import(
   '../dist/domains/cats/services/agents/providers/agy-native/AgyNativeAgentService.js'
 );
 
-function fixture(l0CompilerFn = async () => '# Identity\nYou are F325-TEST-CAT.\n') {
+function fixture(l0CompilerFn = async () => '# Identity\nYou are F325-TEST-CAT.\n', profilePatch = {}) {
   const base = mkdtempSync(join(tmpdir(), 'f325-agy-service-'));
   const workspace = join(base, 'workspace');
   mkdirSync(join(workspace, 'src'), { recursive: true });
@@ -20,6 +20,7 @@ function fixture(l0CompilerFn = async () => '# Identity\nYou are F325-TEST-CAT.\
       homeRoot: join(base, 'profiles'),
       model: 'gemini-3.8-flash-high',
       trustedWorkspaces: [workspace],
+      ...profilePatch,
     },
     command: '/usr/bin/true',
     l0CompilerFn,
@@ -54,6 +55,164 @@ async function collect(iterable) {
 }
 
 describe('F325 one-turn native AGY carrier', () => {
+  for (const [directory, name] of [
+    ['.agents', 'hooks.json'],
+    ['.agents', 'agents'],
+    ['.agents', 'plugins'],
+    ['.agents', 'skills.json'],
+    ['.agents', 'mcp_config.json'],
+    ['.Agents', 'MCP_CONFIG.JSON'],
+  ]) {
+    for (const withSensitiveFile of [false, true]) {
+      test(`autoApprove refuses ${directory}/${name}${withSensitiveFile ? ' alongside .env' : ''} before spawn`, async () => {
+        const f = fixture(undefined, { autoApprove: true });
+        const customization = join(f.workspace, directory, name);
+        mkdirSync(join(f.workspace, directory));
+        if (['agents', 'plugins'].includes(name)) mkdirSync(customization);
+        else writeFileSync(customization, '{}');
+        if (withSensitiveFile) writeFileSync(join(f.workspace, '.env'), 'FIXTURE_ONLY=yes\n');
+        let spawned = false;
+        try {
+          const events = await collect(
+            f.service.invoke('Hello.', {
+              workingDirectory: f.workspace,
+              spawnCliOverride: async function* (launch) {
+                spawned = true;
+                const agent = launch.args[launch.args.indexOf('--agent') + 1];
+                const frames = fakeEvents(agent, launch.cwd, 'unexpected-customized-session', 'Hello.');
+                frames[0].init.permission_mode = 'always-proceed';
+                yield* frames;
+              },
+            }),
+          );
+          assert.equal(spawned, false, JSON.stringify(events));
+          assert.equal(events.at(-1).errorCode, 'AGY_WORKSPACE_CUSTOMIZATION');
+          assert.ok(events.find((event) => event.type === 'error').error.includes(name));
+        } finally {
+          f.cleanup();
+        }
+      });
+    }
+  }
+
+  test('explicit autoApprove launches a normal repository with official bypass mode and native commands', async () => {
+    const f = fixture(undefined, { autoApprove: true, trustedWorkspaces: [] });
+    writeFileSync(join(f.workspace, '.env'), 'FIXTURE_ONLY=yes\n');
+    let launch;
+    try {
+      const events = await collect(
+        f.service.invoke('Say hello.', {
+          workingDirectory: f.workspace,
+          spawnCliOverride: async function* (options) {
+            launch = options;
+            const agent = options.args[options.args.indexOf('--agent') + 1];
+            const frames = fakeEvents(agent, options.cwd, 'auto-approved-session', 'Hello.');
+            frames[0].init.permission_mode = 'always-proceed';
+            yield* frames;
+          },
+        }),
+      );
+      assert.ok(launch, JSON.stringify(events));
+      assert.ok(launch.args.includes('--dangerously-skip-permissions'));
+      assert.ok(!launch.args.includes('--sandbox'));
+      assert.equal(launch.inheritParentEnv, false);
+      assert.equal(launch.env.CAT_CAFE_AGENT_KEY_SECRET, null);
+      const agent = launch.args[launch.args.indexOf('--agent') + 1];
+      const body = readFileSync(join(launch.env.HOME, '.gemini/config/agents', agent, 'agent.md'), 'utf8');
+      assert.match(body, / {2}- run_command\n/);
+      assert.ok(!body.includes('commandExecutionPolicy: off'));
+      const settings = JSON.parse(readFileSync(join(launch.env.HOME, '.gemini/antigravity-cli/settings.json')));
+      assert.equal(settings.toolPermission, 'always-proceed');
+      assert.equal(settings.enableTerminalSandbox, false);
+      assert.deepEqual(settings.permissions.deny, []);
+      assert.equal(events.at(-1).errorCode, undefined, JSON.stringify(events));
+    } finally {
+      f.cleanup();
+    }
+  });
+
+  test('read_only demotes automatic approval and changing the permission mode starts a fresh session', async () => {
+    const f = fixture(undefined, { autoApprove: true });
+    const launches = [];
+    const options = {
+      workingDirectory: f.workspace,
+      spawnCliOverride: async function* (launch) {
+        launches.push(launch);
+        const agent = launch.args[launch.args.indexOf('--agent') + 1];
+        const frames = fakeEvents(agent, launch.cwd, `mode-${launches.length}`, 'OK');
+        frames[0].init.permission_mode = launch.args.includes('--dangerously-skip-permissions')
+          ? 'always-proceed'
+          : 'request-review';
+        yield* frames;
+      },
+    };
+    try {
+      assert.equal((await collect(f.service.invoke('Automatic.', options))).at(-1).errorCode, undefined);
+      const readonly = await collect(
+        f.service.invoke('Read only.', {
+          ...options,
+          sessionId: 'mode-1',
+          toolExecutionPolicy: { mode: 'read_only' },
+        }),
+      );
+      assert.equal(readonly.at(-1).errorCode, undefined);
+      assert.ok(launches[1].args.includes('--sandbox'));
+      assert.ok(!launches[1].args.includes('--dangerously-skip-permissions'));
+      assert.ok(!launches[1].args.includes('--conversation'), 'a permissive session cannot be resumed as read-only');
+      const resumed = await collect(
+        f.service.invoke('Read only again.', {
+          ...options,
+          sessionId: 'mode-2',
+          toolExecutionPolicy: { mode: 'read_only' },
+        }),
+      );
+      assert.equal(resumed.at(-1).errorCode, undefined);
+      assert.ok(launches[2].args.includes('--conversation'), 'same-mode sessions still resume');
+    } finally {
+      f.cleanup();
+    }
+  });
+
+  test('an automatic launch rejects a provider claiming the restricted permission mode', async () => {
+    const f = fixture(undefined, { autoApprove: true });
+    try {
+      const events = await collect(
+        f.service.invoke('Hello.', {
+          workingDirectory: f.workspace,
+          spawnCliOverride: async function* (launch) {
+            const agent = launch.args[launch.args.indexOf('--agent') + 1];
+            yield* fakeEvents(agent, launch.cwd, 'wrong-mode', 'OK');
+          },
+        }),
+      );
+      assert.equal(events.at(-1).errorCode, 'AGY_NATIVE_PREFLIGHT');
+      assert.match(events.find((e) => e.type === 'error').error, /permission mode/);
+    } finally {
+      f.cleanup();
+    }
+  });
+
+  test('host read_only overrides autoApprove before a provider can touch a sensitive repository', async () => {
+    const f = fixture(undefined, { autoApprove: true });
+    writeFileSync(join(f.workspace, '.env'), 'FIXTURE_ONLY=yes\n');
+    let spawned = false;
+    try {
+      const events = await collect(
+        f.service.invoke('Read only.', {
+          workingDirectory: f.workspace,
+          toolExecutionPolicy: { mode: 'read_only' },
+          spawnCliOverride: async function* () {
+            spawned = true;
+          },
+        }),
+      );
+      assert.equal(spawned, false);
+      assert.equal(events.at(-1).errorCode, 'AGY_WORKSPACE_SENSITIVE_CONTENT');
+    } finally {
+      f.cleanup();
+    }
+  });
+
   test('only one of two successors claims a canceled profile after it drains', async () => {
     const f = fixture();
     const controller = new AbortController();

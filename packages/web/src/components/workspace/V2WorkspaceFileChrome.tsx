@@ -22,11 +22,7 @@ export function fileReturnLabel(origin: WorkspaceFileViewerProps['navigationOrig
 }
 
 function fileChromeBackLabel(p: Pick<WorkspaceFileViewerProps, 'navigationOrigin' | 'showFileQuotes'>): string {
-  const returnsToWorkspaceSource =
-    p.navigationOrigin?.kind === 'workspace-home-artifact' ||
-    p.navigationOrigin?.kind === 'workspace-tools-search' ||
-    p.navigationOrigin?.kind === 'workspace-home-search';
-  return p.showFileQuotes && !returnsToWorkspaceSource ? '返回来源' : fileReturnLabel(p.navigationOrigin);
+  return fileReturnLabel(p.navigationOrigin);
 }
 
 /** Presentation only: content, editing, speech, navigation and annotations retain their owners. */
@@ -66,47 +62,49 @@ export function V2WorkspaceFileChrome({
       className={`${p.focusMode ? 'hidden' : 'block'} v2-file-chrome shrink-0`}
       data-testid="v2-file-chrome"
     >
-      <div
-        className="flex h-9 min-w-0 items-center border-b border-cafe-subtle bg-cafe-surface/60"
-        data-testid="v2-file-tabs"
-      >
-        {p.onBack && !p.treeVisible && (
-          <button
-            type="button"
-            onClick={p.onBack}
-            data-testid="v2-file-back"
-            className="shrink-0 border-r border-cafe-subtle px-3 py-2 text-xs font-semibold text-cafe-secondary"
-          >
-            {fileChromeBackLabel(p)}
-          </button>
-        )}
-        <div className="flex min-w-0 flex-1 overflow-x-auto scrollbar-none">
-          {p.openTabs.map((tab) => (
-            <div
-              key={tab}
-              className={`group flex max-w-56 shrink-0 items-center border-r border-cafe-subtle text-xs ${tab === path ? 'bg-cafe-surface text-cafe-black' : 'text-cafe-muted'}`}
+      {!p.nestedWork ? (
+        <div
+          className="flex h-9 min-w-0 items-center border-b border-cafe-subtle bg-cafe-surface/60"
+          data-testid="v2-file-tabs"
+        >
+          {p.onBack && !p.treeVisible && (
+            <button
+              type="button"
+              onClick={p.onBack}
+              data-testid="v2-file-back"
+              className="shrink-0 border-r border-cafe-subtle px-3 py-2 text-xs font-semibold text-cafe-secondary"
             >
-              <button
-                type="button"
-                onClick={() => p.setOpenFile(tab)}
-                title={tab}
-                className="flex min-w-0 items-center gap-1.5 py-2 pl-3"
+              {fileChromeBackLabel(p)}
+            </button>
+          )}
+          <div className="flex min-w-0 flex-1 overflow-x-auto scrollbar-none">
+            {p.openTabs.map((tab) => (
+              <div
+                key={tab}
+                className={`group flex max-w-56 shrink-0 items-center border-r border-cafe-subtle text-xs ${tab === path ? 'bg-cafe-surface text-cafe-black' : 'text-cafe-muted'}`}
               >
-                <FileIcon name={tab} />
-                <span className="truncate">{tab.split('/').at(-1)}</span>
-              </button>
-              <button
-                type="button"
-                aria-label={`关闭 ${tab.split('/').at(-1)}`}
-                className="mx-1 shrink-0 rounded px-1 hover:bg-cafe-surface-sunken"
-                onClick={() => p.closeTab(tab)}
-              >
-                ×
-              </button>
-            </div>
-          ))}
+                <button
+                  type="button"
+                  onClick={() => p.setOpenFile(tab)}
+                  title={tab}
+                  className="flex min-w-0 items-center gap-1.5 py-2 pl-3"
+                >
+                  <FileIcon name={tab} />
+                  <span className="truncate">{tab.split('/').at(-1)}</span>
+                </button>
+                <button
+                  type="button"
+                  aria-label={`关闭 ${tab.split('/').at(-1)}`}
+                  className="mx-1 shrink-0 rounded px-1 hover:bg-cafe-surface-sunken"
+                  onClick={() => p.closeTab(tab)}
+                >
+                  ×
+                </button>
+              </div>
+            ))}
+          </div>
         </div>
-      </div>
+      ) : null}
       <div
         role="toolbar"
         aria-label="文件操作"
@@ -122,11 +120,13 @@ export function V2WorkspaceFileChrome({
           title="在文件列表中显示"
           className="min-w-0 flex-1 truncate text-left text-xs text-cafe-muted"
         >
-          {directory}
+          {p.nestedWork ? path.split('/').at(-1) || path : directory}
         </button>
-        <span className="shrink-0 text-micro text-cafe-muted">
-          {p.file.size < 1024 ? `${p.file.size}B` : `${Math.round(p.file.size / 1024)}KB`}
-        </span>
+        {!p.nestedWork ? (
+          <span className="shrink-0 text-micro text-cafe-muted">
+            {p.file.size < 1024 ? `${p.file.size}B` : `${Math.round(p.file.size / 1024)}KB`}
+          </span>
+        ) : null}
         <span className="v2-file-view-toggle shrink-0">{toggle}</span>
         <Button
           onClick={onAsk}
@@ -150,6 +150,16 @@ export function V2WorkspaceFileChrome({
           </Button>
         )}
         <span className="v2-file-listen shrink-0">{listen}</span>
+        {p.nestedWork && p.onBack ? (
+          <button
+            type="button"
+            className="shrink-0 rounded border border-cafe-subtle px-2 py-1 text-xs"
+            data-testid="v2-file-back"
+            onClick={p.onBack}
+          >
+            {fileReturnLabel(p.navigationOrigin)}
+          </button>
+        ) : null}
         <V2WorkspaceMenu
           width={160}
           trigger="更多 ▾"

@@ -5,8 +5,6 @@ import {
   deriveMailboxState,
   type MailboxRead,
   type MailboxState,
-  mailboxAccessibleName,
-  mailboxPartialNote,
   mailboxStateText,
   sourceStatusText,
 } from '../unified-mailbox-state';
@@ -63,6 +61,32 @@ describe('deriveMailboxState — what the one rail entry may claim', () => {
     const legacy = ok({ items: [item(1)], totalCount: 1, attentionCount: undefined });
     expect(derive(legacy)).toEqual({ kind: 'has-items', count: null, partial: false });
     expect(deriveMailboxPanelState(legacy)).toEqual({ kind: 'has-items', count: 1, partial: false });
+  });
+
+  it('keeps the badge on visible decisions while the panel shows ignored decisions', () => {
+    const result = ok({
+      items: [item(1), item(2), item(3)],
+      totalCount: 8,
+      attentionCount: 6,
+      sources: {
+        structuredChoices: source({ coverage: 'pending_f306_structured_choices' }),
+        approvals: source(),
+        needsMe: source(),
+        personalPreferences: source({ coverage: 'owner_personal_ignored_items' }),
+      },
+      personalView: {
+        mode: 'ignored',
+        preferenceRevision: 9,
+        originalTotalCount: 10,
+        visibleTotalCount: 2,
+        ignoredTotalCount: 8,
+        originalAttentionCount: 6,
+        visibleAttentionCount: 0,
+        ignoredAttentionCount: 6,
+      },
+    });
+    expect(derive(result)).toEqual({ kind: 'empty' });
+    expect(deriveMailboxPanelState(result)).toEqual({ kind: 'has-items', count: 8, partial: false });
   });
 
   it('never reinterprets an older attention number without the qualified source, and withdraws counts for a failed source', () => {
@@ -259,36 +283,6 @@ describe('state wording — the short words of the 1.6 status board', () => {
   ];
   it.each(cases)('%j reads as %s', (state, text) => {
     expect(mailboxStateText(state)).toBe(text);
-    expect(mailboxAccessibleName(state)).toBe(`待办，${text}`);
-  });
-});
-
-describe('mailboxPartialNote — why "partial" when no source is unread', () => {
-  const available = { status: 'available', exhaustiveness: 'complete' } as const;
-  it('says nothing when a source was simply not read (that source names itself)', () => {
-    expect(
-      mailboxPartialNote(
-        read({
-          status: 'partial',
-          sources: { approvals: source({ status: 'unavailable', exhaustiveness: 'unknown' }), needsMe: source() },
-        }),
-      ),
-    ).toBeNull();
-  });
-  it('explains an empty result that both sources returned but could not be confirmed consistent', () => {
-    expect(mailboxPartialNote(read({ consistency: { state: 'uncertain', reasons: ['x'] } }))).toBe(
-      '审批和待处理是分开读的，这次没能确认两边对得上',
-    );
-  });
-  it('explains an available source that cannot prove it read everything', () => {
-    expect(
-      mailboxPartialNote(
-        read({ sources: { approvals: source({ ...available, exhaustiveness: 'unknown' }), needsMe: source() } }),
-      ),
-    ).toBe('这次没能确认两边都读全');
-  });
-  it('says nothing for a verified complete read', () => {
-    expect(mailboxPartialNote(read({ items: [], totalCount: 0 }))).toBeNull();
   });
 });
 

@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import { execFileSync, spawnSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
-import { existsSync, readdirSync, readFileSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, readdirSync, readFileSync, writeFileSync } from 'node:fs';
 import net from 'node:net';
 import { dirname, join } from 'node:path';
 import { test } from 'node:test';
@@ -12,7 +12,33 @@ import { captureNamedAlphaRedisIdentity, verifyNamedAlphaRedisIdentity } from '.
 
 const cli = join(dirname(fileURLToPath(import.meta.url)), 'preview-process.mjs');
 
-for (const [verificationFails, earlyWrapper, missingResult, pnpmWrapper] of [
+function listenerProbeFixture(directory, port, mode) {
+  if (!mode) return null;
+  const bin = join(directory, 'listener-probe-bin');
+  mkdirSync(bin);
+  const armed = join(directory, 'listener-probe-armed');
+  const observed = join(directory, 'listener-probe-timeouts');
+  const native = execFileSync('which', ['lsof'], { encoding: 'utf8' }).trim();
+  writeFileSync(
+    join(bin, 'lsof'),
+    `#!${process.execPath}
+const fs = require('node:fs');
+const args = process.argv.slice(2);
+if (args.includes('-iTCP:${port}') && fs.existsSync(${JSON.stringify(armed)}) &&
+    (${JSON.stringify(mode)} === 'always' || !fs.existsSync(${JSON.stringify(observed)}))) {
+  fs.appendFileSync(${JSON.stringify(observed)}, 'timeout\\n');
+  setTimeout(() => process.exit(1), 10000);
+} else {
+  const result = require('node:child_process').spawnSync(${JSON.stringify(native)}, args, { stdio: 'inherit' });
+  process.exit(result.status ?? 1);
+}
+`,
+    { mode: 0o755 },
+  );
+  return { bin, armed, observed };
+}
+
+for (const [verificationFails, earlyWrapper, missingResult, pnpmWrapper, listenerTimeoutMode] of [
   [false, false, false],
   [true, false, false],
   [false, true, false],
@@ -20,8 +46,11 @@ for (const [verificationFails, earlyWrapper, missingResult, pnpmWrapper] of [
   [false, true, true],
   [false, false, false, true],
   [true, false, false, true],
+  [false, false, false, false, 'once'],
+  [false, false, false, false, 'always'],
 ]) {
-  test(`canonical preview stop ${verificationFails ? 'reports refused Redis cleanup and retains ownership' : 'saves Redis and releases the producer lease'}${earlyWrapper ? ' after an early wrapper exit' : ''}${missingResult ? ' but rejects an unpublished owner result' : ''}${pnpmWrapper ? ' through real pnpm' : ''}`, async (t) => {
+  const cleanupRefused = verificationFails || listenerTimeoutMode === 'always';
+  test(`canonical preview stop ${cleanupRefused ? 'reports refused Redis cleanup and retains ownership' : 'saves Redis and releases the producer lease'}${earlyWrapper ? ' after an early wrapper exit' : ''}${missingResult ? ' but rejects an unpublished owner result' : ''}${pnpmWrapper ? ' through real pnpm' : ''}${listenerTimeoutMode ? ` after ${listenerTimeoutMode} lsof timeout` : ''}`, async (t) => {
     const disposals = [];
     const f = namedAlphaFixture({ after: (fn) => disposals.push(fn) });
     const sockets = [];
@@ -60,6 +89,7 @@ for (const [verificationFails, earlyWrapper, missingResult, pnpmWrapper] of [
     const pidFile = join(directory, `redis-${ports[4]}.pid`);
     const registry = join(f.directory, 'leases');
     const driver = join(f.directory, 'driver.sh');
+    const probe = listenerProbeFixture(f.directory, ports[4], listenerTimeoutMode);
     writeFileSync(
       join(f.directory, 'server.cjs'),
       `require('node:http').createServer((q,s)=>s.end('alpha fixture')).listen(${ports[0]},'127.0.0.1');`,
@@ -73,6 +103,7 @@ redis-cli -p "$REDIS_PORT" set preview-cleanup-marker preserved
 register_managed_pid "$!"
 ${verificationFails ? 'named_alpha_redis_is_owned() { return 1; }' : ''}
 ${missingResult ? 'publish_preview_cleanup_result() { :; }' : ''}
+${probe ? `touch '${probe.armed}'` : ''}
 wait
 `,
     );
@@ -103,7 +134,7 @@ wait
     const assignments = Object.entries({
       ...namedAlphaEnvironment(coordinates),
       HOME: f.env.HOME,
-      PATH: process.env.PATH,
+      PATH: probe ? `${probe.bin}:${process.env.PATH}` : process.env.PATH,
       CAT_CAFE_SKIP_NODE_RUNTIME_GUARD: '1',
       CAT_CAFE_ALPHA_REDIS_REGISTRY_DIR: registry,
       ALPHA_TEST_DRIVER: driver,
@@ -128,7 +159,8 @@ setInterval(()=>{},1000);`,
     verifyNamedAlphaRedisIdentity(raw, proof);
     assert.equal(readdirSync(registry).length, 1, 'producer registered its own Redis lease');
     const stopped = run('stop');
-    if (verificationFails) {
+    if (probe) assert.ok(existsSync(probe.observed), 'exercise an actual timed-out native listener probe');
+    if (cleanupRefused) {
       assert.equal(stopped.status, 1, stopped.stderr || stopped.stdout);
       verifyNamedAlphaRedisIdentity(raw, proof);
       assert.equal(readdirSync(registry).length, 1, 'failed cleanup preserves the original lease');

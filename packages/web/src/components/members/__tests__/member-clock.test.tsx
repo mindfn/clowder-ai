@@ -45,3 +45,46 @@ it('uses current time when a slow owner snapshot arrives, then ticks at its dead
     vi.useRealTimers();
   }
 });
+
+it('updates a due preference at the actual review deadline without an owner write', () => {
+  vi.stubGlobal('React', React);
+  vi.stubGlobal('IS_REACT_ACT_ENVIRONMENT', true);
+  vi.useFakeTimers();
+  vi.setSystemTime(1000);
+  const rootNode = document.createElement('div');
+  const root = createRoot(rootNode);
+  const model = {
+    signalEvents: [],
+    preferenceRevisions: [
+      {
+        v: 1 as const,
+        ownerId: 'owner',
+        preferenceId: 'preference',
+        revisionId: 'revision',
+        commandId: 'command',
+        appliesWhen: {},
+        prefer: [{ type: 'cat' as const, catId: 'a' }],
+        over: [{ type: 'cat' as const, catId: 'b' }],
+        rationale: 'Owner reason',
+        evidenceRefs: ['owner-evidence'],
+        version: 1,
+        validFrom: 100,
+        lifecycle: 'active' as const,
+        reviewAfter: 2000,
+      },
+    ],
+  };
+  function ReviewDue() {
+    return <span>{useMemberClock(model) >= 2000 ? 'Review due' : 'Current'}</span>;
+  }
+  try {
+    act(() => root.render(<ReviewDue />));
+    expect(rootNode.textContent).toBe('Current');
+    act(() => vi.advanceTimersByTime(1000));
+    expect(rootNode.textContent).toBe('Review due');
+  } finally {
+    act(() => root.unmount());
+    vi.useRealTimers();
+    vi.unstubAllGlobals();
+  }
+});

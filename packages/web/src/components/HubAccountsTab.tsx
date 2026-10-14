@@ -95,7 +95,7 @@ export function HubAccountsTab() {
         <input
           type="search"
           aria-label={t.search}
-          placeholder={t.searchHint}
+          placeholder={t.search}
           value={query}
           onChange={(e) => setQuery(e.target.value)}
         />

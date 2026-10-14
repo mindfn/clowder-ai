@@ -3,6 +3,8 @@ import React, { act } from 'react';
 import { createRoot, type Root } from 'react-dom/client';
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import { writeShellLanguage } from '@/components/shell/shell-language';
+import { useChatStore } from '@/stores/chatStore';
+import { useToastStore } from '@/stores/toastStore';
 
 const mocks = vi.hoisted(() => ({
   ownerReads: [] as EntrustedWorkOwnerReadV1[],
@@ -11,7 +13,16 @@ const mocks = vi.hoisted(() => ({
   refetch: vi.fn(),
   projection: vi.fn(),
   resizeReading: null as (() => void) | null,
+  preferences: {
+    ownerUserId: 'owner-1',
+    revision: 0,
+    entries: [] as { coordinate: { kind: 'schedule'; subjectRef: string }; ignoredAt: number }[],
+  },
+  preferencesUnavailable: false,
+  api: vi.fn(),
 }));
+
+vi.mock('@/utils/api-client', () => ({ apiFetch: (...args: unknown[]) => mocks.api(...args) }));
 
 vi.mock('@/hooks/useEntrustedWorkProjection', () => ({
   useEntrustedWorkProjection: (projection: string) => {
@@ -116,6 +127,177 @@ function ownerRead(input: {
 }
 
 describe('F310 ProductSchedulePanel', () => {
+  function questionWork() {
+    const read = ownerRead({ id: 'ask-progress', titleRef: 'message:original', timeRole: 'review_by', time: now });
+    read.work = {
+      title: '核对这次交付',
+      ownerCatId: 'codex61-sol',
+      threadId: 'thread-original',
+      admittedAt: now,
+      ownerNote: '原托付',
+    };
+    mocks.ownerReads = [read];
+    return read;
+  }
+
+  async function askProgress() {
+    await act(async () => root.render(<ProductSchedulePanel now={() => now} />));
+    const button = container.querySelector<HTMLButtonElement>('[data-testid="schedule-ask-progress"]');
+    expect(button).not.toBeNull();
+    await act(async () => button?.click());
+  }
+
+  it('opens the exact Work conversation with an unsent question, without changing Work or sending a message', async () => {
+    const read = questionWork();
+    const original = structuredClone(read);
+    await askProgress();
+    expect(window.location.pathname).toBe('/thread/thread-original');
+    expect(useChatStore.getState().pendingChatInsert).toMatchObject({
+      threadId: 'thread-original',
+      text: '请说说「核对这次交付」目前的进展。',
+      waitForDraft: true,
+      preserveSelection: true,
+    });
+    expect(mocks.api.mock.calls.filter(([, init]) => init?.method)).toEqual([]);
+    expect(read).toEqual(original);
+  });
+
+  it('does not replace a pending authoritative draft ACK with a progress question', async () => {
+    questionWork();
+    const ack = { threadId: 'source-chat', text: 'Original ACK', authoritative: true, serverRevision: 11 };
+    useChatStore.getState().setPendingChatInsert(ack);
+    await askProgress();
+    expect(useChatStore.getState().pendingChatInsert).toBe(ack);
+    expect(window.location.pathname).toBe('/thread/source-chat');
+  });
+
+  it('keeps the current conversation when the Work source cannot be read', async () => {
+    questionWork();
+    const previous = mocks.api.getMockImplementation();
+    mocks.api.mockImplementation((path: string, init?: RequestInit) =>
+      path === '/api/threads/thread-original'
+        ? Promise.resolve(new Response(null, { status: 404 }))
+        : previous?.(path, init),
+    );
+    await askProgress();
+    expect(window.location.pathname).toBe('/thread/source-chat');
+    expect(useChatStore.getState().pendingChatInsert).toBeNull();
+    expect(useToastStore.getState().toasts.at(-1)?.message).toContain('原对话');
+  });
+
+  it('does not queue a question after the person moved to another conversation during its source read', async () => {
+    questionWork();
+    let settle: (response: Response) => void = () => {};
+    const previous = mocks.api.getMockImplementation();
+    mocks.api.mockImplementation((path: string, init?: RequestInit) =>
+      path === '/api/threads/thread-original'
+        ? new Promise<Response>((resolve) => {
+            settle = resolve;
+          })
+        : previous?.(path, init),
+    );
+    await askProgress();
+    useChatStore.setState({ currentThreadId: 'another-chat' });
+    window.history.replaceState({}, '', '/thread/another-chat');
+    await act(async () => settle(Response.json({ id: 'thread-original', createdBy: 'owner-1' })));
+    expect(window.location.pathname).toBe('/thread/another-chat');
+    expect(useChatStore.getState().pendingChatInsert).toBeNull();
+  });
+
+  it('ignores only the personal schedule view, keeps the true total and restores it from the ignored entry', async () => {
+    const first = ownerRead({ id: 'ignore-first', titleRef: 'message:first', timeRole: 'review_by', time: now });
+    const second = ownerRead({ id: 'keep-second', titleRef: 'message:second', timeRole: 'review_by', time: now });
+    mocks.ownerReads = [first, second];
+    await act(async () => root.render(<ProductSchedulePanel now={() => now} />));
+    const button = container.querySelector<HTMLButtonElement>(
+      '[data-subject-ref="task:work:ignore-first"] [data-testid="schedule-ignore"]',
+    );
+    expect(button).not.toBeNull();
+    await act(async () => button?.click());
+    expect(container.querySelector('[data-subject-ref="task:work:ignore-first"]')).toBeNull();
+    expect(container.querySelector('[data-testid="schedule-personal-counts"]')?.textContent).toBe(
+      '共 2 件 · 当前筛选显示 1 件 · 已忽略 1 件',
+    );
+    expect(mocks.ownerReads).toEqual([first, second]);
+    await act(async () => container.querySelector<HTMLButtonElement>('[data-testid="schedule-open-ignored"]')?.click());
+    const restore = container.querySelector<HTMLButtonElement>(
+      '[data-subject-ref="task:work:ignore-first"] [data-testid="schedule-restore"]',
+    );
+    expect(restore).not.toBeNull();
+    await act(async () => restore?.click());
+    expect(mocks.preferences.entries).toEqual([]);
+    expect(
+      mocks.api.mock.calls
+        .filter(([, init]) => init?.method === 'PATCH')
+        .every(([path]) => path === '/api/config/ignored-items'),
+    ).toBe(true);
+  });
+
+  it('does not carry one owner’s recent undo into a newly confirmed owner’s view', async () => {
+    const first = questionWork();
+    await act(async () => root.render(<ProductSchedulePanel now={() => now} />));
+    await act(async () => container.querySelector<HTMLButtonElement>('[data-testid="schedule-ignore"]')?.click());
+    const undo = () =>
+      [...container.querySelectorAll('button')].find((button) => button.textContent === '撤销刚才的忽略');
+    expect(undo()).toBeDefined();
+    const changed = structuredClone(first);
+    changed.envelope.visibility.ownerUserId = 'owner-2';
+    changed.envelope.subjectRef = 'task:work:new-owner';
+    mocks.ownerReads = [changed];
+    mocks.preferences = { ownerUserId: 'owner-2', revision: 0, entries: [] };
+    await act(async () => {
+      root.render(<ProductSchedulePanel now={() => now} />);
+      [...container.querySelectorAll('button')].find((button) => button.textContent === '刷新')?.click();
+    });
+    expect(container.querySelector('[data-testid="schedule-personal-counts"]')?.textContent).toBe(
+      '共 1 件 · 当前筛选显示 1 件 · 已忽略 0 件',
+    );
+    expect(undo()).toBeUndefined();
+  });
+
+  it('does not claim exact ignored counts or save when personal preferences are unavailable', async () => {
+    mocks.preferencesUnavailable = true;
+    mocks.ownerReads = [
+      ownerRead({ id: 'uncertain', titleRef: 'message:uncertain', timeRole: 'review_by', time: now }),
+    ];
+    await act(async () => root.render(<ProductSchedulePanel now={() => now} />));
+    expect(container.querySelector('[data-testid="schedule-personal-counts"]')).toBeNull();
+    const ignore = container.querySelector<HTMLButtonElement>('[data-testid="schedule-ignore"]');
+    expect(ignore).not.toBeNull();
+    expect(ignore?.disabled).toBe(true);
+    expect(container.querySelector('[data-testid="schedule-preferences-error"]')).not.toBeNull();
+  });
+
+  it('does not let a previous owner save failure overwrite the next owner preference state', async () => {
+    const work = ownerRead({ id: 'owner-switch', titleRef: 'message:owner-switch', timeRole: 'review_by', time: now });
+    mocks.ownerReads = [work];
+    let rejectPrevious: (reason: Error) => void = () => {
+      throw new Error('No save started');
+    };
+    const original = mocks.api.getMockImplementation();
+    mocks.api.mockImplementation((path: string, init?: RequestInit) => {
+      if (init?.method === 'PATCH')
+        return new Promise((_resolve, reject) => {
+          rejectPrevious = reject;
+        });
+      return original?.(path, init);
+    });
+    await act(async () => root.render(<ProductSchedulePanel now={() => now} />));
+    await act(async () => container.querySelector<HTMLButtonElement>('[data-testid="schedule-ignore"]')?.click());
+    work.envelope.visibility.ownerUserId = 'owner-2';
+    mocks.preferences = { ownerUserId: 'owner-2', revision: 0, entries: [] };
+    await act(async () => {
+      root.render(<ProductSchedulePanel now={() => now} />);
+      Array.from(container.querySelectorAll('button'))
+        .find((button) => button.textContent === '刷新')
+        ?.click();
+    });
+    expect(container.querySelector('[data-testid="schedule-personal-counts"]')?.textContent).toBe(
+      '共 1 件 · 当前筛选显示 1 件 · 已忽略 0 件',
+    );
+    await act(async () => rejectPrevious(new Error('Old owner connection failed')));
+    expect(container.querySelector('[data-testid="schedule-preferences-error"]')).toBeNull();
+  });
   let container: HTMLDivElement;
   let root: Root;
 
@@ -335,6 +517,35 @@ describe('F310 ProductSchedulePanel', () => {
     mocks.error = false;
     mocks.refetch.mockReset();
     mocks.projection.mockReset();
+    mocks.preferences = { ownerUserId: 'owner-1', revision: 0, entries: [] };
+    mocks.preferencesUnavailable = false;
+    mocks.api.mockReset();
+    useChatStore.setState({ currentThreadId: 'source-chat', pendingChatInsert: null, presentationLock: null });
+    useToastStore.setState({ toasts: [] });
+    window.history.replaceState({}, '', '/thread/source-chat');
+    mocks.api.mockImplementation(async (path: string, init?: RequestInit) => {
+      if (path === '/api/session') return Response.json({ userId: mocks.preferences.ownerUserId });
+      if (path === '/api/threads/thread-original')
+        return Response.json({ id: 'thread-original', createdBy: 'owner-1' });
+      if (path !== '/api/config/ignored-items') return new Response(null, { status: 404 });
+      if (mocks.preferencesUnavailable) return new Response(null, { status: 503 });
+      if (init?.method === 'PATCH') {
+        const change = JSON.parse(String(init.body));
+        const removed = new Set(change.restore.map((item: { subjectRef: string }) => item.subjectRef));
+        mocks.preferences = {
+          ...mocks.preferences,
+          revision: mocks.preferences.revision + 1,
+          entries: [
+            ...mocks.preferences.entries.filter((entry) => !removed.has(entry.coordinate.subjectRef)),
+            ...change.ignore.map((coordinate: { kind: 'schedule'; subjectRef: string }) => ({
+              coordinate,
+              ignoredAt: now,
+            })),
+          ],
+        };
+      }
+      return Response.json(mocks.preferences);
+    });
     container = document.createElement('div');
     document.body.appendChild(container);
     root = createRoot(container);

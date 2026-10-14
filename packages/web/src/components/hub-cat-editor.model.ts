@@ -47,6 +47,7 @@ export interface HubCatEditorFormState {
   provider: string;
   agyNativeEnabled?: boolean;
   agyProfileEnabled?: boolean;
+  agyAutoApprove?: boolean;
   agyProfileId?: string;
   agyHomeRoot?: string;
   agyTrustedWorkspaces?: string;
@@ -398,6 +399,7 @@ export function initialState(cat?: CatData | null, draft?: HubCatEditorDraft | n
     agyNativeEnabled: cat?.clientId === 'google' && cat?.agyProfile?.carrier === 'native',
     agyProfileEnabled: cat?.agyProfile ? cat.agyProfile.enabled === true : true,
     agyProfileId: cat?.agyProfile?.profileId ?? catId,
+    agyAutoApprove: cat?.agyProfile?.carrier === 'native' && cat.agyProfile.autoApprove === true,
     agyHomeRoot: cat?.agyProfile?.homeRoot ?? '',
     agyTrustedWorkspaces: cat?.agyProfile?.trustedWorkspaces?.join('\n') ?? '',
     acpTransport: (acpConfig?.transport as 'stdio' | 'httpstream' | undefined) ?? 'stdio',

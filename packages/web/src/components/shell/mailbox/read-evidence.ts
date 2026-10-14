@@ -88,6 +88,7 @@ function approvalsReadInFull(read: UnifiedAttentionReadV1): boolean {
     approvals.exhaustiveness === 'complete' &&
     read.consistency.state === 'verified' &&
     read.page.offset === 0 &&
+    (!read.personalView || (read.personalView.mode === 'visible' && read.personalView.ignoredTotalCount === 0)) &&
     read.mentionPeriod !== 'earlier' &&
     read.mentionPeriod !== 'handled' &&
     read.page.hasMore === false &&

@@ -2,6 +2,7 @@
 import { createContext, type ReactNode, useContext } from 'react';
 import { useShellCopy } from '../shell/shell-copy';
 import { editorTextKeys } from './members.editor-copy';
+import { nativeTextKeys } from './members.native-copy';
 import { type MembersCopy, membersCopy } from './members.shell-copy';
 export function MemberCopyProvider({ children }: { children: ReactNode }) {
   const copy = useShellCopy(membersCopy);
@@ -11,7 +12,7 @@ export const MemberCopyContext = createContext<MembersCopy>(membersCopy.zh);
 export function useMemberText() {
   const copy = useContext(MemberCopyContext);
   return (value: string): string => {
-    const entry = copy[(editorTextKeys[value] ?? value) as keyof MembersCopy];
+    const entry = copy[(nativeTextKeys[value] ?? editorTextKeys[value] ?? value) as keyof MembersCopy];
     return typeof entry === 'string' ? entry : value;
   };
 }

@@ -6,7 +6,9 @@ import {
   delegateLineageHasProposalAnchor,
   delegateLineageHistoryMatchesCanonicalOwner,
   isCurrentDelegateLineageGeneration,
+  replacementTransitionMatchesDelegateLineage,
 } from '../../../domains/ball-custody/action-successor-delegate-lineage.js';
+import { isApprovedDevelopmentProposalForTask } from '../../../domains/ball-custody/approved-development-proposal.js';
 import { readDurableLocalReviewFact } from '../../../domains/cats/services/local-review-artifact.js';
 import type { DevelopmentWorkActor } from '../../../domains/cats/services/stores/ports/DevelopmentWorkTransition.js';
 import {
@@ -42,6 +44,52 @@ function currentOriginal(message: StoredMessage | null, actor: DevelopmentWorkAc
   );
 }
 
+function currentParentBoundProposalSource(
+  message: StoredMessage | null,
+  actor: DevelopmentWorkActor,
+  task: TaskItem,
+  proposal: ThreadProposal,
+): message is StoredMessage {
+  return Boolean(
+    message &&
+      message.id === proposal.sourceMessageId &&
+      message.userId === actor.userId &&
+      message.threadId === proposal.sourceThreadId &&
+      message.catId === null &&
+      !message.deletedAt &&
+      !message._tombstone &&
+      !message.source &&
+      message.timestamp <= (proposal.approvedAt ?? 0) &&
+      isApprovedDevelopmentProposalForTask(proposal, {
+        id: task.id,
+        threadId: task.threadId,
+        ownerCatId: task.ownerCatId,
+        userId: task.userId,
+        developmentScope: task.entrustedWork?.developmentScope,
+      }),
+  );
+}
+
+function parentBoundProposalSourceRevision(source: StoredMessage, proposal: ThreadProposal, task: TaskItem): string {
+  return `sha256:${createHash('sha256')
+    .update(
+      canonicalGrowingSourceJson({
+        kind: 'approved-parent-task-source-v1',
+        sourceMessageRevision: deriveGrowingSourceMessageRevision(source),
+        proposalId: proposal.proposalId,
+        approvedBy: proposal.approvedBy,
+        approvedAt: proposal.approvedAt,
+        sourceThreadId: proposal.sourceThreadId,
+        parentThreadId: proposal.parentThreadId,
+        subjectTaskId: proposal.subjectTaskId,
+        createdThreadId: proposal.createdThreadId,
+        approvedDevelopmentScope: proposal.approvedDevelopmentScope,
+        taskId: task.id,
+      }),
+    )
+    .digest('hex')}`;
+}
+
 async function hasHumanAuthority(deps: Deps, actor: DevelopmentWorkActor, task: TaskItem, source: StoredMessage) {
   const sourceRef = `message:${source.id}`;
   return (
@@ -63,7 +111,11 @@ export async function resolveDevelopmentReturnSource(
   proposal: ThreadProposal,
   trigger: StoredMessage | null,
 ): Promise<{ sourceMessageRevision: string } | null> {
-  if (!currentOriginal(trigger, actor)) return null;
+  if (!currentOriginal(trigger, actor)) {
+    return currentParentBoundProposalSource(trigger, actor, task, proposal)
+      ? { sourceMessageRevision: parentBoundProposalSourceRevision(trigger, proposal, task) }
+      : null;
+  }
   const sourceMessageRevision = deriveGrowingSourceMessageRevision(trigger);
   if (trigger.catId === null) {
     return (await hasHumanAuthority(deps, actor, task, trigger)) ? { sourceMessageRevision } : null;
@@ -151,7 +203,12 @@ export async function resolveReturnedActionSuccessorReturnSource(
 }
 
 export type ReturnedActionSuccessorReturnStatus =
-  | { kind: 'current'; sourceMessageRevision: string; reporterCatIds: string[] }
+  | {
+      kind: 'current';
+      sourceMessageRevision: string;
+      reporterCatIds: string[];
+      supersededPredecessor?: { generation: number; reporterCatIds: string[] };
+    }
   | { kind: 'superseded' };
 
 /**
@@ -198,12 +255,7 @@ export async function resolveReturnedActionSuccessorReturnStatus(
     .find((anchor) => delegateLineageHasProposalAnchor(lease, anchor));
   const expectedDelegateEvidence = delegateAnchor?.evidenceRef;
   const canonicalHistory = delegateLineageHistoryMatchesCanonicalOwner(lease, lineageRoute);
-  if (
-    (lease.returnTransitions ?? []).length === 0 ||
-    !canonicalHistory ||
-    !expectedDelegateEvidence ||
-    !lease.evidenceRefs.includes(expectedDelegateEvidence)
-  ) {
+  if (!canonicalHistory || !expectedDelegateEvidence || !lease.evidenceRefs.includes(expectedDelegateEvidence)) {
     return null;
   }
   const terminalPredicate = lease.terminalPredicate;
@@ -240,9 +292,24 @@ export async function resolveReturnedActionSuccessorReturnStatus(
       : null;
   }
 
+  const enteringReplacement = replacementTransitions.find(
+    (transition) =>
+      transition.toGeneration === coordinate.generation &&
+      transition.toHolderThreadId === executionThreadId &&
+      replacementTransitionMatchesDelegateLineage(transition, lineageRoute),
+  );
+
   return {
     kind: 'current',
     reporterCatIds,
+    ...(enteringReplacement
+      ? {
+          supersededPredecessor: {
+            generation: enteringReplacement.fromGeneration,
+            reporterCatIds: [...enteringReplacement.fromHolderCatIds],
+          },
+        }
+      : {}),
     sourceMessageRevision: `sha256:${createHash('sha256')
       .update(
         canonicalGrowingSourceJson({

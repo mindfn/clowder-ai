@@ -105,6 +105,35 @@
   border-radius: 16px;
   background: var(--cafe-surface-elevated);
 }
+.imageWorkspace {
+  overflow: hidden;
+}
+.imageArtwork {
+  min-height: 0;
+  margin: 0;
+  border-radius: 0;
+  background: var(--cafe-surface-sunken);
+}
+/* The desk is darker than its paper controls in both themes; dark roles do not follow light token names. */
+:global([data-theme="dark"]) .imageArtwork {
+  background: var(--cafe-surface-elevated);
+}
+.imageArtwork .media {
+  margin: 44px 12px 72px;
+  grid-template-columns: minmax(0, 1fr);
+  grid-template-rows: minmax(0, 1fr);
+}
+.imageWorkspace .modificationRegion:has([data-modification-open]) {
+  flex: 1 1 auto;
+}
+.imageWorkspace:has(.modificationRegion [data-modification-open]) .imageArtwork {
+  min-height: 220px;
+  height: auto;
+  flex: 1 1 40%;
+}
+.imageWorkspace[data-comparing="true"] .imageArtwork {
+  display: none;
+}
 .modificationRegion {
   display: flex;
   flex: 0 1 auto;

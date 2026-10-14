@@ -4,7 +4,10 @@ import { useShellPresentation } from '@/components/shell/shell-presentation';
 import type { WorkspaceSurfaceDescriptor } from '@/components/workbench/workbench-contract';
 import { FocusModeButton } from '@/components/workspace/FocusModeButton';
 import { WorkspaceFocusExitButton } from '@/components/workspace/WorkspaceFocusShell';
+import { resolveArtifactReviewTarget } from './artifact-review-surface';
+import { resolvePublicationTarget } from './publication-surface';
 import { isVoiceDestinationSurface } from './real-surface-adapters';
+import { WorkspaceChatWorkSurface } from './WorkspaceChatWorkScope';
 import { promoteWorkspacePreview } from './WorkspacePreviewIntent';
 import { workspaceChromeCopy } from './workspace-chrome.shell-copy';
 
@@ -80,7 +83,9 @@ function SurfacePaneBody({
   accessibleName,
 }: F307SurfacePaneProps & { accessibleName?: string }) {
   const chromeOwnedByTool =
-    useShellPresentation() === 'v2' && ['file', 'code', 'browser', 'terminal', 'workspace'].includes(surface.type);
+    useShellPresentation() === 'v2' &&
+    (['file', 'code', 'browser', 'terminal', 'workspace'].includes(surface.type) ||
+      Boolean(resolveArtifactReviewTarget(surface) || resolvePublicationTarget(surface)));
   return (
     <article
       className={`${visible ? 'flex' : 'hidden'} min-h-0 min-w-0 flex-1 flex-col overflow-auto bg-[var(--console-panel-bg)]`}
@@ -127,7 +132,7 @@ function SurfacePaneBody({
         className="relative flex min-h-0 min-w-0 flex-1 flex-col overflow-auto [&>*]:min-h-0 [&>*]:w-full [&>*]:flex-1"
         data-testid="f307-owner-surface-host"
       >
-        {children}
+        <WorkspaceChatWorkSurface surfaceId={surface.id}>{children}</WorkspaceChatWorkSurface>
         {focusMode && onExitFocusMode && (
           <WorkspaceFocusExitButton
             onExit={onExitFocusMode}

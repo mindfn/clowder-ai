@@ -14,6 +14,7 @@
 import type { ActionFreshnessResolution } from './ActionSubjectTruthResolver.js';
 import type { ActionSuccessorAdmissionInput } from './ActionSuccessorAdmissionContract.js';
 import {
+  boundGenerationHasTerminalDelegateOutcome,
   currentDelegateLineageGenerationHasExactEntry,
   delegateLineageHasProposalAnchor,
   delegateLineageHistoryMatchesCanonicalOwner,
@@ -45,12 +46,16 @@ export type ActionSuccessorStandingSnapshot = Pick<
  * propagate it into the lease for auditability.
  */
 export interface MatchedStandingAuthority {
-  readonly kind: 'canonical_owner' | 'approved_delegate' | 'returned_delegate_successor';
+  readonly kind:
+    | 'canonical_owner'
+    | 'approved_delegate'
+    | 'returned_delegate_successor'
+    | 'human_reassigned_delegate_successor';
   readonly delegateEvidenceRef?: string;
 }
 
 type ReturnedDelegateSuccessorInput = ActionSuccessorStandingSnapshot &
-  Pick<ActionSuccessorAdmissionInput, 'actorCatId' | 'sourceThreadId'>;
+  Pick<ActionSuccessorAdmissionInput, 'actorCatId' | 'sourceThreadId' | 'now' | 'action' | 'humanReassignmentEvidence'>;
 
 function findApprovedDelegate(
   input: ActionSuccessorStandingSnapshot,
@@ -138,11 +143,6 @@ export function assertDelegateLineageSuccessorStanding(
   input: ReturnedDelegateSuccessorInput,
   freshness: Extract<ActionFreshnessResolution, { status: 'verified' }>,
 ): MatchedStandingAuthority {
-  const transition = current.returnTransitions.at(-1);
-  if (!transition?.rejectingThreadId) {
-    throw new ActionSuccessorStandingError('insufficient', 'approved delegate return lineage is unavailable');
-  }
-
   if (
     freshness.ownerCatId !== input.actorCatId ||
     freshness.holderThreadId !== input.sourceThreadId ||
@@ -156,6 +156,10 @@ export function assertDelegateLineageSuccessorStanding(
   }
 
   const ownerRoute = { ownerCatId: input.actorCatId, ownerThreadId: input.sourceThreadId };
+  const transition = current.returnTransitions.at(-1);
+  if (!transition?.rejectingThreadId && current.generation === 1) {
+    return assertInitialHumanReassignmentStanding(current, input, freshness, ownerRoute);
+  }
   if (!delegateLineageHistoryMatchesCanonicalOwner(current, ownerRoute)) {
     throw new ActionSuccessorStandingError(
       'mismatch',
@@ -164,12 +168,14 @@ export function assertDelegateLineageSuccessorStanding(
     );
   }
 
+  const returnedChildThreadId = transition?.rejectingThreadId;
   const isReturnedGeneration =
-    transition.toGeneration === current.generation &&
+    returnedChildThreadId !== undefined &&
+    transition?.toGeneration === current.generation &&
     current.holderCatIds.length === 1 &&
-    current.holderCatIds[0] === transition.predecessorCatId &&
-    current.holderThreadId === transition.predecessorThreadId;
-  const currentChildThreadId = isReturnedGeneration ? transition.rejectingThreadId : current.holderThreadId;
+    current.holderCatIds[0] === transition?.predecessorCatId &&
+    current.holderThreadId === transition?.predecessorThreadId;
+  const currentChildThreadId = isReturnedGeneration ? returnedChildThreadId : current.holderThreadId;
   const currentChildRoute = { ...ownerRoute, childThreadId: currentChildThreadId };
   if (!isReturnedGeneration && !currentDelegateLineageGenerationHasExactEntry(current, currentChildRoute)) {
     throw new ActionSuccessorStandingError(
@@ -205,4 +211,60 @@ export function assertDelegateLineageSuccessorStanding(
     );
   }
   return { kind: 'returned_delegate_successor', delegateEvidenceRef: targetDelegate.evidenceRef };
+}
+
+function assertInitialHumanReassignmentStanding(
+  current: ActionSuccessorLease,
+  input: ReturnedDelegateSuccessorInput,
+  freshness: Extract<ActionFreshnessResolution, { status: 'verified' }>,
+  ownerRoute: { ownerCatId: string; ownerThreadId: string },
+): MatchedStandingAuthority {
+  const proof = input.humanReassignmentEvidence;
+  const expectedEvidenceRef = proof
+    ? `human-reassignment:message:${proof.sourceMessageId}:${proof.sourceMessageRevision}`
+    : undefined;
+  if (
+    current.generation !== 1 ||
+    current.mode !== 'single' ||
+    current.holderCatIds.length !== 1 ||
+    current.predecessorCatId !== ownerRoute.ownerCatId ||
+    current.predecessorThreadId !== ownerRoute.ownerThreadId ||
+    input.targetThreadId !== current.holderThreadId ||
+    input.holderCatIds.length !== 1 ||
+    !input.holderCatIds[0]?.trim() ||
+    !proof ||
+    proof.userId !== input.tenantScope ||
+    proof.threadId !== current.holderThreadId ||
+    proof.authoredAt <= current.createdAt ||
+    proof.authoredAt > input.now ||
+    !/^sha256:[a-f0-9]{64}$/.test(proof.sourceMessageRevision) ||
+    proof.evidenceRef !== expectedEvidenceRef ||
+    input.action.groundingEvidenceRef !== `message:${proof.sourceMessageId}` ||
+    !boundGenerationHasTerminalDelegateOutcome(
+      current,
+      current.generation,
+      current.holderCatIds,
+      current.holderThreadId,
+    )
+  ) {
+    throw new ActionSuccessorStandingError(
+      'mismatch',
+      'initial delegate reassignment requires exact terminal custody and direct human grounding in the same child',
+      ['owner', 'target_thread'],
+    );
+  }
+  const initialDelegate = freshness.approvedDelegates?.find(
+    (delegate) =>
+      delegate.catId === current.holderCatIds[0] &&
+      delegate.threadId === current.holderThreadId &&
+      delegateLineageHasProposalAnchor(current, delegate),
+  );
+  if (!initialDelegate) {
+    throw new ActionSuccessorStandingError(
+      'mismatch',
+      'the initial delegate no longer has current Task, scope, tenant, and proposal standing',
+      ['owner', 'target_thread'],
+    );
+  }
+  return { kind: 'human_reassigned_delegate_successor', delegateEvidenceRef: proof.evidenceRef };
 }

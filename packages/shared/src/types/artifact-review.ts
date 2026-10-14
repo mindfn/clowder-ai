@@ -84,12 +84,16 @@ export const artifactReviewRoundSchema = z
     decision: z
       .object({
         outcome: z.enum(['approved', 'changes_requested']),
-        explanation: text,
+        explanation: z.string().trim().max(8000),
         actor: artifactReviewActorSchema,
         decidedAt: timestamp,
         receiptRef: ref,
       })
       .strict()
+      .refine((decision) => decision.outcome === 'approved' || decision.explanation.length > 0, {
+        message: 'Changes require human feedback',
+        path: ['explanation'],
+      })
       .optional(),
     attentionRetiredReason: z.enum(['task_changed', 'task_closed', 'asset_changed', 'access_revoked']).optional(),
   })
@@ -184,11 +188,17 @@ export const artifactReviewActionSchema = z
     z.object({ kind: z.literal('request_judgment'), summary: text, judgmentNeeded: text }).strict(),
     z.object({ kind: z.literal('submit_feedback'), explanation: text }).strict(),
     z
-      .object({ kind: z.literal('decide'), outcome: z.enum(['approved', 'changes_requested']), explanation: text })
+      .object({
+        kind: z.literal('decide'),
+        outcome: z.enum(['approved', 'changes_requested']),
+        explanation: z.string().trim().max(8000),
+      })
       .strict(),
     z.object({ kind: z.literal('reopen'), explanation: text }).strict(),
   ])
   .superRefine((action, ctx) => {
+    if (action.kind === 'decide' && action.outcome === 'changes_requested' && !action.explanation)
+      ctx.addIssue({ code: 'custom', path: ['explanation'], message: 'Changes require human feedback' });
     if (action.kind !== 'request_media_edit' || !action.selections) return;
     if (action.anchor) ctx.addIssue({ code: 'custom', path: ['anchor'], message: 'Choose single or named selections' });
     if (new Set(action.selections.map((item) => item.id)).size !== action.selections.length)

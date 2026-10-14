@@ -12,10 +12,12 @@ function Status({
   message,
   subject,
   resolveCatName,
+  ongoingOnly,
 }: {
   message: StatusMessage;
   subject: TextRequestSubject;
   resolveCatName: ResolveCatName;
+  ongoingOnly?: boolean;
 }) {
   const { found, failed, reload } = useTextMessageRequest({ messageId: message.id, sentAt: message.timestamp });
   // A failed read says "cannot tell", never "no request"; once a request is found its own line reports its own state.
@@ -28,6 +30,7 @@ function Status({
           targetName={resolveCatName(found.targetCatId) ?? found.targetCatId}
           contentTitle={subject.title}
           placeCount={subject.placeCount}
+          ongoingOnly={ongoingOnly}
         />
       ) : (
         <ModificationProgressRow copy={describeModificationReadFailure()} handlers={{ reload: () => void reload() }} />
@@ -47,10 +50,14 @@ function Status({
 export function TextMessageRequestStatus({
   message,
   resolveCatName,
+  ongoingOnly,
 }: {
   message: StatusMessage;
   resolveCatName: ResolveCatName;
+  ongoingOnly?: boolean;
 }) {
   const subject = message.extra?.contentModificationRequestV1 ? null : textRequestSubjectOf(message.contentBlocks);
-  return subject ? <Status message={message} subject={subject} resolveCatName={resolveCatName} /> : null;
+  return subject ? (
+    <Status message={message} subject={subject} resolveCatName={resolveCatName} ongoingOnly={ongoingOnly} />
+  ) : null;
 }

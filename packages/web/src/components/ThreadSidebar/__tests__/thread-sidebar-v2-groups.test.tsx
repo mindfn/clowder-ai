@@ -29,7 +29,7 @@ describe('F322 production group preview and compact virtual navigation', () => {
       participants: [],
       createdBy: 'user',
       createdAt: 1710000000000,
-      lastActiveAt: 1710000000000,
+      lastActiveAt: 1710000000000 - index,
       pinned: true,
       presence: { status: 'idle' },
     }));

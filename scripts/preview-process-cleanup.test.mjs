@@ -186,6 +186,23 @@ test('cleanup failure through pnpm is not a successful stop and retains its evid
   assert.equal(f.run('stop').status, 1, 'retry must not erase a failed terminal outcome');
 });
 
+test('a later managed start keeps the original failed completion and owner result intact', async (t) => {
+  const f = await fixture(t, { exitCode: 7, wrapped: true, report: true });
+  assert.equal(f.run('stop').status, 1);
+  assert.equal(JSON.parse(f.run('status').stdout).status, 'stopped');
+  const failedCompletion = readFileSync(f.record.completionPath, 'utf8');
+  const failedOwnerPath = cleanupOwnerResultPath(f.record.completionPath);
+  const failedOwner = readFileSync(failedOwnerPath, 'utf8');
+  assert.notEqual(JSON.parse(failedCompletion).exitCode, 0);
+  assert.equal(JSON.parse(failedOwner).exitCode, 7);
+  const started = f.run('start', ['--', 'pnpm', 'run', 'start']);
+  assert.equal(started.status, 0, started.stderr || started.stdout);
+  const current = JSON.parse(readFileSync(f.recordPath, 'utf8'));
+  assert.notEqual(current.completionPath, f.record.completionPath);
+  assert.equal(readFileSync(f.record.completionPath, 'utf8'), failedCompletion);
+  assert.equal(readFileSync(failedOwnerPath, 'utf8'), failedOwner);
+});
+
 test('lease expiry also waits for a reported wrapped launcher cleanup', async (t) => {
   const f = await fixture(t, { seconds: 8, wrapped: true, lifetime: 2, report: true });
   const deadline = Date.now() + 15_000;

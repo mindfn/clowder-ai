@@ -48,7 +48,9 @@ export function MemberEditorPage({
   }, []);
   useEffect(() => {
     if (validationAttempt === 0) return;
-    const field = main.current?.querySelector<HTMLElement>('[aria-invalid="true"]');
+    const field =
+      main.current?.querySelector<HTMLElement>('[aria-invalid="true"]') ??
+      main.current?.querySelector<HTMLElement>('[role="alert"]');
     field?.focus();
     field?.scrollIntoView?.({ block: 'center' });
   }, [validationAttempt]);
@@ -137,8 +139,8 @@ export function MemberEditorPage({
             </>
           )}
           {e.error && (
-            <p role="alert" className="member-error">
-              {e.error}
+            <p role="alert" tabIndex={-1} className="member-error">
+              {t(e.error)}
             </p>
           )}
           <div className="member-editor-layout">

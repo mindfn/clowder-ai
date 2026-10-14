@@ -2,6 +2,7 @@
 
 import { useMemo } from 'react';
 import type { EnvVar } from './EnvSubComponents';
+import { HelpTip } from './HelpTip';
 import { SettingsSection } from './primitives';
 
 const GROUP_ORDER: readonly string[] = ['network', 'storage', 'lifecycle', 'runtime', 'security'];
@@ -46,25 +47,6 @@ function ReadOnlyToggle({ on, label }: { on: boolean; label: string }) {
   );
 }
 
-function HelpTip({ text }: { text: string }) {
-  return (
-    <span className="group relative inline-flex items-center">
-      <span
-        className="flex h-3.5 w-3.5 cursor-help items-center justify-center rounded-full border border-cafe text-[0.5625rem] leading-none text-cafe-muted"
-        title={text}
-      >
-        ?
-      </span>
-      <span
-        className="invisible absolute left-1/2 top-full z-50 mt-1.5 w-max max-w-xs -translate-x-1/2 rounded-md border border-cafe bg-cafe-surface-elevated px-2.5 py-1.5 text-xs text-cafe-secondary opacity-0 shadow-lg transition group-hover:visible group-hover:opacity-100"
-        aria-hidden
-      >
-        {text}
-      </span>
-    </span>
-  );
-}
-
 function SettingItem({ variable }: { variable: EnvVar }) {
   const label = variable.label ?? variable.name;
   const displayValue = variable.currentValue ?? variable.defaultValue;
@@ -74,7 +56,7 @@ function SettingItem({ variable }: { variable: EnvVar }) {
       <div className="min-w-0 flex-1">
         <div className="flex items-center gap-2">
           <span className="text-sm font-medium text-cafe">{label}</span>
-          {variable.description && <HelpTip text={variable.description} />}
+          {variable.description && <HelpTip topic={label}>{variable.description}</HelpTip>}
         </div>
       </div>
       <div className={`text-right ${variable.booleanSemantics ? 'shrink-0' : 'min-w-0 max-w-[50%] overflow-hidden'}`}>

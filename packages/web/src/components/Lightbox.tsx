@@ -3,6 +3,9 @@
 import { useCallback, useEffect, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { API_URL } from '@/utils/api-client';
+import { lightboxCopy } from './lightbox.shell-copy';
+import { useShellCopy } from './shell/shell-copy';
+import { useShellPresentation } from './shell/shell-presentation';
 
 async function copyImageToClipboard(url: string) {
   const source = new URL(url, window.location.origin);
@@ -17,6 +20,8 @@ async function copyImageToClipboard(url: string) {
 
 export function CopyButton({ url, placement = 'overlay' }: { url: string; placement?: 'overlay' | 'below' }) {
   const [copied, setCopied] = useState(false);
+  const isV2 = useShellPresentation() === 'v2';
+  const t = useShellCopy(lightboxCopy);
 
   const handleCopy = useCallback(
     async (e: React.MouseEvent) => {
@@ -45,9 +50,9 @@ export function CopyButton({ url, placement = 'overlay' }: { url: string; placem
           ? 'rounded-md border border-cafe-subtle px-2 py-1 text-xs text-cafe-muted hover:text-cafe'
           : 'absolute top-2 right-2 bg-[var(--console-overlay-control)] hover:bg-[var(--console-overlay-control-hover)] text-[var(--overlay-fg)] rounded-md px-2 py-1 text-xs opacity-0 group-hover:opacity-100 transition-opacity'
       }
-      title={copied ? 'Copied!' : 'Copy image'}
+      title={copied ? (isV2 ? t.copied : 'Copied!') : isV2 ? t.copyImage : 'Copy image'}
     >
-      {copied ? 'Copied!' : 'Copy'}
+      {copied ? (isV2 ? t.copied : 'Copied!') : isV2 ? t.copy : 'Copy'}
     </button>
   );
 }
@@ -67,6 +72,8 @@ export function Lightbox({
   mediaType?: 'image' | 'video';
   onClose: () => void;
 }) {
+  const isV2 = useShellPresentation() === 'v2';
+  const t = useShellCopy(lightboxCopy);
   useEffect(() => {
     const handleKey = (e: KeyboardEvent) => {
       if (e.key === 'Escape') onClose();
@@ -84,7 +91,7 @@ export function Lightbox({
     <div
       role="dialog"
       aria-modal="true"
-      aria-label={alt || 'Image preview'}
+      aria-label={alt || (isV2 ? (mediaType === 'image' ? t.imagePreview : t.videoPreview) : 'Image preview')}
       className="fixed inset-0 z-50 flex items-center justify-center bg-[var(--console-overlay-heavy)] backdrop-blur-sm"
       onClick={onClose}
     >
@@ -98,7 +105,7 @@ export function Lightbox({
           type="button"
           onClick={onClose}
           className="absolute -top-3 -right-3 bg-[var(--console-overlay-heavy)] hover:bg-[var(--console-overlay-heavy-hover)] text-[var(--overlay-fg)] rounded-full w-8 h-8 flex items-center justify-center text-lg z-10"
-          title="Close"
+          title={isV2 ? t.close : 'Close'}
         >
           &times;
         </button>

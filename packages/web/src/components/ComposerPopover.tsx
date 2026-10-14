@@ -38,6 +38,23 @@ function readViewport() {
   return { width: window.innerWidth, height: window.visualViewport?.height ?? window.innerHeight };
 }
 
+function readAnchorGeometry(trigger: HTMLButtonElement) {
+  const rect = trigger.getBoundingClientRect();
+  const style = getComputedStyle(trigger);
+  return {
+    x: rect.left + rect.width / 2,
+    y: rect.top + rect.height / 2,
+    width: trigger.offsetWidth,
+    height: trigger.offsetHeight,
+    visible:
+      trigger.isConnected &&
+      rect.width > 0 &&
+      rect.height > 0 &&
+      style.display !== 'none' &&
+      style.visibility !== 'hidden',
+  };
+}
+
 /** Shared composer controls use an anchor popup; import can opt into a viewport sheet. */
 export function ComposerPopover({
   anchor,
@@ -64,6 +81,7 @@ export function ComposerPopover({
   closeRef.current = onClose;
   useEffect(() => {
     const trigger = anchor.current;
+    const initialAnchor = trigger ? readAnchorGeometry(trigger) : null;
     panel.current?.querySelector<HTMLElement>('button:not(:disabled), [tabindex="0"]')?.focus();
     const dismiss = (restoreFocus: boolean) => {
       closeRef.current();
@@ -79,7 +97,21 @@ export function ComposerPopover({
     };
     const resize = () => (presentation === 'viewport' ? setViewport(readViewport()) : dismiss(true));
     const scroll = (event: Event) => {
-      if (!panel.current?.contains(event.target as Node)) dismiss(false);
+      const current = trigger ? readAnchorGeometry(trigger) : null;
+      if (!current?.visible || !initialAnchor) {
+        dismiss(false);
+        return;
+      }
+      if (event.target instanceof Node && panel.current?.contains(event.target)) return;
+      // Add rotates in place on opening: its outer rect changes while its center and
+      // layout size stay fixed. Half a CSS pixel tolerates browser transform rounding.
+      if (
+        Math.abs(current.x - initialAnchor.x) > 0.5 ||
+        Math.abs(current.y - initialAnchor.y) > 0.5 ||
+        current.width !== initialAnchor.width ||
+        current.height !== initialAnchor.height
+      )
+        dismiss(false);
     };
     const blur = (event: FocusEvent) => {
       if (!panel.current?.contains(event.target as Node) && !trigger?.contains(event.target as Node)) dismiss(false);

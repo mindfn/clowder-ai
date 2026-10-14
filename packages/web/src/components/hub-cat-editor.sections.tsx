@@ -539,7 +539,7 @@ export function AccountSection({
         {carrierOptionsForClient(form.clientId).length > 1 || form.clientId === 'acp' || form.clientId === 'google' ? (
           <SelectField
             label="接入方式"
-            ariaLabel="接入方式"
+            ariaLabel={page ? 'Transport' : '接入方式'}
             value={native ? 'agy-native' : form.carrier}
             options={[
               ...carrierOptionsForClient(form.clientId),

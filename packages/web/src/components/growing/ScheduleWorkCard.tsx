@@ -11,6 +11,7 @@ import { preparedArtifactPresentation, preparedReviewCoordinate } from './prepar
 import { usePreparedReviewTitle } from './prepared-review-presentation';
 import { scheduleCopy } from './product-schedule.shell-copy';
 import { ScheduleArtifactActions } from './ScheduleArtifactActions';
+import { SchedulePersonalActions } from './SchedulePersonalActions';
 import { workDates, workTitle } from './work-calendar';
 
 export function ScheduleWorkCard({
@@ -23,6 +24,7 @@ export function ScheduleWorkCard({
   artifactsLoading,
   onOpenArtifact,
   onOpenReview,
+  personal,
 }: {
   ownerRead: EntrustedWorkOwnerReadV1;
   currentTime: number;
@@ -33,6 +35,7 @@ export function ScheduleWorkCard({
   artifactsLoading: boolean;
   onOpenArtifact?: (artifact: PreparedArtifactCoordinate, itemRef: string, title?: string) => void;
   onOpenReview?: (review: ArtifactReviewView, itemRef: string) => void;
+  personal?: { ignored: boolean; disabled: boolean; onChange: (ignored: boolean) => void };
 }) {
   const t = useShellCopy(scheduleCopy);
   const dateLabel = (value: number) =>
@@ -111,6 +114,7 @@ export function ScheduleWorkCard({
       <OwnerProgress ownerRead={ownerRead} blocked={blocked} />
       {needsMe ? <p className="mt-2 text-xs font-semibold text-cafe-accent">{t.needsJudgment}</p> : null}
       <div className="mt-3 flex flex-wrap items-center gap-2">
+        {personal ? <SchedulePersonalActions ownerRead={ownerRead} {...personal} /> : null}
         <ScheduleArtifactActions
           ownerRead={ownerRead}
           itemRef={itemRef}

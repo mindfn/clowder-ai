@@ -1,10 +1,16 @@
 import type { ShellPresentation } from '@/components/shell/shell-presentation';
+import { resolveArtifactReviewTarget } from './artifact-review-surface';
 import {
   type ArtifactWorkPresentationState,
   isWorkspaceArtworkFile,
   isWorkspaceFullWindowSurface,
 } from './artifact-work-presentation';
-import { createEntrustedReturnFromRef, resolveWorkspaceDestinationTarget } from './real-surface-adapters';
+import { resolvePublicationTarget } from './publication-surface';
+import {
+  createEntrustedReturnFromRef,
+  resolveFileTarget,
+  resolveWorkspaceDestinationTarget,
+} from './real-surface-adapters';
 import type { WorkbenchLayoutState } from './workbench-contract';
 
 export type MainAreaAttentionPresentation =
@@ -18,6 +24,8 @@ interface WorkspaceWorkHostInput {
   statusPanelOpen: boolean;
   rightPanelMode: 'status' | 'workspace' | 'transcript';
   shellPresentation: ShellPresentation;
+  currentThreadId?: string | null;
+  mediaComposerSurfaceId?: string | null;
 }
 
 /** Read the existing session for both shells; ownership and invalidation stay in the original controller. */
@@ -38,6 +46,30 @@ export function projectWorkspaceWorkHost(
   const sessionMatchesHost =
     presentation.session?.threadId === input.threadId && presentation.session?.surfaceId === activeSurface?.id;
   const fullWindowActive = hostEligible && sessionMatchesHost && presentation.session?.mode === 'full-window';
+  const review = activeSurface && resolveArtifactReviewTarget(activeSurface);
+  const publication = activeSurface && resolvePublicationTarget(activeSurface);
+  const file = activeSurface && resolveFileTarget(activeSurface);
+  const originThread =
+    activeSurface?.navigationOrigin && 'threadId' in activeSurface.navigationOrigin
+      ? activeSurface.navigationOrigin.threadId
+      : null;
+  const sameThread = Boolean(
+    input.threadId && input.currentThreadId === input.threadId && (!originThread || originThread === input.threadId),
+  );
+  // Media qualification comes from the mounted content owner's real PNG source, not the descriptor's broad type.
+  const readableImage =
+    activeSurface?.id === input.mediaComposerSurfaceId &&
+    Boolean(file || publication || (review && review.threadId === input.threadId));
+  const readableDocument = Boolean(file && /\.(?:mdx?|txt)$/i.test(file.path));
+  const narrowWorkComposerActive =
+    input.shellPresentation === 'v2' &&
+    !input.isDesktop &&
+    input.viewMode === 'single' &&
+    input.statusPanelOpen &&
+    input.rightPanelMode === 'workspace' &&
+    !layout.split &&
+    sameThread &&
+    (readableImage || readableDocument);
   const ordinaryHost =
     input.viewMode === 'single' && input.isDesktop && input.statusPanelOpen && input.rightPanelMode === 'workspace';
   const returnSurface = activeSurface ? createEntrustedReturnFromRef(activeSurface.returnTargetRef) : null;
@@ -57,6 +89,7 @@ export function projectWorkspaceWorkHost(
     workspaceWideActive,
     hostEligible,
     fullWindowActive,
+    narrowWorkComposerActive,
     // v2 file artwork shares the Artifact ratio; browser previews keep the Chat owner's ratio.
     splitPreferenceActive:
       hostEligible && (isWorkspaceFullWindowSurface(activeSurface, 'classic') || isWorkspaceArtworkFile(activeSurface)),

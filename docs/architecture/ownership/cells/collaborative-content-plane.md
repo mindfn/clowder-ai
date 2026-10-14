@@ -135,6 +135,14 @@ source; it is neither Human/Cat speech nor another authorization. Ordinary candi
 do not start acknowledgement work. Conflict/unknown may use the existing Queue delivery owner only after the
 exact Task is still open and owned by the original target Cat; that carrier never retries writeback.
 
+A real applied text writeback can separately register `text_writeback_completion` in the existing durable
+review-return outbox. It carries only the original request/Task, Human acceptance and public F063 receipt refs;
+the applied display receipt remains non-executable. Initial acceptance and natural recovery converge on the
+same return key. Registration and delivery revalidate the canonical file/admission binding, current open Task
+and owner/thread/audience. A same-file continuation B can retain admitted request A's exact closure signal;
+another file cannot satisfy it. This return does not retry F063, replay a Human or close a Task. The original
+owner reads canonical acceptance/writeback evidence and the current Task revision before any typed closure.
+
 ## Use This When
 
 - Adding a durable comment or Agent patch tied to a precise content selection.
