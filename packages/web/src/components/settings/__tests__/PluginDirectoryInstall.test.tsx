@@ -42,12 +42,14 @@ beforeEach(() => {
   container = document.createElement('div');
   document.body.append(container);
   root = createRoot(container);
+  window.localStorage.clear();
   fetch.mockReset();
   installResponse = async () => json({ pluginId: 'local-example' }, 201);
   directoryResponse = async () => json(listing(packagePath));
   fetch.mockImplementation(async (url, init) => {
     if (url === '/api/plugin-manager/plugins') return json({ plugins: [], catalog: { status: 'fresh' } });
-    if (url === '/api/projects/browse') return json(listing('/workspace/plugins'));
+    if (url === '/api/projects/browse' || url === '/api/projects/browse?path=%2Fworkspace%2Fplugins')
+      return json(listing('/workspace/plugins'));
     if (url === `/api/projects/browse?path=${encodeURIComponent(packagePath)}`) return directoryResponse();
     if (url === installEndpoint && init?.method === 'POST') return installResponse();
     throw new Error(`Unexpected request: ${url}`);
@@ -196,4 +198,58 @@ it.each([
   expect(JSON.parse(String(writes()[0]?.[1]?.body))).toEqual({
     source: { kind: 'local-directory', path: currentPath },
   });
+});
+
+it('remembers the last browsed concrete directory after close and remount', async () => {
+  await open();
+  await click('取消');
+  await act(async () => {
+    root.unmount();
+    root = createRoot(container);
+  });
+  await act(async () => root.render(<PluginManagerLiveContent />));
+  fetch.mockClear();
+  await click('从本地目录安装');
+  expect(fetch).toHaveBeenCalledWith(`/api/projects/browse?path=${encodeURIComponent(packagePath)}`);
+  expect(document.querySelector('[aria-live="polite"]')?.textContent).toContain(packagePath);
+});
+
+it.each([403, 404])('falls back visibly when the remembered directory is unavailable (%s)', async (status) => {
+  await open();
+  await click('取消');
+  directoryResponse = async () => json({ error: 'Unavailable' }, status);
+  await click('从本地目录安装');
+  expect(document.querySelector('[role="dialog"]')?.textContent).toContain('已切换到主目录');
+  expect(document.querySelector('[aria-live="polite"]')?.textContent).toContain('/workspace/plugins');
+});
+
+it('preserves a Windows server path and never installs the virtual drive picker', async () => {
+  const windowsPath = 'D:\\plugins\\example';
+  directoryResponse = async () =>
+    json({
+      current: windowsPath,
+      homePath: 'C:\\Users\\owner',
+      parent: 'D:\\plugins',
+      name: 'example',
+      entries: [],
+      isWindows: true,
+    });
+  const previous = fetch.getMockImplementation();
+  if (!previous) throw new Error('Missing browse fixture');
+  fetch.mockImplementation(async (url, init) => {
+    if (url === `/api/projects/browse?path=${encodeURIComponent(windowsPath)}`) return directoryResponse();
+    if (String(url).includes('/api/projects/drives')) return json({ drives: [] });
+    return previous(url, init);
+  });
+  await open();
+  await click('取消');
+  await click('从本地目录安装');
+  expect(fetch).toHaveBeenCalledWith(`/api/projects/browse?path=${encodeURIComponent(windowsPath)}`);
+  await click('安装插件');
+  expect(JSON.parse(String(writes()[0]?.[1]?.body)).source.path).toBe(windowsPath);
+  await click('从本地目录安装');
+  const thisPC = Array.from(document.querySelectorAll('button')).find((item) => item.textContent?.includes('此电脑'));
+  expect(thisPC).toBeDefined();
+  await act(async () => thisPC?.click());
+  expect(button('安装插件').disabled).toBe(true);
 });

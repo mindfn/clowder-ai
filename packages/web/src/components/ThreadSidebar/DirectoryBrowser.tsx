@@ -47,7 +47,7 @@ export function DirectoryBrowser({
     useDrivesLoader(isWindowsServer);
 
   const fetchDirectory = useCallback(
-    async (path?: string, fallbackOnForbidden = false) => {
+    async (path?: string, fallbackOnUnavailable = false) => {
       const navigationVersion = ++navigationVersionRef.current;
       onNavigationStart?.();
       setIsLoading(true);
@@ -57,8 +57,8 @@ export function DirectoryBrowser({
         const res = await apiFetch(buildBrowseUrl(path));
         if (navigationVersion !== navigationVersionRef.current) return;
         if (!res.ok) {
-          // 403 fallback (initial load only) — otherwise surface the error.
-          if (shouldFallbackToHome(fallbackOnForbidden, path, res.status)) {
+          // Unavailable path fallback (initial load only) — otherwise surface the error.
+          if (shouldFallbackToHome(fallbackOnUnavailable, path, res.status)) {
             setInfo(copyRef.current.configuredPathUnavailable);
             // await so outer finally doesn't clear isLoading before fallback finishes
             await fetchDirectory(undefined, false);
@@ -85,7 +85,7 @@ export function DirectoryBrowser({
     [onCurrentPathChange, onNavigationStart, showDirectoryView],
   );
 
-  // Initial load — try initialPath, fallback to homedir on 403 (with visible info)
+  // Initial load — try initialPath, fallback to homedir on 403/404 (with visible info)
   useEffect(() => {
     fetchDirectory(initialPath, !!initialPath);
     return () => {

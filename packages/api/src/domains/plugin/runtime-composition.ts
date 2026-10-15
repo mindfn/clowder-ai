@@ -1066,6 +1066,7 @@ export function createPluginManagerRuntimeComposition(
     options.additionalStateProjection,
   );
   const configuration = new HostPluginConfigurationService({
+    lifecycle: options.runtime.lifecycle,
     projectRoot: options.runtime.projectRoot,
     inventory: options.runtime.inventoryStore,
     now,

@@ -182,7 +182,7 @@ export class ExternalPluginLifecycleService {
         }
         throw error;
       }
-      if (shouldResume) {
+      if (shouldResume && (await this.readCurrent(input.instanceId)).configReadiness === 'ready') {
         try {
           await this.options.supervisor.start(input.instanceId);
         } catch (resumeError) {
@@ -296,7 +296,7 @@ export class ExternalPluginLifecycleService {
       const now = this.now();
       transaction.instances.put({
         ...withRuntimeFailure(current, { code, exitCode: null, signal: null, occurredAt: now }),
-        activationState: 'error',
+        activationState: code === 'CONFIGURATION_RESUME_FAILED' ? current.activationState : 'error',
         runtimeState: 'stopped',
         lifecycleRevision: current.lifecycleRevision + 1,
         updatedAt: now,

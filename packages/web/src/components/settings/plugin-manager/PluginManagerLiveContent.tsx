@@ -160,13 +160,14 @@ export function PluginManagerLiveContent({
         const response = await apiFetch(request.path, request.init);
         if (!response.ok) {
           const failure = await responseError(response, `配置保存失败 (${response.status})`);
+          await refresh();
           setError(failure.message);
           return;
         }
         setConfigurationSavedPluginId(pluginId);
         await refresh();
       } catch {
-        setError('配置保存失败；现有配置没有被改写。');
+        setError('未能确认配置保存结果，请刷新后检查。');
       } finally {
         setBusyPluginId(null);
       }

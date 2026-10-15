@@ -6,6 +6,8 @@ import { DirectoryBrowser } from '../../ThreadSidebar/DirectoryBrowser';
 import { SettingsPrimaryButton } from '../primitives/SettingsPrimaryButton';
 import { SettingsSecondaryButton } from '../primitives/SettingsSecondaryButton';
 
+const LAST_DIRECTORY_KEY = 'clowder.plugin-install.last-directory';
+
 function cycleDialogFocus(container: HTMLElement | null, backwards: boolean) {
   if (!container) return;
   const targets = Array.from(container.querySelectorAll<HTMLElement>('button, input, [tabindex="0"]')).filter(
@@ -26,8 +28,29 @@ export function PluginDirectoryInstallButton({ onInstall }: { onInstall: (path: 
   const [selectedPath, setSelectedPath] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [initialPath, setInitialPath] = useState<string | undefined>();
+  const lastDirectory = useRef<string>();
   const inFlight = useRef(false);
   const dialog = useRef<HTMLDivElement>(null);
+
+  const openDialog = () => {
+    try {
+      lastDirectory.current = window.localStorage.getItem(LAST_DIRECTORY_KEY) || lastDirectory.current;
+    } catch {
+      /* Browsing still works when browser storage is unavailable. */
+    }
+    setInitialPath(lastDirectory.current);
+    setOpen(true);
+  };
+  const selectDirectory = useCallback((path: string) => {
+    setSelectedPath(path);
+    lastDirectory.current = path;
+    try {
+      window.localStorage.setItem(LAST_DIRECTORY_KEY, path);
+    } catch {
+      /* Retain the selection for this mounted picker. */
+    }
+  }, []);
 
   const clearSelection = useCallback(() => {
     setSelectedPath(null);
@@ -78,7 +101,7 @@ export function PluginDirectoryInstallButton({ onInstall }: { onInstall: (path: 
 
   return (
     <>
-      <SettingsSecondaryButton onClick={() => setOpen(true)}>从本地目录安装</SettingsSecondaryButton>
+      <SettingsSecondaryButton onClick={openDialog}>从本地目录安装</SettingsSecondaryButton>
       {open &&
         createPortal(
           <div className="fixed inset-0 z-[100] flex items-center justify-center bg-[var(--console-overlay-backdrop)] p-4 backdrop-blur-sm">
@@ -105,7 +128,8 @@ export function PluginDirectoryInstallButton({ onInstall }: { onInstall: (path: 
               >
                 <div className="h-[min(50dvh,400px)] min-h-0">
                   <DirectoryBrowser
-                    onCurrentPathChange={setSelectedPath}
+                    initialPath={initialPath}
+                    onCurrentPathChange={selectDirectory}
                     onNavigationStart={clearSelection}
                     onVirtualLocationChange={clearSelection}
                     allowCreateDirectory={false}

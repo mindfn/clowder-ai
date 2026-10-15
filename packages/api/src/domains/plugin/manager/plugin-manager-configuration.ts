@@ -3,6 +3,7 @@ import {
   type PluginManagerConfigField,
   type PluginManagerConfigureRequest,
 } from '@cat-cafe/shared';
+import { type ExternalPluginLifecycleService, PluginLifecycleError } from '../external-plugin-lifecycle.js';
 import type { PluginInventoryStore, PluginInventoryTransaction } from '../host-inventory/ports.js';
 import type { PluginInstanceRecord, PluginPackageRecord } from '../host-inventory/types.js';
 import type { OperationState } from '../operations/operation-state-machine.js';
@@ -28,6 +29,7 @@ export interface HostPluginConfigurationServiceOptions {
   readonly projectRoot: string;
   readonly inventory: PluginInventoryStore;
   readonly now?: () => number;
+  readonly lifecycle?: Pick<ExternalPluginLifecycleService, 'runWithRuntimeSuspended'>;
 }
 
 function configError(message: string): PluginManagerServiceError {
@@ -132,8 +134,8 @@ function assertConfigurationFence(instance: PluginInstanceRecord, expectedRevisi
       `Expected lifecycle revision ${expectedRevision}, current ${instance.lifecycleRevision}`,
     );
   }
-  if (instance.activationState !== 'disabled' || instance.runtimeState !== 'stopped') {
-    throw new PluginManagerServiceError('ACTION_NOT_ALLOWED', 'Disable the plugin before changing its configuration');
+  if (instance.activationState === 'enabling' || instance.activationState === 'disabling') {
+    throw new PluginManagerServiceError('ACTION_NOT_ALLOWED', 'Plugin activation is changing');
   }
 }
 
@@ -181,6 +183,9 @@ function configureTransaction(input: {
 }): void {
   const current = requireConfigurationTarget(input.transaction, input.pluginId, input.pluginInstanceId);
   assertConfigurationFence(current.instance, input.request.expectedRevision);
+  if (current.instance.runtimeState !== 'stopped') {
+    throw new PluginManagerServiceError('ACTION_NOT_ALLOWED', 'Configuration requires the runtime to be suspended');
+  }
   const fields = manifestConfiguration(current.packageRecord);
   if (fields.length === 0) {
     throw new PluginManagerServiceError(
@@ -349,15 +354,54 @@ export class HostPluginConfigurationService implements PluginManagerConfiguratio
   }
 
   async configure(pluginId: string, pluginInstanceId: string, request: PluginManagerConfigureRequest): Promise<void> {
-    await this.options.inventory.transaction((transaction) => {
-      configureTransaction({
-        transaction,
-        projectRoot: this.options.projectRoot,
-        pluginId,
-        pluginInstanceId,
-        request,
-        now: this.now(),
+    const persist = (expectedRevision: number) =>
+      this.options.inventory.transaction((transaction) => {
+        configureTransaction({
+          transaction,
+          projectRoot: this.options.projectRoot,
+          pluginId,
+          pluginInstanceId,
+          request: { ...request, expectedRevision },
+          now: this.now(),
+        });
       });
-    });
+    if (!this.options.lifecycle) return persist(request.expectedRevision);
+    let persisted = false;
+    try {
+      await this.options.lifecycle.runWithRuntimeSuspended({
+        instanceId: pluginInstanceId,
+        expectedRevision: request.expectedRevision,
+        stopReason: 'configuration_update',
+        resumeFailureCode: 'CONFIGURATION_RESUME_FAILED',
+        preflight: () =>
+          this.options.inventory.transaction((transaction) => {
+            const current = requireConfigurationTarget(transaction, pluginId, pluginInstanceId);
+            assertConfigurationFence(current.instance, request.expectedRevision);
+            const fields = manifestConfiguration(current.packageRecord);
+            if (fields.length === 0) {
+              throw new PluginManagerServiceError('CONFIGURATION_UNAVAILABLE', 'Plugin does not declare configuration');
+            }
+            validateUpdates(fields, request.updates);
+          }),
+        operation: async (stopped) => {
+          await persist(stopped.lifecycleRevision);
+          persisted = true;
+        },
+      });
+    } catch (error) {
+      if (!(error instanceof PluginLifecycleError)) throw error;
+      if (error.code === 'STALE_REVISION' || error.code === 'STALE_INSTANCE') {
+        throw new PluginManagerServiceError('STALE_REVISION', error.message);
+      }
+      if (error.code === 'CONFIGURATION_RESUME_FAILED') {
+        throw new PluginManagerServiceError(
+          'RUNTIME_START_FAILED',
+          persisted
+            ? 'Configuration saved, but the plugin could not restart'
+            : 'Configuration failed, and the previous runtime could not be restored',
+        );
+      }
+      throw new PluginManagerServiceError('ACTION_NOT_ALLOWED', error.message);
+    }
   }
 }

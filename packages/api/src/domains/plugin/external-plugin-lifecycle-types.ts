@@ -11,13 +11,17 @@ export type PluginLifecycleErrorCode =
   | 'STOP_FAILED'
   | 'UPDATE_RESUME_FAILED'
   | 'UPDATE_ROLLBACK_RESUME_FAILED'
-  | 'CATCH_UP_RESUME_FAILED';
+  | 'CATCH_UP_RESUME_FAILED'
+  | 'CONFIGURATION_RESUME_FAILED';
 
 export interface PluginMaintenanceInput<T> {
   readonly instanceId: string;
   readonly expectedRevision: number;
-  readonly stopReason: 'package_update' | 'meeting_catch_up';
-  readonly resumeFailureCode: Extract<PluginRuntimeErrorCode, 'UPDATE_RESUME_FAILED' | 'CATCH_UP_RESUME_FAILED'>;
+  readonly stopReason: 'package_update' | 'meeting_catch_up' | 'configuration_update';
+  readonly resumeFailureCode: Extract<
+    PluginRuntimeErrorCode,
+    'UPDATE_RESUME_FAILED' | 'CATCH_UP_RESUME_FAILED' | 'CONFIGURATION_RESUME_FAILED'
+  >;
   /** Validate a replacement before disrupting the currently running package. */
   readonly preflight?: () => Promise<void>;
   readonly operation: (stopped: PluginInstanceRecord) => Promise<T>;
@@ -25,7 +29,7 @@ export interface PluginMaintenanceInput<T> {
 
 export type PluginMaintenanceResumeFailureCode = Extract<
   PluginRuntimeErrorCode,
-  'UPDATE_RESUME_FAILED' | 'UPDATE_ROLLBACK_RESUME_FAILED' | 'CATCH_UP_RESUME_FAILED'
+  'UPDATE_RESUME_FAILED' | 'UPDATE_ROLLBACK_RESUME_FAILED' | 'CATCH_UP_RESUME_FAILED' | 'CONFIGURATION_RESUME_FAILED'
 >;
 
 export interface PluginMaintenanceResult<T> {

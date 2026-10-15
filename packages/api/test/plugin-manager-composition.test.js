@@ -32,12 +32,14 @@ async function harness({
   contract,
   machinePresentation = false,
   extraFiles = {},
+  effectiveGrants,
 } = {}) {
   const projectRoot = await root('cat-cafe-f202-manager-composition-');
   const archive = await packageArchive({ packageManifest, extraFiles });
   const entry = catalogEntry(archive.integrity, {
     pluginId: packageManifest.pluginId,
     version: packageManifest.version,
+    ...(effectiveGrants ? { effectiveGrants } : {}),
     ...(machinePresentation
       ? {
           presentation: {
@@ -228,6 +230,85 @@ describe('F202 Plugin Manager runtime composition', () => {
     assert.equal(after.configFields.find((field) => field.key === 'provider').currentValue, 'gemini');
     assert.equal(after.configFields.find((field) => field.key === 'apiKey').currentValue, '••••••');
     assert.equal(JSON.stringify(await runtime.inventoryStore.snapshot()).includes('private-key'), false);
+  });
+
+  it('saves configuration independently of enabled intent and reloads the running module', async () => {
+    const packageManifest = manifest({
+      runtime: { transport: 'builtin', entrypoint: 'dist/entrypoint.js' },
+      features: [{ id: 'source', name: 'Source', resources: [], capabilities: ['plugin.config.read'] }],
+      configuration: [{ key: 'endpoint', label: 'Endpoint', kind: 'url', required: true }],
+      test: { action: { method: 'self.test' } },
+    });
+    const entrypoint = `
+export default { create() { return { async start(host) {
+  const endpoint = await host.config.get('endpoint');
+  if (endpoint === 'https://fail.test') throw new Error('fixture reconnect failed');
+  return { actions: { 'self.test': async () => ({ ok: true, message: endpoint }) }, stop() {} };
+} }; } };
+`;
+    const { composition, entry, runtime } = await harness({
+      packageManifest,
+      contract: contributionContractRuntime(),
+      effectiveGrants: ['plugin.config.read'],
+      extraFiles: { 'dist/entrypoint.js': entrypoint },
+    });
+    const manager = composition.manager;
+    const detail = async () => (await manager.get(entry.pluginId)).plugin;
+    const save = async (value, expectedRevision) =>
+      manager.configure(entry.pluginId, {
+        expectedRevision: expectedRevision ?? (await detail()).lifecycleRevision,
+        updates: [{ key: 'endpoint', value }],
+      });
+    try {
+      await manager.install({
+        source: { kind: 'catalog', catalogId: entry.catalogId },
+        expectedVersion: entry.version,
+        expectedDigest: entry.packageDigest,
+      });
+      await save('https://first.test');
+      assert.equal((await detail()).intent, 'disabled');
+      assert.equal((await detail()).live, 'stopped');
+      await manager.setEnabled(entry.pluginId, { enabled: true, expectedRevision: (await detail()).lifecycleRevision });
+      const operations = new InstalledPluginOperations({
+        inventory: runtime.inventoryStore,
+        configuration: composition.configuration,
+        invocation: runtime.supervisor,
+      });
+      const observed = async () => (await operations.runTest(entry.pluginId)).body.message;
+      assert.equal(await observed(), 'https://first.test');
+      const originalRevision = (await detail()).lifecycleRevision;
+      await assert.rejects(save('invalid-url'), (error) => error?.code === 'INVALID_CONFIGURATION');
+      assert.equal((await detail()).lifecycleRevision, originalRevision);
+      assert.equal(await observed(), 'https://first.test');
+      await save('https://second.test');
+      assert.equal((await detail()).intent, 'enabled');
+      assert.equal((await detail()).live, 'running');
+      assert.equal(await observed(), 'https://second.test');
+      await assert.rejects(save('https://stale.test', originalRevision), (error) => error?.code === 'STALE_REVISION');
+      assert.equal(await observed(), 'https://second.test');
+      await save(null);
+      assert.equal((await detail()).config, 'incomplete');
+      assert.equal((await detail()).intent, 'enabled');
+      assert.equal((await detail()).live, 'stopped');
+      await save('https://third.test');
+      assert.equal(await observed(), 'https://third.test');
+      await assert.rejects(save('https://fail.test'), (error) => error?.code === 'RUNTIME_START_FAILED');
+      assert.equal((await detail()).intent, 'enabled');
+      assert.equal((await detail()).live, 'stopped');
+      assert.equal((await detail()).configFields[0].currentValue, 'https://fail.test');
+      await save('https://recovered.test');
+      assert.equal(await observed(), 'https://recovered.test');
+      assert.equal((await runtime.inventoryStore.snapshot()).instances[0].lastRuntimeError, undefined);
+      await manager.setEnabled(entry.pluginId, {
+        enabled: false,
+        expectedRevision: (await detail()).lifecycleRevision,
+      });
+      await save('https://disabled.test');
+      assert.equal((await detail()).intent, 'disabled');
+      assert.equal((await detail()).live, 'stopped');
+    } finally {
+      await runtime.shutdown('configuration_test');
+    }
   });
 
   it('projects typed defaults as the same effective values used for readiness', async () => {

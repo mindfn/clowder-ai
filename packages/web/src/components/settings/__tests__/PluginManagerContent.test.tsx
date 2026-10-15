@@ -657,6 +657,56 @@ describe('F202 live Plugin Manager Console wiring', () => {
     });
   });
 
+  it('refreshes saved configuration and revision when reconnect fails, without toggling intent', async () => {
+    const plugin = { ...connectorPlugin(), lifecycleRevision: 7, intent: 'enabled' as const, live: 'running' as const };
+    let committed = false;
+    mockApiFetch.mockImplementation(async (url, init) => {
+      const current = committed
+        ? { ...plugin, live: 'stopped', lifecycleRevision: plugin.lifecycleRevision + 2 }
+        : plugin;
+      if (url === '/api/plugin-manager/plugins') return json(response(current));
+      if (url === '/api/plugin-manager/plugins/telegram')
+        return json({
+          ...connectorDetail(),
+          plugin: {
+            ...connectorDetail().plugin,
+            ...current,
+            configFields: connectorDetail().plugin.configFields,
+          },
+        });
+      if (url === '/api/plugin-manager/plugins/telegram/contributions/configuration' && init?.method === 'POST') {
+        committed = true;
+        return json(
+          { code: 'RUNTIME_START_FAILED', error: 'Configuration saved, but the plugin could not restart' },
+          503,
+        );
+      }
+      return json({}, 404);
+    });
+    await act(async () => root.render(<PluginsContent />));
+    await flushEffects();
+    const input = container.querySelector('[data-testid="field-TELEGRAM_BOT_TOKEN"]') as HTMLInputElement;
+    await act(async () => {
+      Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')?.set?.call(input, 'changed-token');
+      input.dispatchEvent(new Event('input', { bubbles: true }));
+    });
+    const save = () => {
+      const button = Array.from(container.querySelectorAll('button')).find((item) =>
+        item.textContent?.includes('保存配置'),
+      );
+      if (!button) throw new Error('Missing save control');
+      return button;
+    };
+    await act(async () => save().click());
+    await flushEffects();
+    expect(container.textContent).toContain('Configuration saved, but the plugin could not restart');
+    await act(async () => save().click());
+    const writes = mockApiFetch.mock.calls.filter(([, init]) => init?.method === 'POST');
+    expect(writes).toHaveLength(2);
+    expect(JSON.parse(String(writes[1][1]?.body)).expectedRevision).toBe(plugin.lifecycleRevision + 2);
+    expect(writes.every(([url]) => String(url).endsWith('/configuration'))).toBe(true);
+  });
+
   it('saves the visible select value, confirms success, and enables with the refreshed revision', async () => {
     const installed = managerPlugin({ installed: true });
     const blocked = {
