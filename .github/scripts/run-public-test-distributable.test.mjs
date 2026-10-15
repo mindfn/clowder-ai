@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 import { spawn, spawnSync } from 'node:child_process';
 import { once } from 'node:events';
 import { readFileSync, statSync } from 'node:fs';
+import { createRequire } from 'node:module';
 import { describe, it } from 'node:test';
 import { setTimeout as delay } from 'node:timers/promises';
 import { fileURLToPath } from 'node:url';
@@ -253,6 +254,85 @@ print('pdeathsig-verified')
       assert.equal(child.status, 1, child.stdout + child.stderr);
       assert.match(child.stderr, /cleanup=unknown killed=0/);
       assert.match(child.stderr, /"operation":"proc-environ","code":"EACCES"/);
+    });
+
+    for (const workerSurvives of [false, true]) {
+      it(`checks actual terminal thread-group evidence (live worker=${workerSurvives})`, () => {
+        const proofModule = new URL('../../scripts/lib/gate-linux-process-exit.mjs', import.meta.url).href;
+        const python = workerSurvives
+          ? "import ctypes, threading, time; threading.Thread(target=lambda: time.sleep(60)).start(); print('ready', flush=True); ctypes.CDLL(None).pthread_exit(None)"
+          : 'import os,time; pid=os.fork(); os._exit(0) if pid == 0 else None; print(pid, flush=True); time.sleep(60)';
+        const child = run(`
+          (async () => {
+            const assert = require('node:assert/strict');
+            const fs = require('node:fs');
+            const {spawn} = require('node:child_process');
+            const {once} = require('node:events');
+            const {setTimeout:delay} = require('node:timers/promises');
+            const {readLinuxExitIdentity, proveLinuxExecutionExited} = await import(${JSON.stringify(proofModule)});
+            const owned = spawn('/usr/bin/python3', ['-c', ${JSON.stringify(python)}], {stdio:['ignore','pipe','inherit']});
+            const exited = once(owned,'exit');
+            try {
+              const [ready] = await once(owned.stdout,'data');
+              const pid = ${workerSurvives} ? owned.pid : Number(ready.toString().trim());
+              const deadline = Date.now()+3000;
+              let identity;
+              do {
+                identity = readLinuxExitIdentity(pid,fs.readFileSync);
+                if (identity?.state === 'Z') break;
+                assert.ok(Date.now()<deadline, 'fixture leader did not reach terminal state');
+                await delay(10);
+              } while(true);
+              const proof = proveLinuxExecutionExited(pid,identity,{readFileSyncImpl:fs.readFileSync,readdirSyncImpl:fs.readdirSync});
+              console.log('terminal proof='+JSON.stringify(proof));
+              assert.equal(proof.proven, ${!workerSurvives});
+            } finally { owned.kill('SIGKILL'); await exited; }
+          })().catch(error => {console.error(error);process.exitCode=2;});
+        `);
+        assert.equal(child.status, 0, child.stdout + child.stderr);
+      });
+    }
+
+    it('acquires and fences a Native profile lease with the actual namespace process identity', () => {
+      const ownership = new URL('../../packages/api/src/utils/cli-process-ownership.ts', import.meta.url).href;
+      const lease = new URL(
+        '../../packages/api/src/domains/cats/services/agents/providers/agy-native/agy-native-profile-turn.ts',
+        import.meta.url,
+      ).href;
+      const tsxLoader = createRequire(new URL('../../packages/api/package.json', import.meta.url)).resolve('tsx');
+      const child = runCommand([
+        process.execPath,
+        '--import',
+        resourceGuard,
+        '--import',
+        tsxLoader,
+        '-e',
+        `
+        (async () => {
+          const assert = require('node:assert/strict');
+          const fs = require('node:fs');
+          const os = require('node:os');
+          const path = require('node:path');
+          const { readUnixProcessSnapshotSync, readUnixProcessSnapshot } = await import(${JSON.stringify(ownership)});
+          const { acquireAgyNativeProfileTurn, AgyNativeProfileBusyError } = await import(${JSON.stringify(lease)});
+          const identity = readUnixProcessSnapshotSync({pids:[process.pid]})?.get(process.pid);
+          console.log('namespace identity=' + JSON.stringify(identity));
+          assert.ok(identity?.startedAt);
+          assert.equal(identity.pid, process.pid);
+          assert.deepEqual((await readUnixProcessSnapshot({pids:[process.pid]})).get(process.pid), identity);
+          const home = fs.mkdtempSync(path.join(os.tmpdir(),'native-lease-namespace-'));
+          process.env.CAT_CAFE_DATA_DIR = home;
+          try {
+            const release = acquireAgyNativeProfileTurn(home, 'namespace-owned-turn');
+            try { assert.throws(() => acquireAgyNativeProfileTurn(home, 'other-turn'), AgyNativeProfileBusyError); }
+            finally { release(); }
+            acquireAgyNativeProfileTurn(home, 'successor-turn')();
+          } finally { fs.rmSync(home, {recursive:true,force:true}); }
+        })().catch(error => { console.error(error); process.exitCode = 2; });
+      `,
+      ]);
+      assert.equal(child.status, 0, child.stdout + child.stderr);
+      assert.match(child.stdout, /namespace identity=/);
     });
 
     it('detects and cleans a token-owned detached descendant while failing the leaking command', () => {

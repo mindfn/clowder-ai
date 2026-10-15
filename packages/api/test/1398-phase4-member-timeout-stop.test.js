@@ -15,11 +15,7 @@ const { routeParallel } = await import('../dist/domains/cats/services/agents/rou
 const { routeSerial } = await import('../dist/domains/cats/services/agents/routing/route-serial.js');
 const { InvocationTracker } = await import('../dist/domains/cats/services/agents/invocation/InvocationTracker.js');
 const { A2AAgentService } = await import('../dist/domains/cats/services/agents/providers/A2AAgentService.js');
-const { AntigravityAgentService } = await import(
-  '../dist/domains/cats/services/agents/providers/antigravity/AntigravityAgentService.js'
-);
 const { MessageStore } = await import('../dist/domains/cats/services/stores/ports/MessageStore.js');
-const { createMockBridge } = await import('./antigravity-agent-service-test-helpers.js');
 const { createMemberTimeoutStop, MEMBER_TIMEOUT_REASON } = await import(
   '../dist/domains/cats/services/agents/invocation/member-output-timeout.js'
 );
@@ -309,7 +305,7 @@ describe('G1: remote cancellation survives route settlement and canonical readba
     ['parallel', routeParallel],
     ['serial', routeSerial],
   ]) {
-    for (const kind of ['a2a_task', 'antigravity_cascade']) {
+    for (const kind of ['a2a_task', 'remote_partial']) {
       for (const reason of ['timeout', 'user_cancel']) {
         it(`${routeName} ${kind} ${reason}: same response retains uncertainty, no second error bubble`, async () => {
           let observedSignal;
@@ -329,26 +325,15 @@ describe('G1: remote cancellation survives route settlement and canonical readba
               fetchFn: (_url, options) => waitForAbort(options.signal),
             });
           } else {
-            const bridge = createMockBridge();
-            bridge.pollForSteps = async function* (_cascade, _steps, _timeout, _limit, signal) {
-              yield {
-                steps: [
-                  {
-                    type: 'CORTEX_STEP_TYPE_PLANNER_RESPONSE',
-                    status: 'CORTEX_STEP_STATUS_RUNNING',
-                    plannerResponse: { response: 'partial remote output' },
-                  },
-                ],
-                cursor: {
-                  baselineStepCount: 0,
-                  lastDeliveredStepCount: 1,
-                  terminalSeen: false,
-                  lastActivityAt: Date.now(),
-                },
-              };
-              await waitForAbort(signal);
+            // Exercise the current generic remote-dispatch capability, independent
+            // of any retired carrier implementation. The route owns cancellation.
+            service = {
+              async *invoke(_prompt, options) {
+                options.onRemoteExecutionDispatched({ kind: 'a2a_task', id: 'partial-task-1' });
+                yield { type: 'text', catId: 'opus', content: 'partial remote output', timestamp: Date.now() };
+                await waitForAbort(options.signal);
+              },
             };
-            service = new AntigravityAgentService({ catId: 'opus', model: 'gemini-3.1-pro', bridge });
           }
           const result = await dispatch(
             route,
@@ -369,10 +354,12 @@ describe('G1: remote cancellation survives route settlement and canonical readba
           assert.equal(reply.lifecycle.status, reason === 'timeout' ? 'failed' : 'canceled');
           assert.equal(reply.lifecycle.reason, reason);
           assert.match(reply.content, /远端任务是否已停止尚未确认/);
-          if (kind === 'antigravity_cascade') assert.match(reply.content, /partial remote output/);
+          if (kind === 'remote_partial') assert.match(reply.content, /partial remote output/);
           assert.equal(reply.metadata.cancellationDiagnostics.localWaitCancelled, true);
           assert.equal(reply.metadata.cancellationDiagnostics.remoteTermination, 'unconfirmed');
-          assert.equal(reply.metadata.cancellationDiagnostics.remoteExecution.kind, kind);
+          assert.equal(reply.metadata.cancellationDiagnostics.remoteExecution.kind, 'a2a_task');
+          if (kind === 'remote_partial')
+            assert.equal(reply.metadata.cancellationDiagnostics.remoteExecution.id, 'partial-task-1');
           assert.ok(reply.metadata.cancellationDiagnostics.remoteExecution.id);
           const done = result.events.findLast((event) => event.type === 'done' && event.catId === 'opus');
           assert.equal(done.messageId, reply.id);

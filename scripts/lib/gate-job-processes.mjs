@@ -2,6 +2,7 @@ import { execFileSync, spawn } from 'node:child_process';
 import { readdirSync, readFileSync } from 'node:fs';
 import { constants } from 'node:os';
 import { normalizedGateEnvironment } from './gate-environment.mjs';
+import { proveLinuxExecutionExited, readLinuxExitIdentity } from './gate-linux-process-exit.mjs';
 
 export const GATE_JOB_TOKEN_ENV = 'CAT_CAFE_GATE_JOB_TOKEN';
 export const GATE_STAGE_ROOT_TOKEN_ENV = 'CAT_CAFE_GATE_STAGE_ROOT_TOKEN';
@@ -61,7 +62,7 @@ function decodeEnvironment(buffer) {
   return buffer.toString('utf8').split('\0').filter(Boolean);
 }
 
-function scanLinux(jobToken, tokenEnvironmentKey, { execFileSyncImpl, readFileSyncImpl }) {
+function scanLinux(jobToken, tokenEnvironmentKey, { execFileSyncImpl, readFileSyncImpl, readdirSyncImpl }) {
   const uid = process.getuid?.();
   if (!Number.isSafeInteger(uid)) throw new Error('current uid unavailable');
   const pids = scanOperation('ps', () =>
@@ -75,18 +76,26 @@ function scanLinux(jobToken, tokenEnvironmentKey, { execFileSyncImpl, readFileSy
     .filter((pid) => Number.isSafeInteger(pid) && pid > 0 && pid !== process.pid);
   const processes = [];
   for (const pid of pids) {
+    const before = readLinuxExitIdentity(pid, readFileSyncImpl);
     try {
       const environment = decodeEnvironment(readFileSyncImpl(`/proc/${pid}/environ`));
       if (environment.includes(`${tokenEnvironmentKey}=${jobToken}`)) processes.push({ pid, parentPid: null });
     } catch (error) {
       if (error?.code !== 'ENOENT' && error?.code !== 'ESRCH') {
-        scanOperation(
-          'proc-environ',
-          () => {
-            throw error;
-          },
-          pid,
-        );
+        const proof = proveLinuxExecutionExited(pid, before, { readFileSyncImpl, readdirSyncImpl });
+        if ((error?.code === 'EACCES' || error?.code === 'EPERM') && proof.proven) continue;
+        try {
+          scanOperation(
+            'proc-environ',
+            () => {
+              throw error;
+            },
+            pid,
+          );
+        } catch (failure) {
+          if (proof.evidence.before || proof.evidence.after) failure.failure.exitEvidence = proof.evidence;
+          throw failure;
+        }
       }
     }
   }
@@ -117,7 +126,7 @@ export function scanGateJobProcesses(
       return {
         status: 'ok',
         scanner: 'procfs-env',
-        processes: scanLinux(jobToken, tokenEnvironmentKey, { execFileSyncImpl, readFileSyncImpl }),
+        processes: scanLinux(jobToken, tokenEnvironmentKey, { execFileSyncImpl, readFileSyncImpl, readdirSyncImpl }),
       };
     }
     return { status: 'unknown', scanner: 'unsupported', processes: [] };
