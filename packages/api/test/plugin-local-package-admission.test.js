@@ -94,7 +94,13 @@ function maliciousArchive(entries) {
 test('admits a local npm-style archive into immutable Host inventory without executing its entrypoint', async () => {
   const sideEffect = join(await tempRoot('cat-cafe-f202-local-side-effect-'), 'executed');
   const archive = await packageArchive({
-    packageManifest: manifest(),
+    packageManifest: {
+      ...manifest(),
+      features: manifest().features.map((feature) => ({
+        ...feature,
+        capabilities: [...feature.capabilities, 'task.admitEntrusted'],
+      })),
+    },
   });
   const archivePath = join(await tempRoot('cat-cafe-f202-local-archive-'), 'plugin.tgz');
   await writeFile(archivePath, archive.bytes);
@@ -108,7 +114,7 @@ test('admits a local npm-style archive into immutable Host inventory without exe
   await access(join(packagesRoot, packageDirectoryName(archive.integrity), 'package.tgz'));
   await assert.rejects(access(sideEffect), { code: 'ENOENT' });
   const snapshot = await store.snapshot();
-  assert.deepEqual(snapshot.grants[0].effectiveGrants, ['events.publish']);
+  assert.deepEqual(snapshot.grants[0].effectiveGrants, ['events.publish', 'task.admitEntrusted']);
   assert.equal(snapshot.packages[0].packageState, 'installed');
   assert.deepEqual(snapshot.packages[0].provenance, {
     kind: 'local-archive',
