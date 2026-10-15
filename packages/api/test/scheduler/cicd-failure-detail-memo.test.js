@@ -4,6 +4,11 @@ import { describe, test } from 'node:test';
 const { TaskStore } = await import('../../dist/domains/cats/services/stores/ports/TaskStore.js');
 const { createCiCdCheckTaskSpec } = await import('../../dist/infrastructure/email/CiCdCheckTaskSpec.js');
 const { executeTaskPipeline } = await import('../../dist/infrastructure/scheduler/execute-pipeline.js');
+const { createCiCollectionReaders } = await import('../../dist/infrastructure/email/ci-status-batch-fetcher.js');
+const { READ_MEMO_LIFETIME_MS, READ_MEMO_STAGGER_MS, ReadMemo, readMemoStagger } = await import(
+  '../../dist/infrastructure/github/read-memo.js'
+);
+const MINUTE = 60_000;
 
 /*
  * A failing PR's details (its required checks and their typed execution failures) take several
@@ -47,8 +52,8 @@ function completeRead(poll, observedAt) {
   };
 }
 
-/** One spec instance across ticks, as the scheduler keeps it; each tick reads the next batch. */
-async function collector({ polls, enrich = async (poll) => completeRead(poll, poll.observedAt + 500) }) {
+/** One spec instance across ticks, as the scheduler keeps it; each tick reads the next batch at `times[tick]`. */
+async function collector({ polls, enrich = async (poll) => completeRead(poll, poll.observedAt + 500), times = [] }) {
   const taskStore = new TaskStore();
   await taskStore.create({
     kind: 'pr_tracking',
@@ -66,6 +71,7 @@ async function collector({ polls, enrich = async (poll) => completeRead(poll, po
   let tick = 0;
   const spec = createCiCdCheckTaskSpec({
     taskStore,
+    now: () => times[tick] ?? 0,
     cicdRouter: {
       route: async (poll) => {
         routed.push(poll);
@@ -180,5 +186,141 @@ describe('CI failure details are read once per completed rollup', () => {
     await ci.runTicks();
 
     assert.equal(ci.reads.length, 2, 'without its full rollup there is nothing to recognise');
+  });
+});
+
+describe('a detail read that fell back is retried, not remembered', () => {
+  const FAILING = {
+    __typename: 'CheckRun',
+    name: 'gate',
+    status: 'COMPLETED',
+    conclusion: 'FAILURE',
+    detailsUrl: `${JOB}1`,
+  };
+
+  /** The production readers over a fake `gh`; `broken` names the read that fails on the first tick. */
+  async function productionCollector(broken) {
+    const taskStore = new TaskStore();
+    await taskStore.create({
+      kind: 'pr_tracking',
+      subjectKey: 'pr:owner/repo#7',
+      threadId: 'thread_7',
+      title: 'PR wait',
+      ownerCatId: 'codex-sol',
+      why: 'test',
+      createdBy: 'codex-sol',
+      userId: 'user_1',
+    });
+    const log = { info() {}, warn() {}, error() {} };
+    let tick = 0;
+    let detailReads = 0;
+    const transientFailure = (read) => {
+      if (tick === 0 && broken === read) throw new Error('HTTP 502: Bad Gateway');
+    };
+    const rollup = { contexts: { nodes: [FAILING], pageInfo: { hasNextPage: false } } };
+    const pr = { headRefOid: 'head-7', state: 'OPEN', mergedAt: null, mergedBy: null };
+    const commits = { nodes: [{ commit: { statusCheckRollup: rollup } }] };
+    const responders = [
+      [(args) => args[1] === 'graphql', () => ({ data: { r0: { p0: { ...pr, commits } } } })],
+      [
+        (args) => args[0] === 'pr' && args[1] === 'view',
+        () => {
+          detailReads++;
+          return { ...pr, statusCheckRollup: [FAILING] };
+        },
+      ],
+      [
+        (args) => args[0] === 'pr' && args[1] === 'checks',
+        () => {
+          transientFailure('checks');
+          return [{ name: 'gate', bucket: 'fail', link: `${JOB}1` }];
+        },
+      ],
+      [
+        (args) => args[1].includes('/check-runs?'),
+        () => {
+          transientFailure('execution evidence');
+          return { check_runs: [] };
+        },
+      ],
+      [(args) => args[1].includes('/actions/runs?'), () => ({ workflow_runs: [] })],
+    ];
+    const readers = createCiCollectionReaders(log, () => 'fixture-token', {
+      async execFileAsync(_file, args) {
+        const responder = responders.find(([matches]) => matches(args));
+        if (!responder) throw new Error(`unexpected request: ${args.join(' ')}`);
+        return { stdout: JSON.stringify(responder[1]()) };
+      },
+    });
+    const routed = [];
+    const spec = createCiCdCheckTaskSpec({
+      taskStore,
+      log,
+      ...readers,
+      cicdRouter: {
+        route: async (poll) => {
+          routed.push(poll);
+          return { kind: 'skipped', reason: 'state-only' };
+        },
+      },
+    });
+    const scheduler = { running: new Map(), tickCounts: new Map(), lastRunAt: new Map() };
+    return {
+      routed,
+      detailReads: () => detailReads,
+      async runTicks(count) {
+        for (tick = 0; tick < count; tick++) {
+          await executeTaskPipeline({
+            task: spec,
+            ledger: { record() {} },
+            logger: { info() {}, error() {} },
+            ...scheduler,
+          });
+        }
+      },
+    };
+  }
+
+  for (const broken of ['checks', 'execution evidence']) {
+    test(`a failed ${broken} read is routed once as incomplete, then read again when GitHub recovers`, async () => {
+      const ci = await productionCollector(broken);
+
+      await ci.runTicks(3);
+
+      assert.equal(ci.routed.length, 3);
+      assert.equal(ci.routed[0].failureDetailsIncomplete, true, 'the fallback is still routed, marked incomplete');
+      assert.equal(ci.routed[1].failureDetailsIncomplete, undefined);
+      assert.deepEqual(
+        ci.routed[1].checks.map((check) => check.name),
+        ['gate'],
+      );
+      assert.equal(ci.detailReads(), 2, 'read again after the incomplete read; the complete read is then reused');
+    });
+  }
+});
+
+describe('a remembered detail read expires within a bounded, staggered window', () => {
+  test('details are read again once the window has passed, even though the rollup is unchanged', async () => {
+    // What a detail read depends on is not all in the rollup: branch protection, a check run's later output.
+    const times = [0, 9 * MINUTE, READ_MEMO_LIFETIME_MS + READ_MEMO_STAGGER_MS];
+    const ci = await collector({ polls: times.map((_, index) => batchPoll({ observedAt: 1_000 + index })), times });
+
+    await ci.runTicks();
+
+    assert.equal(ci.reads.length, 2, 'reused inside the window, read again after it');
+  });
+
+  test('reads remembered on the same tick expire at different times', () => {
+    let now = 0;
+    const memo = new ReadMemo(() => now);
+    const [early, late] = ['owner/repo#7', 'owner/repo#8'].sort((a, b) => readMemoStagger(a) - readMemoStagger(b));
+    for (const key of [early, late]) memo.remember(key, 'rollup', key);
+    assert.ok(readMemoStagger(early) < readMemoStagger(late), 'the two keys are staggered apart');
+    assert.ok(readMemoStagger(late) < READ_MEMO_STAGGER_MS);
+
+    now = READ_MEMO_LIFETIME_MS + readMemoStagger(early);
+
+    assert.equal(memo.recall(early, 'rollup'), undefined);
+    assert.equal(memo.recall(late, 'rollup'), late);
   });
 });

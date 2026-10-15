@@ -4,7 +4,7 @@
  */
 import { executeGitHubRequest, GitHubRateLimitError } from '../github/request-budget.js';
 import type { CiBucket, CiCheckDetail, CiPollResult } from './ci-cd-contract.js';
-import { enrichGitHubExecutionFailures } from './ci-execution-failure.js';
+import { readGitHubExecutionFailures } from './ci-execution-failure.js';
 
 export {
   classifyGitHubExecutionFailure,
@@ -103,8 +103,15 @@ export async function fetchPrCiStatus(
   const aggregateBucket = computeAggregateBucket(rollup);
 
   let checks: CiCheckDetail[] = [];
+  let detailsComplete = true;
   if (aggregateBucket !== 'pending' && !options.deferFailureDetails) {
-    checks = await fetchCheckDetails(repoFullName, prNumber, prView.headRefOid, log, options);
+    ({ checks, complete: detailsComplete } = await fetchCheckDetails(
+      repoFullName,
+      prNumber,
+      prView.headRefOid,
+      log,
+      options,
+    ));
   }
 
   return {
@@ -117,6 +124,7 @@ export async function fetchPrCiStatus(
     checks,
     observedAt,
     ...(aggregateBucket === 'fail' && options.deferFailureDetails ? { failureDetailsPending: true } : {}),
+    ...(detailsComplete ? {} : { failureDetailsIncomplete: true }),
   };
 }
 
@@ -143,8 +151,9 @@ async function fetchCheckDetails(
   headSha: string,
   log: MinimalLog,
   options: FetchPrCiStatusOptions,
-): Promise<CiCheckDetail[]> {
-  let checks = await fetchRequiredFailingChecks(repoFullName, prNumber, options);
+): Promise<{ checks: CiCheckDetail[]; complete: boolean }> {
+  const required = await readRequiredFailingChecks(repoFullName, prNumber, options);
+  let checks = required.checks;
   if (!checks) {
     try {
       checks = await fetchGhCheckDetails(repoFullName, prNumber, false, options);
@@ -152,11 +161,11 @@ async function fetchCheckDetails(
       options.signal?.throwIfAborted();
       if (err instanceof GitHubRateLimitError) throw err;
       log.warn(`[ci-status] gh pr checks failed for ${repoFullName}#${prNumber}: ${String(err)}`);
-      return [];
+      return { checks: [], complete: false };
     }
   }
 
-  return enrichGitHubExecutionFailures({
+  const enriched = await readGitHubExecutionFailures({
     signal: options.signal,
     repoFullName,
     headSha,
@@ -164,6 +173,7 @@ async function fetchCheckDetails(
     ghApiJson: (path) => ghApiJson(path, options),
     warn: (message) => log.warn(message),
   });
+  return { checks: enriched.checks, complete: required.complete && enriched.complete };
 }
 
 async function fetchGhCheckDetails(
@@ -205,13 +215,22 @@ export async function fetchRequiredFailingChecks(
   prNumber: number,
   options: FetchPrCiStatusOptions,
 ): Promise<CiCheckDetail[] | null> {
+  return (await readRequiredFailingChecks(repoFullName, prNumber, options)).checks;
+}
+
+/** `checks: null` means "use every check": none required failed, or (`complete: false`) the read failed. */
+async function readRequiredFailingChecks(
+  repoFullName: string,
+  prNumber: number,
+  options: FetchPrCiStatusOptions,
+): Promise<{ checks: CiCheckDetail[] | null; complete: boolean }> {
   try {
     const checks = await fetchGhCheckDetails(repoFullName, prNumber, true, options);
-    return checks.some((check) => check.bucket === 'fail') ? checks : null;
+    return { checks: checks.some((check) => check.bucket === 'fail') ? checks : null, complete: true };
   } catch (error) {
     options.signal?.throwIfAborted();
     if (error instanceof GitHubRateLimitError) throw error;
-    return null;
+    return { checks: null, complete: false };
   }
 }
 
@@ -266,16 +285,8 @@ export function computeAggregateBucket(
   return hasSuccess ? 'pass' : 'pending'; // only cancelled / no positive result → not a green light
 }
 
-/** A ceiling, not a working size: entries are dropped once their PR stops needing details. */
-const MAX_REMEMBERED = 256;
-
-interface Remembered {
-  readonly rollup: string;
-  readonly details: CiPollResult;
-}
-
-/** The batch rollup a detail read describes. A rerun creates check runs with new links. */
-function rollupOf(poll: CiPollResult): string | undefined {
+/** The batch rollup a detail read describes: HEAD and every check's state and link (a rerun gets new links). */
+export function failureDetailRollup(poll: CiPollResult): string | undefined {
   if (!poll.failureDetailsPending || poll.fullRollupPending) return undefined;
   const checks = poll.checks
     .map((check) => JSON.stringify([check.name, check.bucket, check.link, check.workflow, check.description]))
@@ -283,42 +294,12 @@ function rollupOf(poll: CiPollResult): string | undefined {
   return JSON.stringify([poll.headSha, poll.prState, poll.aggregateBucket, poll.checkRollup, checks]);
 }
 
-/**
- * Failure details (a PR's required checks and their typed execution failures) take several
- * serialized `gh` reads. They are a function of the rollup they describe: the same HEAD with the
- * same check runs in the same states has the same details, because a failed run is finished.
- * Read again on every tick for as long as a PR stayed red, they kept the shared per-credential
- * GitHub lane busy enough to starve every other collector.
- *
- * Only a successful read that still agrees with the batch it was taken for is remembered.
- */
-export class FailureDetailMemo {
-  private readonly remembered = new Map<string, Remembered>();
-
-  /** Details already read for exactly this rollup, carrying this batch's observation time. */
-  recall(key: string, poll: CiPollResult): CiPollResult | undefined {
-    const rollup = rollupOf(poll);
-    const entry = this.remembered.get(key);
-    if (rollup === undefined || entry?.rollup !== rollup) return undefined;
-    const { observedAt: _readAt, ...details } = entry.details;
-    return poll.observedAt === undefined ? details : { ...details, observedAt: poll.observedAt };
-  }
-
-  remember(key: string, poll: CiPollResult, details: CiPollResult): void {
-    this.remembered.delete(key);
-    const rollup = rollupOf(poll);
-    // A read that disagrees with the batch saw newer truth; route it, but it describes no rollup.
-    const agrees =
-      details.headSha === poll.headSha &&
-      details.prState === poll.prState &&
-      details.aggregateBucket === poll.aggregateBucket;
-    if (rollup === undefined || !agrees) return;
-    this.remembered.set(key, { rollup, details });
-    const oldest = this.remembered.keys().next().value;
-    if (this.remembered.size > MAX_REMEMBERED && oldest !== undefined) this.remembered.delete(oldest);
-  }
-
-  forget(key: string): void {
-    this.remembered.delete(key);
-  }
+/** A detail read describes its batch rollup only if every read succeeded and it saw the same PR state. */
+export function describesRollup(poll: CiPollResult, details: CiPollResult): boolean {
+  return (
+    details.failureDetailsIncomplete !== true &&
+    details.headSha === poll.headSha &&
+    details.prState === poll.prState &&
+    details.aggregateBucket === poll.aggregateBucket
+  );
 }
