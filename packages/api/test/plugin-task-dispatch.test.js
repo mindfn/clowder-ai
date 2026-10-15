@@ -8,7 +8,7 @@ import { TaskStore } from '../src/domains/cats/services/stores/ports/TaskStore.t
 import { ThreadStore } from '../src/domains/cats/services/stores/ports/ThreadStore.ts';
 import { withPluginCallContext } from '../src/domains/plugin/carrier/plugin-call-context.ts';
 import * as authorityModule from '../src/domains/plugin/host-surface/plugin-task-currentness.ts';
-import { createPluginTaskHost } from '../src/domains/plugin/host-surface/plugin-task-host.ts';
+import { legacyPluginTaskHost } from './helpers/legacy-plugin-task-host.js';
 
 async function fixture(continued = false) {
   const messages = new MessageStore(),
@@ -26,7 +26,7 @@ async function fixture(continued = false) {
     source: { connector: 'neutral', label: 'Neutral', icon: 'message' },
     extra: { pluginMessage: { instanceId: 'instance', revision: 1, provenance: {}, elements: [], appendOps: [] } },
   });
-  const host = createPluginTaskHost({
+  const host = legacyPluginTaskHost({
     pluginId: 'neutral',
     pluginInstanceId: 'instance',
     ownerUserId: 'owner',
@@ -153,7 +153,7 @@ async function producerFixture() {
     admission: { messageStore: f.messages, isCatAvailable: () => true, assertCurrent: async () => {} },
     dispatch: services,
   };
-  const host = createPluginTaskHost(deps);
+  const host = legacyPluginTaskHost(deps);
   assert.equal(typeof host.dispatchEntrusted, 'function');
   return { ...f, queue, resumes, services, deps, host };
 }

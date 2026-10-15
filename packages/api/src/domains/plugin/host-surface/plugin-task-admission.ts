@@ -2,7 +2,6 @@ import { createHash } from 'node:crypto';
 import { isDeepStrictEqual } from 'node:util';
 import { type CatId, type RegisteredCustodyGrantV1 } from '@cat-cafe/shared';
 import { z } from 'zod';
-import type { IMessageStore } from '../../cats/services/stores/ports/MessageStore.js';
 import {
   EntrustedWorkLifecycleService,
   entrustedWorkAdmissionCommandV1Schema,
@@ -11,7 +10,6 @@ import { currentPluginCallContext, currentPluginOwnerRequestContext } from '../c
 import { currentOwnerOperation } from '../carrier/plugin-owner-operation-context.js';
 import { snapshotPluginProtocolData } from '../carrier/plugin-protocol-data.js';
 import { ExternalPluginRuntimeError } from '../external-runtime/types.js';
-import type { PluginInventoryStore } from '../host-inventory/ports.js';
 import { createPluginSourceFactsHost } from './plugin-source-facts-host.js';
 import { preparePluginTaskExecutionReceipt, readPluginContinuationTask } from './plugin-task-continuation.js';
 import { resolvePluginTaskExecutionThread } from './plugin-task-execution-thread.js';
@@ -66,52 +64,9 @@ export type PluginTaskAdmissionResult =
       readonly executionRef: string;
     };
 
-/** Host-only stores and fences. This object never crosses the module boundary. */
-export interface PluginTaskAdmissionServices {
-  readonly messageStore: Pick<IMessageStore, 'getById' | 'getByIdempotencyKey' | 'appendIdempotent'>;
-  isCatAvailable(catId: string): boolean;
-  /** The installation, package and grant revisions captured by this activation must still match. */
-  assertCurrent(): Promise<void>;
-}
-export async function createPluginTaskAdmissionServices(deps: {
-  readonly pluginInstanceId: string;
-  readonly packageDigest: string;
-  readonly inventory: PluginInventoryStore;
-  readonly messageStore: PluginTaskAdmissionServices['messageStore'];
-  readonly assertActivation: () => void;
-  readonly isCatAvailable: (catId: string) => boolean;
-}): Promise<PluginTaskAdmissionServices> {
-  const initial = await deps.inventory.snapshot();
-  const instance = initial.instances.find((i) => i.pluginInstanceId === deps.pluginInstanceId);
-  const grant = initial.grants.find((g) => g.pluginInstanceId === deps.pluginInstanceId);
-  if (!instance || !grant || instance.packageDigest !== deps.packageDigest) refuse('Task installation unavailable');
-  const lifecycleRevision = instance.lifecycleRevision,
-    grantRevision = grant.grantRevision;
-  return Object.freeze({
-    messageStore: deps.messageStore,
-    isCatAvailable: deps.isCatAvailable,
-    async assertCurrent() {
-      deps.assertActivation();
-      const snapshot = await deps.inventory.snapshot();
-      deps.assertActivation();
-      const live = snapshot.instances.find((i) => i.pluginInstanceId === deps.pluginInstanceId);
-      const grants = snapshot.grants.find((g) => g.pluginInstanceId === deps.pluginInstanceId);
-      const pkg = snapshot.packages.find((p) => p.packageDigest === deps.packageDigest);
-      if (
-        !live ||
-        live.lifecycleState !== 'installed' ||
-        live.activationState !== 'enabled' ||
-        live.configReadiness !== 'ready' ||
-        live.lifecycleRevision !== lifecycleRevision ||
-        live.packageDigest !== deps.packageDigest ||
-        pkg?.packageState !== 'installed' ||
-        grants?.grantRevision !== grantRevision ||
-        !grants.effectiveGrants.some((g: string) => g === 'task.admitEntrusted')
-      )
-        refuse('Task installation or admission capability is no longer current');
-    },
-  });
-}
+export type { PluginTaskAdmissionServices } from './plugin-task-data-services.js';
+export { createPluginTaskAdmissionServices } from './plugin-task-data-services.js';
+
 function refuse(reason: string): never {
   throw new ExternalPluginRuntimeError('DELIVERY_REJECTED', reason);
 }

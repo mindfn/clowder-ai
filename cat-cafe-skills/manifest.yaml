@@ -14,18 +14,6 @@
 
 skills:
 
-  collective-participation:
-    category: "协作交互"
-    description: >
-      Collective Channel 中具名猫的授权上下文读取、事项判断与原处回复。
-      Use when: 公共 Channel 请求你参与、要判断这句话是哪件事和能不能接，或已接纳的 Work 要回到原来源。
-      Not for: 私人历史检索、选择任意 Channel、授予本地 owner 权限、新建委托，或自己把请求宣布成已接下的工作。
-      Output: 范围内上下文与对事项的判断；选择表达时发送具名回复，返回真实送达状态。
-    triggers: ["Collective 请求", "Channel 参与", "回到原来源"]
-    not_for: ["私人历史检索", "委托授权", "任意 Channel 发言", "自行宣布接下工作"]
-    output: "授权公共上下文、事项判断与具名回复回执"
-    next: []
-
   # ── 功能生命周期 ──
   feat-lifecycle:
     category: "开发流程"

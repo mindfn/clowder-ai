@@ -14,7 +14,12 @@ import * as currentnessModule from '../dist/domains/plugin/host-surface/plugin-t
 
 const { createPluginTaskInvocationCurrentness } = currentnessModule;
 
-import { createPluginTaskHost } from '../dist/domains/plugin/host-surface/plugin-task-host.js';
+import { preparePluginEntrustedTask } from '../dist/domains/plugin/host-surface/plugin-task-admission.js';
+
+// Build historical receipts to verify the retained Queue/Registry reader.
+const legacyPluginTaskHost = (deps) => ({
+  prepareEntrusted: (value) => preparePluginEntrustedTask(deps, value),
+});
 
 async function fixture(manual = false, firstExecution = false) {
   const messages = new MessageStore(),
@@ -41,7 +46,7 @@ async function fixture(manual = false, firstExecution = false) {
     readThreadStore: threads,
     admission: { messageStore: messages, isCatAvailable: () => true, assertCurrent: async () => {} },
   };
-  const host = createPluginTaskHost(deps);
+  const host = legacyPluginTaskHost(deps);
   let taskThread = manual ? threads.create('owner', 'Chosen Task thread') : thread;
   threads.addParticipants(taskThread.id, ['codex']);
   const prepare = () =>

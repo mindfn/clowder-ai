@@ -15,23 +15,13 @@ import { currentPluginCallContext, currentPluginOwnerRequestContext } from '../c
 import { ExternalPluginRuntimeError } from '../external-runtime/types.js';
 import { hostCapabilityRefusal } from './host-capability-refusal.js';
 import {
-  type PluginTaskAdmissionInput,
-  type PluginTaskAdmissionResult,
-  type PluginTaskAdmissionServices,
-  preparePluginEntrustedTask,
-} from './plugin-task-admission.js';
-import type { PluginTaskDispatchSelection } from './plugin-task-currentness.js';
-import {
   createPluginTaskWorkData,
   type PluginTaskWorkData,
   type PluginTaskWorkMutation,
   updatePluginTaskWorkData,
 } from './plugin-task-data.js';
-import {
-  dispatchPluginEntrustedTask,
-  type PluginTaskDispatchResult,
-  type PluginTaskDispatchServices,
-} from './plugin-task-dispatch.js';
+import type { PluginTaskAdmissionServices } from './plugin-task-data-services.js';
+import type { PluginTaskDispatchServices } from './plugin-task-dispatch.js';
 import { assertPluginTaskGovernance } from './plugin-task-governance.js';
 import { type PluginTaskReadItem, projectOwnedPluginTasks } from './plugin-task-read.js';
 import { setPluginTaskWait } from './plugin-task-wait.js';
@@ -59,8 +49,6 @@ export interface PluginTaskUpdateInput {
 }
 
 export interface PluginTaskHost {
-  dispatchEntrusted(input: PluginTaskDispatchSelection): Promise<PluginTaskDispatchResult>;
-  prepareEntrusted(input: PluginTaskAdmissionInput): Promise<PluginTaskAdmissionResult>;
   setWait(taskId: string, input: PluginWaitUpdate): Promise<TaskItem | null>;
   get(taskId: string): Promise<PluginTaskReadItem | null>;
   listByThread(threadId: string): Promise<readonly PluginTaskReadItem[]>;
@@ -205,8 +193,6 @@ export function createPluginTaskHost(input: PluginTaskHostDeps): PluginTaskHost 
     return after;
   };
   return {
-    dispatchEntrusted: (value) => dispatchPluginEntrustedTask(input, value),
-    prepareEntrusted: (value) => preparePluginEntrustedTask(input, value),
     setWait: (taskId, value) =>
       setPluginTaskWait(
         requireGrant('task.write'),

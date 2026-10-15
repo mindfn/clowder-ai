@@ -58,8 +58,7 @@ import {
   type PluginPrivateStoragePort,
   type PluginStorageHost,
 } from '../../host-surface/plugin-private-storage.js';
-import type { PluginTaskAdmissionServices } from '../../host-surface/plugin-task-admission.js';
-import type { PluginTaskDispatchServices } from '../../host-surface/plugin-task-dispatch.js';
+import type { PluginTaskAdmissionServices } from '../../host-surface/plugin-task-data-services.js';
 import { createPluginTaskHost, type PluginTaskHost } from '../../host-surface/plugin-task-host.js';
 import {
   createPluginThreadHost,
@@ -114,7 +113,6 @@ export interface ModulePluginHostShape {
   readonly participantRoster?: PluginNeutralHost['participantRoster'];
   readonly sourceFacts?: PluginNeutralHost['sourceFacts'];
   readonly nativeContext?: PluginNeutralHost['nativeContext'];
-  readonly taskArtifacts?: PluginNeutralHost['taskArtifacts'];
   readonly threads: PluginThreadHost;
   readonly messaging: PluginMessagingHost;
   readonly media: PluginMediaHost;
@@ -151,7 +149,6 @@ export interface ModulePluginRuntimeOptions {
   readonly taskStore?: ITaskStore;
   readonly taskOwnerUserId?: string;
   readonly taskThreadStore?: Pick<IThreadStore, 'get'> & Partial<Pick<IThreadStore, 'ensureOwnedThread'>>;
-  readonly taskDispatch?: (pluginInstanceId: string) => PluginTaskDispatchServices | undefined;
   readonly taskAdmission?: (
     pluginInstanceId: string,
     packageDigest: string,
@@ -395,7 +392,6 @@ export class ModulePluginRuntime implements BundledPluginRuntime {
         assertActivation,
       );
       assertActivation();
-      const taskDispatch = this.options.taskDispatch?.(pluginInstanceId);
       const candidate = await plugin.start({
         ...neutral,
         pluginInstanceId,
@@ -408,7 +404,6 @@ export class ModulePluginRuntime implements BundledPluginRuntime {
           ...(this.options.taskArtifactReader ? { artifactReader: this.options.taskArtifactReader } : {}),
           ...(this.options.onTaskDataChanged ? { onTaskDataChanged: this.options.onTaskDataChanged } : {}),
           ...(taskAdmission ? { admission: taskAdmission } : {}),
-          ...(taskDispatch ? { dispatch: taskDispatch } : {}),
           pluginInstanceId,
           pluginId: packageRecord.pluginId,
           effectiveGrants,

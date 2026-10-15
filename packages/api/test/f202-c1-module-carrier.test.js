@@ -1235,3 +1235,21 @@ test('real module Task data writes reach original Schedule projection and change
   assert.equal(messages.getRecent(100, 'owner').length, 2);
   await host.router.stop('instance-0', 'host_stop');
 });
+
+test('installed module exposes Task data and ordinary send without legacy execution producers', async () => {
+  const rootDir = await writePackage(`
+    import assert from 'node:assert/strict';
+    export default { create() { return { async start(host) {
+      assert.equal(host.tasks.prepareEntrusted, undefined);
+      assert.equal(host.tasks.dispatchEntrusted, undefined);
+      assert.equal(host.taskArtifacts, undefined);
+      assert.equal(typeof host.tasks.upsertBySubject, 'function');
+      assert.equal(typeof host.tasks.update, 'function');
+      assert.equal(typeof host.messaging.send, 'function');
+      return { actions: {}, stop() {} };
+    } }; } };
+  `);
+  const host = hostOf([{ manifest: manifest(), rootDir }]);
+  await host.router.start('instance-0');
+  await host.router.stop('instance-0', 'host_shutdown');
+});

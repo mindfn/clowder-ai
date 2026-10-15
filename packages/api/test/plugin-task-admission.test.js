@@ -10,9 +10,9 @@ import {
   withPluginOwnerWebhook,
 } from '../src/domains/plugin/carrier/plugin-owner-request-context.ts';
 import { createPluginTaskAdmissionServices } from '../src/domains/plugin/host-surface/plugin-task-admission.ts';
-import { createPluginTaskHost } from '../src/domains/plugin/host-surface/plugin-task-host.ts';
 import { createPluginThreadHost } from '../src/domains/plugin/host-surface/plugin-thread-host.ts';
 import { MemoryConnectorThreadBindingStore } from '../src/infrastructure/connectors/ConnectorThreadBindingStore.ts';
+import { legacyPluginTaskHost } from './helpers/legacy-plugin-task-host.js';
 
 async function fixture(grants = ['task.admitEntrusted']) {
   const messages = new MessageStore();
@@ -50,8 +50,12 @@ async function fixture(grants = ['task.admitEntrusted']) {
       },
     },
   };
-  const host = createPluginTaskHost(deps);
-  assert.equal(typeof host.prepareEntrusted, 'function', 'Task Host must expose actual entrusted admission');
+  const host = legacyPluginTaskHost(deps);
+  assert.equal(
+    typeof host.prepareEntrusted,
+    'function',
+    'historical receipt fixture uses the retained admission implementation',
+  );
   const input = {
     sourceMessageId: source.id,
     targetCatId: 'codex',
@@ -113,7 +117,7 @@ test('background admission uses actual Lifecycle and durable receipt, is idempot
   assert.equal(receipt.queueCustody, undefined);
   assert.match(receipt.content, /plugin_policy/);
   assert.doesNotMatch(receipt.content, /strict|Service verified/);
-  const again = await createPluginTaskHost(f.deps).prepareEntrusted(f.input);
+  const again = await legacyPluginTaskHost(f.deps).prepareEntrusted(f.input);
   assert.equal(again.taskRef, first.taskRef);
   assert.equal(again.admissionRef, first.admissionRef);
   assert.equal(f.tasks.listByKind('work').length, 1);
@@ -327,7 +331,7 @@ for (const [firstCaller, retryCaller, expectedCreator] of [
     const before = receipts();
     assert.equal(before.length, 1);
     assert.ok(before[0].content.includes(`"mode":"${firstCaller}"`));
-    const result = await run(retryCaller, createPluginTaskHost(f.deps), f.input);
+    const result = await run(retryCaller, legacyPluginTaskHost(f.deps), f.input);
     const task = f.tasks.get(result.taskRef.slice('task:work:'.length));
     assert.equal(task.createdBy, expectedCreator);
     assert.equal(result.admissionRef, `message:${before[0].id}`);
@@ -455,7 +459,7 @@ test('continuation reuses the first Task and immutable admission with one durabl
   assert.match(receipt.content, /plugin_policy/);
   const repeats = await Promise.all([
     f.host.prepareEntrusted(f.continuation),
-    createPluginTaskHost(f.deps).prepareEntrusted(f.continuation),
+    legacyPluginTaskHost(f.deps).prepareEntrusted(f.continuation),
   ]);
   assert.ok(repeats.every((r) => r.executionRef === result.executionRef));
   assert.deepEqual(f.tasks.get(before.id), before);
@@ -614,7 +618,7 @@ test('first preparation persists a distinct execution receipt and retry recovers
   const task = structuredClone(f.tasks.get(first.taskRef.slice(10)));
   const results = await Promise.all([
     f.host.prepareEntrusted(f.input),
-    createPluginTaskHost(f.deps).prepareEntrusted(f.input),
+    legacyPluginTaskHost(f.deps).prepareEntrusted(f.input),
   ]);
   assert.ok(results.every((r) => r.executionRef === first.executionRef));
   assert.deepEqual(f.tasks.get(task.id), task);
@@ -684,7 +688,7 @@ test('lost first execution response resumes the same durable Task and execution 
     return result;
   };
   await assert.rejects(() => f.host.prepareEntrusted(f.input), /injected lost/);
-  const retry = await createPluginTaskHost(f.deps).prepareEntrusted(f.input);
+  const retry = await legacyPluginTaskHost(f.deps).prepareEntrusted(f.input);
   assert.equal(retry.executionRef, `message:${lost}`);
   assert.equal(f.tasks.listByKind('work').length, 1);
   assert.equal(
@@ -781,7 +785,7 @@ test('derived Task site: revoked authority during owned-thread creation never ad
 test('derived Task site: missing owned-thread service does not fall back to the source thread', async () => {
   const f = await fixture();
   f.deps.readThreadStore = { get: f.threads.get.bind(f.threads) };
-  await assert.rejects(() => createPluginTaskHost(f.deps).prepareEntrusted(f.input));
+  await assert.rejects(() => legacyPluginTaskHost(f.deps).prepareEntrusted(f.input));
   assert.equal(f.tasks.listByKind('work').length, 0);
 });
 

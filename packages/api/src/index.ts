@@ -4905,10 +4905,6 @@ async function main(): Promise<void> {
   });
   const pluginRuntime = cloudConversations.createRuntime({
     taskArtifactReader: preparedArtifactReader,
-    taskInvocations: {
-      queue: invocationQueue,
-      resume: (threadId, userId) => queueProcessor.resumeAfterStartup(threadId, userId),
-    },
     publicInvocations: {
       queue: invocationQueue,
       resume: (threadId, userId) => queueProcessor.resumeAfterStartup(threadId, userId),

@@ -10,7 +10,7 @@ import {
   withPluginOwnerRequest,
   withPluginOwnerWebhook,
 } from '../src/domains/plugin/carrier/plugin-owner-request-context.ts';
-import { createPluginTaskHost } from '../src/domains/plugin/host-surface/plugin-task-host.ts';
+import { legacyPluginTaskHost } from './helpers/legacy-plugin-task-host.js';
 
 async function fixture(grants = ['task.admitEntrusted']) {
   const messages = new MessageStore();
@@ -48,8 +48,12 @@ async function fixture(grants = ['task.admitEntrusted']) {
       },
     },
   };
-  const host = createPluginTaskHost(deps);
-  assert.equal(typeof host.prepareEntrusted, 'function', 'Task Host must expose actual entrusted admission');
+  const host = legacyPluginTaskHost(deps);
+  assert.equal(
+    typeof host.prepareEntrusted,
+    'function',
+    'historical receipt fixture uses the retained admission implementation',
+  );
   const input = {
     sourceMessageId: source.id,
     targetCatId: 'codex',
@@ -197,7 +201,7 @@ async function executionFixture(backend) {
   const authority = createPluginTaskDispatchAuthority(deps, 'instance'),
     queue = new InvocationQueue(),
     resumes = [];
-  const host = createPluginTaskHost({
+  const host = legacyPluginTaskHost({
     ...f.deps,
     dispatch: {
       messageStore: f.messages,
@@ -437,59 +441,3 @@ test(
     }
   },
 );
-
-test('Task artifact production port uses real Queue/Registry binding and evidence attach preserves callback currentness', async () => {
-  const f = await executionFixture();
-  const { mkdtemp } = await import('node:fs/promises');
-  const { tmpdir } = await import('node:os');
-  const { join } = await import('node:path');
-  const { createPluginTaskArtifactHost } = await import(
-    '../src/domains/plugin/host-surface/plugin-task-artifact-host.ts'
-  );
-  const { captureNativeCallbackCurrentness } = await import('../src/routes/plugin-native-action-currentness.ts');
-  const fence = captureNativeCallbackCurrentness(
-    f.record,
-    f.creds.callbackToken,
-    { instanceId: 'instance', contributionId: 'private', method: 'work.read' },
-    { registry: f.registry, threadStore: f.threads },
-  );
-  const host = createPluginTaskArtifactHost({
-    pluginInstanceId: 'instance',
-    ownerUserId: 'owner',
-    messageStore: f.messages,
-    taskStore: f.tasks,
-    taskArtifactDirectory: await mkdtemp(join(tmpdir(), 'task-v2-artifact-')),
-    assertCurrent: async () => {
-      assert.equal((await f.registry.verifyLatest(f.creds.invocationId, f.creds.callbackToken)).ok, true);
-    },
-  });
-  const run = (fn) =>
-    withPluginCallContext(
-      'instance',
-      {
-        ...fence.identity,
-        assertCurrent: fence.assertCurrent,
-        assertInvocationCurrent: fence.assertInvocationCurrent,
-        readTaskBinding: fence.readTaskBinding,
-      },
-      fn,
-    );
-  const result = await run(() => host.publishText({ text: '# Actual Task artifact', mediaType: 'text/markdown' }));
-  assert.equal(result.seal.executionRef, f.first.executionRef);
-  assert.equal(result.seal.invocationId, f.creds.invocationId);
-  assert.equal(f.tasks.get(f.task.id).entrustedWork.revision, 2);
-  assert.equal(f.tasks.get(f.task.id).entrustedWork.executionAuthorityRevision, 1);
-  assert.equal((await f.registry.verifyLatest(f.creds.invocationId, f.creds.callbackToken)).ok, true);
-  assert.equal(
-    (await run(() => host.readText({ publicationRef: result.publicationRef, artifactRef: result.artifactRef }))).text,
-    '# Actual Task artifact',
-  );
-  await f.tasks.updateEntrustedWork(f.task.id, {
-    expectedRevision: 2,
-    artifactRefs: [result.artifactRef, 'artifact:ordinary-update'],
-  });
-  await assert.rejects(() =>
-    run(() => host.readText({ publicationRef: result.publicationRef, artifactRef: result.artifactRef })),
-  );
-  assert.equal((await f.registry.verifyLatest(f.creds.invocationId, f.creds.callbackToken)).ok, false);
-});

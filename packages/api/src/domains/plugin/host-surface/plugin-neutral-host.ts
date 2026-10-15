@@ -10,7 +10,6 @@ import {
 } from '@clowder-ai/plugin-contract';
 import type { IFrustrationIssueStore } from '../../cats/services/stores/ports/FrustrationIssueStore.js';
 import type { IMessageStore } from '../../cats/services/stores/ports/MessageStore.js';
-import type { ITaskStore } from '../../cats/services/stores/ports/TaskStore.js';
 import type { IThreadStore } from '../../cats/services/stores/ports/ThreadStore.js';
 import { currentPluginCallContext, currentPluginOwnerRequestContext } from '../carrier/plugin-call-context.js';
 import { snapshotPluginProtocolData } from '../carrier/plugin-protocol-data.js';
@@ -34,7 +33,6 @@ import {
   type PluginNativeContextHost,
   type PluginSourceFactsHost,
 } from './plugin-source-facts-host.js';
-import { createPluginTaskArtifactHost, type PluginTaskArtifactHost } from './plugin-task-artifact-host.js';
 import type { PluginThreadProjectionDeps } from './plugin-thread-projections.js';
 
 export interface PluginDeploymentServices {
@@ -43,7 +41,6 @@ export interface PluginDeploymentServices {
   getReviewPolicy(): DeploymentCatalog['policy'];
 }
 export interface PluginNeutralHost {
-  readonly taskArtifacts: PluginTaskArtifactHost;
   readonly publicInvocations: PluginPublicInvocationHost;
   readonly sourceFacts: PluginSourceFactsHost;
   readonly nativeContext: PluginNativeContextHost;
@@ -65,8 +62,6 @@ interface Deps {
   readonly sourceStore: IFrustrationIssueStore | undefined;
   readonly messageStore?: Pick<IMessageStore, 'getById' | 'prepareQueueAdmission' | 'initializeQueueCustody'> &
     Partial<Pick<IMessageStore, 'appendIdempotent' | 'getByIdempotencyKey'>>;
-  readonly taskStore?: ITaskStore;
-  readonly taskArtifactDirectory?: string;
   readonly publicInvocations?: PluginPublicInvocationServices;
   readonly verifyPublicInvocation: PublicInvocationVerifierPort['invokePublicInvocationVerifier'];
   readonly deployment: PluginDeploymentServices | undefined;
@@ -192,26 +187,9 @@ export async function createPluginNeutralHost(deps: Deps): Promise<PluginNeutral
     await caller.assertCurrent();
     if (!thread || thread.createdBy !== deps.ownerUserId) refuse('Source thread does not belong to this owner');
   }
-  const artifactMessages = deps.messageStore;
-  const artifactStore =
-    artifactMessages?.appendIdempotent && artifactMessages.getByIdempotencyKey
-      ? {
-          getById: artifactMessages.getById.bind(artifactMessages),
-          appendIdempotent: artifactMessages.appendIdempotent.bind(artifactMessages),
-          getByIdempotencyKey: artifactMessages.getByIdempotencyKey.bind(artifactMessages),
-        }
-      : undefined;
   const read = ['frustration.read'];
   const write = ['frustration.read', 'frustration.link'];
   return Object.freeze({
-    taskArtifacts: createPluginTaskArtifactHost({
-      pluginInstanceId: deps.pluginInstanceId,
-      ownerUserId: deps.ownerUserId,
-      messageStore: artifactStore,
-      taskStore: deps.taskArtifactDirectory ? deps.taskStore : undefined,
-      taskArtifactDirectory: deps.taskArtifactDirectory ?? '',
-      assertCurrent: current,
-    }),
     publicInvocations: createPluginPublicInvocationHost({
       pluginInstanceId: deps.pluginInstanceId,
       packageDigest: deps.packageDigest,
