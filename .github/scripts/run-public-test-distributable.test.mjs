@@ -1,13 +1,16 @@
 import assert from 'node:assert/strict';
 import { spawn, spawnSync } from 'node:child_process';
 import { once } from 'node:events';
-import { readFileSync, statSync } from 'node:fs';
+import { chmodSync, mkdtempSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import { createRequire } from 'node:module';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import { describe, it } from 'node:test';
 import { setTimeout as delay } from 'node:timers/promises';
 import { fileURLToPath } from 'node:url';
 
 const launcher = fileURLToPath(new URL('./run-public-test-distributable.sh', import.meta.url));
+const namespaceInit = fileURLToPath(new URL('./public-test-namespace-init.py', import.meta.url));
 const commandRunner = new URL('../../packages/api/scripts/redis-test-processes.mjs', import.meta.url).href;
 const namespaceProbe = new URL('../../packages/api/scripts/public-test-isolation-preflight.mjs', import.meta.url).href;
 const resourceGuard = fileURLToPath(
@@ -18,14 +21,21 @@ const requiresRootLinux = process.platform !== 'linux' || process.getuid() !== 0
 // traverse runner-private parent directories after setpriv.
 const runnerUid = process.env.SUDO_UID ?? '1000';
 const runnerGid = process.env.SUDO_GID ?? '1000';
-const commandArgs = (command) => [launcher, runnerUid, runnerGid, process.env.PATH, ...command];
+const commandArgs = (command, launcherPath = launcher) => [
+  launcherPath,
+  runnerUid,
+  runnerGid,
+  process.env.PATH,
+  ...command,
+];
 const nodeCommand = (code) => [process.execPath, '--import', resourceGuard, '-e', code];
-const runCommand = (command, { isolated = true } = {}) =>
+const runCommand = (command, { isolated = true, launcherPath = launcher, input } = {}) =>
   spawnSync(
-    isolated ? 'unshare' : launcher,
-    isolated ? ['--net', '--', ...commandArgs(command)] : commandArgs(command).slice(1),
+    isolated ? 'unshare' : launcherPath,
+    isolated ? ['--net', '--', ...commandArgs(command, launcherPath)] : commandArgs(command, launcherPath).slice(1),
     {
       encoding: 'utf8',
+      input,
       timeout: 15_000,
       killSignal: 'SIGKILL',
       env: {
@@ -47,6 +57,21 @@ assert ctypes.CDLL(None, use_errno=True).prctl(4, 0, 0, 0, 0) == 0
 print('ready', flush=True)
 time.sleep(60)
 `;
+
+async function withCommandAsInitAsync(check) {
+  const root = mkdtempSync(join(tmpdir(), 'public-test-old-init-'));
+  chmodSync(root, 0o755); // Dropped test UID must traverse this root-owned fixture.
+  const oldLauncher = join(root, 'launcher.sh');
+  const source = readFileSync(launcher, 'utf8');
+  const marker = 'exec /usr/bin/python3 -I "$(dirname "$(readlink -f "$0")")/public-test-namespace-init.py" "$@"';
+  assert.ok(source.includes(marker));
+  writeFileSync(oldLauncher, source.replace(marker, 'exec "$@"'), { mode: 0o755 });
+  try {
+    return await check(oldLauncher);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+}
 
 async function ready(child) {
   let timer;
@@ -142,27 +167,56 @@ describe(
     it('preserves the command exit status through the privilege boundary', () => {
       const child = run('process.exit(37)');
       assert.equal(child.status, 37, child.stdout + child.stderr);
+      const signaled = run('process.kill(process.pid, "SIGTERM")');
+      assert.equal(signaled.status, 143, signaled.stdout + signaled.stderr);
+      const input = runCommand(nodeCommand('process.stdout.write(require("node:fs").readFileSync(0))'), {
+        input: 'owned-stdin',
+      });
+      assert.equal(input.status, 0, input.stdout + input.stderr);
+      assert.equal(input.stdout, 'owned-stdin');
     });
 
-    it('preserves SIGKILL parent-death handling in the actual unprivileged namespace init', () => {
-      // PR_GET_PDEATHSIG describes the caller. A subprocess probe would see a
-      // cleared signal after fork, so exec Python as the shard command/PID 1.
+    it('requires SIGKILL parent-death handling in the actual unprivileged namespace init', () => {
       const child = runCommand([
         '/usr/bin/python3',
         '-c',
         `
-import ctypes, os, signal
-assert os.getpid() == 1
+import os
+assert os.getpid() > 1 and os.getppid() == 1
 assert os.getuid() == ${Number(runnerUid)} and os.getuid() != 0
 assert os.getgid() == ${Number(runnerGid)}
-death_signal = ctypes.c_int()
-assert ctypes.CDLL(None, use_errno=True).prctl(2, ctypes.byref(death_signal), 0, 0, 0) == 0
-assert death_signal.value == signal.SIGKILL, death_signal.value
-print('pdeathsig-verified')
+print('supervised-command')
 `,
       ]);
       assert.equal(child.status, 0, child.stdout + child.stderr);
-      assert.equal(child.stdout.trim(), 'pdeathsig-verified');
+      assert.equal(child.stdout.trim(), 'supervised-command');
+      // Execute the real init with a deliberately absent PDEATHSIG. It must
+      // reject before launching any command, even with otherwise valid PID/UID.
+      const rejected = spawnSync(
+        'unshare',
+        [
+          '--pid',
+          '--fork',
+          '--mount-proc',
+          '--',
+          'setpriv',
+          '--reuid',
+          runnerUid,
+          '--regid',
+          runnerGid,
+          '--clear-groups',
+          '/usr/bin/python3',
+          '-I',
+          namespaceInit,
+          process.execPath,
+          '-e',
+          'console.log("must-not-run")',
+        ],
+        { encoding: 'utf8', timeout: 5000 },
+      );
+      assert.equal(rejected.status, 1, rejected.stdout + rejected.stderr);
+      assert.match(rejected.stderr, /namespace init failed/);
+      assert.doesNotMatch(rejected.stdout, /must-not-run/);
     });
 
     it('refuses the process-domain stage without a fresh namespace and matching procfs', () => {
@@ -215,7 +269,8 @@ print('pdeathsig-verified')
             const fs = require('node:fs');
             const self = fs.statSync('/proc/self/ns/pid', { bigint: true });
             const init = fs.statSync('/proc/1/ns/pid', { bigint: true });
-            assert.equal(process.pid, 1);
+            assert.ok(process.pid > 1);
+            assert.equal(process.ppid, 1);
             assert.equal(self.ino, init.ino);
             assert.notEqual(self.dev + ':' + self.ino, ${JSON.stringify(`${parent.dev}:${parent.ino}`)});
             const { detectKernelNetworkBoundary } = await import(${JSON.stringify(namespaceProbe)});
@@ -348,8 +403,93 @@ print('pdeathsig-verified')
       assert.match(child.stderr, /cleanup=proven killed=1/);
     });
 
-    const checkMonitorDeath = async (command) => {
-      const monitor = spawn('unshare', ['--net', '--', ...commandArgs(command)], {
+    it('observes the old unreaped orphan and reaps the same fixture with a dedicated init', async () => {
+      const proofModule = new URL('../../scripts/lib/gate-linux-process-exit.mjs', import.meta.url).href;
+      const owner = `
+import os, signal, time
+r, w = os.pipe()
+pid = os.fork()
+if pid == 0:
+    os.close(r)
+    os.setsid()
+    signal.signal(signal.SIGTERM, signal.SIG_IGN)
+    os.write(w, b'r')
+    os.close(w)
+    time.sleep(60)
+    os._exit(0)
+os.close(w)
+os.read(r, 1)
+print(pid, flush=True)
+os._exit(0)
+`;
+      const probe = `
+        (async () => {
+          const assert = require('node:assert/strict');
+          const fs = require('node:fs');
+          const {spawn} = require('node:child_process');
+          const {once} = require('node:events');
+          const {setTimeout:delay} = require('node:timers/promises');
+          const {readLinuxExitIdentity, proveLinuxExecutionExited} = await import(${JSON.stringify(proofModule)});
+          const read = pid => {
+            try {
+              const raw = fs.readFileSync('/proc/'+pid+'/stat','utf8');
+              const f = raw.slice(raw.lastIndexOf(')')+2).trim().split(/\\s+/);
+              return {pid,state:f[0],parent:Number(f[1]),group:Number(f[2]),threads:Number(f[17]),birth:f[19]};
+            } catch(error) { if(error.code === 'ENOENT') return null; throw error; }
+          };
+          const parent = spawn('/usr/bin/python3',['-c',${JSON.stringify(owner)}],{stdio:['ignore','pipe','inherit']});
+          const exited = once(parent,'exit');
+          let original;
+          try {
+            const [data] = await once(parent.stdout,'data');
+            const pid = Number(data.toString().trim());
+            await exited;
+            original = read(pid);
+            assert.ok(original && pid > 1 && original.parent === 1 && original.group === pid);
+            console.log('adopted='+JSON.stringify(original));
+            process.kill(pid,'SIGTERM');
+            await delay(50);
+            const live = read(pid);
+            assert.equal(live?.birth, original.birth);
+            assert.ok(!['Z','X','x'].includes(live.state), 'TERM-ignoring orphan must remain live');
+            const before = readLinuxExitIdentity(pid,fs.readFileSync);
+            process.kill(pid,'SIGKILL');
+            const deadline = Date.now()+2000;
+            let current;
+            while ((current = read(pid)) && Date.now()<deadline) {
+              assert.equal(current.birth, original.birth, 'identity reuse is not proof');
+              await delay(10);
+            }
+            if (current) {
+              const proof = proveLinuxExecutionExited(pid,before,{readFileSyncImpl:fs.readFileSync,readdirSyncImpl:fs.readdirSync});
+              console.log('unreaped='+JSON.stringify({current,proof}));
+              assert.equal(proof.proven, true, 'counterexample needs whole-execution exit proof');
+              process.exitCode=42;
+            } else {
+              assert.throws(()=>process.kill(pid,0), {code:'ESRCH'});
+              console.log('orphan-reaped');
+            }
+          } finally {
+            parent.kill('SIGKILL');
+            await exited;
+            const current = original && read(original.pid);
+            if(current?.birth === original?.birth && current) process.kill(current.pid,'SIGKILL');
+          }
+        })().catch(error=>{console.error(error);process.exitCode=2;});
+      `;
+      await withCommandAsInitAsync((legacyLauncher) => {
+        const before = run(probe, { launcherPath: legacyLauncher });
+        assert.equal(before.status, 42, before.stdout + before.stderr);
+        assert.match(before.stdout, /unreaped=.*"parent":1.*"proven":true/);
+      });
+      const after = run(probe);
+      assert.equal(after.status, 0, after.stdout + after.stderr);
+      assert.match(after.stdout, /orphan-reaped/);
+      assert.doesNotMatch(after.stdout, /unreaped=/);
+    });
+
+    const checkMonitorDeath = async (command, launcherPath = launcher) => {
+      const monitor = spawn('unshare', ['--net', '--', ...commandArgs(command, launcherPath)], {
         stdio: ['ignore', 'pipe', 'inherit'],
       });
       const exited = once(monitor, 'exit');
@@ -393,17 +533,22 @@ print('pdeathsig-verified')
       // Model the rejected launcher: deliberately clear the signal in PID 1.
       // The original assertion must fail, and finally must reclaim this domain.
       await assert.rejects(
-        checkMonitorDeath([
-          '/usr/bin/python3',
-          '-c',
-          `
+        withCommandAsInitAsync((legacyLauncher) =>
+          checkMonitorDeath(
+            [
+              '/usr/bin/python3',
+              '-c',
+              `
 import ctypes, os, time
 assert os.getpid() == 1
 assert ctypes.CDLL(None, use_errno=True).prctl(1, 0, 0, 0, 0) == 0
 print('ready', flush=True)
 time.sleep(60)
 `,
-        ]),
+            ],
+            legacyLauncher,
+          ),
+        ),
         /namespace init survived its monitor/,
       );
     });

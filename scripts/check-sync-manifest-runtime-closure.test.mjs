@@ -427,6 +427,8 @@ describe('outbound sync runtime closure', { skip: !isHomeRepo && 'sync manifest 
     const launcherFixtures = [
       '.github/scripts/check-public-test-ci-contract.mjs',
       '.github/scripts/run-public-test-distributable.sh',
+      '.github/scripts/public-test-namespace-init.py',
+      '.github/scripts/public-test-namespace-init.test.py',
     ];
     assert.ok(targetOwned.has(workflow), `${workflow} must stay target-owned per F308 KD-4`);
     for (const fixture of launcherFixtures) {

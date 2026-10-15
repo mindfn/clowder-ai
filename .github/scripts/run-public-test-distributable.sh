@@ -53,7 +53,11 @@ if [[ "${1:-}" == "--verify-dropped" ]]; then
     die "entered the parent network namespace"
   fi
 
-  exec "$@"
+  # Node/pnpm waits only for its own child handles; as PID 1 it leaves adopted
+  # orphan zombies behind. Give adoption/reaping to an unprivileged supervisor.
+  # Python is already required by the real Linux boundary fixtures. -I excludes
+  # user site/PYTHONPATH hooks; command stdin and argv remain separate from code.
+  exec /usr/bin/python3 -I "$(dirname "$(readlink -f "$0")")/public-test-namespace-init.py" "$@"
 fi
 
 [[ $# -ge 4 ]] || die "usage: $0 UID GID PATH COMMAND [ARG ...]"
@@ -89,7 +93,7 @@ ip link set lo up
 parent_pidns="$(stat -Lc '%d:%i' /proc/self/ns/pid)" || die "cannot observe parent process namespace"
 # Network isolation alone leaves host same-UID processes visible to cleanup.
 # A private procfs must reflect the new PID domain; do not waive EACCES scans.
-# The root monitor stays outside, while the command drops all privileges inside.
+# The root monitor stays outside; init and command run without privileges inside.
 # On monitor death, kill-child tears down namespace init and all its descendants.
 exec unshare --pid --fork --mount-proc --kill-child=SIGKILL -- \
   "$script_path" --verify-process-domain "$parent_pidns" "$runner_uid" "$runner_gid" "$runner_path" "$@"
