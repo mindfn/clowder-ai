@@ -141,6 +141,7 @@ export interface PluginModuleDefinitionShape {
 }
 
 export interface ModulePluginRuntimeOptions {
+  readonly onTaskDataChanged?: (task: import('@cat-cafe/shared').TaskItem) => void;
   readonly packages: VerifiedPluginPackageLocator;
   readonly materializer?: BuiltinPluginPackageMaterializer;
   readonly configuration: PluginRuntimeConfigurationPort;
@@ -403,6 +404,7 @@ export class ModulePluginRuntime implements BundledPluginRuntime {
         storage,
         ...(this.options.custody ? { custody: this.options.custody(pluginInstanceId) } : {}),
         tasks: createPluginTaskHost({
+          ...(this.options.onTaskDataChanged ? { onTaskDataChanged: this.options.onTaskDataChanged } : {}),
           ...(taskAdmission ? { admission: taskAdmission } : {}),
           ...(taskDispatch ? { dispatch: taskDispatch } : {}),
           pluginInstanceId,

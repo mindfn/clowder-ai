@@ -176,6 +176,7 @@ export interface DormantPluginRuntimeCompositionOptions {
   readonly threadStore?: IThreadStore;
   readonly threadBindingStore?: IConnectorThreadBindingStore;
   readonly threadOwnerUserId?: string;
+  readonly onTaskDataChanged?: (task: import('@cat-cafe/shared').TaskItem) => void;
   readonly threadProjections?: import('./host-surface/plugin-thread-projections.js').PluginThreadProjectionDeps;
   readonly threadDeepLinkUrl?: (threadId: string) => string;
   readonly getDefaultCatId?: MessagingDomainDeps['getDefaultCatId'];
@@ -472,6 +473,7 @@ export function createDormantPluginRuntimeComposition(
       );
       return { ...options.taskInvocations, messageStore: options.messageStore, readAuthority: authority.read };
     },
+    ...(options.onTaskDataChanged ? { onTaskDataChanged: options.onTaskDataChanged } : {}),
     taskAdmission: (pluginInstanceId, packageDigest, assertActivation) =>
       createPluginTaskAdmissionServices({
         pluginInstanceId,

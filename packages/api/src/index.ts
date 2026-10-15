@@ -5069,6 +5069,11 @@ async function main(): Promise<void> {
     threadStore,
     threadBindingStore: connectorBindingStore,
     threadOwnerUserId: privateUserId,
+    onTaskDataChanged: (task) => {
+      socketManager?.broadcastToRoom(`thread:${task.threadId}`, 'task_updated', task);
+      if (task.userId)
+        socketManager?.emitToUser(task.userId, 'entrusted_work_projection_invalidated', { ownerUserId: task.userId });
+    },
     frustrationIssueStore,
     deployment: { getRoster, getDefaultCatId, getReviewPolicy },
     participantRoster: {

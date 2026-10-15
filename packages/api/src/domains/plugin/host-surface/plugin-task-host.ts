@@ -22,6 +22,12 @@ import {
 } from './plugin-task-admission.js';
 import type { PluginTaskDispatchSelection } from './plugin-task-currentness.js';
 import {
+  createPluginTaskWorkData,
+  type PluginTaskWorkData,
+  type PluginTaskWorkMutation,
+  updatePluginTaskWorkData,
+} from './plugin-task-data.js';
+import {
   dispatchPluginEntrustedTask,
   type PluginTaskDispatchResult,
   type PluginTaskDispatchServices,
@@ -34,6 +40,7 @@ const TASK_KINDS = new Set<TaskKind>(['work', 'pr_tracking', 'issue_tracking']);
 const TASK_STATUSES = new Set<TaskStatus>(['todo', 'doing', 'blocked', 'done']);
 
 export interface PluginTaskCreateInput {
+  readonly entrustedWork?: PluginTaskWorkData;
   readonly threadId: string;
   readonly title: string;
   readonly why?: string;
@@ -43,6 +50,7 @@ export interface PluginTaskCreateInput {
 }
 
 export interface PluginTaskUpdateInput {
+  readonly entrustedWork?: PluginTaskWorkMutation;
   readonly title?: string;
   readonly status?: TaskStatus;
   readonly why?: string;
@@ -65,6 +73,7 @@ export interface PluginTaskHost {
 }
 
 export interface PluginTaskHostDeps {
+  readonly onTaskDataChanged?: (task: TaskItem) => void;
   readonly dispatch?: PluginTaskDispatchServices;
   readonly admission?: PluginTaskAdmissionServices;
   readonly pluginInstanceId?: string;
@@ -227,12 +236,14 @@ export function createPluginTaskHost(input: PluginTaskHostDeps): PluginTaskHost 
       await assertCurrentCall();
       const task = withCallerUser(createInput(value));
       await authorizeTask(task);
+      if (value.entrustedWork !== undefined) return createPluginTaskWorkData(input, task, value.entrustedWork);
       return store.create(task);
     },
     upsertBySubject: async (value) => {
       const store = requireGrant('task.write');
       await assertCurrentCall();
       const task = withCallerUser(subjectUpsertInput(value));
+      if (value.entrustedWork !== undefined) return createPluginTaskWorkData(input, task, value.entrustedWork);
       for (let attempt = 0; ; attempt++) {
         // Snapshot before authorization, including absence. The store must fence this exact
         // aggregate at the write, since upsert retains its kind rather than the input kind.
@@ -251,6 +262,7 @@ export function createPluginTaskHost(input: PluginTaskHostDeps): PluginTaskHost 
       const store = requireGrant('task.write');
       await assertCurrentCall();
       const id = boundedString(taskId, 'taskId', 500);
+      if (value.entrustedWork !== undefined) return updatePluginTaskWorkData(input, id, value);
       const patch = updateInput(value);
       const task = await store.get(id);
       if (!task) return null;
@@ -265,6 +277,7 @@ export function createPluginTaskHost(input: PluginTaskHostDeps): PluginTaskHost 
       await assertCurrentCall();
       const id = boundedString(taskId, 'taskId', 500);
       const expected = boundedString(expectedThreadId, 'expectedThreadId', 500);
+      if (value.entrustedWork !== undefined) return updatePluginTaskWorkData(input, id, value, expected);
       const patch = updateInput(value);
       const task = await store.get(id);
       if (!task || task.threadId !== expected) return null;

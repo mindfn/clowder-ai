@@ -4,8 +4,11 @@ import { tmpdir } from 'node:os';
 import { basename, join } from 'node:path';
 import { test } from 'node:test';
 import { createThreadDeepLinkUrl } from '../dist/config/frontend-origin.js';
+import './helpers/setup-cat-registry.js';
 import { MessageStore } from '../dist/domains/cats/services/stores/ports/MessageStore.js';
+import { TaskStore } from '../dist/domains/cats/services/stores/ports/TaskStore.js';
 import { ThreadStore } from '../dist/domains/cats/services/stores/ports/ThreadStore.js';
+import { EntrustedWorkOwnerReadService } from '../dist/domains/growing/EntrustedWorkOwnerReadService.js';
 import { createMessagingDomain } from '../dist/domains/messaging/index.js';
 import { MediaEntitlementLedger, MemoryMediaEntitlementPort } from '../dist/domains/messaging/media-entitlements.js';
 import { FileMessagingMediaLedger } from '../dist/domains/messaging/media-ledger.js';
@@ -314,6 +317,7 @@ function hostOf(records, options = {}) {
   };
   const moduleRuntime = new ModulePluginRuntime({
     packages,
+    ...options.taskServices,
     ...(options.materializer === undefined ? {} : { materializer: options.materializer }),
     configuration: options.configuration ?? {
       readConfig: async () => undefined,
@@ -1160,4 +1164,55 @@ test('a staged tree that changed after admission is never imported into the Host
 
   assert.equal(integrityCalls, 1, 'the module carrier verifies admitted bytes exactly once');
   assert.deepEqual(moduleLog(), [], 'a tree that failed integrity must never reach dynamic import');
+});
+
+test('real module Task data writes reach original Schedule projection and change notifications without dispatch', async () => {
+  const tasks = new TaskStore(),
+    messages = new MessageStore(),
+    threads = new ThreadStore();
+  const thread = threads.create('owner', 'Schedule');
+  threads.addParticipants(thread.id, ['codex']);
+  const source = messages.append({
+    userId: 'owner',
+    threadId: thread.id,
+    catId: null,
+    content: 'Produce the report.',
+    timestamp: 1,
+    source: { connector: 'plugin', label: 'Plugin', icon: 'message' },
+    extra: { pluginMessage: { instanceId: 'instance-0', revision: 1, provenance: {}, elements: [], appendOps: [] } },
+  });
+  const rootDir = await writePackage(`
+    export default {create(){return {async start(host){
+      const task=await host.tasks.upsertBySubject(${JSON.stringify({ threadId: thread.id, title: 'Report', subjectKey: 'module:report', ownerCatId: 'codex', entrustedWork: { sourceMessageId: source.id, intendedOutcome: 'Report', closure: { condition: 'Report accepted', expectedSignal: 'accepted' }, time: { businessDeadline: { value: 1900000000000, sourceRef: `message:${source.id}` } } } })});
+      const read=await host.tasks.get(task.id);
+      if(read.entrustedWork.time.businessDeadline.value!==1900000000000) throw Error('missing deadline');
+      return {actions:{},stop(){}};
+    }}}};
+  `);
+  const changes = [];
+  const host = hostOf(
+    [{ manifest: manifest(), rootDir, effectiveGrants: ['task.read', 'task.write', 'task.admitEntrusted'] }],
+    {
+      taskServices: {
+        taskStore: tasks,
+        taskOwnerUserId: 'owner',
+        taskThreadStore: threads,
+        taskAdmission: async () => ({
+          messageStore: messages,
+          isCatAvailable: (id) => id === 'codex',
+          assertCurrent: async () => {},
+        }),
+        onTaskDataChanged: (task) => changes.push(task.id),
+      },
+    },
+  );
+  await host.router.start('instance-0');
+  const schedule = await new EntrustedWorkOwnerReadService({
+    tasks,
+    producerCatalog: { listCurrentReceipts: async () => [] },
+  }).listForOwner('owner');
+  assert.equal(schedule.length, 1);
+  assert.equal(schedule[0].timeRefs.find((ref) => ref.role === 'business_deadline').value, 1900000000000);
+  assert.deepEqual(changes, [tasks.getBySubject('module:report').id]);
+  assert.equal(messages.getRecent(100, 'owner').length, 1);
 });
