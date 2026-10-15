@@ -24,7 +24,9 @@ import { buildHandedEvent, buildHeldEvent } from '../dist/domains/ball-custody/b
 import { EventWaitDispositionService } from '../dist/domains/ball-custody/EventWaitDispositionService.js';
 import { TurnCustodyProjectionService } from '../dist/domains/ball-custody/TurnCustodyProjectionService.js';
 import { createTypedWaitRegistration } from '../dist/domains/ball-custody/TypedWaitRegistration.js';
+import { InvocationQueue } from '../dist/domains/cats/services/agents/invocation/InvocationQueue.js';
 import { InvocationRegistry } from '../dist/domains/cats/services/agents/invocation/InvocationRegistry.js';
+import { PersistedQueueDelivery } from '../dist/domains/cats/services/agents/invocation/PersistedQueueDelivery.js';
 import { MessageStore } from '../dist/domains/cats/services/stores/ports/MessageStore.js';
 import { TaskStore } from '../dist/domains/cats/services/stores/ports/TaskStore.js';
 import { DeploymentWaitLifecycleService } from '../dist/domains/runtime-deployment/DeploymentWaitLifecycleService.js';
@@ -54,7 +56,13 @@ async function realDeploymentWakes(threadId, catId) {
   };
   const lifecycle = new DeploymentWaitLifecycleService({
     taskStore,
-    deliveryDeps: { messageStore },
+    deliveryDeps: {
+      delivery: new PersistedQueueDelivery({
+        messages: messageStore,
+        queue: new InvocationQueue(),
+        progress: async () => ({ kind: 'queued' }),
+      }),
+    },
     now: () => 500,
     log: { info() {}, warn() {}, error() {} },
     currentObservation: async () => observation,
@@ -216,11 +224,11 @@ for (const backend of ['memory', 'redis']) {
       const terminalsOf = async (w) =>
         (await w.eventLog.read(w.subjectKey)).filter((e) => e.kind === 'ball.wait_dispositioned');
 
-      test('control: a first completion settles the open stop check', async () => {
+      test('control: lifecycle completion resolves the wait without a separate Stop gate', async () => {
         const w = await world();
         const s = await w.expose(w.carrier);
         const opened = await w.gate.open(s.wake);
-        assert.equal((await w.gate.close(opened)).shouldBlock, true);
+        assert.equal((await w.gate.close(opened)).shouldBlock, false);
 
         await w.service.complete(s.auth, 'completed');
 
@@ -378,15 +386,16 @@ for (const backend of ['memory', 'redis']) {
           const s = await w.expose(w.carrier);
           await replace(w);
           const opened = await w.gate.open(s.wake);
-          assert.equal(opened.state, 'unknown_legacy', 'open could not prove the wake live');
-          assert.equal((await w.gate.close(opened)).shouldBlock, true, 'nothing written yet');
+          assert.equal(opened.state, 'covered_empty', 'typed waits are owned by their lifecycle');
+          assert.equal((await w.gate.close(opened)).shouldBlock, false, 'Stop does not duplicate wait ownership');
 
           const completion = await w.service.complete(s.auth, 'completed');
 
           assert.equal(completion.retired, true);
           const settled = await w.gate.close(opened);
           assert.equal(settled.shouldBlock, false, 'the current turn must see the terminal it just wrote');
-          assert.equal(settled.structuredTransitionKind, 'wait_dispositioned');
+          assert.equal(settled.structuredTransitionKind, undefined);
+          assert.equal((await terminalsOf(w)).length, 1);
         });
       }
 

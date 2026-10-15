@@ -7,7 +7,7 @@ export interface RuntimeInteractionCopy {
   readonly: string;
   syncFailed: string;
   submitFailed: string;
-  kind: Record<RuntimeInteractionRecord['request']['kind'] | 'unknown', string>;
+  kind: Record<Exclude<RuntimeInteractionRecord['request']['kind'], 'conversation_decision'> | 'unknown', string>;
   status: Record<RuntimeInteractionRecord['status'], string>;
   terminal: {
     answered: string;

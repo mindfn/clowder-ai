@@ -5,9 +5,7 @@ import { join } from 'node:path';
 import { describe, test } from 'node:test';
 
 async function loadModules() {
-  const importer = await import(
-    '../dist/domains/cats/services/agents/providers/antigravity/antigravity-runtime-session-import.js'
-  );
+  const importer = await import('../dist/domains/cats/services/runtime-session/LegacyAntigravitySessionImport.js');
   const store = await import('../dist/domains/cats/services/runtime-session/RuntimeSessionStore.js');
   return { ...importer, ...store };
 }
@@ -230,10 +228,7 @@ describe('Antigravity legacy runtime-session import', () => {
 
   test('importer is read-only with respect to the legacy JSON file and Bridge session map', () => {
     const source = readFileSync(
-      new URL(
-        '../src/domains/cats/services/agents/providers/antigravity/antigravity-runtime-session-import.ts',
-        import.meta.url,
-      ),
+      new URL('../src/domains/cats/services/runtime-session/LegacyAntigravitySessionImport.ts', import.meta.url),
       'utf8',
     );
     assert.doesNotMatch(source, /writeFileSync|persistSessionMap/);

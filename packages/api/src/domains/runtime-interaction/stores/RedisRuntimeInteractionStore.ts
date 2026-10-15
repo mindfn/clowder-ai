@@ -7,12 +7,25 @@ import type {
 } from '@cat-cafe/shared';
 import type { RedisClient } from '@cat-cafe/shared/utils';
 import type {
+  ClaimRuntimeInteractionSubmissionInput,
+  CompleteRuntimeInteractionSubmissionInput,
   CreateRuntimeInteractionInput,
   InvalidateRuntimeInteractionInput,
   RuntimeInteractionPendingIndexRead,
   RuntimeInteractionStore,
+  SettleConversationInteractionInput,
   SettleRuntimeInteractionInput,
 } from '../ports/RuntimeInteractionStore.js';
+import { bindingsForRuntimeInteraction, normalizeRuntimeInteractionRecord } from '../RuntimeInteractionRecordModel.js';
+import {
+  ANCHOR_LUA,
+  CLAIM_SUBMISSION_LUA,
+  COMPLETE_SUBMISSION_LUA,
+  CREATE_STAGED_LUA,
+  INVALIDATE_LUA,
+  SETTLE_CONVERSATION_LUA,
+  SETTLE_LUA,
+} from './redis-runtime-interaction-scripts.js';
 
 export const RuntimeInteractionKeys = {
   detail: (interactionId: string) => `runtime-interaction:${interactionId}`,
@@ -21,57 +34,18 @@ export const RuntimeInteractionKeys = {
   activeByInvocation: (invocationId: string) => `runtime-interaction:invocation:${invocationId}:active`,
 } as const;
 
-const CREATE_STAGED_LUA = `
-if redis.call('EXISTS', KEYS[1]) == 1 then return 0 end
-if redis.call('SCARD', KEYS[3]) > 0 then return -1 end
-redis.call('HSET', KEYS[1],
-  'request', ARGV[1],
-  'status', 'staged',
-  'hostEpoch', ARGV[2],
-  'updatedAt', ARGV[3])
-redis.call('SADD', KEYS[2], ARGV[4])
-redis.call('SADD', KEYS[3], ARGV[4])
-return 1
-`;
-
-const ANCHOR_LUA = `
-local status = redis.call('HGET', KEYS[1], 'status')
-local hostEpoch = redis.call('HGET', KEYS[1], 'hostEpoch')
-if status ~= 'staged' or hostEpoch ~= ARGV[1] then return 0 end
-redis.call('HSET', KEYS[1], 'status', 'pending', 'cardRef', ARGV[2], 'updatedAt', ARGV[3])
-redis.call('ZADD', KEYS[2], tonumber(ARGV[4]), ARGV[5])
-return 1
-`;
-
-const SETTLE_LUA = `
-local status = redis.call('HGET', KEYS[1], 'status')
-local hostEpoch = redis.call('HGET', KEYS[1], 'hostEpoch')
-if status ~= 'pending' or hostEpoch ~= ARGV[1] then return 0 end
-redis.call('HSET', KEYS[1], 'status', ARGV[2], 'terminal', ARGV[3], 'updatedAt', ARGV[4])
-redis.call('ZREM', KEYS[2], ARGV[5])
-redis.call('SREM', KEYS[3], ARGV[5])
-redis.call('SREM', KEYS[4], ARGV[5])
-return 1
-`;
-
-const INVALIDATE_LUA = `
-local status = redis.call('HGET', KEYS[1], 'status')
-if status ~= 'staged' and status ~= 'pending' then return 0 end
-redis.call('HSET', KEYS[1], 'status', 'invalidated', 'terminal', ARGV[1], 'updatedAt', ARGV[2])
-redis.call('ZREM', KEYS[2], ARGV[3])
-redis.call('SREM', KEYS[3], ARGV[3])
-redis.call('SREM', KEYS[4], ARGV[3])
-return 1
-`;
-
 export class RedisRuntimeInteractionStore implements RuntimeInteractionStore {
   constructor(private readonly redis: RedisClient) {}
 
   async createStaged(input: CreateRuntimeInteractionInput): Promise<RuntimeInteractionRecord> {
+    const derived = bindingsForRuntimeInteraction(input.request);
     const record: RuntimeInteractionRecord = {
       request: structuredClone(input.request),
+      source: structuredClone(derived.source),
+      returnBinding: structuredClone(derived.returnBinding),
       status: 'staged',
       hostEpoch: input.hostEpoch,
+      revision: 1,
       updatedAt: input.now,
     };
     const created = await this.redis.eval(
@@ -84,6 +58,9 @@ export class RedisRuntimeInteractionStore implements RuntimeInteractionStore {
       record.hostEpoch,
       String(record.updatedAt),
       input.request.interactionId,
+      record.returnBinding.kind === 'provider_waiter' ? '1' : '0',
+      JSON.stringify(record.source),
+      JSON.stringify(record.returnBinding),
     );
     if (Number(created) === -1) {
       throw new Error(`active interaction already exists for invocation: ${input.request.owner.invocationId}`);
@@ -99,6 +76,7 @@ export class RedisRuntimeInteractionStore implements RuntimeInteractionStore {
     hostEpoch: string,
     cardRef: RuntimeInteractionCardRef,
     now: number,
+    expectedRevision?: number,
   ): Promise<RuntimeInteractionRecord | null> {
     const existing = await this.get(interactionId);
     if (!existing) return null;
@@ -112,6 +90,7 @@ export class RedisRuntimeInteractionStore implements RuntimeInteractionStore {
       String(now),
       String(existing.request.createdAt),
       interactionId,
+      expectedRevision === undefined ? '' : String(expectedRevision),
     );
     return Number(transitioned) === 1 ? this.get(interactionId) : null;
   }
@@ -131,13 +110,66 @@ export class RedisRuntimeInteractionStore implements RuntimeInteractionStore {
       JSON.stringify(input.terminal),
       String(input.now),
       input.interactionId,
+      input.expectedRevision === undefined ? '' : String(input.expectedRevision),
+    );
+    return Number(transitioned) === 1 ? this.get(input.interactionId) : null;
+  }
+
+  async claimSubmission(input: ClaimRuntimeInteractionSubmissionInput): Promise<RuntimeInteractionRecord | null> {
+    const transitioned = await this.redis.eval(
+      CLAIM_SUBMISSION_LUA,
+      1,
+      RuntimeInteractionKeys.detail(input.interactionId),
+      String(input.expectedRevision),
+      JSON.stringify(input.submission),
+      String(input.now),
+    );
+    return Number(transitioned) === 1 ? this.get(input.interactionId) : null;
+  }
+
+  async completeSubmission(input: CompleteRuntimeInteractionSubmissionInput): Promise<RuntimeInteractionRecord | null> {
+    const existing = await this.get(input.interactionId);
+    if (!existing) return null;
+    const transitioned = await this.redis.eval(
+      COMPLETE_SUBMISSION_LUA,
+      4,
+      RuntimeInteractionKeys.detail(input.interactionId),
+      RuntimeInteractionKeys.pendingByUser(existing.request.owner.userId),
+      RuntimeInteractionKeys.active(),
+      RuntimeInteractionKeys.activeByInvocation(existing.request.owner.invocationId),
+      String(input.expectedRevision),
+      input.operationId,
+      input.terminal.status,
+      JSON.stringify(input.terminal),
+      String(input.now),
+      input.interactionId,
+    );
+    return Number(transitioned) === 1 ? this.get(input.interactionId) : null;
+  }
+
+  async settleConversation(input: SettleConversationInteractionInput): Promise<RuntimeInteractionRecord | null> {
+    const existing = await this.get(input.interactionId);
+    if (!existing) return null;
+    const transitioned = await this.redis.eval(
+      SETTLE_CONVERSATION_LUA,
+      4,
+      RuntimeInteractionKeys.detail(input.interactionId),
+      RuntimeInteractionKeys.pendingByUser(existing.request.owner.userId),
+      RuntimeInteractionKeys.active(),
+      RuntimeInteractionKeys.activeByInvocation(existing.request.owner.invocationId),
+      String(input.expectedRevision),
+      input.terminal.status,
+      JSON.stringify(input.terminal),
+      String(input.now),
+      input.interactionId,
     );
     return Number(transitioned) === 1 ? this.get(input.interactionId) : null;
   }
 
   async invalidate(input: InvalidateRuntimeInteractionInput): Promise<RuntimeInteractionRecord | null> {
     const existing = await this.get(input.interactionId);
-    if (!existing) return null;
+    if (!existing || (input.expectedRevision !== undefined && existing.revision !== input.expectedRevision))
+      return null;
     return this.invalidateKnown(existing, input.reasonCode, input.now);
   }
 
@@ -157,12 +189,18 @@ export class RedisRuntimeInteractionStore implements RuntimeInteractionStore {
     now: number,
   ): Promise<RuntimeInteractionRecord[]> {
     const ids = await this.redis.smembers(RuntimeInteractionKeys.active());
-    const records = (await this.readMany(ids)).filter((record) => record.hostEpoch !== hostEpoch);
+    const records = (await this.readMany(ids)).filter(
+      (record) => record.returnBinding.kind === 'provider_waiter' && record.hostEpoch !== hostEpoch,
+    );
     return this.invalidateRecords(records, reasonCode, now);
   }
 
   async get(interactionId: string): Promise<RuntimeInteractionRecord | null> {
     return parseRecord(await this.redis.hgetall(RuntimeInteractionKeys.detail(interactionId)));
+  }
+
+  async listActive(): Promise<RuntimeInteractionRecord[]> {
+    return this.readMany(await this.redis.smembers(RuntimeInteractionKeys.active()));
   }
 
   async readPendingIndexByUser(userId: string): Promise<RuntimeInteractionPendingIndexRead> {
@@ -204,6 +242,7 @@ export class RedisRuntimeInteractionStore implements RuntimeInteractionStore {
       JSON.stringify(terminal),
       String(now),
       id,
+      String(existing.revision),
     );
     return Number(transitioned) === 1 ? this.get(id) : null;
   }
@@ -249,12 +288,18 @@ function parseBatchRecord(interactionId: string, result: unknown): RuntimeIntera
 
 function parseRecord(raw: Record<string, string>): RuntimeInteractionRecord | null {
   if (!raw.request || !raw.status || !raw.hostEpoch || !raw.updatedAt) return null;
-  return {
-    request: JSON.parse(raw.request) as RuntimeInteractionRecord['request'],
+  return normalizeRuntimeInteractionRecord({
+    request: JSON.parse(raw.request) as unknown,
     status: raw.status as RuntimeInteractionStatus,
     hostEpoch: raw.hostEpoch,
+    ...(raw.source ? { source: JSON.parse(raw.source) as RuntimeInteractionRecord['source'] } : {}),
+    ...(raw.returnBinding
+      ? { returnBinding: JSON.parse(raw.returnBinding) as RuntimeInteractionRecord['returnBinding'] }
+      : {}),
+    ...(raw.revision ? { revision: Number(raw.revision) } : {}),
     ...(raw.cardRef ? { cardRef: JSON.parse(raw.cardRef) as RuntimeInteractionCardRef } : {}),
+    ...(raw.submission ? { submission: JSON.parse(raw.submission) as RuntimeInteractionRecord['submission'] } : {}),
     ...(raw.terminal ? { terminal: JSON.parse(raw.terminal) as RuntimeInteractionTerminal } : {}),
     updatedAt: Number(raw.updatedAt),
-  };
+  });
 }

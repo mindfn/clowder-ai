@@ -7,6 +7,7 @@
 @import "./exploration-host.css";
 @import "./exploration-navigation.css";
 @import "./exploration-decision.css";
+@import "./exploration-v2.css";
 
 .exploration-workspace {
   min-width: 0;

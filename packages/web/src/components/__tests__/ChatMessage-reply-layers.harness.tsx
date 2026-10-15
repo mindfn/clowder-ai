@@ -71,6 +71,7 @@ export function streamReply(overrides: Partial<ChatMessageData> = {}): ChatMessa
     id: 'reply-1',
     type: 'assistant',
     catId: 'opus',
+    from: { kind: 'agent', catId: overrides.catId ?? 'opus' },
     origin: 'stream',
     content: '改好了登录页，截图见下。',
     timestamp: Date.UTC(2026, 9, 5, 3, 0),

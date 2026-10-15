@@ -39,8 +39,8 @@ afterEach(() => {
   vi.restoreAllMocks();
 });
 
-/** Media annotations keep their own composer (text annotations now go to chat, CVO095/098). */
-function seedMediaDraft(body: string) {
+/** New image discussion goes to Chat; a persisted unknown annotation still owns its retry. */
+function seedPendingMediaAnnotation(body: string, operationId = 'pending-original-operation') {
   localStorage.setItem(
     workspaceReviewDraftKey(mediaView()),
     JSON.stringify({
@@ -48,7 +48,12 @@ function seedMediaDraft(body: string) {
       body,
       target: { kind: 'media_anchor', anchor: { kind: 'image-point', x: 32, y: 48 } },
       activeAnnotationId: null,
-      annotation: null,
+      annotation: {
+        operationId,
+        expectedRevision: 1,
+        body,
+        target: { kind: 'media_anchor', anchor: { kind: 'image-point', x: 32, y: 48 } },
+      },
       action: null,
       refresh: null,
     }),
@@ -68,8 +73,11 @@ async function renderMedia() {
     for (let i = 0; i < 4; i += 1) await Promise.resolve();
   });
 }
-const saveButton = () =>
-  [...container.querySelectorAll('button')].find((button) => button.getAttribute('aria-label') === '保存批注');
+const retryAnnotation = async () => {
+  const button = [...container.querySelectorAll('button')].find((item) => item.textContent === '核对并重试保存');
+  expect(button).toBeTruthy();
+  await act(async () => button!.click());
+};
 
 it('reuses an annotation operation id after an unknown write result instead of creating a duplicate comment', async () => {
   let annotationAttempts = 0;
@@ -85,16 +93,17 @@ it('reuses an annotation operation id after an unknown write result instead of c
       return new Response(JSON.stringify({ receipt: null }));
     throw new Error(`unexpected route: ${url}`);
   });
-  seedMediaDraft('Please clarify this frame.');
+  seedPendingMediaAnnotation('Please clarify this frame.');
   await renderMedia();
-  await act(async () => saveButton()?.click());
-  await act(async () => saveButton()?.click());
+  await retryAnnotation();
+  await retryAnnotation();
 
   const calls = mocks.apiFetch.mock.calls.filter(
     ([url]) => url === `/api/workspace/content-reviews/${reviewId}/annotations`,
   );
   expect(calls).toHaveLength(2);
-  expect(JSON.parse(String(calls[0]?.[1]?.body)).operationId).toBe(JSON.parse(String(calls[1]?.[1]?.body)).operationId);
+  expect(JSON.parse(String(calls[0]?.[1]?.body)).operationId).toBe('pending-original-operation');
+  expect(JSON.parse(String(calls[1]?.[1]?.body))).toEqual(JSON.parse(String(calls[0]?.[1]?.body)));
 });
 
 it('reconciles an unknown annotation response from the persisted operation identity', async () => {
@@ -109,9 +118,9 @@ it('reconciles an unknown annotation response from the persisted operation ident
     if (url === `/api/workspace/content-reviews/${reviewId}`) return new Response(JSON.stringify(confirmed));
     throw new Error(`unexpected route: ${url}`);
   });
-  seedMediaDraft('Please review this ordinary file.');
+  seedPendingMediaAnnotation('Please review this ordinary file.', operationId);
   await renderMedia();
-  await act(async () => saveButton()?.click());
+  await retryAnnotation();
 
   expect(
     mocks.apiFetch.mock.calls.filter(([url]) => url === `/api/workspace/content-reviews/${reviewId}/annotations`),

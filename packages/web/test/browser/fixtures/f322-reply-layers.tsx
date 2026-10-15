@@ -53,17 +53,7 @@ const result = (id: string, detail: string, status: 'completed' | 'error' = 'com
   timestamp: T0 + 1,
 });
 const run = (turn: string) => ({ stream: { invocationId: `parent-${turn}`, turnInvocationId: turn } });
-const reconciliation = (turn: string, phase: 'failed' | 'canceled' | 'unknown_running') => ({
-  ...run(turn),
-  invocationReconciliation: {
-    v: 1 as const,
-    invocationId: `parent-${turn}`,
-    catIds: [] as string[],
-    turnInvocationIds: [turn],
-    phase,
-    updatedAt: T0,
-  },
-});
+const reconciliation = (turn: string, phase: 'failed' | 'canceled' | 'unknown_running') => run(turn);
 const base = (id: string, catId: string, over: Partial<ChatMessageData>): ChatMessageData => ({
   id,
   type: 'assistant',
@@ -205,16 +195,18 @@ const messages: ChatMessageData[] = [
       // A terminal reconciliation fact must win even while an old stream flag is still present.
       isStreaming: phase !== 'running',
       toolEvents: [tool(`terminal-${phase}`, 'Read')],
+      lifecycle: {
+        kind: 'response',
+        orderKey: '1',
+        invocationId: `terminal-${phase}`,
+        targetId: 'opus',
+        inputEntryIds: [],
+        inputMessageIds: [],
+        status: phase === 'running' ? 'processing' : phase === 'succeeded' ? 'completed' : phase,
+        startedAt: T0,
+      },
       extra: {
         ...run(`terminal-${phase}`),
-        invocationReconciliation: {
-          v: 1 as const,
-          invocationId: `parent-terminal-${phase}`,
-          catIds: ['opus'],
-          turnInvocationIds: [`terminal-${phase}`],
-          phase,
-          updatedAt: T0,
-        },
       },
     }),
   ),
@@ -254,40 +246,20 @@ const failedMembers = [
   },
 ] satisfies SidebarSnapshotRow[];
 if (failureVisibility) {
-  messages.push(
-    base('r-supplement-failed', 'codex', {
-      content: 'The original answer remains available.',
-      extra: {
-        freshnessSupplement: {
-          type: 'freshness_supplement',
-          supplementId: 'f254-supplement:r-supplement-failed:1',
-          lineageId: 'r-supplement-failed',
-          originalMessageId: 'r-supplement-failed',
-          threadId: 'thread-replies',
-          catId: 'codex',
-          seq: 1,
-          status: 'failed',
-          requiredCount: 1,
-          terminalReason: 'read_only_policy_unavailable',
-          updatedAt: T0,
-        },
-      },
-    }),
-    {
-      id: 'r-network-error',
-      type: 'system',
-      content: 'Error: stream disconnected before completion',
-      timestamp: T0,
-      extra: {
-        cliDiagnostics: {
-          reasonCode: 'network_error',
-          publicSummary: '网络连接失败',
-          publicHint: '模型服务连接已中断。',
-          debugRef: { command: 'codex app-server', exitCode: null, signal: null, invocationId: 'failed-primary' },
-        },
+  messages.push({
+    id: 'r-network-error',
+    type: 'system',
+    content: 'Error: stream disconnected before completion',
+    timestamp: T0,
+    extra: {
+      cliDiagnostics: {
+        reasonCode: 'network_error',
+        publicSummary: '网络连接失败',
+        publicHint: '模型服务连接已中断。',
+        debugRef: { command: 'codex app-server', exitCode: null, signal: null, invocationId: 'failed-primary' },
       },
     },
-  );
+  });
 }
 if (new URLSearchParams(window.location.search).has('subagents')) {
   messages.splice(0, messages.length, ...subexecutionSceneMessages());

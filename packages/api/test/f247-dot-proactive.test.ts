@@ -28,15 +28,13 @@ test('same shared connection asks as dot; canonical Queue returns actual local r
       assert.ok(
         f.queue
           .list(root.threadId, 'owner')
-          .some((e) => e.callerCatId === 'gpt-dot' && e.a2aTriggerMessageId === root.id),
+          .some((e) => e.from.kind === 'agent' && e.from.catId === 'gpt-dot' && e.payload.messageId === root.id),
       );
     const replies = await Promise.all(roots.map((root) => f.reply(root.id, root.threadId, 'codex', undefined, true)));
     for (const r of replies) {
-      assert.deepEqual(r.mentions, ['gpt-dot'], 'explicit and automatic dot targets must merge');
+      assert.deepEqual(r.mentions, ['gpt-dot'], 'explicit reply target uses the canonical Queue');
       assert.ok(
-        f.queue
-          .list(r.threadId, 'owner')
-          .some((e) => e.targetCats.includes('gpt-dot') && e.a2aTriggerMessageId === r.id),
+        f.queue.list(r.threadId, 'owner').some((e) => e.targets.includes('gpt-dot') && e.payload.messageId === r.id),
       );
       assert.equal((await f.deliver(r.id)).kind, 'sent');
       assert.equal((await f.deliver(r.id)).kind, 'sent');
@@ -48,11 +46,6 @@ test('same shared connection asks as dot; canonical Queue returns actual local r
         (await f.returns.read(f.setup.credentialSecret, event.eventId)).source.id,
         event.data.source_message_id,
       );
-    assert.deepEqual(
-      (await f.connection.current())!.allowedCatIds,
-      [],
-      'one-question reply is not a permanent summon grant',
-    );
   } finally {
     await f.close();
   }
@@ -67,7 +60,7 @@ test('owner replies to a dot question through ordinary summon authority and dot 
     const source = f.messages.append({
       userId: 'owner',
       threadId: thread.id,
-      catId: null,
+      from: { kind: 'user', userId: 'owner' },
       replyTo: rootId,
       content: '@dot 补充一点背景',
       mentions: [createCatId('gpt-dot')],
@@ -76,7 +69,6 @@ test('owner replies to a dot question through ordinary summon authority and dot 
     assert.equal((await f.deliver(source.id)).kind, 'sent');
     assert.equal(f.events.length, 1);
     assert.equal((await f.returns.read(f.setup.credentialSecret, f.events[0].eventId)).source.id, source.id);
-    assert.deepEqual((await f.connection.current())?.allowedCatIds, []);
   } finally {
     await f.close();
   }
@@ -130,7 +122,7 @@ test('replyTo alone, unrelated executions, non-recipients, and stale subscriptio
     const unrelated = f.messages.append({
       userId: 'owner',
       threadId: a.id,
-      catId: null,
+      from: { kind: 'user', userId: 'owner' },
       content: 'other',
       mentions: [],
       timestamp: Date.now(),
@@ -147,80 +139,61 @@ test('replyTo alone, unrelated executions, non-recipients, and stale subscriptio
   }
 });
 
-test('withdrawn recipients and replaced execution witnesses cannot use a consultation reply permission', async () => {
+test('a removed exact input binding or withdrawn source cannot authorize a consultation reply', async () => {
   const f = await fixture();
   try {
     const thread = f.thread('withdrawn');
-    const request = await f.ask(thread.id);
-    const rootId = request.result.structuredContent.messageId as string;
-    const answer = await f.reply(rootId, thread.id);
+    const rootId = (await f.ask(thread.id)).result.structuredContent.messageId;
+    const answer = await f.reply(rootId, thread.id, 'codex', undefined, true);
     const root = f.messages.getById(rootId)!;
-    assert.ok(root.queueCustody);
-    const original = structuredClone(root.queueCustody);
-    root.queueCustody.withdrawnByCatIds = ['codex' as never];
-    assert.notEqual(
-      (await f.deliver(answer.id)).kind,
-      'sent',
-      'a withdrawn target has no residual consultation authority',
-    );
-    root.queueCustody = { ...original, awakenedInvocationIdByCatId: { codex: 'replacement-child' } };
-    assert.notEqual(
-      (await f.deliver(answer.id)).kind,
-      'sent',
-      'an old child must not answer after a replacement was created',
-    );
-    root.queueCustody = original;
-    assert.equal(
-      (await f.deliver(answer.id)).kind,
-      'sent',
-      'the original authority remains valid without those changes',
-    );
+    const ref = root.lifecycle!.dispatchRefs![0];
+    const response = f.messages.getById(ref.statusMessageId)!;
+    assert.equal(response.lifecycle?.kind, 'response');
+    if (response.lifecycle?.kind !== 'response') throw Error('response missing');
+    response.lifecycle.inputMessageIds = [];
+    assert.notEqual((await f.deliver(answer.id)).kind, 'sent', 'a rejected Append loses exact reply authority');
+    response.lifecycle.inputMessageIds = [rootId];
+    root.deletedAt = Date.now();
+    assert.notEqual((await f.deliver(answer.id)).kind, 'sent', 'a withdrawn source cannot grant a reply');
+    delete root.deletedAt;
+    assert.equal((await f.deliver(answer.id)).kind, 'sent');
   } finally {
     await f.close();
   }
 });
 
-test('completed replacement remains authoritative after Queue live witness cleanup', async () => {
+test('terminal exact response retains reply authority after its Queue row retires', async () => {
   const f = await fixture();
   try {
-    const thread = f.thread('completed replacement');
-    const request = await f.ask(thread.id);
-    const rootId = request.result.structuredContent.messageId as string;
-    const stale = await f.reply(rootId, thread.id);
+    const thread = f.thread('completed');
+    const rootId = (await f.ask(thread.id)).result.structuredContent.messageId;
+    const answer = await f.reply(rootId, thread.id, 'codex', undefined, true);
     const root = f.messages.getById(rootId)!;
-    assert.ok(root.queueCustody);
-    root.queueCustody = {
-      ...root.queueCustody,
-      status: 'terminal',
-      pendingTargetCats: [],
-      awakenedInvocationIdByCatId: {},
-      steeredInvocationIdByCatId: {},
-      seenInvocationIdByCatId: {},
-      targetOutcomeByCatId: {
-        codex: {
-          invocationId: 'winning-child',
-          disposition: 'completed',
-          evidenceRef: { kind: 'turn_execution', invocationId: 'winning-child' },
-          handledAt: Date.now(),
-        },
-      },
-    };
-    assert.notEqual((await f.deliver(stale.id)).kind, 'sent', 'terminal cleanup cannot revive the superseded child');
-    const winning = await f.reply(rootId, thread.id);
-    const winningOutcome = root.queueCustody.targetOutcomeByCatId?.codex;
-    assert.ok(winningOutcome && winning.extra?.stream?.turnInvocationId);
-    winningOutcome.invocationId = winning.extra.stream.turnInvocationId;
+    const response = f.messages.getById(root.lifecycle!.dispatchRefs![0].statusMessageId)!;
+    if (response.lifecycle?.kind !== 'response') throw Error('response missing');
     assert.equal(
-      (await f.deliver(winning.id)).kind,
-      'sent',
-      'the completed winning child can still deliver its final reply',
+      f.messages.commitLifecycleResponseTerminal(response.id, {
+        invocationId: response.lifecycle.invocationId,
+        status: 'completed',
+        completedAt: Date.now(),
+        content: 'complete',
+        mentions: [],
+        origin: 'stream',
+      }).kind,
+      'applied',
     );
+    const row = f.queue.list(thread.id, 'owner').find((e) => e.payload.messageId === rootId)!;
+    await f.queue.terminalizeEntryDurable(thread.id, 'owner', row.id);
+    assert.equal((await f.deliver(answer.id)).kind, 'sent');
+    const replay = await f.ask(thread.id);
+    assert.equal(replay.result.structuredContent.messageId, rootId);
+    assert.ok(!f.queue.list(thread.id, 'owner').some((e) => e.payload.messageId === rootId));
   } finally {
     await f.close();
   }
 });
 
-test('ordinary mid-task callback speech stays visible but only a final publication auto-returns to dot', async () => {
+test('ordinary callback speech stays visible; only an explicit callback target returns to dot', async () => {
   const f = await fixture();
   try {
     const thread = f.thread('progress');
@@ -229,8 +202,8 @@ test('ordinary mid-task callback speech stays visible but only a final publicati
     const progress = await f.reply(rootId, thread.id, 'codex', undefined, false, false);
     assert.equal(progress.extra?.isExplicitPost, true);
     assert.deepEqual(progress.mentions, [], 'ordinary progress must not wake dot');
-    assert.ok(!f.queue.list(thread.id, 'owner').some((e) => e.targetCats.includes('gpt-dot')));
-    const final = await f.reply(rootId, thread.id);
+    assert.ok(!f.queue.list(thread.id, 'owner').some((e) => e.targets.includes('gpt-dot')));
+    const final = await f.reply(rootId, thread.id, 'codex', undefined, true);
     assert.deepEqual(final.mentions, ['gpt-dot']);
     assert.equal((await f.deliver(final.id)).kind, 'sent');
     assert.equal(f.events.length, 1);
@@ -239,67 +212,26 @@ test('ordinary mid-task callback speech stays visible but only a final publicati
   }
 });
 
-for (const failure of ['preflight rejection', 'enqueue exception'] as const) {
-  test(`dot ask reports retryable ${failure} and recovers the same durable question`, async () => {
-    let blocked = true;
-    const f = await fixture(
-      failure === 'preflight rejection'
-        ? {
-            routingDispatchPreflight: {
-              preflight: async (input) => ({
-                v: 1,
-                ownerId: input.ownerId,
-                observedAt: Date.now(),
-                resolverState: 'fresh',
-                targets: input.targetCatIds.map((targetCatId) => ({
-                  targetCatId,
-                  disposition: blocked ? 'rejected' : 'allowed',
-                  reasons: [],
-                  alternatives: [],
-                })),
-              }),
-            },
-          }
-        : {},
-    );
-    const enqueue = f.queue.enqueue.bind(f.queue);
-    if (failure === 'enqueue exception')
-      f.queue.enqueue = (input) => {
-        if (blocked) throw new Error('queue unavailable');
-        return enqueue(input);
-      };
-    try {
-      const thread = f.thread(failure);
-      for (let attempt = 0; attempt < 2; attempt++) {
-        const response = await f.ask(thread.id);
-        assert.equal(response.error?.data.reason, 'dot_ask_delivery_pending', JSON.stringify(response));
-        assert.equal(f.postResults.at(-1)?.statusCode, 503);
-        assert.equal(f.queue.list(thread.id, 'owner').length, 0);
-      }
-      const [initial, retry] = f.postResults;
-      assert.ok(initial.body.messageId);
-      assert.equal(retry.body.messageId, initial.body.messageId);
-      assert.equal(f.messages.getById(initial.body.messageId)?.deliveryStatus, 'queued');
-      const remote = await f.remote.rpc('tools/call', {
-        name: 'cat_cafe_dot_ask',
-        arguments: {
-          attempt_id: f.setup.attemptId,
-          thread_id: thread.id,
-          target_cat_ids: ['codex'],
-          content: '请回答这一问',
-          client_message_id: 'request',
-        },
-      });
-      assert.equal(remote.result.isError, true, 'the shared Remote must preserve the retryable error');
-      assert.match(remote.result.content[0].text, /dot_ask_delivery_pending/);
-      blocked = false;
-      const recovered = await f.ask(thread.id);
-      assert.equal(recovered.result.structuredContent.messageId, initial.body.messageId);
-      assert.equal(f.queue.list(thread.id, 'owner').length, 1);
-      assert.equal((await f.ask(thread.id)).result.structuredContent.messageId, initial.body.messageId);
-      assert.equal(f.queue.list(thread.id, 'owner').length, 1, 'recovery must not create a second dispatch');
-    } finally {
-      await f.close();
+test('atomic admission failure leaves no partial question and same-key retry admits once', async () => {
+  const f = await fixture();
+  const send = f.queue.send.bind(f.queue);
+  let blocked = true;
+  f.queue.send = async (...args) => {
+    if (blocked) throw Error('fixture admission unavailable');
+    return send(...args);
+  };
+  try {
+    const thread = f.thread('atomic failure');
+    for (let i = 0; i < 2; i++) {
+      assert.equal((await f.ask(thread.id)).error.data.reason, 'dot_ask_delivery_pending');
+      assert.equal(f.queue.list(thread.id, 'owner').length, 0);
+      assert.equal(f.messages.getByThread(thread.id, 100, 'owner').length, 0);
     }
-  });
-}
+    blocked = false;
+    const root = (await f.ask(thread.id)).result.structuredContent.messageId;
+    assert.equal((await f.ask(thread.id)).result.structuredContent.messageId, root);
+    assert.equal(f.queue.list(thread.id, 'owner').length, 1);
+  } finally {
+    await f.close();
+  }
+});

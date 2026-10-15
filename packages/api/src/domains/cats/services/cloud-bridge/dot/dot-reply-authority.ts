@@ -1,4 +1,5 @@
 import { createCatId } from '@cat-cafe/shared';
+import { readQueueTargetExecution } from '../../agents/invocation/queue-ledger/QueueTargetExecutionView.js';
 import type { IMessageStore, StoredMessage } from '../../stores/ports/MessageStore.js';
 import { canViewMessage, isTimelinePublished } from '../../stores/visibility.js';
 import { DOT_CAT_ID, type DotConnectionState } from './dot-connection-state.js';
@@ -34,19 +35,12 @@ export async function dotReplyAuthority(
   if (!parent?.extra?.dotAsk) return explicitParent?.extra?.dotAsk ? 'rejected' : 'ordinary';
   const ask = parent.extra.dotAsk;
   const target = source.catId;
-  const custody = parent.queueCustody;
-  if (target && custody) {
-    if (custody.withdrawnByCatIds?.includes(target)) return 'rejected';
-    // Queue's accepted replacement/current prompt witness supersedes an older
-    // child even if that child later posts a formally authored answer.
-    const currentChild =
-      custody.steeredInvocationIdByCatId?.[target] ??
-      custody.awakenedInvocationIdByCatId?.[target] ??
-      custody.seenInvocationIdByCatId?.[target] ??
-      custody.targetOutcomeByCatId?.[target]?.invocationId;
-    const replyChild = source.extra?.turnExecution?.invocationId ?? source.extra?.stream?.turnInvocationId;
-    if (currentChild && currentChild !== replyChild) return 'rejected';
-  }
+  // The canonical source-to-response binding identifies the one accepted execution.
+  // A withdrawn source or rejected Append cannot authorize a late cloud return.
+  const execution = target ? await readQueueTargetExecution(messages, undefined, parent, target) : undefined;
+  const replyChild = source.extra?.turnExecution?.invocationId ?? source.extra?.stream?.turnInvocationId;
+  if (execution?.kind !== 'response' || !replyChild || execution.response.invocationId !== replyChild)
+    return 'rejected';
 
   return parent.catId === DOT_CAT_ID &&
     !parent.deletedAt &&
@@ -76,11 +70,14 @@ export async function canDeliverDotSource(
   state: DotConnectionState,
   source: DotReplyCandidate,
   messages: Pick<IMessageStore, 'getById'>,
-  allowedCatIds: readonly string[],
 ) {
+  if (source.userId !== state.ownerUserId || source.catId === DOT_CAT_ID) return false;
+  if (
+    state.pairedAt === null ||
+    !state.subscription ||
+    (state.subscription.expiresAt !== null && state.subscription.expiresAt <= Date.now())
+  )
+    return false;
   const permission = await dotReplyAuthority(state, source, messages);
-  return (
-    permission === 'request_reply' ||
-    (permission === 'ordinary' && (!source.catId || allowedCatIds.includes(source.catId)))
-  );
+  return permission !== 'rejected';
 }

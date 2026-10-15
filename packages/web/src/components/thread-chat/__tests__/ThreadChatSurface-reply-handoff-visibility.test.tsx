@@ -37,6 +37,7 @@ vi.mock('@/hooks/useThreadScopedSelectors', async (original) => ({
 }));
 vi.mock('@/hooks/useChatHistory', () => ({
   useChatHistory: () => ({
+    messages: fixture.messages,
     handleScroll: vi.fn(),
     jumpToLatest: vi.fn(),
     jumpToMessage: vi.fn(),
@@ -143,25 +144,24 @@ describe('ThreadChatSurface reply handoff eligibility transitions', () => {
     await act(async () => root.render(<ThreadChatSurface threadId={THREAD_ID} density="full" />));
   }
 
-  it('keeps one standalone handoff when the same settled source becomes identity-only', async () => {
+  it('does not revive retired routing rows when their source becomes identity-only', async () => {
     await render([source('visible source'), route]);
-    expect(container.querySelector('[data-message-id="route"]')?.textContent).toBe('');
+    expect(container.querySelector('[data-message-id="route"]')).toBeNull();
 
     await render([source(''), route]);
 
-    expect(container.querySelectorAll('[data-testid="reply-handoff"]')).toHaveLength(1);
-    expect(container.querySelector('[data-message-id="route"]')?.textContent).toContain('交给');
+    expect(container.querySelectorAll('[data-testid="reply-handoff"]')).toHaveLength(0);
+    expect(container.querySelector('[data-message-id="route"]')).toBeNull();
   });
 
-  it('moves a standalone handoff into the source when that same loaded row becomes visible', async () => {
+  it('does not revive a retired routing projection when its source becomes visible', async () => {
     await render([source(''), route]);
-    expect(container.querySelector('[data-message-id="route"]')?.textContent).toContain('交给');
+    expect(container.querySelector('[data-message-id="route"]')).toBeNull();
 
     await render([source('visible source'), route]);
 
-    expect(
-      container.querySelector('[data-message-id="source"]')?.querySelector('[data-testid="reply-handoff"]'),
-    ).not.toBeNull();
-    expect(container.querySelector('[data-message-id="route"]')?.textContent).toBe('');
+    expect(container.querySelector('[data-message-id="source"]')?.textContent).toContain('visible source');
+    expect(container.querySelector('[data-testid="reply-handoff"]')).toBeNull();
+    expect(container.querySelector('[data-message-id="route"]')).toBeNull();
   });
 });

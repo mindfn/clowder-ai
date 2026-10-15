@@ -37,6 +37,7 @@ export async function firstFileFixture(t: TestContext, path = 'guide.md', source
   const f = await createLiveReviewFixture(root, 'image/png', undefined, source);
   const fileStore = new WorkspaceContentReviewStore(join(root, 'files.sqlite'));
   const files = new WorkspaceContentReviewService({ store: fileStore, source });
+  const errors: unknown[] = [];
   const integration = createContentModificationIntegration({
     dataDir: root,
     source,
@@ -44,8 +45,9 @@ export async function firstFileFixture(t: TestContext, path = 'guide.md', source
     artifacts: f,
     tasks: f.tasks,
     messages: f.messages,
+    delivery: f.dispatch.delivery,
     changed: () => {},
-    onError: () => {},
+    onError: (error) => errors.push(error),
   });
   const locator = { worktreeId: 'worktree-a', path };
   // A normal file preview describes its bytes; it has never opened the annotation owner.
@@ -64,7 +66,7 @@ export async function firstFileFixture(t: TestContext, path = 'guide.md', source
   const message = f.messages.append({
     userId: 'operator',
     threadId: f.thread.id,
-    catId: null,
+    from: { kind: 'user', userId: 'operator' },
     mentions: ['codex-astra'],
     timestamp: Date.now(),
     content: 'Please revise this quoted passage.',
@@ -107,6 +109,7 @@ export async function firstFileFixture(t: TestContext, path = 'guide.md', source
     files,
     fileStore,
     integration,
+    errors,
     app,
     root,
     locator,

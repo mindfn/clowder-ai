@@ -28,6 +28,7 @@ vi.mock('@/utils/api-client', () => ({
                 id: 'codex-astra',
                 displayName: '小星星',
                 mentionPatterns: ['@codex-astra'],
+                carrier: 'cli',
                 clientId: 'openai',
                 defaultModel: 'gpt-6-astra',
                 color: { primary: '#000', secondary: '#fff' },

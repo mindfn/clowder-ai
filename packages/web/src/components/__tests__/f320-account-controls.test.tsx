@@ -34,6 +34,7 @@ const managed = (ready = false): ProfileItem => ({
   },
 });
 const cat: CatData = {
+  carrier: 'cli',
   id: 'sol',
   displayName: '小太阳',
   clientId: 'openai',

@@ -24,7 +24,7 @@ const cat = {
   avatar: '/avatars/opus.png',
   color: { primary: '#9B7EBD', secondary: '#E8DFF5' },
 } as CatData;
-describe('unchanged classic message markup at the F322 C boundary', () => {
+describe('approved 1398 classic message markup across F322 integration', () => {
   let h: ReplyLayersHarness;
   beforeAll(installReplyLayersActEnvironment);
   afterAll(uninstallReplyLayersActEnvironment);
@@ -48,6 +48,7 @@ describe('unchanged classic message markup at the F322 C boundary', () => {
         kind === 'human'
           ? streamReply({
               type: 'user',
+              from: { kind: 'user', userId: 'operator' },
               catId: undefined,
               origin: undefined,
               content: 'Human message',

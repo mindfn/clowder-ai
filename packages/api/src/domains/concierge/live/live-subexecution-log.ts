@@ -79,7 +79,9 @@ export class LiveSubexecutionLog {
     if (!(await this.deps.verify()) || !this.available()) return;
     const terminal = ['completed', 'failed', 'interrupted'].includes(semantic.stage);
     const result = await this.append({
-      ...this.deps.scope,
+      userId: this.deps.scope.userId,
+      threadId: this.deps.scope.threadId,
+      from: { kind: 'agent', catId: this.deps.scope.catId },
       content: describe(child, semantic, terminal, child.sourceRefs),
       timestamp: semantic.occurredAt,
       mentions: [],

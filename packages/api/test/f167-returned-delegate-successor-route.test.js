@@ -225,7 +225,7 @@ test('real callback route reattaches one successor in the returned delegate chil
   assert.deepEqual(f.currentLease().holderCatIds, [SUCCESSOR_CAT]);
   assert.equal(f.currentLease().holderThreadId, f.child.id);
   assert.equal(f.invocationQueue.list(f.child.id, TENANT).length, 1);
-  const fence = f.invocationQueue.list(f.child.id, TENANT)[0].actionSuccessorFence;
+  const fence = f.invocationQueue.list(f.child.id, TENANT)[0].execution.actionSuccessorFence;
   assert.equal(fence.leaseId, f.currentLease().leaseId);
   assert.equal(fence.generation, 3);
   assert.equal(fence.dispatchId, 'cross-post:returned-successor-route');
@@ -316,7 +316,7 @@ test('rejected structured recovery stays local while ordinary A2A still reaches 
       assert.equal(ordinary.json().status, 'ok');
       const entries = f.invocationQueue.list(f.child.id, TENANT);
       assert.equal(entries.length, 1);
-      assert.equal(entries[0].actionSuccessorFence, undefined);
+      assert.equal(entries[0].execution.actionSuccessorFence, undefined);
       assert.equal(f.task.status, originalTask.status);
       assert.equal(f.task.updatedAt, originalTask.updatedAt);
       assert.deepEqual(

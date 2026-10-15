@@ -1,12 +1,14 @@
 import {
   type IgnoredItemSnapshot,
   ignoredItemSnapshotSchema,
-  parseRuntimeInteractionRequest,
+  type RichInteractiveBlock,
   type RuntimeInteractionRecord,
 } from '@cat-cafe/shared';
 import type { FastifyInstance } from 'fastify';
 import type { IMessageStore } from '../domains/cats/services/stores/ports/MessageStore.js';
 import type { RuntimeInteractionPendingReadSource } from '../domains/runtime-interaction/ports/RuntimeInteractionStore.js';
+import { readVerifiedRuntimeInteractionPresentation } from '../domains/runtime-interaction/RuntimeInteractionCardPublisher.js';
+import { normalizeRuntimeInteractionRecord } from '../domains/runtime-interaction/RuntimeInteractionRecordModel.js';
 import { projectCompanionDecisions } from './companion-decision-projection.js';
 import {
   approvalsSourceSchema,
@@ -14,6 +16,10 @@ import {
   type DecisionSourceRead,
   needsMeSourceSchema,
 } from './companion-decision-sources.js';
+import {
+  type OriginalApprovalCardMessageStore,
+  readOriginalApprovalCards,
+} from './companion-original-approval-cards.js';
 import { type MentionReadOptions, readUserMentionTodos } from './user-mention-todo-projection.js';
 
 export interface DecisionPersonalPreferenceReadOptions {
@@ -33,6 +39,7 @@ export async function readCompanionDecisionProjection(
   mentionOptions?: MentionReadOptions,
   runtimeInteractionStore?: RuntimeInteractionPendingReadSource,
   personalPreferences?: DecisionPersonalPreferenceReadOptions,
+  sourceMessageStore?: OriginalApprovalCardMessageStore,
 ) {
   const config = {
     approvals: {
@@ -85,9 +92,18 @@ export async function readCompanionDecisionProjection(
     read('approvals'),
     read('needsMe'),
     messageStore ? readUserMentionTodos(messageStore, userId, mentionOptions) : undefined,
-    runtimeInteractionStore ? readStructuredChoices(runtimeInteractionStore, userId) : undefined,
+    runtimeInteractionStore ? readStructuredChoices(runtimeInteractionStore, userId, sourceMessageStore) : undefined,
     personalPreferences ? readDecisionPersonalPreferences(personalPreferences, userId) : undefined,
   ]);
+  const approvalBody = approvals.body ? approvalsSourceSchema.parse(approvals.body) : undefined;
+  const originalApprovalCards = approvalBody
+    ? await readOriginalApprovalCards(
+        approvalBody.items,
+        userId,
+        sourceMessageStore ?? originalCardStoreFromMentionStore(messageStore),
+      )
+    : undefined;
+  if (originalApprovalCards) approvals.state.observedAt = Date.now();
   const projection = projectCompanionDecisions(
     approvals.body ?? { items: [] },
     needsMe.body ?? { ownerReads: [] },
@@ -104,6 +120,8 @@ export async function readCompanionDecisionProjection(
     personalPreferences && personal
       ? { mode: personalPreferences.mode, snapshot: personal.snapshot, state: personal.state }
       : undefined,
+    originalApprovalCards,
+    structuredChoices?.conversationPresentations,
   );
   await Promise.all(
     projection.items.map(async (row) => {
@@ -118,6 +136,12 @@ export async function readCompanionDecisionProjection(
     }),
   );
   return projection;
+}
+
+function originalCardStoreFromMentionStore(value: unknown): OriginalApprovalCardMessageStore | undefined {
+  if (!value || typeof value !== 'object') return undefined;
+  const getById = Reflect.get(value, 'getById');
+  return typeof getById === 'function' ? (value as OriginalApprovalCardMessageStore) : undefined;
 }
 
 export async function readDecisionPersonalPreferences(
@@ -150,47 +174,83 @@ export async function readDecisionPersonalPreferences(
 async function readStructuredChoices(
   store: RuntimeInteractionPendingReadSource,
   userId: string,
-): Promise<{ body?: RuntimeInteractionRecord[]; state: DecisionSourceRead }> {
+  messageStore?: OriginalApprovalCardMessageStore,
+): Promise<{
+  body?: RuntimeInteractionRecord[];
+  conversationPresentations?: ReadonlyMap<string, RichInteractiveBlock>;
+  state: DecisionSourceRead;
+}> {
   const startedAt = Date.now();
   const base = {
     coverage: 'pending_f306_structured_choices' as const,
     startedAt,
     observedAt: Date.now(),
   };
-  let records: RuntimeInteractionRecord[];
-  let exhaustiveness: DecisionSourceRead['exhaustiveness'];
+  let source: { records: RuntimeInteractionRecord[]; exhaustiveness: DecisionSourceRead['exhaustiveness'] };
   try {
-    if (store.readPendingIndexByUser) {
-      const read = await store.readPendingIndexByUser(userId);
-      records = read.records;
-      exhaustiveness = read.exhaustiveness;
-    } else {
-      records = await store.listPendingByUser(userId);
-      exhaustiveness = 'partial';
-    }
+    source = await loadStructuredChoiceRecords(store, userId);
   } catch {
     return { state: { ...base, observedAt: Date.now(), status: 'unavailable', exhaustiveness: 'unknown' } };
   }
+  let verified: { records: RuntimeInteractionRecord[]; presentations: Map<string, RichInteractiveBlock> };
   try {
-    for (const record of records) {
-      parseRuntimeInteractionRequest(record.request);
-      if (
-        !isPendingIndexSnapshotStatus(record.status) ||
-        record.request.owner.userId !== userId ||
-        !Number.isSafeInteger(record.updatedAt) ||
-        record.updatedAt < 0 ||
-        !validCardRef(record)
-      ) {
-        throw new Error('structured choice source identity mismatch');
-      }
-    }
+    verified = await verifyStructuredChoiceRecords(source.records, userId, messageStore);
   } catch {
     return { state: { ...base, observedAt: Date.now(), status: 'invalid', exhaustiveness: 'unknown' } };
   }
   return {
-    body: records.filter((record) => record.status === 'pending'),
-    state: { ...base, observedAt: Date.now(), status: 'available', exhaustiveness },
+    body: verified.records.filter((record) => record.status === 'pending' && !record.submission),
+    conversationPresentations: verified.presentations,
+    state: { ...base, observedAt: Date.now(), status: 'available', exhaustiveness: source.exhaustiveness },
   };
+}
+
+async function loadStructuredChoiceRecords(store: RuntimeInteractionPendingReadSource, userId: string) {
+  if (store.readPendingIndexByUser) return store.readPendingIndexByUser(userId);
+  return { records: await store.listPendingByUser(userId), exhaustiveness: 'partial' as const };
+}
+
+async function verifyStructuredChoiceRecords(
+  sourceRecords: RuntimeInteractionRecord[],
+  userId: string,
+  messageStore?: OriginalApprovalCardMessageStore,
+): Promise<{ records: RuntimeInteractionRecord[]; presentations: Map<string, RichInteractiveBlock> }> {
+  const records = sourceRecords.map((record) => normalizeRuntimeInteractionRecord(record));
+  const presentations = new Map<string, RichInteractiveBlock>();
+  for (const record of records) {
+    assertStructuredChoiceRecord(record, userId);
+    const presentation = await readConversationPresentation(record, messageStore);
+    if (presentation) presentations.set(record.request.interactionId, presentation);
+  }
+  return { records, presentations };
+}
+
+function assertStructuredChoiceRecord(record: RuntimeInteractionRecord, userId: string): void {
+  if (
+    !isPendingIndexSnapshotStatus(record.status) ||
+    record.request.owner.userId !== userId ||
+    !Number.isSafeInteger(record.revision) ||
+    record.revision <= 0 ||
+    !Number.isSafeInteger(record.updatedAt) ||
+    record.updatedAt < 0 ||
+    !validCardRef(record)
+  ) {
+    throw new Error('structured choice source identity mismatch');
+  }
+}
+
+async function readConversationPresentation(
+  record: RuntimeInteractionRecord,
+  messageStore?: OriginalApprovalCardMessageStore,
+): Promise<RichInteractiveBlock | undefined> {
+  if (record.status !== 'pending' || record.submission || record.request.kind !== 'conversation_decision') {
+    return undefined;
+  }
+  const stored = messageStore ? await messageStore.getById(record.cardRef?.messageId ?? '') : null;
+  const block = record.cardRef
+    ? readVerifiedRuntimeInteractionPresentation(stored, record.request, record.cardRef)
+    : null;
+  return block?.kind === 'interactive' ? block : undefined;
 }
 
 function isPendingIndexSnapshotStatus(status: RuntimeInteractionRecord['status']): boolean {
@@ -199,12 +259,21 @@ function isPendingIndexSnapshotStatus(status: RuntimeInteractionRecord['status']
 
 function validCardRef(record: RuntimeInteractionRecord): boolean {
   const { cardRef } = record;
-  return Boolean(
+  const canonicalAddress = Boolean(
     cardRef &&
       cardRef.threadId === record.request.owner.threadId &&
       cardRef.threadId.trim().length > 0 &&
       cardRef.messageId.trim().length > 0 &&
       cardRef.blockId.trim().length > 0,
+  );
+  if (!canonicalAddress || !cardRef) return false;
+  if (record.request.kind !== 'conversation_decision') return true;
+  return Boolean(
+    cardRef.blockDigest &&
+      /^[a-f0-9]{64}$/.test(cardRef.blockDigest) &&
+      Number.isSafeInteger(cardRef.publishedAt) &&
+      cardRef.publishedAt !== undefined &&
+      cardRef.publishedAt >= 0,
   );
 }
 

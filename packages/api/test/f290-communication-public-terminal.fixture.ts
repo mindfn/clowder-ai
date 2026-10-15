@@ -2,12 +2,10 @@ import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import Fastify from 'fastify';
-import { turnCustodyAdoptionRegistry } from '../src/domains/ball-custody/TurnCustodyAdoptionRegistry.js';
 import { TurnCustodyProjectionService } from '../src/domains/ball-custody/TurnCustodyProjectionService.js';
 import { InvocationQueue } from '../src/domains/cats/services/agents/invocation/InvocationQueue.js';
 import { InvocationRegistry } from '../src/domains/cats/services/agents/invocation/InvocationRegistry.js';
 import { InvocationTracker } from '../src/domains/cats/services/agents/invocation/InvocationTracker.js';
-import { QueuedMessageCustodyCoordinator } from '../src/domains/cats/services/agents/invocation/QueuedMessageCustodyCoordinator.js';
 import { QueueProcessor } from '../src/domains/cats/services/agents/invocation/QueueProcessor.js';
 import { AgentRegistry } from '../src/domains/cats/services/agents/registry/AgentRegistry.js';
 import { AgentRouter } from '../src/domains/cats/services/agents/routing/AgentRouter.js';
@@ -23,7 +21,7 @@ import { scopedTestSessions, scriptedSessionInit } from './helpers/scoped-test-s
 
 /** Production Service/Connector/ingress/router/Queue; only the provider and Human login are fixtures. */
 export async function publicTerminalFixture(
-  scenario: { forgedReply?: boolean; adoptHold?: boolean; providerFails?: boolean } = {},
+  scenario: { forgedReply?: boolean; otherHold?: boolean; providerFails?: boolean } = {},
 ) {
   const world = await createWorld();
   const cafe = world.operator;
@@ -39,12 +37,18 @@ export async function publicTerminalFixture(
   });
   const registry = new InvocationRegistry();
   const sessionPorts = scopedTestSessions(cafe.dataDirectory);
-  const queue = new InvocationQueue();
+  let processor: QueueProcessor;
+  const queue = new InvocationQueue(undefined, {
+    onAdmitted: ({ threadId }) => {
+      void processor.requestDrain(threadId);
+    },
+  });
   const tracker = new InvocationTracker();
   const records = new InvocationRecordStore();
   const app = Fastify();
   let calls = 0;
   let acceptedEventId: string | undefined;
+  let otherHoldId: string | undefined;
   let lastAuth: Awaited<ReturnType<typeof registry.peekRecord>>;
   const hooks: { afterReply?: () => Promise<void> } = {};
   const broadcasts: Record<string, unknown>[] = [];
@@ -61,11 +65,11 @@ export async function publicTerminalFixture(
       lastAuth = verified.record;
       world.turns.set(lastAuth.invocationId, { catId: CAT, status: 'running' });
       yield* scriptedSessionInit(CAT, prompt, options);
-      if (scenario.adoptHold) {
+      if (scenario.otherHold) {
         const hold = messages.append({
           userId: cafe.ownerUserId,
           threadId: thread.id,
-          catId: null,
+          from: { kind: 'system', service: 'hold-ball' },
           mentions: [],
           timestamp: Date.now(),
           content: 'Existing managed hold wake',
@@ -76,19 +80,9 @@ export async function publicTerminalFixture(
             meta: { wakeWhen: true, taskId: 'fixture-unsettled-hold' },
           },
         });
-        assert.equal(
-          await turnCustodyAdoptionRegistry.adopt(lastAuth.invocationId, [
-            {
-              kind: 'structured',
-              protocol: 'hold',
-              subjectKey: `ball:thread:${thread.id}`,
-              holderCatId: CAT,
-              sourceMessageId: hold.id,
-              taskId: 'fixture-unsettled-hold',
-            },
-          ]),
-          true,
-        );
+        // This independent managed wake remains its own durable input. An accepted
+        // Collective business reply cannot settle or expose another carrier.
+        otherHoldId = hold.id;
       }
       const current = await context.current(lastAuth);
       if (!scenario.forgedReply && current.reply.status !== 'accepted') {
@@ -102,7 +96,12 @@ export async function publicTerminalFixture(
         acceptedEventId = result.reply.eventId;
         await hooks.afterReply?.();
       }
-      yield { type: 'text', catId: CAT, content: 'Public reply delivered', timestamp: Date.now() };
+      yield {
+        type: 'text',
+        catId: CAT,
+        content: scenario.forgedReply ? 'Unverified public reply' : 'Public reply delivered\n\n@co-creator',
+        timestamp: Date.now(),
+      };
       if (scenario.providerFails)
         yield { type: 'error', catId: CAT, error: 'fixture provider failed', timestamp: Date.now() };
       yield {
@@ -142,14 +141,13 @@ export async function publicTerminalFixture(
     emitToUser() {},
   };
   type QueueDeps = ConstructorParameters<typeof QueueProcessor>[0];
-  const processor = new QueueProcessor({
+  processor = new QueueProcessor({
     queue,
     invocationTracker: tracker,
     invocationRecordStore: records as unknown as QueueDeps['invocationRecordStore'],
     router: router as unknown as QueueDeps['router'],
     messageStore: messages,
     turnExecutionStore: sessionPorts.turnExecutionStore,
-    queueCustodyCoordinator: new QueuedMessageCustodyCoordinator({ messageStore: messages }),
     socketManager: sockets as never,
     log: app.log,
   });
@@ -181,6 +179,9 @@ export async function publicTerminalFixture(
     get calls() {
       return calls;
     },
+    get otherHoldId() {
+      return otherHoldId;
+    },
     get acceptedEventId() {
       return acceptedEventId;
     },
@@ -205,8 +206,8 @@ export async function publicTerminalFixture(
             calls > 0 &&
             !tracker.has(thread.id) &&
             source?.deliveryStatus === 'delivered' &&
-            source.queueCustody?.status === 'terminal' &&
-            (scenario.adoptHold || scenario.providerFails || queue.list(thread.id, cafe.ownerUserId).length === 0)
+            source.lifecycle?.dispatchRefs?.some((ref) => ref.targetId === CAT && ref.phase !== 'dispatched') &&
+            queue.list(thread.id, cafe.ownerUserId).length === 0
           );
         },
         'real exact-source Queue terminal',

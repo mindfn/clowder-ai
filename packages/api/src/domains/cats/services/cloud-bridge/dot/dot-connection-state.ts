@@ -34,10 +34,12 @@ export const dotConnectionStateSchema = z
     lastReplyAt: z.number().nullable(),
     lastImageAt: z.number().nullable(),
     revokedAt: z.number().nullable(),
-    allowedCatIds: z.array(ref).max(50).default([]),
+    // Decode and retire the old per-cat setting without invalidating paired records.
+    allowedCatIds: z.array(ref).max(50).optional(),
     testEventIds: z.array(ref).max(2).default([]),
   })
-  .strict();
+  .strict()
+  .transform(({ allowedCatIds: _retired, ...state }) => state);
 
 export type DotConnectionState = z.infer<typeof dotConnectionStateSchema>;
 export type DotSubscription = z.infer<typeof dotSubscriptionSchema>;
@@ -66,7 +68,6 @@ export function projectDotConnection(state: DotConnectionState | null, now = Dat
     imageAt: state?.lastImageAt ?? null,
     revoked,
     ownerUserId: state?.ownerUserId ?? null,
-    allowedCatIds: state?.allowedCatIds ?? [],
     testEventIds: state?.testEventIds ?? [],
   };
 }

@@ -46,7 +46,7 @@ it.each([
   await act(async () => button('返回').click());
   expect(switched).toHaveBeenCalledTimes(1);
   expect(returned).toHaveBeenCalledTimes(1);
-  expect(container.querySelector('h2')).toBeNull();
+  expect([...container.querySelectorAll('h2')].map((node) => node.textContent)).toEqual(['封面']);
 });
 afterEach(() => {
   act(() => root.unmount());
@@ -110,7 +110,7 @@ it.each([
     `/api/content-publications/${encodeURIComponent(contentRef)}/media/2`,
   );
   expect(mocks.apiFetch).toHaveBeenCalledTimes(2);
-  expect([...container.querySelectorAll('h2')].map((node) => node.textContent)).toEqual(shell === 'v2' ? [] : ['封面']);
+  expect([...container.querySelectorAll('h2')].map((node) => node.textContent)).toEqual(['封面']);
   expect(
     container.querySelector('select[aria-label="作品版本"]')?.getAttribute('value') ??
       (container.querySelector('select') as HTMLSelectElement)?.value,

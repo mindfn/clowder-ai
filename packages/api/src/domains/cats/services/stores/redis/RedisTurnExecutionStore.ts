@@ -1,18 +1,23 @@
 import type { RedisClient } from '@cat-cafe/shared/utils';
 import {
   assertCoveredMessageIds,
+  assertCreatableOutputFence,
   assertCreateTurnExecutionInput,
   assertTurnExecutionTerminalInput,
   type BindCoveredMessageIdsResult,
   type CreateTurnExecutionInput,
   type CreateTurnExecutionResult,
   cloneTurnExecutionRecord,
+  createdOutputFence,
   type InterruptRunningTurnExecutionsInput,
   type ITurnExecutionStore,
+  matchesTurnExecutionSource,
   serializeTurnExecutionIdentity,
   type TransitionTurnExecutionResult,
   type TurnExecutionRecord,
+  type TurnExecutionSourceQuery,
   type TurnExecutionTerminalInput,
+  type TurnOutputFenceVerdict,
 } from '../ports/TurnExecutionStore.js';
 import { TurnExecutionKeys } from '../redis-keys/turn-execution-keys.js';
 import { readAuthoritativeHash } from './redis-pipeline-reply.js';
@@ -20,6 +25,7 @@ import { hydrateTurnExecution, type RedisTurnExecutionHash, sortTurnExecutions }
 import {
   BIND_TURN_EXECUTION_COVERAGE_LUA,
   CREATE_TURN_EXECUTION_LUA,
+  SETTLE_TURN_OUTPUT_FENCE_LUA,
   TERMINALIZE_TURN_EXECUTION_LUA,
 } from './turn-execution-redis-scripts.js';
 
@@ -28,6 +34,7 @@ export class RedisTurnExecutionStore implements ITurnExecutionStore {
 
   async createRunning(input: CreateTurnExecutionInput): Promise<CreateTurnExecutionResult> {
     assertCreateTurnExecutionInput(input);
+    assertCreatableOutputFence(input);
     const result = Number(
       await this.redis.eval(
         CREATE_TURN_EXECUTION_LUA,
@@ -44,6 +51,7 @@ export class RedisTurnExecutionStore implements ITurnExecutionStore {
         input.executionKind,
         String(input.startedAt),
         JSON.stringify(input.causal ?? {}),
+        createdOutputFence(input),
         input.queueCompletionPolicy ?? '',
       ),
     );
@@ -101,6 +109,31 @@ export class RedisTurnExecutionStore implements ITurnExecutionStore {
     return cloneTurnExecutionRecord(record);
   }
 
+  async listBySource(query: TurnExecutionSourceQuery): Promise<TurnExecutionRecord[]> {
+    // Recovery reads existing persistent records; no delivery ledger or private IDs in public History.
+    const prefix = this.redis.options.keyPrefix ?? '';
+    const pattern = `${prefix.replace(/[\\*?[\]]/g, '\\$&')}${TurnExecutionKeys.record('*')}`;
+    const records = new Map<string, TurnExecutionRecord>();
+    let cursor = '0';
+    do {
+      const [next, keys] = await this.redis.scan(cursor, 'MATCH', pattern, 'COUNT', 200);
+      cursor = next;
+      if (!keys.length) continue;
+      const pipeline = this.redis.pipeline();
+      for (const key of keys) pipeline.hgetall(prefix ? key.slice(prefix.length) : key);
+      const results = await pipeline.exec();
+      for (let i = 0; i < keys.length; i += 1) {
+        const hash = readAuthoritativeHash(results?.[i], `turn execution ${keys[i]}`);
+        if (hash === null) continue;
+        const record = hydrateTurnExecution(hash as RedisTurnExecutionHash);
+        if (!record) throw new Error(`turn execution ${keys[i]}: non-empty hash failed to hydrate`);
+        if (matchesTurnExecutionSource(record, query))
+          records.set(record.invocationId, cloneTurnExecutionRecord(record));
+      }
+    } while (cursor !== '0');
+    return sortTurnExecutions([...records.values()]);
+  }
+
   async listByParent(parentInvocationId: string): Promise<TurnExecutionRecord[]> {
     const childIds = await this.redis.smembers(TurnExecutionKeys.parent(parentInvocationId));
     if (childIds.length === 0) return [];
@@ -135,9 +168,10 @@ export class RedisTurnExecutionStore implements ITurnExecutionStore {
     const result = Number(
       await this.redis.eval(
         TERMINALIZE_TURN_EXECUTION_LUA,
-        2,
+        3,
         TurnExecutionKeys.record(invocationId),
         TurnExecutionKeys.running,
+        TurnExecutionKeys.responsePending,
         input.status,
         String(input.endedAt),
         input.terminalReason ?? '',
@@ -183,6 +217,41 @@ export class RedisTurnExecutionStore implements ITurnExecutionStore {
       records.push(cloneTurnExecutionRecord(record));
     }
     return sortTurnExecutions(records);
+  }
+
+  async listResponsePending(): Promise<TurnExecutionRecord[]> {
+    const childIds = await this.redis.smembers(TurnExecutionKeys.responsePending);
+    if (childIds.length === 0) return [];
+    const pipeline = this.redis.pipeline();
+    for (const invocationId of childIds) pipeline.hgetall(TurnExecutionKeys.record(invocationId));
+    const results = await pipeline.exec();
+    const records: TurnExecutionRecord[] = [];
+    for (let index = 0; index < childIds.length; index += 1) {
+      const invocationId = childIds[index];
+      const hash = readAuthoritativeHash(results?.[index], `turn execution ${invocationId}`);
+      // No record means no turn whose response could still settle.
+      if (hash === null) continue;
+      const record = hydrateTurnExecution(hash as RedisTurnExecutionHash);
+      if (!record) throw new Error(`turn execution ${invocationId}: non-empty hash failed to hydrate`);
+      records.push(cloneTurnExecutionRecord(record));
+    }
+    return sortTurnExecutions(records);
+  }
+
+  async clearResponsePending(invocationId: string): Promise<void> {
+    await this.redis.srem(TurnExecutionKeys.responsePending, invocationId);
+  }
+
+  async settleOutputFence(invocationId: string, verdict: TurnOutputFenceVerdict): Promise<TurnExecutionRecord | null> {
+    if (verdict !== 'allowed' && verdict !== 'rejected') throw new Error(`invalid output fence verdict: ${verdict}`);
+    const result = Number(
+      await this.redis.eval(SETTLE_TURN_OUTPUT_FENCE_LUA, 1, TurnExecutionKeys.record(invocationId), verdict),
+    );
+    if (result === -1) throw new Error(`turn execution ${invocationId}: corrupt output fence`);
+    if (result === 0) return null;
+    const record = await this.get(invocationId);
+    if (!record) throw new Error(`turn execution ${invocationId}: non-empty hash failed to hydrate`);
+    return record;
   }
 
   async interruptRunningBefore(

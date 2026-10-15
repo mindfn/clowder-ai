@@ -16,8 +16,12 @@ async function brokenEndpoint(world: World) {
   const cafe = world.operator;
   const threads = new ThreadStore();
   const messages = new MessageStore();
-  const queue = new InvocationQueue();
   const processed: { threadId: string; userId: string }[] = [];
+  const queue = new InvocationQueue(undefined, {
+    onAdmitted: ({ threadId, entries }) => {
+      processed.push({ threadId, userId: entries[0]!.owner.userId });
+    },
+  });
   const dispatcher = new CollectiveIngressDispatcher({
     connector: cafe.connector,
     threadStore: threads,
@@ -25,8 +29,9 @@ async function brokenEndpoint(world: World) {
     invocationQueue: queue,
     queueProcessor: {
       async processNext(threadId, userId) {
-        processed.push({ threadId, userId });
-        return { started: false }; // Recording fixture, never starts a model.
+        throw new Error(
+          `Ingress must notify canonical admission, not call processNext directly: ${threadId}/${userId}`,
+        );
       },
     },
     socketManager: { broadcastToRoom() {}, emitToUser() {} },

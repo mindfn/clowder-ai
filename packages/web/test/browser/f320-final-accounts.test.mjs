@@ -3,11 +3,12 @@ import { mkdir, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { after, before, test } from 'node:test';
 import { chromium } from '../../../ppt-forge/node_modules/playwright/index.mjs';
+import { runClaudeAccountJourney } from './f320-claude-accounts.journey.mjs';
 import { startFinalAccountPreview } from './f320-final-runtime.fixture.mjs';
 
 let preview, browser, companyIdentity;
 before(async () => {
-  preview = await startFinalAccountPreview({ withOverrides: true });
+  preview = await startFinalAccountPreview({ withOverrides: true, withClaude: true });
   browser = await chromium.launch({ headless: true });
 });
 after(async () => {
@@ -275,4 +276,10 @@ test(
       await page.close();
     }
   },
+);
+
+test(
+  'Claude account entry keeps secrets private, switches next calls, preserves in-flight metadata and recovers token errors',
+  { timeout: 120000 },
+  () => runClaudeAccountJourney({ preview, browser }),
 );

@@ -25,7 +25,9 @@ import { MediaGalleryBlock } from './MediaGalleryBlock';
 import { PersonMemoryProposalCard } from './PersonMemoryProposalCard';
 import { isProposalCardBlock, ProposalCard } from './ProposalCard';
 import { RichBlockForwardButton } from './RichBlockForwardButton';
+import { RuntimeConversationCard } from './RuntimeConversationCard';
 import { isRuntimeInteractionCardBlock, RuntimeInteractionCard } from './RuntimeInteractionCard';
+import type { RuntimeConversationBinding } from './runtime-conversation-model';
 import { isScheduleMutationProposalCardBlock, ScheduleMutationProposalCard } from './ScheduleMutationProposalCard';
 
 const RICH_BLOCK_OVERLAY_ACTIONS_CLASS =
@@ -128,6 +130,7 @@ function RichBlockRenderer({
   confirmations,
   sendContext,
   htmlWidgetDisclosureKeys,
+  runtimeInteractionCard,
 }: {
   block: RichBlock;
   publication?: PublishedMessageCoordinate;
@@ -140,6 +143,7 @@ function RichBlockRenderer({
   /** F229 Bug 2 fix: propagated to InteractiveBlock to tag interactive-send events */
   sendContext?: string;
   htmlWidgetDisclosureKeys?: Readonly<Record<string, string>>;
+  runtimeInteractionCard?: RuntimeConversationBinding;
 }) {
   switch (block.kind) {
     case 'card':
@@ -160,6 +164,16 @@ function RichBlockRenderer({
     case 'audio':
       return <AudioBlock block={block} catId={catId} />;
     case 'interactive':
+      if (runtimeInteractionCard?.requestKind === 'conversation_decision')
+        return (
+          <RuntimeConversationCard
+            block={block}
+            binding={runtimeInteractionCard}
+            messageId={messageId}
+            sourceThreadId={sourceThreadId}
+            catId={catId}
+          />
+        );
       return <InteractiveBlock block={block} messageId={messageId} sendContext={sendContext} />;
     case 'html_widget':
       return <HtmlWidgetBlock block={block} disclosureKey={htmlWidgetDisclosureKeys?.[block.id]} />;
@@ -307,6 +321,7 @@ export function RichBlocks({
   confirmations,
   sendContext,
   htmlWidgetDisclosureKeys,
+  runtimeInteractionCard,
   readOnly = false,
   forwardingEnabled = true,
 }: {
@@ -328,6 +343,7 @@ export function RichBlocks({
    *  Prevents InteractiveBlock events from leaking to the wrong thread's handler. */
   sendContext?: string;
   htmlWidgetDisclosureKeys?: Readonly<Record<string, string>>;
+  runtimeInteractionCard?: RuntimeConversationBinding;
   /** Forwarded blocks are inert evidence: no callbacks, specialised actions, or HTML execution. */
   readOnly?: boolean;
   /** The source must be terminal and the browser document admitted before forwarding can begin. */
@@ -337,7 +353,7 @@ export function RichBlocks({
   const visibility = useFrustrationVisibility(blocks, readOnly ? undefined : messageSource?.connector);
   const shownBlocks = readOnly ? blocks : visibleFrustrationBlocks(visibility);
   if (shownBlocks.length === 0) return null;
-  const items = readOnly ? shownBlocks : groupBlocks(shownBlocks);
+  const items = readOnly || runtimeInteractionCard ? shownBlocks : groupBlocks(shownBlocks);
   const forwardBlock = forwardBlockId ? shownBlocks.find((block) => block.id === forwardBlockId) : undefined;
   return (
     <>
@@ -365,6 +381,7 @@ export function RichBlocks({
                   messageSource={messageSource}
                   confirmations={confirmations}
                   sendContext={sendContext}
+                  runtimeInteractionCard={runtimeInteractionCard}
                   htmlWidgetDisclosureKeys={htmlWidgetDisclosureKeys}
                 />
               )}

@@ -125,7 +125,7 @@ export function humanTerminalReceiptMessage(
   return {
     threadId: receipt.originalThreadId,
     userId: receipt.ownerUserId,
-    catId: null,
+    from: { kind: 'user', userId: receipt.ownerUserId },
     content: receipt.decision.state === 'satisfied' ? '我确认这件已经完成。' : '我不再继续这件。',
     mentions: [],
     timestamp: receipt.recordedAt,

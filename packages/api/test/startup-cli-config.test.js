@@ -55,7 +55,7 @@ describe('resolveStartupCliConfigContext', () => {
     }
   });
 
-  it('regenerates workspace CLI configs with runtime MCP binaries and workspace env', async () => {
+  it('reconciles runtime MCP binaries without recreating retired Gemini execution config', async () => {
     const root = join(tmpdir(), `cat-cafe-startup-regenerate-workspace-${Date.now()}`);
     const runtime = join(tmpdir(), `cat-cafe-startup-regenerate-runtime-${Date.now()}`);
     const apiCwd = join(runtime, 'packages', 'api');
@@ -99,16 +99,7 @@ describe('resolveStartupCliConfigContext', () => {
         join(runtime, 'packages', 'mcp-server', 'dist', 'memory.js'),
       );
 
-      // Claude and Codex are invoke-time only — no persistent files should be written.
-      // Only Gemini .gemini/settings.json should be generated at startup.
-      const gemini = JSON.parse(await readFile(join(root, '.gemini', 'settings.json'), 'utf-8'));
-      assert.equal(
-        gemini.mcpServers['cat-cafe-memory'].args[0],
-        join(runtime, 'packages', 'mcp-server', 'dist', 'memory.js'),
-      );
-      // Gemini uses callback env placeholders (not ALLOWED_WORKSPACE_DIRS directly)
-      assert.ok(gemini.mcpServers['cat-cafe-memory'].env, 'env should be present');
-      assert.equal(gemini.mcpServers['cat-cafe-memory'].env.CAT_CAFE_API_URL, '${CAT_CAFE_API_URL}');
+      await assert.rejects(readFile(join(root, '.gemini', 'settings.json')), { code: 'ENOENT' });
     } finally {
       if (originalAwd === undefined) delete process.env.ALLOWED_WORKSPACE_DIRS;
       else process.env.ALLOWED_WORKSPACE_DIRS = originalAwd;

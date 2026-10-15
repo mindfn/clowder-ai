@@ -48,6 +48,20 @@ export function record(
 ): RuntimeInteractionRecord {
   return {
     request,
+    source:
+      request.kind === 'conversation_decision'
+        ? {
+            kind: 'conversation_decision',
+            requesterCatId: request.owner.catId,
+            requesterThreadId: request.owner.threadId,
+            requesterInvocationId: request.owner.invocationId,
+          }
+        : { kind: 'provider_request', provider: request.provider },
+    returnBinding:
+      request.kind === 'conversation_decision'
+        ? { kind: 'conversation_turn', requesterCatId: request.owner.catId, requesterThreadId: request.owner.threadId }
+        : { kind: 'provider_waiter' },
+    revision: 1,
     status,
     hostEpoch: 'host-ui',
     cardRef,

@@ -114,7 +114,7 @@ test('historical applied receipts reach thread and full global Works after owner
     f.messages.append({
       userId: 'operator',
       threadId: f.thread.id,
-      catId: null,
+      from: { kind: 'user', userId: 'operator' },
       mentions: [],
       timestamp: Date.now() + i,
       content: `Later ordinary message ${i}`,
@@ -185,7 +185,7 @@ test('a later authorized edit remains the same original file without claiming it
   assert.equal(await readFile(path, 'utf8'), 'Later Human edit.\n');
 });
 
-for (const mutate of ['user', 'task', 'candidate', 'receipt', 'source', 'target', 'time']) {
+for (const mutate of ['user', 'sender', 'task', 'candidate', 'receipt', 'source', 'target', 'time']) {
   test(`an apparent applied Host with a mismatched ${mutate} cannot mint an original file`, async (t) => {
     const f = await acceptedFileFixture(t);
     assert.equal((await f.accept()).statusCode, 200);
@@ -193,7 +193,8 @@ for (const mutate of ['user', 'task', 'candidate', 'receipt', 'source', 'target'
       (m) => m.extra?.contentModificationReceiptV1?.state === 'applied',
     );
     const receipt = host.extra.contentModificationReceiptV1;
-    if (mutate === 'user') host.userId = 'operator';
+    if (mutate === 'user') host.userId = 'other-owner';
+    else if (mutate === 'sender') host.from = { kind: 'user', userId: 'operator' };
     else if (mutate === 'source') {
       host.replyTo = f.message.id + '-other';
       receipt.sourceMessageId = host.replyTo;
@@ -237,7 +238,7 @@ test('missing accepted-result and lineage owners preserve ordinary artifacts wit
   assert.equal((await f.accept()).statusCode, 200);
   f.messages.append({
     userId: 'operator',
-    catId: 'codex-astra',
+    from: { kind: 'agent', catId: 'codex-astra' },
     threadId: f.thread.id,
     mentions: [],
     timestamp: Date.now(),

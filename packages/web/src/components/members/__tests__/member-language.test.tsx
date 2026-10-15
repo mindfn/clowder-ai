@@ -17,6 +17,7 @@ const cat: CatData = {
   avatar: '/avatars/family/codex61-sol.png',
   color: { primary: '#5B8C5A', secondary: '#D4E6D3' },
   mentionPatterns: ['@tester'],
+  carrier: 'cli',
   clientId: 'anthropic',
   defaultModel: 'test-model',
   accountRef: 'claude',
@@ -129,6 +130,7 @@ it('renders Native fields and its original model validation in English', async (
   expect(
     container.querySelector('textarea[aria-label="Approved workspaces"]')?.closest('label')?.textContent,
   ).toContain('Approved workspaces');
+  expect(container.textContent).toContain('denied outright');
   const save = [...document.querySelectorAll('button')].find((button) => button.textContent === 'Save');
   await act(async () => save?.click());
   expect(container.querySelector('[role="alert"]')?.textContent).toBe(

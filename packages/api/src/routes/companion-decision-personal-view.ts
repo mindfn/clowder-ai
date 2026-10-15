@@ -1,27 +1,21 @@
-import { createHash } from 'node:crypto';
 import {
   type IgnoredItemSnapshot,
   ignoredItemKey,
   type UnifiedAttentionItemV1,
   type UnifiedAttentionPersonalGroupCountsV1,
   type UnifiedAttentionPersonalViewV1,
-  type UnifiedAttentionPreferenceCoordinate,
   type UnifiedAttentionSourceRead,
 } from '@cat-cafe/shared';
+import { attachDecisionPreferenceCoordinates } from './companion-decision-preference-coordinate.js';
+import { decisionQualified, decisionQualifiedItems } from './companion-decision-qualification.js';
 import type { UserMentionTodoRead } from './user-mention-todo-projection.js';
+
+export { attachDecisionPreferenceCoordinates } from './companion-decision-preference-coordinate.js';
 
 export interface DecisionPersonalViewInput {
   mode: 'visible' | 'ignored';
   snapshot?: IgnoredItemSnapshot;
   state: UnifiedAttentionSourceRead;
-}
-
-function decisionQualifiedItems(items: UnifiedAttentionItemV1[]): UnifiedAttentionItemV1[] {
-  return items.filter(decisionQualified);
-}
-
-function decisionQualified(item: UnifiedAttentionItemV1): boolean {
-  return item.approval?.resolution === 'open' || item.choiceRequest !== undefined;
 }
 
 function groupCounts(items: UnifiedAttentionItemV1[]): UnifiedAttentionPersonalGroupCountsV1['original'] {
@@ -50,66 +44,6 @@ interface PersonalProjection {
   sourceExact: boolean;
   view?: UnifiedAttentionPersonalViewV1;
   counts?: ExactPersonalCounts;
-}
-
-function canonical(value: unknown): string {
-  if (Array.isArray(value)) return `[${value.map(canonical).join(',')}]`;
-  if (value && typeof value === 'object') {
-    const entries = Object.entries(value as Record<string, unknown>)
-      .filter(([, entry]) => entry !== undefined)
-      .sort(([left], [right]) => left.localeCompare(right));
-    return `{${entries.map(([key, entry]) => `${JSON.stringify(key)}:${canonical(entry)}`).join(',')}}`;
-  }
-  return JSON.stringify(value) ?? 'null';
-}
-
-function exactVersionPayload(item: UnifiedAttentionItemV1): unknown | null {
-  if (item.userMention) {
-    if (!Number.isSafeInteger(item.userMention.expectedRevision) || item.userMention.expectedRevision === undefined)
-      return null;
-    return {
-      kind: 'user_mention',
-      messageId: item.userMention.messageId,
-      expectedRevision: item.userMention.expectedRevision,
-    };
-  }
-  if (item.choiceRequest) {
-    return {
-      kind: 'structured_choice',
-      interactionId: item.choiceRequest.interactionId,
-      revision: item.choiceRequest.revision,
-      cardRef: item.choiceRequest.cardRef,
-    };
-  }
-  if (item.approval) return { kind: 'approval', approval: item.approval };
-  if (item.linkedNeedsMe.length === 0) return null;
-  const receipts = item.linkedNeedsMe
-    .map(({ ownerRead, receipt }) => ({
-      ownerSubjectRef: ownerRead.envelope.subjectRef,
-      ownerRevision: ownerRead.envelope.revision,
-      producer: receipt.producer,
-      taskRef: receipt.taskRef,
-      kind: receipt.kind,
-      action: receipt.action,
-    }))
-    .sort((left, right) => canonical(left).localeCompare(canonical(right)));
-  return { kind: item.kind, receipts };
-}
-
-function preferenceCoordinate(item: UnifiedAttentionItemV1): UnifiedAttentionPreferenceCoordinate | undefined {
-  const versionPayload = exactVersionPayload(item);
-  if (!versionPayload) return undefined;
-  const version = `sha256:${createHash('sha256')
-    .update(canonical({ decisionRef: item.decisionRef, version: versionPayload }))
-    .digest('hex')}`;
-  return { kind: 'mailbox', decisionRef: item.decisionRef, version };
-}
-
-export function attachDecisionPreferenceCoordinates(items: UnifiedAttentionItemV1[]): UnifiedAttentionItemV1[] {
-  return items.map((item) => {
-    const coordinate = preferenceCoordinate(item);
-    return coordinate ? { ...item, preferenceCoordinate: coordinate } : item;
-  });
 }
 
 function snapshotIsExact(

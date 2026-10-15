@@ -1,4 +1,3 @@
-import { getBubbleInvocationId } from '@/debug/bubbleIdentity';
 import type { ChatMessage } from '@/stores/chat-types';
 import { recallResultTitle, recallTypeLabel } from './recall-display';
 import type { RecallEvent } from './recall-types';
@@ -109,7 +108,11 @@ export function findRecallReply(event: RecallEvent, messages: readonly ChatMessa
   if (event.messageId) return messages.find((message) => message.id === event.messageId);
   if (!event.catId || !event.invocationId) return undefined;
   const exact = messages.filter(
-    (message) => message.catId === event.catId && getBubbleInvocationId(message) === event.invocationId,
+    (message) =>
+      message.catId === event.catId &&
+      (message.lifecycle?.kind === 'response'
+        ? message.lifecycle.invocationId
+        : (message.extra?.stream?.turnInvocationId ?? message.extra?.stream?.invocationId)) === event.invocationId,
   );
   if (exact.length === 1) return exact[0];
   return undefined;
@@ -118,7 +121,11 @@ export function groupRecallEvents(events: RecallEvent[], messages: readonly Chat
   const groups = new Map<string, RecallGroup>();
   for (const event of events) {
     const reply = findRecallReply(event, messages);
-    const invocationId = reply ? (getBubbleInvocationId(reply) ?? event.invocationId) : event.invocationId;
+    const invocationId = reply
+      ? ((reply.lifecycle?.kind === 'response'
+          ? reply.lifecycle.invocationId
+          : (reply.extra?.stream?.turnInvocationId ?? reply.extra?.stream?.invocationId)) ?? event.invocationId)
+      : event.invocationId;
     const id = invocationId ? JSON.stringify([event.catId, invocationId]) : `message:${event.messageId ?? event.id}`;
     let group = groups.get(id);
     if (!group) {

@@ -37,7 +37,7 @@ describe('F293 Phase O: scarce notification delivery', () => {
         { effectClass: 'fyi' },
         { coordination: { phase: 'terminal', subjectRef: 'feature:F293:O' } },
       ]) {
-        test(`${queued ? 'queue' : 'direct'} ${crossThread ? 'cross_post' : 'post_message'} ${JSON.stringify(metadata)} delivers without waking scarce cat`, async () => {
+        test(`${queued ? 'canonical queue' : 'canonical send'} ${crossThread ? 'cross_post' : 'post_message'} ${JSON.stringify(metadata)} delivers without waking scarce cat`, async () => {
           const auth = await setup({ queued });
           const threadId = crossThread ? target.id : source.id;
           const response = await post(auth, { threadId, ...metadata });
@@ -99,8 +99,8 @@ describe('F293 Phase O: scarce notification delivery', () => {
 
   test('identical notification retry preserves delivery receipt and does not wake; later substantive send does wake', async () => {
     const auth = await setup();
-    const first = await post(auth, { threadId: target.id, effectClass: 'fyi' });
-    const retry = await post(auth, { threadId: target.id, effectClass: 'fyi' });
+    const first = await post(auth, { threadId: target.id, effectClass: 'fyi', clientMessageId: 'quiet-retry' });
+    const retry = await post(auth, { threadId: target.id, effectClass: 'fyi', clientMessageId: 'quiet-retry' });
     assert.equal(retry.json().status, 'duplicate');
     assert.equal(retry.json().messageId, first.json().messageId);
     assert.deepEqual(retry.json().deliveredWithoutWake, ['fable-5']);
@@ -143,7 +143,7 @@ describe('F293 Phase O: scarce notification delivery', () => {
         messages.append({
           userId: 'user-1',
           threadId: target.id,
-          catId: 'codex',
+          from: { kind: 'agent', catId: 'codex' },
           content: `Later message ${index}`,
           mentions: [],
           timestamp: Date.now() + index,

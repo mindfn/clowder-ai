@@ -1,7 +1,11 @@
 import { EVOLUTION_PREPARATION_SECTIONS, type EvolutionPreparationSection } from '@cat-cafe/shared';
+import { useCatData } from '@/hooks/useCatData';
 import type { EvolutionProgramProjection } from '../evolution-program-projection';
 import { EvolutionPreparationSectionIcon } from './EvolutionPreparationSectionIcon';
-import { isVisiblePreparationSubmission } from './evolution-preparation-resource';
+import {
+  type EvolutionPreparationSectionProjection,
+  isVisiblePreparationSubmission,
+} from './evolution-preparation-resource';
 import {
   preparationBodySummary,
   preparationBoundarySummary,
@@ -59,14 +63,29 @@ export function EvolutionPreparationOverview({
   );
 }
 
-export function EvolutionPreparationActivityStatus({ projection }: { projection: EvolutionProgramProjection }) {
+export function EvolutionPreparationActivityStatus({
+  projection,
+  section,
+}: {
+  projection: EvolutionProgramProjection;
+  section?: EvolutionPreparationSectionProjection;
+}) {
+  const { getCatById } = useCatData();
   const sections = projection.preparation?.sections;
-  const active =
-    sections &&
-    Object.values(sections).some((section) => section.activities.some((activity) => activity.state === 'active'));
+  const readingSections = section ? [section] : Object.values(sections ?? {});
+  const active = readingSections.some((entry) => entry.activities.some((activity) => activity.state === 'active'));
+  const recent = section?.activities.find(
+    (activity) => !activity.itemId && activity.state !== 'superseded_by_submission',
+  );
+  const cat = recent?.catId ? getCatById(recent.catId) : undefined;
   return (
     <p className="evolution-v2-activity" role="status">
       <strong>{active ? '猫正在准备' : '活动状态待核实'}</strong>{' '}
+      {recent && (
+        <span>
+          · 最近记录的工作：{recent.focus}（{cat ? cat.nickname?.trim() || cat.displayName : '作者信息待核实'}）。{' '}
+        </span>
+      )}
       {active ? '已看到本轮活动记录；工作进展与可改边界分别阅读。' : '未见可核验的进行中活动，已有提交仍可阅读。'}
     </p>
   );

@@ -28,8 +28,8 @@ import { extractUserEnvTemplates, hasSupportedEnvTemplate, resolveEnvMap } from 
 
 import { createHash } from 'node:crypto';
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from 'node:fs';
-import { tmpdir } from 'node:os';
-import { dirname, join, parse, resolve } from 'node:path';
+import { homedir, tmpdir } from 'node:os';
+import { dirname, isAbsolute, join, parse, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import {
   type CatId,
@@ -67,14 +67,13 @@ import { getCatModel } from '../../../../../config/cat-models.js';
 import {
   type CodexCarrierMode,
   getCodexApprovalPolicy,
-  getCodexCarrierMode,
   getCodexOAuthTransport,
   getCodexSandboxMode,
   getCodexServedModelObservation,
 } from '../../../../../config/codex-cli.js';
 import { estimateCostFromTokens } from '../../../../../config/model-pricing.js';
 import { createModuleLogger } from '../../../../../infrastructure/logger.js';
-import { buildActiveWriterRecoveryDiagnostic } from '../../../../../utils/cli-diagnostics.js';
+import { buildCliDiagnostics } from '../../../../../utils/cli-diagnostics.js';
 import { formatCliExitError } from '../../../../../utils/cli-format.js';
 import { CLI_EXECUTION_ID_ENV, CLI_EXECUTION_OWNER_BINDING_ENV } from '../../../../../utils/cli-process-ownership.js';
 import { formatCliNotFoundError, resolveCliCommand } from '../../../../../utils/cli-resolve.js';
@@ -87,7 +86,6 @@ import {
   spawnCli,
   withVerdictGhGuardEnv,
 } from '../../../../../utils/cli-spawn.js';
-import { parseCliTimeoutMs, resolveCliTimeoutMs } from '../../../../../utils/cli-timeout.js';
 import type { SpawnFn } from '../../../../../utils/cli-types.js';
 import { findMonorepoRoot } from '../../../../../utils/monorepo-root.js';
 import { sanitizeCliStderr } from '../../../../../utils/sanitize-cli-stderr.js';
@@ -219,6 +217,33 @@ const log = createModuleLogger('codex-agent');
 interface CodexProviderRecoveryTracker {
   attempts: string[];
   lastAttempt?: number;
+}
+
+const ACTIVE_WRITER_WAIT_NOTICE_MS = 10_000;
+
+export function buildCodexActiveWriterWaitSignal(input: {
+  catId: CatId;
+  metadata: MessageMetadata;
+  event: CodexAppServerRecoveryEvent;
+  timestamp?: number;
+}): AgentMessage | null {
+  if (input.event.reason !== 'active_writer_retry' || (input.event.elapsedMs ?? 0) < ACTIVE_WRITER_WAIT_NOTICE_MS) {
+    return null;
+  }
+  return {
+    type: 'provider_signal',
+    catId: input.catId,
+    content: JSON.stringify({
+      type: 'warning',
+      presentation: 'transient_status',
+      message: '正在等待该成员的原生会话释放，可点 Stop 取消',
+    }),
+    metadata: {
+      ...input.metadata,
+      diagnostics: { appServerRecovery: input.event },
+    },
+    timestamp: input.timestamp ?? Date.now(),
+  };
 }
 
 function codexEventType(event: unknown): string | undefined {
@@ -393,6 +418,20 @@ function confirmationUnavailableError(): Error & { reasonCode: 'confirmation_una
   return Object.assign(new Error('Runtime interaction confirmation is unavailable'), {
     reasonCode: 'confirmation_unavailable' as const,
   });
+}
+
+export function resolveCodexApiKeyIsolationRoot(
+  env: NodeJS.ProcessEnv = process.env,
+  platform: NodeJS.Platform = process.platform,
+): string {
+  const userHome = env.HOME || env.USERPROFILE || homedir();
+  if (platform === 'win32') {
+    return join(env.LOCALAPPDATA || join(userHome, 'AppData', 'Local'), 'clowder-ai', 'codex-api-key-homes');
+  }
+  if (platform === 'darwin') {
+    return join(userHome, 'Library', 'Caches', 'clowder-ai', 'codex-api-key-homes');
+  }
+  return join(env.XDG_CACHE_HOME || join(userHome, '.cache'), 'clowder-ai', 'codex-api-key-homes');
 }
 
 /**
@@ -1194,6 +1233,7 @@ export class CodexAgentService implements AgentService {
   private readonly carrierMode: CodexCarrierMode;
   private readonly approvalSurface: CodexApprovalSurface;
   private readonly appServerHostPool: CodexAppServerHostPool | undefined;
+  private apiKeyIsolationHome: string | undefined;
   private readonly nativeRealtimeCompanionEnabled: boolean;
   /** F203 Phase C: compiles per-cat L0 → OpenAI developer role (-c). */
   private readonly l0CompilerFn: typeof compileL0ViaSubprocess;
@@ -1208,13 +1248,21 @@ export class CodexAgentService implements AgentService {
     this.contextSnapshotResolver = options?.contextSnapshotResolver ?? createCodexSessionContextSnapshotResolver();
     this.cliCommand = options?.cliCommand ?? 'codex';
     this.nativeShellSafetyCheck = options?.nativeShellSafetyCheck ?? false;
-    this.carrierMode = options?.carrierMode ?? getCodexCarrierMode();
+    this.carrierMode = options?.carrierMode ?? 'exec_json';
     // Clowder AI currently has no synchronous approval request/response surface.
     // Keep this explicit so a future interactive bridge changes provenance rather
     // than relying on transport names or timing heuristics.
     this.approvalSurface = options?.approvalSurface ?? 'unavailable';
     this.appServerHostPool = options?.appServerHostPool;
     this.nativeRealtimeCompanionEnabled = options?.nativeRealtimeCompanionEnabled ?? false;
+  }
+
+  private getApiKeyIsolationHome(): string {
+    if (this.apiKeyIsolationHome) return this.apiKeyIsolationHome;
+    const root = resolveCodexApiKeyIsolationRoot();
+    mkdirSync(root, { recursive: true, mode: 0o700 });
+    this.apiKeyIsolationHome = mkdtempSync(join(root, `${this.catId}-`));
+    return this.apiKeyIsolationHome;
   }
 
   /** F203 Phase C — this service injects L0 via `-c developer_instructions=` (Task 4). */
@@ -1236,8 +1284,18 @@ export class CodexAgentService implements AgentService {
     options?: Pick<AgentServiceOptions, 'liveCompanion' | 'requiredTools'>,
   ): AgentFreshnessCarrierCapability {
     return options?.liveCompanion || (options?.requiredTools?.length ?? 0) > 0 || this.carrierMode === 'app_server'
-      ? { provider: 'openai_codex', carrier: 'codex_app_server', deliverySemantics: 'exact_active_turn' }
-      : { provider: 'openai_codex', carrier: 'codex_exec_json', deliverySemantics: 'unsupported' };
+      ? {
+          provider: 'openai_codex',
+          carrier: 'codex_app_server',
+          deliverySemantics: 'exact_active_turn',
+          activeInvocationGuidance: 'supported',
+        }
+      : {
+          provider: 'openai_codex',
+          carrier: 'codex_exec_json',
+          deliverySemantics: 'unsupported',
+          activeInvocationGuidance: 'unsupported',
+        };
   }
 
   async requestNativeCompaction(input: {
@@ -2092,6 +2150,7 @@ export class CodexAgentService implements AgentService {
     const recentStreamErrors: string[] = [];
     const errorEvidence = new CodexErrorEvidence();
     let capacityRecoveryBlocked: CodexAppServerRecoveryBlockedEvent | null = null;
+    let activeWriterWaitNoticeEmitted = false;
     let providerRecovery: CodexProviderRecoveryTracker | null = null;
 
     try {
@@ -2158,6 +2217,12 @@ export class CodexAgentService implements AgentService {
       } else if (apiExecutionHome) {
         rawEnv.HOME = dirname(apiExecutionHome);
         if (process.platform === 'win32') rawEnv.USERPROFILE = rawEnv.HOME;
+      } else if (!accountLaunch.managed && authMode === 'api_key' && customBaseUrl) {
+        const isolatedHome = this.getApiKeyIsolationHome();
+        rawEnv.HOME = isolatedHome;
+        if (process.platform === 'win32') {
+          rawEnv.USERPROFILE = isolatedHome;
+        }
       }
       const homeIsolated = scopedNative || (authMode === 'api_key' && !!customBaseUrl);
       const codexEnv = privateWork
@@ -2475,7 +2540,7 @@ export class CodexAgentService implements AgentService {
               thread: options?.sessionId
                 ? { kind: 'resume' as const, threadId: options.sessionId }
                 : { kind: 'start' as const },
-              model: cliModel,
+              ...(!customBaseUrl && cliModel ? { model: cliModel } : {}),
               ...(options?.workingDirectory ? { cwd: options.workingDirectory } : {}),
               sandbox: sandboxMode,
               approvalPolicy,
@@ -2550,8 +2615,10 @@ export class CodexAgentService implements AgentService {
                     },
                   }
                 : {}),
+              ...(options?.activeRunDispatch ? { activeRunDispatch: options.activeRunDispatch } : {}),
               ...(options?.signal ? { signal: options.signal } : {}),
-              timeoutMs: resolveCliTimeoutMs(parseCliTimeoutMs(codexEnv.CLI_TIMEOUT_MS ?? undefined)),
+              // F117 KD-22: no idle interrupt of its own — the member's one timeout is its
+              // invocation's, and it stops the turn through the signal above.
               interruptGraceMs: KILL_GRACE_MS,
             },
             retryBudget: options?.liveCompanion ? 0 : 1,
@@ -2627,12 +2694,18 @@ export class CodexAgentService implements AgentService {
       // (compaction retry, turn.failed then new turn.started + turn.completed)
       // are handled canonically at spawn layer via localFinalTerminal tracking.
       const catConfig = catRegistry.tryGet(this.catId as string)?.config;
-      const signatureIdentity = catConfig?.nickname?.trim() || catConfig?.displayName?.trim();
+      const nickname = catConfig?.nickname?.trim();
+      const displayName = catConfig?.displayName?.trim();
+      const signatureIdentity = nickname || displayName;
+      const signatureIdentityAliases = [...new Set([nickname, displayName])].filter((identity): identity is string =>
+        Boolean(identity && identity !== signatureIdentity),
+      );
       const codexStreamState: CodexStreamState = {
         hadPriorTextTurn: false,
         ...(signatureIdentity
           ? {
               signatureIdentity,
+              ...(signatureIdentityAliases.length > 0 ? { signatureIdentityAliases } : {}),
               canonicalSignature: `[${signatureIdentity}/${effectiveModel}🐾]`,
             }
           : {}),
@@ -2690,6 +2763,13 @@ export class CodexAgentService implements AgentService {
             },
             timestamp: Date.now(),
           };
+          if (!activeWriterWaitNoticeEmitted) {
+            const waitSignal = buildCodexActiveWriterWaitSignal({ catId: this.catId, metadata, event });
+            if (waitSignal) {
+              activeWriterWaitNoticeEmitted = true;
+              yield waitSignal;
+            }
+          }
           continue;
         }
         if (isCodexAppServerRecoveryBlockedEvent(event)) {
@@ -3204,26 +3284,12 @@ export class CodexAgentService implements AgentService {
                     },
                   }
                 : {}),
-              cliDiagnostics:
-                err instanceof CodexActiveWriterRecoveryError
-                  ? buildActiveWriterRecoveryDiagnostic({
-                      state:
-                        err.detection.diagnostics.classification === 'external_or_unknown'
-                          ? 'external_or_unknown'
-                          : 'owner_busy',
-                      debugRef: {
-                        command: 'codex app-server',
-                        exitCode: null,
-                        signal: null,
-                        ...(options?.invocationId ? { invocationId: options.invocationId } : {}),
-                      },
-                    })
-                  : errorEvidence.diagnostics(rawError, {
-                      command: 'codex app-server',
-                      exitCode: null,
-                      signal: null,
-                      ...(options?.invocationId ? { invocationId: options.invocationId } : {}),
-                    }),
+              cliDiagnostics: errorEvidence.diagnostics(rawError, {
+                command: 'codex app-server',
+                exitCode: null,
+                signal: null,
+                ...(options?.invocationId ? { invocationId: options.invocationId } : {}),
+              }),
             }
           : metadata;
       yield {

@@ -26,10 +26,10 @@ import {
   bootstrapCapabilities,
   type DiscoveryPaths,
   discoverExternalMcpServersTagged,
-  generateCliConfigs,
   healCatCafeMcpTopology,
   readCapabilitiesConfig,
   readCapabilitiesConfigState,
+  reconcileMcpRuntimeConfig,
   toCapabilityEntry,
   withCapabilityLock,
   writeCapabilitiesConfig,
@@ -381,7 +381,7 @@ export const capabilitiesRoutes: FastifyPluginAsync = async (app) => {
       // without requiring a full re-bootstrap.  writeXxxMcpConfig functions
       // are idempotent merge-writers, so repeated calls are safe and cheap.
       try {
-        await generateCliConfigs(config, getCliConfigPaths(projectRoot), projectRoot);
+        await reconcileMcpRuntimeConfig(config, getCliConfigPaths(projectRoot), projectRoot);
       } catch (error) {
         const code = (error as NodeJS.ErrnoException | undefined)?.code;
         if (code !== 'EPERM' && code !== 'EACCES') throw error;
@@ -744,7 +744,7 @@ export const capabilitiesRoutes: FastifyPluginAsync = async (app) => {
       // Persist config (once for all skills)
       try {
         await writeCapabilitiesConfig(projectRoot, config);
-        await generateCliConfigs(config, getCliConfigPaths(projectRoot), projectRoot);
+        await reconcileMcpRuntimeConfig(config, getCliConfigPaths(projectRoot), projectRoot);
       } catch (persistErr) {
         // Rollback all caps
         for (const { cap, skillId } of targets) {
@@ -861,7 +861,7 @@ export const capabilitiesRoutes: FastifyPluginAsync = async (app) => {
             Object.assign(cap, snapshot);
           }
           await writeCapabilitiesConfig(projectRoot, config).catch(() => {});
-          await generateCliConfigs(config, getCliConfigPaths(projectRoot), projectRoot).catch(() => {});
+          await reconcileMcpRuntimeConfig(config, getCliConfigPaths(projectRoot), projectRoot).catch(() => {});
           // Reconcile filesystem with restored config — syncProject may have
           // created symlinks before failing; leaving them creates a stale-mount
           // mismatch (config=disabled but symlinks exist → drift shows "多余挂载"

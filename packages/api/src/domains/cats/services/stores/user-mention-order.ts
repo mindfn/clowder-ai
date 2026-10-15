@@ -1,3 +1,4 @@
+import { messageFrom } from './message-from.js';
 import type { StoredMessage } from './ports/MessageStore.js';
 import { isTimelinePublished } from './visibility.js';
 
@@ -23,9 +24,9 @@ export function userMentionEvent(message: StoredMessage): UserMentionEvent | nul
   ) {
     return null;
   }
-  if (message.catId === 'system') return null;
-  if (message.catId === null) return message.extra?.crossPost ? null : 'reply';
-  return message.mentionsUser ? 'request' : null;
+  const sender = messageFrom(message);
+  if (sender.kind === 'user') return message.extra?.crossPost ? null : 'reply';
+  return sender.kind === 'agent' && message.mentionsUser ? 'request' : null;
 }
 
 export interface MentionCoordinate {

@@ -1045,24 +1045,42 @@ async function captureHeaderKeyboard(page, width, language) {
   if (!directory) return;
   mkdirSync(directory, { recursive: true });
   await page.screenshot({ path: path.join(directory, `header-keyboard-${width}-${language}.png`), fullPage: true });
+  const controls = await page.locator('[data-shell-header="v2"] button').evaluateAll((buttons) =>
+    buttons.map((button) => ({
+      id: button.getAttribute('data-testid'),
+      name: button.getAttribute('aria-label'),
+      box: button.getBoundingClientRect().toJSON(),
+    })),
+  );
+  writeFileSync(path.join(directory, `header-keyboard-${width}-${language}.json`), JSON.stringify(controls, null, 2));
 }
 
 test('the complete header stays in its real shell pane through keyboard navigation', async (t) => {
-  for (const [width, language] of [
+  for (const [width, language, paneWidth = width - 52] of [
     [320, 'zh'],
     [320, 'en'],
     [390, 'en'],
     [1440, 'en'],
+    [1440, 'en', 268],
   ]) {
-    await t.test(`${width}px ${language}`, async () => {
-      const proof = await openProof({ viewport: { width, height: 900 }, language });
+    await t.test(`${width}px ${language}, ${paneWidth}px pane`, async () => {
+      const proof = await openProof({
+        viewport: { width, height: 900 },
+        language,
+        ready: '作品，这条对话的作品',
+      });
       const { page } = proof;
       try {
         const header = page.locator('[data-shell-header="v2"]');
         await header.waitFor();
+        // Model the host's narrow desktop Chat pane without changing its controls.
+        await header.evaluate((element, size) => {
+          element.style.width = `${size}px`;
+        }, paneWidth);
         const controls = [
           'header-sidebar-expand',
           'conversation-view-menu-toggle',
+          'thread-metadata-menu-toggle',
           'message-search-entry',
           'header-works',
           'header-tasks',
@@ -1071,14 +1089,29 @@ test('the complete header stays in its real shell pane through keyboard navigati
         const before = await header.boundingBox();
         const bodyBefore = await page.getByTestId('conversation').boundingBox();
         assert.equal(before.x, 52, 'the real world rail consumes 52px of the viewport');
-        assert.equal(before.width, width - 52);
+        assert.equal(before.width, paneWidth);
+        const evidenceSize = `${width}-pane-${paneWidth}`;
+        await captureHeaderKeyboard(page, evidenceSize, language);
+        let previousRight = before.x;
         for (const id of controls) {
           const button = await page.getByTestId(id).boundingBox();
           assert.ok(button);
           assert.ok(button.width >= 28, `${id} retains its usable width`);
+          assert.ok(button.x >= previousRight, `${id} does not overlap the previous control`);
+          previousRight = button.x + button.width;
           assert.ok(
             button.x >= before.x && button.x + button.width <= before.x + before.width,
             `${id} fits the header`,
+          );
+          assert.equal(
+            await page.getByTestId(id).evaluate((element) => {
+              const box = element.getBoundingClientRect();
+              return (
+                document.elementFromPoint(box.x + box.width / 2, box.y + box.height / 2)?.closest('button') === element
+              );
+            }),
+            true,
+            `${id} receives pointer input at its center`,
           );
         }
         await page.evaluate(() => document.activeElement instanceof HTMLElement && document.activeElement.blur());
@@ -1095,7 +1128,7 @@ test('the complete header stays in its real shell pane through keyboard navigati
           );
         }
         assert.deepEqual([...reached].sort(), [...controls].sort());
-        await captureHeaderKeyboard(page, width, language);
+        await captureHeaderKeyboard(page, evidenceSize, language);
       } finally {
         await closeProof(proof);
       }
@@ -1106,6 +1139,7 @@ test('the complete header stays in its real shell pane through keyboard navigati
 test('the v2 header keeps the conversation view honest and inside a narrow viewport', async () => {
   const proof = await openProof({
     viewport: { width: 390, height: 860 },
+    ready: '作品，这条对话的作品',
     api: ({ request, url }) => {
       if (url.pathname !== '/api/config/conversation-view') return null;
       if (request.method() === 'PUT') {
@@ -1170,6 +1204,7 @@ test('the conversation view menu stays inside a short viewport and scrolls to it
   const proof = await openProof({
     viewport,
     participantCount: 13,
+    ready: '作品，这条对话的作品',
     api: ({ request, url }) =>
       url.pathname === '/api/config/conversation-view' && request.method() === 'GET' ? { abort: true } : null,
   });

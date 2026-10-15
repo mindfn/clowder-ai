@@ -1,7 +1,6 @@
 import { createHash } from 'node:crypto';
 import { type ConnectorSource, contentModificationRequestCarrierV1Schema } from '@cat-cafe/shared';
 import type { PersistedQueueDeliveryPort } from '../cats/services/agents/invocation/PersistedQueueDelivery.js';
-import { projectQueueReceipt } from '../cats/services/stores/ports/queued-message-receipt.js';
 import { ArtifactReviewError } from '../collaborative-content/artifact-review/errors.js';
 import { reviewReturnAttempt } from '../collaborative-content/artifact-review/return-attempt.js';
 import type {
@@ -138,10 +137,7 @@ export class ArtifactReviewReturnDispatcher {
           mentions: message.mentions,
           userId: message.userId,
           source: message.source,
-          extra: {
-            ...message.extra,
-            ...(message.queueCustody ? { queueReceipt: projectQueueReceipt(message.queueCustody) } : {}),
-          },
+          extra: message.extra,
         },
       ],
     });

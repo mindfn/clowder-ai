@@ -1,3 +1,4 @@
+import { messageFrom } from '../cats/services/stores/message-from.js';
 import type { IMessageStore } from '../cats/services/stores/ports/MessageStore.js';
 import { deriveGrowingSourceMessageRevision } from '../cats/services/stores/ports/MessageStore.js';
 import type { ActionSuccessorHumanReassignmentEvidence } from './ActionSuccessorAdmissionContract.js';
@@ -24,7 +25,7 @@ export async function resolveActionSuccessorHumanReassignmentEvidence(input: {
     source.id !== sourceMessageId ||
     source.userId !== input.userId ||
     source.threadId !== input.childThreadId ||
-    source.catId !== null ||
+    messageFrom(source).kind !== 'user' ||
     source.deletedAt ||
     source._tombstone ||
     source.source ||

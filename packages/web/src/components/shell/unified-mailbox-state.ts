@@ -9,6 +9,7 @@
  *  - loading and failure withdraw the earlier claim — nothing here carries a previous number or previous rows.
  */
 import type { UnifiedAttentionReadV1, UnifiedAttentionSourceRead } from '@cat-cafe/shared';
+import { isMailboxDecision } from './mailbox/mailbox-decision-kind';
 import { mailboxEntryCopy } from './mailbox/mailbox-entry.shell-copy';
 
 /**
@@ -73,11 +74,7 @@ function deriveReadState(result: MailboxRead, field: 'attentionCount' | 'totalCo
   if (attention === 0) return { kind: 'empty' };
   if (attention !== null && attention > 0) return { kind: 'has-items', count: attention, partial: false };
   const knownRows =
-    field === 'totalCount'
-      ? rows > 0
-      : read.items.some(
-          (item) => item.kind === 'approval' || (item.kind === 'judgment' && item.choiceRequest !== undefined),
-        );
+    field === 'totalCount' ? rows > 0 : read.items.some((item) => item.kind === 'approval' || isMailboxDecision(item));
   if (knownRows) {
     return {
       kind: 'has-items',

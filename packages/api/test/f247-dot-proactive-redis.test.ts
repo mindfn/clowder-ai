@@ -2,15 +2,13 @@ import assert from 'node:assert/strict';
 import { randomUUID } from 'node:crypto';
 import { test } from 'node:test';
 import { createCatId } from '@cat-cafe/shared';
-import Redis from 'ioredis';
 import { RedisMessageStore } from '../src/domains/cats/services/stores/redis/RedisMessageStore.js';
-import { assertRedisIsolationOrThrow } from './helpers/redis-test-helpers.js';
+import { ownedRedisFixture } from './helpers/owned-redis-fixture.js';
+
+const fixture = ownedRedisFixture('f117-dot-restart');
 
 test('dot request admission and connection-scoped atomic idempotency survive a Redis store restart', async () => {
-  const url = process.env.REDIS_URL;
-  assert.ok(url, 'run through scripts/run-isolated-redis-tests.sh');
-  assertRedisIsolationOrThrow(url);
-  const redis = new Redis(url);
+  const redis = fixture.client();
   const owner = `dot-test-${randomUUID()}`;
   const store = new RedisMessageStore(redis, { ttlSeconds: 0 });
   try {
@@ -26,7 +24,7 @@ test('dot request admission and connection-scoped atomic idempotency survive a R
     const input = {
       userId: owner,
       threadId: `${owner}:A`,
-      catId: createCatId('gpt-dot'),
+      from: { kind: 'agent' as const, catId: createCatId('gpt-dot') },
       content: 'question',
       mentions: [createCatId('codex')],
       timestamp: Date.now(),

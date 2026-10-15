@@ -18,8 +18,6 @@ interface ChatComposerActionsProps {
   stopState: StopState;
   onStop?: () => void;
   onSend: () => void;
-  onQueueSend?: () => void;
-  onRequestSteer?: () => void;
 }
 
 const control =
@@ -56,8 +54,6 @@ export function ChatComposerActions({
   stopState,
   onStop,
   onSend,
-  onQueueSend,
-  onRequestSteer,
 }: ChatComposerActionsProps) {
   const t = useShellCopy(chatComposerCopy);
   const stopLabel = {
@@ -84,33 +80,18 @@ export function ChatComposerActions({
   if (disabled && showStop) return stop;
 
   const inputBusy = disabled || sendDisabled || voice.state === 'recording' || voice.state === 'transcribing';
-  const sendLabel = onQueueSend && hasText ? t.queue : t.send;
+  const sendLabel = t.send;
 
   return (
     <>
-      {hasText && onRequestSteer && (
-        <AppTooltip label={t.force} side="top" multiline>
-          <button
-            type="button"
-            onClick={onRequestSteer}
-            disabled={inputBusy}
-            aria-label={t.force}
-            className={`${control} text-[var(--shell-muted)] hover:bg-[var(--shell-selected)]`}
-          >
-            <svg aria-hidden="true" className="h-4 w-4" viewBox="0 0 20 20" fill="currentColor">
-              <path d="M11.3 1.046A1 1 0 0 1 12 2v5h4a1 1 0 0 1 .82 1.573l-7 10A1 1 0 0 1 8 18v-5H4a1 1 0 0 1-.82-1.573l7-10a1 1 0 0 1 1.12-.381Z" />
-            </svg>
-          </button>
-        </AppTooltip>
-      )}
       <ComposerVoiceControl voice={voice} disabled={disabled} />
       {!hasText && showStop ? (
         stop
       ) : (
-        <AppTooltip label={onQueueSend && hasText ? t.queueHint : t.send} side="top">
+        <AppTooltip label={t.send} side="top">
           <button
             type="button"
-            onClick={onQueueSend ?? onSend}
+            onClick={onSend}
             disabled={inputBusy || !hasText}
             aria-label={sendLabel}
             className={`${control} bg-[var(--shell-primary)] text-[var(--shell-primary-on)] hover:brightness-95`}

@@ -33,6 +33,7 @@ describe('ConnectorBubble deployment wait avatar', () => {
     const message: ChatMessage = {
       id: 'persisted-deployment-return',
       type: 'connector',
+      from: { kind: 'external', connectorId: connector, sender: { id: 'deployment', name: 'Deployment Wait' } },
       content: 'Deployment ready — return to the original task for acceptance.',
       timestamp: 1791160380000,
       source: { connector, label: 'Deployment Wait', icon },

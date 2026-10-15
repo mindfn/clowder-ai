@@ -8,7 +8,7 @@
  *
  * Two rules the types make hard to break:
  *  - unknown is never blank: every reason / state has words, including ones this code has never heard of;
- *  - force-reset floats to the row for exactly three abnormal classes (`ForceResetReason`), never "always".
+ *  - force-reset belongs to the thread's abnormal execution, never a delivered Queue entry.
  */
 import type { ActiveExecutionNonCancelableReason, ActiveExecutionProjection } from '@cat-cafe/shared';
 import { activeExecutionKey } from '@/stores/activeExecutionStore';
@@ -16,19 +16,10 @@ import type { QueueEntry } from '@/stores/chat-types';
 import { type ExecutionRowWords, executionRowCopy } from './execution-row.shell-copy';
 import type { QueueWaitInfo } from './queue-view';
 
-/** Why the row offers 强制重置. Exactly the three abnormal classes of the design; the normal reset lives in the title menu. */
-export type ForceResetReason = 'silent_turn' | 'unverified_legacy' | 'processing_stuck';
+/** Why the row offers thread recovery; normal reset lives in the title menu. */
+export type ForceResetReason = 'silent_turn' | 'unverified_legacy';
 
-export type RowStatus =
-  | 'working'
-  | 'stopping'
-  | 'blocked'
-  | 'silent'
-  | 'confirming'
-  | 'unverified'
-  | 'stuck'
-  | 'paused'
-  | 'waiting';
+export type RowStatus = 'working' | 'stopping' | 'blocked' | 'silent' | 'unverified' | 'waiting';
 
 /** What the single ■ slot shows. `none` = nothing to stop here (several runs: each has its own ■ in the panel). */
 export type StopSlot =
@@ -51,15 +42,9 @@ export interface ExecutionRowInput {
   silent: Readonly<Record<string, { since: number | null }>>;
   /** The canonical projection failed its last refresh for this thread. */
   hydrationStale: boolean;
-  /** The legacy socket says live while canonical truth is still inside its neutral loading grace. */
-  hasConfirmingLegacyExecution: boolean;
   /** The legacy socket still reports a live turn while the canonical projection has none and is not ready. */
   hasUnverifiedLegacyExecution: boolean;
   queue: {
-    /** Raw queue length: a paused flag on an empty queue says nothing (the old panel hid itself too). */
-    total: number;
-    paused: boolean;
-    pauseReason?: 'canceled' | 'failed';
     /** Entries the user is shown (selectVisibleQueueEntries). */
     entries: readonly QueueEntry[];
     canRecoverOrphaned: boolean;
@@ -74,12 +59,8 @@ export interface ExecutionRowModel {
   runningCount: number;
   /** Visible entries still waiting. */
   queuedCount: number;
-  /** Visible entries whose processing is stuck (a force-reset is projected and no live target holds them). */
-  stuckCount: number;
-  /** Visible entries in total (paused text counts these). */
+  /** Total entries in the visible Queue. */
   visibleQueueCount: number;
-  /** The queue is paused (and non-empty): the row says so whatever else it says. */
-  queuePaused: boolean;
   /** The one run the row is about, when exactly one runs. */
   single: ActiveExecutionProjection | null;
   /** How long the single run has been going. */
@@ -91,18 +72,17 @@ export interface ExecutionRowModel {
   stop: StopSlot;
   /** Non-empty ⇒ the row floats a 强制重置. */
   forceReset: readonly ForceResetReason[];
-  /** 继续 (queue paused) / 恢复 (queue orphaned); null = no resume control. The panel header always offers it. */
-  resume: 'continue' | 'recover' | null;
+  /** Orphaned Queue recovery; null means no recovery control. */
+  resume: 'recover' | null;
   /**
    * What the ROW itself shows. A floating 强制重置 already asks for the user's attention, so an orphaned queue's 恢复
-   * waits in the panel instead of competing with it; a paused queue's 继续 is its own state and stays.
+   * waits in the panel instead of competing with it.
    */
-  resumeOnRow: 'continue' | 'recover' | null;
+  resumeOnRow: 'recover' | null;
   /** The chevron: there is a panel worth opening. */
   panelToggle: boolean;
   /** "状态暂不可核对" badge. */
   staleNote: boolean;
-  pauseReason: 'canceled' | 'failed' | null;
   waitInfo: QueueWaitInfo | null;
 }
 
@@ -119,10 +99,7 @@ function stopSlotFor(single: ActiveExecutionProjection | null, pendingKeys: Read
 interface Counts {
   running: number;
   silent: number;
-  stuck: number;
-  confirming: boolean;
   unverified: boolean;
-  paused: boolean;
 }
 
 function statusFor(counts: Counts, stop: StopSlot): RowStatus {
@@ -131,18 +108,15 @@ function statusFor(counts: Counts, stop: StopSlot): RowStatus {
     if (counts.silent > 0) return 'silent';
     return stop.kind === 'blocked' ? 'blocked' : 'working';
   }
-  if (counts.confirming) return 'confirming';
   if (counts.unverified) return 'unverified';
-  if (counts.stuck > 0) return 'stuck';
-  return counts.paused ? 'paused' : 'waiting';
+  return 'waiting';
 }
 
-/** Exactly the three abnormal classes of the design, in a fixed order. */
+/** Execution recovery reasons, in a fixed order. */
 function forceResetReasons(counts: Counts): ForceResetReason[] {
   const reasons: ForceResetReason[] = [];
   if (counts.silent > 0) reasons.push('silent_turn');
   if (counts.unverified) reasons.push('unverified_legacy');
-  if (counts.stuck > 0) reasons.push('processing_stuck');
   return reasons;
 }
 
@@ -156,34 +130,22 @@ export function deriveExecutionRow(input: ExecutionRowInput): ExecutionRowModel 
   const { queue } = input;
   const single = executions.length === 1 ? executions[0] : null;
   const visibleQueueCount = queue.entries.length;
-  const paused = queue.paused && queue.total > 0;
   const counts: Counts = {
     running: executions.length,
     silent: executions.filter((execution) => input.silent[activeExecutionKey(execution)] !== undefined).length,
-    stuck: queue.entries.filter((entry) => entry.status === 'processing').length,
-    confirming: executions.length === 0 && input.hasConfirmingLegacyExecution,
     unverified: executions.length === 0 && input.hasUnverifiedLegacyExecution,
-    paused,
   };
   const stop = stopSlotFor(single, input.cancelPendingKeys);
   const status = statusFor(counts, stop);
   const forceReset = forceResetReasons(counts);
-  const resume = paused ? 'continue' : queue.canRecoverOrphaned ? 'recover' : null;
+  const resume = queue.canRecoverOrphaned ? 'recover' : null;
 
   return {
-    visible:
-      counts.running > 0 ||
-      counts.confirming ||
-      counts.unverified ||
-      counts.stuck > 0 ||
-      paused ||
-      visibleQueueCount > 0,
+    visible: counts.running > 0 || counts.unverified || visibleQueueCount > 0,
     status,
     runningCount: counts.running,
     queuedCount: queue.entries.filter((entry) => entry.status === 'queued').length,
-    stuckCount: counts.stuck,
     visibleQueueCount,
-    queuePaused: paused,
     single,
     elapsedMs: single ? Math.max(0, input.now - single.startedAt) : null,
     silentCount: counts.silent,
@@ -191,10 +153,9 @@ export function deriveExecutionRow(input: ExecutionRowInput): ExecutionRowModel 
     stop,
     forceReset,
     resume,
-    resumeOnRow: resume === 'continue' || forceReset.length === 0 ? resume : null,
-    panelToggle: counts.running > 1 || visibleQueueCount > 0 || paused,
+    resumeOnRow: forceReset.length === 0 ? resume : null,
+    panelToggle: counts.running > 1 || visibleQueueCount > 0,
     staleNote: input.hydrationStale && counts.running > 0,
-    pauseReason: paused ? (queue.pauseReason ?? 'failed') : null,
     waitInfo: queue.waitInfo,
   };
 }
@@ -212,10 +173,7 @@ export function blockedReasonCopy(reason: string, copy: ExecutionRowWords = exec
 
 export const FORCE_RESET_REASON_COPY: Record<ForceResetReason, string> = executionRowCopy.zh.forceResetReason;
 
-export const PAUSE_REASON_COPY = executionRowCopy.zh.pauseReason;
-
 function queueTailOf(model: ExecutionRowModel, copy: ExecutionRowWords): string {
-  if (model.queuePaused) return copy.status.queuePausedTail;
   return model.queuedCount > 0 ? copy.status.queueTail(model.queuedCount) : '';
 }
 
@@ -262,14 +220,8 @@ export function rowStatusText(
       return blockedText(model, who, clock, copy);
     case 'silent':
       return silentText(model, clock, tail, copy);
-    case 'confirming':
-      return copy.status.confirming;
     case 'unverified':
       return copy.status.unverified;
-    case 'stuck':
-      return copy.status.stuck(model.stuckCount, tail);
-    case 'paused':
-      return copy.status.paused(model.visibleQueueCount);
     case 'waiting':
       return copy.status.waiting(model.queuedCount > 0 ? model.queuedCount : model.visibleQueueCount);
   }
@@ -287,14 +239,8 @@ export function rowCompactStatusText(model: ExecutionRowModel, copy: ExecutionRo
       return copy.compact.stopping;
     case 'silent':
       return copy.compact.silent;
-    case 'confirming':
-      return copy.compact.confirming;
     case 'unverified':
       return copy.compact.unverified;
-    case 'stuck':
-      return copy.compact.stuck;
-    case 'paused':
-      return copy.compact.paused;
     case 'waiting':
       return copy.compact.waiting(model.queuedCount > 0 ? model.queuedCount : model.visibleQueueCount);
   }

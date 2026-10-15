@@ -4,6 +4,7 @@ import { useEffect, useState } from 'react';
 import { Lightbox } from '@/components/Lightbox';
 import { openEvolutionMedia } from '@/components/workbench/evolution-media-navigation';
 import { ExplorationIcon } from './ExplorationIcon';
+import { useExplorationPlayback } from './ExplorationPlaybackGroup';
 import { ExplorationTrace, type explorationTraceBounds } from './ExplorationTrace';
 
 function mediaUrl(programId: string, record: EvolutionExplorationRecordV1, media: EvolutionExplorationMediaV1) {
@@ -66,6 +67,15 @@ function ImageEvidence({ src, label }: { src: string; label: string }) {
 function VideoEvidence({ src, label, poster }: { src: string; label: string; poster?: string }) {
   const [state, setState] = useState<'idle' | 'loading' | 'ready' | 'failed'>('idle');
   const [attempt, setAttempt] = useState(0);
+  const playback = useExplorationPlayback();
+  useEffect(
+    () =>
+      playback?.register(src, () => {
+        setAttempt((value) => value + 1);
+        setState('loading');
+      }),
+    [playback?.register, src],
+  );
   if (state === 'idle' || state === 'failed')
     return (
       <div className="exploration-video-cover">
@@ -99,8 +109,14 @@ function VideoEvidence({ src, label, poster }: { src: string; label: string; pos
         muted
         playsInline
         preload="metadata"
-        onLoadedMetadata={() => setState('ready')}
-        onError={() => setState('failed')}
+        onLoadedMetadata={(event) => {
+          setState('ready');
+          playback?.ready(src, event.currentTarget);
+        }}
+        onError={() => {
+          setState('failed');
+          playback?.fail(src);
+        }}
       />
     </div>
   );

@@ -25,13 +25,20 @@ import { type CallbackRoutesOptions, callbacksRoutes } from '../../src/routes/ca
 import { registerDotMcpRoutes } from '../../src/routes/chatgpt-dot-mcp-routes.js';
 import { sharedRemote } from './f247-shared-remote.js';
 
-export async function dotProactiveFixture(
-  options: Pick<CallbackRoutesOptions, 'routingDispatchPreflight' | 'turnExecutionStore'> = {},
-) {
+export async function dotProactiveFixture(options: Pick<CallbackRoutesOptions, 'turnExecutionStore'> = {}) {
   for (const [id, config] of Object.entries(
     toAllCatConfigs(loadCatConfig(fileURLToPath(new URL('../../../../cat-template.json', import.meta.url)))),
   ))
     if (!catRegistry.has(id)) catRegistry.register(id, config);
+  if (!catRegistry.has('gpt-dot'))
+    catRegistry.register('gpt-dot', {
+      ...catRegistry.getOrThrow('codex').config,
+      id: createCatId('gpt-dot'),
+      displayName: 'test dot',
+      provider: 'openai-chatgpt-pro',
+      clientId: 'openai',
+      mentionPatterns: ['@dot'],
+    });
   const dir = await mkdtemp(join(tmpdir(), 'dot-ask-'));
   const app = Fastify();
   const messages = new MessageStore();
@@ -92,7 +99,6 @@ export async function dotProactiveFixture(
     messageStore: messages,
     threadStore: threads,
     enabled: async () => enabled,
-    allowedCats: async () => [],
     sendWebhook: async (_url, _headers, body) => {
       events.push(JSON.parse(body));
       return { status: 202, body: '{}' };
@@ -108,7 +114,7 @@ export async function dotProactiveFixture(
       messageId: messages.append({
         threadId,
         userId: 'owner',
-        catId: createCatId('gpt-dot'),
+        from: { kind: 'agent', catId: createCatId('gpt-dot') },
         replyTo: sourceMessageId,
         content,
         mentions: [],
@@ -129,6 +135,7 @@ export async function dotProactiveFixture(
     threadStore: threads,
     socketManager: socket,
     invocationQueue: queue,
+    queueProcessor: {} as CallbackRoutesOptions['queueProcessor'],
     invocationRecordStore: records,
     router: {} as AgentRouter,
     admitDotReturn: (i) => returns.admitReturn(i),
@@ -166,22 +173,58 @@ export async function dotProactiveFixture(
       content,
       client_message_id: key,
     });
+  const replyCredentials = new Map<string, Awaited<ReturnType<typeof registry.create>>>();
   const reply = async (
     root: string,
     t: string,
     cat = 'codex',
     explicitRoot?: string,
     explicitDot = false,
-    finalPublication = true,
+    _finalPublication = true,
   ) => {
-    const auth = await registry.create('owner', createCatId(cat), t, undefined, root);
+    const key = `${root}:${cat}`;
+    const auth = replyCredentials.get(key) ?? (await registry.create('owner', createCatId(cat), t, undefined, root));
+    replyCredentials.set(key, auth);
+    const parent = messages.getById(root);
+    if (
+      parent?.lifecycle?.kind === 'input' &&
+      parent.extra?.dotAsk?.recipientCatIds.includes(cat) &&
+      !parent.lifecycle.dispatchRefs?.some((ref) => ref.targetId === cat)
+    ) {
+      const response = messages.append({
+        userId: 'owner',
+        threadId: t,
+        from: { kind: 'agent', catId: createCatId(cat) },
+        content: '',
+        mentions: [],
+        timestamp: Date.now(),
+        origin: 'stream',
+        lifecycle: {
+          kind: 'response',
+          orderKey: `${Date.now()}:${auth.invocationId}`,
+          invocationId: auth.invocationId,
+          targetId: cat,
+          inputEntryIds: [],
+          inputMessageIds: [root],
+          status: 'processing',
+          startedAt: Date.now(),
+        },
+      });
+      messages.advanceLifecycleInputDispatch(root, {
+        kind: 'input',
+        orderKey: parent.lifecycle.orderKey,
+        targetId: cat,
+        phase: 'dispatched',
+        statusMessageId: response.id,
+        dispatchedAt: Date.now(),
+      });
+    }
     const r = await app.inject({
       method: 'POST',
       url: '/api/callbacks/post-message',
       headers: { 'x-invocation-id': auth.invocationId, 'x-callback-token': auth.callbackToken },
       payload: {
         content: '真实回答',
-        streamDisposition: finalPublication ? 'replace_final' : 'independent',
         ...(explicitRoot ? { replyTo: explicitRoot } : {}),
         ...(explicitDot ? { targetCats: ['gpt-dot'] } : {}),
       },

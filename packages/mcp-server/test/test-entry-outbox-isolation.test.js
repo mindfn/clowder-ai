@@ -57,7 +57,7 @@ for (const fixture of ['cross-post-message-targetcats.test.js', 'f247-cloud-coll
   }
 }
 
-test('MCP test entry creates different outboxes for each process and cleans them on exit', () => {
+test('MCP test entry creates different outboxes and retains isolated evidence on exit', () => {
   const paths = [];
   for (let attempt = 0; attempt < 2; attempt += 1) {
     const result = spawnSync(
@@ -76,10 +76,11 @@ test('MCP test entry creates different outboxes for each process and cleans them
       },
     );
     assert.equal(result.status, 0, result.stderr);
-    const { directory, enabled } = JSON.parse(result.stdout);
+    const { directory, enabled } = JSON.parse(result.stdout.split('\n')[0]);
     assert.equal(enabled, 'true', 'outbox transport remains enabled');
     assert.ok(directory, 'entrypoint must install a private outbox');
-    assert.equal(existsSync(directory), false, 'private outbox must be removed after process exit');
+    assert.equal(existsSync(directory), true, 'isolated callback evidence remains inspectable after process exit');
+    assert.ok(result.stdout.includes(`Retained isolated callback outbox: ${directory}`));
     paths.push(directory);
   }
   assert.notEqual(paths[0], paths[1]);

@@ -158,7 +158,7 @@ export async function createCalendarFixture() {
     mentions.append({
       userId: 'default-user',
       threadId: `thread-j3-controlled-mention-${index}`,
-      catId: 'codex61-sol',
+      from: { kind: 'agent', catId: 'codex61-sol' },
       mentionsUser: true,
       content: `受控 @你 请求 ${index + 1}，不代表真实猫执行`,
       timestamp: now,
@@ -168,7 +168,7 @@ export async function createCalendarFixture() {
     const message = mentions.append({
       userId: 'default-user',
       threadId: `thread-j3-handled-${handledHistory.length}`,
-      catId: 'codex61-sol',
+      from: { kind: 'agent', catId: 'codex61-sol' },
       mentionsUser: true,
       content: `Controlled handled request: ${label}`,
       timestamp: now - 7000,
@@ -352,7 +352,7 @@ export async function createCalendarFixture() {
       return mentions.append({
         userId: 'default-user',
         threadId: 'thread-j3-controlled-mention-0',
-        catId: 'codex61-sol',
+        from: { kind: 'agent', catId: 'codex61-sol' },
         mentionsUser: true,
         timestamp: now,
         content: 'Controlled newer request, same conversation, different message',

@@ -179,12 +179,14 @@ async function codexConfig(_f, workingDirectory) {
 
 export const providers = {
   codex: codexConfig,
-  claude: (f, workingDirectory) =>
-    resolveClaudeMcpConfig({
-      workingDirectory,
-      mcpServerPath: f.mcpServerPath,
-      callbackEnv: { ...callbackFixture, CAT_CAFE_CAT_ID: 'opus' },
-    }),
+  claude: async (f, workingDirectory) =>
+    (
+      await resolveClaudeMcpConfig({
+        workingDirectory,
+        mcpServerPath: f.mcpServerPath,
+        callbackEnv: { ...callbackFixture, CAT_CAFE_CAT_ID: 'opus' },
+      })
+    ).servers,
   kimi: async (f, workingDirectory) => {
     const path = await writeMcpConfigFile(workingDirectory ?? '', f.mcpServerPath, {
       ...callbackFixture,

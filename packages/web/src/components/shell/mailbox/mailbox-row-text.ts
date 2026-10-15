@@ -54,6 +54,16 @@ export function useMailboxRowText(item: UnifiedAttentionItemV1): MailboxRowText 
       time: time(request.timestamp),
     };
   }
+  if (item.runtimeInteraction) {
+    const runtime = item.runtimeInteraction;
+    return {
+      catId: runtime.requesterCatId,
+      lead: null,
+      title: runtime.title,
+      source: t.choice,
+      time: time(runtime.createdAt),
+    };
+  }
   if (item.choiceRequest) {
     const choice = item.choiceRequest;
     return {

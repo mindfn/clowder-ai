@@ -172,7 +172,7 @@ test('a terminal return registration follows the exact returned action generatio
 
   const originalDelegateMessage = f.messages.append({
     userId: f.actor.userId,
-    catId: ORIGINAL_DELEGATE_CAT,
+    from: { kind: 'agent', catId: ORIGINAL_DELEGATE_CAT },
     threadId: f.child.id,
     content: 'Stale original delegate result',
     mentions: [],
@@ -189,7 +189,7 @@ test('a terminal return registration follows the exact returned action generatio
 
   const oldReporterMessage = f.messages.append({
     userId: f.actor.userId,
-    catId: f.actor.catId,
+    from: { kind: 'agent', catId: f.actor.catId },
     threadId: f.child.id,
     content: 'Stale old reporter result',
     mentions: [],
@@ -206,7 +206,7 @@ test('a terminal return registration follows the exact returned action generatio
 
   const previousSuccessorMessage = f.messages.append({
     userId: f.actor.userId,
-    catId: SUCCESSOR_CAT,
+    from: { kind: 'agent', catId: SUCCESSOR_CAT },
     threadId: f.child.id,
     content: 'Stale previous successor result',
     mentions: [],
@@ -223,7 +223,7 @@ test('a terminal return registration follows the exact returned action generatio
 
   const successorMessage = f.messages.append({
     userId: f.actor.userId,
-    catId: SECOND_SUCCESSOR_CAT,
+    from: { kind: 'agent', catId: SECOND_SUCCESSOR_CAT },
     threadId: f.child.id,
     content: 'Current successor result',
     mentions: [],

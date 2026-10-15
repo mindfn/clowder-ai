@@ -105,20 +105,20 @@ describe('canonical message search projection', () => {
     const notices = [null, 'system'].map((catId, i) => ({
       id: `notice-${i}`,
       threadId: thread.id,
-      userId: 'scheduler',
+      userId: 'owner',
+      from: { kind: 'system', service: 'hold-ball' },
       catId,
       content: '[定时任务] piano 持球唤醒。',
       timestamp: 500 + i,
       source: {
         connector: 'hold-ball',
         label: '持球通知',
-        meta: { taskId: 'test-wake', threadId: thread.id, catId: 'codex61-sol', wakeWhen: true },
+        meta: { managedHold: true, taskId: 'test-wake', threadId: thread.id, catId: 'codex61-sol', wakeWhen: true },
       },
-      queueCustody: { ownerUserId: 'owner' },
     }));
     const human = { ...messages.get('old'), id: 'human' };
     const cat = { ...human, id: 'cat', catId: 'codex61-sol' };
-    const otherOwnerHold = { ...notices[0], id: 'other-owner-hold', queueCustody: { ownerUserId: 'someone-else' } };
+    const otherOwnerHold = { ...notices[0], id: 'other-owner-hold', userId: 'someone-else' };
     const internal = { ...notices[0], id: 'internal-system', userId: 'system' };
     const rows = [...notices, human, cat, otherOwnerHold, internal];
     try {
@@ -185,9 +185,8 @@ describe('canonical message search projection', () => {
         label: `${connector} source`,
         icon: '',
         sender: { id: 'external-sender', name: 'Acceptance source' },
-        meta: { taskId: 'test-wake', threadId: thread.id, catId: 'codex61-sol', wakeWhen: true },
+        meta: { managedHold: true, taskId: 'test-wake', threadId: thread.id, catId: 'codex61-sol', wakeWhen: true },
       },
-      queueCustody: { ownerUserId: 'owner' },
     }));
     notices.push({
       ...notices[0],

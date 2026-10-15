@@ -8,18 +8,15 @@ import { MemberAccountFollowing } from './accounts/MemberAccountFollowing';
 import type { ProfileItem } from './hub-accounts.types';
 import { usesAgyNative } from './hub-cat-editor.agy';
 import {
-  ACP_TRANSPORT_OPTIONS,
   autoSlug,
   CLIENT_OPTIONS,
-  CODEX_CARRIER_OPTIONS,
+  carrierOptionsForClient,
   defaultAcpCommandForClient,
   defaultAcpStartupArgsForClient,
   getAcpWarning,
   type HubCatEditorFormState,
-  isAcpOnlyClient,
   joinTags,
   normalizeMentionPattern,
-  showTransportSelector,
   splitMentionPatterns,
   splitStrengthTags,
 } from './hub-cat-editor.model';
@@ -490,8 +487,6 @@ export function AccountSection({
   modelOptions,
   availableProfiles,
   loadingProfiles,
-  effectiveCodexCarrier,
-  codexLocalCapable = true,
   onChange,
 }: {
   form: HubCatEditorFormState;
@@ -499,10 +494,6 @@ export function AccountSection({
   modelOptions: string[];
   availableProfiles: ProfileItem[];
   loadingProfiles: boolean;
-  /** F254 D2: server-resolved effective carrier for the edited cat (null for new cats). */
-  effectiveCodexCarrier?: { effective: 'exec_json' | 'app_server'; source: 'per-cat' | 'env' | 'default' } | null;
-  /** F254 D2: false for cloud-only cats (cli removed) — the Codex carrier never applies. */
-  codexLocalCapable?: boolean;
   onChange: (patch: FormPatch) => void;
 }) {
   const page = useMemberEditorPresentation();
@@ -529,46 +520,55 @@ export function AccountSection({
         <SelectField
           label="Client"
           value={form.clientId}
-          options={CLIENT_OPTIONS}
+          options={
+            form.clientId === 'antigravity'
+              ? [...CLIENT_OPTIONS, { value: 'antigravity', label: 'Antigravity IDE（已退役）' }]
+              : CLIENT_OPTIONS
+          }
           onChange={(value) => {
             const nextClient = value as HubCatEditorFormState['clientId'];
-            const forceAcp = isAcpOnlyClient(nextClient);
-            const nextAcpEnabled = forceAcp || (showTransportSelector(nextClient) && form.acpEnabled);
+            const nextCarrier = carrierOptionsForClient(nextClient)[0]?.value ?? 'cli';
             onChange({
               clientId: nextClient,
               provider: '',
               cliEffort: '',
-              codexCarrier: '',
-              acpEnabled: nextAcpEnabled,
-              agyNativeEnabled: false,
-              ...(nextAcpEnabled ? acpDefaultsForClientSwitch(form, nextClient) : {}),
+              carrier: nextCarrier,
+              agyNativeEnabled: nextClient === 'google',
+              ...(nextClient === 'google'
+                ? { agyProfileEnabled: true, agyProfileId: form.agyProfileId || form.catId }
+                : {}),
+              ...acpDefaultsForClientSwitch(form, nextClient),
             });
           }}
           required
         />
 
-        {showTransportSelector(form.clientId) ? (
+        {carrierOptionsForClient(form.clientId).length > 1 || form.clientId === 'acp' || form.clientId === 'google' ? (
           <SelectField
-            label="Transport"
-            ariaLabel="Transport"
-            value={form.acpEnabled ? 'acp' : native ? 'agy-native' : 'cli'}
-            options={
-              form.clientId === 'google'
-                ? [...ACP_TRANSPORT_OPTIONS, { value: 'agy-native', label: 'AGY Native' }]
-                : ACP_TRANSPORT_OPTIONS
-            }
+            label="接入方式"
+            ariaLabel={page ? 'Transport' : '接入方式'}
+            value={form.clientId === 'google' ? (native ? 'agy-native' : 'retired') : form.carrier}
+            options={[
+              ...(form.clientId === 'google'
+                ? !native
+                  ? [{ value: 'retired', label: '旧入口已退役，请配置 Native' }]
+                  : []
+                : carrierOptionsForClient(form.clientId)),
+              ...(form.clientId === 'google' ? [{ value: 'agy-native', label: 'AGY Native' }] : []),
+            ]}
             onChange={(value) => {
-              const acpEnabled = value === 'acp';
+              if (value === 'agy-native') {
+                onChange({ carrier: 'cli', agyNativeEnabled: true });
+                return;
+              }
+              const carrier = value as HubCatEditorFormState['carrier'];
               onChange({
-                acpEnabled,
-                agyNativeEnabled: value === 'agy-native',
-                ...(value === 'agy-native'
-                  ? { agyProfileEnabled: true, agyProfileId: form.agyProfileId || form.catId }
-                  : {}),
-                ...(acpEnabled && !form.acpCommand.trim()
+                carrier,
+                agyNativeEnabled: false,
+                ...(carrier === 'acp' && !form.acpCommand.trim()
                   ? { acpCommand: defaultAcpCommandForClient(form.clientId) }
                   : {}),
-                ...(acpEnabled && !form.acpStartupArgs.trim()
+                ...(carrier === 'acp' && !form.acpStartupArgs.trim()
                   ? { acpStartupArgs: defaultAcpStartupArgsForClient(form.clientId) }
                   : {}),
               });
@@ -578,75 +578,14 @@ export function AccountSection({
         ) : null}
 
         {(() => {
-          const acpWarn = getAcpWarning(form.clientId, form.acpEnabled);
+          const acpWarn = getAcpWarning(form.clientId, form.carrier);
           return acpWarn ? <p className="text-xs text-amber-600 dark:text-amber-400">⚠️ {acpWarn}</p> : null;
         })()}
 
-        {form.clientId === 'openai' && !form.acpEnabled && codexLocalCapable ? (
-          <>
-            <SelectField
-              label="接入方式（Carrier）"
-              ariaLabel="Codex Carrier"
-              value={form.codexCarrier}
-              options={CODEX_CARRIER_OPTIONS}
-              onChange={(value) => onChange({ codexCarrier: value as HubCatEditorFormState['codexCarrier'] })}
-            />
-            <p className="-mt-1 text-micro leading-4 text-cafe-muted">
-              {page ? (
-                t('App Server 使用可复用的常驻进程；CLI 每次启动一个进程。跟随默认时由服务端统一决定。')
-              ) : (
-                <>
-                  App Server 走池化常驻宿主（F254，持久会话、可复用宿主）；CLI 走一次性 <code>codex exec</code>
-                  。「默认」跟随服务端环境变量 <code>CAT_CAFE_CODEX_CARRIER</code>。
-                </>
-              )}
-            </p>
-            {effectiveCodexCarrier && page ? (
-              <p className="-mt-1 text-micro leading-4 text-cafe-secondary" data-testid="codex-carrier-effective">
-                {t('当前生效：')}
-                {effectiveCodexCarrier.effective === 'app_server' ? 'App Server' : 'CLI'}
-                {' · '}
-                {t(
-                  effectiveCodexCarrier.source === 'per-cat'
-                    ? '本成员设置'
-                    : effectiveCodexCarrier.source === 'env'
-                      ? '服务端默认'
-                      : '默认值',
-                )}
-              </p>
-            ) : effectiveCodexCarrier ? (
-              <p className="-mt-1 text-micro leading-4 text-cafe-secondary" data-testid="codex-carrier-effective">
-                当前生效：
-                {effectiveCodexCarrier.effective === 'app_server' ? 'App Server' : 'CLI（codex exec）'}
-                （来源：
-                {effectiveCodexCarrier.source === 'per-cat'
-                  ? '本成员覆盖'
-                  : effectiveCodexCarrier.source === 'env'
-                    ? '全局环境变量'
-                    : '默认值'}
-                ）
-              </p>
-            ) : null}
-          </>
-        ) : null}
-
         {form.clientId === 'antigravity' ? (
-          <>
-            <TextField
-              label="CLI Command"
-              value={form.commandArgs}
-              onChange={(value) => onChange({ commandArgs: value })}
-              required
-              placeholder="启动命令参数"
-            />
-            <TextField
-              label="Model"
-              value={form.defaultModel}
-              onChange={(value) => onChange({ defaultModel: value })}
-              required
-              placeholder="模型标识符"
-            />
-          </>
+          <p className="text-sm text-cafe-secondary">
+            IDE 执行入口已退役。选择 Google / AGY Native 并保存隔离 Profile 后可继续使用；成员身份与历史消息保留。
+          </p>
         ) : (
           <>
             <SelectField
@@ -689,7 +628,7 @@ export function AccountSection({
               disabled={loadingProfiles}
               required
             />
-            {page && form.clientId === 'openai' && codexLocalCapable && (
+            {page && form.clientId === 'openai' && form.provider !== 'openai-chatgpt-pro' && (
               <MemberAccountFollowing
                 accountRef={form.accountRef}
                 accounts={availableProfiles}
@@ -773,7 +712,7 @@ export function AccountSection({
                 </p>
               </div>
             ) : null}
-            {form.acpEnabled ? (
+            {form.carrier === 'acp' ? (
               <>
                 <TextField
                   label="ACP Command"

@@ -85,7 +85,6 @@ describe('execution row location through the original owner', () => {
       messages: [message],
       threadStates: {},
       queue: [],
-      queuePaused: false,
       activeInvocations: {},
       catInvocations: {},
       catStatuses: {},

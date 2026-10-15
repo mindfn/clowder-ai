@@ -2,13 +2,23 @@ import './helpers/setup-cat-registry.js';
 import assert from 'node:assert/strict';
 import { describe, test } from 'node:test';
 
+import { appendTestLifecycleResponseSource } from './helpers/message-from-fixtures.js';
+
+const { MessageStore } = await import('../dist/domains/cats/services/stores/ports/MessageStore.js');
 const { routeSerial } = await import('../dist/domains/cats/services/agents/routing/route-serial.js');
 const { routeParallel } = await import('../dist/domains/cats/services/agents/routing/route-parallel.js');
 const { InvocationTracker } = await import('../dist/domains/cats/services/agents/invocation/InvocationTracker.js');
 
 function depsFor(services) {
   let invocations = 0;
+  const messageStore = new MessageStore();
   const stored = [];
+  const append = messageStore.append.bind(messageStore);
+  messageStore.append = (input) => {
+    const row = append(input);
+    stored.push(row);
+    return row;
+  };
   return {
     services,
     stored,
@@ -30,21 +40,7 @@ function depsFor(services) {
       },
       apiUrl: 'http://127.0.0.1:3102',
     },
-    messageStore: {
-      append: async (input) => {
-        const message = { id: `notice-${stored.length + 1}`, ...input };
-        stored.push(message);
-        return message;
-      },
-      getById: async (id) => stored.find((message) => message.id === id) ?? null,
-      getRecent: () => [],
-      getMentionsFor: () => [],
-      getRecentMentionsFor: () => [],
-      getBefore: () => [],
-      getByThread: () => [],
-      getByThreadAfter: () => [],
-      getByThreadBefore: () => [],
-    },
+    messageStore,
     draftStore: { delete: async () => {}, touch: async () => {}, upsert: async () => {} },
     toolEventLog: { append: async () => {}, updateSummary: async () => {} },
     socketManager: { broadcastToRoom: () => {} },
@@ -89,6 +85,26 @@ async function collect(route, deps, catIds, threadId, tracker) {
   const messages = [];
   for await (const message of route(deps, catIds, 'read this workspace', 'user1', threadId, {
     signal: batch.signal,
+    onLifecycleInvocationStarted: async (input) => {
+      const row = await appendTestLifecycleResponseSource(deps.messageStore, {
+        ...input,
+        timestamp: input.startedAt,
+      });
+      return {
+        responseMessageId: row.id,
+        priorFrontierMessageId: null,
+        activeRun: {
+          threadId,
+          targetId: input.catId,
+          invocationId: input.invocationId,
+          responseMessageId: row.id,
+          inputEntryIds: [],
+          inputMessageIds: [],
+          privateInputEntryIds: [],
+          startedAt: input.startedAt,
+        },
+      };
+    },
     signalForCat: (catId) => tracker.getController(threadId, catId)?.signal,
   }))
     messages.push(message);
@@ -127,6 +143,10 @@ for (const [name, route] of [
         });
         const messages = await collect(route, deps, ['opus', 'codex'], threadId, tracker);
         assert.equal(stopped, true, 'exercise Stop during the running service');
+        const stoppedResponse = deps.stored
+          .map((row) => deps.messageStore.getById(row.id))
+          .find((row) => row.lifecycle?.kind === 'response' && row.lifecycle.targetId === 'opus');
+        assert.equal(stoppedResponse?.lifecycle?.status, 'canceled', 'Stop closes the exact admitted response');
         assert.equal(silentNotices(messages, 'opus').length, 0, 'canceled turn must never say completed without text');
         assert.equal(
           messages.some((message) => message.catId === 'opus' && message.type === 'error'),
@@ -138,12 +158,16 @@ for (const [name, route] of [
           'per-cat cancellation must preserve the sibling',
         );
         assert.ok(
-          deps.stored.some((message) => message.catId === 'codex' && message.content === 'Sibling finished.'),
+          deps.stored
+            .map((row) => deps.messageStore.getById(row.id))
+            .some((message) => message.catId === 'codex' && message.content === 'Sibling finished.'),
           'sibling result remains durable',
         );
         if (hadTools)
           assert.ok(
-            deps.stored.some((message) => message.catId === 'opus' && message.toolEvents?.length),
+            deps.stored
+              .map((row) => deps.messageStore.getById(row.id))
+              .some((message) => message.catId === 'opus' && message.toolEvents?.length),
             'completed pre-cancel tool evidence remains durable',
           );
       });
@@ -161,7 +185,20 @@ for (const [name, route] of [
           },
         });
         const messages = await collect(route, deps, ['opus'], `natural-notice-${name}-${hadTools}`, tracker);
-        assert.equal(silentNotices(messages, 'opus').length, 1, 'real no-text completion still needs its diagnostic');
+        assert.equal(
+          silentNotices(messages, 'opus').length,
+          0,
+          'the terminal response replaces a separate silent-completion notice',
+        );
+        const response = deps.stored
+          .map((row) => deps.messageStore.getById(row.id))
+          .find((row) => row.lifecycle?.kind === 'response');
+        assert.equal(
+          response?.lifecycle?.status,
+          'completed',
+          'natural completion remains visible on its fixed response',
+        );
+        if (hadTools) assert.ok(response.toolEvents?.length, 'tool-only completion retains its audit evidence');
       });
     }
   });

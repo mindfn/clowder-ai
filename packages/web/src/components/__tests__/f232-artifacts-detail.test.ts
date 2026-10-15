@@ -11,7 +11,8 @@ const { mockState } = vi.hoisted(() => ({
 }));
 
 vi.mock('@/utils/api-client', () => ({ API_URL: 'http://test.local', apiFetch: vi.fn() }));
-vi.mock('@/hooks/useThreadArtifacts', () => ({
+vi.mock('@/hooks/useThreadArtifacts', async (original) => ({
+  ...(await original<object>()),
   useThreadArtifacts: () => ({ artifacts: mockState.artifacts, loading: false, error: null }),
 }));
 vi.mock('@/hooks/useCatData', () => ({
@@ -67,7 +68,7 @@ describe('F232 AC-A7 ArtifactsPanel 内容查看交互', () => {
         catId: 'opus-48',
         createdAt: Date.now(),
         sourceMessageId: null,
-        ref: 'zts212653/cat-cafe#2247',
+        ref: 'zts212653/clowder-ai#2247',
       },
     ];
     const { container } = renderPanel();

@@ -193,7 +193,7 @@ for (const laterSuccessor of [false, true]) {
 
     const report = scenario.f.messages.append({
       userId: scenario.f.actor.userId,
-      catId: reporter,
+      from: { kind: 'agent', catId: reporter },
       threadId: scenario.child.id,
       content: 'Child B actual result',
       mentions: [],

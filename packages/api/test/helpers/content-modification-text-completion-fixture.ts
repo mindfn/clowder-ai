@@ -61,6 +61,19 @@ export async function prepareTextCompletion(
     },
     f.cat,
   );
+  // A continuation can be queued behind its root request. Settle both exact
+  // initial deliveries before measuring any wake caused by accepting the file.
+  for (const initialRequestId of new Set([rootRequest.record.requestId, request.record.requestId])) {
+    const deliveries = f.messages
+      .getByThreadIncludingQueued(f.thread.id)
+      .filter(
+        (message) =>
+          message.source?.meta?.kind === 'request_text_edit' && message.source.meta.requestId === initialRequestId,
+      );
+    assert.equal(deliveries.length, 1, 'each initial request has exactly one Host delivery');
+    const invocationId = await f.dispatch.waitForAwakening(deliveries[0]!.id);
+    await f.dispatch.releaseProvider(invocationId);
+  }
   await f.dispatch.close();
   const startsBeforeAcceptance = f.starts.length;
   const drain = f.dispatcher.drain.bind(f.dispatcher);

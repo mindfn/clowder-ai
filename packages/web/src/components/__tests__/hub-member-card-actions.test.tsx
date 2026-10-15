@@ -14,8 +14,7 @@ const cat: CatData = {
   avatar: '',
   roleDescription: '',
   personality: '',
-  adapterMode: 'cli',
-  codexCarrier: { effective: 'app_server', source: 'per-cat' },
+  carrier: 'app_server',
 };
 
 describe('Hub member actions and effective transport', () => {
@@ -53,10 +52,10 @@ describe('Hub member actions and effective transport', () => {
     expect(onEdit).toHaveBeenCalledExactlyOnceWith(cat);
   });
 
-  it('shows the effective app-server carrier, with ACP taking precedence', () => {
+  it('renders the canonical carrier', () => {
     act(() => root.render(<HubMemberOverviewCard cat={cat} />));
     expect(host.textContent).toContain('APP SERVER');
-    act(() => root.render(<HubMemberOverviewCard cat={{ ...cat, adapterMode: 'acp' }} />));
+    act(() => root.render(<HubMemberOverviewCard cat={{ ...cat, carrier: 'acp' }} />));
     expect(host.textContent).toContain('ACP');
     expect(host.textContent).not.toContain('APP SERVER');
   });

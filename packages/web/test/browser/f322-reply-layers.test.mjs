@@ -199,30 +199,19 @@ async function open({
 
 const measure = (page, id) => page.evaluate(measureReply(), id);
 
-test('failed primary and supplementary checks disclose their reason, survive reload and identify the collapsed member', async () => {
+test('failed primary executions disclose their reason, survive reload and identify the collapsed member', async () => {
   const { page, errors, unexpected } = await open({ failureVisibility: true });
   try {
     for (const language of ['zh', 'en']) {
       await page.evaluate((value) => window.__replies.setLanguage(value), language);
-      const notice = page.locator('[data-message-id="r-supplement-failed"] [role="alert"]');
-      await notice.scrollIntoViewIfNeeded();
-      assert.match(
-        await notice.innerText(),
-        language === 'zh'
-          ? /新消息补读失败.*不支持安全的只读检查/s
-          : /New-message check failed.*cannot enforce a read-only check/s,
-      );
-      assert.equal(await notice.evaluate((element) => element.scrollWidth <= element.clientWidth), true);
       const diagnostic = page.locator('[data-message-id="r-network-error"] [data-testid="cli-diagnostics-banner"]');
       assert.match(await diagnostic.innerText(), /网络连接失败/);
       const summary = page.locator('[data-testid="failed-group"] [data-testid="thread-status-text"]');
       await summary.focus();
       assert.match(await page.getByRole('tooltip').innerText(), /F317 C · 前台收件与长对话续接/);
-      await page
-        .locator('[data-message-id="r-supplement-failed"]')
-        .screenshot({ path: path.join(evidenceDir ?? '/tmp', `failure-visible-${language}.png`) });
+      await diagnostic.screenshot({ path: path.join(evidenceDir ?? '/tmp', `failure-visible-${language}.png`) });
       await page.reload({ waitUntil: 'networkidle' });
-      assert.match(await notice.innerText(), language === 'zh' ? /新消息补读失败/ : /New-message check failed/);
+      assert.match(await diagnostic.innerText(), /网络连接失败/);
     }
     assert.deepEqual(errors, []);
     assert.deepEqual(unexpected, []);

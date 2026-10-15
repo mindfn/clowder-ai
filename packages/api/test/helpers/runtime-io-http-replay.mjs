@@ -10,10 +10,6 @@ import { monitorEventLoopDelay } from 'node:perf_hooks';
 import { setTimeout as delay } from 'node:timers/promises';
 import { fileURLToPath } from 'node:url';
 import { promisify } from 'node:util';
-import {
-  listListenPortsViaLsof,
-  listProcessesViaPs,
-} from '../../dist/domains/cats/services/agents/providers/antigravity/antigravity-ls-discovery.js';
 import { getMemoizedMcpHostVersion } from '../../dist/domains/cats/services/agents/providers/mcp-schema-delivery-capability.js';
 import { CanonicalTasteMemoryCueSource } from '../../dist/domains/memory/cue/sources/TasteMemoryCueSource.js';
 import { clearEnvironmentCache, getEnvironmentProfile } from '../../dist/domains/services/environment-detector.js';
@@ -112,8 +108,6 @@ try {
   for (const name of ['python3.13', 'python3.12', 'python3.11', 'python3.10', 'python3', 'python'])
     await executable(name, `setTimeout(()=>console.log('arm64\\n3.12.1'),100)`);
   await executable('fixture-provider', `setTimeout(()=>console.log('fixture-cli 1.2.3'),400)`);
-  await executable('ps', `setTimeout(()=>console.log('123 language_server --csrf_token fixture'),150)`);
-  await executable('lsof', `setTimeout(()=>console.log('language_server 123 TCP *:18888 (LISTEN)'),150)`);
   const pluginRoot = join(fixture, 'plugins');
   const packageRoot = join(fixture, 'archive/fixture-plugin');
   await mkdir(packageRoot, { recursive: true });
@@ -183,9 +177,8 @@ try {
     ]);
     assert.equal(a, '1.2.3');
     assert.equal(a, b);
-    assert.equal((await listProcessesViaPs()).length, 1);
-    assert.deepEqual(await listListenPortsViaLsof('123'), [18888]);
-    return { version: a, discovery: true };
+    // F325 retired IDE process/port discovery. The live host-version consumer remains.
+    return { version: a, sharedProbe: true, retired: ['antigravity-ide-discovery'] };
   });
   await measure(
     'R11',

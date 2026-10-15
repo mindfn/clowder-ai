@@ -63,8 +63,8 @@ test('an accepted publication response replays its exact receipt without a new m
   assert.equal(f.store.get(input.payload.reviewId)!.revision, revision);
 });
 
-for (const boundary of ['original-body-withdrawn', 'return-body-withdrawn'] as const) {
-  test(`a lost candidate receipt refuses ${boundary} when recovering its projection`, async (t) => {
+for (const boundary of ['original-source-withdrawn', 'return-source-withdrawn'] as const) {
+  test(`accepted business receipt recovery follows original-Human authority after ${boundary}`, async (t) => {
     const f = await fixture(t, true);
     await f.markOriginalHandled();
     const childId = await continuation(f);
@@ -72,16 +72,28 @@ for (const boundary of ['original-body-withdrawn', 'return-body-withdrawn'] as c
     const response = await f.app.inject(await responseInput(f, childId));
     assert.equal(response.statusCode, 200, response.body);
     const before = f.store.get(f.request.record.progress.review!.reviewId)!.revision;
-    if (boundary === 'original-body-withdrawn') f.humanMessage.queueCustody!.bodyExposures = [];
-    else f.messages.getById(f.carriers()[0]!.id)!.queueCustody!.bodyExposures = [];
+    const existingReceipts = f.messages
+      .getByThread(f.thread.id, 100, 'operator')
+      .filter((message) => message.extra?.contentModificationReceiptV1?.state === 'candidate').length;
+    if (boundary === 'original-source-withdrawn') f.humanMessage._tombstone = true;
+    else f.messages.getById(f.carriers()[0]!.id)!._tombstone = true;
     await f.recover();
     assert.equal(
       f.messages
         .getByThread(f.thread.id, 100, 'operator')
         .filter((message) => message.extra?.contentModificationReceiptV1?.state === 'candidate').length,
-      0,
+      boundary === 'return-source-withdrawn' ? 1 : existingReceipts,
+      'An authorized original Human retains the one accepted business receipt; return Queue/body state is not a gate',
     );
-    assert.ok(f.errors.some((error) => String(error).includes('access_denied')));
+    if (boundary === 'original-source-withdrawn' && !existingReceipts)
+      assert.ok(f.errors.some((error) => String(error).includes('access_denied')));
+    await f.recover();
+    assert.equal(
+      f.messages
+        .getByThread(f.thread.id, 100, 'operator')
+        .filter((message) => message.extra?.contentModificationReceiptV1?.state === 'candidate').length,
+      boundary === 'return-source-withdrawn' ? 1 : existingReceipts,
+    );
     assert.equal(f.store.get(f.request.record.progress.review!.reviewId)!.revision, before);
   });
 }
@@ -131,42 +143,46 @@ test('a handled multi-target Human receives one candidate receipt with error-fre
   assert.equal(receipts[0]!.replyTo, f.humanMessage.id);
   assert.equal(receipts[0]!.visibility, 'whisper');
   assert.deepEqual(receipts[0]!.whisperTo, f.humanMessage.whisperTo);
-  assert.equal(f.humanMessage.deliveryStatus, 'queued');
-  assert.deepEqual(f.humanMessage.queueCustody!.pendingTargetCats, ['sonnet']);
+  assert.equal(f.humanMessage.deliveryStatus, undefined);
+  assert.equal(Object.hasOwn(f.humanMessage, 'queueCustody'), false);
   assert.equal(f.carriers().length, 1);
 });
 
-test('one native image cannot choose either of two independent requests covered by its producer', async (t) => {
+test('independent queued media requests keep separate producers and cannot borrow one native image', async (t) => {
   const f = await fixture(t, false, { sharedProducer: true });
   const second = f.secondRequest;
   assert.ok(second);
   assert.notEqual(second.record.requestId, f.request.record.requestId);
   assert.notEqual(second.record.progress.task!.taskId, f.request.record.progress.task!.taskId);
-  assert.ok(f.child.causal!.coveredMessageIds!.includes(second.record.progress.sourceMessageId!));
+  assert.equal(
+    f.child.causal!.coveredMessageIds!.length,
+    1,
+    'one message_wake admits one source, no old inline worklist',
+  );
   f.publish('append');
-  const starts = f.dispatch.starts.length;
   await f.recover();
   await f.recover();
-  assert.equal(f.carriers().length, 0);
-  assert.equal(f.dispatch.starts.length, starts);
-  for (const request of [f.request, second]) {
-    assert.equal(f.store.returns.publicationForRequest(request.record.requestId), null);
-    assert.equal(f.store.get(request.record.progress.review!.reviewId)!.rounds.length, 1);
-  }
+  assert.equal(f.carriers().length, 1);
+  assert.ok(f.store.returns.publicationForRequest(f.request.record.requestId));
+  assert.equal(f.store.returns.publicationForRequest(second.record.requestId), null);
+  assert.equal(f.store.get(second.record.progress.review!.reviewId)!.rounds.length, 1);
 });
 
-for (const boundary of ['not-handled', 'other-outcome-child', 'no-producer-body', 'other-custody-owner'] as const) {
-  test(`handled Human bridge refuses ${boundary} before registration and wake`, async (t) => {
-    const f = await fixture(t, true);
-    await f.markOriginalHandled();
-    const custody = f.humanMessage.queueCustody!;
-    assert.ok(custody.handledByCatIds!.includes('codex-astra'));
-    assert.equal(custody.targetOutcomeByCatId!['codex-astra']!.invocationId, f.child.invocationId);
-    assert.ok(custody.bodyExposures!.some((item) => item.invocationId === f.child.invocationId));
-    if (boundary === 'not-handled') custody.handledByCatIds = [];
-    if (boundary === 'other-outcome-child') custody.targetOutcomeByCatId!['codex-astra']!.invocationId = randomUUID();
-    if (boundary === 'no-producer-body') custody.bodyExposures = [];
-    if (boundary === 'other-custody-owner') custody.ownerUserId = 'another-owner';
+for (const boundary of ['wrong-owner', 'wrong-thread', 'wrong-target', 'no-source-cause', 'ambiguous-child'] as const) {
+  test(`private native producer refuses ${boundary} before registration and wake`, async (t) => {
+    const f = await fixture(t);
+    const original = f.dispatch.turns.listBySource.bind(f.dispatch.turns);
+    t.mock.method(f.dispatch.turns, 'listBySource', (query) => {
+      const records = original(query);
+      if (boundary === 'ambiguous-child') return [...records, { ...records[0]!, invocationId: randomUUID() }];
+      return records.map((record) => ({
+        ...record,
+        ...(boundary === 'wrong-owner' ? { userId: 'foreign' } : {}),
+        ...(boundary === 'wrong-thread' ? { threadId: 'foreign' } : {}),
+        ...(boundary === 'wrong-target' ? { catId: 'sonnet' } : {}),
+        ...(boundary === 'no-source-cause' ? { causal: { triggerMessageId: 'foreign' } } : {}),
+      }));
+    });
     f.publish('append');
     const starts = f.dispatch.starts.length;
     await f.recover();

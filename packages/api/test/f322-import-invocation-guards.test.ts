@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
+import { fileURLToPath } from 'node:url';
 import { catRegistry, createCatId } from '@cat-cafe/shared';
 import { loadCatConfig, toAllCatConfigs } from '../src/config/cat-config-loader.js';
 import {
@@ -12,7 +13,9 @@ import { SessionChainStore } from '../src/domains/cats/services/stores/ports/Ses
 import { ThreadStore } from '../src/domains/cats/services/stores/ports/ThreadStore.js';
 import type { AgentMessage, AgentServiceOptions } from '../src/domains/cats/services/types.js';
 
-for (const [id, config] of Object.entries(toAllCatConfigs(loadCatConfig('../../cat-template.json')))) {
+for (const [id, config] of Object.entries(
+  toAllCatConfigs(loadCatConfig(fileURLToPath(new URL('../../../cat-template.json', import.meta.url)))),
+)) {
   if (!catRegistry.has(id)) catRegistry.register(id, config);
 }
 

@@ -41,11 +41,15 @@ export function PianoMessageNavigator({
   const activeMessage = activeKey ? byId.get(activeKey.id) : undefined;
   const idFor = (id: string) => `piano-${prefix}-${encodeURIComponent(id)}`;
   const sender = (message: (typeof messages)[number]) =>
-    getSenderLabel(message, (id) => getCatById(id.toLowerCase()), coCreator.name);
-  const identityColor = (message: (typeof messages)[number]) =>
-    message.catId
-      ? `var(--color-${catSlug(getCatById(message.catId.toLowerCase())?.id ?? message.catId)}-primary, var(--console-cat-fallback))`
-      : 'var(--cafe-text-muted)';
+    getSenderLabel(message, (id) => getCatById(id.toLowerCase()), coCreator);
+  const identityColor = (message: (typeof messages)[number]) => {
+    const actorCatId = message.from?.kind === 'agent' ? message.from.catId : undefined;
+    return actorCatId
+      ? `var(--color-${catSlug(getCatById(actorCatId.toLowerCase())?.id ?? actorCatId)}-primary, var(--console-cat-fallback))`
+      : message.from?.kind === 'user'
+        ? 'var(--color-cocreator-primary)'
+        : 'var(--cafe-text-muted)';
+  };
 
   return (
     <div
@@ -74,8 +78,8 @@ export function PianoMessageNavigator({
         if (!message) return null;
         const previous = byId.get(geometry.keys[index - 1]?.id);
         const sameSender =
-          !!previous && previous.catId === message.catId && (message.catId ? true : previous.type === message.type);
-        const preview = messageNavigatorPreviewText(message, messages);
+          !!previous?.from && !!message.from && JSON.stringify(previous.from) === JSON.stringify(message.from);
+        const preview = messageNavigatorPreviewText(message);
         const status = `${key.error ? '，这里出过错' : ''}${key.awaitingResponse ? '，等你回应' : ''}`;
         return (
           <PianoMessageKey
@@ -108,7 +112,6 @@ export function PianoMessageNavigator({
       {input.preview && activeKey && activeMessage && geometry && (
         <PianoPreview
           message={activeMessage}
-          messages={messages}
           keyData={activeKey}
           trackHeight={geometry.trackHeight}
           label={sender(activeMessage)}

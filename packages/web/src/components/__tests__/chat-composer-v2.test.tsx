@@ -173,14 +173,7 @@ describe('v2 two-level composer', () => {
     renderComposer();
     expect(textarea.value).toBe('Keep my draft with speech');
     await act(async () => button('发送消息')?.click());
-    expect(onSend).toHaveBeenCalledWith(
-      'Keep my draft with speech',
-      undefined,
-      undefined,
-      undefined,
-      undefined,
-      undefined,
-    );
+    expect(onSend).toHaveBeenCalledWith('Keep my draft with speech', undefined, undefined, undefined);
   });
 
   it('keeps textarea identity, selection and composition across language and presentation changes', () => {
@@ -297,7 +290,6 @@ describe('v2 two-level composer', () => {
           presentation="v2"
           hasText
           hasActiveInvocation
-          activeExecutionKey="exec-1"
           onTranscript={vi.fn()}
           onSend={onSend}
           onQueueSend={onQueueSend}
@@ -305,39 +297,9 @@ describe('v2 two-level composer', () => {
       ),
     );
     expect(button('语音输入')).toBeDefined();
-    act(() => button('排队发送')?.click());
-    expect(onQueueSend).toHaveBeenCalledOnce();
-    expect(onSend).not.toHaveBeenCalled();
-  });
-
-  it('requires confirmation for force-send and dismisses a stale execution target', () => {
-    const onForceSend = vi.fn();
-    const renderRunning = (execution: string) =>
-      act(() =>
-        root.render(
-          <ChatInputActionButton
-            presentation="v2"
-            hasText
-            hasActiveInvocation
-            activeExecutionKey={execution}
-            onTranscript={vi.fn()}
-            onSend={onSend}
-            onQueueSend={vi.fn()}
-            onForceSend={onForceSend}
-          />,
-        ),
-      );
-    renderRunning('exec-a');
-    act(() => button('强制停止并发送此消息')?.click());
-    expect(onForceSend).not.toHaveBeenCalled();
-    expect(container.querySelector('[data-testid="steer-confirm"]')).not.toBeNull();
-    renderRunning('exec-b');
-    expect(container.querySelector('[data-testid="steer-confirm"]')).toBeNull();
-    expect(onForceSend).not.toHaveBeenCalled();
-    act(() => button('强制停止并发送此消息')?.click());
-    act(() => container.querySelector<HTMLButtonElement>('[data-testid="steer-confirm"]')?.click());
-    expect(onForceSend).toHaveBeenCalledOnce();
-    expect(onSend).not.toHaveBeenCalled();
+    act(() => button('发送消息')?.click());
+    expect(onQueueSend).not.toHaveBeenCalled();
+    expect(onSend).toHaveBeenCalledOnce();
   });
 
   it('disables add and send while an attachment is uploading, without changing the draft', () => {
@@ -365,7 +327,7 @@ describe('v2 two-level composer', () => {
     ],
     ['recording', false, true, 'hidden', ['停止录音', '发送消息'], ['Stop recording', 'Send message']],
     ['transcribing', false, true, 'hidden', ['转写中', '发送消息'], ['Transcribing', 'Send message']],
-    ['idle', true, true, 'available', ['语音输入', '排队发送'], ['Voice input', 'Queue message']],
+    ['idle', true, true, 'available', ['语音输入', '发送消息'], ['Voice input', 'Send message']],
   ] as const)('updates action names in place: voice=%s, active=%s, draft=%s, stop=%s', (state, active, text, stopState, zh, en) => {
     voice.state = state;
     act(() =>

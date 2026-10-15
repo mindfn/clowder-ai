@@ -72,15 +72,7 @@ describe('shared split composer admission', () => {
     ];
     const onSend = mockInput.mock.calls[0][0].onSend;
     await act(async () => {
-      await onSend(
-        '消息',
-        undefined,
-        undefined,
-        'queue',
-        'reply-1',
-        'continue_current',
-        withAttachments ? attachments : undefined,
-      );
+      await onSend('消息', undefined, undefined, 'reply-1', withAttachments ? attachments : undefined);
     });
     expect(mockSend).toHaveBeenCalledTimes(1);
     expect(mockSend.mock.calls[0]).toEqual([
@@ -88,10 +80,9 @@ describe('shared split composer admission', () => {
       undefined,
       'split-target',
       undefined,
-      'queue',
       'reply-1',
-      'continue_current',
       withAttachments ? attachments : undefined,
+      undefined,
       { consumeComposerDraft: true },
     ]);
   });

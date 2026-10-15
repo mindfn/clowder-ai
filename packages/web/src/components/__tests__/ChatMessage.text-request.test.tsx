@@ -87,14 +87,28 @@ describe('ChatMessage: request status under a sent message that quotes places of
   };
 
   it('puts the live request line inside the Human message that was taken over', async () => {
-    await render({ id: 'human-text', type: 'user', content: '请改这一处', timestamp: 1, contentBlocks: blocks });
+    await render({
+      id: 'human-text',
+      type: 'user',
+      from: { kind: 'user', userId: 'operator' },
+      content: '请改这一处',
+      timestamp: 1,
+      contentBlocks: blocks,
+    });
     const status = container.querySelector('[data-testid="text-message-request"]');
     expect(status?.textContent).toContain('修改中 · launch-plan.md 1 处');
     expect(status?.closest('[data-message-id="human-text"]')).not.toBeNull();
   });
 
   it('shows nothing for a message that was not taken over by any request', async () => {
-    await render({ id: 'human-untouched', type: 'user', content: '请改这一处', timestamp: 1, contentBlocks: blocks });
+    await render({
+      id: 'human-untouched',
+      type: 'user',
+      from: { kind: 'user', userId: 'operator' },
+      content: '请改这一处',
+      timestamp: 1,
+      contentBlocks: blocks,
+    });
     expect(container.querySelector('[data-testid="text-message-request"]')).toBeNull();
   });
 
@@ -102,6 +116,7 @@ describe('ChatMessage: request status under a sent message that quotes places of
     await render({
       id: 'human-text',
       type: 'user',
+      from: { kind: 'user', userId: 'operator' },
       content: '请改这一处',
       timestamp: 1,
       contentBlocks: blocks,
@@ -113,7 +128,13 @@ describe('ChatMessage: request status under a sent message that quotes places of
   });
 
   it('reads nothing for an ordinary Human message', async () => {
-    await render({ id: 'human-plain', type: 'user', content: '你好', timestamp: 1 });
+    await render({
+      id: 'human-plain',
+      type: 'user',
+      from: { kind: 'user', userId: 'operator' },
+      content: '你好',
+      timestamp: 1,
+    });
     expect(mocks.fetch).not.toHaveBeenCalled();
   });
 });

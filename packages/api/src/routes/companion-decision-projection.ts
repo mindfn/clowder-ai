@@ -1,4 +1,5 @@
 import type {
+  RichInteractiveBlock,
   RuntimeInteractionRecord,
   UnifiedAttentionItemV1,
   UnifiedAttentionReadV1,
@@ -12,6 +13,7 @@ import {
   type DecisionSourceRead,
   needsMeSourceSchema,
 } from './companion-decision-sources.js';
+import { type OriginalApprovalCardRead, originalApprovalCardKey } from './companion-original-approval-cards.js';
 import { mergeStructuredChoices } from './companion-structured-choices.js';
 import type { UserMentionTodoRead } from './user-mention-todo-projection.js';
 
@@ -110,6 +112,8 @@ export function projectCompanionDecisions(
   userMentions?: UserMentionTodoRead,
   structuredChoices: RuntimeInteractionRecord[] = [],
   personal?: DecisionPersonalViewInput,
+  originalApprovalCards?: OriginalApprovalCardRead,
+  conversationPresentations?: ReadonlyMap<string, RichInteractiveBlock>,
 ) {
   const approvalRead = approvalsSourceSchema.parse(approvalsSource);
   const workRead = needsMeSourceSchema.parse(needsMeSource);
@@ -117,8 +121,13 @@ export function projectCompanionDecisions(
   const needsMe = workRead.ownerReads;
   assertDecisionOwner(approvals, needsMe, userId);
   const unified = projectDecisionItems(approvals, needsMe);
-  const reasons = new Set(unified.reasons);
-  mergeStructuredChoices(unified.items, structuredChoices, reasons);
+  const reasons = new Set([...unified.reasons, ...(originalApprovalCards?.reasons ?? [])]);
+  for (const item of unified.items) {
+    if (!item.approval) continue;
+    const proof = originalApprovalCards?.proofs.get(originalApprovalCardKey(item.approval));
+    if (proof) item.originalApprovalCard = proof;
+  }
+  mergeStructuredChoices(unified.items, structuredChoices, reasons, userId, conversationPresentations);
   const canonicalDecisionItems = unified.items;
   const personalProjection = selectDecisionPersonalItems({
     canonicalItems: canonicalDecisionItems,

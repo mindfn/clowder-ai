@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import { MessageStore } from '../../src/domains/cats/services/stores/ports/MessageStore.js';
+import { canonicalTestMessageInput } from '../helpers/message-from-fixtures.js';
 import { registerMentionRestorationTests } from '../helpers/user-mention-restoration-contract.js';
 
 const request = {
@@ -15,8 +16,8 @@ const request = {
 
 test('activation is fixed once; 558 legacy requests do not become current attention and handled state survives', async () => {
   const store = new MessageStore();
-  for (let n = 0; n < 558; n++) store.append({ ...request, threadId: `legacy-${n}` });
-  const handled = store.append({ ...request, threadId: 'handled' });
+  for (let n = 0; n < 558; n++) store.append(canonicalTestMessageInput({ ...request, threadId: `legacy-${n}` }));
+  const handled = store.append(canonicalTestMessageInput({ ...request, threadId: 'handled' }));
   store.resolveUserMentionRequest('owner', 'handled', handled.id);
   assert.equal(await store.initializeUserMentionInbox(200), 200);
   assert.equal(await store.initializeUserMentionInbox(300), 200);
@@ -25,7 +26,7 @@ test('activation is fixed once; 558 legacy requests do not become current attent
     (await store.listHandledUserMentions('owner')).map((m) => m.id),
     [handled.id],
   );
-  const fresh = store.append({ ...request, timestamp: 201 });
+  const fresh = store.append(canonicalTestMessageInput({ ...request, timestamp: 201 }));
   assert.deepEqual(
     store
       .listUserMentionRequests('owner')
@@ -37,16 +38,18 @@ test('activation is fixed once; 558 legacy requests do not become current attent
 
 test('bulk exact snapshots preserve human replies/new requests and undo only once without resurrecting replies', async () => {
   const store = new MessageStore();
-  const a = store.append({ ...request, threadId: 'a' });
-  const b = store.append({ ...request, threadId: 'b' });
+  const a = store.append(canonicalTestMessageInput({ ...request, threadId: 'a' }));
+  const b = store.append(canonicalTestMessageInput({ ...request, threadId: 'b' }));
   const refs = [a, b].map((m) => ({ threadId: m.threadId, messageId: m.id }));
   const result = await store.handleUserMentionRequests('owner', refs);
   assert.ok(result);
   assert.equal(result.handled, 2);
   assert.equal(store.listUserMentionRequests('owner').length, 0);
   assert.equal((await store.listHandledUserMentions('owner')).length, 2);
-  store.append({ ...request, threadId: 'a', catId: null, mentionsUser: false, timestamp: 101 });
-  const newer = store.append({ ...request, threadId: 'b', timestamp: 102 });
+  store.append(
+    canonicalTestMessageInput({ ...request, threadId: 'a', catId: null, mentionsUser: false, timestamp: 101 }),
+  );
+  const newer = store.append(canonicalTestMessageInput({ ...request, threadId: 'b', timestamp: 102 }));
   assert.equal(await store.undoUserMentionHandling('other', result.undoId), null);
   assert.deepEqual(await store.undoUserMentionHandling('owner', result.undoId), { restored: 0 });
   assert.deepEqual(
@@ -58,10 +61,10 @@ test('bulk exact snapshots preserve human replies/new requests and undo only onc
 
 test('bulk undo restores exact requests but not pre-existing handled rows; a stale snapshot closes nothing', async () => {
   const store = new MessageStore();
-  const closed = store.append({ ...request, threadId: 'already' });
+  const closed = store.append(canonicalTestMessageInput({ ...request, threadId: 'already' }));
   store.resolveUserMentionRequest('owner', 'already', closed.id);
-  const first = store.append(request);
-  const replacement = store.append({ ...request, timestamp: 101 });
+  const first = store.append(canonicalTestMessageInput(request));
+  const replacement = store.append(canonicalTestMessageInput({ ...request, timestamp: 101 }));
   assert.equal(await store.handleUserMentionRequests('owner', [{ threadId: 'thread', messageId: first.id }]), null);
   const result = await store.handleUserMentionRequests('owner', [{ threadId: 'thread', messageId: replacement.id }]);
   assert.ok(result);
@@ -83,8 +86,12 @@ test('mailbox defaults to only post-load recent requests, exposes earlier separa
   t.after(() => app.close());
   const store = new MessageStore();
   const now = Date.now();
-  const legacy = store.append({ ...request, threadId: 'legacy', timestamp: now - 25 * 86400000 });
-  const oldHandled = store.append({ ...request, threadId: 'handled', timestamp: now - 24 * 86400000 });
+  const legacy = store.append(
+    canonicalTestMessageInput({ ...request, threadId: 'legacy', timestamp: now - 25 * 86400000 }),
+  );
+  const oldHandled = store.append(
+    canonicalTestMessageInput({ ...request, threadId: 'handled', timestamp: now - 24 * 86400000 }),
+  );
   store.resolveUserMentionRequest('owner', 'handled', oldHandled.id);
   const previous = process.env.DEFAULT_OWNER_USER_ID;
   process.env.DEFAULT_OWNER_USER_ID = 'owner';
@@ -115,7 +122,9 @@ test('mailbox defaults to only post-load recent requests, exposes earlier separa
   assert.equal((await get()).json().totalCount, 0);
   assert.equal((await get('earlier')).json().items[0].userMention.messageId, legacy.id);
   assert.equal((await get('earlier')).json().attentionCount, 0);
-  const fresh = store.append({ ...request, timestamp: now + 1, content: '@co-creator\n需要你重启，建议空闲时操作' });
+  const fresh = store.append(
+    canonicalTestMessageInput({ ...request, timestamp: now + 1, content: '@co-creator\n需要你重启，建议空闲时操作' }),
+  );
   const read = (await get()).json();
   assert.equal(read.totalCount, 1);
   assert.equal(read.attentionCount, 0, 'explicit @you rows stay visible without increasing the decision badge');
@@ -213,7 +222,7 @@ test('bulk and undo refuse missing sessions, foreign owners, malformed and nonlo
   const app = Fastify();
   t.after(() => app.close());
   const store = new MessageStore();
-  const msg = store.append(request);
+  const msg = store.append(canonicalTestMessageInput(request));
   app.addHook('preHandler', async (r) => {
     r.sessionUserId = String(r.headers['x-test-session'] ?? '');
   });
@@ -282,7 +291,7 @@ for (const [day, hours] of [
     const { readUserMentionTodos } = await import('../../src/routes/user-mention-todo-projection.js');
     const now = new Date(2026, 9, day, 10).getTime();
     const store = new MessageStore();
-    store.append({ ...request, timestamp: now - hours * 3600000 });
+    store.append(canonicalTestMessageInput({ ...request, timestamp: now - hours * 3600000 }));
     const result = await readUserMentionTodos(store, 'owner', { cutover: now - 7 * 86400000, now, period: 'week' });
     assert.equal(result.items.length, 1);
     assert.equal(result.recentCount, 1);
@@ -295,7 +304,7 @@ test('thread title lookup fails per row without failing approvals or disclosing 
   const app = Fastify();
   t.after(() => app.close());
   const store = new MessageStore();
-  store.append(request);
+  store.append(canonicalTestMessageInput(request));
   const previous = process.env.DEFAULT_OWNER_USER_ID;
   process.env.DEFAULT_OWNER_USER_ID = 'owner';
   t.after(() => {

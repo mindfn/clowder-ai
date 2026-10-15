@@ -35,7 +35,7 @@ import {
 import { invalidateCliCommand } from './cli-resolve.js';
 import { resolveWindowsSpawnPlan } from './cli-spawn-win.js';
 import { buildUnixSupervisedSpawnPlan } from './cli-supervised-process.js';
-import { resolveCliTimeoutMs } from './cli-timeout.js';
+import { registerProcessActivity } from './process-activity-registry.js';
 
 export { resolveCliSupervisorNodeArgs } from './cli-supervised-process.js';
 
@@ -357,10 +357,15 @@ export async function* spawnCli(
   options: CliSpawnOptions,
   deps?: CliSpawnerDeps,
 ): AsyncGenerator<unknown, void, undefined> {
+  if (options.stdinInput !== undefined && options.onStdinReady) {
+    throw new Error('CLI stdin must have exactly one input owner');
+  }
   const doSpawn: SpawnFn = deps?.spawnFn ?? defaultSpawn;
   const livenessWarningDrainIntervalMs = deps?.livenessWarningDrainIntervalMs ?? LIVENESS_WARNING_DRAIN_INTERVAL_MS;
-  // Default timeout is configurable via CLI_TIMEOUT_MS env var; 0 disables timeout.
-  const timeoutMs = resolveCliTimeoutMs(options.timeoutMs);
+  // Only a caller that asks for a response timeout gets one (probes and other one-off commands).
+  // F117 KD-22: a dispatched member's timeout is its invocation's, driven by CLI_TIMEOUT_MS — never
+  // a second one here.
+  const timeoutMs = options.timeoutMs ?? 0;
 
   // Log only flag names (--foo) and arg count — never raw values.
   // Multiple providers pass prompt text via different shapes (positional,
@@ -389,7 +394,7 @@ export async function* spawnCli(
     // Incident 2026-05-29 (cross-thread-context-contamination): when stdinInput is
     // provided, open stdin as a pipe so the prompt can be streamed off the command
     // line. Otherwise keep 'ignore' (unchanged for providers not using stdin).
-    stdio: [options.stdinInput != null ? 'pipe' : 'ignore', 'pipe', 'pipe'],
+    stdio: [options.stdinInput != null || options.onStdinReady ? 'pipe' : 'ignore', 'pipe', 'pipe'],
     bindExecutionOwner: options.bindExecutionOwner !== false,
   });
   if (options.bindExecutionOwner !== false) {
@@ -406,7 +411,8 @@ export async function* spawnCli(
   // cross-process prompt leakage (`ps -o command=` / /proc/<pid>/cmdline can read
   // any concurrent process's full argv). The child reads it because the CLI is
   // invoked with PROMPT='-'.
-  if (options.stdinInput != null) {
+  let closeStdin: (() => void) | undefined;
+  if (options.stdinInput != null || options.onStdinReady) {
     const childStdin = child.stdin;
     if (childStdin) {
       // EPIPE guard: child may exit before consuming all stdin. EPIPE is expected
@@ -416,8 +422,20 @@ export async function* spawnCli(
           log.warn({ err, pid: child.pid, command: options.command }, 'Unexpected CLI stdin write error');
         }
       });
-      childStdin.write(options.stdinInput);
-      childStdin.end();
+      if (options.stdinInput != null) childStdin.write(options.stdinInput);
+      if (options.stdinCloseSignal && !options.stdinCloseSignal.aborted) {
+        closeStdin = () => childStdin.end();
+        options.stdinCloseSignal.addEventListener('abort', closeStdin, { once: true });
+      } else if (!options.onStdinReady || options.stdinCloseSignal?.aborted) {
+        childStdin.end();
+      }
+      options.onStdinReady?.((input) => {
+        if (childStdin.destroyed || childStdin.writableEnded || options.signal?.aborted) {
+          throw new Error('CLI stdin is closed');
+        }
+        childStdin.write(input);
+        if (!options.stdinCloseSignal) childStdin.end();
+      });
     }
   }
 
@@ -663,13 +681,17 @@ export async function* spawnCli(
   let localFinalTerminal: 'completed' | 'failed' | null = null;
 
   // F118 Phase B: Initialize liveness probe
+  let unregisterProcessActivity: (() => void) | undefined;
   if (options.livenessProbe && child.pid !== undefined) {
     probe = new ProcessLivenessProbe(child.pid, options.livenessProbe);
     probe.start();
     // F152: Register probe for OTel agentLiveness gauge
     if (options.invocationId) {
       const catId = options.env?.CAT_CAFE_CAT_ID ?? 'unknown';
-      registerLivenessProbe(options.invocationId, catId, () => probe!.getState());
+      const liveProbe = probe;
+      registerLivenessProbe(options.invocationId, catId, () => liveProbe.getState());
+      // F117 KD-22: the member output timeout defers while this process is still using CPU.
+      unregisterProcessActivity = registerProcessActivity(options.invocationId, () => liveProbe.activity());
     }
   }
 
@@ -1156,6 +1178,7 @@ export async function* spawnCli(
       child.stderr?.destroy();
     }
     if (timeoutTimer) clearTimeout(timeoutTimer);
+    if (closeStdin) options.stdinCloseSignal?.removeEventListener('abort', closeStdin);
     if (options.signal) {
       options.signal.removeEventListener('abort', abortHandler);
     }
@@ -1163,6 +1186,7 @@ export async function* spawnCli(
     probe?.stop();
     // F152: Unregister probe from OTel gauge
     if (options.invocationId) unregisterLivenessProbe(options.invocationId);
+    unregisterProcessActivity?.();
     killChild();
 
     // F153 Phase B: End CLI session span with appropriate status

@@ -100,22 +100,11 @@ function assertOrdinaryReplacementRoute(
   }
 }
 
-/** Server-derived interruption proof, passed on only when it names exactly the lease and generation being replaced. */
-function interruptedGenerationFor(
-  input: ActionSuccessorAdmissionInput,
-  replacement: { leaseId: string; expectedGeneration: number },
-): { generation: number; evidenceRef: string } | undefined {
-  const proof = input.interruptedGenerationEvidence;
-  if (proof?.leaseId !== replacement.leaseId || proof.generation !== replacement.expectedGeneration) return undefined;
-  return { generation: proof.generation, evidenceRef: proof.evidenceRef };
-}
-
 function isDelegateLineageReplacement(
   current: ActionSuccessorLease,
   input: ActionSuccessorAdmissionInput,
   claimOrigin: ClaimOrigin,
   returnedReplacement: ReturnedReplacementResolution,
-  interruptedGeneration: ReturnType<typeof interruptedGenerationFor>,
 ): boolean {
   if (returnedReplacement.kind === 'authorized') return true;
   if (
@@ -153,13 +142,6 @@ function isDelegateLineageReplacement(
   if (!currentDelegateLineageGenerationHasExactEntry(current, lineageRoute)) {
     return false;
   }
-  if (interruptedGeneration) {
-    return (
-      current.status === 'active' &&
-      Object.keys(current.holderOutcomes).length === 0 &&
-      Object.keys(current.completionCandidates).length === 0
-    );
-  }
   const holderOutcome = current.holderOutcomes[current.holderCatIds[0] ?? ''];
   return (
     current.status === 'replaceable' &&
@@ -189,14 +171,7 @@ export async function admitActionSuccessorReplacement(
     return { admit: false, outcome: 'return_proof_required', lease: current };
   }
   if (returnedReplacement.kind === 'ordinary') assertOrdinaryReplacementRoute(current, input, claimOrigin);
-  const interruptedGeneration = interruptedGenerationFor(input, replacement);
-  const delegateLineageReentry = isDelegateLineageReplacement(
-    current,
-    input,
-    claimOrigin,
-    returnedReplacement,
-    interruptedGeneration,
-  );
+  const delegateLineageReentry = isDelegateLineageReplacement(current, input, claimOrigin, returnedReplacement);
   const { terminalPredicate, freshnessEvidenceRef, delegateEvidenceRef } = await deps.resolveVerifiedPredicate(
     input,
     current,
@@ -204,7 +179,6 @@ export async function admitActionSuccessorReplacement(
   );
   const replacementInput = {
     expectedGeneration: replacement.expectedGeneration,
-    ...(interruptedGeneration ? { interruptedGeneration } : {}),
     holderCatIds: input.holderCatIds,
     holderThreadId: input.targetThreadId,
     dispatchId: input.dispatchId,

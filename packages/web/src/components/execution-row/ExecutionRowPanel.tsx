@@ -19,13 +19,6 @@ import type { ExecutionRowController } from './useExecutionRow';
 function WaitLine({ controller, words }: { controller: ExecutionRowController; words: ExecutionRowWords }) {
   const { model, resolveCatName } = controller;
   const wait = model.waitInfo;
-  if (model.queuePaused && model.pauseReason) {
-    return (
-      <div data-testid="execution-row-pause-reason" className="px-3 py-1 text-xs text-conn-amber-text">
-        {words.pauseReason[model.pauseReason]}
-      </div>
-    );
-  }
   if (!wait || model.visibleQueueCount === 0) return null;
   return (
     <div data-testid="execution-row-wait" className="px-3 py-1 text-xs text-cafe-muted">
@@ -85,7 +78,7 @@ function RunningSection({ controller, words }: { controller: ExecutionRowControl
 
 function QueueSection({ controller, words }: { controller: ExecutionRowController; words: ExecutionRowWords }) {
   const { model, view, commands, convergence, resolveCatName } = controller;
-  if (model.visibleQueueCount === 0 && !model.queuePaused) return null;
+  if (model.visibleQueueCount === 0) return null;
   return (
     <section aria-label={words.panel.queue(model.visibleQueueCount)} data-testid="execution-row-queue">
       <div className="flex items-center gap-2 px-3 pt-2 pb-1 text-xs">
@@ -98,7 +91,7 @@ function QueueSection({ controller, words }: { controller: ExecutionRowControlle
               onClick={() => void commands.handleContinue()}
               className="rounded-md bg-[var(--semantic-success)] px-2 py-1 text-[var(--cafe-surface)] hover:opacity-90"
             >
-              {model.resume === 'continue' ? words.actions.continue : words.actions.recover}
+              {words.actions.recover}
             </button>
           ) : null}
           <button

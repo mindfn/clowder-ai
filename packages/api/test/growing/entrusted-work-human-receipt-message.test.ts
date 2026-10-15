@@ -3,6 +3,7 @@ import { describe, test } from 'node:test';
 import type { EntrustedWorkHumanTerminalReceiptV1 } from '@cat-cafe/shared';
 import { MessageStore, mergeMessageExtra } from '../../src/domains/cats/services/stores/ports/MessageStore.js';
 import { safeParseExtra } from '../../src/domains/cats/services/stores/redis/redis-message-parsers.js';
+import { adaptMessageStore } from '../helpers/message-from-fixtures.js';
 
 const receipt: EntrustedWorkHumanTerminalReceiptV1 = {
   v: 1,
@@ -61,7 +62,7 @@ function message(overrides: Record<string, unknown> = {}) {
 
 describe('F310 typed original-Thread terminal receipt', () => {
   test('validates exact Host-authenticated coordinates and survives memory/Redis hydration', () => {
-    const store = new MessageStore();
+    const store = adaptMessageStore(new MessageStore());
     const stored = store.append(message());
     assert.deepEqual(stored.extra?.entrustedWorkHumanTerminalReceiptV1, receipt);
     assert.deepEqual(
@@ -93,7 +94,7 @@ describe('F310 typed original-Thread terminal receipt', () => {
   });
 
   test('generic extra patches and stream merges cannot replace the immutable receipt', () => {
-    const store = new MessageStore();
+    const store = adaptMessageStore(new MessageStore());
     const stored = store.append(message());
     const forged = {
       ...receipt,

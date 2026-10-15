@@ -257,7 +257,6 @@ export * from './capability-evolution-preparation-review.js';
 export * from './capability-evolution-refs.js';
 // Cat types
 export type {
-  AgyNativeCodingGrantConfig,
   AgyProfileConfig,
   CatColor,
   CatConfig,
@@ -288,10 +287,17 @@ export type {
   Roster,
   RosterEntry,
 } from './cat-breed.js';
+export {
+  CAT_CARRIERS,
+  type CatCarrier,
+  catClientSupportsCarrier,
+  getCatCarrierOptions,
+} from './cat-carrier.js';
 // F182: Cat routing error types
 export type { CatAlternative, CatRoutingError } from './cat-routing.js';
+export { CatAlternativeSchema, CatRoutingErrorSchema } from './cat-routing.js';
 // F212: CLI error diagnostics (cross-package data contract; classifier/sanitizer impl stays in api)
-export type { CliActiveWriterRecoveryState, CliDiagnostics, CliErrorReasonCode } from './cli-diagnostics.js';
+export type { CliDiagnostics, CliErrorReasonCode } from './cli-diagnostics.js';
 export type { BuiltinAccountClient } from './client-routing.js';
 export {
   BUILTIN_ACCOUNT_CLIENT_FOR_ID,
@@ -309,11 +315,13 @@ export type {
   CloudBridgeOutboundStatus,
   CloudBridgeOutboundTransport,
   CloudBridgeRecoveryV1,
+  CloudBridgeRetryV1,
 } from './cloud-bridge-outbound-receipt.js';
 export {
   isCloudBridgeFailureDiagnosticV1,
   isCloudBridgeOutboundReceiptV1,
   isCloudBridgeRecoveryV1,
+  isCloudBridgeRetryV1,
 } from './cloud-bridge-outbound-receipt.js';
 export * from './collective.js';
 export * from './collective-collaboration.js';
@@ -461,6 +469,7 @@ export type {
 export {
   getAllConnectorDefinitions,
   getConnectorDefinition,
+  isManagedHoldConnectorSource,
   isSelectableManagedHoldConnectorSource,
   isStaticConnectorId,
   registerConnectorDefinition,
@@ -616,23 +625,8 @@ export type {
   TrajectoryProvenance,
 } from './feat-trajectory.js';
 export { makeGitRefEntryId } from './feat-trajectory.js';
-// F254 Phase E: persistent catch-closure responsibility and output-commit decisions
-export type {
-  ClosureDraftBody,
-  FreshnessClosureAggregate,
-  FreshnessClosureAttempt,
-  FreshnessClosureBlockedReason,
-  FreshnessClosureDisposition,
-  FreshnessClosureProjection,
-  FreshnessClosureStatus,
-  FreshnessSupplementAggregate,
-  FreshnessSupplementFailureReason,
-  FreshnessSupplementProjection,
-  FreshnessSupplementStatus,
-  LegacyClosureMigrationOutcomeCounts,
-  OutputCommitDecision,
-  PublishedFreshnessAnnotation,
-} from './freshness-closure.js';
+// Output-commit truth for an answer turn
+export type { OutputCommitDecision, PublishedFreshnessAnnotation } from './freshness-closure.js';
 // F245: Friction Signal Eval types
 export type {
   ActionableFrictionCandidate,
@@ -777,6 +771,8 @@ export {
   custodyOpportunityEpisodeInputV1Schema,
   custodyOpportunityEpisodeV1Schema,
 } from './growing-opportunity.js';
+export type { HoldCancelEntry, HoldCardCancelability, HoldCardRef } from './hold-card-cancelability.js';
+export { decideHoldCancelEntry, readHoldCardCancelability } from './hold-card-cancelability.js';
 // F281 Phase A: server-bound human disposition feedback and exact-subject eligibility contract
 export {
   buildHumanDispositionEnvelope,
@@ -1077,6 +1073,38 @@ export {
   createCatMessage,
   createUserMessage,
 } from './message.js';
+// #1354 / RFC #1356: canonical Queue → History → Active Run lifecycle contract.
+export type {
+  LifecycleActiveRun,
+  LifecycleAppendAction,
+  LifecycleAppendCapability,
+  LifecycleAppendExpectedRun,
+  LifecycleDeliveryFailureReason,
+  LifecycleDeliveryFailureResult,
+  LifecycleDispatchRef,
+  LifecycleInlinePayload,
+  LifecycleInputCapabilities,
+  LifecycleInputReadReceipt,
+  LifecycleMessageFrom,
+  LifecycleMessageMetadata,
+  LifecycleMessageRefPayload,
+  LifecycleQueueEntry,
+  LifecycleQueuePriority,
+  LifecycleQueueSnapshot,
+  LifecycleResponseBubble,
+  LifecycleStoredMessageMetadata,
+  MessageFrom,
+  ReorderVisibleLifecycleEntriesCommand,
+  StructuredOwnerAdmissionBinding,
+  TimelineMessageKind,
+} from './message-lifecycle.js';
+export {
+  hasExactLifecycleProcessingDispatch,
+  isLifecycleInputReadReceipt,
+  isLifecycleStoredMessageMetadata,
+  isMessageFrom,
+  timelineMessageKind,
+} from './message-lifecycle.js';
 // Mount Rules types (F228 Skill 挂载规则解耦)
 export type {
   CustomMountPointRule,
@@ -1431,6 +1459,7 @@ export {
   type ProviderWarningSemanticEvent,
 } from './provider-semantic-event.js';
 export type {
+  ActiveInvocationGuidanceCapability,
   FreshnessCarrier,
   FreshnessCarrierCapability,
   FreshnessCarrierDeliverySemantics,
@@ -1445,15 +1474,8 @@ export type {
   QueueInvocationSettlement,
   QueueLineageEvidenceRef,
   QueueManagedHoldContinuationWitness,
-  QueueMessageReceipt,
-  QueueMessageReceiptProjection,
-  QueueReceiptTarget,
-  QueueReceiptTargetState,
   QueueRecoveryAction,
   QueueRecoveryRequest,
-  QueueReminderAttempt,
-  QueueReminderAttemptState,
-  QueueReminderMissedReason,
   QueueSourceResponseConsumptionWitness,
   QueueTargetAttempt,
   QueueTargetAttemptState,
@@ -1464,12 +1486,15 @@ export type {
   QueueTerminalSilentConsumptionWitness,
   QueueTurnExecutionEvidenceRef,
 } from './queue-receipt.js';
-// F264: durable per-target queued-message receipt and manual reminder truth
+// F264: delivery capability and durable per-target receipt projections
 export {
+  ACTIVE_INVOCATION_GUIDANCE_CAPABILITIES,
   FRESHNESS_CARRIER_DELIVERY_SEMANTICS,
   FRESHNESS_CARRIER_PROVIDERS,
   FRESHNESS_CARRIERS,
   isQueueDispatchDispositionEvidence,
+  parseFreshnessCarrierCapability,
+  supportsActiveInvocationGuidance,
 } from './queue-receipt.js';
 // Reflux types (F076 Phase 2 — 回流)
 export type {
@@ -1506,6 +1531,7 @@ export type {
 export { isPersonMemoryProposalCardBlock, isValidRichBlock, normalizeRichBlock } from './rich.js';
 // F293 Phase A: durable routing truth and pure advisory projection contracts.
 export * from './routing-context.js';
+export * from './runtime-conversation-decision.js';
 // F306 Phase B: provider-neutral mid-run request ↔ human response contract.
 export * from './runtime-interaction.js';
 // F246 Phase I Wave 1: F139 schedule mutation proposal + audit contract
@@ -1534,6 +1560,7 @@ export type {
   ContextHealthConfig,
   ContextManagementHint,
   HybridProgress,
+  NativeSessionBinding,
   SealReason,
   SealResult,
   SessionCapacityPin,
@@ -1733,6 +1760,8 @@ export type {
   TurnExecutionStatus,
   TurnExecutionTerminalInput,
   TurnExecutionTerminalStatus,
+  TurnOutputFence,
+  TurnOutputFenceVerdict,
 } from './turn-execution.js';
 export * from './unified-attention.js';
 // User preferences types (F166 猫猫排序自定义)

@@ -7,7 +7,7 @@
  *
  * Follows F139 TaskSpec_P1 consumer pattern (CiCdCheckTaskSpec etc).
  */
-import type { CatId, CommunityEvent, ConnectorSource } from '@cat-cafe/shared';
+import type { CommunityEvent, ConnectorSource } from '@cat-cafe/shared';
 import type { ICommunityEventLog } from '../../../domains/community/CommunityEventLog.js';
 import type {
   ConnectorDeliveryDeps,
@@ -21,7 +21,6 @@ import type { IConnectorThreadBindingStore } from '../ConnectorThreadBindingStor
 import { type InboxThreadStore, selfHealInboxThreadKind } from './inbox-thread-resolver.js';
 import type { ReconciliationDedup } from './ReconciliationDedup.js';
 import type { ResolveRepoInboxCatId } from './RepoInboxOwnerResolver.js';
-import { REPO_INBOX_WAKE_POLICY, type RepoInboxWakeTrigger } from './repo-inbox-wake-policy.js';
 import type { RepoInboxSignal } from './types.js';
 
 /** Minimal projector interface — only apply() needed here. */
@@ -72,7 +71,6 @@ export interface RepoScanTaskSpecOptions {
   threadStore?: Pick<InboxThreadStore, 'get' | 'updateThreadKind'>;
   deliverFn: (deps: ConnectorDeliveryDeps, input: ConnectorDeliveryInput) => Promise<ConnectorDeliveryResult>;
   deliveryDeps: ConnectorDeliveryDeps;
-  invokeTrigger: RepoInboxWakeTrigger;
   fetchOpenPRs: (repo: string, signal?: AbortSignal) => Promise<GhPrItem[]>;
   fetchOpenIssues: (repo: string, signal?: AbortSignal) => Promise<GhIssueItem[]>;
   log: { info(...args: unknown[]): void; warn(...args: unknown[]): void };
@@ -315,7 +313,12 @@ export function createRepoScanTaskSpec(opts: RepoScanTaskSpecOptions): TaskSpec_
           catId: inboxCatId,
           content,
           source,
+          idempotencyKey: `github-repo-event:${signal.deliveryId}`,
+          sourceCategory: 'producer_return',
         });
+        if (!delivered.admitted) {
+          throw new Error(`Repository scan admission refused: ${delivered.rejection ?? 'unproven'}`);
+        }
 
         // Delivery, its dedup marker, event projection, and wake are one bounded
         // completion group. Cancellation is safe before delivery, never between
@@ -351,21 +354,7 @@ export function createRepoScanTaskSpec(opts: RepoScanTaskSpecOptions): TaskSpec_
           }
         }
 
-        try {
-          await Promise.resolve(
-            opts.invokeTrigger.trigger(
-              binding.threadId,
-              inboxCatId as CatId,
-              opts.defaultUserId,
-              content,
-              delivered.messageId,
-              undefined,
-              REPO_INBOX_WAKE_POLICY,
-            ),
-          );
-        } catch {
-          opts.log.warn(`[repo-scan] trigger failed for ${signal.repoFullName}#${signal.number}`);
-        }
+        // Reconciliation delivery is admitted to the Queue above; drain owes the inbox wake.
       },
     },
     state: { runLedger: 'sqlite' },

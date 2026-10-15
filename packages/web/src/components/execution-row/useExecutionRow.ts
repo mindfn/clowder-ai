@@ -8,7 +8,6 @@
  * wires the row's buttons to the very same commands the old surfaces use (cancelProjectedExecution through
  * ExecutionCancelButton, useQueueCommands, useQueueActionConvergence). The 1s clock ticks only while something runs.
  */
-import type { QueueRecoveryAction } from '@cat-cafe/shared';
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { useCatData } from '@/hooks/useCatData';
 import { useExecutionRecoveryVerification } from '@/hooks/useExecutionRecoveryVerification';
@@ -37,21 +36,6 @@ function useNow(active: boolean): number {
   return now;
 }
 
-const EXECUTION_CONFIRMATION_GRACE_MS = 30_000;
-
-function useConfirmationGrace(active: boolean): boolean {
-  const [expired, setExpired] = useState(false);
-  useEffect(() => {
-    setExpired(false);
-    if (!active) return;
-    const timer = window.setTimeout(() => setExpired(true), EXECUTION_CONFIRMATION_GRACE_MS);
-    return () => window.clearTimeout(timer);
-  }, [active]);
-  return active && !expired;
-}
-
-type ForceResetAction = Extract<QueueRecoveryAction, { kind: 'force_reset' }>;
-
 export function useExecutionRow(threadId: string) {
   const words = useShellCopy(executionRowCopy);
   const { getCatById } = useCatData({ fetch: false });
@@ -62,13 +46,11 @@ export function useExecutionRow(threadId: string) {
   // The ONE shared answer to "is what this thread shows still verified?": the project-wide snapshot covers this thread
   // when it is anchored here OR belongs to the same project, so a failed re-read is stale for a same-project thread
   // that is not the anchor too. (An anchor-only test here missed that case; the classic composer already gets it right.)
-  const { canonicalProjectionLoading, canonicalProjectionStale, hasUnverifiedLegacyExecution } =
-    useExecutionRecoveryVerification(threadId);
-  const hasConfirmingLegacyExecution = useConfirmationGrace(canonicalProjectionLoading && hasUnverifiedLegacyExecution);
+  const { canonicalProjectionStale, hasUnverifiedLegacyExecution } = useExecutionRecoveryVerification(threadId);
 
   const view = useQueueView(threadId);
   // The new shell's row reports a reset that went through as done even when the re-read after it fails.
-  const convergence = useQueueActionConvergence(threadId, { resetDoneSurvivesRereadFailure: true });
+  const convergence = useQueueActionConvergence(threadId);
   const commands = useQueueCommands(threadId, view, convergence.refreshQueue);
 
   const executions = useMemo(
@@ -99,39 +81,17 @@ export function useExecutionRow(threadId: string) {
         cancelPendingKeys,
         silent,
         hydrationStale: canonicalProjectionStale,
-        hasConfirmingLegacyExecution,
-        hasUnverifiedLegacyExecution: hasUnverifiedLegacyExecution && !hasConfirmingLegacyExecution,
+        hasUnverifiedLegacyExecution,
         queue: {
-          total: view.queue.length,
-          paused: view.queuePaused,
-          pauseReason: view.queuePauseReason,
           entries: view.visibleEntries,
           canRecoverOrphaned: view.canRecoverOrphanedQueue,
           waitInfo: view.waitInfo,
         },
       }),
-    [
-      canonicalProjectionStale,
-      cancelPendingKeys,
-      executions,
-      hasConfirmingLegacyExecution,
-      hasUnverifiedLegacyExecution,
-      now,
-      silent,
-      view,
-    ],
+    [canonicalProjectionStale, cancelPendingKeys, executions, hasUnverifiedLegacyExecution, now, silent, view],
   );
 
-  const stuckAction = useMemo(
-    () =>
-      view.visibleEntries
-        .filter((entry) => entry.status === 'processing')
-        .flatMap((entry) => entry.recoveryActions ?? [])
-        .find((action): action is ForceResetAction => action.kind === 'force_reset') ?? null,
-    [view.visibleEntries],
-  );
-  const forceReset = useRowForceReset({ threadId, reasons: model.forceReset, stuckAction, convergence });
-
+  const forceReset = useRowForceReset({ threadId, convergence });
   const locate = (execution: (typeof executions)[number]) => {
     if (locateExecution(execution) === 'unavailable')
       useToastStore

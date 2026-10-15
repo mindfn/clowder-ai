@@ -1,5 +1,6 @@
 import type { FastifyInstance, FastifyReply } from 'fastify';
 import { z } from 'zod';
+import type { IMessageStore } from '../domains/cats/services/stores/ports/MessageStore.js';
 import type { RuntimeInteractionPendingReadSource } from '../domains/runtime-interaction/ports/RuntimeInteractionStore.js';
 import { migrateStoredProjectPath } from '../utils/persistent-project-path.js';
 import { requireCallbackAuth } from './callback-auth-prehandler.js';
@@ -79,6 +80,7 @@ export function registerCompanionWorkReadRoutes(
   app: FastifyInstance,
   projectPath: string,
   runtimeInteractionStore?: RuntimeInteractionPendingReadSource,
+  messageStore?: Pick<IMessageStore, 'getById'>,
 ): void {
   app.get('/api/callbacks/companion/running-work', async (request, reply) => {
     const record = requireCallbackAuth(request, reply);
@@ -117,6 +119,8 @@ export function registerCompanionWorkReadRoutes(
       undefined,
       undefined,
       runtimeInteractionStore,
+      undefined,
+      messageStore,
     );
     const response = companionDecisionWireResponse(result, view);
     return reply.code(response.statusCode).send(response.body);

@@ -14,7 +14,7 @@ import { registerOrdinaryChatReceiptJourney } from './f309-ordinary-workspace-jo
 import { registerOrdinaryChatTextRequestJourney } from './f309-ordinary-workspace-journey-chat-text-request.mjs';
 import { registerOrdinaryDocumentJourney } from './f309-ordinary-workspace-journey-document.mjs';
 import { registerOrdinaryEntryJourneys } from './f309-ordinary-workspace-journey-entries.mjs';
-import { registerOrdinaryImageJourney } from './f309-ordinary-workspace-journey-image.mjs';
+import { assertArtworkLayout, registerOrdinaryImageJourney } from './f309-ordinary-workspace-journey-image.mjs';
 import { registerOrdinaryModificationJourney } from './f309-ordinary-workspace-journey-modification.mjs';
 import { registerOrdinaryOwnerJourney } from './f309-ordinary-workspace-journey-owner.mjs';
 import {
@@ -112,6 +112,46 @@ for (const changesAdjacentGeometry of [false, true]) {
       }
     },
   );
+}
+
+for (const condition of ['responsive transition', 'stable overflow', 'never settles']) {
+  test(`ordinary artwork geometry: ${condition}`, { timeout: 10_000 }, async (t) => {
+    const context = await suite.browser.newContext({ viewport: { width: 1280, height: 900 } });
+    t.after(() => context.close());
+    const page = await context.newPage();
+    await page.setContent(`<style>
+      #canvas { position:relative; width:360px; height:400px; }
+      #media { width:360px; height:300px; }
+      #tools { position:absolute; bottom:0; width:360px; height:50px; }
+      @keyframes enter { from { transform:translateX(400px) } to { transform:translateX(0) } }
+      @keyframes drift { from { transform:translateX(0) } to { transform:translateX(20px) } }
+      @media(max-width:500px) { #tools { ${
+        condition === 'responsive transition'
+          ? 'animation:enter .35s linear'
+          : condition === 'stable overflow'
+            ? 'transform:translateX(20px)'
+            : 'animation:drift .04s linear infinite alternate'
+      } } }
+      </style><main data-testid="workspace-content-review-surface">
+        <section id="canvas" data-testid="workspace-review-artwork">
+          <div id="media" data-testid="workspace-content-review-media"></div>
+          <div id="tools" role="region" aria-label="作品画布工具"></div>
+        </section></main>`);
+    await page.setViewportSize({ width: 390, height: 844 });
+    const name = `geometry-control-${condition.replaceAll(' ', '-')}`;
+    if (condition === 'responsive transition') {
+      await assertArtworkLayout(page, name);
+    } else {
+      await assert.rejects(assertArtworkLayout(page, name), (error) => {
+        assert.match(
+          error.message,
+          condition === 'stable overflow' ? /controls and media stay inside their own canvas/ : /did not settle/,
+        );
+        for (const field of ['viewport', 'canvas', 'toolbar', 'media']) assert.match(error.message, new RegExp(field));
+        return true;
+      });
+    }
+  });
 }
 
 registerNativeSendAckCloseJourneys(async () => {

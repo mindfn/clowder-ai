@@ -26,6 +26,7 @@ export function AccountSwitchConfirm({
 }) {
   const t = useShellCopy(accountsCopy);
   const language = useShellLanguage();
+  const tool = account.clientId === 'anthropic' ? 'claude' : 'codex';
   const [includeOverrides, setIncludeOverrides] = useState(false);
   const [preview, setPreview] = useState<Preview>();
   const [error, setError] = useState('');
@@ -34,7 +35,7 @@ export function AccountSwitchConfirm({
     let current = true;
     setPreview(undefined);
     setError('');
-    void accountRequest<Preview>(`/api/accounts/${encodeURIComponent(account.id)}/codex/binding/preview`, {
+    void accountRequest<Preview>(`/api/accounts/${encodeURIComponent(account.id)}/${tool}/binding/preview`, {
       scope: 'local',
       includeOverrides,
     })
@@ -47,14 +48,14 @@ export function AccountSwitchConfirm({
     return () => {
       current = false;
     };
-  }, [account.id, includeOverrides]);
+  }, [account.id, includeOverrides, tool]);
   async function commit() {
     if (!preview) return;
     setBusy(true);
     setError('');
     try {
       const result = await accountRequest<Preview>(
-        `/api/accounts/${encodeURIComponent(account.id)}/codex/binding/commit`,
+        `/api/accounts/${encodeURIComponent(account.id)}/${tool}/binding/commit`,
         { scope: 'local', includeOverrides, previewToken: preview.previewToken },
       );
       if (!result.selection) throw new Error('换号结果读不到，请刷新核对');
@@ -74,6 +75,7 @@ export function AccountSwitchConfirm({
       <h3>{t.switchName(accountDisplayName(account, t))}</h3>
       <p>{t.switchTiming}</p>
       <p>{t.switchNative}</p>
+      {account.claude && <p>{t.tokenUnknown}</p>}
       {error && <p role="alert">{accountMessage(error, language)}</p>}
       {preview ? (
         <>

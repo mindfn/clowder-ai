@@ -3,25 +3,14 @@
  *
  * 読写六种 MCP 配置格式，归一化为 McpServerDescriptor 内部模型。
  *
- * Persistent (written at startup via generateCliConfigs / PROVIDER_WRITERS):
- *   Gemini:      .gemini/settings.json            — { mcpServers: { name: { command, args, env, cwd } } }
- *   Antigravity: ~/.gemini/antigravity/mcp_config.json — { mcpServers: { name: { command, args, env, cwd } } }
- *
- * Invoke-time only (temp file or CLI args per invocation, NOT written at startup):
- *   Claude:      --mcp-config JSON --strict-mcp-config at invoke time
- *   Codex:       --config mcp_servers.X... inline overrides at invoke time
- *   Kimi:        temp mcp.json via writeMcpConfigFile + --mcp-config-file
- *   OpenCode:    temp opencode.json via writeOpenCodeRuntimeConfig + OPENCODE_CONFIG
- *
- * Read adapters (readClaudeMcpConfig, readCodexMcpConfig, etc.) are still used
- * for bootstrap discovery. Write adapters only exist for persistent-file providers
- * (Gemini, Kimi, Antigravity); Claude/Codex writers were removed as dead code.
+ * Active carriers configure MCP per invocation. Legacy Gemini and Antigravity
+ * readers remain for external capability discovery; their execution writers
+ * are retired. Kimi/OpenCode format helpers still serve active consumers.
  */
 
 import { mkdir, readFile, writeFile } from 'node:fs/promises';
 import { dirname } from 'node:path';
 import type { McpServerDescriptor } from '@cat-cafe/shared';
-import { hasUsableAgentKeyCredentials } from '@cat-cafe/shared/utils';
 import { parse as parseToml } from 'smol-toml';
 import { createModuleLogger } from '../../infrastructure/logger.js';
 import { DEPRECATED_MANAGED_SERVERS, isOurOwnedDeprecatedEntry } from './deprecated-managed-servers.js';
@@ -86,18 +75,6 @@ export function applyDeprecatedManagedCleanup(existingServers: Record<string, un
  * insufficient because users may own an unrelated `foo:bar` entry alongside
  * an external `foo__bar` server.
  */
-function migrateOwnedPluginNames(
-  existingServers: Record<string, unknown>,
-  servers: readonly McpServerDescriptor[],
-): void {
-  for (const server of servers) {
-    const legacyName = server.capabilityId;
-    if (server.source === 'plugin' && legacyName?.includes(':') && legacyName.replace(/:/g, '__') === server.name) {
-      delete existingServers[legacyName];
-    }
-  }
-}
-
 const log = createModuleLogger('mcp-config-adapters');
 
 const CAT_CAFE_ENV_PLACEHOLDERS: Readonly<Record<string, string>> = Object.fromEntries(
@@ -105,7 +82,7 @@ const CAT_CAFE_ENV_PLACEHOLDERS: Readonly<Record<string, string>> = Object.fromE
 );
 
 /**
- * Resolve the workspace root that Bengal will operate inside (where pwd/git
+ * Resolve the workspace root for managed MCP tools (where pwd/git
  * commands run). Conceptually distinct from the runtime binary root
  * (where MCP server code lives) — codex review (PR #1414).
  *
@@ -134,45 +111,11 @@ export function resolveWorkspaceRoot(): string {
       `[mcp-config] CAT_CAFE_RUNTIME_ROOT=${runtimeRoot} is set but neither ` +
         `CAT_CAFE_WORKSPACE_ROOT nor ALLOWED_WORKSPACE_DIRS is exported. Falling back ` +
         `to process.cwd() (${process.cwd()}) which equals the runtime worktree — ` +
-        `Bengal's MCP shell tools will operate on runtime internals instead of the ` +
+        `Managed MCP shell tools will operate on runtime internals instead of the ` +
         `user workspace. Update runtime startup to export CAT_CAFE_WORKSPACE_ROOT.`,
     );
   }
   return process.cwd();
-}
-
-/**
- * Baseline defaults — only used as fallback when the descriptor doesn't
- * supply the key. Descriptor / pre-existing config wins for these.
- *
- * ALLOWED_WORKSPACE_DIRS lives here (not in enforced) because users may
- * have a correct value in their existing mcp_config.json that we should
- * not clobber on regenerate — codex review (PR #1414) P1-2.
- */
-function buildAntigravityCatCafeEnvBaseline(): Readonly<Record<string, string>> {
-  const env: Record<string, string> = {
-    ALLOWED_WORKSPACE_DIRS: resolveWorkspaceRoot(),
-  };
-  const agentKeyFile = process.env.CAT_CAFE_AGENT_KEY_FILE?.trim();
-  if (agentKeyFile) env.CAT_CAFE_AGENT_KEY_FILE = agentKeyFile;
-  const agentKeyFiles = process.env.CAT_CAFE_AGENT_KEY_FILES?.trim();
-  if (agentKeyFiles) env.CAT_CAFE_AGENT_KEY_FILES = agentKeyFiles;
-  return env;
-}
-
-/**
- * Hard-enforced env keys: writer ALWAYS overwrites regardless of what the
- * descriptor or pre-existing config says.
- *  - CAT_CAFE_API_URL: deployment truth — wherever the live API is, that's
- *    the URL to call back to. Stale legacy URLs would break the callback path.
- *  - CAT_CAFE_READONLY: security — persistent MCP must stay read-only.
- *    The descriptor cannot opt out of this boundary.
- */
-function buildAntigravityCatCafeEnforcedEnv(): Readonly<Record<string, string>> {
-  return {
-    CAT_CAFE_API_URL: process.env.CAT_CAFE_API_URL?.trim() || 'http://localhost:3004',
-    CAT_CAFE_READONLY: 'true',
-  };
 }
 
 function isCatCafeServer(name: string): boolean {
@@ -181,7 +124,7 @@ function isCatCafeServer(name: string): boolean {
 
 /**
  * Ensure cat-cafe-* MCP servers carry the invoke-time callback env placeholders.
- * Shared by Gemini and Kimi writers (identical logic, previously duplicated).
+ * Used by the remaining invoke-time MCP configuration writers.
  */
 function ensureCatCafeEnvPlaceholders(name: string, env?: Record<string, string>): Record<string, string> | undefined {
   if (!isCatCafeServer(name)) return env;
@@ -189,64 +132,6 @@ function ensureCatCafeEnvPlaceholders(name: string, env?: Record<string, string>
     ...CAT_CAFE_ENV_PLACEHOLDERS,
     ...(env ?? {}),
   };
-}
-
-function ensureWorkspaceEnvForManagedCatCafe(
-  server: McpServerDescriptor,
-  env?: Record<string, string>,
-): Record<string, string> | undefined {
-  // Source-based, not name-based: user-owned external servers may legally use
-  // cat-cafe-* names and must not inherit workspace filesystem access.
-  if (server.source !== 'cat-cafe') return env;
-  const workspaceRoot = resolveWorkspaceRoot();
-  if (!env) {
-    return { ALLOWED_WORKSPACE_DIRS: workspaceRoot };
-  }
-  return {
-    ...env,
-    ALLOWED_WORKSPACE_DIRS: workspaceRoot,
-  };
-}
-
-/**
- * Provenance, not name, grants the union opt-in (upstream #1454 review P1):
- * synthesizing CAT_CAFE_READONLY_AGENT_KEY_UNION from ambient
- * CAT_CAFE_AGENT_KEY_* vars inside the name-gated baseline handed the
- * write-tool union to preserved third-party/fork-like entries that merely
- * reuse a cat-cafe-* name. The opt-in may only be synthesized for a managed
- * descriptor (source === 'cat-cafe'), and only when the final merged env
- * actually delivers USABLE agent-key credentials (shared semantics with the
- * server toolset gate: a '{}' variant map, bad JSON, a blank secret, or a
- * path to a missing sidecar is not a credential). Anything explicitly set —
- * including "false", which forces strict readonly — always wins over
- * synthesis; preserved entries keep whatever the user wrote themselves.
- */
-function ensureAntigravityCatCafeEnv(
-  server: Pick<McpServerDescriptor, 'name' | 'source'>,
-  env?: Record<string, string>,
-): Record<string, string> | undefined {
-  if (!isCatCafeServer(server.name)) return env;
-  const safeEnv = { ...(env ?? {}) };
-  delete safeEnv.CAT_CAFE_AGENT_KEY_SECRET;
-  // codex review (PR #1414) P1-2: previous merge order put defaults LAST,
-  // so process-derived defaults silently overwrote pre-existing user values.
-  // Correct order:
-  //   1. baseline (fillable defaults, e.g. ALLOWED_WORKSPACE_DIRS) — lowest priority
-  //   2. descriptor env / pre-existing config — wins for user-controllable keys
-  //   3. enforced (CAT_CAFE_API_URL, CAT_CAFE_READONLY) — highest, can't be opted out
-  const merged: Record<string, string> = {
-    ...buildAntigravityCatCafeEnvBaseline(),
-    ...safeEnv,
-    ...buildAntigravityCatCafeEnforcedEnv(),
-  };
-  if (
-    server.source === 'cat-cafe' &&
-    merged.CAT_CAFE_READONLY_AGENT_KEY_UNION === undefined &&
-    hasUsableAgentKeyCredentials(merged)
-  ) {
-    merged.CAT_CAFE_READONLY_AGENT_KEY_UNION = 'true';
-  }
-  return merged;
 }
 
 // ────────── Readers ──────────
@@ -333,71 +218,6 @@ export async function readAntigravityMcpConfig(filePath: string): Promise<McpSer
   return Object.entries(servers as Record<string, Record<string, unknown>>).map(([name, cfg]) =>
     toDescriptor(name, normalizeAntigravityConfig(cfg), true),
   );
-}
-
-// ────────── Writers ──────────
-// NOTE: Claude and Codex use invoke-time CLI injection (--mcp-config / --config)
-// — persistent file writers were removed as dead code. Only Gemini, Kimi, and
-// Antigravity still need persistent config files.
-
-/** Write McpServerDescriptor[] → Gemini .gemini/settings.json (merge: preserves user's non-managed servers) */
-export async function writeGeminiMcpConfig(filePath: string, servers: McpServerDescriptor[]): Promise<void> {
-  // Read existing config to preserve non-MCP sections AND user's MCP servers
-  const raw = await safeReadFile(filePath);
-  let existing: Record<string, unknown> = {};
-  if (raw) {
-    const parsed = safeJsonParse(raw);
-    if (parsed) existing = parsed;
-  }
-
-  // Get existing MCP servers (user's + old managed)
-  const existingMcp: Record<string, unknown> =
-    existing.mcpServers && typeof existing.mcpServers === 'object'
-      ? { ...(existing.mcpServers as Record<string, unknown>) }
-      : {};
-
-  // F213 Phase B: L5 cleanup of deprecated managed entries before update.
-  applyDeprecatedManagedCleanup(existingMcp, 'gemini');
-
-  migrateOwnedPluginNames(existingMcp, servers);
-
-  // Update/add managed entries; remove disabled managed; preserve user's own
-  for (const s of servers) {
-    // Skip URL-based servers — Gemini only supports stdio transport.
-    // Delete any stale managed entry so Gemini doesn't load old stdio config.
-    if (s.transport === 'streamableHttp') {
-      delete existingMcp[s.name];
-      continue;
-    }
-    if (!s.command || s.command.trim().length === 0) {
-      delete existingMcp[s.name];
-      continue;
-    }
-    if (s.enabled) {
-      const entry: Record<string, unknown> = { command: s.command, args: s.args };
-      const env = ensureCatCafeEnvPlaceholders(s.name, s.env);
-      if (env && Object.keys(env).length > 0) entry.env = env;
-      if (s.workingDir) entry.cwd = s.workingDir;
-      existingMcp[s.name] = entry;
-    } else {
-      // Disabled managed server → remove from config (Gemini has no enabled field)
-      delete existingMcp[s.name];
-    }
-  }
-
-  // Ensure split cat-cafe-* entries have required Gemini env placeholders.
-  for (const [name, value] of Object.entries(existingMcp)) {
-    if (!isCatCafeServer(name)) continue;
-    if (!value || typeof value !== 'object' || Array.isArray(value)) continue;
-    const cfg = value as Record<string, unknown>;
-    const currentEnv = toStringRecord(cfg.env);
-    cfg.env = ensureCatCafeEnvPlaceholders(name, currentEnv);
-    existingMcp[name] = cfg;
-  }
-
-  existing.mcpServers = existingMcp;
-  await ensureDir(filePath);
-  await writeFile(filePath, `${JSON.stringify(existing, null, 2)}\n`, 'utf-8');
 }
 
 // ────────── Stale Override Cleanup ──────────
@@ -503,58 +323,6 @@ export async function writeKimiMcpConfig(filePath: string, servers: McpServerDes
     const cfg = value as Record<string, unknown>;
     const currentEnv = toStringRecord(cfg.env);
     cfg.env = ensureCatCafeEnvPlaceholders(name, currentEnv);
-    existingMcp[name] = cfg;
-  }
-
-  existing.mcpServers = existingMcp;
-  await ensureDir(filePath);
-  await writeFile(filePath, `${JSON.stringify(existing, null, 2)}\n`, 'utf-8');
-}
-
-/** Write McpServerDescriptor[] → Antigravity ~/.gemini/antigravity/mcp_config.json */
-export async function writeAntigravityMcpConfig(filePath: string, servers: McpServerDescriptor[]): Promise<void> {
-  const raw = await safeReadFile(filePath);
-  let existing: Record<string, unknown> = {};
-  if (raw) {
-    const parsed = safeJsonParse(raw);
-    if (parsed) existing = parsed;
-  }
-
-  const existingMcp: Record<string, unknown> =
-    existing.mcpServers && typeof existing.mcpServers === 'object'
-      ? { ...(existing.mcpServers as Record<string, unknown>) }
-      : {};
-
-  // F213 Phase B: L5 cleanup of deprecated managed entries before update.
-  applyDeprecatedManagedCleanup(existingMcp, 'antigravity');
-
-  migrateOwnedPluginNames(existingMcp, servers);
-
-  for (const s of servers) {
-    if (s.transport === 'streamableHttp') {
-      delete existingMcp[s.name];
-      continue;
-    }
-    if (!s.command || s.command.trim().length === 0 || !s.enabled) {
-      delete existingMcp[s.name];
-      continue;
-    }
-    const entry: Record<string, unknown> = { command: s.command, args: s.args };
-    const env = ensureAntigravityCatCafeEnv(s, s.env);
-    if (env && Object.keys(env).length > 0) entry.env = env;
-    if (s.workingDir) entry.cwd = s.workingDir;
-    existingMcp[s.name] = entry;
-  }
-
-  for (const [name, value] of Object.entries(existingMcp)) {
-    if (!isCatCafeServer(name)) continue;
-    if (!value || typeof value !== 'object' || Array.isArray(value)) continue;
-    const cfg = value as Record<string, unknown>;
-    const currentEnv = toStringRecord(cfg.env);
-    // File-preserved entries carry no managed provenance (F213: no reliable
-    // ownership proof → preserve), so they get the file-read default source —
-    // union synthesis can never fire for them here.
-    cfg.env = ensureAntigravityCatCafeEnv({ name, source: 'external' }, currentEnv);
     existingMcp[name] = cfg;
   }
 

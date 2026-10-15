@@ -8,7 +8,7 @@ import {
   productStatus,
 } from './capability-evolution-presentation';
 import { EvolutionHomeActionsV2 } from './EvolutionHomeActionsV2';
-import { journeyMoment, MOMENTS } from './EvolutionJourney';
+import { journeyStageLabel } from './EvolutionJourney';
 import { useEvolutionAssetReview } from './evolution-asset-resource';
 
 export function EvolutionPhaseGaps({ projection }: { projection: EvolutionProgramPresentationProjection }) {
@@ -67,7 +67,7 @@ function ProjectRow({
         ? titles.join('、')
         : `${refs.length} 个已记录版本`;
   const status = productStatus(projection);
-  const phase = program.stage === 'instrumenting' ? '准备（评估）' : MOMENTS[journeyMoment(projection)];
+  const phase = journeyStageLabel(projection);
   return (
     <button
       type="button"

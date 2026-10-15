@@ -11,7 +11,7 @@ import { assertCodexManagedCarrierSupport } from '../../../../../config/codex-ma
 import { assertCodexSharedStateCarrier } from '../../../../../config/codex-shared-state.js';
 import { buildChildEnv } from '../../../../../utils/cli-spawn.js';
 import { buildUnixSupervisedSpawnPlan } from '../../../../../utils/cli-supervised-process.js';
-import { sanitizeCliStderr } from '../../../../../utils/sanitize-cli-stderr.js';
+import { excerptSanitizedStderr, sanitizeCliStderr } from '../../../../../utils/sanitize-cli-stderr.js';
 import { createStderrTail, type StderrTail } from '../../../../../utils/stderr-tail.js';
 import type { AgentCarrierSession, AgentCarrierSessionOptions } from '../../types.js';
 import { readCodexHostAuthIdentity } from './codex-host-auth-identity.js';
@@ -204,7 +204,7 @@ class SpawnedCodexAppServerHost implements CodexAppServerHostProcess {
   }
 
   diagnostic(): string {
-    return sanitizeCliStderr(this.stderr.value.slice(-1_000));
+    return excerptSanitizedStderr(this.stderr.value, { edge: 'tail', maxLength: 1_000 });
   }
 }
 

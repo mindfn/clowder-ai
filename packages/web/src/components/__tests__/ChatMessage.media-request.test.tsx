@@ -83,14 +83,28 @@ describe('ChatMessage: request status under a sent image message', () => {
   };
 
   it('puts the live request line inside the Human message that was taken over', async () => {
-    await render({ id: 'human-media', type: 'user', content: '请处理这一处', timestamp: 1, contentBlocks: blocks });
+    await render({
+      id: 'human-media',
+      type: 'user',
+      from: { kind: 'user', userId: 'operator' },
+      content: '请处理这一处',
+      timestamp: 1,
+      contentBlocks: blocks,
+    });
     const status = container.querySelector('[data-testid="media-message-request"]');
     expect(status?.textContent).toContain('修改中 · 窄屏设计稿.png 1\u00A0处');
     expect(status?.closest('[data-message-id="human-media"]')).not.toBeNull();
   });
 
   it('shows nothing for a message that was not taken over by any request', async () => {
-    await render({ id: 'human-untouched', type: 'user', content: '请处理这一处', timestamp: 1, contentBlocks: blocks });
+    await render({
+      id: 'human-untouched',
+      type: 'user',
+      from: { kind: 'user', userId: 'operator' },
+      content: '请处理这一处',
+      timestamp: 1,
+      contentBlocks: blocks,
+    });
     expect(container.querySelector('[data-testid="media-message-request"]')).toBeNull();
   });
 
@@ -98,6 +112,7 @@ describe('ChatMessage: request status under a sent image message', () => {
     await render({
       id: 'human-media',
       type: 'user',
+      from: { kind: 'user', userId: 'operator' },
       content: '请处理这一处',
       timestamp: 1,
       contentBlocks: blocks,
@@ -109,7 +124,13 @@ describe('ChatMessage: request status under a sent image message', () => {
   });
 
   it('reads nothing for an ordinary Human message', async () => {
-    await render({ id: 'human-plain', type: 'user', content: '你好', timestamp: 1 });
+    await render({
+      id: 'human-plain',
+      type: 'user',
+      from: { kind: 'user', userId: 'operator' },
+      content: '你好',
+      timestamp: 1,
+    });
     expect(mocks.fetch).not.toHaveBeenCalled();
   });
 });

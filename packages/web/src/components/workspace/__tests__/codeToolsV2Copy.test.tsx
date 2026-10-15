@@ -60,6 +60,7 @@ const CATS = {
       displayName: '梵花猫',
       color: { primary: '#123456', secondary: '#abcdef' },
       mentionPatterns: [],
+      carrier: 'cli',
       clientId: 'kimi-code',
       defaultModel: 'k3',
     },

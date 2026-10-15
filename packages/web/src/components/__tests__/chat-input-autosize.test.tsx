@@ -44,8 +44,8 @@ afterEach(() => {
   vi.unstubAllGlobals();
 });
 
-function render(presentation: 'classic' | 'v2' = 'v2') {
-  act(() => root.render(<ChatInput onSend={vi.fn()} presentation={presentation} />));
+function render(presentation: 'classic' | 'v2' = 'v2', placeholder?: string) {
+  act(() => root.render(<ChatInput onSend={vi.fn()} presentation={presentation} placeholder={placeholder} />));
   return container.querySelector('textarea') as HTMLTextAreaElement;
 }
 
@@ -79,6 +79,17 @@ describe('ChatInput border-box autosizing', () => {
     type(textarea, '');
     expect(textarea.style.height).toBe('46px');
     expect(textarea.clientHeight).toBe(textarea.scrollHeight);
+  });
+
+  it('remeasures when the displayed placeholder changes without a draft or width change', () => {
+    const textarea = render('classic', '短提示');
+    expect(textarea.style.height).toBe('46px');
+    vi.spyOn(HTMLTextAreaElement.prototype, 'scrollHeight', 'get').mockReturnValue(64);
+    render('classic', '想调整方向？可直接给当前成员发消息，引导回复。');
+    expect(textarea.value).toBe('');
+    expect(textarea.placeholder).toContain('引导回复');
+    expect(textarea.style.height).toBe('66px');
+    expect(textarea.clientHeight).toBeGreaterThanOrEqual(textarea.scrollHeight);
   });
 
   it('remeasures an empty placeholder when viewport width changes', () => {

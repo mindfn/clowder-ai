@@ -262,14 +262,13 @@ export function NewConversationPage(props: NewConversationPageProps) {
                 onPinnedChange={admission.updatePinned}
               />
             }
-            onSend={(content, images, whisper, deliveryMode, replyToId, messageDisposition, contextAttachments) =>
+            onSend={(content, images, whisper, replyToId, contextAttachments, explicitTargetCats) =>
               admission.send({
                 content,
                 images,
                 whisper,
-                deliveryMode,
                 replyToId,
-                messageDisposition,
+                explicitTargetCats,
                 contextAttachments,
               })
             }

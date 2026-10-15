@@ -7,4 +7,10 @@ import type {
 export interface RuntimeInteractionPort {
   request(request: RuntimeInteractionRequest, options?: { signal?: AbortSignal }): Promise<RuntimeInteractionResponse>;
   invalidateInvocation(invocationId: string, reasonCode: RuntimeInteractionTerminalReasonCode): Promise<unknown>;
+  pendingConversationDecisionPrompt(
+    userId: string,
+    threadId: string,
+    catId: string,
+    originTriggerMessageId?: string,
+  ): Promise<string>;
 }

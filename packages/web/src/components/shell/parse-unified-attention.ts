@@ -1,4 +1,4 @@
-import { type UnifiedAttentionReadV1, unifiedAttentionChoiceRequestSchema } from '@cat-cafe/shared';
+import { isValidRichBlock, type UnifiedAttentionReadV1, unifiedAttentionChoiceRequestSchema } from '@cat-cafe/shared';
 
 /**
  * Structural guard for `GET /api/concierge/work/decisions?view=unified` (F310 delivery record).
@@ -38,6 +38,40 @@ function isSourceRead(value: unknown): boolean {
 
 function isChoiceRequest(value: unknown): boolean {
   return unifiedAttentionChoiceRequestSchema.safeParse(value).success;
+}
+
+function isRuntimeInteraction(value: unknown): boolean {
+  if (
+    !isRecord(value) ||
+    !isNonBlankString(value.interactionId) ||
+    !Number.isSafeInteger(value.revision) ||
+    Number(value.revision) < 0 ||
+    !isNonBlankString(value.requesterCatId) ||
+    !Number.isSafeInteger(value.createdAt) ||
+    !isNonBlankString(value.title) ||
+    !isRecord(value.cardRef)
+  )
+    return false;
+  const ref = value.cardRef;
+  if (!['threadId', 'messageId', 'blockId'].every((k) => isNonBlankString(ref[k]))) return false;
+  if (value.sourceKind === 'conversation_decision')
+    return (
+      value.kind === 'conversation_decision' &&
+      Number(value.revision) > 0 &&
+      typeof value.allowTextResponse === 'boolean' &&
+      isValidRichBlock(value.presentation) &&
+      value.presentation.kind === 'interactive' &&
+      value.presentation.id === ref.blockId &&
+      typeof ref.blockDigest === 'string' &&
+      /^[a-f0-9]{64}$/.test(ref.blockDigest) &&
+      Number.isSafeInteger(ref.publishedAt) &&
+      Number(ref.publishedAt) >= 0 &&
+      (value.deadlineAt === undefined || (Number.isSafeInteger(value.deadlineAt) && Number(value.deadlineAt) > 0))
+    );
+  return (
+    (value.sourceKind === undefined || value.sourceKind === 'provider_request') &&
+    ['approval', 'question', 'elicitation'].includes(String(value.kind))
+  );
 }
 
 function isUserMention(value: unknown): boolean {
@@ -84,6 +118,7 @@ function isItem(value: unknown): boolean {
     !isPreferenceCoordinate(value.preferenceCoordinate, value.decisionRef)
   )
     return false;
+  if (value.runtimeInteraction !== undefined && !isRuntimeInteraction(value.runtimeInteraction)) return false;
   if (value.choiceRequest !== undefined && !isChoiceRequest(value.choiceRequest)) return false;
   if (value.kind === 'user_mention') return isUserMention(value.userMention);
   if (value.approval === undefined) return true;

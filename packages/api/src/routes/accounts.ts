@@ -147,14 +147,18 @@ export const accountsRoutes: FastifyPluginAsync<{
         ...((body.displayName ?? body.name) ? { displayName: body.displayName ?? body.name } : {}),
         ...(body.envVars && Object.keys(body.envVars).length > 0 ? { envVars: body.envVars } : {}),
       };
+      const managedClaude = body.claudeToken !== undefined;
+      if (managedClaude) account = { ...account, claude: { kind: 'long_lived_token' } };
       const managed = account.authType === 'oauth' && account.clientId === 'openai';
-      const profileId = managed
-        ? `codex-${randomUUID()}`
-        : deriveAccountId(
-            body.displayName ?? body.name ?? body.provider ?? 'custom',
-            new Set(readAccountStoreSnapshot(projectRoot).refs),
-            account.authType === 'api_key',
-          );
+      const profileId = managedClaude
+        ? `claude-${randomUUID()}`
+        : managed
+          ? `codex-${randomUUID()}`
+          : deriveAccountId(
+              body.displayName ?? body.name ?? body.provider ?? 'custom',
+              new Set(readAccountStoreSnapshot(projectRoot).refs),
+              account.authType === 'api_key',
+            );
       if (managed)
         account = {
           ...account,
@@ -166,6 +170,7 @@ export const accountsRoutes: FastifyPluginAsync<{
         account = { ...account, codex: prepareCodexManagedLayout(account.codex, projectRoot) };
         writeCatalogAccount(projectRoot, profileId, account);
       }
+      if (body.claudeToken) writeCredential(profileId, { accessToken: body.claudeToken }, projectRoot);
       if (body.apiKey) writeCredential(profileId, { apiKey: body.apiKey }, projectRoot);
       configEventBus.emitChange({
         source: 'accounts',
@@ -218,8 +223,19 @@ export const accountsRoutes: FastifyPluginAsync<{
           'envVars' in parsed.data)
       )
         throw new Error('codex_managed_account_fields_owned');
+      if (
+        existing.claude &&
+        ((parsed.data.authType && parsed.data.authType !== 'oauth') ||
+          (parsed.data.clientId && parsed.data.clientId !== 'anthropic') ||
+          'apiKey' in parsed.data ||
+          'baseUrl' in parsed.data ||
+          'envVars' in parsed.data)
+      )
+        throw new Error('claude_token_account_fields_owned');
+      if (parsed.data.claudeToken && !existing.claude) throw new Error('claude_token_account_required');
       // clowder-ai#340: protocol not persisted — derived at runtime from well-known account IDs.
       const account: AccountConfig = {
+        ...(existing.claude ? { claude: existing.claude } : {}),
         ...(existing.codex ? { codex: existing.codex } : {}),
         ...(existing.quota ? { quota: existing.quota } : {}),
         authType: (parsed.data.authType as 'oauth' | 'api_key') ?? existing.authType,
@@ -258,6 +274,8 @@ export const accountsRoutes: FastifyPluginAsync<{
             : (existing.displayName ?? params.profileId),
       };
       writeCatalogAccount(projectRoot, params.profileId, account);
+      if (parsed.data.claudeToken)
+        writeCredential(params.profileId, { accessToken: parsed.data.claudeToken }, projectRoot);
       if (parsed.data.apiKey != null) {
         if (parsed.data.apiKey) {
           writeCredential(params.profileId, { apiKey: parsed.data.apiKey }, projectRoot);

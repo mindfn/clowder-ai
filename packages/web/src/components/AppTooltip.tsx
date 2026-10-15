@@ -53,6 +53,10 @@ export function resetAppTooltipWarmState(): void {
 }
 
 interface AppTooltipProps {
+  /** Text rows can use a longer dwell than compact shell controls. */
+  delayMs?: number;
+  /** Read-only status controls can reveal their explanation on a tap. */
+  showOnClick?: boolean;
   /** The control's name. Keep it short; it is also what a screen reader should hear on the control. */
   label: string;
   /** Optional second line (state / count / unavailable reason). */
@@ -91,6 +95,8 @@ function matchesFocusVisible(target: EventTarget | null): boolean {
 }
 
 export function AppTooltip({
+  delayMs = APP_TOOLTIP_DELAY_MS,
+  showOnClick = false,
   label,
   detail,
   shortcut,
@@ -153,13 +159,13 @@ export function AppTooltip({
         ? APP_TOOLTIP_CONTENT_DELAY_MS
         : warm.active?.warmsIcons || Date.now() < warm.until
           ? 0
-          : APP_TOOLTIP_DELAY_MS;
+          : delayMs;
     if (wait === 0) {
       openNow();
       return;
     }
     showTimer.current = setTimeout(openNow, wait);
-  }, [disabled, intent, openNow]);
+  }, [delayMs, disabled, intent, openNow]);
 
   useEffect(
     () => () => {
@@ -242,7 +248,7 @@ export function AppTooltip({
       return;
     }
     // A click is the user acting on the control; the name tip has done its job.
-    close();
+    if (!showOnClick) close();
   };
   const cancelLongPress = (event: ReactPointerEvent) => {
     if (event.pointerType !== 'touch') return;
@@ -254,6 +260,12 @@ export function AppTooltip({
     swallowClick.current = false;
     event.stopPropagation();
     event.preventDefault();
+  };
+  const onClick = () => {
+    if (showOnClick) {
+      dismissed.current = false;
+      openNow();
+    }
   };
   const onFocus = (event: FocusEvent) => {
     if (!matchesFocusVisible(event.target)) return;
@@ -289,6 +301,7 @@ export function AppTooltip({
       onPointerUp={cancelLongPress}
       onPointerCancel={cancelLongPress}
       onClickCapture={onClickCapture}
+      onClick={onClick}
       onFocusCapture={onFocus}
       onBlurCapture={onBlur}
       onKeyDownCapture={onKeyDownCapture}

@@ -16,28 +16,6 @@ import {
   modificationOperationKeys,
 } from './journal.js';
 
-/** Current target custody and its exact body witness precede global Queue settlement. No Queue writes. */
-export function hasCurrentModificationQueueExposure(
-  source: StoredMessage,
-  targetCatId: string,
-  expectedInvocationId?: string,
-): boolean {
-  const custody = source.queueCustody;
-  const invocationId = custody?.seenInvocationIdByCatId[targetCatId];
-  return Boolean(
-    source.deliveryStatus === 'queued' &&
-      custody &&
-      custody.ownerUserId === source.userId &&
-      custody.status !== 'terminal' &&
-      custody.pendingTargetCats.some((catId) => catId === targetCatId) &&
-      invocationId &&
-      (expectedInvocationId === undefined || invocationId === expectedInvocationId) &&
-      custody.bodyExposures?.some(
-        (exposure) => exposure.targetCatId === targetCatId && exposure.invocationId === invocationId,
-      ),
-  );
-}
-
 /** Revalidate the actual human source. A durable journal never substitutes for current source custody. */
 export async function assertModificationSourceAuthority(
   messages: Pick<IMessageStore, 'getById'>,
@@ -81,7 +59,7 @@ export async function requireModificationSourceMessage(
     if (
       !record.progress.sourceMessageRevision ||
       deriveGrowingSourceMessageRevision(source) !== record.progress.sourceMessageRevision ||
-      (!isDelivered(source) && !hasCurrentModificationQueueExposure(source, record.payload.targetCatId)) ||
+      !isDelivered(source) ||
       !source.mentions.some((catId) => catId === record.payload.targetCatId) ||
       (source.visibility === 'whisper' && !source.whisperTo?.some((catId) => catId === record.payload.targetCatId))
     )

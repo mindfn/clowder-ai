@@ -92,6 +92,7 @@ export function reconcileRetainedManagedCommand(
         !['cancel_requested', 'cancelled_by_user', 'retired_by_replacement'].includes(String(lifecycle.status)) ||
         !command ||
         command.durableJob ||
+        command.jobId ||
         command.messageId ||
         command.invocationId ||
         command.wakeSource ||

@@ -14,7 +14,8 @@ vi.mock('@/utils/api-client', () => ({
   apiFetch: vi.fn(async () => Response.json({ artifacts: [] })),
 }));
 vi.mock('@/utils/scrollToMessage', () => ({ scrollToMessage: vi.fn(() => false) }));
-vi.mock('@/hooks/useThreadArtifacts', () => ({
+vi.mock('@/hooks/useThreadArtifacts', async (original) => ({
+  ...(await original<object>()),
   useThreadArtifacts: () => ({
     artifacts: [
       {

@@ -72,17 +72,17 @@ describe('F322 B §1.16 — reply status (layer 2)', () => {
       streamReply({
         isStreaming: false,
         toolEvents: [tool('t1', 'Read')],
-        extra: {
-          stream: { invocationId: 'parent-1', turnInvocationId: 'turn-1' },
-          invocationReconciliation: {
-            v: 1,
-            invocationId: 'parent-1',
-            catIds: ['opus'],
-            turnInvocationIds: ['turn-1'],
-            phase: 'running',
-            updatedAt: 1,
-          },
+        lifecycle: {
+          kind: 'response',
+          orderKey: '1',
+          invocationId: 'turn-1',
+          targetId: 'opus',
+          inputEntryIds: [],
+          inputMessageIds: [],
+          status: 'processing',
+          startedAt: 1,
         },
+        extra: { stream: { invocationId: 'parent-1', turnInvocationId: 'turn-1' } },
       }),
     );
 
@@ -96,17 +96,17 @@ describe('F322 B §1.16 — reply status (layer 2)', () => {
       streamReply({
         isStreaming: true,
         toolEvents: [tool('t1', 'Read')],
-        extra: {
-          stream: { invocationId: 'parent-1', turnInvocationId: 'turn-1' },
-          invocationReconciliation: {
-            v: 1,
-            invocationId: 'parent-1',
-            catIds: ['opus'],
-            turnInvocationIds: ['turn-1'],
-            phase: 'canceled',
-            updatedAt: 1,
-          },
+        lifecycle: {
+          kind: 'response',
+          orderKey: '1',
+          invocationId: 'turn-1',
+          targetId: 'opus',
+          inputEntryIds: [],
+          inputMessageIds: [],
+          status: 'canceled',
+          startedAt: 1,
         },
+        extra: { stream: { invocationId: 'parent-1', turnInvocationId: 'turn-1' } },
       }),
     );
 
@@ -167,23 +167,22 @@ describe('F322 B §1.16 — reply status (layer 2)', () => {
     render(
       streamReply({
         isStreaming: true,
-        extra: {
-          stream: { invocationId: 'parent-1', turnInvocationId: 'turn-1' },
-          invocationReconciliation: {
-            v: 1,
-            invocationId: 'parent-1',
-            catIds: ['opus'],
-            turnInvocationIds: ['turn-1'],
-            phase: 'unknown_running',
-            reason: 'record_unavailable',
-            updatedAt: 1,
-          },
+        lifecycle: {
+          kind: 'response',
+          orderKey: '1',
+          invocationId: 'turn-1',
+          targetId: 'opus',
+          inputEntryIds: [],
+          inputMessageIds: [],
+          status: 'interrupted',
+          startedAt: 1,
         },
+        extra: { stream: { invocationId: 'parent-1', turnInvocationId: 'turn-1' } },
       }),
     );
 
-    expect(q('reply-status')?.textContent).toBe('状态暂不可核对');
-    expect(q('reply-status-dot')?.getAttribute('data-tone')).toBe('hollow');
+    expect(q('reply-status')?.textContent).toBe('已停止');
+    expect(q('reply-status-dot')?.getAttribute('data-tone')).toBe('neutral');
   });
 
   it.each([
@@ -192,17 +191,17 @@ describe('F322 B §1.16 — reply status (layer 2)', () => {
   ] as const)('a reply that ended as %s says "%s"', (phase, words, tone) => {
     render(
       streamReply({
-        extra: {
-          stream: { invocationId: 'parent-1', turnInvocationId: 'turn-1' },
-          invocationReconciliation: {
-            v: 1,
-            invocationId: 'parent-1',
-            catIds: ['opus'],
-            turnInvocationIds: ['turn-1'],
-            phase,
-            updatedAt: 1,
-          },
+        lifecycle: {
+          kind: 'response',
+          orderKey: '1',
+          invocationId: 'turn-1',
+          targetId: 'opus',
+          inputEntryIds: [],
+          inputMessageIds: [],
+          status: phase,
+          startedAt: 1,
         },
+        extra: { stream: { invocationId: 'parent-1', turnInvocationId: 'turn-1' } },
       }),
     );
 

@@ -7,6 +7,7 @@ import {
 } from '@cat-cafe/shared';
 
 interface HostMessageCandidate {
+  readonly from?: { readonly kind: string };
   readonly userId?: unknown;
   readonly catId?: unknown;
   readonly extra?: unknown;
@@ -22,7 +23,7 @@ export function catConsumableHostSpeaker(message: HostMessageCandidate): string 
   if (message.catId !== null) return undefined;
   const extra = record(message.extra);
   if (
-    message.userId === 'system' &&
+    (message.from ? message.from.kind === 'system' : message.userId === 'system') &&
     extra?.systemKind === 'content_modification_receipt' &&
     contentModificationReceiptV1Schema.safeParse(extra.contentModificationReceiptV1).success
   ) {
@@ -64,5 +65,8 @@ export function isCatConsumableHostMessage(message: HostMessageCandidate): boole
 
 /** Generic system badges remain browser-only and must not enter Cat cognition or freshness. */
 export function isDisplayOnlySystemMessage(message: HostMessageCandidate): boolean {
-  return message.userId === 'system' && !isCatConsumableHostMessage(message);
+  return (
+    (message.from ? message.from.kind === 'system' : message.userId === 'system') &&
+    !isCatConsumableHostMessage(message)
+  );
 }

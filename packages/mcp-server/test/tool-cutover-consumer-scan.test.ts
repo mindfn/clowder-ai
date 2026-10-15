@@ -88,35 +88,35 @@ test('the seven F167 retirement assertions remain visible and pass only with man
     await fixtureFile(
       repoRoot,
       fixtureConsumers[0],
-      "const COMPLETERS = ['cat_cafe_complete_event_wait', 'cat_cafe_complete_managed_hold', 'cat_cafe_complete_a2a_dispatch']; // mcp-cutover-negative-reference: absence\n",
+      "const COMPLETERS = ['cat_cafe_complete_event_wait', 'cat_cafe_complete_managed_hold', 'cat_cafe_complete_a2a_dispatch']; // mcp-cutover-negative-reference: absence\n", // mcp-cutover-negative-reference: absence
     );
     await fixtureFile(
       repoRoot,
       fixtureConsumers[1],
-      "for (const name of ['cat_cafe_complete_managed_hold', 'cat_cafe_complete_a2a_dispatch']) {} // mcp-cutover-negative-reference: absence\n",
+      "for (const name of ['cat_cafe_complete_managed_hold', 'cat_cafe_complete_a2a_dispatch']) {} // mcp-cutover-negative-reference: absence\n", // mcp-cutover-negative-reference: absence
     );
     await fixtureFile(
       repoRoot,
       fixtureConsumers[2],
-      "return { tool: 'cat_cafe_complete_a2a_dispatch' }; // mcp-cutover-negative-reference: rejection\n",
+      "return { tool: 'cat_cafe_complete_a2a_dispatch' }; // mcp-cutover-negative-reference: rejection\n", // mcp-cutover-negative-reference: rejection
     );
     await fixtureFile(
       repoRoot,
       fixtureConsumers[3],
-      "assert.equal(tools.has('cat_cafe_complete_a2a_dispatch'), false); // mcp-cutover-negative-reference: absence\n",
+      "assert.equal(tools.has('cat_cafe_complete_a2a_dispatch'), false); // mcp-cutover-negative-reference: absence\n", // mcp-cutover-negative-reference: absence
     );
 
     const scans = await scanRetiredNames(repoRoot, [
-      'cat_cafe_complete_event_wait',
-      'cat_cafe_complete_managed_hold',
-      'cat_cafe_complete_a2a_dispatch',
+      'cat_cafe_complete_event_wait', // mcp-cutover-negative-reference: absence
+      'cat_cafe_complete_managed_hold', // mcp-cutover-negative-reference: absence
+      'cat_cafe_complete_a2a_dispatch', // mcp-cutover-negative-reference: absence
     ]);
     assert.deepEqual(
       Object.fromEntries(scans.map((scan) => [scan.retiredName, scan.matches.length])),
       {
-        cat_cafe_complete_a2a_dispatch: 4,
-        cat_cafe_complete_event_wait: 1,
-        cat_cafe_complete_managed_hold: 2,
+        cat_cafe_complete_a2a_dispatch: 4, // mcp-cutover-negative-reference: absence
+        cat_cafe_complete_event_wait: 1, // mcp-cutover-negative-reference: absence
+        cat_cafe_complete_managed_hold: 2, // mcp-cutover-negative-reference: absence
       },
       'all seven raw literal occurrences remain auditable',
     );
@@ -125,7 +125,7 @@ test('the seven F167 retirement assertions remain visible and pass only with man
       assert.deepEqual(classified, { activeMatches: [], invalidEvidence: [] });
     }
 
-    const dispatchScan = scans.find((scan) => scan.retiredName === 'cat_cafe_complete_a2a_dispatch');
+    const dispatchScan = scans.find((scan) => scan.retiredName === 'cat_cafe_complete_a2a_dispatch'); // mcp-cutover-negative-reference: absence
     assert.ok(dispatchScan);
     const missingManifestBinding = classifyCutoverReferences(
       dispatchScan,

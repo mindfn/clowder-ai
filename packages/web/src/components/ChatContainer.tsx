@@ -49,13 +49,11 @@ import { PawIcon } from './icons/PawIcon';
 import { MessageSearchOverlay } from './message-search/MessageSearchOverlay';
 import { useMessageSearchHost } from './message-search/useMessageSearchHost';
 import { NewConversationPage } from './new-conversation/NewConversationPage';
-import { ParallelStatusBar } from './ParallelStatusBar';
 import { ProjectSetupCard } from './ProjectSetupCard';
 import { RuntimeUpdateRequiredDialog } from './RuntimeUpdateRequiredDialog';
 import { SplitPaneChatView } from './SplitPaneView';
 import { useShellPresentation } from './shell/shell-presentation';
 import { useSettingsReadingPort } from './shell/useSettingsSourceReturn';
-import { ThinkingIndicator } from './ThinkingIndicator';
 import { ThreadSidebar } from './ThreadSidebar';
 import { assignDocumentRoute, pushThreadRouteWithHistory } from './ThreadSidebar/thread-navigation';
 import { ThreadChatExport, ThreadChatSurface, useThreadChatRuntime } from './thread-chat';
@@ -427,7 +425,7 @@ function InteractiveChatContainer({ threadId }: ChatContainerProps) {
         : [threadId],
     [viewMode, splitPaneThreadIds, threadId],
   );
-  const { socketConnected, resetAgentMessageRefs, registerIndexEventHandler } = useThreadChatRuntime(runtimeThreadIds);
+  const { socketConnected, registerIndexEventHandler } = useThreadChatRuntime(runtimeThreadIds);
   // F079: Vote modal
   const handleVoteSubmit = useCallback(
     async (config: VoteConfig) => {
@@ -725,9 +723,6 @@ function InteractiveChatContainer({ threadId }: ChatContainerProps) {
     if (prevThreadRef.current !== threadId) {
       // Thread switch: store saves/restores per-thread state automatically
       setCurrentThread(threadId);
-      // F173 A.12 — resetRefs no longer touches suppression markers (invocation-driven cleanup).
-      // It still clears activeRefs / finalizedStreamRef / sawStreamData per the original purpose.
-      resetAgentMessageRefs();
       clearTasks();
       prevThreadRef.current = threadId;
     }
@@ -738,7 +733,6 @@ function InteractiveChatContainer({ threadId }: ChatContainerProps) {
   }, [
     threadId,
     clearTasks, // Clean up non-thread-scoped refs
-    resetAgentMessageRefs, // First mount — sync threadId to store without save/restore
     setCurrentThread,
   ]); // eslint-disable-line react-hooks/exhaustive-deps
 
@@ -1066,9 +1060,6 @@ function InteractiveChatContainer({ threadId }: ChatContainerProps) {
             />
           ) : (
             <>
-              {!workComposerOnlyActive && intentMode === 'ideate' && <ParallelStatusBar threadId={threadId} />}
-              {!workComposerOnlyActive && <ThinkingIndicator threadId={threadId} />}
-
               <ThreadChatSurface
                 threadId={threadId}
                 density="full"

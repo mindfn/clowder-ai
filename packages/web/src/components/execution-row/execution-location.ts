@@ -3,7 +3,6 @@
 import type { ActiveExecutionProjection } from '@cat-cafe/shared';
 import { expandMessageExecutionRecord } from '@/components/message-disclosure-state';
 import { requestExecutionDetail } from '@/components/workspace-home/execution-detail-request';
-import { getBubbleInvocationId } from '@/debug/bubbleIdentity';
 import { selectThreadMessages } from '@/hooks/useThreadScopedSelectors';
 import { activeExecutionKey, useActiveExecutionStore } from '@/stores/activeExecutionStore';
 import { useChatStore } from '@/stores/chatStore';
@@ -23,7 +22,11 @@ export function locateExecution(execution: ActiveExecutionProjection): 'opened' 
   const chat = useChatStore.getState();
   const message = selectThreadMessages(chat, current.threadId).find(
     (item) =>
-      item.catId === current.catId && item.isStreaming && getBubbleInvocationId(item) === current.turnInvocationId,
+      item.catId === current.catId &&
+      item.isStreaming &&
+      (item.lifecycle?.kind === 'response'
+        ? item.lifecycle.invocationId
+        : (item.extra?.stream?.turnInvocationId ?? item.extra?.stream?.invocationId)) === current.turnInvocationId,
   );
   if (!message) return 'unavailable';
   expandMessageExecutionRecord(current.threadId, message);

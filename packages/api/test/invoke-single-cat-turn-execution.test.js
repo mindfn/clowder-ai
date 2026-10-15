@@ -100,12 +100,14 @@ describe('invokeSingleCat durable child execution lifecycle', () => {
   test('creates running before prompt exposure/provider and terminalizes success', async () => {
     const store = new InMemoryTurnExecutionStore();
     const exposureCalls = [];
+    const lifecycleCalls = [];
     let providerObservedStatus;
     let providerRecoveryAnchor;
     const service = {
       async *invoke(_prompt, options) {
         providerObservedStatus = (await store.get('child-success'))?.status;
         providerRecoveryAnchor = options.recoveryAnchor;
+        assert.equal(lifecycleCalls.length, 1, 'processing response must exist before provider starts');
         assert.equal(exposureCalls.length, 1, 'body exposure must be durable before provider starts');
         yield { type: 'text', catId: 'codex', content: 'ok', timestamp: Date.now() };
         yield { type: 'done', catId: 'codex', timestamp: Date.now() };
@@ -120,20 +122,32 @@ describe('invokeSingleCat durable child execution lifecycle', () => {
         userId: 'user-1',
         threadId: 'thread-1',
         parentInvocationId: 'parent-1',
-        executionKind: 'freshness_supplement',
+        executionKind: 'routing_guard',
         executionCausal: {
           triggerMessageId: 'msg-trigger',
-          freshnessSupplementId: 'supplement-1',
+          routingGuardReason: 'missing_routing_exit',
         },
         promptMessageIds: ['msg-queued'],
-        onPromptMessagesExposed: async (input) => {
-          exposureCalls.push(input);
+        onLifecycleInvocationStarted: async (input) => {
+          lifecycleCalls.push(input);
+          return { responseMessageId: 'response-child-success', priorFrontierMessageId: 'message-before-response' };
         },
+        onPromptMessagesExposed: async (input) => exposureCalls.push(input),
         isLastCat: true,
       }),
     );
 
     assert.equal(providerObservedStatus, 'running');
+    assert.deepEqual(lifecycleCalls, [
+      {
+        threadId: 'thread-1',
+        userId: 'user-1',
+        catId: 'codex',
+        invocationId: 'child-success',
+        parentInvocationId: 'parent-1',
+        startedAt: lifecycleCalls[0].startedAt,
+      },
+    ]);
     assert.deepEqual(providerRecoveryAnchor, {
       threadId: 'thread-1',
       invocationId: 'child-success',
@@ -152,11 +166,12 @@ describe('invokeSingleCat durable child execution lifecycle', () => {
       type: 'invocation_created',
       invocationId: 'child-success',
       parentInvocationId: 'parent-1',
-      executionKind: 'freshness_supplement',
+      executionKind: 'routing_guard',
       startedAt: createdBody.startedAt,
       freshnessCarrierCapability: {
         provider: 'other',
         carrier: 'other',
+        activeInvocationGuidance: 'undeclared',
         deliverySemantics: 'undeclared',
       },
       effectiveStrategy: {
@@ -183,19 +198,21 @@ describe('invokeSingleCat durable child execution lifecycle', () => {
     });
     assert.match(createdBody.effectiveStrategy.revision, /^provider_default:[a-f0-9]{64}$/);
     assert.equal(created.turnInvocationId, 'child-success');
+    assert.equal(created.lifecycleResponseMessageId, 'response-child-success');
+    assert.equal(created.lifecyclePriorFrontierMessageId, 'message-before-response');
     assert.equal(created.turnExecutionStartedAt, createdBody.startedAt);
     assert.deepEqual(created.extra?.turnExecution, {
       invocationId: 'child-success',
       parentInvocationId: 'parent-1',
-      executionKind: 'freshness_supplement',
+      executionKind: 'routing_guard',
     });
 
     const terminal = await store.get('child-success');
     assert.equal(terminal.status, 'succeeded');
-    assert.equal(terminal.executionKind, 'freshness_supplement');
+    assert.equal(terminal.executionKind, 'routing_guard');
     assert.deepEqual(terminal.causal, {
       triggerMessageId: 'msg-trigger',
-      freshnessSupplementId: 'supplement-1',
+      routingGuardReason: 'missing_routing_exit',
       coveredMessageIds: ['msg-queued'],
     });
     assert.equal(terminal.endedAt >= terminal.startedAt, true);
@@ -302,7 +319,7 @@ describe('invokeSingleCat durable child execution lifecycle', () => {
     assert.doesNotMatch(JSON.stringify(terminal), /secret-token-should-not-persist/);
   });
 
-  test('observes success only after the canonical durable terminal and carries the exact preflight decision', async () => {
+  test('persists success without global availability observation', async () => {
     const store = new InMemoryTurnExecutionStore();
     const observed = [];
     const exactDecision = routingDecision();
@@ -334,15 +351,11 @@ describe('invokeSingleCat durable child execution lifecycle', () => {
       }),
     );
 
-    assert.equal(observed.length, 1);
-    assert.equal(observed[0].status, 'succeeded');
-    assert.equal(observed[0].observationId, 'child-routing-success');
-    assert.equal(observed[0].evidenceRef, 'turn-execution:child-routing-success');
-    assert.equal(observed[0].preflightDecision, exactDecision);
-    assert.equal(observed[0].observedAt, (await store.get('child-routing-success')).endedAt);
+    assert.equal((await store.get('child-routing-success')).status, 'succeeded');
+    assert.deepEqual(observed, []);
   });
 
-  test('maps structured provider failures after persistence and keeps observer failure advisory', async () => {
+  test('persists provider failure without disabling a member globally', async () => {
     const store = new InMemoryTurnExecutionStore();
     const observed = [];
     const service = {
@@ -386,9 +399,7 @@ describe('invokeSingleCat durable child execution lifecycle', () => {
     );
 
     assert.equal((await store.get('child-routing-failure')).status, 'failed');
-    assert.equal(observed.length, 1);
-    assert.equal(observed[0].status, 'failed');
-    assert.equal(observed[0].failureClass, 'quota_exhausted');
+    assert.deepEqual(observed, []);
   });
 
   test('provider iterator ending without terminal done is interrupted, never succeeded', async () => {
@@ -486,6 +497,7 @@ describe('invokeSingleCat durable child execution lifecycle', () => {
       status: 'interrupted',
       endedAt: (await store.get('child-returned')).endedAt,
       terminalReason: 'generator_returned_without_completion',
+      outputFence: 'open',
     });
   });
 

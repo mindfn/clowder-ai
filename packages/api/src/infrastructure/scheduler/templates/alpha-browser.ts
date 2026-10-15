@@ -103,32 +103,23 @@ async function notifyAlphaFailure(
   ownerCatId: string | null,
   guardianCatId: string,
   content: string,
+  idempotencyKey: string,
 ): Promise<void> {
-  if (!ctx.deliver || !ctx.invokeTrigger) throw new Error('Alpha failure delivery and trigger are required');
   const targetCatId = alphaTriageTarget(options, ownerCatId, guardianCatId);
   if (ownerCatId && targetCatId !== ownerCatId) {
     content += `\n自动核验交给订阅守护者 ${targetCatId}；历史负责人 ${ownerCatId} 当前不接自动核验，原归属记录保留。`;
   }
-  const source = await ctx.deliver({ threadId, content, userId: options.ownerUserId });
-  // Delivery may yield while roster/policy changes. Retry with a truthful source
-  // message instead of waking the now-ineligible cat or silently changing target.
-  if (alphaTriageTarget(options, ownerCatId, guardianCatId) !== targetCatId) {
-    throw new Error('Alpha triage target changed during delivery; retry with current policy');
-  }
-  const outcome = await ctx.invokeTrigger.trigger(
+  if (!ctx.deliver) throw new Error('Alpha failure delivery is required');
+  await ctx.deliver({
     threadId,
-    targetCatId,
-    options.ownerUserId,
     content,
-    source,
-    undefined,
-    {
-      reason: 'scheduled_alpha_browser_triage',
-      sourceCategory: 'scheduled',
-      priority: 'urgent',
-    },
-  );
-  if (outcome !== 'dispatched' && outcome !== 'enqueued') throw new Error(`Alpha wake not accepted: ${outcome}`);
+    userId: options.ownerUserId,
+    targetCatId,
+    idempotencyKey,
+    deliveryStatus: 'queued',
+    sourceCategory: 'scheduled',
+    priority: 'urgent',
+  });
 }
 
 async function reportFailures(
@@ -174,12 +165,17 @@ async function reportFailures(
         title: `[P1] Alpha ${draft.kind}: ${draft.testedHeadSha.slice(0, 10)}`,
         why: `Alpha full verification requires triage.\nRevision: ${draft.testedHeadSha}\nExecution: ${draft.jobId}:${draft.generation}\nUnits: ${draft.unitIds.join(', ')}\nOwner source: ${draft.ownerSourceRef ?? 'unresolved'}\nOwnership: ${draft.ownership}. A failing journey is evidence to investigate, not proof that its feature code is the root cause.`,
       }));
-    // Task identity and notification completion are different facts. Replays
-    // retain the one Task but retry delivery/trigger until both have succeeded.
-    // Duplicate notifications after a crash are preferable to silently losing
-    // the owner/guardian wake and settling an unhandled revision.
+    // Retry the same atomic admission: one source and target, never a second trigger.
     const content = `Alpha 浏览器验证未通过：${draft.testedHeadSha}\n内部 P1：${task.id}\n${task.why}`;
-    await notifyAlphaFailure(options, ctx, threadId, draft.ownerCatId, guardianCatId, content);
+    await notifyAlphaFailure(
+      options,
+      ctx,
+      threadId,
+      draft.ownerCatId,
+      guardianCatId,
+      content,
+      `alpha-triage:${draft.jobId}:${draft.generation}:${task.id}`,
+    );
     refs.push(`task:${task.id}`);
   }
   return refs;

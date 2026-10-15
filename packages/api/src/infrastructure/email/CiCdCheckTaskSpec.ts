@@ -7,13 +7,12 @@
  * Execute: fetch current PR/CI facts → route through F280 typed wait predicates.
  * Collection always advances; only a matched generation creates a connector wake.
  */
-import type { CatId, TaskItem } from '@cat-cafe/shared';
+import type { TaskItem } from '@cat-cafe/shared';
 import { parsePrSubjectKey } from '@cat-cafe/shared';
 import type { ITaskStore } from '../../domains/cats/services/stores/ports/TaskStore.js';
 import { ReadMemo } from '../github/read-memo.js';
 import type { ExecuteContext, TaskSpec_P1 } from '../scheduler/types.js';
 import type { CiCdRouter, CiPollResult, CiRouteResult } from './CiCdRouter.js';
-import type { ConnectorInvokeTrigger, ConnectorTriggerPolicy } from './ConnectorInvokeTrigger.js';
 import { isStaleCiSnapshot } from './ci-cd-contract.js';
 import { ciStatusTargetKey, createCiCollectionReaders, type PrCiStatusTarget } from './ci-status-batch-fetcher.js';
 import { describesRollup, enrichPrCiFailure, failureDetailRollup } from './ci-status-fetcher.js';
@@ -30,7 +29,6 @@ export interface CiCdCheckSignal {
 export interface CiCdCheckTaskSpecOptions {
   readonly taskStore: ITaskStore;
   readonly cicdRouter: CiCdRouter;
-  readonly invokeTrigger?: ConnectorInvokeTrigger;
   readonly fetchPrStatus?: (
     repoFullName: string,
     prNumber: number,
@@ -64,35 +62,6 @@ export interface CiCdCheckTaskSpecOptions {
    * Reuses the same self-login resolver as review feedback echo filtering.
    */
   readonly isSelfMerge?: (mergedByLogin: string) => boolean;
-}
-
-/**
- * PR terminal state (merged/closed) consumes any active wait exactly once.
- * Fires exactly once in production: CiCdRouter persists ci.prState and the gate filters completed lifecycle tasks.
- */
-async function triggerLifecycleWake(
-  opts: CiCdCheckTaskSpecOptions,
-  invokeTrigger: ConnectorInvokeTrigger,
-  signal: CiCdCheckSignal,
-  routeResult: Extract<CiRouteResult, { kind: 'lifecycle' }>,
-): Promise<void> {
-  const policy: ConnectorTriggerPolicy = {
-    priority: 'normal',
-    reason: routeResult.prState === 'merged' ? 'github_pr_merged' : 'github_pr_closed',
-    sourceCategory: 'ci',
-  };
-  await invokeTrigger
-    .trigger(
-      routeResult.threadId,
-      routeResult.catId as CatId,
-      signal.task.userId ?? '',
-      routeResult.content,
-      routeResult.messageId,
-      undefined,
-      policy,
-    )
-    .catch((err) => opts.log.warn({ err }, '[cicd-check] lifecycle trigger failed (best-effort)'));
-  opts.log.info(`[cicd-check] PR ${routeResult.prState} -> wake ${routeResult.catId} (terminal lifecycle)`);
 }
 
 function needsCiLifecycleRecovery(task: TaskItem): boolean {
@@ -280,7 +249,6 @@ export function createCiCdCheckTaskSpec(opts: CiCdCheckTaskSpecOptions): TaskSpe
         const routeResult = await opts.cicdRouter.route(pollResult);
         if (isStaleCiRoute(routeResult))
           throw new Error(`Stale CI snapshot for ${signal.repoFullName}#${signal.prNumber}; retry current HEAD`);
-        if (!opts.invokeTrigger) return;
 
         if (routeResult.kind === 'lifecycle') {
           // Skip wake when the merge was performed by our own GitHub identity —
@@ -290,28 +258,14 @@ export function createCiCdCheckTaskSpec(opts: CiCdCheckTaskSpecOptions): TaskSpe
             opts.log.info(`[cicd-check] PR ${routeResult.prState} by self (${pollResult.mergedByLogin}) -> skip wake`);
             return;
           }
-          await triggerLifecycleWake(opts, opts.invokeTrigger, signal, routeResult);
+          // CiCdRouter already admitted this terminal notice in one transaction; Queue drain owes
+          // the wake. No second trigger to fire twice or to drop best-effort.
+          opts.log.info(`[cicd-check] PR ${routeResult.prState} -> ${routeResult.catId} (terminal lifecycle)`);
           return;
         }
 
         if (routeResult.kind !== 'notified') return;
 
-        const policy: ConnectorTriggerPolicy = {
-          priority: routeResult.bucket === 'fail' ? 'urgent' : 'normal',
-          reason: 'github_wait_satisfied',
-          sourceCategory: 'ci',
-        };
-        await opts.invokeTrigger
-          .trigger(
-            routeResult.threadId,
-            routeResult.catId as CatId,
-            signal.task.userId ?? '',
-            routeResult.content,
-            routeResult.messageId,
-            undefined,
-            policy,
-          )
-          .catch((err) => opts.log.warn({ err }, '[cicd-check] wait trigger failed (best-effort)'));
         opts.log.info(`[cicd-check] Typed wait satisfied → wake ${routeResult.catId}`);
       },
     },

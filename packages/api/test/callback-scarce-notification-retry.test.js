@@ -45,7 +45,7 @@ function assertOneQuietDelivery(fixture) {
 for (const principal of ['invocation-token', 'agent-key']) {
   test(`${principal}: the injected queue stays quiet for FYI but admits actionable delivery`, async (t) => {
     const { fixture, send } = await setupPrincipal(t, principal);
-    const enqueue = t.mock.method(fixture.queue, 'enqueue');
+    const enqueue = t.mock.method(fixture.queue, 'send');
     assertReceipt(await send());
     assertOneQuietDelivery(fixture);
     assert.equal(enqueue.mock.callCount(), 0, 'FYI must never touch the real injected queue');
@@ -54,7 +54,7 @@ for (const principal of ['invocation-token', 'agent-key']) {
     assert.equal(enqueue.mock.callCount(), 1, 'the route must actually be wired to this queue');
     const queued = fixture.queue.list(fixture.target.id, 'user-1');
     assert.equal(queued.length, 1);
-    assert.deepEqual(queued[0].targetCats, ['codex']);
+    assert.deepEqual(queued[0].targets, ['codex']);
   });
 
   test(`${principal}: append failure leaves the same notification key retryable`, async (t) => {

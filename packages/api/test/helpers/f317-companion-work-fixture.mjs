@@ -26,7 +26,7 @@ export async function workFixture(_t, { artifactWorkLineage } = {}) {
     const source = messages.append({
       userId,
       threadId: thread.id,
-      catId: null,
+      from: { kind: 'user', userId },
       content: '请帮我做一份回家清单',
       mentions: [],
       timestamp: Date.now(),
@@ -55,7 +55,7 @@ export async function workFixture(_t, { artifactWorkLineage } = {}) {
     return messages.append({
       userId: 'owner',
       threadId: thread.id,
-      catId: 'codex-sol',
+      from: { kind: 'agent', catId: 'codex-sol' },
       content: `交付 ${name}`,
       mentions: [],
       timestamp,

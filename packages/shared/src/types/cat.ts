@@ -4,6 +4,7 @@
  */
 
 import type { CliConfig } from './cat-breed.js';
+import type { CatCarrier } from './cat-carrier.js';
 import type { CatId, SessionId } from './ids.js';
 import { createCatId } from './ids.js';
 import type { VoiceConfig } from './tts.js';
@@ -52,18 +53,6 @@ export interface AgyProfileConfig {
   readonly model?: string;
   readonly autoApprove?: boolean;
   readonly trustedWorkspaces?: readonly string[];
-  /** Operator-issued P1 coding grant bound to one durable entrusted Task and worktree. */
-  readonly nativeCodingGrant?: AgyNativeCodingGrantConfig;
-}
-
-export interface AgyNativeCodingGrantConfig {
-  readonly threadId: string;
-  readonly taskId: string;
-  readonly workUnitRef: string;
-  readonly acceptedRevision: string;
-  readonly workspaceRoot: string;
-  readonly writableFiles: readonly string[];
-  readonly testFile: string;
 }
 
 /**
@@ -82,6 +71,8 @@ export interface CatConfig {
   readonly accountRef?: string;
   /** clowder-ai#340 P5: CLI client identity (renamed from `provider`). */
   readonly clientId: ClientId;
+  /** Canonical, config-resolved member access mode. */
+  readonly carrier: CatCarrier;
   readonly defaultModel: string;
   readonly mcpSupport: boolean;
   readonly cli?: CliConfig;

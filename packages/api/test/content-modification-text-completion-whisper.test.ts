@@ -9,7 +9,7 @@ test('a real whispered Human takeover keeps its exact private audience in the se
   const human = f.messages.append({
     userId: 'operator',
     threadId: f.thread.id,
-    catId: null,
+    from: { kind: 'user', userId: 'operator' },
     mentions: ['codex-astra'],
     visibility: 'whisper',
     whisperTo: ['codex-astra'],

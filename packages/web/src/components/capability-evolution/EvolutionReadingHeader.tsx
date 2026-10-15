@@ -1,6 +1,6 @@
 import type { ReactNode } from 'react';
 import { evolutionProgramPresentation, productStatus } from './capability-evolution-presentation';
-import { EvolutionJourney, type JourneyMoment } from './EvolutionJourney';
+import { EvolutionJourney, type JourneyMoment, journeyStageLabel } from './EvolutionJourney';
 import { EvolutionProgramName } from './EvolutionProgramName';
 import { EvolutionProgramOrigin } from './EvolutionProgramOrigin';
 import type { EvolutionProgramProjection } from './evolution-program-projection';
@@ -22,7 +22,7 @@ export function EvolutionReadingHeader({
   v2: boolean;
 }) {
   const status = productStatus(projection);
-  if (!v2 || moment !== 1)
+  if (!v2 || (moment !== 1 && moment !== 2))
     return (
       <header>
         <div className="mb-6 flex items-center justify-between">
@@ -66,7 +66,7 @@ export function EvolutionReadingHeader({
         {controls}
       </div>
       <p className="evolution-eyebrow">
-        能力进化 · 第 {projection.program.cycle} 轮 · {productStatus(projection).label}
+        能力进化 · 第 {projection.program.cycle} 轮 · {journeyStageLabel(projection)}
       </p>
       <h1 className="evolution-title">{evolutionProgramPresentation(projection.program, projection.origin).title}</h1>
       <div className="evolution-v2-reading-origin">

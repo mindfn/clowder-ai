@@ -4,12 +4,13 @@ import {
   contentModificationRequestContractSchema,
   contentModificationTakeoverSchema,
 } from '@cat-cafe/shared';
+import type { QueueTargetExecutionReadPort } from '../../cats/services/agents/invocation/queue-ledger/QueueTargetExecutionView.js';
 import {
   deriveGrowingSourceMessageRevision,
   type IMessageStore,
 } from '../../cats/services/stores/ports/MessageStore.js';
 import type { ITaskStore } from '../../cats/services/stores/ports/TaskStore.js';
-import type { ITurnExecutionStore } from '../../cats/services/stores/ports/TurnExecutionStore.js';
+import type { TurnExecutionSourceReadPort } from '../../cats/services/stores/ports/TurnExecutionStore.js';
 import type { EntrustedWorkLifecycleService } from '../../growing/EntrustedWorkLifecycleService.js';
 import type { MediaReviewPrincipal } from '../../video-studio/content-owner/published-media-access.js';
 import type { ArtifactReviewStore } from '../artifact-review/store.js';
@@ -57,7 +58,8 @@ export class ContentModificationService {
     private readonly deps: {
       store: ArtifactReviewStore;
       messages: IMessageStore;
-      turnExecutions?: Pick<ITurnExecutionStore, 'get'>;
+      queue?: QueueTargetExecutionReadPort;
+      turnExecutions?: TurnExecutionSourceReadPort;
       tasks: ITaskStore;
       lifecycle: EntrustedWorkLifecycleService;
       content: ModificationContentPort;

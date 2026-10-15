@@ -27,6 +27,7 @@ const PROVIDER_CARRIERS: Readonly<Record<string, ProviderCarrier>> = Object.free
   'openai\0exec_json': { provider: 'codex', carrier: 'exec_json' },
   'openai\0app_server': { provider: 'codex', carrier: 'app_server' },
   'google\0gemini_cli': { provider: 'gemini', carrier: 'gemini_cli' },
+  'google\0agy_stream_json': { provider: 'gemini', carrier: 'agy_stream_json' },
   'google\0antigravity': { provider: 'gemini', carrier: 'antigravity_adapter' },
   'google\0antigravity-cli': { provider: 'gemini', carrier: 'antigravity_adapter' },
   'antigravity\0cdp_bridge': { provider: 'antigravity', carrier: 'cdp_bridge' },
@@ -149,7 +150,12 @@ export function resolveContextContinuity(input: {
  * resume is rejected outright rather than silently substituted.
  */
 export function carrierHasProviderContinuityPreflight(providerCarrier: ProviderCarrier): boolean {
-  return providerCarrier.provider === 'codex' && providerCarrier.carrier === 'app_server';
+  // F325: fixed official AGY 1.3.5 emits init before stdin. The adapter verifies
+  // its runtime id and launch binding before allowing any prompt bytes through.
+  return (
+    (providerCarrier.provider === 'codex' && providerCarrier.carrier === 'app_server') ||
+    (providerCarrier.provider === 'gemini' && providerCarrier.carrier === 'agy_stream_json')
+  );
 }
 
 export function supportsProviderContinuityPreflight(handshake: ContextContinuityHandshake): boolean {

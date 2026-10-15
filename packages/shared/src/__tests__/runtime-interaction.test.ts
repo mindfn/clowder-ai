@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest';
 import {
   parseRuntimeInteractionRequest,
   parseRuntimeInteractionResponse,
-  type RuntimeInteractionRequest,
+  type RuntimeProviderInteractionRequest,
   redactRuntimeInteractionResponse,
 } from '../types/runtime-interaction.js';
 
@@ -22,7 +22,7 @@ const provider = {
   itemId: 'provider-item',
 } as const;
 
-function approvalRequest(): RuntimeInteractionRequest {
+function approvalRequest(): RuntimeProviderInteractionRequest {
   return {
     version: 1,
     interactionId: 'interaction-1',
@@ -41,6 +41,142 @@ function approvalRequest(): RuntimeInteractionRequest {
 }
 
 describe('runtime interaction contract', () => {
+  const conversationPresentation = {
+    id: 'release-name',
+    kind: 'interactive',
+    v: 1,
+    interactiveType: 'select',
+    title: 'Choose a release name',
+    options: [
+      { id: 'sunrise', label: 'Sunrise' },
+      { id: 'custom', label: 'Other', customInput: true },
+    ],
+    messageTemplate: 'Release name: {selection}',
+  } as const;
+
+  const conversationRequest = () => ({
+    version: 1 as const,
+    interactionId: 'conversation-1',
+    kind: 'conversation_decision' as const,
+    owner,
+    createdAt: 1_777_000_000_000,
+    title: 'Choose a release name',
+    presentation: conversationPresentation,
+    allowTextResponse: true,
+  });
+
+  it('admits only an explicit standalone interactive conversation decision', () => {
+    const parsed = parseRuntimeInteractionRequest(conversationRequest());
+    expect(parsed.kind).toBe('conversation_decision');
+    if (parsed.kind !== 'conversation_decision') throw new Error('expected conversation decision');
+    expect(parsed.presentation).toEqual(conversationPresentation);
+
+    expect(() =>
+      parseRuntimeInteractionRequest({
+        ...conversationRequest(),
+        presentation: {
+          ...conversationPresentation,
+          options: [
+            {
+              id: 'sunrise',
+              label: 'Sunrise',
+              action: { type: 'callback', endpoint: '/api/callbacks/do-something' },
+            },
+          ],
+        },
+      }),
+    ).toThrow(/callback|guide|action/i);
+    expect(() =>
+      parseRuntimeInteractionRequest({
+        ...conversationRequest(),
+        presentation: { ...conversationPresentation, groupId: 'legacy-guide-group' },
+      }),
+    ).toThrow(/one conversation decision|independently submitted/i);
+    expect(() =>
+      parseRuntimeInteractionRequest({
+        ...conversationRequest(),
+        presentation: { ...conversationPresentation, disabled: true },
+      }),
+    ).toThrow(/actionable/i);
+    expect(() =>
+      parseRuntimeInteractionRequest({
+        ...conversationRequest(),
+        presentation: {
+          ...conversationPresentation,
+          options: [
+            { id: 'duplicate', label: 'First' },
+            { id: 'duplicate', label: 'Second' },
+          ],
+        },
+      }),
+    ).toThrow(/option ids must be unique/i);
+  });
+
+  it('validates conversation responses against the original block and redacts free text', () => {
+    const request = parseRuntimeInteractionRequest(conversationRequest());
+    if (request.kind !== 'conversation_decision') throw new Error('expected conversation decision');
+    const selected = parseRuntimeInteractionResponse(request, {
+      kind: 'selection',
+      selectedIds: ['custom'],
+      customInput: 'Dawn Chorus',
+    });
+    expect(selected).toEqual({ kind: 'selection', selectedIds: ['custom'], customInput: 'Dawn Chorus' });
+    expect(redactRuntimeInteractionResponse(request, selected)).toEqual({
+      kind: 'selection',
+      selectedIds: ['custom'],
+      hasCustomInput: true,
+    });
+    const text = parseRuntimeInteractionResponse(request, { kind: 'text', text: 'Keep it quiet' });
+    expect(redactRuntimeInteractionResponse(request, text)).toEqual({ kind: 'text' });
+    expect(JSON.stringify(redactRuntimeInteractionResponse(request, text))).not.toContain('Keep it quiet');
+
+    expect(() => parseRuntimeInteractionResponse(request, { kind: 'selection', selectedIds: ['missing'] })).toThrow(
+      /unknown option/i,
+    );
+    expect(() =>
+      parseRuntimeInteractionResponse(request, {
+        kind: 'selection',
+        selectedIds: ['sunrise'],
+        customInput: 'not allowed here',
+      }),
+    ).toThrow(/custom/i);
+    expect(() =>
+      parseRuntimeInteractionResponse({ ...request, allowTextResponse: false }, { kind: 'text', text: 'No' }),
+    ).toThrow(/text response/i);
+    expect(() => parseRuntimeInteractionResponse(request, { kind: 'text', text: 'x'.repeat(100_001) })).toThrow(
+      /too_big|100000/i,
+    );
+    expect(() =>
+      parseRuntimeInteractionResponse(request, {
+        kind: 'selection',
+        selectedIds: ['custom'],
+        customInput: 'x'.repeat(100_001),
+      }),
+    ).toThrow(/too_big|100000/i);
+  });
+
+  it('requires a future deadline for a declared default and validates the default response', () => {
+    expect(() =>
+      parseRuntimeInteractionRequest({
+        ...conversationRequest(),
+        defaultResponse: { kind: 'selection', selectedIds: ['sunrise'] },
+      }),
+    ).toThrow(/deadline/i);
+    expect(() =>
+      parseRuntimeInteractionRequest({
+        ...conversationRequest(),
+        deadlineAt: 1_776_999_999_999,
+      }),
+    ).toThrow(/later than createdAt/i);
+    expect(() =>
+      parseRuntimeInteractionRequest({
+        ...conversationRequest(),
+        deadlineAt: 1_777_000_001_000,
+        defaultResponse: { kind: 'selection', selectedIds: ['missing'] },
+      }),
+    ).toThrow(/unknown option/i);
+  });
+
   it('preserves an explicit producer-owned entrusted Task link', () => {
     const request = approvalRequest();
     const parsed = parseRuntimeInteractionRequest({

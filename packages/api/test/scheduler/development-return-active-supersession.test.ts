@@ -93,7 +93,12 @@ function successorInput(
 }
 
 test('current g2 atomically supersedes the active g1 return and becomes the only reporter', async (t) => {
-  const f = await fixture(t, { proposalDelegateCatId: ORIGINAL_DELEGATE_CAT, separateProposalSource: true });
+  const f = await fixture(t, {
+    ownerCatId: 'codex-astra',
+    proposalDelegateCatId: ORIGINAL_DELEGATE_CAT,
+    catAuthoredProposalSource: true,
+    proposalTriggerCatId: 'codex-sol',
+  });
   const first = await f.service.register(f.actor, f.input, 'strict');
   assert.equal(first.status, 'waiting');
   assert.deepEqual(first.reporterCatIds, [ORIGINAL_DELEGATE_CAT]);

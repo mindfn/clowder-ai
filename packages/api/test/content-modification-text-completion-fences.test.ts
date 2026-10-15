@@ -56,7 +56,8 @@ test('preserving cancelled root A still permits its uncancelled B completion', a
   assert.equal(completion.length, 1);
   assert.equal(completion[0]?.source?.meta?.requestId, f.requestId);
   assert.equal(completion[0]?.source?.meta?.closureRequestId, f.rootRequest.record.requestId);
-  assert.ok(completion[0]?.queueCustody, 'the real Queue accepted the uncancelled current B return');
+  assert.ok(completion[0]);
+  await f.dispatch.waitForAwakening(completion[0].id); // exact persisted Queue/History child, no retired custody field
   const taskRef = f.request.record.progress.task;
   assert.ok(taskRef);
   assert.equal(f.tasks.get(taskRef.taskId)?.entrustedWork?.closure.state, 'open');

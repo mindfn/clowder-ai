@@ -1,11 +1,13 @@
 'use client';
 import { refIdentity } from '@cat-cafe/shared';
+import { useShellPresentation } from '@/components/shell/shell-presentation';
 import { EvolutionSource } from '../EvolutionVersionEvidence';
 import type { EvolutionProgramProjection } from '../evolution-program-projection';
 import { ExplorationActions } from './ExplorationActions';
 import { ExplorationCaseList } from './ExplorationCaseList';
 import { ExplorationComparison } from './ExplorationComparison';
 import { ExplorationConditions } from './ExplorationConditions';
+import { ExplorationCounterexample } from './ExplorationCounterexample';
 import { ExplorationDecisionHeader } from './ExplorationDecisionHeader';
 import { ExplorationDetailStatus } from './ExplorationDetailStatus';
 import { ExplorationIcon } from './ExplorationIcon';
@@ -26,6 +28,7 @@ export function EvolutionExplorationWorkspace({
   onPreparation?: () => void;
 }) {
   const workspace = useExplorationWorkspace(projection);
+  const v2 = useShellPresentation() === 'v2';
   const {
     id,
     reading,
@@ -112,13 +115,38 @@ export function EvolutionExplorationWorkspace({
       className="exploration-workspace"
       aria-label="探索进化工作面"
       data-testid="evolution-exploration-workspace"
+      data-exploration-presentation={v2 ? 'v2' : 'classic'}
     >
       <ExplorationSourceStatus blockers={catalog.blockers} retry={resource.retry} />
 
+      {v2 && (
+        <>
+          <section className="exploration-version-state" aria-label="生效与阅读状态">
+            <p>
+              当前生效：
+              {!asset.catalog
+                ? '待来源核验'
+                : asset.catalog.currentVersionRefs.length
+                  ? asset.catalog.currentVersionRefs
+                      .map(
+                        (ref) =>
+                          asset.catalog?.versions.find(
+                            (version) => refIdentity(version.versionRef) === refIdentity(ref),
+                          )?.title ?? '已登记，版本名待核实',
+                      )
+                      .join('、')
+                  : '未登记'}
+            </p>
+            <p>正在读：{node.title}</p>
+          </section>
+          <ExplorationNavigation workspace={workspace} v2 />
+        </>
+      )}
+
       <div className="exploration-decision-layout">
-        <ExplorationNavigation workspace={workspace} />
+        {v2 ? <ExplorationDecisionHeader workspace={workspace} v2 /> : <ExplorationNavigation workspace={workspace} />}
         <div className="exploration-decision-main">
-          <ExplorationDecisionHeader workspace={workspace} />
+          {!v2 && <ExplorationDecisionHeader workspace={workspace} />}
           <div className="exploration-reading-tabs" role="group" aria-label="阅读内容">
             {(['results', 'changes', 'conditions'] as const).map((tab) => (
               <button
@@ -214,6 +242,7 @@ export function EvolutionExplorationWorkspace({
                     reading={reading}
                     onChange={change}
                     onRetry={resource.retry}
+                    v2={v2}
                   />
                 ) : (
                   <ExplorationComparison
@@ -252,6 +281,15 @@ export function EvolutionExplorationWorkspace({
                   />
                 </section>
               )}
+              {v2 && experiment && detail?.status === 'resolved' && comparison?.status !== 'paired' && (
+                <ExplorationCounterexample
+                  programId={id}
+                  right={{ experiment, records }}
+                  selectedRecord={record}
+                  retry={resource.retry}
+                />
+              )}
+              {v2 && experiment && <ExplorationConditions experiment={experiment} onPreparation={onPreparation} />}
               {!experiment && (
                 <p className="exploration-notice">
                   该版本尚无已发布的实验。内容变化可以解释机制，尚不能证明行为改善。

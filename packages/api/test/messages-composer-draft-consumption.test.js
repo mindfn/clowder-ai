@@ -41,21 +41,21 @@ async function fixture({ reject = false, beforeAppend, strict = true, queue = fa
     updatedAt: Date.now(),
   });
   if (beforeAppend) {
-    const append = store.append.bind(store);
-    store.append = (input) => {
+    const append = store.appendWithQueueLedgerAdmission.bind(store);
+    store.appendWithQueueLedgerAdmission = (...args) => {
       beforeAppend(store);
-      return append(input);
+      return append(...args);
     };
   }
   const dispatches = [];
-  let notifyDispatch;
-  const dispatched = new Promise((resolve) => {
-    notifyDispatch = resolve;
-  });
-  const invocationQueue = queue ? new InvocationQueue() : undefined;
+  const invocationQueue = new InvocationQueue(undefined, { resolveTargets: async () => (reject ? [] : ['opus']) });
   const controller = () => new AbortController();
   await app.register(messagesRoutes, {
     registry: new InvocationRegistry(),
+    queueProcessor: {
+      requestDrain: async () => {},
+      tryAutoAppendExactEntry: async () => ({ outcome: 'rejected', reason: 'append_unavailable' }),
+    },
     messageStore: store,
     invocationRecordStore: new InvocationRecordStore(),
     socketManager: { broadcastAgentMessage() {}, broadcastToRoom() {}, emitToUser() {} },
@@ -63,7 +63,6 @@ async function fixture({ reject = false, beforeAppend, strict = true, queue = fa
       resolveTargetsAndIntent: async () => ({ targetCats: reject ? [] : ['opus'], intent: { intent: 'execute' } }),
       routeExecution: async function* (...args) {
         dispatches.push(args);
-        notifyDispatch();
         yield { type: 'done', catId: 'opus', timestamp: Date.now() };
       },
       ackCollectedCursors: async () => {},
@@ -89,7 +88,6 @@ async function fixture({ reject = false, beforeAppend, strict = true, queue = fa
     app,
     store,
     dispatches,
-    dispatched,
     invocationQueue,
     send: (payload) =>
       app.inject({
@@ -106,10 +104,10 @@ async function fixture({ reject = false, beforeAppend, strict = true, queue = fa
   };
 }
 
-test('a stored accepted message consumes its matching owner draft before HTTP200, with the revision receipt', async () => {
+test('a stored accepted message consumes its matching owner draft before HTTP202, with the revision receipt', async () => {
   const { send, store } = await fixture();
   const response = await send({});
-  assert.equal(response.statusCode, 200, response.body);
+  assert.equal(response.statusCode, 202, response.body);
   assert.ok(response.json().userMessageId);
   assert.equal(store.getOwnerComposerDraft(OWNER, THREAD).text, '');
   assert.deepEqual(response.json().composerDraftConsumption, { threadId: THREAD, expectedRevision: 1, revision: 2 });
@@ -118,7 +116,7 @@ test('a stored accepted message consumes its matching owner draft before HTTP200
 test('a rejected send leaves its owner draft untouched', async () => {
   const { send, store } = await fixture({ reject: true });
   const before = store.getOwnerComposerDraft(OWNER, THREAD);
-  assert.equal((await send({})).statusCode, 400);
+  assert.equal((await send({ content: '', contextAttachments: [] })).statusCode, 400);
   assert.deepEqual(store.getOwnerComposerDraft(OWNER, THREAD), before);
 });
 
@@ -134,7 +132,7 @@ test('a concurrent revision wins even when its text and attachments are identica
     },
   });
   const response = await send({});
-  assert.equal(response.statusCode, 200, response.body);
+  assert.equal(response.statusCode, 202, response.body);
   assert.equal(store.getOwnerComposerDraft(OWNER, THREAD).revision, 2);
   assert.equal(store.getOwnerComposerDraft(OWNER, THREAD).text, TEXT);
   assert.equal(response.json().composerDraftConsumption, undefined);
@@ -143,7 +141,7 @@ test('a concurrent revision wins even when its text and attachments are identica
 test('a sender without the mounted revision cannot consume the saved draft', async () => {
   const { send, store } = await fixture();
   const before = store.getOwnerComposerDraft(OWNER, THREAD);
-  assert.equal((await send({ content: '另一条消息', composerDraftRevision: undefined })).statusCode, 200);
+  assert.equal((await send({ content: '另一条消息', composerDraftRevision: undefined })).statusCode, 202);
   assert.deepEqual(store.getOwnerComposerDraft(OWNER, THREAD), before);
 });
 
@@ -157,37 +155,38 @@ test('body identity hints cannot consume another owner draft', async () => {
   });
   const before = store.getOwnerComposerDraft('other-owner', THREAD);
   const response = await send({ userId: 'other-owner' });
-  assert.equal(response.statusCode, 200, response.body);
+  assert.equal(response.statusCode, 202, response.body);
   assert.deepEqual(store.getOwnerComposerDraft('other-owner', THREAD), before);
 });
 
 test('compatibility-only identity cannot consume a durable owner draft', async () => {
   const { send, store } = await fixture({ strict: false });
   const before = store.getOwnerComposerDraft(OWNER, THREAD);
-  assert.equal((await send({ userId: OWNER })).statusCode, 200);
+  assert.equal((await send({ userId: OWNER })).statusCode, 202);
   assert.deepEqual(store.getOwnerComposerDraft(OWNER, THREAD), before);
 });
 
 test('the explicit mounted revision consumes an older saved body when the accepted send contains unsaved edits', async () => {
   const { send, store } = await fixture();
   const response = await send({ content: '刚打的新正文\n无需等待防抖' });
-  assert.equal(response.statusCode, 200, response.body);
+  assert.equal(response.statusCode, 202, response.body);
   assert.equal(store.getOwnerComposerDraft(OWNER, THREAD).text, '');
   assert.equal(store.getById(response.json().userMessageId).content, '刚打的新正文\n无需等待防抖');
 });
 
 test('a stored queue admission consumes the bound draft before its accepted response', async () => {
   const { send, store } = await fixture({ queue: true });
-  const response = await send({ deliveryMode: 'queue' });
+  const response = await send({ messageDisposition: 'next_work' });
   assert.equal(response.statusCode, 202, response.body);
   assert.equal(response.json().status, 'queued');
   assert.equal(store.getOwnerComposerDraft(OWNER, THREAD).text, '');
 });
 
-test('an idempotent replay cannot consume a newer same-content draft', async () => {
+test('an idempotent replay cannot consume a newer same-content draft even in the same millisecond', async (t) => {
+  t.mock.method(Date, 'now', () => 100);
   const { send, store } = await fixture();
   const idempotencyKey = '1fea5e0d-4db8-42af-9745-0c0dadbe5701';
-  assert.equal((await send({ idempotencyKey })).statusCode, 200);
+  assert.equal((await send({ idempotencyKey })).statusCode, 202);
   store.putOwnerComposerDraft(OWNER, THREAD, {
     expectedRevision: 2,
     text: TEXT,
@@ -196,8 +195,8 @@ test('an idempotent replay cannot consume a newer same-content draft', async () 
   });
   const before = store.getOwnerComposerDraft(OWNER, THREAD);
   const response = await send({ idempotencyKey, composerDraftRevision: 3 });
-  assert.equal(response.statusCode, 200, response.body);
-  assert.equal(response.json().status, 'duplicate');
+  assert.equal(response.statusCode, 202, response.body);
+  assert.equal(response.json().status, 'queued');
   assert.deepEqual(store.getOwnerComposerDraft(OWNER, THREAD), before);
   assert.equal(response.json().composerDraftConsumption, undefined);
 });
@@ -214,28 +213,25 @@ test('invalid draft revisions are rejected without consuming any owner state', a
 for (const operation of ['read', 'clear']) {
   for (const queued of [false, true]) {
     test(
-      `a draft ${operation} failure preserves one ${queued ? 'queue admission' : 'normal dispatch'}`,
+      `a draft ${operation} failure preserves one ${queued ? 'queue admission' : 'default Queue admission'}`,
       { timeout: 5000 },
       async () => {
-        const { send, store, dispatched, dispatches, invocationQueue } = await fixture({ queue: queued });
+        const { send, store, dispatches, invocationQueue } = await fixture({ queue: queued });
         const method = operation === 'read' ? 'getOwnerComposerDraft' : 'clearOwnerComposerDraft';
         store[method] = async () => {
           throw new Error('owner draft store down');
         };
-        const response = await send(queued ? { deliveryMode: 'queue' } : {});
-        assert.equal(response.statusCode, queued ? 202 : 200, response.body);
+        const response = await send(queued ? { messageDisposition: 'next_work' } : {});
+        assert.equal(response.statusCode, 202, response.body);
         const body = response.json();
         assert.ok(body.userMessageId);
         assert.equal(body.composerDraftConsumption, undefined);
         assert.equal(store.getById(body.userMessageId).content, TEXT);
-        if (queued) {
+        {
           const entries = invocationQueue.list(THREAD, OWNER);
           assert.equal(entries.length, 1);
           assert.equal(entries[0].id, body.entryId);
           assert.equal(dispatches.length, 0);
-        } else {
-          await dispatched;
-          assert.equal(dispatches.length, 1);
         }
       },
     );
@@ -253,7 +249,7 @@ test('an older mounted ticket cannot consume a newer draft already saved before 
   const before = store.getOwnerComposerDraft(OWNER, THREAD);
   assert.equal(before.revision, 2);
   const response = await send({ composerDraftRevision: 1 });
-  assert.equal(response.statusCode, 200, response.body);
+  assert.equal(response.statusCode, 202, response.body);
   assert.deepEqual(store.getOwnerComposerDraft(OWNER, THREAD), before);
   assert.equal(response.json().composerDraftConsumption, undefined);
 });

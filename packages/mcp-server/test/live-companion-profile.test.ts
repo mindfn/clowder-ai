@@ -29,7 +29,6 @@ test('Live gets memory drilldown, coordination and its scoped Task lifecycle wit
     'recall_person_relationship',
     'list_tasks',
     'cross_post_message',
-    'complete_a2a_dispatch',
     'preview_open',
     'admit_entrusted_work',
     'read_entrusted_work',
@@ -39,6 +38,7 @@ test('Live gets memory drilldown, coordination and its scoped Task lifecycle wit
   ])
     assert.ok(names.has(`cat_cafe_${name}`), name);
   for (const name of [
+    'complete_a2a_dispatch',
     'shell_exec',
     'propose_thread',
     'propose_profile_update',

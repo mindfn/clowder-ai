@@ -3,6 +3,7 @@ import { test } from 'node:test';
 import Fastify from 'fastify';
 import { MessageStore } from '../../src/domains/cats/services/stores/ports/MessageStore.js';
 import { companionDecisionRoutes } from '../../src/routes/companion-decision-routes.js';
+import { adaptMessageStore, canonicalTestMessageInput } from '../helpers/message-from-fixtures.js';
 
 const source = {
   userId: 'owner',
@@ -23,7 +24,7 @@ async function fixture(t: { after: (fn: () => Promise<void>) => void }) {
     else process.env.DEFAULT_OWNER_USER_ID = previous;
   });
   const app = Fastify();
-  const messages = new MessageStore();
+  const messages = adaptMessageStore(new MessageStore());
   t.after(() => app.close());
   app.addHook('preHandler', async (request) => {
     request.sessionUserId = String(request.headers['x-test-session'] ?? '');
@@ -109,34 +110,40 @@ for (const [scenario, readBeforeLaterCommit] of [
 ] as const) {
   test(`durable reads preserve later-visible lower-id @you requests — ${scenario}`, () => {
     const messages = new MessageStore();
-    const firstCommitted = messages.append({
-      ...source,
-      catId: 'codex61-sol',
-      content: '@co-creator first committed',
-      timestamp: 200,
-    });
+    const firstCommitted = messages.append(
+      canonicalTestMessageInput({
+        ...source,
+        catId: 'codex61-sol',
+        content: '@co-creator first committed',
+        timestamp: 200,
+      }),
+    );
     let laterVisible: ReturnType<MessageStore['append']>;
     let handled: boolean;
     if (readBeforeLaterCommit) {
       handled = messages.resolveUserMentionRequestFromRead('owner', source.threadId, firstCommitted.id, 1_000);
-      laterVisible = messages.append({
-        ...source,
-        catId: 'codex61-sol',
-        content: '@co-creator later visible',
-        timestamp: 100,
-      });
+      laterVisible = messages.append(
+        canonicalTestMessageInput({
+          ...source,
+          catId: 'codex61-sol',
+          content: '@co-creator later visible',
+          timestamp: 100,
+        }),
+      );
       assert.equal(handled, true);
       assert.deepEqual(
         messages.listHandledUserMentions('owner').map((message) => message.id),
         [firstCommitted.id],
       );
     } else {
-      laterVisible = messages.append({
-        ...source,
-        catId: 'codex61-sol',
-        content: '@co-creator later visible',
-        timestamp: 100,
-      });
+      laterVisible = messages.append(
+        canonicalTestMessageInput({
+          ...source,
+          catId: 'codex61-sol',
+          content: '@co-creator later visible',
+          timestamp: 100,
+        }),
+      );
       handled = messages.resolveUserMentionRequestFromRead('owner', source.threadId, firstCommitted.id, 1_000);
       assert.equal(handled, false);
       assert.deepEqual(messages.listHandledUserMentions('owner'), []);
@@ -169,7 +176,13 @@ test('F320 explicit mention enters the existing mailbox once, updates, and close
   assert.equal(updated.totalCount, 1);
   assert.equal(updated.items[0].decisionRef, initial.items[0].decisionRef);
   assert.equal(updated.items[0].userMention.messageId, next.id);
-  messages.append({ ...source, catId: null, mentionsUser: false, content: '可以，稍后重启', timestamp: 102 });
+  messages.append({
+    ...source,
+    catId: null,
+    mentionsUser: false,
+    content: '可以，稍后重启',
+    timestamp: 102,
+  });
   assert.equal((await read()).totalCount, 0);
   const history = (
     await app.inject({

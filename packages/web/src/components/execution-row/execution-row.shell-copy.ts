@@ -51,7 +51,6 @@ export const executionRowCopy = defineShellCopy(
       forceResetReason: {
         silent_turn: '这一轮已经一段时间没有动静',
         unverified_legacy: '本轮没有留下可核对的终态，可能已经结束',
-        processing_stuck: '有一条消息的处理卡住了，没有猫在接它',
       },
       pauseReason: { canceled: '当前调用已取消', failed: '当前调用失败' },
       stale: '状态暂不可核对',
@@ -127,7 +126,6 @@ export const executionRowCopy = defineShellCopy(
       forceResetReason: {
         silent_turn: 'This turn has shown no activity for a while',
         unverified_legacy: 'This turn left no verifiable final state and may have ended',
-        processing_stuck: 'A message is stuck with no cat handling it',
       },
       pauseReason: { canceled: 'The current invocation was cancelled', failed: 'The current invocation failed' },
       stale: 'State cannot be verified',

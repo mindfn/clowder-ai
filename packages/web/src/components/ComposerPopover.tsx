@@ -61,8 +61,8 @@ export function ComposerPopover({
   label,
   onClose,
   preferredWidth,
+  presentation = 'v2',
   scrollContent = false,
-  presentation = 'anchor',
   children,
 }: {
   anchor: RefObject<HTMLButtonElement>;
@@ -72,7 +72,7 @@ export function ComposerPopover({
   /** Let a child body scroll while a sibling action footer stays visible. */
   scrollContent?: boolean;
   /** A full-height mobile sheet / viewport-height desktop panel. Anchor consumers are unchanged. */
-  presentation?: 'anchor' | 'viewport';
+  presentation?: 'classic' | 'v2' | 'anchor' | 'viewport';
   children: ReactNode;
 }) {
   const [viewport, setViewport] = useState(readViewport);
@@ -148,7 +148,11 @@ export function ComposerPopover({
               preferredWidth,
             )
       }
-      className={`z-[70] flex flex-col ${scrollContent ? 'overflow-hidden' : 'overflow-y-auto'} overscroll-contain ${presentation === 'viewport' ? 'rounded-t-xl sm:rounded-xl' : 'rounded-lg'} border border-[var(--shell-hairline-strong)] bg-[var(--shell-paper)] p-1 text-[var(--shell-body)] shadow-lg`}
+      className={`z-[70] flex flex-col ${scrollContent ? 'overflow-hidden' : 'overflow-y-auto'} overscroll-contain ${
+        presentation === 'classic'
+          ? 'rounded-2xl bg-cafe-surface-canvas p-1.5 text-cafe-secondary shadow-xl'
+          : `${presentation === 'viewport' ? 'rounded-t-xl sm:rounded-xl' : 'rounded-lg'} border border-[var(--shell-hairline-strong)] bg-[var(--shell-paper)] p-1 text-[var(--shell-body)] shadow-lg`
+      }`}
     >
       {children}
     </div>,

@@ -65,6 +65,7 @@ function cat(id, nickname, available = true, extra = {}) {
     avatar: '/avatars/family/codex61-sol.png',
     mentionPatterns: [`@${id}`],
     clientId: 'anthropic',
+    carrier: 'cli',
     accountRef: 'claude',
     defaultModel: 'test-model',
     roleDescription: '隔离验收伙伴',
@@ -108,6 +109,7 @@ export async function scene(width = 1440, dark = false, classic = false, protect
       cat('fixture-b', '测试乙', false),
       cat('fixture-c', '测试丙', true, {
         clientId: 'openai',
+        carrier: 'app_server',
         codexCarrier: { effective: 'app_server', source: 'per-cat' },
       }),
     ],
@@ -123,6 +125,7 @@ export async function scene(width = 1440, dark = false, classic = false, protect
     state.cats.push(
       cat('gpt-pro', '隔离Pro', true, {
         clientId: 'openai',
+        carrier: 'cli',
         defaultModel: 'gpt-pro',
         mentionPatterns: ['@gpt-pro'],
         identityProtection: {

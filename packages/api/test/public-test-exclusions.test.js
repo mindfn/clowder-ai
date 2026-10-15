@@ -74,9 +74,14 @@ test('registry retains only audited exclusions and drops re-admitted cases', asy
   assert.equal(registry.entries.length, RECONCILED_EXCLUSIONS.length);
   const redisEntry = registry.entries.find((entry) => entry.id === 'redis');
   assert.equal(
-    redisEntry.publicAudit.matchedFileCount,
+    redisEntry.publicAuditHistory[0].matchedFileCount,
     redisEntry.audit.matchedFileCount + 1,
-    'public audit also counts the target-owned test/redis-task-progress-store.test.js',
+    'the original public audit included the target-owned task progress suite',
+  );
+  assert.equal(
+    redisEntry.publicAudit.matchedFileCount,
+    redisEntry.publicAuditHistory[0].matchedFileCount - redisEntry.inventoryRevision.removedFiles.length,
+    'the revised public audit removes only the recorded retired inventory',
   );
   for (const entry of registry.entries) {
     assert.match(entry.audit.sourceHead, /^[a-f0-9]{40}$/);

@@ -32,7 +32,7 @@ export function buildCSS(p: TunerState, hc: HcOverride, actual?: ActualColours):
      * the nearest one that does (F322: the saved value itself is never rewritten). */
     const role = resolveTunerNameAndPlate(p, dark, actual);
     const nameL = role.l;
-    /* The lineage ring (globals.css `[data-lineage-focus]`) is drawn in the human colour at the bubble lightness, floored at 3:1. */
+    /* The lineage ring (globals.css `[data-message-jump-focus]`) is drawn in the human colour at the bubble lightness, floored at 3:1. */
     const ringL = lineageRingLightness(p, dark, actual, role.plateL).l;
     return (
       `${sel}{` +

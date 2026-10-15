@@ -4,6 +4,7 @@ import { test } from 'node:test';
 import { createCatId } from '@cat-cafe/shared';
 import { MessageStore } from '../src/domains/cats/services/stores/ports/MessageStore.js';
 import { LiveCompanionCall } from '../src/domains/concierge/live/LiveCompanionCall.js';
+import { adaptMessageStore } from './helpers/message-from-fixtures.js';
 
 async function fixture(store: MessageStore, suffix: string) {
   const root = `root-${suffix}`;
@@ -49,7 +50,7 @@ async function fixture(store: MessageStore, suffix: string) {
 }
 
 test('actual Call wiring retains a corrected old result, recovers it on reentry, and speaks only a current natural reminder once', async () => {
-  const store = new MessageStore();
+  const store = adaptMessageStore(new MessageStore());
   const first = await fixture(store, 'one');
   const original = await first.call.sendText('Compare the old SOP and the new report', 'original');
   await first.call.observe(first.event('item/completed', { type: 'userMessage', clientId: original.messageId }));

@@ -9,6 +9,7 @@ import {
 } from '../src/domains/cats/services/stores/ports/MessageStore.js';
 import { ArtifactReviewStore } from '../src/domains/collaborative-content/artifact-review/store.js';
 import { VideoProjectMessageImporter } from '../src/domains/collaborative-content/workspace-review/project-message/import.js';
+import { adaptMessageStore } from './helpers/message-from-fixtures.js';
 import { screeningFixture } from './helpers/video-project-screening.js';
 
 function attachment(screening: VideoProjectScreening): ProjectScreeningContextAttachment {
@@ -48,7 +49,7 @@ function attachment(screening: VideoProjectScreening): ProjectScreeningContextAt
 async function setup() {
   const f = await screeningFixture();
   const { screening } = await f.make().register(f.request);
-  const messages = new MessageStore();
+  const messages = adaptMessageStore(new MessageStore());
   const path = join(f.dataDir, 'artifact-reviews.sqlite');
   let store = new ArtifactReviewStore(path);
   let allowed = true;

@@ -1,8 +1,4 @@
 import { type MessageContent, serializeContextAttachmentsPrompt } from '@cat-cafe/shared';
-import {
-  queueSourceTargetState,
-  readQueueCarrierMessages,
-} from '../domains/cats/services/agents/invocation/QueueCarrierSourceProjection.js';
 import type { IMessageStore } from '../domains/cats/services/stores/ports/MessageStore.js';
 import { canViewMessage, type Viewer } from '../domains/cats/services/stores/visibility.js';
 
@@ -37,38 +33,33 @@ export async function projectQueuedCallbackMessageBody(
     return entry.content ? queueBody : { ...queueBody, sourceUnavailableReason: 'queued_body_not_persisted' };
   }
   try {
-    const sources = await readQueueCarrierMessages(
-      {
-        id: entry.entryId,
-        threadId: scope.threadId,
-        userId: scope.userId,
-        messageId: entry.messageId ?? null,
-        mergedMessageIds: [...(entry.mergedMessageIds ?? [])],
-      },
-      store,
-    );
+    const sourceIds = [
+      ...new Set([entry.messageId, ...(entry.mergedMessageIds ?? [])].filter((id): id is string => Boolean(id))),
+    ];
+    const sources = await Promise.all(sourceIds.map((id) => store.getById(id)));
     if (
-      sources.some((source) => {
-        const state = queueSourceTargetState(source, entry.entryId, scope.catId);
-        return (
+      sources.some(
+        (source) =>
+          !source ||
+          source.threadId !== scope.threadId ||
+          source.userId !== scope.userId ||
           source.deletedAt ||
           source._tombstone ||
-          !canViewMessage(source, scope.viewer) ||
-          state === 'retired' ||
-          state === 'unknown'
-        );
-      })
+          source.recall ||
+          !canViewMessage(source, scope.viewer),
+      )
     ) {
-      return { ...queueBody, sourceUnavailableReason: 'queued_body_source_changed' };
+      return { content: '', contentLength: 0, sourceUnavailableReason: 'queued_body_source_changed' };
     }
+    const persisted = sources.filter((source): source is NonNullable<typeof source> => source !== null);
     return projectCallbackMessageBody({
-      content: entry.content,
-      contentBlocks: sources.flatMap((source) => source.contentBlocks ?? []),
+      content: persisted.map((source) => source.content).join('\n\n'),
+      contentBlocks: persisted.flatMap((source) => source.contentBlocks ?? []),
     });
   } catch (error) {
     scope.onSourceError?.(error);
     // Keep the exact entry/drill visible but withhold full-read evidence. One
     // missing source must not prevent other readable bodies from being returned.
-    return { ...queueBody, sourceUnavailableReason: 'queued_body_source_unavailable' };
+    return { content: '', contentLength: 0, sourceUnavailableReason: 'queued_body_source_unavailable' };
   }
 }

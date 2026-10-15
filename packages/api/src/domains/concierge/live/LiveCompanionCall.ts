@@ -2,7 +2,7 @@ import type { CodexAppServerJsonObject } from '../../cats/services/agents/provid
 import type { CodexLiveNativeClient, CodexLiveRunPort } from '../../cats/services/agents/providers/CodexLiveRunPort.js';
 import { CodexLiveStartupCancelledError } from '../../cats/services/agents/providers/CodexLiveRunPort.js';
 import type { CodexSubexecutionEvent } from '../../cats/services/agents/providers/CodexSubexecutionIdentity.js';
-import type { FreshnessReadableMessage } from '../../cats/services/freshness/checkFreshnessForPostMessage.js';
+import type { FreshnessReadableMessage } from '../../cats/services/freshness/freshness-unseen-source.js';
 import type {
   HostTextSubmission,
   HostVoiceObservation,
@@ -170,6 +170,9 @@ export class LiveCompanionCall implements CodexLiveRunPort {
   }
   transcriptScope(): { callId: string; realtimeSessionId: string } | undefined {
     return this.realtimeSessionId ? { callId: this.id, realtimeSessionId: this.realtimeSessionId } : undefined;
+  }
+  acceptsAdmission(): boolean {
+    return !this.startupSignal.aborted && this.state === 'preparing';
   }
   acceptsInput(): boolean {
     return !this.startupSignal.aborted && this.state === 'talking';

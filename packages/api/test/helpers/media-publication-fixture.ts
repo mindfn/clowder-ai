@@ -1,15 +1,10 @@
 import assert from 'node:assert/strict';
 import { createHash } from 'node:crypto';
-import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
+import { mkdir, mkdtemp, readFile, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { createCatId } from '@cat-cafe/shared';
 import sharp from 'sharp';
-import { InvocationQueue } from '../../src/domains/cats/services/agents/invocation/InvocationQueue.js';
-import {
-  createInitialQueuedMessageCustody,
-  QueuedMessageCustodyCoordinator,
-} from '../../src/domains/cats/services/agents/invocation/QueuedMessageCustodyCoordinator.js';
 import { scanAndPublishCodexImages } from '../../src/domains/cats/services/agents/providers/codex-image-scanner.js';
 import { CliRawArchive } from '../../src/domains/cats/services/session/CliRawArchive.js';
 import { mediaMessageFixture } from './media-message-fixture.js';
@@ -24,12 +19,17 @@ export async function mediaPublicationFixture(
   } = {},
 ) {
   const nativeRoot = await mkdtemp(join(tmpdir(), 'f309-publication-native-'));
-  t.after(() => rm(nativeRoot, { recursive: true, force: true }));
+  t.after(async () => {
+    console.info(`retained owned native media evidence: ${nativeRoot}`);
+  });
   let fixtureRef: Awaited<ReturnType<typeof mediaMessageFixture>> | undefined;
   const f = await mediaMessageFixture(
     t,
     'image/png',
-    { get: (id) => fixtureRef?.dispatch.turns.get(id) ?? null },
+    {
+      get: (id) => fixtureRef?.dispatch.turns.get(id) ?? null,
+      listBySource: (query) => fixtureRef?.dispatch.turns.listBySource(query) ?? [],
+    },
     {
       authenticatedQueue: true,
       nativeImageArchiveDirectory: join(nativeRoot, 'raw'),
@@ -101,19 +101,13 @@ export async function mediaPublicationFixture(
     )!.id;
     const entry = f.queue.findEntryWithMessageId(f.thread.id, initial.id)!;
     // The deterministic provider consumes the second request too; real child creation and body exposure persist the causal binding.
-    f.dispatch.coverOnNextProviderStart([second.id, secondCarrierId]);
+    // Separate queued source admits its own child in the single Queue; no body-exposure shortcut.
     f.dispatch.tracker.complete(f.thread.id, 'codex-astra', blocked);
     await f.dispatch.processor.progressOwnedCarrier(entry, 'codex-astra');
   }
   const childId = await f.dispatch.waitForAwakening(initial.id);
   const child = f.dispatch.turns.get(childId);
   assert.ok(child);
-  if (secondCarrierId) {
-    const entry = f.queue.findEntryWithMessageId(f.thread.id, secondCarrierId)!;
-    f.queue.markQueuedSeen(f.thread.id, 'operator', entry.id, 'codex-astra', childId);
-    await f.dispatch.coordinator.persistEntry(f.queue.getEntrySnapshot(f.thread.id, 'operator', entry.id)!);
-    await f.dispatch.coordinator.assertPromptExposurePersisted([secondCarrierId], 'codex-astra', childId);
-  }
   const sessionId = 'native-publication-session';
   const codexHome = join(nativeRoot, 'codex');
   const sourcePath = join(codexHome, 'generated_images', sessionId, 'exec-generated.png');
@@ -156,12 +150,7 @@ export async function mediaPublicationFixture(
   const image = images[0]!;
   assert.deepEqual(await readFile(image.absPath), pixels);
   if (options.producerStatus !== 'running') {
-    f.dispatch.turns.transitionTerminal(childId, {
-      status: options.producerStatus ?? 'succeeded',
-      terminalReason: options.producerStatus === 'canceled' ? 'user_stop' : 'fixture_native_output_completed',
-      endedAt: Date.now(),
-    });
-    await f.dispatch.releaseProvider(childId);
+    await f.dispatch.releaseProvider(childId, options.producerStatus ?? 'succeeded');
   }
   const projection = {
     invocationId: childId,
@@ -172,7 +161,7 @@ export async function mediaPublicationFixture(
     const message = f.messages.append({
       userId: 'operator',
       threadId: f.thread.id,
-      catId: createCatId('codex-astra'),
+      from: { kind: 'agent', catId: createCatId('codex-astra') },
       mentions: [],
       timestamp: Date.now(),
       content: '原回合生成的图片',
@@ -196,32 +185,9 @@ export async function mediaPublicationFixture(
       .getByThreadIncludingQueued(f.thread.id, 100, 'operator')
       .filter((message) => message.source?.meta?.kind === 'resume_media_publication');
   async function markOriginalHandled() {
-    const queue = new InvocationQueue();
-    const coordinator = new QueuedMessageCustodyCoordinator({ messageStore: f.messages });
-    assert.equal(f.messages.prepareQueueAdmission(human.id).kind, 'prepared');
-    const { entry } = queue.enqueue({
-      threadId: f.thread.id,
-      userId: 'operator',
-      ownerAuthProvenance: 'strict',
-      messageId: human.id,
-      content: human.content,
-      targetCats: human.mentions,
-      source: 'user',
-      intent: 'execute',
-    });
-    assert.ok(entry);
-    assert.equal(
-      f.messages.initializeQueueCustody(human.id, createInitialQueuedMessageCustody(entry)).kind,
-      'initialized',
-    );
-    queue.markQueuedSeen(f.thread.id, 'operator', entry.id, 'codex-astra', childId);
-    const exposed = queue.getEntrySnapshot(f.thread.id, 'operator', entry.id);
-    assert.ok(exposed);
-    await coordinator.persistEntry(exposed);
-    await coordinator.assertPromptExposurePersisted([human.id], 'codex-astra', childId);
-    await coordinator.commitSuccessfulTargets(exposed, ['codex-astra'], childId, Date.now());
-    assert.equal(f.messages.getById(human.id)?.deliveryStatus, 'queued');
-    assert.deepEqual(f.messages.getById(human.id)?.queueCustody?.pendingTargetCats, ['sonnet']);
+    assert.equal(f.messages.getById(human.id)?.deliveryStatus, undefined);
+    assert.equal(Object.hasOwn(human, 'queueCustody'), false);
+    assert.equal(f.dispatch.turns.get(childId)?.status, 'succeeded');
   }
   return {
     ...f,

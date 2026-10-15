@@ -184,6 +184,80 @@ test('a structured choice coordinate uses its canonical interaction revision and
   assert.notEqual(nextRevision.version, original.version);
 });
 
+test('an approval/runtime alias binds Ignore to both exact proofs while preserving the legacy question version', () => {
+  const baseApproval = approval('approval-1', 'F306');
+  const runtime = {
+    interactionId: 'approval-1',
+    revision: 7,
+    kind: 'approval' as const,
+    requesterCatId: baseApproval.requesterCatId,
+    createdAt: baseApproval.createdAt,
+    title: baseApproval.summary,
+    cardRef: { threadId: 'thread-1', messageId: 'message-1', blockId: 'block-1' },
+  };
+  const aliased = {
+    decisionRef: 'f306.runtime_interaction:approval-1',
+    kind: 'approval' as const,
+    summary: baseApproval.summary,
+    approval: baseApproval,
+    runtimeInteraction: runtime,
+    linkedNeedsMe: [],
+  } as unknown as UnifiedAttentionItemV1;
+  const first = coordinate(attachDecisionPreferenceCoordinates([aliased])[0]);
+  const runtimeChanged = coordinate(
+    attachDecisionPreferenceCoordinates([
+      {
+        ...aliased,
+        runtimeInteraction: { ...runtime, revision: runtime.revision + 1 },
+      } as unknown as UnifiedAttentionItemV1,
+    ])[0],
+  );
+  const approvalChanged = coordinate(
+    attachDecisionPreferenceCoordinates([
+      {
+        ...aliased,
+        approval: { ...baseApproval, summary: 'Changed approval source' },
+      } as unknown as UnifiedAttentionItemV1,
+    ])[0],
+  );
+  assert.notEqual(runtimeChanged.version, first.version);
+  assert.notEqual(approvalChanged.version, first.version);
+
+  const question = {
+    decisionRef: 'f306.runtime_interaction:question-1',
+    kind: 'judgment' as const,
+    summary: 'Where?',
+    choiceRequest: {
+      interactionId: 'question-1',
+      revision: 5,
+      requesterCatId: 'codex-sol',
+      createdAt: 1,
+      title: 'Question',
+      questions: [{ id: 'q', header: 'Question', question: 'Where?' }],
+      cardRef: { threadId: 'thread-1', messageId: 'message-2', blockId: 'block-2' },
+    },
+    linkedNeedsMe: [],
+  } satisfies UnifiedAttentionItemV1;
+  const legacy = coordinate(attachDecisionPreferenceCoordinates([question])[0]);
+  const withRuntime = coordinate(
+    attachDecisionPreferenceCoordinates([
+      {
+        ...question,
+        runtimeInteraction: {
+          interactionId: 'question-1',
+          revision: 5,
+          kind: 'question',
+          requesterCatId: 'codex-sol',
+          createdAt: 1,
+          title: 'Question',
+          cardRef: question.choiceRequest.cardRef,
+        },
+      } as unknown as UnifiedAttentionItemV1,
+    ])[0],
+  );
+  assert.equal(withRuntime.version, legacy.version);
+});
+
 test('mention ignores never enter the decision badge and schedule preferences never suppress Needs Me', () => {
   const mentions: UserMentionTodoRead = {
     items: [

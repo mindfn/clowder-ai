@@ -4,7 +4,7 @@ import {
   ANTIGRAVITY_RUNTIME_SEAL_REASONS,
   buildAntigravitySessionLifecycle,
   normalizeAntigravitySessionLifecycle,
-} from '../dist/domains/cats/services/agents/providers/antigravity/antigravity-runtime-lifecycle.js';
+} from '../dist/domains/cats/services/runtime-session/LegacyAntigravityLifecycle.js';
 
 const EXPECTED_REASONS = [
   'oversized_retire',

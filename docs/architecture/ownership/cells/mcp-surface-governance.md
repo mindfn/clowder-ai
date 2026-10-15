@@ -22,7 +22,7 @@ mcp_selector_claims:
     decision: accepted
 code_anchors:
   - packages/mcp-server/src/canonical-server-tools.ts
-  - packages/mcp-server/src/tools/native-task-test-tool.ts
+  - packages/mcp-server/governance/cutovers/f325-native-task-test-retirement.json
   - packages/mcp-server/src/canonical-tool-registry.ts
   - packages/mcp-server/src/server-toolsets.ts
   - packages/mcp-server/src/tool-governance.ts
@@ -44,6 +44,7 @@ doc_anchors:
   - feature-specs/2026-08-04-f286-phase-b-admission-contract.md
 static_scan_hints: [resourceFamily, cutoverState, exposureTier, standaloneReason, allowedNextActions, registerFullToolset, EXPECTED_TOOLS, MCP_TOOLS_SECTION, compatibility alias, atomic cutover]
 cited_by:
+  - {feature: F325, date: 2026-10-14, delta: "Atomically retires cat_cafe_run_task_test; normal Native uses canonical MCP discovery and the existing managed hold/status/cancel lifecycle"}
   - {feature: F325, date: 2026-09-29, delta: "P1 admits cat_cafe_run_task_test as one Task-scoped side-effect boundary with host-selected target and no model command/path parameters"}
   - {feature: F286, date: 2026-08-01, delta: "new cell for MCP semantic admission and atomic resource-family cutover"}
 ---
@@ -57,6 +58,8 @@ Architecture cell: `mcp-surface-governance`
 F286 owns the policy and derived registry that decide which Clowder AI MCP semantic identities exist, which resource lifecycle and authority boundary each identity belongs to, how it is exposed by runtime/profile, and whether a complete resource family is eligible for atomic cutover.
 
 This cell owns the cutover invariant: a runtime/profile must never advertise both replaced and canonical MCP surfaces. A migration bundle moves MCP registration/schema/descriptions, runtime catalogs/profiles/provisioning, L0 prompts, skills/conventions, deterministic fixtures, and any declared eval or observability consumer together. Rollback restores the previous exact release rather than retaining a second exposed surface.
+
+F325 removes the temporary `cat_cafe_run_task_test` surface and exact-file coding grants. Ordinary Native members use canonical capability discovery and their accepted ToolExecutionPolicy. Durable execution extends the existing hold/status/cancel resource lifecycle, including explicit retry lineage; no parallel job tool family is added.
 
 ## Use This When
 

@@ -82,7 +82,10 @@ it('saves a visual text mark through the ordinary review action endpoint instead
     await Promise.resolve();
     await Promise.resolve();
   });
-  const markup = container.querySelector<HTMLButtonElement>('[data-mode="markup"]');
+  const markup = [...container.querySelectorAll<HTMLButtonElement>('button')].find(
+    (button) => button.textContent === '画笔',
+  );
+  expect(markup).toBeTruthy();
   await act(async () => markup?.click());
   const textTool = container.querySelector<HTMLButtonElement>('[aria-label="文字"]');
   await act(async () => textTool?.click());

@@ -78,8 +78,8 @@ function Host() {
       presentation="v2"
       disabled={latest.phase === 'creating' || latest.phase === 'sending'}
       onDraftChange={latest.onDraftChange}
-      onSend={(content, images, whisper, deliveryMode, replyToId, messageDisposition, contextAttachments) =>
-        latest.send({ content, images, whisper, deliveryMode, replyToId, messageDisposition, contextAttachments })
+      onSend={(content, images, whisper, replyToId, contextAttachments, explicitTargetCats) =>
+        latest.send({ content, images, whisper, replyToId, contextAttachments, explicitTargetCats })
       }
     />
   ) : null;
@@ -204,8 +204,8 @@ it('requires confirmation without losing local or hydrated text, context, images
   expect(sentCall?.[0]).toContain('saved draft from other tab');
   expect(sentCall?.[0]).toContain('new local first message');
   expect(sentCall?.[1]).toHaveLength(2);
-  expect(sentCall?.[5]).toBe('restored-reply');
-  expect(sentCall?.[7]).toEqual([context]);
+  expect(sentCall?.[4]).toBe('restored-reply');
+  expect(sentCall?.[5]).toEqual([context]);
   expect(server.puts).toEqual([expect.objectContaining({ expectedRevision: 1, replyTo: 'restored-reply' })]);
   expect(server.deletes).toEqual([2]);
   expect(state.draft).toBeNull();

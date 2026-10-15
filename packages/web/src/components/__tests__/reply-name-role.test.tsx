@@ -36,12 +36,26 @@ const getCatById = (id: string) => (id === 'opus' ? opus : undefined);
 
 const pill = (senderCatId: string | null, extra: { deleted?: true } = {}) =>
   renderToStaticMarkup(
-    <ReplyPill replyPreview={{ senderCatId, content: '内容', ...extra }} replyToId="m1" getCatById={getCatById} />,
+    <ReplyPill
+      replyPreview={{
+        from: senderCatId ? { kind: 'agent', catId: senderCatId } : { kind: 'user', userId: 'owner' },
+        senderCatId,
+        content: '内容',
+        ...extra,
+      }}
+      replyToId="m1"
+      getCatById={getCatById}
+    />,
   );
 const bar = (senderCatId: string | null) =>
   renderToStaticMarkup(
     <ReplyPreviewBar
-      replyToMessage={{ id: 'm1', senderCatId, content: '内容' }}
+      replyToMessage={{
+        id: 'm1',
+        from: senderCatId ? { kind: 'agent', catId: senderCatId } : { kind: 'user', userId: 'owner' },
+        senderCatId,
+        content: '内容',
+      }}
       cats={[opus]}
       onClear={() => undefined}
     />,
@@ -52,10 +66,12 @@ const textColors = (html: string) => [...html.matchAll(/(?:^|[;"\s])color:([^;"]
 const background = (html: string) => /background-color:([^;"]+)/.exec(html)?.[1];
 const styleOfFirstElement = (html: string) => /style="([^"]*)"/.exec(html)?.[1];
 
-describe('classic is byte-identical: a cat is still written in its own hex', () => {
+describe('classic uses the approved theme-aware source pill and original composer bar', () => {
   it('the reply pill', () => {
     shell.presentation = 'classic';
-    expect(styleOfFirstElement(pill('opus'))).toBe('background-color:#8B5CF620;color:#8B5CF6');
+    expect(styleOfFirstElement(pill('opus'))).toBe(
+      'background-color:color-mix(in srgb, var(--color-opus-primary, #8B5CF6) 12.5%, transparent);color:var(--color-opus-primary, #8B5CF6)',
+    );
   });
 
   it('the reply bar: the arrow, the line and the close button', () => {
@@ -106,6 +122,6 @@ describe('the new shell writes a cat in its name role and keeps the tint', () =>
     shell.presentation = 'v2';
     expect(textColors(pill('opus'))).toEqual(['var(--color-opus-text)']);
     shell.presentation = 'classic';
-    expect(textColors(pill('opus'))).toEqual(['#8B5CF6']);
+    expect(textColors(pill('opus'))).toEqual(['var(--color-opus-primary, #8B5CF6)']);
   });
 });

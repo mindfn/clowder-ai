@@ -11,7 +11,9 @@ export type AuthoritativeCompactionEventSource =
    * 0.147.0) dynamically observed the item, its `(threadId, turnId, item.id)`
    * envelope coordinates, and a consumable window before the next `turn/start`.
    */
-  | 'codex_app_server_context_compaction';
+  | 'codex_app_server_context_compaction'
+  /** Fixed AGY 1.3.5 /compact and post-compaction request wire qualification (F325). */
+  | 'agy_native_checkpoint';
 
 export type AuthoritativeCompactionSupport =
   | { readonly status: 'supported'; readonly eventSource: AuthoritativeCompactionEventSource }
@@ -48,8 +50,10 @@ function resolveClaudeHookSupport(input: {
  * authority by having its event delivery dynamically proven end to end, never
  * by declaring `observesCompression=true` or by appearing in a schema enum.
  *
- * Two carriers currently qualify: the Claude print carrier (typed boundary +
- * authenticated project hook) and the Codex app-server (F296 B4 Gate 0).
+ * Three carriers currently qualify: the Claude print carrier (typed boundary +
+ * authenticated project hook), the Claude Agent SDK carrier (typed boundary +
+ * the PreCompact hook it runs in-process, F117 K2, f117-notes/phase2b-sdk-precompact)
+ * and the Codex app-server (F296 B4 Gate 0).
  */
 export function resolveAuthoritativeCompactionSupport(input: {
   readonly capability: AgentContextCapability;
@@ -70,7 +74,7 @@ export function resolveAuthoritativeCompactionSupport(input: {
   } = input;
   if (
     capability.provider === 'anthropic' &&
-    capability.carrier === 'print_sdk' &&
+    (capability.carrier === 'print_sdk' || capability.carrier === 'agent_sdk') &&
     (eventSource === 'claude_compact_boundary' || eventSource === 'claude_precompact_hook')
   ) {
     return resolveClaudeHookSupport({
@@ -83,6 +87,11 @@ export function resolveAuthoritativeCompactionSupport(input: {
   // The app-server source is bound to the app-server carrier. A Codex
   // exec_json invocation can never route this event, and no other event source
   // can borrow the app-server's proof.
+  if (eventSource === 'agy_native_checkpoint') {
+    return capability.provider === 'google' && capability.carrier === 'agy_stream_json'
+      ? { status: 'supported', eventSource }
+      : { status: 'unsupported', reason: 'typed_event_unroutable' };
+  }
   if (eventSource === 'codex_app_server_context_compaction') {
     return capability.provider === 'openai' && capability.carrier === 'app_server'
       ? { status: 'supported', eventSource }

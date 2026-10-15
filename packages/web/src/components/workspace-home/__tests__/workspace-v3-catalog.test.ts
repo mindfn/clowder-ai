@@ -18,6 +18,10 @@ describe('one v3 tool catalogue', () => {
         'voice',
         'films',
         'team',
+        'schedule',
+        'eval',
+        'community',
+        'capability-evolution',
       ].sort(),
     );
     expect(new Set(HOME_ROWS.map((row) => row.id)).size).toBe(HOME_ROWS.length);

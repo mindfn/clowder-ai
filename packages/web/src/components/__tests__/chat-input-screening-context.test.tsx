@@ -75,14 +75,6 @@ it.each([
     textarea?.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true, cancelable: true })),
   );
   expect(send).toHaveBeenCalledOnce();
-  expect(send).toHaveBeenCalledWith(
-    'Keep original words',
-    undefined,
-    undefined,
-    undefined,
-    undefined,
-    undefined,
-    contexts,
-  );
+  expect(send).toHaveBeenCalledWith('Keep original words', undefined, undefined, undefined, contexts);
   expect(textarea?.value, 'A declined local admission retains the original draft').toBe('Keep original words');
 });

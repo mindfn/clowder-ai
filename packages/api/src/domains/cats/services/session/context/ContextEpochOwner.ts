@@ -259,6 +259,11 @@ export function applyContinuityToEpoch(input: {
       // so it is normalized to unknown(binding_mismatch) rather than believed.
       if (!previous.boundRuntimeSessionId || previous.boundRuntimeSessionId !== disposition.runtimeSessionId) {
         return advance('binding_mismatch', {
+          // A newly qualified carrier can adopt an untracked runtime, but only
+          // cold. Failed delivery leaves cold unconsumed; the next resume cannot
+          // become hot until confirmColdConsumed. An existing conflict never
+          // uses this migration path to replace the known binding.
+          ...(!previous.boundRuntimeSessionId ? { boundRuntimeSessionId: disposition.runtimeSessionId } : {}),
           normalizedDisposition: {
             state: 'unknown',
             reason: 'binding_mismatch',
